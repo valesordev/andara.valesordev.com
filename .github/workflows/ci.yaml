@@ -1,0 +1,48 @@
+# CI runs `make check` and nothing else, so a green CI and a green local run
+# cannot disagree (AW-INF-001, AC-13).
+
+name: check
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: bootstrap
+        run: make bootstrap
+
+      # Sub-steps are named individually so a red build is diagnosable from the
+      # summary view without opening logs (AW-INF-001, observability section).
+      - name: fmt
+        run: make fmt-check
+      - name: vet
+        run: make vet
+      - name: lint
+        run: make lint
+      - name: test
+        run: make test
+      - name: validate-stories
+        run: make validate-stories
+      - name: backlog freshness
+        run: make backlog-check
+      - name: k8s-dry
+        run: make k8s-dry ENV=dev

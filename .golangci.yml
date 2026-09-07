@@ -1,0 +1,60 @@
+# Lint configuration for andara.
+#
+# The depguard block below is not style. It is ADR-0001's simulation-core seam
+# invariant and ADR-0002's determinism requirement, made mechanical. Widening the
+# denied list requires an explicit, reviewable diff and an ADR that authorizes it.
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - depguard
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unused
+
+linters-settings:
+  depguard:
+    rules:
+      sim-core-is-dependency-free:
+        # server/sim is the simulation core. It may not reach the network, a
+        # datastore, the filesystem, the wall clock, or global randomness.
+        # See CLAUDE.md §10, ADR-0001, ADR-0002.
+        files:
+          - "**/server/sim/**"
+        deny:
+          - pkg: "net"
+            desc: "sim core is transport-agnostic; transport lives in the Gateway (AW-SRV-005)"
+          - pkg: "net/http"
+            desc: "sim core is transport-agnostic"
+          - pkg: "database/sql"
+            desc: "persistence is an adapter behind an interface the sim owns (ADR-0002)"
+          - pkg: "os"
+            desc: "sim core does no I/O; loading lives outside the core (AW-SRV-001)"
+          - pkg: "io/ioutil"
+            desc: "sim core does no I/O"
+          - pkg: "math/rand"
+            desc: "use the seeded, snapshot-able PRNG; global rand breaks replay (ADR-0002)"
+          - pkg: "math/rand/v2"
+            desc: "use the seeded, snapshot-able PRNG; global rand breaks replay (ADR-0002)"
+
+  revive:
+    rules:
+      - name: exported
+      - name: error-strings
+      - name: context-as-argument
+
+  misspell:
+    locale: US
+
+issues:
+  exclude-rules:
+    - path: _test\.go
+      linters: [errcheck]
+  max-issues-per-linter: 0
+  max-same-issues: 0

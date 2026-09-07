@@ -1,0 +1,28 @@
+# Build artifacts
+/bin/
+*.test
+coverage.out
+coverage.html
+
+# Local runtime state (make up / make down VOLUMES=1)
+/.local/
+/content/**/*.local.*
+
+# Tooling
+.golangci-cache/
+__pycache__/
+*.pyc
+
+# Editors and OS
+.DS_Store
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.swp
+
+# Secrets — nothing here should ever be committed
+*.pem
+*.key
+.env
+.env.*
+!.env.example
