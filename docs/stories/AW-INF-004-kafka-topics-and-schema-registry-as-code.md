@@ -4,7 +4,7 @@ title: Kafka topic and schema registry provisioning as code
 epic: EPIC-10
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-INF-002, AW-INF-005, AW-SRV-002, AW-SRV-010]
@@ -13,6 +13,24 @@ risk: high
 ---
 
 ## Context
+
+> **Partially delivered — 2026-09-07, as a dependency of `AW-INF-002`.** The local stack cannot
+> create its topics without this story's declaration, and duplicating topic configuration into a
+> compose file is the exact drift this story exists to prevent. What landed:
+> `deploy/kafka/topics.yaml` (all eight topics, replication factor and `min.insync.replicas` per
+> environment, and the broker settings, split into `broker.assert` for real Kafka and `broker.local`
+> for the local Redpanda), plus `make topics-apply` and `make topics-diff` — verified against a live
+> broker, including the refusal to change a partition count (AC-1 through AC-5).
+>
+> **Still open:** AC-5a's live-cluster assertions against real Kafka, and AC-6 through AC-8 —
+> `make schemas-apply` and `make schemas-check`, which need the `.proto` sources from `AW-SRV-005`
+> before they can register or check anything. Both targets exist and exit non-zero naming this story.
+>
+> One finding for whoever picks this up: `unclean.leader.election.enable` has no Redpanda equivalent,
+> because Raft replication cannot elect a leader missing committed records. The declaration therefore
+> asserts it rather than applying it, and the local stack does not exercise it at all. That is a real
+> local/production divergence and belongs in `AW-INF-005`'s rehearsal.
+
 
 ADR-0002 makes Kafka the ordering authority for the entire World. Its topic configuration is therefore
 not infrastructure trivia — the partition count on `andara.commands.v1` is effectively permanent,

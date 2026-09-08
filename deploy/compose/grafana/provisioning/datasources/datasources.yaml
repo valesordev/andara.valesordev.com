@@ -1,0 +1,38 @@
+# Datasources provisioned from this file. Nothing is configured in the UI — AW-INF-002's
+# definition of done requires the dashboard to come from the repo.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    type: prometheus
+    uid: andara-prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 5s
+
+  - name: Tempo
+    type: tempo
+    uid: andara-tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # A log line and its trace carry the same trace_id, so one click moves between them.
+      tracesToLogsV2:
+        datasourceUid: andara-loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        filterByTraceID: true
+
+  - name: Loki
+    type: loki
+    uid: andara-loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      derivedFields:
+        - name: TraceID
+          matcherRegex: '"trace_id":"([a-f0-9]+)"'
+          url: '$${__value.raw}'
+          datasourceUid: andara-tempo

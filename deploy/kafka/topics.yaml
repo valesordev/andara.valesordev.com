@@ -1,0 +1,120 @@
+# Topic declaration — one source, applied identically to every environment.
+#
+# ADR-0002 makes Kafka the ordering authority for the entire World, so this file is not
+# infrastructure trivia. Two properties in it are effectively permanent:
+#
+#   * partitions on a keyed topic. Repartitioning changes the key-to-partition mapping and
+#     therefore reorders history. There is no safe in-place change; `topics-apply` refuses.
+#   * cleanup.policy on the content topics. `delete` on a compacted content topic is the
+#     difference between a version history and a version eraser (ADR-0004).
+#
+# Delivered by AW-INF-004; consumed by AW-INF-002's local stack so that local and
+# production topics come from one declaration rather than from a compose-file duplicate.
+#
+# Retention values are seconds. -1 means infinite.
+
+defaults:
+  replication_factor:
+    local: 1
+    dev: 3
+    prod: 3
+  config:
+    min.insync.replicas:
+      local: 1
+      dev: 2
+      prod: 2
+
+topics:
+  - name: andara.commands.v1
+    partitions: 64
+    cleanup.policy: delete
+    retention.ms: 2592000000      # 30 days
+    why: |
+      The write-ahead log for the World. 64 partitions is a permanent choice: the
+      partition is derived from the Zone key, so repartitioning reorders history.
+      Retention must outlive the oldest Snapshot recovery would ever restore from.
+
+  - name: andara.events.v1
+    partitions: 64
+    cleanup.policy: delete
+    retention.ms: 2592000000      # 30 days
+    why: |
+      Derived Events and Tick Boundary Records. Retention must EXCEED the age of the
+      oldest Snapshot recovery would restore from, plus margin — replay reads the Tick
+      Boundary Records from here (ADR-0002 §4). Shrinking this to save disk is an
+      invisible correctness change, not a capacity change.
+
+  - name: andara.state.v1
+    partitions: 64
+    cleanup.policy: compact
+    why: |
+      Current state per aggregate. Every index — Redis, Postgres, later ClickHouse — is
+      built from this topic rather than from the Event history, so rebuilding an index
+      costs live-state time instead of world-age time (ADR-0002 §5.5).
+
+  - name: andara.audit.v1
+    partitions: 6
+    cleanup.policy: delete
+    retention.ms: 31536000000     # 365 days
+    why: |
+      Privileged actions. Long retention is the point; this is the record of who did what
+      with operator authority.
+
+  - name: andara.accounts.v1
+    partitions: 6
+    cleanup.policy: compact
+    why: |
+      Account state. Deliberately not World state — it survives a World rebuild.
+
+  - name: andara.content.blobs.v1
+    partitions: 6
+    cleanup.policy: compact
+    why: |
+      Keys are content hashes, so compaction retains every blob ever published (ADR-0004).
+
+  - name: andara.content.versions.v1
+    partitions: 6
+    cleanup.policy: compact
+    why: |
+      Keys are packID@version, so compaction keeps the whole version history.
+
+  - name: andara.content.active.v1
+    partitions: 6
+    cleanup.policy: compact
+    why: |
+      The only mutable pointer in the content pipeline: which version is live. Rollback is
+      a write to this topic (ADR-0004).
+
+# Broker settings that are not defaults and are not negotiable.
+#
+# Split in two because the local broker and the production broker are not the same
+# software (ADR-0002 §7: Redpanda locally, real Kafka in production):
+#
+#   assert  — checked against a real Kafka cluster by `make topics-diff`, never written.
+#             Silently rewriting a production broker's configuration is not something a
+#             make target should do.
+#   local   — applied to the local Redpanda broker by `make topics-apply`, because a local
+#             broker is disposable.
+broker:
+  assert:
+    unclean.leader.election.enable: "false"
+    # With it enabled, an out-of-sync replica can be elected leader and silently truncate
+    # records that were already acknowledged — which means acks=all does NOT guarantee
+    # durability. The zero-RPO claim in docs/specs/slo/recovery.md rests on this setting as
+    # much as on acks. Redpanda has no equivalent property: its Raft replication cannot
+    # elect a leader that is missing committed records, which is one of the few places the
+    # local and production brokers genuinely differ rather than merely appearing to.
+
+  local:
+    enable_consumer_group_metrics: "[group,partition,consumer_lag]"
+    # Off by default because computing it costs the broker something. Per-partition
+    # consumer lag is a dashboard panel and a runbook diagnostic (AW-SRV-002), and a metric
+    # the broker never computes is a metric nobody has when the World is behind.
+
+# Consumer groups, reserved by convention. <env> is local, dev, or prod.
+consumer_groups:
+  - andara-sim-<env>                 # simulation processes      <- andara.commands.v1
+  - andara-state-<env>               # state projector           <- andara.events.v1
+  - andara-projection-redis-<env>    # Redis index               <- andara.state.v1
+  - andara-projection-pg-<env>       # Postgres index            <- andara.state.v1, accounts, audit
+  - andara-content-<env>             # content resolver          <- content topics

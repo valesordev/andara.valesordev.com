@@ -40,6 +40,8 @@ jobs:
         run: make lint
       - name: test
         run: make test
+      - name: proto freshness
+        run: make proto-check
       - name: validate-stories
         run: make validate-stories
       - name: backlog freshness
