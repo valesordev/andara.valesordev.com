@@ -177,13 +177,18 @@ sense. May activate content only with a second approver.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
-**Game Type** — `[NEEDS BRIAN]` — Brian's term, 2026-09-07: "builders can build new game types that
-subtype server types." The intent is clear enough to record and too unspecified to build on. Open:
-what a *server type* is (a protobuf message, an Entity kind, a Behavior contract?), what *subtyping*
-means (inheritance, composition, or constrained specialization?), what a subtype may override, and
-whether a subtype is content or code. It constrains the Content Language (ADR-0009) and may constrain
-the world model (`AW-SRV-001`), which is why defining it before the grammar exists is much cheaper
-than after.
+**Game Object** — Any content-defined thing that participates in the type system: an Entity, an Item,
+a Behavior, and further kinds not yet named. The kind set is open by construction (ADR-0010).
+
+**Game Type** — A named Game Object definition in the inheritance hierarchy. A subtype `extends`
+exactly one parent, may override inherited values and add new ones, and may never remove one —
+anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base types are published by
+the server as the `andara.core` Content Pack; Builder types extend them and pin the core version they
+compiled against (ADR-0010).
+
+Overriding a *function* is not part of this hierarchy: functions live in Behaviors, which are Python
+classes in Behavior Agents, where inheritance is Python's own (ADR-0005). `RABID_DOG` overriding how a
+dog reacts is `class RabidDog(Dog)`; `FIRE_SWORD` adding fire damage is a value.
 
 **Game Master** — Live-world authority: moderates players, intervenes in the running World, inspects
 and adjusts state at runtime. Acts *in* the game. GM powers are `[NEEDS BRIAN]`.

@@ -32,8 +32,9 @@ I was wrong, so that world-building is a fast loop rather than a release process
 ## Scope
 
 ### In scope
-- The **grammar specification** for the Content Language (ADR-0009), and the compile step to the
-  canonical protobuf. The decision to build a purpose-built text language rather than map YAML onto
+- The **grammar specification** for the Content Language (ADR-0009), including the Game Type
+  hierarchy from ADR-0010, and the compile step to the canonical protobuf. The compiler resolves
+  `extends` chains and emits flattened definitions with the chain retained in the manifest. The decision to build a purpose-built text language rather than map YAML onto
   the protobuf is made; the syntax is this story's to design, with a Builder in the room.
 - `content publish` — compile, validate locally, upload blobs, create a version manifest.
 - `content activate` — move the Active Pointer. Deliberately separate from publish, per `AW-SRV-013`
@@ -113,7 +114,8 @@ test gates merges — a format that cannot be read back is not an authoring form
   the live World. `AW-SRV-013` enforces; this command surfaces.
 - **Resolved 2026-09-07 (Brian): in-game building is a design goal**, for Admins and Builders, not
   players. `EPIC-11`, not Phase 1.
-- `[NEEDS BRIAN]` Carried from ADR-0009 and the glossary: what "Builders can build new game types that
-  subtype server types" means. This story cannot finish a grammar without it, because a language that
-  cannot express subtyping will have to be changed to add it, and changing this language is a breaking
-  change to everything already authored.
+- **Gated by ADR-0010** (`proposed`, 2026-09-08), which specifies the Game Type hierarchy this
+  grammar must express: single inheritance, value overrides, new values, no removal, and no functions
+  — those live in Python Behaviors (ADR-0005). This story does not reach `ready` until that ADR is
+  accepted, because a language that cannot express subtyping has to change to add it, and changing
+  this language is a breaking change to everything already authored.

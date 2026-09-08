@@ -95,10 +95,15 @@ grooming decision with the Builder in the room, not an architecture decision.
 - **We are foreclosing** a schema-generated authoring format, and with it the guarantee that the
   authoring surface cannot drift from the wire format. Keeping them in step is now a maintenance
   obligation with a person attached, not a property of the build.
-- **Brian's "Builders can build new game types that subtype server types"** (2026-09-07) is a
-  constraint on this language that has not been specified yet. Whatever subtyping turns out to mean,
-  the language has to express it, and it is much cheaper to know that before the grammar exists than
-  after. See ADR-0004 and the glossary; the semantics are `[NEEDS BRIAN]`.
+- **The language must express single inheritance** — `extends`, value overrides, and new values —
+  specified in ADR-0010 (2026-09-08). It **stays declarative**: functions are not part of the
+  hierarchy, because function overrides live in Python Behaviors (ADR-0005). This is a type-hierarchy
+  feature, not an expression language, and the distinction is the difference between a grammar and a
+  compiler with a runtime. It only changes if ADR-0010's open question resolves toward in-tick Builder
+  code, which would reopen this ADR as well as ADR-0005.
+- The corpus of source files that must keep compiling — this ADR's only mechanical check against
+  breaking changes — has to cover inheritance chains specifically, because that is where breaking
+  changes will actually appear.
 
 ## Revisit when
 
