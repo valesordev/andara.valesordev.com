@@ -177,18 +177,33 @@ sense. May activate content only with a second approver.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
+**Component** — A named, namespaced unit of data attached to a Template: `andara.core.Wieldable`,
+`pets.Aggro`. Components hold data and never logic — logic is a Go system inside the tick or a Python
+Behavior outside it (ADR-0005, ADR-0010). Components are the composition axis of the type system, so
+"flaming" attaches to a sword and a dragon alike without either being related to the other. A Template
+holds at most one Component of a given type.
+
 **Game Object** — Any content-defined thing that participates in the type system: an Entity, an Item,
 a Behavior, and further kinds not yet named. The kind set is open by construction (ADR-0010).
 
-**Game Type** — A named Game Object definition in the inheritance hierarchy. A subtype `extends`
-exactly one parent, may override inherited values and add new ones, and may never remove one —
-anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base types are published by
-the server as the `andara.core` Content Pack; Builder types extend them and pin the core version they
+**Game Type** — See Template. The two terms mean the same thing; Template is preferred because it says
+what the thing does.
+
+**System** — Go code inside the simulation that reads Components and acts on them in the tick. Written
+by Developers, never by Builders. The counterpart to a Behavior, which is Python, written by Builders,
+and runs outside the tick.
+
+**Template** — A named Game Type: a definition in a single-inheritance hierarchy that contains a set of
+Components. `FIRE_SWORD extends SWORD` and adds `FireDamage{amount: 5}`. A subtype may override an
+inherited Component field by field and may add new Components; it may never remove either, because
+anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base Templates ship in the
+server's `andara.core` Content Pack; Builder Templates extend them and pin the core version they
 compiled against (ADR-0010).
 
-Overriding a *function* is not part of this hierarchy: functions live in Behaviors, which are Python
-classes in Behavior Agents, where inheritance is Python's own (ADR-0005). `RABID_DOG` overriding how a
-dog reacts is `class RabidDog(Dog)`; `FIRE_SWORD` adding fire damage is a value.
+Overriding a *function* is not part of this hierarchy. Functions live in Behaviors, which are Python
+classes in Behavior Agents, where inheritance is Python's own and Builders may subtype freely
+(ADR-0005). A Behavior is bound to a Template by a Component, which is the single seam between the two
+inheritance systems.
 
 **Game Master** — Live-world authority: moderates players, intervenes in the running World, inspects
 and adjusts state at runtime. Acts *in* the game. GM powers are `[NEEDS BRIAN]`.

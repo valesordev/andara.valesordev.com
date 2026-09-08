@@ -95,12 +95,16 @@ grooming decision with the Builder in the room, not an architecture decision.
 - **We are foreclosing** a schema-generated authoring format, and with it the guarantee that the
   authoring surface cannot drift from the wire format. Keeping them in step is now a maintenance
   obligation with a person attached, not a property of the build.
-- **The language must express single inheritance** — `extends`, value overrides, and new values —
-  specified in ADR-0010 (2026-09-08). It **stays declarative**: functions are not part of the
-  hierarchy, because function overrides live in Python Behaviors (ADR-0005). This is a type-hierarchy
-  feature, not an expression language, and the distinction is the difference between a grammar and a
-  compiler with a runtime. It only changes if ADR-0010's open question resolves toward in-tick Builder
-  code, which would reopen this ADR as well as ADR-0005.
+- **The language must express Templates and Components** — `extends`, a component set, and field-level
+  overrides on inherited components — specified in ADR-0010 (2026-09-08). It **stays declarative**:
+  components hold data, and logic lives in Go systems or Python Behaviors (ADR-0005). This is a
+  type-and-composition feature, not an expression language, and the distinction is the difference
+  between a grammar and a compiler with a runtime.
+
+  Two things this makes the grammar responsible for that a plain data language would not be:
+  component **namespacing**, so `andara.core.Wieldable` and a Builder's `pets.Aggro` cannot collide;
+  and readable **merge semantics**, because a Builder stating one field of an inherited component has
+  to be able to predict what the other fields become.
 - The corpus of source files that must keep compiling — this ADR's only mechanical check against
   breaking changes — has to cover inheritance chains specifically, because that is where breaking
   changes will actually appear.

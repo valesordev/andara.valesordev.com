@@ -144,8 +144,17 @@ this section is the design that gets built then.
   overrides `on_event`, and calls `super()` where the base reaction still applies — Python's own
   inheritance, contained by the process boundary, with determinism unaffected because the log records
   the Commands an Agent submitted rather than the Python that produced them. ADR-0010 carries the
-  value half of the same requirement, and its open question is whether *Items* also need in-tick
-  functions; if they do, this ADR is reopened rather than extended.
+  value half of the same requirement. **Confirmed 2026-09-08: Builders may subtype Behaviors freely** —
+  `class RabidDog(Dog)` calling `super()` is the intended use, and the containment is unchanged by how
+  deep the Python hierarchy goes, because it is the process boundary and the network policy rather
+  than the class graph.
+
+  ADR-0010's component model strengthens this ADR rather than straining it: components hold data and
+  systems hold logic, which is the same line this ADR already draws. A Behavior is bound to a Template
+  by a component, so the two inheritance systems — Templates in content, Python classes in the Agent —
+  meet at exactly one seam. The remaining question there is whether Builders may define new component
+  types that no Go system reads; if they may, Behaviors become the only thing that acts on them, which
+  makes the Agent SDK's ability to read arbitrary components load-bearing (`AW-SRV-016`).
 
 ## Revisit when
 

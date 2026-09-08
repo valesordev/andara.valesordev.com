@@ -176,7 +176,7 @@ art binaries do not belong in Kafka — `EPIC-21` will need object storage with 
 | `ADR-0007` | Schema authority | accepted | Protobuf for wire, log, snapshot, and content |
 | `ADR-0008` | Tick rate | **proposed** | 10 Hz, 100 ms interval, 50 ms budget; mechanics measured in Ticks |
 | `ADR-0009` | Content authoring language | accepted | A purpose-built text language compiling to canonical protobuf |
-| `ADR-0010` | Game Object type system | **proposed** | Single inheritance over values; functions stay in Python Behaviors |
+| `ADR-0010` | Game Object type system | **proposed** | Templates in single inheritance containing Components; logic stays in Go systems and Python Behaviors |
 
 ### Service level targets
 
@@ -205,11 +205,13 @@ stories and glossary. The largest remaining:
 - **The canonical Direction set**, without which the loader cannot reject `norht` as a typo
   (`AW-SRV-001`).
 - **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
-- **Whether Builders need in-tick functions on Items** — ADR-0010's discriminating question, and the
-  largest open decision in the repo. Brian's subtyping requirement (2026-09-07, specified 2026-09-08)
-  is served by value inheritance plus Python Behaviors *if* mechanics are data-driven enough that
-  "FIRE_SWORD adds fire damage" is a number rather than a formula. If it is a formula, ADR-0005 and
-  ADR-0002 both reopen and the tick gains a sandboxed interpreter. It gates `AW-CLI-003`'s grammar.
+- **Whether the component model covers Rooms and Zones or only Entities and Items** (ADR-0010). The
+  most time-sensitive question in the repo: `AW-SRV-001` is `ready` and defines `Room` as a plain
+  struct. The story analyses the exposure and concludes it should proceed — topology is unaffected and
+  a component set is an additive field — but it needs an answer before that field is designed away.
+- **Whether Builders may define new Component types** (ADR-0010). The difference between Builders
+  having an extension path and filing feature requests. Recommendation: yes, carried as opaque data
+  and read only by Behaviors. Gates `AW-CLI-003`'s grammar.
 
 ### Resolved on 2026-09-07
 
