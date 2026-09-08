@@ -105,15 +105,22 @@ command -v kubeconform >/dev/null 2>&1 \
   || ok kubeconform "not installed (manifest schema validation will be skipped)"
 
 # Git hooks: run the cheap checks before a commit lands, not after CI says so.
-if [[ -d .git ]]; then
-  mkdir -p .git/hooks
-  cat > .git/hooks/pre-commit <<'HOOK'
+#
+# --git-common-dir rather than a literal .git, because in a linked worktree .git is a
+# *file* pointing at the real git directory, so `[[ -d .git ]]` is false and the hook is
+# silently not installed. Hooks live in the common directory and are shared by every
+# worktree, which is what we want: the same pre-commit check wherever a commit is made.
+HOOKS_DIR="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+if [[ -n "$HOOKS_DIR" ]]; then
+  HOOKS_DIR="$HOOKS_DIR/hooks"
+  mkdir -p "$HOOKS_DIR"
+  cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 set -euo pipefail
 make validate-stories backlog-check
 HOOK
-  chmod +x .git/hooks/pre-commit
-  ok "git hooks" "pre-commit installed"
+  chmod +x "$HOOKS_DIR/pre-commit"
+  ok "git hooks" "pre-commit installed in $(basename "$(dirname "$HOOKS_DIR")")/hooks"
 fi
 
 mkdir -p .local/data
