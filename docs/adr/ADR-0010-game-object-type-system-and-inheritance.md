@@ -33,179 +33,197 @@ The reason this needs deciding before `AW-CLI-003` writes a grammar is compatibi
 convenience: a language that cannot express subtyping has to change to add it, and changing the
 language is a breaking change to every piece of content already authored.
 
-## The requirement, decomposed
+## The model
 
-Brian named four capabilities across an open set of kinds. They do not all cost the same, and two of
-them already have homes:
+Brian, 2026-09-08, specifying the shape:
 
-| Capability | Where it lives | Status |
-|-----------|----------------|--------|
-| Override an inherited **value** | Content data, resolved before the sim sees it | New — this ADR |
-| Extend with **new values** | Content data | New — this ADR |
-| Override an inherited **function** | Python `class Behavior` subclass in a Behavior Agent | **Already served by ADR-0005** |
-| Extend with **new functions** | Same | **Already served by ADR-0005** |
+> Builders can subtype Behaviors freely. I'm going to be mixing two styles with this DSL and that is
+> having types as templates that contain components, that way we can allow for component composition
+> in an inheritance framework.
 
-The RABID_DOG example resolves cleanly against what is already decided. "Reacts differently to
-characters" is a Behavior: a Builder writes `class RabidDog(Dog)` in Python, overrides `on_event`,
-and calls `super()` where it wants the base reaction. Python's inheritance *is* the mechanism, the
-process boundary is the sandbox, and determinism is unaffected because the log records the Commands an
-Agent submitted rather than the Python that produced them. Nothing new is needed for this case.
+So there are two axes, and they do different jobs:
 
-The FIRE_SWORD example is the one that does not resolve on its own, and it is the whole decision.
+- **Templates** are named Game Types in a single-inheritance hierarchy. `FIRE_SWORD extends SWORD`.
+- **Components** are the composable units a Template contains. `FireDamage`, `Wieldable`, `Aggro`.
 
-## The discriminating question
+Inheritance gives you *identity and specialization* — a FIRE_SWORD is a SWORD, and anything that
+works on a SWORD works on it. Composition gives you *cross-cutting capability* — `FireDamage` attaches
+to a sword and to a dragon without either being related to the other.
 
-**When FIRE_SWORD "adds fire damage", is that a value in a table the combat system already reads, or a
-formula the Builder writes?**
+This resolves, rather than defers, the question this ADR previously left open about traits. Components
+are the trait mechanism. "Flaming" applied to both a sword and a dog is one component attached twice,
+not a parent class that both awkwardly descend from.
 
-```
-# Option 1 — a value the sim already understands
-FIRE_SWORD extends SWORD {
-    damage.fire = 5
-}
+It also removes the main argument anyone would make for multiple inheritance. Multiple inheritance
+exists to let a type acquire capability from more than one place; that is precisely what composition
+does, without the diamond problem or a resolution order Builders must memorise. **Single inheritance
+plus components is a stronger position than single inheritance alone**, and it is the reason the
+decision below is now stated with more confidence than the first draft of this ADR carried.
 
-# Option 2 — a function the Builder writes
-FIRE_SWORD extends SWORD {
-    fn on_hit(target) { ... arbitrary logic ... }
-}
-```
+### Why this fits ADR-0005 unusually well
 
-These are not two syntaxes for one thing. They are two architectures.
+The component/system split is load-bearing here, not decoration. In the discipline this model comes
+from, **components hold data and systems hold logic** — and that is the same line ADR-0005 already
+draws between content and behavior.
 
-### Option 1 — data-driven mechanics; Builders add values, never in-tick code
+| | Holds | Written by | Runs |
+|---|-------|-----------|------|
+| **Component** | data only | Builder, in the DSL | nowhere — it is read |
+| **System** | logic over components | Developer, in Go | in the tick |
+| **Behavior** | logic over Events | Builder, in Python | in an Agent, out of tick |
 
-Combat, and every other system a Builder can reach, is table-driven. Damage has types; types have
-resistances; modifiers are data. A Builder composes existing mechanics with new numbers. Anything
-genuinely new in *behavior* is a Behavior Agent, one tick later.
+The sim never executes anything a Builder wrote, because nothing a Builder writes in the DSL is
+executable. That is not a restriction bolted onto the model; it is what the model already says.
 
-**Good:** ADR-0005 stands exactly as accepted. The sim never runs Builder code, determinism is
-unconditional, the tick has no new bound to enforce, and the DSL stays declarative — `extends`, value
-overrides, new values, no expression language. Builders are untrusted (ADR-0004) and this is the only
-design where that costs nothing.
-**Bad:** a Builder can only combine mechanics the server already has. "Fire damage" works if a damage
-type system exists; "this sword hums when a dwarf holds it" does not, until someone adds a mechanic
-for it. World-building becomes partly a feature-request pipeline into `SRV`.
-**Costs us:** the ceiling is set by how data-driven the mechanics are, and that is a design burden
-paid continuously, not once. Every system built with a hard-coded assumption is a system Builders
-cannot extend, and they will find them faster than we do.
+### How Behaviors attach
 
-### Option 2 — Builder functions execute in the tick
+A Behavior binding is a component: `Behavior{class: "andara.builder.pets.RabidDog"}`. That gives one
+clean seam between two inheritance systems that otherwise have nothing to do with each other — the
+Template hierarchy in content, and the Python class hierarchy in the Agent (ADR-0005).
 
-The type system carries code. Something evaluates it inside the simulation.
+**Builders may subtype Behaviors freely** (Brian, 2026-09-08). `class RabidDog(Dog)` overriding
+`on_event` and calling `super()` is the intended use. The security posture is unchanged by how deep
+the Python hierarchy goes: containment is the process boundary and the network policy, not the class
+graph.
 
-**Good:** Builders are genuinely unbounded. The mechanics ceiling disappears.
-**Bad:** it reopens ADR-0005 in full. Untrusted code inside `server/sim` needs a sandboxed,
-deterministic, step-bounded interpreter — no clock, no randomness outside the seeded PRNG, no
-allocation without a ceiling — and a tick budget of 50 ms (ADR-0008) that a Builder's loop must not
-exhaust. It also reopens ADR-0002: replay must re-execute that code and get the identical answer,
-which means the interpreter itself becomes part of the state contract and cannot change behavior
-across versions.
-**Costs us:** the in-tick reflex layer ADR-0005 deliberately deferred, plus a language runtime, plus
-every determinism bug that follows. This is the largest single piece of engineering anyone has
-proposed for this project, and it would be built to serve content that does not exist yet.
+## The remaining question
 
-### Recommendation
+The component model narrows the earlier FIRE_SWORD fork to something much sharper:
 
-**Option 1**, with one addition that keeps the door open: **Builder-added values the sim does not
-recognize are carried, not rejected.** A subtype may declare `hums_near_dwarves = true`; the sim
-stores it, exposes it through perception scoping, and does nothing with it — but a Behavior Agent can
-read it and act. That gives Builders an extension point for genuinely new behavior at the cost of one
-tick of latency, using machinery that already exists, without putting a single line of Builder code
-inside the tick.
+> **May Builders define new component *types*, or only compose from the ones `andara.core` provides?**
 
-If that is not enough, the honest answer is that Option 2 needs its own ADR and its own epic, not a
-paragraph here.
+If only core components exist, the ceiling is hard: a Builder can build anything the systems already
+understand and nothing else, and every new idea is a feature request into `SRV`.
+
+If Builders may define new component types, the extension path is complete without a line of Builder
+code in the tick. A Builder defines `HumsNearDwarves{}`, attaches it to a Template, and the sim
+**carries it as opaque data** — stores it, includes it in perception scoping, hashes it into state,
+and acts on it not at all. No Go system reads it. A *Behavior* reads it and acts, one tick later,
+through the Command pipeline like everything else.
+
+**Recommendation: Builders may define new component types, and unrecognised components are carried
+rather than rejected.** This is the whole extension story, it costs nothing in the tick, and it uses
+machinery that already exists. The alternative — Builder logic executing inside the tick — is the
+Option 2 that the first draft of this ADR costed, and it remains what it was: a sandboxed,
+step-bounded, deterministic interpreter whose own behavior becomes part of the state contract
+forever. If that is genuinely needed, it deserves its own ADR and its own epic.
+
+The honest cost of the recommendation: **an inert component is invisible until a Behavior exists to
+read it**, so a Builder can write something that looks meaningful and does nothing. `content validate`
+should warn — not fail — when a Template carries a component no system and no bound Behavior reads.
 
 ## Decision
 
-Proposed, pending Brian's answer to the discriminating question. Everything below assumes Option 1.
+Proposed, pending Brian on the question above. Everything else here is decided.
 
-**1. One type system, generic over kinds.** Entity, Item, Behavior, and whatever comes next are *Game
-Object kinds*. Inheritance is a property of the type system, not re-implemented per kind. Brian
-flagged that the kind set is incomplete, so it is open by construction: adding a kind must not require
-touching the inheritance machinery.
+**1. Templates and Components.** A Game Type is a Template: a named definition in a single-inheritance
+hierarchy that contains a set of Components. Components are data. Kinds — Entity, Item, Behavior, and
+whatever comes next — are open by construction, since Brian flagged the kind set as incomplete.
 
-**2. Single inheritance, deep chains allowed.** `FIRE_SWORD extends SWORD extends WEAPON` is fine.
-Multiple inheritance is **not offered** — the diamond problem forces a resolution order that every
-Builder then has to learn, and the failure mode is silent: content that works until two parents both
-define the same value. Cross-cutting composition — "flaming" applied to both a sword and a dog — is
-the obvious next request and is deliberately left open below.
+**2. Single inheritance, deep chains allowed. Multiple inheritance is not offered**, because
+composition already does the job it would be there for.
 
-**3. A subtype may override and extend. It may never remove.** Removal breaks substitutability, which
-is the entire value of the hierarchy: anything holding a SWORD must keep working when handed a
-FIRE_SWORD.
+**3. A Template's components are keyed by component type.** At most one `FireDamage` per Template.
+Two of a thing is a list *inside* one component, never two components of the same type — because
+override semantics on a bag of duplicates have no good answer, and the bad answers are all silent.
 
-**4. Cycles and unbounded depth are compile-time errors**, reported with a file and line like every
-other content error (`AW-SRV-001`'s `ValidationError`). Depth is bounded by a stated constant.
+**4. Overriding a component merges field by field; a subtype states only what changes.** Restating
+every field to change one is the ergonomic failure this whole model exists to avoid. Two consequences
+of merge that have to be stated or they will be discovered: a list-valued field is **replaced, not
+appended** — appending is surprising and there is no way to un-append — and merge is shallow past one
+level of nesting, which is a constraint on how components are designed rather than a limit on merge.
 
-**5. Base types are published as a content pack, not compiled into the binary.** The server publishes
-`andara.core` through the same three topics as any other pack (ADR-0004), versioned like any other
-pack. A Builder pack records the core version it compiled against.
+**5. A subtype may override and extend. It may never remove** — not a value, not a component.
+Substitutability is the point: anything holding a SWORD keeps working when handed a FIRE_SWORD. A
+`CURSED_SWORD` that cannot be wielded is `Wieldable{enabled: false}`, not a Template with `Wieldable`
+deleted. That is a real constraint on component design: **components need their own off switch**, or
+Builders will ask for removal within the month.
 
-The alternative — base types existing only as Go structs — fails a requirement that is already
-committed: `AW-CLI-002` says `content validate` must work on a laptop with no server and no cluster
-access. A compiler that cannot see DOG cannot resolve `extends DOG`, so it would need a generated
-description of the base types shipped inside the CLI binary — which is the core pack again, with the
-worse property that it is versioned with the CLI rather than with the server. Publishing it as content
-makes offline validation work against a cached copy and turns version skew into a legible error:
+**6. Components are namespaced by the pack that defines them.** `andara.core.FireDamage` and a
+Builder's `pets.Aggro` cannot collide, and provenance is readable at a glance.
+
+**7. Cycles and unbounded depth are compile-time errors**, with a file and line like every other
+content error (`AW-SRV-001`'s `ValidationError`). Depth is bounded by a stated constant.
+
+**8. Base types are published as a content pack, not compiled into the binary.** The server publishes
+`andara.core` — base Templates and core Component definitions — through the same three topics as any
+other pack (ADR-0004), versioned like any other pack. A Builder pack records the core version it
+compiled against.
+
+The alternative, base types existing only as Go structs, fails a commitment already made:
+`AW-CLI-002` requires `content validate` to work on a laptop with no server and no cluster access, and
+a compiler that cannot see `SWORD` cannot resolve `extends SWORD`. Publishing base types as content
+makes offline validation work against a cached copy and turns version skew into a legible error —
 *compiled against `andara.core@7`, server runs `andara.core@9`*.
 
-Two carve-outs this forces, both worth stating rather than discovering:
+Two carve-outs this forces, worth stating rather than discovering:
 
 - Activating `andara.core` is part of a **deploy**, not a moderated Builder action. The two-person
-  approval rule (`AW-SRV-013`) applies to Builder packs; requiring an approver to ship a server
-  release would be an accident, not a policy.
+  approval rule (`AW-SRV-013`) governs Builder packs; requiring an approver to ship a server release
+  would be an accident, not a policy.
 - `AW-INF-007`'s deploy lifecycle gains a step: publish and activate the core pack for the version
   being deployed, before the server reports ready.
 
-**6. Resolution happens at compile time, and the resolved form is what is published** — with the
-inheritance chain retained in the manifest for provenance. The sim receives fully-resolved definitions
-and needs no resolver, which keeps `server/sim` free of a subsystem it would otherwise have to hold.
-The cost is that a change to DOG does not reach RABID_DOG until RABID_DOG is recompiled and
-republished; the manifest records the chain so that "what needs rebuilding after DOG changes" is an
-answerable question rather than an archaeology exercise.
+**9. Resolution happens at compile time; the resolved component set is what is published**, with the
+inheritance chain and each component's originating ancestor retained in the manifest. The sim receives
+flat Templates and needs no resolver, which keeps `server/sim` free of a subsystem it would otherwise
+have to carry. Provenance matters more under merge than it did under plain value inheritance: "why
+does this Template have `Aggro{threshold: 3}`" is a question a Builder will ask about a value that
+appears in none of the files they wrote.
 
 ## Consequences
 
-- **Server types become public API for Builders, and this is the loudest consequence here.** Every
-  field on a base type is a contract with content that lives outside the repository and outlives any
-  binary. ADR-0007's additive-only rule now binds **server type definitions**, not only the wire
-  format: renaming or removing a field on `DOG` breaks every Builder subtype of it, silently, in
-  content nobody on the team has read. This changes how `SRV` code is written from the very first
-  Entity onward, and no `ready` story says so yet.
-- **The mechanics ceiling is now a design commitment.** Under Option 1, what Builders can express is
-  bounded by how data-driven `SRV`'s systems are. That has to be a standing constraint on how
-  mechanics get built, or the ceiling arrives by accident.
-- **ADR-0009's language grows a type-hierarchy feature and stays declarative.** `extends`, value
-  overrides, new values. It does **not** grow an expression language — that only happens under Option
-  2. The corpus-of-source compatibility check ADR-0009 requires now has to cover inheritance chains,
-  which is where breaking changes will actually appear.
-- **`content validate` gains a resolution stage**, and its errors must name the type in the chain that
-  is wrong rather than the resolved output, or a Builder debugging a three-deep hierarchy is reading a
-  flattened blob (`AW-CLI-002`).
-- **Behavior Agents gain a reason to read arbitrary content values.** Carried-but-unrecognized values
-  are only useful if the Agent SDK exposes them, which is a small addition to `AW-SRV-016` and worth
-  making deliberately rather than as a bug fix.
-- **We are foreclosing** multiple inheritance, value removal, and — under Option 1 — any Builder code
+- **Core Components become public API for Builders, and this is the loudest consequence here.** Every
+  field on `andara.core.Wieldable` is a contract with content that lives outside the repository and
+  outlives any binary. ADR-0007's additive-only rule now binds **component definitions**, not only the
+  wire format: renaming or removing a field breaks every Builder Template that overrides it, silently,
+  in content nobody on the team has read. This changes how `SRV` code is written from the first
+  component onward, and no `ready` story says so yet.
+- **Component design becomes the mechanics-ceiling decision, made continuously.** What Builders can
+  express is bounded by what the core components represent and what systems read them. A component
+  designed without an off switch cannot be disabled by a subtype (decision 5); a system that reads a
+  hard-coded constant instead of a component field is a wall Builders will hit before we do.
+- **ADR-0009's language grows Templates and Components and stays declarative.** `extends`, a component
+  set, field-level overrides. It does **not** grow an expression language: components hold data, and
+  logic lives in Go systems or Python Behaviors. The corpus-of-source compatibility check ADR-0009
+  requires now has to cover inheritance chains and component merges specifically, because that is
+  where breaking changes will actually appear.
+- **`content validate` gains a resolution stage** — resolve the chain, merge components — and its
+  errors must name the Template and component in the chain that is wrong rather than the flattened
+  output. It should also **warn on inert components**: a component no system and no bound Behavior
+  reads is almost always a mistake, and it is silent by construction (`AW-CLI-002`).
+- **The Agent SDK must expose arbitrary components**, including ones it has no generated type for.
+  Carried-but-unrecognised components are the entire Builder extension path, and they are useless if
+  a Behavior cannot read them. That is a deliberate addition to `AW-SRV-016`, not a later bug fix.
+- **`AW-SRV-001`'s world model is now a scoping question, not just a loader.** Rooms, Zones, and Exits
+  are currently plain structs. Whether they are Game Objects with components — a Room with a
+  `Dark{}` or `NoMagic{}` component is an obvious want — or whether the component model covers only
+  Entities and Items, changes that story's data model. It is `ready` and unblocked, so this needs an
+  answer before it is picked up. See Open questions.
+- **We are foreclosing** multiple inheritance, removal of values and components, and any Builder code
   inside the tick. The first two are cheap to relax later; the third is not, and reversing it means
-  building what Option 2 describes.
+  building the sandboxed interpreter this ADR declined.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` **The discriminating question above.** Everything here assumes Option 1.
-- `[NEEDS BRIAN]` Cross-cutting traits. Single inheritance means "flaming" cannot be applied to both a
-  sword and a dog without duplicating it. A trait or mixin mechanism solves that and is a real
-  addition to the language. It is the most likely next request, and knowing now whether it is wanted
-  is much cheaper than adding it after content exists.
-- `[NEEDS BRIAN]` Whether Builders may subtype *Behaviors* freely, given ADR-0005 already lets them
-  write Python. The type system says yes; the security posture is unchanged either way, because the
-  process boundary does the containment. Worth confirming rather than assuming.
+- `[NEEDS BRIAN]` **May Builders define new component types?** The remaining question above.
+  Recommendation: yes, with unrecognised components carried as opaque data and read only by Behaviors.
+  This is the difference between Builders having an extension path and filing feature requests.
+- `[NEEDS BRIAN]` **Does the component model cover Rooms and Zones, or only Entities and Items?**
+  `AW-SRV-001` is `ready` and defines `Room`, `Zone`, and `World` as plain structs. A Room with a
+  `Dark{}` component is a natural thing to want and would change that model. Answering after the
+  loader is built means rewriting it. This is the most time-sensitive question here.
+- **Resolved 2026-09-08:** cross-cutting traits — components are the mechanism, so the question is
+  closed rather than deferred.
+- **Resolved 2026-09-08 (Brian):** Builders may subtype Behaviors freely.
 
 ## Revisit when
 
-- Builders are routinely requesting new mechanics rather than composing existing ones — the concrete
-  signal that Option 1's ceiling has been reached and Option 2's cost is worth paying.
-- A base type needs a breaking change, at which point the "server types are public API" consequence
-  stops being theoretical and we learn what migrating Builder content actually costs.
-- Compile-time resolution proves wrong because base types change often enough that republishing every
-  subtype is a chore rather than an event.
+- Builders are routinely requesting new *components* rather than composing existing ones — the signal
+  that the core component vocabulary is too thin, which is a content-design problem with a cheap fix.
+- Builders are routinely requesting new *systems* — the signal that data-driven composition has hit
+  its ceiling and in-tick execution is worth its cost, which is the expensive one.
+- A core component needs a breaking change, at which point "core components are public API" stops
+  being theoretical and we learn what migrating Builder content actually costs.
+- Field-level merge proves too clever — if Builders cannot predict what a three-deep override
+  produces, whole-component replacement is the simpler model and this is where we switch to it.
