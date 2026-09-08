@@ -4,9 +4,9 @@ Planning source of truth. Phase → Epic → Milestone. Story status lives in st
 `BACKLOG.md` is the generated view. This file changes when scope or sequencing changes, not when a
 story closes.
 
-**All open architecture decisions were made on 2026-09-07.** ADR-0001 through ADR-0007 and ADR-0009
-are `accepted`; ADR-0008 (tick rate) is `proposed` pending Brian's confirmation of a recommendation he
-asked for. Nothing in the backlog is ADR-blocked. What follows reflects the architecture those decisions
+ADR-0001 through ADR-0007 and ADR-0009 are `accepted`. ADR-0008 (tick rate) is `proposed` pending
+Brian's confirmation of a recommendation he asked for; ADR-0010 (Game Object type system) is
+`proposed` and gates `AW-CLI-003` only. Nothing on the M1 or M2 critical path is ADR-blocked. What follows reflects the architecture those decisions
 describe, which is meaningfully larger in Phase 1 than the drafted alternative — see "What the
 decisions cost" below.
 
@@ -176,6 +176,7 @@ art binaries do not belong in Kafka — `EPIC-21` will need object storage with 
 | `ADR-0007` | Schema authority | accepted | Protobuf for wire, log, snapshot, and content |
 | `ADR-0008` | Tick rate | **proposed** | 10 Hz, 100 ms interval, 50 ms budget; mechanics measured in Ticks |
 | `ADR-0009` | Content authoring language | accepted | A purpose-built text language compiling to canonical protobuf |
+| `ADR-0010` | Game Object type system | **proposed** | Single inheritance over values; functions stay in Python Behaviors |
 
 ### Service level targets
 
@@ -204,9 +205,11 @@ stories and glossary. The largest remaining:
 - **The canonical Direction set**, without which the loader cannot reject `norht` as a typo
   (`AW-SRV-001`).
 - **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
-- **What "Builders can build new game types that subtype server types" means** — new on 2026-09-07,
-  and the largest of these. It constrains ADR-0009's grammar and may constrain the world model, and it
-  is much cheaper to answer before the language exists than after. See the glossary.
+- **Whether Builders need in-tick functions on Items** — ADR-0010's discriminating question, and the
+  largest open decision in the repo. Brian's subtyping requirement (2026-09-07, specified 2026-09-08)
+  is served by value inheritance plus Python Behaviors *if* mechanics are data-driven enough that
+  "FIRE_SWORD adds fire damage" is a number rather than a formula. If it is a formula, ADR-0005 and
+  ADR-0002 both reopen and the tick gains a sandboxed interpreter. It gates `AW-CLI-003`'s grammar.
 
 ### Resolved on 2026-09-07
 

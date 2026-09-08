@@ -139,6 +139,13 @@ this section is the design that gets built then.
   **Recommendation: World state**, so that a recovery restores NPC memory along with everything else.
   `[NEEDS BRIAN]` for confirmation, because it constrains what an LLM-driven NPC can remember.
 - **We are foreclosing** any Python inside `server/sim`. The `depguard` boundary is the enforcement.
+- **2026-09-08:** Brian's requirement that Builders be able to override and add *functions* on Game
+  Types is already served by this ADR and needs nothing new. A Builder writes `class RabidDog(Dog)`,
+  overrides `on_event`, and calls `super()` where the base reaction still applies — Python's own
+  inheritance, contained by the process boundary, with determinism unaffected because the log records
+  the Commands an Agent submitted rather than the Python that produced them. ADR-0010 carries the
+  value half of the same requirement, and its open question is whether *Items* also need in-tick
+  functions; if they do, this ADR is reopened rather than extended.
 
 ## Revisit when
 

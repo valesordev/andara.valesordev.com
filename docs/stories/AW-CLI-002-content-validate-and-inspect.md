@@ -41,7 +41,12 @@ publish a Zone that fails to load.
 
 ### Out of scope
 - Publishing and rollback — `AW-CLI-003`.
-- Any validation logic of its own. It wraps `sim.BuildWorld` and adds nothing.
+- Any world-model validation logic of its own. It wraps `sim.BuildWorld` and adds nothing.
+
+Once ADR-0010 is accepted, `validate` gains a **resolution stage** ahead of `sim.BuildWorld`:
+resolving `extends` chains against the cached `andara.core` pack. Its errors must name the type in the
+chain that is wrong, not the flattened output — a Builder debugging a three-deep hierarchy should not
+be reading a resolved blob.
 
 ## Acceptance criteria (known now; completed at grooming)
 
