@@ -111,6 +111,18 @@ state are separately stored.
 
 - `[ASSUMPTION]` Argon2id parameters chosen against a stated target verification time on production
   hardware, re-tuned as an explicit, reviewed change rather than drifting.
+- **Resolved 2026-09-07 (Brian): `andara-cli` stores credentials, and acting as another identity
+  always records who was really acting.** Two requirements land on this story from that. First, an
+  acting-as request is only ever accepted from an authenticated caller — there is no anonymous
+  impersonation, because there would be nobody to record. Second, every audit record produced under
+  acting-as names **both** identities: the authenticated Account that acted and the identity it acted
+  as. One field is not enough; an audit trail that records only the acted-as identity is worse than
+  none, because it looks complete.
+
+  `AW-CLI-001` owns where the credential file lives and its `0600` requirement. This story owns what a
+  credential *is*. The consequence for sequencing: `andara-cli play` ships with no `--as` at all until
+  this story lands, rather than an anonymous one that later grows identity.
+
 - `[NEEDS BRIAN]` Token lifetimes. Short session tokens with refresh is the shape; the numbers are a
   security-versus-annoyance call.
 - `[NEEDS BRIAN]` Whether Behavior Agent credentials are per-deployment (ADR-0005's assumption) or

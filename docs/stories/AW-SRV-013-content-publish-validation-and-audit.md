@@ -103,7 +103,23 @@ CLAUDE.md §8, plus: the compaction test from AC-7 runs against a broker with co
 
 - `[NEEDS BRIAN]` Whether Builders are scoped per pack or trusted across all content. Per-pack is safer
   and is more machinery.
-- `[NEEDS BRIAN]` Whether a publish should be reviewable before activation — a two-person rule for a live
-  world is cheap here (publish and activate are already separate) and may be wanted.
+- **Resolved 2026-09-07 (Brian): a second approver is required to activate.** Publishing stays a
+  single-Builder action; moving the Active Pointer requires a distinct second identity to approve. The
+  reasoning Brian gave is worth recording because it changes what this feature is for: it lets more
+  people contribute content while keeping a human moderation step in front of the live World. It is a
+  contribution-scaling mechanism, not a compliance control.
+
+  This story owns the rule, because the server is the security boundary and the CLI is a client.
+  Specifically: an activation request from the same identity that published is rejected; the approval
+  is itself an audited action on `andara.audit.v1` carrying approver, pack, version, and blob hashes;
+  and an approval is bound to one `packID@version`, so re-publishing invalidates it. `AW-CLI-003`
+  surfaces the approval state and the rejection — it does not enforce anything.
+
+  Three sub-decisions this opens, none of which block grooming: whether an Operator may override in an
+  incident (recommendation: yes, loudly audited, since the alternative is that a bad activation cannot
+  be rolled back at 3am by whoever is awake); whether rollback to a previously-approved version needs
+  fresh approval (recommendation: no — it was approved once and the content is byte-identical); and
+  whether approval expires.
+
 - `[ASSUMPTION]` Version numbers are monotonic integers per pack, assigned by the server, not by the
   Builder.

@@ -35,7 +35,8 @@ a real trace backend, and real TLS, so that what passes locally is what passes i
   registry, an OTLP collector, a metrics store, a trace backend, and a dashboard UI.
 - Topic creation on startup by invoking the topic-as-code definitions from `AW-INF-004`, so local and
   production topics come from one source.
-- Local CA and server certificate provisioning, with the CA trusted by `andara-cli` out of the box.
+- Local CA and server certificate provisioning, plus a generated `andara-cli` config naming the
+  endpoint and the CA, so the CLI trusts the stack without a per-invocation flag.
 - `make up`, `make down`, `make logs`, `make ps`.
 - A pre-provisioned dashboard showing the tick SLIs from `AW-SRV-002` and consumer lag from
   `AW-INF-004`.
@@ -59,8 +60,10 @@ a real trace backend, and real TLS, so that what passes locally is what passes i
 4. **Given** `make up` completed **when** the topics are listed **then** every topic named in
    `AW-INF-004` exists with the declared partition count and cleanup policy — specifically
    `andara.commands.v1` with 64 partitions and the three content topics with `cleanup.policy=compact`.
-5. **Given** a running stack **when** `andara-cli play` connects **then** it does so over TLS against
-   the locally provisioned CA with no insecure flag and no certificate warning.
+5. **Given** a running stack and `ANDARA_CONFIG` pointing at the config `make up` generated **when**
+   `andara-cli play` connects **then** it does so over TLS against the locally provisioned CA, with no
+   insecure flag and no certificate warning. `AW-CLI-001` AC-10 makes the insecure flag impossible to
+   pass rather than merely discouraged.
 6. **Given** a running stack **when** a developer issues one command **then** a trace for it is
    retrievable by Session correlation ID with spans for `command.execute`, the Kafka produce, and the
    tick's apply.
@@ -122,6 +125,11 @@ that changing where the stack listens does not require rewriting a DSN:
 | `ANDARA_OTLP_HTTP_PORT` | `4318` | OTLP HTTP receiver |
 | `ANDARA_LOKI_PORT` | `3100` | Loki |
 | `ANDARA_TLS_DIR` | `./.local/tls` | directory the CA and certificate live in |
+
+`make up` also writes `./.local/cli.yaml` — an `andara-cli` config (`AW-CLI-001`) carrying
+`server.address` and `server.tls_ca` for this stack — and prints the `ANDARA_CONFIG` export that
+activates it. It is written into the repository's `.local/`, never into `$XDG_CONFIG_HOME`: a local
+stack has no business editing a developer's global configuration.
 
 Every port has an override. `make up` validates availability before starting anything and fails fast
 naming both the port and its variable.
@@ -212,7 +220,7 @@ Executed against a running stack on a clean machine.
 | 2 | Second `make up` recreates nothing; a record produced before it survives (high-watermark unchanged). |
 | 3 | `make down` exits 0; a second `make down` on a stopped stack also exits 0. |
 | 4 | All eight declared topics exist. `andara.commands.v1` has 64 partitions; `andara.state.v1`, `andara.accounts.v1`, and the three content topics carry `cleanup.policy=compact`. `make topics-diff` reports no drift. |
-| 5 | **Pending `AW-SRV-005`.** The CA, the certificate, and its SANs (`localhost`, `127.0.0.1`, `andara-server`) are provisioned and verify against each other; there is no server or `andara-cli` to connect yet. |
+| 5 | **Pending `AW-SRV-005`.** The CA, the certificate, and its SANs (`localhost`, `127.0.0.1`, `andara-server`) are provisioned and verify against each other, and `make up` generates `.local/cli.yaml` naming the endpoint and the CA. There is no server or `andara-cli` to connect yet. |
 | 6 | **Partial.** A synthetic OTLP trace with `command.execute` as parent and `log.produce` as child, carrying `session_id`, round-trips through the collector and is retrievable from Tempo by trace ID. The real spans arrive with `AW-SRV-005` and `AW-SRV-002`. |
 | 7 | **Partial.** A synthetic OTLP log line is retrievable from Loki filtered by its Session correlation ID. |
 | 8 | **Partial.** Datasources and the dashboard are provisioned from files and load with no manual configuration; all six panels are present. The `andara_*` panels have no data until the server emits, which is the point of provisioning them now. The broker-side lag query returns live data. |

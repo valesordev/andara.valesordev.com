@@ -113,6 +113,10 @@ Version currently live. The only mutable thing in the content store. Rollback is
 **Content Blob** — An immutable content body on `andara.content.blobs.v1`, keyed by its SHA-256. Keys
 never repeat, so compaction never removes one.
 
+**Content Language** — The purpose-built, text-based language Builders author content in, compiled by
+`andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
+of the compiled output. Its grammar is `AW-CLI-003`'s.
+
 **Content Pack** — A versioned bundle of Zone Definitions, Item Definitions, NPC Definitions, and
 dialogue that the server loads as a set. Authored outside the repository by Builders and published
 through `andara-cli` (ADR-0004).
@@ -167,10 +171,19 @@ used as the correlation ID on every log line, span, and Command in its path.
 Story `As a <role>` lines use exactly these. "User" is not a role.
 
 **Builder** — Authors world content: Zones, Rooms, Items, NPCs, dialogue, and Behaviors. Works through
-`andara-cli` and the content store, **without repository access** (ADR-0004). Untrusted by the system
-in the security sense.
+`andara-cli` and the content store, **without repository access** — confirmed 2026-09-07; a Builder
+who needs a server change opens a GitHub issue (ADR-0004). Untrusted by the system in the security
+sense. May activate content only with a second approver.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
+
+**Game Type** — `[NEEDS BRIAN]` — Brian's term, 2026-09-07: "builders can build new game types that
+subtype server types." The intent is clear enough to record and too unspecified to build on. Open:
+what a *server type* is (a protobuf message, an Entity kind, a Behavior contract?), what *subtyping*
+means (inheritance, composition, or constrained specialization?), what a subtype may override, and
+whether a subtype is content or code. It constrains the Content Language (ADR-0009) and may constrain
+the world model (`AW-SRV-001`), which is why defining it before the grammar exists is much cheaper
+than after.
 
 **Game Master** — Live-world authority: moderates players, intervenes in the running World, inspects
 and adjusts state at runtime. Acts *in* the game. GM powers are `[NEEDS BRIAN]`.
