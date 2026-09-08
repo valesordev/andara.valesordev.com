@@ -1,0 +1,19 @@
+# Build context for deploy/compose/Dockerfile.server, whose context is the repo root.
+#
+# The CA private key is the reason this file exists: it lives under .local/tls and has no
+# business being sent to a Docker daemon, even though it never reaches the image.
+.git
+.github
+.local
+bin
+gen/**/*_test.go
+docs
+deploy
+client
+agents
+BACKLOG.md
+CLAUDE.md
+README.md
+**/__pycache__
+*.pem
+*.key

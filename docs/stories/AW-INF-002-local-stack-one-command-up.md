@@ -4,7 +4,7 @@ title: Local stack — Redpanda, datastores, observability, and TLS with one com
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: review
 size: M
 depends_on: [AW-INF-001, AW-INF-004]
 blocks: [AW-INF-003, AW-SRV-002]
@@ -107,7 +107,21 @@ test loops. `PROFILE=full` is the default.
 | `ANDARA_METRICS_PORT` | `9090` | metrics UI |
 | `ANDARA_DASHBOARD_PORT` | `3000` | dashboard UI |
 | `ANDARA_TRACE_PORT` | `4317` | OTLP receiver |
-| `ANDARA_DATA_DIR` | `./.local/data` | host path for volumes |
+| `ANDARA_DATA_DIR` | `./.local/data` | host path for local material |
+
+Ports are overridden by their own variables, separately from the client-facing addresses above, so
+that changing where the stack listens does not require rewriting a DSN:
+
+| Variable | Default | Service |
+|----------|---------|---------|
+| `ANDARA_KAFKA_PORT` | `9092` | Redpanda Kafka API |
+| `ANDARA_SCHEMA_REGISTRY_PORT` | `8081` | schema registry |
+| `ANDARA_REDPANDA_ADMIN_PORT` | `9644` | Redpanda admin and metrics |
+| `ANDARA_REDIS_PORT` | `6379` | Redis |
+| `ANDARA_POSTGRES_PORT` | `5432` | Postgres |
+| `ANDARA_OTLP_HTTP_PORT` | `4318` | OTLP HTTP receiver |
+| `ANDARA_LOKI_PORT` | `3100` | Loki |
+| `ANDARA_TLS_DIR` | `./.local/tls` | directory the CA and certificate live in |
 
 Every port has an override. `make up` validates availability before starting anything and fails fast
 naming both the port and its variable.
@@ -122,10 +136,31 @@ naming both the port and its variable.
 | `telemetry.log_format` | `ANDARA_LOG_FORMAT` | `json` |
 | `telemetry.log_level` | `ANDARA_LOG_LEVEL` | `info` |
 
+### Server obligations this stack imposes
+
+The stack asserts three things about `andara-server` that no other story states. They are contracts,
+not implementation hints — the stack does not work without them, and two of them fail silently.
+
+| Obligation | Where it is exercised | Consequence if absent |
+|------------|----------------------|-----------------------|
+| `GET /readyz` on `ANDARA_HTTP_PORT`, returning 200 **only** when the World is loaded and the Tick Loop is running — not merely when the process is alive | compose healthcheck | `make up` returns before the World exists, and the "blocks until healthy" guarantee in AC-1 is a lie. `AW-INF-003` makes the same distinction for Kubernetes readiness, and for the same reason: a pod still replaying its log tail has nothing to serve. |
+| `GET /metrics` on `ANDARA_HTTP_PORT`, Prometheus exposition format | `deploy/compose/prometheus/prometheus.yaml` scrapes it | Every `andara_*` panel on the dashboard is empty and nothing says why. |
+| Logs exported **over OTLP** to `ANDARA_OTLP_ENDPOINT`, in addition to stdout | the collector's log pipeline into Loki | AC-7 fails. `telemetry.log_format: json` above describes the stdout encoding and is easy to read as stdout-only; a server that only writes to stdout puts nothing in the log sink, and the Session correlation ID a developer greps for is simply not there. |
+
+`ANDARA_HTTP_PORT` is bound to loopback by the compose file: health and metrics are an operator
+surface, not a player one.
+
 ## Data / state impact
 
-Local only. Volumes under `ANDARA_DATA_DIR` hold the Redpanda log, Redis, and Postgres data.
-`make down VOLUMES=1` is the documented reset and `ANDARA_DATA_DIR` is in `.gitignore`.
+Local only. `make down VOLUMES=1` is the documented reset.
+
+**Amendment (implementation):** this section originally put the Redpanda log, Redis, and Postgres
+data in bind mounts under `ANDARA_DATA_DIR`. They are Docker named volumes instead. Redpanda runs as
+uid 101 and Postgres as uid 999, so a bind mount into a developer-owned directory fails to write on
+Linux and behaves differently again on macOS — the stack would come up unhealthy on a clean machine,
+which is the one thing this story exists to prevent. `ANDARA_DATA_DIR` remains the host directory for
+local material, and `make down VOLUMES=1` removes the named volumes and that directory together, so
+the documented reset is unchanged.
 
 The local CA private key is generated per machine, never committed, and never reused across machines.
 It is in `.gitignore` alongside the data directory.
@@ -166,6 +201,47 @@ None. Local stacks do not alert. Alert rules are `AW-INF-005` and require an SLO
   make logs SVC=andara-server
   make down VOLUMES=1 && make ps  # expect: no services
   ```
+
+## Verification record — 2026-09-07
+
+Executed against a running stack on a clean machine.
+
+| AC | Result |
+|----|--------|
+| 1 | `make up` returns only after all eight services report healthy, then prints every URL. |
+| 2 | Second `make up` recreates nothing; a record produced before it survives (high-watermark unchanged). |
+| 3 | `make down` exits 0; a second `make down` on a stopped stack also exits 0. |
+| 4 | All eight declared topics exist. `andara.commands.v1` has 64 partitions; `andara.state.v1`, `andara.accounts.v1`, and the three content topics carry `cleanup.policy=compact`. `make topics-diff` reports no drift. |
+| 5 | **Pending `AW-SRV-005`.** The CA, the certificate, and its SANs (`localhost`, `127.0.0.1`, `andara-server`) are provisioned and verify against each other; there is no server or `andara-cli` to connect yet. |
+| 6 | **Partial.** A synthetic OTLP trace with `command.execute` as parent and `log.produce` as child, carrying `session_id`, round-trips through the collector and is retrievable from Tempo by trace ID. The real spans arrive with `AW-SRV-005` and `AW-SRV-002`. |
+| 7 | **Partial.** A synthetic OTLP log line is retrievable from Loki filtered by its Session correlation ID. |
+| 8 | **Partial.** Datasources and the dashboard are provisioned from files and load with no manual configuration; all six panels are present. The `andara_*` panels have no data until the server emits, which is the point of provisioning them now. The broker-side lag query returns live data. |
+| 9 | `make up` with 8081 held by another process: `port 8081 is already in use (schema registry). Override it with ANDARA_SCHEMA_REGISTRY_PORT=<port>`. Exits non-zero before starting anything. |
+| 10 | `make down VOLUMES=1` removes all seven volumes and `ANDARA_DATA_DIR`; the next `make up` recreates all eight topics and the log is empty. |
+| 11 | Five consecutive `make up` / `make down` cycles leave no orphaned containers and no orphaned networks. |
+| 12 | **Pending `AW-SRV-010`.** Read-only degradation is server behavior; there is no server to degrade. |
+
+Three findings worth carrying forward:
+
+- **Redpanda's file-descriptor limit caps the cluster's partition count.** The container default of
+  1024 descriptors allows 204 partitions; this declaration asks for 210. The broker comes up healthy
+  and then refuses the last three topics with `INVALID_PARTITIONS: ... hardware constraints`. The
+  compose file raises `nofile` to 65535. `andara.commands.v1` is 64 partitions permanently, so this
+  is a standing constraint, not a one-off.
+- **Consumer-lag metrics are off by default.** Redpanda computes
+  `redpanda_kafka_consumer_group_lag_*` only when `enable_consumer_group_metrics` includes
+  `consumer_lag`. Without it the dashboard's lag panel is silently empty — the worst failure mode for
+  an observability panel. The setting is in the declaration and applied at `make up`.
+- **`unclean.leader.election.enable` has no Redpanda equivalent.** Raft replication cannot elect a
+  leader that is missing committed records, so the setting the zero-RPO claim rests on is asserted
+  against real Kafka and not applied locally. `deploy/kafka/topics.yaml` splits `broker.assert` from
+  `broker.local` for exactly this reason. This is a real local/production divergence, and it is the
+  kind `AW-INF-005` must test for.
+
+Also worth stating: Loki indexes only `service_name` and `deployment_environment`.
+`session_id`, `trace_id`, and `tick` are structured metadata — queryable, but not stream labels. A
+Loki stream label is the same cardinality hazard CLAUDE.md §7 rejects for metrics, wearing a
+different hat.
 
 ## Definition of done
 

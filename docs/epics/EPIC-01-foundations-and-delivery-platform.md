@@ -38,3 +38,20 @@ identical `make check`.
 
 ## Stories
 `AW-INF-001`, `AW-INF-002`, `AW-INF-003`, `AW-INF-006`, `AW-INF-007`
+
+## Status — 2026-09-07
+
+`AW-INF-001` and `AW-INF-002` are implemented and in `review`, with every acceptance criterion
+executed rather than reasoned about; each story carries its own verification record, including the
+criteria that cannot close until a server exists. The M0 gate — `make bootstrap && make up && make
+check` on a clean machine — holds.
+
+`AW-INF-003`, `AW-INF-006`, and `AW-INF-007` remain `draft` and are **not** implemented. This is
+deliberate, not deferral: all three carry `[NEEDS BRIAN]` questions about the target platform, and
+two of them depend on server stories (`AW-SRV-005`, `AW-SRV-007`) that have no code behind them yet.
+Writing a Helm chart before the platform is chosen would mean inventing the answer to a question that
+is Brian's, and writing probes for a process whose readiness semantics do not exist would mean
+guessing at the one thing `AW-INF-003` says must not be guessed. They are groomed when the platform
+is known and the server is measurable.
+
+The epic's "Done when" is met for everything that does not require a running `andara-server`.

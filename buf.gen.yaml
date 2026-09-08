@@ -1,0 +1,21 @@
+# Codegen targets for the Andara protocol. Output is committed (ADR-0007) — see gen/README.md.
+#
+# Run via `make proto`. `make proto-check` regenerates into a temporary tree and fails if
+# the result differs from what is committed.
+version: v2
+managed:
+  enabled: true
+  override:
+    - file_option: go_package_prefix
+      value: github.com/valesordev/andara/gen/go
+plugins:
+  - remote: buf.build/protocolbuffers/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/grpc/go
+    out: gen/go
+    opt: paths=source_relative
+  - remote: buf.build/protocolbuffers/python
+    out: gen/python
+  - remote: buf.build/bufbuild/es
+    out: gen/ts

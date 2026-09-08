@@ -1,0 +1,20 @@
+# buf module for the Andara protocol.
+#
+# ADR-0007 makes protobuf the schema authority for the wire, the log, snapshots, and
+# content. `buf breaking` is how the additive-only and reserved-number rules stop being
+# review discipline and start being mechanical.
+version: v2
+modules:
+  - path: .
+lint:
+  use:
+    - STANDARD
+  except:
+    # Enum values are namespaced by their enum, not by a package-wide prefix. Revisit if
+    # this ever produces a real collision.
+    - ENUM_VALUE_PREFIX
+breaking:
+  use:
+    - FILE
+  # Deleting a field or reusing a number is a breaking change even when the wire would
+  # tolerate it, because the log is permanent (ADR-0002).

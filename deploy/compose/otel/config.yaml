@@ -1,0 +1,58 @@
+# OTLP collector for the local stack.
+#
+# One receiver, three exporters. The server exports traces, metrics, and logs over OTLP
+# (ANDARA_OTLP_ENDPOINT); the collector fans them out to Tempo, Prometheus, and Loki so
+# that a Session correlation ID looks the same in all three.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  batch:
+    timeout: 1s
+    send_batch_size: 1024
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+exporters:
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Resource attributes become labels only where they are bounded. Session ID, Room ID,
+    # and Entity ID are rejected as labels by CLAUDE.md §7 and must not arrive here.
+    resource_to_telemetry_conversion:
+      enabled: false
+
+service:
+  # 100% sampled locally, deliberately. A sampled local trace is a trace that is missing
+  # exactly when a developer goes looking for it.
+  telemetry:
+    logs:
+      level: info
+    metrics:
+      level: basic
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp/tempo]
+    metrics:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [prometheus]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlphttp/loki]

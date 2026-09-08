@@ -44,7 +44,8 @@ can start on any story without reading a wiki or asking anyone how the build wor
 ### Out of scope
 - Local runtime stack (server + datastores + observability) — `AW-INF-002`.
 - Kubernetes manifests, Helm charts, `make k8s-dry` producing real output — `AW-INF-003`.
-- Container image build and publish — `AW-INF-004`.
+- Container image build and publish. No story owns this yet; `deploy/compose/Dockerfile.server`
+  builds a local-stack image from source and is explicitly not a production image.
 - Any Go application source. `make check` passes on an empty module and stays passing as source
   arrives.
 
@@ -165,9 +166,16 @@ Go module path: `github.com/valesordev/andara`.
 ### Enforced import boundary
 
 `make lint` fails if any package under `server/sim/...` imports: `net`, `net/*`, `database/sql`,
-`time` (except `time.Duration`), `math/rand`, `os`, or any Kafka, Redis, Postgres, or gRPC package.
-This is ADR-0001's seam invariant and ADR-0002's determinism requirement made mechanical. The allowlist lives in `.golangci.yml` under
-`depguard` so that widening it requires an explicit, reviewable diff.
+`time`, `math/rand`, `os`, or any Kafka, Redis, Postgres, gRPC, or Connect package. This is
+ADR-0001's seam invariant and ADR-0002's determinism requirement made mechanical. The denied list
+lives in `.golangci.yml` under `depguard` so that widening it requires an explicit, reviewable diff.
+
+**Amendment (implementation):** this section originally read `time` (except `time.Duration`).
+`depguard` denies packages, not symbols, so that exception is not expressible. `time` is denied
+outright, which is the stricter and more defensible reading anyway: ADR-0008 measures mechanics in
+Ticks, so a duration reaches the core as a Tick count and the core never needs the package. Verified
+mechanically — a fixture importing `net` and `time` from `server/sim` fails `make lint` with both
+denials named.
 
 ## Data / state impact
 
@@ -203,6 +211,43 @@ build-time observability instead:
   make story COMP=SRV TITLE="Throwaway story"   # inspect, then delete the file
   ```
   Expected: three exit-0 runs, a Mermaid graph on stdout, and a scaffolded file at the printed path.
+
+## Verification record — 2026-09-07
+
+Every acceptance criterion was executed against the working tree, not reasoned about.
+
+| AC | Result |
+|----|--------|
+| 1 | `make bootstrap` twice, exit 0 both times, identical output. Tooling is pinned and installed into `./bin`. |
+| 2 | `make` with no arguments prints the target list, exit 0. |
+| 3 | `make check` runs fmt, vet, lint, test, proto-check, validate-stories, backlog-check, k8s-dry; exit 0. |
+| 4 | Fixture with `depends_on: [AW-SRV-999]` — one line naming file, field, and unresolved ID. |
+| 5 | Two-node cycle fixture — `dependency cycle: AW-INF-901 -> AW-INF-902 -> AW-INF-901`. |
+| 6 | Fixture missing `risk` and carrying `status: almost-ready`, `size: XL` — three lines, each naming the file, key, and permitted values. |
+| 7 | `make backlog` twice, empty diff on the second run. |
+| 8 | Story title edited, `make backlog-check` fails naming `make backlog` as the fix. |
+| 9, 10 | `make story COMP=SRV` twice — `AW-SRV-020`, then `AW-SRV-021`. No overwrite. |
+| 11 | `make adr TITLE="Fixture decision"` — a file scaffolded at the next zero-padded four-digit ID, one greater than the highest existing. Inspected, then deleted. |
+| 12 | `make graph` emits `graph LR` with per-status `classDef` styling. |
+| 13 | CI runs `make check` sub-steps and nothing else. |
+| 14 | `make k8s-dry` with no chart — exit 0, states there is nothing to validate. |
+| 15 | `make proto-check` regenerates into a temp tree and diffs against `gen/`; no-op with no `.proto` sources. |
+
+Two defects were found and fixed in the process:
+
+- **Every make recipe failed.** `SHELL := /usr/bin/env bash` — make does not word-split `SHELL`, so
+  it looked for a program literally named `/usr/bin/env bash`. Nothing in this repo had ever run,
+  including in CI. Now `SHELL := bash`.
+- **`.golangci.yml` was v1 schema.** An unpinned `go install ...@latest` gets golangci-lint v2, which
+  rejects a v1 config outright. The config is migrated to v2 and the binary is pinned.
+
+Two notes on exactness rather than defects:
+
+- ACs 4–6 say the validator "exits 1". `scripts/validate_stories.py` does exit 1; `make
+  validate-stories` surfaces make's own 2. Exit non-zero with an actionable line is the intent, and
+  overriding make's convention to hit a literal 1 would be worse.
+- `make proto`/`proto-check` are wired and skip cleanly with no `.proto` sources. They are exercised
+  end to end for the first time by `AW-SRV-005`.
 
 ## Definition of done
 
