@@ -86,6 +86,23 @@ costs an Envoy deployment.
   it is a separate component with its own story — never a second path into the simulation.
 - Debugging is `grpcurl`, not `nc`. Worth having in `make bootstrap`.
 
+
+## Resolved since acceptance
+
+**2026-09-07 (Brian) — the Text Interface is permanent, and it is a technical client.** This ADR left
+open whether `andara-cli play` was a supported client or Phase 1 scaffolding. It is permanent.
+`andara-cli` is text-only for its whole life and will never render anything; rendering is `CLT`'s job
+and always will be.
+
+The part that changes engineering decisions is who it is for. `play` is an Operator and Developer
+tool that a human can also play through — so seeing Intents and Events go back and forth at a
+technical level is a first-class feature of it, not a debug flag. `AW-CLI-004` carries the
+consequences.
+
+This does not weaken the Phase 1 exit criteria: a human still has to play through it, and it is still
+the only client for months. It means that when polish competes with protocol visibility, visibility
+wins.
+
 ## Revisit when
 
 - A closed playtest is bottlenecked on binary distribution rather than on the game.

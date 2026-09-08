@@ -4,9 +4,9 @@ Planning source of truth. Phase → Epic → Milestone. Story status lives in st
 `BACKLOG.md` is the generated view. This file changes when scope or sequencing changes, not when a
 story closes.
 
-**All open architecture decisions were made on 2026-09-07.** ADR-0001 through ADR-0007 are `accepted`;
-ADR-0008 (tick rate) is `proposed` pending Brian's confirmation of a recommendation he asked for. Nothing
-in the backlog is ADR-blocked. What follows reflects the architecture those decisions
+**All open architecture decisions were made on 2026-09-07.** ADR-0001 through ADR-0007 and ADR-0009
+are `accepted`; ADR-0008 (tick rate) is `proposed` pending Brian's confirmation of a recommendation he
+asked for. Nothing in the backlog is ADR-blocked. What follows reflects the architecture those decisions
 describe, which is meaningfully larger in Phase 1 than the drafted alternative — see "What the
 decisions cost" below.
 
@@ -26,7 +26,10 @@ the art-content cost; building it against an unstable protocol pays that cost tw
 3. The server survives a deliberate process kill and returns to a playable World within the stated
    RTO, losing no more than the stated RPO, with a matching State Hash.
 4. A Builder publishes a Content Pack version and rolls it back, without repository access and without
-   a deploy.
+   a deploy. **As of 2026-09-07 activation requires a second approver**, so demonstrating this
+   criterion needs two identities — one publishing, one approving. That is a change to how the
+   criterion is exercised, not a weakening of it; it is called out here because a single-person
+   rehearsal will now fail, and it should.
 5. An Operator can run the full lifecycle — deploy, inspect, intervene, roll back — through
    `andara-cli`, with no direct datastore or Kafka access.
 6. Tick duration, tick overrun, and simulation lag SLOs exist, are measured, and have runbooks.
@@ -94,8 +97,8 @@ Epics: `EPIC-04`, `EPIC-08`, `EPIC-10` (state projector, Redis).
 
 #### M3 — Authored world *(gate: a Builder with no repository access publishes a Zone, sees it live, and rolls it back)*
 Content blobs, version manifests, active pointer. Publish-time validation and authorization. Content
-reload at a tick boundary. `andara-cli content` commands and a human-authorable surface. Postgres
-projection for rosters and Builder queries.
+reload at a tick boundary. `andara-cli content` commands and the Content Language that compiles to
+canonical protobuf (ADR-0009). Postgres projection for rosters and Builder queries.
 Epics: `EPIC-05`, `EPIC-06`, `EPIC-10` (Postgres).
 
 #### M4 — Playable vertical slice *(gate: Phase 1 exit criteria 1–6 all hold)*
@@ -146,9 +149,14 @@ Not started. Gated on Phase 1 exit criteria. Placeholder epics only; no stories,
 
 | Epic | Title | Component |
 |------|-------|-----------|
+| `EPIC-11` | In-game building for admins and builders | `SRV` |
 | `EPIC-20` | Client bootstrap and Connect protocol client | `CLT` |
 | `EPIC-21` | Art pipeline and asset delivery | `CLT` |
 | `EPIC-22` | Rendered world presentation | `CLT` |
+
+`EPIC-11` is not a client epic and does not wait on the Phase 2 gate for a technical reason — it waits
+because Phase 1 has no capacity for it. It exists now so that Phase 1 stories touching the content
+path can check whether they are foreclosing it.
 
 ADR-0003 serves Connect alongside gRPC, so the browser path needs no proxy. ADR-0004 flags that large
 art binaries do not belong in Kafka — `EPIC-21` will need object storage with hashes in the manifest.
@@ -167,6 +175,7 @@ art binaries do not belong in Kafka — `EPIC-21` will need object storage with 
 | `ADR-0006` | Identity and accounts | accepted | Closed → invite → open; 5 characters, 1 live; 180 s linkdead grace, extended by combat to a 300 s ceiling |
 | `ADR-0007` | Schema authority | accepted | Protobuf for wire, log, snapshot, and content |
 | `ADR-0008` | Tick rate | **proposed** | 10 Hz, 100 ms interval, 50 ms budget; mechanics measured in Ticks |
+| `ADR-0009` | Content authoring language | accepted | A purpose-built text language compiling to canonical protobuf |
 
 ### Service level targets
 
@@ -192,11 +201,24 @@ Design questions that gate specific stories rather than architecture, tracked as
 stories and glossary. The largest remaining:
 
 - **What players see during a deploy or recovery interruption** (`AW-INF-007`, `slo/recovery.md`).
-- **The content authoring format** — protobuf is not hand-authorable, and this decides how pleasant
-  world-building feels (`AW-CLI-003`).
 - **The canonical Direction set**, without which the loader cannot reject `norht` as a typo
   (`AW-SRV-001`).
 - **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
+- **What "Builders can build new game types that subtype server types" means** — new on 2026-09-07,
+  and the largest of these. It constrains ADR-0009's grammar and may constrain the world model, and it
+  is much cheaper to answer before the language exists than after. See the glossary.
+
+### Resolved on 2026-09-07
+
+- **The content authoring format** — a purpose-built text language, ADR-0009.
+- **Whether the Text Interface is permanent** — it is, and it is an Operator and Developer tool that a
+  human can also play through. `andara-cli` never renders anything (ADR-0003, `AW-CLI-004`).
+- **Whether Builders have repository access** — none do; server changes go through GitHub issues.
+- **Whether activation needs a second approver** — it does (`AW-SRV-013`).
+- **Whether `andara-cli` stores credentials** — it does, and acting as another identity always records
+  who was really acting (`AW-CLI-001`, `AW-SRV-008`).
+- **Whether in-game building is a design goal** — it is, for Admins and Builders, not players.
+  `EPIC-11`, not Phase 1.
 
 ---
 
@@ -210,5 +232,6 @@ Named here so they stop reappearing in grooming:
 - ClickHouse. Added when there is an analytical query Postgres handles badly.
 - Cross-region deployment, multi-cluster, disaster recovery beyond single-cluster restore.
 - Email-based account flows, including password reset. Gates the open-registration transition.
-- In-game building. `[NEEDS BRIAN]` on whether it is a design goal.
+- In-game building. Confirmed a design goal on 2026-09-07 and given `EPIC-11`, but for Admins and
+  Builders only, and not in Phase 1.
 - Anti-cheat beyond what server authority provides for free.

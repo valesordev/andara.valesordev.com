@@ -36,7 +36,8 @@ publish a Zone that fails to load.
 - `andara-cli content inspect zone|room` for reading resolved content.
 - Findings rendered per `AW-CLI-001`'s output contract, human and JSON.
 - Offline operation: `validate --path` must work on a laptop with no server and no cluster access, or
-  Builders will not use it.
+  Builders will not use it. `--path` names a **local working directory of authored source** — not a
+  checkout of this repository, which no Builder has (decision below).
 
 ### Out of scope
 - Publishing and rollback — `AW-CLI-003`.
@@ -86,8 +87,13 @@ use.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` Confirmation that Builders have no repository access, which ADR-0004 assumes. If some do,
-  `--path` covers them and `--pack/--version` covers the rest; both surfaces are cheap.
+- **Resolved 2026-09-07 (Brian):** no Builder has repository access, confirming ADR-0004's assumption.
+  A Builder who needs something changed in the server opens a GitHub issue; they do not open a pull
+  request, because they cannot. Both surfaces stay, but they now mean different things rather than
+  serving different populations: `--path` validates source a Builder is still writing, and
+  `--pack/--version` validates what is already published. That also makes the content store the only
+  Builder-facing write path, which is what makes publish-time authorization and audit load-bearing
+  rather than defensive (`AW-SRV-013`).
 - Per ADR-0007 the canonical content format is protobuf, which is not hand-authorable. The human-friendly
   authoring surface is `AW-CLI-003`'s problem, and `validate` must accept whatever that turns out to be as
   well as the canonical form.
