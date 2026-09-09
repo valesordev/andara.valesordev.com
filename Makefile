@@ -186,11 +186,12 @@ adr:
 k8s-dry:
 	@$(SCRIPTS)/k8s_dry.sh "$(ENV)"
 
-## build: compile andara-cli into ./bin
+## build: compile andara-cli and andara-server into ./bin
 build:
 	@mkdir -p bin
 	@$(GO) build -ldflags "$(LDFLAGS_CLI)" -o bin/andara-cli ./cmd/andara-cli
-	@echo "build: bin/andara-cli"
+	@$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/andara-server ./cmd/andara-server
+	@echo "build: bin/andara-cli bin/andara-server"
 
 ## goldens: regenerate CLI --help golden files
 goldens:

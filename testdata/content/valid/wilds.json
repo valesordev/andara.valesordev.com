@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "id": "wilds",
+  "name": "Wilds",
+  "rooms": [
+    {
+      "id": "trail",
+      "title": "Forest Trail",
+      "description": "A narrow path under pines.",
+      "exits": [
+        {"direction": "west", "toZone": "town", "toRoom": "plaza"},
+        {"direction": "north", "toRoom": "copse"}
+      ]
+    },
+    {
+      "id": "copse",
+      "title": "Copse",
+      "description": "A ring of younger trees.",
+      "exits": [
+        {"direction": "south", "toRoom": "trail"}
+      ]
+    }
+  ]
+}
