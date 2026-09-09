@@ -3,6 +3,7 @@ module github.com/valesordev/andara
 go 1.25.0
 
 require (
+	connectrpc.com/connect v1.21.0
 	github.com/prometheus/client_golang v1.23.2
 	github.com/spf13/cobra v1.9.1
 	go.opentelemetry.io/otel v1.46.0

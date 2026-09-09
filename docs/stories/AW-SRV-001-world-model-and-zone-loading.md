@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-INF-001]
+depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002]
 assignee: cursor
 risk: medium
@@ -152,7 +152,9 @@ The sim core exposes `func BuildWorld(defs []ZoneDefinition) (*World, []Validati
 supply `ZoneDefinition` values from wherever they have them. This is what makes one validator serve
 `andara-cli content validate` on a Builder's laptop, the server-side publish gate, and the boot load.
 
-`ZoneDefinition` is a generated protobuf type (ADR-0007), so the same definition travels over the
+`ZoneDefinition` is a generated protobuf type from `AW-SRV-020` — a dependency that lived only in this
+prose until 2026-09-09 and is now declared in frontmatter, where `make validate-stories` can see it. So
+the same definition travels over the
 wire, through Kafka, and into the validator without a translation layer.
 
 ### Configuration

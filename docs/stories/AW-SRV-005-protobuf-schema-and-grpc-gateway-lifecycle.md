@@ -1,12 +1,12 @@
 ---
 id: AW-SRV-005
-title: Protobuf schema, gRPC service definition, and gateway connection lifecycle
+title: gRPC gateway — TLS, session lifecycle, and protocol version negotiation
 epic: EPIC-03
 component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-INF-001]
+depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-008, AW-SRV-010, AW-SRV-011, AW-INF-006, AW-CLI-004]
 assignee: cursor
 risk: high
@@ -18,11 +18,14 @@ ADR-0007 makes protobuf the single schema authority for the wire, the Kafka log,
 content. ADR-0003 puts gRPC on the wire and serves Connect and gRPC-Web from the same handler so
 Phase 2's browser client needs no proxy.
 
-This story writes that schema and stands up the server that serves it. It is deliberately first among
-the transport stories: almost everything downstream — Commands in the log, Events on the stream,
-Account records, content manifests, the Python SDK, the Phase 2 client — is generated from what this
-story defines. Getting the field numbers and the service shape right here is cheap; changing them once
-there is a log full of records written against them is not.
+**Split 2026-09-09:** this story originally wrote the schema *and* stood up the server. The schema is
+an interface contract, which CLAUDE.md §2 puts on Claude Code's side of the line, so it is now
+`AW-SRV-020` and this story consumes it. What remains here is the server: TLS, connection lifecycle,
+Session establishment, version negotiation, interceptors, and graceful drain — all of which run *in*
+the game and are Cursor's.
+
+The split also right-sizes it. One story covering a permanent wire contract and a concurrent network
+server was an `L` wearing an `M`'s frontmatter.
 
 ## User story
 
@@ -32,16 +35,16 @@ future client, so that a contract change is one diff rather than four that drift
 ## Scope
 
 ### In scope
-- The `.proto` sources under `docs/specs/protocol/`, per the ADR-0007 layout.
-- `andara.game.v1.Game` and `andara.admin.v1.Admin` service definitions, both on one endpoint.
-- `andara.log.v1` record types: `LoggedCommand`, `Event`, `TickCompleted`.
-- `andara.state.v1` snapshot envelope with `state_version`.
-- Code generation for Go, Python, and TypeScript, committed.
 - The gRPC/Connect/gRPC-Web server: TLS, connection lifecycle, Session establishment, Protocol version
   negotiation, graceful shutdown.
-- The canonical-encoding helper for anything that feeds the State Hash (ADR-0007 rule 3).
+- Serving `andara.game.v1.Game` and `andara.admin.v1.Admin` from one endpoint, from the generated code
+  `AW-SRV-020` produces.
+- The interceptor chain: authentication seam, request deadlines, message size limits.
+- The canonical-encoding **helper** and its determinism test (ADR-0007 rule 3). `AW-SRV-020` states the
+  rule and shapes the schema so it is satisfiable; this story implements it in Go.
 
 ### Out of scope
+- The `.proto` sources and codegen — `AW-SRV-020`.
 - Command ingress behavior — `AW-SRV-010`. This story defines the RPC and accepts the call; it does not
   parse, authorize, or produce.
 - Event streaming behavior — `AW-SRV-011`.
@@ -52,10 +55,11 @@ future client, so that a contract change is one diff rather than four that drift
 
 ## Acceptance criteria
 
-1. **Given** the `.proto` sources **when** `make proto` runs **then** Go, Python, and TypeScript are
-   generated, and **when** `make proto-check` runs afterward **then** it exits 0.
-2. **Given** a `.proto` edit that removes a field **when** `make check` runs **then** it exits 1 naming
-   the field. ADR-0007's additive-only rule is enforced mechanically.
+1. **Given** the generated code from `AW-SRV-020` **when** the server is built **then** it serves the
+   `Game` and `Admin` services from that generated code, with no hand-written message types.
+2. **Given** a message that feeds the State Hash **when** the canonical encoder serializes it twice
+   **then** the bytes are identical, asserted by test. The schema-level rules are `AW-SRV-020`'s; this
+   is the encoder that honours them.
 3. **Given** a running server **when** a gRPC client connects over TLS **then** the handshake succeeds
    against the local CA with no insecure flag.
 4. **Given** the same running server **when** a Connect client and a gRPC-Web client connect **then**
@@ -71,8 +75,6 @@ future client, so that a contract change is one diff rather than four that drift
 8. **Given** a shutdown signal **when** the server receives it **then** it stops accepting new
    connections, drains in-flight RPCs within the drain timeout, closes streams with a typed reason, and
    exits 0.
-9. **Given** a message that feeds the State Hash **when** it is serialized twice **then** the bytes are
-   identical, with map fields either sorted or absent (ADR-0007 rule 3).
 10. **Given** an unauthenticated call to any `Admin` method **when** it arrives **then** it is rejected
     at the interceptor, before reaching any handler.
 11. **Given** a request with no deadline **when** it arrives **then** the server applies its own maximum
@@ -80,9 +82,11 @@ future client, so that a contract change is one diff rather than four that drift
 
 ## Interface contract
 
+The service and message shapes below are **defined by `AW-SRV-020`** and reproduced here for reading
+convenience. `docs/specs/protocol/` is authoritative; if these disagree, the `.proto` wins.
+
 ```protobuf
-// CONTRACT SKETCH — not an implementation
-// docs/specs/protocol/andara/game/v1/game.proto
+// Defined in AW-SRV-020 — docs/specs/protocol/andara/game/v1/game.proto
 
 service Game {
   // Establish a Session. Returns SessionID and the negotiated protocol version.
@@ -205,17 +209,14 @@ measure.
 ## Definition of done
 
 CLAUDE.md §8, plus:
-- Generated code is committed and `make proto-check` gates merges.
-- `buf breaking` runs in CI against the merge base, so an accidental incompatible change cannot land.
-- The schema is registered with the schema registry by `AW-INF-004`'s tooling.
 - No code path exists that serves the Protocol without TLS.
+- The Session teardown test runs in CI, since a leak here is invisible until it is an outage.
 
 ## Open questions
 
 - `[ASSUMPTION]` Connect's Go implementation, serving all three protocols from one definition
   (ADR-0003). The alternative is grpc-go plus an Envoy gRPC-Web proxy in Phase 2, which is more
-  infrastructure for the same outcome.
-- `[ASSUMPTION]` `buf` for generation, lint, and breaking-change detection.
+  infrastructure for the same outcome. `AW-SRV-020` generates the Connect stubs this consumes.
 - `[NEEDS BRIAN]` Whether `Admin` should be reachable on the same listener in production or restricted
   by network policy. ADR-0003 says same endpoint, same protocol; restricting *reachability* at the
   network layer is compatible with that and is probably wanted. It is an `AW-INF-006` decision.
