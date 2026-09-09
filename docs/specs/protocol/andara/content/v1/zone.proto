@@ -42,12 +42,13 @@ message RoomDefinition {
   // direction (AW-SRV-001).
   repeated ExitDefinition exits = 4;
 
-  // Held for ADR-0010's component set. That ADR is `proposed`, and a Room
-  // carrying a Dark{} or NoMagic{} component is a natural want — but assigning
-  // a permanent field number to an unaccepted design is exactly what ADR-0007
-  // rule 1 makes expensive. Adding it later is additive; reserving now just
-  // marks the intent so nobody takes the number for something else.
-  reserved 5 to 9;
+  // ADR-0010's component set attaches here, at field 5, when that ADR is
+  // accepted — a Room carrying a Dark{} or NoMagic{} component is a natural
+  // want. It is not `reserved`: adding the field later is additive and needs no
+  // reservation, while a reserved range would have to shrink to accept it,
+  // which buf counts as a breaking change. Assigning a permanent number to an
+  // unaccepted design is what ADR-0007 rule 1 makes expensive, so the number
+  // stays unassigned and this comment carries the intent.
 }
 
 message ExitDefinition {

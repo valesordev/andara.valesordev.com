@@ -253,13 +253,12 @@ const file_andara_content_v1_zone_proto_rawDesc = "" +
 	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x17\n" +
 	"\azone_id\x18\x02 \x01(\tR\x06zoneId\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x127\n" +
-	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\"\xa0\x01\n" +
+	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\"\x9a\x01\n" +
 	"\x0eRoomDefinition\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x127\n" +
-	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exitsJ\x04\b\x05\x10\n" +
-	"\"j\n" +
+	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exits\"j\n" +
 	"\x0eExitDefinition\x12\x1c\n" +
 	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x1c\n" +
 	"\n" +

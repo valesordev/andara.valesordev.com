@@ -150,7 +150,7 @@ var File_andara_state_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\x84\x02\n" +
+	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\xfe\x01\n" +
 	"\x10SnapshotEnvelope\x12#\n" +
 	"\rstate_version\x18\x01 \x01(\rR\fstateVersion\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x128\n" +
@@ -159,7 +159,7 @@ const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"state_hash\x18\x04 \x01(\fR\tstateHash\x12\x17\n" +
 	"\azone_id\x18\x05 \x01(\tR\x06zoneId\x12+\n" +
 	"\x12taken_at_unix_nano\x18\x06 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n" +
-	"\x04body\x18\a \x01(\fR\x04bodyJ\x04\b\b\x10\x10B\xbf\x01\n" +
+	"\x04body\x18\a \x01(\fR\x04bodyB\xbf\x01\n" +
 	"\x13com.andara.state.v1B\rSnapshotProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03ASX\xaa\x02\x0fAndara.State.V1\xca\x02\x0fAndara\\State\\V1\xe2\x02\x1bAndara\\State\\V1\\GPBMetadata\xea\x02\x11Andara::State::V1b\x06proto3"
 
 var (
