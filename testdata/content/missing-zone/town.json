@@ -1,0 +1,15 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Plaza",
+      "description": "Open air.",
+      "exits": [
+        {"direction": "east", "toZone": "wilds", "toRoom": "trail"}
+      ]
+    }
+  ]
+}

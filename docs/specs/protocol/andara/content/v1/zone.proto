@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package andara.content.v1;
+
+// ZoneDefinition is the canonical authored form of a Zone: its Rooms and Exits.
+// One Zone per definition. Field numbers are additive-only (ADR-0007); the
+// message is not a closed field set so a later component set can land without
+// a breaking change (ADR-0010).
+message ZoneDefinition {
+  uint32 format_version = 1;
+  string id = 2;
+  string name = 3;
+  repeated RoomDefinition rooms = 4;
+}
+
+message RoomDefinition {
+  string id = 1;
+  string title = 2;
+  string description = 3;
+  repeated ExitDefinition exits = 4;
+}
+
+message ExitDefinition {
+  string direction = 1;
+  // Empty means the containing Zone.
+  string to_zone = 2;
+  string to_room = 3;
+}

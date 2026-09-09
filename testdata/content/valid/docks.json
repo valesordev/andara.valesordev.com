@@ -1,0 +1,24 @@
+{
+  "formatVersion": 1,
+  "id": "docks",
+  "name": "Docks",
+  "rooms": [
+    {
+      "id": "pier",
+      "title": "The Pier",
+      "description": "Salt air and creaking boards.",
+      "exits": [
+        {"direction": "north", "toZone": "town", "toRoom": "plaza"},
+        {"direction": "south", "toRoom": "warehouse"}
+      ]
+    },
+    {
+      "id": "warehouse",
+      "title": "Warehouse",
+      "description": "Barrels and rope.",
+      "exits": [
+        {"direction": "north", "toRoom": "pier"}
+      ]
+    }
+  ]
+}
