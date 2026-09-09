@@ -13,7 +13,7 @@ andara/game/v1/       Game service — OpenSession, Submit, Subscribe   (AW-SRV-
 andara/admin/v1/      Admin service — operator and builder surface    (AW-SRV-005)
 andara/log/v1/        LoggedCommand, Event, TickCompleted             (AW-SRV-004, AW-SRV-005)
 andara/state/v1/      snapshot envelope with state_version            (AW-SRV-006)
-andara/content/v1/    blobs, version manifests, active pointer        (AW-SRV-012, AW-SRV-013)
+andara/content/v1/    ZoneDefinition (AW-SRV-001); blobs, version manifests, active pointer (AW-SRV-012, AW-SRV-013)
 ```
 
 Generated Go, Python, and TypeScript live in `gen/` and are **committed**, so a clone builds without a
@@ -35,4 +35,4 @@ if generated code is stale.
 
 The v1 Protocol must be **frozen** before any Phase 2 client work begins — a Phase 1 exit criterion.
 
-Nothing here yet. `AW-SRV-005` writes the first definitions.
+`andara.content.v1.ZoneDefinition` is defined; the Game and Admin services arrive with `AW-SRV-005`.

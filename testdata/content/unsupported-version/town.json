@@ -1,0 +1,12 @@
+{
+  "formatVersion": 99,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Plaza",
+      "description": "Too new."
+    }
+  ]
+}

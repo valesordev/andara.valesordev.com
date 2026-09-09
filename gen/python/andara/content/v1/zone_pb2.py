@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1c\x61ndara/content/v1/zone.proto\x12\x11\x61ndara.content.v1\"\x9d\x01\n\x0eZoneDefinition\x12%\n\x0e\x66ormat_version\x18\x01 \x01(\rR\rformatVersion\x12\x17\n\x07zone_id\x18\x02 \x01(\tR\x06zoneId\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\x37\n\x05rooms\x18\x04 \x03(\x0b\x32!.andara.content.v1.RoomDefinitionR\x05rooms\"\x9a\x01\n\x0eRoomDefinition\x12\x17\n\x07room_id\x18\x01 \x01(\tR\x06roomId\x12\x14\n\x05title\x18\x02 \x01(\tR\x05title\x12 \n\x0b\x64\x65scription\x18\x03 \x01(\tR\x0b\x64\x65scription\x12\x37\n\x05\x65xits\x18\x04 \x03(\x0b\x32!.andara.content.v1.ExitDefinitionR\x05\x65xits\"j\n\x0e\x45xitDefinition\x12\x1c\n\tdirection\x18\x01 \x01(\tR\tdirection\x12\x1c\n\nto_zone_id\x18\x02 \x01(\tR\x08toZoneId\x12\x1c\n\nto_room_id\x18\x03 \x01(\tR\x08toRoomIdB\xc9\x01\n\x15\x63om.andara.content.v1B\tZoneProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03\x41\x43X\xaa\x02\x11\x41ndara.Content.V1\xca\x02\x11\x41ndara\\Content\\V1\xe2\x02\x1d\x41ndara\\Content\\V1\\GPBMetadata\xea\x02\x13\x41ndara::Content::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1c\x61ndara/content/v1/zone.proto\x12\x11\x61ndara.content.v1\"\x94\x01\n\x0eZoneDefinition\x12%\n\x0e\x66ormat_version\x18\x01 \x01(\rR\rformatVersion\x12\x0e\n\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\x37\n\x05rooms\x18\x04 \x03(\x0b\x32!.andara.content.v1.RoomDefinitionR\x05rooms\"\x91\x01\n\x0eRoomDefinition\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n\x05title\x18\x02 \x01(\tR\x05title\x12 \n\x0b\x64\x65scription\x18\x03 \x01(\tR\x0b\x64\x65scription\x12\x37\n\x05\x65xits\x18\x04 \x03(\x0b\x32!.andara.content.v1.ExitDefinitionR\x05\x65xits\"`\n\x0e\x45xitDefinition\x12\x1c\n\tdirection\x18\x01 \x01(\tR\tdirection\x12\x17\n\x07to_zone\x18\x02 \x01(\tR\x06toZone\x12\x17\n\x07to_room\x18\x03 \x01(\tR\x06toRoomB\xc9\x01\n\x15\x63om.andara.content.v1B\tZoneProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03\x41\x43X\xaa\x02\x11\x41ndara.Content.V1\xca\x02\x11\x41ndara\\Content\\V1\xe2\x02\x1d\x41ndara\\Content\\V1\\GPBMetadata\xea\x02\x13\x41ndara::Content::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,9 +33,9 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\025com.andara.content.v1B\tZoneProtoP\001Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\242\002\003ACX\252\002\021Andara.Content.V1\312\002\021Andara\\Content\\V1\342\002\035Andara\\Content\\V1\\GPBMetadata\352\002\023Andara::Content::V1'
   _globals['_ZONEDEFINITION']._serialized_start=52
-  _globals['_ZONEDEFINITION']._serialized_end=209
-  _globals['_ROOMDEFINITION']._serialized_start=212
-  _globals['_ROOMDEFINITION']._serialized_end=366
-  _globals['_EXITDEFINITION']._serialized_start=368
-  _globals['_EXITDEFINITION']._serialized_end=474
+  _globals['_ZONEDEFINITION']._serialized_end=200
+  _globals['_ROOMDEFINITION']._serialized_start=203
+  _globals['_ROOMDEFINITION']._serialized_end=348
+  _globals['_EXITDEFINITION']._serialized_start=350
+  _globals['_EXITDEFINITION']._serialized_end=446
 # @@protoc_insertion_point(module_scope)

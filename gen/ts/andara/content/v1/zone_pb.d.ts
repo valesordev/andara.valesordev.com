@@ -25,17 +25,17 @@ export declare const file_andara_content_v1_zone: GenFile;
  */
 export declare type ZoneDefinition = Message<"andara.content.v1.ZoneDefinition"> & {
   /**
-   * Rejected at load with both versions named when the server does not support
-   * it, rather than being partially understood (ADR-0004).
+   * Rejected at load with both the file's version and the supported range
+   * named, rather than being partially understood (ADR-0004).
    *
    * @generated from field: uint32 format_version = 1;
    */
   formatVersion: number;
 
   /**
-   * @generated from field: string zone_id = 2;
+   * @generated from field: string id = 2;
    */
-  zoneId: string;
+  id: string;
 
   /**
    * @generated from field: string name = 3;
@@ -43,9 +43,10 @@ export declare type ZoneDefinition = Message<"andara.content.v1.ZoneDefinition">
   name: string;
 
   /**
-   * Sorted by room_id by the compiler. Load must be deterministic: the same
+   * Sorted by room id by the compiler. Load must be deterministic: the same
    * definition must produce the same World, and a repeated field with a stable
-   * order is what gives that (a map would not — see andara/log/v1/log.proto).
+   * order is what gives that. A map would not — see andara/log/v1/log.proto for
+   * why unspecified ordering is disqualifying anywhere near the State Hash.
    *
    * @generated from field: repeated andara.content.v1.RoomDefinition rooms = 4;
    */
@@ -65,9 +66,9 @@ export declare type RoomDefinition = Message<"andara.content.v1.RoomDefinition">
   /**
    * Unique within the Zone. Duplicates are a load error.
    *
-   * @generated from field: string room_id = 1;
+   * @generated from field: string id = 1;
    */
-  roomId: string;
+  id: string;
 
   /**
    * @generated from field: string title = 2;
@@ -80,9 +81,9 @@ export declare type RoomDefinition = Message<"andara.content.v1.RoomDefinition">
   description: string;
 
   /**
-   * Sorted by direction. Every target must resolve to an existing Room, in
-   * this Zone or another, or the load fails naming the file, room, and
-   * direction (AW-SRV-001).
+   * Sorted by direction. Every target must resolve to an existing Room, in this
+   * Zone or another, or the load fails naming the file, room, and direction
+   * (AW-SRV-001).
    *
    * @generated from field: repeated andara.content.v1.ExitDefinition exits = 4;
    */
@@ -110,19 +111,21 @@ export declare type ExitDefinition = Message<"andara.content.v1.ExitDefinition">
   direction: string;
 
   /**
-   * Target Room. Cross-Zone Exits are resolved at load time as
-   * ZoneID+RoomID value pairs, never as pointers — that is ADR-0001's seam
-   * invariant, and it is what allows a Zone to move to another process later
-   * without rewriting its exits.
+   * Target Room. Cross-Zone Exits are resolved at load time as Zone+Room value
+   * pairs, never as pointers — ADR-0001's seam invariant, and what allows a
+   * Zone to move to another process later without rewriting its exits.
    *
-   * @generated from field: string to_zone_id = 2;
+   * Empty `to_zone` means the containing Zone, which is the common case and
+   * keeps intra-Zone exits terse. `to_room` is always required.
+   *
+   * @generated from field: string to_zone = 2;
    */
-  toZoneId: string;
+  toZone: string;
 
   /**
-   * @generated from field: string to_room_id = 3;
+   * @generated from field: string to_room = 3;
    */
-  toRoomId: string;
+  toRoom: string;
 };
 
 /**

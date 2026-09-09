@@ -41,21 +41,33 @@ case "$ACTION" in
     # removed field: remove it, regenerate, and the diff is clean. `buf
     # breaking` is what actually enforces it.
     #
-    # Against main rather than the merge base, so the comparison is against
-    # what is actually released.
+    # Against the merge target rather than the merge base, so the comparison is
+    # against what is actually released.
     #
-    # The `git ls-tree` guard is not defensive padding: on the branch that first
-    # introduces these files, main has no protos, and buf fails outright with
-    # "Module had no .proto files" rather than treating an absent baseline as
-    # nothing to compare. Without the guard, the very commit that adds the
-    # schema cannot pass its own check.
-    if git rev-parse --verify --quiet main >/dev/null &&
-       git ls-tree -r main --name-only -- "$PROTO_DIR" 2>/dev/null | grep -q '\.proto$'; then
+    # origin/main is preferred over the local main branch, which on a developer
+    # machine is usually behind — and a stale baseline makes this check skip or
+    # pass vacuously exactly when it matters. CI fetches main explicitly; this
+    # is what makes the local run agree with it.
+    BASE_REF=""
+    if git rev-parse --verify --quiet origin/main >/dev/null; then
+      BASE_REF="origin/main"
+    elif git rev-parse --verify --quiet main >/dev/null; then
+      BASE_REF="main"
+    fi
+
+    # The `ls-tree` guard is not defensive padding: on the branch that first
+    # introduces these files the baseline has no protos, and buf fails outright
+    # with "Module had no .proto files" rather than treating an absent baseline
+    # as nothing to compare. Without it, the commit adding the schema could not
+    # pass its own check.
+    if [[ -n "$BASE_REF" ]] &&
+       git ls-tree -r "$BASE_REF" --name-only -- "$PROTO_DIR" 2>/dev/null | grep -q '\.proto$'; then
       buf breaking "$PROTO_DIR" \
-        --against ".git#branch=main,subdir=$PROTO_DIR" \
-        || { echo "make: proto-check: breaking schema change (ADR-0007 is additive-only)" >&2; exit 1; }
+        --against ".git#ref=$BASE_REF,subdir=$PROTO_DIR" \
+        || { echo "make: proto-check: breaking schema change vs $BASE_REF (ADR-0007 is additive-only)" >&2; exit 1; }
+      echo "proto-check: no breaking change vs $BASE_REF"
     else
-      echo "proto-check: main has no .proto sources yet; breaking-change check skipped" >&2
+      echo "proto-check: ${BASE_REF:-no baseline branch} has no .proto sources yet; breaking-change check skipped" >&2
     fi
 
     # The determinism rules from ADR-0007 rule 3, mechanically. Anything that

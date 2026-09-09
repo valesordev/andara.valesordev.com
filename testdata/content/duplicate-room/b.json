@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "market-square",
+      "title": "Market again",
+      "description": "Also crowded."
+    }
+  ]
+}
