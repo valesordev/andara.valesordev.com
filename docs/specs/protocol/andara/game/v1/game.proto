@@ -1,0 +1,93 @@
+// The Game service: what a player, andara-cli, or a Behavior Agent talks to.
+//
+// ADR-0003 puts gRPC over HTTP/2 with TLS on the wire and serves Connect and
+// gRPC-Web from the same handler, so this one definition covers every client.
+// AW-SRV-005 implements the server; AW-SRV-010 and AW-SRV-011 implement what
+// Submit and Subscribe actually do.
+
+syntax = "proto3";
+
+package andara.game.v1;
+
+import "andara/game/v1/event.proto";
+
+service Game {
+  // Establish a Session. Returns a SessionID and the negotiated protocol version.
+  rpc OpenSession(OpenSessionRequest) returns (OpenSessionResponse);
+
+  // Submit an Intent as raw text.
+  //
+  // The response means "accepted and ordered", NOT "succeeded" (ADR-0002): the
+  // Command is durable in the log at the returned offset, and its outcome
+  // arrives later on the Event stream. A client that treats this as a result
+  // has misunderstood the architecture.
+  rpc Submit(SubmitRequest) returns (SubmitResponse);
+
+  // Server-streaming, perception-scoped Events for this Session (AW-SRV-004).
+  rpc Subscribe(SubscribeRequest) returns (stream EventEnvelope);
+
+  rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+}
+
+message OpenSessionRequest {
+  // Wire-compatibility negotiation, deliberately separate from protobuf field
+  // evolution: protobuf absorbs additive change, and this integer exists for
+  // what it cannot. AW-SRV-005 owns the negotiation rules.
+  uint32 protocol_version = 1;
+
+  // Opaque to this schema. AW-SRV-008 defines what a credential is; until it
+  // lands, AW-SRV-005 accepts any non-empty value against a stub verifier so
+  // that the seam exists rather than being retrofitted.
+  string auth_token = 2;
+
+  // "andara-cli/0.1", "agent-sdk/0.1". Diagnostic only, never authorization.
+  string client_name = 3;
+}
+
+message OpenSessionResponse {
+  string session_id = 1;
+  uint32 negotiated_version = 2;
+  // Both bounds are returned so a rejected client can report what would work
+  // without a second round trip.
+  uint32 server_min_version = 3;
+  uint32 server_max_version = 4;
+}
+
+message SubmitRequest {
+  string session_id = 1;
+
+  // The player's raw text, exactly as typed. It has crossed no trust boundary.
+  //
+  // This is deliberately not a structured command. AW-SRV-003 puts `Parse` at
+  // the Gateway, before the log, so the client cannot skip it — a structured
+  // intent on the wire would move parsing to the client, which is a
+  // client-authority violation (CLAUDE.md §1) dressed as a schema decision.
+  // The parsed form is andara.log.v1.LoggedCommand, written after authorize.
+  string raw = 2;
+
+  // Client-supplied, echoed on the resulting Events so a client can correlate
+  // its own submission without guessing. Not an idempotency key.
+  string client_ref = 3;
+}
+
+message SubmitResponse {
+  // Where in the log it landed. Durable on the declared number of replicas
+  // before this returns (ADR-0002).
+  int64 accepted_offset = 1;
+  int32 partition = 2;
+}
+
+message SubscribeRequest {
+  string session_id = 1;
+
+  // Resume point. Zero means "from now". If the requested ID is older than the
+  // server can serve, the stream opens with a resync rather than a gap —
+  // AW-SRV-011 owns that behavior.
+  uint64 last_event_id = 2;
+}
+
+message CloseSessionRequest {
+  string session_id = 1;
+}
+
+message CloseSessionResponse {}

@@ -17,6 +17,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # `buf breaking` compares against main (AW-SRV-020), and the default
+          # shallow clone fetches only the tested ref — main would be absent and
+          # the check would skip itself into a vacuous pass.
+          fetch-depth: 0
+
+      - name: make main available for the breaking-change check
+        run: git fetch origin main:main || echo "no origin/main yet"
 
       - uses: actions/setup-go@v5
         with:
