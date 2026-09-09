@@ -1,0 +1,57 @@
+// The snapshot envelope (ADR-0002 §4).
+//
+// A Snapshot is an RTO optimisation, not a correctness mechanism: Kafka holds
+// the authority, and recovery from offset zero is always correct, just slow
+// (AW-SRV-007). What makes a snapshot usable is that it names exactly where in
+// the log it was taken, so the tail can be replayed onto it.
+//
+// The same determinism rules as andara.log.v1 apply here and for the same
+// reason: no map, no float or double, no Any, no Timestamp. This record feeds
+// the State Hash.
+
+syntax = "proto3";
+
+package andara.state.v1;
+
+import "andara/log/v1/log.proto";
+
+message SnapshotEnvelope {
+  // Interpretation version of the body. Separate from protobuf field evolution
+  // (ADR-0007 rule 2): protobuf absorbs an added field, and this integer exists
+  // for a change in what the state *means*.
+  //
+  // A binary that cannot read a state_version refuses to start with both
+  // versions named, rather than starting with a World it has misread. On
+  // rollback that is the difference between replaying from an older snapshot
+  // and silently serving corrupt state (AW-INF-007).
+  uint32 state_version = 1;
+
+  // The tick this snapshot is exactly consistent with.
+  uint64 tick = 2;
+
+  // Where to resume the log from. Recovery seeks to these offsets and replays
+  // forward, so they must be the offsets committed at that tick boundary.
+  repeated andara.log.v1.PartitionOffset offsets = 3;
+
+  // Hash of the state in `body`, comparable to the TickCompleted record for the
+  // same tick. Recovery verifies rather than trusts.
+  bytes state_hash = 4;
+
+  // Which Zone this snapshot covers. Snapshots are per-Zone and keyed to
+  // offsets (ADR-0002), so a Zone can be restored without the whole World.
+  string zone_id = 5;
+
+  // Diagnostic only, never read by recovery logic — the same rule as
+  // LoggedCommand.accepted_at_unix_nano.
+  int64 taken_at_unix_nano = 6;
+
+  // The serialized Zone state. Its shape is AW-SRV-006's to define, and that
+  // story is `draft`: assigning field numbers to a guess about mutable World
+  // state would be assigning them permanently. Bytes keeps the envelope stable
+  // while the body evolves independently, versioned by state_version above.
+  bytes body = 7;
+
+  // Held for AW-SRV-006 and AW-SRV-007 — compression, chunking, and content
+  // addressing of the body are all plausible and none are decided.
+  reserved 8 to 15;
+}

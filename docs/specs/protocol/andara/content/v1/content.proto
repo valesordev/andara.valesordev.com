@@ -1,0 +1,76 @@
+// The content store (ADR-0004).
+//
+// Three compacted topics, and the shape matters because the obvious
+// single-topic design does not actually version anything:
+//
+//   andara.content.blobs.v1     key = sha256(body)   — immutable, permanent
+//   andara.content.versions.v1  key = packID@version — full history retained
+//   andara.content.active.v1    key = packID         — the only mutable pointer
+//
+// Compaction keeps the newest value per key. Keying history by packID@version
+// is what turns that from a history-eraser into a history-preserver, and
+// keying blobs by their own hash means compaction never removes one.
+
+syntax = "proto3";
+
+package andara.content.v1;
+
+// A content blob, addressed by the hash of its body.
+message Blob {
+  // sha256 of `body`. The record key on andara.content.blobs.v1.
+  bytes hash = 1;
+  bytes body = 2;
+  // Diagnostic: what this blob was when it was written.
+  string media_type = 3;
+}
+
+// An immutable version manifest. Keyed by packID@version, so publishing never
+// overwrites a previous version.
+message ContentVersion {
+  string pack_id = 1;
+  // Monotonic per pack, assigned by the server rather than the Builder
+  // (AW-SRV-013).
+  uint64 version = 2;
+
+  // The version this was published on top of. Zero for the first, which is
+  // what makes the history a chain rather than a set.
+  uint64 parent_version = 3;
+
+  repeated BlobRef blobs = 4;
+
+  // Who published it. Every publish is audited (ADR-0004); this is the record,
+  // not the audit trail itself, which lives on andara.audit.v1.
+  string author = 5;
+  int64 published_at_unix_nano = 6;
+
+  // Set when a second approver has approved this version for activation.
+  // Publishing is a single-Builder action; moving the Active Pointer is not
+  // (AW-SRV-013, decided 2026-09-07). Empty means unapproved, and an
+  // activation naming an unapproved version is rejected by the server.
+  string approved_by = 7;
+  int64 approved_at_unix_nano = 8;
+
+  // The core pack version this content was compiled against. ADR-0010 publishes
+  // base Templates as `andara.core`, and a Builder pack pins what it compiled
+  // against so version skew is a legible error rather than a mystery. Empty
+  // until ADR-0010 is accepted.
+  uint64 core_version = 9;
+}
+
+message BlobRef {
+  // Path within the pack. Sorted by the publisher so a manifest encodes
+  // identically for identical content.
+  string path = 1;
+  bytes hash = 2;
+  uint64 size_bytes = 3;
+}
+
+// The Active Pointer: which version of a pack is live. The only mutable record
+// in the content store, and rollback is one write of this (ADR-0004).
+message ActiveVersion {
+  string pack_id = 1;
+  uint64 version = 2;
+  // Who moved the pointer, which is the approver rather than the publisher.
+  string activated_by = 3;
+  int64 activated_at_unix_nano = 4;
+}

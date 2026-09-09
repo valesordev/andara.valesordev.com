@@ -11,9 +11,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `review` | 2 |
 | `in-progress` | 1 |
-| `ready` | 9 |
+| `ready` | 10 |
 | `draft` | 18 |
-| **total** | **30** |
+| **total** | **31** |
 
 ## Attention first
 
@@ -37,19 +37,20 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | claude-code | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 
-### `ready` (9)
+### `ready` (10)
 
 | ID | Epic | Component | Size | Risk | Assignee | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `EPIC-06` | cli | S | low | cursor | andara-cli skeleton — command tree, configuration precedence, and output contract | `AW-INF-001` |
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | cursor | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011` |
-| [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | cursor | World model types and zone definition loading with referential validation at boot | `AW-INF-001` |
+| [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | cursor | World model types and zone definition loading with referential validation at boot | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | cursor | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | cursor | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | cursor | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
-| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | cursor | Protobuf schema, gRPC service definition, and gateway connection lifecycle | `AW-INF-001` |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | cursor | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | cursor | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | cursor | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
+| [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | claude-code | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 
 ### `draft` (18)
 
@@ -106,9 +107,10 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 |----|--------|-------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `ready` | andara-cli play — the text interface as a first-class protocol client |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `ready` | Command pipeline stages split across the log boundary, with look and move |
-| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `ready` | Protobuf schema, gRPC service definition, and gateway connection lifecycle |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `ready` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `ready` | Command ingress — parse, authorize, and produce to the command log |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `ready` | Event egress — server-streaming subscription with per-session backpressure |
+| [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `ready` | Protobuf schema as the wire, log, snapshot, and content contract |
 
 ### `EPIC-04` — Snapshots and recovery
 

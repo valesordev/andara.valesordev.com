@@ -1,0 +1,133 @@
+// The Kafka log: the ordering authority for the entire World (ADR-0002).
+//
+// DETERMINISM RULES — these messages feed the State Hash, so they obey
+// ADR-0007 rule 3 without exception:
+//
+//   * no `map` fields — protobuf does not specify map ordering, so two
+//     encodings of one value would hash differently. Use a `repeated` message
+//     sorted by an explicit key.
+//   * no `float` or `double` — floating-point representation and arithmetic
+//     are not reproducible across platforms, and replay must be exact.
+//   * no `google.protobuf.Any` — its encoding depends on a type registry that
+//     can differ between binaries.
+//   * `int64`/`uint64` rather than Timestamp — one field, no well-known-type
+//     dependency inside a hashed record.
+//
+// A record written today must be readable by a binary built years from now, so
+// field numbers here are permanent. Removed fields become `reserved` and are
+// never reused (ADR-0007 rule 1).
+
+syntax = "proto3";
+
+package andara.log.v1;
+
+// A Command that has been parsed and authorized at the Gateway and produced to
+// its Zone's partition. `Validate` and `Apply` accept only this type, so the
+// log boundary cannot be bypassed by accident (AW-SRV-003).
+//
+// The raw text a player typed is NOT carried here. It is a Gateway input
+// (andara.game.v1.SubmitRequest.raw); by this point it has been parsed, and
+// replaying parse would mean replaying a verb table that may have changed.
+message LoggedCommand {
+  // Partition key input. The Zone determines the partition, and the mapping
+  // hash(zone_id) % 64 is permanent because repartitioning a keyed topic
+  // reorders history (ADR-0002).
+  string zone_id = 1;
+
+  // Who acts. Authorization already happened; this is the authorized actor.
+  string actor_id = 2;
+
+  // Correlation, not authorization. Carried so an Event can be traced back to
+  // the Session that caused it, and so a client's client_ref can be echoed.
+  string session_id = 3;
+  string client_ref = 4;
+
+  // W3C trace parent, so a Command in the log joins the trace that produced it
+  // (AW-SRV-005). Diagnostic: it never affects apply, and it is excluded from
+  // the State Hash for exactly that reason.
+  string trace_id = 5;
+
+  // Wall-clock time the Gateway accepted it, unix nanoseconds. Diagnostic
+  // only. The simulation advances by Tick, never by this value — reading it in
+  // `Apply` would make replay depend on when it ran (ADR-0002, ADR-0008).
+  int64 accepted_at_unix_nano = 6;
+
+  oneof command {
+    Look look = 10;
+    Move move = 11;
+  }
+
+  // Verbs beyond look and move arrive with their own stories. Numbers 12-63
+  // are held for them so that the oneof stays inside the two-byte tag range.
+  reserved 7 to 9, 12 to 63;
+}
+
+message Look {}
+
+message Move {
+  // A Direction label. Deliberately a string, not an enum: the canonical
+  // Direction set is an open design question (AW-SRV-001), and a string lets
+  // the loader reject an unknown direction with a real error rather than the
+  // wire silently dropping an unknown enum member. If Direction becomes closed
+  // later, that is an additive change to validation, not to this schema.
+  string direction = 1;
+}
+
+// An Event as it was emitted by the simulation and written to the log. This is
+// the durable record; andara.game.v1.EventEnvelope is the client-facing,
+// perception-scoped projection of it.
+message Event {
+  uint64 event_id = 1;
+  uint64 tick = 2;
+  string zone_id = 3;
+
+  // The Event's own schema version, for changes protobuf cannot absorb.
+  // Distinct from state_version, which versions snapshot interpretation.
+  uint32 schema_version = 4;
+
+  // Serialized andara.game.v1.EventEnvelope payload. Bytes rather than a
+  // nested message so that the log record's encoding does not change when a
+  // new client-facing payload type is added, and deliberately not Any.
+  bytes payload = 5;
+
+  // Who may perceive this, computed inside the sim before publication
+  // (AW-SRV-004). Never recomputed by a transport.
+  Scope scope = 6;
+}
+
+// Repeated fields here are sorted by the sim before encoding, because this
+// record feeds the State Hash.
+message Scope {
+  string room_zone_id = 1;
+  string room_id = 2;
+  repeated string entity_ids = 3;
+  // Privileged: Game Master and Operator visibility only.
+  bool world = 4;
+}
+
+// The Tick Boundary Record. Replay reads these to know where a tick ended and
+// what the World hashed to at that point (ADR-0002 §4), which is what makes
+// recovery verifiable rather than hopeful.
+message TickCompleted {
+  uint64 tick = 1;
+
+  // Committed offset per partition at the tick boundary. Repeated and sorted
+  // by partition rather than a map, per the determinism rules above.
+  repeated PartitionOffset offsets = 2;
+
+  // Hash of authoritative World state at the end of this tick. Recovery
+  // compares against this; a mismatch halts rather than serving a wrong World
+  // (AW-SRV-007, AW-INF-007).
+  bytes state_hash = 3;
+
+  // Interpretation version of the state this hash covers (ADR-0002 §4).
+  uint32 state_version = 4;
+
+  uint64 events_emitted = 5;
+  uint64 commands_applied = 6;
+}
+
+message PartitionOffset {
+  int32 partition = 1;
+  int64 offset = 2;
+}

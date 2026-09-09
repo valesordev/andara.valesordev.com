@@ -36,18 +36,49 @@ case "$ACTION" in
     ;;
   check)
     buf lint "$PROTO_DIR"
-    TMP="$(mktemp -d)"
-    trap 'rm -rf "$TMP"' EXIT
-    buf generate "$PROTO_DIR" --output "$TMP"
-    # gen/README.md is hand-written and never appears in a regenerated tree. Without
-    # this exclusion, `make check` would go red the day the first .proto lands, blaming
-    # stale codegen for a file that codegen does not produce.
-    if ! diff -rq -x README.md "$TMP/$GEN_DIR" "$GEN_DIR" >/dev/null 2>&1; then
-      STALE="$(diff -rq -x README.md "$TMP/$GEN_DIR" "$GEN_DIR" 2>&1 | head -5)"
-      echo "make: proto-check: generated code is stale (run \`make proto\`):" >&2
-      echo "$STALE" >&2
+
+    # ADR-0007 rule 1 is additive-only, and regenerate-and-diff cannot see a
+    # removed field: remove it, regenerate, and the diff is clean. `buf
+    # breaking` is what actually enforces it.
+    #
+    # Against main rather than the merge base, so the comparison is against
+    # what is actually released.
+    #
+    # The `git ls-tree` guard is not defensive padding: on the branch that first
+    # introduces these files, main has no protos, and buf fails outright with
+    # "Module had no .proto files" rather than treating an absent baseline as
+    # nothing to compare. Without the guard, the very commit that adds the
+    # schema cannot pass its own check.
+    if git rev-parse --verify --quiet main >/dev/null &&
+       git ls-tree -r main --name-only -- "$PROTO_DIR" 2>/dev/null | grep -q '\.proto$'; then
+      buf breaking "$PROTO_DIR" \
+        --against ".git#branch=main,subdir=$PROTO_DIR" \
+        || { echo "make: proto-check: breaking schema change (ADR-0007 is additive-only)" >&2; exit 1; }
+    else
+      echo "proto-check: main has no .proto sources yet; breaking-change check skipped" >&2
+    fi
+
+    # The determinism rules from ADR-0007 rule 3, mechanically. Anything that
+    # feeds the State Hash may not carry a construct whose encoding is
+    # unspecified or unreproducible. Checked here rather than trusted to review
+    # because the failure is silent: a hash that differs across replays.
+    #
+    # Comments are stripped before matching — the rules are documented in these
+    # files, and a guard that trips over its own explanation is a guard people
+    # delete.
+    BAD="$(awk '
+      { line = $0; sub(/\/\/.*/, "", line)
+        if (line ~ /map[[:space:]]*</ ||
+            line ~ /[[:space:]](float|double)[[:space:]]+[A-Za-z_]/ ||
+            line ~ /google\.protobuf\.Any/)
+          printf "%s:%d: %s\n", FILENAME, FNR, $0 }
+    ' "$PROTO_DIR"/andara/log/v1/*.proto "$PROTO_DIR"/andara/state/v1/*.proto 2>/dev/null || true)"
+    if [[ -n "$BAD" ]]; then
+      echo "make: proto-check: non-deterministic construct in a hashed message (ADR-0007 rule 3):" >&2
+      echo "$BAD" >&2
       exit 1
     fi
+
     echo "proto-check: $GEN_DIR matches $PROTO_DIR"
     ;;
   *)
