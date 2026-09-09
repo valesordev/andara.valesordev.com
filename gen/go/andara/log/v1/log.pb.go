@@ -588,7 +588,7 @@ var File_andara_log_v1_log_proto protoreflect.FileDescriptor
 
 const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\n" +
-	"\x17andara/log/v1/log.proto\x12\randara.log.v1\"\xbc\x02\n" +
+	"\x17andara/log/v1/log.proto\x12\randara.log.v1\"\xb0\x02\n" +
 	"\rLoggedCommand\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x19\n" +
 	"\bactor_id\x18\x02 \x01(\tR\aactorId\x12\x1d\n" +
@@ -601,8 +601,7 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\x04look\x18\n" +
 	" \x01(\v2\x13.andara.log.v1.LookH\x00R\x04look\x12)\n" +
 	"\x04move\x18\v \x01(\v2\x13.andara.log.v1.MoveH\x00R\x04moveB\t\n" +
-	"\acommandJ\x04\b\a\x10\n" +
-	"J\x04\b\f\x10@\"\x06\n" +
+	"\acommand\"\x06\n" +
 	"\x04Look\"$\n" +
 	"\x04Move\x12\x1c\n" +
 	"\tdirection\x18\x01 \x01(\tR\tdirection\"\xbc\x01\n" +

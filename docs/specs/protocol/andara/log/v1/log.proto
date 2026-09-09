@@ -57,9 +57,12 @@ message LoggedCommand {
     Move move = 11;
   }
 
-  // Verbs beyond look and move arrive with their own stories. Numbers 12-63
-  // are held for them so that the oneof stays inside the two-byte tag range.
-  reserved 7 to 9, 12 to 63;
+  // Verbs beyond look and move arrive with their own stories, taking numbers
+  // from 12 upward — deliberately NOT `reserved`. A reserved range would have
+  // to shrink to add a verb, and buf treats shrinking one as a breaking change,
+  // so reserving numbers "to hold them" makes the most routine schema change in
+  // the project fail CI. `reserved` is for numbers that have been used and
+  // retired; an unused number needs no ceremony to stay available.
 }
 
 message Look {}

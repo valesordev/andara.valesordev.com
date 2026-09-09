@@ -32,10 +32,11 @@ message EventEnvelope {
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
-  // the single-byte range. AW-SRV-004's EventType strings map one-to-one onto
-  // this oneof; the string form is derived from the field, never carried
-  // alongside it, so the two cannot disagree.
-  reserved 4 to 9;
+  // the single-byte range — 4 through 9 are simply unused, not `reserved`,
+  // because a reserved range must shrink to be used and buf counts that as a
+  // breaking change. AW-SRV-004's EventType strings map one-to-one onto this
+  // oneof; the string form is derived from the field, never carried alongside
+  // it, so the two cannot disagree.
 }
 
 message RoomDescribed {

@@ -51,7 +51,8 @@ message SnapshotEnvelope {
   // while the body evolves independently, versioned by state_version above.
   bytes body = 7;
 
-  // Held for AW-SRV-006 and AW-SRV-007 — compression, chunking, and content
-  // addressing of the body are all plausible and none are decided.
-  reserved 8 to 15;
+  // Compression, chunking, and content addressing of the body are all plausible
+  // additions for AW-SRV-006 and AW-SRV-007, and none are decided. They take
+  // numbers from 8 upward when they arrive; nothing is reserved, because a
+  // reserved range has to shrink to be used and buf counts that as breaking.
 }

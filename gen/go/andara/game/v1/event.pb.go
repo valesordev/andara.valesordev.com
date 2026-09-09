@@ -638,7 +638,7 @@ var File_andara_game_v1_event_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\x87\x05\n" +
+	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\x81\x05\n" +
 	"\rEventEnvelope\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\x04R\aeventId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -652,8 +652,7 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\fzone_faulted\x18\x0e \x01(\v2\x1b.andara.game.v1.ZoneFaultedH\x00R\vzoneFaulted\x12R\n" +
 	"\x12subscriber_dropped\x18\x0f \x01(\v2!.andara.game.v1.SubscriberDroppedH\x00R\x11subscriberDropped\x12R\n" +
 	"\x12simulation_stopped\x18\x10 \x01(\v2!.andara.game.v1.SimulationStoppedH\x00R\x11simulationStoppedB\t\n" +
-	"\apayloadJ\x04\b\x04\x10\n" +
-	"\"\xad\x01\n" +
+	"\apayload\"\xad\x01\n" +
 	"\rRoomDescribed\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12\x14\n" +
