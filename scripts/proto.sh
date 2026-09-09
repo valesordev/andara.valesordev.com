@@ -36,18 +36,61 @@ case "$ACTION" in
     ;;
   check)
     buf lint "$PROTO_DIR"
-    TMP="$(mktemp -d)"
-    trap 'rm -rf "$TMP"' EXIT
-    buf generate "$PROTO_DIR" --output "$TMP"
-    # gen/README.md is hand-written and never appears in a regenerated tree. Without
-    # this exclusion, `make check` would go red the day the first .proto lands, blaming
-    # stale codegen for a file that codegen does not produce.
-    if ! diff -rq -x README.md "$TMP/$GEN_DIR" "$GEN_DIR" >/dev/null 2>&1; then
-      STALE="$(diff -rq -x README.md "$TMP/$GEN_DIR" "$GEN_DIR" 2>&1 | head -5)"
-      echo "make: proto-check: generated code is stale (run \`make proto\`):" >&2
-      echo "$STALE" >&2
+
+    # ADR-0007 rule 1 is additive-only, and regenerate-and-diff cannot see a
+    # removed field: remove it, regenerate, and the diff is clean. `buf
+    # breaking` is what actually enforces it.
+    #
+    # Against the merge target rather than the merge base, so the comparison is
+    # against what is actually released.
+    #
+    # origin/main is preferred over the local main branch, which on a developer
+    # machine is usually behind — and a stale baseline makes this check skip or
+    # pass vacuously exactly when it matters. CI fetches main explicitly; this
+    # is what makes the local run agree with it.
+    BASE_REF=""
+    if git rev-parse --verify --quiet origin/main >/dev/null; then
+      BASE_REF="origin/main"
+    elif git rev-parse --verify --quiet main >/dev/null; then
+      BASE_REF="main"
+    fi
+
+    # The `ls-tree` guard is not defensive padding: on the branch that first
+    # introduces these files the baseline has no protos, and buf fails outright
+    # with "Module had no .proto files" rather than treating an absent baseline
+    # as nothing to compare. Without it, the commit adding the schema could not
+    # pass its own check.
+    if [[ -n "$BASE_REF" ]] &&
+       git ls-tree -r "$BASE_REF" --name-only -- "$PROTO_DIR" 2>/dev/null | grep -q '\.proto$'; then
+      buf breaking "$PROTO_DIR" \
+        --against ".git#ref=$BASE_REF,subdir=$PROTO_DIR" \
+        || { echo "make: proto-check: breaking schema change vs $BASE_REF (ADR-0007 is additive-only)" >&2; exit 1; }
+      echo "proto-check: no breaking change vs $BASE_REF"
+    else
+      echo "proto-check: ${BASE_REF:-no baseline branch} has no .proto sources yet; breaking-change check skipped" >&2
+    fi
+
+    # The determinism rules from ADR-0007 rule 3, mechanically. Anything that
+    # feeds the State Hash may not carry a construct whose encoding is
+    # unspecified or unreproducible. Checked here rather than trusted to review
+    # because the failure is silent: a hash that differs across replays.
+    #
+    # Comments are stripped before matching — the rules are documented in these
+    # files, and a guard that trips over its own explanation is a guard people
+    # delete.
+    BAD="$(awk '
+      { line = $0; sub(/\/\/.*/, "", line)
+        if (line ~ /map[[:space:]]*</ ||
+            line ~ /[[:space:]](float|double)[[:space:]]+[A-Za-z_]/ ||
+            line ~ /google\.protobuf\.Any/)
+          printf "%s:%d: %s\n", FILENAME, FNR, $0 }
+    ' "$PROTO_DIR"/andara/log/v1/*.proto "$PROTO_DIR"/andara/state/v1/*.proto 2>/dev/null || true)"
+    if [[ -n "$BAD" ]]; then
+      echo "make: proto-check: non-deterministic construct in a hashed message (ADR-0007 rule 3):" >&2
+      echo "$BAD" >&2
       exit 1
     fi
+
     echo "proto-check: $GEN_DIR matches $PROTO_DIR"
     ;;
   *)

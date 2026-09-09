@@ -12,7 +12,9 @@ plugins:
   - remote: buf.build/protocolbuffers/go
     out: gen/go
     opt: paths=source_relative
-  - remote: buf.build/grpc/go
+  # Connect, not grpc-go: ADR-0003 serves gRPC, gRPC-Web, and Connect from one
+  # handler, and AW-CLI-001 and AW-SRV-005 both assume Connect's Go client.
+  - remote: buf.build/connectrpc/go
     out: gen/go
     opt: paths=source_relative
   - remote: buf.build/protocolbuffers/python

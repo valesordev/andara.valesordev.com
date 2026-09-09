@@ -1,0 +1,92 @@
+// Events as they reach a client.
+//
+// The sim emits Events and computes their Scope (AW-SRV-004); the transport
+// fans out what the Session is permitted to perceive. Redaction happens inside
+// the sim before publication, so an EventEnvelope on the wire is already
+// exactly what this Session may see — a client never filters for correctness.
+
+syntax = "proto3";
+
+package andara.game.v1;
+
+message EventEnvelope {
+  // Monotonic within a World, never reused, stable across recovery
+  // (AW-SRV-004). A client resumes from this value.
+  uint64 event_id = 1;
+
+  // The Tick this Event was emitted in (ADR-0008).
+  uint64 tick = 2;
+
+  // Echoed from SubmitRequest.client_ref when this Event resulted from this
+  // Session's own submission. Empty otherwise.
+  string client_ref = 3;
+
+  oneof payload {
+    RoomDescribed room_described = 10;
+    CharacterArrived character_arrived = 11;
+    CharacterLeft character_left = 12;
+    CommandRejected command_rejected = 13;
+    ZoneFaulted zone_faulted = 14;
+    SubscriberDropped subscriber_dropped = 15;
+    SimulationStopped simulation_stopped = 16;
+  }
+
+  // Payload numbers start at 10 so that envelope metadata has room to grow in
+  // the single-byte range — 4 through 9 are simply unused, not `reserved`,
+  // because a reserved range must shrink to be used and buf counts that as a
+  // breaking change. AW-SRV-004's EventType strings map one-to-one onto this
+  // oneof; the string form is derived from the field, never carried alongside
+  // it, so the two cannot disagree.
+}
+
+message RoomDescribed {
+  string zone_id = 1;
+  string room_id = 2;
+  string title = 3;
+  string description = 4;
+  repeated string exits = 5;          // Direction labels, sorted
+  repeated string occupants = 6;      // display names, sorted
+}
+
+message CharacterArrived {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
+  string from_direction = 4;          // empty when it did not come through an Exit
+}
+
+message CharacterLeft {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
+  string to_direction = 4;
+}
+
+// A Command that was logged and then failed validate or apply. Pre-log
+// failures never reach the log and are returned on the Submit call instead
+// (AW-SRV-003).
+message CommandRejected {
+  // Stable, machine-readable, snake_case, additive-only — the same taxonomy as
+  // AW-SRV-003's ErrCode: no_such_exit, exit_blocked, actor_not_found,
+  // zone_faulted.
+  string code = 1;
+
+  // Player-facing and player-safe. It must not reveal state the actor cannot
+  // perceive: "there is no exit west" is fine, naming the key that locks a
+  // door the actor cannot see is an information leak (AW-SRV-003).
+  string message = 2;
+}
+
+message ZoneFaulted {
+  string zone_id = 1;
+}
+
+// The server dropped this subscriber rather than blocking the tick
+// (AW-SRV-004). The client's view is now incomplete and it must resubscribe.
+message SubscriberDropped {
+  string reason = 1;
+}
+
+message SimulationStopped {
+  string reason = 1;
+}

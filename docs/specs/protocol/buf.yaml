@@ -13,6 +13,18 @@ lint:
     # Enum values are namespaced by their enum, not by a package-wide prefix. Revisit if
     # this ever produces a real collision.
     - ENUM_VALUE_PREFIX
+
+    # The services are `Game` and `Admin`, not `GameService` and `AdminService`.
+    # `andara.game.v1.Game/OpenSession` is written into ADR-0003, AW-SRV-005's operator
+    # commands, and AW-CLI-004. A linter's naming preference does not get to rewrite an
+    # accepted interface contract, and the fully-qualified name already carries the
+    # package, so the suffix would be redundant as well as breaking.
+    - SERVICE_SUFFIX
+
+    # Subscribe streams `EventEnvelope` directly. Wrapping it in a `SubscribeResponse`
+    # whose only field is the envelope adds a layer to every Event on the hot path to
+    # satisfy a naming convention.
+    - RPC_RESPONSE_STANDARD_NAME
 breaking:
   use:
     - FILE
