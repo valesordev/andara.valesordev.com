@@ -24,6 +24,22 @@ different renderer against a contract that has been in daily use for months.
 The cost is real and named in ADR-0003: onboarding a playtester now means shipping them a binary. For a
 closed launch (ADR-0006) that is acceptable.
 
+**Resolved 2026-09-07 (Brian):** the Text Interface is **permanent, and it is an operator and
+developer tool rather than a player product.** `andara-cli` is text-only for its whole life and will
+never render anything; the rendered client is `CLT`'s job and always will be. That settles ADR-0003's
+open question and it changes this story's centre of gravity: `play` is how a human drives the world
+*and inspects the protocol while doing it* — seeing the Intents and Events going back and forth at a
+technical level is a first-class feature here, not a debugging afterthought.
+
+Two consequences worth stating, because they pull in opposite directions from the obvious reading:
+
+- Polish that only serves players — prose quality, immersion, colour — is worth less than clarity
+  about what the protocol did. A readable transcript still matters, because a human has to play
+  through it for the Phase 1 exit criteria, but it is not the product.
+- Protocol visibility is worth more than it looks. This is the only client that exists for months, so
+  it is also the only way anyone sees a malformed Event, a missed `last_event_id`, or a Session that
+  resynced without saying so.
+
 M1's gate is this command working.
 
 ## User story
@@ -40,13 +56,19 @@ pixel is rendered.
 - Local echo, line editing, history, and Ctrl-C semantics that do not surprise anyone.
 - Clear presentation of the three states a player can be in: connected, world read-only, disconnected.
 - `--output json` emitting the raw Event stream instead of prose, for debugging and for scripted tests.
+- **Protocol visibility.** A mode that shows the Intents sent and the Events received alongside the
+  prose — message name, Session correlation ID, `last_event_id`, and tick where the Event carries one.
+  Toggleable during a session, not only at launch, because the moment you want it is after something
+  looked wrong.
 
 ### Out of scope
-- Authentication UX — `AW-SRV-008`. Until then `--as <name>` opens an anonymous Session.
+- Authentication UX — `AW-SRV-008` owns the login flow. `--as` is **not** anonymous; see below.
 - Any game logic. This client renders and submits; it decides nothing.
 - Client-side prediction. The world is server-authoritative and this client shows what the server said,
   even when that is one tick behind.
-- Colour themes, panes, status bars. A readable scrolling transcript is the whole product.
+- Colour themes, panes, status bars, and any full-screen TUI. A scrolling transcript is the whole
+  presentation, permanently — not a placeholder for something richer.
+- Rendering of any kind, ever. Settled above.
 
 ## Acceptance criteria
 
@@ -168,9 +190,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` A plain scrolling transcript rather than a full-screen TUI. A TUI is more pleasant and
-  much more code, and it competes with the Phase 2 client for the same effort.
-- `[NEEDS BRIAN]` Whether the Text Interface is a permanent supported client or Phase 1 scaffolding.
-  ADR-0003 flags this as open. It decides how much this command deserves — a permanent MUD client is a
-  product, a bootstrap is a tool.
-- `[ASSUMPTION]` `--as <name>` creates an anonymous throwaway Character until `AW-SRV-008` lands.
+- **Resolved 2026-09-07 (Brian):** the Text Interface is permanent, text-only, and operator/developer
+  facing. It never renders. The scrolling-transcript assumption is now a decision, and protocol
+  visibility is in scope. See Context.
+- **Withdrawn, not resolved:** an earlier `[ASSUMPTION]` had `--as <name>` opening an anonymous
+  throwaway Character until `AW-SRV-008` landed. That assumption is **wrong** under Brian's decision
+  that acting-as must record who was really acting: an anonymous `--as` cannot name the real caller,
+  so there is nobody to record. `--as` therefore requires a stored credential from the first version
+  that has it, and until `AW-SRV-008` lands, `play` has no `--as` at all rather than an anonymous one.
+  The alternative — ship anonymous now, add identity later — means an audit trail with a hole in it
+  exactly where the early, least careful commands live.

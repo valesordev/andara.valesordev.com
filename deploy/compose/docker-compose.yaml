@@ -1,0 +1,267 @@
+# Local stack for Andara's World (AW-INF-002).
+#
+# Started by `make up`, never by hand — scripts/stack.sh provisions TLS, checks ports,
+# waits for health, applies the topic declaration from deploy/kafka/topics.yaml, and
+# prints the URLs. Running `docker compose up` directly skips all of that.
+#
+# The stack is deliberately honest: a real broker with real offsets and a real rebalance
+# (ADR-0002 makes Kafka the ordering authority, so an in-memory stand-in would prove
+# nothing), and real TLS (ADR-0003 makes it mandatory on the wire; a stack that does not
+# provision certificates teaches developers to pass an insecure flag).
+#
+# Profiles:
+#   min  — server, Redpanda, Redis. Fast test loops.
+#   full — everything, including observability. The default.
+# The `server` profile is enabled by scripts/stack.sh only once Go sources exist; until
+# AW-SRV-005 lands there is no server image to build.
+
+name: andara
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v25.1.10
+    profiles: [min, full]
+    command:
+      - redpanda
+      - start
+      - --node-id=0
+      - --mode=dev-container
+      - --smp=1
+      - --default-log-level=info
+      # Two listeners deliberately. `internal` is what containers on this network use;
+      # `external` is what the host uses. A single listener breaks one of the two, and the
+      # failure looks like an intermittent client bug rather than a config error.
+      - --kafka-addr=internal://0.0.0.0:29092,external://0.0.0.0:9092
+      - --advertise-kafka-addr=internal://redpanda:29092,external://localhost:${ANDARA_KAFKA_PORT:-9092}
+      - --schema-registry-addr=internal://0.0.0.0:8081,external://0.0.0.0:18081
+      - --rpc-addr=redpanda:33145
+      - --advertise-rpc-addr=redpanda:33145
+      # Redpanda locally, real Kafka in production (ADR-0002 §7). AW-INF-005 must test
+      # against real Kafka before production: rebalance and tiered-storage behavior are
+      # where the two can diverge, and M1 exercises neither.
+    ulimits:
+      # Redpanda derives its maximum partition count from the process file-descriptor
+      # limit. The container default of 1024 caps the cluster at 204 partitions, and this
+      # declaration asks for 210 — andara.commands.v1 alone is 64, permanently (ADR-0002).
+      # Without this the stack comes up healthy and then refuses to create the last three
+      # topics, which is a confusing way to learn about ulimits.
+      nofile:
+        soft: 65535
+        hard: 65535
+    ports:
+      - "${ANDARA_KAFKA_PORT:-9092}:9092"
+      - "${ANDARA_SCHEMA_REGISTRY_PORT:-8081}:8081"
+      - "${ANDARA_REDPANDA_ADMIN_PORT:-9644}:9644"
+    volumes:
+      - redpanda-data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
+      interval: 5s
+      timeout: 5s
+      retries: 24
+      start_period: 10s
+    logging: *default-logging
+
+  redis:
+    image: redis:7.4-alpine
+    profiles: [min, full]
+    command: ["redis-server", "--save", "60", "1", "--appendonly", "no"]
+    ports:
+      - "${ANDARA_REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 3s
+    logging: *default-logging
+
+  postgres:
+    image: postgres:16.6-alpine
+    profiles: [full]
+    environment:
+      POSTGRES_USER: andara
+      POSTGRES_DB: andara
+      # Local only. The DSN in the story carries no password, and a local stack that
+      # demands one is a local stack people work around.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "${ANDARA_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U andara -d andara"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *default-logging
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.116.1
+    profiles: [full]
+    command: ["--config=/etc/otel/config.yaml"]
+    ports:
+      - "${ANDARA_TRACE_PORT:-4317}:4317"     # OTLP gRPC — traces, metrics, and logs
+      - "${ANDARA_OTLP_HTTP_PORT:-4318}:4318" # OTLP HTTP
+    volumes:
+      - ./otel/config.yaml:/etc/otel/config.yaml:ro
+    depends_on:
+      tempo:
+        condition: service_started
+      loki:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+    logging: *default-logging
+
+  prometheus:
+    image: prom/prometheus:v3.1.0
+    profiles: [full]
+    command:
+      - --config.file=/etc/prometheus/prometheus.yaml
+      - --storage.tsdb.retention.time=24h
+      - --web.enable-lifecycle
+    ports:
+      - "${ANDARA_METRICS_PORT:-9090}:9090"
+    volumes:
+      - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    logging: *default-logging
+
+  tempo:
+    image: grafana/tempo:2.7.0
+    profiles: [full]
+    command: ["-config.file=/etc/tempo/config.yaml"]
+    user: "0:0"
+    volumes:
+      - ./tempo/config.yaml:/etc/tempo/config.yaml:ro
+      - tempo-data:/var/tempo
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3200/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 10s
+    logging: *default-logging
+
+  loki:
+    image: grafana/loki:3.3.2
+    profiles: [full]
+    command: ["-config.file=/etc/loki/config.yaml"]
+    user: "0:0"
+    ports:
+      - "${ANDARA_LOKI_PORT:-3100}:3100"
+    volumes:
+      - ./loki/config.yaml:/etc/loki/config.yaml:ro
+      - loki-data:/loki
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3100/ready"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 15s
+    logging: *default-logging
+
+  grafana:
+    image: grafana/grafana:11.4.0
+    profiles: [full]
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_AUTH_DISABLE_LOGIN_FORM: "true"
+      GF_FEATURE_TOGGLES_ENABLE: traceqlEditor
+    ports:
+      - "${ANDARA_DASHBOARD_PORT:-3000}:3000"
+    volumes:
+      # Provisioned from files in the repo, never clicked together in the UI — a dashboard
+      # that exists only in someone's browser is not a deliverable.
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 18
+      start_period: 10s
+    logging: *default-logging
+
+  andara-server:
+    # Built from source rather than pulled: there is no image registry yet, and no story
+    # that publishes one. See deploy/compose/Dockerfile.server.
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.server
+    profiles: [server]
+    environment:
+      ANDARA_GRPC_PORT: "8443"
+      ANDARA_HTTP_PORT: "8080"
+      ANDARA_KAFKA_BROKERS: "redpanda:29092"
+      ANDARA_SCHEMA_REGISTRY: "http://redpanda:8081"
+      ANDARA_REDIS_ADDR: "redis:6379"
+      ANDARA_POSTGRES_DSN: "postgres://andara@postgres:5432/andara"
+      ANDARA_TLS_CERT_FILE: "/etc/andara/tls/server.pem"
+      ANDARA_TLS_KEY_FILE: "/etc/andara/tls/server-key.pem"
+      ANDARA_TLS_CA_FILE: "/etc/andara/tls/ca.pem"
+      ANDARA_OTLP_ENDPOINT: "otel-collector:4317"
+      ANDARA_SERVICE_NAME: "andara-server"
+      ANDARA_ENV: "local"
+      ANDARA_LOG_FORMAT: "json"
+      ANDARA_LOG_LEVEL: "${ANDARA_LOG_LEVEL:-info}"
+    ports:
+      - "${ANDARA_GRPC_PORT:-8443}:8443"
+      # Health and metrics are plaintext and loopback-only on purpose: they are an
+      # operator surface, not a player one.
+      - "127.0.0.1:${ANDARA_HTTP_PORT:-8080}:8080"
+    volumes:
+      - ${ANDARA_TLS_DIR:-../../.local/tls}:/etc/andara/tls:ro
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # Readiness must reflect *simulation* readiness, not process liveness — a server
+      # replaying its log tail has no World to serve yet (AW-INF-003 makes the same
+      # distinction for Kubernetes probes).
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:8080/readyz"]
+      interval: 5s
+      timeout: 3s
+      retries: 60
+      start_period: 10s
+    logging: *default-logging
+
+volumes:
+  # Named volumes rather than bind mounts under ANDARA_DATA_DIR: Redpanda runs as uid 101
+  # and Postgres as uid 999, so a bind mount into a developer-owned directory fails to
+  # write on Linux and behaves differently again on macOS. `make down VOLUMES=1` removes
+  # these and ANDARA_DATA_DIR together, so the documented reset is unchanged.
+  redpanda-data:
+  redis-data:
+  postgres-data:
+  prometheus-data:
+  tempo-data:
+  loki-data:
+  grafana-data:

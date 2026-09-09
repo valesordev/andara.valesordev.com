@@ -1,0 +1,32 @@
+# Local scrape configuration.
+#
+# Scrapes the server directly and the collector's Prometheus exporter, plus Redpanda's own
+# broker and consumer-group metrics. Redpanda's metrics are scraped, not merely exposed:
+# per-partition consumer lag is a dashboard panel and a runbook diagnostic (AW-SRV-002),
+# and a metric nobody scrapes is a metric nobody has.
+
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    env: local
+
+scrape_configs:
+  - job_name: andara-server
+    static_configs:
+      - targets: ["andara-server:8080"]
+    metrics_path: /metrics
+
+  - job_name: otel-collector
+    static_configs:
+      - targets: ["otel-collector:8889"]
+
+  - job_name: redpanda
+    static_configs:
+      - targets: ["redpanda:9644"]
+    metrics_path: /public_metrics
+
+  - job_name: redpanda-internal
+    static_configs:
+      - targets: ["redpanda:9644"]
+    metrics_path: /metrics

@@ -228,6 +228,21 @@ CLAUDE.md §8, plus:
 
 - `[ASSUMPTION]` One Zone per definition. Multi-Zone bundles buy nothing and complicate error
   reporting.
+- `[NEEDS BRIAN]` **Whether Rooms carry Components** (ADR-0010, 2026-09-08). A Room with a `Dark{}` or
+  `NoMagic{}` component is a natural want, and this story defines `Room` as a plain struct.
+
+  The risk is smaller than it first looks and this story should **not** wait on it. Room *topology* —
+  the ID, the exits, the cross-Zone refs, the graph validation that is most of this story — is
+  unaffected either way: a component set would be additional data on a Room, not a replacement for
+  `Exits`. So the answer changes whether `Room` gains one field, which is additive in Go and additive
+  in protobuf (ADR-0007 rule 1).
+
+  What that buys is one instruction rather than a blocker: **do not design `Room`, `Zone`, or the
+  content schema in a way that makes adding a component set a breaking change.** Concretely, that
+  means not treating the room message's field set as closed and not hashing a room in a way that
+  assumes its fields are exactly these. If the answer comes back "Entities and Items only", nothing
+  here changes at all.
+
 - `[NEEDS BRIAN]` The canonical `Direction` set. The loader treats Direction as an opaque string
   until this is answered, which means it cannot yet reject `norht` as a typo. That is a real cost;
   answering this turns typos into boot failures.

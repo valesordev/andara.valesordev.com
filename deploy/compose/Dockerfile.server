@@ -1,0 +1,37 @@
+# Local-stack image for andara-server.
+#
+# Deliberately not a production image: there is no registry and no publish story yet, so
+# this exists to make `make up` run the same binary a developer just built. When image
+# build and publish gets a story, this file is the starting point, not the answer.
+#
+# CLAUDE.md §2: the Dockerfile runs *around* the game, so it is Claude Code's; everything
+# it compiles is Cursor's.
+
+FROM golang:1.24-alpine AS build
+WORKDIR /src
+
+RUN apk add --no-cache git ca-certificates
+
+# Dependency layer first, so a source-only change does not re-download the module graph.
+COPY go.mod go.sum* ./
+RUN go mod download
+
+COPY . .
+
+# Version and commit are stamped in rather than read at runtime: andara_build_info must
+# name the build that is actually running, and a binary that reads its own version from
+# the environment can be lied to.
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 go build \
+      -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+      -o /out/andara-server ./cmd/andara-server
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates wget \
+ && adduser -D -u 10001 andara
+COPY --from=build /out/andara-server /usr/local/bin/andara-server
+USER andara
+EXPOSE 8443 8080
+ENTRYPOINT ["/usr/local/bin/andara-server"]

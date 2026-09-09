@@ -1,0 +1,61 @@
+# Loki, single-binary local mode. The log sink a developer greps by Session correlation ID
+# (AW-INF-002 AC-7). Logs arrive over OTLP from the collector, not from a file shipper, so
+# a log line and its trace carry the same identifiers by construction.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  retention_period: 24h
+  allow_structured_metadata: true
+  # Index labels are bounded; everything unbounded is structured metadata.
+  #
+  # CLAUDE.md §7 rejects Session ID, Room ID, and Entity ID as metric labels for
+  # cardinality reasons, and a Loki stream label is the same hazard wearing a different
+  # hat — one stream per Session is how a log store falls over. session_id and trace_id
+  # stay queryable (`{service="andara-server"} | session_id="..."`) without indexing them.
+  otlp_config:
+    resource_attributes:
+      ignore_defaults: true
+      attributes_config:
+        - action: index_label
+          attributes:
+            - service.name
+            - deployment.environment
+    log_attributes:
+      - action: structured_metadata
+        attributes:
+          - session_id
+          - trace_id
+          - span_id
+          - tick
+          - zone
+
+compactor:
+  working_directory: /loki/compactor
+  retention_enabled: true
+  delete_request_store: filesystem
