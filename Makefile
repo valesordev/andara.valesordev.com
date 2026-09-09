@@ -28,6 +28,11 @@ PROFILE     ?= full
 VOLUMES     ?= 0
 PKG         ?= ./...
 COMPOSE     := deploy/compose/docker-compose.yaml
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+CLI_PKG     := github.com/valesordev/andara/admin/cli
+LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -X $(CLI_PKG).builtAt=$(BUILT_AT)
 
 # Empty when the module has no Go packages yet, which is the state until AW-SRV-001
 # lands. The Go steps skip rather than fail so that `make check` is green from day one.
@@ -36,7 +41,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 .PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
         schemas-apply schemas-check check fmt fmt-check vet lint test \
         proto proto-check backlog backlog-check story adr validate-stories \
-        graph k8s-dry clean
+        graph k8s-dry clean build goldens
 
 ## help: print this target list
 help:
@@ -180,6 +185,17 @@ adr:
 ## k8s-dry: render and validate manifests for ENV=<env>
 k8s-dry:
 	@$(SCRIPTS)/k8s_dry.sh "$(ENV)"
+
+## build: compile andara-cli into ./bin
+build:
+	@mkdir -p bin
+	@$(GO) build -ldflags "$(LDFLAGS_CLI)" -o bin/andara-cli ./cmd/andara-cli
+	@echo "build: bin/andara-cli"
+
+## goldens: regenerate CLI --help golden files
+goldens:
+	@$(GO) test ./admin/cli -count=1 -run '^TestHelpGoldens$$' -args -update
+	@echo "goldens: updated admin/cli/testdata/help"
 
 ## clean: remove build artifacts and local state
 clean:
