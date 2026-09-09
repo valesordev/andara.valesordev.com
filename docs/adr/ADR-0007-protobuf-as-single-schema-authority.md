@@ -73,6 +73,12 @@ docs/specs/protocol/
 - **Content authored by a Builder is now protobuf**, not hand-written YAML. `andara-cli` must offer a
   human-authorable surface that compiles to it, or Builders will hate this. That is a real cost of the
   decision and it belongs in `AW-CLI-003`'s scope, not discovered later.
+- **Protobuf has no inheritance, and content now does (ADR-0010).** The Game Type hierarchy is
+  resolved before it becomes a protobuf message; what is published is the flattened definition plus
+  the chain in the manifest for provenance. The consequence that reaches this ADR: rule 1's
+  additive-only discipline now binds **server type definitions as base classes**, not only the wire
+  format. Renaming or removing a field on a base type breaks every Builder subtype of it, in content
+  that lives outside the repository.
 - **We are foreclosing** JSON on the wire and in the log. `andara-cli --output json` still emits JSON,
   because that is a human and scripting surface, not a protocol.
 

@@ -1,0 +1,149 @@
+{
+  "uid": "andara-tick-health",
+  "title": "Andara — tick health and log lag",
+  "description": "The four SLIs a simulation operator watches: tick duration against the Tick Budget (ADR-0008), tick overruns, simulation lag, and per-partition consumer lag. Metric names come from AW-SRV-002; do not rename a panel without renaming the metric.",
+  "tags": ["andara", "slo"],
+  "timezone": "browser",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-30m", "to": "now" },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Tick duration — p50 / p99 against the 50 ms Tick Budget",
+      "description": "ADR-0008: 100 ms tick interval, 50 ms budget. The SLO is 99.9% of ticks inside the budget over 28 days (docs/specs/slo/tick-health.md).",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "lineWidth": 1, "fillOpacity": 5 },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "calcs": ["max"] } },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "histogram_quantile(0.50, sum(rate(andara_tick_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "refId": "B",
+          "expr": "histogram_quantile(0.99, sum(rate(andara_tick_duration_seconds_bucket[1m])) by (le))",
+          "legendFormat": "p99"
+        },
+        {
+          "refId": "C",
+          "expr": "vector(0.05)",
+          "legendFormat": "Tick Budget (50 ms)"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Simulation lag",
+      "description": "The player-visible symptom, and the only tick metric with an alert on it (SimulationLagging). Overrun count is a cause and is deliberately not alerted.",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 0.5 },
+              { "color": "red", "value": 2 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "refId": "A", "expr": "andara_simulation_lag_seconds", "legendFormat": "lag" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Tick overruns and input starvation",
+      "description": "Ticks that exceeded the budget, and ticks that applied nothing because the log was unavailable. Both are causes; they diagnose the lag panel rather than page on their own.",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "rate(andara_tick_overruns_total[1m])",
+          "legendFormat": "overruns/s"
+        },
+        {
+          "refId": "B",
+          "expr": "rate(andara_tick_input_starved_total[1m])",
+          "legendFormat": "input starved/s"
+        },
+        {
+          "refId": "C",
+          "expr": "rate(andara_ticks_total[1m])",
+          "legendFormat": "ticks/s (expect 10)"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Per-partition consumer lag",
+      "description": "andara_consumer_lag has a bounded cardinality of 64 — one series per partition of andara.commands.v1, and the partition count is permanent (ADR-0002).",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "showLegend": false } },
+      "targets": [
+        { "refId": "A", "expr": "andara_consumer_lag", "legendFormat": "p{{partition}}" },
+        {
+          "refId": "B",
+          "expr": "sum(redpanda_kafka_consumer_group_lag_sum) by (redpanda_group)",
+          "legendFormat": "broker view: {{redpanda_group}}"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Deferred records and checkpoint age",
+      "description": "Backlog beyond max_per_tick, and how much re-apply a restart would cost right now.",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 17 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "andara_tick_deferred_records", "legendFormat": "deferred records" },
+        { "refId": "B", "expr": "andara_checkpoint_age_ticks", "legendFormat": "checkpoint age (ticks)" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "table",
+      "title": "Build and content version",
+      "description": "ADR-0004 decoupled content from code, so reproducing a bug requires naming both. One series per deployed build.",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 17 },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "expr": "andara_build_info", "instant": true, "format": "table" }
+      ]
+    }
+  ]
+}

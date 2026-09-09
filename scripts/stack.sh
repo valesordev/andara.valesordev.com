@@ -1,43 +1,172 @@
 #!/usr/bin/env bash
-# Local stack driver. The compose definition itself is AW-INF-002; this script is the
-# stable interface `make up/down/logs/ps` calls, so those targets do not change when
-# the stack lands.
+# Local stack driver (AW-INF-002). `make up/down/logs/ps` call this; nothing calls
+# `docker compose` directly, because everything around the compose invocation — TLS,
+# port checks, health waiting, topic application — is what makes the stack honest.
+#
+# `make up` returns only when the stack is usable, not when the containers have started.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
-COMPOSE="deploy/compose/docker-compose.yaml"
 
-not_yet() {
-  echo "make: $1: no local stack yet — implement AW-INF-002 (docs/stories/AW-INF-002-local-stack-one-command-up.md)" >&2
-  exit 1
+COMPOSE_FILE="deploy/compose/docker-compose.yaml"
+DATA_DIR="${ANDARA_DATA_DIR:-$REPO/.local/data}"
+TLS_DIR="${ANDARA_TLS_DIR:-$REPO/.local/tls}"
+
+fail() { echo "make: ${ACTION:-up}: $*" >&2; exit 1; }
+
+ACTION="${1:-up}"
+
+command -v docker >/dev/null 2>&1 || fail "docker not found (run \`make bootstrap\`)"
+docker compose version >/dev/null 2>&1 || fail "the docker compose plugin is not installed"
+[[ -f "$COMPOSE_FILE" ]] || fail "missing $COMPOSE_FILE"
+
+dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
+
+# The server profile is enabled only once there is a server to build. Until AW-SRV-005
+# lands, `make up` brings up everything the server will need and says so, rather than
+# failing on a build context that has no main package in it.
+server_profile_args() {
+  if find cmd/andara-server -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+    echo "--profile server"
+  fi
 }
 
-[[ -f "$COMPOSE" ]] || not_yet "${1:-up}"
+# port env-var-name description
+#
+# Every port has an override, and `make up` names the variable rather than making the
+# developer find it (AC-9).
+declare -a PORTS_MIN=(
+  "${ANDARA_KAFKA_PORT:-9092}|ANDARA_KAFKA_PORT|Redpanda Kafka API"
+  "${ANDARA_SCHEMA_REGISTRY_PORT:-8081}|ANDARA_SCHEMA_REGISTRY_PORT|schema registry"
+  "${ANDARA_REDPANDA_ADMIN_PORT:-9644}|ANDARA_REDPANDA_ADMIN_PORT|Redpanda admin and metrics"
+  "${ANDARA_REDIS_PORT:-6379}|ANDARA_REDIS_PORT|Redis hot projection"
+)
+declare -a PORTS_FULL=(
+  "${ANDARA_POSTGRES_PORT:-5432}|ANDARA_POSTGRES_PORT|Postgres tabular projection"
+  "${ANDARA_TRACE_PORT:-4317}|ANDARA_TRACE_PORT|OTLP gRPC receiver"
+  "${ANDARA_OTLP_HTTP_PORT:-4318}|ANDARA_OTLP_HTTP_PORT|OTLP HTTP receiver"
+  "${ANDARA_METRICS_PORT:-9090}|ANDARA_METRICS_PORT|Prometheus"
+  "${ANDARA_DASHBOARD_PORT:-3000}|ANDARA_DASHBOARD_PORT|Grafana"
+  "${ANDARA_LOKI_PORT:-3100}|ANDARA_LOKI_PORT|Loki"
+)
+declare -a PORTS_SERVER=(
+  "${ANDARA_GRPC_PORT:-8443}|ANDARA_GRPC_PORT|andara-server gRPC (TLS)"
+  "${ANDARA_HTTP_PORT:-8080}|ANDARA_HTTP_PORT|andara-server health and metrics"
+)
 
-command -v docker >/dev/null 2>&1 || {
-  echo "make: ${1:-up}: docker not found (run \`make bootstrap\`)" >&2; exit 1;
+port_in_use() {
+  "${PY:-python3}" - "$1" <<'PY'
+import socket, sys
+s = socket.socket()
+s.settimeout(0.4)
+sys.exit(0 if s.connect_ex(("127.0.0.1", int(sys.argv[1]))) == 0 else 1)
+PY
 }
 
-case "${1:-up}" in
+preflight_ports() {
+  local profile="$1"
+  local -a wanted=("${PORTS_MIN[@]}")
+  [[ "$profile" == "full" ]] && wanted+=("${PORTS_FULL[@]}")
+  [[ -n "$(server_profile_args)" ]] && wanted+=("${PORTS_SERVER[@]}")
+
+  for entry in "${wanted[@]}"; do
+    IFS='|' read -r port var desc <<< "$entry"
+    if port_in_use "$port"; then
+      fail "port $port is already in use ($desc). Override it with $var=<port>, or stop whatever holds it."
+    fi
+  done
+}
+
+case "$ACTION" in
   up)
-    docker compose -f "$COMPOSE" --profile "${2:-full}" up -d --wait
+    PROFILE="${2:-full}"
+    [[ "$PROFILE" == "min" || "$PROFILE" == "full" ]] \
+      || fail "PROFILE must be 'min' or 'full', got '$PROFILE'"
+
+    mkdir -p "$DATA_DIR"
+
+    # A stack that is already up is not restarted, and its ports are not re-checked —
+    # they are held by the stack itself (AC-2).
+    RUNNING="$(dc ps -q 2>/dev/null | wc -l | tr -d ' ')"
+    if [[ "$RUNNING" == "0" ]]; then
+      preflight_ports "$PROFILE"
+    fi
+
+    "$REPO/scripts/tls.sh"
+
+    echo "up: starting the $PROFILE stack (this blocks until every service is healthy)"
+    # shellcheck disable=SC2046
+    dc --profile "$PROFILE" $(server_profile_args) up -d --wait --remove-orphans \
+      || fail "one or more services did not become healthy; \`make logs\` shows why"
+
+    # Topics come from deploy/kafka/topics.yaml, applied by AW-INF-004's tool. The compose
+    # file deliberately holds no topic configuration of its own: one declaration, applied
+    # to local and production alike, or they drift.
+    ANDARA_ENV=local "${PY:-python3}" "$REPO/scripts/topics.py" apply --env local
+
+    # A ready-to-use CLI config, so "the CA is trusted out of the box" (AW-INF-002 AC-5)
+    # is one export rather than two flags on every invocation. Written into the repo's
+    # .local/ rather than the developer's global config, because a local stack has no
+    # business editing $XDG_CONFIG_HOME.
+    mkdir -p "$REPO/.local"
+    cat > "$REPO/.local/cli.yaml" <<CLICONF
+# Generated by \`make up\`. Not committed; regenerated on every up.
+# Use with: export ANDARA_CONFIG=$REPO/.local/cli.yaml
+server:
+  address: localhost:${ANDARA_GRPC_PORT:-8443}
+  tls_ca: $TLS_DIR/ca.pem
+CLICONF
+
+    if [[ -z "$(server_profile_args)" ]]; then
+      echo
+      echo "up: andara-server is not running — no Go sources under cmd/andara-server yet (AW-SRV-005)."
+      echo "    Everything it depends on is up and waiting for it."
+    fi
+
+    echo
+    echo "up: the stack is ready"
+    printf '  %-24s %s\n' "Kafka API"        "localhost:${ANDARA_KAFKA_PORT:-9092}"
+    printf '  %-24s %s\n' "Schema registry"  "http://localhost:${ANDARA_SCHEMA_REGISTRY_PORT:-8081}"
+    printf '  %-24s %s\n' "Redpanda admin"   "http://localhost:${ANDARA_REDPANDA_ADMIN_PORT:-9644}/public_metrics"
+    printf '  %-24s %s\n' "Redis"            "localhost:${ANDARA_REDIS_PORT:-6379}"
+    if [[ "$PROFILE" == "full" ]]; then
+      printf '  %-24s %s\n' "Postgres"       "postgres://andara@localhost:${ANDARA_POSTGRES_PORT:-5432}/andara"
+      printf '  %-24s %s\n' "OTLP receiver"  "localhost:${ANDARA_TRACE_PORT:-4317}"
+      printf '  %-24s %s\n' "Prometheus"     "http://localhost:${ANDARA_METRICS_PORT:-9090}"
+      printf '  %-24s %s\n' "Loki"           "http://localhost:${ANDARA_LOKI_PORT:-3100}"
+      printf '  %-24s %s\n' "Grafana"        "http://localhost:${ANDARA_DASHBOARD_PORT:-3000}/d/andara-tick-health"
+    fi
+    if [[ -n "$(server_profile_args)" ]]; then
+      printf '  %-24s %s\n' "andara-server"  "localhost:${ANDARA_GRPC_PORT:-8443} (gRPC, TLS)"
+      printf '  %-24s %s\n' "server health"  "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/readyz"
+    fi
+    printf '  %-24s %s\n' "TLS CA"           "$TLS_DIR/ca.pem"
+    echo
+    echo "  andara-cli: export ANDARA_CONFIG=$REPO/.local/cli.yaml"
     ;;
+
   down)
+    # Stopping an already-stopped stack is not an error (AC-3).
     if [[ "${2:-0}" == "1" ]]; then
-      docker compose -f "$COMPOSE" down --volumes
+      dc --profile min --profile full --profile server down --volumes --remove-orphans
+      rm -rf "$DATA_DIR"
+      echo "down: stack stopped, volumes and $DATA_DIR removed; the next \`make up\` starts from an empty log"
     else
-      docker compose -f "$COMPOSE" down
+      dc --profile min --profile full --profile server down --remove-orphans
+      echo "down: stack stopped; volumes retained"
     fi
     ;;
+
   logs)
-    if [[ -n "${2:-}" ]]; then docker compose -f "$COMPOSE" logs -f "$2";
-    else docker compose -f "$COMPOSE" logs -f; fi
+    if [[ -n "${2:-}" ]]; then dc logs -f "$2"; else dc logs -f; fi
     ;;
+
   ps)
-    docker compose -f "$COMPOSE" ps
+    dc --profile min --profile full --profile server ps
     ;;
+
   *)
-    echo "make: stack: unknown action '$1'" >&2; exit 2
+    fail "unknown action '$ACTION'"
     ;;
 esac

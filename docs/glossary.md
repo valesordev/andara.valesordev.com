@@ -113,6 +113,10 @@ Version currently live. The only mutable thing in the content store. Rollback is
 **Content Blob** — An immutable content body on `andara.content.blobs.v1`, keyed by its SHA-256. Keys
 never repeat, so compaction never removes one.
 
+**Content Language** — The purpose-built, text-based language Builders author content in, compiled by
+`andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
+of the compiled output. Its grammar is `AW-CLI-003`'s.
+
 **Content Pack** — A versioned bundle of Zone Definitions, Item Definitions, NPC Definitions, and
 dialogue that the server loads as a set. Authored outside the repository by Builders and published
 through `andara-cli` (ADR-0004).
@@ -167,10 +171,39 @@ used as the correlation ID on every log line, span, and Command in its path.
 Story `As a <role>` lines use exactly these. "User" is not a role.
 
 **Builder** — Authors world content: Zones, Rooms, Items, NPCs, dialogue, and Behaviors. Works through
-`andara-cli` and the content store, **without repository access** (ADR-0004). Untrusted by the system
-in the security sense.
+`andara-cli` and the content store, **without repository access** — confirmed 2026-09-07; a Builder
+who needs a server change opens a GitHub issue (ADR-0004). Untrusted by the system in the security
+sense. May activate content only with a second approver.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
+
+**Component** — A named, namespaced unit of data attached to a Template: `andara.core.Wieldable`,
+`pets.Aggro`. Components hold data and never logic — logic is a Go system inside the tick or a Python
+Behavior outside it (ADR-0005, ADR-0010). Components are the composition axis of the type system, so
+"flaming" attaches to a sword and a dragon alike without either being related to the other. A Template
+holds at most one Component of a given type.
+
+**Game Object** — Any content-defined thing that participates in the type system: an Entity, an Item,
+a Behavior, and further kinds not yet named. The kind set is open by construction (ADR-0010).
+
+**Game Type** — See Template. The two terms mean the same thing; Template is preferred because it says
+what the thing does.
+
+**System** — Go code inside the simulation that reads Components and acts on them in the tick. Written
+by Developers, never by Builders. The counterpart to a Behavior, which is Python, written by Builders,
+and runs outside the tick.
+
+**Template** — A named Game Type: a definition in a single-inheritance hierarchy that contains a set of
+Components. `FIRE_SWORD extends SWORD` and adds `FireDamage{amount: 5}`. A subtype may override an
+inherited Component field by field and may add new Components; it may never remove either, because
+anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base Templates ship in the
+server's `andara.core` Content Pack; Builder Templates extend them and pin the core version they
+compiled against (ADR-0010).
+
+Overriding a *function* is not part of this hierarchy. Functions live in Behaviors, which are Python
+classes in Behavior Agents, where inheritance is Python's own and Builders may subtype freely
+(ADR-0005). A Behavior is bound to a Template by a Component, which is the single seam between the two
+inheritance systems.
 
 **Game Master** — Live-world authority: moderates players, intervenes in the running World, inspects
 and adjusts state at runtime. Acts *in* the game. GM powers are `[NEEDS BRIAN]`.

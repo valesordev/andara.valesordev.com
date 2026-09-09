@@ -1,0 +1,24 @@
+Operator, builder, and player tooling for Andara's World
+
+Usage:
+  andara-cli [flags]
+  andara-cli [command]
+
+Available Commands:
+  completion  Generate shell completion scripts
+  config      Show and inspect CLI configuration
+  help        Help about any command
+  version     Print version, commit, and build date
+
+Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+  -h, --help                    help for andara-cli
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)
+
+Use "andara-cli [command] --help" for more information about a command.

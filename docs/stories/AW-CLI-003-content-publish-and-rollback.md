@@ -32,9 +32,15 @@ I was wrong, so that world-building is a fast loop rather than a release process
 ## Scope
 
 ### In scope
-- A human-authorable source format for content, and the compile step to the canonical protobuf.
+- The **grammar specification** for the Content Language (ADR-0009), including the Game Type
+  hierarchy from ADR-0010, and the compile step to the canonical protobuf. The compiler resolves
+  `extends` chains and emits flattened definitions with the chain retained in the manifest. The decision to build a purpose-built text language rather than map YAML onto
+  the protobuf is made; the syntax is this story's to design, with a Builder in the room.
 - `content publish` — compile, validate locally, upload blobs, create a version manifest.
-- `content activate` — move the Active Pointer. Deliberately separate from publish, per `AW-SRV-013` AC-2.
+- `content activate` — move the Active Pointer. Deliberately separate from publish, per `AW-SRV-013`
+  AC-2, and now also because activation requires a second approver: this command **surfaces** the
+  approval state and renders the rejection when an unapproved version is activated. It enforces
+  nothing — the server is the security boundary (`AW-SRV-013`).
 - `content rollback` — activate a prior version, which is one pointer move.
 - `content history` and `content diff` between versions, which the version chain makes possible.
 - Clear reporting of the server's rejection findings, which are the same findings `content validate`
@@ -42,8 +48,11 @@ I was wrong, so that world-building is a fast loop rather than a release process
 
 ### Out of scope
 - The server-side publish path — `AW-SRV-013`.
-- In-game building. `[NEEDS BRIAN]` on whether it is a design goal; it would publish through the same
-  topics, so nothing here forecloses it.
+- In-game building — a design goal as of 2026-09-07, for Admins and Builders rather than players, with
+  its own epic (`EPIC-11`) and explicitly not Phase 1. It publishes through the same three topics, so
+  nothing here forecloses it. The one thing this story should avoid is accumulating assumptions that
+  make `andara-cli` the *only* writer, because it is now known not to be.
+- Enforcement of the two-person rule — `AW-SRV-013`.
 - Concurrent editing and conflict resolution. ADR-0004 is explicit that last-pointer-move-wins is the
   whole concurrency model, and the CLI should make that visible rather than hide it.
 
@@ -94,9 +103,19 @@ test gates merges — a format that cannot be read back is not an authoring form
 
 ## Open questions
 
-- `[NEEDS BRIAN]` The authoring format. YAML is the obvious default and is diffable and familiar; a
-  purpose-built DSL reads better for room descriptions and exits and is more work. This decides how
-  pleasant world-building feels, which for a MUD is not a small thing.
-- `[NEEDS BRIAN]` Whether activation should require a second approver. Publish and activate are already
-  separate, so a two-person rule for a live world is nearly free here.
-- `[NEEDS BRIAN]` Whether in-game building is a design goal, carried from ADR-0004.
+- **Resolved 2026-09-07 (Brian): a purpose-built, text-based language**, recorded as ADR-0009. Text
+  is explicit — diffable, greppable, reviewable. What this story now owes is the grammar itself, plus
+  three things ADR-0009 flags as the difference between a compiler that helps and one that does not:
+  error messages that name a line rather than a field, a formatter so that Builders do not argue about
+  layout, and a corpus of source files that must keep compiling, which is the only mechanical check
+  the language will have against breaking changes.
+- **Resolved 2026-09-07 (Brian): activation requires a second approver.** Not as a compliance control
+  — as a way to let more people contribute content while keeping a human moderation step in front of
+  the live World. `AW-SRV-013` enforces; this command surfaces.
+- **Resolved 2026-09-07 (Brian): in-game building is a design goal**, for Admins and Builders, not
+  players. `EPIC-11`, not Phase 1.
+- **Gated by ADR-0010** (`proposed`, 2026-09-08), which specifies the Game Type hierarchy this
+  grammar must express: single inheritance, value overrides, new values, no removal, and no functions
+  — those live in Python Behaviors (ADR-0005). This story does not reach `ready` until that ADR is
+  accepted, because a language that cannot express subtyping has to change to add it, and changing
+  this language is a breaking change to everything already authored.

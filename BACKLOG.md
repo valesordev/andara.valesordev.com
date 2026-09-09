@@ -9,8 +9,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 1 |
-| `ready` | 11 |
+| `review` | 2 |
+| `in-progress` | 1 |
+| `ready` | 9 |
 | `draft` | 18 |
 | **total** | **30** |
 
@@ -19,23 +20,29 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `review` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton | review by brian |
+| [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command | review by brian |
 
 ## By status
 
-### `review` (1)
+### `review` (2)
 
 | ID | Epic | Component | Size | Risk | Assignee | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `EPIC-01` | infra | M | low | claude-code | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton | — |
+| [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | claude-code | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
 
-### `ready` (11)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Assignee | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | claude-code | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
+
+### `ready` (9)
 
 | ID | Epic | Component | Size | Risk | Assignee | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `EPIC-06` | cli | S | low | cursor | andara-cli skeleton — command tree, configuration precedence, and output contract | `AW-INF-001` |
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | cursor | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011` |
-| [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | claude-code | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
-| [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | claude-code | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | cursor | World model types and zone definition loading with referential validation at boot | `AW-INF-001` |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | cursor | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | cursor | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
@@ -76,7 +83,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `review` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton |
-| [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `ready` | Local stack — Redpanda, datastores, observability, and TLS with one command |
+| [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `draft` | Kubernetes workload topology, volumes, and probes for andara-server |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `draft` | Ingress, certificate management, and gRPC/Connect routing |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `draft` | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback |
@@ -156,7 +163,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `ready` | Kafka topic and schema registry provisioning as code |
+| [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `in-progress` | Kafka topic and schema registry provisioning as code |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `draft` | Kafka operational contract, degradation mode, and availability SLO |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `draft` | Redis hot projection from the event topic |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `draft` | Postgres tabular projection for accounts, rosters, and builder queries |

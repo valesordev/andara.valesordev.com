@@ -71,8 +71,27 @@ in-world justification.
 
 Out of scope for this ADR and for Phase 1: `andara-cli` is the publish path. Whether a web editor or
 an in-game Builder mode is layered on later is a product decision, and both would publish through the
-same three topics, so neither is foreclosed. `[NEEDS BRIAN]` — in-game building is a MUD tradition and
-if it is a design goal rather than a convenience, it deserves its own epic.
+same three topics, so neither is foreclosed.
+
+**Resolved 2026-09-07 (Brian), three answers:**
+
+1. **No Builder has repository access**, confirming this ADR's assumption. A Builder who needs a
+   server change opens a GitHub issue. The content store is therefore the only Builder-facing write
+   path, which is what makes publish-time authorization and audit load-bearing rather than defensive.
+2. **Activating content requires a second approver.** Publishing stays a single-Builder action; moving
+   the Active Pointer needs a distinct second identity. Brian's reasoning is the part worth keeping:
+   it lets more people contribute while keeping a human moderation step in front of the live World.
+   `AW-SRV-013` owns the rule — the server is the security boundary.
+3. **In-game building is a design goal**, for Admins and Builders, not for players. It gets its own
+   epic (`EPIC-11`) and it is explicitly not Phase 1. Since it publishes through these same three
+   topics, nothing in this ADR changes; what changes is that the authoring surface is now known to be
+   plural, so `andara-cli` should not accumulate assumptions that make it the only writer.
+
+Alongside (3), Brian stated that **Builders can build new game types that subtype server types.** That
+is a content-model constraint, not an authoring-surface one, and its semantics are not yet specified —
+what a server type is, what subtyping means, and what a subtype may override are all open. It
+constrains ADR-0009's language and it may constrain `AW-SRV-001`'s world model. Recorded in the
+glossary as `[NEEDS BRIAN]`; nothing is built on it until it is defined.
 
 ## Consequences
 

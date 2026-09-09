@@ -6,26 +6,42 @@
 # Onboarding on a new machine, in full:
 #     make bootstrap && make up && make check
 
-SHELL := /usr/bin/env bash
+SHELL := bash
 .SHELLFLAGS := -euo pipefail -c
 .DEFAULT_GOAL := help
 .ONESHELL:
+
+# Pinned tooling lives in ./bin (see scripts/bootstrap.sh), ahead of whatever the
+# developer happens to have installed globally. This is what makes "CI runs the same
+# check the developer does" true for tool versions and not only for target names.
+export PATH := $(CURDIR)/bin:$(PATH)
 
 PY          ?= python3
 GO          ?= go
 SCRIPTS     := scripts
 ENV         ?= dev
+# The stack targets talk to a broker, and a broker is a place, not an environment name.
+# ENV=dev with replication_factor 3 against a single-node local Redpanda would fail in a
+# confusing way, so the topic targets default to local and are overridden explicitly.
+ANDARA_ENV  ?= local
 PROFILE     ?= full
 VOLUMES     ?= 0
 PKG         ?= ./...
 COMPOSE     := deploy/compose/docker-compose.yaml
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+CLI_PKG     := github.com/valesordev/andara/admin/cli
+LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -X $(CLI_PKG).builtAt=$(BUILT_AT)
 
 # Empty when the module has no Go packages yet, which is the state until AW-SRV-001
 # lands. The Go steps skip rather than fail so that `make check` is green from day one.
-HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -print -quit 2>/dev/null)
+HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*' -print -quit 2>/dev/null)
 
-.PHONY: help bootstrap up down logs ps check fmt fmt-check vet lint test \
-        backlog backlog-check story adr validate-stories graph k8s-dry clean
+.PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
+        schemas-apply schemas-check check fmt fmt-check vet lint test \
+        proto proto-check backlog backlog-check story adr validate-stories \
+        graph k8s-dry clean build goldens
 
 ## help: print this target list
 help:
@@ -56,8 +72,28 @@ logs:
 ps:
 	@$(SCRIPTS)/stack.sh ps
 
-## check: fmt, vet, lint, test, story validation, manifest validation — what CI runs
-check: fmt-check vet lint test validate-stories backlog-check k8s-dry
+## tls: provision the local CA and server certificate; FORCE=1 to reissue
+tls:
+	@$(SCRIPTS)/tls.sh
+
+## topics-apply: create missing Kafka topics from deploy/kafka/topics.yaml
+topics-apply:
+	@$(PY) $(SCRIPTS)/topics.py apply --env $(ANDARA_ENV)
+
+## topics-diff: fail if a live topic has drifted from the declaration
+topics-diff:
+	@$(PY) $(SCRIPTS)/topics.py diff --env $(ANDARA_ENV)
+
+## schemas-apply: register protobuf schemas with the schema registry
+schemas-apply:
+	@echo "make: schemas-apply: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
+
+## schemas-check: fail on a backward-incompatible schema change
+schemas-check:
+	@echo "make: schemas-check: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
+
+## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
+check: fmt-check vet lint test proto-check validate-stories backlog-check k8s-dry
 	@echo "check: all clean"
 
 ## fmt: format Go sources in place
@@ -108,6 +144,14 @@ else
 	@$(GO) test -race -count=1 $(PKG)
 endif
 
+## proto: regenerate committed protobuf code from docs/specs/protocol/
+proto:
+	@$(SCRIPTS)/proto.sh gen
+
+## proto-check: fail if committed protobuf code is stale
+proto-check:
+	@$(SCRIPTS)/proto.sh check
+
 ## backlog: regenerate BACKLOG.md from story frontmatter
 backlog:
 	@$(PY) $(SCRIPTS)/gen_backlog.py
@@ -141,6 +185,17 @@ adr:
 ## k8s-dry: render and validate manifests for ENV=<env>
 k8s-dry:
 	@$(SCRIPTS)/k8s_dry.sh "$(ENV)"
+
+## build: compile andara-cli into ./bin
+build:
+	@mkdir -p bin
+	@$(GO) build -ldflags "$(LDFLAGS_CLI)" -o bin/andara-cli ./cmd/andara-cli
+	@echo "build: bin/andara-cli"
+
+## goldens: regenerate CLI --help golden files
+goldens:
+	@$(GO) test ./admin/cli -count=1 -run '^TestHelpGoldens$$' -args -update
+	@echo "goldens: updated admin/cli/testdata/help"
 
 ## clean: remove build artifacts and local state
 clean:
