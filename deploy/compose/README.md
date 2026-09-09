@@ -25,7 +25,7 @@ make down VOLUMES=1      # stop and reset to an empty log
 | Tempo | — | Trace backend. Reached through Grafana. |
 | Loki | 3100 | The log sink you grep by Session correlation ID. |
 | Grafana | 3000 | Provisioned dashboard and datasources, from files in this directory. |
-| andara-server | 8443 (gRPC/TLS), 8080 (health, loopback) | Started only once `cmd/andara-server` has Go sources (AW-SRV-005). |
+| andara-server | 8443 (gRPC/TLS, not listening yet), 8080 (health, metrics, loopback) | Started once `cmd/andara-server` has Go sources. Local stack uses `content.source=dir` with `testdata/content/valid` until AW-SRV-012. |
 
 CLAUDE.md §8 requires instrumentation verified against a real backend rather than merely
 registered. That is what this stack is for.

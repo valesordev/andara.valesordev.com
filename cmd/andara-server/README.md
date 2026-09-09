@@ -6,4 +6,10 @@ Wiring only: flag/env parsing, telemetry setup, dependency construction, signal 
 it constructs lives under `server/`. The simulation core is `server/sim`, which the depguard rule in
 `.golangci.yml` keeps dependency-free.
 
-First story to put source here: `AW-SRV-005`.
+```
+ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/valid \
+  ./bin/andara-server --validate-only ; echo $?   # 0
+
+ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/dangling \
+  ./bin/andara-server --validate-only ; echo $?   # 1
+```

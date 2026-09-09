@@ -13,42 +13,41 @@ syntax = "proto3";
 package andara.content.v1;
 
 message ZoneDefinition {
-  // Rejected at load with both versions named when the server does not support
-  // it, rather than being partially understood (ADR-0004).
+  // Rejected at load with both the file's version and the supported range
+  // named, rather than being partially understood (ADR-0004).
   uint32 format_version = 1;
 
-  string zone_id = 2;
+  string id = 2;
   string name = 3;
 
-  // Sorted by room_id by the compiler. Load must be deterministic: the same
+  // Sorted by room id by the compiler. Load must be deterministic: the same
   // definition must produce the same World, and a repeated field with a stable
-  // order is what gives that (a map would not — see andara/log/v1/log.proto).
+  // order is what gives that. A map would not — see andara/log/v1/log.proto for
+  // why unspecified ordering is disqualifying anywhere near the State Hash.
   repeated RoomDefinition rooms = 4;
 
-  // The Zone→Partition mapping is hash(zone_id) % 64, computed at load rather
-  // than carried here (AW-SRV-001). Content does not get to choose its
-  // partition: the mapping is permanent because repartitioning a keyed topic
-  // reorders history (ADR-0002).
+  // The Zone→Partition mapping is hash(id) % 64, computed at load rather than
+  // carried here (AW-SRV-001). Content does not get to choose its partition:
+  // the mapping is permanent because repartitioning a keyed topic reorders
+  // history (ADR-0002).
 }
 
 message RoomDefinition {
   // Unique within the Zone. Duplicates are a load error.
-  string room_id = 1;
+  string id = 1;
   string title = 2;
   string description = 3;
 
-  // Sorted by direction. Every target must resolve to an existing Room, in
-  // this Zone or another, or the load fails naming the file, room, and
-  // direction (AW-SRV-001).
+  // Sorted by direction. Every target must resolve to an existing Room, in this
+  // Zone or another, or the load fails naming the file, room, and direction
+  // (AW-SRV-001).
   repeated ExitDefinition exits = 4;
 
   // ADR-0010's component set attaches here, at field 5, when that ADR is
   // accepted — a Room carrying a Dark{} or NoMagic{} component is a natural
-  // want. It is not `reserved`: adding the field later is additive and needs no
-  // reservation, while a reserved range would have to shrink to accept it,
-  // which buf counts as a breaking change. Assigning a permanent number to an
-  // unaccepted design is what ADR-0007 rule 1 makes expensive, so the number
-  // stays unassigned and this comment carries the intent.
+  // want. It is deliberately not `reserved`: adding the field later is
+  // additive and needs no reservation, while a reserved range would have to
+  // shrink to accept it, which buf counts as a breaking change.
 }
 
 message ExitDefinition {
@@ -58,10 +57,12 @@ message ExitDefinition {
   // on the wire, which is silently worse.
   string direction = 1;
 
-  // Target Room. Cross-Zone Exits are resolved at load time as
-  // ZoneID+RoomID value pairs, never as pointers — that is ADR-0001's seam
-  // invariant, and it is what allows a Zone to move to another process later
-  // without rewriting its exits.
-  string to_zone_id = 2;
-  string to_room_id = 3;
+  // Target Room. Cross-Zone Exits are resolved at load time as Zone+Room value
+  // pairs, never as pointers — ADR-0001's seam invariant, and what allows a
+  // Zone to move to another process later without rewriting its exits.
+  //
+  // Empty `to_zone` means the containing Zone, which is the common case and
+  // keeps intra-Zone exits terse. `to_room` is always required.
+  string to_zone = 2;
+  string to_room = 3;
 }

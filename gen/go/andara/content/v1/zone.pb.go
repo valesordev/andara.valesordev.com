@@ -33,14 +33,15 @@ const (
 
 type ZoneDefinition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// Rejected at load with both versions named when the server does not support
-	// it, rather than being partially understood (ADR-0004).
+	// Rejected at load with both the file's version and the supported range
+	// named, rather than being partially understood (ADR-0004).
 	FormatVersion uint32 `protobuf:"varint,1,opt,name=format_version,json=formatVersion,proto3" json:"format_version,omitempty"`
-	ZoneId        string `protobuf:"bytes,2,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	Id            string `protobuf:"bytes,2,opt,name=id,proto3" json:"id,omitempty"`
 	Name          string `protobuf:"bytes,3,opt,name=name,proto3" json:"name,omitempty"`
-	// Sorted by room_id by the compiler. Load must be deterministic: the same
+	// Sorted by room id by the compiler. Load must be deterministic: the same
 	// definition must produce the same World, and a repeated field with a stable
-	// order is what gives that (a map would not — see andara/log/v1/log.proto).
+	// order is what gives that. A map would not — see andara/log/v1/log.proto for
+	// why unspecified ordering is disqualifying anywhere near the State Hash.
 	Rooms         []*RoomDefinition `protobuf:"bytes,4,rep,name=rooms,proto3" json:"rooms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -83,9 +84,9 @@ func (x *ZoneDefinition) GetFormatVersion() uint32 {
 	return 0
 }
 
-func (x *ZoneDefinition) GetZoneId() string {
+func (x *ZoneDefinition) GetId() string {
 	if x != nil {
-		return x.ZoneId
+		return x.Id
 	}
 	return ""
 }
@@ -107,12 +108,12 @@ func (x *ZoneDefinition) GetRooms() []*RoomDefinition {
 type RoomDefinition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique within the Zone. Duplicates are a load error.
-	RoomId      string `protobuf:"bytes,1,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	Id          string `protobuf:"bytes,1,opt,name=id,proto3" json:"id,omitempty"`
 	Title       string `protobuf:"bytes,2,opt,name=title,proto3" json:"title,omitempty"`
 	Description string `protobuf:"bytes,3,opt,name=description,proto3" json:"description,omitempty"`
-	// Sorted by direction. Every target must resolve to an existing Room, in
-	// this Zone or another, or the load fails naming the file, room, and
-	// direction (AW-SRV-001).
+	// Sorted by direction. Every target must resolve to an existing Room, in this
+	// Zone or another, or the load fails naming the file, room, and direction
+	// (AW-SRV-001).
 	Exits         []*ExitDefinition `protobuf:"bytes,4,rep,name=exits,proto3" json:"exits,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -148,9 +149,9 @@ func (*RoomDefinition) Descriptor() ([]byte, []int) {
 	return file_andara_content_v1_zone_proto_rawDescGZIP(), []int{1}
 }
 
-func (x *RoomDefinition) GetRoomId() string {
+func (x *RoomDefinition) GetId() string {
 	if x != nil {
-		return x.RoomId
+		return x.Id
 	}
 	return ""
 }
@@ -183,12 +184,14 @@ type ExitDefinition struct {
 	// naming the file and line. A closed enum would drop it as an unknown member
 	// on the wire, which is silently worse.
 	Direction string `protobuf:"bytes,1,opt,name=direction,proto3" json:"direction,omitempty"`
-	// Target Room. Cross-Zone Exits are resolved at load time as
-	// ZoneID+RoomID value pairs, never as pointers — that is ADR-0001's seam
-	// invariant, and it is what allows a Zone to move to another process later
-	// without rewriting its exits.
-	ToZoneId      string `protobuf:"bytes,2,opt,name=to_zone_id,json=toZoneId,proto3" json:"to_zone_id,omitempty"`
-	ToRoomId      string `protobuf:"bytes,3,opt,name=to_room_id,json=toRoomId,proto3" json:"to_room_id,omitempty"`
+	// Target Room. Cross-Zone Exits are resolved at load time as Zone+Room value
+	// pairs, never as pointers — ADR-0001's seam invariant, and what allows a
+	// Zone to move to another process later without rewriting its exits.
+	//
+	// Empty `to_zone` means the containing Zone, which is the common case and
+	// keeps intra-Zone exits terse. `to_room` is always required.
+	ToZone        string `protobuf:"bytes,2,opt,name=to_zone,json=toZone,proto3" json:"to_zone,omitempty"`
+	ToRoom        string `protobuf:"bytes,3,opt,name=to_room,json=toRoom,proto3" json:"to_room,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -230,16 +233,16 @@ func (x *ExitDefinition) GetDirection() string {
 	return ""
 }
 
-func (x *ExitDefinition) GetToZoneId() string {
+func (x *ExitDefinition) GetToZone() string {
 	if x != nil {
-		return x.ToZoneId
+		return x.ToZone
 	}
 	return ""
 }
 
-func (x *ExitDefinition) GetToRoomId() string {
+func (x *ExitDefinition) GetToRoom() string {
 	if x != nil {
-		return x.ToRoomId
+		return x.ToRoom
 	}
 	return ""
 }
@@ -248,23 +251,21 @@ var File_andara_content_v1_zone_proto protoreflect.FileDescriptor
 
 const file_andara_content_v1_zone_proto_rawDesc = "" +
 	"\n" +
-	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\x9d\x01\n" +
+	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\x94\x01\n" +
 	"\x0eZoneDefinition\x12%\n" +
-	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x17\n" +
-	"\azone_id\x18\x02 \x01(\tR\x06zoneId\x12\x12\n" +
+	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x0e\n" +
+	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x127\n" +
-	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\"\x9a\x01\n" +
-	"\x0eRoomDefinition\x12\x17\n" +
-	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12\x14\n" +
+	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\"\x91\x01\n" +
+	"\x0eRoomDefinition\x12\x0e\n" +
+	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x127\n" +
-	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exits\"j\n" +
+	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exits\"`\n" +
 	"\x0eExitDefinition\x12\x1c\n" +
-	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x1c\n" +
-	"\n" +
-	"to_zone_id\x18\x02 \x01(\tR\btoZoneId\x12\x1c\n" +
-	"\n" +
-	"to_room_id\x18\x03 \x01(\tR\btoRoomIdB\xc9\x01\n" +
+	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x17\n" +
+	"\ato_zone\x18\x02 \x01(\tR\x06toZone\x12\x17\n" +
+	"\ato_room\x18\x03 \x01(\tR\x06toRoomB\xc9\x01\n" +
 	"\x15com.andara.content.v1B\tZoneProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03ACX\xaa\x02\x11Andara.Content.V1\xca\x02\x11Andara\\Content\\V1\xe2\x02\x1dAndara\\Content\\V1\\GPBMetadata\xea\x02\x13Andara::Content::V1b\x06proto3"
 
 var (
