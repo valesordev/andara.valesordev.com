@@ -8,7 +8,7 @@ status: review
 size: M
 depends_on: [AW-INF-001, AW-INF-004]
 blocks: [AW-INF-003, AW-SRV-002]
-assignee: claude-code
+lane: architecture
 risk: medium
 ---
 

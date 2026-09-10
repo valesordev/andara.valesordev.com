@@ -8,7 +8,7 @@ status: review
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-CLI-002, AW-CLI-003, AW-CLI-004]
-assignee: cursor
+lane: implementation
 risk: low
 ---
 

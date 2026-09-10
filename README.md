@@ -39,9 +39,10 @@ shell commands that is not a target is a defect.
 
 ## Who writes what
 
-Claude Code writes what runs *around* the game — specifications, stories, ADRs, infrastructure,
-CI, runbooks. Cursor writes what runs *in* the game — Go and TypeScript application source and its
-tests. See `CLAUDE.md` §2.
+Work splits into two lanes: *architecture* is what runs **around** the game — specifications,
+stories, ADRs, infrastructure, CI, runbooks — and *implementation* is what runs **in** it, the Go
+and TypeScript application source and its tests. Claude Code works both, in that order. Every
+story declares its lane; `docs/status.md` reports the two separately. See `CLAUDE.md` §2.
 
 ## Architecture
 
