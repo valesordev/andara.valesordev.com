@@ -111,7 +111,7 @@ One file, `deploy/kafka/topics.yaml`, applied everywhere.
 
 | Topic | Partitions | Cleanup | RF (prod / local) | Notes |
 |-------|-----------:|---------|-------------------|-------|
-| `andara.commands.v1` | **64** | delete | 3 / 1 | the WAL; partition count is permanent |
+| `andara.commands.v1` | **64** | delete | 3 / 1 | the WAL; partition count is permanent. `retention.ms: -1` — infinite, decided 2026-09-10 |
 | `andara.events.v1` | 64 | delete | 3 / 1 | derived Events + Tick Boundary Records |
 | `andara.state.v1` | 64 | **compact** | 3 / 1 | current state per aggregate; what the indexes read (ADR-0002 §5.5) |
 | `andara.audit.v1` | 6 | delete, long retention | 3 / 1 | privileged actions |
@@ -267,6 +267,22 @@ CLAUDE.md §8, plus:
 - `[ASSUMPTION]` Schema registry compatibility mode is `BACKWARD` — new readers can read old data,
   which is what replay of an old log requires. `FULL` would also forbid changes that break old readers
   of new data; worth considering once Behavior Agents version-skew from the server.
-- `[NEEDS BRIAN]` Retention on `andara.commands.v1`. Infinite retention with tiered storage makes the
-  entire World history replayable forever, which is a genuinely valuable debugging and audit property.
-  Finite retention is cheaper. This is a cost decision.
+- **Resolved 2026-09-10 (Brian): infinite retention, with tiered storage as the mechanism.**
+  `retention.ms: -1` on `andara.commands.v1` is applied in `deploy/kafka/topics.yaml` and verified —
+  `-1` round-trips through `topics-apply` and `topics-diff` at creation.
+
+  **Tiered storage itself is not enabled, and needs two things this decision did not settle.** Measured
+  against the running broker on 2026-09-10:
+
+  1. **An S3-compatible bucket.** `cloud_storage_enabled` refuses to turn on without
+     `cloud_storage_region`, `_bucket`, `_access_key`, `_secret_key` (or the Azure equivalents). MinIO
+     locally, real object storage in production. On a single box (`AW-INF-003`) a local MinIO puts the
+     archive on the same disk as the log, which is archival, not durability.
+  2. `[NEEDS BRIAN]` **A Redpanda enterprise licence.** The broker reports
+     `Type: free_trial, Organization: Redpanda Built-In Evaluation Period`. Tiered Storage is an
+     enterprise feature, so it works during the trial and stops when the trial ends. Infinite retention
+     without tiered storage means the log grows on local disk forever, which on this box is a capacity
+     question with a date on it.
+
+  Until both are settled, retention is infinite **on local disk**. The properties are applied in
+  `AW-INF-005`, which owns the operational contract and is where disk growth becomes an alert.

@@ -191,7 +191,8 @@ CLAUDE.md §8, plus:
   Connect from one definition per ADR-0003. `AW-CLI-001` and `AW-SRV-005` both already assume it.
 - `[ASSUMPTION]` `buf` remote plugins for generation. They need network access at `make proto` time.
   Committed generated code means a clone still builds offline; only regenerating needs the network.
-- `[NEEDS BRIAN]` The canonical `Direction` set, carried from `AW-SRV-001`. `direction` is a string in
-  this schema, which is what lets the loader reject an unknown value with a real error rather than the
-  schema rejecting it as an unknown enum member. If Direction becomes a closed enum later, that is an
-  additive change to the loader's validation, not to the wire.
+- **Resolved 2026-09-10 (Brian): the canonical `Direction` set is closed** — the twelve in
+  `docs/glossary.md`. `direction` stays a **string** in this schema, which is the outcome this story
+  argued for: closing the set is a change to the loader's validation, not to the wire, so the schema
+  needs no change and the set can grow later without one. The comments in `log.proto` and `zone.proto`
+  are updated to say the set is closed and where it lives.

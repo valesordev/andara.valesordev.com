@@ -28,7 +28,7 @@ topics:
   - name: andara.commands.v1
     partitions: 64
     cleanup.policy: delete
-    retention.ms: 2592000000      # 30 days
+    retention.ms: -1              # infinite
     why: |
       The write-ahead log for the World. 64 partitions is a permanent choice: the
       partition is derived from the Zone key, so repartitioning reorders history.

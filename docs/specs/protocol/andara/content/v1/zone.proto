@@ -43,18 +43,23 @@ message RoomDefinition {
   // (AW-SRV-001).
   repeated ExitDefinition exits = 4;
 
-  // ADR-0010's component set attaches here, at field 5, when that ADR is
-  // accepted — a Room carrying a Dark{} or NoMagic{} component is a natural
-  // want. It is deliberately not `reserved`: adding the field later is
+  // ADR-0010 was accepted on 2026-09-10 and decision 8 says Rooms and Zones
+  // carry Components. The component set attaches here, at field 5, in
+  // AW-SRV-021. Still deliberately not `reserved`: adding the field is
   // additive and needs no reservation, while a reserved range would have to
   // shrink to accept it, which buf counts as a breaking change.
+  //
+  // It will be `repeated`, sorted by component type, because a Room's
+  // components feed the State Hash and ADR-0007 rule 3 forbids maps there.
 }
 
 message ExitDefinition {
-  // A Direction label, not an enum. The canonical set is an open question
-  // (AW-SRV-001), and a string lets the loader reject `norht` with an error
-  // naming the file and line. A closed enum would drop it as an unknown member
-  // on the wire, which is silently worse.
+  // A Direction label, not an enum. The canonical set is closed as of
+  // 2026-09-10 — the twelve in docs/glossary.md — but it is closed in the
+  // loader's validation, not here: a string lets the loader reject `norht`
+  // with an error naming the file and line, where a closed enum would drop it
+  // as an unknown member on the wire, which is silently worse. Growing the set
+  // stays a validation change, never a schema change.
   string direction = 1;
 
   // Target Room. Cross-Zone Exits are resolved at load time as Zone+Room value

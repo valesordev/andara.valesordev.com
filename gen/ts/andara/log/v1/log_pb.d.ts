@@ -129,11 +129,12 @@ export declare const LookSchema: GenMessage<Look>;
  */
 export declare type Move = Message<"andara.log.v1.Move"> & {
   /**
-   * A Direction label. Deliberately a string, not an enum: the canonical
-   * Direction set is an open design question (AW-SRV-001), and a string lets
-   * the loader reject an unknown direction with a real error rather than the
-   * wire silently dropping an unknown enum member. If Direction becomes closed
-   * later, that is an additive change to validation, not to this schema.
+   * A Direction label. Deliberately a string, not an enum. The canonical
+   * Direction set was closed on 2026-09-10 (docs/glossary.md) and this stayed
+   * a string, exactly as planned: closing the set is a change to validation,
+   * never to the wire. A string lets the parser reject an unknown direction
+   * with a real error where the wire would silently drop an unknown enum
+   * member, and it lets the set grow without a schema change.
    *
    * @generated from field: string direction = 1;
    */

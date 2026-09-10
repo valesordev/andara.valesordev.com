@@ -7,7 +7,7 @@ type: feature
 status: done
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
-blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002]
+blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002, AW-SRV-021]
 lane: implementation
 risk: medium
 ---
@@ -246,30 +246,26 @@ Every item holds except one, which cannot yet be satisfied by anything:
 
 ## Open questions
 
-All resolved at review on 2026-09-10. Kept rather than deleted: a story that shows what it decided
-and what it handed on is worth more later than one that shows only its conclusion.
+All three resolved on 2026-09-10. Kept rather than deleted: a story that shows what it decided and
+what it handed on is worth more later than one that shows only its conclusion.
 
 - ~~`[ASSUMPTION]` One Zone per definition.~~ **Confirmed by Brian, 2026-09-10.** One Zone per
   definition file is the decision, not an assumption. The loader enforces it — a second definition
   declaring a ZoneID already seen is `duplicate_zone` — and `zone.proto` encodes it by giving
   `ZoneDefinition` a single `id`. `format_version` remains the hook if multi-Zone bundles are ever
   wanted; they would be a new format version, not a reinterpretation of this one.
-
-- ~~`[NEEDS BRIAN]` Whether Rooms carry Components (ADR-0010).~~ **Carried forward to ADR-0010,
-  2026-09-10.** Not answered, and deliberately not blocking: the decision stays with the ADR. What
-  this story owed the question, it paid — adding a component set is still additive in both
-  directions. `Room` is a plain struct with no closed field set; `CanonicalBytes` serializes named
-  fields and hashes no field set, so a Room that gains a component set does not change the encoding
-  of a Room without one; and `RoomDefinition` field 5 is left free and unreserved in `zone.proto`.
-
-- ~~`[NEEDS BRIAN]` The canonical `Direction` set.~~ **Carried forward to AW-SRV-020, 2026-09-10.**
-  `Direction` stayed an opaque string, so the loader still cannot reject `norht` as a typo — a real
-  cost, stated plainly. Closing it is behaviour this story never specified: enforcing a closed set
-  adds a validation rule and an `ErrCode`, which wants grooming rather than a tail on a finished
-  story. `docs/status.md` already carries the question against `AW-SRV-020`, so nothing is lost by
-  this story no longer carrying it. `zone.proto` documents why `direction` is a string and not an
-  enum: an unknown enum member is dropped silently on the wire, which is worse than a rejected string.
-
+- **Resolved 2026-09-10 (Brian): Rooms and Zones do carry Components** (ADR-0010 decision 8, now
+  accepted). The instruction this story gave itself — *do not design `Room`, `Zone`, or the content
+  schema in a way that makes adding a component set a breaking change* — was followed, and it paid:
+  `zone.proto` left `RoomDefinition` field 5 open and unreserved, and `Room` is a plain struct that
+  gains a field. On the implementation side the same instruction shaped `CanonicalBytes`, which
+  serializes named fields and hashes no field set, so a Room that gains a component set does not
+  change the encoding of a Room that has none. **This story is not reopened.** `AW-SRV-021` adds the
+  component set.
+- **Resolved 2026-09-10 (Brian): the canonical `Direction` set is closed** — the twelve in
+  `docs/glossary.md`, each with a reverse. `direction` stays a string on the wire; the set is enforced
+  in the loader, so `norht` becomes a boot failure naming the file and line. That enforcement does not
+  exist yet — this story shipped with Direction opaque — and it is `AW-SRV-021`'s to add.
 - Per ADR-0007 the canonical format is protobuf. The Builder-facing authoring surface that compiles
   to it is `AW-CLI-003`'s problem — flagged here because protobuf is not hand-authorable and pretending
   otherwise would make Builders hate this. Unchanged; dir-mode protobuf JSON is the test and CLI
