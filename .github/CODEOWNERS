@@ -1,0 +1,71 @@
+# Code owners for andara.valesordev.com.
+#
+# GitHub uses this to request review automatically. It is also the machine-readable
+# form of CLAUDE.md §2's implementation boundary — with one important caveat, stated
+# here rather than discovered later:
+#
+#   Every path below is owned by @solo-seven, because that is the only account with
+#   write access. Claude Code and Cursor both push as it. GitHub cannot express
+#   "this path belongs to the architecture lane and that one to the implementation
+#   lane" when both lanes are the same user, so the lane split lives in the section
+#   headings and comments. Treat those as the contract; treat the @solo-seven column
+#   as GitHub bookkeeping.
+#
+# Consequence worth knowing: with a single owner who is also the author of every PR,
+# GitHub will not request a review (you cannot review your own pull request). This
+# file therefore documents and surfaces ownership; it does not gate anything. The
+# `main` ruleset today has approvals=0 and require_code_owner_review=false, which is
+# the correct setting for a solo repository — turning code-owner review ON with one
+# collaborator would make every PR permanently unmergeable.
+
+# ---------------------------------------------------------------------------
+# Default
+# ---------------------------------------------------------------------------
+*                           @solo-seven
+
+# ---------------------------------------------------------------------------
+# Claude Code's lane — runs *around* the game: specify, build, ship, operate,
+# observe. CLAUDE.md §2, tiebreaker rule 2.
+#
+# A change here from the implementation lane is the signal to stop and check.
+# The zone.proto collision on 2026-09-09 is the worked example: AW-SRV-001 needed
+# ZoneDefinition, the schema had not merged, and a second .proto was written. The
+# field numbers happened to agree. Had they not, they would now be permanent
+# under ADR-0002 with a log written against them.
+# ---------------------------------------------------------------------------
+
+# The schema authority (ADR-0007). Field numbers here are permanent.
+/docs/specs/protocol/       @solo-seven
+/buf.gen.yaml               @solo-seven
+
+# Generated from the above and committed (ADR-0007 rule 5). Never hand-edited;
+# a diff here without a matching .proto diff means someone edited output.
+/gen/                       @solo-seven
+
+# Planning and decisions. Story status is frontmatter; BACKLOG.md is generated.
+/docs/                      @solo-seven
+/BACKLOG.md                 @solo-seven
+/CLAUDE.md                  @solo-seven
+
+# Infrastructure, automation, and the single automation surface (CLAUDE.md §9).
+/deploy/                    @solo-seven
+/scripts/                   @solo-seven
+/.github/                   @solo-seven
+/Makefile                   @solo-seven
+/.golangci.yml              @solo-seven
+/.editorconfig              @solo-seven
+/.dockerignore              @solo-seven
+
+# ---------------------------------------------------------------------------
+# Cursor's lane — runs *in* the game. CLAUDE.md §2, tiebreaker rule 1.
+#
+# Application source and its tests. Claude Code writes contracts and test plans
+# for these, never the implementations.
+# ---------------------------------------------------------------------------
+/cmd/                       @solo-seven
+/server/                    @solo-seven
+/admin/                     @solo-seven
+/agents/                    @solo-seven
+/client/                    @solo-seven
+/go.mod                     @solo-seven
+/go.sum                     @solo-seven
