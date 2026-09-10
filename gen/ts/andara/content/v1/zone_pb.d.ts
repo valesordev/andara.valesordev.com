@@ -101,10 +101,12 @@ export declare const RoomDefinitionSchema: GenMessage<RoomDefinition>;
  */
 export declare type ExitDefinition = Message<"andara.content.v1.ExitDefinition"> & {
   /**
-   * A Direction label, not an enum. The canonical set is an open question
-   * (AW-SRV-001), and a string lets the loader reject `norht` with an error
-   * naming the file and line. A closed enum would drop it as an unknown member
-   * on the wire, which is silently worse.
+   * A Direction label, not an enum. The canonical set is closed as of
+   * 2026-09-10 — the twelve in docs/glossary.md — but it is closed in the
+   * loader's validation, not here: a string lets the loader reject `norht`
+   * with an error naming the file and line, where a closed enum would drop it
+   * as an unknown member on the wire, which is silently worse. Growing the set
+   * stays a validation change, never a schema change.
    *
    * @generated from field: string direction = 1;
    */
