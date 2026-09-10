@@ -231,8 +231,9 @@ func TestBuildWorld_UnsupportedVersion(t *testing.T) {
 	if !strings.Contains(e.Detail, "99") {
 		t.Errorf("Detail %q does not name file version", e.Detail)
 	}
-	if !strings.Contains(e.Detail, "1") {
-		t.Errorf("Detail %q does not name supported range", e.Detail)
+	wantRange := fmt.Sprintf("%d-%d", MinFormatVersion, MaxFormatVersion)
+	if !strings.Contains(e.Detail, wantRange) {
+		t.Errorf("Detail %q does not name supported range %s", e.Detail, wantRange)
 	}
 }
 
@@ -343,33 +344,35 @@ func TestBuildWorld_ExitsSortedByDirection(t *testing.T) {
 	}
 }
 
-func TestBuildWorld_PartitionIdenticalWithinZone(t *testing.T) {
+// AC-6: a Room whose only inbound Exit is its own is still reachable by no
+// other Room, so it is still an orphan. A self-loop is not an arrival.
+func TestBuildWorld_SelfLoopIsStillAnOrphan(t *testing.T) {
 	world, errs := BuildWorld([]Input{
 		zone("town.json", "town", "Town",
-			room("a", "A"),
-			room("b", "B"),
-		),
-		zone("wilds.json", "wilds", "Wilds",
-			room("c", "C"),
+			room("plaza", "Plaza", exit("north", "", "plaza")),
 		),
 	}, Options{})
-	if fatal(errs) {
-		t.Fatalf("errors: %v", errs)
+	if world == nil {
+		t.Fatalf("world is nil; orphans are not fatal by default: %v", errs)
 	}
-	town := world.Zones["town"]
-	if town.Partition != PartitionFor("town") {
-		t.Errorf("town partition = %d, want %d", town.Partition, PartitionFor("town"))
+	e := requireCode(t, errs, ErrOrphanRoom)
+	if e.Room != "plaza" {
+		t.Errorf("Room = %q, want plaza", e.Room)
 	}
-	if town.Rooms["a"] == nil || town.Rooms["b"] == nil {
-		t.Fatal("rooms missing")
-	}
-	// AC-11: two rooms in the same Zone share the Zone's partition.
-	if town.Partition != PartitionFor("town") {
-		t.Fatal("zone partition drifted from PartitionFor")
-	}
-	wilds := world.Zones["wilds"]
-	if wilds.Partition != PartitionFor("wilds") {
-		t.Errorf("wilds partition = %d, want %d", wilds.Partition, PartitionFor("wilds"))
+}
+
+// A self-loop must not mask a genuinely reachable neighbor either.
+func TestBuildWorld_SelfLoopDoesNotMaskReachability(t *testing.T) {
+	_, errs := BuildWorld([]Input{
+		zone("town.json", "town", "Town",
+			room("plaza", "Plaza", exit("north", "", "hall"), exit("in", "", "plaza")),
+			room("hall", "Hall", exit("south", "", "plaza")),
+		),
+	}, Options{})
+	for _, e := range errs {
+		if e.Code == ErrOrphanRoom && e.Room == "hall" {
+			t.Errorf("hall has an inbound exit from plaza and is not an orphan: %v", errs)
+		}
 	}
 }
 

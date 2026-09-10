@@ -49,11 +49,13 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 
 	inputs, loadErrs := content.Load(rt.Cfg.ContentSource, rt.Cfg.ContentPath)
 	loadFatal := false
+	errorCount := 0
 	for _, e := range loadErrs {
 		telemetry.LogFinding(ctx, rt.Tel.Log, e, rt.Cfg.StrictOrphans)
 		rt.Tel.Metrics.ValidationErrors.WithLabelValues(string(e.Code)).Inc()
 		if e.Fatal() {
 			loadFatal = true
+			errorCount++
 		}
 	}
 
@@ -62,6 +64,9 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		Source:        rt.Cfg.ContentSourceName(),
 	}
 
+	// error_count on content.validate covers both phases. A boot that failed in
+	// the source adapter never reaches BuildWorld, and a span reporting zero
+	// errors on a failed boot is worse than no span.
 	ctx, vspan := rt.Tel.Tracer.Start(ctx, "content.validate")
 	var (
 		world *sim.World
@@ -71,7 +76,6 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		world, errs = sim.BuildWorld(inputs, opts)
 	}
 	buildFatal := false
-	errorCount := 0
 	for _, e := range errs {
 		telemetry.LogFinding(ctx, rt.Tel.Log, e, rt.Cfg.StrictOrphans)
 		rt.Tel.Metrics.ValidationErrors.WithLabelValues(string(e.Code)).Inc()

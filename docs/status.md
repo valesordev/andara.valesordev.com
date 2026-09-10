@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-31 stories — 1 in-progress · 5 review · 7 ready · 18 draft
+31 stories — 6 review · 7 ready · 18 draft
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -13,11 +13,11 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-001  World model types and zone definition loading with referential validation at b…
-         branch aw-srv-001-world-model-and-zone-loading
+  now    — nothing in flight
   next   AW-SRV-005  ready  gRPC gateway — TLS, session lifecycle, and protocol ver…  (unblocks 5)
-  review AW-CLI-001 — run the §8 checklist, then flip to done
-  held   6 ready, blocked: AW-SRV-004, AW-SRV-002, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
+  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
+  review AW-SRV-001, AW-CLI-001 — run the §8 checklist, then flip to done
+  held   5 ready, blocked: AW-SRV-004, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
 
 ## Decisions the lanes are waiting on
 
