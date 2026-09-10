@@ -8,7 +8,7 @@ status: ready
 size: M
 depends_on: [AW-SRV-002, AW-SRV-003]
 blocks: [AW-SRV-006, AW-SRV-011, AW-SRV-019]
-assignee: cursor
+lane: implementation
 risk: medium
 ---
 

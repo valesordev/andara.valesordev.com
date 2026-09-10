@@ -8,7 +8,7 @@ status: review
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-SRV-001, AW-SRV-005]
-assignee: claude-code
+lane: architecture
 risk: high
 ---
 
@@ -18,7 +18,7 @@ ADR-0007 makes protobuf the single schema authority for the wire, the Kafka log,
 content. That schema is an interface contract, so CLAUDE.md §2 puts it on Claude Code's side of the
 line: it *specifies*, it does not run in the game. It was originally folded into `AW-SRV-005`
 alongside the gateway implementation, which put a contract and its consumer in one story assigned to
-Cursor. This story is that half, split out.
+the implementation lane. This story is that half, split out.
 
 The split is not bookkeeping. Field numbers assigned here are permanent — ADR-0002 makes the log the
 authority for all World state, so a record written today must be readable by a binary built in three
@@ -46,7 +46,7 @@ future client, so that a contract change is one reviewable diff rather than four
 
 ### Out of scope
 - The gRPC/Connect server, TLS, session lifecycle, negotiation, interceptors, drain — `AW-SRV-005`.
-- The canonical-encoding **helper**, which is Go and therefore Cursor's. This story states the rule and
+- The canonical-encoding **helper**, which is Go and therefore implementation lane. This story states the rule and
   constrains the schema so the rule is satisfiable; `AW-SRV-005` implements and tests it.
 - Registering schemas with the registry — `AW-INF-004`, which this story unblocks.
 - Any message for a `draft` story: Characters, Accounts, Items, Behaviors, session persistence. Naming

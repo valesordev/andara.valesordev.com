@@ -19,7 +19,11 @@ COMPONENTS = {"SRV": "server", "CLI": "cli", "INF": "infra", "CLT": "client"}
 TYPES = ["feature", "infra", "spike", "chore", "bug"]
 STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
 SIZES = ["S", "M", "L"]
-ASSIGNEES = ["cursor", "claude-code"]
+# The lane a story belongs to: does it produce a contract, or the thing built to it?
+# This was `assignee` while two tools split the work. The split was never really about
+# who held the keyboard — it is about which kind of artifact the story produces, and
+# that distinction survives one agent doing both.
+LANES = ["architecture", "implementation"]
 RISKS = ["low", "medium", "high"]
 
 # (key, kind, allowed) — order is the required frontmatter order.
@@ -33,7 +37,7 @@ STORY_SCHEMA = [
     ("size", "enum", SIZES),
     ("depends_on", "list", None),
     ("blocks", "list", None),
-    ("assignee", "enum", ASSIGNEES),
+    ("lane", "enum", LANES),
     ("risk", "enum", RISKS),
 ]
 

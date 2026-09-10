@@ -8,7 +8,7 @@ status: draft
 size: M
 depends_on: [AW-INF-001, AW-INF-002]
 blocks: [AW-INF-006, AW-INF-007]
-assignee: claude-code
+lane: architecture
 risk: high
 ---
 

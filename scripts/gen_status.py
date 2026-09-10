@@ -33,9 +33,11 @@ HEADER = (
 # unmerged work is how two lanes deadlock.
 SATISFIED = ("done", "review")
 
-LANES = [
-    ("claude-code", "Architecture", "specs, ADRs, infra, automation"),
-    ("cursor", "Implementation", "server and cli source, tests"),
+# One agent works both lanes. They stay separate in this report because they are still
+# two different prompts: write the contract, or build to it.
+LANE_VIEWS = [
+    ("architecture", "Architecture", "contracts, specs, ADRs, infra, automation"),
+    ("implementation", "Implementation", "server and cli source, tests"),
 ]
 
 # Only list items. ADR-0008 mentions the tag in prose ("the largest `[NEEDS BRIAN]` in the
@@ -116,24 +118,24 @@ def render():
     out.append("Regenerate with `make status`; `make check` fails if this file is stale.\n")
 
     surfaced = []
-    for assignee, lane, scope in LANES:
-        mine = [d for d in stories if d.get("assignee") == assignee]
+    for lane, heading, scope in LANE_VIEWS:
+        mine = [d for d in stories if d.get("lane") == lane]
         now = sorted([d for d in mine if d.get("status") == "in-progress"], key=rank)
         review = sorted([d for d in mine if d.get("status") == "review"], key=rank)
         ready = sorted([d for d in mine if d.get("status") == "ready" and satisfied(d)], key=rank)
         held = [d for d in mine if d.get("status") == "ready" and not satisfied(d)]
 
-        # Grooming a draft IS the architecture lane's work, so a draft is a legitimate
-        # next item there. Cursor never picks up a draft — it has no contract to build to.
-        if assignee == "claude-code" and not ready:
+        # Falling back to a draft used to be architecture-only, because the tool that held
+        # the implementation lane could not groom. One agent can, so both lanes fall back —
+        # the status word on the `next` line already says which verb applies.
+        if not ready:
             ready = sorted([d for d in mine if d.get("status") == "draft"], key=rank)[:1]
 
-        out.append("\n## %s lane — %s · %s\n\n" % (lane, assignee, scope))
+        out.append("\n## %s lane — %s\n\n" % (heading, scope))
 
         for d in now[:1]:
             out.append("  now    %s  %s\n" % (d["id"], fit(d["title"], 79)))
-            if assignee == "cursor":
-                out.append("         branch %s\n" % branch_for(d["_path"], d["id"]))
+            out.append("         branch %s\n" % branch_for(d["_path"], d["id"]))
             surfaced.append(d)
         if not now:
             out.append("  now    — nothing in flight\n")

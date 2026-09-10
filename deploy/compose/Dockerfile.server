@@ -4,8 +4,8 @@
 # this exists to make `make up` run the same binary a developer just built. When image
 # build and publish gets a story, this file is the starting point, not the answer.
 #
-# CLAUDE.md §2: the Dockerfile runs *around* the game, so it is Claude Code's; everything
-# it compiles is Cursor's.
+# CLAUDE.md §2: the Dockerfile runs *around* the game, so it is architecture lane; everything
+# it compiles is implementation lane.
 
 FROM golang:1.25-alpine AS build
 WORKDIR /src
