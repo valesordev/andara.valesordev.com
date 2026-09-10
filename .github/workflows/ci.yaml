@@ -69,6 +69,8 @@ jobs:
         run: make test
       - name: proto freshness
         run: make proto-check
+      - name: subject declaration
+        run: make schemas-check
       - name: validate-stories
         run: make validate-stories
       - name: backlog freshness

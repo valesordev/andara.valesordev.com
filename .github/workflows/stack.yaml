@@ -21,6 +21,8 @@ on:
       - "scripts/stack.sh"
       - "scripts/tls.sh"
       - "scripts/topics.py"
+      - "scripts/schemas.py"
+      - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
   pull_request:
     # Repeated rather than a YAML anchor: GitHub Actions' parser does not expand aliases.
@@ -29,6 +31,8 @@ on:
       - "scripts/stack.sh"
       - "scripts/tls.sh"
       - "scripts/topics.py"
+      - "scripts/schemas.py"
+      - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
   schedule:
     # Weekly, because the thing most likely to break this is an upstream image, not a commit.
@@ -62,6 +66,17 @@ jobs:
 
       - name: topics match the declaration
         run: make topics-diff
+
+      # AC-6 and AC-7 live here rather than in `check`, because they are the questions git
+      # cannot answer — what is actually registered — and answering them needs a registry.
+      # `make up` already registered the subjects; this proves the registry agrees with the
+      # declaration, and that a second apply changes nothing.
+      - name: subjects are registered and match the declaration
+        run: |
+          set -euo pipefail
+          make schemas-diff
+          make schemas-apply | tail -1 | grep -q '0 newly registered' \
+            || { echo "schemas-apply is not idempotent"; exit 1; }
 
       - name: build info and scrape targets are up
         run: |
