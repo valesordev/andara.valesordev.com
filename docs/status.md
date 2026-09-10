@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-31 stories — 6 review · 7 ready · 18 draft
+32 stories — 6 review · 8 ready · 18 draft
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -21,16 +21,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Decisions the lanes are waiting on
 
-  ADR-0008    proposed, unaccepted — Tick rate and the player latency budget
-  ADR-0010    May Builders define new component types?
-  ADR-0010    Does the component model cover Rooms and Zones, or only Entities and Items?
-  AW-INF-003  Target cluster, Kubernetes version, and whether there is an existing platform to co…
-  AW-INF-004  Retention on andara.commands.v1. Infinite retention with tiered storage makes the e…
-  AW-SRV-001  Whether Rooms carry Components
-  AW-SRV-001  The canonical Direction set. The loader treats Direction as an opaque string until…
-  AW-SRV-005  Whether Admin should be reachable on the same listener in production or restricted…
-  AW-SRV-020  The canonical Direction set, carried from AW-SRV-001. direction is a string in this…
-              28 more, attached to stories neither lane has reached
+  AW-INF-004  A Redpanda enterprise licence.
+              30 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

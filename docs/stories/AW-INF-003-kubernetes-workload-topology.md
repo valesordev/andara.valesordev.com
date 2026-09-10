@@ -98,8 +98,19 @@ CLAUDE.md §8, plus: `make k8s-dry` validates every environment in CI, and every
 
 ## Open questions
 
-- `[NEEDS BRIAN]` Target cluster, Kubernetes version, and whether there is an existing platform to
-  conform to — ingress controller, secret manager, GitOps tooling — or this is greenfield.
+- **Resolved 2026-09-10 (Brian): the kind cluster on Brian's box, Kubernetes v1.36.1.** Greenfield —
+  no platform to conform to. `make k8s-dry` validates against v1.36.1; the chart targets that first.
+
+  **What this costs, recorded here because nobody will remember it later.** The kind "cluster" is four
+  containers on one machine (`solo7-control-plane` plus three workers). RF=3 with
+  `min.insync.replicas=2` is three replicas on one disk, so the settings AW-INF-004 declares
+  non-negotiable are correct for a real cluster and buy nothing against the failure they exist for —
+  a lost disk. `docs/specs/slo/recovery.md`'s zero-RPO target is, until this moves, a claim about one
+  machine. ADR-0002 carries the same note under `Revisit when`. The chart is **not** softened to match:
+  it stays correct for a real cluster, because the box is where this runs first, not where it stays.
+
+  Two facts about this box that `AW-INF-006` needs: the kind control plane already publishes `:80` and
+  `:443`, and other projects hold `:3000`, `:8081`, and `:9000`. Ingress must not assume a free port.
 - `[ASSUMPTION]` Environments are `local`, `dev`, and `prod`. Adding staging later is cheap; assuming it
   exists when it does not is not.
 - Resource requests cannot be set honestly until `AW-SRV-002` has produced real tick measurements. This
