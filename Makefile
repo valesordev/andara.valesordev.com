@@ -40,7 +40,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 
 .PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
         schemas-apply schemas-check check fmt fmt-check vet lint test \
-        proto proto-check backlog backlog-check story adr validate-stories \
+        proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry clean build goldens
 
 ## help: print this target list
@@ -93,7 +93,7 @@ schemas-check:
 	@echo "make: schemas-check: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
-check: fmt-check vet lint test proto-check validate-stories backlog-check k8s-dry
+check: fmt-check vet lint test proto-check validate-stories backlog-check status-check k8s-dry
 	@echo "check: all clean"
 
 ## fmt: format Go sources in place
@@ -159,6 +159,14 @@ backlog:
 ## backlog-check: fail if BACKLOG.md is stale
 backlog-check:
 	@$(PY) $(SCRIPTS)/gen_backlog.py --check
+
+## status: regenerate docs/status.md — the two-lane development state, one screen
+status:
+	@$(PY) $(SCRIPTS)/gen_status.py
+
+## status-check: fail if docs/status.md is stale
+status-check:
+	@$(PY) $(SCRIPTS)/gen_status.py --check
 
 ## validate-stories: schema-check frontmatter, resolve IDs, detect cycles
 validate-stories:

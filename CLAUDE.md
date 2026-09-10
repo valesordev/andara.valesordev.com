@@ -68,6 +68,7 @@ Snippets are contracts, not code drops — keep them under ~30 lines and mark th
 
 ```
 docs/
+  status.md               # GENERATED — two-lane state, one screen; read this first
   roadmap.md              # phase → epic → milestone map; the planning source of truth
   glossary.md             # domain vocabulary; every term used in a story must exist here
   adr/
@@ -255,6 +256,7 @@ make bootstrap         # install/verify toolchain, hooks, local deps — idempot
 make up / make down    # local stack (server + datastores + observability) via compose
 make check             # fmt + vet + lint + test + manifest validation; what CI runs
 make backlog           # regenerate BACKLOG.md from docs/stories/*.md frontmatter
+make status            # regenerate docs/status.md — what to prompt next in each lane
 make story             # scaffold a new story from template; auto-assigns next ID
 make adr               # scaffold a new ADR
 make validate-stories  # schema-check frontmatter, verify depends_on IDs resolve, detect cycles
@@ -314,8 +316,13 @@ An ADR states: context, options considered with honest trade-offs, decision, con
 
 ### Session start
 
-Read `docs/roadmap.md`, `docs/glossary.md`, and any ADR with `status: proposed`. Then check
-`BACKLOG.md` for `blocked` and `review` items before starting new work.
+Read `docs/status.md` first — it names the story in flight and the next one in each lane, and
+lists the decisions the lanes are waiting on. Then `docs/roadmap.md`, `docs/glossary.md`, and any
+ADR with `status: proposed`. `BACKLOG.md` is the full view when `status.md` is not enough.
+
+`status.md` is only as honest as story frontmatter. When a branch merges, move the story to
+`review`; when the §8 checklist passes, move it to `done`. Run `make status` in the same pass —
+`make check` fails if it is stale.
 
 ---
 
