@@ -4,7 +4,7 @@ title: World model types and zone definition loading with referential validation
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002]
@@ -226,28 +226,68 @@ CLAUDE.md §8, plus:
 - The import boundary from `AW-INF-001` passes: `server/sim` imports no filesystem package.
 - Every new noun (`Zone`, `Room`, `Exit`, `Direction`, `Zone Definition`) is in `docs/glossary.md`.
 
+### Checked at review, 2026-09-10
+
+Every item holds except one, which cannot yet be satisfied by anything:
+
+- §8 "config changes reflected in the Helm values schema" — **deferred, not met.** `deploy/helm/`
+  holds a `.gitkeep`; there is no chart until `AW-INF-003`, which is still `draft`. The three keys
+  this story adds — `content.source`, `content.path`, `content.strict_orphans` — are documented in
+  `server/README.md` and must land in the values schema when the chart does. **`AW-INF-003` inherits
+  that obligation.** Holding this story at `review` for it was considered and rejected: a dependency
+  counts as met at `review`, so waiting unblocks nobody and leaves a finished story looking unfinished.
+- §8 "instrumentation emitting and verified against a real backend" — met the hard way. The four
+  metrics were read back out of Prometheus's TSDB after a real scrape of `andara-server:8080`, both
+  spans out of Tempo with their attributes and parent/child edge intact, and an `orphan_room` finding
+  line's `trace_id` resolved to its own trace. That exercise found a defect no unit test could:
+  traces carried no resource, so they arrived as `unknown_service:andara-server` and were unfindable
+  by the service name the dashboards query. Fixed, and pinned by a test that reads the resource off
+  an exported span.
+
 ## Open questions
 
-- `[ASSUMPTION]` One Zone per definition. Multi-Zone bundles buy nothing and complicate error
-  reporting.
-- `[NEEDS BRIAN]` **Whether Rooms carry Components** (ADR-0010, 2026-09-08). A Room with a `Dark{}` or
-  `NoMagic{}` component is a natural want, and this story defines `Room` as a plain struct.
+All resolved at review on 2026-09-10. Kept rather than deleted: a story that shows what it decided
+and what it handed on is worth more later than one that shows only its conclusion.
 
-  The risk is smaller than it first looks and this story should **not** wait on it. Room *topology* —
-  the ID, the exits, the cross-Zone refs, the graph validation that is most of this story — is
-  unaffected either way: a component set would be additional data on a Room, not a replacement for
-  `Exits`. So the answer changes whether `Room` gains one field, which is additive in Go and additive
-  in protobuf (ADR-0007 rule 1).
+- ~~`[ASSUMPTION]` One Zone per definition.~~ **Confirmed by Brian, 2026-09-10.** One Zone per
+  definition file is the decision, not an assumption. The loader enforces it — a second definition
+  declaring a ZoneID already seen is `duplicate_zone` — and `zone.proto` encodes it by giving
+  `ZoneDefinition` a single `id`. `format_version` remains the hook if multi-Zone bundles are ever
+  wanted; they would be a new format version, not a reinterpretation of this one.
 
-  What that buys is one instruction rather than a blocker: **do not design `Room`, `Zone`, or the
-  content schema in a way that makes adding a component set a breaking change.** Concretely, that
-  means not treating the room message's field set as closed and not hashing a room in a way that
-  assumes its fields are exactly these. If the answer comes back "Entities and Items only", nothing
-  here changes at all.
+- ~~`[NEEDS BRIAN]` Whether Rooms carry Components (ADR-0010).~~ **Carried forward to ADR-0010,
+  2026-09-10.** Not answered, and deliberately not blocking: the decision stays with the ADR. What
+  this story owed the question, it paid — adding a component set is still additive in both
+  directions. `Room` is a plain struct with no closed field set; `CanonicalBytes` serializes named
+  fields and hashes no field set, so a Room that gains a component set does not change the encoding
+  of a Room without one; and `RoomDefinition` field 5 is left free and unreserved in `zone.proto`.
 
-- `[NEEDS BRIAN]` The canonical `Direction` set. The loader treats Direction as an opaque string
-  until this is answered, which means it cannot yet reject `norht` as a typo. That is a real cost;
-  answering this turns typos into boot failures.
+- ~~`[NEEDS BRIAN]` The canonical `Direction` set.~~ **Carried forward to AW-SRV-020, 2026-09-10.**
+  `Direction` stayed an opaque string, so the loader still cannot reject `norht` as a typo — a real
+  cost, stated plainly. Closing it is behaviour this story never specified: enforcing a closed set
+  adds a validation rule and an `ErrCode`, which wants grooming rather than a tail on a finished
+  story. `docs/status.md` already carries the question against `AW-SRV-020`, so nothing is lost by
+  this story no longer carrying it. `zone.proto` documents why `direction` is a string and not an
+  enum: an unknown enum member is dropped silently on the wire, which is worse than a rejected string.
+
 - Per ADR-0007 the canonical format is protobuf. The Builder-facing authoring surface that compiles
   to it is `AW-CLI-003`'s problem — flagged here because protobuf is not hand-authorable and pretending
-  otherwise would make Builders hate this.
+  otherwise would make Builders hate this. Unchanged; dir-mode protobuf JSON is the test and CLI
+  surface, not the Builder language (ADR-0009).
+
+### Found at review, handed to the architecture lane
+
+Neither is a defect in this story's code; both are places the contract and the automation should
+catch up, and neither is the implementation lane's to change.
+
+1. **This story's own manual/operator command does not work as written.** The Test plan shows
+   `ANDARA_CONTENT_PATH=./testdata/content/valid ./andara-server --validate-only` expecting `0`. It
+   exits `1`: `content.source` defaults to `kafka`, so it fails with `no_zones_found` naming kafka.
+   It needs `ANDARA_CONTENT_SOURCE=dir`, which both component READMEs have right — which is exactly
+   why nobody would notice.
+2. **The stack CI job does not assert this story's instrumentation.** `.github/workflows/stack.yaml`
+   round-trips a *synthetic* `command.execute` span posted by `curl`, and its scrape-target check
+   still says "andara-server is expected down until AW-SRV-005 lands" — stale, since the server
+   profile is live and the container is healthy. The real `content.load` span and
+   `andara_content_zones_loaded` in Prometheus were verified by hand for this review; a job that
+   asserts them is what stops the next person having to.
