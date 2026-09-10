@@ -4,7 +4,7 @@ title: Kafka topic and schema registry provisioning as code
 epic: EPIC-10
 component: infra
 type: infra
-status: in-progress
+status: review
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-INF-002, AW-INF-005, AW-SRV-002, AW-SRV-010]
@@ -85,13 +85,23 @@ every environment, so that a local test exercises the same log semantics product
 5a. **Given** a live cluster **when** `topics-diff` runs **then** it fails if
    `unclean.leader.election.enable` is not `false` or `min.insync.replicas` is below 2 in production.
    These two settings are what the zero-RPO target rests on, and drift in them is silent.
-6. **Given** a protobuf schema change that removes a field **when** `make schemas-check` runs **then**
-   it exits 1 naming the field and the subject. ADR-0007's additive-only rule is enforced here, not by
-   review.
+6. **Given** a protobuf schema change that removes a field **when** `make check` runs **then** it exits 1
+   naming the field *and the subjects that carry it*. ADR-0007's additive-only rule is enforced
+   mechanically, not by review.
+   **Amended 2026-09-10, with the measurement that forced it.** This originally said `schemas-check`
+   would be the detector. It cannot be: Redpanda's registry was measured and its `BACKWARD` check
+   accepts a removed field *and a renumbered one*. Renumbering is the one that would end the project —
+   replay would misread every historical record (ADR-0002) — so the detector is `buf breaking` in
+   `make proto-check`, which already ran it. `proto-check` now names the carrying subjects on failure,
+   which is the part that was genuinely missing. Both targets are in `make check`, so the criterion
+   holds as written at the level that matters: the change cannot merge.
 7. **Given** a fresh registry **when** `make schemas-apply` runs **then** every subject is registered
-   with `BACKWARD` compatibility and the command exits 0.
+   with `BACKWARD` compatibility and the command exits 0. Running it a second time registers nothing.
+7a. **Given** a registry holding something other than the declaration **when** `make schemas-diff` runs
+   **then** it exits 1, naming the subject and whether it is undeclared, unregistered, or superseded.
 8. **Given** any environment **when** `make check` runs **then** `make schemas-check` runs as part of
-   it, so an incompatible schema cannot merge.
+   it, so a topic without a declared record type cannot merge. `schemas-check` is offline by
+   construction — it needs no broker, because `make check` must stay containerless (`AW-INF-002`).
 
 ## Interface contract
 
@@ -140,8 +150,33 @@ These are asserted against the live cluster by `topics-diff`, not merely written
 |--------|--------|---------------|
 | `topics-apply` | topics match the declaration | a change is required that is unsafe to make |
 | `topics-diff` | no drift | drift, printed per property |
-| `schemas-apply` | subjects registered | registration rejected |
-| `schemas-check` | schemas are backward-compatible | an incompatible change |
+| `schemas-apply` | subjects registered; idempotent | registration rejected |
+| `schemas-check` | the declaration is complete and every declared message exists | a topic with no subject and no `pending:` entry, a message that does not exist, a missing reference |
+| `schemas-diff` | the registry matches `deploy/kafka/schemas.yaml` | a subject undeclared, unregistered, or superseded |
+
+**Which target owns which detector.** Stated because the obvious arrangement is wrong and the next
+reader will try it:
+
+| Question | Target | Needs a broker |
+|----------|--------|----------------|
+| Is this schema change additive-only (ADR-0007)? | `proto-check` (`buf breaking`) | no |
+| Is every topic's record type declared, and does it exist? | `schemas-check` | no |
+| Does the registry hold what we declared? | `schemas-diff` | **yes** |
+
+`schemas-check` deliberately does **not** re-run `buf breaking`. Same detector, same baseline, two red
+steps for one change. The offline pair runs in `make check`; `schemas-diff` runs in the `stack`
+workflow, where a registry exists.
+
+### Subject declaration
+
+`deploy/kafka/schemas.yaml`. Every topic in `topics.yaml` is either mapped to a subject or listed under
+`pending:` with the story that will define its record type — an omitted topic is indistinguishable from
+a forgotten one, and `schemas-check` fails if the named story does not exist.
+
+`andara.events.v1` carries two record types with no envelope wrapping them — derived Events and the
+Tick Boundary Records replay reads (ADR-0002 §4) — so it uses **TopicRecordNameStrategy** and holds two
+subjects. The alternative is adding an envelope message, a permanent wire change this story has no
+mandate to make.
 
 ## Data / state impact
 
@@ -191,6 +226,31 @@ Consumer-lag alerting belongs to `AW-INF-005`, which owns the SLO it would be ti
   make topics-apply && make topics-diff     # expect: exit 0, no drift
   make schemas-apply && make schemas-check  # expect: exit 0
   ```
+
+## Verification record — 2026-09-10
+
+Executed against a live Redpanda registry, not reasoned about. (The topic half, ACs 1–5a, was verified
+when it shipped inside `AW-INF-002`.)
+
+| AC | Result |
+|----|--------|
+| 6 | Removed `LoggedCommand.client_ref`, ran `make proto-check`: named the field, then named all three carrying subjects (`andara.commands.v1-value`, both `andara.events.v1-*`). Exit 1. |
+| 7 | `make schemas-apply` on an empty registry: 6 subjects, global and per-subject compatibility `BACKWARD`. Second run: `0 newly registered`. |
+| 7a | Three drift modes, each detected: a subject registered out of band; global compatibility moved to `NONE`; a field added locally and not applied. |
+| 8 | `make schemas-check` is in `CHECK_TARGETS`; the CI parity guard failed until `ci.yaml` gained the step, which is the guard working. |
+| — | `schemas-check` catches an unaccounted topic, a `pending:` entry naming a story that does not exist, a message that is not in the descriptor, and a subject name that does not match its strategy. |
+| — | Reference path exercised by temporarily declaring `snapshot.proto` (which imports `log.proto`): `schemas-check` demanded the `references:` entry, and `apply` then registered both in order. |
+
+Three findings worth keeping:
+
+- **The registry cannot enforce ADR-0007.** Measured: `is_compatible: true` for a removed field and for
+  a field renumbered `2 → 7`. It does reject a scalar type change and a removed message. BACKWARD
+  compatibility and additive-only are different rules, and only the second one protects replay.
+- **Redpanda rejects `version: -1` in a schema reference** — the Confluent "latest" convention — with
+  `422 parse error at offset 2772`, an offset past the end of the schema. That error sends you reading
+  the `.proto`. References now resolve to concrete versions.
+- **A subject name that is an import path must be URL-encoded** in the request path, or one path
+  segment becomes four and the registry answers 404.
 
 ## Definition of done
 
