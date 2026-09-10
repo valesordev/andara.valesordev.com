@@ -2,9 +2,9 @@
 
 Operating charter for Claude Code on this repository.
 
-Claude Code works this repo as **Technical Project Manager + DevOps/SRE**. It produces
-specifications, user stories, ADRs, and infrastructure definitions. **Cursor writes the
-application code.** Read the "Implementation boundary" table before touching any file.
+Claude Code works this repo end to end: specifications, user stories, ADRs, infrastructure,
+and the application code itself. Read the "Lane discipline" section before touching any file —
+the two lanes are no longer two tools, but they are still two different jobs.
 
 ---
 
@@ -37,30 +37,37 @@ burns that cost twice. When drafting roadmap items, defend this ordering.
 
 ---
 
-## 2. Implementation boundary
+## 2. Lane discipline
 
-| Artifact | Claude Code | Cursor |
-|----------|-------------|--------|
-| Epics, user stories, acceptance criteria | **Owns** | Consumes |
-| Technical specs, protocol/schema definitions, interface contracts | **Owns** | Consumes |
-| ADRs | **Owns** | Proposes via story feedback |
-| Go/TypeScript application source | Never writes | **Owns** |
-| Unit/integration test code | Never writes | **Owns** |
-| Test *plans* and coverage expectations | **Owns** | Implements |
-| Kubernetes manifests, Helm charts, Terraform | **Owns** | Reviews |
-| CI/CD workflows, Makefiles, dev-env scripts | **Owns** | Reviews |
-| Dashboards, alert rules, SLO definitions | **Owns** | — |
-| Runbooks, on-call docs | **Owns** | — |
+Work in this repo belongs to one of two lanes. Every story declares which in its `lane`
+frontmatter field, and `docs/status.md` reports the two separately.
 
-Two rules that resolve every ambiguity in the table:
+| Lane | Produces | Examples |
+|------|----------|----------|
+| `architecture` | The contract, and everything that builds, ships, operates, or observes what runs to it | Epics, stories, ADRs, protocol and schema definitions, test plans, Helm charts, CI, Makefiles, dashboards, SLOs, runbooks |
+| `implementation` | The thing built to the contract | Go and TypeScript application source, unit and integration tests |
 
-1. If the artifact runs **in** the game, Cursor writes it.
-2. If the artifact runs **around** the game (build, ship, operate, observe, specify), Claude Code writes it.
+One rule resolves every ambiguity: if the artifact runs **in** the game it is
+`implementation`; if it runs **around** the game — build, ship, operate, observe, specify —
+it is `architecture`.
 
-Claude Code may write short illustrative snippets **inside a story** (an interface sketch, a
-proto/JSON schema, a struct shape) to remove ambiguity. It does not write implementations.
-Snippets are contracts, not code drops — keep them under ~30 lines and mark them
-`// CONTRACT SKETCH — not an implementation`.
+**Why the lanes survive one agent doing both.** The split was never really about who held the
+keyboard; it was about not letting the contract be written by the code. The rule that carries
+that forward is short:
+
+> A story reaches `status: ready` — its interface contract written — *before* its
+> implementation starts. Writing both in one pass means the contract is whatever the code
+> happened to do, and there is nothing left to check the code against.
+
+Two habits enforce it in practice:
+
+1. Groom and implement in **separate sessions**. Grooming a story and then immediately
+   implementing it in the same context means the story is a memory of intent rather than a
+   specification anything can be verified against.
+2. A story still contains **contracts, not code drops**. Illustrative snippets inside a story
+   (an interface sketch, a proto or JSON schema, a struct shape) stay under ~30 lines and are
+   marked `// CONTRACT SKETCH — not an implementation`. If a snippet grows past that, it wants
+   to be the implementation, and the implementation belongs on a branch.
 
 ---
 
@@ -97,7 +104,7 @@ backlog view is generated.
 - Story ID: `AW-<COMP>-<NNN>` — `AW-SRV-014`, `AW-INF-003`. Zero-padded to 3. Never reused, never renumbered.
 - Epic ID: `EPIC-<NN>`.
 - ADR ID: `ADR-<NNNN>`, monotonic, never deleted — superseded ADRs get `status: superseded by ADR-XXXX`.
-- Branch name (for Cursor): `<story-id-lower>-<slug>` → `aw-srv-014-room-graph-loader`.
+- Branch name: `<story-id-lower>-<slug>` → `aw-srv-014-room-graph-loader`. Both lanes use it.
 - Commit trailer: `Story: AW-SRV-014`.
 
 ---
@@ -117,7 +124,7 @@ status: ready              # draft | ready | in-progress | review | done | block
 size: M                    # S | M | L  — L means "split it"
 depends_on: [AW-SRV-011, AW-INF-002]
 blocks: []
-assignee: cursor           # cursor | claude-code
+lane: implementation       # architecture (contracts, infra) | implementation (source)
 risk: medium               # low | medium | high
 ---
 
@@ -149,8 +156,9 @@ or a human can execute it in under a minute. No criterion may contain "properly"
 
 ## Interface contract
 Function signatures, wire messages, CLI flags, config keys, env vars, exit codes, error
-taxonomy. This is the section Cursor reads most carefully. Be exhaustive here; ambiguity
-here is the primary cause of rework.
+taxonomy. This is the section the implementation lane reads most carefully, and the only
+defence against a story that means whatever the code turns out to do. Be exhaustive here;
+ambiguity here is the primary cause of rework.
 
 ## Data / state impact
 Schema changes, migration requirements, backward-compatibility constraints, what happens to
@@ -185,7 +193,7 @@ When Brian describes a feature, Claude Code:
 3. **Writes the story.** Directly. Do not narrate a plan to write a story, or ask whether to
    proceed with a story that has already been requested.
 4. **Splits aggressively.** Anything sized `L` gets decomposed before it reaches `ready`.
-   Target: a story Cursor can complete in one focused session against a clean context window.
+   Target: a story one focused session can complete against a clean context window.
 5. **Declares dependencies** in `depends_on` and back-fills `blocks` on the referenced stories.
 6. **Regenerates the backlog** (`make backlog`).
 

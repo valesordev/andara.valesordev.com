@@ -84,7 +84,7 @@ def render():
         if not group:
             continue
         out.append("### `%s` (%d)\n\n" % (status, len(group)))
-        out.append("| ID | Epic | Component | Size | Risk | Assignee | Title | Depends on |\n")
+        out.append("| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |\n")
         out.append("|----|------|-----------|------|------|----------|-------|------------|\n")
         for d, path in sorted(group, key=lambda r: r[0].get("id", "")):
             deps = ", ".join("`%s`" % x for x in (d.get("depends_on") or [])) or "—"
@@ -92,7 +92,7 @@ def render():
                 "| [`%s`](%s) | `%s` | %s | %s | %s | %s | %s | %s |\n"
                 % (
                     d.get("id"), path, d.get("epic"), d.get("component"), d.get("size"),
-                    d.get("risk"), d.get("assignee"), d.get("title"), deps,
+                    d.get("risk"), d.get("lane"), d.get("title"), deps,
                 )
             )
         out.append("\n")

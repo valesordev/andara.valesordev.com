@@ -322,7 +322,8 @@ are marked, not removed.
 
 **Epic** — A themed grouping of Stories that delivers a coherent capability. `EPIC-NN`.
 
-**Story** — The unit of work handed to Cursor. `AW-<COMP>-<NNN>`. Format in CLAUDE.md §5.
+**Story** — The unit of work one focused session takes on. `AW-<COMP>-<NNN>`. Carries a `lane` of
+`architecture` or `implementation`. Format in CLAUDE.md §5.
 
 **Milestone** — A demonstrable state of the product on the roadmap. Defined by what a human can
 observably do, not by which stories are closed.

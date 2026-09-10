@@ -8,7 +8,7 @@ status: draft
 size: S
 depends_on: [AW-CLI-001, AW-SRV-001]
 blocks: [AW-CLI-003]
-assignee: cursor
+lane: implementation
 risk: low
 ---
 
