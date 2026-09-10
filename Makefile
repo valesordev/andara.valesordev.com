@@ -39,7 +39,7 @@ LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -
 HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*' -print -quit 2>/dev/null)
 
 .PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
-        schemas-apply schemas-check check fmt fmt-check vet lint test \
+        schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens
 
@@ -86,17 +86,21 @@ topics-diff:
 
 ## schemas-apply: register protobuf schemas with the schema registry
 schemas-apply:
-	@echo "make: schemas-apply: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
+	@$(PY) $(SCRIPTS)/schemas.py apply --env $(ANDARA_ENV)
 
-## schemas-check: fail on a backward-incompatible schema change
+## schemas-diff: fail if the registry has drifted from deploy/kafka/schemas.yaml
+schemas-diff:
+	@$(PY) $(SCRIPTS)/schemas.py diff --env $(ANDARA_ENV)
+
+## schemas-check: verify the subject declaration — offline, no broker needed
 schemas-check:
-	@echo "make: schemas-check: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
+	@$(PY) $(SCRIPTS)/schemas.py check
 
 # The single list. CI enumerates these as named steps for diagnosability, and a parity
 # guard in the workflow reads this target to prove the two lists have not drifted —
 # they had, silently, before `status-check` existed.
-CHECK_TARGETS := fmt-check vet lint test proto-check validate-stories backlog-check \
-                 status-check k8s-dry
+CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
+                 backlog-check status-check k8s-dry
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)

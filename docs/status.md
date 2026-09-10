@@ -2,22 +2,22 @@
 
 # Status — Andara's World
 
-31 stories — 1 in-progress · 4 review · 7 ready · 18 draft · 1 done
+31 stories — 5 review · 7 ready · 18 draft · 1 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    AW-INF-004  Kafka topic and schema registry provisioning as code
-         branch aw-inf-004-kafka-topics-and-schema-registry-as-code
+  now    — nothing in flight
   next   AW-INF-003  draft  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
-  review AW-INF-001, AW-INF-002, AW-SRV-020 — run the §8 checklist, then flip to done
+  review AW-INF-001, AW-INF-004, AW-INF-002, AW-SRV-020 — run the §8 checklist, then flip to…
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
   next   AW-SRV-005  ready  gRPC gateway — TLS, session lifecycle, and protocol ver…  (unblocks 5)
+  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
   review AW-CLI-001 — run the §8 checklist, then flip to done
-  held   6 ready, blocked: AW-SRV-004, AW-SRV-002, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
+  held   5 ready, blocked: AW-SRV-004, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
 
 ## Decisions the lanes are waiting on
 
