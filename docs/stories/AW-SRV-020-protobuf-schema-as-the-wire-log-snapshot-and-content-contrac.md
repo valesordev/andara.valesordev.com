@@ -4,7 +4,7 @@ title: Protobuf schema as the wire, log, snapshot, and content contract
 epic: EPIC-03
 component: server
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-SRV-001, AW-SRV-005]

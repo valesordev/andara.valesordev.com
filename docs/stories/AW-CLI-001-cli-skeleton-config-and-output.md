@@ -4,7 +4,7 @@ title: andara-cli skeleton — command tree, configuration precedence, and outpu
 epic: EPIC-06
 component: cli
 type: feature
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-CLI-002, AW-CLI-003, AW-CLI-004]
