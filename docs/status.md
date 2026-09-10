@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-31 stories — 1 in-progress · 5 review · 7 ready · 18 draft
+31 stories — 1 in-progress · 4 review · 7 ready · 18 draft · 1 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -16,7 +16,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   now    — nothing in flight
   next   AW-SRV-005  ready  gRPC gateway — TLS, session lifecycle, and protocol ver…  (unblocks 5)
-  review AW-SRV-001, AW-CLI-001 — run the §8 checklist, then flip to done
+  review AW-CLI-001 — run the §8 checklist, then flip to done
   held   6 ready, blocked: AW-SRV-004, AW-SRV-002, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
 
 ## Decisions the lanes are waiting on
@@ -26,11 +26,9 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   ADR-0010    Does the component model cover Rooms and Zones, or only Entities and Items?
   AW-INF-003  Target cluster, Kubernetes version, and whether there is an existing platform to co…
   AW-INF-004  Retention on andara.commands.v1. Infinite retention with tiered storage makes the e…
-  AW-SRV-001  Whether Rooms carry Components
-  AW-SRV-001  The canonical Direction set. The loader treats Direction as an opaque string until…
   AW-SRV-005  Whether Admin should be reachable on the same listener in production or restricted…
   AW-SRV-020  The canonical Direction set, carried from AW-SRV-001. direction is a string in this…
-              28 more, attached to stories neither lane has reached
+              30 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

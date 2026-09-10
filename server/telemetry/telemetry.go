@@ -10,7 +10,9 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/valesordev/andara/server/config"
@@ -71,8 +73,32 @@ func Setup(cfg config.Config, stderr io.Writer) *Telemetry {
 	return &Telemetry{Log: log, Metrics: m, Tracer: tr, TP: tp, Reg: reg}
 }
 
-func newTracerProvider(cfg config.Config) *sdktrace.TracerProvider {
-	opts := []sdktrace.TracerProviderOption{}
+// bootResource identifies this process to a trace backend.
+//
+// Without it the Go SDK falls back to `unknown_service:<executable>`, which is
+// what Tempo recorded until this was added: the spans arrived, carried their
+// attributes, and were unfindable by the service name every dashboard and
+// TraceQL query uses. The slog handler has always stamped `service` and `env` on
+// every line, so logs and traces disagreed about the identity they were meant to
+// correlate on. An in-memory SpanRecorder cannot see this — resource attributes
+// are attached on export — which is why CLAUDE.md §8 asks for instrumentation
+// verified against a real backend rather than merely registered.
+func bootResource(cfg config.Config) *sdkresource.Resource {
+	return sdkresource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceName(cfg.ServiceName),
+		semconv.DeploymentEnvironmentName(cfg.Environment),
+	)
+}
+
+// newTracerProvider builds the boot tracer. extra exists so a test can attach a
+// span processor and read back what a real exporter would see; the SDK does not
+// expose a provider's resource, and a resource that is silently dropped is the
+// defect this seam is here to keep caught.
+func newTracerProvider(cfg config.Config, extra ...sdktrace.TracerProviderOption) *sdktrace.TracerProvider {
+	opts := append([]sdktrace.TracerProviderOption{
+		sdktrace.WithResource(bootResource(cfg)),
+	}, extra...)
 	if cfg.OTLPEndpoint == "" {
 		return sdktrace.NewTracerProvider(opts...)
 	}
