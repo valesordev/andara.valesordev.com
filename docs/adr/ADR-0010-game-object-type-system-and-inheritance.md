@@ -1,10 +1,10 @@
 ---
 id: ADR-0010
 title: Game Object type system — inheritance, overrides, and where Builder logic runs
-status: proposed
+status: accepted
 date: 2026-09-08
 deciders: [brian]
-gates: [AW-CLI-003]
+gates: []
 ---
 
 ## Context
@@ -116,6 +116,8 @@ should warn — not fail — when a Template carries a component no system and n
 
 Proposed, pending Brian on the question above. Everything else here is decided.
 
+**Accepted 2026-09-10 (Brian).** Both open questions are answered and appear as decisions 7 and 8.
+
 **1. Templates and Components.** A Game Type is a Template: a named definition in a single-inheritance
 hierarchy that contains a set of Components. Components are data. Kinds — Entity, Item, Behavior, and
 whatever comes next — are open by construction, since Brian flagged the kind set as incomplete.
@@ -141,6 +143,38 @@ Builders will ask for removal within the month.
 
 **6. Components are namespaced by the pack that defines them.** `andara.core.FireDamage` and a
 Builder's `pets.Aggro` cannot collide, and provenance is readable at a glance.
+
+**7. Component *types* are defined on the server. Builders compose them; they do not create them.**
+Decided 2026-09-10 by Brian, against the recommendation this ADR carried. The recommendation was to
+let Builders define new component types carried as opaque data — so record what the decision costs
+rather than pretending it is free: **a Builder who needs a component that does not exist files a
+GitHub issue and waits for a server release.** That is consistent with the 2026-09-07 decision that
+Builders have no repository access, and it makes the core component vocabulary a bottleneck by
+design.
+
+What Builders keep: composing existing components onto new Templates, overriding their fields, and
+subtyping Behaviors freely (decided 2026-09-08). That is most of the expressive power; what is
+withheld is inventing new *kinds* of data.
+
+The tradeoff bought: every component in the World is a type the server understands, so validation,
+the State Hash, projections, and the wire format all have a closed vocabulary. Opaque
+Builder-defined components would have been unvalidatable by construction — the server cannot check
+the invariants of a type it has never seen. The `Revisit when` trigger below is already written for
+this: Builders routinely requesting new components is the signal the vocabulary is too thin.
+
+**8. The component model covers Rooms and Zones, not only Entities and Items.** Decided 2026-09-10
+by Brian. A Room carrying `andara.core.Dark{}` or `andara.core.NoMagic{}` is the motivating case, and
+a Zone carrying Zone-wide properties follows the same shape.
+
+This is additive, not a rewrite, because the seam was left open deliberately:
+`andara/content/v1/zone.proto` reserves nothing at `RoomDefinition` field 5 and says in a comment
+that ADR-0010's component set attaches there. `AW-SRV-001` shipped `Room` and `Zone` as plain structs
+and is in `review`; it is not reopened. `AW-SRV-021` adds the component set to both, and to the
+content schema, as new scope.
+
+One constraint this puts on Rooms specifically: a Room's component set feeds the State Hash like
+everything else the sim reads, so it obeys ADR-0007 rule 3 — sorted by component type, no maps, no
+floats.
 
 **7. Cycles and unbounded depth are compile-time errors**, with a file and line like every other
 content error (`AW-SRV-001`'s `ValidationError`). Depth is bounded by a stated constant.
@@ -206,13 +240,11 @@ appears in none of the files they wrote.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` **May Builders define new component types?** The remaining question above.
-  Recommendation: yes, with unrecognised components carried as opaque data and read only by Behaviors.
-  This is the difference between Builders having an extension path and filing feature requests.
-- `[NEEDS BRIAN]` **Does the component model cover Rooms and Zones, or only Entities and Items?**
-  `AW-SRV-001` is `ready` and defines `Room`, `Zone`, and `World` as plain structs. A Room with a
-  `Dark{}` component is a natural thing to want and would change that model. Answering after the
-  loader is built means rewriting it. This is the most time-sensitive question here.
+- **Resolved 2026-09-10 (Brian):** Builders may **not** define new component types — see decision 7,
+  which records the cost, because the answer went against this ADR's recommendation.
+- **Resolved 2026-09-10 (Brian):** the component model **does** cover Rooms and Zones — decision 8.
+  It arrived in time: `zone.proto` had left `RoomDefinition` field 5 open for exactly this, so
+  `AW-SRV-001` needed no rework and `AW-SRV-021` carries the addition.
 - **Resolved 2026-09-08:** cross-cutting traits — components are the mechanism, so the question is
   closed rather than deferred.
 - **Resolved 2026-09-08 (Brian):** Builders may subtype Behaviors freely.

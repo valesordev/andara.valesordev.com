@@ -36,8 +36,10 @@ so that what works in development works in production.
 - Certificate issuance and rotation.
 - Long-lived stream handling: idle and total-duration timeouts long enough for a play session, not the
   60-second default that would disconnect every player every minute.
-- Network-level restriction of `Admin` reachability, which ADR-0005 flags as probably wanted and
-  compatible with "same endpoint, same protocol".
+- Network-level restriction of `Admin` reachability. **Decided 2026-09-10 (Brian): same listener,
+  restricted by network policy.** A NetworkPolicy admits `Admin` only from the operator network, so
+  authorization is not the only thing between the internet and a privileged RPC. ADR-0003's "same
+  endpoint, same protocol" is unaffected — this restricts reachability, not the protocol.
 
 ### Out of scope
 - The workload itself — `AW-INF-003`.

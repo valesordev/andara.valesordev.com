@@ -217,6 +217,11 @@ CLAUDE.md §8, plus:
 - `[ASSUMPTION]` Connect's Go implementation, serving all three protocols from one definition
   (ADR-0003). The alternative is grpc-go plus an Envoy gRPC-Web proxy in Phase 2, which is more
   infrastructure for the same outcome. `AW-SRV-020` generates the Connect stubs this consumes.
-- `[NEEDS BRIAN]` Whether `Admin` should be reachable on the same listener in production or restricted
-  by network policy. ADR-0003 says same endpoint, same protocol; restricting *reachability* at the
-  network layer is compatible with that and is probably wanted. It is an `AW-INF-006` decision.
+- **Resolved 2026-09-10 (Brian): same listener, restricted by network policy.** ADR-0003's "same
+  endpoint, same protocol" stands — `Admin` is served from the same Connect handler as `Game`, so
+  there is no privileged back door and no second transport to secure (CLAUDE.md §10). What changes is
+  *reachability*: a NetworkPolicy admits `Admin` only from the operator network, so the authorization
+  check is not the only thing between the internet and a privileged RPC.
+
+  This story is unaffected — it still serves both services on one listener. The policy is
+  `AW-INF-006`'s to write, and it is named in that story's scope rather than left implied.
