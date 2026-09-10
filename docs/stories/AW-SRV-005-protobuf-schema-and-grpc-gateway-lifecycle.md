@@ -8,7 +8,7 @@ status: ready
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-008, AW-SRV-010, AW-SRV-011, AW-INF-006, AW-CLI-004]
-assignee: cursor
+lane: implementation
 risk: high
 ---
 
@@ -22,7 +22,7 @@ Phase 2's browser client needs no proxy.
 an interface contract, which CLAUDE.md §2 puts on Claude Code's side of the line, so it is now
 `AW-SRV-020` and this story consumes it. What remains here is the server: TLS, connection lifecycle,
 Session establishment, version negotiation, interceptors, and graceful drain — all of which run *in*
-the game and are Cursor's.
+the game and are implementation lane.
 
 The split also right-sizes it. One story covering a permanent wire contract and a concurrent network
 server was an `L` wearing an `M`'s frontmatter.

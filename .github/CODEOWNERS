@@ -1,15 +1,13 @@
 # Code owners for andara.valesordev.com.
 #
 # GitHub uses this to request review automatically. It is also the machine-readable
-# form of CLAUDE.md §2's implementation boundary — with one important caveat, stated
-# here rather than discovered later:
+# form of CLAUDE.md §2's lane discipline — with one caveat, stated here rather than
+# discovered later:
 #
-#   Every path below is owned by @solo-seven, because that is the only account with
-#   write access. Claude Code and Cursor both push as it. GitHub cannot express
-#   "this path belongs to the architecture lane and that one to the implementation
-#   lane" when both lanes are the same user, so the lane split lives in the section
-#   headings and comments. Treat those as the contract; treat the @solo-seven column
-#   as GitHub bookkeeping.
+#   Every path below is owned by @solo-seven, the only account with write access.
+#   The lane a path belongs to lives in the section headings and comments, because
+#   GitHub has no way to express it. Treat the headings as the contract; treat the
+#   @solo-seven column as GitHub bookkeeping.
 #
 # Consequence worth knowing: with a single owner who is also the author of every PR,
 # GitHub will not request a review (you cannot review your own pull request). This
@@ -24,14 +22,16 @@
 *                           @solo-seven
 
 # ---------------------------------------------------------------------------
-# Claude Code's lane — runs *around* the game: specify, build, ship, operate,
-# observe. CLAUDE.md §2, tiebreaker rule 2.
+# Architecture lane — runs *around* the game: specify, build, ship, operate,
+# observe. CLAUDE.md §2.
 #
-# A change here from the implementation lane is the signal to stop and check.
-# The zone.proto collision on 2026-09-09 is the worked example: AW-SRV-001 needed
-# ZoneDefinition, the schema had not merged, and a second .proto was written. The
-# field numbers happened to agree. Had they not, they would now be permanent
-# under ADR-0002 with a log written against them.
+# Touching a path here from an implementation branch is the signal to stop and
+# check. The zone.proto collision on 2026-09-09 is the worked example: AW-SRV-001
+# needed ZoneDefinition, the schema had not merged, and a second .proto was written.
+# The field numbers happened to agree. Had they not, they would now be permanent
+# under ADR-0002 with a log written against them. One agent working both lanes makes
+# this easier to do by accident, not harder — the contract is now always within
+# reach of the session writing the code.
 # ---------------------------------------------------------------------------
 
 # The schema authority (ADR-0007). Field numbers here are permanent.
@@ -57,10 +57,9 @@
 /.dockerignore              @solo-seven
 
 # ---------------------------------------------------------------------------
-# Cursor's lane — runs *in* the game. CLAUDE.md §2, tiebreaker rule 1.
+# Implementation lane — runs *in* the game. CLAUDE.md §2.
 #
-# Application source and its tests. Claude Code writes contracts and test plans
-# for these, never the implementations.
+# Application source and its tests, built to a contract that merged first.
 # ---------------------------------------------------------------------------
 /cmd/                       @solo-seven
 /server/                    @solo-seven

@@ -8,7 +8,7 @@ status: draft              # draft | ready | in-progress | review | done | block
 size: M                    # S | M | L  — L means "split it"
 depends_on: []
 blocks: []
-assignee: cursor           # cursor | claude-code
+lane: implementation       # architecture (contracts, infra) | implementation (source)
 risk: medium               # low | medium | high
 ---
 

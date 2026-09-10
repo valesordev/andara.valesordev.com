@@ -8,7 +8,7 @@ status: in-progress
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-INF-002, AW-INF-005, AW-SRV-002, AW-SRV-010]
-assignee: claude-code
+lane: architecture
 risk: high
 ---
 

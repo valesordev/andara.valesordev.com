@@ -8,7 +8,7 @@ status: review
 size: M
 depends_on: []
 blocks: [AW-INF-002, AW-INF-003, AW-INF-004, AW-SRV-001, AW-SRV-005, AW-SRV-020, AW-CLI-001]
-assignee: claude-code
+lane: architecture
 risk: low
 ---
 
@@ -21,7 +21,7 @@ surface and the conventions every later story inherits.
 
 It also establishes the planning tooling — story scaffolding, frontmatter validation, backlog
 generation, dependency graphing — because a backlog that is hand-maintained drifts within a week.
-Per CLAUDE.md §2, all of this runs *around* the game, so it is Claude Code's to write, not Cursor's.
+Per CLAUDE.md §2, all of this runs *around* the game, so it is architecture lane.
 
 ## User story
 
@@ -132,7 +132,7 @@ Enforced by `make validate-stories`. Required keys, in this order:
 | `size` | enum | `S`, `M`, `L` |
 | `depends_on` | list | story IDs that resolve to existing files |
 | `blocks` | list | story IDs that resolve to existing files |
-| `assignee` | enum | `cursor`, `claude-code` |
+| `lane` | enum | `architecture`, `implementation` |
 | `risk` | enum | `low`, `medium`, `high` |
 
 Additional validation rules:

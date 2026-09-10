@@ -1,6 +1,6 @@
 # cmd/andara-cli
 
-`main` for `andara-cli`. Owned by Cursor (CLAUDE.md §2).
+`main` for `andara-cli`. Implementation lane (CLAUDE.md §2).
 
 Wires `admin/cli.Execute`. The command tree, configuration, and output contract
 live under `admin/cli`. `andara-cli` talks to the server over the same versioned

@@ -5,13 +5,14 @@
 31 stories — 2 in-progress · 4 review · 7 ready · 18 draft
 Regenerate with `make status`; `make check` fails if this file is stale.
 
-## Architecture lane — claude-code · specs, ADRs, infra, automation
+## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    AW-INF-004  Kafka topic and schema registry provisioning as code
+         branch aw-inf-004-kafka-topics-and-schema-registry-as-code
   next   AW-INF-003  draft  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
   review AW-INF-001, AW-INF-002, AW-SRV-020 — run the §8 checklist, then flip to done
 
-## Implementation lane — cursor · server and cli source, tests
+## Implementation lane — server and cli source, tests
 
   now    AW-SRV-001  World model types and zone definition loading with referential validation at b…
          branch aw-srv-001-world-model-and-zone-loading
