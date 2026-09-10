@@ -1,0 +1,98 @@
+# Subject declaration — which protobuf type each topic carries, and under what subject.
+#
+# ADR-0007 makes protobuf the single schema authority. This file is the mapping from that
+# authority to the registry, and it exists so that "which type is on this topic" has one
+# written answer rather than living in whichever producer was written first.
+#
+# WHAT ENFORCES WHAT — read this before adding a check here:
+#
+#   * ADR-0007's additive-only rule is enforced by `buf breaking` inside `make proto-check`.
+#     It is NOT enforced here and must not be duplicated here.
+#   * `make schemas-check` verifies THIS FILE: that every topic is accounted for, that every
+#     declared message exists, and that compatibility is BACKWARD everywhere. It runs offline,
+#     inside `make check`, and needs no broker.
+#   * `make schemas-diff` compares the registry against this file. It needs a live registry
+#     and runs in the `stack` workflow, where one exists.
+#
+# The registry's own BACKWARD check is a second opinion in `schemas-apply`, never the primary
+# one. Measured against Redpanda's registry on 2026-09-10: it accepts a removed field and
+# accepts a renumbered field as BACKWARD-compatible. Renumbering is the one that would end the
+# project — replay would misread every historical record — so the detector is buf, not this.
+
+compatibility: BACKWARD
+
+# Subjects that exist only so an import can resolve. The registry addresses references by
+# subject name, and that name must equal the import path. They carry no topic, so
+# `schemas-diff` does not look for one.
+#
+# Empty today: no topic carries a .proto that imports another. `schemas-check` fails the
+# moment one does, naming the import — so this stays correct without anyone remembering it.
+# snapshot.proto imports log.proto but has no topic; Zone Snapshots are AW-SRV-006.
+references:
+
+# strategy is informational but load-bearing for a reader: TopicNameStrategy means one type
+# on the topic and the subject is `<topic>-value`. TopicRecordNameStrategy means the topic
+# carries more than one type and the subject is `<topic>-<fully.qualified.Message>`.
+subjects:
+  - subject: andara.commands.v1-value
+    topic: andara.commands.v1
+    strategy: TopicNameStrategy
+    file: andara/log/v1/log.proto
+    message: andara.log.v1.LoggedCommand
+
+  # andara.events.v1 carries two record types — derived Events and the Tick Boundary Records
+  # replay reads (ADR-0002 §4) — with no envelope wrapping them. TopicRecordNameStrategy is
+  # what that situation is for. The alternative is adding an envelope message, which is a
+  # permanent wire change this story has no mandate to make.
+  - subject: andara.events.v1-andara.log.v1.Event
+    topic: andara.events.v1
+    strategy: TopicRecordNameStrategy
+    file: andara/log/v1/log.proto
+    message: andara.log.v1.Event
+
+  - subject: andara.events.v1-andara.log.v1.TickCompleted
+    topic: andara.events.v1
+    strategy: TopicRecordNameStrategy
+    file: andara/log/v1/log.proto
+    message: andara.log.v1.TickCompleted
+
+  - subject: andara.content.blobs.v1-value
+    topic: andara.content.blobs.v1
+    strategy: TopicNameStrategy
+    file: andara/content/v1/content.proto
+    message: andara.content.v1.Blob
+
+  - subject: andara.content.versions.v1-value
+    topic: andara.content.versions.v1
+    strategy: TopicNameStrategy
+    file: andara/content/v1/content.proto
+    message: andara.content.v1.ContentVersion
+
+  - subject: andara.content.active.v1-value
+    topic: andara.content.active.v1
+    strategy: TopicNameStrategy
+    file: andara/content/v1/content.proto
+    message: andara.content.v1.ActiveVersion
+
+# Topics whose record type is not designed yet. Declared rather than omitted, because an
+# omitted topic is indistinguishable from a forgotten one — and the story that adds the type
+# has to come back here, which is the point. `schemas-check` fails if the named story does
+# not exist, so a pending entry cannot outlive its story.
+pending:
+  - topic: andara.state.v1
+    story: AW-SRV-019
+    why: |
+      The compacted current-state record per aggregate. Its shape is the state projector's
+      to define. andara.state.v1.SnapshotEnvelope is NOT this type — that is a Zone snapshot
+      (AW-SRV-006), a different record with a different lifecycle.
+
+  - topic: andara.accounts.v1
+    story: AW-SRV-008
+    why: |
+      Account state, which does not exist until there are accounts.
+
+  - topic: andara.audit.v1
+    story: AW-SRV-013
+    why: |
+      The privileged-action record. AW-SRV-013 is the first story that writes one, and
+      the audit record's fields are that story's authorization decisions made durable.

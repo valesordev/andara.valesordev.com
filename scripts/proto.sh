@@ -62,10 +62,27 @@ case "$ACTION" in
     # pass its own check.
     if [[ -n "$BASE_REF" ]] &&
        git ls-tree -r "$BASE_REF" --name-only -- "$PROTO_DIR" 2>/dev/null | grep -q '\.proto$'; then
-      buf breaking "$PROTO_DIR" \
-        --against ".git#ref=$BASE_REF,subdir=$PROTO_DIR" \
-        || { echo "make: proto-check: breaking schema change vs $BASE_REF (ADR-0007 is additive-only)" >&2; exit 1; }
-      echo "proto-check: no breaking change vs $BASE_REF"
+      # Output is captured so the failure can name the SUBJECTS the broken file is
+      # carried under, not only the file. A developer reading "log.proto:75" has to go
+      # look up what that breaks; "andara.commands.v1-value" is the thing that breaks.
+      BREAKING_OUT="$(mktemp)"
+      trap 'rm -f "$BREAKING_OUT"' EXIT
+      if buf breaking "$PROTO_DIR" \
+           --against ".git#ref=$BASE_REF,subdir=$PROTO_DIR" >"$BREAKING_OUT" 2>&1; then
+        echo "proto-check: no breaking change vs $BASE_REF"
+      else
+        cat "$BREAKING_OUT" >&2
+        echo "make: proto-check: breaking schema change vs $BASE_REF (ADR-0007 is additive-only)" >&2
+        # The registry cannot catch this: measured against Redpanda on 2026-09-10, its
+        # BACKWARD check accepts both a removed and a RENUMBERED field. Renumbering would
+        # make replay misread every historical record (ADR-0002). buf is the only detector.
+        cut -d: -f1 "$BREAKING_OUT" | grep '\.proto$' | sort -u | while read -r f; do
+          "${PY:-python3}" "$REPO/scripts/schemas.py" subjects-for "$f" 2>/dev/null | while read -r sub; do
+            echo "make: proto-check:   $f is carried by subject $sub" >&2
+          done
+        done
+        exit 1
+      fi
     else
       echo "proto-check: ${BASE_REF:-no baseline branch} has no .proto sources yet; breaking-change check skipped" >&2
     fi
