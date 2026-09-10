@@ -6,7 +6,7 @@ component: cli
 type: feature
 status: draft
 size: M
-depends_on: [AW-CLI-001, AW-CLI-002, AW-SRV-013]
+depends_on: [AW-CLI-001, AW-CLI-002, AW-SRV-013, AW-SRV-021]
 blocks: []
 lane: implementation
 risk: medium

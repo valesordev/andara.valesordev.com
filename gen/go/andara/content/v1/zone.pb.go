@@ -179,10 +179,12 @@ func (x *RoomDefinition) GetExits() []*ExitDefinition {
 
 type ExitDefinition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// A Direction label, not an enum. The canonical set is an open question
-	// (AW-SRV-001), and a string lets the loader reject `norht` with an error
-	// naming the file and line. A closed enum would drop it as an unknown member
-	// on the wire, which is silently worse.
+	// A Direction label, not an enum. The canonical set is closed as of
+	// 2026-09-10 — the twelve in docs/glossary.md — but it is closed in the
+	// loader's validation, not here: a string lets the loader reject `norht`
+	// with an error naming the file and line, where a closed enum would drop it
+	// as an unknown member on the wire, which is silently worse. Growing the set
+	// stays a validation change, never a schema change.
 	Direction string `protobuf:"bytes,1,opt,name=direction,proto3" json:"direction,omitempty"`
 	// Target Room. Cross-Zone Exits are resolved at load time as Zone+Room value
 	// pairs, never as pointers — ADR-0001's seam invariant, and what allows a

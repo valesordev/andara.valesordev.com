@@ -10,9 +10,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 6 |
-| `ready` | 7 |
+| `ready` | 8 |
 | `draft` | 18 |
-| **total** | **31** |
+| **total** | **32** |
 
 ## Attention first
 
@@ -38,7 +38,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | implementation | World model types and zone definition loading with referential validation at boot | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 
-### `ready` (7)
+### `ready` (8)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -49,13 +49,14 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 
 ### `draft` (18)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-SRV-001` |
-| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, activate, and rollback with a human-authorable format | `AW-CLI-001`, `AW-CLI-002`, `AW-SRV-013` |
+| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, activate, and rollback with a human-authorable format | `AW-CLI-001`, `AW-CLI-002`, `AW-SRV-013`, `AW-SRV-021` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
@@ -96,6 +97,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `review` | World model types and zone definition loading with referential validation at boot |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `ready` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `ready` | Components on Rooms and Zones, and the closed Direction set |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 

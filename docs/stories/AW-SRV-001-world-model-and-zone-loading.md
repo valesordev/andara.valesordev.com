@@ -7,7 +7,7 @@ type: feature
 status: review
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
-blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002]
+blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002, AW-SRV-021]
 lane: implementation
 risk: medium
 ---
@@ -230,24 +230,15 @@ CLAUDE.md §8, plus:
 
 - `[ASSUMPTION]` One Zone per definition. Multi-Zone bundles buy nothing and complicate error
   reporting.
-- `[NEEDS BRIAN]` **Whether Rooms carry Components** (ADR-0010, 2026-09-08). A Room with a `Dark{}` or
-  `NoMagic{}` component is a natural want, and this story defines `Room` as a plain struct.
-
-  The risk is smaller than it first looks and this story should **not** wait on it. Room *topology* —
-  the ID, the exits, the cross-Zone refs, the graph validation that is most of this story — is
-  unaffected either way: a component set would be additional data on a Room, not a replacement for
-  `Exits`. So the answer changes whether `Room` gains one field, which is additive in Go and additive
-  in protobuf (ADR-0007 rule 1).
-
-  What that buys is one instruction rather than a blocker: **do not design `Room`, `Zone`, or the
-  content schema in a way that makes adding a component set a breaking change.** Concretely, that
-  means not treating the room message's field set as closed and not hashing a room in a way that
-  assumes its fields are exactly these. If the answer comes back "Entities and Items only", nothing
-  here changes at all.
-
-- `[NEEDS BRIAN]` The canonical `Direction` set. The loader treats Direction as an opaque string
-  until this is answered, which means it cannot yet reject `norht` as a typo. That is a real cost;
-  answering this turns typos into boot failures.
+- **Resolved 2026-09-10 (Brian): Rooms and Zones do carry Components** (ADR-0010 decision 8, now
+  accepted). The instruction this story gave itself — *do not design `Room`, `Zone`, or the content
+  schema in a way that makes adding a component set a breaking change* — was followed, and it paid:
+  `zone.proto` left `RoomDefinition` field 5 open and unreserved, and `Room` is a plain struct that
+  gains a field. **This story is not reopened.** `AW-SRV-021` adds the component set.
+- **Resolved 2026-09-10 (Brian): the canonical `Direction` set is closed** — the twelve in
+  `docs/glossary.md`, each with a reverse. `direction` stays a string on the wire; the set is enforced
+  in the loader, so `norht` becomes a boot failure naming the file and line. That enforcement does not
+  exist yet — this story shipped with Direction opaque — and it is `AW-SRV-021`'s to add.
 - Per ADR-0007 the canonical format is protobuf. The Builder-facing authoring surface that compiles
   to it is `AW-CLI-003`'s problem — flagged here because protobuf is not hand-authorable and pretending
   otherwise would make Builders hate this.
