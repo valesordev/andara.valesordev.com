@@ -10,9 +10,12 @@
 
 name: stack
 
+# Same two-trigger split as `check`, plus the path filter repeated on `pull_request`.
+# Without it every PR paid three minutes to boot a stack it had not touched — `push` was
+# filtered and `pull_request` was not, which reads as filtered and is not.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
     paths:
       - "deploy/**"
       - "scripts/stack.sh"
@@ -20,6 +23,13 @@ on:
       - "scripts/topics.py"
       - ".github/workflows/stack.yaml"
   pull_request:
+    # Repeated rather than a YAML anchor: GitHub Actions' parser does not expand aliases.
+    paths:
+      - "deploy/**"
+      - "scripts/stack.sh"
+      - "scripts/tls.sh"
+      - "scripts/topics.py"
+      - ".github/workflows/stack.yaml"
   schedule:
     # Weekly, because the thing most likely to break this is an upstream image, not a commit.
     - cron: "17 6 * * 1"
