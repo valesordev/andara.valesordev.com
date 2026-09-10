@@ -1,0 +1,29 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square.",
+      "exits": [
+        {"direction": "north", "toRoom": "hall"}
+      ]
+    },
+    {
+      "id": "hall",
+      "title": "Town Hall",
+      "description": "Stone walls.",
+      "exits": [
+        {"direction": "south", "toRoom": "plaza"}
+      ]
+    },
+    {
+      "id": "attic",
+      "title": "Forgotten Attic",
+      "description": "Reachable by no Exit. A Builder is mid-work.",
+      "exits": []
+    }
+  ]
+}

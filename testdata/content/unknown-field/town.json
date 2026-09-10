@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square.",
+      "brightness": "dim"
+    }
+  ]
+}

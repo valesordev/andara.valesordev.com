@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
+	"strconv"
 
 	"google.golang.org/protobuf/encoding/protojson"
 
@@ -108,11 +110,39 @@ func parseZoneJSON(path string, data []byte) (*contentv1.ZoneDefinition, *sim.Va
 	if err := u.Unmarshal(data, def); err != nil {
 		return nil, &sim.ValidationError{
 			File:   path,
+			Line:   protojsonLine(err.Error()),
 			Code:   sim.ErrMalformed,
 			Detail: err.Error(),
 		}
 	}
 	return def, nil
+}
+
+// protojsonErrLine matches the position protojson embeds in its error strings:
+// `proto: (line 4:3): unknown field "bogus"`. The pre-parse above only catches
+// encoding/json syntax errors, which leaves every protojson-level failure —
+// wrong scalar type, unknown field, wrong nesting — without a line, and those
+// are the mistakes a Builder actually makes. AC-8 requires the line, and the
+// observability contract requires it as a structured field, not buried in prose.
+//
+// This reads an internal format with no compatibility promise. A protojson
+// upgrade that reworded the prefix would silently cost us the line number, so
+// TestProtojsonLine pins the shape: if that test fails after a dependency bump,
+// the extraction needs updating, not deleting.
+var protojsonErrLine = regexp.MustCompile(`\(line (\d+):\d+\)`)
+
+// protojsonLine returns the 1-based line from a protojson error message, or 0
+// when the message carries no position.
+func protojsonLine(msg string) int {
+	m := protojsonErrLine.FindStringSubmatch(msg)
+	if m == nil {
+		return 0
+	}
+	n, err := strconv.Atoi(m[1])
+	if err != nil || n < 1 {
+		return 0
+	}
+	return n
 }
 
 func lineFromOffset(data []byte, offset int64) int {
