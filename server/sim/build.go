@@ -255,15 +255,19 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 		}
 	}
 
-	// Orphans: no inbound intra-zone exit. Legal unless StrictOrphans.
+	// Orphans: no inbound intra-zone exit from another Room. Legal unless
+	// StrictOrphans. A Room's own Exit back to itself is not an inbound edge —
+	// AC-6 scopes reachability to "any other Room in that Zone", and a self-loop
+	// leaves the Room as unreachable as it was.
 	for _, zid := range order {
 		z := byID[zid]
 		inbound := make(map[RoomID]struct{}, len(z.rooms))
 		for _, r := range z.rooms {
 			for _, e := range r.exits {
-				if e.toZone == zid {
-					inbound[e.toRoom] = struct{}{}
+				if e.toZone != zid || e.toRoom == r.id {
+					continue
 				}
+				inbound[e.toRoom] = struct{}{}
 			}
 		}
 		rids := make([]RoomID, 0, len(z.rooms))
