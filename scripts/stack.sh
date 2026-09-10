@@ -105,6 +105,10 @@ case "$ACTION" in
     # to local and production alike, or they drift.
     ANDARA_ENV=local "${PY:-python3}" "$REPO/scripts/topics.py" apply --env local
 
+    # Subjects come from deploy/kafka/schemas.yaml the same way (AW-INF-004), so a local
+    # registry holds what production holds rather than whatever the first producer wrote.
+    ANDARA_ENV=local "${PY:-python3}" "$REPO/scripts/schemas.py" apply --env local
+
     # A ready-to-use CLI config, so "the CA is trusted out of the box" (AW-INF-002 AC-5)
     # is one export rather than two flags on every invocation. Written into the repo's
     # .local/ rather than the developer's global config, because a local stack has no
