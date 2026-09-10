@@ -4,7 +4,7 @@ title: World model types and zone definition loading with referential validation
 epic: EPIC-02
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-002, AW-SRV-003, AW-SRV-006, AW-SRV-012, AW-CLI-002]
