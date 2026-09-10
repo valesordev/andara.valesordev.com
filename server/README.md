@@ -8,7 +8,7 @@ no filesystem, no wall clock, and no global randomness. This is enforced by `dep
 determinism is a production dependency rather than a preference.
 
 ```
-server/sim/        simulation core — types, BuildWorld, PartitionFor
+server/sim/        simulation core — types, BuildWorld, PartitionFor, CanonicalBytes
 server/content/    ZoneDefinition source adapters (dir now; Kafka in AW-SRV-012)
 server/boot/       load orchestration, /livez /readyz /metrics
 server/config/     flag > env > file > default
@@ -40,3 +40,12 @@ and CLI surface, not the Builder language (ADR-0009).
 
 `Zone.Partition` is `PartitionFor(ZoneID)`: FNV-1a 32 of the ID, modulo 64. Callers that produce
 to `andara.commands.v1` (AW-SRV-010) must use this function, not a Kafka client default.
+`World.PartitionOf(RoomRef)` answers the same question for a Room, which has no Partition of its
+own — it inherits its Zone's, because a Zone is the unit of simulation authority. The mapping is
+pinned by golden vectors in `server/sim/partition_test.go`: under ADR-0002 changing it is a
+migration, not a refactor, because repartitioning a keyed topic reorders history.
+
+`CanonicalBytes(*World)` serializes topology in a stable order — zones by ID, rooms by ID, exits by
+Direction — with free-text fields escaped so the encoding is injective. It is how AW-SRV-001 AC-10
+is asserted, and it is deliberately not ADR-0002's State Hash, which covers mutable state and
+arrives with `AW-SRV-002`.

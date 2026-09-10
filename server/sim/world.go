@@ -59,3 +59,24 @@ func (w *World) Resolve(ref RoomRef) (*Room, bool) {
 	r, ok := z.Rooms[ref.Room]
 	return r, ok
 }
+
+// PartitionOf returns the Partition that owns the Room addressed by ref.
+//
+// A Room has no Partition of its own: it inherits its Zone's, because a Zone is
+// the unit of simulation authority (ADR-0001) and a Zone split across
+// Partitions would be unsimulatable. This accessor exists so that invariant is
+// something a caller can assert rather than something it has to know
+// structurally — AW-SRV-001 AC-11, and the routing AW-SRV-010 needs.
+func (w *World) PartitionOf(ref RoomRef) (int32, bool) {
+	if w == nil {
+		return 0, false
+	}
+	z, ok := w.Zones[ref.Zone]
+	if !ok {
+		return 0, false
+	}
+	if _, ok := z.Rooms[ref.Room]; !ok {
+		return 0, false
+	}
+	return z.Partition, true
+}
