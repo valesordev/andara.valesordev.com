@@ -8,16 +8,16 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 ## Architecture lane — claude-code · specs, ADRs, infra, automation
 
   now    AW-INF-004  Kafka topic and schema registry provisioning as code
-  next   AW-INF-003  Kubernetes workload topology, volumes, and probes for andara-…  (unblocks 2)
+  next   AW-INF-003  draft  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
   review AW-INF-001, AW-INF-002, AW-SRV-020 — run the §8 checklist, then flip to done
 
 ## Implementation lane — cursor · server and cli source, tests
 
   now    AW-SRV-001  World model types and zone definition loading with referential validation at b…
          branch aw-srv-001-world-model-and-zone-loading
-  next   AW-SRV-005  gRPC gateway — TLS, session lifecycle, and protocol version n…  (unblocks 5)
+  next   AW-SRV-005  ready  gRPC gateway — TLS, session lifecycle, and protocol ver…  (unblocks 5)
   review AW-CLI-001 — run the §8 checklist, then flip to done
-  held   6 groomed, blocked by unmerged work: AW-SRV-004, AW-SRV-002, AW-SRV-003, AW-SRV-011…
+  held   6 ready, blocked: AW-SRV-004, AW-SRV-002, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
 
 ## Decisions the lanes are waiting on
 

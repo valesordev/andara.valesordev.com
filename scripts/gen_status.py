@@ -138,12 +138,15 @@ def render():
         if not now:
             out.append("  now    — nothing in flight\n")
 
+        # The status word is the prompt: `ready` means assign it, `draft` means groom it.
+        # Without it the reader has to infer which of the two lanes' verbs applies.
         for d in ready[:2]:
             gates = len(d.get("blocks", []))
             tag = "  (unblocks %d)" % gates if gates else ""
+            st = d.get("status", "draft")
             out.append(
-                "  next   %s  %s%s\n"
-                % (d["id"], fit(d["title"], 76 - len(tag)), tag)
+                "  next   %s  %-6s %s%s\n"
+                % (d["id"], st, fit(d["title"], 70 - len(tag)), tag)
             )
             surfaced.append(d)
         if not ready:
@@ -155,7 +158,11 @@ def render():
             surfaced.extend(review)
         if held:
             ids = ", ".join(d["id"] for d in sorted(held, key=rank))
-            out.append("  held   %s\n" % fit("%d groomed, blocked by unmerged work: %s" % (len(held), ids), 84))
+            out.append("  held   %s\n" % fit("%d ready, blocked: %s" % (len(held), ids), 91))
+        stuck = sorted([d for d in mine if d.get("status") == "blocked"], key=rank)
+        if stuck:
+            ids = ", ".join(d["id"] for d in stuck)
+            out.append("  BLOCKED %s\n" % fit("%s — see each story's \'Blocked by\'" % ids, 90))
 
     # Decisions. Only the ones attached to something live: a proposed ADR, or a story
     # one of the lanes is about to touch. The rest are real but not urgent, and a report
