@@ -117,7 +117,7 @@ if [[ -n "$HOOKS_DIR" ]]; then
   cat > "$HOOKS_DIR/pre-commit" <<'HOOK'
 #!/usr/bin/env bash
 set -euo pipefail
-make validate-stories backlog-check
+make validate-stories backlog-check status-check
 HOOK
   chmod +x "$HOOKS_DIR/pre-commit"
   ok "git hooks" "pre-commit installed in $(basename "$(dirname "$HOOKS_DIR")")/hooks"
