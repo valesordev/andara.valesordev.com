@@ -3,9 +3,12 @@
 
 name: check
 
+# `pull_request` covers every branch that is going anywhere; `push` is narrowed to main
+# so a branch with an open PR does not run this twice for one commit. The cost is that a
+# branch pushed with no PR open runs nothing — open the PR to get CI.
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
 
 concurrency:
@@ -38,6 +41,22 @@ jobs:
       - name: bootstrap
         run: make bootstrap
 
+      # AC-13 says CI runs `make check` and no other build logic. It enumerates the
+      # sub-targets instead, for the named-step diagnosability the story's observability
+      # section requires — which means two lists that can drift, and did: `status-check`
+      # was added to `make check` and CI never noticed. The Makefile is the source of
+      # truth; this asserts the workflow matches it.
+      - name: ci parity with `make check`
+        run: |
+          rc=0
+          for t in $(make check-targets); do
+            grep -q "run: make $t" .github/workflows/ci.yaml || {
+              echo "::error file=.github/workflows/ci.yaml::make check runs '$t' but this workflow has no step for it"
+              rc=1
+            }
+          done
+          exit $rc
+
       # Sub-steps are named individually so a red build is diagnosable from the
       # summary view without opening logs (AW-INF-001, observability section).
       - name: fmt
@@ -54,5 +73,7 @@ jobs:
         run: make validate-stories
       - name: backlog freshness
         run: make backlog-check
+      - name: status freshness
+        run: make status-check
       - name: k8s-dry
         run: make k8s-dry ENV=dev

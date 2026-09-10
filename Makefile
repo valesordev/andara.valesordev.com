@@ -41,7 +41,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 .PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
         schemas-apply schemas-check check fmt fmt-check vet lint test \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
-        graph k8s-dry clean build goldens
+        graph k8s-dry check-targets clean build goldens
 
 ## help: print this target list
 help:
@@ -92,9 +92,19 @@ schemas-apply:
 schemas-check:
 	@echo "make: schemas-check: not implemented — AW-INF-004 (needs the .proto sources from AW-SRV-005)" >&2; exit 1
 
+# The single list. CI enumerates these as named steps for diagnosability, and a parity
+# guard in the workflow reads this target to prove the two lists have not drifted —
+# they had, silently, before `status-check` existed.
+CHECK_TARGETS := fmt-check vet lint test proto-check validate-stories backlog-check \
+                 status-check k8s-dry
+
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
-check: fmt-check vet lint test proto-check validate-stories backlog-check status-check k8s-dry
+check: $(CHECK_TARGETS)
 	@echo "check: all clean"
+
+## check-targets: print what `make check` runs, one per line — the CI parity guard reads this
+check-targets:
+	@printf '%s\n' $(CHECK_TARGETS)
 
 ## fmt: format Go sources in place
 fmt:
