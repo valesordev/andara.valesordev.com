@@ -9,7 +9,15 @@ type ZoneID string
 // RoomID names a Room. Unique within a Zone.
 type RoomID string
 
-// Direction is the label on an Exit. Opaque until the canonical set is decided.
+// Direction is the label on an Exit.
+//
+// The canonical set was closed on 2026-09-10 — the twelve in docs/glossary.md,
+// each with a reverse — but this type is still an unvalidated string, and
+// enforcing the set is AW-SRV-021's. Until then a typo like "norht" loads as a
+// Direction nobody can traverse rather than failing the boot. The set is
+// deliberately enforced here in the loader rather than as a protobuf enum: an
+// unknown enum member is dropped silently on the wire, where a rejected string
+// names the file and the line (zone.proto, ExitDefinition.direction).
 type Direction string
 
 // RoomRef addresses a Room across Zone boundaries. Cross-Zone references are

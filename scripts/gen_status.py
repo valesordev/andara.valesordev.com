@@ -42,7 +42,7 @@ LANE_VIEWS = [
 
 # Only list items. ADR-0008 mentions the tag in prose ("the largest `[NEEDS BRIAN]` in the
 # repo"); pulling that in would render half a sentence as if it were a question.
-NEEDS_RE = re.compile(r"^\s*[-*]\s+.*?\[NEEDS BRIAN\]`?\s*(.*)")
+NEEDS_RE = re.compile(r"^\s*(?:[-*]|\d+[.)])\s+.*?\[NEEDS BRIAN\]`?\s*(.*)")
 SLUG_RE = re.compile(r"^AW-[A-Z]+-\d{3}-(.*)\.md$")
 
 
@@ -195,7 +195,7 @@ def render():
                 "  %-11s %d more, attached to stories neither lane has reached\n" % ("", rest)
             )
     else:
-        out.append("  none — every open question is on a story neither lane has reached\n")
+        out.append("  none on the stories above — the rest are on stories neither lane has reached\n")
 
     out.append(
         "\nLegend: `now` is in flight · `next` is groomed with every dependency merged ·\n"

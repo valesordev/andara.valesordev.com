@@ -75,8 +75,35 @@ nothing else — no Kafka, no datastore, no Projection (ADR-0005).
 
 **Container** — An Entity that can hold Item instances. A backpack, a chest, a corpse.
 
-**Direction** — The label on an Exit. `[NEEDS BRIAN]` — the canonical set. Treated as an opaque string
-until answered, which means typos cannot yet be rejected at load.
+**Direction** — The label on an Exit. **The canonical set is closed** (decided 2026-09-10), and the
+loader rejects anything outside it, naming the file and line — which is what turns `norht` into a boot
+failure rather than a Room nobody can leave.
+
+| Direction | Reverse | | Direction | Reverse |
+|-----------|---------|-|-----------|---------|
+| `north` | `south` | | `northeast` | `southwest` |
+| `south` | `north` | | `northwest` | `southeast` |
+| `east` | `west` | | `southeast` | `northwest` |
+| `west` | `east` | | `southwest` | `northeast` |
+| `up` | `down` | | `in` | `out` |
+| `down` | `up` | | `out` | `in` |
+
+The twelve of the MUD tradition, chosen because they are what players already have in their fingers.
+The set is expected to grow — `fore`/`aft` on a ship, `port`/`starboard`, a named portal — and growing
+it is a one-line change plus a content revalidation, not a schema change.
+
+Three things this is deliberately **not**:
+
+- **Not a protobuf enum.** `direction` stays a string on the wire (`andara/content/v1/zone.proto`,
+  `andara/log/v1/log.proto`). A closed enum would drop an unknown member silently on the wire; a
+  string lets the loader reject it loudly. Closing the set is validation, not encoding.
+- **Not the parser's input vocabulary.** `n`, `ne`, `u` and friends are abbreviations a player types;
+  the command pipeline expands them (`AW-SRV-003`). What is stored and hashed is always the full label.
+- **Not a claim that every Room has all twelve.** Exits are authored one at a time.
+
+Each Direction has a **reverse**, listed above. The reverse is not enforced — a one-way Exit is legal
+and useful (a chute, a trapdoor) — but the loader can warn on an Exit whose reverse is absent, which
+catches the far more common case of a Builder forgetting the way back.
 
 **Exit** — A directed edge from one Room to another, labeled with a Direction. Exits are
 one-directional in the data model; a two-way passage is two Exits. Exit conditions (doors, locks,

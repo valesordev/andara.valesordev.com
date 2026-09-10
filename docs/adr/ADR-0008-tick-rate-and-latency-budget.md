@@ -1,7 +1,7 @@
 ---
 id: ADR-0008
 title: Tick rate and the player latency budget
-status: proposed
+status: accepted
 date: 2026-09-07
 deciders: [brian]
 gates: []
@@ -9,7 +9,7 @@ gates: []
 
 ## Context
 
-The Tick Rate has been the largest `[NEEDS BRIAN]` in the repo since the first server story. It sets the
+The Tick Rate was the largest open decision in the repo from the first server story. It sets the
 tick budget, the tick-health SLO target, the floor on player-perceived command latency, the cost of
 ADR-0001's one-tick cross-Zone delay, the reaction time of ADR-0005's Behavior Agents, and what the
 Phase 2 client has to work with. Brian has asked for a recommendation.
@@ -82,6 +82,8 @@ interval, which is exactly the regime ADR-0002 says its trade-offs stop working 
 **Costs us:** Sharding sooner, for latency nobody asked for in a text-first world.
 
 ## Decision
+
+**Accepted 2026-09-10 (Brian): 10 Hz.** The recommendation below stands as written.
 
 **10 Hz. A 100 ms tick interval, with the overrun threshold — the tick budget — set at 50 ms.**
 

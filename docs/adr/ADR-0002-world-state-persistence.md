@@ -161,6 +161,11 @@ which is correct precisely because apply is a pure function.
 
 ## Revisit when
 
+- **The World runs somewhere with independent failure domains.** Decided 2026-09-10: Phase 1 runs on a
+  single-box kind cluster (`AW-INF-003`). `min.insync.replicas=2` and RF=3 across kind nodes are three
+  replicas on one disk, so the zero-RPO target in `docs/specs/slo/recovery.md` is, until then, a claim
+  about one machine. The settings stay correct for a real cluster; what changes is what they buy today.
+
 - Produce p99 on the input path exceeds 25% of the tick interval.
 - A single partition's consume-and-apply rate approaches the tick budget, which is the signal that
   ADR-0001's sharding should be activated.
