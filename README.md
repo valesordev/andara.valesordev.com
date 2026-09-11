@@ -36,6 +36,8 @@ shell commands that is not a target is a defect.
 | `client/` | `andara-client` — Phase 2, deferred (TypeScript, WebGL). |
 | `gen/` | Generated protobuf code. Committed; regenerate with `make proto`. |
 | `deploy/` | Compose, Kafka topic definitions, Helm, Kubernetes. |
+| `LICENSING.md` | Which license covers which path, and the Open Canon split for the world itself. |
+| `CONTRIBUTING.md` | What to contribute here, what not to, and what `make check` enforces. |
 
 ## Who writes what
 
@@ -71,3 +73,11 @@ ADR-blocked.
 pipeline, gRPC gateway, `andara-cli play` — are groomed to `ready`. M2 through M4 stories are `draft`:
 scoped, sequenced, and dependency-linked, with interface contracts written when their milestone
 approaches rather than guessed at now.
+
+## License
+
+The code is [Apache-2.0](LICENSE); the documentation under `docs/` is
+[CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt). Andara's World itself — the name, the world and
+its setting, and its canon — is a creative work of [solo7.media](https://solo7.media) under
+the Open Canon split: world and setting CC BY-SA 4.0, canon works CC BY-NC-ND 4.0. The full
+map, with the reasoning, is in [`LICENSING.md`](LICENSING.md).

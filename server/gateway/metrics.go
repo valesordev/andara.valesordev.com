@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 package gateway
 
 import "github.com/prometheus/client_golang/prometheus"

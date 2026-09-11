@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Measure p99 CPU and RSS of andara-server under the sizing fixture and record the result
 # in deploy/helm/andara/measurements.yaml (AW-INF-003 AC-10).
 #

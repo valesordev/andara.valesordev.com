@@ -1,0 +1,30 @@
+# REUSE (https://reuse.software) declaration: which license covers which path.
+# LICENSING.md is the human-readable map; this file is what `make license-check`
+# verifies. Later entries take precedence over earlier ones for a path both match.
+
+version = 1
+SPDX-PackageName = "andara.valesordev.com"
+SPDX-PackageSupplier = "Valesor Development <https://github.com/valesordev>"
+SPDX-PackageDownloadLocation = "https://github.com/valesordev/andara.valesordev.com"
+
+# Default: source, build, deploy, configuration, generated code, and test fixtures.
+[[annotations]]
+path = ["**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Documentation: ADRs, epics, stories, specs prose, SLOs, runbooks, glossary, roadmap,
+# and the backlog generated from them.
+[[annotations]]
+path = ["docs/**", "BACKLOG.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# The protocol is source, not prose: it compiles into gen/, which inherits its license.
+[[annotations]]
+path = ["docs/specs/protocol/**/*.proto", "docs/specs/protocol/buf.yaml"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "Apache-2.0"

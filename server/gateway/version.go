@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 package gateway
 
 // Negotiate applies the Protocol version rule from ADR-0003: the server

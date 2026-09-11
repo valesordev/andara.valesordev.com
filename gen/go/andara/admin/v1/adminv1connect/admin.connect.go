@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
 // The Admin service.
 //
 // ADR-0003 keeps Admin on the same endpoint and the same protocol as Game:

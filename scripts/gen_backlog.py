@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Regenerate BACKLOG.md from docs/stories/*.md frontmatter.
 
 Deterministic: same inputs produce byte-identical output. `--check` verifies the

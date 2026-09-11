@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Scaffold a new story from the template, allocating the next ID for a component.
 
     scripts/new_story.py SRV "Load zone definitions at boot"

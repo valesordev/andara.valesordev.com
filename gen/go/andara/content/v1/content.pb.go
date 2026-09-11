@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // The content store (ADR-0004).
 //
 // Three compacted topics, and the shape matters because the obvious

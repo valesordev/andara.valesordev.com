@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
 // The Game service: what a player, andara-cli, or a Behavior Agent talks to.
 //
 // ADR-0003 puts gRPC over HTTP/2 with TLS on the wire and serves Connect and
