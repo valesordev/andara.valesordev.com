@@ -14,6 +14,7 @@ set -euo pipefail
 # parsing tomorrow — golangci-lint v1 config against a v2 binary is exactly that failure.
 GOLANGCI_VERSION="v2.13.2"
 BUF_VERSION="v1.72.0"
+GRPCURL_VERSION="v1.9.4"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -40,21 +41,23 @@ ok go "$GOV"
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
 
-# install_pinned <binary> <module@version> <version-probe-command...>
+# install_pinned <binary> <module> <version> [ldflags]
 # Installs only when the binary is absent or is the wrong version, so the common case is
-# a version check and nothing else.
+# a version check and nothing else. ldflags exists for tools that only know their own
+# version when a release pipeline stamps it in — grpcurl reports "dev build" from a
+# plain `go install`, which would make this re-install it on every run.
 install_pinned() {
-  local name="$1" module="$2" want="$3"
+  local name="$1" module="$2" want="$3" ldflags="${4:-}"
   local have=""
   if [[ -x "$BIN/$name" ]]; then
-    have="$("$BIN/$name" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    have="$("$BIN/$name" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
   fi
   if [[ "v${have}" == "$want" ]]; then
     ok "$name" "$have (pinned)"
     return 0
   fi
   echo "  installing $name $want ..."
-  GOBIN="$BIN" go install "${module}@${want}" \
+  GOBIN="$BIN" go install -ldflags "$ldflags" "${module}@${want}" \
     || fail "could not install $name $want; check network access to the Go module proxy"
   ok "$name" "$want (installed)"
 }
@@ -73,6 +76,15 @@ if find docs/specs/protocol -name '*.proto' -print -quit 2>/dev/null | grep -q .
   install_pinned buf github.com/bufbuild/buf/cmd/buf "$BUF_VERSION"
 else
   ok buf "deferred (no .proto sources yet)"
+fi
+
+# grpcurl is how the Protocol is poked by hand (ADR-0003: "debugging is grpcurl, not nc")
+# and what AW-SRV-005's operator test plan runs. Needed once there is a server to poke.
+if find cmd/andara-server -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+  install_pinned grpcurl github.com/fullstorydev/grpcurl/cmd/grpcurl "$GRPCURL_VERSION" \
+    "-X main.version=$GRPCURL_VERSION"
+else
+  ok grpcurl "deferred (no server yet)"
 fi
 
 # Needed by `make up`, not by `make check`. Report rather than fail, so a developer who

@@ -189,7 +189,14 @@ say Character.
 Changeable without a deploy; every change is an audit Event (ADR-0006).
 
 **Session** — A live, authenticated gRPC connection bound to at most one Character. Has a `SessionID`
-used as the correlation ID on every log line, span, and Command in its path.
+used as the correlation ID on every log line, span, and Command in its path. Bound to the transport
+connection it was opened on: when that connection closes, the Session ends (AW-SRV-005). Whether a
+Character survives that is Linkdead's question, not the Session's.
+
+**Principal** — Who a verified credential speaks for, as the Gateway sees it: the subject a token
+named, and (once AW-SRV-008 lands) what it is permitted to do. Not an Account and not a Character —
+those are what a Principal may be bound to. Until AW-SRV-008, a stub verifier names every non-empty
+token `stub`.
 
 ---
 

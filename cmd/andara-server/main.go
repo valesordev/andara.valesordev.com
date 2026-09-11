@@ -11,6 +11,7 @@ import (
 
 	"github.com/valesordev/andara/server/boot"
 	"github.com/valesordev/andara/server/config"
+	"github.com/valesordev/andara/server/gateway"
 	"github.com/valesordev/andara/server/telemetry"
 )
 
@@ -30,8 +31,6 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return boot.ExitFail
 	}
 	_ = stdout
-	_ = version
-	_ = commit
 
 	tel := telemetry.Setup(cfg, stderr)
 	defer tel.Shutdown(context.Background())
@@ -45,6 +44,34 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	// The Protocol endpoint (AW-SRV-005). Built before the health server
+	// listens so that a bad certificate fails the boot rather than a boot
+	// that reports live and never serves.
+	gw, err := gateway.New(gateway.Options{
+		Listen:            cfg.GRPCListen,
+		TLSCertFile:       cfg.TLSCertFile,
+		TLSKeyFile:        cfg.TLSKeyFile,
+		MaxRecvBytes:      cfg.GRPCMaxRecvBytes,
+		MaxRequestTimeout: cfg.GRPCMaxRequestTimeout,
+		DrainTimeout:      cfg.GRPCDrainTimeout,
+		ProtocolMin:       cfg.ProtocolMinVersion,
+		ProtocolMax:       cfg.ProtocolMaxVersion,
+		Build:             gateway.BuildInfo{Version: version, Commit: commit},
+		Environment:       cfg.Environment,
+		OnDrain:           rt.Drain,
+		Log:               tel.Log,
+		Tracer:            tel.Tracer,
+		Registry:          tel.Reg,
+	})
+	if err != nil {
+		tel.Log.Error("gateway", "detail", err.Error())
+		return boot.ExitFail
+	}
+	if err := gw.Start(); err != nil {
+		tel.Log.Error("gateway", "detail", err.Error())
+		return boot.ExitFail
+	}
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPListen(),
 		Handler:           rt.Handler(),
@@ -55,15 +82,32 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		tel.Log.Info("http listen", "addr", srv.Addr)
 		errCh <- srv.ListenAndServe()
 	}()
+	gwErr := make(chan error, 1)
+	go func() { gwErr <- gw.Wait() }()
+
 	select {
 	case <-ctx.Done():
-		shctx, shcancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Drain the Protocol first, then the operator surface, so /readyz
+		// answers 503 for the whole drain. A drain that runs past its
+		// timeout is logged and still exits 0: the process was asked to
+		// stop and it stopped (AC-8).
+		shctx, shcancel := context.WithTimeout(context.Background(), cfg.GRPCDrainTimeout+5*time.Second)
 		defer shcancel()
+		if err := gw.Shutdown(shctx); err != nil {
+			tel.Log.Warn("gateway shutdown", "detail", err.Error())
+		}
 		_ = srv.Shutdown(shctx)
+		return boot.ExitOK
+	case err := <-gwErr:
+		if err != nil {
+			tel.Log.Error("gateway", "detail", err.Error())
+			return boot.ExitFail
+		}
 		return boot.ExitOK
 	case err := <-errCh:
 		if err != nil && err != http.ErrServerClosed {
 			tel.Log.Error("http server", "detail", err.Error())
+			_ = gw.Shutdown(context.Background())
 			return boot.ExitFail
 		}
 		return boot.ExitOK
