@@ -14,6 +14,7 @@ set -euo pipefail
 # parsing tomorrow — golangci-lint v1 config against a v2 binary is exactly that failure.
 GOLANGCI_VERSION="v2.13.2"
 BUF_VERSION="v1.72.0"
+GRPCURL_VERSION="v1.9.4"
 HELM_VERSION="v3.22.0"
 KUBECONFORM_VERSION="v0.8.0"
 
@@ -42,7 +43,7 @@ ok go "$GOV"
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
 
-# install_pinned <binary> <module@version> <version-probe-command...>
+# install_pinned <binary> <module> <version>
 # Installs only when the binary is absent or is the wrong version, so the common case is
 # a version check and nothing else.
 install_pinned() {
@@ -50,8 +51,9 @@ install_pinned() {
   local have=""
   if [[ -x "$BIN/$name" ]]; then
     # The module version stamped into the binary, not `--version` output: kubeconform built
-    # by `go install` reports "development", and helm prints a struct. `go version -m` reads
-    # the build info every Go binary carries, so one check covers every pinned tool.
+    # by `go install` reports "development", helm prints a struct, and grpcurl says "dev
+    # build". `go version -m` reads the build info every Go binary carries, so one check
+    # covers every pinned tool.
     have="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $3; exit}' || true)"
   fi
   if [[ "${have}" == "$want" ]]; then
@@ -91,6 +93,14 @@ if find docs/specs/protocol -name '*.proto' -print -quit 2>/dev/null | grep -q .
   install_pinned buf github.com/bufbuild/buf/cmd/buf "$BUF_VERSION"
 else
   ok buf "deferred (no .proto sources yet)"
+fi
+
+# grpcurl is how the Protocol is poked by hand (ADR-0003: "debugging is grpcurl, not nc")
+# and what AW-SRV-005's operator test plan runs. Needed once there is a server to poke.
+if find cmd/andara-server -name '*.go' -print -quit 2>/dev/null | grep -q .; then
+  install_pinned grpcurl github.com/fullstorydev/grpcurl/cmd/grpcurl "$GRPCURL_VERSION"
+else
+  ok grpcurl "deferred (no server yet)"
 fi
 
 # Needed by `make up`, not by `make check`. Report rather than fail, so a developer who

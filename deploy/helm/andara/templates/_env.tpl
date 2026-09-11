@@ -42,4 +42,36 @@ ANDARA_LOG_LEVEL: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_OTLP_ENDPOINT: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "grpc" "listen" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_GRPC_LISTEN: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "grpc" "tls_cert_file" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TLS_CERT_FILE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "grpc" "tls_key_file" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TLS_KEY_FILE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "grpc" "drain_timeout" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_GRPC_DRAIN_TIMEOUT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "grpc" "max_recv_bytes" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_GRPC_MAX_RECV_BYTES: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "grpc" "max_request_timeout" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_GRPC_MAX_REQUEST_TIMEOUT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "protocol" "min_version" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_PROTOCOL_MIN: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "protocol" "max_version" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_PROTOCOL_MAX: {{ $v | toString | quote }}
+{{- end }}
 {{- end -}}

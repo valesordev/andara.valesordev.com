@@ -32,6 +32,17 @@ if [[ "$ENVNAME" == "local" ]]; then
     --from-file=testdata/content/valid \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: configmap andara-content from testdata/content/valid"
+
+  # The server refuses to start without TLS material (AW-SRV-005: no plaintext mode), so
+  # the local cluster gets the same locally-issued certificate `make up` uses, as the
+  # Secret AW-INF-006 will have cert-manager issue under this exact name. Recreated every
+  # run so a reissued certificate is applied; the private key never leaves .local/.
+  "$REPO/scripts/tls.sh" >/dev/null
+  TLS_DIR="${ANDARA_TLS_DIR:-$REPO/.local/tls}"
+  kubectl -n "$NS" create secret tls andara-server-tls \
+    --cert="$TLS_DIR/server.pem" --key="$TLS_DIR/server-key.pem" \
+    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+  echo "helm-install: secret andara-server-tls from $TLS_DIR (cert-manager takes this over in AW-INF-006)"
 fi
 
 helm upgrade --install andara "$CHART" \
