@@ -58,9 +58,10 @@ jobs:
           set -euo pipefail
           NS=andara-local
           kubectl -n $NS wait --for=condition=Ready pod/andara-0 --timeout=120s
-          body="$(kubectl -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/readyz)"
-          echo "readyz: $body"
-          echo "$body" | grep -q '"ready":true'
+          # Status, not body: the body is "ok" on main today and becomes a JSON phase with
+          # AW-SRV-007; the probe contract is the 200, and the readiness probe is this URL.
+          kubectl -n $NS exec andara-0 -c server -- wget -S --spider http://127.0.0.1:8080/readyz 2>&1 \
+            | tee /dev/stderr | grep -q 'HTTP/1.1 200'
           kubectl -n $NS get endpointslice -l kubernetes.io/service-name=andara \
             -o jsonpath='{.items[0].endpoints[0].conditions.ready}' | grep -q true
           kubectl -n $NS logs andara-0 -c partitions | grep -q 'ordinal=0 replicas=1 -> 0,1,2'
