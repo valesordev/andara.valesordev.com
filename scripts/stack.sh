@@ -26,9 +26,10 @@ docker compose version >/dev/null 2>&1 || fail "the docker compose plugin is not
 
 dc() { docker compose -f "$COMPOSE_FILE" "$@"; }
 
-# The server profile is enabled only once there is a server to build. Until AW-SRV-005
-# lands, `make up` brings up everything the server will need and says so, rather than
-# failing on a build context that has no main package in it.
+# The server profile is enabled only once there is a server to build. Before AW-SRV-005
+# landed, `make up` brought up everything the server would need and said so, rather than
+# failing on a build context with no main package in it. The detection stays: it is what
+# keeps a fresh checkout that has not built yet from failing, and it costs one `find`.
 server_profile_args() {
   if find cmd/andara-server -name '*.go' -print -quit 2>/dev/null | grep -q .; then
     echo "--profile server"
@@ -127,7 +128,7 @@ CLICONF
 
     if [[ -z "$(server_profile_args)" ]]; then
       echo
-      echo "up: andara-server is not running — no Go sources under cmd/andara-server yet (AW-SRV-005)."
+      echo "up: andara-server is not running — no Go sources found under cmd/andara-server."
       echo "    Everything it depends on is up and waiting for it."
     fi
 

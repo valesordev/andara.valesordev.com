@@ -4,7 +4,7 @@ title: andara-cli skeleton — command tree, configuration precedence, and outpu
 epic: EPIC-06
 component: cli
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-CLI-002, AW-CLI-003, AW-CLI-004, AW-CLI-006]
@@ -209,14 +209,19 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` Cobra-style command tree, per CLAUDE.md §1.
-- `[ASSUMPTION]` Config file format is YAML, matching the server's. If the server config ends up
-  elsewhere, they should agree.
+- **Resolved 2026-09-11 (by the implementation):** the command tree is Cobra, per CLAUDE.md §1.
+  `admin/cli` builds it on `spf13/cobra`, and `TestGlobalFlagsOnEveryCommand` asserts the global
+  flag set over the whole tree rather than per command.
+- **Resolved 2026-09-11 (by the implementation):** the config file is YAML, and the server's is too
+  (`server/config` reads the same format), so the two agree as intended. `make up` writes
+  `.local/cli.yaml` in it.
 - Per ADR-0003 there is **one endpoint** serving both `andara.game.v1.Game` and
   `andara.admin.v1.Admin`, so `--server-address` is a single value rather than a game/admin pair. It
   is `localhost:8443` locally, matching `AW-SRV-005`'s `grpc.listen` default.
 - **Resolved 2026-09-07 (Brian):** stored credentials are supported, and acting as another identity
   still records who was really acting. The storage contract is above; the token model is
   `AW-SRV-008`'s.
-- `[ASSUMPTION]` The client uses Connect's Go implementation, which speaks gRPC, gRPC-Web, and Connect
-  from one generated client — matching what the server serves (ADR-0003).
+- **Moved to `AW-CLI-004` 2026-09-11:** which client library `andara-cli` uses to speak the Protocol
+  is not this story's to assume. This story ships no Protocol client — it is explicitly out of scope
+  above — so the assumption was recorded where it could not be tested and is now recorded where it
+  will be decided.

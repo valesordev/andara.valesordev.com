@@ -190,6 +190,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- `[ASSUMPTION]` The client uses Connect's Go implementation, which speaks gRPC, gRPC-Web, and Connect
+  from one generated client — matching what the server serves (ADR-0003). Moved here from
+  `AW-CLI-001` on 2026-09-11: that story ships no Protocol client, so the assumption sat in a story
+  that could never test it. `AW-SRV-005` has since proven the server side of it —
+  `TestOpenSession_AllProtocolsOneHandler` establishes a Session over all three protocols against one
+  handler — so what remains open is only the client's half.
+
 - **Resolved 2026-09-07 (Brian):** the Text Interface is permanent, text-only, and operator/developer
   facing. It never renders. The scrolling-transcript assumption is now a decision, and protocol
   visibility is in scope. See Context.
