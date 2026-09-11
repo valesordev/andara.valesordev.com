@@ -4,7 +4,7 @@ title: gRPC gateway — TLS, session lifecycle, and protocol version negotiation
 epic: EPIC-03
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-008, AW-SRV-010, AW-SRV-011, AW-INF-006, AW-CLI-004]
