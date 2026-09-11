@@ -34,6 +34,10 @@ func TestRun_BrokenFixturesExitOne(t *testing.T) {
 		{ac: "AC-8", fixture: "malformed", code: "malformed_file"},
 		{ac: "AC-8", fixture: "bad-field-type", code: "malformed_file"},
 		{ac: "AC-8", fixture: "unknown-field", code: "malformed_file"},
+		// AW-SRV-021.
+		{ac: "AW-SRV-021 AC-2", fixture: "unknown-component", code: "unknown_component_type"},
+		{ac: "AW-SRV-021 AC-3", fixture: "duplicate-component", code: "duplicate_component_type"},
+		{ac: "AW-SRV-021 AC-6", fixture: "bad-direction", code: "unknown_direction"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.ac+"/"+tc.fixture, func(t *testing.T) {
@@ -168,5 +172,66 @@ func TestRun_PrintsEveryFindingNotJustTheFirst(t *testing.T) {
 	if len(found) != 10 {
 		t.Errorf("reported %d of 10 broken exits; a Builder needs one boot, not ten: %v",
 			len(found), stderr.String())
+	}
+}
+
+// AW-SRV-021 AC-7: a one-way Exit is legal. The process serves, and
+// --validate-only exits 0 — but the warning is on stderr, because a Builder who
+// meant to author the way back has no other way to find out.
+func TestRun_OneWayExitWarnsAndExitsZero(t *testing.T) {
+	path := abs(t, filepath.Join("..", "..", "testdata", "content", "one-way"))
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--validate-only", "--content-source=dir", "--content-path=" + path},
+		emptyEnv, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d, want 0; stderr=%s", code, stderr.String())
+	}
+	out := stderr.String()
+	if !strings.Contains(out, "missing_reverse_exit") {
+		t.Fatalf("a one-way Exit must be warned about, never silent:\n%s", out)
+	}
+	for _, want := range []string{"oubliette", "plaza", `"level":"WARN"`} {
+		if !strings.Contains(out, want) {
+			t.Errorf("the warning does not carry %q:\n%s", want, out)
+		}
+	}
+}
+
+// AW-SRV-021 AC-2, at the boundary a Builder actually meets it: the message has
+// to say component types are server-defined, or a Builder who typed
+// "andara.core.Drak" spends the afternoon re-checking their spelling.
+func TestRun_UnknownComponentSaysTypesAreServerDefined(t *testing.T) {
+	path := abs(t, filepath.Join("..", "..", "testdata", "content", "unknown-component"))
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--validate-only", "--content-source=dir", "--content-path=" + path},
+		emptyEnv, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1; stderr=%s", code, stderr.String())
+	}
+	out := stderr.String()
+	for _, want := range []string{
+		"andara.core.Drak", "plaza", "town.json", "defined on the server", "ADR-0010 decision 7",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("stderr does not name %q:\n%s", want, out)
+		}
+	}
+}
+
+// AW-SRV-021 AC-6: the line, on stderr, as a structured field. A finding that
+// says "somewhere in this file" is what the position walk exists to prevent.
+func TestRun_BadDirectionNamesTheLineAndThePermittedSet(t *testing.T) {
+	path := abs(t, filepath.Join("..", "..", "testdata", "content", "bad-direction"))
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"--validate-only", "--content-source=dir", "--content-path=" + path},
+		emptyEnv, &stdout, &stderr); code != 1 {
+		t.Fatalf("exit %d, want 1; stderr=%s", code, stderr.String())
+	}
+	out := stderr.String()
+	if !strings.Contains(out, `"line":11`) {
+		t.Errorf("stderr does not carry the line as a structured field:\n%s", out)
+	}
+	for _, d := range sim.Directions() {
+		if !strings.Contains(out, string(d)) {
+			t.Errorf("stderr does not list the permitted Direction %s:\n%s", d, out)
+		}
 	}
 }

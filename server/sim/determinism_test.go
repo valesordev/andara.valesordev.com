@@ -53,8 +53,19 @@ func (s *shuffler) shuffle(n int, swap func(i, j int)) {
 	}
 }
 
-// shuffledWorld builds a fixed Zone graph with Rooms and Exits in a permuted
-// order. Its topology is identical every call; only the input ordering moves.
+// shuffledComponents is the fixed Component set every Room in shuffledWorld
+// carries, authored out of type order on purpose: a sort that does not happen is
+// visible only when the input is not already sorted (AW-SRV-021 AC-5).
+var shuffledComponents = []string{
+	"andara.core.NoRecall",
+	"andara.core.Dark",
+	"andara.core.NoMagic",
+	"andara.core.Indoors",
+}
+
+// shuffledWorld builds a fixed Zone graph with Rooms, Exits, and Components in a
+// permuted order. Its topology is identical every call; only the input ordering
+// moves.
 func shuffledWorld(t *testing.T, rnd *shuffler) *World {
 	t.Helper()
 
@@ -73,17 +84,29 @@ func shuffledWorld(t *testing.T, rnd *shuffler) *World {
 			{Direction: "up", ToZone: "wilds", ToRoom: "trail"},
 		}
 		rnd.shuffle(len(exits), func(a, b int) { exits[a], exits[b] = exits[b], exits[a] })
+		comps := make([]*contentv1.ComponentValue, 0, len(shuffledComponents))
+		for _, ct := range shuffledComponents {
+			comps = append(comps, &contentv1.ComponentValue{Type: ct})
+		}
+		rnd.shuffle(len(comps), func(a, b int) { comps[a], comps[b] = comps[b], comps[a] })
 		rooms = append(rooms, &contentv1.RoomDefinition{
 			Id:          id,
 			Title:       "Room " + id,
 			Description: "A room.",
 			Exits:       exits,
+			Components:  comps,
 		})
 	}
 	rnd.shuffle(len(rooms), func(a, b int) { rooms[a], rooms[b] = rooms[b], rooms[a] })
 
+	townComps := make([]*contentv1.ComponentValue, 0, len(shuffledComponents))
+	for _, ct := range shuffledComponents {
+		townComps = append(townComps, &contentv1.ComponentValue{Type: ct})
+	}
+	rnd.shuffle(len(townComps), func(a, b int) { townComps[a], townComps[b] = townComps[b], townComps[a] })
+
 	inputs := []Input{
-		zone("town.json", "town", "Town", rooms...),
+		zoneWith("town.json", "town", "Town", townComps, rooms...),
 		zone("wilds.json", "wilds", "Wilds", room("trail", "Trail", exit("down", "town", "r00"))),
 	}
 	rnd.shuffle(len(inputs), func(a, b int) { inputs[a], inputs[b] = inputs[b], inputs[a] })
@@ -194,4 +217,54 @@ func directions(exits []Exit) []string {
 		out[i] = string(e.Direction)
 	}
 	return out
+}
+
+// The Component property stated on the slice rather than through the
+// serialization, so a regression is legible without diffing two blobs. Every
+// Room's set is authored in a different permutation each iteration and must come
+// out of the loader in the same one.
+func TestBuildWorld_ComponentOrderIsSortedRegardlessOfInputOrder(t *testing.T) {
+	rnd := newShuffler(4)
+	want := []ComponentType{
+		"andara.core.Dark", "andara.core.Indoors", "andara.core.NoMagic", "andara.core.NoRecall",
+	}
+	for i := 0; i < determinismIterations; i++ {
+		world := shuffledWorld(t, rnd)
+		for zid, z := range world.Zones {
+			if zid == "town" && !sameTypes(z.Components, want) {
+				t.Fatalf("iteration %d: Zone %s components = %v, want %v",
+					i, zid, componentTypes(z.Components), want)
+			}
+			for rid, r := range z.Rooms {
+				if zid != "town" {
+					continue
+				}
+				if !sameTypes(r.Components, want) {
+					t.Fatalf("iteration %d: %s/%s components = %v, want %v",
+						i, zid, rid, componentTypes(r.Components), want)
+				}
+			}
+		}
+	}
+}
+
+func componentTypes(comps []Component) []ComponentType {
+	out := make([]ComponentType, len(comps))
+	for i, c := range comps {
+		out[i] = c.Type
+	}
+	return out
+}
+
+func sameTypes(comps []Component, want []ComponentType) bool {
+	got := componentTypes(comps)
+	if len(got) != len(want) {
+		return false
+	}
+	for i := range got {
+		if got[i] != want[i] {
+			return false
+		}
+	}
+	return true
 }

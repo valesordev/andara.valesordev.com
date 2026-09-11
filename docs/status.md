@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-35 stories — 2 review · 27 ready · 6 done
+35 stories — 1 in-progress · 2 review · 26 ready · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,9 +14,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
-  next   AW-SRV-021  ready  Components on Rooms and Zones, and the closed Direction…  (unblocks 5)
+  now    AW-SRV-021  Components on Rooms and Zones, and the closed Direction set
+         branch aw-srv-021-components-on-rooms-and-zones-and-the-closed-direction-set
   next   AW-SRV-008  ready  Account store, registration modes, and authentication  (unblocks 3)
+  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
   held   20 ready, blocked: AW-SRV-022, AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007,…
 
 ## Decisions the lanes are waiting on

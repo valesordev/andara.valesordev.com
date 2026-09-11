@@ -105,7 +105,7 @@ func TestBuildWorld_DuplicateComponentTypeIsFatal(t *testing.T) {
 }
 
 // AC-4: a Zone-level Component is the Zone's own. It does not descend onto the
-// Zone's Rooms. This test pins the non-merging behaviour precisely so that a
+// Zone's Rooms. This test pins the non-merging behavior precisely so that a
 // later decision to merge is a visible change to a test, not a silent change to
 // what content means.
 func TestBuildWorld_ZoneComponentsDoNotDescendToRooms(t *testing.T) {

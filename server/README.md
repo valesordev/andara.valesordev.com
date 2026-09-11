@@ -128,6 +128,55 @@ grpcurl -cacert .local/tls/ca.pem -H 'Authorization: Bearer x' \
 `map`, a `float`/`double`, or `google.protobuf.Any` rather than encode it non-canonically.
 
 `CanonicalBytes(*World)` serializes topology in a stable order — zones by ID, rooms by ID, exits by
-Direction — with free-text fields escaped so the encoding is injective. It is how AW-SRV-001 AC-10
-is asserted, and it is deliberately not ADR-0002's State Hash, which covers mutable state and
-arrives with `AW-SRV-002`.
+Direction, Components by type and their fields by name — with free-text fields escaped so the
+encoding is injective. It is how AW-SRV-001 AC-10 is asserted, and it is deliberately not ADR-0002's
+State Hash, which covers mutable state and arrives with `AW-SRV-002`.
+
+## Content validation (AW-SRV-001, AW-SRV-021)
+
+`sim.BuildWorld` is the one validator — the same code serves boot, `content validate`, and the
+publish path (ADR-0004). It returns every finding, never only the first, so a Builder fixing ten
+broken Exits needs one boot rather than ten.
+
+**Findings that refuse the load** (the process exits 1 and `/readyz` stays 503):
+`unknown_room`, `unknown_zone`, `duplicate_room`, `duplicate_zone`, `unsupported_format_version`,
+`malformed_file`, `no_zones_found`, `unknown_direction`, `unknown_component_type`,
+`duplicate_component_type`, `invalid_component_field`.
+
+**Findings that are advisory** — the World loads and the process serves, and each is logged at
+`warn`: `missing_reverse_exit`, and `orphan_room` unless `content.strict_orphans` is set, which
+promotes it to a refusal.
+
+**Directions are a closed set** — the twelve in `docs/glossary.md`, each with a reverse. It is
+enforced here rather than as a protobuf enum: an unknown enum member is dropped silently on the wire,
+where a rejected string names the file and the line. An Exit whose target has no Exit back along the
+reverse Direction is a `missing_reverse_exit` warning; one-way Exits are legal, and silent ones are
+not. Growing the set is a glossary edit plus `canonicalDirections` in `server/sim/direction.go` plus
+a content revalidation — never a schema change.
+
+**Component types are a closed, server-defined table** (`componentRegistry` in
+`server/sim/component.go`, ADR-0010 decision 7). Content composes from it; a type outside it is a
+load error, and adding one is a code change and a release. A registry entry declares its fields by
+name and kind, so a field the entry does not declare is also a load error rather than something the
+State Hash covers and nothing reads.
+
+### Content-load metrics
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_content_zones_loaded` | gauge | — | 1 |
+| `andara_content_rooms_loaded` | gauge | `zone` | Zones in the content set |
+| `andara_content_load_duration_seconds` | histogram | — | 1 |
+| `andara_content_validation_errors_total` | counter | `code` | the `ErrCode` set, closed in `server/sim/errors.go` |
+| `andara_content_components_total` | counter | `component_type` | the Component registry, closed by construction |
+| `andara_content_load_warnings_total` | counter | `kind` | `orphan_room`, `missing_reverse_exit` |
+
+Warnings appear in both counters: `validation_errors_total` counts every finding by code,
+`load_warnings_total` counts only the advisory ones, so an operator can ask whether a content pack is
+sloppy without knowing which codes happen to be advisory. `room_id` is a label on neither — that is
+the unbounded cardinality CLAUDE.md §7 rejects on sight, and it lives on the log line instead.
+
+Every rejection and every warning logs one structured line carrying `code`, `file`, `line`,
+`zone`, `room`, `detail`, and `trace_id`. Component and Direction validation are attributes on the
+existing `content.load` and `content.validate` spans (`component_count`, `error_count`,
+`warning_count`), not spans of their own: a span per Room would be one span per Room.
