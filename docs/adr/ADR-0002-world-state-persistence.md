@@ -120,6 +120,19 @@ later is a consumer-group rebalance, not a data migration.
 
 ## Consequences
 
+**Annotated 2026-09-11 (`AW-SRV-019` grooming): the state projector is a replica, not a fold.** This
+ADR describes projections as folding the Event topic into current state. When the projector was groomed
+against `AW-SRV-003`'s actual contract — `Apply(LoggedCommand, *WorldState) ([]Event, error)`, state
+mutated directly, Events emitted as a consequence — a fold over Events would have needed a second
+implementation of every state change, which is the defect the design was trying to avoid. The projector
+therefore runs `sim.Engine` over the same Commands and Tick Boundary Records the server consumes,
+bootstraps from the newest Snapshot Round, and emits a State Record for each aggregate a tick touched. The
+properties this ADR wanted hold unchanged: one implementation of state change, a digest assertion against
+every `TickCompleted`, and index rebuilds in live-state time. What changed is the projector's input
+topic and its memory footprint (a full replica of World state). If the sim ever becomes internally
+event-sourced, the projector can switch to the Event topic without changing its output.
+
+
 **Kafka availability becomes World availability.** This is the significant new cost, and it did not
 exist in either drafted option. If the log is unreachable, the World cannot accept Commands. The
 mitigations are real but they are work: `acks=all` with `min.insync.replicas=2`, a documented

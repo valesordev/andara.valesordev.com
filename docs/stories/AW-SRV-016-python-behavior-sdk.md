@@ -1,10 +1,10 @@
 ---
 id: AW-SRV-016
-title: Python behavior SDK and agent runtime
+title: Python behavior SDK and per-pack agent runtime
 epic: EPIC-09
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-009]
 blocks: []
@@ -12,17 +12,16 @@ lane: implementation
 risk: medium
 ---
 
-> `status: draft` — unblocked by ADR-0005 and scoped. Groomed to `ready` when M4 approaches.
-
 ## Context
 
-ADR-0005 chose Python for Behaviors with "a decent OOP style", executed out of process. `AW-SRV-009`
-builds the server-side boundary; this story builds the thing a Builder actually writes.
+ADR-0005 chose Python for Behaviors, executed out of process. `AW-SRV-009` builds the server-side
+boundary; this story builds the thing a Builder writes and the runtime that runs it.
 
-Out-of-process makes the SDK the easiest kind of Python to write well: it is a client library against a
-network API, generated from the same protobuf definitions as the game client (ADR-0007). A Behavior can
-be as slow, as stateful, and as non-deterministic as it likes — including calling a model — because the
-log records what it decided rather than how.
+**Builders write Behaviors (2026-09-11).** So the runtime is not "a service Developers deploy with code
+in the image"; it is `andara-agent`, a fixed image that loads a pack's Behavior blobs from the content
+store at start and on every pointer move, in one process per pack. The SDK is what those blobs import,
+published as a versioned package pinned to a protocol version, installable by someone with no
+repository access.
 
 ## User story
 
@@ -32,97 +31,134 @@ behavior feels like writing a program rather than filling in a configuration fil
 ## Scope
 
 ### In scope
-- `class Behavior` with typed event handlers and a lifecycle (`on_attach`, `on_event`, `on_detach`).
-- Entity proxy objects: reading an NPC's perceived surroundings as objects rather than as raw protobuf.
-- A typed action API generated from the protobuf definitions, so an invalid action is a type error rather
-  than a server rejection.
-- The Agent runtime: connect, authenticate, claim NPCs, dispatch Events to Behaviors, submit Commands.
-- Local development affordances: run a Behavior against a local stack, and a replay harness that feeds a
-  recorded Event stream to a Behavior for testing without a server.
-- Packaging and distribution to Builders who have no repository access.
+- Package `andara-sdk`: `Behavior` base class with `on_attach`, `on_event`, typed `on_<event>`
+  handlers, `on_detach`; `NPC` proxy with a typed action API generated from `gen/python`; `Memory`
+  proxy over `andara.core.Memory` slots that makes "this survives restart, `self.*` does not" explicit.
+- Runtime `andara-agent`: authenticate (`WORKLOAD_JWT` or `API_KEY`), fetch the pack's active
+  version, load `text/x-python` blobs into an isolated module namespace, claim the NPCs whose Templates
+  name a Behavior in this pack, subscribe, dispatch per NPC on an `asyncio` task each, heartbeat, reload
+  on pointer move.
+- Containment inside the process: per-Behavior exception isolation; a blocking handler stalls only its
+  NPC; import of the SDK's `unsafe` surface (raw gRPC stub) is denied to pack code.
+- Replay harness: `andara-sdk replay --events recording.pb --behavior town.merchant`.
+- Local dev: `andara-agent --pack ./town --server localhost:8443` against `make up`.
+- `Dockerfile.agent`, published with the server image; the Helm `Deployment` template lands in
+  `AW-INF-003`'s chart as `agents[]` values.
 
 ### Out of scope
-- The server-side protocol and identity — `AW-SRV-009`.
-- Model and vector-store integration. The SDK must not prevent it and must not build it.
-- Any deterministic guarantee about Behavior code, which is exactly what out-of-process execution makes
-  unnecessary.
+- The server protocol — `AW-SRV-009`. The compiler that validates Templates reference existing
+  Behaviors — `AW-CLI-006` (`E_UNRESOLVED` on a missing Behavior name).
+- Model and vector-store integration. Allowed by construction; not built.
+- A language-level sandbox. Containment is the process, the network policy, and the pack scope
+  (ADR-0005); this story does not pretend otherwise.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** a Behavior subclass with an `on_event` handler **when** an Event its NPC perceives arrives
-   **then** the handler is called with a typed object, not a raw message.
-2. **Given** a handler that submits an action **when** it returns **then** a Command is submitted for the
-   correct NPC through the same pipeline a player uses.
-3. **Given** a handler that raises **when** it raises **then** the exception is caught, logged with the
-   Behavior name and the triggering Event, the NPC continues to exist unattended, and other Behaviors on
-   the same Agent are unaffected.
-4. **Given** a handler that blocks for thirty seconds **when** it blocks **then** other Behaviors on the
-   same Agent continue to be dispatched. One slow NPC must not stall an Agent any more than it stalls the
-   World.
-5. **Given** an invalid action — a direction that is not an Exit, a target that is not present **when** it
-   is constructed **then** the SDK surfaces it locally where possible, and otherwise the server's typed
-   rejection is delivered back to the Behavior rather than swallowed.
-6. **Given** a recorded Event stream **when** it is fed to a Behavior through the replay harness **then**
-   the Behavior runs with no server, so a Builder can unit-test behavior.
-7. **Given** a Builder with no repository access **when** they install the SDK **then** it installs from a
-   published package with a pinned protocol version.
+1. **Given** a Behavior with `on_character_arrived` **when** an Event its NPC perceives arrives **then**
+   the handler is called with a typed `CharacterArrived` and an `NPC` proxy, not raw bytes.
+2. **Given** a handler awaiting `npc.say("…")` **when** it returns **then** a `Say` Command is submitted
+   for that NPC with a `client_ref` linking it to the triggering `event_id`.
+3. **Given** a handler that raises **when** it raises **then** the exception is logged with `behavior`,
+   `npc_id`, `event_id`, `andara_behavior_errors_total{behavior}` increments, the NPC stays attended,
+   and other NPCs on the Agent are unaffected.
+4. **Given** a handler blocking for thirty seconds **when** it blocks **then** other NPCs' handlers keep
+   dispatching and heartbeats keep the leases alive.
+5. **Given** an invalid action — a Direction not in the closed set, a target not perceived **when**
+   constructed **then** the SDK raises locally; **given** a server rejection **then** `CommandRejected`
+   is delivered to the Behavior's `on_rejected`, not swallowed.
+6. **Given** a recorded Event stream **when** fed through the replay harness **then** the Behavior runs
+   with no server and the harness prints the Commands it would have submitted.
+7. **Given** a clean machine with no repository access **when** `pip install andara-sdk==<v>` runs
+   **then** it installs with `gen/python` pinned to one protocol version, and `andara-agent` refuses to
+   start against a server outside that version's range, naming both.
+8. **Given** the pack's pointer moves **when** the runtime observes it **then** Behaviors are reloaded
+   from the new version's blobs within `agent.reload_debounce`; NPCs stay attended across the reload
+   and `on_detach`/`on_attach` are called in that order.
+9. **Given** pack code that imports `andara_sdk.unsafe` or opens a socket **when** loaded **then** the
+   load fails naming the module and line; the NPCs of that Behavior are left unattended rather than
+   driven by code that escaped the API.
+10. **Given** `npc.memory[3] = b"…"` **when** set **then** a `SetMemory` Command is submitted and the
+    value is readable after a server recovery; **given** `self.x = …` **then** documentation and a
+    `Behavior.__setattr__` warning on first use say it will not survive restart.
 
 ## Interface contract
 
-To be written at grooming. Sketch of the shape ADR-0005 calls for:
-
 ```python
 # CONTRACT SKETCH — not an implementation
+class Behavior:
+    async def on_attach(self, npc: NPC) -> None: ...
+    async def on_event(self, npc: NPC, ev: Event) -> None: ...      # fallback
+    async def on_character_arrived(self, npc: NPC, ev: CharacterArrived) -> None: ...   # typed, one per payload
+    async def on_rejected(self, npc: NPC, rej: CommandRejected) -> None: ...
+    async def on_detach(self, npc: NPC) -> None: ...
 
-class Innkeeper(Behavior):
-    async def on_attach(self, npc: NPC) -> None:
-        self.regulars: set[str] = set()
-
-    async def on_character_arrived(self, npc: NPC, ev: CharacterArrived) -> None:
-        if ev.character.name in self.regulars:
-            await npc.say(f"Welcome back, {ev.character.name}.")
-        else:
-            self.regulars.add(ev.character.name)
-            await npc.say("Sit anywhere you like.")
+class NPC:
+    id: str; room: RoomView; visible: Sequence[EntityView]      # from perceived Events only
+    memory: Memory                                              # slots → SetMemory; survives restart
+    async def say(self, text: str) -> None: ...
+    async def move(self, direction: Direction) -> None: ...      # Direction is the closed enum
 ```
 
-The `await` in a handler is the whole point: it may be a model call taking two seconds, and nothing in the
-World waits on it.
+### Runtime
+
+| Item | Value |
+|------|-------|
+| entry | `andara-agent --pack <id> [--server addr] [--credential-file f]` |
+| Behavior discovery | blobs with `media_type: text/x-python`; a `Behavior` subclass registers as `<pack>.<ClassName>` unless `name=` given |
+| Template binding | `andara.core.Behavior{name}` on the NPC's Template must resolve to a registered Behavior in this pack |
+| dispatch | one `asyncio.Task` per NPC; Events for an NPC are processed in `event_id` order |
+| reload | on `ActiveVersion` change; `agent.reload_debounce` 2 s |
+| exit codes | `0` · `1` config · `3` server unreachable · `4` protocol version · `5` credential |
+
+### Configuration (`ANDARA_AGENT_*`)
+
+`PACK`, `SERVER`, `CREDENTIAL_FILE`, `RELOAD_DEBOUNCE` (`2s`), `MAX_CONCURRENCY` (`64` handlers in
+flight), `LOG_LEVEL`.
+
+### Packaging
+
+`andara-sdk` on the private index `make up` serves (`pypiserver` in the local stack) and, for Builders,
+a wheel attached to each server release; version `MAJOR.MINOR` tracks `protocol_version`.
 
 ## Data / state impact
 
-Behavior instance state — `self.regulars` above — is Agent-local and is **lost when the Agent restarts**,
-whereas NPC memory intended to survive belongs in World state (`AW-SRV-009`). The SDK must make that
-distinction obvious in its API rather than leaving Builders to discover it, because the failure mode is an
-NPC that quietly forgets everything after a deploy.
+Behavior instance state is Agent-local and lost on restart; NPC memory is World state via `SetMemory`.
+The SDK makes the distinction an API boundary (AC-10), because the failure mode is an NPC that quietly
+forgets everything after a deploy.
 
 ## Observability requirements
 
-- **Metrics:** emitted by the Agent runtime, not by the server: `andara_behavior_dispatches_total`
-  (counter, label `behavior`), `andara_behavior_duration_seconds` (histogram, label `behavior`),
-  `andara_behavior_errors_total` (counter, label `behavior`). Behavior name is authored and bounded; NPC
-  instance ID is rejected.
-- **Logs:** structured, with `behavior`, `npc_id`, and the triggering `event_id`.
-- **Traces:** a Behavior's decision is its own trace, linked to the triggering Event and the resulting
-  Command, per `AW-SRV-009`.
-- **Alerts:** none in the SDK. `NPCsUnattended` from `AW-SRV-009` is the symptom that matters.
+- **Metrics (runtime):** `andara_behavior_dispatches_total{behavior}`,
+  `andara_behavior_duration_seconds{behavior}`, `andara_behavior_errors_total{behavior}`,
+  `andara_agent_reloads_total{outcome}`, `andara_agent_leases_held`. Behavior name is authored and
+  bounded; NPC ID is rejected.
+- **Logs:** structured JSON with `behavior`, `npc_id`, `event_id`, `pack`, `version`.
+- **Traces:** a decision is a trace rooted at the runtime, `trace_id` propagated on the Command.
+- **Alerts:** none in the SDK; `NPCsUnattended` (`AW-SRV-009`) is the symptom.
 
 ## Test plan
 
-Handler dispatch and typing; exception containment; concurrent dispatch under a blocking handler; the
-replay harness; package installation from a clean environment with no repository access.
+- **Unit (pytest):** handler dispatch and typing; exception containment; concurrency under a blocking
+  handler; local action validation; the `unsafe` import guard.
+- **Integration:** against `make up` with the `town` fixture pack — end-to-end say/move; pointer-move
+  reload (AC-8); kill-and-recover with memory (AC-10); clean-environment install (AC-7).
+- **Manual/operator:**
+  ```
+  pip install andara-sdk==0.1.0
+  andara-sdk replay --events testdata/market.pb --behavior town.Merchant   # expect: Commands printed
+  andara-agent --pack town --server localhost:8443                        # expect: "claimed 12 NPCs"
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the replay harness works without a running server, and the Agent-local versus World
-state distinction is documented in the SDK's own README with a worked example.
+CLAUDE.md §8, plus: the replay harness and the reload test in CI; `docs/sdk/python.md` written for a
+Builder, including the `self.*` versus `memory` rule.
 
 ## Open questions
 
-- `[ASSUMPTION]` `async` handlers, because ADR-0005's entire premise is that a Behavior may take a long
-  time and must not block its peers.
-- `[NEEDS BRIAN]` Whether Builders write Behaviors at all, or whether Behaviors are a Developer artifact
-  and Builders only reference them by name. ADR-0004 says Builders are untrusted, which the process
-  boundary handles; the question is whether they should be writing code.
-- `[ASSUMPTION]` Published as a versioned package pinned to a protocol version, so an SDK upgrade is a
-  deliberate act.
+- **Resolved 2026-09-11 (Brian): Builders write Behaviors.**
+- `[ASSUMPTION]` `async` handlers, because ADR-0005's premise is that a Behavior may take a long time.
+- `[ASSUMPTION]` Python 3.12, `asyncio`, `grpclib`-free — the generated Connect client from
+  `gen/python`.
+- `[ASSUMPTION]` Import denial of `andara_sdk.unsafe` and sockets is a loader check, not a sandbox;
+  ADR-0005 says the sandbox is the process and the network policy.
