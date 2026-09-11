@@ -1,0 +1,35 @@
+{{- if .Values.networkPolicy.enabled }}
+# Skeleton (AW-INF-003). Default-deny ingress to the server pod, admitting the http port
+# from the observability namespace for scrapes and the grpc port from the ingress
+# controller and the Behavior Agent namespaces. AW-INF-006 owns the gRPC rules and turns
+# this on; until then it renders only when a values file asks for it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "andara.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.observabilityNamespace }}
+      ports:
+        - port: http
+          protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }}
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: {{ .Values.networkPolicy.agentNamespace }}
+      ports:
+        - port: grpc
+          protocol: TCP
+{{- end }}

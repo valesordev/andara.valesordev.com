@@ -1,0 +1,12 @@
+# Server configuration as environment, one ANDARA_* entry per key set under `server`
+# (templates/_env.tpl is generated from keys.yaml by `make values-schema`). The
+# StatefulSet consumes this with envFrom and rolls on its checksum, so a values change
+# is a deploy, not a drift.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "andara.name" . }}-config
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+data:
+  {{- include "andara.serverEnv" . | nindent 2 }}
