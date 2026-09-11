@@ -12,4 +12,13 @@ ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/valid \
 
 ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/dangling \
   ./bin/andara-server --validate-only ; echo $?   # 1
+
+# Serving needs TLS material; `make tls` provisions it. Without it: exit 1, no plaintext mode.
+make tls && ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/valid \
+  ANDARA_TLS_CERT_FILE=.local/tls/server.pem ANDARA_TLS_KEY_FILE=.local/tls/server-key.pem \
+  ./bin/andara-server                              # :8443 gRPC/TLS, :8080 health and metrics
 ```
+
+Exit codes: `0` on a clean drain after `SIGTERM`/`SIGINT`; `1` on a configuration error
+(including missing or unloadable TLS material), a fatal content finding, or a listener failure.
+Configuration keys are in `server/README.md`.
