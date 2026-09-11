@@ -39,15 +39,16 @@ keys:
   - {key: sim.seed,                    env: ANDARA_SIM_SEED,               type: int, default: 0, story: AW-SRV-002}
   - {key: sim.checkpoint_every_ticks,  env: ANDARA_CHECKPOINT_EVERY_TICKS, type: int, default: 100, min: 1, story: AW-SRV-002}
 
-  # --- AW-SRV-005: gateway ---
+  # --- AW-SRV-005: gateway — env names and defaults are the story's config table, which
+  # AW-INF-002's compose file and server/config/config.go both follow ---
   - {key: grpc.listen,               env: ANDARA_GRPC_LISTEN,              type: string, default: ":8443", story: AW-SRV-005}
-  - {key: grpc.tls_cert_file,        env: ANDARA_GRPC_TLS_CERT_FILE,       type: string, default: "", story: AW-SRV-005}
-  - {key: grpc.tls_key_file,         env: ANDARA_GRPC_TLS_KEY_FILE,        type: string, default: "", story: AW-SRV-005}
-  - {key: grpc.drain_timeout,        env: ANDARA_GRPC_DRAIN_TIMEOUT,       type: duration, default: 10s, story: AW-SRV-005}
-  - {key: grpc.max_recv_bytes,       env: ANDARA_GRPC_MAX_RECV_BYTES,      type: int, default: 4194304, min: 1, story: AW-SRV-005}
+  - {key: grpc.tls_cert_file,        env: ANDARA_TLS_CERT_FILE,            type: string, default: "", story: AW-SRV-005}
+  - {key: grpc.tls_key_file,         env: ANDARA_TLS_KEY_FILE,             type: string, default: "", story: AW-SRV-005}
+  - {key: grpc.drain_timeout,        env: ANDARA_GRPC_DRAIN_TIMEOUT,       type: duration, default: 15s, story: AW-SRV-005}
+  - {key: grpc.max_recv_bytes,       env: ANDARA_GRPC_MAX_RECV_BYTES,      type: int, default: 65536, min: 1, story: AW-SRV-005}
   - {key: grpc.max_request_timeout,  env: ANDARA_GRPC_MAX_REQUEST_TIMEOUT, type: duration, default: 30s, story: AW-SRV-005}
-  - {key: protocol.min_version,      env: ANDARA_PROTOCOL_MIN_VERSION,     type: int, default: 1, min: 1, story: AW-SRV-005}
-  - {key: protocol.max_version,      env: ANDARA_PROTOCOL_MAX_VERSION,     type: int, default: 1, min: 1, story: AW-SRV-005}
+  - {key: protocol.min_version,      env: ANDARA_PROTOCOL_MIN,             type: int, default: 1, min: 1, story: AW-SRV-005}
+  - {key: protocol.max_version,      env: ANDARA_PROTOCOL_MAX,             type: int, default: 1, min: 1, story: AW-SRV-005}
 
   # --- AW-SRV-004 / AW-SRV-011: events and egress ---
   - {key: events.subscriber_buffer,  env: ANDARA_SUBSCRIBER_BUFFER,      type: int, default: 1024, min: 1, story: AW-SRV-004}

@@ -121,6 +121,55 @@
               "description": "ANDARA_OTLP_ENDPOINT (AW-SRV-001). Default when unset: 'localhost:4317'."
             }
           }
+        },
+        "grpc": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "listen": {
+              "type": "string",
+              "description": "ANDARA_GRPC_LISTEN (AW-SRV-005). Default when unset: ':8443'."
+            },
+            "tls_cert_file": {
+              "type": "string",
+              "description": "ANDARA_TLS_CERT_FILE (AW-SRV-005). Default when unset: ''."
+            },
+            "tls_key_file": {
+              "type": "string",
+              "description": "ANDARA_TLS_KEY_FILE (AW-SRV-005). Default when unset: ''."
+            },
+            "drain_timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_GRPC_DRAIN_TIMEOUT (AW-SRV-005). Default when unset: '15s'."
+            },
+            "max_recv_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_GRPC_MAX_RECV_BYTES (AW-SRV-005). Default when unset: 65536."
+            },
+            "max_request_timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_GRPC_MAX_REQUEST_TIMEOUT (AW-SRV-005). Default when unset: '30s'."
+            }
+          }
+        },
+        "protocol": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "min_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_PROTOCOL_MIN (AW-SRV-005). Default when unset: 1."
+            },
+            "max_version": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_PROTOCOL_MAX (AW-SRV-005). Default when unset: 1."
+            }
+          }
         }
       }
     },

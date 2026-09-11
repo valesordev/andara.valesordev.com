@@ -9,8 +9,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 6 |
-| `ready` | 28 |
+| `review` | 7 |
+| `ready` | 27 |
 | `done` | 1 |
 | **total** | **35** |
 
@@ -23,11 +23,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command | review by brian |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server | review by brian |
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `review` | Kafka topic and schema registry provisioning as code | review by brian |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `review` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | review by brian |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `review` | Protobuf schema as the wire, log, snapshot, and content contract | review by brian |
 
 ## By status
 
-### `review` (6)
+### `review` (7)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -36,9 +37,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | architecture | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | architecture | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 
-### `ready` (28)
+### `ready` (27)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -53,7 +55,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
-| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006` |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
@@ -111,7 +112,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 |----|--------|-------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `ready` | andara-cli play — the text interface as a first-class protocol client |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `ready` | Command pipeline stages split across the log boundary, with look and move |
-| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `ready` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `review` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `ready` | Command ingress — parse, authorize, and produce to the command log |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `ready` | Event egress — server-streaming subscription with per-session backpressure |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `review` | Protobuf schema as the wire, log, snapshot, and content contract |

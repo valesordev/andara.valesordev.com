@@ -21,7 +21,11 @@ fail() { echo "make: tls: $*" >&2; exit 1; }
 command -v openssl >/dev/null 2>&1 || fail "openssl not found (run \`make bootstrap\`)"
 
 mkdir -p "$TLS_DIR"
-chmod 700 "$TLS_DIR"
+# Traversable, not listable-by-secret: the server container runs as an unprivileged uid
+# and must be able to reach server.pem through this directory. The CA key is what needs
+# protecting, and it is 600 below; a 700 directory here made the leaf unreadable from
+# inside the container, which surfaced as "permission denied" on the first real boot.
+chmod 755 "$TLS_DIR"
 
 # Idempotent: regenerate only what is missing or expired. `make tls FORCE=1` starts over.
 if [[ "${FORCE:-0}" != "1" && -f "$TLS_DIR/ca.pem" && -f "$TLS_DIR/server.pem" ]]; then

@@ -120,7 +120,7 @@ func (rt *Runtime) Handler() http.Handler {
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
 		if !rt.ready.Load() {
-			http.Error(w, "world not loaded\n", http.StatusServiceUnavailable)
+			http.Error(w, "not ready\n", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)
@@ -130,7 +130,15 @@ func (rt *Runtime) Handler() http.Handler {
 	return mux
 }
 
-// Ready reports whether a World has been loaded.
+// Ready reports whether a World has been loaded and the process is not
+// draining.
 func (rt *Runtime) Ready() bool {
 	return rt.ready.Load()
+}
+
+// Drain flips readiness off. The gateway calls it when Shutdown begins, so
+// a load balancer stops routing here while in-flight work finishes
+// (AW-SRV-005 AC-8).
+func (rt *Runtime) Drain() {
+	rt.ready.Store(false)
 }
