@@ -138,6 +138,9 @@ services:
       - "${ANDARA_METRICS_PORT:-9090}:9090"
     volumes:
       - ./prometheus/prometheus.yaml:/etc/prometheus/prometheus.yaml:ro
+      # The same rules file the chart ships as a ConfigMap (AW-INF-003): one file, evaluated
+      # here so `make up` is where an alert is verified against a real backend (§8).
+      - ../helm/andara/files/alerts.yaml:/etc/prometheus/rules/andara-server.rules.yaml:ro
       - prometheus-data:/prometheus
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]

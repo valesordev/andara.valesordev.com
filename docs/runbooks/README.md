@@ -14,12 +14,26 @@ A runbook states:
 Every step must be executable through `andara-cli` or standard infrastructure tooling. A step that
 says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 
+## Shipped
+
+| File | Story | Alert |
+|------|-------|-------|
+| `server-unavailable.md` | `AW-INF-003` | `AndaraServerUnavailable` |
+| `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
+
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
-| `server-unavailable.md` | `AW-INF-003` | `AndaraServerUnavailable` |
-| `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
-| `snapshot-stale.md` | `AW-INF-003` | `AndaraSnapshotStale` |
+| `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
+| `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
+| `projection-stale.md` | `AW-SRV-019` (shared with `AW-SRV-017`, `AW-SRV-018`) | `ProjectionStale` |
+| `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
+| `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
+| `content-load-failing.md` | `AW-SRV-012` | `ContentLoadFailing` |
+| `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
+| `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
+| `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
+| `npcs-unattended.md` | `AW-SRV-009` | `NPCsUnattended` |

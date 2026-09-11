@@ -1,0 +1,21 @@
+# Measured tick cost, committed from `make measure-tick ENV=<env>` (AW-INF-003 AC-10).
+#
+# Resource requests derive from these numbers × resourcesMultiplier unless a values file
+# sets resources.requests explicitly. Integers, not quantities, because Helm can multiply
+# 500 and cannot multiply "500m".
+#
+# measured: false means nobody has run the measurement yet — there is no tick loop to
+# measure until AW-SRV-002 lands — and the numbers below are a placeholder that `make
+# helm-test` warns about on every run until a real measurement replaces them.
+measured: false
+measured_at: ""
+fixture: "sizing fixture, AW-SRV-006 test plan: 2,000 Rooms / 10,000 Entities / 500 Characters"
+server:
+  cpu_millicores_p99: 500
+  memory_mib_p99: 512
+projector:
+  # A state projector is a full replica of World state (AW-SRV-019), so it shares the
+  # server's memory number; redis and postgres projectors are small.
+  state:    {cpu_millicores_p99: 250, memory_mib_p99: 512}
+  redis:    {cpu_millicores_p99: 100, memory_mib_p99: 128}
+  postgres: {cpu_millicores_p99: 100, memory_mib_p99: 128}

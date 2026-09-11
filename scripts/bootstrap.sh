@@ -15,6 +15,8 @@ set -euo pipefail
 GOLANGCI_VERSION="v2.13.2"
 BUF_VERSION="v1.72.0"
 GRPCURL_VERSION="v1.9.4"
+HELM_VERSION="v3.22.0"
+KUBECONFORM_VERSION="v0.8.0"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -41,26 +43,41 @@ ok go "$GOV"
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
 
-# install_pinned <binary> <module> <version> [ldflags]
+# install_pinned <binary> <module> <version>
 # Installs only when the binary is absent or is the wrong version, so the common case is
-# a version check and nothing else. ldflags exists for tools that only know their own
-# version when a release pipeline stamps it in — grpcurl reports "dev build" from a
-# plain `go install`, which would make this re-install it on every run.
+# a version check and nothing else.
 install_pinned() {
-  local name="$1" module="$2" want="$3" ldflags="${4:-}"
+  local name="$1" module="$2" want="$3"
   local have=""
   if [[ -x "$BIN/$name" ]]; then
-    have="$("$BIN/$name" --version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    # The module version stamped into the binary, not `--version` output: kubeconform built
+    # by `go install` reports "development", helm prints a struct, and grpcurl says "dev
+    # build". `go version -m` reads the build info every Go binary carries, so one check
+    # covers every pinned tool.
+    have="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $3; exit}' || true)"
   fi
-  if [[ "v${have}" == "$want" ]]; then
-    ok "$name" "$have (pinned)"
+  if [[ "${have}" == "$want" ]]; then
+    ok "$name" "${have#v} (pinned)"
     return 0
   fi
   echo "  installing $name $want ..."
-  GOBIN="$BIN" go install -ldflags "$ldflags" "${module}@${want}" \
+  GOBIN="$BIN" go install "${module}@${want}" \
     || fail "could not install $name $want; check network access to the Go module proxy"
   ok "$name" "$want (installed)"
 }
+
+# PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003): rendered
+# manifests are real YAML and deserve a real parser. Installed only when the import fails,
+# so a distro-packaged copy is left alone; a refusal (PEP 668 externally-managed
+# environments) is reported with the package to install rather than forced past.
+if ${PY:-python3} -c 'import yaml' >/dev/null 2>&1; then
+  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
+else
+  echo "  installing PyYAML from scripts/requirements.txt ..."
+  ${PY:-python3} -m pip install --quiet --user -r scripts/requirements.txt 2>/dev/null \
+    || fail "PyYAML is missing and pip refused to install it; install your distro's python-yaml (or run: python3 -m pip install -r scripts/requirements.txt)"
+  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)') (installed)"
+fi
 
 # golangci-lint is needed by `make lint`, which is a no-op until Go sources exist. Install
 # it anyway once sources appear; before that, skip the download nobody needs yet.
@@ -81,8 +98,7 @@ fi
 # grpcurl is how the Protocol is poked by hand (ADR-0003: "debugging is grpcurl, not nc")
 # and what AW-SRV-005's operator test plan runs. Needed once there is a server to poke.
 if find cmd/andara-server -name '*.go' -print -quit 2>/dev/null | grep -q .; then
-  install_pinned grpcurl github.com/fullstorydev/grpcurl/cmd/grpcurl "$GRPCURL_VERSION" \
-    "-X main.version=$GRPCURL_VERSION"
+  install_pinned grpcurl github.com/fullstorydev/grpcurl/cmd/grpcurl "$GRPCURL_VERSION"
 else
   ok grpcurl "deferred (no server yet)"
 fi
@@ -107,14 +123,19 @@ else
   ok openssl "not installed (needed by \`make tls\`, not by \`make check\`)"
 fi
 
-# helm and kubeconform back `make k8s-dry`. It exits 0 with no chart present, so these are
-# reported, not required, until AW-INF-003 lands a chart.
-command -v helm >/dev/null 2>&1 \
-  && ok helm "$(helm version --short 2>/dev/null || echo present)" \
-  || ok helm "not installed (needed by \`make k8s-dry\` once AW-INF-003 lands a chart)"
-command -v kubeconform >/dev/null 2>&1 \
-  && ok kubeconform "present" \
-  || ok kubeconform "not installed (manifest schema validation will be skipped)"
+# helm and kubeconform back `make k8s-dry`, which validates the chart against the pinned
+# Kubernetes version on every `make check` (AW-INF-003 AC-1). Both are Go modules, so they
+# pin the same way buf does. The system helm may be a different major; ./bin wins on PATH.
+install_pinned helm helm.sh/helm/v3/cmd/helm "$HELM_VERSION"
+install_pinned kubeconform github.com/yannh/kubeconform/cmd/kubeconform "$KUBECONFORM_VERSION"
+
+# kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
+command -v kind >/dev/null 2>&1 \
+  && ok kind "$(kind version 2>/dev/null | awk '{print $2}')" \
+  || ok kind "not installed (needed by \`make helm-install ENV=local\`, not by \`make check\`)"
+command -v kubectl >/dev/null 2>&1 \
+  && ok kubectl "$(kubectl version --client 2>/dev/null | head -1 | awk '{print $3}')" \
+  || ok kubectl "not installed (needed by \`make helm-install\`, not by \`make check\`)"
 
 # Git hooks: run the cheap checks before a commit lands, not after CI says so.
 #

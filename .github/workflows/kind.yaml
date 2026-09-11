@@ -1,0 +1,85 @@
+# Chart lifecycle on a real cluster (AW-INF-003 test plan, integration half).
+#
+# Separate from `check` for the same reason stack.yaml is: `make check` must not need a
+# cluster. What this proves today: the chart installs, the pod is ready only once
+# /readyz says so, the snapshot claim survives uninstall and is reattached by the next
+# install. What it cannot prove yet, named rather than skipped: not-ready during log
+# replay (AC-2) and liveness restart on a wedged tick (AC-8) need AW-SRV-007 and
+# AW-SRV-002 to exist.
+
+name: kind
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/**"
+      - "deploy/compose/Dockerfile.server"
+      - "scripts/helm_install.sh"
+      - "scripts/k8s_dry.sh"
+      - ".github/workflows/kind.yaml"
+  pull_request:
+    paths:
+      - "deploy/helm/**"
+      - "deploy/compose/Dockerfile.server"
+      - "scripts/helm_install.sh"
+      - "scripts/k8s_dry.sh"
+      - ".github/workflows/kind.yaml"
+  schedule:
+    - cron: "41 6 * * 1"
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: bootstrap
+        run: make bootstrap
+      - name: kind cluster
+        uses: helm/kind-action@v1
+        with:
+          cluster_name: ci
+          # kind must be new enough for the node image: v1.36 nodes carry containerd
+          # config v4, which the action's default kind cannot load images into.
+          version: v0.33.0
+          node_image: kindest/node:v1.36.1
+      - name: image
+        run: make image
+      - name: kind-load
+        run: make kind-load KIND_CLUSTER=ci
+      - name: helm-install
+        run: make helm-install ENV=local
+      - name: pod is ready because /readyz says so
+        run: |
+          set -euo pipefail
+          NS=andara-local
+          kubectl -n $NS wait --for=condition=Ready pod/andara-0 --timeout=120s
+          # Status, not body: the body is "ok" on main today and becomes a JSON phase with
+          # AW-SRV-007; the probe contract is the 200, and the readiness probe is this URL.
+          kubectl -n $NS exec andara-0 -c server -- wget -S --spider http://127.0.0.1:8080/readyz 2>&1 \
+            | tee /dev/stderr | grep -q 'HTTP/1.1 200'
+          kubectl -n $NS get endpointslice -l kubernetes.io/service-name=andara \
+            -o jsonpath='{.items[0].endpoints[0].conditions.ready}' | grep -q true
+          kubectl -n $NS logs andara-0 -c partitions | grep -q 'ordinal=0 replicas=1 -> 0,1,2'
+      - name: snapshot claim survives uninstall and is reattached
+        run: |
+          set -euo pipefail
+          NS=andara-local
+          pv="$(kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
+          echo "pv before: $pv"
+          helm -n $NS uninstall andara
+          sleep 5
+          kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.status.phase}' | grep -q Bound
+          make helm-install ENV=local
+          after="$(kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
+          echo "pv after:  $after"
+          [[ "$pv" == "$after" ]]
+      - name: dump on failure
+        if: failure()
+        run: |
+          kubectl -n andara-local describe pod andara-0 || true
+          kubectl -n andara-local logs andara-0 --all-containers || true

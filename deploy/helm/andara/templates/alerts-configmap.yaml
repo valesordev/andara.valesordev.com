@@ -1,0 +1,16 @@
+{{- if .Values.alerts.enabled }}
+# Prometheus rules as a ConfigMap rather than a PrometheusRule: the CRD would need its
+# schema for kubeconform and an operator to be installed, and the same file is mounted by
+# the compose Prometheus (`make up`), which is where §8's "verified against a real backend"
+# happens. The observability stack mounts this map into its rules directory.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "andara.name" . }}-alerts
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+    andara.valesordev.com/prometheus-rules: "true"
+data:
+  andara-server.rules.yaml: |
+    {{- .Files.Get "files/alerts.yaml" | nindent 4 }}
+{{- end }}

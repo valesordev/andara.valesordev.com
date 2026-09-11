@@ -1,0 +1,16 @@
+{{- if .Values.pdb.enabled }}
+# minAvailable 0 at one replica is deliberate: a deploy is the interruption until sharding
+# is active (ADR-0001), and a PDB of 1 would make every node drain wait forever on a pod
+# that cannot be evicted without an outage anyway. Raise it with replicaCount.
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  minAvailable: {{ .Values.pdb.minAvailable }}
+  selector:
+    matchLabels:
+      {{- include "andara.selectorLabels" . | nindent 6 }}
+{{- end }}
