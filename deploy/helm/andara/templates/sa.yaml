@@ -1,0 +1,12 @@
+{{- if .Values.serviceAccount.create }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "andara.serviceAccountName" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+# The server needs no Kubernetes API access. The token is mounted only so that
+# AW-SRV-009's WORKLOAD_JWT verification has an issuer to compare against; nothing in the
+# server calls the API server.
+automountServiceAccountToken: false
+{{- end }}

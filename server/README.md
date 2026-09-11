@@ -49,6 +49,22 @@ mode and no flag to create one; `make up` provisions certificates so nobody need
 `--validate-only` loads and validates, prints every finding, and exits without serving. Exit `0`
 on a valid World, `1` on any fatal finding.
 
+### In Kubernetes
+
+The chart (`deploy/helm/andara`, AW-INF-003) sets every key above through `server.<key>` in a
+values file — `server.content.source: dir` renders `ANDARA_CONTENT_SOURCE=dir` into the
+`andara-config` ConfigMap. The mapping lives in `deploy/helm/andara/keys.yaml`, which `make
+values-schema-check` holds against this package: **a new `ANDARA_*` read anywhere under `server/`
+fails `make check` until `keys.yaml` lists it**, and then `make values-schema` regenerates the
+values schema and the env template. Keys that are groomed but not yet read here are in
+`keys.yaml` already and stay out of the schema until the code lands — a values file cannot set
+a key this binary would ignore.
+
+`ANDARA_SIM_PARTITIONS` is the one variable the chart sets that is not a value: the `partitions`
+init container derives it from the pod ordinal (`p mod replicaCount == ordinal`, over 0–63) and
+the server container sources it before exec. Probes: startup and readiness on `/readyz`, liveness
+on `/livez`, all on `http.port`. `/livez` must never depend on Kafka or a datastore.
+
 Dir-mode files are protobuf JSON (`formatVersion`, one Zone per `.json` file). That is the test
 and CLI surface, not the Builder language (ADR-0009).
 

@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-014]
 blocks: []
@@ -12,22 +12,22 @@ lane: implementation
 risk: high
 ---
 
-> `status: draft` — unblocked by ADR-0006 and scoped. Groomed to `ready` when M2 approaches. The
-> combat interaction is now decided, so what remains is the interface contract.
-
 ## Context
 
 ADR-0006 decided the lifecycle: on stream loss the Character remains in the World marked linkdead for
 `session.linkdead_grace` (180 seconds); reconnecting within that window rebinds; on expiry the Character
-is **despawned** — removed from the World with its state persisted, not deleted.
+is **despawned** — removed from the World with its state persisted, not deleted. Combat extends the
+timer to a ceiling.
 
 The grace period is load-bearing beyond player experience. On any restart every Session drops and every
 Character goes linkdead, so **`linkdead_grace` must outlast the RTO** or a routine deploy empties the map.
 At 180 s against a 60 s RTO target there is 3× margin — and that is exactly the kind of relationship
 someone breaks by tightening one number in isolation.
 
-This is the story that closes Phase 1 exit criterion 1: disconnect, reconnect, and find the World as you
-left it.
+**Decided 2026-09-11 (Brian): linkdead is visible to other players.** A `CharacterLinkdead` Event is
+Room-scoped and `look` shows the marker. An attacker sees the bounded window; the mechanic is honest
+about itself. This closes Phase 1 exit criterion 1: disconnect, reconnect, and find the World as you left
+it.
 
 ## User story
 
@@ -37,115 +37,168 @@ not cost me my place in the world.
 ## Scope
 
 ### In scope
-- The Session state machine: connected → authenticated → playing → linkdead → playing or despawned.
-- The linkdead grace timer, its configuration, and its expiry behavior.
-- **Combat extension of the grace timer** (ADR-0006): a linkdead Character in combat stays attackable and
-  its remaining grace refreshes to `linkdead_combat_extension` on each combat interaction, bounded by the
-  absolute `linkdead_max` ceiling. Damage lands; death is possible; survival by despawn is possible.
-- The combat-interaction interface: combat emits an Event that refreshes the deadline. This story owns
-  the contract; whichever epic defines combat consumes it.
-- Reconnect and rebind, including resuming the Event stream via `AW-SRV-011`'s `last_event_id`.
-- `CharacterDespawned` Event so everyone in the Room sees it happen.
-- Clean quit: an explicit `CloseSession` despawns immediately rather than leaving a linkdead body.
-- A startup assertion that `linkdead_max >= linkdead_grace > RTO_target`, and that `linkdead_grace`
-  covers `egress.resume_window` at the observed Event rate — failing loudly rather than producing a world
-  where every restart empties the map or where the ceiling truncates the ordinary case.
-- Reconciling the resume window with the grace period — `AW-SRV-011` flags that if the window is too
-  small at the observed Event rate, every linkdead reconnect becomes a resync.
+- The Gateway Session state machine and the World-side linkdead state, and the Commands between them.
+- The grace deadline as a Tick in Zone state, set, refreshed, and expired inside the sim.
+- Combat extension and ceiling (ADR-0006) via one sim hook, `OnCombatInteraction`.
+- Reconnect and rebind, resuming the Event stream via `AW-SRV-011`'s `last_event_id`.
+- `CharacterLinkdead`, `CharacterReconnected`, `CharacterDespawned` Events, Room-scoped.
+- Clean quit: `CloseSession` despawns immediately.
+- Startup assertions on the ADR-0006 invariant and on the resume window.
 
 ### Out of scope
 - Roster and selection — `AW-SRV-014`.
-- The combat system itself. This story defines the deadline-refresh contract and nothing about how damage
-  is computed.
-- Whether a linkdead Character defends itself or flees. If it should, that is a Behavior (`EPIC-09`), not
-  a Session concern — and it would rebalance all three grace numbers.
+- The combat system. This story defines the deadline-refresh hook and nothing about damage.
+- A linkdead Character defending itself or fleeing. Inert, per ADR-0006; a Behavior could change it
+  later and would rebalance the three numbers.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** a playing Session **when** its stream drops **then** the Character is marked linkdead, remains
-   in its Room, and a state change is visible to others in the Room.
-2. **Given** a linkdead Character **when** the player reconnects within the grace period **then** the
-   Session rebinds to the same Character, the Event stream resumes from `last_event_id` with no gap, and
-   the Character was never removed.
-3. **Given** a linkdead Character **when** the grace period expires **then** it is despawned, its state is
-   persisted, a `CharacterDespawned` Event is emitted, and it is no longer targetable.
-4. **Given** a despawned Character **when** the player logs back in **then** it is placed at the position
-   it held at despawn.
-5. **Given** an explicit quit **when** `CloseSession` is called **then** the Character despawns
-   immediately, with no linkdead body left behind — per `AW-CLI-004` AC-11.
-6. **Given** a server restart while a Character is linkdead **when** the World recovers **then** the
-   linkdead state and its remaining grace are reconstructed from World state, not lost. A restart must not
-   silently extend or cancel a grace period.
-7. **Given** the observed Event rate **when** the resume window and the grace period are compared **then**
-   a reconnect at the end of the grace period resumes rather than resyncs, or the configuration is flagged
-   as inconsistent at startup.
-8. **Given** a configuration violating `linkdead_max >= linkdead_grace > RTO_target` **when** the server
-   starts **then** it refuses to start, naming the violated relation and every value in it. The ADR-0006
-   invariant is asserted, not documented.
-9. **Given** a full server restart completing within RTO **when** clients reconnect **then** every
-   Character that was playing rebinds and none despawns. This is the criterion the grace period exists
-   for.
-10. **Given** a linkdead Character being attacked **when** each combat interaction lands **then** its
-    remaining grace becomes `max(remaining, linkdead_combat_extension)` — a refresh, not an accumulation
-    — and the Character remains a valid target throughout.
-11. **Given** a linkdead Character under sustained attack **when** `linkdead_max` is reached **then** it
-    despawns regardless of ongoing combat, and a `CharacterDespawned` Event is emitted so the attacker
-    sees it leave rather than simply stopping.
-12. **Given** a linkdead Character attacked once and then left alone **when** `linkdead_combat_extension`
-    elapses with no further interaction **then** it despawns — 60 s after the last blow, not at the
-    original 180 s deadline.
-13. **Given** a linkdead Character that takes lethal damage before either deadline **when** it dies
-    **then** normal death rules apply. Being linkdead confers no protection beyond the eventual despawn.
-14. **Given** the same combat sequence replayed from a snapshot **when** replay completes **then** the
-    despawn happens on the identical Tick, because the deadline is a Tick extended by a Command inside
-    the tick rather than a wall-clock timer.
+1. **Given** a playing Session **when** its stream drops **then** within `session.linkdead_detect`
+   (default 5 s) a `MarkLinkdead` Command is produced, the Character stays in its Room, and a
+   `CharacterLinkdead` Event with Room scope is emitted; `look` in that Room shows `(linkdead)` after the
+   name.
+2. **Given** a linkdead Character **when** the player reconnects within the grace period and selects it
+   **then** the Session rebinds, the stream resumes from `last_event_id` with no gap, and a
+   `CharacterReconnected` Event is emitted; the Character was never removed.
+3. **Given** a linkdead Character **when** its deadline Tick is reached **then** the sim despawns it in
+   that tick, marks it dormant with its position, emits `CharacterDespawned{reason=LINKDEAD}`, and it is
+   no longer targetable.
+4. **Given** a despawned Character **when** the player logs back in and selects it **then** it spawns at
+   the position it held at despawn (`AW-SRV-014` AC-4).
+5. **Given** `CloseSession` **when** it is called by a playing Session **then** an `UnbindCharacter{QUIT}`
+   is produced and `CharacterDespawned{reason=QUIT}` follows; no linkdead body is left.
+6. **Given** a restart while a Character is linkdead **when** the World recovers **then** its deadline
+   Tick is exactly what the snapshot and log say; the grace is neither extended nor cancelled.
+7. **Given** `egress.resume_window` (an Event count, `AW-SRV-011`), `session.linkdead_max`, and
+   `egress.assumed_event_rate` **when** the server starts **then** it refuses to start if
+   `resume_window < linkdead_max × assumed_event_rate`, naming all three; in production
+   `andara_reconnect_resyncs_total` rising is the signal the assumed rate is too low.
+8. **Given** configuration violating `linkdead_max >= linkdead_grace > recovery.rto_target` **when** the
+   server starts **then** it exits `1` naming the violated relation and every value in it.
+9. **Given** a full restart completing within RTO **when** clients reconnect **then** every Character
+   that was playing rebinds and none despawns. Exercised in CI on top of `AW-SRV-007`'s test.
+10. **Given** a linkdead Character **when** `OnCombatInteraction` fires for it **then** its deadline
+    becomes `max(deadline, now + extension_ticks)`, capped at `linkdead_since + max_ticks`; a refresh,
+    not an accumulation.
+11. **Given** sustained attack **when** `linkdead_since + max_ticks` is reached **then** it despawns with
+    `reason=LINKDEAD_CEILING` and `andara_linkdead_ceiling_despawns_total` increments.
+12. **Given** one attack then silence **when** `extension_ticks` elapse **then** it despawns — 60 s
+    after the last blow, not at the original 180 s deadline.
+13. **Given** lethal damage before either deadline **when** it dies **then** normal death rules apply;
+    `andara_linkdead_outcomes_total{outcome="died"}` increments.
+14. **Given** the same log replayed from a snapshot **when** replay completes **then** every despawn
+    lands on the identical Tick.
 
 ## Interface contract
 
-To be written at grooming. Committed now: the grace timer is World state, not Session state — AC-6
-requires it, since Session state does not survive a restart and the grace period must.
+### Gateway Session states
+
+```
+connected ─authenticate─▶ authenticated ─SelectCharacter─▶ playing ─stream drop─▶ linkdead(gateway)
+                                                              ▲                        │
+                                                              └── SelectCharacter(same) ┘   (within grace)
+playing ─CloseSession─▶ closed          linkdead(gateway) ─grace expiry Event─▶ closed
+```
+
+The Gateway's linkdead state is bookkeeping; the World's is authoritative. On stream drop the Gateway
+produces `MarkLinkdead`; on the `CharacterDespawned` Event it closes the Session.
+
+```protobuf
+// CONTRACT SKETCH — additions to andara/log/v1/log.proto LoggedCommand oneof
+MarkLinkdead mark_linkdead = 15;        // character_id
+// BindCharacter (12) doubles as reconnect: applied to a linkdead body it clears the deadline.
+
+// additions to andara/game/v1/event.proto payload oneof
+CharacterLinkdead    { string character_id = 1; uint64 deadline_tick = 2; }
+CharacterReconnected { string character_id = 1; }
+CharacterDespawned   { string character_id = 1; DespawnReason reason = 2; }   // QUIT, LINKDEAD, LINKDEAD_CEILING, SWITCH
+```
+
+```go
+// CONTRACT SKETCH — not an implementation
+package sim
+// Called by any Apply that constitutes a combat interaction against target.
+// Whichever epic defines combat calls this and nothing else about linkdead.
+func (e *Engine) OnCombatInteraction(target EntityID)
+```
+
+`EntityState` (`AW-SRV-006`) carries `linkdead_deadline_tick` (4), and gains `uint64 linkdead_since_tick
+= 7`. Both are hashed.
+
+### Configuration
+
+| Key | Env | Default | Notes |
+|-----|-----|---------|-------|
+| `session.linkdead_grace` | `ANDARA_LINKDEAD_GRACE` | `180s` | ADR-0006; → Ticks at `sim.tick_rate` |
+| `session.linkdead_combat_extension` | `ANDARA_LINKDEAD_COMBAT_EXTENSION` | `60s` | |
+| `session.linkdead_max` | `ANDARA_LINKDEAD_MAX` | `300s` | ceiling |
+| `session.linkdead_detect` | `ANDARA_LINKDEAD_DETECT` | `5s` | stream keepalive miss before `MarkLinkdead` |
+| `recovery.rto_target` | `ANDARA_RECOVERY_RTO_TARGET` | `60s` | for the invariant only; `slo/recovery.md` |
+| `egress.assumed_event_rate` | `ANDARA_EGRESS_ASSUMED_EVENT_RATE` | `5` | Events/s per Session for the AC-7 check; 2048 ≥ 300 × 5 |
+
+Startup asserts, in order, and exits `1` on the first failure:
+`linkdead_max >= linkdead_grace`, `linkdead_grace > recovery.rto_target`,
+`egress.resume_window >= linkdead_max × egress.assumed_event_rate`, `auth.session_ttl > linkdead_max`.
+
+### Error taxonomy
+
+`ErrNotLinkdead` — `BindCharacter` on a live body from another Session (already `FAILED_PRECONDITION`
+at the Gateway; the sim rejects as defence in depth). `ErrInvariant{Relation, Values}` at boot.
 
 ## Data / state impact
 
-The linkdead flag and the grace deadline are World state and therefore part of `StateHash` and every
-snapshot. Expressing the deadline as a Tick rather than a wall-clock time is what keeps it deterministic
-under replay; a wall-clock deadline would make recovery produce a different World than the one players
-were in, which is exactly the failure ADR-0002's determinism rules exist to prevent.
+`linkdead_deadline_tick` and `linkdead_since_tick` are Zone state, hashed and snapshotted;
+`state_version` bumps by one with a zero-fill migration. Deadlines are Ticks so replay is exact; a
+wall-clock deadline would make a recovered World differ from the one players were in.
+
+`session.linkdead_detect` is the one wall-clock number, and it is on the Gateway side of the log: it
+decides *when* `MarkLinkdead` is produced, and the log then fixes the Tick.
 
 ## Observability requirements
 
-- **Metrics:** `andara_sessions_linkdead` (gauge, label `in_combat`),
-  `andara_linkdead_outcomes_total` (counter, label `outcome` — `reconnected`, `despawned`, `died`),
-  `andara_linkdead_duration_seconds` (histogram, label `in_combat`),
-  `andara_linkdead_combat_extensions_total` (counter),
-  `andara_linkdead_ceiling_despawns_total` (counter — despawns that hit `linkdead_max` while still in
-  combat; a rising rate is the signal that the ceiling is too short and players are combat-logging),
-  `andara_reconnect_resyncs_total` (counter — the AC-7 signal).
-- **Logs:** linkdead entry and exit at `info` with Session, Character, and outcome.
-- **Traces:** linkdead entry and reconnect as events on the `session.lifetime` span.
-- **Alerts:** a rising linkdead rate is a symptom of network or server trouble and is tied to the Session
-  availability SLO from `AW-SRV-011` rather than getting its own.
+### Metrics
+- `andara_sessions_linkdead` — gauge, label `in_combat` (`true`/`false`).
+- `andara_linkdead_outcomes_total` — counter, label `outcome` (`reconnected`, `despawned`, `ceiling`,
+  `died`, `quit`).
+- `andara_linkdead_duration_seconds` — histogram, label `in_combat`.
+- `andara_linkdead_combat_extensions_total`, `andara_linkdead_ceiling_despawns_total` — counters.
+- `andara_reconnect_resyncs_total` — counter; the AC-7 signal in production.
+
+### Logs
+- `info` on linkdead entry, reconnect, despawn with `session_id`, `character_id`, `outcome`,
+  `deadline_tick`, `trace_id`.
+
+### Traces
+- `linkdead.enter` and `linkdead.reconnect` as span events on `session.lifetime`.
+
+### Alerts
+None of its own. A rising linkdead rate is a symptom tied to the Session availability SLO
+(`AW-SRV-011`, `EPIC-07`).
 
 ## Test plan
 
-Drop-and-reconnect inside the window; drop-and-expire asserting despawn and persisted position; restart
-mid-grace asserting the deadline survives (AC-6); explicit quit asserting no linkdead body; the resume
-window and grace period consistency check.
+- **Unit:** deadline arithmetic for AC-10–12 as a table over Ticks; startup invariant table (AC-7, AC-8);
+  state machine transitions including `CloseSession` while already linkdead.
+- **Integration:** drop-and-reconnect inside the window against `AW-SRV-011`'s stream (AC-2);
+  drop-and-expire (AC-3, AC-4); kill mid-grace and recover (AC-6); full restart within RTO with 50
+  Sessions (AC-9); replay determinism of despawn Ticks (AC-14) using a fixture combat verb that calls
+  `OnCombatInteraction`.
+- **Manual/operator:**
+  ```
+  andara-cli play            # select a Character, then kill the client
+  andara-cli play            # within 180 s: expect "reconnected", no gap in output
+  # second terminal, same Room: expect "<name> (linkdead)" in look, then "<name> reconnects"
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the restart-mid-grace test, and a startup check that flags an inconsistent
-`resume_window` / `linkdead_grace` pair rather than letting every reconnect resync silently.
+CLAUDE.md §8, plus: the restart-mid-grace test, the CI restart-within-RTO test, and the startup
+invariant test.
 
 ## Open questions
 
-- **Combat extends the timer, bounded by a ceiling** (ADR-0006). Defaults: 60 s extension, 300 s
-  ceiling — both starting points to retune once combat pacing exists to measure against.
-  `andara_linkdead_ceiling_despawns_total` is the metric that tells you the ceiling is too short.
-- **180-second default grace**, decided. Long enough to survive a dropped connection *and* a full server
-  restart, short enough that a body is not a trade dummy for ten minutes.
-- `[NEEDS BRIAN]` Whether other players can tell a Character is linkdead. This matters more now than it
-  did: with combat extending the timer, a visible linkdead marker tells an attacker they have a bounded
-  window on a defenceless target, while hiding it makes the mechanic invisible to the people it affects.
-- `[NEEDS BRIAN]` Whether a linkdead Character is inert, defends itself, or flees. The decision makes the
-  timeout the survivability mechanism, which implies inert — carried from ADR-0006.
+- **Resolved 2026-09-11 (Brian): linkdead is visible.** AC-1's marker and Event are that decision.
+- **Combat extends the timer, bounded by a ceiling** (ADR-0006): 60 s / 300 s, retuned once combat
+  pacing exists. `andara_linkdead_ceiling_despawns_total` says when the ceiling is too short.
+- `[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.
+- `[ASSUMPTION]` `session.linkdead_detect` 5 s. The gRPC keepalive from `AW-SRV-005` is the detector.

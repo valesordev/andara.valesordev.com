@@ -1,18 +1,16 @@
 ---
 id: AW-SRV-013
-title: Content publish path — server-side validation, versioning, and audit
+title: Content publish path — server-side validation, versioning, approval, and audit
 epic: EPIC-05
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
-blocks: [AW-CLI-003]
+blocks: [AW-CLI-003, AW-SRV-009]
 lane: implementation
 risk: high
 ---
-
-> `status: draft` — unblocked by ADR-0004 and scoped. Groomed to `ready` when M3 approaches.
 
 ## Context
 
@@ -20,8 +18,10 @@ ADR-0004 lets Builders publish content without repository access. That makes the
 boundary, not a convenience: a client-side validation check is something a Builder can skip, so the
 authoritative gate is server-side.
 
-This story implements publish and rollback over `Admin`: write blobs, write a version manifest, move the
-Active Pointer — each step authorized and audited.
+This story implements publish, approval, activation, and rollback over `Admin`: write blobs, write a
+version manifest, approve, move the Active Pointer — each step authorized and audited. Two decisions
+shape it: **activation requires a second approver** (2026-09-07) and **Builder authority is scoped per
+pack** (2026-09-11).
 
 ## User story
 
@@ -31,95 +31,160 @@ costs a minute rather than a deploy.
 ## Scope
 
 ### In scope
-- `Admin` RPCs: publish blobs, publish a version manifest, move the Active Pointer, list versions.
-- **Server-side validation** at publish, rejecting the write, using `AW-SRV-001`'s validator unchanged.
-- Authorization: the `builder` role from ADR-0006, scoped per content pack.
-- Audit records for every publish and every pointer move, with author, pack, version, and blob hashes.
-- Version manifest linkage: `parent_version`, so history is a walkable chain.
-- Rollback: move the pointer to any prior version, which is one record.
-- Blob deduplication — a hash already present is not rewritten.
+- `Admin` RPCs: `HasBlobs`, `PublishBlob` (client-streaming), `PublishVersion`, `ApproveVersion`,
+  `ActivateVersion`, `ListVersions`, `GetVersion`, `ReloadContent`.
+- Server-side validation at `PublishVersion` using `AW-SRV-012`'s resolver over the just-written blobs
+  and `AW-SRV-001`/`021`'s validator, rejecting before the manifest is written.
+- Authorization: `builder` role **and** the pack in `Account.builder_packs`; `operator` may act on any
+  pack, audited as `override`.
+- The two-person rule: `ApproveVersion` by a distinct identity holding the pack; `ActivateVersion`
+  requires `approved_by` set, or `operator` with `override=true`. Rollback to a previously-approved
+  version needs no fresh approval. Approvals do not expire; they are bound to `packID@version`.
+- `andara.core` carve-out (ADR-0010 §8): publish and activate by `operator` only, no second approver;
+  it is a deploy step (`AW-INF-007`).
+- Audit records for every publish, approval, activation, rejection, and override.
+- Blob deduplication and size limits.
 
 ### Out of scope
-- The Builder-facing CLI and the human-authorable format — `AW-CLI-003`.
-- Content resolution and reload — `AW-SRV-012`.
-- Concurrent editing with conflict resolution. ADR-0004 is explicit: last-pointer-move-wins is the whole
-  concurrency model.
+- The CLI and the Content Language — `AW-CLI-003`, `AW-CLI-005`.
+- Resolution and reload — `AW-SRV-012`.
+- Concurrent editing. Last-pointer-move-wins is the whole concurrency model (ADR-0004).
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** a Builder publishing a version with a dangling Exit **when** the publish is attempted
-   **then** it is rejected server-side with the same findings `AW-SRV-001` would produce, and nothing is
-   written to any content topic.
-2. **Given** a valid publish **when** it completes **then** blobs exist keyed by hash, a version manifest
-   exists keyed `packID@version` naming its `parent_version`, and the Active Pointer has **not** moved.
-   Publishing and activating are separate operations.
-3. **Given** a published version **when** the Active Pointer is moved to it **then** one record is
-   written to `andara.content.active.v1` and one to `andara.audit.v1`.
-4. **Given** a rollback to version `N-3` **when** it is requested **then** it succeeds with one pointer
-   move, and version `N` remains intact and re-activatable. Rollback is not deletion.
-5. **Given** a Builder without the `builder` role for that pack **when** they publish **then** it is
-   rejected and one audit record is written.
-6. **Given** a blob whose hash already exists **when** it is published again **then** it is not rewritten
-   and the publish still succeeds.
-7. **Given** the version history for a pack **when** it is listed **then** every version ever published
-   is present, because the versions topic is keyed such that compaction retains all of it (ADR-0004).
+1. **Given** a Builder publishing a version with a dangling Exit **when** `PublishVersion` runs **then**
+   it returns `INVALID_ARGUMENT` with the same findings `AW-SRV-001` produces, no manifest is written,
+   and the blobs already written are left (they are content-addressed and harmless).
+2. **Given** a valid publish **when** it completes **then** blobs exist keyed by hash, a manifest exists
+   keyed `packID@version` with `parent_version` = the pack's current newest version, `approved_by` is
+   empty, and the Active Pointer has not moved.
+3. **Given** an unapproved version **when** `ActivateVersion` is called by its publisher or anyone else
+   without `override` **then** `FAILED_PRECONDITION` names the missing approval and one audit record is
+   written.
+4. **Given** `ApproveVersion` by the same Account that published **then** `PERMISSION_DENIED`; by a
+   distinct Builder holding the pack **then** `approved_by` and `approved_at_unix_nano` are set on the
+   manifest and audited.
+5. **Given** an approved version **when** `ActivateVersion` runs **then** one record is written to
+   `andara.content.active.v1` with `activated_by` = the caller and one to `andara.audit.v1`.
+6. **Given** a rollback to a previously-activated version `N-3` **when** requested **then** it succeeds
+   with one pointer move and no new approval; version `N` remains intact and re-activatable.
+7. **Given** a Builder whose `builder_packs` lacks the pack **when** they publish **then**
+   `PERMISSION_DENIED` and one audit record.
+8. **Given** an `operator` activating an unapproved version with `override=true` **when** it runs
+   **then** it succeeds and the audit record carries `override=true` and the stated `reason`.
+9. **Given** a blob whose hash exists **when** `HasBlobs` is called **then** it is reported present and
+   `PublishBlob` for it is not required; publishing it anyway is idempotent.
+10. **Given** the versions topic **when** compaction is forced **then** every version ever published is
+    still listed by `ListVersions`.
+11. **Given** `andara.core` **when** a Builder attempts any write **then** `PERMISSION_DENIED`; **when**
+    an `operator` activates it **then** no approval is required and the audit record names the deploy
+    tag.
+12. **Given** a blob over `content.max_blob_bytes` **when** streamed **then** `RESOURCE_EXHAUSTED`
+    before any bytes are produced.
 
 ## Interface contract
 
-To be written at grooming. Committed now: publish uses `sim.BuildWorld` for validation, so the CLI, the
-publish gate, and the load path share one implementation — the equivalence `AW-CLI-002` AC-4 asserts.
+```protobuf
+// CONTRACT SKETCH — additions to andara/admin/v1/admin.proto
+rpc HasBlobs(HasBlobsRequest) returns (HasBlobsResponse);                 // hashes → present[]
+rpc PublishBlob(stream PublishBlobChunk) returns (PublishBlobResponse);  // first chunk: pack_id, path, media_type, size; then bytes
+rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse); // pack_id, blobs[], core_version → version, findings[]
+rpc ApproveVersion(ApproveVersionRequest) returns (ApproveVersionResponse); // pack_id, version
+rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse); // pack_id, version, override, reason
+rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);     // pack_id → ContentVersion[], active
+rpc GetVersion(GetVersionRequest) returns (ContentVersion);
+rpc ReloadContent(ReloadContentRequest) returns (ReloadContentResponse); // operator; re-resolve without a pointer move
+
+// andara/accounts/v1/account.proto (AW-SRV-008) Account: next free number
+repeated string builder_packs = 12;   // sorted
+```
+
+### Authorization matrix
+
+| RPC | `builder` with pack | `builder` without | `operator` |
+|-----|:---:|:---:|:---:|
+| `HasBlobs`, `PublishBlob`, `PublishVersion`, `ListVersions`, `GetVersion` | ✓ | ✗ | ✓ |
+| `ApproveVersion` | ✓ if ≠ publisher | ✗ | ✓ if ≠ publisher |
+| `ActivateVersion` | ✓ if approved | ✗ | ✓; unapproved needs `override` + `reason` |
+| any on `andara.core` | ✗ | ✗ | ✓, no approval |
+| `ReloadContent` | ✗ | ✗ | ✓ |
+
+### Audit record
+
+`{actor_account_id, acting_as_account_id, action, pack_id, version, blob_hashes_sha256 (hash of the
+sorted list), override, reason, outcome, findings_count, session_id, trace_id}` on `andara.audit.v1`,
+keyed by actor. `action ∈ {publish, approve, activate, rollback, reject, override}`.
+
+### Configuration
+
+| Key | Env | Default |
+|-----|-----|---------|
+| `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` (shared with `AW-SRV-012`) |
+| `content.max_pack_bytes` | `ANDARA_CONTENT_MAX_PACK_BYTES` | `268435456` (256 MiB per version) |
+| `content.core_pack` | `ANDARA_CONTENT_CORE_PACK` | `andara.core` |
+
+### Error taxonomy
+
+| Condition | gRPC code |
+|-----------|-----------|
+| validation findings | `INVALID_ARGUMENT` (findings in details) |
+| pack not held, self-approval, Builder on core | `PERMISSION_DENIED` |
+| unapproved activation, `parent_version` stale | `FAILED_PRECONDITION` |
+| blob or pack too large | `RESOURCE_EXHAUSTED` |
+| version not found | `NOT_FOUND` |
 
 ## Data / state impact
 
-Blob storage grows monotonically: content-addressed blobs are never removed by compaction. ADR-0004
-accepts this for auditability and flags that it needs a retention story before the topic becomes the
-largest thing in the cluster — and that large binaries, if Phase 2 art ever ships this way, belong in
-object storage with hashes in the manifest instead.
+Blob storage grows monotonically; ADR-0004 accepts this and flags a retention story before the topic is
+the largest thing in the cluster. `andara_content_blob_bytes_total` is the number to watch. The
+`ContentVersion` message already carries `approved_by` (7), `approved_at_unix_nano` (8), and
+`core_version` (9); no schema change on the content topics. Version numbers are server-assigned,
+monotonic per pack, under the `AW-SRV-008` single-writer lock.
 
 ## Observability requirements
 
-- **Metrics:** `andara_content_publishes_total` (counter, label `outcome`),
-  `andara_content_pointer_moves_total` (counter, label `direction` — `forward` or `rollback`),
-  `andara_content_blob_bytes_total` (counter), `andara_content_validation_failures_total` (counter, label
-  `code`, reusing `AW-SRV-001`'s taxonomy). Pack ID is a bounded label; blob hash is not and is rejected.
-- **Logs:** every publish and pointer move at `info` with author, pack, version. Rejections at `warn`
-  with the findings.
-- **Traces:** `content.publish` with `content.validate` and `content.write_blobs` children.
-- **Alerts:** none directly. A failing publish is a Builder's problem, visible to them immediately. A
-  pointer move to a version that then fails to load alerts via `AW-SRV-012`'s `ContentLoadFailing`.
+### Metrics
+- `andara_content_publishes_total{outcome}` (`ok`, `rejected`, `denied`, `too_large`).
+- `andara_content_approvals_total{outcome}` (`ok`, `self`, `denied`).
+- `andara_content_pointer_moves_total{direction, override}` (`forward`/`rollback` × `true`/`false`).
+- `andara_content_blob_bytes_total` — counter. `andara_content_validation_failures_total{code}` reusing
+  `AW-SRV-001`'s taxonomy. Pack ID is a bounded label; blob hash and account are rejected.
+
+### Logs
+- `info` per publish, approve, activate with actor, pack, version; `warn` per rejection with findings;
+  `warn` per override with reason.
+
+### Traces
+- `content.publish` → `content.write_blobs`, `content.validate`; `content.activate`.
+
+### Alerts
+None directly. A failing publish is visible to the Builder; a bad activation alerts via `AW-SRV-012`'s
+`ContentLoadFailing`.
 
 ## Test plan
 
-Server-side rejection asserting no topic writes; publish-then-activate as separate steps; rollback
-asserting the newer version survives; role enforcement; blob dedup; version history retained across a
-forced compaction, which is the test that would catch the compaction trap ADR-0004 warns about.
+- **Unit:** authorization matrix as a table; audit record shape per action; version assignment.
+- **Integration:** against a throwaway Redpanda — every AC, including forced compaction (AC-10) and
+  the streamed size limit (AC-12); the three-way equivalence fixture from `AW-CLI-002` AC-4 asserting
+  server findings equal CLI findings.
+- **Manual/operator:**
+  ```
+  andara-cli content publish ./town            # as builder A: version 8, "awaiting approval"
+  andara-cli content approve pack.town 8       # as builder B
+  andara-cli content activate pack.town 8      # as A or B: pointer moves; audit shows both
+  andara-cli content rollback pack.town        # pointer to 7, no approval needed
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the compaction test from AC-7 runs against a broker with compaction forced, because
-"we keyed it correctly" is exactly the kind of belief that should be verified rather than reasoned about.
+CLAUDE.md §8, plus: the compaction test (AC-10) against a broker with compaction forced, and the
+three-way equivalence fixture wired in.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` Whether Builders are scoped per pack or trusted across all content. Per-pack is safer
-  and is more machinery.
-- **Resolved 2026-09-07 (Brian): a second approver is required to activate.** Publishing stays a
-  single-Builder action; moving the Active Pointer requires a distinct second identity to approve. The
-  reasoning Brian gave is worth recording because it changes what this feature is for: it lets more
-  people contribute content while keeping a human moderation step in front of the live World. It is a
-  contribution-scaling mechanism, not a compliance control.
-
-  This story owns the rule, because the server is the security boundary and the CLI is a client.
-  Specifically: an activation request from the same identity that published is rejected; the approval
-  is itself an audited action on `andara.audit.v1` carrying approver, pack, version, and blob hashes;
-  and an approval is bound to one `packID@version`, so re-publishing invalidates it. `AW-CLI-003`
-  surfaces the approval state and the rejection — it does not enforce anything.
-
-  Three sub-decisions this opens, none of which block grooming: whether an Operator may override in an
-  incident (recommendation: yes, loudly audited, since the alternative is that a bad activation cannot
-  be rolled back at 3am by whoever is awake); whether rollback to a previously-approved version needs
-  fresh approval (recommendation: no — it was approved once and the content is byte-identical); and
-  whether approval expires.
-
-- `[ASSUMPTION]` Version numbers are monotonic integers per pack, assigned by the server, not by the
-  Builder.
+- **Resolved 2026-09-07 (Brian): a second approver is required to activate.** AC-3–5.
+- **Resolved 2026-09-11 (Brian): Builders are scoped per pack.** `builder_packs` and AC-7.
+- `[ASSUMPTION]` Operator override exists, is loud, and requires a reason (AC-8) — the alternative is
+  that a bad activation cannot be rolled back at 3 am.
+- `[ASSUMPTION]` Rollback to a previously-approved version needs no fresh approval; approvals do not
+  expire. Both follow from binding an approval to byte-identical content.

@@ -71,7 +71,16 @@ subscribes to perception-scoped Events, decides, and submits Commands over the s
 player's client uses. Agents may take arbitrarily long, call models, and be non-deterministic; the log
 records what they decided, not how, so replay never re-runs Python. They authenticate with in-cluster
 workload identity under the `agent` role, and network policy permits them to reach the gRPC endpoint and
-nothing else — no Kafka, no datastore, no Projection (ADR-0005).
+nothing else — no Kafka, no datastore, no Projection (ADR-0005). **Builders write Behaviors** (decided
+2026-09-11), so Behavior code is Content Pack material and **one Agent deployment runs one pack**, with an
+identity scoped to that pack: it can drive only NPCs whose Template is from its pack.
+
+**Lease** — A Behavior Agent's exclusive, time-limited hold on one NPC, renewed by heartbeat. Exactly one
+Agent Session may hold a Lease on an NPC. Expiry makes the NPC **unattended**: it stays in the World and
+stops acting, visibly (`AW-SRV-009`).
+
+**Attended / Unattended** — Whether an NPC currently has a Behavior Agent holding its Lease. World state,
+set by a Command, so replay and players agree on it.
 
 **Container** — An Entity that can hold Item instances. A backpack, a chest, a corpse.
 
@@ -140,9 +149,16 @@ Version currently live. The only mutable thing in the content store. Rollback is
 **Content Blob** — An immutable content body on `andara.content.blobs.v1`, keyed by its SHA-256. Keys
 never repeat, so compaction never removes one.
 
+**Approval** — A second Builder's sign-off on a Content Version, bound to `packID@version`, required
+before that version can be activated (decided 2026-09-07). Publishing is one person's act; activating
+is two. An Operator may override, loudly audited, with a reason. Rollback to a previously-approved
+version needs no fresh approval (`AW-SRV-013`).
+
 **Content Language** — The purpose-built, text-based language Builders author content in, compiled by
 `andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
-of the compiled output. Its grammar is `AW-CLI-003`'s.
+of the compiled output. Source files use the `.aw` extension and are published alongside the compiled
+blobs so a Builder can fetch back what they wrote. Its specification is `AW-CLI-005`; its compiler,
+formatter, and decompiler are `AW-CLI-006`; the Builder commands are `AW-CLI-003`.
 
 **Content Pack** — A versioned bundle of Zone Definitions, Item Definitions, NPC Definitions, and
 dialogue that the server loads as a set. Authored outside the repository by Builders and published
@@ -308,10 +324,14 @@ Projector and audit. Retention must reach back at least as far as the oldest Sna
 time proportional to live state rather than to the World's age. Each record carries `tick`,
 `source_offset`, `source_event_id`, `content_version_sha256`, and `state_digest` (ADR-0002 §5.5).
 
-**State Projector** — The component that folds the Event Topic into the State Topic. It embeds the
-Simulation Core in fold-only mode rather than reimplementing the fold, so there is one implementation of
-how an Event changes state — and so its accumulated hash can be asserted against the State Hash in the
-corresponding Tick Boundary Record. Divergence is an alert, not a discovery.
+**State Projector** — The component that produces the State Topic. It is a **replica** of the
+simulation: it runs the Simulation Core over the same Commands and Tick Boundary Records the live server
+consumes, bootstrapping from the newest Snapshot Round, and emits a State Record for every aggregate a
+tick touched. There is one implementation of how state changes, and the replica's State Hash is asserted
+against every Tick Boundary Record. Divergence is an alert, not a discovery (`AW-SRV-019`).
+
+**State Record** — One record on the State Topic: an aggregate's current body plus the tick, source
+offset, content version, `state_version`, and a per-record digest. A null value is a tombstone.
 
 **Offset** — A record's position within a Partition. The unit of progress; checkpointed with the state
 it produced.
@@ -340,9 +360,18 @@ every player.
 is a consumer-group rebalance, not a migration, and there is no handoff protocol because there is no
 state transfer (ADR-0001).
 
-**Snapshot** — A complete serialization of a Zone's state at a Tick, keyed to the Offsets that produced
-it. Stored in object storage; its manifest is recorded on the Event Topic so recovery finds it by
-reading the log it already reads. The replay origin.
+**Snapshot** — A complete serialization of one Zone's state at a Tick, keyed to the Offsets that
+produced it. Stored in object storage under `{zone}/{state_version}/{offset}`; a `SnapshotWritten`
+manifest is recorded on the Event Topic for audit and tooling. The replay origin (`AW-SRV-006`).
+
+**Snapshot Round** — Every owned Zone snapshotted at one tick boundary — a single consistent cut, written
+as one Snapshot per Zone. Recovery restores a **complete** round: one with every Zone present and
+hash-valid. An incomplete round is never selectable. Rounds may carry tags (`deploy:<tag>`) that
+retention keeps longer (`AW-INF-007`).
+
+**Dormant** — A Character that exists in Zone state but is not present in any Room: despawned, or
+created and never bound. Keeps its last position so "where you were" survives restart and replay
+(`AW-SRV-014`).
 
 **Write-Ahead Log (WAL)** — Here, the Command Log. Commands are durable before they are applied, by
 construction: the tick only ever sees records it consumed.

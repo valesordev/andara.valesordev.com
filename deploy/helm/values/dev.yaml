@@ -1,0 +1,15 @@
+# dev: the same box as prod today (kind, 2026-09-10), separated by namespace and values
+# so that a values-only mistake is caught here first.
+image:
+  repository: ghcr.io/valesordev/andara-server
+  tag: dev
+  pullPolicy: Always
+
+server:
+  telemetry:
+    environment: dev
+    log_level: debug
+
+snapshots:
+  size: 5Gi
+  storageClass: standard
