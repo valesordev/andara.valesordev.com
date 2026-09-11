@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Emit the story dependency DAG as Mermaid on stdout."""
 
 import os

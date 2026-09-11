@@ -105,7 +105,8 @@ schemas-check:
 # guard in the workflow reads this target to prove the two lists have not drifted —
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
-                 backlog-check status-check values-schema-check k8s-dry helm-test
+                 backlog-check status-check values-schema-check k8s-dry helm-test \
+                 license-check
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -224,6 +225,10 @@ values-schema-check:
 ## helm-test: render-level assertions over the chart for every environment (AW-INF-003 test plan)
 helm-test:
 	@$(PY) $(SCRIPTS)/helm_test.py
+
+## license-check: REUSE compliance and SPDX headers — the declaration in LICENSING.md, verified
+license-check:
+	@PY=$(PY) $(SCRIPTS)/license_check.sh
 
 ## image: build the andara-server image from deploy/compose/Dockerfile.server — TAG=<tag>, default dev
 image:

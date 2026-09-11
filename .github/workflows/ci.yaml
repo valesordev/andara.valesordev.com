@@ -83,3 +83,5 @@ jobs:
         run: make k8s-dry
       - name: helm-test
         run: make helm-test
+      - name: license-check
+        run: make license-check

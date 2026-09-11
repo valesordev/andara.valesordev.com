@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Protobuf codegen and freshness check.
 #
 # ADR-0007: protobuf is the schema authority and generated code is committed, so a schema

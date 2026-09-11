@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 package sim
 
 // EntityID is an opaque, stable identity for anything the simulation tracks.

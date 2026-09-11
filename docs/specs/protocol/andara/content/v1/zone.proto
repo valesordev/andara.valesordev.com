@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // Zone Definitions — the topology AW-SRV-001 loads into an immutable World.
 //
 // This is the canonical form. Builders do not author it directly: ADR-0007

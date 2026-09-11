@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Install and verify the toolchain `make check` and `make up` need.
 #
 # Idempotent by construction: every step either verifies something already correct or
@@ -66,18 +69,23 @@ install_pinned() {
   ok "$name" "$want (installed)"
 }
 
-# PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003): rendered
-# manifests are real YAML and deserve a real parser. Installed only when the import fails,
-# so a distro-packaged copy is left alone; a refusal (PEP 668 externally-managed
-# environments) is reported with the package to install rather than forced past.
-if ${PY:-python3} -c 'import yaml' >/dev/null 2>&1; then
-  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
-else
-  echo "  installing PyYAML from scripts/requirements.txt ..."
+# Python dependencies beyond the standard library, pinned in scripts/requirements.txt:
+# PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003) — rendered
+# manifests are real YAML and deserve a real parser — and reuse backs `make license-check`.
+# Installed only when an import fails, so a distro-packaged copy is left alone; a refusal
+# (PEP 668 externally-managed environments) is reported with the file to install rather
+# than forced past.
+pydeps_missing=""
+for mod in yaml reuse; do
+  ${PY:-python3} -c "import $mod" >/dev/null 2>&1 || pydeps_missing="$pydeps_missing $mod"
+done
+if [ -n "$pydeps_missing" ]; then
+  echo "  installing$pydeps_missing from scripts/requirements.txt ..."
   ${PY:-python3} -m pip install --quiet --user -r scripts/requirements.txt 2>/dev/null \
-    || fail "PyYAML is missing and pip refused to install it; install your distro's python-yaml (or run: python3 -m pip install -r scripts/requirements.txt)"
-  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)') (installed)"
+    || fail "python modules missing:$pydeps_missing; pip refused to install them (run: python3 -m pip install -r scripts/requirements.txt, or install your distro's packages)"
 fi
+ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
+ok reuse "$(${PY:-python3} -m reuse --version | awk 'NR==1{print $NF}')"
 
 # golangci-lint is needed by `make lint`, which is a no-op until Go sources exist. Install
 # it anyway once sources appear; before that, skip the download nobody needs yet.

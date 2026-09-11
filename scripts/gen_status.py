@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Regenerate docs/status.md — the two-lane development state, one screen.
 
 The question this answers is not "what is in the backlog" (BACKLOG.md answers that).

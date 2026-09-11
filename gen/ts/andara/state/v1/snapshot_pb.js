@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // The snapshot envelope (ADR-0002 §4).
 //
 // A Snapshot is an RTO optimisation, not a correctness mechanism: Kafka holds

@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Schema-check story frontmatter, resolve dependency IDs, and detect cycles.
 
 Exit 0 when every story is valid. Exit 1 with one actionable line per violation.

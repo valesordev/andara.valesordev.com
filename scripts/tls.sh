@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Provision a local CA and a server certificate for the local stack.
 #
 # ADR-0003 makes TLS mandatory on the wire. If `make up` did not do this, developers would

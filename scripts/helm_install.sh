@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # `helm upgrade --install` for one environment, idempotent (AW-INF-003).
 #
 # local: the image comes from `make image && make kind-load` (pullPolicy Never) and
