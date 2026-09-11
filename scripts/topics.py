@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Apply and diff the Kafka topic declaration in deploy/kafka/topics.yaml.
 
     scripts/topics.py apply [--env local]

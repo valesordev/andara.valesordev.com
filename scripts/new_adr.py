@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Scaffold a new ADR from the template, allocating the next four-digit ID.
 
     scripts/new_adr.py "Sharding model"

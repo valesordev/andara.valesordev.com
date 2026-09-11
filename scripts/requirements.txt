@@ -1,7 +1,9 @@
 # Python dependencies of the scripts under scripts/ beyond the standard library.
 # Installed by `make bootstrap` when missing; pinned so CI and a developer machine agree.
 #
-# Only PyYAML, and only because scripts/helm_test.py has to read Kubernetes manifests
-# rendered by helm, which are real YAML. The repo's own declaration files (topics.yaml,
-# schemas.yaml, story frontmatter) keep their narrow stdlib parsers on purpose.
+# PyYAML, because scripts/helm_test.py has to read Kubernetes manifests rendered by helm,
+# which are real YAML. The repo's own declaration files (topics.yaml, schemas.yaml, story
+# frontmatter) keep their narrow stdlib parsers on purpose.
 PyYAML==6.0.3
+# reuse verifies REUSE.toml and LICENSES/ for `make license-check` (LICENSING.md).
+reuse==6.2.0

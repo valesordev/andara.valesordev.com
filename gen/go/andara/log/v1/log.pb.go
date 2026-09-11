@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // The Kafka log: the ordering authority for the entire World (ADR-0002).
 //
 // DETERMINISM RULES — these messages feed the State Hash, so they obey

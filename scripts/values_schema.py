@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Generate the chart's values.schema.json and templates/_env.tpl from keys.yaml (AW-INF-003).
 
 Two inputs, both under deploy/helm/andara:

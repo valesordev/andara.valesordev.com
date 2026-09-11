@@ -1,3 +1,6 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Shared frontmatter parsing and repo-layout constants for Andara's planning tooling.
 
 Deliberately stdlib-only. This tooling validates the repo; it must not depend on

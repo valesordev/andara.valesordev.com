@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Register and verify protobuf subjects against the schema registry (AW-INF-004).
 
     scripts/schemas.py check                 # offline; runs inside `make check`

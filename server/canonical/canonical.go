@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // Package canonical is the encoder for anything that feeds the State Hash
 // (ADR-0007 rule 3, AW-SRV-005 AC-2).
 //

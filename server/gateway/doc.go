@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // Package gateway is the server side of the Protocol: one TLS endpoint serving
 // andara.game.v1.Game and andara.admin.v1.Admin over gRPC, gRPC-Web, and
 // Connect from the code AW-SRV-020 generates (ADR-0003, AW-SRV-005).

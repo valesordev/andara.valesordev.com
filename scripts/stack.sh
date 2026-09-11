@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Local stack driver (AW-INF-002). `make up/down/logs/ps` call this; nothing calls
 # `docker compose` directly, because everything around the compose invocation — TLS,
 # port checks, health waiting, topic application — is what makes the stack honest.

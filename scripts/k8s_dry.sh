@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 # Render and validate the chart for one environment, or every environment with ENV=all
 # (AW-INF-003 AC-1). Validation is against the pinned Kubernetes version in strict mode,
 # and kubeconform is required, not optional: a skipped schema check is a green build that

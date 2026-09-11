@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
 """Render-level tests for deploy/helm/andara (AW-INF-003 test plan, unit half).
 
 `helm unittest` is a plugin that cannot be pinned the way ./bin tools are, so these are the

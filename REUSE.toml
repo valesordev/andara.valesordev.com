@@ -1,0 +1,44 @@
+# REUSE (https://reuse.software) declaration: which license covers which path.
+# LICENSING.md is the human-readable map; this file is what `make license-check`
+# verifies. Later entries take precedence over earlier ones for a path both match.
+
+version = 1
+SPDX-PackageName = "andara.valesordev.com"
+SPDX-PackageSupplier = "Valesor Development <https://github.com/valesordev>"
+SPDX-PackageDownloadLocation = "https://github.com/valesordev/andara.valesordev.com"
+
+# Default: source, build, deploy, configuration, generated code, and test fixtures.
+[[annotations]]
+path = ["**"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "Apache-2.0"
+
+# Documentation: ADRs, epics, stories, specs prose, SLOs, runbooks, glossary, roadmap,
+# and the backlog generated from them.
+[[annotations]]
+path = ["docs/**", "BACKLOG.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "CC-BY-SA-4.0"
+
+# Machine-readable artifacts under docs/ are source, not prose. The protocol compiles into
+# gen/, which inherits its license; migrations and schema files run against a database.
+[[annotations]]
+path = [
+  "docs/specs/protocol/**/*.proto",
+  "docs/specs/protocol/buf.yaml",
+  "docs/specs/schema/**/*.sql",
+  "docs/specs/schema/**/*.json",
+]
+precedence = "closest"
+SPDX-FileCopyrightText = "2026 Valesor Development"
+SPDX-License-Identifier = "Apache-2.0"
+
+# The glossary carries the setting vocabulary of Andara's World, a solo7.media creative
+# work (Tier 1 of the Open Canon split, CC BY-SA 4.0 — the same license as the rest of docs/).
+[[annotations]]
+path = ["docs/glossary.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["2026 Valesor Development", "2026 solo7.media"]
+SPDX-License-Identifier = "CC-BY-SA-4.0"

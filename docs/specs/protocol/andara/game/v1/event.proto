@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // Events as they reach a client.
 //
 // The sim emits Events and computes their Scope (AW-SRV-004); the transport

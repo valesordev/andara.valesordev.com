@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
 // Package testpki issues a throwaway CA and server certificate for tests,
 // so that nothing under test depends on .local/tls or on openssl. ECDSA
 // P-256 keeps a thousand handshakes cheap.
