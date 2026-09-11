@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"errors"
+	"log/slog"
 	"net"
 	"net/http"
 	"runtime"
@@ -17,6 +18,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -541,7 +543,12 @@ func TestCloseSession_EndsStream(t *testing.T) {
 // grow with the count.
 func TestConnectionDrop_TearsDownSessions(t *testing.T) {
 	const n = 1000
-	h := start(t, nil)
+	// A recording tracer and a log buffer retain every span and line, and
+	// the heap bound below would be measuring them rather than the server.
+	h := start(t, func(o *Options) {
+		o.Tracer = noop.NewTracerProvider().Tracer("andara-server")
+		o.Log = slog.New(slog.DiscardHandler)
+	})
 
 	// Warm up so the baseline includes whatever the first connection
 	// allocates once (TLS session caches, the h2 framer pools).
@@ -593,7 +600,9 @@ func TestConnectionDrop_TearsDownSessions(t *testing.T) {
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
 	const bound = 8 << 20
-	if delta := int64(after.HeapAlloc) - int64(base.HeapAlloc); delta > bound {
+	delta := int64(after.HeapAlloc) - int64(base.HeapAlloc)
+	t.Logf("heap delta %d bytes, goroutines %d → %d, over %d connect-and-drop cycles", delta, baseGoroutines, runtime.NumGoroutine(), n)
+	if delta > bound {
 		t.Errorf("heap grew by %d bytes over %d connect-and-drop cycles (bound %d)", delta, n, bound)
 	}
 }

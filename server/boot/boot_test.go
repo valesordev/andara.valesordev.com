@@ -61,6 +61,35 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	}
 }
 
+// AW-SRV-005 AC-8: Drain flips /readyz to 503 while the World stays loaded,
+// so a load balancer stops routing here during the drain window.
+func TestDrain_ReadyzGoes503(t *testing.T) {
+	rt, logs := runtime(t, fixture(t, "valid"), false)
+	if code := rt.LoadContent(context.Background()); code != ExitOK {
+		t.Fatalf("exit %d; logs=%s", code, logs.String())
+	}
+	h := rt.Handler()
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("readyz before drain = %d", rr.Code)
+	}
+	rt.Drain()
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("readyz during drain = %d, want 503", rr.Code)
+	}
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/livez", nil))
+	if rr.Code != http.StatusOK {
+		t.Errorf("livez during drain = %d, want 200: draining is not dying", rr.Code)
+	}
+	if rt.World == nil {
+		t.Error("World unloaded by Drain")
+	}
+}
+
 func TestLoadContent_DanglingLogsErrorFields(t *testing.T) {
 	rt, logs := runtime(t, fixture(t, "dangling"), false)
 	code := rt.LoadContent(context.Background())
