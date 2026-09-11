@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -50,6 +51,11 @@ type sessionStore struct {
 	mu     sync.Mutex
 	byID   map[string]*Session
 	byConn map[uint64]map[string]*Session
+	// live is every connection that has been seen and not yet closed. A
+	// Session may only be opened on a live connection: an OpenSession
+	// handler can still be running after its connection has gone, and a
+	// Session bound to a dead connection would never be torn down.
+	live map[uint64]bool
 
 	metrics *Metrics
 	log     *slog.Logger
@@ -60,6 +66,7 @@ func newSessionStore(m *Metrics, log *slog.Logger, tracer trace.Tracer) *session
 	return &sessionStore{
 		byID:    map[string]*Session{},
 		byConn:  map[uint64]map[string]*Session{},
+		live:    map[uint64]bool{},
 		metrics: m,
 		log:     log,
 		tracer:  tracer,
@@ -74,11 +81,40 @@ func newSessionID() string {
 	return hex.EncodeToString(b[:])
 }
 
+// errConnGone is returned by open when the connection an OpenSession
+// arrived on has already closed; there is nobody to hand the Session to.
+var errConnGone = errors.New("connection closed before the session was established")
+
+// connOpened records a live connection. Called from ConnContext.
+func (st *sessionStore) connOpened(connID uint64) {
+	st.mu.Lock()
+	st.live[connID] = true
+	st.mu.Unlock()
+}
+
+// connClosed marks a connection dead and tears down every Session opened
+// on it (AC-7). Marking and collecting happen in one critical section so
+// that an open racing this call either lands before it and is torn down
+// here, or lands after it and is refused.
+func (st *sessionStore) connClosed(connID uint64) {
+	st.mu.Lock()
+	delete(st.live, connID)
+	conns := st.byConn[connID]
+	victims := make([]*Session, 0, len(conns))
+	for _, s := range conns {
+		victims = append(victims, s)
+	}
+	st.mu.Unlock()
+	for _, s := range victims {
+		st.close(context.Background(), s, OutcomeDropped, "connection dropped")
+	}
+}
+
 // open establishes a Session. rpcCtx is the OpenSession call's context; the
 // session.lifetime span is a new root linked to it, because a Session
 // outlives the RPC that created it and a child span cannot outlive its
 // parent honestly.
-func (st *sessionStore) open(rpcCtx context.Context, connID uint64, clientName string, version uint32, remote string, p Principal) *Session {
+func (st *sessionStore) open(rpcCtx context.Context, connID uint64, clientName string, version uint32, remote string, p Principal) (*Session, error) {
 	id := newSessionID()
 	_, span := st.tracer.Start(context.Background(), "session.lifetime",
 		trace.WithNewRoot(),
@@ -104,6 +140,13 @@ func (st *sessionStore) open(rpcCtx context.Context, connID uint64, clientName s
 	}
 
 	st.mu.Lock()
+	if !st.live[connID] {
+		st.mu.Unlock()
+		cancel()
+		span.SetStatus(codes.Error, errConnGone.Error())
+		span.End()
+		return nil, errConnGone
+	}
 	st.byID[id] = s
 	conns := st.byConn[connID]
 	if conns == nil {
@@ -122,7 +165,7 @@ func (st *sessionStore) open(rpcCtx context.Context, connID uint64, clientName s
 		slog.String("trace_id", traceID(rpcCtx)),
 		slog.String("session_trace_id", span.SpanContext().TraceID().String()),
 	)
-	return s
+	return s, nil
 }
 
 func (st *sessionStore) get(id string) (*Session, bool) {
@@ -169,25 +212,10 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			slog.String("remote_addr", s.RemoteAddr),
 			slog.String("outcome", outcome),
 			slog.String("reason", reason),
-			slog.Duration("duration", dur),
+			slog.Float64("duration_ms", float64(dur.Microseconds())/1000),
 			slog.String("trace_id", traceIDOr(ctx, s.span.SpanContext())),
 		)
 	})
-}
-
-// closeConn tears down every Session opened on a connection that has gone
-// away (AC-7).
-func (st *sessionStore) closeConn(connID uint64) {
-	st.mu.Lock()
-	conns := st.byConn[connID]
-	victims := make([]*Session, 0, len(conns))
-	for _, s := range conns {
-		victims = append(victims, s)
-	}
-	st.mu.Unlock()
-	for _, s := range victims {
-		st.close(context.Background(), s, OutcomeDropped, "connection dropped")
-	}
 }
 
 // closeAll ends every Session with one reason. Drain uses it.

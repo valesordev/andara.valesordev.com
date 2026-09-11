@@ -165,11 +165,15 @@ func (s *Server) connContext(ctx context.Context, c net.Conn) context.Context {
 	id := s.conns.next
 	s.conns.ids[c] = id
 	s.conns.Unlock()
+	s.sessions.connOpened(id)
 	return context.WithValue(ctx, connIDKey{}, id)
 }
 
 // connState tears down every Session on a connection when it closes
-// (AC-7). It is the only place a dropped connection is observed.
+// (AC-7). It is the only place a dropped connection is observed. It fires
+// when the connection's serve loop returns, which can be before a handler
+// on that connection has — the store refuses an open on a closed
+// connection for exactly that reason.
 func (s *Server) connState(c net.Conn, st http.ConnState) {
 	if st != http.StateClosed && st != http.StateHijacked {
 		return
@@ -179,7 +183,7 @@ func (s *Server) connState(c net.Conn, st http.ConnState) {
 	delete(s.conns.ids, c)
 	s.conns.Unlock()
 	if ok {
-		s.sessions.closeConn(id)
+		s.sessions.connClosed(id)
 	}
 }
 

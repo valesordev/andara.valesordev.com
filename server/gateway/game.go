@@ -60,7 +60,11 @@ func (g *gameService) OpenSession(ctx context.Context, req *connect.Request[game
 		return nil, connectError(ErrUnauthenticated)
 	}
 
-	sess := g.s.sessions.open(ctx, connIDFrom(ctx), msg.GetClientName(), negotiated, req.Peer().Addr, principal)
+	sess, err := g.s.sessions.open(ctx, connIDFrom(ctx), msg.GetClientName(), negotiated, req.Peer().Addr, principal)
+	if err != nil {
+		// The connection is already gone; the code is for the record.
+		return nil, connect.NewError(connect.CodeCanceled, err)
+	}
 	return connect.NewResponse(&gamev1.OpenSessionResponse{
 		SessionId:         sess.ID,
 		NegotiatedVersion: negotiated,
