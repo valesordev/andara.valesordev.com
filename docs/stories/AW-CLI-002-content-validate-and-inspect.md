@@ -4,15 +4,13 @@ title: andara-cli content validate and inspect
 epic: EPIC-05
 component: cli
 type: feature
-status: draft
+status: ready
 size: S
-depends_on: [AW-CLI-001, AW-SRV-001]
+depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001]
 blocks: [AW-CLI-003]
 lane: implementation
 risk: low
 ---
-
-> `status: draft` — unblocked by ADR-0004 and scoped. Groomed to `ready` when M3 approaches.
 
 ## Context
 
@@ -22,7 +20,9 @@ change.
 
 ADR-0004 makes the server-side check at publish the authoritative gate, since Builders are untrusted. That
 does not make this command redundant — it makes it the fast feedback loop. A Builder should find a dangling
-Exit in a second on their laptop, not in a round trip to a server.
+Exit in a second on their laptop, not in a round trip to a server. With ADR-0009 and `AW-CLI-006`,
+"content" on the laptop is Content Language source, so `validate --path` compiles first and validates
+second, and both stages report through one diagnostic format.
 
 ## User story
 
@@ -32,45 +32,59 @@ publish a Zone that fails to load.
 ## Scope
 
 ### In scope
-- `andara-cli content validate` against a local directory or a published version.
-- `andara-cli content inspect zone|room` for reading resolved content.
-- Findings rendered per `AW-CLI-001`'s output contract, human and JSON.
-- Offline operation: `validate --path` must work on a laptop with no server and no cluster access, or
-  Builders will not use it. `--path` names a **local working directory of authored source** — not a
-  checkout of this repository, which no Builder has (decision below).
+- `andara-cli content validate [--path DIR | --pack ID --version N]`: compile (`AW-CLI-006`) then
+  `sim.BuildWorld`; findings rendered per `AW-CLI-001`, human and JSON.
+- `andara-cli content inspect zone|room|template <ref> [--pack --version]`: print the resolved
+  definition — flattened Template with per-field provenance (ADR-0010 §9), Room with Components and
+  Exits, Zone summary.
+- Offline operation for `--path` against the cached core pack.
+- The three-way equivalence fixture: one fixture set, three runners (CLI, CI job, server publish gate),
+  identical findings.
 
 ### Out of scope
-- Publishing and rollback — `AW-CLI-003`.
-- Any world-model validation logic of its own. It wraps `sim.BuildWorld` and adds nothing.
+- Publishing — `AW-CLI-003`. The compiler — `AW-CLI-006`.
+- Any validation logic of its own.
 
-Once ADR-0010 is accepted, `validate` gains a **resolution stage** ahead of `sim.BuildWorld`:
-resolving `extends` chains against the cached `andara.core` pack. Its errors must name the type in the
-chain that is wrong, not the flattened output — a Builder debugging a three-deep hierarchy should not
-be reading a resolved blob.
+## Acceptance criteria
 
-## Acceptance criteria (known now; completed at grooming)
-
-1. **Given** content with a dangling Exit **when** `content validate` runs **then** it exits 1 and prints
-   one line per finding naming the file, Room ID, direction, and unresolved target.
-2. **Given** valid content **when** it runs **then** it exits 0 and prints a summary of Zones and Rooms.
-3. **Given** `--output json` **when** validation fails **then** stdout is a JSON array of validation
-   findings and nothing else.
-4. **Given** the same content **when** validated by the CLI, by CI, and by the server at publish **then**
-   all three produce identical findings. Divergence between the three is the failure this story exists to
-   prevent, and it is asserted by a shared fixture set rather than by inspection.
-5. **Given** no network access **when** `content validate --path ./mycontent` runs **then** it succeeds.
+1. **Given** source with a dangling Exit **when** `content validate --path` runs **then** it exits `1`
+   and prints one line per finding as `file:line:col: CODE message` naming Room, Direction, and target.
+2. **Given** valid source **when** it runs **then** it exits `0` and prints `N zones, M rooms, T
+   templates, core andara.core@V`.
+3. **Given** `--output json` **when** validation fails **then** stdout is a JSON array of `Diagnostic`
+   and nothing else; stderr carries nothing but the exit summary.
+4. **Given** the equivalence fixture **when** run by the CLI, by `make content-conformance`, and by
+   `AW-SRV-013`'s gate **then** all three produce identical diagnostics (code, position, chain).
+5. **Given** no network and a cached core **when** `validate --path` runs **then** it succeeds; with no
+   cache it fails with `E_CORE_VERSION` and the `fetch-core` hint, exit `1`.
+6. **Given** `--pack town --version 8` **when** `validate` runs **then** it fetches the version over
+   `Admin.GetVersion` and the blobs, validates, and exits `0`/`1` as above; server unreachable is exit
+   `3`.
+7. **Given** `inspect template town.Merchant` **when** it runs **then** each Component field shows the
+   ancestor that set it, e.g. `Dialogue.greeting = "Fine wares!"  (town.Merchant)` and
+   `Aggro.threshold = 3  (andara.core.Npc)`.
+8. **Given** `inspect room market/square` **when** it runs **then** Exits are listed in the closed
+   Direction order with reverse-Exit presence marked.
 
 ## Interface contract
 
-To be written at grooming. Committed now: the command calls `sim.BuildWorld` and formats its output. A
-rule that exists in the CLI but not at publish or at load is a defect.
+```
+andara-cli content validate [--path DIR | --pack ID --version N] [--output human|json]
+andara-cli content inspect zone <zone>          [--path DIR | --pack ID --version N]
+andara-cli content inspect room <zone>/<room>   [...]
+andara-cli content inspect template <pack>.<name> [...]
+```
 
-Provisional surface:
-```
-andara-cli content validate [--path DIR | --pack ID --version N]
-andara-cli content inspect zone <ZoneID>
-andara-cli content inspect room <ZoneID>/<RoomID>
-```
+| Exit | Meaning |
+|-----:|---------|
+| `0` | valid / printed |
+| `1` | diagnostics (compile or validation) |
+| `2` | usage or IO |
+| `3` | server unreachable (`AW-CLI-001` taxonomy) |
+
+Diagnostics are `lang.Diagnostic` from `AW-CLI-006`; `sim.ValidationError` findings are mapped into the
+same shape with `file:line:col` recovered from the source map the compiler emits. JSON schema is
+`AW-CLI-001`'s error envelope with `diagnostics: []`.
 
 ## Data / state impact
 
@@ -78,27 +92,26 @@ Read-only.
 
 ## Observability requirements
 
-Per `AW-CLI-001`: no metrics, structured stderr diagnostics, `cli.command` root span. Nothing additional.
+Per `AW-CLI-001`: no metrics, structured stderr diagnostics, `cli.command` root span with
+`content.compile` and `content.validate` children carrying counts.
 
 ## Test plan
 
-The three-way equivalence test from AC-4 over a shared fixture set, run in CI. Offline operation asserted
-in an environment with no network.
+- **Unit:** finding-to-diagnostic mapping with source map; output formatting both modes.
+- **Integration:** the three-way equivalence test (AC-4) in CI; offline run in a network-less container
+  (AC-5); `--pack` path against a throwaway Redpanda (AC-6).
+- **Manual/operator:**
+  ```
+  andara-cli content validate --path ./town            # expect: "3 zones, 41 rooms, 7 templates, core andara.core@3"
+  andara-cli content inspect template town.Merchant    # expect: fields with provenance
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the equivalence test runs in CI, using the same fixtures `AW-SRV-001` and `AW-SRV-013`
-use.
+CLAUDE.md §8, plus: the equivalence test runs in CI using the same fixtures `AW-SRV-001`, `AW-SRV-013`,
+and `AW-CLI-005`'s corpus use.
 
 ## Open questions
 
-- **Resolved 2026-09-07 (Brian):** no Builder has repository access, confirming ADR-0004's assumption.
-  A Builder who needs something changed in the server opens a GitHub issue; they do not open a pull
-  request, because they cannot. Both surfaces stay, but they now mean different things rather than
-  serving different populations: `--path` validates source a Builder is still writing, and
-  `--pack/--version` validates what is already published. That also makes the content store the only
-  Builder-facing write path, which is what makes publish-time authorization and audit load-bearing
-  rather than defensive (`AW-SRV-013`).
-- Per ADR-0007 the canonical content format is protobuf, which is not hand-authorable. The human-friendly
-  authoring surface is `AW-CLI-003`'s problem, and `validate` must accept whatever that turns out to be as
-  well as the canonical form.
+- **Resolved 2026-09-07 (Brian):** no Builder has repository access; `--path` is a Builder's own working
+  directory of `.aw` source, `--pack/--version` is what is already published.

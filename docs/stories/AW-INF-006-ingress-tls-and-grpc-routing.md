@@ -4,7 +4,7 @@ title: Ingress, certificate management, and gRPC/Connect routing
 epic: EPIC-01
 component: infra
 type: infra
-status: draft
+status: ready
 size: M
 depends_on: [AW-INF-003, AW-SRV-005]
 blocks: []
@@ -12,15 +12,16 @@ lane: architecture
 risk: medium
 ---
 
-> `status: draft` — scoped and unblocked. Groomed once the target platform is known; ingress is the
-> most platform-dependent story in the repo.
-
 ## Context
 
 ADR-0003 puts gRPC over HTTP/2 with TLS on the wire and serves Connect and gRPC-Web from the same
 handler. That combination is unremarkable to write and easy to get wrong to deploy: HTTP/2 must reach
 the pod intact, and an ingress that terminates and re-originates as HTTP/1.1 breaks server streaming in
 ways that look like intermittent client bugs.
+
+**Decided 2026-09-10 (Brian):** platform is kind v1.36.1 on Brian's box, where the control plane already
+publishes `:80` and `:443` and other projects hold `:3000`, `:8081`, `:9000`; `Admin` stays on the same
+listener and is restricted by network policy. The engineering choices that follow are in the contract.
 
 ## User story
 
@@ -30,65 +31,123 @@ so that what works in development works in production.
 ## Scope
 
 ### In scope
-- Service and ingress for the single TLS endpoint serving `Game` and `Admin`.
-- End-to-end HTTP/2 to the pod, or TLS passthrough — whichever the platform supports without breaking
-  streaming.
-- Certificate issuance and rotation.
-- Long-lived stream handling: idle and total-duration timeouts long enough for a play session, not the
-  60-second default that would disconnect every player every minute.
-- Network-level restriction of `Admin` reachability. **Decided 2026-09-10 (Brian): same listener,
-  restricted by network policy.** A NetworkPolicy admits `Admin` only from the operator network, so
-  authorization is not the only thing between the internet and a privileged RPC. ADR-0003's "same
-  endpoint, same protocol" is unaffected — this restricts reachability, not the protocol.
+- ingress-nginx as the controller (the one the kind port mapping was made for), TLS terminated at the
+  ingress with cert-manager, re-originated to the pod as `GRPCS` so HTTP/2 is end to end.
+- Two `Ingress` resources on one host: `/` for `Game` and `Auth`; `/andara.admin.v1.Admin/` with
+  `whitelist-source-range` for operators. The pod keeps one listener; the path split is how "same
+  listener, restricted by network" is honored for external traffic.
+- `NetworkPolicy`: the server pod's gRPC port admits the ingress-controller namespace and the Behavior
+  Agent namespace only; nothing else in the cluster reaches it directly.
+- cert-manager `ClusterIssuer`: a private CA (`andara-ca`) for `local`/`dev`/box-prod, with an ACME
+  issuer selectable by values for a public domain. The pod's own cert comes from the same issuer.
+- Stream timeouts: 4 h read/send at the ingress; HTTP/2 keepalive aligned with `AW-SRV-005`.
+- Certificate rotation with no dropped streams.
 
 ### Out of scope
-- The workload itself — `AW-INF-003`.
-- Client-side TLS trust for `andara-cli` locally — `AW-INF-002`.
-- Rate limiting at the edge. Per-Session limits live in `AW-SRV-010`, where the Session is known.
+- The workload — `AW-INF-003`. Client-side trust locally — `AW-INF-002` (`ANDARA_TLS_CA_FILE`).
+- Edge rate limiting. Per-Session limits live in `AW-SRV-010`.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** a deployed environment **when** a gRPC client connects from outside the cluster **then**
-   the connection is HTTP/2 end to end and a server stream stays open for at least one hour without an
-   ingress-initiated close.
-2. **Given** the same environment **when** a Connect client and a gRPC-Web client connect **then** both
-   succeed against the same endpoint.
-3. **Given** a certificate approaching expiry **when** rotation runs **then** it completes with no
-   dropped streams.
-4. **Given** a request to an `Admin` method from outside the permitted network range **when** it arrives
-   **then** it is rejected at the network layer, before reaching the server.
-5. **Given** any rendered manifest **when** inspected **then** no certificate private key is present in
-   it.
+1. **Given** a client outside the cluster **when** it opens `Subscribe` **then** the stream stays open
+   for 60 minutes with no ingress-initiated close, and `nginx_ingress_controller_requests` shows HTTP/2
+   on both legs.
+2. **Given** a Connect client and a gRPC-Web client **when** both call `OpenSession` on the same host
+   **then** both succeed.
+3. **Given** a certificate within `renewBefore` **when** cert-manager renews it **then** an open stream
+   from before renewal is still open after, and new connections present the new cert.
+4. **Given** a request to `/andara.admin.v1.Admin/GetServerInfo` from outside the operator CIDRs
+   **when** it arrives **then** ingress returns `403` and the server logs no request.
+5. **Given** any rendered manifest **when** grepped **then** no private key appears; keys exist only in
+   cert-manager-managed Secrets.
+6. **Given** a pod in another namespace **when** it dials the server pod's gRPC port directly **then**
+   the connection is refused by NetworkPolicy.
+7. **Given** `make k8s-dry ENV=prod` **when** it runs **then** the Ingress, Certificate, ClusterIssuer,
+   and NetworkPolicy render and validate against v1.36.1 with the cert-manager CRD schemas.
+8. **Given** the host port is already held (`:443` by the kind control plane) **when** the chart is
+   installed **then** it uses the kind-mapped controller rather than binding a host port itself, and the
+   `local` values document the mapped ports.
 
 ## Interface contract
 
-To be written at grooming, once the platform is known.
+### Ingress annotations (both resources)
+
+| Annotation | Value | Why |
+|------------|-------|-----|
+| `nginx.ingress.kubernetes.io/backend-protocol` | `GRPCS` | HTTP/2 to the pod; the pod terminates its own TLS |
+| `nginx.ingress.kubernetes.io/proxy-read-timeout` / `proxy-send-timeout` | `14400` | 4 h streams |
+| `nginx.ingress.kubernetes.io/proxy-body-size` | `4m` | above `grpc.max_recv_bytes` |
+| `cert-manager.io/cluster-issuer` | `values.tls.issuer` | |
+| `nginx.ingress.kubernetes.io/whitelist-source-range` | `values.admin.allowedCIDRs` | Admin resource only |
+| `nginx.ingress.kubernetes.io/use-regex` | `true` | Admin path prefix |
+
+Ingress class `nginx`; host `values.host` (`andara.local` for `local`, resolved by `/etc/hosts` line
+printed by `make helm-install`).
+
+### Certificates
+
+| Certificate | Issuer | SANs | Secret | Consumer |
+|-------------|--------|------|--------|----------|
+| `andara-edge` | `values.tls.issuer` | `values.host` | `andara-edge-tls` | ingress |
+| `andara-server` | `andara-ca` | `andara-0.andara.<ns>.svc`, `andara.<ns>.svc` | `andara-server-tls` | pod (`grpc.tls_cert_file`/`key_file`) |
+
+`renewBefore: 240h` (10 d of a 90 d cert). The CA bundle is published as ConfigMap `andara-ca-bundle`
+and `make helm-install` writes it to `.local/tls/ca.pem` for `andara-cli`.
+
+### Values
+
+| Value | Type | Default |
+|-------|------|---------|
+| `ingress.enabled` | bool | `true` |
+| `ingress.className` | string | `nginx` |
+| `host` | hostname | `andara.local` |
+| `tls.issuer` | `andara-ca` \| `letsencrypt-prod` | `andara-ca` |
+| `admin.allowedCIDRs` | list of CIDR | `["10.0.0.0/8","192.168.0.0/16"]` |
+| `networkPolicy.agentNamespace` | string | `andara-agents` |
+
+### Make targets
+
+`make helm-install` (from `AW-INF-003`) gains the issuer bootstrap and the `/etc/hosts` hint;
+`make stream-soak ENV=<env> DURATION=60m` runs AC-1 from outside the cluster and is scheduled nightly
+in CI.
 
 ## Data / state impact
 
-None. Certificate material is managed by the platform's secret mechanism and never appears in a chart
-value or a rendered manifest.
+None. Certificate material is managed by cert-manager Secrets and never appears in a chart value or a
+rendered manifest.
 
 ## Observability requirements
 
-- **Metrics:** ingress request rate, status distribution, and stream duration by route; certificate
-  expiry as a gauge, so `CertificateExpiringSoon` is a symptom alert with a runbook.
-- **Alerts:** `CertificateExpiringSoon` and `IngressErrorRateHigh`, both tied to the Session
-  availability SLO from `AW-SRV-011`.
+- **Metrics:** `nginx_ingress_controller_requests{host, path, status}`,
+  `nginx_ingress_controller_request_duration_seconds`, stream duration via
+  `andara_session_duration_seconds` (`AW-SRV-005`), `certmanager_certificate_expiration_timestamp_seconds`.
+- **Logs:** controller access logs with `upstream_status` and `request_time`, retained 7 d.
+- **Alerts:** `CertificateExpiringSoon` (< 7 d) and `IngressErrorRateHigh` (5xx ratio > 1% for 10 m),
+  both tied to the Session availability SLO from `AW-SRV-011`; runbooks
+  `docs/runbooks/certificate-expiring.md` and `docs/runbooks/ingress-error-rate.md` ship here.
 
 ## Test plan
 
-An integration test from outside the cluster asserting a one-hour stream, and a rotation rehearsal
-asserting no dropped streams.
+- **Integration (kind, CI):** AC-1 as `make stream-soak` (nightly, 60 m; 5 m on PRs); AC-2 with the
+  `gen/ts` Connect client and a gRPC-Web probe; AC-3 by forcing `cmctl renew` mid-stream; AC-4 and AC-6
+  with `curl` from an out-of-range pod; AC-5 as a `helm unittest` grep.
+- **Manual/operator:**
+  ```
+  make helm-install ENV=local
+  andara-cli --server andara.local:443 --tls-ca .local/tls/ca.pem play   # expect: session opens
+  curl -sk https://andara.local/andara.admin.v1.Admin/GetServerInfo      # from outside CIDR: 403
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: a one-hour stream test that runs in CI or on a schedule, because this is the failure
-mode most likely to be introduced by an unrelated platform change.
+CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` The ingress controller and certificate tooling, which follow from the platform choice
-  in `AW-INF-003`.
-- `[NEEDS BRIAN]` Whether `Admin` should be network-restricted in production. ADR-0003 keeps it on the
-  same protocol and endpoint; restricting reachability is compatible and probably wanted.
+- **Resolved 2026-09-10 (Brian): Admin restricted by network, same listener.** Honored at L7 for
+  external traffic and at L3 for in-cluster traffic. In-cluster callers that reach the pod (Agents) are
+  bounded by role at `authorize`, which is the ADR-0005 containment.
+- `[ASSUMPTION]` ingress-nginx and cert-manager. Both are what a kind cluster with `:80`/`:443` mapped
+  was prepared for, and both are boring. Envoy Gateway with TLS passthrough is the alternative if
+  re-origination ever proves to be the streaming problem; AC-1 would catch that.
+- `[ASSUMPTION]` Private CA for the box, ACME selectable by values for a public host.

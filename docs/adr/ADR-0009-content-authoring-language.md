@@ -72,7 +72,7 @@ ADR-0007 is unchanged. Protobuf remains the single schema authority; this langua
 it and is never itself stored in the content topics. What gets published is the compiled output and
 the source, so a Builder can fetch back what they wrote.
 
-`AW-CLI-003` owns the grammar specification. This ADR deliberately does not sketch syntax — that is a
+`AW-CLI-005` owns the grammar specification (moved from `AW-CLI-003` on 2026-09-11, when that story was split into spec, compiler `AW-CLI-006`, and commands). This ADR deliberately does not sketch syntax — that is a
 grooming decision with the Builder in the room, not an architecture decision.
 
 ## Consequences

@@ -10,10 +10,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 5 |
-| `ready` | 8 |
-| `draft` | 18 |
+| `ready` | 29 |
 | `done` | 1 |
-| **total** | **32** |
+| **total** | **35** |
 
 ## Attention first
 
@@ -37,41 +36,39 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | architecture | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 
-### `ready` (8)
+### `ready` (29)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
+| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001` |
+| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, approve, activate, rollback, history, diff, and fetch | `AW-CLI-001`, `AW-CLI-002`, `AW-CLI-006`, `AW-SRV-013`, `AW-SRV-021` |
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | implementation | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011` |
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
-| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
-| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
-| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
-| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
-| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
-| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
-
-### `draft` (18)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-SRV-001` |
-| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, activate, and rollback with a human-authorable format | `AW-CLI-001`, `AW-CLI-002`, `AW-SRV-013`, `AW-SRV-021` |
+| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007` |
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
+| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
+| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
+| [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006` |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
-| [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011` |
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001` |
-| [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, and audit | `AW-SRV-008`, `AW-SRV-012` |
-| [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character roster, creation, selection, and binding | `AW-SRV-007`, `AW-SRV-008` |
+| [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
+| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
+| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
+| [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character roster, creation, selection, and binding | `AW-SRV-007`, `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `EPIC-08` | server | M | high | implementation | Session lifecycle and linkdead grace period | `AW-SRV-014` |
-| [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `EPIC-09` | server | M | medium | implementation | Python behavior SDK and agent runtime | `AW-SRV-009` |
-| [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `EPIC-10` | server | M | medium | implementation | Redis hot projection from the event topic | `AW-SRV-019` |
+| [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `EPIC-09` | server | M | medium | implementation | Python behavior SDK and per-pack agent runtime | `AW-SRV-009` |
+| [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `EPIC-10` | server | M | medium | implementation | Redis hot projection from the state topic | `AW-SRV-019` |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `EPIC-10` | server | M | medium | implementation | Postgres tabular projection for accounts, rosters, and builder queries | `AW-SRV-017` |
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004` |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
+| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 
 ### `done` (1)
 
@@ -89,9 +86,9 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 |----|--------|-------|
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `review` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command |
-| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `draft` | Kubernetes workload topology, volumes, and probes for andara-server |
-| [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `draft` | Ingress, certificate management, and gRPC/Connect routing |
-| [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `draft` | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback |
+| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `ready` | Kubernetes workload topology, volumes, and probes for andara-server |
+| [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `ready` | Ingress, certificate management, and gRPC/Connect routing |
+| [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `ready` | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback |
 
 ### `EPIC-02` — World model and simulation core
 
@@ -103,6 +100,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `ready` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `ready` | Components on Rooms and Zones, and the closed Direction set |
+| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `ready` | Template definitions — schema, flattened loading, and Entity instantiation |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
@@ -123,8 +121,8 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `draft` | Zone snapshots keyed to partition offsets |
-| [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `draft` | Recovery from snapshot and log tail, verified in CI |
+| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `ready` | Zone snapshots keyed to partition offsets |
+| [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `ready` | Recovery from snapshot and log tail, verified in CI |
 
 ### `EPIC-05` — Content pipeline and zone authoring
 
@@ -132,10 +130,12 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `draft` | andara-cli content validate and inspect |
-| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `draft` | andara-cli content publish, activate, and rollback with a human-authorable format |
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `draft` | Content resolution from the store and reload at a tick boundary |
-| [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `draft` | Content publish path — server-side validation, versioning, and audit |
+| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `ready` | andara-cli content validate and inspect |
+| [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
+| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `ready` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
+| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `ready` | Content Language compiler, formatter, and decompiler |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `ready` | Content resolution from the store and reload at a tick boundary |
+| [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
 ### `EPIC-06` — Operator and builder CLI
 
@@ -151,9 +151,9 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0006
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `draft` | Account store, registration modes, and authentication |
-| [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `draft` | Character roster, creation, selection, and binding |
-| [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `draft` | Session lifecycle and linkdead grace period |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `ready` | Account store, registration modes, and authentication |
+| [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `ready` | Character roster, creation, selection, and binding |
+| [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `ready` | Session lifecycle and linkdead grace period |
 
 ### `EPIC-09` — Behavior agents and Python SDK
 
@@ -161,8 +161,8 @@ Milestone `M4` · status `ready` · ADR gates: none · constrained by: `ADR-0005
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `draft` | Behavior agent protocol, identity, and runtime boundary |
-| [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `draft` | Python behavior SDK and agent runtime |
+| [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `ready` | Behavior agent protocol, identity, and runtime boundary |
+| [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `ready` | Python behavior SDK and per-pack agent runtime |
 
 ### `EPIC-10` — Data layer — Kafka, schema registry, and projections
 
@@ -171,8 +171,8 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `review` | Kafka topic and schema registry provisioning as code |
-| [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `draft` | Kafka operational contract, degradation mode, and availability SLO |
-| [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `draft` | Redis hot projection from the event topic |
-| [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `draft` | Postgres tabular projection for accounts, rosters, and builder queries |
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `draft` | State projector and the compacted current-state topic |
+| [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `ready` | Kafka operational contract, degradation mode, and availability SLO |
+| [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `ready` | Redis hot projection from the state topic |
+| [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `ready` | Postgres tabular projection for accounts, rosters, and builder queries |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `ready` | State projector and the compacted current-state topic |
 

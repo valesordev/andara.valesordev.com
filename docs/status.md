@@ -2,27 +2,29 @@
 
 # Status — Andara's World
 
-32 stories — 5 review · 8 ready · 18 draft · 1 done
+35 stories — 5 review · 29 ready · 1 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    — nothing in flight
-  next   AW-INF-003  draft  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
-  review AW-INF-001, AW-INF-004, AW-INF-002, AW-SRV-020 — run the §8 checklist, then flip to…
+  next   AW-INF-003  ready  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
+  review AW-INF-001, AW-INF-004, AW-SRV-020, AW-INF-002 — run the §8 checklist, then flip to…
+  held   4 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-006, AW-INF-007
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
   next   AW-SRV-005  ready  gRPC gateway — TLS, session lifecycle, and protocol ver…  (unblocks 5)
-  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
+  next   AW-SRV-021  ready  Components on Rooms and Zones, and the closed Direction…  (unblocks 5)
   review AW-CLI-001 — run the §8 checklist, then flip to done
-  held   5 ready, blocked: AW-SRV-004, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
+  held   21 ready, blocked: AW-SRV-022, AW-SRV-004, AW-SRV-008, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
 
 ## Decisions the lanes are waiting on
 
   AW-INF-004  A Redpanda enterprise licence.
-              30 more, attached to stories neither lane has reached
+  AW-SRV-021  The core component vocabulary beyond the four seeded here.
+              13 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
