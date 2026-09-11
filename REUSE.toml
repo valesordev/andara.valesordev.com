@@ -22,9 +22,23 @@ precedence = "closest"
 SPDX-FileCopyrightText = "2026 Valesor Development"
 SPDX-License-Identifier = "CC-BY-SA-4.0"
 
-# The protocol is source, not prose: it compiles into gen/, which inherits its license.
+# Machine-readable artifacts under docs/ are source, not prose. The protocol compiles into
+# gen/, which inherits its license; migrations and schema files run against a database.
 [[annotations]]
-path = ["docs/specs/protocol/**/*.proto", "docs/specs/protocol/buf.yaml"]
+path = [
+  "docs/specs/protocol/**/*.proto",
+  "docs/specs/protocol/buf.yaml",
+  "docs/specs/schema/**/*.sql",
+  "docs/specs/schema/**/*.json",
+]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Valesor Development"
 SPDX-License-Identifier = "Apache-2.0"
+
+# The glossary carries the setting vocabulary of Andara's World, a solo7.media creative
+# work (Tier 1 of the Open Canon split, CC BY-SA 4.0 — the same license as the rest of docs/).
+[[annotations]]
+path = ["docs/glossary.md"]
+precedence = "closest"
+SPDX-FileCopyrightText = ["2026 Valesor Development", "2026 solo7.media"]
+SPDX-License-Identifier = "CC-BY-SA-4.0"
