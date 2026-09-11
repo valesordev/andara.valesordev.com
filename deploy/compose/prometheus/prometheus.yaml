@@ -11,6 +11,12 @@ global:
   external_labels:
     env: local
 
+# Alert rules shipped by the Helm chart, mounted from deploy/helm/andara/files (AW-INF-003).
+# kube_* series do not exist here, so the rules evaluate to empty rather than firing; what
+# `make up` verifies is that they parse and load, which is the failure mode a typo causes.
+rule_files:
+  - /etc/prometheus/rules/*.yaml
+
 scrape_configs:
   - job_name: andara-server
     static_configs:

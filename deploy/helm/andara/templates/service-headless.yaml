@@ -1,0 +1,20 @@
+# Headless: stable per-pod DNS (andara-0.andara.<ns>.svc) is what makes the StatefulSet
+# identity real. Client-facing exposure is AW-INF-006's Service and Ingress, not this.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: false
+  selector:
+    {{- include "andara.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: grpc
+      port: 8443
+      targetPort: grpc
+    - name: http
+      port: {{ include "andara.httpPort" . }}
+      targetPort: http

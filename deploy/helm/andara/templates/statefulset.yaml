@@ -1,0 +1,214 @@
+# One replica owning all 64 Partitions at launch; scaling out is the sharding mechanism
+# (ADR-0001). Stable identity and retained storage are why this is a StatefulSet and not
+# a Deployment: pod-0's name is in certificates and runbooks, and its snapshot volume
+# outlives it.
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "andara.name" . }}
+  replicas: {{ .Values.replicaCount }}
+  # Replace, not rolling: two pods claiming the same Partitions is the one thing this
+  # topology must never do, and a rolling update of a one-replica set is a restart anyway
+  # (AW-INF-007 owns the pre-stop snapshot that makes that restart short).
+  podManagementPolicy: OrderedReady
+  updateStrategy:
+    type: RollingUpdate
+  # The snapshot volume survives uninstall and scale-down (AC-3). Losing it costs replay
+  # time, not data (ADR-0002) — but it is the difference between a 60 s and a full-history
+  # recovery, so it is never deleted by the chart.
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels:
+      {{- include "andara.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "andara.selectorLabels" . | nindent 8 }}
+      annotations:
+        # A values change re-renders the ConfigMap; this rolls the pod so it is applied.
+        checksum/config: {{ include "andara.serverEnv" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "andara.serviceAccountName" . }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ .Values.terminationGracePeriodSeconds }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        # Ordinal → Partitions. p mod replicaCount == ordinal, over 0–63, written to a
+        # shared file the server container sources before exec. The ordinal comes from the
+        # pod-index label rather than from parsing $HOSTNAME, so a rename of the set does
+        # not change which pod owns what.
+        - name: partitions
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              ordinal="${POD_INDEX}"
+              n="${REPLICAS}"
+              parts=""
+              p=0
+              while [ "$p" -lt 64 ]; do
+                if [ $((p % n)) -eq "$ordinal" ]; then
+                  parts="${parts:+$parts,}$p"
+                fi
+                p=$((p + 1))
+              done
+              echo "ANDARA_SIM_PARTITIONS=$parts" > /shared/partitions.env
+              echo "partitions: ordinal=$ordinal replicas=$n -> $parts"
+          env:
+            - name: POD_INDEX
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.labels['apps.kubernetes.io/pod-index']
+            - name: REPLICAS
+              value: {{ .Values.replicaCount | quote }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+      containers:
+        - name: server
+          image: {{ .Values.image.repository }}:{{ .Values.image.tag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              set -a; . /shared/partitions.env; set +a
+              exec /usr/local/bin/andara-server
+          envFrom:
+            - configMapRef:
+                name: {{ include "andara.name" . }}-config
+          env:
+            - name: ANDARA_POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          ports:
+            - name: grpc
+              containerPort: 8443
+              protocol: TCP
+            - name: http
+              containerPort: {{ include "andara.httpPort" . }}
+              protocol: TCP
+          # Startup: recovery in progress, budget covers worst-case replay (AC-7).
+          # Readiness: 200 only when the World is loaded and ticking (AW-SRV-007 sets it).
+          # Liveness: process alive and the tick loop not wedged — never Kafka, never a
+          # datastore (AW-SRV-010: a broker outage is a read-only World, not a restart).
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: {{ .Values.probes.startup.periodSeconds }}
+            failureThreshold: {{ .Values.probes.startup.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds | default 3 }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: {{ .Values.probes.readiness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.readiness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.readiness.timeoutSeconds | default 3 }}
+          livenessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: {{ .Values.probes.liveness.periodSeconds }}
+            failureThreshold: {{ .Values.probes.liveness.failureThreshold }}
+            timeoutSeconds: {{ .Values.probes.liveness.timeoutSeconds | default 3 }}
+          resources:
+            {{- include "andara.resources" . | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: shared
+              mountPath: /shared
+              readOnly: true
+            - name: snapshots
+              mountPath: /var/lib/andara/snapshots
+            - name: cache
+              mountPath: /var/cache/andara
+            {{- if .Values.contentVolume.configMapName }}
+            - name: content
+              mountPath: /content
+              readOnly: true
+            {{- end }}
+            {{- if .Values.secrets.tokenKey.secretName }}
+            - name: token-key
+              mountPath: /etc/andara/secrets/token-key
+              readOnly: true
+            {{- end }}
+            {{- if .Values.secrets.tlsCert.secretName }}
+            - name: tls
+              mountPath: /etc/andara/secrets/tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.secrets.kafkaCreds.secretName }}
+            - name: kafka-creds
+              mountPath: /etc/andara/secrets/kafka
+              readOnly: true
+            {{- end }}
+      volumes:
+        - name: shared
+          emptyDir: {}
+        - name: cache
+          emptyDir: {}
+        {{- if .Values.contentVolume.configMapName }}
+        - name: content
+          configMap:
+            name: {{ .Values.contentVolume.configMapName }}
+        {{- end }}
+        {{- if .Values.secrets.tokenKey.secretName }}
+        - name: token-key
+          secret:
+            secretName: {{ .Values.secrets.tokenKey.secretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.tokenKey.key }}
+                path: token.keys
+        {{- end }}
+        {{- if .Values.secrets.tlsCert.secretName }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.secrets.tlsCert.secretName }}
+            defaultMode: 0400
+            items:
+              - key: {{ .Values.secrets.tlsCert.certKey }}
+                path: tls.crt
+              - key: {{ .Values.secrets.tlsCert.keyKey }}
+                path: tls.key
+        {{- end }}
+        {{- if .Values.secrets.kafkaCreds.secretName }}
+        - name: kafka-creds
+          secret:
+            secretName: {{ .Values.secrets.kafkaCreds.secretName }}
+            defaultMode: 0400
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: snapshots
+        annotations:
+          helm.sh/resource-policy: keep
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.snapshots.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.snapshots.size }}

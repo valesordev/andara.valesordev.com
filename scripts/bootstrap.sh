@@ -14,6 +14,8 @@ set -euo pipefail
 # parsing tomorrow — golangci-lint v1 config against a v2 binary is exactly that failure.
 GOLANGCI_VERSION="v2.13.2"
 BUF_VERSION="v1.72.0"
+HELM_VERSION="v3.22.0"
+KUBECONFORM_VERSION="v0.8.0"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -47,10 +49,13 @@ install_pinned() {
   local name="$1" module="$2" want="$3"
   local have=""
   if [[ -x "$BIN/$name" ]]; then
-    have="$("$BIN/$name" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+    # The module version stamped into the binary, not `--version` output: kubeconform built
+    # by `go install` reports "development", and helm prints a struct. `go version -m` reads
+    # the build info every Go binary carries, so one check covers every pinned tool.
+    have="$(go version -m "$BIN/$name" 2>/dev/null | awk '$1=="mod"{print $3; exit}' || true)"
   fi
-  if [[ "v${have}" == "$want" ]]; then
-    ok "$name" "$have (pinned)"
+  if [[ "${have}" == "$want" ]]; then
+    ok "$name" "${have#v} (pinned)"
     return 0
   fi
   echo "  installing $name $want ..."
@@ -95,14 +100,19 @@ else
   ok openssl "not installed (needed by \`make tls\`, not by \`make check\`)"
 fi
 
-# helm and kubeconform back `make k8s-dry`. It exits 0 with no chart present, so these are
-# reported, not required, until AW-INF-003 lands a chart.
-command -v helm >/dev/null 2>&1 \
-  && ok helm "$(helm version --short 2>/dev/null || echo present)" \
-  || ok helm "not installed (needed by \`make k8s-dry\` once AW-INF-003 lands a chart)"
-command -v kubeconform >/dev/null 2>&1 \
-  && ok kubeconform "present" \
-  || ok kubeconform "not installed (manifest schema validation will be skipped)"
+# helm and kubeconform back `make k8s-dry`, which validates the chart against the pinned
+# Kubernetes version on every `make check` (AW-INF-003 AC-1). Both are Go modules, so they
+# pin the same way buf does. The system helm may be a different major; ./bin wins on PATH.
+install_pinned helm helm.sh/helm/v3/cmd/helm "$HELM_VERSION"
+install_pinned kubeconform github.com/yannh/kubeconform/cmd/kubeconform "$KUBECONFORM_VERSION"
+
+# kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
+command -v kind >/dev/null 2>&1 \
+  && ok kind "$(kind version 2>/dev/null | awk '{print $2}')" \
+  || ok kind "not installed (needed by \`make helm-install ENV=local\`, not by \`make check\`)"
+command -v kubectl >/dev/null 2>&1 \
+  && ok kubectl "$(kubectl version --client 2>/dev/null | head -1 | awk '{print $3}')" \
+  || ok kubectl "not installed (needed by \`make helm-install\`, not by \`make check\`)"
 
 # Git hooks: run the cheap checks before a commit lands, not after CI says so.
 #

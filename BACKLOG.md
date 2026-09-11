@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 5 |
-| `in-progress` | 1 |
+| `review` | 6 |
 | `ready` | 28 |
 | `done` | 1 |
 | **total** | **35** |
@@ -22,26 +21,22 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `review` | andara-cli skeleton — command tree, configuration precedence, and output contract | review by brian |
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `review` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton | review by brian |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command | review by brian |
+| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server | review by brian |
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `review` | Kafka topic and schema registry provisioning as code | review by brian |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `review` | Protobuf schema as the wire, log, snapshot, and content contract | review by brian |
 
 ## By status
 
-### `review` (5)
+### `review` (6)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `EPIC-06` | cli | S | low | implementation | andara-cli skeleton — command tree, configuration precedence, and output contract | `AW-INF-001` |
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `EPIC-01` | infra | M | low | architecture | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton | — |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | architecture | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
+| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | architecture | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
 
 ### `ready` (28)
 
@@ -92,7 +87,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 |----|--------|-------|
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `review` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command |
-| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `in-progress` | Kubernetes workload topology, volumes, and probes for andara-server |
+| [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `ready` | Ingress, certificate management, and gRPC/Connect routing |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `ready` | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback |
 
