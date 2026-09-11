@@ -4,15 +4,13 @@ title: Character roster, creation, selection, and binding
 epic: EPIC-08
 component: server
 type: feature
-status: draft
+status: ready
 size: M
-depends_on: [AW-SRV-007, AW-SRV-008]
+depends_on: [AW-SRV-007, AW-SRV-008, AW-SRV-022]
 blocks: [AW-SRV-015]
 lane: implementation
 risk: medium
 ---
-
-> `status: draft` — unblocked by ADR-0006 and scoped. Groomed to `ready` when M2 approaches.
 
 ## Context
 
@@ -21,7 +19,10 @@ on 2026-09-07. This story is the roster: creation, naming, selection, binding to
 deletion.
 
 It depends on `AW-SRV-007` rather than only on `AW-SRV-008` because a Character is World state — it has a
-position, an inventory, a history — and a roster that survives a restart requires recovery to work first.
+position and a history — and a roster that survives a restart requires recovery to work first. The one
+genuinely awkward consequence of ADR-0006's Account/World split is that a Character's *identity* is
+Account state and its *body* is World state, and name uniqueness has to hold across that boundary. This
+story designs that seam rather than letting it happen.
 
 ## User story
 
@@ -31,77 +32,175 @@ than one place in the world.
 ## Scope
 
 ### In scope
-- Character creation, with the roster cap of five enforced server-side.
-- Globally unique, immutable Character names, reserved on deletion.
-- Character selection and binding to a Session, with the one-live rule enforced.
-- Soft deletion: leaves the roster, name stays reserved, World state retained for a stated window.
-- The Account↔Character link, which lives in Account state, while the Character itself lives in World
-  state — the split ADR-0006 requires.
-- Spawn placement for a newly created Character.
+- Roster RPCs on `Game`: `ListCharacters`, `CreateCharacter`, `SelectCharacter`, `DeleteCharacter`.
+- The roster cap of five and the one-live rule, enforced at the Gateway against Account and Session
+  state before anything reaches the log.
+- Globally unique, immutable, case-insensitively reserved Character names, reserved on deletion.
+- Binding: `SelectCharacter` produces a `BindCharacter` Command; the sim spawns or re-materializes the
+  Character and emits `CharacterSpawned`. Switching Characters is despawn then spawn, both visible.
+- Dormant Characters: a Character not in the World keeps its last position in Zone state, so
+  "where you were" survives restart and replay.
+- Soft deletion with a retention window, after which the sim drops the dormant body and the name stays
+  reserved.
+- Spawn placement for a never-played Character at `character.spawn_room`.
 
 ### Out of scope
-- Session lifecycle and linkdead — `AW-SRV-015`.
-- Authentication — `AW-SRV-008`.
-- Character appearance, class, stats, or any game system. `[NEEDS BRIAN]` — this story delivers identity
-  and placement; what a Character *is* is a design decision.
+- Linkdead and reconnect — `AW-SRV-015`. Authentication — `AW-SRV-008`.
+- Appearance, class, stats, inventory. A Character instantiates the `andara.core.Character` Template
+  (ADR-0010, `AW-SRV-022`); what components that Template carries is Brian's and is additive to this contract.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** an Account with five Characters **when** a sixth is created **then** it is rejected naming
-   the cap.
-2. **Given** a Character name already in use, including by a soft-deleted Character **when** creation is
-   attempted **then** it is rejected without revealing whether the existing Character is active.
+1. **Given** an Account with five Characters, deleted ones included until retention expires **when** a
+   sixth is created **then** `CreateCharacter` returns `RESOURCE_EXHAUSTED` naming the cap.
+2. **Given** a name reserved by any Character, active or soft-deleted, on any Account **when** creation
+   uses it in any letter case **then** it returns `ALREADY_EXISTS` with one fixed message.
 3. **Given** an Account with a live Character **when** a second Character is selected on another Session
-   **then** it is rejected. One live Character per Account, enforced at binding time rather than queued.
-4. **Given** a Character selected **when** the Session binds **then** the Character is placed in the World
-   at its last known position, or at the spawn Room if it has never played.
-5. **Given** a soft-deleted Character **when** the retention window expires **then** its World state is
-   removed and its name remains reserved.
-6. **Given** a server restart **when** an Account reconnects **then** its roster and each Character's
-   position are exactly as before, per `AW-SRV-007`.
-7. **Given** two concurrent selection attempts for the same Character **when** both arrive **then** at
-   most one binds. A Character must never be bound to two Sessions.
-8. **Given** a player switching Characters **when** they do **then** it is a despawn followed by a spawn,
-   both visible to anyone in the affected Rooms — not a silent swap and not a second Session.
+   **then** `SelectCharacter` returns `FAILED_PRECONDITION` naming the live Character; nothing is
+   produced.
+4. **Given** a Character selected **when** the `BindCharacter` Command applies **then** the Character is
+   placed at its dormant position, or at `character.spawn_room` if it has never been bound, and a
+   `CharacterSpawned` Event is emitted with Room scope.
+5. **Given** a soft-deleted Character **when** `character.delete_retention` expires, measured in Ticks
+   **then** the sim removes the dormant body, `andara_characters_total{state="deleted"}` decrements, and
+   the name reservation record remains.
+6. **Given** a server restart **when** an Account reconnects **then** its roster and every Character's
+   position, live or dormant, are exactly as before, per `AW-SRV-007`.
+7. **Given** two concurrent `SelectCharacter` calls for the same Character from two Sessions **when**
+   both arrive **then** exactly one produces a `BindCharacter` and the other returns
+   `FAILED_PRECONDITION`.
+8. **Given** a player switching Characters **when** the second `SelectCharacter` applies **then** a
+   `CharacterDespawned` for the first and a `CharacterSpawned` for the second are emitted, each with its
+   own Room scope, in that order.
+9. **Given** a World rollback to an earlier snapshot round **when** a name created after that round is
+   checked **then** it is still reserved, because the reservation lives on `andara.accounts.v1`.
+10. **Given** a name that fails `character.name_pattern` **when** creation is attempted **then**
+    `INVALID_ARGUMENT` names the rule, and the name is not reserved.
 
 ## Interface contract
 
-To be written at grooming. It will cover the roster RPCs, the name-uniqueness mechanism across the
-Account topic and World state, and the binding protocol.
+```protobuf
+// CONTRACT SKETCH — not an implementation; additions to andara/game/v1/game.proto
+rpc ListCharacters(ListCharactersRequest) returns (ListCharactersResponse);
+rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);   // name
+rpc SelectCharacter(SelectCharacterRequest) returns (SubmitResponse);            // character_id; returns the BindCharacter offset
+rpc DeleteCharacter(DeleteCharacterRequest) returns (DeleteCharacterResponse);   // character_id
+message CharacterSummary { string character_id = 1; string name = 2; CharacterStatus status = 3;
+                           string zone_id = 4; bool live = 5; int64 created_unix = 6; }
 
-Committed now: the Account↔Character link is Account state and the Character is World state, so name
-uniqueness is enforced across a boundary — which is the one genuinely awkward consequence of ADR-0006's
-separation and needs a designed answer rather than an incidental one.
+// additions to andara/accounts/v1/account.proto (AW-SRV-008)
+message Account { /* … */ repeated CharacterRef characters = 11; }   // sorted by character_id
+message CharacterRef { string character_id = 1; string name = 2; CharacterStatus status = 3; int64 deleted_unix = 4; }
+message NameReservation { string character_id = 1; string account_id = 2; }   // key: name/{fold(name)}
+
+// additions to andara/log/v1/log.proto LoggedCommand oneof
+BindCharacter bind_character = 12;      // character_id, account_id, spawn RoomRef if never bound
+UnbindCharacter unbind_character = 13;  // character_id, reason: SWITCH | QUIT
+PurgeCharacter purge_character = 14;    // character_id; retention expiry
+```
+
+`ZoneState.EntityState` gains `bool dormant = 5` and `uint64 dormant_since_tick = 6` (`AW-SRV-006`).
+
+### Binding protocol
+
+```
+SelectCharacter ─▶ gateway lock(account) ─▶ live? FAILED_PRECONDITION
+                                          ─▶ owned & ACTIVE? else NOT_FOUND
+                                          ─▶ session.live = character (tentative)
+                                          ─▶ produce BindCharacter to zone partition
+                                          ─▶ respond offset
+sim apply(BindCharacter) ─▶ dormant body? clear dormant : create from andara.core.Character at spawn
+                        ─▶ emit CharacterSpawned{character_id, room}
+```
+
+The live flag is Session state at the Gateway (single process, ADR-0001) and is the one-live guard;
+the sim trusts `BindCharacter` because `authorize` already checked ownership. A second Gateway process
+would need the guard moved into the log, which is the sharding story's problem, recorded here.
+
+### Name folding
+
+`fold(name)` = Unicode NFKC, casefold, trim. Reservation key is `name/{fold}`; display name is as typed.
+`character.name_pattern` default `^[\p{L}][\p{L}' -]{2,23}$`.
+
+### Configuration
+
+| Key | Env | Default | Notes |
+|-----|-----|---------|-------|
+| `character.max_per_account` | `ANDARA_CHARACTER_MAX_PER_ACCOUNT` | `5` | ADR-0006 |
+| `character.spawn_room` | `ANDARA_CHARACTER_SPAWN_ROOM` | — | `zone_id/room_id`; boot fails if unresolvable |
+| `character.delete_retention` | `ANDARA_CHARACTER_DELETE_RETENTION` | `720h` | 30 d, converted to Ticks at `sim.tick_rate` |
+| `character.name_pattern` | `ANDARA_CHARACTER_NAME_PATTERN` | above | RE2 |
+
+### Error taxonomy
+
+| Condition | gRPC code |
+|-----------|-----------|
+| cap reached | `RESOURCE_EXHAUSTED` |
+| name reserved | `ALREADY_EXISTS` |
+| name invalid | `INVALID_ARGUMENT` |
+| another Character live, or Character bound elsewhere | `FAILED_PRECONDITION` |
+| not owned / deleted | `NOT_FOUND` |
 
 ## Data / state impact
 
-Name reservation must survive both a World rollback and an Account-topic compaction, which means it lives
-in Account state, not in the World. A World rollback that freed a name for reuse while another player
-held it would be an unrecoverable identity collision.
+`andara.accounts.v1` gains `Account.characters` and the `name/*` keyspace. Both are written under the
+`AW-SRV-008` single-writer lock, reservation first, then the Account record. Dormant bodies are Zone
+state and therefore part of the State Hash and every snapshot; `state_version` bumps by one with a
+migration that adds `dormant=false` to existing entities.
+
+Retention expiry is driven by a Tick comparison inside the sim (`PurgeCharacter` is produced by the
+Gateway's sweep and applied in order), so replay purges on the same Tick.
 
 ## Observability requirements
 
-- **Metrics:** `andara_characters_total` (gauge, label `state` — `active`, `deleted`),
-  `andara_character_creations_total` (counter, label `outcome`), `andara_character_bindings_total`
-  (counter, label `outcome`). Character name and Account ID are rejected as labels.
-- **Logs:** creation, selection, binding, and deletion at `info` with Account, Character, and Session
-  correlation ID. Character names are player-supplied and are escaped.
-- **Traces:** `character.select` as a child of `session.lifetime`.
-- **Alerts:** none. Roster problems present as authentication or session problems, which already alert.
+### Metrics
+- `andara_characters_total` — gauge, label `state` (`live`, `dormant`, `deleted`).
+- `andara_character_creations_total` — counter, label `outcome` (`ok`, `cap`, `name_taken`,
+  `name_invalid`).
+- `andara_character_bindings_total` — counter, label `outcome` (`ok`, `already_live`, `race_lost`,
+  `not_found`).
+- `andara_character_purges_total` — counter.
+Character name and Account ID are rejected as labels.
+
+### Logs
+- `info` on create, select, bind-applied, delete, purge with `account_id`, `character_id`,
+  `session_id`, `trace_id`. Names are player-supplied and are logged escaped, never as a key.
+
+### Traces
+- `character.select` child of `session.lifetime`; the `BindCharacter` apply joins via `trace_id` in the
+  log record.
+
+### Alerts
+None. Roster problems present as authentication or Session problems, which already alert.
 
 ## Test plan
 
-Cap enforcement; name uniqueness including against soft-deleted names; concurrent selection asserting
-single binding; restart asserting roster and position survive; retention expiry.
+- **Unit:** name folding table (case, NFKC confusables, whitespace); cap counting including deleted;
+  `name_pattern` edge cases; `BindCharacter` apply from dormant and from never-bound.
+- **Integration:** 20-way concurrent `SelectCharacter` (AC-7); switch asserting Event order and scopes
+  (AC-8); kill-and-recover with one live and one dormant Character (AC-6); rollback to an older round
+  asserting the reservation survives (AC-9); retention expiry in a replayed log asserting the same purge
+  Tick.
+- **Manual/operator:**
+  ```
+  andara-cli play
+  > create Aldric            # expect: "Aldric created (1 of 5)"
+  > select Aldric            # expect: spawn Room description; others see "Aldric appears"
+  > quit
+  andara-cli character list  # expect: Aldric, dormant, zone shown
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the concurrent-binding test from AC-7, and an explicit test that name reservation
-survives a World rollback.
+CLAUDE.md §8, plus: the concurrent-binding test (AC-7) and the rollback name-reservation test (AC-9).
 
 ## Open questions
 
-- `[NEEDS BRIAN]` Soft-delete retention window.
-- `[NEEDS BRIAN]` What a Character *is* beyond a name and a position. This story is deliberately empty of
-  game design.
-- `[NEEDS BRIAN]` Spawn Room for new Characters, which is lore-bearing.
+- `[NEEDS BRIAN]` Which Room is `character.spawn_room`. Lore-bearing; the key exists and boot refuses an
+  unresolvable value, so the answer is one values-file line.
+- `[NEEDS BRIAN]` What a Character *is* beyond a name and a position. Components on
+  `andara.core.Character` are additive; nothing here changes when they arrive.
+- `[ASSUMPTION]` Soft-delete retention 30 d, counted against the cap until purged, so deletion is not a
+  way to hold six names.
+- `[ASSUMPTION]` One-live is enforced at the Gateway in process memory. Correct under ADR-0001; the
+  sharding story moves it.

@@ -4,26 +4,29 @@ title: Recovery from snapshot and log tail, verified in CI
 epic: EPIC-04
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-006]
-blocks: [AW-SRV-014, AW-INF-007]
+blocks: [AW-INF-007, AW-SRV-014]
 lane: implementation
 risk: high
 ---
 
-> `status: draft` — unblocked and scoped. Groomed to `ready` alongside `AW-SRV-006`.
-
 ## Context
 
 ADR-0002 is explicit that a recovery path not exercised in CI is a recovery path that does not work.
-This story makes `kill -9` a tested operation: load the newest snapshot, resume consuming from its
-offsets, and assert the resulting State Hash equals what it was before the kill.
+This story makes `kill -9` a tested operation: load the newest complete snapshot round, resume consuming
+from its offsets, and assert the resulting State Hash equals what it was before the kill.
 
 The determinism guarantees from `AW-SRV-002` are what make this possible, and this is where they stop
-being a design principle and become a production dependency. In particular, ADR-0002 §4's Tick Boundary
-Records are what make replay *exact* rather than approximately exact — replay reads the recorded offset
-ranges rather than re-deciding them.
+being a design principle and become a production dependency. ADR-0002 §4's Tick Boundary Records are
+what make replay *exact* rather than approximately exact — replay reads the recorded offset ranges
+rather than re-deciding them.
+
+**Decided 2026-09-11 (Brian): on a State Hash mismatch the server refuses to start.** It does not
+search backwards for a round that verifies. A server that picks its own history is a server that can
+silently serve the wrong World; a server that stops is an incident with a human in it. The operator's
+tools for that incident are in this story's contract.
 
 ## User story
 
@@ -33,90 +36,211 @@ match, so that a crash is an interruption rather than an incident.
 ## Scope
 
 ### In scope
-- Recovery: locate the newest valid snapshot, load it, resume consuming from its offsets, replay to the
-  log head using recorded Tick Boundary Records.
-- State Hash verification at the end of recovery.
-- `andara-server recover --verify` — recover and compare without accepting connections, so an operator
-  can validate a backup without exposing it to players.
+- Recovery at boot: select the newest complete snapshot round, load every Zone, seek each Partition to
+  the round's offsets, replay to the log head using recorded `TickCompleted` boundaries, verify the
+  State Hash against the last boundary, then and only then report ready.
+- Refusal, exit code, and log line on: hash mismatch, log gap, unreadable `state_version`, incomplete
+  round with no older complete one.
+- `andara-server recover --verify [--round <tick>]` — recover and compare without accepting connections.
+- `andara-cli snapshot list` and `andara-cli snapshot verify` over `Admin`, so an operator can choose a
+  round without a shell on the pod.
 - Re-apply idempotency across the checkpoint window, per `AW-SRV-002` AC-10.
-- Refusal on an incomplete history: a gap between snapshot offsets and available log.
-- Recovery-time measurement published as a metric and as a CI artifact.
+- Recovery-time measurement by phase, published as a metric and as a CI artifact.
+- A cold start with no snapshot at all replays from offset zero — the M1 behavior, kept.
 
 ### Out of scope
 - Snapshot writing — `AW-SRV-006`.
-- Deploy lifecycle — `AW-INF-007`.
-- Cross-Partition consistent cuts, which are not needed: snapshots are per-Zone and therefore
-  per-Partition by construction.
+- Deploy lifecycle, pre-stop snapshot, and the rollback runbook — `AW-INF-007`.
+- Probes. This story exposes readiness; `AW-INF-003` wires it.
+- What players see. Recovery is silent to a connected client beyond a dropped stream; `AW-SRV-015`
+  rebinds them and `AW-INF-007` owns any notice.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
 1. **Given** a running World at tick `T` with a known State Hash **when** the process is killed with
-   `SIGKILL` and restarted **then** the recovered World's State Hash at tick `T` is identical.
-2. **Given** a snapshot whose offsets precede the earliest available log offset **when** recovery runs
-   **then** it refuses to start, exits 1, and names the gap. A World must never be recovered from an
-   incomplete history — this is the failure mode that log retention shrinkage would silently create.
-3. **Given** recorded Tick Boundary Records **when** replay runs with different fetch batching than the
-   original **then** the tick boundaries are taken from the records and the State Hash sequence is
-   identical.
-4. **Given** a partially written snapshot **when** recovery selects a snapshot **then** it is not
-   selectable, and recovery falls back to the previous valid one.
-5. **Given** any change to `server/sim` or the persistence adapters **when** CI runs **then** a
+   `SIGKILL` and restarted **then** the recovered World's State Hash at tick `T` is identical, and the
+   server reports ready only after that comparison.
+2. **Given** a round whose offsets precede the earliest available log offset on any owned Partition
+   **when** recovery runs **then** it exits `3` with an `error` line naming the Partition, the round's
+   offset, and the log's earliest offset. A World is never recovered from an incomplete history.
+3. **Given** recorded `TickCompleted` boundaries **when** replay runs with different fetch batching
+   than the original **then** the boundaries are taken from the records and the State Hash sequence is
+   identical at every boundary.
+4. **Given** a round with a missing or hash-invalid Zone object **when** rounds are listed **then** it
+   is `incomplete` and recovery selects the newest `complete` one instead.
+5. **Given** the recovered hash differs from the `TickCompleted` hash at the same tick **when**
+   recovery finishes replay **then** the server exits `2`, `andara_recovery_state_hash_match` is `0`,
+   and the `error` line names the tick, both hashes, and the round used. It never accepts a connection.
+6. **Given** any change to `server/sim` or `server/store` **when** CI runs **then** the
    kill-and-recover integration test executes and gates the merge.
-6. **Given** a realistic snapshot and log tail **when** recovery runs **then** measured recovery time is
-   published and compared against the RTO SLO, broken down by phase — detection, start, snapshot load,
-   replay, verify — so the dominant term is visible rather than inferred.
-7. **Given** a Command acknowledged to a client with a partition and offset **when** recovery completes
-   **then** that offset is present in the log. `andara_acknowledged_commands_lost_total` must remain 0;
-   any non-zero value is an incident, not budget burn (`docs/specs/slo/recovery.md`).
+7. **Given** the sizing fixture and a 60 s tail **when** recovery runs in CI **then**
+   `recovery-timing.json` is published with per-phase durations, and the `replay` phase is under 5 s.
+8. **Given** a Command acknowledged to a client with a partition and offset **when** recovery completes
+   **then** that offset is at or below the replayed head. `andara_acknowledged_commands_lost_total`
+   stays `0`.
+9. **Given** no snapshot round exists **when** recovery runs **then** it replays from offset zero on
+   every Partition and reaches ready with a hash matching the last `TickCompleted`.
+10. **Given** `recover --verify --round 4200` **when** it runs **then** it loads that round, replays to
+    head, prints `match` or `mismatch` with both hashes, exits `0` or `2`, and never binds `grpc.listen`.
 
 ## Interface contract
 
-To be written at grooming. Committed now: recovery is a first-class operation rather than a side effect
-of boot, exposed as `andara-server recover --verify`.
+```go
+// CONTRACT SKETCH — not an implementation
+package store   // outside sim; uses sim.WorldStore and sim.Engine
+
+type Round struct {
+    Tick         sim.Tick
+    StateVersion uint32
+    Zones        []ZoneSnapshotRef       // one per owned Zone; sorted
+    Complete     bool                    // every owned Zone present and hash-valid
+}
+
+// ListRounds groups WorldStore keys by tick and marks completeness against the
+// process's owned Zones. Newest first.
+func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error)
+
+// Recover is the whole boot-time path. It returns a ready Engine or a typed error.
+func Recover(ctx context.Context, opts RecoverOptions) (*sim.Engine, Report, error)
+
+type RecoverOptions struct {
+    Round   *sim.Tick   // nil: newest complete
+    Verify  bool        // true: compare and return; never serve
+}
+type Report struct {
+    Phases   map[string]time.Duration   // load, seek, replay, verify
+    Round    Round
+    Replayed uint64                     // ticks
+    Match    bool
+}
+```
+
+### Sequence
+
+```
+select round ─▶ load Zones ─▶ migrate state_version ─▶ seek Partitions ─▶ replay boundaries ─▶ verify ─▶ ready
+     │              │                │                       │                  │               │
+  none: offset 0  ErrRound       ErrStateVersion         ErrLogGap        ErrOffsetGap    ErrHashMismatch
+```
+
+Ready means: hash verified, consumer lag under `sim.tick_budget_ms × 10`, and the first live tick
+completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
+
+### Exit codes
+
+| Code | Condition |
+|-----:|-----------|
+| `0` | recovered and serving, or `--verify` matched |
+| `1` | configuration or store error before recovery began |
+| `2` | `ErrHashMismatch` — the alerting condition |
+| `3` | `ErrLogGap` — retention shorter than the snapshot age |
+| `4` | `ErrStateVersion` — binary older than the snapshot |
+| `5` | `ErrRoundIncomplete` with no complete round and `recovery.require_snapshot=true` |
+
+### CLI
+
+| Command | RPC | Output |
+|---------|-----|--------|
+| `andara-server recover --verify [--round T]` | — | `match`/`mismatch`, both hashes, phase timings; exit per table |
+| `andara-cli snapshot list [--zone Z]` | `Admin.ListSnapshotRounds` | table: tick, state_version, zones, complete, age |
+| `andara-cli snapshot verify --round T` | `Admin.VerifySnapshotRound` | `match`/`mismatch`; runs server-side against a scratch Engine, never the live one |
+
+```protobuf
+// CONTRACT SKETCH — added to andara/admin/v1/admin.proto
+rpc ListSnapshotRounds(ListSnapshotRoundsRequest) returns (ListSnapshotRoundsResponse);
+rpc VerifySnapshotRound(VerifySnapshotRoundRequest) returns (VerifySnapshotRoundResponse);
+message ListSnapshotRoundsRequest { string zone_id = 1; uint32 limit = 2; }
+message SnapshotRound { uint64 tick = 1; uint32 state_version = 2; repeated string zone_ids = 3; bool complete = 4; int64 taken_at_unix_nano = 5; }
+message ListSnapshotRoundsResponse { repeated SnapshotRound rounds = 1; }
+message VerifySnapshotRoundRequest { uint64 tick = 1; }
+message VerifySnapshotRoundResponse { bool match = 1; bytes expected_hash = 2; bytes actual_hash = 3; }
+```
+
+### Configuration
+
+| Key | Env | Default | Notes |
+|-----|-----|---------|-------|
+| `recovery.require_snapshot` | `ANDARA_RECOVERY_REQUIRE_SNAPSHOT` | `false` | `true` in prod once M2 lands: a cold replay is a retention bug, not a boot |
+| `recovery.replay_batch` | `ANDARA_RECOVERY_REPLAY_BATCH` | `4096` | fetch size during replay; AC-3 proves it does not matter |
+| `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | bounds `--verify` |
+
+### Error taxonomy
+
+`ErrHashMismatch{Tick, Expected, Actual, Round}`, `ErrLogGap{Partition, Need, Have}`,
+`ErrStateVersion` (from `AW-SRV-006`), `ErrRoundIncomplete{Tick, Missing}`, `ErrOffsetGap` (from
+`AW-SRV-002`, re-raised during replay).
 
 ## Data / state impact
 
-Defines the forward-migration path for snapshots written by older `state_version` values, and the policy
-when migration is not possible.
+No new persisted state. Consumer group offsets are **not** trusted at boot: recovery seeks explicitly
+to the round's offsets and re-applies the window, which `AW-SRV-002` AC-10 makes idempotent. The
+consumer group's committed offset is only a hint for lag metrics until the first live tick.
 
-Recovery is the moment every latent non-determinism in the sim core becomes a data-corruption bug, which
-is why `AW-SRV-002`'s mechanical determinism guards are a hard dependency rather than a nicety. It is
-also why ADR-0005 keeps Python out of the tick: replay replays Commands, never re-runs Behaviors.
+Log retention on `andara.commands.v1` and `andara.events.v1` must exceed the age of the oldest round an
+operator might select, plus margin. `AW-INF-005` owns the number; AC-2 turns a wrong one into exit `3`
+rather than a quietly wrong World.
 
 ## Observability requirements
 
-- **Metrics:** `andara_recovery_duration_seconds` (histogram), `andara_recovery_replayed_ticks` (gauge),
-  `andara_recovery_state_hash_match` (gauge, 0 or 1), `andara_recovery_failures_total` (counter, label
-  `reason`).
-- **Logs:** recovery start and completion at `info` with snapshot tick, offset range, and duration; log
-  gap at `error`; hash mismatch at `error`.
-- **Traces:** `recovery.run` with `recovery.load_snapshot` and `recovery.replay` children.
-- **Alerts:** `RecoveryStateMismatch` on `andara_recovery_state_hash_match == 0`. This is the one alert
-  that must page. Runbook ships in this story.
+### Metrics
+- `andara_recovery_duration_seconds` — histogram, label `phase` (`load`, `seek`, `replay`, `verify`,
+  `total`). Bounded enum.
+- `andara_recovery_replayed_ticks` — gauge.
+- `andara_recovery_state_hash_match` — gauge, 0 or 1. Set once per recovery.
+- `andara_recovery_failures_total` — counter, label `reason` (`hash`, `gap`, `version`, `round`,
+  `store`).
+- `andara_acknowledged_commands_lost_total` — counter; the RPO SLI, must stay 0.
+- `andara_recovery_round_tick` — gauge, the round used.
+
+### Logs
+- `info` at start with round tick and offsets; `info` at ready with phase durations.
+- `error` on every refusal, one line, with the fields the exit-code table names.
+- Required fields: `ts`, `level`, `msg`, `service`, `env`, `tick`, `partition`, `trace_id`.
+
+### Traces
+- `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `bytes`),
+  `recovery.seek`, `recovery.replay` (`ticks`, `records`), `recovery.verify`.
+
+### Alerts
+- `RecoveryStateMismatch` on `andara_recovery_state_hash_match == 0`. Pages. Runbook
+  `docs/runbooks/recovery-state-mismatch.md` ships here and its mitigation is
+  `andara-cli snapshot list` → `andara-server recover --verify --round` → deploy pinned to that round
+  via `AW-INF-007`.
 
 ## Test plan
 
-The CI kill-and-recover test; a log-gap fixture asserting refusal; timing-independence with varied fetch
-batching; a recovery-time measurement published as a CI artifact so RTO regressions are visible in a
-diff.
+- **Unit:** `ListRounds` grouping and completeness against fixtures with a missing Zone and a
+  hash-invalid Zone; exit-code mapping per error; `Report` phase accounting.
+- **Integration (CI, gates merges):** kill-and-recover against a throwaway Redpanda and the filesystem
+  store — run the sizing fixture 90 s, `SIGKILL`, restart, assert AC-1; vary `recovery.replay_batch`
+  across three values asserting AC-3; truncate the log below the round's offset asserting exit `3`;
+  corrupt one Zone object asserting AC-4; flip one byte in `prng_state` asserting exit `2`; no-snapshot
+  cold start asserting AC-9. Publish `recovery-timing.json` (AC-7).
+- **Manual/operator:**
+  ```
+  make up && andara-server &
+  kill -9 %1 && andara-server            # expect: "recovery complete match=true" then ready
+  andara-cli snapshot list               # expect: rounds newest first, complete=true
+  andara-server recover --verify --round <tick>   # expect: match, exit 0
+  ```
 
 ## Definition of done
 
 CLAUDE.md §8, plus:
-- The kill-and-recover test gates merges on every sim-core change.
-- `docs/specs/slo/recovery.md` exists with RPO and RTO targets.
-- `docs/runbooks/recovery-state-mismatch.md` exists and resolves its alert.
+- The kill-and-recover test gates merges on every `server/sim` and `server/store` change.
+- `docs/runbooks/recovery-state-mismatch.md` exists and resolves its alert with `andara-cli` commands
+  only.
+- `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
+  run in the job summary.
 
 ## Open questions
 
+- **Resolved 2026-09-11 (Brian): refuse on hash mismatch.** No automatic search for an older round.
 - **RTO is decided**: 120 s p99 at M2, 60 s p99 at Phase 1 exit (`docs/specs/slo/recovery.md`). The
-  phase breakdown there shows the dominant terms are Kubernetes failure detection and pod startup, not
-  replay — so optimizing this means `AW-INF-003`'s probes and image pre-pull, not a faster simulation.
-- **`linkdead_grace > RTO` is a standing invariant** (ADR-0006). At 180 s versus 60 s there is 3× margin;
-  neither may move without checking the other, and `AW-SRV-015` asserts it at startup.
-- `[NEEDS BRIAN]` What players see during recovery — shared with `AW-INF-007`.
-- `[NEEDS BRIAN]` Whether the World refuses to start or rolls back to the last matching tick on a hash
-  mismatch. Refusing is safer; rolling back is more playable. A product call.
-- Log retention must exceed the age of the oldest snapshot recovery would use, plus margin. Carried from
-  `AW-INF-004`'s open retention question; AC-2 is what turns a wrong answer into a loud failure instead
-  of a quiet one.
+  dominant terms are Kubernetes detection and pod startup; optimizing this means `AW-INF-003`'s probes
+  and image pre-pull, not a faster simulation.
+- **`linkdead_grace > RTO` is a standing invariant** (ADR-0006), asserted at startup by `AW-SRV-015`.
+- `[NEEDS BRIAN]` What players see during recovery — carried by `AW-INF-007`. Does not affect this
+  contract: recovery is silent on the wire.
+- `[ASSUMPTION]` `recovery.require_snapshot` defaults `false` so M1 keeps booting; `AW-INF-003`'s prod
+  values set it `true`.

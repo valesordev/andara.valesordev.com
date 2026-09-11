@@ -266,3 +266,7 @@ CLAUDE.md §8, plus:
   neither of which M1 exercises. `AW-INF-005` must test against real Kafka before production.
 - `[ASSUMPTION]` Observability stack is OTLP Collector + Prometheus + a trace backend + Grafana.
   Concrete choices are implementation details behind OTLP.
+- **Follow-ups recorded 2026-09-11** (not reopened; this story stays at `review`): `AW-SRV-006` wants a
+  MinIO service so the `s3` snapshot store is exercised locally, and `AW-SRV-016` wants a `pypiserver`
+  so `andara-sdk` installs the way a Builder installs it. Both are one compose service each and land
+  with the story that needs them.

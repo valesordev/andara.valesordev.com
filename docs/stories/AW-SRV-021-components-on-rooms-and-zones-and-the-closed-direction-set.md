@@ -7,7 +7,7 @@ type: feature
 status: ready
 size: M
 depends_on: [AW-SRV-001]
-blocks: [AW-CLI-003]
+blocks: [AW-CLI-003, AW-CLI-005, AW-CLI-006, AW-SRV-012, AW-SRV-022]
 lane: implementation
 risk: medium
 ---
@@ -50,7 +50,7 @@ instead of producing a Room nobody can leave.
 ### Out of scope
 - Components on Entities and Items — those arrive with the Entities themselves, not here.
 - Template inheritance and field-level override merge (ADR-0010 decisions 2, 4, 5). This story
-  attaches components to *instances* authored in a Zone Definition. Templates are `AW-SRV-012`'s.
+  attaches components to *instances* authored in a Zone Definition. Templates are `AW-SRV-022`'s.
 - Any component that changes simulation behaviour. `Dark{}` is data here; the system that reads it
   and suppresses a Room description belongs to the story that adds looking in the dark.
 - Direction *abbreviation* expansion — `n`, `ne`, `u`. That is the command parser, `AW-SRV-003`.

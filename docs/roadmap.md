@@ -4,11 +4,10 @@ Planning source of truth. Phase → Epic → Milestone. Story status lives in st
 `BACKLOG.md` is the generated view. This file changes when scope or sequencing changes, not when a
 story closes.
 
-ADR-0001 through ADR-0007 and ADR-0009 are `accepted`. ADR-0008 (tick rate) is `proposed` pending
-Brian's confirmation of a recommendation he asked for; ADR-0010 (Game Object type system) is
-`proposed` and gates `AW-CLI-003` only. Nothing on the M1 or M2 critical path is ADR-blocked. What follows reflects the architecture those decisions
-describe, which is meaningfully larger in Phase 1 than the drafted alternative — see "What the
-decisions cost" below.
+ADR-0001 through ADR-0010 are all `accepted` (ADR-0008 and ADR-0010 on 2026-09-10). Nothing in Phase 1
+is ADR-blocked, and as of 2026-09-11 every Phase 1 story is `ready` or beyond. What follows reflects the
+architecture those decisions describe, which is meaningfully larger in Phase 1 than the drafted
+alternative — see "What the decisions cost" below.
 
 ---
 
@@ -42,8 +41,8 @@ Until all six hold, `CLT` stories stay in `draft`.
 
 Kafka is the ordering authority. The Gateway parses and authorizes an Intent and produces a Command to
 the Zone's Partition; the simulation consumes its Partitions at 10 Hz, validates and applies in offset
-order, and emits Events. The Event log folds into a compacted current-state topic, and the indexes are
-built from *that* — Redis for hot reads, Postgres for tabular, ClickHouse later — so rebuilding one costs
+order, and emits Events. A replica of the simulation consumes the same log and writes a compacted current-state topic, and
+the indexes are built from *that* — Redis for hot reads, Postgres for tabular, ClickHouse later — so rebuilding one costs
 live-state time rather than world-age time. Indexes serve tooling and out-of-session queries, never the
 in-game read path. Clients, `andara-cli`, and Python Behavior Agents running inside the server realm all
 speak the same gRPC service. Content is authored outside the repository and published to compacted
@@ -96,14 +95,17 @@ compacted topic, then the Redis index on top of it.
 Epics: `EPIC-04`, `EPIC-08`, `EPIC-10` (state projector, Redis).
 
 #### M3 — Authored world *(gate: a Builder with no repository access publishes a Zone, sees it live, and rolls it back)*
-Content blobs, version manifests, active pointer. Publish-time validation and authorization. Content
-reload at a tick boundary. `andara-cli content` commands and the Content Language that compiles to
-canonical protobuf (ADR-0009). Postgres projection for rosters and Builder queries.
+Content blobs, version manifests, active pointer. Publish-time validation, per-pack Builder
+authorization, and second-approver activation. Content reload at a tick boundary. The Content Language
+specification (`AW-CLI-005`), its compiler (`AW-CLI-006`), and the `andara-cli content` commands
+(`AW-CLI-002`, `AW-CLI-003`). Postgres projection for rosters and Builder queries.
 Epics: `EPIC-05`, `EPIC-06`, `EPIC-10` (Postgres).
 
 #### M4 — Playable vertical slice *(gate: Phase 1 exit criteria 1–6 all hold)*
-Python Behavior Agents driving NPCs. Items. One complete gameplay loop `[NEEDS BRIAN — which loop:
-combat, trade, exploration, social?]`. SLOs with error budgets and runbooks. Protocol frozen at v1.
+Python Behavior Agents driving NPCs — **written by Builders** (decided 2026-09-11), so Behavior code
+is pack content and one Agent deployment runs one pack. Items. One complete gameplay loop `[NEEDS
+BRIAN — which loop: combat, trade, exploration, social?]`. SLOs with error budgets and runbooks. Protocol
+frozen at v1.
 Epics: `EPIC-09`, remainder of `EPIC-07`.
 
 ### Sequencing rationale
@@ -174,9 +176,9 @@ art binaries do not belong in Kafka — `EPIC-21` will need object storage with 
 | `ADR-0005` | Behavior layer | accepted | Python Behavior Agents outside the tick |
 | `ADR-0006` | Identity and accounts | accepted | Closed → invite → open; 5 characters, 1 live; 180 s linkdead grace, extended by combat to a 300 s ceiling |
 | `ADR-0007` | Schema authority | accepted | Protobuf for wire, log, snapshot, and content |
-| `ADR-0008` | Tick rate | **proposed** | 10 Hz, 100 ms interval, 50 ms budget; mechanics measured in Ticks |
+| `ADR-0008` | Tick rate | accepted | 10 Hz, 100 ms interval, 50 ms budget; mechanics measured in Ticks |
 | `ADR-0009` | Content authoring language | accepted | A purpose-built text language compiling to canonical protobuf |
-| `ADR-0010` | Game Object type system | **proposed** | Templates in single inheritance containing Components; logic stays in Go systems and Python Behaviors |
+| `ADR-0010` | Game Object type system | accepted | Templates in single inheritance containing Components; server-defined component types; Rooms and Zones carry Components |
 
 ### Service level targets
 
@@ -201,17 +203,36 @@ cadence — not load — is therefore the most likely thing to make ADR-0001's s
 Design questions that gate specific stories rather than architecture, tracked as `[NEEDS BRIAN]` in the
 stories and glossary. The largest remaining:
 
-- **What players see during a deploy or recovery interruption** (`AW-INF-007`, `slo/recovery.md`).
-- **The canonical Direction set**, without which the loader cannot reject `norht` as a typo
-  (`AW-SRV-001`).
+None of these affect an interface contract; every story carrying one is `ready` with the mechanism in
+place and the words or values left to Brian.
+
+- **What players see during a deploy or recovery interruption** — the `ServerStopping` Event and its
+  lead time exist (`AW-INF-007`); the message does not.
+- **What players see on relocation** when a Room is removed by a content change (`AW-SRV-012`).
 - **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
-- **Whether the component model covers Rooms and Zones or only Entities and Items** (ADR-0010). The
-  most time-sensitive question in the repo: `AW-SRV-001` is `ready` and defines `Room` as a plain
-  struct. The story analyses the exposure and concludes it should proceed — topology is unaffected and
-  a component set is an additive field — but it needs an answer before that field is designed away.
-- **Whether Builders may define new Component types** (ADR-0010). The difference between Builders
-  having an extension path and filing feature requests. Recommendation: yes, carried as opaque data
-  and read only by Behaviors. Gates `AW-CLI-003`'s grammar.
+- **The spawn Room** for new Characters (`AW-SRV-014`, one values-file line) and what a Character *is*
+  beyond name and position.
+- **What an unattended NPC looks like** to players (`AW-SRV-009`).
+- **The Content Language syntax review** (`AW-CLI-005` AC-10) — Brian reads `town.aw` as the Builder
+  in the room.
+- **The wording of the read-only error** every player will eventually see (`AW-SRV-010`).
+
+### Resolved on 2026-09-11
+
+- **Hash mismatch on recovery: refuse to start.** No automatic search for an older round; the operator
+  picks one with `andara-cli snapshot list` and `recover --verify --round` (`AW-SRV-007`).
+- **Builder authority is scoped per pack** (`Account.builder_packs`, `AW-SRV-013`).
+- **Linkdead is visible to other players** — a Room-scoped Event and a `look` marker (`AW-SRV-015`).
+- **Builders write Behaviors.** Behavior code is pack content; one Agent deployment per pack with an
+  identity scoped to that pack (`AW-SRV-008`, `AW-SRV-009`, `AW-SRV-016`).
+
+### Resolved on 2026-09-10
+
+- **Tick rate** — ADR-0008 accepted at 10 Hz / 50 ms budget.
+- **Game Object type system** — ADR-0010 accepted; component types are server-defined; Rooms and
+  Zones carry Components (`AW-SRV-021`).
+- **The canonical Direction set** — closed, the classic twelve with reverses.
+- **Platform** — kind v1.36.1 on Brian's box; `Admin` on the same listener, restricted by network.
 
 ### Resolved on 2026-09-07
 
