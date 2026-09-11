@@ -87,10 +87,19 @@ jobs:
           targets = json.load(sys.stdin)['data']['activeTargets']
           up = {t['labels']['job']: t['health'] for t in targets}
           print(up)
-          # andara-server is expected down until AW-SRV-005 lands; everything else must be up.
-          for job in ('otel-collector', 'redpanda'):
+          for job in ('andara-server', 'otel-collector', 'redpanda'):
               assert up.get(job) == 'up', '%s is %s' % (job, up.get(job))
           "
+
+      # AW-SRV-005 §8: instrumentation must be verified against a real backend, not just
+      # registered. The gateway's Go tests read a Prometheus registry in-process, which proves
+      # the counters move but not that anything scrapes them. This opens a Session on the
+      # running server over TLS and then asks Prometheus what it saw.
+      #
+      # It also covers the story's manual/operator test plan, which until now was a grpcurl
+      # sequence in a markdown file that nothing ran (CLAUDE.md §9).
+      - name: a Session opens over TLS and Prometheus sees it
+        run: make stack-smoke
 
       - name: a trace round-trips through the collector
         run: |

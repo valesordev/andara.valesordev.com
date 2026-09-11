@@ -46,7 +46,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
-        values-schema values-schema-check helm-test image kind-load helm-install measure-tick
+        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke
 
 ## help: print this target list
 help:
@@ -246,6 +246,10 @@ kind-load:
 ## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env>
 helm-install:
 	@$(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)"
+
+## stack-smoke: open a Session on the running stack and verify Prometheus counted it — needs `make up`
+stack-smoke:
+	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stack_smoke.sh
 
 ## measure-tick: run the server against the sizing fixture and record p99 tick CPU and RSS into measurements.yaml — DURATION=<seconds>
 measure-tick:

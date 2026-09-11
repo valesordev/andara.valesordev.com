@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-35 stories — 7 review · 27 ready · 1 done
+35 stories — 5 review · 27 ready · 3 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -17,7 +17,6 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-021  ready  Components on Rooms and Zones, and the closed Direction…  (unblocks 5)
   next   AW-SRV-008  ready  Account store, registration modes, and authentication  (unblocks 3)
-  review AW-SRV-005, AW-CLI-001 — run the §8 checklist, then flip to done
   held   20 ready, blocked: AW-SRV-022, AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007,…
 
 ## Decisions the lanes are waiting on

@@ -4,7 +4,7 @@ title: gRPC gateway — TLS, session lifecycle, and protocol version negotiation
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001, AW-SRV-020]
 blocks: [AW-SRV-008, AW-SRV-010, AW-SRV-011, AW-INF-006, AW-CLI-004]
@@ -201,10 +201,13 @@ measure.
 - **Manual/operator:**
   ```
   make up
-  grpcurl -cacert .local/tls/ca.pem localhost:8443 list
-  grpcurl -cacert .local/tls/ca.pem -d '{"protocol_version":99}' \
-      localhost:8443 andara.game.v1.Game/OpenSession   # expect FAILED_PRECONDITION with both ranges
+  make stack-smoke   # opens a Session over TLS, then asks Prometheus whether it counted it
   ```
+  `stack-smoke` is a target rather than a remembered `grpcurl` invocation (CLAUDE.md §9), and the
+  `stack` workflow runs it on every push, so the §8 "verified against a real backend" line is
+  answered by CI rather than by whoever last read this section. It asserts the out-of-range
+  rejection names both ranges, and that every instrument in the Observability section has series
+  in Prometheus with the `andara-server` target `up`.
 
 ## Definition of done
 
@@ -214,9 +217,12 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` Connect's Go implementation, serving all three protocols from one definition
-  (ADR-0003). The alternative is grpc-go plus an Envoy gRPC-Web proxy in Phase 2, which is more
-  infrastructure for the same outcome. `AW-SRV-020` generates the Connect stubs this consumes.
+- **Resolved 2026-09-11 (by the implementation):** Connect's Go implementation serves all three
+  protocols from one definition (ADR-0003), and the alternative — grpc-go plus an Envoy gRPC-Web
+  proxy in Phase 2 — is not needed. `AW-SRV-020` generates the stubs; `server/gateway` serves
+  `Game` and `Admin` from them, and `TestOpenSession_AllProtocolsOneHandler` establishes a Session
+  over Connect, gRPC-Web, Connect's gRPC client, and a `google.golang.org/grpc` client against one
+  handler. The assumption held; no proxy is in the architecture.
 - **Resolved 2026-09-10 (Brian): same listener, restricted by network policy.** ADR-0003's "same
   endpoint, same protocol" stands — `Admin` is served from the same Connect handler as `Game`, so
   there is no privileged back door and no second transport to secure (CLAUDE.md §10). What changes is
