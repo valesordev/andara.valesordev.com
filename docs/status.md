@@ -2,13 +2,14 @@
 
 # Status — Andara's World
 
-35 stories — 5 review · 29 ready · 1 done
+35 stories — 1 in-progress · 5 review · 28 ready · 1 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    — nothing in flight
-  next   AW-INF-003  ready  Kubernetes workload topology, volumes, and probes for a…  (unblocks 2)
+  now    AW-INF-003  Kubernetes workload topology, volumes, and probes for andara-server
+         branch aw-inf-003-kubernetes-workload-topology
+  next   — nothing groomed and unblocked
   review AW-INF-001, AW-INF-004, AW-SRV-020, AW-INF-002 — run the §8 checklist, then flip to…
   held   4 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-006, AW-INF-007
 

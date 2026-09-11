@@ -4,7 +4,7 @@ title: Kubernetes workload topology, volumes, and probes for andara-server
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-001, AW-INF-002]
 blocks: [AW-INF-006, AW-INF-007]
