@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/valesordev/andara/server/sim"
 )
 
 // Every AC in AW-SRV-001 that describes a failure says "exit code 1". Six of
@@ -122,11 +124,15 @@ func TestRun_PrintsEveryFindingNotJustTheFirst(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"formatVersion":1,"id":"town","name":"Town","rooms":[`)
 	b.WriteString(`{"id":"plaza","title":"Plaza","description":"d","exits":[`)
+	// Ten real Directions with ten missing targets. The Directions have to be
+	// canonical or the loader rejects them first (AW-SRV-021 AC-6) and this
+	// test stops being about unresolved targets.
+	dirs := sim.Directions()
 	for i := 0; i < 10; i++ {
 		if i > 0 {
 			b.WriteByte(',')
 		}
-		b.WriteString(`{"direction":"d` + string(rune('0'+i)) + `","toRoom":"missing` + string(rune('0'+i)) + `"}`)
+		b.WriteString(`{"direction":"` + string(dirs[i]) + `","toRoom":"missing` + string(rune('0'+i)) + `"}`)
 	}
 	b.WriteString(`]}]}`)
 	if err := os.WriteFile(filepath.Join(dir, "town.json"), []byte(b.String()), 0o644); err != nil {

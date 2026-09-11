@@ -78,7 +78,7 @@ func LoadDir(dir string) ([]sim.Input, []sim.ValidationError) {
 			errs = append(errs, *verr)
 			continue
 		}
-		inputs = append(inputs, sim.Input{File: path, Def: def})
+		inputs = append(inputs, sim.Input{File: path, Def: def, Pos: zonePositions(data)})
 	}
 	if len(inputs) == 0 && len(errs) == 0 {
 		return nil, []sim.ValidationError{{

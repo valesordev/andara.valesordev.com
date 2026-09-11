@@ -1,0 +1,26 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square of packed earth.",
+      "components": [
+        {"type": "andara.core.Drak"}
+      ],
+      "exits": [
+        {"direction": "north", "toRoom": "hall"}
+      ]
+    },
+    {
+      "id": "hall",
+      "title": "Town Hall",
+      "description": "Stone walls and faded banners.",
+      "exits": [
+        {"direction": "south", "toRoom": "plaza"}
+      ]
+    }
+  ]
+}

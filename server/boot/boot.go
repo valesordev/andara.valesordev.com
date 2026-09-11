@@ -53,13 +53,14 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	inputs, loadErrs := content.Load(rt.Cfg.ContentSource, rt.Cfg.ContentPath)
 	loadFatal := false
 	errorCount := 0
+	warnCount := 0
 	for _, e := range loadErrs {
-		telemetry.LogFinding(ctx, rt.Tel.Log, e, rt.Cfg.StrictOrphans)
-		rt.Tel.Metrics.ValidationErrors.WithLabelValues(string(e.Code)).Inc()
-		if e.Fatal() {
-			loadFatal = true
-			errorCount++
+		if rt.recordFinding(ctx, e) {
+			warnCount++
+			continue
 		}
+		loadFatal = true
+		errorCount++
 	}
 
 	opts := sim.Options{
@@ -80,18 +81,23 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	}
 	buildFatal := false
 	for _, e := range errs {
-		telemetry.LogFinding(ctx, rt.Tel.Log, e, rt.Cfg.StrictOrphans)
-		rt.Tel.Metrics.ValidationErrors.WithLabelValues(string(e.Code)).Inc()
-		if e.Code == sim.ErrOrphanRoom && !rt.Cfg.StrictOrphans {
+		if rt.recordFinding(ctx, e) {
+			warnCount++
 			continue
 		}
 		buildFatal = true
 		errorCount++
 	}
-	vspan.SetAttributes(attribute.Int("error_count", errorCount))
+	// Component and Direction validation are attributes on the existing span,
+	// not spans of their own: a span per Room would be one span per Room
+	// (AW-SRV-021 observability).
+	vspan.SetAttributes(
+		attribute.Int("error_count", errorCount),
+		attribute.Int("warning_count", warnCount),
+	)
 	vspan.End()
 
-	zoneCount, roomCount := 0, 0
+	zoneCount, roomCount, componentCount := 0, 0, 0
 	ok := world != nil && !loadFatal && !buildFatal
 	if ok {
 		zoneCount = len(world.Zones)
@@ -100,6 +106,10 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 			n := len(z.Rooms)
 			roomCount += n
 			rt.Tel.Metrics.RoomsLoaded.WithLabelValues(string(id)).Set(float64(n))
+			componentCount += rt.countComponents(z.Components)
+			for _, r := range z.Rooms {
+				componentCount += rt.countComponents(r.Components)
+			}
 		}
 		rt.World = world
 		rt.ready.Store(true)
@@ -107,11 +117,34 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	span.SetAttributes(
 		attribute.Int("zone_count", zoneCount),
 		attribute.Int("room_count", roomCount),
+		attribute.Int("component_count", componentCount),
 	)
 	if !ok {
 		return ExitFail
 	}
 	return ExitOK
+}
+
+// recordFinding logs one finding and counts it, and reports whether it was
+// advisory. Both loops share it so a warning can never be logged at warn and
+// counted as an error, which is the way these two drift apart.
+func (rt *Runtime) recordFinding(ctx context.Context, e sim.ValidationError) bool {
+	telemetry.LogFinding(ctx, rt.Tel.Log, e, rt.Cfg.StrictOrphans)
+	rt.Tel.Metrics.ValidationErrors.WithLabelValues(string(e.Code)).Inc()
+	if !sim.IsWarning(e, rt.Cfg.StrictOrphans) {
+		return false
+	}
+	rt.Tel.Metrics.LoadWarnings.WithLabelValues(string(e.Code)).Inc()
+	return true
+}
+
+// countComponents records one Component set against the by-type counter and
+// returns its size.
+func (rt *Runtime) countComponents(set []sim.Component) int {
+	for _, c := range set {
+		rt.Tel.Metrics.Components.WithLabelValues(string(c.Type)).Inc()
+	}
+	return len(set)
 }
 
 // Handler serves /livez, /readyz, and /metrics.
