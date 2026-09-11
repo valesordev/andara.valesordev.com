@@ -17,7 +17,9 @@ Everything that builds, runs, ships, or tests the game is under the
 Helm chart, compose stack, and Kubernetes manifests, CI workflows, and the `.proto` files
 under `docs/specs/protocol/`. The protocol lives among the documentation but it is source —
 it compiles into `gen/`, and generated code inherits the license of what it was generated
-from.
+from. The same goes for any migration or schema file under `docs/specs/schema/`: `.sql` and
+`.json` there are Apache-2.0 by the same `REUSE.toml` override, and a new machine-readable
+format under `docs/` needs adding to it.
 
 The fixtures under `testdata/` are code, not content. The zones there ("Town", "Docks",
 "Wilds") exist to exercise the loader and are not part of Andara's World.
@@ -97,10 +99,11 @@ The header, for a new source file:
 For Python and shell it is the same two lines after `#`, below the shebang.
 <!-- REUSE-IgnoreEnd -->
 
-A new *kind* of file — a migration, a template, a golden — needs no header; the `**`
-annotation in `REUSE.toml` already covers it as Apache-2.0. A new *tree* of documentation or
-creative material needs a `REUSE.toml` entry, and `make license-check` will not tell you so:
-the default is code. Check the map above when adding one.
+A new *kind* of file outside `docs/` — a template, a golden — needs no header; the `**`
+annotation in `REUSE.toml` already covers it as Apache-2.0. Inside `docs/` the default is
+CC BY-SA 4.0, so a new machine-readable format there needs the Apache-2.0 override extended.
+A new *tree* of documentation or creative material needs a `REUSE.toml` entry. In neither
+case will `make license-check` tell you so; check the map above when adding one.
 
 ## Open questions
 
