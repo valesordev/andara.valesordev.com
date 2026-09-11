@@ -111,8 +111,8 @@ Three things this is deliberately **not**:
 - **Not a claim that every Room has all twelve.** Exits are authored one at a time.
 
 Each Direction has a **reverse**, listed above. The reverse is not enforced — a one-way Exit is legal
-and useful (a chute, a trapdoor) — but the loader can warn on an Exit whose reverse is absent, which
-catches the far more common case of a Builder forgetting the way back.
+and useful (a chute, a trapdoor) — but the loader warns on an Exit whose reverse is absent
+(`missing_reverse_exit`), which catches the far more common case of a Builder forgetting the way back.
 
 **Exit** — A directed edge from one Room to another, labeled with a Direction. Exits are
 one-directional in the data model; a two-way passage is two Exits. Exit conditions (doors, locks,

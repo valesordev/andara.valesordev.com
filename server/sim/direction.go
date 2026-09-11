@@ -16,43 +16,45 @@ import "strings"
 // is dropped silently on the wire, where an unknown string is rejected loudly
 // with a file and a line (zone.proto, ExitDefinition.direction).
 var canonicalDirections = []Direction{
-	North, Northeast, East, Southeast,
-	South, Southwest, West, Northwest,
-	Up, Down, In, Out,
+	DirNorth, DirNortheast, DirEast, DirSoutheast,
+	DirSouth, DirSouthwest, DirWest, DirNorthwest,
+	DirUp, DirDown, DirIn, DirOut,
 }
 
-// The twelve canonical Directions.
+// The twelve canonical Directions. Prefixed because four of them — In, Out, Up,
+// Down — are words this package will want again for things that are not
+// Directions, and a collision discovered later costs more than the prefix does.
 const (
-	North     Direction = "north"
-	Northeast Direction = "northeast"
-	East      Direction = "east"
-	Southeast Direction = "southeast"
-	South     Direction = "south"
-	Southwest Direction = "southwest"
-	West      Direction = "west"
-	Northwest Direction = "northwest"
-	Up        Direction = "up"
-	Down      Direction = "down"
-	In        Direction = "in"
-	Out       Direction = "out"
+	DirNorth     Direction = "north"
+	DirNortheast Direction = "northeast"
+	DirEast      Direction = "east"
+	DirSoutheast Direction = "southeast"
+	DirSouth     Direction = "south"
+	DirSouthwest Direction = "southwest"
+	DirWest      Direction = "west"
+	DirNorthwest Direction = "northwest"
+	DirUp        Direction = "up"
+	DirDown      Direction = "down"
+	DirIn        Direction = "in"
+	DirOut       Direction = "out"
 )
 
 // directionReverse pairs every Direction with its reverse. Every canonical
 // Direction has one, which is what lets the loader warn about a one-way Exit
 // that was almost certainly meant to be two.
 var directionReverse = map[Direction]Direction{
-	North:     South,
-	South:     North,
-	East:      West,
-	West:      East,
-	Northeast: Southwest,
-	Southwest: Northeast,
-	Northwest: Southeast,
-	Southeast: Northwest,
-	Up:        Down,
-	Down:      Up,
-	In:        Out,
-	Out:       In,
+	DirNorth:     DirSouth,
+	DirSouth:     DirNorth,
+	DirEast:      DirWest,
+	DirWest:      DirEast,
+	DirNortheast: DirSouthwest,
+	DirSouthwest: DirNortheast,
+	DirNorthwest: DirSoutheast,
+	DirSoutheast: DirNorthwest,
+	DirUp:        DirDown,
+	DirDown:      DirUp,
+	DirIn:        DirOut,
+	DirOut:       DirIn,
 }
 
 // Valid reports whether d is one of the twelve canonical Directions.

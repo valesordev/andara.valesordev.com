@@ -628,9 +628,13 @@ func validateComponentFields(cd *contentv1.ComponentValue, spec componentSpec, s
 
 		f, kind := fieldValue(fd)
 		if kind != want {
+			got := "a " + kind.String()
+			if kind == FieldUnset {
+				got = "no value"
+			}
 			errs = append(errs, site.finding(i, ErrInvalidComponentField, fmt.Sprintf(
-				"component %q on %s sets field %q to a %s; it is declared %s",
-				cd.Type, site.what, fd.Name, kind, want)))
+				"component %q on %s sets field %q to %s; it is declared %s",
+				cd.Type, site.what, fd.Name, got, want)))
 			continue
 		}
 		fields = append(fields, f)
