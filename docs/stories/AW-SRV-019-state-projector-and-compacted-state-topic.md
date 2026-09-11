@@ -4,31 +4,28 @@ title: State projector and the compacted current-state topic
 epic: EPIC-10
 component: server
 type: feature
-status: draft
+status: ready
 size: M
-depends_on: [AW-SRV-004]
+depends_on: [AW-SRV-004, AW-SRV-006]
 blocks: [AW-SRV-017]
 lane: implementation
 risk: high
 ---
 
-> `status: draft` — unblocked by ADR-0002 §5.5 and scoped. Groomed to `ready` when M2 approaches.
-
 ## Context
 
-ADR-0002 §5.5: the ordered Event history flows into a **compacted** `andara.state.v1` holding the current
-state of each aggregate, and the indexes read from *that* rather than from the full history. Without it,
-building or rebuilding a Redis or Postgres index costs time proportional to the World's entire history,
-forever. With it, a rebuild costs time proportional to live state.
+ADR-0002: the ordered history flows into a **compacted** `andara.state.v1` holding the current state of
+each aggregate, and the indexes read from *that* rather than from the full history. Without it, building
+or rebuilding a Redis or Postgres index costs time proportional to the World's entire history, forever.
+With it, a rebuild costs time proportional to live state.
 
-This story is the projector that produces it, and it is deliberately first among the read-path stories
-because every index downstream depends on it.
-
-The design point that makes it safe: the projector does not re-implement the simulation's fold. It
-**embeds `server/sim` in fold-only mode** — the same dependency-free, deterministic package, with no
-transport, no scheduler, and no producer — so there is exactly one implementation of how an Event changes
-state. Its accumulated hash must then equal the `state_hash` in the corresponding `TickCompleted` record,
-which turns "are the indexes in sync with the World" from a matter of belief into an assertion.
+The design point that makes it safe: **the projector is a replica of the simulation, not a second
+implementation of it.** It runs `sim.Engine` — the same dependency-free package — over the same
+`LoggedCommand` records and the same `TickCompleted` boundaries the live server consumes, using exactly
+the `Replay` seam `AW-SRV-007` uses for recovery. Its `StateHash()` after tick `T` must equal
+`TickCompleted{T}.state_hash`, which turns "are the indexes in sync with the World" from belief into an
+assertion. The draft's alternative — folding *Events* into state — would require the sim to mutate state
+only through the Events it emits, which `AW-SRV-003` does not promise and which nothing else needs.
 
 ## User story
 
@@ -38,98 +35,167 @@ projection schema change is routine.
 ## Scope
 
 ### In scope
-- The `andara.state.v1` record format: aggregate state plus
-  `{tick, source_offset, source_event_id, content_version_sha256, state_digest}`.
-- Typed aggregate keys: `character:<id>`, `npc:<id>`, `item:<id>`, `room:<zone>/<id>`.
-- Tombstones for destroyed aggregates, so compaction can actually remove them.
-- The projector: consume `andara.events.v1`, fold via the embedded sim core, produce to
-  `andara.state.v1`.
-- **Digest verification** against `TickCompleted.state_hash`, with divergence as an alert rather than a
-  discovery.
-- Rebuild from `andara.events.v1` from the earliest available offset.
-- Write isolation: exactly one component may produce to `andara.state.v1`.
+- `andara-projector state` — a second binary in the server module, consuming `andara.commands.v1` and
+  `andara.events.v1` (for `TickCompleted` and `SnapshotWritten`), bootstrapping from the newest complete
+  snapshot round through a read-only `sim.WorldStore`.
+- The `andara.state.v1` record: `StateRecord{key, kind, tick, source_offset, content_version,
+  state_version, digest, body}`; typed keys; tombstones.
+- Producing, after each replayed tick, one record per aggregate that tick's Events touched, plus
+  tombstones for destroyed ones.
+- Digest verification against every `TickCompleted`; halt on divergence.
+- `andara-projector state --rebuild`: wipe the consumer group, restart from the newest round.
+- Write isolation: the projector's Kafka principal is the only one with write on `andara.state.v1`.
+- Depends on `AW-SRV-006` (new edge) because bootstrap reads snapshot rounds.
 
 ### Out of scope
-- Redis and Postgres indexes — `AW-SRV-017`, `AW-SRV-018`. They consume this topic.
-- Recovery. The compacted topic is a read-path bootstrap, **not** a recovery mechanism — it has a ragged
-  tick edge and compaction has discarded the versions an earlier consistent cut would need. Snapshots
-  (`AW-SRV-006`) remain the recovery path, and ADR-0002 §5.5 says why at length.
+- Redis and Postgres indexes — `AW-SRV-017`, `AW-SRV-018`.
+- Recovery. `andara.state.v1` has a ragged tick edge across Partitions and compaction has discarded
+  earlier versions; it is a read-path bootstrap and never a recovery source.
 - Any authoritative role. Nothing may read `andara.state.v1` to make a game decision.
 
-## Acceptance criteria (known now; completed at grooming)
+## Acceptance criteria
 
-1. **Given** a `CharacterArrived` Event **when** the projector applies it **then** `character:<id>` and
-   `room:<zone>/<id>` records are produced reflecting the new state.
-2. **Given** the projector has consumed through tick `T` **when** its accumulated state hash is compared
-   to `TickCompleted{tick: T}.state_hash` **then** they are equal. This is the sync assertion the whole
-   design exists to make possible.
-3. **Given** a divergence at tick `T` **when** it is detected **then** the projector halts, does not
-   produce further records, and alerts. A projector that keeps writing after it knows it is wrong is
-   worse than one that stops.
-4. **Given** an Event applied twice **when** the second application completes **then** the produced record
-   is identical. At-least-once delivery must be safe.
-5. **Given** a destroyed Entity **when** it is destroyed **then** a tombstone is produced for its key, and
-   after compaction the key is absent.
-6. **Given** an empty `andara.state.v1` **when** a rebuild runs **then** it consumes `andara.events.v1`
-   from the earliest available offset and the result matches a projector that consumed incrementally.
-7. **Given** a record in `andara.state.v1` **when** it is inspected **then** `content_version_sha256`
-   identifies the content version that defined the aggregate, so a runtime object traces back to its
-   authored source.
-8. **Given** the projector is stopped **when** the World continues ticking **then** nothing in the game is
-   affected. This is a tooling outage.
-9. **Given** any component other than the projector **when** it produces to `andara.state.v1` **then** it
-   fails on credentials.
+1. **Given** a tick whose Events include `CharacterArrived` **when** the projector replays it **then**
+   records for `character:<id>` and `room:<zone>/<id>` are produced with `tick` equal to that tick and
+   `body` equal to the replica's state for those aggregates.
+2. **Given** the projector has replayed through tick `T` **when** its `StateHash()` is compared with
+   `TickCompleted{T}.state_hash` **then** they are equal, for every `T`.
+3. **Given** a divergence at `T` **when** it is detected **then** the projector produces nothing further,
+   commits no offset past `T-1`, sets `andara_state_digest_mismatches_total` to 1, exits `2`, and the
+   `error` line names `T`, both hashes, and the last good offset per Partition.
+4. **Given** a Partition batch redelivered after a crash **when** it is replayed **then** every record
+   produced is byte-identical to the first delivery. At-least-once is safe because the replica is
+   deterministic and the record is canonical.
+5. **Given** a destroyed Entity (`CharacterPurged`, item destroyed) **when** its tick replays **then** a
+   tombstone (null value) is produced for its key, and after `topics.py` forces compaction the key is
+   absent.
+6. **Given** an empty `andara.state.v1` **when** `--rebuild` runs against a World with 10,000 Entities and
+   a 24 h history **then** it reaches a state whose records equal the incremental projector's, in under
+   `snapshot load + tail replay` — never a from-zero replay when a complete round exists.
+7. **Given** any record **when** it is inspected **then** `content_version` names the `packID@version`
+   active when the aggregate was last written, so a runtime object traces to authored source.
+8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
+   server are unchanged and no player-visible behavior differs.
+9. **Given** any Kafka principal other than `andara-projector-state` **when** it produces to
+   `andara.state.v1` **then** the broker rejects it with an authorization error (`AW-INF-004` ACLs).
+10. **Given** a `state_version` newer than the projector binary **when** bootstrap reads the round
+    **then** it exits `4` naming both, as `AW-SRV-007` does.
 
 ## Interface contract
 
-To be written at grooming. Committed now: the projector imports `server/sim` and calls the same fold the
-simulation calls. It contains no state-transition logic of its own. A second implementation of how an
-Event changes state is the defect this story is shaped to prevent.
+```protobuf
+// CONTRACT SKETCH — not an implementation; andara/state/v1/record.proto
+message StateRecord {
+  string key = 1;                 // "character:<id>" | "npc:<id>" | "item:<id>" | "room:<zone>/<id>" | "zone:<id>"
+  AggregateKind kind = 2;
+  uint64 tick = 3;
+  int64 source_offset = 4;        // commands.v1 offset of the last Command applied to this aggregate's Zone
+  string content_version = 5;     // packID@version active at write
+  uint32 state_version = 6;
+  bytes digest = 7;               // sha256 of body; per-record integrity, not the World hash
+  bytes body = 8;                 // canonical EntityState | RoomState | ZoneSummary
+}
+```
+
+Key = record key on the topic. Partitioner: `hash(zone_id) % 64`, the same function as
+`andara.commands.v1`, so a Zone's aggregates share a Partition and a future shard reads only its own.
+Tombstone = null value with the same key.
+
+```go
+// CONTRACT SKETCH — not an implementation
+package projector
+// Touched maps the Events of one tick to the aggregate keys whose bodies must be re-emitted.
+// It is a table over EventType, not logic; an EventType absent from the table fails a unit test.
+func Touched(events []sim.Event) []Key
+// Run: bootstrap(round) → engine.Replay(boundaries, records, afterTick: emit Touched) → verify each TickCompleted.
+```
+
+### Consumer and producer
+
+| Property | Value |
+|----------|-------|
+| consumer group | `andara-projector-state-<env>` |
+| consumes | `andara.commands.v1` (all Partitions), `andara.events.v1` (control records only) |
+| produces | `andara.state.v1`, `acks=all`, idempotent, key-ordered |
+| offset commit | after the records for tick `T` are acked, never before |
+| bootstrap | newest complete round via `sim.WorldStore` read-only; `--from-zero` overrides |
+
+### Configuration
+
+| Key | Env | Default | Notes |
+|-----|-----|---------|-------|
+| `projector.state.batch_ticks` | `ANDARA_PROJECTOR_BATCH_TICKS` | `10` | ticks replayed between produce flushes |
+| `projector.state.lag_budget` | `ANDARA_PROJECTOR_LAG_BUDGET` | `5s` | `ProjectionStale` threshold |
+| `snapshot.*` | as `AW-SRV-006` | | read-only use |
+
+### Exit codes
+
+`0` clean stop · `1` config/store · `2` digest divergence · `3` log gap · `4` state_version.
 
 ## Data / state impact
 
-`andara.state.v1` is compacted and derived. It is disposable — losing it costs a rebuild, not data — and
-that should be verified by actually deleting and rebuilding it in a non-production environment rather
-than assumed.
+`andara.state.v1`: compacted, 64 Partitions, `min.compaction.lag.ms=60000`, `cleanup.policy=compact`,
+provisioned by `AW-INF-004`'s `topics.yaml` in this story's PR. Derived and disposable; AC-6 proves it
+by deleting it.
 
-Record format carries `state_version` like every other persisted artifact (ADR-0007), because a change to
-how an aggregate serializes is a change to what every index reads.
+The projector holds a full replica of World state in memory — the same footprint as the server. That is
+the cost of the replica design and is stated in the Helm values (`AW-INF-003`).
 
-Compaction throughput is the risk worth watching: if state churn outpaces the compactor, a "compacted"
-topic becomes a second full history with worse ergonomics. ADR-0002 lists this as a revisit trigger.
+Compaction throughput is the risk to watch: if churn outpaces the compactor, the topic becomes a second
+full history. `andara_state_topic_bytes` makes that visible.
 
 ## Observability requirements
 
-- **Metrics:** `andara_state_projector_lag_seconds` (gauge), `andara_state_records_produced_total`
-  (counter, label `kind`), `andara_state_tombstones_total` (counter),
-  `andara_state_digest_mismatches_total` (counter — must stay 0),
-  `andara_state_rebuild_duration_seconds` (histogram). Aggregate ID is rejected as a label.
-- **Logs:** `info` on start, checkpoint, rebuild; `error` on digest mismatch naming the tick, both
-  hashes, and the last good offset.
-- **Traces:** `state.fold` per batch, not per Event.
-- **Alerts:** `StateProjectorDiverged` on `andara_state_digest_mismatches_total > 0` — symptom: the
-  indexes no longer describe the World. Runbook ships in this story. `ProjectionStale` on lag, at lower
-  severity, since a stale index is a tooling problem and a diverged one is a correctness problem.
+### Metrics
+- `andara_state_projector_lag_seconds` — gauge; `now − TickCompleted.accepted_at` of the last verified tick.
+- `andara_state_projector_tick` — gauge.
+- `andara_state_records_produced_total` — counter, label `kind` (bounded enum).
+- `andara_state_tombstones_total` — counter.
+- `andara_state_digest_mismatches_total` — counter; must stay 0.
+- `andara_state_rebuild_duration_seconds` — histogram, label `phase` (`bootstrap`, `replay`).
+- `andara_state_topic_bytes` — gauge, from broker metadata.
+Aggregate ID is rejected as a label.
+
+### Logs
+- `info` on start with the round used; per `batch_ticks` at `debug`; `error` on divergence per AC-3.
+- Required fields: `ts`, `level`, `msg`, `service=andara-projector-state`, `env`, `tick`, `partition`.
+
+### Traces
+- `state.replay` per batch with `ticks`, `records_in`, `records_out`; `state.verify` per boundary.
+
+### Alerts
+- `StateProjectorDiverged` on `andara_state_digest_mismatches_total > 0`: the indexes no longer describe
+  the World. Runbook `docs/runbooks/state-projector-diverged.md` ships here: stop downstream projectors,
+  `--rebuild`, and if it diverges again the *server* is non-deterministic — escalate as a sim bug.
+- `ProjectionStale{projection="state"}` on lag over `lag_budget` for 5 m, low severity, runbook
+  `docs/runbooks/projection-stale.md` shared with `AW-SRV-017`/`018`.
 
 ## Test plan
 
-Digest equality against `TickCompleted` over a long fixture run (AC-2); an injected divergence asserting
-halt-and-alert; idempotency under duplicate delivery; tombstone removal verified against a broker with
-compaction forced; rebuild-from-empty matching an incremental projector.
+- **Unit:** `Touched` table completeness against every `EventType`; record canonical encoding; tombstone
+  emission for each destroy Event.
+- **Integration:** a 10-minute fixture run asserting AC-2 at every boundary; injected divergence (flip a
+  byte in the replica) asserting AC-3; crash-and-redeliver asserting AC-4; forced compaction asserting
+  AC-5; `--rebuild` from round vs incremental equality (AC-6); ACL rejection (AC-9).
+- **Manual/operator:**
+  ```
+  make up && andara-projector state
+  andara-cli projection status                 # expect: state: tick N, lag <1s, digest ok
+  andara-projector state --rebuild             # expect: bootstrap from round, replay, "digest ok"
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus:
-- The digest assertion runs continuously in production, not only in tests.
-- The rebuild is a documented command exercised in CI — a rebuild that has never been run is a rebuild
-  that does not work.
-- A test proves the projector imports the sim core rather than reimplementing the fold.
+CLAUDE.md §8, plus: the digest assertion runs continuously in production; `--rebuild` is exercised in
+CI; a test asserts the projector binary imports `server/sim` and contains no `Apply` of its own
+(depguard rule).
 
 ## Open questions
 
-- `[ASSUMPTION]` One projector process for all aggregate kinds. Splitting by kind would parallelize the
-  fold and would break the single-hash sync assertion, which is worth more than the throughput.
-- `[NEEDS BRIAN]` Whether `andara.state.v1` should be partitioned by Zone like the other topics — which
-  keeps a Zone's state co-located and lets a future shard read only its own — or by aggregate key for
-  even compaction load. Zone-partitioning is probably right for the same reason everything else is
-  Zone-partitioned, and it is a permanent choice.
+- `[ASSUMPTION]` Partitioned by Zone with the commands partitioner. Permanent, and the same reason
+  everything else is Zone-partitioned.
+- `[ASSUMPTION]` One projector process for all aggregate kinds, because the single-hash assertion needs
+  one replica.
+- `[ASSUMPTION]` Replica rather than Event fold, for the reason in Context. If a later story makes the
+  sim internally event-sourced, the projector can drop the commands consumer without changing its
+  output.
