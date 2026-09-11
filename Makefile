@@ -28,6 +28,10 @@ PROFILE     ?= full
 VOLUMES     ?= 0
 PKG         ?= ./...
 COMPOSE     := deploy/compose/docker-compose.yaml
+IMAGE       ?= andara-server
+TAG         ?= dev
+KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
+DURATION    ?= 300
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -41,7 +45,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 .PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
-        graph k8s-dry check-targets clean build goldens
+        graph k8s-dry check-targets clean build goldens \
+        values-schema values-schema-check helm-test image kind-load helm-install measure-tick
 
 ## help: print this target list
 help:
@@ -100,7 +105,7 @@ schemas-check:
 # guard in the workflow reads this target to prove the two lists have not drifted —
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
-                 backlog-check status-check k8s-dry
+                 backlog-check status-check values-schema-check k8s-dry helm-test
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -204,9 +209,42 @@ adr:
 	fi
 	@$(PY) $(SCRIPTS)/new_adr.py "$(TITLE)"
 
-## k8s-dry: render and validate manifests for ENV=<env>
+## k8s-dry: render and validate the chart against Kubernetes 1.36.1 — ENV=<env>, or every environment when ENV is not given
 k8s-dry:
-	@$(SCRIPTS)/k8s_dry.sh "$(ENV)"
+	@$(SCRIPTS)/k8s_dry.sh "$(if $(filter command line,$(origin ENV)),$(ENV),all)"
+
+## values-schema: regenerate the chart's values.schema.json and templates/_env.tpl from keys.yaml
+values-schema:
+	@$(PY) $(SCRIPTS)/values_schema.py
+
+## values-schema-check: fail if an ANDARA_* the server reads is missing from keys.yaml, or the generated files are stale
+values-schema-check:
+	@$(PY) $(SCRIPTS)/values_schema.py --check
+
+## helm-test: render-level assertions over the chart for every environment (AW-INF-003 test plan)
+helm-test:
+	@$(PY) $(SCRIPTS)/helm_test.py
+
+## image: build the andara-server image from deploy/compose/Dockerfile.server — TAG=<tag>, default dev
+image:
+	@docker build -f deploy/compose/Dockerfile.server \
+	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) \
+	  -t $(IMAGE):$(TAG) .
+	@echo "image: $(IMAGE):$(TAG)"
+
+## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>
+kind-load:
+	@if [[ -z "$(KIND_CLUSTER)" ]]; then echo "make: kind-load: no kind cluster found" >&2; exit 1; fi
+	@kind load docker-image $(IMAGE):$(TAG) --name $(KIND_CLUSTER)
+	@echo "kind-load: $(IMAGE):$(TAG) -> kind/$(KIND_CLUSTER)"
+
+## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env>
+helm-install:
+	@$(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)"
+
+## measure-tick: run the server against the sizing fixture and record p99 tick CPU and RSS into measurements.yaml — DURATION=<seconds>
+measure-tick:
+	@$(SCRIPTS)/measure_tick.sh "$(DURATION)"
 
 ## build: compile andara-cli and andara-server into ./bin
 build:

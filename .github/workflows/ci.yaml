@@ -77,5 +77,9 @@ jobs:
         run: make backlog-check
       - name: status freshness
         run: make status-check
+      - name: values schema freshness
+        run: make values-schema-check
       - name: k8s-dry
-        run: make k8s-dry ENV=dev
+        run: make k8s-dry
+      - name: helm-test
+        run: make helm-test

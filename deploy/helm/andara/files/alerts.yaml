@@ -1,0 +1,33 @@
+# Prometheus alerting rules for the andara-server workload (AW-INF-003).
+#
+# Symptom-based, tied to docs/specs/slo/world-write-availability.md. Each alert names its
+# runbook; a rule without one is an incomplete story (CLAUDE.md §7). Mounted by the
+# compose Prometheus and shipped as a ConfigMap by the chart, so one file is evaluated in
+# both places.
+groups:
+  - name: andara-server
+    rules:
+      - alert: AndaraServerUnavailable
+        # The server's own scrape, not kube_state: it is the same signal in the compose stack
+        # and the cluster, and a StatefulSet that has been deleted outright has no kube_*
+        # series to be zero. absent() covers that case. The cluster Prometheus must scrape
+        # the pod under job="andara-server", which the observability stack (EPIC-07) owns.
+        expr: |
+          max(up{job="andara-server"}) == 0 or absent(up{job="andara-server"})
+        for: 2m
+        labels:
+          severity: page
+          slo: world-write-availability
+        annotations:
+          summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+          runbook: docs/runbooks/server-unavailable.md
+      - alert: AndaraServerCrashLooping
+        expr: |
+          increase(kube_pod_container_status_restarts_total{container="server", pod=~"andara-[0-9]+"}[10m]) > 3
+        for: 0m
+        labels:
+          severity: page
+          slo: world-write-availability
+        annotations:
+          summary: "andara-server restarted more than 3 times in 10 minutes"
+          runbook: docs/runbooks/server-crashlooping.md

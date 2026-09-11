@@ -1,0 +1,25 @@
+# kind on the developer's box (decided 2026-09-10, v1.36.1). The image is built by
+# `make image` and loaded with `make kind-load`; nothing is pulled.
+image:
+  repository: andara-server
+  tag: dev
+  pullPolicy: Never
+
+server:
+  telemetry:
+    environment: local
+    log_format: text
+    log_level: debug
+    otlp_endpoint: ""   # no collector in the local cluster; empty disables export
+  content:
+    source: dir
+    path: /content
+
+snapshots:
+  size: 1Gi
+  storageClass: standard
+
+contentVolume:
+  configMapName: andara-content
+
+resourcesMultiplier: 1

@@ -1,0 +1,409 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "andara chart values",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "replicaCount",
+    "image",
+    "snapshots",
+    "probes",
+    "terminationGracePeriodSeconds"
+  ],
+  "properties": {
+    "replicaCount": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 64,
+      "description": "StatefulSet replicas. Each replica owns the Partitions p where p mod replicaCount == ordinal (ADR-0001)."
+    },
+    "image": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "repository",
+        "tag"
+      ],
+      "properties": {
+        "repository": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string",
+          "minLength": 1
+        },
+        "pullPolicy": {
+          "type": "string",
+          "enum": [
+            "Always",
+            "IfNotPresent",
+            "Never"
+          ]
+        }
+      }
+    },
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "content": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "kafka",
+                "dir"
+              ],
+              "description": "ANDARA_CONTENT_SOURCE (AW-SRV-001). Default when unset: 'kafka'."
+            },
+            "path": {
+              "type": "string",
+              "description": "ANDARA_CONTENT_PATH (AW-SRV-001). Default when unset: './content'."
+            },
+            "strict_orphans": {
+              "type": "boolean",
+              "description": "ANDARA_STRICT_ORPHANS (AW-SRV-001). Default when unset: False."
+            }
+          }
+        },
+        "http": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "ANDARA_HTTP_PORT (AW-INF-002). Default when unset: 8080."
+            }
+          }
+        },
+        "telemetry": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "service_name": {
+              "type": "string",
+              "description": "ANDARA_SERVICE_NAME (AW-SRV-001). Default when unset: 'andara-server'."
+            },
+            "environment": {
+              "type": "string",
+              "enum": [
+                "local",
+                "dev",
+                "prod"
+              ],
+              "description": "ANDARA_ENV (AW-INF-002). Default when unset: 'local'."
+            },
+            "log_format": {
+              "type": "string",
+              "enum": [
+                "json",
+                "text"
+              ],
+              "description": "ANDARA_LOG_FORMAT (AW-SRV-001). Default when unset: 'json'."
+            },
+            "log_level": {
+              "type": "string",
+              "enum": [
+                "debug",
+                "info",
+                "warn",
+                "error"
+              ],
+              "description": "ANDARA_LOG_LEVEL (AW-SRV-001). Default when unset: 'info'."
+            },
+            "otlp_endpoint": {
+              "type": "string",
+              "description": "ANDARA_OTLP_ENDPOINT (AW-SRV-001). Default when unset: 'localhost:4317'."
+            }
+          }
+        }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Secret references only. A value here is a Secret name, never secret material (AC-4).",
+      "properties": {
+        "tokenKey": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "tlsCert": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string"
+            },
+            "certKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "keyKey": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        },
+        "kafkaCreds": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Explicit overrides. When empty, requests derive from measurements.yaml \u00d7 resourcesMultiplier.",
+      "properties": {
+        "requests": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        },
+        "limits": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "cpu": {
+              "type": "string"
+            },
+            "memory": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "resourcesMultiplier": {
+      "type": "number",
+      "minimum": 1,
+      "maximum": 4,
+      "description": "Headroom over the p99 in measurements.yaml when resources.requests is not set."
+    },
+    "terminationGracePeriodSeconds": {
+      "type": "integer",
+      "minimum": 30,
+      "maximum": 3600,
+      "description": "Must cover the pre-stop snapshot (AW-INF-007 derives it)."
+    },
+    "snapshots": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "size"
+      ],
+      "properties": {
+        "size": {
+          "type": "string",
+          "pattern": "^[0-9]+(Mi|Gi|Ti)$"
+        },
+        "storageClass": {
+          "type": "string"
+        }
+      }
+    },
+    "probes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startup",
+        "readiness",
+        "liveness"
+      ],
+      "properties": {
+        "startup": {
+          "$ref": "#/$defs/probe"
+        },
+        "readiness": {
+          "$ref": "#/$defs/probe"
+        },
+        "liveness": {
+          "$ref": "#/$defs/probe"
+        }
+      }
+    },
+    "pdb": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "minAvailable": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Skeleton only; AW-INF-006 fills the gRPC ingress rules and turns it on.",
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "observabilityNamespace": {
+          "type": "string"
+        },
+        "ingressNamespace": {
+          "type": "string"
+        },
+        "agentNamespace": {
+          "type": "string"
+        }
+      }
+    },
+    "serviceAccount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "create": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    "alerts": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "projectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "One Deployment each (AW-SRV-017/018/019). Disabled until their binaries exist.",
+      "properties": {
+        "state": {
+          "$ref": "#/$defs/projector"
+        },
+        "redis": {
+          "$ref": "#/$defs/projector"
+        },
+        "postgres": {
+          "$ref": "#/$defs/projector"
+        }
+      }
+    },
+    "contentVolume": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "When configMapName is set, that ConfigMap is mounted read-only at /content for server.content.source=dir (local and CI). Production content comes from the store (ADR-0004).",
+      "properties": {
+        "configMapName": {
+          "type": "string"
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "probe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "periodSeconds",
+        "failureThreshold"
+      ],
+      "properties": {
+        "periodSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 300
+        },
+        "failureThreshold": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "timeoutSeconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 60
+        }
+      }
+    },
+    "projector": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "replicas": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "requests": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              }
+            },
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cpu": {
+                  "type": "string"
+                },
+                "memory": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,103 @@
+# Chart defaults. Every key is described in values.schema.json, which `helm template`
+# enforces; a key not in the schema fails to render (AW-INF-003 AC-5).
+#
+# Server configuration goes under `server`, keyed exactly as the story config tables
+# (`server.content.source`), and is rendered to the ANDARA_* env the binary reads by the
+# generated templates/_env.tpl. Only keys the running binary reads are accepted; a
+# groomed-but-unbuilt key is rejected by the schema until its story lands.
+
+replicaCount: 1
+
+image:
+  repository: andara-server
+  tag: dev
+  pullPolicy: IfNotPresent
+
+server:
+  telemetry:
+    environment: dev
+
+# Secret *references*. Never material. Each mounts under /etc/andara/secrets/<name>/ with
+# mode 0400 when secretName is set; the env var naming the file is a server key set under
+# `server` once its story has landed (AW-SRV-005 for TLS, AW-SRV-008 for the token key).
+secrets:
+  tokenKey:
+    secretName: ""
+    key: token.keys
+  tlsCert:
+    secretName: ""
+    certKey: tls.crt
+    keyKey: tls.key
+  kafkaCreds:
+    secretName: ""
+
+# Empty means "derive from measurements.yaml × resourcesMultiplier". Set explicitly only
+# when a measurement is not what you want to run against.
+resources: {}
+resourcesMultiplier: 1.5
+
+# Must cover the pre-stop snapshot: AW-INF-007 asserts
+# >= snapshot.upload_timeout + deploy.notice_lead + 2 ticks + 10 s.
+terminationGracePeriodSeconds: 90
+
+snapshots:
+  size: 20Gi
+  storageClass: ""
+
+probes:
+  # Recovery in progress. 10 s × 60 = 600 s, which must exceed AW-SRV-007's measured
+  # worst-case recovery by 3× (AC-7).
+  startup:
+    periodSeconds: 10
+    failureThreshold: 60
+    timeoutSeconds: 3
+  readiness:
+    periodSeconds: 5
+    failureThreshold: 2
+    timeoutSeconds: 3
+  liveness:
+    periodSeconds: 10
+    failureThreshold: 3
+    timeoutSeconds: 3
+
+pdb:
+  enabled: true
+  # 0 at replicaCount 1: a deploy *is* the interruption until sharding is active (ADR-0001).
+  minAvailable: 0
+
+networkPolicy:
+  # Skeleton. AW-INF-006 adds the gRPC ingress rules and enables it.
+  enabled: false
+  observabilityNamespace: observability
+  ingressNamespace: ingress-nginx
+  agentNamespace: andara-agents
+
+serviceAccount:
+  create: true
+  name: ""
+
+alerts:
+  enabled: true
+
+# Disabled everywhere until the binaries exist (AW-SRV-019, AW-SRV-017, AW-SRV-018).
+# Enabling one before then renders a Deployment that crash-loops on a missing subcommand.
+projectors:
+  state:
+    enabled: false
+    replicas: 1
+    resources: {}
+  redis:
+    enabled: false
+    replicas: 1
+    resources: {}
+  postgres:
+    enabled: false
+    replicas: 1
+    resources: {}
+
+# Mount a ConfigMap of Zone Definition JSON at /content for `server.content.source: dir`.
+# `make helm-install ENV=local` creates it from testdata/content/valid.
+contentVolume:
+  configMapName: ""
+
+podAnnotations: {}

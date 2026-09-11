@@ -1,0 +1,168 @@
+# Hand-written half of values.schema.json (AW-INF-003 AC-5). `make values-schema` merges
+# the generated `server` subtree in and writes values.schema.json; edit this, never that.
+#
+# additionalProperties is false everywhere: a typo in a values file must fail `helm
+# template`, not render a chart that quietly ignores it.
+$schema: https://json-schema.org/draft/2020-12/schema
+title: andara chart values
+type: object
+additionalProperties: false
+required: [replicaCount, image, snapshots, probes, terminationGracePeriodSeconds]
+properties:
+  replicaCount:
+    type: integer
+    minimum: 1
+    maximum: 64
+    description: StatefulSet replicas. Each replica owns the Partitions p where p mod replicaCount == ordinal (ADR-0001).
+  image:
+    type: object
+    additionalProperties: false
+    required: [repository, tag]
+    properties:
+      repository: {type: string, minLength: 1}
+      tag: {type: string, minLength: 1}
+      pullPolicy: {type: string, enum: [Always, IfNotPresent, Never]}
+  server:
+    type: object
+    description: GENERATED from keys.yaml — see values.schema.json.
+  secrets:
+    type: object
+    additionalProperties: false
+    description: Secret references only. A value here is a Secret name, never secret material (AC-4).
+    properties:
+      tokenKey:
+        type: object
+        additionalProperties: false
+        properties:
+          secretName: {type: string}
+          key: {type: string, minLength: 1}
+      tlsCert:
+        type: object
+        additionalProperties: false
+        properties:
+          secretName: {type: string}
+          certKey: {type: string, minLength: 1}
+          keyKey: {type: string, minLength: 1}
+      kafkaCreds:
+        type: object
+        additionalProperties: false
+        properties:
+          secretName: {type: string}
+  resources:
+    type: object
+    additionalProperties: false
+    description: Explicit overrides. When empty, requests derive from measurements.yaml × resourcesMultiplier.
+    properties:
+      requests:
+        type: object
+        additionalProperties: false
+        properties:
+          cpu: {type: string}
+          memory: {type: string}
+      limits:
+        type: object
+        additionalProperties: false
+        properties:
+          cpu: {type: string}
+          memory: {type: string}
+  resourcesMultiplier:
+    type: number
+    minimum: 1
+    maximum: 4
+    description: Headroom over the p99 in measurements.yaml when resources.requests is not set.
+  terminationGracePeriodSeconds:
+    type: integer
+    minimum: 30
+    maximum: 3600
+    description: Must cover the pre-stop snapshot (AW-INF-007 derives it).
+  snapshots:
+    type: object
+    additionalProperties: false
+    required: [size]
+    properties:
+      size:
+        type: string
+        pattern: "^[0-9]+(Mi|Gi|Ti)$"
+      storageClass: {type: string}
+  probes:
+    type: object
+    additionalProperties: false
+    required: [startup, readiness, liveness]
+    properties:
+      startup: {$ref: "#/$defs/probe"}
+      readiness: {$ref: "#/$defs/probe"}
+      liveness: {$ref: "#/$defs/probe"}
+  pdb:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+      minAvailable: {type: integer, minimum: 0}
+  networkPolicy:
+    type: object
+    additionalProperties: false
+    description: Skeleton only; AW-INF-006 fills the gRPC ingress rules and turns it on.
+    properties:
+      enabled: {type: boolean}
+      observabilityNamespace: {type: string}
+      ingressNamespace: {type: string}
+      agentNamespace: {type: string}
+  serviceAccount:
+    type: object
+    additionalProperties: false
+    properties:
+      create: {type: boolean}
+      name: {type: string}
+  alerts:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+  projectors:
+    type: object
+    additionalProperties: false
+    description: One Deployment each (AW-SRV-017/018/019). Disabled until their binaries exist.
+    properties:
+      state: {$ref: "#/$defs/projector"}
+      redis: {$ref: "#/$defs/projector"}
+      postgres: {$ref: "#/$defs/projector"}
+  contentVolume:
+    type: object
+    additionalProperties: false
+    description: "When configMapName is set, that ConfigMap is mounted read-only at /content for server.content.source=dir (local and CI). Production content comes from the store (ADR-0004)."
+    properties:
+      configMapName: {type: string}
+  podAnnotations:
+    type: object
+    additionalProperties: {type: string}
+$defs:
+  probe:
+    type: object
+    additionalProperties: false
+    required: [periodSeconds, failureThreshold]
+    properties:
+      periodSeconds: {type: integer, minimum: 1, maximum: 300}
+      failureThreshold: {type: integer, minimum: 1, maximum: 1000}
+      timeoutSeconds: {type: integer, minimum: 1, maximum: 60}
+  projector:
+    type: object
+    additionalProperties: false
+    properties:
+      enabled: {type: boolean}
+      replicas: {type: integer, minimum: 1, maximum: 1}
+      resources:
+        type: object
+        additionalProperties: false
+        properties:
+          requests:
+            type: object
+            additionalProperties: false
+            properties:
+              cpu: {type: string}
+              memory: {type: string}
+          limits:
+            type: object
+            additionalProperties: false
+            properties:
+              cpu: {type: string}
+              memory: {type: string}

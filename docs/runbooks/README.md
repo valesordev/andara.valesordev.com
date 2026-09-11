@@ -14,14 +14,19 @@ A runbook states:
 Every step must be executable through `andara-cli` or standard infrastructure tooling. A step that
 says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 
+## Shipped
+
+| File | Story | Alert |
+|------|-------|-------|
+| `server-unavailable.md` | `AW-INF-003` | `AndaraServerUnavailable` |
+| `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
+
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
-| `server-unavailable.md` | `AW-INF-003` | `AndaraServerUnavailable` |
-| `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
 | `projection-stale.md` | `AW-SRV-019` (shared with `AW-SRV-017`, `AW-SRV-018`) | `ProjectionStale` |
