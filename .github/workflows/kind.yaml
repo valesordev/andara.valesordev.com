@@ -43,6 +43,9 @@ jobs:
         uses: helm/kind-action@v1
         with:
           cluster_name: ci
+          # kind must be new enough for the node image: v1.36 nodes carry containerd
+          # config v4, which the action's default kind cannot load images into.
+          version: v0.33.0
           node_image: kindest/node:v1.36.1
       - name: image
         run: make image

@@ -64,6 +64,19 @@ install_pinned() {
   ok "$name" "$want (installed)"
 }
 
+# PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003): rendered
+# manifests are real YAML and deserve a real parser. Installed only when the import fails,
+# so a distro-packaged copy is left alone; a refusal (PEP 668 externally-managed
+# environments) is reported with the package to install rather than forced past.
+if ${PY:-python3} -c 'import yaml' >/dev/null 2>&1; then
+  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
+else
+  echo "  installing PyYAML from scripts/requirements.txt ..."
+  ${PY:-python3} -m pip install --quiet --user -r scripts/requirements.txt 2>/dev/null \
+    || fail "PyYAML is missing and pip refused to install it; install your distro's python-yaml (or run: python3 -m pip install -r scripts/requirements.txt)"
+  ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)') (installed)"
+fi
+
 # golangci-lint is needed by `make lint`, which is a no-op until Go sources exist. Install
 # it anyway once sources appear; before that, skip the download nobody needs yet.
 if find . -name '*.go' -not -path './.git/*' -not -path './bin/*' -print -quit | grep -q .; then
