@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-32 stories — 1 in-progress · 5 review · 7 ready · 18 draft · 1 done
+32 stories — 6 review · 7 ready · 18 draft · 1 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -13,11 +13,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-005  gRPC gateway — TLS, session lifecycle, and protocol version negotiation
-         branch aw-srv-005-protobuf-schema-and-grpc-gateway-lifecycle
+  now    — nothing in flight
   next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
   next   AW-SRV-021  ready  Components on Rooms and Zones, and the closed Direction…  (unblocks 1)
-  review AW-CLI-001 — run the §8 checklist, then flip to done
+  review AW-SRV-005, AW-CLI-001 — run the §8 checklist, then flip to done
   held   5 ready, blocked: AW-SRV-004, AW-SRV-003, AW-SRV-011, AW-SRV-010, AW-CLI-004
 
 ## Decisions the lanes are waiting on
