@@ -1,0 +1,26 @@
+# prod. Requests derive from measurements.yaml × 1.5 (AC-10); nothing here restates a
+# server default (the chart renders only what is set).
+image:
+  repository: ghcr.io/valesordev/andara-server
+  tag: "0.0.0"   # always overridden by `make deploy TAG=` (AW-INF-007); 0.0.0 is not a published image
+
+server:
+  telemetry:
+    environment: prod
+    log_level: info
+
+snapshots:
+  size: 20Gi
+  storageClass: standard
+
+secrets:
+  tokenKey:
+    secretName: andara-token-key
+  tlsCert:
+    secretName: andara-server-tls
+  kafkaCreds:
+    secretName: andara-kafka-creds
+
+pdb:
+  enabled: true
+  minAvailable: 0

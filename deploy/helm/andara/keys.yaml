@@ -1,0 +1,119 @@
+# The server configuration key registry (AW-INF-003 AC-6).
+#
+# One entry per configuration key the chart can set, mapping the dotted key from the
+# story config tables to the environment variable the server reads. This file is the
+# source `make values-schema` generates values.schema.json and templates/_env.tpl from,
+# and `make values-schema-check` holds it against the code:
+#
+#   * an ANDARA_* literal in server/**/*.go that is not listed here FAILS, naming the
+#     variable — a key the chart cannot set is a key an operator cannot set;
+#   * an entry here whose env is not yet in code is a WARNING naming the story — the
+#     key is groomed, not built, and stays out of the schema until it lands.
+#
+# The env name is recorded rather than derived because the existing names are not
+# rule-derivable (ANDARA_STRICT_ORPHANS, ANDARA_ENV). Types: string | int | bool |
+# duration | enum (with `values`). `default` is what the server uses when unset; the
+# chart never re-states it.
+
+ignore_env:
+  - ANDARA_CONFIG          # the config file path; the chart uses env, not a file
+  - ANDARA_SIM_PARTITIONS  # written by the init container from the pod ordinal, never a value
+
+keys:
+  # --- AW-SRV-001 / AW-INF-002: in code ---
+  - {key: content.source,          env: ANDARA_CONTENT_SOURCE,   type: enum, values: [kafka, dir], default: kafka, story: AW-SRV-001}
+  - {key: content.path,            env: ANDARA_CONTENT_PATH,     type: string, default: ./content, story: AW-SRV-001}
+  - {key: content.strict_orphans,  env: ANDARA_STRICT_ORPHANS,   type: bool,   default: false, story: AW-SRV-001}
+  - {key: http.port,               env: ANDARA_HTTP_PORT,        type: int,    default: 8080, min: 1, max: 65535, story: AW-INF-002}
+  - {key: telemetry.service_name,  env: ANDARA_SERVICE_NAME,     type: string, default: andara-server, story: AW-SRV-001}
+  - {key: telemetry.environment,   env: ANDARA_ENV,              type: enum, values: [local, dev, prod], default: local, story: AW-INF-002}
+  - {key: telemetry.log_format,    env: ANDARA_LOG_FORMAT,       type: enum, values: [json, text], default: json, story: AW-SRV-001}
+  - {key: telemetry.log_level,     env: ANDARA_LOG_LEVEL,        type: enum, values: [debug, info, warn, error], default: info, story: AW-SRV-001}
+  - {key: telemetry.otlp_endpoint, env: ANDARA_OTLP_ENDPOINT,    type: string, default: localhost:4317, story: AW-SRV-001}
+
+  # --- AW-SRV-002: tick loop ---
+  - {key: sim.tick_rate,               env: ANDARA_TICK_RATE,              type: int, default: 10, min: 1, max: 100, story: AW-SRV-002}
+  - {key: sim.tick_budget_ms,          env: ANDARA_TICK_BUDGET_MS,         type: int, default: 50, min: 1, story: AW-SRV-002}
+  - {key: sim.max_per_tick,            env: ANDARA_MAX_PER_TICK,           type: int, default: 1024, min: 1, story: AW-SRV-002}
+  - {key: sim.drain_timeout_ms,        env: ANDARA_DRAIN_TIMEOUT_MS,       type: int, default: 5000, min: 0, story: AW-SRV-002}
+  - {key: sim.seed,                    env: ANDARA_SIM_SEED,               type: int, default: 0, story: AW-SRV-002}
+  - {key: sim.checkpoint_every_ticks,  env: ANDARA_CHECKPOINT_EVERY_TICKS, type: int, default: 100, min: 1, story: AW-SRV-002}
+
+  # --- AW-SRV-005: gateway ---
+  - {key: grpc.listen,               env: ANDARA_GRPC_LISTEN,              type: string, default: ":8443", story: AW-SRV-005}
+  - {key: grpc.tls_cert_file,        env: ANDARA_GRPC_TLS_CERT_FILE,       type: string, default: "", story: AW-SRV-005}
+  - {key: grpc.tls_key_file,         env: ANDARA_GRPC_TLS_KEY_FILE,        type: string, default: "", story: AW-SRV-005}
+  - {key: grpc.drain_timeout,        env: ANDARA_GRPC_DRAIN_TIMEOUT,       type: duration, default: 10s, story: AW-SRV-005}
+  - {key: grpc.max_recv_bytes,       env: ANDARA_GRPC_MAX_RECV_BYTES,      type: int, default: 4194304, min: 1, story: AW-SRV-005}
+  - {key: grpc.max_request_timeout,  env: ANDARA_GRPC_MAX_REQUEST_TIMEOUT, type: duration, default: 30s, story: AW-SRV-005}
+  - {key: protocol.min_version,      env: ANDARA_PROTOCOL_MIN_VERSION,     type: int, default: 1, min: 1, story: AW-SRV-005}
+  - {key: protocol.max_version,      env: ANDARA_PROTOCOL_MAX_VERSION,     type: int, default: 1, min: 1, story: AW-SRV-005}
+
+  # --- AW-SRV-004 / AW-SRV-011: events and egress ---
+  - {key: events.subscriber_buffer,  env: ANDARA_SUBSCRIBER_BUFFER,      type: int, default: 1024, min: 1, story: AW-SRV-004}
+  - {key: events.max_subscribers,    env: ANDARA_MAX_SUBSCRIBERS,        type: int, default: 10000, min: 1, story: AW-SRV-004}
+  - {key: egress.buffer,             env: ANDARA_EGRESS_BUFFER,          type: int, default: 256, min: 1, story: AW-SRV-011}
+  - {key: egress.resume_window,      env: ANDARA_EGRESS_RESUME_WINDOW,   type: int, default: 2048, min: 1, story: AW-SRV-011}
+  - {key: egress.heartbeat_interval, env: ANDARA_EGRESS_HEARTBEAT_INTERVAL, type: duration, default: 15s, story: AW-SRV-011}
+  - {key: egress.max_sessions,       env: ANDARA_EGRESS_MAX_SESSIONS,    type: int, default: 5000, min: 1, story: AW-SRV-011}
+  - {key: egress.assumed_event_rate, env: ANDARA_EGRESS_ASSUMED_EVENT_RATE, type: int, default: 5, min: 1, story: AW-SRV-015}
+
+  # --- AW-SRV-010: ingress ---
+  - {key: ingress.rate_limit,        env: ANDARA_INGRESS_RATE_LIMIT,   type: string, default: 20/s, story: AW-SRV-010}
+  - {key: ingress.burst,             env: ANDARA_INGRESS_BURST,        type: int, default: 40, min: 1, story: AW-SRV-010}
+  - {key: ingress.produce_deadline,  env: ANDARA_PRODUCE_DEADLINE,     type: duration, default: 2s, story: AW-SRV-010}
+  - {key: ingress.max_pending,       env: ANDARA_INGRESS_MAX_PENDING,  type: int, default: 256, min: 1, story: AW-SRV-010}
+  - {key: ingress.agent_rate_limit,  env: ANDARA_AGENT_RATE_LIMIT,     type: string, default: 100/s, story: AW-SRV-010}
+
+  # --- AW-SRV-006 / AW-SRV-007 / AW-INF-007: snapshots, recovery, deploy ---
+  - {key: snapshot.interval,         env: ANDARA_SNAPSHOT_INTERVAL,       type: duration, default: 60s, story: AW-SRV-006}
+  - {key: snapshot.max_stall_ms,     env: ANDARA_SNAPSHOT_MAX_STALL_MS,   type: int, default: 5, min: 0, story: AW-SRV-006}
+  - {key: snapshot.store,            env: ANDARA_SNAPSHOT_STORE,          type: enum, values: [fs, s3], default: fs, story: AW-SRV-006}
+  - {key: snapshot.fs_path,          env: ANDARA_SNAPSHOT_FS_PATH,        type: string, default: /var/lib/andara/snapshots, story: AW-SRV-006}
+  - {key: snapshot.s3_bucket,        env: ANDARA_SNAPSHOT_S3_BUCKET,      type: string, default: "", story: AW-SRV-006}
+  - {key: snapshot.s3_endpoint,      env: ANDARA_SNAPSHOT_S3_ENDPOINT,    type: string, default: "", story: AW-SRV-006}
+  - {key: snapshot.upload_timeout,   env: ANDARA_SNAPSHOT_UPLOAD_TIMEOUT, type: duration, default: 30s, story: AW-SRV-006}
+  - {key: snapshot.keep_rounds,      env: ANDARA_SNAPSHOT_KEEP_ROUNDS,    type: int, default: 120, min: 1, story: AW-INF-007}
+  - {key: snapshot.keep_deploy_rounds, env: ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS, type: int, default: 30, min: 0, story: AW-INF-007}
+  - {key: recovery.require_snapshot, env: ANDARA_RECOVERY_REQUIRE_SNAPSHOT, type: bool, default: false, story: AW-SRV-007}
+  - {key: recovery.replay_batch,     env: ANDARA_RECOVERY_REPLAY_BATCH,   type: int, default: 4096, min: 1, story: AW-SRV-007}
+  - {key: recovery.verify_timeout,   env: ANDARA_RECOVERY_VERIFY_TIMEOUT, type: duration, default: 600s, story: AW-SRV-007}
+  - {key: recovery.rto_target,       env: ANDARA_RECOVERY_RTO_TARGET,     type: duration, default: 60s, story: AW-SRV-015}
+  - {key: recovery.pin_round,        env: ANDARA_RECOVERY_PIN_ROUND,      type: int, default: 0, min: 0, story: AW-INF-007}
+  - {key: deploy.notice_lead,        env: ANDARA_DEPLOY_NOTICE_LEAD,      type: duration, default: 10s, story: AW-INF-007}
+  - {key: deploy.expected_back,      env: ANDARA_DEPLOY_EXPECTED_BACK,    type: duration, default: 60s, story: AW-INF-007}
+
+  # --- AW-SRV-008 / AW-SRV-014 / AW-SRV-015: identity and sessions ---
+  - {key: auth.session_ttl,          env: ANDARA_AUTH_SESSION_TTL,        type: duration, default: 1h, story: AW-SRV-008}
+  - {key: auth.refresh_ttl,          env: ANDARA_AUTH_REFRESH_TTL,        type: duration, default: 720h, story: AW-SRV-008}
+  - {key: auth.token_key_file,       env: ANDARA_AUTH_TOKEN_KEY_FILE,     type: string, default: "", story: AW-SRV-008}
+  - {key: auth.argon2.memory_kib,    env: ANDARA_AUTH_ARGON2_MEMORY_KIB,  type: int, default: 65536, min: 8192, story: AW-SRV-008}
+  - {key: auth.argon2.time,          env: ANDARA_AUTH_ARGON2_TIME,        type: int, default: 3, min: 1, story: AW-SRV-008}
+  - {key: auth.argon2.threads,       env: ANDARA_AUTH_ARGON2_THREADS,     type: int, default: 4, min: 1, story: AW-SRV-008}
+  - {key: auth.rate_limit,           env: ANDARA_AUTH_RATE_LIMIT,         type: string, default: 10/m, story: AW-SRV-008}
+  - {key: auth.invite_ttl,           env: ANDARA_AUTH_INVITE_TTL,         type: duration, default: 168h, story: AW-SRV-008}
+  - {key: auth.recheck_interval,     env: ANDARA_AUTH_RECHECK_INTERVAL,   type: duration, default: 30s, story: AW-SRV-008}
+  - {key: auth.k8s_issuer,           env: ANDARA_AUTH_K8S_ISSUER,         type: string, default: "", story: AW-SRV-009}
+  - {key: auth.k8s_jwks_url,         env: ANDARA_AUTH_K8S_JWKS_URL,       type: string, default: "", story: AW-SRV-009}
+  - {key: character.max_per_account, env: ANDARA_CHARACTER_MAX_PER_ACCOUNT, type: int, default: 5, min: 1, story: AW-SRV-014}
+  - {key: character.spawn_room,      env: ANDARA_CHARACTER_SPAWN_ROOM,    type: string, default: "", story: AW-SRV-014}
+  - {key: character.delete_retention, env: ANDARA_CHARACTER_DELETE_RETENTION, type: duration, default: 720h, story: AW-SRV-014}
+  - {key: character.name_pattern,    env: ANDARA_CHARACTER_NAME_PATTERN,  type: string, default: "", story: AW-SRV-014}
+  - {key: session.linkdead_grace,    env: ANDARA_LINKDEAD_GRACE,          type: duration, default: 180s, story: AW-SRV-015}
+  - {key: session.linkdead_combat_extension, env: ANDARA_LINKDEAD_COMBAT_EXTENSION, type: duration, default: 60s, story: AW-SRV-015}
+  - {key: session.linkdead_max,      env: ANDARA_LINKDEAD_MAX,            type: duration, default: 300s, story: AW-SRV-015}
+  - {key: session.linkdead_detect,   env: ANDARA_LINKDEAD_DETECT,         type: duration, default: 5s, story: AW-SRV-015}
+
+  # --- AW-SRV-009: behavior agents ---
+  - {key: agent.lease_ttl,                env: ANDARA_AGENT_LEASE_TTL,          type: duration, default: 30s, story: AW-SRV-009}
+  - {key: agent.max_entities_per_session, env: ANDARA_AGENT_MAX_ENTITIES,       type: int, default: 500, min: 1, story: AW-SRV-009}
+  - {key: agent.memory_slots,             env: ANDARA_AGENT_MEMORY_SLOTS,       type: int, default: 16, min: 0, story: AW-SRV-009}
+  - {key: agent.memory_slot_bytes,        env: ANDARA_AGENT_MEMORY_SLOT_BYTES,  type: int, default: 1024, min: 1, story: AW-SRV-009}
+
+  # --- AW-SRV-012 / AW-SRV-013: content ---
+  - {key: content.packs,             env: ANDARA_CONTENT_PACKS,           type: string, default: andara.core, story: AW-SRV-012}
+  - {key: content.cache_dir,         env: ANDARA_CONTENT_CACHE_DIR,       type: string, default: /var/cache/andara/blobs, story: AW-SRV-012}
+  - {key: content.max_blob_bytes,    env: ANDARA_CONTENT_MAX_BLOB_BYTES,  type: int, default: 8388608, min: 1, story: AW-SRV-012}
+  - {key: content.reload_debounce,   env: ANDARA_CONTENT_RELOAD_DEBOUNCE, type: duration, default: 2s, story: AW-SRV-012}
+  - {key: content.max_pack_bytes,    env: ANDARA_CONTENT_MAX_PACK_BYTES,  type: int, default: 268435456, min: 1, story: AW-SRV-013}
+  - {key: content.core_pack,         env: ANDARA_CONTENT_CORE_PACK,       type: string, default: andara.core, story: AW-SRV-013}

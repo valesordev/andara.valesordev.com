@@ -1,0 +1,72 @@
+{{- /*
+One Deployment per projector (AW-SRV-019 state, AW-SRV-017 redis, AW-SRV-018 postgres).
+Deployments, not part of the StatefulSet: a projector is disposable and rebuilds from the
+log, so it has no identity to keep. All three are disabled until their binaries exist.
+*/ -}}
+{{- range $name, $spec := .Values.projectors }}
+{{- if $spec.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "andara.name" $ }}-projector-{{ $name }}
+  labels:
+    {{- include "andara.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: projector-{{ $name }}
+spec:
+  replicas: {{ $spec.replicas | default 1 }}
+  # A projector holds a consumer group; two of one kind would split the fold.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ include "andara.name" $ }}-projector-{{ $name }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "andara.name" $ }}-projector-{{ $name }}
+        app.kubernetes.io/name: {{ include "andara.name" $ }}
+        app.kubernetes.io/component: projector-{{ $name }}
+      annotations:
+        checksum/config: {{ include "andara.serverEnv" $ | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "andara.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: projector
+          image: {{ $.Values.image.repository }}:{{ $.Values.image.tag }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          command: ["/usr/local/bin/andara-projector", {{ $name | quote }}]
+          envFrom:
+            - configMapRef:
+                name: {{ include "andara.name" $ }}-config
+          ports:
+            - name: http
+              containerPort: {{ include "andara.httpPort" $ }}
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /livez, port: http}
+            periodSeconds: 10
+          resources:
+            {{- include "andara.projectorResources" (dict "root" $ "name" $name "spec" $spec) | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: cache
+              mountPath: /var/cache/andara
+      volumes:
+        - name: cache
+          emptyDir: {}
+{{- end }}
+{{- end }}
