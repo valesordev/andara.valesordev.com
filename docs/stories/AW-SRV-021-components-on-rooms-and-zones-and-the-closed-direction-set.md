@@ -166,7 +166,8 @@ CLAUDE.md §8, plus: `make schemas-apply` has been run so the registry carries t
   (CLAUDE.md §11). This does not block the story: the mechanism is the story, and adding a type to the
   registry afterwards is a small change. ADR-0010 decision 7 makes this list the thing Builders will
   push on, so expect it to grow from real content rather than from guessing now.
-- `[ASSUMPTION]` Zone-level and Room-level components do not merge or inherit — a Zone's `Dark{}` does
-  not make its Rooms dark. Merging is ADR-0010 decision 4's semantics applied across a containment
-  boundary rather than an inheritance one, which is a different rule and wants its own decision. AC-4
-  pins the non-merging behaviour so that a later change to it is a visible test change.
+- **Resolved 2026-09-14 (Brian):** Zone-level and Room-level components do not merge or inherit — a
+  Zone's `Dark{}` does not make its Rooms dark. Merging is ADR-0010 decision 4's semantics applied
+  across a containment boundary rather than an inheritance one, which is a different rule and would
+  want its own decision. AC-4 pins the non-merging behaviour so that a later change to it is a visible
+  test change.

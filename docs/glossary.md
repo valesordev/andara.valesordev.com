@@ -240,8 +240,8 @@ naming the type, the file, and the Room. Adding a type is a server change and a 
 rejection message says out loud so a Builder files an issue rather than re-checking their spelling.
 
 A Zone's Components are the Zone's own and do **not** descend onto its Rooms: a Zone carrying `Dark`
-does not make its Rooms dark. Merging across that containment boundary is a different rule from the
-inheritance merge in ADR-0010 decision 4 and has not been decided.
+does not make its Rooms dark (decided 2026-09-14). Merging across that containment boundary is a
+different rule from the inheritance merge in ADR-0010 decision 4 and would need its own decision.
 
 **Core Component vocabulary for Rooms and Zones.** Four to start, enough to prove the mechanism and
 the ones that recur across every MUD. Which Room and Zone properties Andara actually wants is game
