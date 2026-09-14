@@ -192,7 +192,9 @@ rendered manifest.
 - **Manual/operator:**
   ```
   make image && make kind-load && make helm-install ENV=local      # prints the /etc/hosts line and the CA path
-  bin/andara-cli --server-address andara.local:443 --tls-ca .local/tls/cluster/local/ca.pem play   # expect: session opens
+  grpcurl -cacert .local/tls/cluster/local/ca.pem -authority andara.local 127.0.0.1:443 \
+    -d '{"protocol_version":1,"auth_token":"x","client_name":"probe"}' andara.game.v1.Game/OpenSession
+                                                                    # expect: a session_id (andara-cli play is AW-CLI-002; same flags, same CA)
   grpcurl -cacert .local/tls/cluster/local/ca.pem -authority andara.local 127.0.0.1:443 \
     andara.admin.v1.Admin/GetServerInfo                              # from the box: Unauthenticated (reached the server)
   kubectl -n andara-local patch middleware andara-admin-allowlist --type merge \
