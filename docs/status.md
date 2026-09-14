@@ -2,13 +2,14 @@
 
 # Status — Andara's World
 
-35 stories — 3 review · 26 ready · 6 done
+35 stories — 1 in-progress · 3 review · 25 ready · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    — nothing in flight
-  next   AW-INF-006  ready  Ingress, certificate management, and gRPC/Connect routing
+  now    AW-INF-006  Ingress, certificate management, and gRPC/Connect routing
+         branch aw-inf-006-ingress-tls-and-grpc-routing
+  next   — nothing groomed and unblocked
   review AW-INF-002, AW-INF-003 — run the §8 checklist, then flip to done
   held   3 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007
 

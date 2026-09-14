@@ -4,7 +4,7 @@ title: Ingress, certificate management, and gRPC/Connect routing
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-003, AW-SRV-005]
 blocks: []
