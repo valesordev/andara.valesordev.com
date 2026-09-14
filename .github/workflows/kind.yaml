@@ -102,7 +102,7 @@ jobs:
           set -euo pipefail
           NS=andara-local
           kubectl -n $NS get certificate andara-edge andara-server
-          helm -n $NS get manifest andara | grep -c 'PRIVATE KEY' | grep -qx 0
+          ! helm -n $NS get manifest andara | grep -q 'PRIVATE KEY'
       - name: Connect and gRPC-Web through the edge on one host (AC-2)
         run: |
           set -euo pipefail
@@ -137,8 +137,11 @@ jobs:
           # The catch-all is unaffected.
           curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 -X POST -H 'content-type: application/json' \
             https://andara.local/andara.game.v1.Game/OpenSession -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci"}' >/dev/null
-          # Restore the release's allowlist for the steps that follow.
-          make helm-install ENV=local >/dev/null
+          # Put the allowlist back explicitly. `helm upgrade` would not: for a CRD-typed
+          # resource Helm patches old manifest → new manifest and never reads live state,
+          # so an unchanged values file leaves a hand-patched Middleware as it is.
+          kubectl -n $NS patch middleware andara-admin-allowlist --type merge \
+            -p '{"spec":{"ipAllowList":{"sourceRange":["10.0.0.0/8","192.168.0.0/16","172.16.0.0/12"]}}}'
       - name: the server pod is unreachable from another namespace (AC-6)
         run: |
           set -euo pipefail

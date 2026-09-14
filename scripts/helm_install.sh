@@ -78,14 +78,19 @@ HOST="$(awk '/^host:/{print $2}' "$VALUES")"
 ISSUER="$(helm -n "$NS" get values andara --all -o json | "${PY:-python3}" -c 'import json,sys; print(json.load(sys.stdin)["tls"]["issuer"])')"
 CA_DIR="$REPO/.local/tls/cluster/$ENVNAME"
 mkdir -p "$CA_DIR"
-kubectl -n "$NS" wait --for=condition=Ready certificate/andara-edge certificate/andara-server --timeout=120s >/dev/null
+kubectl -n "$NS" wait --for=condition=Ready certificate/andara-server --timeout=120s >/dev/null
 kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA_DIR/ca.pem"
-echo "helm-install: edge https://$HOST (issuer $ISSUER); private CA written to $CA_DIR/ca.pem"
-if [[ "$ISSUER" == "andara-ca" ]]; then
-  echo "helm-install:   andara-cli --server-address $HOST:443 --tls-ca $CA_DIR/ca.pem ..."
+if kubectl -n "$NS" get certificate andara-edge >/dev/null 2>&1; then
+  kubectl -n "$NS" wait --for=condition=Ready certificate/andara-edge --timeout=120s >/dev/null
+  echo "helm-install: edge https://$HOST (issuer $ISSUER); private CA written to $CA_DIR/ca.pem"
+  if [[ "$ISSUER" == "andara-ca" ]]; then
+    echo "helm-install:   andara-cli --server-address $HOST:443 --tls-ca $CA_DIR/ca.pem ..."
+  else
+    echo "helm-install:   andara-cli --server-address $HOST:443 ...   (public issuer; the system trust store suffices)"
+  fi
+  if ! getent hosts "$HOST" >/dev/null 2>&1; then
+    echo "helm-install:   $HOST does not resolve here; add to /etc/hosts:   127.0.0.1 $HOST"
+  fi
 else
-  echo "helm-install:   andara-cli --server-address $HOST:443 ...   (public issuer; the system trust store suffices)"
-fi
-if ! getent hosts "$HOST" >/dev/null 2>&1; then
-  echo "helm-install:   $HOST does not resolve here; add to /etc/hosts:   127.0.0.1 $HOST"
+  echo "helm-install: ingress.enabled=false — no edge; private CA written to $CA_DIR/ca.pem"
 fi

@@ -197,7 +197,9 @@ rendered manifest.
     andara.admin.v1.Admin/GetServerInfo                              # from the box: Unauthenticated (reached the server)
   kubectl -n andara-local patch middleware andara-admin-allowlist --type merge \
     -p '{"spec":{"ipAllowList":{"sourceRange":["203.0.113.0/24"]}}}'  # then the same call: HTTP 403 from the edge
-  make helm-install ENV=local                                       # restores the allowlist
+  kubectl -n andara-local patch middleware andara-admin-allowlist --type merge \
+    -p '{"spec":{"ipAllowList":{"sourceRange":["10.0.0.0/8","192.168.0.0/16","172.16.0.0/12"]}}}'
+                                                                    # restore it explicitly: helm patches CRs old→new manifest and never reads live state
   make stream-soak ENV=local SOAK=3m                                # AC-1 short, AC-3, gRPC counter
   ```
 
@@ -212,8 +214,8 @@ CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `d
   bounded by role at `authorize`, which is the ADR-0005 containment.
 - **Resolved 2026-09-14 (by the cluster): Traefik and cert-manager.** The `[ASSUMPTION]` of ingress-nginx
   was false on the decided platform; Traefik is what the port mapping was made for. Envoy Gateway with TLS
-  passthrough remains the alternative if re-origination ever proves to be the streaming problem; the 60 m
-  soak passed on 2026-09-14 with a certificate renewal mid-stream, so it has not.
+  passthrough remains the alternative if re-origination ever proves to be the streaming problem; the
+  60 m soak is what would show it (result recorded below once observed).
 - `[ASSUMPTION]` Private CA for the box, ACME selectable by values for a public host. `dev` and `prod`
   values name `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` under the zone the
   cluster's `letsencrypt` issuer already solves for, on `andara-ca` until Brian picks public names —

@@ -260,10 +260,18 @@ def test_edge_off():
     code, out, err = render("local", "--set", "ingress.enabled=false")
     if code:
         return fail("ingress.enabled=false failed to render: %s" % err.strip())
-    kinds = {d["kind"] for d in docs(out)}
-    for k in ("Ingress", "Certificate", "Middleware", "ServersTransport"):
+    ds = docs(out)
+    kinds = {d["kind"] for d in ds}
+    for k in ("Ingress", "Middleware", "ServersTransport"):
         if k in kinds:
             fail("ingress.enabled=false still renders a %s" % k)
+    if find(ds, "Certificate", "andara-edge") is not None:
+        fail("ingress.enabled=false still renders the edge Certificate")
+    if find(ds, "Certificate", "andara-server") is None:
+        fail("ingress.enabled=false dropped the server Certificate; the server has no plaintext mode")
+    svc = find(ds, "Service", "andara")
+    if "traefik.ingress.kubernetes.io/service.serverstransport" in (svc["metadata"].get("annotations") or {}):
+        fail("ingress.enabled=false still points the Service at a ServersTransport")
     for setting, needle in [
         ("host=Andara_Local", "/host"),
         ("admin.allowedCIDRs[0]=everyone", "/admin/allowedCIDRs"),
