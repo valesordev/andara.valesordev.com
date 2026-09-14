@@ -185,7 +185,9 @@ its Room and stops being a target. What happens when a Linkdead grace period exp
 would otherwise have lost.
 
 **Invite Code** — A single-use, expiring, revocable, Account-scoped token required to register while
-`auth.registration_mode` is `invite`. Issuance and redemption are both audited.
+the Registration Mode is `invite`. Issued by an Operator onto their own Account, shown once, stored
+only as a hash; burned on the issuer's record — durably — before the new Account is written, so of N
+concurrent presentations exactly one wins. Issuance and redemption are both audited (AW-SRV-008).
 
 **Linkdead** — A Session whose stream dropped while its Character remains in the World. The Character is
 marked linkdead and held for `session.linkdead_grace` (180 s); reconnecting within that window rebinds. On
@@ -201,18 +203,55 @@ surviving by despawning out of it (ADR-0006).
 **Player** — A human playing the game. Used for the human, not the Entity. When the Entity is meant,
 say Character.
 
-**Registration Mode** — Server configuration gating account creation: `closed`, `invite`, or `open`.
-Changeable without a deploy; every change is an audit Event (ADR-0006).
+**Registration Mode** — The gate on account creation: `closed`, `invite`, or `open`. Not
+configuration but a record on `andara.accounts.v1` under the key `config/registration`, written by
+`Admin.SetRegistrationMode` and audited, so the switch survives a restart and needs no deploy
+(ADR-0006, AW-SRV-008). `closed` is the state of a topic with no such record.
 
 **Session** — A live, authenticated gRPC connection bound to at most one Character. Has a `SessionID`
 used as the correlation ID on every log line, span, and Command in its path. Bound to the transport
 connection it was opened on: when that connection closes, the Session ends (AW-SRV-005). Whether a
 Character survives that is Linkdead's question, not the Session's.
 
-**Principal** — Who a verified credential speaks for, as the Gateway sees it: the subject a token
-named, and (once AW-SRV-008 lands) what it is permitted to do. Not an Account and not a Character —
-those are what a Principal may be bound to. Until AW-SRV-008, a stub verifier names every non-empty
-token `stub`.
+**Principal** — Who a verified credential speaks for, as the Gateway and the Command Pipeline see it:
+the Account that authenticated, the effective Role set, the Account being acted as (if any), the
+agent's Content Pack scope, and the token's expiry. Roles and status come from the Account index at
+verification time, never from the token (AW-SRV-008). Not an Account and not a Character — those are
+what a Principal may be bound to.
+
+**Role** — An Account attribute checked in `authorize` before a Command reaches the log: `player`,
+`builder`, `game_master`, `operator`, `agent` (ADR-0006). Roles are a set, not a ladder — an Operator
+who needs to build holds `builder` too. `agent` is set when the Account is created and cannot be
+granted or removed afterwards. The `authorize` stage reads a Verb's required Role from the verb table
+and rejects, audited, without consuming a log offset (AW-SRV-008).
+
+**Session Token** — A signed, stateless credential — `base64url(payload).base64url(HMAC-SHA256)` —
+naming an Account, an expiry, and the signing key, and carrying no Roles. What `OpenSession` and the
+Admin bearer header present. Lives `auth.session_ttl` (1 h, which must exceed `session.linkdead_max`)
+and survives a server restart because nothing about it is stored (AW-SRV-008).
+
+**Refresh Token** — 32 random bytes, presented to `Auth.Refresh` for a fresh Session Token and a
+fresh Refresh Token; only its SHA-256 is stored, on the Account record. Revocable, per token or all at
+once; presenting a revoked one is refused and audited. Lives `auth.refresh_ttl` (30 d).
+
+**API Key** — `ak_` plus 32 random bytes: the credential of an `agent` Account where there is no token
+issuer (`make up`). Shown once at creation, Argon2id-hashed like a password. The cluster alternative is
+a **Workload JWT**, a projected Kubernetes service-account token verified against the issuer's JWKS,
+whose `sub` must equal the Account's `workload_subject` (AW-SRV-008, ADR-0005).
+
+**Acting As** — An `operator` or `game_master` opening a Session as another Account
+(`OpenSessionRequest.act_as_account_id`). The Session takes the target's Roles; every Audit Record in
+it names both `actor_account_id` and `acting_as_account_id`, so acting as someone never hides who was
+acting (decided 2026-09-07; AW-SRV-008).
+
+**Audit Record** — One record on `andara.audit.v1` per privileged action: actor, acting-as, action,
+target, outcome, Session ID, trace ID, timestamp. Written for every Admin RPC, every `authorize`
+rejection, every Invite issued or redeemed, every Refresh Token revoked. Keyed by actor, retained 365
+days; never carries a username on a failure path, a token, or a hash.
+
+**Bootstrap Operator** — The first `operator` Account, created at boot from `auth.bootstrap_operator`
+only while the index holds no operator and ignored afterwards. Every later operator is created by one
+through `Admin.CreateAccount`; the setting can stay configured without being a back door (AW-SRV-008).
 
 ---
 
