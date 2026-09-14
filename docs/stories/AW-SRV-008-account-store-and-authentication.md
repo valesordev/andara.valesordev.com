@@ -4,7 +4,7 @@ title: Account store, registration modes, and authentication
 epic: EPIC-08
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-005]
 blocks: [AW-SRV-009, AW-SRV-013, AW-SRV-014]
