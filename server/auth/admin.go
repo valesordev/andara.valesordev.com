@@ -364,3 +364,53 @@ func roleList(roles []Role) string {
 	}
 	return strings.Join(parts, ",")
 }
+
+// BootstrapActor is the actor named on the audit record Bootstrap writes:
+// nobody had an Account yet, so nobody could have.
+const BootstrapActor = "bootstrap"
+
+// Bootstrap creates the first operator Account from auth.bootstrap_operator
+// when the index holds no operator at all, and does nothing otherwise. It
+// is how the first `Admin.CreateAccount` caller comes to exist; every later
+// operator is created by one. Returns whether an Account was created.
+func (s *Store) Bootstrap(ctx context.Context, username, password string) (bool, error) {
+	username = NormalizeUsername(username)
+	if !validUsername(username) {
+		return false, fmt.Errorf("%w: bootstrap operator username must be 3-32 characters of a-z, 0-9, _ or -", ErrInvalidArgument)
+	}
+	if err := validPassword(password); err != nil {
+		return false, fmt.Errorf("bootstrap operator: %w", err)
+	}
+	s.mu.RLock()
+	haveOperator := false
+	for _, a := range s.byID {
+		if a.GetStatus() == accountsv1.AccountStatus_ACTIVE && slices.Contains(a.GetRoles(), accountsv1.Role_OPERATOR) {
+			haveOperator = true
+			break
+		}
+	}
+	s.mu.RUnlock()
+	if haveOperator {
+		return false, nil
+	}
+	cred := hashCredential(accountsv1.CredentialKind_PASSWORD, password, s.opts.Argon2)
+
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	if _, taken := s.lookupUsername(username); taken {
+		return false, fmt.Errorf("bootstrap operator: username %q exists without the operator role; grant it or choose another", username)
+	}
+	acc := &accountsv1.Account{
+		AccountId:   newAccountID(),
+		Username:    username,
+		Credential:  cred,
+		Roles:       []accountsv1.Role{accountsv1.Role_OPERATOR},
+		Status:      accountsv1.AccountStatus_ACTIVE,
+		CreatedUnix: s.now().Unix(),
+	}
+	if err := s.commit(ctx, acc); err != nil {
+		return false, err
+	}
+	s.audit.Record(ctx, Entry{Actor: Principal{AccountID: BootstrapActor}, Action: ActionCreateAccount, Target: acc.AccountId, Outcome: AuditOK, Detail: "bootstrap operator"})
+	return true, nil
+}

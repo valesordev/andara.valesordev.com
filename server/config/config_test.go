@@ -11,8 +11,9 @@ import (
 	"time"
 )
 
-// withTLS layers the two required TLS keys over env, so a test about something
-// else does not fail the gateway's "no plaintext mode" check.
+// withTLS layers the required-to-serve keys over env — TLS material, the
+// token key file, and a broker — so a test about something else does not
+// fail the "no plaintext mode" and "no accounts without a store" checks.
 func withTLS(env EnvLookup) EnvLookup {
 	return func(k string) (string, bool) {
 		switch k {
@@ -20,6 +21,10 @@ func withTLS(env EnvLookup) EnvLookup {
 			return "/tls/server.pem", true
 		case "ANDARA_TLS_KEY_FILE":
 			return "/tls/server-key.pem", true
+		case "ANDARA_AUTH_TOKEN_KEY_FILE":
+			return "/auth/token-keys", true
+		case "ANDARA_KAFKA_BROKERS":
+			return "redpanda:29092", true
 		}
 		if env == nil {
 			return "", false
@@ -172,6 +177,10 @@ func TestParse_GatewayFileKeys(t *testing.T) {
 protocol:
   min_version: 2
   max_version: 3
+kafka:
+  brokers: [file:9092]
+auth:
+  token_key_file: /file/keys
 `)
 	if err := os.WriteFile(path, body, 0o644); err != nil {
 		t.Fatal(err)
@@ -210,6 +219,10 @@ func TestParse_GatewayEnvAndFlags(t *testing.T) {
 			return "1", true
 		case "ANDARA_PROTOCOL_MAX":
 			return "4", true
+		case "ANDARA_AUTH_TOKEN_KEY_FILE":
+			return "/env/keys", true
+		case "ANDARA_KAFKA_BROKERS":
+			return "env:9092, env2:9092", true
 		}
 		return "", false
 	}
@@ -292,5 +305,93 @@ func TestContentSourceName(t *testing.T) {
 	c.ContentSource = "kafka"
 	if c.ContentSourceName() != "kafka" {
 		t.Errorf("got %q", c.ContentSourceName())
+	}
+}
+
+func TestParse_AuthKeys(t *testing.T) {
+	// Required to serve, exempt under --validate-only, like TLS.
+	tlsOnly := func(k string) (string, bool) {
+		switch k {
+		case "ANDARA_TLS_CERT_FILE":
+			return "/tls/server.pem", true
+		case "ANDARA_TLS_KEY_FILE":
+			return "/tls/server-key.pem", true
+		}
+		return "", false
+	}
+	if _, err := Parse(nil, tlsOnly, nil); err == nil || !strings.Contains(err.Error(), "kafka.brokers") {
+		t.Fatalf("kafka store without brokers: %v", err)
+	}
+	if _, err := Parse([]string{"--auth-store=memory"}, tlsOnly, nil); err == nil || !strings.Contains(err.Error(), "auth.token_key_file") {
+		t.Fatalf("no key file: %v", err)
+	}
+	if _, err := Parse([]string{"--validate-only"}, tlsOnly, nil); err != nil {
+		t.Fatalf("validate-only should need neither: %v", err)
+	}
+
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AuthStore != "kafka" || c.AuthSessionTTL != time.Hour || c.AuthRefreshTTL != 720*time.Hour ||
+		c.AuthArgon2MemoryKiB != 65536 || c.AuthArgon2Time != 3 || c.AuthArgon2Threads != 4 ||
+		c.AuthRateLimit != "10/m" || c.AuthInviteTTL != 168*time.Hour || c.AuthRecheckInterval != 30*time.Second ||
+		c.SessionLinkdeadMax != 300*time.Second || len(c.KafkaBrokers) != 1 {
+		t.Errorf("defaults: %+v", c)
+	}
+
+	// File, env, flag precedence and every key.
+	dir := t.TempDir()
+	path := dir + "/server.yaml"
+	body := []byte(`kafka:
+  brokers: [a:1, b:2]
+auth:
+  store: memory
+  session_ttl: 2h
+  refresh_ttl: 48h
+  token_key_file: /f/keys
+  argon2: {memory_kib: 1024, time: 2, threads: 1}
+  rate_limit: 5/m
+  invite_ttl: 24h
+  recheck_interval: 10s
+  k8s_issuer: https://kubernetes.default.svc
+  k8s_jwks_url: https://kubernetes.default.svc/openid/v1/jwks
+session:
+  linkdead_max: 90s
+`)
+	if err := os.WriteFile(path, body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Parse([]string{"--config", path, "--auth-argon2-time=5"}, func(k string) (string, bool) {
+		if k == "ANDARA_AUTH_SESSION_TTL" {
+			return "3h", true
+		}
+		return tlsOnly(k)
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.AuthStore != "memory" || c.AuthSessionTTL != 3*time.Hour || c.AuthRefreshTTL != 48*time.Hour ||
+		c.AuthTokenKeyFile != "/f/keys" || c.AuthArgon2MemoryKiB != 1024 || c.AuthArgon2Time != 5 || c.AuthArgon2Threads != 1 ||
+		c.AuthRateLimit != "5/m" || c.AuthInviteTTL != 24*time.Hour || c.AuthRecheckInterval != 10*time.Second ||
+		c.AuthK8sIssuer != "https://kubernetes.default.svc" || c.SessionLinkdeadMax != 90*time.Second ||
+		strings.Join(c.KafkaBrokers, ",") != "a:1,b:2" {
+		t.Errorf("file+env+flag: %+v", c)
+	}
+
+	// ADR-0006's invariant: a token must outlive the linkdead ceiling.
+	if _, err := Parse([]string{"--auth-session-ttl=4m"}, withTLS(nil), nil); err == nil || !strings.Contains(err.Error(), "linkdead_max") {
+		t.Fatalf("session_ttl <= linkdead_max accepted: %v", err)
+	}
+	for _, bad := range [][]string{
+		{"--auth-store=redis"},
+		{"--auth-argon2-memory-kib=4"},
+		{"--auth-argon2-threads=0"},
+		{"--auth-k8s-issuer=x"},
+		{"--auth-recheck-interval=0s"},
+	} {
+		if _, err := Parse(bad, withTLS(nil), nil); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
 	}
 }
