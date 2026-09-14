@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	"github.com/valesordev/andara/gen/go/andara/admin/v1/adminv1connect"
+	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 )
 
@@ -42,10 +43,24 @@ type Options struct {
 	Build       BuildInfo
 	Environment string
 
-	// Seams. Nil selects the stub for each.
+	// Verifier is required: there is no stub that accepts any token, and
+	// no code path that serves the Protocol without authentication.
 	Verifier TokenVerifier
-	Ingress  Ingress
-	Egress   Egress
+	// Auth serves andara.auth.v1.Auth on the same listener. Nil leaves the
+	// service unmounted, which a test that needs only Game may want.
+	Auth authv1connect.AuthHandler
+	// Accounts is the account-administration half of Admin. Nil leaves
+	// those methods UNIMPLEMENTED.
+	Accounts AccountAdmin
+	// Rechecker, with RecheckInterval, is the AC-12 loop: every open
+	// Session's Principal is re-read on the interval and the Session closed
+	// if its Account was disabled or its roles changed. Nil disables it.
+	Rechecker       Rechecker
+	RecheckInterval time.Duration
+
+	// Seams. Nil selects the stub for each.
+	Ingress Ingress
+	Egress  Egress
 
 	// OnDrain is called once when Shutdown begins, before any connection is
 	// closed, so readiness can flip to "not ready" while in-flight work
@@ -98,7 +113,10 @@ func New(opts Options) (*Server, error) {
 		return nil, errors.New("gateway: max_recv_bytes and drain_timeout must be positive")
 	}
 	if opts.Verifier == nil {
-		opts.Verifier = StubVerifier{}
+		return nil, errors.New("gateway: a TokenVerifier is required; there is no accept-anything mode")
+	}
+	if opts.Rechecker != nil && opts.RecheckInterval <= 0 {
+		return nil, errors.New("gateway: recheck_interval must be positive when a Rechecker is set")
 	}
 	if opts.Ingress == nil {
 		opts.Ingress = UnimplementedIngress{}
@@ -131,10 +149,13 @@ func New(opts Options) (*Server, error) {
 	mux := http.NewServeMux()
 	mux.Handle(gamev1connect.NewGameHandler(&gameService{s: s}, handlerOpts...))
 	mux.Handle(adminv1connect.NewAdminHandler(&adminService{s: s}, handlerOpts...))
+	if opts.Auth != nil {
+		mux.Handle(authv1connect.NewAuthHandler(opts.Auth, handlerOpts...))
+	}
 	// Server reflection, so `grpcurl ... list` works against the local
 	// stack (ADR-0003: debugging is grpcurl, not nc). The schema is public
 	// in this repository; exposing it costs nothing.
-	reflector := grpcreflect.NewStaticReflector(gamev1connect.GameName, adminv1connect.AdminName)
+	reflector := grpcreflect.NewStaticReflector(gamev1connect.GameName, adminv1connect.AdminName, authv1connect.AuthName)
 	mux.Handle(grpcreflect.NewHandlerV1(reflector))
 	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
 
@@ -214,6 +235,9 @@ func (s *Server) Start() error {
 		}
 		s.serveErr <- err
 	}()
+	if s.opts.Rechecker != nil {
+		go s.sessions.recheckLoop(s.drainCtx, s.opts.RecheckInterval, s.opts.Rechecker)
+	}
 	return nil
 }
 

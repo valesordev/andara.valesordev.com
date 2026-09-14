@@ -12,6 +12,7 @@ import (
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/server/auth"
 )
 
 // gameService implements andara.game.v1.Game from the generated interface.
@@ -57,10 +58,21 @@ func (g *gameService) OpenSession(ctx context.Context, req *connect.Request[game
 			slog.String("remote_addr", req.Peer().Addr),
 			slog.String("trace_id", traceID(ctx)),
 		)
-		if errors.Is(err, ErrPermissionDenied) {
+		return nil, connectError(ErrUnauthenticated)
+	}
+	// Acting as another Account (AW-SRV-008 AC-10) is a privilege check on
+	// the verified Principal; the verifier audits it either way.
+	if target := msg.GetActAsAccountId(); target != "" {
+		principal, err = g.s.opts.Verifier.ActAs(ctx, principal, target)
+		if err != nil {
+			g.s.metrics.SessionsTotal.WithLabelValues(OutcomeRejectedAuth).Inc()
+			g.s.log.LogAttrs(ctx, slog.LevelInfo, "session rejected: act-as refused",
+				slog.String("client_name", msg.GetClientName()),
+				slog.String("remote_addr", req.Peer().Addr),
+				slog.String("trace_id", traceID(ctx)),
+			)
 			return nil, connectError(ErrPermissionDenied)
 		}
-		return nil, connectError(ErrUnauthenticated)
 	}
 
 	sess, err := g.s.sessions.open(ctx, connIDFrom(ctx), msg.GetClientName(), negotiated, req.Peer().Addr, principal)
@@ -94,6 +106,7 @@ func (g *gameService) Submit(ctx context.Context, req *connect.Request[gamev1.Su
 	}
 	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
 	defer cancel()
+	ctx = auth.WithSessionID(ctx, sess.ID)
 	resp, err := g.s.opts.Ingress.Submit(ctx, sess, req.Msg)
 	if err != nil {
 		return nil, g.s.mapSeamError(ctx, sess, err)

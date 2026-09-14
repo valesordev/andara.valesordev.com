@@ -119,15 +119,12 @@ func TestBearerToken(t *testing.T) {
 	}
 }
 
-func TestStubVerifier(t *testing.T) {
-	if _, err := (StubVerifier{}).Verify(context.Background(), ""); !errors.Is(err, ErrUnauthenticated) {
-		t.Errorf("empty token: %v", err)
-	}
-	if _, err := (StubVerifier{}).Verify(context.Background(), "   "); !errors.Is(err, ErrUnauthenticated) {
-		t.Errorf("blank token: %v", err)
-	}
-	if p, err := (StubVerifier{}).Verify(context.Background(), "anything"); err != nil || p.Subject == "" {
-		t.Errorf("non-empty token: %v %+v", err, p)
+func TestNew_RequiresVerifier(t *testing.T) {
+	pki := testpki.New(t)
+	opts := defaultOptions(pki)
+	opts.Verifier = nil
+	if _, err := New(opts); err == nil {
+		t.Fatal("New accepted a nil Verifier; there is no accept-anything mode after AW-SRV-008")
 	}
 }
 
@@ -145,7 +142,7 @@ func (f fakeRequest) HTTPMethod() string  { return http.MethodPost }
 
 // AC-10 at the unit: the auth interceptor returns before next is called.
 func TestAuthInterceptor_RejectsBeforeHandler(t *testing.T) {
-	ic := &authInterceptor{verifier: StubVerifier{}}
+	ic := &authInterceptor{verifier: acceptAnyVerifier{}}
 	reached := false
 	next := func(context.Context, connect.AnyRequest) (connect.AnyResponse, error) {
 		reached = true
@@ -184,6 +181,10 @@ func TestAuthInterceptor_RejectsBeforeHandler(t *testing.T) {
 type denyingVerifier struct{}
 
 func (denyingVerifier) Verify(context.Context, string) (Principal, error) {
+	return Principal{}, ErrPermissionDenied
+}
+
+func (denyingVerifier) ActAs(context.Context, Principal, string) (Principal, error) {
 	return Principal{}, ErrPermissionDenied
 }
 

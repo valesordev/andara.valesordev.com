@@ -26,7 +26,7 @@ func TestSessionStore_RefusesOpenOnClosedConn(t *testing.T) {
 	st.connOpened(7)
 	st.connClosed(7)
 
-	_, err := st.open(context.Background(), 7, "late/0", 1, "1.2.3.4:5", Principal{Subject: "stub"})
+	_, err := st.open(context.Background(), 7, "late/0", 1, "1.2.3.4:5", Principal{AccountID: "stub"})
 	if !errors.Is(err, errConnGone) {
 		t.Fatalf("open on a closed connection: err = %v, want errConnGone", err)
 	}
