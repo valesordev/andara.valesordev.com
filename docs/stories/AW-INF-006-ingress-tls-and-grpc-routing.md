@@ -216,8 +216,11 @@ CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `d
   bounded by role at `authorize`, which is the ADR-0005 containment.
 - **Resolved 2026-09-14 (by the cluster): Traefik and cert-manager.** The `[ASSUMPTION]` of ingress-nginx
   was false on the decided platform; Traefik is what the port mapping was made for. Envoy Gateway with TLS
-  passthrough remains the alternative if re-origination ever proves to be the streaming problem; the
-  60 m soak is what would show it (result recorded below once observed).
+  passthrough remains the alternative if re-origination ever proves to be the streaming problem. Observed
+  2026-09-14 on the box: `make stream-soak ENV=local SOAK=60m` held an idle Subscribe for 1h0m0s
+  through Traefik with the edge certificate renewed at +30 s (serial changed, stream open) and a `helm
+  upgrade` of the release mid-soak; `traefik_router_requests_total{protocol="grpc"}` = 14 on the
+  release's routers. AC-1 and AC-3 hold as written.
 - `[ASSUMPTION]` Private CA for the box, ACME selectable by values for a public host. `dev` and `prod`
   values name `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` under the zone the
   cluster's `letsencrypt` issuer already solves for, on `andara-ca` until Brian picks public names —
