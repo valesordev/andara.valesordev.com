@@ -182,6 +182,13 @@ and runbook.
 
 ## Open questions
 
+- **Carried from `AW-INF-004` on 2026-09-14:** registry compatibility is `BACKWARD` — new readers read
+  old data, which replay requires. `FULL` would additionally forbid schema changes that break *old*
+  readers of *new* data. That only matters once something older than the server reads the log, which
+  is this story's Behavior Agents version-skewing from it. Decide here whether `andara.events.v1`'s
+  subjects move to `FULL` when the first agent ships, or whether agents are held to the server's
+  protobuf generation.
+
 - **Resolved 2026-09-11 (Brian): Builders write Behaviors.** One Agent deployment per pack, identity
   scoped to the pack.
 - `[NEEDS BRIAN]` What an unattended NPC looks like to players — the `NpcUnattended` Event exists; the

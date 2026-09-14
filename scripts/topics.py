@@ -244,13 +244,39 @@ def main():
             )
 
         have_cfg = describe_config(run, name)
-        for key in COMPARED:
-            if key not in want_cfg or key not in have_cfg:
+        # The broker-level assertions are topic-level properties on Kafka too, reported
+        # per topic by DescribeConfigs with the broker default as their effective value.
+        # Checking them here, through the same Kafka API call the rest of this loop uses,
+        # is what works against the production broker ADR-0002 names. The previous
+        # implementation went through `rpk cluster config get`, which is Redpanda's admin
+        # API and does not exist on Kafka — so against production it failed to read the
+        # property and then treated the empty answer as agreement.
+        want_all = dict(want_cfg)
+        if args.env != "local":
+            want_all.update(broker.get("assert", {}))
+        for key in COMPARED + sorted(k for k in broker.get("assert", {}) if k not in COMPARED):
+            if key not in want_all:
                 continue
-            if str(have_cfg[key]) != str(want_cfg[key]):
+            if key not in have_cfg:
+                # Redpanda does not implement min.insync.replicas or unclean leader
+                # election (its Raft replication cannot elect a leader missing committed
+                # records), so a local broker never reports them and there is nothing to
+                # compare. Kafka reports every property with its effective value, so on
+                # any other environment an absent key means the declaration is not in
+                # force — which is drift, not assent. Until 2026-09-14 this was a silent
+                # `continue` on every environment, and the two settings the zero-RPO
+                # target rests on were never actually verified (AW-INF-004 AC-5a).
+                if args.env == "local":
+                    continue
+                drift.append(
+                    "%s: %s is not reported by the broker, declaration says '%s' — "
+                    "the setting is not in force" % (name, key, want_all[key])
+                )
+                continue
+            if str(have_cfg[key]) != str(want_all[key]):
                 drift.append(
                     "%s: %s is '%s', declaration says '%s'"
-                    % (name, key, have_cfg[key], want_cfg[key])
+                    % (name, key, have_cfg[key], want_all[key])
                 )
 
     # A local broker is disposable, so broker settings are applied to it. Dev and prod
@@ -261,18 +287,6 @@ def main():
             if res.returncode != 0:
                 die("could not set broker config %s=%s: %s"
                     % (key, val, (res.stderr or res.stdout).strip()))
-
-    # The two settings the zero-RPO claim rests on. Drift in them is silent, which is
-    # exactly why it is asserted rather than assumed (AW-INF-004 AC-5a).
-    if args.env != "local":
-        res = run(["cluster", "config", "get", "unclean.leader.election.enable"])
-        have = res.stdout.strip() if res.returncode == 0 else ""
-        want = broker.get("assert", {}).get("unclean.leader.election.enable", "false")
-        if have and have != want:
-            drift.append(
-                "cluster: unclean.leader.election.enable is '%s', must be '%s' — with it "
-                "enabled, acks=all does not guarantee durability" % (have, want)
-            )
 
     if drift:
         for line in drift:

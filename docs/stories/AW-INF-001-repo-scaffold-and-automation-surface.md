@@ -4,7 +4,7 @@ title: Repo scaffold, Makefile automation surface, story tooling, and CI skeleto
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: []
 blocks: [AW-INF-002, AW-INF-003, AW-INF-004, AW-SRV-001, AW-SRV-005, AW-SRV-020, AW-CLI-001]
@@ -59,17 +59,17 @@ can start on any story without reading a wiki or asking anyone how the build wor
 3. **Given** a clean clone **when** a developer runs `make check` **then** fmt, vet, lint, test,
    story validation, and protobuf-codegen freshness all run, and the command exits 0.
 4. **Given** a story file whose `depends_on` names `AW-SRV-999`, which does not exist **when**
-   `make validate-stories` runs **then** it exits 1 and prints one line naming the offending file,
+   `make validate-stories` runs **then** it exits non-zero and prints one line naming the offending file,
    the field, and the unresolved ID.
 5. **Given** two story files whose `depends_on` form a cycle **when** `make validate-stories` runs
-   **then** it exits 1 and prints the cycle as an ID chain.
+   **then** it exits non-zero and prints the cycle as an ID chain.
 6. **Given** a story file missing a required frontmatter key, or carrying a value outside that key's
-   enumeration **when** `make validate-stories` runs **then** it exits 1 and names the file, the key,
+   enumeration **when** `make validate-stories` runs **then** it exits non-zero and names the file, the key,
    and the permitted values.
 7. **Given** the current `docs/stories/` contents **when** `make backlog` runs **then** `BACKLOG.md`
    is regenerated deterministically — running it twice produces no diff on the second run.
 8. **Given** `make backlog` has been run and a story is then edited **when** `make check` runs
-   **then** it exits 1 with a message stating that `BACKLOG.md` is stale and naming `make backlog`
+   **then** it exits non-zero with a message stating that `BACKLOG.md` is stale and naming `make backlog`
    as the fix.
 9. **Given** any working tree **when** a developer runs `make story COMP=SRV TITLE="Load zone files"`
    **then** a new file is created at `docs/stories/AW-SRV-<next>-load-zone-files.md` from the
@@ -88,7 +88,12 @@ can start on any story without reading a wiki or asking anyone how the build wor
 14. **Given** no Kubernetes manifests exist yet **when** `make k8s-dry` runs **then** it exits 0 and
     prints that there are no manifests to validate. An empty manifest set is not a failure.
 15. **Given** a `.proto` file edited without regenerating **when** `make check` runs **then** it exits
-    1 naming the stale package and `make proto` as the fix.
+    non-zero naming the stale package and `make proto` as the fix.
+    **Found failing at review, 2026-09-14.** `scripts/proto.sh check` ran `buf lint`, `buf breaking`,
+    and the determinism grep, then printed "gen matches" without ever comparing `gen/` to the
+    sources — `buf.gen.yaml`'s own header described a regenerate-and-diff that was never written. It
+    now regenerates into a scratch tree and diffs, naming the stale package. Proven both ways: an
+    added field with no regenerate fails; a removed `.proto` with its output still committed fails.
 
 ## Interface contract
 
@@ -243,9 +248,10 @@ Two defects were found and fixed in the process:
 
 Two notes on exactness rather than defects:
 
-- ACs 4–6 say the validator "exits 1". `scripts/validate_stories.py` does exit 1; `make
-  validate-stories` surfaces make's own 2. Exit non-zero with an actionable line is the intent, and
-  overriding make's convention to hit a literal 1 would be worse.
+- ACs 4–6 and 8 originally said "exits 1". The scripts do; `make` surfaces its own 2, which is
+  what a developer sees. Exit non-zero with an actionable line is the intent — the interface contract
+  above says exactly that — and overriding make's convention to hit a literal 1 would be worse. The
+  ACs were reworded to "non-zero" on 2026-09-14 so they say what the contract says.
 - `make proto`/`proto-check` are wired and skip cleanly with no `.proto` sources. They are exercised
   end to end for the first time by `AW-SRV-005`.
 
@@ -259,15 +265,12 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` Go module path is `github.com/valesordev/andara`. Changing it later is a
-  mechanical rename but touches every file, so confirm before `AW-SRV-001` starts.
-- `[ASSUMPTION]` The existing top-level `admin/` directory is `andara-cli`'s package root. If
-  `admin/` was intended as something else (a web admin surface), say so and it gets its own
-  component ID.
-- `[ASSUMPTION]` Single Go module for `server` and `admin` rather than two modules, so that
-  protocol types are shared by import rather than by duplication or a third module.
-- `[ASSUMPTION]` Python 3.9+ is an acceptable dependency for the `scripts/` tooling. The alternative
-  is writing them in Go, which is more code and makes the tooling depend on the build it validates.
-  Note that ADR-0005 makes Python a runtime dependency of the project anyway, via Behavior Agents.
-- `[ASSUMPTION]` `buf` for protobuf codegen and lint rather than raw `protoc`, because ADR-0007's
-  additive-only and reserved-number rules are exactly what `buf breaking` enforces automatically.
+All five assumptions below held; each is now observable in the repository rather than pending.
+
+- **Resolved 2026-09-14 (by the implementation):** the Go module path is `github.com/valesordev/andara` (`go.mod`).
+- **Resolved 2026-09-14 (by the implementation):** `admin/` is `andara-cli`'s package root — `AW-CLI-001` shipped there.
+- **Resolved 2026-09-14 (by the implementation):** one Go module for `server` and `admin`; protocol types are shared by import from `gen/go`.
+- **Resolved 2026-09-14 (by the implementation):** Python 3.9+ for `scripts/`; `make bootstrap` verifies the interpreter and ADR-0005 makes
+  Python a runtime dependency regardless.
+- **Resolved 2026-09-14 (by the implementation):** `buf` rather than raw `protoc`. `buf breaking` is the additive-only detector (`AW-SRV-020`
+  AC-2, proven by deleting and renumbering a field), and `buf lint` the style gate.

@@ -4,7 +4,7 @@ title: Protobuf schema as the wire, log, snapshot, and content contract
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-SRV-001, AW-SRV-005, AW-CLI-005, AW-SRV-022]
@@ -187,10 +187,16 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` Connect's Go implementation (`buf.build/connectrpc/go`), serving gRPC, gRPC-Web, and
-  Connect from one definition per ADR-0003. `AW-CLI-001` and `AW-SRV-005` both already assume it.
-- `[ASSUMPTION]` `buf` remote plugins for generation. They need network access at `make proto` time.
-  Committed generated code means a clone still builds offline; only regenerating needs the network.
+- **Resolved 2026-09-14 (by the implementation):** Connect's Go implementation (`buf.build/connectrpc/go`) serves
+  gRPC, gRPC-Web, and Connect from one definition. `AW-SRV-005` proved it — one handler, four
+  clients, four Sessions — and closed on it on 2026-09-11.
+- **Resolved 2026-09-14 (by the implementation):** `buf` remote plugins, **pinned by version** in `buf.gen.yaml`.
+  They need the network at `make proto` and `make proto-check` time; committed output means a clone
+  builds offline. The pin was missing until 2026-09-14 and it mattered: `protoc-gen-es` moved
+  v2.14.1 → v2.15.0 in the three days after `gen/` was committed, so an unpinned `make proto` on
+  a different day regenerated a different tree from the same schema. Bumping a plugin is now a
+  reviewable edit to one file, followed by `make proto`. The BSR rate-limits unauthenticated
+  clients; `proto-check` says so when it happens rather than blaming the schema.
 - **Resolved 2026-09-10 (Brian): the canonical `Direction` set is closed** — the twelve in
   `docs/glossary.md`. `direction` stays a **string** in this schema, which is the outcome this story
   argued for: closing the set is a change to the loader's validation, not to the wire, so the schema

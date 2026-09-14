@@ -4,7 +4,7 @@ title: Kafka topic and schema registry provisioning as code
 epic: EPIC-10
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001]
 blocks: [AW-INF-002, AW-INF-005, AW-SRV-002, AW-SRV-010]
@@ -75,16 +75,27 @@ every environment, so that a local test exercises the same log semantics product
 2. **Given** all topics already correct **when** `make topics-apply` runs again **then** it exits 0 and
    changes nothing.
 3. **Given** a broker where `andara.commands.v1` exists with 32 partitions and the definition declares
-   64 **when** `make topics-apply` runs **then** it exits 1, states that repartitioning a keyed topic
+   64 **when** `make topics-apply` runs **then** it exits non-zero, states that repartitioning a keyed topic
    reorders history, and makes no change. Partition count is never silently altered.
 4. **Given** a broker where a topic's retention differs from the definition **when** `make topics-diff`
-   runs **then** it exits 1 and prints the topic, the property, the actual value, and the declared one.
+   runs **then** it exits non-zero and prints the topic, the property, the actual value, and the declared one.
 5. **Given** the declaration **when** it is inspected **then** `andara.commands.v1` has 64 partitions and
    `andara.state.v1`, `andara.content.blobs.v1`, `andara.content.versions.v1`, `andara.content.active.v1`,
    and `andara.accounts.v1` all have `cleanup.policy=compact`.
 5a. **Given** a live cluster **when** `topics-diff` runs **then** it fails if
    `unclean.leader.election.enable` is not `false` or `min.insync.replicas` is below 2 in production.
    These two settings are what the zero-RPO target rests on, and drift in them is silent.
+   **Found failing at review, 2026-09-14 — both halves.** `min.insync.replicas` was declared and
+   listed for comparison but skipped whenever the broker did not report it, and
+   `unclean.leader.election.enable` was read through `rpk cluster config get`, which is Redpanda's
+   admin API and does not exist on the Kafka broker ADR-0002 §7 names for production; an unreadable
+   property was then treated as agreement. `topics-diff --env prod` reported no drift against a
+   broker carrying neither setting. Both are now checked per topic through DescribeConfigs — the
+   Kafka API call the rest of the tool already uses — and on any non-local environment an absent
+   property is drift, not assent. On `local` they are skipped by design: Redpanda implements
+   neither (its Raft replication cannot elect a leader missing committed records), which the
+   declaration already says. Proven against Redpanda: `local` clean, `--env prod` reports 16
+   drifts naming each topic, property, and declared value. Not yet proven against real Kafka.
 6. **Given** a protobuf schema change that removes a field **when** `make check` runs **then** it exits 1
    naming the field *and the subjects that carry it*. ADR-0007's additive-only rule is enforced
    mechanically, not by review.
@@ -98,7 +109,7 @@ every environment, so that a local test exercises the same log semantics product
 7. **Given** a fresh registry **when** `make schemas-apply` runs **then** every subject is registered
    with `BACKWARD` compatibility and the command exits 0. Running it a second time registers nothing.
 7a. **Given** a registry holding something other than the declaration **when** `make schemas-diff` runs
-   **then** it exits 1, naming the subject and whether it is undeclared, unregistered, or superseded.
+   **then** it exits non-zero, naming the subject and whether it is undeclared, unregistered, or superseded.
 8. **Given** any environment **when** `make check` runs **then** `make schemas-check` runs as part of
    it, so a topic without a declared record type cannot merge. `schemas-check` is offline by
    construction — it needs no broker, because `make check` must stay containerless (`AW-INF-002`).
@@ -262,11 +273,15 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` 64 partitions on `andara.commands.v1`, per ADR-0002 §6. This is the one number in
-  this story that cannot be changed later. Confirm it before the first production apply.
-- `[ASSUMPTION]` Schema registry compatibility mode is `BACKWARD` — new readers can read old data,
-  which is what replay of an old log requires. `FULL` would also forbid changes that break old readers
-  of new data; worth considering once Behavior Agents version-skew from the server.
+- **Resolved by ADR-0002 §6, noted 2026-09-14:** 64 partitions on `andara.commands.v1` is that
+  ADR's recorded decision ("Decision: 64 partitions"), not this story's assumption. It is applied in
+  the declaration and AC-3 — proven at review by recreating the topic with 32 — is what keeps it from
+  ever being changed by a make target. It cannot be changed later; that is the point.
+- **Resolved 2026-09-14 (by the implementation):** registry compatibility is `BACKWARD` — new readers read old data,
+  which replay requires — set globally by `schemas-apply` and verified by `schemas-diff`. `FULL`
+  would additionally forbid changes that break old readers of new data; that is a question for
+  `AW-SRV-009` once Behavior Agents version-skew from the server, and is noted there rather than
+  left open here.
 - **Resolved 2026-09-10 (Brian): infinite retention, with tiered storage as the mechanism.**
   `retention.ms: -1` on `andara.commands.v1` is applied in `deploy/kafka/topics.yaml` and verified —
   `-1` round-trips through `topics-apply` and `topics-diff` at creation.

@@ -2,14 +2,14 @@
 
 # Status — Andara's World
 
-35 stories — 5 review · 27 ready · 3 done
+35 stories — 2 review · 27 ready · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    — nothing in flight
   next   AW-INF-006  ready  Ingress, certificate management, and gRPC/Connect routing
-  review AW-INF-001, AW-INF-004, AW-SRV-020, AW-INF-002, AW-INF-003 — run the §8 checklist,…
+  review AW-INF-002, AW-INF-003 — run the §8 checklist, then flip to done
   held   3 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007
 
 ## Implementation lane — server and cli source, tests
@@ -21,9 +21,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Decisions the lanes are waiting on
 
-  AW-INF-004  A Redpanda enterprise licence.
   AW-SRV-021  The core component vocabulary beyond the four seeded here.
-              13 more, attached to stories neither lane has reached
+              14 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
