@@ -310,6 +310,12 @@ after the consume (ADR-0002 §2). Rejection at any stage produces a typed error,
 without a proxy. Served from the same handler as gRPC and gRPC-Web so Phase 2 inherits a browser path
 for free (ADR-0003).
 
+**Edge** — The cluster's ingress in front of the Gateway: Traefik terminating TLS on the public
+hostname and re-originating to the pod as HTTP/2 over TLS, so a stream never crosses an HTTP/1.1 hop.
+Two routers on one hostname — `/` for `Game`, the `Admin` service prefix behind an operator IP
+allowlist. The Edge is the one hop the server cannot observe from the inside; `AW-INF-006` and
+`docs/specs/slo/edge-availability.md` own it.
+
 **Gateway** — The server component that terminates gRPC connections, authenticates Sessions, parses
 and authorizes Intents, produces Commands to the log, and streams Events out. The Gateway knows about
 connections; the Simulation Core does not.

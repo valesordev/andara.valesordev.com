@@ -1,8 +1,10 @@
 {{- if .Values.networkPolicy.enabled }}
-# Skeleton (AW-INF-003). Default-deny ingress to the server pod, admitting the http port
-# from the observability namespace for scrapes and the grpc port from the ingress
-# controller and the Behavior Agent namespaces. AW-INF-006 owns the gRPC rules and turns
-# this on; until then it renders only when a values file asks for it.
+# Default-deny ingress to the server pod (AW-INF-003 skeleton, AW-INF-006 rules): the http
+# port admits the observability namespace for scrapes; the grpc port admits the ingress
+# controller's namespace and the Behavior Agent namespace, and nothing else in the
+# cluster reaches it directly (AC-6). This is the L3 half of "Admin on the same listener,
+# restricted by network"; the L7 half is the allowlist on the Admin Ingress. kubelet
+# probes come from the node, which no NetworkPolicy governs.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:

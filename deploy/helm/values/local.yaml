@@ -14,15 +14,13 @@ server:
   content:
     source: dir
     path: /content
-  grpc:
-    # The mount the chart gives secrets.tlsCert; the Secret itself is written by
-    # scripts/helm_install.sh from `make tls` until AW-INF-006 has cert-manager issue it.
-    tls_cert_file: /etc/andara/secrets/tls/tls.crt
-    tls_key_file: /etc/andara/secrets/tls/tls.key
-
-secrets:
-  tlsCert:
-    secretName: andara-server-tls
+# The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
+# made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
+# by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at
+# Traefik from the docker bridge, not from 127.0.0.1, hence the 172.16/12 allowlist entry.
+host: andara.local
+admin:
+  allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"]
 
 snapshots:
   size: 1Gi

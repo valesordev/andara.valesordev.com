@@ -1,4 +1,7 @@
-# Chart lifecycle on a real cluster (AW-INF-003 test plan, integration half).
+# Chart lifecycle on a real cluster (AW-INF-003 test plan, integration half) and the
+# edge (AW-INF-006): Traefik and cert-manager installed the way the box has them, then
+# TLS, gRPC routing, the Admin allowlist, NetworkPolicy, and the stream soak — 5 m on a
+# pull request, 60 m on the nightly schedule.
 #
 # Separate from `check` for the same reason stack.yaml is: `make check` must not need a
 # cluster. What this proves today: the chart installs, the pod is ready only once
@@ -14,24 +17,35 @@ on:
     branches: [main]
     paths:
       - "deploy/helm/**"
+      - "deploy/k8s/**"
+      - "deploy/kind/**"
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
       - "scripts/k8s_dry.sh"
+      - "scripts/kind_platform.sh"
+      - "scripts/stream_soak.sh"
+      - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
   pull_request:
     paths:
       - "deploy/helm/**"
+      - "deploy/k8s/**"
+      - "deploy/kind/**"
       - "deploy/compose/Dockerfile.server"
       - "scripts/helm_install.sh"
       - "scripts/k8s_dry.sh"
+      - "scripts/kind_platform.sh"
+      - "scripts/stream_soak.sh"
+      - "internal/smoke/soak_test.go"
       - ".github/workflows/kind.yaml"
+  # Nightly: the 60 m soak (AW-INF-006 AC-1). A pull request runs the same soak for 5 m.
   schedule:
-    - cron: "41 6 * * 1"
+    - cron: "41 6 * * *"
 
 jobs:
   lifecycle:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 100
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -47,6 +61,9 @@ jobs:
           # config v4, which the action's default kind cannot load images into.
           version: v0.33.0
           node_image: kindest/node:v1.36.1
+          config: deploy/kind/config.yaml
+      - name: kind-platform (traefik + cert-manager, as the box has them)
+        run: make kind-platform KIND_CLUSTER=ci
       - name: image
         run: make image
       - name: kind-load
@@ -78,8 +95,70 @@ jobs:
           after="$(kubectl -n $NS get pvc snapshots-andara-0 -o jsonpath='{.spec.volumeName}')"
           echo "pv after:  $after"
           [[ "$pv" == "$after" ]]
+      # AW-INF-006. Everything below talks to the edge on the runner's :443, which the
+      # kind config maps to the control plane, where Traefik holds the host port.
+      - name: certificates issued, no key material in the rendered chart (AC-5)
+        run: |
+          set -euo pipefail
+          NS=andara-local
+          kubectl -n $NS get certificate andara-edge andara-server
+          helm -n $NS get manifest andara | grep -c 'PRIVATE KEY' | grep -qx 0
+      - name: Connect and gRPC-Web through the edge on one host (AC-2)
+        run: |
+          set -euo pipefail
+          CA=.local/tls/cluster/local/ca.pem
+          curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 \
+            -X POST -H 'content-type: application/json' \
+            https://andara.local/andara.game.v1.Game/OpenSession \
+            -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci/connect"}' | grep -q sessionId
+          printf '\x00\x00\x00\x00\x08\x08\x01\x12\x01x\x1a\x01w' > /tmp/open.bin
+          curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 \
+            -X POST -H 'content-type: application/grpc-web+proto' -H 'x-grpc-web: 1' \
+            https://andara.local/andara.game.v1.Game/OpenSession --data-binary @/tmp/open.bin \
+            -o /dev/null -w '%{http_code} %{content_type}\n' | grep -q '^200 application/grpc-web+proto'
+      - name: Admin is 403 at the edge from outside the allowlist, and the server never sees it (AC-4)
+        run: |
+          set -euo pipefail
+          NS=andara-local
+          CA=.local/tls/cluster/local/ca.pem
+          kubectl -n $NS patch middleware andara-admin-allowlist --type merge \
+            -p '{"spec":{"ipAllowList":{"sourceRange":["203.0.113.0/24"]}}}'
+          sleep 3
+          # "The server logs no request": its own RPC counter for the Admin service, read
+          # off the pod, does not move while the edge answers 403.
+          admin_calls() { kubectl -n $NS exec andara-0 -c server -- wget -qO- http://127.0.0.1:8080/metrics \
+            | awk '/^andara_grpc_requests_total\{.*andara.admin.v1.Admin/ { s += $NF } END { print s + 0 }'; }
+          before=$(admin_calls)
+          code=$(curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
+            -X POST -H 'content-type: application/proto' \
+            https://andara.local/andara.admin.v1.Admin/GetServerInfo --data-binary '')
+          [[ "$code" == "403" ]]
+          [[ "$(admin_calls)" == "$before" ]]
+          # The catch-all is unaffected.
+          curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 -X POST -H 'content-type: application/json' \
+            https://andara.local/andara.game.v1.Game/OpenSession -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci"}' >/dev/null
+          # Restore the release's allowlist for the steps that follow.
+          make helm-install ENV=local >/dev/null
+      - name: the server pod is unreachable from another namespace (AC-6)
+        run: |
+          set -euo pipefail
+          POD_IP=$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.status.podIP}')
+          kubectl create ns andara-probe
+          kubectl -n andara-probe run prober --image=curlimages/curl:8.10.1 --restart=Never --command -- sleep 300
+          kubectl -n andara-probe wait --for=condition=Ready pod/prober --timeout=120s
+          if kubectl -n andara-probe exec prober -- curl -sk -m 5 -o /dev/null https://$POD_IP:8443/; then
+            echo "::error::a pod in another namespace reached the server's grpc port"; exit 1
+          fi
+          if kubectl -n andara-probe exec prober -- curl -s -m 5 -o /dev/null http://$POD_IP:8080/readyz; then
+            echo "::error::a pod in another namespace reached the server's http port"; exit 1
+          fi
+          kubectl delete ns andara-probe --wait=false
+      - name: stream soak through the edge, renewal mid-stream (AC-1, AC-3)
+        run: make stream-soak ENV=local SOAK=${{ github.event_name == 'schedule' && '60m' || '5m' }}
       - name: dump on failure
         if: failure()
         run: |
           kubectl -n andara-local describe pod andara-0 || true
           kubectl -n andara-local logs andara-0 --all-containers || true
+          kubectl -n andara-local get certificate,ingress,middleware,serverstransport -o wide || true
+          kubectl -n traefik logs deploy/traefik --tail=200 || true

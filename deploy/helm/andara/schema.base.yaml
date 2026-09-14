@@ -7,7 +7,7 @@ $schema: https://json-schema.org/draft/2020-12/schema
 title: andara chart values
 type: object
 additionalProperties: false
-required: [replicaCount, image, snapshots, probes, terminationGracePeriodSeconds]
+required: [replicaCount, image, snapshots, probes, terminationGracePeriodSeconds, host, ingress, tls, admin]
 properties:
   replicaCount:
     type: integer
@@ -98,10 +98,50 @@ properties:
     properties:
       enabled: {type: boolean}
       minAvailable: {type: integer, minimum: 0}
+  ingress:
+    type: object
+    additionalProperties: false
+    description: "Edge routing through the cluster's Traefik (AW-INF-006): two Ingresses on `host`, HTTPS/HTTP-2 to the pod."
+    required: [enabled]
+    properties:
+      enabled: {type: boolean}
+      className: {type: string, minLength: 1}
+      entrypoint: {type: string, minLength: 1, description: Traefik entrypoint the routers bind to; websecure is the cluster's :443.}
+  host:
+    type: string
+    pattern: "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"
+    description: The one hostname both Ingresses serve and the edge certificate's SAN.
+  tls:
+    type: object
+    additionalProperties: false
+    required: [issuer]
+    properties:
+      issuer:
+        type: string
+        enum: [andara-ca, letsencrypt, letsencrypt-staging]
+        description: ClusterIssuer for the edge certificate. andara-ca is bootstrapped by `make helm-install`; the ACME issuers are the cluster's own.
+      privateIssuer:
+        type: string
+        enum: [andara-ca]
+        description: ClusterIssuer for the server certificate the pod presents on the second leg. Always the private CA.
+      duration: {type: string, pattern: "^[0-9]+h$"}
+      renewBefore: {type: string, pattern: "^[0-9]+h$"}
+  admin:
+    type: object
+    additionalProperties: false
+    required: [allowedCIDRs]
+    properties:
+      allowedCIDRs:
+        type: array
+        minItems: 1
+        description: Source ranges the Admin Ingress admits (Traefik ipAllowList); every other source is 403 at the edge.
+        items:
+          type: string
+          pattern: "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$"
   networkPolicy:
     type: object
     additionalProperties: false
-    description: Skeleton only; AW-INF-006 fills the gRPC ingress rules and turns it on.
+    description: Default-deny ingress to the server pod; the grpc port admits ingressNamespace and agentNamespace only (AW-INF-006 AC-6).
     properties:
       enabled: {type: boolean}
       observabilityNamespace: {type: string}

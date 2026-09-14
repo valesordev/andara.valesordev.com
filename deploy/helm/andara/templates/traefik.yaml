@@ -1,0 +1,41 @@
+{{- if .Values.ingress.enabled }}
+# Traefik CRDs the two Ingresses lean on (AW-INF-006).
+#
+# ServersTransport: how Traefik dials the pod. It dials the pod IP, which is in nobody's
+# SANs, so serverName pins verification to the headless Service name the server
+# certificate carries. rootCAs reads `ca.crt` from the server certificate's own Secret —
+# cert-manager writes the issuing CA there — so the second leg is verified against the
+# private CA with no bundle to bootstrap.
+apiVersion: traefik.io/v1alpha1
+kind: ServersTransport
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  serverName: {{ printf "%s.%s.svc" (include "andara.name" .) .Release.Namespace | quote }}
+  rootCAs:
+    - secret: {{ .Values.secrets.tlsCert.secretName }}
+  forwardingTimeouts:
+    dialTimeout: 5s
+    # 0 on purpose: Subscribe sends its headers immediately (AW-SRV-005 flushes them
+    # before the first Event), but a bound here is a bound on how long a stream may be
+    # silent, and the story's answer to that is "hours", not a proxy setting.
+    responseHeaderTimeout: 0s
+---
+# The operator allowlist in front of the Admin Ingress. Rejects with 403 before the
+# request is proxied, so the server never sees it (AC-4). Source IP is the connection's
+# peer: Traefik owns the host port directly, so there is no forwarder to trust.
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "andara.name" . }}-admin-allowlist
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  ipAllowList:
+    sourceRange:
+      {{- range .Values.admin.allowedCIDRs }}
+      - {{ . | quote }}
+      {{- end }}
+{{- end }}
