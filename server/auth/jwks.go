@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"strings"
@@ -153,7 +154,7 @@ func (v *JWKSVerifier) fetchLocked(ctx context.Context) error {
 	var set struct {
 		Keys []jwk `json:"keys"`
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 1<<20)).Decode(&set); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&set); err != nil {
 		return err
 	}
 	keys := map[string]crypto.PublicKey{}

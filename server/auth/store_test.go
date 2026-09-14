@@ -557,7 +557,7 @@ func TestAdmin_AuditCompleteness(t *testing.T) {
 
 func TestAdmin_RecordVersionConflict(t *testing.T) {
 	f := newFixture(t, nil)
-	opCtx, _ := f.bootstrapOperator("oper", "operator-password")
+	opCtx, firstOp := f.bootstrapOperator("oper", "operator-password")
 	id, err := f.store.CreateAccount(opCtx, "brian", "correct horse battery", nil)
 	if err != nil {
 		t.Fatal(err)
@@ -585,6 +585,17 @@ func TestAdmin_RecordVersionConflict(t *testing.T) {
 	self := WithPrincipal(context.Background(), Principal{AccountID: opID, Roles: []Role{RoleOperator}})
 	if _, err := f.store.SetAccountStatus(self, opID, accountsv1.AccountStatus_DISABLED, 0); Code(err) != connect.CodePermissionDenied {
 		t.Fatalf("self-disable: %v", err)
+	}
+	// The last operator can be neither demoted nor disabled; the others can.
+	if _, err := f.store.SetRoles(self, firstOp, []Role{RolePlayer}, 0); err != nil {
+		t.Fatalf("demote one of two operators: %v", err)
+	}
+	if _, err := f.store.SetRoles(self, opID, []Role{RolePlayer}, 0); Code(err) != connect.CodePermissionDenied {
+		t.Fatalf("demote the last operator: %v", err)
+	}
+	other := WithPrincipal(context.Background(), Principal{AccountID: "someone-else", Roles: []Role{RoleOperator}})
+	if _, err := f.store.SetAccountStatus(other, opID, accountsv1.AccountStatus_DISABLED, 0); Code(err) != connect.CodePermissionDenied {
+		t.Fatalf("disable the last operator: %v", err)
 	}
 }
 

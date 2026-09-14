@@ -153,6 +153,10 @@ func (s *Store) SetRoles(ctx context.Context, accountID string, roles []Role, ex
 		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetRoles, Target: accountID, Outcome: AuditDenied, Detail: "agent role is not assignable"})
 		return 0, fmt.Errorf("%w: the agent role is set at creation and cannot be changed", ErrInvalidArgument)
 	}
+	if !slices.Contains(roles, RoleOperator) && s.lastOperator(accountID) {
+		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetRoles, Target: accountID, Outcome: AuditDenied, Detail: "last operator"})
+		return 0, fmt.Errorf("%w: cannot remove operator from the last operator account", ErrPermissionDenied)
+	}
 	acc.Roles = RolesToProto(roles)
 	if err := s.commit(ctx, acc); err != nil {
 		return 0, err
@@ -182,6 +186,10 @@ func (s *Store) SetAccountStatus(ctx context.Context, accountID string, status a
 	if !ok {
 		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetAccountStatus, Target: accountID, Outcome: AuditDenied, Detail: "no such account"})
 		return 0, ErrNotFound
+	}
+	if status == accountsv1.AccountStatus_DISABLED && s.lastOperator(accountID) {
+		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetAccountStatus, Target: accountID, Outcome: AuditDenied, Detail: "last operator"})
+		return 0, fmt.Errorf("%w: cannot disable the last operator account", ErrPermissionDenied)
 	}
 	if err := checkVersion(acc, expectedVersion); err != nil {
 		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetAccountStatus, Target: accountID, Outcome: AuditConflict})
@@ -355,6 +363,24 @@ func (s *Store) CreateAgentAccount(ctx context.Context, username, packID string,
 	}
 	s.audit.Record(ctx, Entry{Actor: actor, Action: ActionCreateAgentAccount, Target: acc.AccountId, Outcome: AuditOK, Detail: "pack " + acc.AgentPackId + ", " + strings.ToLower(kind.String())})
 	return acc.AccountId, apiKey, nil
+}
+
+// lastOperator reports whether accountID is the only ACTIVE operator. A
+// deployment with no operator has no way to create one short of the
+// bootstrap setting, so removing the last one is refused. Caller holds wmu.
+func (s *Store) lastOperator(accountID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	target := s.byID[accountID]
+	if target == nil || target.GetStatus() != accountsv1.AccountStatus_ACTIVE || !slices.Contains(target.GetRoles(), accountsv1.Role_OPERATOR) {
+		return false
+	}
+	for id, a := range s.byID {
+		if id != accountID && a.GetStatus() == accountsv1.AccountStatus_ACTIVE && slices.Contains(a.GetRoles(), accountsv1.Role_OPERATOR) {
+			return false
+		}
+	}
+	return true
 }
 
 func roleList(roles []Role) string {
