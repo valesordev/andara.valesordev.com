@@ -111,8 +111,8 @@ Three things this is deliberately **not**:
 - **Not a claim that every Room has all twelve.** Exits are authored one at a time.
 
 Each Direction has a **reverse**, listed above. The reverse is not enforced — a one-way Exit is legal
-and useful (a chute, a trapdoor) — but the loader can warn on an Exit whose reverse is absent, which
-catches the far more common case of a Builder forgetting the way back.
+and useful (a chute, a trapdoor) — but the loader warns on an Exit whose reverse is absent
+(`missing_reverse_exit`), which catches the far more common case of a Builder forgetting the way back.
 
 **Exit** — A directed edge from one Room to another, labeled with a Direction. Exits are
 one-directional in the data model; a two-way passage is two Exits. Exit conditions (doors, locks,
@@ -227,11 +227,35 @@ sense. May activate content only with a second approver.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
-**Component** — A named, namespaced unit of data attached to a Template: `andara.core.Wieldable`,
-`pets.Aggro`. Components hold data and never logic — logic is a Go system inside the tick or a Python
-Behavior outside it (ADR-0005, ADR-0010). Components are the composition axis of the type system, so
-"flaming" attaches to a sword and a dragon alike without either being related to the other. A Template
-holds at most one Component of a given type.
+**Component** — A named, namespaced unit of data attached to a Template, a Room, or a Zone:
+`andara.core.Wieldable`, `andara.core.Dark`, `pets.Aggro`. Components hold data and never logic —
+logic is a Go system inside the tick or a Python Behavior outside it (ADR-0005, ADR-0010). Components
+are the composition axis of the type system, so "flaming" attaches to a sword and a dragon alike
+without either being related to the other. A Template, Room, or Zone holds at most one Component of a
+given type.
+
+**Component types are defined by the server, not by content** (ADR-0010 decision 7). The vocabulary is
+a closed table in the server binary; Builders compose from it and a type outside it is a load error
+naming the type, the file, and the Room. Adding a type is a server change and a release, which the
+rejection message says out loud so a Builder files an issue rather than re-checking their spelling.
+
+A Zone's Components are the Zone's own and do **not** descend onto its Rooms: a Zone carrying `Dark`
+does not make its Rooms dark. Merging across that containment boundary is a different rule from the
+inheritance merge in ADR-0010 decision 4 and has not been decided.
+
+**Core Component vocabulary for Rooms and Zones.** Four to start, enough to prove the mechanism and
+the ones that recur across every MUD. Which Room and Zone properties Andara actually wants is game
+design and is `[NEEDS BRIAN]`; the list is expected to grow from real content.
+
+| Component | Means |
+|-----------|-------|
+| `andara.core.Dark` | The Room is unlit. |
+| `andara.core.NoMagic` | Magic does not function here. |
+| `andara.core.Indoors` | The Room is enclosed; weather and sky do not reach it. |
+| `andara.core.NoRecall` | Recall and other self-teleport effects do not leave from here. |
+
+Each is data today. The system that reads `Dark` and suppresses a Room description belongs to the
+story that adds looking in the dark, not to the one that adds the Component.
 
 **Game Object** — Any content-defined thing that participates in the type system: an Entity, an Item,
 a Behavior, and further kinds not yet named. The kind set is open by construction (ADR-0010).

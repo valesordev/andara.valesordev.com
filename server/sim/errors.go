@@ -17,7 +17,37 @@ const (
 	ErrMalformed          ErrCode = "malformed_file"
 	ErrEmptyContent       ErrCode = "no_zones_found"
 	ErrOrphanRoom         ErrCode = "orphan_room"
+
+	// AW-SRV-021.
+	ErrUnknownDirection      ErrCode = "unknown_direction"
+	ErrUnknownComponent      ErrCode = "unknown_component_type"
+	ErrDuplicateComponent    ErrCode = "duplicate_component_type"
+	ErrInvalidComponentField ErrCode = "invalid_component_field"
+	ErrMissingReverseExit    ErrCode = "missing_reverse_exit"
 )
+
+// warningCodes are findings that do not refuse a load. They are advisory
+// because the thing they describe is legal — a Room a Builder has not connected
+// yet, a chute that only goes down — and refusing content for being unfinished
+// would make the loader useless to the person using it.
+//
+// The set is closed by construction, which is what makes it safe as a metric
+// label (CLAUDE.md §7) on andara_content_load_warnings_total.
+var warningCodes = map[ErrCode]struct{}{
+	ErrOrphanRoom:         {},
+	ErrMissingReverseExit: {},
+}
+
+// IsWarning reports whether a finding is advisory rather than a refusal.
+// Orphans are the one finding whose class is policy: --strict-orphans promotes
+// them, and nothing else moves.
+func IsWarning(e ValidationError, strictOrphans bool) bool {
+	if e.Code == ErrOrphanRoom {
+		return !strictOrphans
+	}
+	_, ok := warningCodes[e.Code]
+	return ok
+}
 
 // ValidationError carries everything a Builder needs to fix the problem without
 // opening the loader source.
@@ -40,9 +70,10 @@ func (e ValidationError) Error() string {
 	return fmt.Sprintf("%s: %s", e.Code, e.Detail)
 }
 
-// Fatal reports whether the finding refuses a load. Orphans are warnings unless
-// the caller opted into Options.StrictOrphans, in which case they are already
-// treated as fatal by BuildWorld (World is nil).
+// Fatal reports whether the finding refuses a load under default policy.
+// Orphans are warnings unless the caller opted into Options.StrictOrphans, in
+// which case they are already treated as fatal by BuildWorld (World is nil);
+// use IsWarning when that policy is in hand.
 func (e ValidationError) Fatal() bool {
-	return e.Code != ErrOrphanRoom
+	return !IsWarning(e, false)
 }

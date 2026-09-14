@@ -54,6 +54,18 @@ export declare type ZoneDefinition = Message<"andara.content.v1.ZoneDefinition">
    * @generated from field: repeated andara.content.v1.RoomDefinition rooms = 4;
    */
   rooms: RoomDefinition[];
+
+  /**
+   * Zone-wide Components (ADR-0010 decision 8). Sorted by type by the compiler,
+   * at most one of each type. Zone-level Components do not descend onto the
+   * Zone's Rooms: a Zone carrying Dark does not make its Rooms dark
+   * (AW-SRV-021 AC-4). Merging across a containment boundary is a different
+   * rule from ADR-0010 decision 4's inheritance merge and wants its own
+   * decision.
+   *
+   * @generated from field: repeated andara.content.v1.ComponentValue components = 5;
+   */
+  components: ComponentValue[];
 };
 
 /**
@@ -91,6 +103,19 @@ export declare type RoomDefinition = Message<"andara.content.v1.RoomDefinition">
    * @generated from field: repeated andara.content.v1.ExitDefinition exits = 4;
    */
   exits: ExitDefinition[];
+
+  /**
+   * Components attached to this Room (ADR-0010 decision 8) — the field number
+   * zone.proto held open for exactly this. Sorted by type by the compiler, at
+   * most one of each type (ADR-0010 decision 3): two of a thing has no
+   * override semantics, so the loader rejects it rather than picking one.
+   *
+   * `repeated`, not `map`, because a Room's components feed the State Hash and
+   * ADR-0007 rule 3 forbids maps there.
+   *
+   * @generated from field: repeated andara.content.v1.ComponentValue components = 5;
+   */
+  components: ComponentValue[];
 };
 
 /**
@@ -138,4 +163,90 @@ export declare type ExitDefinition = Message<"andara.content.v1.ExitDefinition">
  * Use `create(ExitDefinitionSchema)` to create a new message.
  */
 export declare const ExitDefinitionSchema: GenMessage<ExitDefinition>;
+
+/**
+ * ComponentValue is one Component attached to a Room or a Zone.
+ *
+ * Components are data; systems hold the logic (ADR-0010). Nothing here is
+ * executable and nothing here is read by the loader beyond validating it.
+ *
+ * @generated from message andara.content.v1.ComponentValue
+ */
+export declare type ComponentValue = Message<"andara.content.v1.ComponentValue"> & {
+  /**
+   * Namespaced Component type, e.g. "andara.core.Dark" (ADR-0010 decision 6).
+   * Rejected at load if the server has no such type registered: Component
+   * types are defined on the server and Builders compose them rather than
+   * creating them (ADR-0010 decision 7).
+   *
+   * @generated from field: string type = 1;
+   */
+  type: string;
+
+  /**
+   * Field values for the Component. Deliberately not google.protobuf.Any and
+   * not a map: ADR-0007 rule 3 forbids both anywhere near the State Hash.
+   * Sorted by name by the compiler, like every other repeated field the sim
+   * hashes. A field the registry does not declare on this type is a load
+   * error — an undeclared field would otherwise be hashed into World state
+   * while meaning nothing to any system.
+   *
+   * @generated from field: repeated andara.content.v1.ComponentField fields = 2;
+   */
+  fields: ComponentField[];
+};
+
+/**
+ * Describes the message andara.content.v1.ComponentValue.
+ * Use `create(ComponentValueSchema)` to create a new message.
+ */
+export declare const ComponentValueSchema: GenMessage<ComponentValue>;
+
+/**
+ * ComponentField is one named value inside a ComponentValue.
+ *
+ * @generated from message andara.content.v1.ComponentField
+ */
+export declare type ComponentField = Message<"andara.content.v1.ComponentField"> & {
+  /**
+   * Unique within the ComponentValue. Duplicates are a load error.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * No double or float member, and none may be added: a float in the State
+   * Hash makes the hash platform-dependent (ADR-0007 rule 3). A quantity that
+   * wants a fraction is an integer in fixed units, decided when the first
+   * Component needs one.
+   *
+   * @generated from oneof andara.content.v1.ComponentField.value
+   */
+  value: {
+    /**
+     * @generated from field: string string_value = 2;
+     */
+    value: string;
+    case: "stringValue";
+  } | {
+    /**
+     * @generated from field: int64 int_value = 3;
+     */
+    value: bigint;
+    case: "intValue";
+  } | {
+    /**
+     * @generated from field: bool bool_value = 4;
+     */
+    value: boolean;
+    case: "boolValue";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message andara.content.v1.ComponentField.
+ * Use `create(ComponentFieldSchema)` to create a new message.
+ */
+export declare const ComponentFieldSchema: GenMessage<ComponentField>;
 

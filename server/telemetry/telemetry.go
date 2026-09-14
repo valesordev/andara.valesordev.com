@@ -31,12 +31,14 @@ type Telemetry struct {
 	Reg     *prometheus.Registry
 }
 
-// Metrics is the AW-SRV-001 content-load instrument set.
+// Metrics is the content-load instrument set.
 type Metrics struct {
 	ZonesLoaded      prometheus.Gauge
 	RoomsLoaded      *prometheus.GaugeVec
 	LoadDuration     prometheus.Histogram
 	ValidationErrors *prometheus.CounterVec
+	Components       *prometheus.CounterVec
+	LoadWarnings     *prometheus.CounterVec
 }
 
 // Setup builds a JSON slog logger, a Prometheus registry, and a tracer.
@@ -67,7 +69,8 @@ func Setup(cfg config.Config, stderr io.Writer) *Telemetry {
 
 	reg := prometheus.NewRegistry()
 	m := newMetrics()
-	reg.MustRegister(m.ZonesLoaded, m.RoomsLoaded, m.LoadDuration, m.ValidationErrors)
+	reg.MustRegister(m.ZonesLoaded, m.RoomsLoaded, m.LoadDuration, m.ValidationErrors,
+		m.Components, m.LoadWarnings)
 
 	tp := newTracerProvider(cfg)
 	otel.SetTracerProvider(tp)
@@ -140,6 +143,25 @@ func newMetrics() *Metrics {
 			Name:      "content_validation_errors_total",
 			Help:      "Validation findings by ErrCode.",
 		}, []string{"code"}),
+		// component_type is safe as a label only because the Component
+		// registry is closed by construction (ADR-0010 decision 7): the
+		// cardinality bound is the number of types in the server binary, and
+		// content cannot add one. This is the same reason room_id is not a
+		// label anywhere in this file (CLAUDE.md §7).
+		Components: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "andara",
+			Name:      "content_components_total",
+			Help:      "Components in the loaded World, by registered Component type.",
+		}, []string{"component_type"}),
+		// kind is bounded by sim's warningCodes. Warnings also appear in
+		// content_validation_errors_total, which counts every finding by code;
+		// this one exists so an operator can ask "is this content pack sloppy"
+		// without knowing which codes happen to be advisory.
+		LoadWarnings: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "andara",
+			Name:      "content_load_warnings_total",
+			Help:      "Advisory content findings by kind: content loaded, but something looks unfinished.",
+		}, []string{"kind"}),
 	}
 }
 
@@ -160,10 +182,11 @@ func TraceID(ctx context.Context) string {
 	return sc.TraceID().String()
 }
 
-// LogFinding writes one structured line per validation finding.
+// LogFinding writes one structured line per validation finding. A finding that
+// does not refuse the load logs at warn; everything else at error.
 func LogFinding(ctx context.Context, log *slog.Logger, e sim.ValidationError, strict bool) {
 	level := slog.LevelError
-	if e.Code == sim.ErrOrphanRoom && !strict {
+	if sim.IsWarning(e, strict) {
 		level = slog.LevelWarn
 	}
 	attrs := []any{

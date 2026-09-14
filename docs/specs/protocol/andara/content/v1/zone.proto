@@ -29,6 +29,14 @@ message ZoneDefinition {
   // why unspecified ordering is disqualifying anywhere near the State Hash.
   repeated RoomDefinition rooms = 4;
 
+  // Zone-wide Components (ADR-0010 decision 8). Sorted by type by the compiler,
+  // at most one of each type. Zone-level Components do not descend onto the
+  // Zone's Rooms: a Zone carrying Dark does not make its Rooms dark
+  // (AW-SRV-021 AC-4). Merging across a containment boundary is a different
+  // rule from ADR-0010 decision 4's inheritance merge and wants its own
+  // decision.
+  repeated ComponentValue components = 5;
+
   // The Zone→Partition mapping is hash(id) % 64, computed at load rather than
   // carried here (AW-SRV-001). Content does not get to choose its partition:
   // the mapping is permanent because repartitioning a keyed topic reorders
@@ -46,14 +54,14 @@ message RoomDefinition {
   // (AW-SRV-001).
   repeated ExitDefinition exits = 4;
 
-  // ADR-0010 was accepted on 2026-09-10 and decision 8 says Rooms and Zones
-  // carry Components. The component set attaches here, at field 5, in
-  // AW-SRV-021. Still deliberately not `reserved`: adding the field is
-  // additive and needs no reservation, while a reserved range would have to
-  // shrink to accept it, which buf counts as a breaking change.
+  // Components attached to this Room (ADR-0010 decision 8) — the field number
+  // zone.proto held open for exactly this. Sorted by type by the compiler, at
+  // most one of each type (ADR-0010 decision 3): two of a thing has no
+  // override semantics, so the loader rejects it rather than picking one.
   //
-  // It will be `repeated`, sorted by component type, because a Room's
-  // components feed the State Hash and ADR-0007 rule 3 forbids maps there.
+  // `repeated`, not `map`, because a Room's components feed the State Hash and
+  // ADR-0007 rule 3 forbids maps there.
+  repeated ComponentValue components = 5;
 }
 
 message ExitDefinition {
@@ -73,4 +81,40 @@ message ExitDefinition {
   // keeps intra-Zone exits terse. `to_room` is always required.
   string to_zone = 2;
   string to_room = 3;
+}
+
+// ComponentValue is one Component attached to a Room or a Zone.
+//
+// Components are data; systems hold the logic (ADR-0010). Nothing here is
+// executable and nothing here is read by the loader beyond validating it.
+message ComponentValue {
+  // Namespaced Component type, e.g. "andara.core.Dark" (ADR-0010 decision 6).
+  // Rejected at load if the server has no such type registered: Component
+  // types are defined on the server and Builders compose them rather than
+  // creating them (ADR-0010 decision 7).
+  string type = 1;
+
+  // Field values for the Component. Deliberately not google.protobuf.Any and
+  // not a map: ADR-0007 rule 3 forbids both anywhere near the State Hash.
+  // Sorted by name by the compiler, like every other repeated field the sim
+  // hashes. A field the registry does not declare on this type is a load
+  // error — an undeclared field would otherwise be hashed into World state
+  // while meaning nothing to any system.
+  repeated ComponentField fields = 2;
+}
+
+// ComponentField is one named value inside a ComponentValue.
+message ComponentField {
+  // Unique within the ComponentValue. Duplicates are a load error.
+  string name = 1;
+
+  // No double or float member, and none may be added: a float in the State
+  // Hash makes the hash platform-dependent (ADR-0007 rule 3). A quantity that
+  // wants a fraction is an integer in fixed units, decided when the first
+  // Component needs one.
+  oneof value {
+    string string_value = 2;
+    int64 int_value = 3;
+    bool bool_value = 4;
+  }
 }

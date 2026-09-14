@@ -45,7 +45,14 @@ type ZoneDefinition struct {
 	// definition must produce the same World, and a repeated field with a stable
 	// order is what gives that. A map would not — see andara/log/v1/log.proto for
 	// why unspecified ordering is disqualifying anywhere near the State Hash.
-	Rooms         []*RoomDefinition `protobuf:"bytes,4,rep,name=rooms,proto3" json:"rooms,omitempty"`
+	Rooms []*RoomDefinition `protobuf:"bytes,4,rep,name=rooms,proto3" json:"rooms,omitempty"`
+	// Zone-wide Components (ADR-0010 decision 8). Sorted by type by the compiler,
+	// at most one of each type. Zone-level Components do not descend onto the
+	// Zone's Rooms: a Zone carrying Dark does not make its Rooms dark
+	// (AW-SRV-021 AC-4). Merging across a containment boundary is a different
+	// rule from ADR-0010 decision 4's inheritance merge and wants its own
+	// decision.
+	Components    []*ComponentValue `protobuf:"bytes,5,rep,name=components,proto3" json:"components,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -108,6 +115,13 @@ func (x *ZoneDefinition) GetRooms() []*RoomDefinition {
 	return nil
 }
 
+func (x *ZoneDefinition) GetComponents() []*ComponentValue {
+	if x != nil {
+		return x.Components
+	}
+	return nil
+}
+
 type RoomDefinition struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Unique within the Zone. Duplicates are a load error.
@@ -117,7 +131,15 @@ type RoomDefinition struct {
 	// Sorted by direction. Every target must resolve to an existing Room, in this
 	// Zone or another, or the load fails naming the file, room, and direction
 	// (AW-SRV-001).
-	Exits         []*ExitDefinition `protobuf:"bytes,4,rep,name=exits,proto3" json:"exits,omitempty"`
+	Exits []*ExitDefinition `protobuf:"bytes,4,rep,name=exits,proto3" json:"exits,omitempty"`
+	// Components attached to this Room (ADR-0010 decision 8) — the field number
+	// zone.proto held open for exactly this. Sorted by type by the compiler, at
+	// most one of each type (ADR-0010 decision 3): two of a thing has no
+	// override semantics, so the loader rejects it rather than picking one.
+	//
+	// `repeated`, not `map`, because a Room's components feed the State Hash and
+	// ADR-0007 rule 3 forbids maps there.
+	Components    []*ComponentValue `protobuf:"bytes,5,rep,name=components,proto3" json:"components,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -176,6 +198,13 @@ func (x *RoomDefinition) GetDescription() string {
 func (x *RoomDefinition) GetExits() []*ExitDefinition {
 	if x != nil {
 		return x.Exits
+	}
+	return nil
+}
+
+func (x *RoomDefinition) GetComponents() []*ComponentValue {
+	if x != nil {
+		return x.Components
 	}
 	return nil
 }
@@ -252,25 +281,220 @@ func (x *ExitDefinition) GetToRoom() string {
 	return ""
 }
 
+// ComponentValue is one Component attached to a Room or a Zone.
+//
+// Components are data; systems hold the logic (ADR-0010). Nothing here is
+// executable and nothing here is read by the loader beyond validating it.
+type ComponentValue struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Namespaced Component type, e.g. "andara.core.Dark" (ADR-0010 decision 6).
+	// Rejected at load if the server has no such type registered: Component
+	// types are defined on the server and Builders compose them rather than
+	// creating them (ADR-0010 decision 7).
+	Type string `protobuf:"bytes,1,opt,name=type,proto3" json:"type,omitempty"`
+	// Field values for the Component. Deliberately not google.protobuf.Any and
+	// not a map: ADR-0007 rule 3 forbids both anywhere near the State Hash.
+	// Sorted by name by the compiler, like every other repeated field the sim
+	// hashes. A field the registry does not declare on this type is a load
+	// error — an undeclared field would otherwise be hashed into World state
+	// while meaning nothing to any system.
+	Fields        []*ComponentField `protobuf:"bytes,2,rep,name=fields,proto3" json:"fields,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComponentValue) Reset() {
+	*x = ComponentValue{}
+	mi := &file_andara_content_v1_zone_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComponentValue) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComponentValue) ProtoMessage() {}
+
+func (x *ComponentValue) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_content_v1_zone_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComponentValue.ProtoReflect.Descriptor instead.
+func (*ComponentValue) Descriptor() ([]byte, []int) {
+	return file_andara_content_v1_zone_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ComponentValue) GetType() string {
+	if x != nil {
+		return x.Type
+	}
+	return ""
+}
+
+func (x *ComponentValue) GetFields() []*ComponentField {
+	if x != nil {
+		return x.Fields
+	}
+	return nil
+}
+
+// ComponentField is one named value inside a ComponentValue.
+type ComponentField struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Unique within the ComponentValue. Duplicates are a load error.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// No double or float member, and none may be added: a float in the State
+	// Hash makes the hash platform-dependent (ADR-0007 rule 3). A quantity that
+	// wants a fraction is an integer in fixed units, decided when the first
+	// Component needs one.
+	//
+	// Types that are valid to be assigned to Value:
+	//
+	//	*ComponentField_StringValue
+	//	*ComponentField_IntValue
+	//	*ComponentField_BoolValue
+	Value         isComponentField_Value `protobuf_oneof:"value"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ComponentField) Reset() {
+	*x = ComponentField{}
+	mi := &file_andara_content_v1_zone_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ComponentField) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ComponentField) ProtoMessage() {}
+
+func (x *ComponentField) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_content_v1_zone_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ComponentField.ProtoReflect.Descriptor instead.
+func (*ComponentField) Descriptor() ([]byte, []int) {
+	return file_andara_content_v1_zone_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *ComponentField) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *ComponentField) GetValue() isComponentField_Value {
+	if x != nil {
+		return x.Value
+	}
+	return nil
+}
+
+func (x *ComponentField) GetStringValue() string {
+	if x != nil {
+		if x, ok := x.Value.(*ComponentField_StringValue); ok {
+			return x.StringValue
+		}
+	}
+	return ""
+}
+
+func (x *ComponentField) GetIntValue() int64 {
+	if x != nil {
+		if x, ok := x.Value.(*ComponentField_IntValue); ok {
+			return x.IntValue
+		}
+	}
+	return 0
+}
+
+func (x *ComponentField) GetBoolValue() bool {
+	if x != nil {
+		if x, ok := x.Value.(*ComponentField_BoolValue); ok {
+			return x.BoolValue
+		}
+	}
+	return false
+}
+
+type isComponentField_Value interface {
+	isComponentField_Value()
+}
+
+type ComponentField_StringValue struct {
+	StringValue string `protobuf:"bytes,2,opt,name=string_value,json=stringValue,proto3,oneof"`
+}
+
+type ComponentField_IntValue struct {
+	IntValue int64 `protobuf:"varint,3,opt,name=int_value,json=intValue,proto3,oneof"`
+}
+
+type ComponentField_BoolValue struct {
+	BoolValue bool `protobuf:"varint,4,opt,name=bool_value,json=boolValue,proto3,oneof"`
+}
+
+func (*ComponentField_StringValue) isComponentField_Value() {}
+
+func (*ComponentField_IntValue) isComponentField_Value() {}
+
+func (*ComponentField_BoolValue) isComponentField_Value() {}
+
 var File_andara_content_v1_zone_proto protoreflect.FileDescriptor
 
 const file_andara_content_v1_zone_proto_rawDesc = "" +
 	"\n" +
-	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\x94\x01\n" +
+	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\xd7\x01\n" +
 	"\x0eZoneDefinition\x12%\n" +
 	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
 	"\x04name\x18\x03 \x01(\tR\x04name\x127\n" +
-	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\"\x91\x01\n" +
+	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\x12A\n" +
+	"\n" +
+	"components\x18\x05 \x03(\v2!.andara.content.v1.ComponentValueR\n" +
+	"components\"\xd4\x01\n" +
 	"\x0eRoomDefinition\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x03 \x01(\tR\vdescription\x127\n" +
-	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exits\"`\n" +
+	"\x05exits\x18\x04 \x03(\v2!.andara.content.v1.ExitDefinitionR\x05exits\x12A\n" +
+	"\n" +
+	"components\x18\x05 \x03(\v2!.andara.content.v1.ComponentValueR\n" +
+	"components\"`\n" +
 	"\x0eExitDefinition\x12\x1c\n" +
 	"\tdirection\x18\x01 \x01(\tR\tdirection\x12\x17\n" +
 	"\ato_zone\x18\x02 \x01(\tR\x06toZone\x12\x17\n" +
-	"\ato_room\x18\x03 \x01(\tR\x06toRoomB\xc9\x01\n" +
+	"\ato_room\x18\x03 \x01(\tR\x06toRoom\"_\n" +
+	"\x0eComponentValue\x12\x12\n" +
+	"\x04type\x18\x01 \x01(\tR\x04type\x129\n" +
+	"\x06fields\x18\x02 \x03(\v2!.andara.content.v1.ComponentFieldR\x06fields\"\x92\x01\n" +
+	"\x0eComponentField\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12#\n" +
+	"\fstring_value\x18\x02 \x01(\tH\x00R\vstringValue\x12\x1d\n" +
+	"\tint_value\x18\x03 \x01(\x03H\x00R\bintValue\x12\x1f\n" +
+	"\n" +
+	"bool_value\x18\x04 \x01(\bH\x00R\tboolValueB\a\n" +
+	"\x05valueB\xc9\x01\n" +
 	"\x15com.andara.content.v1B\tZoneProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03ACX\xaa\x02\x11Andara.Content.V1\xca\x02\x11Andara\\Content\\V1\xe2\x02\x1dAndara\\Content\\V1\\GPBMetadata\xea\x02\x13Andara::Content::V1b\x06proto3"
 
 var (
@@ -285,20 +509,25 @@ func file_andara_content_v1_zone_proto_rawDescGZIP() []byte {
 	return file_andara_content_v1_zone_proto_rawDescData
 }
 
-var file_andara_content_v1_zone_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
+var file_andara_content_v1_zone_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_andara_content_v1_zone_proto_goTypes = []any{
 	(*ZoneDefinition)(nil), // 0: andara.content.v1.ZoneDefinition
 	(*RoomDefinition)(nil), // 1: andara.content.v1.RoomDefinition
 	(*ExitDefinition)(nil), // 2: andara.content.v1.ExitDefinition
+	(*ComponentValue)(nil), // 3: andara.content.v1.ComponentValue
+	(*ComponentField)(nil), // 4: andara.content.v1.ComponentField
 }
 var file_andara_content_v1_zone_proto_depIdxs = []int32{
 	1, // 0: andara.content.v1.ZoneDefinition.rooms:type_name -> andara.content.v1.RoomDefinition
-	2, // 1: andara.content.v1.RoomDefinition.exits:type_name -> andara.content.v1.ExitDefinition
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	3, // 1: andara.content.v1.ZoneDefinition.components:type_name -> andara.content.v1.ComponentValue
+	2, // 2: andara.content.v1.RoomDefinition.exits:type_name -> andara.content.v1.ExitDefinition
+	3, // 3: andara.content.v1.RoomDefinition.components:type_name -> andara.content.v1.ComponentValue
+	4, // 4: andara.content.v1.ComponentValue.fields:type_name -> andara.content.v1.ComponentField
+	5, // [5:5] is the sub-list for method output_type
+	5, // [5:5] is the sub-list for method input_type
+	5, // [5:5] is the sub-list for extension type_name
+	5, // [5:5] is the sub-list for extension extendee
+	0, // [0:5] is the sub-list for field type_name
 }
 
 func init() { file_andara_content_v1_zone_proto_init() }
@@ -306,13 +535,18 @@ func file_andara_content_v1_zone_proto_init() {
 	if File_andara_content_v1_zone_proto != nil {
 		return
 	}
+	file_andara_content_v1_zone_proto_msgTypes[4].OneofWrappers = []any{
+		(*ComponentField_StringValue)(nil),
+		(*ComponentField_IntValue)(nil),
+		(*ComponentField_BoolValue)(nil),
+	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_content_v1_zone_proto_rawDesc), len(file_andara_content_v1_zone_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   3,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

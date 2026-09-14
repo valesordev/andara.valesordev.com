@@ -454,9 +454,14 @@ func requireCode(t *testing.T, errs []ValidationError, code ErrCode) ValidationE
 	return ValidationError{}
 }
 
+// fatal reports whether any finding refuses the load under default policy.
+// It asks IsWarning rather than naming a code, so a finding class added later —
+// missing_reverse_exit was the first — is classified the same way the loader
+// classifies it, instead of turning every "no errors" assertion in this file
+// into a failure.
 func fatal(errs []ValidationError) bool {
 	for _, e := range errs {
-		if e.Code != ErrOrphanRoom {
+		if !IsWarning(e, false) {
 			return true
 		}
 	}

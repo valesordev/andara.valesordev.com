@@ -14,13 +14,12 @@ type RoomID string
 
 // Direction is the label on an Exit.
 //
-// The canonical set was closed on 2026-09-10 — the twelve in docs/glossary.md,
-// each with a reverse — but this type is still an unvalidated string, and
-// enforcing the set is AW-SRV-021's. Until then a typo like "norht" loads as a
-// Direction nobody can traverse rather than failing the boot. The set is
-// deliberately enforced here in the loader rather than as a protobuf enum: an
-// unknown enum member is dropped silently on the wire, where a rejected string
-// names the file and the line (zone.proto, ExitDefinition.direction).
+// The canonical set is closed — the twelve in docs/glossary.md, each with a
+// reverse — and enforced by the loader, not by the type: a Direction value can
+// hold anything, and Valid reports whether it is one of the twelve. The set is
+// enforced in the loader rather than as a protobuf enum because an unknown enum
+// member is dropped silently on the wire, where a rejected string names the
+// file and the line (zone.proto, ExitDefinition.direction). See direction.go.
 type Direction string
 
 // RoomRef addresses a Room across Zone boundaries. Cross-Zone references are
@@ -42,15 +41,53 @@ type Room struct {
 	ID          RoomID
 	Title       string
 	Description string
-	Exits       []Exit // stable, sorted by Direction
+	Exits       []Exit      // stable, sorted by Direction
+	Components  []Component // stable, sorted by Type; at most one of each
+}
+
+// Component returns the Room's Component of type t, if it carries one.
+//
+// A sorted slice rather than a map, even though ADR-0010 decision 3 calls the
+// set "keyed by type": uniqueness is enforced at load, and a slice is
+// deterministic by construction where a map has to be sorted on the way out of
+// every reader that ever touches it. Component sets are single digits long, so
+// the scan costs nothing worth a map for.
+func (r *Room) Component(t ComponentType) (Component, bool) {
+	if r == nil {
+		return Component{}, false
+	}
+	return findComponent(r.Components, t)
 }
 
 // Zone is an authored collection of Rooms and the unit of simulation authority.
 type Zone struct {
-	ID        ZoneID
-	Name      string
-	Rooms     map[RoomID]*Room
-	Partition int32 // hash(ID) % 64
+	ID         ZoneID
+	Name       string
+	Rooms      map[RoomID]*Room
+	Partition  int32       // hash(ID) % 64
+	Components []Component // stable, sorted by Type; at most one of each
+}
+
+// Component returns the Zone's Component of type t, if it carries one.
+//
+// Zone-level Components are the Zone's own. They do not descend onto its Rooms:
+// a Zone carrying Dark does not make its Rooms dark (AW-SRV-021 AC-4). Merging
+// across a containment boundary is a different rule from ADR-0010 decision 4's
+// inheritance merge, and it wants its own decision before it exists.
+func (z *Zone) Component(t ComponentType) (Component, bool) {
+	if z == nil {
+		return Component{}, false
+	}
+	return findComponent(z.Components, t)
+}
+
+func findComponent(set []Component, t ComponentType) (Component, bool) {
+	for _, c := range set {
+		if c.Type == t {
+			return c, true
+		}
+	}
+	return Component{}, false
 }
 
 // World is the immutable topology. Mutable state lives elsewhere (AW-SRV-002).

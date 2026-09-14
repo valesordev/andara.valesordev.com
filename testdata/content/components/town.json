@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "components": [
+    {"type": "andara.core.NoRecall"}
+  ],
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square of packed earth.",
+      "exits": [
+        {"direction": "north", "toRoom": "cellar"}
+      ]
+    },
+    {
+      "id": "cellar",
+      "title": "Under the Plaza",
+      "description": "No lamp has been lit here in years.",
+      "components": [
+        {"type": "andara.core.NoMagic"},
+        {"type": "andara.core.Indoors"},
+        {"type": "andara.core.Dark"}
+      ],
+      "exits": [
+        {"direction": "south", "toRoom": "plaza"}
+      ]
+    }
+  ]
+}
