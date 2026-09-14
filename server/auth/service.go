@@ -9,7 +9,6 @@ import (
 
 	"connectrpc.com/connect"
 
-	accountsv1 "github.com/valesordev/andara/gen/go/andara/accounts/v1"
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
 	authv1 "github.com/valesordev/andara/gen/go/andara/auth/v1"
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
@@ -191,15 +190,4 @@ func (a *Admin) CreateAgentAccount(ctx context.Context, req *adminv1.CreateAgent
 		return nil, connectError(err)
 	}
 	return &adminv1.CreateAgentAccountResponse{AccountId: id, ApiKey: key}, nil
-}
-
-// StatusFromString reads active or disabled, for andara-cli.
-func StatusFromString(s string) (accountsv1.AccountStatus, bool) {
-	switch s {
-	case "active":
-		return accountsv1.AccountStatus_ACTIVE, true
-	case "disabled":
-		return accountsv1.AccountStatus_DISABLED, true
-	}
-	return accountsv1.AccountStatus_ACCOUNT_STATUS_UNSPECIFIED, false
 }

@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -39,8 +40,12 @@ type runtime struct {
 	creds        credentialsInfo
 	command      string
 	span         trace.Span
+	ctx          context.Context
 	tp           *sdktrace.TracerProvider
 	started      time.Time
+	// stdin is where a password is read from with --password-stdin; nil
+	// means os.Stdin.
+	stdin io.Reader
 }
 
 type globalFlags struct {
@@ -122,6 +127,10 @@ func newRoot(rt *runtime) *cobra.Command {
 
 	root.AddCommand(newVersionCmd(rt))
 	root.AddCommand(newConfigCmd(rt))
+	root.AddCommand(newAuthCmd(rt))
+	root.AddCommand(newAccountCmd(rt))
+	root.AddCommand(newInviteCmd(rt))
+	root.AddCommand(newRegistrationCmd(rt))
 	root.AddCommand(newCompletionCmd(rt))
 	return root
 }
