@@ -142,12 +142,23 @@ case "$ACTION" in
     # `diff -rq` reports each differing or one-sided file; the parent directory of
     # each is the generated package. "Only in gen/..." covers a .proto that was removed
     # without regenerating; "Only in $FRESH/..." covers one that was added.
-    STALE="$(diff -rq "$FRESH/$GEN_DIR" "$GEN_DIR" 2>/dev/null \
-      | sed -E -e "s#^Files $FRESH/([^ ]+) and .*#\\1#" \
-               -e "s#^Only in $FRESH/([^:]+): (.*)#\\1/\\2#" \
-               -e "s#^Only in ([^:]+): (.*)#\\1/\\2#" \
-      | xargs -r -n1 dirname | sort -u | tr '\n' ' ')"
-    if [[ -n "$STALE" ]]; then
+    #
+    # `|| true` because diff exits 1 on a difference, this script runs under
+    # `set -eo pipefail`, and an assignment whose substitution fails is itself a
+    # failure: without it the script died here silently with no message at all.
+    # gen/README.md is the one hand-written file under gen/ — it explains why the
+    # directory is committed — and is excluded by name rather than by pattern so that
+    # any other stray file in gen/ is still reported.
+    DIFF_OUT="$(diff -rq --exclude=README.md "$FRESH/$GEN_DIR" "$GEN_DIR" 2>&1 || true)"
+    if [[ -n "$DIFF_OUT" ]]; then
+      STALE="$(printf '%s\n' "$DIFF_OUT" \
+        | sed -E -e "s#^Files $FRESH/([^ ]+) and .*#\\1#" \
+                 -e "s#^Only in $FRESH/([^:]+): (.*)#\\1/\\2#" \
+                 -e "s#^Only in ([^:]+): (.*)#\\1/\\2#" \
+        | xargs -r -n1 dirname | sort -u | tr '\n' ' ')"
+      # The raw lines too, so a CI failure is diagnosable from the log: which files,
+      # and whether they differ or exist on one side only.
+      printf '%s\n' "$DIFF_OUT" | sed "s#$FRESH/##" >&2
       echo "make: proto-check: generated code is stale in: $STALE(run \`make proto\` and commit gen/)" >&2
       exit 1
     fi
