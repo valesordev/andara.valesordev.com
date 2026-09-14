@@ -17,11 +17,126 @@ syntax = "proto3";
 
 package andara.admin.v1;
 
+import "andara/accounts/v1/account.proto";
+
 service Admin {
   // Build and content identity of the running server. ADR-0004 decoupled
   // content from code, so reproducing a bug requires naming both — this is the
   // RPC form of the andara_build_info metric (AW-INF-002).
   rpc GetServerInfo(GetServerInfoRequest) returns (GetServerInfoResponse);
+
+  // Account administration (AW-SRV-008). Every one of these requires the
+  // caller to hold `operator`, and every one writes exactly one record to
+  // andara.audit.v1 naming actor, acting-as, action, target, Session, and
+  // trace. The mutating ones take expected_record_version for optimistic
+  // concurrency: 0 means "whatever it is now"; any other value must match or
+  // the call is ABORTED and nothing is written.
+
+  // Create a PASSWORD Account directly. The only path to an Account while
+  // the Registration Mode is `closed`.
+  rpc CreateAccount(CreateAccountRequest) returns (CreateAccountResponse);
+  // Replace an Account's password. No email flow exists in Phase 1
+  // (ADR-0006); this is how a locked-out player gets back in.
+  rpc ResetPassword(ResetPasswordRequest) returns (ResetPasswordResponse);
+  // Replace the role set. Open Sessions on the Account are closed within
+  // auth.recheck_interval so they reopen with the new roles.
+  rpc SetRoles(SetRolesRequest) returns (SetRolesResponse);
+  // ACTIVE or DISABLED. A DISABLED Account's still-valid session token is
+  // refused by OpenSession, and its open Sessions are closed within
+  // auth.recheck_interval.
+  rpc SetAccountStatus(SetAccountStatusRequest) returns (SetAccountStatusResponse);
+  // Mint Invite Codes scoped to the caller's Account. The codes are in the
+  // response and nowhere else; only their hashes are stored.
+  rpc IssueInvite(IssueInviteRequest) returns (IssueInviteResponse);
+  rpc RevokeInvite(RevokeInviteRequest) returns (RevokeInviteResponse);
+  // Flip the Registration Mode. A write to andara.accounts.v1 under the key
+  // "config/registration", not a deploy.
+  rpc SetRegistrationMode(SetRegistrationModeRequest) returns (SetRegistrationModeResponse);
+  // Create an AGENT Account scoped to one Content Pack. With an API_KEY
+  // credential the key is in the response exactly once; with WORKLOAD_JWT
+  // there is no secret to return and workload_subject is what the projected
+  // token's `sub` must equal.
+  rpc CreateAgentAccount(CreateAgentAccountRequest) returns (CreateAgentAccountResponse);
+}
+
+message CreateAccountRequest {
+  string username = 1;
+  string password = 2;
+  // Defaults to [PLAYER] when empty.
+  repeated andara.accounts.v1.Role roles = 3;
+}
+
+message CreateAccountResponse {
+  string account_id = 1;
+}
+
+message ResetPasswordRequest {
+  string account_id = 1;
+  string new_password = 2;
+  uint64 expected_record_version = 3;
+}
+
+message ResetPasswordResponse {
+  uint64 record_version = 1;
+}
+
+message SetRolesRequest {
+  string account_id = 1;
+  repeated andara.accounts.v1.Role roles = 2;
+  uint64 expected_record_version = 3;
+}
+
+message SetRolesResponse {
+  uint64 record_version = 1;
+}
+
+message SetAccountStatusRequest {
+  string account_id = 1;
+  andara.accounts.v1.AccountStatus status = 2;
+  uint64 expected_record_version = 3;
+}
+
+message SetAccountStatusResponse {
+  uint64 record_version = 1;
+}
+
+message IssueInviteRequest {
+  // 1..100. Each code expires auth.invite_ttl after issuance.
+  uint32 count = 1;
+}
+
+message IssueInviteResponse {
+  repeated string codes = 1;
+  int64 expires_unix = 2;
+}
+
+message RevokeInviteRequest {
+  string code = 1;
+}
+
+message RevokeInviteResponse {}
+
+message SetRegistrationModeRequest {
+  andara.accounts.v1.RegistrationMode mode = 1;
+}
+
+message SetRegistrationModeResponse {
+  andara.accounts.v1.RegistrationMode previous = 1;
+}
+
+message CreateAgentAccountRequest {
+  string username = 1;
+  string pack_id = 2;
+  // API_KEY or WORKLOAD_JWT.
+  andara.accounts.v1.CredentialKind credential_kind = 3;
+  // Required for WORKLOAD_JWT; refused otherwise.
+  string workload_subject = 4;
+}
+
+message CreateAgentAccountResponse {
+  string account_id = 1;
+  // Set only for API_KEY, and only here. It is never stored or logged.
+  string api_key = 2;
 }
 
 message GetServerInfoRequest {}

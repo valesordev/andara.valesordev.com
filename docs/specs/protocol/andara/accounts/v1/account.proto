@@ -1,0 +1,144 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
+// Account records — the andara.accounts.v1 topic (AW-SRV-008).
+//
+// Account state is not World state (ADR-0006): it lives on its own compacted
+// topic, keyed by account_id, so that a World rollback cannot roll back a
+// credential and a World Snapshot shared for debugging cannot carry one. The
+// server is the single writer and rebuilds an in-memory index from the topic
+// at boot; Postgres is a projection of it (AW-SRV-018), never the authority.
+//
+// Everything sorted here is sorted because the record is compared and hashed
+// in tests, and because a repeated field with a stable order is the only kind
+// that survives a round trip through the log unchanged.
+
+syntax = "proto3";
+
+package andara.accounts.v1;
+
+// One record on andara.accounts.v1. The key is account_id for an Account and
+// the literal "config/registration" for the AuthConfig, so the topic holds the
+// registration mode as an audited write rather than a deploy (ADR-0006).
+message AccountRecord {
+  oneof record {
+    Account account = 1;
+    AuthConfig config = 2;
+  }
+}
+
+message Account {
+  string account_id = 1;
+  // Unique across the topic, compared case-insensitively. Never a log field
+  // on a failed authentication: it may be a password typed in the wrong box.
+  string username = 2;
+  Credential credential = 3;
+
+  // Sorted by enum value, no duplicates. Roles are Account attributes read
+  // from the index at use; a session token carries identity, never roles
+  // (AW-SRV-008 AC-12).
+  repeated Role roles = 4;
+  AccountStatus status = 5;
+  int64 created_unix = 6;
+
+  // Sorted by hash. Only the SHA-256 of a refresh token is stored; the token
+  // itself is returned to the caller exactly once.
+  repeated RefreshTokenRecord refresh_tokens = 7;
+
+  // Invite Codes this Account issued, sorted by code_hash. An Invite is
+  // Account-scoped: burning one is a write to the issuer's record.
+  repeated Invite invites = 8;
+
+  // Non-empty only for AGENT: the one Content Pack this Account's Behaviors
+  // may drive (ADR-0005, and the 2026-09-11 decision that Builders write
+  // Behaviors).
+  string agent_pack_id = 9;
+
+  // Optimistic concurrency for Admin writes: a request that names a version
+  // other than the current one is refused with ABORTED rather than applied
+  // over a change it did not see.
+  uint64 record_version = 10;
+
+  // AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
+  // must carry. 11 and 12 are unused, not reserved — see zone.proto for why.
+  string workload_subject = 13;
+}
+
+message Credential {
+  CredentialKind kind = 1;
+  // Argon2id output for PASSWORD and API_KEY; empty for WORKLOAD_JWT, whose
+  // verification is against the issuer rather than a stored secret.
+  bytes hash = 2;
+  bytes salt = 3;
+  // Stored alongside the hash so a parameter change is a rehash on the next
+  // successful login (AW-SRV-008 AC-13), not a migration.
+  Argon2Params params = 4;
+}
+
+message Argon2Params {
+  uint32 memory_kib = 1;
+  uint32 time = 2;
+  uint32 threads = 3;
+  uint32 key_len = 4;
+}
+
+message RefreshTokenRecord {
+  bytes hash = 1;
+  int64 issued_unix = 2;
+  int64 expires_unix = 3;
+  bool revoked = 4;
+}
+
+message Invite {
+  // SHA-256 of the code. The code itself is shown once, at issuance.
+  bytes code_hash = 1;
+  int64 issued_unix = 2;
+  int64 expires_unix = 3;
+  bool revoked = 4;
+  // Set before the successful Register response is sent (AW-SRV-008 AC-4).
+  bool redeemed = 5;
+  string redeemed_by_account_id = 6;
+}
+
+message AuthConfig {
+  RegistrationMode mode = 1;
+  // The operator Account that made the change. The mode is data on the topic
+  // rather than configuration so that flipping it is an audited write.
+  string changed_by = 2;
+  int64 changed_unix = 3;
+}
+
+enum Role {
+  ROLE_UNSPECIFIED = 0;
+  PLAYER = 1;
+  BUILDER = 2;
+  GAME_MASTER = 3;
+  OPERATOR = 4;
+  AGENT = 5;
+}
+
+enum AccountStatus {
+  ACCOUNT_STATUS_UNSPECIFIED = 0;
+  ACTIVE = 1;
+  DISABLED = 2;
+}
+
+enum CredentialKind {
+  CREDENTIAL_KIND_UNSPECIFIED = 0;
+  PASSWORD = 1;
+  // `ak_` + 32 random bytes, for agent Accounts where there is no token
+  // issuer (`make up`). Argon2id-hashed like a password.
+  API_KEY = 2;
+  // A projected Kubernetes service-account token, verified against
+  // auth.k8s_issuer; the cluster path ADR-0005 asks for.
+  WORKLOAD_JWT = 3;
+}
+
+// The registration phases ADR-0006 decided: closed at launch, then invite-only
+// beta, then open.
+enum RegistrationMode {
+  REGISTRATION_MODE_UNSPECIFIED = 0;
+  CLOSED = 1;
+  INVITE = 2;
+  OPEN = 3;
+}

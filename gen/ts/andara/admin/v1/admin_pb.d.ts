@@ -19,11 +19,339 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
+import type { AccountStatus, CredentialKind, RegistrationMode, Role } from "../../accounts/v1/account_pb";
 
 /**
  * Describes the file andara/admin/v1/admin.proto.
  */
 export declare const file_andara_admin_v1_admin: GenFile;
+
+/**
+ * @generated from message andara.admin.v1.CreateAccountRequest
+ */
+export declare type CreateAccountRequest = Message<"andara.admin.v1.CreateAccountRequest"> & {
+  /**
+   * @generated from field: string username = 1;
+   */
+  username: string;
+
+  /**
+   * @generated from field: string password = 2;
+   */
+  password: string;
+
+  /**
+   * Defaults to [PLAYER] when empty.
+   *
+   * @generated from field: repeated andara.accounts.v1.Role roles = 3;
+   */
+  roles: Role[];
+};
+
+/**
+ * Describes the message andara.admin.v1.CreateAccountRequest.
+ * Use `create(CreateAccountRequestSchema)` to create a new message.
+ */
+export declare const CreateAccountRequestSchema: GenMessage<CreateAccountRequest>;
+
+/**
+ * @generated from message andara.admin.v1.CreateAccountResponse
+ */
+export declare type CreateAccountResponse = Message<"andara.admin.v1.CreateAccountResponse"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+};
+
+/**
+ * Describes the message andara.admin.v1.CreateAccountResponse.
+ * Use `create(CreateAccountResponseSchema)` to create a new message.
+ */
+export declare const CreateAccountResponseSchema: GenMessage<CreateAccountResponse>;
+
+/**
+ * @generated from message andara.admin.v1.ResetPasswordRequest
+ */
+export declare type ResetPasswordRequest = Message<"andara.admin.v1.ResetPasswordRequest"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+
+  /**
+   * @generated from field: string new_password = 2;
+   */
+  newPassword: string;
+
+  /**
+   * @generated from field: uint64 expected_record_version = 3;
+   */
+  expectedRecordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.ResetPasswordRequest.
+ * Use `create(ResetPasswordRequestSchema)` to create a new message.
+ */
+export declare const ResetPasswordRequestSchema: GenMessage<ResetPasswordRequest>;
+
+/**
+ * @generated from message andara.admin.v1.ResetPasswordResponse
+ */
+export declare type ResetPasswordResponse = Message<"andara.admin.v1.ResetPasswordResponse"> & {
+  /**
+   * @generated from field: uint64 record_version = 1;
+   */
+  recordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.ResetPasswordResponse.
+ * Use `create(ResetPasswordResponseSchema)` to create a new message.
+ */
+export declare const ResetPasswordResponseSchema: GenMessage<ResetPasswordResponse>;
+
+/**
+ * @generated from message andara.admin.v1.SetRolesRequest
+ */
+export declare type SetRolesRequest = Message<"andara.admin.v1.SetRolesRequest"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+
+  /**
+   * @generated from field: repeated andara.accounts.v1.Role roles = 2;
+   */
+  roles: Role[];
+
+  /**
+   * @generated from field: uint64 expected_record_version = 3;
+   */
+  expectedRecordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetRolesRequest.
+ * Use `create(SetRolesRequestSchema)` to create a new message.
+ */
+export declare const SetRolesRequestSchema: GenMessage<SetRolesRequest>;
+
+/**
+ * @generated from message andara.admin.v1.SetRolesResponse
+ */
+export declare type SetRolesResponse = Message<"andara.admin.v1.SetRolesResponse"> & {
+  /**
+   * @generated from field: uint64 record_version = 1;
+   */
+  recordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetRolesResponse.
+ * Use `create(SetRolesResponseSchema)` to create a new message.
+ */
+export declare const SetRolesResponseSchema: GenMessage<SetRolesResponse>;
+
+/**
+ * @generated from message andara.admin.v1.SetAccountStatusRequest
+ */
+export declare type SetAccountStatusRequest = Message<"andara.admin.v1.SetAccountStatusRequest"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+
+  /**
+   * @generated from field: andara.accounts.v1.AccountStatus status = 2;
+   */
+  status: AccountStatus;
+
+  /**
+   * @generated from field: uint64 expected_record_version = 3;
+   */
+  expectedRecordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetAccountStatusRequest.
+ * Use `create(SetAccountStatusRequestSchema)` to create a new message.
+ */
+export declare const SetAccountStatusRequestSchema: GenMessage<SetAccountStatusRequest>;
+
+/**
+ * @generated from message andara.admin.v1.SetAccountStatusResponse
+ */
+export declare type SetAccountStatusResponse = Message<"andara.admin.v1.SetAccountStatusResponse"> & {
+  /**
+   * @generated from field: uint64 record_version = 1;
+   */
+  recordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetAccountStatusResponse.
+ * Use `create(SetAccountStatusResponseSchema)` to create a new message.
+ */
+export declare const SetAccountStatusResponseSchema: GenMessage<SetAccountStatusResponse>;
+
+/**
+ * @generated from message andara.admin.v1.IssueInviteRequest
+ */
+export declare type IssueInviteRequest = Message<"andara.admin.v1.IssueInviteRequest"> & {
+  /**
+   * 1..100. Each code expires auth.invite_ttl after issuance.
+   *
+   * @generated from field: uint32 count = 1;
+   */
+  count: number;
+};
+
+/**
+ * Describes the message andara.admin.v1.IssueInviteRequest.
+ * Use `create(IssueInviteRequestSchema)` to create a new message.
+ */
+export declare const IssueInviteRequestSchema: GenMessage<IssueInviteRequest>;
+
+/**
+ * @generated from message andara.admin.v1.IssueInviteResponse
+ */
+export declare type IssueInviteResponse = Message<"andara.admin.v1.IssueInviteResponse"> & {
+  /**
+   * @generated from field: repeated string codes = 1;
+   */
+  codes: string[];
+
+  /**
+   * @generated from field: int64 expires_unix = 2;
+   */
+  expiresUnix: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.IssueInviteResponse.
+ * Use `create(IssueInviteResponseSchema)` to create a new message.
+ */
+export declare const IssueInviteResponseSchema: GenMessage<IssueInviteResponse>;
+
+/**
+ * @generated from message andara.admin.v1.RevokeInviteRequest
+ */
+export declare type RevokeInviteRequest = Message<"andara.admin.v1.RevokeInviteRequest"> & {
+  /**
+   * @generated from field: string code = 1;
+   */
+  code: string;
+};
+
+/**
+ * Describes the message andara.admin.v1.RevokeInviteRequest.
+ * Use `create(RevokeInviteRequestSchema)` to create a new message.
+ */
+export declare const RevokeInviteRequestSchema: GenMessage<RevokeInviteRequest>;
+
+/**
+ * @generated from message andara.admin.v1.RevokeInviteResponse
+ */
+export declare type RevokeInviteResponse = Message<"andara.admin.v1.RevokeInviteResponse"> & {
+};
+
+/**
+ * Describes the message andara.admin.v1.RevokeInviteResponse.
+ * Use `create(RevokeInviteResponseSchema)` to create a new message.
+ */
+export declare const RevokeInviteResponseSchema: GenMessage<RevokeInviteResponse>;
+
+/**
+ * @generated from message andara.admin.v1.SetRegistrationModeRequest
+ */
+export declare type SetRegistrationModeRequest = Message<"andara.admin.v1.SetRegistrationModeRequest"> & {
+  /**
+   * @generated from field: andara.accounts.v1.RegistrationMode mode = 1;
+   */
+  mode: RegistrationMode;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetRegistrationModeRequest.
+ * Use `create(SetRegistrationModeRequestSchema)` to create a new message.
+ */
+export declare const SetRegistrationModeRequestSchema: GenMessage<SetRegistrationModeRequest>;
+
+/**
+ * @generated from message andara.admin.v1.SetRegistrationModeResponse
+ */
+export declare type SetRegistrationModeResponse = Message<"andara.admin.v1.SetRegistrationModeResponse"> & {
+  /**
+   * @generated from field: andara.accounts.v1.RegistrationMode previous = 1;
+   */
+  previous: RegistrationMode;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetRegistrationModeResponse.
+ * Use `create(SetRegistrationModeResponseSchema)` to create a new message.
+ */
+export declare const SetRegistrationModeResponseSchema: GenMessage<SetRegistrationModeResponse>;
+
+/**
+ * @generated from message andara.admin.v1.CreateAgentAccountRequest
+ */
+export declare type CreateAgentAccountRequest = Message<"andara.admin.v1.CreateAgentAccountRequest"> & {
+  /**
+   * @generated from field: string username = 1;
+   */
+  username: string;
+
+  /**
+   * @generated from field: string pack_id = 2;
+   */
+  packId: string;
+
+  /**
+   * API_KEY or WORKLOAD_JWT.
+   *
+   * @generated from field: andara.accounts.v1.CredentialKind credential_kind = 3;
+   */
+  credentialKind: CredentialKind;
+
+  /**
+   * Required for WORKLOAD_JWT; refused otherwise.
+   *
+   * @generated from field: string workload_subject = 4;
+   */
+  workloadSubject: string;
+};
+
+/**
+ * Describes the message andara.admin.v1.CreateAgentAccountRequest.
+ * Use `create(CreateAgentAccountRequestSchema)` to create a new message.
+ */
+export declare const CreateAgentAccountRequestSchema: GenMessage<CreateAgentAccountRequest>;
+
+/**
+ * @generated from message andara.admin.v1.CreateAgentAccountResponse
+ */
+export declare type CreateAgentAccountResponse = Message<"andara.admin.v1.CreateAgentAccountResponse"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+
+  /**
+   * Set only for API_KEY, and only here. It is never stored or logged.
+   *
+   * @generated from field: string api_key = 2;
+   */
+  apiKey: string;
+};
+
+/**
+ * Describes the message andara.admin.v1.CreateAgentAccountResponse.
+ * Use `create(CreateAgentAccountResponseSchema)` to create a new message.
+ */
+export declare const CreateAgentAccountResponseSchema: GenMessage<CreateAgentAccountResponse>;
 
 /**
  * @generated from message andara.admin.v1.GetServerInfoRequest
@@ -103,6 +431,94 @@ export declare const Admin: GenService<{
     methodKind: "unary";
     input: typeof GetServerInfoRequestSchema;
     output: typeof GetServerInfoResponseSchema;
+  },
+  /**
+   * Create a PASSWORD Account directly. The only path to an Account while
+   * the Registration Mode is `closed`.
+   *
+   * @generated from rpc andara.admin.v1.Admin.CreateAccount
+   */
+  createAccount: {
+    methodKind: "unary";
+    input: typeof CreateAccountRequestSchema;
+    output: typeof CreateAccountResponseSchema;
+  },
+  /**
+   * Replace an Account's password. No email flow exists in Phase 1
+   * (ADR-0006); this is how a locked-out player gets back in.
+   *
+   * @generated from rpc andara.admin.v1.Admin.ResetPassword
+   */
+  resetPassword: {
+    methodKind: "unary";
+    input: typeof ResetPasswordRequestSchema;
+    output: typeof ResetPasswordResponseSchema;
+  },
+  /**
+   * Replace the role set. Open Sessions on the Account are closed within
+   * auth.recheck_interval so they reopen with the new roles.
+   *
+   * @generated from rpc andara.admin.v1.Admin.SetRoles
+   */
+  setRoles: {
+    methodKind: "unary";
+    input: typeof SetRolesRequestSchema;
+    output: typeof SetRolesResponseSchema;
+  },
+  /**
+   * ACTIVE or DISABLED. A DISABLED Account's still-valid session token is
+   * refused by OpenSession, and its open Sessions are closed within
+   * auth.recheck_interval.
+   *
+   * @generated from rpc andara.admin.v1.Admin.SetAccountStatus
+   */
+  setAccountStatus: {
+    methodKind: "unary";
+    input: typeof SetAccountStatusRequestSchema;
+    output: typeof SetAccountStatusResponseSchema;
+  },
+  /**
+   * Mint Invite Codes scoped to the caller's Account. The codes are in the
+   * response and nowhere else; only their hashes are stored.
+   *
+   * @generated from rpc andara.admin.v1.Admin.IssueInvite
+   */
+  issueInvite: {
+    methodKind: "unary";
+    input: typeof IssueInviteRequestSchema;
+    output: typeof IssueInviteResponseSchema;
+  },
+  /**
+   * @generated from rpc andara.admin.v1.Admin.RevokeInvite
+   */
+  revokeInvite: {
+    methodKind: "unary";
+    input: typeof RevokeInviteRequestSchema;
+    output: typeof RevokeInviteResponseSchema;
+  },
+  /**
+   * Flip the Registration Mode. A write to andara.accounts.v1 under the key
+   * "config/registration", not a deploy.
+   *
+   * @generated from rpc andara.admin.v1.Admin.SetRegistrationMode
+   */
+  setRegistrationMode: {
+    methodKind: "unary";
+    input: typeof SetRegistrationModeRequestSchema;
+    output: typeof SetRegistrationModeResponseSchema;
+  },
+  /**
+   * Create an AGENT Account scoped to one Content Pack. With an API_KEY
+   * credential the key is in the response exactly once; with WORKLOAD_JWT
+   * there is no secret to return and workload_subject is what the projected
+   * token's `sub` must equal.
+   *
+   * @generated from rpc andara.admin.v1.Admin.CreateAgentAccount
+   */
+  createAgentAccount: {
+    methodKind: "unary";
+    input: typeof CreateAgentAccountRequestSchema;
+    output: typeof CreateAgentAccountResponseSchema;
   },
 }>;
 

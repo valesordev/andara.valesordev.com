@@ -22,6 +22,7 @@
 package adminv1
 
 import (
+	v1 "github.com/valesordev/andara/gen/go/andara/accounts/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -36,6 +37,811 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type CreateAccountRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	Password string                 `protobuf:"bytes,2,opt,name=password,proto3" json:"password,omitempty"`
+	// Defaults to [PLAYER] when empty.
+	Roles         []v1.Role `protobuf:"varint,3,rep,packed,name=roles,proto3,enum=andara.accounts.v1.Role" json:"roles,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAccountRequest) Reset() {
+	*x = CreateAccountRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[0]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAccountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAccountRequest) ProtoMessage() {}
+
+func (x *CreateAccountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[0]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAccountRequest.ProtoReflect.Descriptor instead.
+func (*CreateAccountRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{0}
+}
+
+func (x *CreateAccountRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *CreateAccountRequest) GetPassword() string {
+	if x != nil {
+		return x.Password
+	}
+	return ""
+}
+
+func (x *CreateAccountRequest) GetRoles() []v1.Role {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
+}
+
+type CreateAccountResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	AccountId     string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAccountResponse) Reset() {
+	*x = CreateAccountResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAccountResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAccountResponse) ProtoMessage() {}
+
+func (x *CreateAccountResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAccountResponse.ProtoReflect.Descriptor instead.
+func (*CreateAccountResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *CreateAccountResponse) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+type ResetPasswordRequest struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	AccountId             string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	NewPassword           string                 `protobuf:"bytes,2,opt,name=new_password,json=newPassword,proto3" json:"new_password,omitempty"`
+	ExpectedRecordVersion uint64                 `protobuf:"varint,3,opt,name=expected_record_version,json=expectedRecordVersion,proto3" json:"expected_record_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *ResetPasswordRequest) Reset() {
+	*x = ResetPasswordRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetPasswordRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetPasswordRequest) ProtoMessage() {}
+
+func (x *ResetPasswordRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResetPasswordRequest.ProtoReflect.Descriptor instead.
+func (*ResetPasswordRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ResetPasswordRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *ResetPasswordRequest) GetNewPassword() string {
+	if x != nil {
+		return x.NewPassword
+	}
+	return ""
+}
+
+func (x *ResetPasswordRequest) GetExpectedRecordVersion() uint64 {
+	if x != nil {
+		return x.ExpectedRecordVersion
+	}
+	return 0
+}
+
+type ResetPasswordResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RecordVersion uint64                 `protobuf:"varint,1,opt,name=record_version,json=recordVersion,proto3" json:"record_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ResetPasswordResponse) Reset() {
+	*x = ResetPasswordResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ResetPasswordResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ResetPasswordResponse) ProtoMessage() {}
+
+func (x *ResetPasswordResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ResetPasswordResponse.ProtoReflect.Descriptor instead.
+func (*ResetPasswordResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *ResetPasswordResponse) GetRecordVersion() uint64 {
+	if x != nil {
+		return x.RecordVersion
+	}
+	return 0
+}
+
+type SetRolesRequest struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	AccountId             string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	Roles                 []v1.Role              `protobuf:"varint,2,rep,packed,name=roles,proto3,enum=andara.accounts.v1.Role" json:"roles,omitempty"`
+	ExpectedRecordVersion uint64                 `protobuf:"varint,3,opt,name=expected_record_version,json=expectedRecordVersion,proto3" json:"expected_record_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *SetRolesRequest) Reset() {
+	*x = SetRolesRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRolesRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRolesRequest) ProtoMessage() {}
+
+func (x *SetRolesRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRolesRequest.ProtoReflect.Descriptor instead.
+func (*SetRolesRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *SetRolesRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *SetRolesRequest) GetRoles() []v1.Role {
+	if x != nil {
+		return x.Roles
+	}
+	return nil
+}
+
+func (x *SetRolesRequest) GetExpectedRecordVersion() uint64 {
+	if x != nil {
+		return x.ExpectedRecordVersion
+	}
+	return 0
+}
+
+type SetRolesResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RecordVersion uint64                 `protobuf:"varint,1,opt,name=record_version,json=recordVersion,proto3" json:"record_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRolesResponse) Reset() {
+	*x = SetRolesResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRolesResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRolesResponse) ProtoMessage() {}
+
+func (x *SetRolesResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRolesResponse.ProtoReflect.Descriptor instead.
+func (*SetRolesResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SetRolesResponse) GetRecordVersion() uint64 {
+	if x != nil {
+		return x.RecordVersion
+	}
+	return 0
+}
+
+type SetAccountStatusRequest struct {
+	state                 protoimpl.MessageState `protogen:"open.v1"`
+	AccountId             string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	Status                v1.AccountStatus       `protobuf:"varint,2,opt,name=status,proto3,enum=andara.accounts.v1.AccountStatus" json:"status,omitempty"`
+	ExpectedRecordVersion uint64                 `protobuf:"varint,3,opt,name=expected_record_version,json=expectedRecordVersion,proto3" json:"expected_record_version,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
+}
+
+func (x *SetAccountStatusRequest) Reset() {
+	*x = SetAccountStatusRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAccountStatusRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAccountStatusRequest) ProtoMessage() {}
+
+func (x *SetAccountStatusRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAccountStatusRequest.ProtoReflect.Descriptor instead.
+func (*SetAccountStatusRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *SetAccountStatusRequest) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *SetAccountStatusRequest) GetStatus() v1.AccountStatus {
+	if x != nil {
+		return x.Status
+	}
+	return v1.AccountStatus(0)
+}
+
+func (x *SetAccountStatusRequest) GetExpectedRecordVersion() uint64 {
+	if x != nil {
+		return x.ExpectedRecordVersion
+	}
+	return 0
+}
+
+type SetAccountStatusResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	RecordVersion uint64                 `protobuf:"varint,1,opt,name=record_version,json=recordVersion,proto3" json:"record_version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetAccountStatusResponse) Reset() {
+	*x = SetAccountStatusResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetAccountStatusResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetAccountStatusResponse) ProtoMessage() {}
+
+func (x *SetAccountStatusResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetAccountStatusResponse.ProtoReflect.Descriptor instead.
+func (*SetAccountStatusResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *SetAccountStatusResponse) GetRecordVersion() uint64 {
+	if x != nil {
+		return x.RecordVersion
+	}
+	return 0
+}
+
+type IssueInviteRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// 1..100. Each code expires auth.invite_ttl after issuance.
+	Count         uint32 `protobuf:"varint,1,opt,name=count,proto3" json:"count,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueInviteRequest) Reset() {
+	*x = IssueInviteRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueInviteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueInviteRequest) ProtoMessage() {}
+
+func (x *IssueInviteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueInviteRequest.ProtoReflect.Descriptor instead.
+func (*IssueInviteRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *IssueInviteRequest) GetCount() uint32 {
+	if x != nil {
+		return x.Count
+	}
+	return 0
+}
+
+type IssueInviteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Codes         []string               `protobuf:"bytes,1,rep,name=codes,proto3" json:"codes,omitempty"`
+	ExpiresUnix   int64                  `protobuf:"varint,2,opt,name=expires_unix,json=expiresUnix,proto3" json:"expires_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *IssueInviteResponse) Reset() {
+	*x = IssueInviteResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *IssueInviteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*IssueInviteResponse) ProtoMessage() {}
+
+func (x *IssueInviteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use IssueInviteResponse.ProtoReflect.Descriptor instead.
+func (*IssueInviteResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *IssueInviteResponse) GetCodes() []string {
+	if x != nil {
+		return x.Codes
+	}
+	return nil
+}
+
+func (x *IssueInviteResponse) GetExpiresUnix() int64 {
+	if x != nil {
+		return x.ExpiresUnix
+	}
+	return 0
+}
+
+type RevokeInviteRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Code          string                 `protobuf:"bytes,1,opt,name=code,proto3" json:"code,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeInviteRequest) Reset() {
+	*x = RevokeInviteRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeInviteRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeInviteRequest) ProtoMessage() {}
+
+func (x *RevokeInviteRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeInviteRequest.ProtoReflect.Descriptor instead.
+func (*RevokeInviteRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *RevokeInviteRequest) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+type RevokeInviteResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *RevokeInviteResponse) Reset() {
+	*x = RevokeInviteResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *RevokeInviteResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*RevokeInviteResponse) ProtoMessage() {}
+
+func (x *RevokeInviteResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use RevokeInviteResponse.ProtoReflect.Descriptor instead.
+func (*RevokeInviteResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+}
+
+type SetRegistrationModeRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Mode          v1.RegistrationMode    `protobuf:"varint,1,opt,name=mode,proto3,enum=andara.accounts.v1.RegistrationMode" json:"mode,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRegistrationModeRequest) Reset() {
+	*x = SetRegistrationModeRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRegistrationModeRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRegistrationModeRequest) ProtoMessage() {}
+
+func (x *SetRegistrationModeRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRegistrationModeRequest.ProtoReflect.Descriptor instead.
+func (*SetRegistrationModeRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SetRegistrationModeRequest) GetMode() v1.RegistrationMode {
+	if x != nil {
+		return x.Mode
+	}
+	return v1.RegistrationMode(0)
+}
+
+type SetRegistrationModeResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Previous      v1.RegistrationMode    `protobuf:"varint,1,opt,name=previous,proto3,enum=andara.accounts.v1.RegistrationMode" json:"previous,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SetRegistrationModeResponse) Reset() {
+	*x = SetRegistrationModeResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SetRegistrationModeResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SetRegistrationModeResponse) ProtoMessage() {}
+
+func (x *SetRegistrationModeResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SetRegistrationModeResponse.ProtoReflect.Descriptor instead.
+func (*SetRegistrationModeResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *SetRegistrationModeResponse) GetPrevious() v1.RegistrationMode {
+	if x != nil {
+		return x.Previous
+	}
+	return v1.RegistrationMode(0)
+}
+
+type CreateAgentAccountRequest struct {
+	state    protoimpl.MessageState `protogen:"open.v1"`
+	Username string                 `protobuf:"bytes,1,opt,name=username,proto3" json:"username,omitempty"`
+	PackId   string                 `protobuf:"bytes,2,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	// API_KEY or WORKLOAD_JWT.
+	CredentialKind v1.CredentialKind `protobuf:"varint,3,opt,name=credential_kind,json=credentialKind,proto3,enum=andara.accounts.v1.CredentialKind" json:"credential_kind,omitempty"`
+	// Required for WORKLOAD_JWT; refused otherwise.
+	WorkloadSubject string `protobuf:"bytes,4,opt,name=workload_subject,json=workloadSubject,proto3" json:"workload_subject,omitempty"`
+	unknownFields   protoimpl.UnknownFields
+	sizeCache       protoimpl.SizeCache
+}
+
+func (x *CreateAgentAccountRequest) Reset() {
+	*x = CreateAgentAccountRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAgentAccountRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAgentAccountRequest) ProtoMessage() {}
+
+func (x *CreateAgentAccountRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAgentAccountRequest.ProtoReflect.Descriptor instead.
+func (*CreateAgentAccountRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+}
+
+func (x *CreateAgentAccountRequest) GetUsername() string {
+	if x != nil {
+		return x.Username
+	}
+	return ""
+}
+
+func (x *CreateAgentAccountRequest) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+func (x *CreateAgentAccountRequest) GetCredentialKind() v1.CredentialKind {
+	if x != nil {
+		return x.CredentialKind
+	}
+	return v1.CredentialKind(0)
+}
+
+func (x *CreateAgentAccountRequest) GetWorkloadSubject() string {
+	if x != nil {
+		return x.WorkloadSubject
+	}
+	return ""
+}
+
+type CreateAgentAccountResponse struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	AccountId string                 `protobuf:"bytes,1,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	// Set only for API_KEY, and only here. It is never stored or logged.
+	ApiKey        string `protobuf:"bytes,2,opt,name=api_key,json=apiKey,proto3" json:"api_key,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateAgentAccountResponse) Reset() {
+	*x = CreateAgentAccountResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateAgentAccountResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateAgentAccountResponse) ProtoMessage() {}
+
+func (x *CreateAgentAccountResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateAgentAccountResponse.ProtoReflect.Descriptor instead.
+func (*CreateAgentAccountResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CreateAgentAccountResponse) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
+	}
+	return ""
+}
+
+func (x *CreateAgentAccountResponse) GetApiKey() string {
+	if x != nil {
+		return x.ApiKey
+	}
+	return ""
+}
+
 type GetServerInfoRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	unknownFields protoimpl.UnknownFields
@@ -44,7 +850,7 @@ type GetServerInfoRequest struct {
 
 func (x *GetServerInfoRequest) Reset() {
 	*x = GetServerInfoRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[0]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -56,7 +862,7 @@ func (x *GetServerInfoRequest) String() string {
 func (*GetServerInfoRequest) ProtoMessage() {}
 
 func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[0]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -69,7 +875,7 @@ func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetServerInfoRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{0}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{16}
 }
 
 type GetServerInfoResponse struct {
@@ -90,7 +896,7 @@ type GetServerInfoResponse struct {
 
 func (x *GetServerInfoResponse) Reset() {
 	*x = GetServerInfoResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[1]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -102,7 +908,7 @@ func (x *GetServerInfoResponse) String() string {
 func (*GetServerInfoResponse) ProtoMessage() {}
 
 func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[1]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -115,7 +921,7 @@ func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetServerInfoResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{1}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *GetServerInfoResponse) GetVersion() string {
@@ -171,7 +977,56 @@ var File_andara_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\x1bandara/admin/v1/admin.proto\x12\x0fandara.admin.v1\"\x16\n" +
+	"\x1bandara/admin/v1/admin.proto\x12\x0fandara.admin.v1\x1a andara/accounts/v1/account.proto\"~\n" +
+	"\x14CreateAccountRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
+	"\bpassword\x18\x02 \x01(\tR\bpassword\x12.\n" +
+	"\x05roles\x18\x03 \x03(\x0e2\x18.andara.accounts.v1.RoleR\x05roles\"6\n" +
+	"\x15CreateAccountResponse\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\"\x90\x01\n" +
+	"\x14ResetPasswordRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12!\n" +
+	"\fnew_password\x18\x02 \x01(\tR\vnewPassword\x126\n" +
+	"\x17expected_record_version\x18\x03 \x01(\x04R\x15expectedRecordVersion\">\n" +
+	"\x15ResetPasswordResponse\x12%\n" +
+	"\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\x98\x01\n" +
+	"\x0fSetRolesRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12.\n" +
+	"\x05roles\x18\x02 \x03(\x0e2\x18.andara.accounts.v1.RoleR\x05roles\x126\n" +
+	"\x17expected_record_version\x18\x03 \x01(\x04R\x15expectedRecordVersion\"9\n" +
+	"\x10SetRolesResponse\x12%\n" +
+	"\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\xab\x01\n" +
+	"\x17SetAccountStatusRequest\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x129\n" +
+	"\x06status\x18\x02 \x01(\x0e2!.andara.accounts.v1.AccountStatusR\x06status\x126\n" +
+	"\x17expected_record_version\x18\x03 \x01(\x04R\x15expectedRecordVersion\"A\n" +
+	"\x18SetAccountStatusResponse\x12%\n" +
+	"\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"*\n" +
+	"\x12IssueInviteRequest\x12\x14\n" +
+	"\x05count\x18\x01 \x01(\rR\x05count\"N\n" +
+	"\x13IssueInviteResponse\x12\x14\n" +
+	"\x05codes\x18\x01 \x03(\tR\x05codes\x12!\n" +
+	"\fexpires_unix\x18\x02 \x01(\x03R\vexpiresUnix\")\n" +
+	"\x13RevokeInviteRequest\x12\x12\n" +
+	"\x04code\x18\x01 \x01(\tR\x04code\"\x16\n" +
+	"\x14RevokeInviteResponse\"V\n" +
+	"\x1aSetRegistrationModeRequest\x128\n" +
+	"\x04mode\x18\x01 \x01(\x0e2$.andara.accounts.v1.RegistrationModeR\x04mode\"_\n" +
+	"\x1bSetRegistrationModeResponse\x12@\n" +
+	"\bprevious\x18\x01 \x01(\x0e2$.andara.accounts.v1.RegistrationModeR\bprevious\"\xc8\x01\n" +
+	"\x19CreateAgentAccountRequest\x12\x1a\n" +
+	"\busername\x18\x01 \x01(\tR\busername\x12\x17\n" +
+	"\apack_id\x18\x02 \x01(\tR\x06packId\x12K\n" +
+	"\x0fcredential_kind\x18\x03 \x01(\x0e2\".andara.accounts.v1.CredentialKindR\x0ecredentialKind\x12)\n" +
+	"\x10workload_subject\x18\x04 \x01(\tR\x0fworkloadSubject\"T\n" +
+	"\x1aCreateAgentAccountResponse\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x01 \x01(\tR\taccountId\x12\x17\n" +
+	"\aapi_key\x18\x02 \x01(\tR\x06apiKey\"\x16\n" +
 	"\x14GetServerInfoRequest\"\xa0\x02\n" +
 	"\x15GetServerInfoResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
@@ -180,9 +1035,17 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\x0fcontent_pack_id\x18\x04 \x01(\tR\rcontentPackId\x12'\n" +
 	"\x0fcontent_version\x18\x05 \x01(\x04R\x0econtentVersion\x120\n" +
 	"\x14protocol_min_version\x18\x06 \x01(\rR\x12protocolMinVersion\x120\n" +
-	"\x14protocol_max_version\x18\a \x01(\rR\x12protocolMaxVersion2g\n" +
+	"\x14protocol_max_version\x18\a \x01(\rR\x12protocolMaxVersion2\xf9\x06\n" +
 	"\x05Admin\x12^\n" +
-	"\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponseB\xbc\x01\n" +
+	"\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n" +
+	"\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n" +
+	"\rResetPassword\x12%.andara.admin.v1.ResetPasswordRequest\x1a&.andara.admin.v1.ResetPasswordResponse\x12O\n" +
+	"\bSetRoles\x12 .andara.admin.v1.SetRolesRequest\x1a!.andara.admin.v1.SetRolesResponse\x12g\n" +
+	"\x10SetAccountStatus\x12(.andara.admin.v1.SetAccountStatusRequest\x1a).andara.admin.v1.SetAccountStatusResponse\x12X\n" +
+	"\vIssueInvite\x12#.andara.admin.v1.IssueInviteRequest\x1a$.andara.admin.v1.IssueInviteResponse\x12[\n" +
+	"\fRevokeInvite\x12$.andara.admin.v1.RevokeInviteRequest\x1a%.andara.admin.v1.RevokeInviteResponse\x12p\n" +
+	"\x13SetRegistrationMode\x12+.andara.admin.v1.SetRegistrationModeRequest\x1a,.andara.admin.v1.SetRegistrationModeResponse\x12m\n" +
+	"\x12CreateAgentAccount\x12*.andara.admin.v1.CreateAgentAccountRequest\x1a+.andara.admin.v1.CreateAgentAccountResponseB\xbc\x01\n" +
 	"\x13com.andara.admin.v1B\n" +
 	"AdminProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/admin/v1;adminv1\xa2\x02\x03AAX\xaa\x02\x0fAndara.Admin.V1\xca\x02\x0fAndara\\Admin\\V1\xe2\x02\x1bAndara\\Admin\\V1\\GPBMetadata\xea\x02\x11Andara::Admin::V1b\x06proto3"
 
@@ -198,19 +1061,61 @@ func file_andara_admin_v1_admin_proto_rawDescGZIP() []byte {
 	return file_andara_admin_v1_admin_proto_rawDescData
 }
 
-var file_andara_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_andara_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 18)
 var file_andara_admin_v1_admin_proto_goTypes = []any{
-	(*GetServerInfoRequest)(nil),  // 0: andara.admin.v1.GetServerInfoRequest
-	(*GetServerInfoResponse)(nil), // 1: andara.admin.v1.GetServerInfoResponse
+	(*CreateAccountRequest)(nil),        // 0: andara.admin.v1.CreateAccountRequest
+	(*CreateAccountResponse)(nil),       // 1: andara.admin.v1.CreateAccountResponse
+	(*ResetPasswordRequest)(nil),        // 2: andara.admin.v1.ResetPasswordRequest
+	(*ResetPasswordResponse)(nil),       // 3: andara.admin.v1.ResetPasswordResponse
+	(*SetRolesRequest)(nil),             // 4: andara.admin.v1.SetRolesRequest
+	(*SetRolesResponse)(nil),            // 5: andara.admin.v1.SetRolesResponse
+	(*SetAccountStatusRequest)(nil),     // 6: andara.admin.v1.SetAccountStatusRequest
+	(*SetAccountStatusResponse)(nil),    // 7: andara.admin.v1.SetAccountStatusResponse
+	(*IssueInviteRequest)(nil),          // 8: andara.admin.v1.IssueInviteRequest
+	(*IssueInviteResponse)(nil),         // 9: andara.admin.v1.IssueInviteResponse
+	(*RevokeInviteRequest)(nil),         // 10: andara.admin.v1.RevokeInviteRequest
+	(*RevokeInviteResponse)(nil),        // 11: andara.admin.v1.RevokeInviteResponse
+	(*SetRegistrationModeRequest)(nil),  // 12: andara.admin.v1.SetRegistrationModeRequest
+	(*SetRegistrationModeResponse)(nil), // 13: andara.admin.v1.SetRegistrationModeResponse
+	(*CreateAgentAccountRequest)(nil),   // 14: andara.admin.v1.CreateAgentAccountRequest
+	(*CreateAgentAccountResponse)(nil),  // 15: andara.admin.v1.CreateAgentAccountResponse
+	(*GetServerInfoRequest)(nil),        // 16: andara.admin.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil),       // 17: andara.admin.v1.GetServerInfoResponse
+	(v1.Role)(0),                        // 18: andara.accounts.v1.Role
+	(v1.AccountStatus)(0),               // 19: andara.accounts.v1.AccountStatus
+	(v1.RegistrationMode)(0),            // 20: andara.accounts.v1.RegistrationMode
+	(v1.CredentialKind)(0),              // 21: andara.accounts.v1.CredentialKind
 }
 var file_andara_admin_v1_admin_proto_depIdxs = []int32{
-	0, // 0: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
-	1, // 1: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	18, // 0: andara.admin.v1.CreateAccountRequest.roles:type_name -> andara.accounts.v1.Role
+	18, // 1: andara.admin.v1.SetRolesRequest.roles:type_name -> andara.accounts.v1.Role
+	19, // 2: andara.admin.v1.SetAccountStatusRequest.status:type_name -> andara.accounts.v1.AccountStatus
+	20, // 3: andara.admin.v1.SetRegistrationModeRequest.mode:type_name -> andara.accounts.v1.RegistrationMode
+	20, // 4: andara.admin.v1.SetRegistrationModeResponse.previous:type_name -> andara.accounts.v1.RegistrationMode
+	21, // 5: andara.admin.v1.CreateAgentAccountRequest.credential_kind:type_name -> andara.accounts.v1.CredentialKind
+	16, // 6: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
+	0,  // 7: andara.admin.v1.Admin.CreateAccount:input_type -> andara.admin.v1.CreateAccountRequest
+	2,  // 8: andara.admin.v1.Admin.ResetPassword:input_type -> andara.admin.v1.ResetPasswordRequest
+	4,  // 9: andara.admin.v1.Admin.SetRoles:input_type -> andara.admin.v1.SetRolesRequest
+	6,  // 10: andara.admin.v1.Admin.SetAccountStatus:input_type -> andara.admin.v1.SetAccountStatusRequest
+	8,  // 11: andara.admin.v1.Admin.IssueInvite:input_type -> andara.admin.v1.IssueInviteRequest
+	10, // 12: andara.admin.v1.Admin.RevokeInvite:input_type -> andara.admin.v1.RevokeInviteRequest
+	12, // 13: andara.admin.v1.Admin.SetRegistrationMode:input_type -> andara.admin.v1.SetRegistrationModeRequest
+	14, // 14: andara.admin.v1.Admin.CreateAgentAccount:input_type -> andara.admin.v1.CreateAgentAccountRequest
+	17, // 15: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
+	1,  // 16: andara.admin.v1.Admin.CreateAccount:output_type -> andara.admin.v1.CreateAccountResponse
+	3,  // 17: andara.admin.v1.Admin.ResetPassword:output_type -> andara.admin.v1.ResetPasswordResponse
+	5,  // 18: andara.admin.v1.Admin.SetRoles:output_type -> andara.admin.v1.SetRolesResponse
+	7,  // 19: andara.admin.v1.Admin.SetAccountStatus:output_type -> andara.admin.v1.SetAccountStatusResponse
+	9,  // 20: andara.admin.v1.Admin.IssueInvite:output_type -> andara.admin.v1.IssueInviteResponse
+	11, // 21: andara.admin.v1.Admin.RevokeInvite:output_type -> andara.admin.v1.RevokeInviteResponse
+	13, // 22: andara.admin.v1.Admin.SetRegistrationMode:output_type -> andara.admin.v1.SetRegistrationModeResponse
+	15, // 23: andara.admin.v1.Admin.CreateAgentAccount:output_type -> andara.admin.v1.CreateAgentAccountResponse
+	15, // [15:24] is the sub-list for method output_type
+	6,  // [6:15] is the sub-list for method input_type
+	6,  // [6:6] is the sub-list for extension type_name
+	6,  // [6:6] is the sub-list for extension extendee
+	0,  // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_andara_admin_v1_admin_proto_init() }
@@ -224,7 +1129,7 @@ func file_andara_admin_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_admin_v1_admin_proto_rawDesc), len(file_andara_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   18,
 			NumExtensions: 0,
 			NumServices:   1,
 		},
