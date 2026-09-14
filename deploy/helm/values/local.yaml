@@ -19,10 +19,21 @@ server:
     # scripts/helm_install.sh from `make tls` until AW-INF-006 has cert-manager issue it.
     tls_cert_file: /etc/andara/secrets/tls/tls.crt
     tls_key_file: /etc/andara/secrets/tls/tls.key
+  auth:
+    # No broker in the local cluster yet, so Accounts live in memory and are lost on
+    # restart; the bootstrap operator is re-created on every boot for the same reason.
+    store: memory
+    # The mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the
+    # Secret from `make auth-keys`.
+    token_key_file: /etc/andara/secrets/token-key/token.keys
 
 secrets:
   tlsCert:
     secretName: andara-server-tls
+  tokenKey:
+    secretName: andara-server-token-key
+  bootstrapOperator:
+    secretName: andara-server-bootstrap
 
 snapshots:
   size: 1Gi

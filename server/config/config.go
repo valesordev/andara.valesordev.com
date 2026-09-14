@@ -185,7 +185,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.AuthK8sIssuer, "auth-k8s-issuer", c.AuthK8sIssuer, "issuer of workload JWTs for agent accounts; unset disables the kind (ANDARA_AUTH_K8S_ISSUER)")
 	fs.StringVar(&c.AuthK8sJWKSURL, "auth-k8s-jwks-url", c.AuthK8sJWKSURL, "JWKS endpoint for auth.k8s_issuer (ANDARA_AUTH_K8S_JWKS_URL)")
 	fs.StringVar(&c.AuthBootstrapOperator, "auth-bootstrap-operator", c.AuthBootstrapOperator, "username:password for the first operator account; ignored once one exists (ANDARA_AUTH_BOOTSTRAP_OPERATOR)")
-	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_SESSION_LINKDEAD_MAX)")
+	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -599,7 +599,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_REFRESH_TTL", &c.AuthRefreshTTL},
 		{"ANDARA_AUTH_INVITE_TTL", &c.AuthInviteTTL},
 		{"ANDARA_AUTH_RECHECK_INTERVAL", &c.AuthRecheckInterval},
-		{"ANDARA_SESSION_LINKDEAD_MAX", &c.SessionLinkdeadMax},
+		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
 	} {
 		if v, ok := env(dv.name); ok {
 			if err := parseDuration(dv.name, v, dv.dst); err != nil {

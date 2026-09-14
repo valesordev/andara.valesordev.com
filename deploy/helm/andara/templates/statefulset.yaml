@@ -102,6 +102,13 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.name
+            {{- if .Values.secrets.bootstrapOperator.secretName }}
+            - name: ANDARA_AUTH_BOOTSTRAP_OPERATOR
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secrets.bootstrapOperator.secretName }}
+                  key: {{ .Values.secrets.bootstrapOperator.key }}
+            {{- end }}
           ports:
             - name: grpc
               containerPort: 8443

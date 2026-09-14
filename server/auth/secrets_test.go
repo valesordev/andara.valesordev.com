@@ -207,7 +207,7 @@ func TestAuthenticate_ConstantCostOnFailure(t *testing.T) {
 	}
 	// Real time, not the fixture clock: this measures the derivation.
 	f := newFixture(t, func(o *Options) {
-		o.Argon2 = Argon2Params{MemoryKiB: 256, Time: 1, Threads: 1}
+		o.Argon2 = Argon2Params{MemoryKiB: 512, Time: 1, Threads: 1}
 		o.Now = time.Now
 	})
 	opCtx, _ := f.bootstrapOperator("oper", "operator-password")
@@ -215,24 +215,30 @@ func TestAuthenticate_ConstantCostOnFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	const n = 1000
-	measure := func(username string) time.Duration {
-		ds := make([]time.Duration, n)
-		for i := range n {
-			start := time.Now()
-			_, err := f.store.Authenticate(context.Background(), username, "wrong password", "peer")
-			ds[i] = time.Since(start)
-			if !errors.Is(err, ErrUnauthenticated) {
-				t.Fatalf("%s: %v", username, err)
-			}
+	attempt := func(username string) time.Duration {
+		start := time.Now()
+		_, err := f.store.Authenticate(context.Background(), username, "wrong password", "peer")
+		d := time.Since(start)
+		if !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("%s: %v", username, err)
 		}
-		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
-		return ds[n/2]
+		return d
 	}
-	// Interleave so drift affects both equally.
-	known, unknown := measure("brian"), measure("nobody")
-	known2, unknown2 := measure("brian"), measure("nobody")
-	known = (known + known2) / 2
-	unknown = (unknown + unknown2) / 2
+	// Strictly interleaved, so whatever else the machine is doing — the
+	// rest of `go test ./...` under -race, say — lands on both paths alike.
+	knowns, unknowns := make([]time.Duration, n), make([]time.Duration, n)
+	for i := range n {
+		if i%2 == 0 {
+			knowns[i], unknowns[i] = attempt("brian"), attempt("nobody")
+		} else {
+			unknowns[i], knowns[i] = attempt("nobody"), attempt("brian")
+		}
+	}
+	median := func(ds []time.Duration) time.Duration {
+		sort.Slice(ds, func(i, j int) bool { return ds[i] < ds[j] })
+		return ds[len(ds)/2]
+	}
+	known, unknown := median(knowns), median(unknowns)
 	diff := float64(known-unknown) / float64(known)
 	if diff < 0 {
 		diff = -diff

@@ -78,7 +78,9 @@ def test_no_secret_material(env):
     for k, v in (cm.get("data") or {}).items():
         if planted in str(v):
             fail("%s: secret name leaked into ConfigMap key %s" % (env, k))
-        if any(w in k for w in ("PASSWORD", "SECRET", "TOKEN_KEY", "API_KEY")):
+        # A *_FILE key names where a mounted Secret is, which is a reference, not
+        # material (ANDARA_AUTH_TOKEN_KEY_FILE, AW-SRV-008).
+        if not k.endswith("_FILE") and any(w in k for w in ("PASSWORD", "SECRET", "TOKEN_KEY", "API_KEY", "BOOTSTRAP")):
             fail("%s: ConfigMap carries a secret-shaped key %s" % (env, k))
     sts = find(ds, "StatefulSet", "andara")
     for c in sts["spec"]["template"]["spec"]["containers"]:

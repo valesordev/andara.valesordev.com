@@ -32,9 +32,9 @@ type Keyring struct {
 const MinKeyBytes = 32
 
 // LoadKeyring reads a file of `key_id: base64` lines. Blank lines and `#`
-// comments are ignored. The file must not be readable by group or other:
-// the config table says 0400, and a key file the whole host can read is a
-// key file that is not one.
+// comments are ignored. The file must not be readable by other or writable
+// by group: the config table says 0400, and a key file the whole host can
+// read is a key file that is not one.
 func LoadKeyring(path string) (*Keyring, error) {
 	if path == "" {
 		return nil, errors.New("auth.token_key_file is required (ANDARA_AUTH_TOKEN_KEY_FILE)")
@@ -43,8 +43,11 @@ func LoadKeyring(path string) (*Keyring, error) {
 	if err != nil {
 		return nil, fmt.Errorf("auth.token_key_file: %w", err)
 	}
-	if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-		return nil, fmt.Errorf("auth.token_key_file %s has mode %04o; require 0400 or 0600", path, perm)
+	// Group read is allowed because that is how a Kubernetes Secret volume
+	// with fsGroup presents the file (0440); group write and any other-bit
+	// are not.
+	if perm := fi.Mode().Perm(); perm&0o027 != 0 {
+		return nil, fmt.Errorf("auth.token_key_file %s has mode %04o; require 0400, 0600, or 0440/0640 with a trusted group", path, perm)
 	}
 	f, err := os.Open(path)
 	if err != nil {

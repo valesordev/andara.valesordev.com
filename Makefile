@@ -42,8 +42,8 @@ LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -
 # lands. The Go steps skip rather than fail so that `make check` is green from day one.
 HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*' -print -quit 2>/dev/null)
 
-.PHONY: help bootstrap up down logs ps tls topics-apply topics-diff \
-        schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test \
+.PHONY: help bootstrap up down logs ps tls auth-keys topics-apply topics-diff \
+        schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
         values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke
@@ -80,6 +80,10 @@ ps:
 ## tls: provision the local CA and server certificate; FORCE=1 to reissue
 tls:
 	@$(SCRIPTS)/tls.sh
+
+## auth-keys: provision the local session-token signing keyring; FORCE=1 to regenerate
+auth-keys:
+	@$(SCRIPTS)/auth_keys.sh
 
 ## topics-apply: create missing Kafka topics from deploy/kafka/topics.yaml
 topics-apply:
@@ -163,6 +167,11 @@ ifeq ($(HAS_GO),)
 else
 	@$(GO) test -race -count=1 $(PKG)
 endif
+
+## test-integration: run the broker-backed tests against the running stack — needs `make up`
+test-integration:
+	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
+	  $(GO) test -tags integration -race -count=1 -v ./server/recordlog/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:

@@ -46,6 +46,22 @@ if [[ "$ENVNAME" == "local" ]]; then
     --cert="$TLS_DIR/server.pem" --key="$TLS_DIR/server-key.pem" \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: secret andara-server-tls from $TLS_DIR (cert-manager takes this over in AW-INF-006)"
+
+  # The session-token keyring (AW-SRV-008), same per-machine key `make up` uses, under the
+  # name values/local.yaml gives secrets.tokenKey. A real deployment provisions this
+  # Secret from its secret store; the rotation procedure is in server/README.md.
+  "$REPO/scripts/auth_keys.sh" >/dev/null
+  AUTH_DIR="${ANDARA_AUTH_DIR:-$REPO/.local/auth}"
+  kubectl -n "$NS" create secret generic andara-server-token-key \
+    --from-file=token.keys="$AUTH_DIR/token-keys" \
+    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+  echo "helm-install: secret andara-server-token-key from $AUTH_DIR"
+
+  # The first operator, local only; the value is the same one `make up` uses.
+  kubectl -n "$NS" create secret generic andara-server-bootstrap \
+    --from-literal=bootstrap-operator="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}" \
+    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+  echo "helm-install: secret andara-server-bootstrap (operator:andara-local unless ANDARA_BOOTSTRAP_OPERATOR is set)"
 fi
 
 helm upgrade --install andara "$CHART" \
