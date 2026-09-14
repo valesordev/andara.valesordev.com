@@ -174,9 +174,14 @@ func (k *Kafka) Replay(ctx context.Context, fn func(Record) error) error {
 					return
 				}
 			}
-			// Compaction leaves gaps, including at the very end of a partition
-			// whose active segment has rolled, so completion is the fetch
-			// reaching the captured end offset — not a record at stop-1.
+			// Compaction leaves gaps, so completion is the last fetched offset
+			// reaching the captured end — not a count of records. The record
+			// at end-1 always exists on a compact-only topic (it is in the
+			// active segment, which compaction never touches), which is what
+			// makes this terminate. The empty-fetch clause covers a partition
+			// whose tail was removed by a delete policy; franz-go rarely
+			// delivers an empty partition, so a compact+delete topic would
+			// want an explicit high-watermark check here (AW-SRV-019).
 			if p.HighWatermark >= stop && (len(p.Records) == 0 || p.Records[len(p.Records)-1].Offset+1 >= stop) {
 				delete(end, p.Partition)
 			}

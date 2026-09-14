@@ -152,7 +152,7 @@ func TestRegister_InviteMode_BadCodesOneMessage(t *testing.T) {
 		t.Fatal(err)
 	}
 	fresh, _, _ := f.store.IssueInvite(opCtx, 1)
-	mustRegister(t, f, "first", "correct horse battery", fresh[0])
+	mustRegister(t, f, "first", "correct horse battery", " "+strings.ToUpper(fresh[0])+"\n")
 	if _, err := f.store.Register(context.Background(), "second", "correct horse battery", fresh[0], "peer"); Code(err) != connect.CodePermissionDenied {
 		t.Fatalf("reuse: %v", err)
 	}
@@ -546,7 +546,7 @@ func TestAdmin_AuditCompleteness(t *testing.T) {
 			t.Fatalf("%s: %d audit records, want 1", st.name, len(recs)-before)
 		}
 		last := recs[len(recs)-1]
-		if last.GetAction() != st.name || last.GetActorAccountId() != opID || last.GetTraceId() != "" && false {
+		if last.GetAction() != st.name || last.GetActorAccountId() != opID {
 			t.Fatalf("%s: audit %+v", st.name, last)
 		}
 	}

@@ -307,8 +307,13 @@ rather than claimed:
   the bytes a Snapshot is built from.
 - **AC-11** — `AuthorizeBind` rejects and audits an agent reaching outside its pack. Entity
   binding is AW-SRV-014 and Templates AW-SRV-022; they call it.
-- **AC-12's `SubscriberDropped{reason=REVOKED}`** — the Session closes with outcome `revoked`
-  within the interval; the Event on the stream is AW-SRV-011's, which owns delivering Events.
+- **AC-12** — read as: a `DISABLED` Account's still-valid token is `UNAUTHENTICATED` at
+  `OpenSession`; a role change does not refuse `OpenSession` (the new Session simply gets the new
+  roles, read from the index) but does close every open Session within the interval, because those
+  Sessions hold stale roles. Refusing a login because a role was *removed* would lock a demoted
+  builder out of the game rather than out of building. *(Reading recorded 2026-09-14.)*
+  `SubscriberDropped{reason=REVOKED}` — the Session closes with outcome `revoked`; the Event on the
+  stream is AW-SRV-011's, which owns delivering Events.
 - **Against the running stack:** index replay after a restart, Prometheus scraping the auth
   metrics, Tempo holding `session.authenticate` and `auth.verify_credential`, the audit record read
   back from the broker (`make stack-smoke`), the record log on a throwaway compacted topic
@@ -340,3 +345,9 @@ state and World state are separately stored (AC-7); the key-rotation procedure i
   impossible and is the more dangerous default.
 - `[ASSUMPTION]` Roles form a set, not a hierarchy. An operator who needs to build is granted
   `builder`. The alternative hides the grant.
+- **For AW-INF-006:** the per-peer half of `auth.rate_limit` keys on the direct TCP peer. Behind an
+  ingress every player arrives from one address and `10/m` becomes ten logins a minute for the whole
+  game. The ingress story must forward the client address (proxy protocol or a trusted header the
+  Gateway reads) or the peer bucket is a self-inflicted outage on launch day.
+- **For AW-SRV-013:** that story reads `Account.builder_packs`, which this record does not carry.
+  Additive, and AW-SRV-013's to add.

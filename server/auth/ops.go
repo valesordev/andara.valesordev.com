@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"slices"
+	"strings"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -98,7 +99,9 @@ func (s *Store) Register(ctx context.Context, username, password, inviteCode str
 	id := newAccountID()
 	var issuer *accountsv1.Account
 	if inviteCode != "" {
-		hash := hashSecret(inviteCode)
+		// Codes are issued lower-case; a player who types one in capitals
+		// meant the same code, and RevokeInvite normalizes the same way.
+		hash := hashSecret(strings.ToLower(strings.TrimSpace(inviteCode)))
 		s.mu.RLock()
 		issuerID, ok := s.invites[key32(hash)]
 		s.mu.RUnlock()

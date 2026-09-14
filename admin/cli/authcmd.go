@@ -62,8 +62,7 @@ func (rt *runtime) readSecret(prompt string, fromStdin bool) (string, error) {
 	return string(b), nil
 }
 
-func credentialFrom(username string, pair *authv1.TokenPair, resp *connect.Response[authv1.AuthenticateResponse]) storedCredential {
-	_ = resp
+func credentialFrom(username string, pair *authv1.TokenPair) storedCredential {
 	return storedCredential{
 		Username:       username,
 		SessionToken:   pair.GetSessionToken(),
@@ -108,7 +107,7 @@ func newAuthLoginCmd(rt *runtime) *cobra.Command {
 			if err != nil {
 				return rpcError(err)
 			}
-			cred := credentialFrom(username, resp.Msg.GetTokens(), resp)
+			cred := credentialFrom(username, resp.Msg.GetTokens())
 			if err := rt.storeCredential(cred); err != nil {
 				return err
 			}
