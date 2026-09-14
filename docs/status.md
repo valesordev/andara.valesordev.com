@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-35 stories — 1 in-progress · 2 review · 26 ready · 6 done
+35 stories — 3 review · 26 ready · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,16 +14,17 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-021  Components on Rooms and Zones, and the closed Direction set
-         branch aw-srv-021-components-on-rooms-and-zones-and-the-closed-direction-set
+  now    — nothing in flight
+  next   AW-SRV-022  ready  Template definitions — schema, flattened loading, and E…  (unblocks 5)
   next   AW-SRV-008  ready  Account store, registration modes, and authentication  (unblocks 3)
-  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
-  held   20 ready, blocked: AW-SRV-022, AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007,…
+  review AW-SRV-021 — run the §8 checklist, then flip to done
+  held   19 ready, blocked: AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007, AW-SRV-011,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-021  The core component vocabulary beyond the four seeded here.
-              14 more, attached to stories neither lane has reached
+  AW-SRV-022  The andara.core Template vocabulary beyond the four seeded here — the same question…
+              13 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

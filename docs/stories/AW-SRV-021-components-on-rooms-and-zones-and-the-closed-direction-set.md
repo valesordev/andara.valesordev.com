@@ -4,7 +4,7 @@ title: Components on Rooms and Zones, and the closed Direction set
 epic: EPIC-02
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-001]
 blocks: [AW-CLI-003, AW-CLI-005, AW-CLI-006, AW-SRV-012, AW-SRV-022]
@@ -118,10 +118,12 @@ say so.
 ## Data / state impact
 
 `RoomDefinition` and `ZoneDefinition` gain a field. Additive under ADR-0007 rule 1, so `buf breaking`
-passes and existing content loads unchanged (AC-8). Both subjects that carry the content topics
-(`andara.content.blobs.v1-value`, `andara.content.versions.v1-value`) accept the new field under
-`BACKWARD` compatibility; `make schemas-diff` will report the registry as behind until
-`make schemas-apply` runs, which is the intended signal.
+passes and existing content loads unchanged (AC-8). The schema registry does not see the change:
+`zone.proto` carries no subject of its own, and a `ZoneDefinition` rides inside `Blob` as opaque
+bytes, so neither `andara.content.blobs.v1-value` nor `andara.content.versions.v1-value` mentions
+`ComponentValue`. `make schemas-diff` stays clean before and after this story, and `make schemas-apply`
+has nothing to apply. *(Corrected 2026-09-14 during implementation; the original text claimed the
+registry would report itself behind until `schemas-apply` ran. Confirmed against the live registry.)*
 
 A Room's component set feeds the State Hash, so it obeys the determinism rules in
 `andara/log/v1/log.proto`: sorted `repeated`, no maps, no floats.
@@ -155,8 +157,8 @@ A Room's component set feeds the State Hash, so it obeys the determinism rules i
 
 ## Definition of done
 
-CLAUDE.md §8, plus: `make schemas-apply` has been run so the registry carries the new schema, and
-`make schemas-diff` is clean.
+CLAUDE.md §8, plus: `make schemas-diff` is clean — which it is vacuously, see Data / state impact;
+the registry carries no subject this story touches.
 
 ## Open questions
 
@@ -166,7 +168,8 @@ CLAUDE.md §8, plus: `make schemas-apply` has been run so the registry carries t
   (CLAUDE.md §11). This does not block the story: the mechanism is the story, and adding a type to the
   registry afterwards is a small change. ADR-0010 decision 7 makes this list the thing Builders will
   push on, so expect it to grow from real content rather than from guessing now.
-- `[ASSUMPTION]` Zone-level and Room-level components do not merge or inherit — a Zone's `Dark{}` does
-  not make its Rooms dark. Merging is ADR-0010 decision 4's semantics applied across a containment
-  boundary rather than an inheritance one, which is a different rule and wants its own decision. AC-4
-  pins the non-merging behaviour so that a later change to it is a visible test change.
+- **Resolved 2026-09-14 (Brian):** Zone-level and Room-level components do not merge or inherit — a
+  Zone's `Dark{}` does not make its Rooms dark. Merging would be ADR-0010 decision 4's semantics applied
+  across a containment boundary rather than an inheritance one, which is a different rule and wants its
+  own decision if it is ever wanted. AC-4 pins the non-merging behaviour so that a later change to it is
+  a visible test change; the glossary entry for Component records the same.
