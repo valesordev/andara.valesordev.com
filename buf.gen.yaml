@@ -2,6 +2,12 @@
 #
 # Run via `make proto`. `make proto-check` regenerates into a temporary tree and fails if
 # the result differs from what is committed.
+#
+# Every plugin is pinned. An unpinned remote plugin resolves to whatever the BSR
+# published most recently, so `make proto` on two different days produces two different
+# trees from one schema — protoc-gen-es moved v2.14.1 -> v2.15.0 between 2026-09-11 and
+# 2026-09-14 and would have made every developer's regenerate a spurious diff. Bumping a
+# plugin is a deliberate, reviewable edit here, followed by `make proto` and a commit of gen/.
 version: v2
 managed:
   enabled: true
@@ -9,15 +15,15 @@ managed:
     - file_option: go_package_prefix
       value: github.com/valesordev/andara/gen/go
 plugins:
-  - remote: buf.build/protocolbuffers/go
+  - remote: buf.build/protocolbuffers/go:v1.36.12
     out: gen/go
     opt: paths=source_relative
   # Connect, not grpc-go: ADR-0003 serves gRPC, gRPC-Web, and Connect from one
   # handler, and AW-CLI-001 and AW-SRV-005 both assume Connect's Go client.
-  - remote: buf.build/connectrpc/go
+  - remote: buf.build/connectrpc/go:v1.19.1
     out: gen/go
     opt: paths=source_relative
-  - remote: buf.build/protocolbuffers/python
+  - remote: buf.build/protocolbuffers/python:v36.1
     out: gen/python
-  - remote: buf.build/bufbuild/es
+  - remote: buf.build/bufbuild/es:v2.14.1
     out: gen/ts

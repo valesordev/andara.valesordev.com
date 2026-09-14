@@ -111,6 +111,58 @@ case "$ACTION" in
       exit 1
     fi
 
+    # The freshness check itself: regenerate into a scratch directory and diff against
+    # what is committed. buf breaking above catches a removed field, which this cannot
+    # see (remove it, regenerate, and the diff is clean); this catches the other
+    # direction — a field added, or any other edit, without `make proto` being run —
+    # which buf breaking cannot see because an additive change is not breaking. Both
+    # are needed. Until 2026-09-14 this step did not exist and the line below asserted
+    # a comparison that never happened (AW-INF-001 AC-15).
+    #
+    # The diff runs per generated package rather than over the whole tree, so the
+    # failure names the package a developer has to look at, not just "gen/ differs".
+    FRESH="$(mktemp -d)"
+    trap 'rm -rf "$FRESH" "${BREAKING_OUT:-}"' EXIT
+    # Remote plugins mean this reaches the BSR, so the failure has to distinguish "the
+    # schema does not generate" from "the registry refused us" — an unauthenticated
+    # client is rate-limited, and a developer who hits that should not go looking for
+    # a bug in their .proto.
+    GEN_OUT="$(mktemp)"
+    if ! buf generate "$PROTO_DIR" -o "$FRESH" >"$GEN_OUT" 2>&1; then
+      cat "$GEN_OUT" >&2
+      if grep -q 'resource_exhausted\|too many requests' "$GEN_OUT"; then
+        echo "make: proto-check: the BSR rate-limited this run; wait a minute and retry (or \`buf registry login\`)" >&2
+      else
+        echo "make: proto-check: buf generate failed; the schema does not generate cleanly" >&2
+      fi
+      rm -f "$GEN_OUT"
+      exit 1
+    fi
+    rm -f "$GEN_OUT"
+    # `diff -rq` reports each differing or one-sided file; the parent directory of
+    # each is the generated package. "Only in gen/..." covers a .proto that was removed
+    # without regenerating; "Only in $FRESH/..." covers one that was added.
+    #
+    # `|| true` because diff exits 1 on a difference, this script runs under
+    # `set -eo pipefail`, and an assignment whose substitution fails is itself a
+    # failure: without it the script died here silently with no message at all.
+    # gen/README.md is the one hand-written file under gen/ — it explains why the
+    # directory is committed — and is excluded by name rather than by pattern so that
+    # any other stray file in gen/ is still reported.
+    DIFF_OUT="$(diff -rq --exclude=README.md "$FRESH/$GEN_DIR" "$GEN_DIR" 2>&1 || true)"
+    if [[ -n "$DIFF_OUT" ]]; then
+      STALE="$(printf '%s\n' "$DIFF_OUT" \
+        | sed -E -e "s#^Files $FRESH/([^ ]+) and .*#\\1#" \
+                 -e "s#^Only in $FRESH/([^:]+): (.*)#\\1/\\2#" \
+                 -e "s#^Only in ([^:]+): (.*)#\\1/\\2#" \
+        | xargs -r -n1 dirname | sort -u | tr '\n' ' ')"
+      # The raw lines too, so a CI failure is diagnosable from the log: which files,
+      # and whether they differ or exist on one side only.
+      printf '%s\n' "$DIFF_OUT" | sed "s#$FRESH/##" >&2
+      echo "make: proto-check: generated code is stale in: $STALE(run \`make proto\` and commit gen/)" >&2
+      exit 1
+    fi
+
     echo "proto-check: $GEN_DIR matches $PROTO_DIR"
     ;;
   *)
