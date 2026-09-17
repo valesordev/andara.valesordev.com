@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -345,7 +346,17 @@ type KafkaPublisher struct {
 	// OnFailure, if set, is called once per record the broker never
 	// acknowledged, with the topic it was for.
 	OnFailure func(topic string, err error)
+	// OnBoundaryLost, if set, is called once, the first time a Tick
+	// Boundary Record is not delivered.
+	OnBoundaryLost func(tick sim.Tick, err error)
+
+	boundaryLost atomic.Bool
+	lostAtTick   atomic.Uint64
 }
+
+// ErrBoundaryLost: a Tick Boundary Record was not delivered, so no later
+// one will be published by this process — see Publish.
+var ErrBoundaryLost = errors.New("tick boundary lost; boundaries are no longer published by this process")
 
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
 // producer on.
@@ -400,6 +411,18 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 
 // Publish implements Publisher. A zero-tick TickCompleted (the drain's) is
 // not written.
+//
+// Boundaries have an invariant Events do not: the sequence on the topic
+// must be gapless, because recovery refuses to replay past a gap (a lost
+// batching decision, sim.ErrBoundaryGap). franz-go fails everything
+// buffered behind a failed record on the same Partition, so an outage
+// longer than the delivery timeout would leave `…, N, [gap], M, …` and a
+// World that cannot boot. So: once one boundary is lost, this process
+// publishes no more. It keeps ticking and Events keep flowing (AC-9); the
+// next restart recovers exactly to the last delivered boundary and
+// re-batches after it, which is the policy AW-SRV-007 inherits. The
+// boundary is produced with a short blocking bound rather than TryProduce
+// so a momentarily full buffer does not itself open a gap.
 func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim.TickCompleted) error {
 	recs := make([]*kgo.Record, 0, len(events)+1)
 	for _, ev := range events {
@@ -417,14 +440,34 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 		}
 		recs = append(recs, &kgo.Record{Topic: k.Events, Partition: p, Key: []byte(ev.Zone), Value: body})
 	}
-	if tc.Tick > 0 {
-		body, err := proto.Marshal(tc.Proto())
-		if err != nil {
-			return err
-		}
-		recs = append(recs, &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body})
+	if err := k.send(ctx, recs); err != nil {
+		return err
 	}
-	return k.send(ctx, recs)
+	if tc.Tick == 0 {
+		return nil
+	}
+	if k.boundaryLost.Load() {
+		return fmt.Errorf("%w (since tick %d)", ErrBoundaryLost, k.lostAtTick.Load())
+	}
+	body, err := proto.Marshal(tc.Proto())
+	if err != nil {
+		return err
+	}
+	bctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
+	defer cancel()
+	tick := tc.Tick
+	k.client.Produce(bctx, &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body}, func(_ *kgo.Record, err error) {
+		if err == nil {
+			return
+		}
+		if k.boundaryLost.CompareAndSwap(false, true) {
+			k.lostAtTick.Store(uint64(tick))
+			if k.OnBoundaryLost != nil {
+				k.OnBoundaryLost(tick, err)
+			}
+		}
+	})
+	return nil
 }
 
 // Produce implements Publisher.

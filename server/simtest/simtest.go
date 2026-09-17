@@ -82,16 +82,28 @@ func AllPartitions() []int32 {
 }
 
 // Handlers exercise state: look spawns an Entity whose ID comes from the
-// RNG; move renames every Entity's Behavior, rejects "nowhere", panics on
-// "panic", and produces a cross-Zone Command on "elsewhere". Together they
-// touch the RNG, the Entity map, and Component fields, so the hash means
-// something.
+// RNG and whose Behavior name records the tick it was spawned on; move
+// renames every Entity's Behavior, rejects "nowhere", panics on "panic",
+// and produces a cross-Zone Command on "elsewhere". Together they touch the
+// RNG, the tick, the Entity map, and Component fields, so the hash means
+// something and batching matters.
 func Handlers(reg *sim.TemplateRegistry) map[sim.CommandKind]sim.Apply {
 	return map[sim.CommandKind]sim.Apply{
 		"look": func(a *sim.ApplyContext, _ *logv1.LoggedCommand) error {
 			tmpl, _ := reg.Get("town.Merchant")
 			id := sim.EntityID(fmt.Sprintf("e-%d", a.RNG.Intn(1000)))
 			ent := sim.Instantiate(tmpl, id, "town@1")
+			// Stamp the tick into the Entity, so that how records were
+			// batched into ticks changes the state — which is what makes
+			// replaying from recorded boundaries, rather than re-deciding
+			// them, the only exact replay (AC-5).
+			for i := range ent.Components {
+				for j := range ent.Components[i].Fields {
+					if ent.Components[i].Fields[j].Name == "name" {
+						ent.Components[i].Fields[j].Str = fmt.Sprintf("spawned@%d", a.Tick)
+					}
+				}
+			}
 			a.Zone.Entities[id] = &ent
 			a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: &gamev1.RoomDescribed{ZoneId: string(a.Zone.ID), RoomId: "plaza"}}})
 			return nil

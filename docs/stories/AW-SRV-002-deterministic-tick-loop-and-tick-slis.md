@@ -318,7 +318,15 @@ panel and a diagnostic step inside the runbook.
   20,000 rejected Commands at 1,024 per tick stayed under 1 ms per tick. The SLO's targets hold
   with two orders of magnitude of margin there and are to be re-validated on the sizing fixture
   once handlers spend the budget. `measurements.yaml` keeps its placeholder: sizing production on an
-  idle loop would be worse than one.
+  idle loop would be worse than one. What will spend the budget first is not a handler:
+  `WorldState.CanonicalBytes` re-serializes every Entity every tick, so the hash is O(Entities) per
+  tick, and the sizing fixture's 10,000 Entities will show it. An incremental hash is the fix when
+  it does.
+- **AC-5's teeth:** the fixture's `look` handler stamps the tick into the Entity it spawns, so the
+  same records in a different batching reach a different hash — asserted by the negative in
+  `TestEngine_ReplayFromBoundaries`. A replay that re-derived boundaries would fail the positive.
+- **AC-9 in CI:** the stack workflow stops Redpanda for eight seconds and asserts the loop kept
+  ticking, counted starvation, stayed healthy, and stopped counting once the broker returned.
 - **Waiting on other stories:** the timing-independence test with artificially varied fetch batching
   is covered by uneven in-process batches and the broker's own; a fetch-batch knob on the consumer
   is not exposed. Overruns on the stack need Commands that cost something (AW-SRV-003).
@@ -351,9 +359,15 @@ CLAUDE.md §8, plus:
   agree without anyone choosing.
 - `[ASSUMPTION]` `SimulationStopped` is not World history (event_id 0), so that a recovered process
   reuses no Event ID. AW-SRV-004 owns Event IDs and may want it otherwise.
-- **For AW-SRV-007:** a Tick Boundary Record lost during an outage makes exact replay past it
-  impossible. The asynchronous publisher makes that rare (a minute of retries) but a crash mid-outage
-  still loses what is buffered. Recovery needs a policy — most likely "a snapshot newer than the gap,
-  or refuse" — and this story refuses.
+- **Lost-boundary policy — `[ASSUMPTION]`, and for AW-SRV-007.** A Tick Boundary Record lost during
+  an outage makes exact replay past it impossible. franz-go fails everything buffered behind a failed
+  record on the same Partition, so an outage longer than the delivery timeout (one minute) would
+  have left `…, N, [gap], M, …` on the topic and a World that refuses to boot — worse than the
+  synchronous publisher it replaced. The invariant now enforced: **once one boundary is lost, this
+  process publishes no more.** It keeps ticking and Events keep flowing (AC-9 holds); the next restart
+  recovers exactly to the last delivered boundary and re-batches after it; `Recover` still refuses a
+  gap as the backstop. The alternative — exit on a lost boundary so Kubernetes restarts into exact
+  recovery — has the cleaner invariant and kills the sim on every long outage. Brian's call; the
+  seventy-second outage is the scenario to decide against.
 - **For AW-SRV-004:** `sim.Event` and `EventSink` are the minimal shape; Scope, redaction, buffering,
   and the drop rule are yours, on top of them.

@@ -22,7 +22,7 @@ type Metrics struct {
 	ConsumerLag      *prometheus.GaugeVec // {partition}
 	CheckpointAge    prometheus.Gauge
 	ZoneFaults       *prometheus.CounterVec // {zone}
-	PublishFailures  *prometheus.CounterVec // {kind}: events, commands, checkpoint
+	PublishFailures  *prometheus.CounterVec // {kind}: events, commands, checkpoint, boundary
 }
 
 // TickBuckets place the 50 ms Tick Budget on a boundary (ADR-0008), so the
@@ -52,7 +52,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		ZoneFaults:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "andara_tick_zone_faults_total", Help: "Zones quarantined by a panic inside a tick."}, []string{"zone"}),
 		PublishFailures: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "andara_tick_publish_failures_total", Help: "Ticks whose Events, cross-Zone Commands, or checkpoint could not be written."}, []string{"kind"}),
 	}
-	for _, k := range []string{"events", "commands", "checkpoint"} {
+	for _, k := range []string{"events", "commands", "checkpoint", "boundary"} {
 		m.PublishFailures.WithLabelValues(k)
 	}
 	if reg != nil {

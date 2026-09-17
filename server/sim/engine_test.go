@@ -287,6 +287,23 @@ func TestEngine_ReplayFromBoundaries(t *testing.T) {
 	if err := newEngine(t, 3).Replay([]sim.TickCompleted{b0}, src); err == nil || !strings.Contains(err.Error(), "state_version") {
 		t.Fatalf("version: %v", err)
 	}
+	// The negative that gives AC-5 its teeth: the same records applied in a
+	// different batching, with no boundaries to read, reach a different
+	// hash — because a handler reads the tick. A replay that re-derived
+	// boundaries would be this.
+	other := newEngine(t, 3)
+	remaining = map[int32][]sim.Record{}
+	for p, r := range log {
+		remaining[p] = r
+	}
+	for tick := 1; tick <= 40; tick++ {
+		if _, err := other.Step(simtest.Batch(remaining, 2)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if other.StateHash() == final {
+		t.Fatal("a different batching produced the same hash; the test cannot tell replay from re-derivation")
+	}
 	// A log missing records is a gap, never a skip.
 	short := simtest.MemorySource{}
 	for p, r := range log {

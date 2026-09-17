@@ -126,6 +126,34 @@ jobs:
       - name: the record log and the tick loop on the broker
         run: make test-integration
 
+      # AW-SRV-002 AC-9: the broker goes away and the tick loop keeps its schedule applying
+      # nothing — starvation counted, the container still healthy — and when the broker
+      # returns the counter stops moving. The loop is read through /metrics because that is
+      # what an operator has.
+      - name: the tick loop survives a broker outage
+        run: |
+          set -euo pipefail
+          metric() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" | awk -v m="$1" '$1 == m { print $2 }'; }
+          ticks_before=$(metric andara_ticks_total)
+          docker compose -f deploy/compose/docker-compose.yaml stop redpanda
+          sleep 8
+          starved=$(metric andara_tick_input_starved_total)
+          ticks_during=$(metric andara_ticks_total)
+          docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'andara-server-1 healthy'
+          docker compose -f deploy/compose/docker-compose.yaml start redpanda
+          sleep 12
+          starved_after=$(metric andara_tick_input_starved_total)
+          ticks_after=$(metric andara_ticks_total)
+          echo "ticks $ticks_before -> $ticks_during -> $ticks_after; starved $starved -> $starved_after"
+          python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$starved" "$starved_after" <<'PY'
+          import sys
+          tb, td, ta, s, sa = map(float, sys.argv[1:])
+          assert td - tb >= 40, "the loop stalled while the broker was down"
+          assert s >= 20, "no starvation counted during the outage"
+          assert ta - td >= 60, "the loop stalled after the broker returned"
+          assert sa - s <= 30, "starvation kept rising after the broker returned"
+          PY
+
       - name: a trace round-trips through the collector
         run: |
           set -euo pipefail

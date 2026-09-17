@@ -76,6 +76,11 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			// Delivery failures arrive after Publish returned; count them
 			// against the loop's metric by topic.
 			if loop != nil {
+				kp.OnBoundaryLost = func(tick sim.Tick, err error) {
+					loop.Metrics().PublishFailures.WithLabelValues("boundary").Inc()
+					rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "tick boundary lost: this process publishes no more boundaries; the next restart recovers exactly to the last delivered one and re-batches after it",
+						slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()))
+				}
 				kp.OnFailure = func(topic string, err error) {
 					kind := "events"
 					if topic == tickloop.CommandsTopic {

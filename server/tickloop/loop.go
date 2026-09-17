@@ -234,8 +234,12 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	}
 
 	if err := l.opts.Publisher.Publish(tctx, res.Events, res.Completed); err != nil {
-		l.metrics.PublishFailures.WithLabelValues("events").Inc()
-		l.log.LogAttrs(tctx, slog.LevelWarn, "events not published", slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()), slog.String("trace_id", traceID(tctx)))
+		kind := "events"
+		if errors.Is(err, ErrBoundaryLost) {
+			kind = "boundary"
+		}
+		l.metrics.PublishFailures.WithLabelValues(kind).Inc()
+		l.log.LogAttrs(tctx, slog.LevelWarn, "not published", slog.String("kind", kind), slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()), slog.String("trace_id", traceID(tctx)))
 	}
 	if len(res.Outbound) > 0 {
 		if err := l.opts.Publisher.Produce(tctx, res.Outbound); err != nil {
