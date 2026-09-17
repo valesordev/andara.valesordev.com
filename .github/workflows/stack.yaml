@@ -19,21 +19,39 @@ on:
     paths:
       - "deploy/**"
       - "scripts/stack.sh"
+      - "scripts/stack_smoke.sh"
       - "scripts/tls.sh"
+      - "scripts/auth_keys.sh"
       - "scripts/topics.py"
       - "scripts/schemas.py"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
+      # The server is part of the stack since AW-SRV-005, and the account store talks to
+      # the broker since AW-SRV-008; a Go change can break what only this workflow checks.
+      - "server/**"
+      - "cmd/**"
+      - "internal/**"
+      - "gen/**"
+      - "go.mod"
+      - "go.sum"
   pull_request:
     # Repeated rather than a YAML anchor: GitHub Actions' parser does not expand aliases.
     paths:
       - "deploy/**"
       - "scripts/stack.sh"
+      - "scripts/stack_smoke.sh"
       - "scripts/tls.sh"
+      - "scripts/auth_keys.sh"
       - "scripts/topics.py"
       - "scripts/schemas.py"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
+      - "server/**"
+      - "cmd/**"
+      - "internal/**"
+      - "gen/**"
+      - "go.mod"
+      - "go.sum"
   schedule:
     # Weekly, because the thing most likely to break this is an upstream image, not a commit.
     - cron: "17 6 * * 1"
@@ -100,6 +118,11 @@ jobs:
       # sequence in a markdown file that nothing ran (CLAUDE.md §9).
       - name: a Session opens over TLS and Prometheus sees it
         run: make stack-smoke
+
+      # AW-SRV-008's record-log adapter against the real broker: append with acks=all,
+      # replay from the start, on a throwaway compacted topic.
+      - name: the record log appends and replays on the broker
+        run: make test-integration
 
       - name: a trace round-trips through the collector
         run: |

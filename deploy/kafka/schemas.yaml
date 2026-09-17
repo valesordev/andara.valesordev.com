@@ -74,6 +74,24 @@ subjects:
     file: andara/content/v1/content.proto
     message: andara.content.v1.ActiveVersion
 
+  # Account state is not World state (ADR-0006): its own compacted topic, keyed by
+  # account_id plus the one "config/registration" key, written only by the server.
+  - subject: andara.accounts.v1-value
+    topic: andara.accounts.v1
+    strategy: TopicNameStrategy
+    file: andara/accounts/v1/account.proto
+    message: andara.accounts.v1.AccountRecord
+
+  # AW-SRV-008 writes the first audit record — every Admin RPC and every authorize
+  # rejection — which makes it the story that defines the type. AW-SRV-013 extends it
+  # additively with the content-publish fields (numbers 20 and up are reserved for it
+  # by comment, not by `reserved`, for the reason zone.proto gives).
+  - subject: andara.audit.v1-value
+    topic: andara.audit.v1
+    strategy: TopicNameStrategy
+    file: andara/audit/v1/audit.proto
+    message: andara.audit.v1.AuditRecord
+
 # Topics whose record type is not designed yet. Declared rather than omitted, because an
 # omitted topic is indistinguishable from a forgotten one — and the story that adds the type
 # has to come back here, which is the point. `schemas-check` fails if the named story does
@@ -85,14 +103,3 @@ pending:
       The compacted current-state record per aggregate. Its shape is the state projector's
       to define. andara.state.v1.SnapshotEnvelope is NOT this type — that is a Zone snapshot
       (AW-SRV-006), a different record with a different lifecycle.
-
-  - topic: andara.accounts.v1
-    story: AW-SRV-008
-    why: |
-      Account state, which does not exist until there are accounts.
-
-  - topic: andara.audit.v1
-    story: AW-SRV-013
-    why: |
-      The privileged-action record. AW-SRV-013 is the first story that writes one, and
-      the audit record's fields are that story's authorization decisions made durable.

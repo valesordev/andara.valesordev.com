@@ -49,6 +49,16 @@ export declare type OpenSessionRequest = Message<"andara.game.v1.OpenSessionRequ
    * @generated from field: string client_name = 3;
    */
   clientName: string;
+
+  /**
+   * Open the Session as another Account (AW-SRV-008 AC-10). Requires the
+   * token's Account to hold `operator` or `game_master`; anyone else setting
+   * it gets PERMISSION_DENIED. Every audit record in the resulting Session
+   * names both identities — acting as someone never hides who was acting.
+   *
+   * @generated from field: string act_as_account_id = 4;
+   */
+  actAsAccountId: string;
 };
 
 /**

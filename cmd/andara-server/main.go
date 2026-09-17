@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/boot"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/gateway"
@@ -47,6 +48,16 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	// The account store (AW-SRV-008): keyring, broker, index replay,
+	// bootstrap operator. A server that cannot authenticate anyone has
+	// nothing to serve, so this is a boot failure like a bad certificate.
+	accounts, err := rt.OpenAccounts(ctx)
+	if err != nil {
+		tel.Log.Error("accounts", "detail", err.Error())
+		return boot.ExitFail
+	}
+	defer accounts.Close()
+
 	// The Protocol endpoint (AW-SRV-005). Built before the health server
 	// listens so that a bad certificate fails the boot rather than a boot
 	// that reports live and never serves.
@@ -61,6 +72,11 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		ProtocolMax:       cfg.ProtocolMaxVersion,
 		Build:             gateway.BuildInfo{Version: version, Commit: commit},
 		Environment:       cfg.Environment,
+		Verifier:          accounts,
+		Auth:              auth.NewService(accounts),
+		Accounts:          auth.NewAdmin(accounts),
+		Rechecker:         accounts,
+		RecheckInterval:   cfg.AuthRecheckInterval,
 		OnDrain:           rt.Drain,
 		Log:               tel.Log,
 		Tracer:            tel.Tracer,

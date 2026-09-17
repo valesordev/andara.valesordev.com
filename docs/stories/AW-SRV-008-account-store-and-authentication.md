@@ -4,7 +4,7 @@ title: Account store, registration modes, and authentication
 epic: EPIC-08
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-005]
 blocks: [AW-SRV-009, AW-SRV-013, AW-SRV-014]
@@ -104,9 +104,9 @@ As a player, I want to create an account and log in, so that my characters are m
 // CONTRACT SKETCH — not an implementation; andara/auth/v1/auth.proto
 service Auth {
   rpc Register(RegisterRequest) returns (RegisterResponse);          // username, password, invite_code
-  rpc Authenticate(AuthenticateRequest) returns (TokenPair);         // username, password
-  rpc Refresh(RefreshRequest) returns (TokenPair);                   // refresh_token
-  rpc Revoke(RevokeRequest) returns (RevokeResponse);                // refresh_token, or all for the caller
+  rpc Authenticate(AuthenticateRequest) returns (AuthenticateResponse); // username, password → {TokenPair tokens}
+  rpc Refresh(RefreshRequest) returns (RefreshResponse);             // refresh_token → {TokenPair tokens}
+  rpc Revoke(RevokeRequest) returns (RevokeResponse);                // refresh_token, all: every token on its Account
 }
 message TokenPair { string session_token = 1; int64 session_expires_unix = 2;
                     string refresh_token = 3; int64 refresh_expires_unix = 4; }
@@ -130,11 +130,19 @@ message AuthConfig { RegistrationMode mode = 1; string changed_by = 2; int64 cha
 
 `OpenSessionRequest` gains `string act_as_account_id = 4`. `auth_token` carries the session token.
 
+*Corrected 2026-09-14 during implementation:* `Authenticate` and `Refresh` wrap `TokenPair` in a
+per-RPC response because buf's `RPC_REQUEST_RESPONSE_UNIQUE` rule refuses one response type on two
+RPCs. `Revoke` identifies the caller by the presented refresh token — possessing it is the authority
+to revoke it — and `all=true` revokes every refresh token on that Account; there is no separate
+"caller" identity because the RPC is unauthenticated by design. `Refresh` rotates: the presented token
+is retired and a new one issued, so a leaked refresh token is good for one use. The record is as
+sketched, with `Invite.redeemed_by_account_id` added so the burn names who came in on the code.
+
 ### Tokens
 
 | Token | Form | Lifetime | Storage |
 |-------|------|---------:|---------|
-| session | signed: `base64(payload).base64(HMAC-SHA256)`; payload = account_id, acting_as, exp, key_id — **not roles**; those come from the Account index at use (AC-12) | `auth.session_ttl` = 1 h | none — stateless (AC-8) |
+| session | signed: `base64url(payload).base64url(HMAC-SHA256)`; payload = account_id, acting_as, exp, key_id, nonce — **not roles**; those come from the Account index at use (AC-12). `acting_as` is empty on every token issued today: acting-as is decided at `OpenSession` (AC-10), not at `Authenticate` | `auth.session_ttl` = 1 h | none — stateless (AC-8) |
 | refresh | 32 random bytes, base64url | `auth.refresh_ttl` = 30 d | SHA-256 hash in the Account record |
 | API key (`agent`, local/dev) | `ak_` + 32 random bytes | until revoked | Argon2id hash in `credential` |
 | workload JWT (`agent`, cluster) | projected Kubernetes service-account token | token `exp` | none — verified against `auth.k8s_issuer`; `Account.workload_subject` must match `sub` |
@@ -149,17 +157,45 @@ the rest verify only. Rotation is: add a key, deploy, make it first, deploy, rem
 // CONTRACT SKETCH — not an implementation
 package auth
 type Principal struct { AccountID string; Roles []Role; ActingAs string; AgentPackID string; SessionExp time.Time }
-type Verifier interface { Verify(ctx context.Context, token string) (Principal, error) }
+type Verifier interface {
+    Verify(ctx context.Context, token string) (Principal, error)
+    ActAs(ctx context.Context, p Principal, target string) (Principal, error)   // AC-10; audited either way
+    Recheck(p Principal) error                                                  // AC-12; the Gateway polls it
+}
 // Authorize replaces AW-SRV-003's stub: verb table row -> required role; agent scope -> pack check.
-func Authorize(cmd sim.Command, p Principal, s *Session) error
+type Authorizer struct { Table VerbRoles; Audit *Auditor }                     // VerbRoles = map[verb]Role
+func (a *Authorizer) Authorize(ctx, verb string, p Principal, sessionID string) error
+func (a *Authorizer) AuthorizeBind(ctx, p Principal, templatePackID, sessionID string) error
 ```
+
+*Corrected 2026-09-14 during implementation:* `Authorize` takes the verb and the Session ID rather
+than `sim.Command` and `*gateway.Session` — the Gateway imports `auth` for its Verifier, so `auth`
+importing the Gateway would be a cycle, and `sim.Command` does not exist until AW-SRV-003. The
+information is the same. When acting as another Account the Session takes the **target's** roles
+(an operator sees what the player sees) and the audit record names both; `[ASSUMPTION]` until
+Brian says otherwise. Roles are a set, not a ladder: an operator needing a builder-gated verb holds
+`builder` too.
 
 ### Admin RPCs
 
 `CreateAccount`, `ResetPassword`, `SetRoles`, `SetAccountStatus`, `IssueInvite`, `RevokeInvite`,
 `SetRegistrationMode`, `CreateAgentAccount` (returns the API key exactly once). Each requires
-`operator`; each writes one `andara.audit.v1` record `{actor, acting_as, action, target, session_id,
-trace_id}`. `andara-cli account …` and `andara-cli invite …` wrap them one-to-one.
+`operator`; each writes one `andara.audit.v1` record `{actor, acting_as, action, target, outcome,
+session_id, trace_id, ts, detail}` — on refusal as well as success, because a refused privileged
+action is itself worth knowing about. `andara-cli account …`, `andara-cli invite …`, and
+`andara-cli registration set …` wrap them one-to-one; `andara-cli auth login|refresh|logout|whoami`
+wraps `Auth`.
+
+**The first operator.** Every Admin RPC requires `operator`, so the story as groomed had no way to
+create the first one. `auth.bootstrap_operator` (`username:password`) creates it at boot while the
+index holds no operator, and is ignored once one exists — so it can stay configured without being a
+back door. The chart injects it from a Secret (`secrets.bootstrapOperator`); `make up` sets
+`operator:andara-local`. *(Added 2026-09-14 during implementation.)*
+
+**The credential file.** AW-CLI-001 left its contents to this story: one entry per server address
+with `account_id`, `username`, `session_token`, `session_expires`, `refresh_token`, `refresh_expires`,
+written `0600`, never printed. `andara-cli auth login` writes it; the Admin wrappers send the
+session token as bearer.
 
 ### Configuration
 
@@ -175,6 +211,10 @@ trace_id}`. `andara-cli account …` and `andara-cli invite …` wrap them one-t
 | `auth.invite_ttl` | `ANDARA_AUTH_INVITE_TTL` | `168h` | 7 d |
 | `auth.recheck_interval` | `ANDARA_AUTH_RECHECK_INTERVAL` | `30s` | bound on AC-12; every open Session re-reads status and roles |
 | `auth.k8s_issuer` / `auth.k8s_jwks_url` | `ANDARA_AUTH_K8S_ISSUER` / `…_JWKS_URL` | — | `WORKLOAD_JWT` verification; unset disables the kind |
+| `auth.store` | `ANDARA_AUTH_STORE` | `kafka` | `kafka` or `memory`; `memory` loses every Account on restart and warns at boot. *(Added 2026-09-14.)* |
+| `auth.bootstrap_operator` | `ANDARA_AUTH_BOOTSTRAP_OPERATOR` | — | `username:password`, applied only while no operator exists. *(Added 2026-09-14.)* |
+| `kafka.brokers` | `ANDARA_KAFKA_BROKERS` | — | required with `auth.store=kafka`; the first story to read it. *(Added 2026-09-14.)* |
+| `session.linkdead_max` | `ANDARA_LINKDEAD_MAX` | `300s` | read here for the assertion below; AW-SRV-015 owns its meaning. *(Added 2026-09-14.)* |
 
 Startup asserts `auth.session_ttl > session.linkdead_max` and refuses to boot otherwise.
 
@@ -188,6 +228,8 @@ Startup asserts `auth.session_ttl > session.linkdead_max` and refuses to boot ot
 | username taken | `ALREADY_EXISTS` |
 | rate limited | `RESOURCE_EXHAUSTED` |
 | `record_version` conflict on an Admin write | `ABORTED` |
+| Admin write naming an unknown Account or Invite | `NOT_FOUND` |
+| malformed request (username, password policy, count, mode) | `INVALID_ARGUMENT` |
 
 ## Data / state impact
 
@@ -199,6 +241,12 @@ between the two burns a code without an Account, which an Operator re-issues —
 hidden. Projected to Postgres by `AW-SRV-018`; the topic stays authoritative.
 
 Migration: none. Rollback: the record is additive; an older binary ignores unknown fields.
+
+*Corrected 2026-09-14 during implementation:* `deploy/kafka/schemas.yaml` had `andara.audit.v1`
+pending on AW-SRV-013, but this story writes the first audit record (AC-3, AC-6, AC-9) and so defines
+`andara.audit.v1.AuditRecord`; AW-SRV-013 extends it additively (numbers 20+ are left for it).
+`make up` now starts the server only after `topics-apply`, because the server replays
+`andara.accounts.v1` at boot and refuses a topic it would have had to create.
 
 ## Observability requirements
 
@@ -235,11 +283,41 @@ availability SLO in `EPIC-07`.
   yields exactly one audit record; snapshot byte-search (AC-7); restart-then-verify (AC-8).
 - **Manual/operator:**
   ```
+  andara-cli auth login --username operator                        # the bootstrap operator `make up` configured
   andara-cli account create --username brian --role operator      # expect: prompt for password, audit line in logs
   andara-cli invite issue --count 3                                # expect: three codes, 7 d expiry
   andara-cli auth login --username brian                           # expect: token stored 0600 by AW-CLI-001
-  andara-cli play --as <account>                                   # expect: audit records name both identities
+  andara-cli play --as <account>                                   # expect: audit records name both identities (AW-CLI-004)
   ```
+
+### Verification record (2026-09-14)
+
+Every AC passes in-process except where a dependency does not exist yet, and those are stated
+rather than claimed:
+
+- **AC-1, 2, 3, 4, 5, 8, 9, 10, 12, 13** — `server/auth` tests (`TestNoSecretLeaks`,
+  `TestAuthenticate_ConstantCostOnFailure`, `TestRegister_*`, `TestVerify_SurvivesRestart`,
+  `TestRefreshAndRevoke`, `TestActAs`, `TestDisableAndRecheck`, `TestAuthenticate_RehashOnLogin`);
+  AC-10 and AC-12 at the Gateway in `server/gateway/auth_test.go`.
+- **AC-6** — `Authorizer.Authorize` returns `ErrNotAuthorized` and writes the audit record naming
+  actor, verb, and Session (`TestAuthorize`). "Nothing is produced to `andara.commands.v1`" is
+  vacuous until AW-SRV-010 has a producer; that story wires `Authorize` into `Submit` and asserts it.
+- **AC-7** — `TestSnapshotBytesCarryNoAccountState` plants a username, password, and tokens and
+  searches `sim.CanonicalBytes(world)`. Zone Snapshots proper are AW-SRV-006; the assertion is on
+  the bytes a Snapshot is built from.
+- **AC-11** — `AuthorizeBind` rejects and audits an agent reaching outside its pack. Entity
+  binding is AW-SRV-014 and Templates AW-SRV-022; they call it.
+- **AC-12** — read as: a `DISABLED` Account's still-valid token is `UNAUTHENTICATED` at
+  `OpenSession`; a role change does not refuse `OpenSession` (the new Session simply gets the new
+  roles, read from the index) but does close every open Session within the interval, because those
+  Sessions hold stale roles. Refusing a login because a role was *removed* would lock a demoted
+  builder out of the game rather than out of building. *(Reading recorded 2026-09-14.)*
+  `SubscriberDropped{reason=REVOKED}` — the Session closes with outcome `revoked`; the Event on the
+  stream is AW-SRV-011's, which owns delivering Events.
+- **Against the running stack:** index replay after a restart, Prometheus scraping the auth
+  metrics, Tempo holding `session.authenticate` and `auth.verify_credential`, the audit record read
+  back from the broker (`make stack-smoke`), the record log on a throwaway compacted topic
+  (`make test-integration`), and the manual/operator sequence with the built `andara-cli`.
 
 ## Definition of done
 
@@ -257,6 +335,19 @@ state and World state are separately stored (AC-7); the key-rotation procedure i
   "per deployment" wording stands; the deployment unit became the pack.
 - `[ASSUMPTION]` Token lifetimes 1 h / 30 d. Security-versus-annoyance; both are config keys.
 - `[ASSUMPTION]` Argon2id 64 MiB / t=3 / p=4, targeting ~100 ms on the kind box. Re-tuned as a config
-  change, which AC-12 makes safe.
+  change, which AC-13 makes safe.
 - `[ASSUMPTION]` Stateless signed session tokens rather than a server-side session table, because
   AC-8 requires tokens to survive a restart and a table would put tokens in a topic.
+- `[ASSUMPTION]` Usernames are 3–32 characters of `a-z 0-9 _ -`, compared case-insensitively;
+  passwords are at least 8 characters. Neither was specified; both are one constant each.
+- `[ASSUMPTION]` Acting as another Account gives the Session the target's roles, not the actor's.
+  The alternative — keeping operator powers while impersonating — makes "see what the player sees"
+  impossible and is the more dangerous default.
+- `[ASSUMPTION]` Roles form a set, not a hierarchy. An operator who needs to build is granted
+  `builder`. The alternative hides the grant.
+- **For AW-INF-006:** the per-peer half of `auth.rate_limit` keys on the direct TCP peer. Behind an
+  ingress every player arrives from one address and `10/m` becomes ten logins a minute for the whole
+  game. The ingress story must forward the client address (proxy protocol or a trusted header the
+  Gateway reads) or the peer bucket is a self-inflicted outage on launch day.
+- **For AW-SRV-013:** that story reads `Account.builder_packs`, which this record does not carry.
+  Additive, and AW-SRV-013's to add.

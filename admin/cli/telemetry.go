@@ -16,9 +16,10 @@ import (
 func (rt *runtime) startSpan() {
 	rt.tp = sdktrace.NewTracerProvider()
 	tracer := rt.tp.Tracer("andara-cli")
-	_, span := tracer.Start(context.Background(), "cli.command")
+	ctx, span := tracer.Start(context.Background(), "cli.command")
 	span.SetAttributes(attribute.String("command", rt.command))
 	rt.span = span
+	rt.ctx = ctx
 	rt.started = time.Now()
 }
 

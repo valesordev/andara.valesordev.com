@@ -48,6 +48,12 @@ properties:
         additionalProperties: false
         properties:
           secretName: {type: string}
+      bootstrapOperator:
+        type: object
+        additionalProperties: false
+        properties:
+          secretName: {type: string}
+          key: {type: string, minLength: 1}
   resources:
     type: object
     additionalProperties: false

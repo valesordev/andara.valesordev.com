@@ -74,4 +74,60 @@ ANDARA_PROTOCOL_MIN: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_PROTOCOL_MAX: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "store" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_STORE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "session_ttl" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_SESSION_TTL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "refresh_ttl" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_REFRESH_TTL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "token_key_file" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_TOKEN_KEY_FILE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "argon2" "memory_kib" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_ARGON2_MEMORY_KIB: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "argon2" "time" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_ARGON2_TIME: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "argon2" "threads" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_ARGON2_THREADS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "rate_limit" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_RATE_LIMIT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "invite_ttl" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_INVITE_TTL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "recheck_interval" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_RECHECK_INTERVAL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "k8s_issuer" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_K8S_ISSUER: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "auth" "k8s_jwks_url" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AUTH_K8S_JWKS_URL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "session" "linkdead_max" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_LINKDEAD_MAX: {{ $v | toString | quote }}
+{{- end }}
 {{- end -}}

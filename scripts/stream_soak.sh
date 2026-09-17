@@ -55,7 +55,7 @@ for n,u in re.findall(r"(\d+)([hms])", d): t += int(n)*{"h":3600,"m":60,"s":1}[u
 print(t)' "$DURATION")"
 LOG="$(mktemp -t stream-soak.XXXXXX)"
 ANDARA_SOAK_DURATION="$DURATION" ANDARA_SOAK_ADDR="$HOST:443" ANDARA_SOAK_RESOLVE="$RESOLVE" \
-ANDARA_TLS_CA_FILE="$CA" \
+ANDARA_TLS_CA_FILE="$CA" ANDARA_SOAK_OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}" \
   "$GO" test -tags soak -count=1 -v -timeout "$((secs + 600))s" -run '^TestSoak_' ./internal/smoke/ >"$LOG" 2>&1 &
 soak=$!
 

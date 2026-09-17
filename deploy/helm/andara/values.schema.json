@@ -174,6 +174,98 @@
               "description": "ANDARA_PROTOCOL_MAX (AW-SRV-005). Default when unset: 1."
             }
           }
+        },
+        "kafka": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "brokers": {
+              "type": "string",
+              "description": "ANDARA_KAFKA_BROKERS (AW-SRV-008). Default when unset: ''."
+            }
+          }
+        },
+        "auth": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "store": {
+              "type": "string",
+              "enum": [
+                "kafka",
+                "memory"
+              ],
+              "description": "ANDARA_AUTH_STORE (AW-SRV-008). Default when unset: 'kafka'."
+            },
+            "session_ttl": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_AUTH_SESSION_TTL (AW-SRV-008). Default when unset: '1h'."
+            },
+            "refresh_ttl": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_AUTH_REFRESH_TTL (AW-SRV-008). Default when unset: '720h'."
+            },
+            "token_key_file": {
+              "type": "string",
+              "description": "ANDARA_AUTH_TOKEN_KEY_FILE (AW-SRV-008). Default when unset: ''."
+            },
+            "argon2": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "memory_kib": {
+                  "type": "integer",
+                  "minimum": 8192,
+                  "description": "ANDARA_AUTH_ARGON2_MEMORY_KIB (AW-SRV-008). Default when unset: 65536."
+                },
+                "time": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ANDARA_AUTH_ARGON2_TIME (AW-SRV-008). Default when unset: 3."
+                },
+                "threads": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ANDARA_AUTH_ARGON2_THREADS (AW-SRV-008). Default when unset: 4."
+                }
+              }
+            },
+            "rate_limit": {
+              "type": "string",
+              "description": "ANDARA_AUTH_RATE_LIMIT (AW-SRV-008). Default when unset: '10/m'."
+            },
+            "invite_ttl": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_AUTH_INVITE_TTL (AW-SRV-008). Default when unset: '168h'."
+            },
+            "recheck_interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_AUTH_RECHECK_INTERVAL (AW-SRV-008). Default when unset: '30s'."
+            },
+            "k8s_issuer": {
+              "type": "string",
+              "description": "ANDARA_AUTH_K8S_ISSUER (AW-SRV-008). Default when unset: ''."
+            },
+            "k8s_jwks_url": {
+              "type": "string",
+              "description": "ANDARA_AUTH_K8S_JWKS_URL (AW-SRV-008). Default when unset: ''."
+            }
+          }
+        },
+        "session": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "linkdead_max": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_LINKDEAD_MAX (AW-SRV-008). Default when unset: '300s'."
+            }
+          }
         }
       }
     },
@@ -218,6 +310,19 @@
           "properties": {
             "secretName": {
               "type": "string"
+            }
+          }
+        },
+        "bootstrapOperator": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string"
+            },
+            "key": {
+              "type": "string",
+              "minLength": 1
             }
           }
         }

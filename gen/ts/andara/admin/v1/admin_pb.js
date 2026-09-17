@@ -18,26 +18,139 @@
 /* eslint-disable */
 
 import { fileDesc, messageDesc, serviceDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_andara_accounts_v1_account } from "../../accounts/v1/account_pb";
 
 /**
  * Describes the file andara/admin/v1/admin.proto.
  */
 export const file_andara_admin_v1_admin = /*@__PURE__*/
-  fileDesc("ChthbmRhcmEvYWRtaW4vdjEvYWRtaW4ucHJvdG8SD2FuZGFyYS5hZG1pbi52MSIWChRHZXRTZXJ2ZXJJbmZvUmVxdWVzdCK7AQoVR2V0U2VydmVySW5mb1Jlc3BvbnNlEg8KB3ZlcnNpb24YASABKAkSDgoGY29tbWl0GAIgASgJEhMKC2Vudmlyb25tZW50GAMgASgJEhcKD2NvbnRlbnRfcGFja19pZBgEIAEoCRIXCg9jb250ZW50X3ZlcnNpb24YBSABKAQSHAoUcHJvdG9jb2xfbWluX3ZlcnNpb24YBiABKA0SHAoUcHJvdG9jb2xfbWF4X3ZlcnNpb24YByABKA0yZwoFQWRtaW4SXgoNR2V0U2VydmVySW5mbxIlLmFuZGFyYS5hZG1pbi52MS5HZXRTZXJ2ZXJJbmZvUmVxdWVzdBomLmFuZGFyYS5hZG1pbi52MS5HZXRTZXJ2ZXJJbmZvUmVzcG9uc2VCvAEKE2NvbS5hbmRhcmEuYWRtaW4udjFCCkFkbWluUHJvdG9QAVo7Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2FkbWluL3YxO2FkbWludjGiAgNBQViqAg9BbmRhcmEuQWRtaW4uVjHKAg9BbmRhcmFcQWRtaW5cVjHiAhtBbmRhcmFcQWRtaW5cVjFcR1BCTWV0YWRhdGHqAhFBbmRhcmE6OkFkbWluOjpWMWIGcHJvdG8z");
+  fileDesc("ChthbmRhcmEvYWRtaW4vdjEvYWRtaW4ucHJvdG8SD2FuZGFyYS5hZG1pbi52MSJjChRDcmVhdGVBY2NvdW50UmVxdWVzdBIQCgh1c2VybmFtZRgBIAEoCRIQCghwYXNzd29yZBgCIAEoCRInCgVyb2xlcxgDIAMoDjIYLmFuZGFyYS5hY2NvdW50cy52MS5Sb2xlIisKFUNyZWF0ZUFjY291bnRSZXNwb25zZRISCgphY2NvdW50X2lkGAEgASgJImEKFFJlc2V0UGFzc3dvcmRSZXF1ZXN0EhIKCmFjY291bnRfaWQYASABKAkSFAoMbmV3X3Bhc3N3b3JkGAIgASgJEh8KF2V4cGVjdGVkX3JlY29yZF92ZXJzaW9uGAMgASgEIi8KFVJlc2V0UGFzc3dvcmRSZXNwb25zZRIWCg5yZWNvcmRfdmVyc2lvbhgBIAEoBCJvCg9TZXRSb2xlc1JlcXVlc3QSEgoKYWNjb3VudF9pZBgBIAEoCRInCgVyb2xlcxgCIAMoDjIYLmFuZGFyYS5hY2NvdW50cy52MS5Sb2xlEh8KF2V4cGVjdGVkX3JlY29yZF92ZXJzaW9uGAMgASgEIioKEFNldFJvbGVzUmVzcG9uc2USFgoOcmVjb3JkX3ZlcnNpb24YASABKAQigQEKF1NldEFjY291bnRTdGF0dXNSZXF1ZXN0EhIKCmFjY291bnRfaWQYASABKAkSMQoGc3RhdHVzGAIgASgOMiEuYW5kYXJhLmFjY291bnRzLnYxLkFjY291bnRTdGF0dXMSHwoXZXhwZWN0ZWRfcmVjb3JkX3ZlcnNpb24YAyABKAQiMgoYU2V0QWNjb3VudFN0YXR1c1Jlc3BvbnNlEhYKDnJlY29yZF92ZXJzaW9uGAEgASgEIiMKEklzc3VlSW52aXRlUmVxdWVzdBINCgVjb3VudBgBIAEoDSI6ChNJc3N1ZUludml0ZVJlc3BvbnNlEg0KBWNvZGVzGAEgAygJEhQKDGV4cGlyZXNfdW5peBgCIAEoAyIjChNSZXZva2VJbnZpdGVSZXF1ZXN0EgwKBGNvZGUYASABKAkiFgoUUmV2b2tlSW52aXRlUmVzcG9uc2UiUAoaU2V0UmVnaXN0cmF0aW9uTW9kZVJlcXVlc3QSMgoEbW9kZRgBIAEoDjIkLmFuZGFyYS5hY2NvdW50cy52MS5SZWdpc3RyYXRpb25Nb2RlIlUKG1NldFJlZ2lzdHJhdGlvbk1vZGVSZXNwb25zZRI2CghwcmV2aW91cxgBIAEoDjIkLmFuZGFyYS5hY2NvdW50cy52MS5SZWdpc3RyYXRpb25Nb2RlIpUBChlDcmVhdGVBZ2VudEFjY291bnRSZXF1ZXN0EhAKCHVzZXJuYW1lGAEgASgJEg8KB3BhY2tfaWQYAiABKAkSOwoPY3JlZGVudGlhbF9raW5kGAMgASgOMiIuYW5kYXJhLmFjY291bnRzLnYxLkNyZWRlbnRpYWxLaW5kEhgKEHdvcmtsb2FkX3N1YmplY3QYBCABKAkiQQoaQ3JlYXRlQWdlbnRBY2NvdW50UmVzcG9uc2USEgoKYWNjb3VudF9pZBgBIAEoCRIPCgdhcGlfa2V5GAIgASgJIhYKFEdldFNlcnZlckluZm9SZXF1ZXN0IrsBChVHZXRTZXJ2ZXJJbmZvUmVzcG9uc2USDwoHdmVyc2lvbhgBIAEoCRIOCgZjb21taXQYAiABKAkSEwoLZW52aXJvbm1lbnQYAyABKAkSFwoPY29udGVudF9wYWNrX2lkGAQgASgJEhcKD2NvbnRlbnRfdmVyc2lvbhgFIAEoBBIcChRwcm90b2NvbF9taW5fdmVyc2lvbhgGIAEoDRIcChRwcm90b2NvbF9tYXhfdmVyc2lvbhgHIAEoDTL5BgoFQWRtaW4SXgoNR2V0U2VydmVySW5mbxIlLmFuZGFyYS5hZG1pbi52MS5HZXRTZXJ2ZXJJbmZvUmVxdWVzdBomLmFuZGFyYS5hZG1pbi52MS5HZXRTZXJ2ZXJJbmZvUmVzcG9uc2USXgoNQ3JlYXRlQWNjb3VudBIlLmFuZGFyYS5hZG1pbi52MS5DcmVhdGVBY2NvdW50UmVxdWVzdBomLmFuZGFyYS5hZG1pbi52MS5DcmVhdGVBY2NvdW50UmVzcG9uc2USXgoNUmVzZXRQYXNzd29yZBIlLmFuZGFyYS5hZG1pbi52MS5SZXNldFBhc3N3b3JkUmVxdWVzdBomLmFuZGFyYS5hZG1pbi52MS5SZXNldFBhc3N3b3JkUmVzcG9uc2USTwoIU2V0Um9sZXMSIC5hbmRhcmEuYWRtaW4udjEuU2V0Um9sZXNSZXF1ZXN0GiEuYW5kYXJhLmFkbWluLnYxLlNldFJvbGVzUmVzcG9uc2USZwoQU2V0QWNjb3VudFN0YXR1cxIoLmFuZGFyYS5hZG1pbi52MS5TZXRBY2NvdW50U3RhdHVzUmVxdWVzdBopLmFuZGFyYS5hZG1pbi52MS5TZXRBY2NvdW50U3RhdHVzUmVzcG9uc2USWAoLSXNzdWVJbnZpdGUSIy5hbmRhcmEuYWRtaW4udjEuSXNzdWVJbnZpdGVSZXF1ZXN0GiQuYW5kYXJhLmFkbWluLnYxLklzc3VlSW52aXRlUmVzcG9uc2USWwoMUmV2b2tlSW52aXRlEiQuYW5kYXJhLmFkbWluLnYxLlJldm9rZUludml0ZVJlcXVlc3QaJS5hbmRhcmEuYWRtaW4udjEuUmV2b2tlSW52aXRlUmVzcG9uc2UScAoTU2V0UmVnaXN0cmF0aW9uTW9kZRIrLmFuZGFyYS5hZG1pbi52MS5TZXRSZWdpc3RyYXRpb25Nb2RlUmVxdWVzdBosLmFuZGFyYS5hZG1pbi52MS5TZXRSZWdpc3RyYXRpb25Nb2RlUmVzcG9uc2USbQoSQ3JlYXRlQWdlbnRBY2NvdW50EiouYW5kYXJhLmFkbWluLnYxLkNyZWF0ZUFnZW50QWNjb3VudFJlcXVlc3QaKy5hbmRhcmEuYWRtaW4udjEuQ3JlYXRlQWdlbnRBY2NvdW50UmVzcG9uc2VCvAEKE2NvbS5hbmRhcmEuYWRtaW4udjFCCkFkbWluUHJvdG9QAVo7Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2FkbWluL3YxO2FkbWludjGiAgNBQViqAg9BbmRhcmEuQWRtaW4uVjHKAg9BbmRhcmFcQWRtaW5cVjHiAhtBbmRhcmFcQWRtaW5cVjFcR1BCTWV0YWRhdGHqAhFBbmRhcmE6OkFkbWluOjpWMWIGcHJvdG8z", [file_andara_accounts_v1_account]);
+
+/**
+ * Describes the message andara.admin.v1.CreateAccountRequest.
+ * Use `create(CreateAccountRequestSchema)` to create a new message.
+ */
+export const CreateAccountRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 0);
+
+/**
+ * Describes the message andara.admin.v1.CreateAccountResponse.
+ * Use `create(CreateAccountResponseSchema)` to create a new message.
+ */
+export const CreateAccountResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 1);
+
+/**
+ * Describes the message andara.admin.v1.ResetPasswordRequest.
+ * Use `create(ResetPasswordRequestSchema)` to create a new message.
+ */
+export const ResetPasswordRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 2);
+
+/**
+ * Describes the message andara.admin.v1.ResetPasswordResponse.
+ * Use `create(ResetPasswordResponseSchema)` to create a new message.
+ */
+export const ResetPasswordResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 3);
+
+/**
+ * Describes the message andara.admin.v1.SetRolesRequest.
+ * Use `create(SetRolesRequestSchema)` to create a new message.
+ */
+export const SetRolesRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 4);
+
+/**
+ * Describes the message andara.admin.v1.SetRolesResponse.
+ * Use `create(SetRolesResponseSchema)` to create a new message.
+ */
+export const SetRolesResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 5);
+
+/**
+ * Describes the message andara.admin.v1.SetAccountStatusRequest.
+ * Use `create(SetAccountStatusRequestSchema)` to create a new message.
+ */
+export const SetAccountStatusRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 6);
+
+/**
+ * Describes the message andara.admin.v1.SetAccountStatusResponse.
+ * Use `create(SetAccountStatusResponseSchema)` to create a new message.
+ */
+export const SetAccountStatusResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 7);
+
+/**
+ * Describes the message andara.admin.v1.IssueInviteRequest.
+ * Use `create(IssueInviteRequestSchema)` to create a new message.
+ */
+export const IssueInviteRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 8);
+
+/**
+ * Describes the message andara.admin.v1.IssueInviteResponse.
+ * Use `create(IssueInviteResponseSchema)` to create a new message.
+ */
+export const IssueInviteResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 9);
+
+/**
+ * Describes the message andara.admin.v1.RevokeInviteRequest.
+ * Use `create(RevokeInviteRequestSchema)` to create a new message.
+ */
+export const RevokeInviteRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 10);
+
+/**
+ * Describes the message andara.admin.v1.RevokeInviteResponse.
+ * Use `create(RevokeInviteResponseSchema)` to create a new message.
+ */
+export const RevokeInviteResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 11);
+
+/**
+ * Describes the message andara.admin.v1.SetRegistrationModeRequest.
+ * Use `create(SetRegistrationModeRequestSchema)` to create a new message.
+ */
+export const SetRegistrationModeRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 12);
+
+/**
+ * Describes the message andara.admin.v1.SetRegistrationModeResponse.
+ * Use `create(SetRegistrationModeResponseSchema)` to create a new message.
+ */
+export const SetRegistrationModeResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 13);
+
+/**
+ * Describes the message andara.admin.v1.CreateAgentAccountRequest.
+ * Use `create(CreateAgentAccountRequestSchema)` to create a new message.
+ */
+export const CreateAgentAccountRequestSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 14);
+
+/**
+ * Describes the message andara.admin.v1.CreateAgentAccountResponse.
+ * Use `create(CreateAgentAccountResponseSchema)` to create a new message.
+ */
+export const CreateAgentAccountResponseSchema = /*@__PURE__*/
+  messageDesc(file_andara_admin_v1_admin, 15);
 
 /**
  * Describes the message andara.admin.v1.GetServerInfoRequest.
  * Use `create(GetServerInfoRequestSchema)` to create a new message.
  */
 export const GetServerInfoRequestSchema = /*@__PURE__*/
-  messageDesc(file_andara_admin_v1_admin, 0);
+  messageDesc(file_andara_admin_v1_admin, 16);
 
 /**
  * Describes the message andara.admin.v1.GetServerInfoResponse.
  * Use `create(GetServerInfoResponseSchema)` to create a new message.
  */
 export const GetServerInfoResponseSchema = /*@__PURE__*/
-  messageDesc(file_andara_admin_v1_admin, 1);
+  messageDesc(file_andara_admin_v1_admin, 17);
 
 /**
  * @generated from service andara.admin.v1.Admin

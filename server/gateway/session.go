@@ -234,6 +234,43 @@ func (st *sessionStore) closeAll(outcome, reason string) {
 	}
 }
 
+// recheckLoop is AW-SRV-008 AC-12: every interval, every open Session's
+// Principal is re-read against the Account index, and a Session whose
+// Account was disabled or whose roles changed is closed with outcome
+// "revoked". The Subscribe stream on it ends the way any teardown ends it;
+// SubscriberDropped{reason=REVOKED} as an Event is AW-SRV-011's, when there
+// is an Egress that delivers Events.
+func (st *sessionStore) recheckLoop(ctx context.Context, interval time.Duration, r Rechecker) {
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+			st.recheck(ctx, r)
+		}
+	}
+}
+
+// recheck runs one pass and returns how many Sessions it closed.
+func (st *sessionStore) recheck(ctx context.Context, r Rechecker) int {
+	st.mu.Lock()
+	live := make([]*Session, 0, len(st.byID))
+	for _, s := range st.byID {
+		live = append(live, s)
+	}
+	st.mu.Unlock()
+	n := 0
+	for _, s := range live {
+		if err := r.Recheck(s.Principal); err != nil {
+			st.close(ctx, s, OutcomeRevoked, "revoked: "+err.Error())
+			n++
+		}
+	}
+	return n
+}
+
 func (st *sessionStore) count() int {
 	st.mu.Lock()
 	defer st.mu.Unlock()

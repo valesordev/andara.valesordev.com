@@ -14,6 +14,13 @@ server:
   content:
     source: dir
     path: /content
+  auth:
+    # No broker in the local cluster yet, so Accounts live in memory and are lost on
+    # restart; the bootstrap operator is re-created on every boot for the same reason.
+    store: memory
+    # The mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the
+    # Secret from `make auth-keys`.
+    token_key_file: /etc/andara/secrets/token-key/token.keys
 # The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
 # made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
 # by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at
@@ -21,6 +28,12 @@ server:
 host: andara.local
 admin:
   allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "172.16.0.0/12"]
+
+secrets:
+  tokenKey:
+    secretName: andara-server-token-key
+  bootstrapOperator:
+    secretName: andara-server-bootstrap
 
 snapshots:
   size: 1Gi
