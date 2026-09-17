@@ -21,7 +21,18 @@ PORT="${ANDARA_MEASURE_PORT:-18080}"
 
 [[ -x bin/andara-server ]] || make build >/dev/null
 
+# The server refuses to serve without TLS material and a token keyring; both are the
+# local stack's. The tick loop runs on the memory source — no broker, no Commands — so
+# this measures the loop's own cost over the fixture's World, a floor under any real load.
+scripts/tls.sh >/dev/null
+scripts/auth_keys.sh >/dev/null
+TLS_DIR="${ANDARA_TLS_DIR:-$REPO/.local/tls}"
+AUTH_DIR="${ANDARA_AUTH_DIR:-$REPO/.local/auth}"
+
 ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH="$FIXTURE" ANDARA_HTTP_PORT="$PORT" \
+ANDARA_GRPC_LISTEN="127.0.0.1:${ANDARA_MEASURE_GRPC_PORT:-18443}" \
+ANDARA_TLS_CERT_FILE="$TLS_DIR/server.pem" ANDARA_TLS_KEY_FILE="$TLS_DIR/server-key.pem" \
+ANDARA_AUTH_STORE=memory ANDARA_AUTH_TOKEN_KEY_FILE="$AUTH_DIR/token-keys" ANDARA_SIM_SOURCE=memory \
 ANDARA_LOG_LEVEL=warn ANDARA_LOG_FORMAT=json ANDARA_OTLP_ENDPOINT="" \
   bin/andara-server >/dev/null 2>&1 &
 PID=$!

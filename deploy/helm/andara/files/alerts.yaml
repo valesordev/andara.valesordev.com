@@ -31,6 +31,21 @@ groups:
         annotations:
           summary: "andara-server restarted more than 3 times in 10 minutes"
           runbook: docs/runbooks/server-crashlooping.md
+  - name: andara-tick
+    # The tick loop (AW-SRV-002). One alert, on the symptom: players experience the world
+    # responding late, which is lag. Overruns and consumer lag are causes — dashboard
+    # panels and the runbook's diagnostic path, never pages (docs/specs/slo/tick-health.md).
+    rules:
+      - alert: SimulationLagging
+        expr: |
+          andara_simulation_lag_seconds > 0.5
+        for: 2m
+        labels:
+          severity: page
+          slo: tick-health
+        annotations:
+          summary: "The simulation is more than 500 ms behind schedule — the World is responding late"
+          runbook: docs/runbooks/simulation-lagging.md
   - name: andara-edge
     # The edge (AW-INF-006): Traefik in front, cert-manager underneath. Both are cluster
     # services the observability stack scrapes (EPIC-07); in the compose stack neither

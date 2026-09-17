@@ -22,12 +22,12 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
 | `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
 | `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
+| `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
-| `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |

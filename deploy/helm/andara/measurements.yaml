@@ -4,9 +4,13 @@
 # sets resources.requests explicitly. Integers, not quantities, because Helm can multiply
 # 500 and cannot multiply "500m".
 #
-# measured: false means nobody has run the measurement yet — there is no tick loop to
-# measure until AW-SRV-002 lands — and the numbers below are a placeholder that `make
-# helm-test` warns about on every run until a real measurement replaces them.
+# measured: false means no measurement on the sizing fixture has been taken yet, and the
+# numbers below are a placeholder that `make helm-test` warns about on every run until a
+# real one replaces them. The tick loop exists (AW-SRV-002) and `make measure-tick` runs;
+# its first measurement — p99 10 millicores, 94 MiB, over testdata/content/valid with no
+# Commands on the memory source, 2026-09-17 — is an idle floor, and sizing production on
+# it would be worse than this placeholder. The sizing fixture is AW-SRV-006's; run the
+# measurement against it when it exists and flip this then.
 measured: false
 measured_at: ""
 fixture: "sizing fixture, AW-SRV-006 test plan: 2,000 Rooms / 10,000 Entities / 500 Characters"
