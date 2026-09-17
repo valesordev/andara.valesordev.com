@@ -290,8 +290,10 @@ func TestBuildWorld_UnknownZoneComponentIsFatal(t *testing.T) {
 
 func TestComponentRegistry_SeedVocabulary(t *testing.T) {
 	want := []ComponentType{
+		"andara.core.Behavior", // AW-SRV-022
 		"andara.core.Dark",
 		"andara.core.Indoors",
+		"andara.core.Memory", // AW-SRV-022
 		"andara.core.NoMagic",
 		"andara.core.NoRecall",
 	}

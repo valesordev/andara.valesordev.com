@@ -1,0 +1,36 @@
+{
+  "formatVersion": 1,
+  "name": "town.Merchant",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc",
+    "town.Merchant"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "town.merchant"
+        }
+      ]
+    },
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "town.Merchant"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "town/npcs.aw",
+    "line": 12
+  }
+}

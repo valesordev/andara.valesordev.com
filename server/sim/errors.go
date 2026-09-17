@@ -24,6 +24,15 @@ const (
 	ErrDuplicateComponent    ErrCode = "duplicate_component_type"
 	ErrInvalidComponentField ErrCode = "invalid_component_field"
 	ErrMissingReverseExit    ErrCode = "missing_reverse_exit"
+
+	// AW-SRV-022. Templates are flattened by the compiler; the loader checks
+	// the result rather than resolving anything (ADR-0010 decision 9).
+	ErrUnresolvedExtends   ErrCode = "unresolved_extends"
+	ErrUnflattenedTemplate ErrCode = "unflattened_template"
+	ErrDuplicateTemplate   ErrCode = "duplicate_template"
+	ErrChainMismatch       ErrCode = "chain_mismatch"
+	ErrChainTooDeep        ErrCode = "chain_too_deep"
+	ErrInvalidProvenance   ErrCode = "invalid_provenance"
 )
 
 // warningCodes are findings that do not refuse a load. They are advisory
@@ -52,12 +61,13 @@ func IsWarning(e ValidationError, strictOrphans bool) bool {
 // ValidationError carries everything a Builder needs to fix the problem without
 // opening the loader source.
 type ValidationError struct {
-	File   string
-	Line   int // 0 when not line-scoped
-	Zone   ZoneID
-	Room   RoomID
-	Code   ErrCode
-	Detail string
+	File     string
+	Line     int // 0 when not line-scoped
+	Zone     ZoneID
+	Room     RoomID
+	Template TemplateRef // set for Template findings (AW-SRV-022)
+	Code     ErrCode
+	Detail   string
 }
 
 func (e ValidationError) Error() string {

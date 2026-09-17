@@ -1,0 +1,17 @@
+{
+  "formatVersion": 1,
+  "name": "town.P",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "town.P"
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "town.P"
+    }
+  ],
+  "resolved": true
+}

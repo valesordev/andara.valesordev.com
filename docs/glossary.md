@@ -293,6 +293,14 @@ design and is `[NEEDS BRIAN]`; the list is expected to grow from real content.
 | `andara.core.Indoors` | The Room is enclosed; weather and sky do not reach it. |
 | `andara.core.NoRecall` | Recall and other self-teleport effects do not leave from here. |
 
+Two more arrived with Templates (AW-SRV-022), and — one vocabulary for every carrier — are legal on
+a Room or Zone too, where they mean nothing until a system reads them:
+
+| Component | Means |
+|-----------|-------|
+| `andara.core.Behavior{name}` | Binds a Behavior to a Template: the one seam between the Template hierarchy and the Python class hierarchy in a Behavior Agent. The name is recorded, not validated — AW-CLI-006 checks it at compile, AW-SRV-009 at claim. |
+| `andara.core.Memory` | The Entity remembers: NPC memory as World state (AW-SRV-009). The slots are runtime state set by Command, not Template data, so as a Template Component this is a marker. |
+
 Each is data today. The system that reads `Dark` and suppresses a Room description belongs to the
 story that adds looking in the dark, not to the one that adds the Component.
 
@@ -312,6 +320,15 @@ inherited Component field by field and may add new Components; it may never remo
 anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base Templates ship in the
 server's `andara.core` Content Pack; Builder Templates extend them and pin the core version they
 compiled against (ADR-0010).
+
+The server sees a Template only **flattened** (AW-SRV-022): the compiler resolves the chain and
+merges the Components, and publishes `andara.content.v1.TemplateDefinition` — `<pack>.<Name>`, a
+kind, the chain root-first, the merged Component set, per-field provenance naming which ancestor set
+each value, and `resolved: true`. The loader checks that output rather than recomputing it, resolves
+ancestors only within the pack or `andara.core`, bounds the chain at `sim.MaxChainDepth` (16), and
+holds every Template in a chain to one kind — so `andara.core.Item` is its own root, not an Entity.
+`sim.Instantiate` makes an Entity from a Template; the Entity names its Template, and therefore its
+pack, forever.
 
 Overriding a *function* is not part of this hierarchy. Functions live in Behaviors, which are Python
 classes in Behavior Agents, where inheritance is Python's own and Builders may subtype freely

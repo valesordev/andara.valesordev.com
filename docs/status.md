@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-41 stories — 2 review · 30 ready · 9 done
+41 stories — 1 in-progress · 2 review · 29 ready · 9 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -13,9 +13,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
-  next   AW-SRV-022  ready  Template definitions — schema, flattened loading, and E…  (unblocks 5)
+  now    AW-SRV-022  Template definitions — schema, flattened loading, and Entity instantiation
+         branch aw-srv-022-template-definitions-flattened-loading-and-entity-instantiation
   next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 4)
+  next   AW-SRV-024  ready  Export logs over OTLP so the log sink carries what stde…  (unblocks 1)
   review AW-SRV-021, AW-SRV-008 — run the §8 checklist, then flip to done
   held   19 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
 

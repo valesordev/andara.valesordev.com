@@ -1,0 +1,82 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
+// Template Definitions — Game Types in a single-inheritance hierarchy that
+// contain Components (ADR-0010), as the compiler emits them and the loader
+// reads them (AW-SRV-022).
+//
+// Resolution happens at compile time (ADR-0010 decision 9): the compiler
+// walks `extends`, merges Components field by field, and publishes the
+// flattened result with the chain and per-field provenance retained. The
+// server carries no resolver — a TemplateDefinition with resolved=false is
+// rejected at load, never resolved late.
+//
+// One blob per declaration, at `templates/<name>.json` in the pack. Like a
+// ZoneDefinition it rides inside a Blob as opaque bytes, so no registry
+// subject names it.
+
+syntax = "proto3";
+
+package andara.content.v1;
+
+import "andara/content/v1/zone.proto";
+
+message TemplateDefinition {
+  // "<pack>.<Name>": the pack is everything before the last dot, and the
+  // name is unique within it. The loader resolves ancestors within the same
+  // pack or the core pack and nowhere else.
+  string name = 1;
+
+  // Open by construction: Brian flagged the kind set as incomplete
+  // (ADR-0010 decision 1). Every Template in a chain has the same kind.
+  TemplateKind kind = 2;
+
+  // Root first, self last, compiler-emitted. A root Template's chain is
+  // [self]. The loader checks that every ancestor exists, that each
+  // Template's chain is its parent's chain plus itself, and that the depth
+  // is within MaxChainDepth — a chain that fails any of these is a compiler
+  // bug surfaced as a load error rather than a silently wrong Template.
+  repeated string chain = 3;
+
+  // The flattened Component set, sorted by type, at most one of each type
+  // (ADR-0010 decision 3). A subtype may override and extend but never
+  // remove (decision 5), so every ancestor's Components — and their fields —
+  // are present here.
+  repeated ComponentValue components = 4;
+
+  // Which ancestor set each field's value. Sorted by (component, field).
+  // "Why does this Template have Aggro{threshold: 3}" is a question about a
+  // value that may appear in none of the files a Builder wrote.
+  repeated FieldProvenance provenance = 5;
+
+  // Must be true to load (ADR-0010 decision 9).
+  bool resolved = 6;
+
+  // Where the declaration came from, for errors.
+  SourceRef source = 7;
+
+  // Rejected at load with both the file's version and the supported range
+  // named, like ZoneDefinition.format_version. Templates are their own
+  // blobs, so they version separately from Zones.
+  uint32 format_version = 8;
+}
+
+message FieldProvenance {
+  string component = 1;
+  string field = 2;
+  // The Template in the chain that set this value — self, for a value
+  // declared here.
+  string from = 3;
+}
+
+message SourceRef {
+  string file = 1;
+  uint32 line = 2;
+}
+
+enum TemplateKind {
+  TEMPLATE_KIND_UNSPECIFIED = 0;
+  ENTITY = 1;
+  ITEM = 2;
+  BEHAVIOR = 3;
+}

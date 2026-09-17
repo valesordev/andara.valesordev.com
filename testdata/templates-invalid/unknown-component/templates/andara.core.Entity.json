@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "andara.core.Entity",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core/entity.aw",
+    "line": 1
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "formatVersion": 1,
+  "name": "town.Twin",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "town.Twin"
+  ],
+  "resolved": true
+}

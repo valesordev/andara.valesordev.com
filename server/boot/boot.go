@@ -5,6 +5,7 @@ package boot
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"sync/atomic"
 	"time"
@@ -31,7 +32,10 @@ type Runtime struct {
 	Tel *telemetry.Telemetry
 	// World is the loaded topology; nil until LoadContent succeeds.
 	World *sim.World
-	ready atomic.Bool
+	// Templates is the loaded Template registry (AW-SRV-022); nil until
+	// LoadContent succeeds.
+	Templates *sim.TemplateRegistry
+	ready     atomic.Bool
 }
 
 // New constructs a Runtime. Telemetry must already be set up.
@@ -97,8 +101,48 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	)
 	vspan.End()
 
+	// Templates (AW-SRV-022): loaded and validated under the same span, after
+	// the Zones, with the same finding discipline. A refused Template refuses
+	// the boot the way a dangling Exit does.
+	tinputs, terrs := content.LoadTemplates(rt.Cfg.ContentSource, rt.Cfg.ContentPath)
+	templateFatal := false
+	for _, e := range terrs {
+		if rt.recordFinding(ctx, e) {
+			warnCount++
+			continue
+		}
+		templateFatal = true
+		errorCount++
+	}
+	var templates *sim.TemplateRegistry
+	if !templateFatal {
+		var berrs []sim.ValidationError
+		templates, berrs = sim.BuildTemplates(tinputs, sim.TemplateOptions{})
+		for _, e := range berrs {
+			if rt.recordFinding(ctx, e) {
+				warnCount++
+				continue
+			}
+			templateFatal = true
+			errorCount++
+		}
+	}
+	templateCount := 0
+	if templates != nil {
+		templateCount = templates.Len()
+		for _, pack := range templates.Packs() {
+			n := len(templates.Pack(pack))
+			rt.Tel.Metrics.TemplatesLoaded.WithLabelValues(pack).Set(float64(n))
+			rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "templates loaded",
+				slog.String("pack", pack),
+				slog.Int("templates", n),
+				slog.String("trace_id", telemetry.TraceID(ctx)),
+			)
+		}
+	}
+
 	zoneCount, roomCount, componentCount := 0, 0, 0
-	ok := world != nil && !loadFatal && !buildFatal
+	ok := world != nil && !loadFatal && !buildFatal && !templateFatal
 	if ok {
 		zoneCount = len(world.Zones)
 		rt.Tel.Metrics.ZonesLoaded.Set(float64(zoneCount))
@@ -112,12 +156,14 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 			}
 		}
 		rt.World = world
+		rt.Templates = templates
 		rt.ready.Store(true)
 	}
 	span.SetAttributes(
 		attribute.Int("zone_count", zoneCount),
 		attribute.Int("room_count", roomCount),
 		attribute.Int("component_count", componentCount),
+		attribute.Int("template_count", templateCount),
 	)
 	if !ok {
 		return ExitFail

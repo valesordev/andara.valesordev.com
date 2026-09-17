@@ -116,6 +116,22 @@ var componentRegistry = map[ComponentType]componentSpec{
 	"andara.core.Indoors": {},
 	// Recall and other self-teleport effects do not leave from here.
 	"andara.core.NoRecall": {},
+
+	// AW-SRV-022: the two Components the andara.core seed Templates carry.
+	// One vocabulary for every carrier (ADR-0010 decision 8), so these are
+	// legal on a Room or a Zone too, where they mean nothing until a system
+	// reads them.
+
+	// Binds a Behavior to a Template: the one seam between the Template
+	// hierarchy and the Python class hierarchy in a Behavior Agent
+	// (ADR-0010). The name is recorded here and not validated: AW-CLI-006
+	// validates it at compile, AW-SRV-009 at claim.
+	"andara.core.Behavior": {fields: map[string]FieldKind{"name": FieldString}},
+	// NPC memory as World state (AW-SRV-009). The slots — {slot, bytes} —
+	// are runtime state a Behavior sets by Command, not Template data, and
+	// the ComponentField oneof could not carry them anyway; as a Template
+	// Component this is a marker that says "this Entity remembers".
+	"andara.core.Memory": {},
 }
 
 // KnownComponentType reports whether the server has a Component type
