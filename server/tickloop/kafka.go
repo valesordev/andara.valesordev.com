@@ -454,7 +454,7 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 	if err != nil {
 		return err
 	}
-	// The record's own context is never cancelled: franz-go fails a record
+	// The record's own context is never canceled: franz-go fails a record
 	// whose context ends before delivery, and the tick's context ends with
 	// the tick.
 	tick := tc.Tick
