@@ -103,6 +103,26 @@ jobs:
           NS=andara-local
           kubectl -n $NS get certificate andara-edge andara-server
           ! helm -n $NS get manifest andara | grep -q 'PRIVATE KEY'
+      # AW-SRV-008: a Session needs a real token. The bootstrap operator `make helm-install`
+      # configured authenticates through the edge; every step below carries its token.
+      - name: authenticate as the bootstrap operator through the edge
+        run: |
+          set -euo pipefail
+          CA=.local/tls/cluster/local/ca.pem
+          TOKEN=$(curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 \
+            -X POST -H 'content-type: application/json' \
+            https://andara.local/andara.auth.v1.Auth/Authenticate \
+            -d '{"username":"operator","password":"andara-local"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["tokens"]["sessionToken"])')
+          [[ -n "$TOKEN" ]]
+          echo "::add-mask::$TOKEN"
+          echo "ANDARA_CI_TOKEN=$TOKEN" >> "$GITHUB_ENV"
+          # A made-up token is refused: the AW-SRV-005 stub is gone.
+          code=$(curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 -o /dev/null -w '%{http_code}' \
+            -X POST -H 'content-type: application/json' \
+            https://andara.local/andara.game.v1.Game/OpenSession \
+            -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci/connect"}')
+          [[ "$code" == "401" ]]
       - name: Connect and gRPC-Web through the edge on one host (AC-2)
         run: |
           set -euo pipefail
@@ -110,8 +130,22 @@ jobs:
           curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 \
             -X POST -H 'content-type: application/json' \
             https://andara.local/andara.game.v1.Game/OpenSession \
-            -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci/connect"}' | grep -q sessionId
-          printf '\x00\x00\x00\x00\x08\x08\x01\x12\x01x\x1a\x01w' > /tmp/open.bin
+            -d '{"protocolVersion":1,"authToken":"'"$ANDARA_CI_TOKEN"'","clientName":"kind-ci/connect"}' | grep -q sessionId
+          # The same request as a gRPC-Web frame: 5-byte prefix, then OpenSessionRequest
+          # {protocol_version=1, auth_token, client_name} on the protobuf wire.
+          python3 - "$ANDARA_CI_TOKEN" > /tmp/open.bin <<'PY'
+          import struct, sys
+          def varint(n):
+              out = b""
+              while True:
+                  b, n = n & 0x7f, n >> 7
+                  out += bytes([b | (0x80 if n else 0)])
+                  if not n: return out
+          def field(num, wire, payload): return varint(num << 3 | wire) + payload
+          tok, name = sys.argv[1].encode(), b"kind-ci/grpc-web"
+          msg = field(1, 0, varint(1)) + field(2, 2, varint(len(tok)) + tok) + field(3, 2, varint(len(name)) + name)
+          sys.stdout.buffer.write(b"\x00" + struct.pack(">I", len(msg)) + msg)
+          PY
           curl -s --cacert $CA --resolve andara.local:443:127.0.0.1 \
             -X POST -H 'content-type: application/grpc-web+proto' -H 'x-grpc-web: 1' \
             https://andara.local/andara.game.v1.Game/OpenSession --data-binary @/tmp/open.bin \
@@ -136,7 +170,7 @@ jobs:
           [[ "$(admin_calls)" == "$before" ]]
           # The catch-all is unaffected.
           curl -sf --cacert $CA --resolve andara.local:443:127.0.0.1 -X POST -H 'content-type: application/json' \
-            https://andara.local/andara.game.v1.Game/OpenSession -d '{"protocolVersion":1,"authToken":"ci","clientName":"kind-ci"}' >/dev/null
+            https://andara.local/andara.game.v1.Game/OpenSession -d '{"protocolVersion":1,"authToken":"'"$ANDARA_CI_TOKEN"'","clientName":"kind-ci"}' >/dev/null
           # Put the allowlist back explicitly. `helm upgrade` would not: for a CRD-typed
           # resource Helm patches old manifest → new manifest and never reads live state,
           # so an unchanged values file leaves a hand-patched Middleware as it is.
