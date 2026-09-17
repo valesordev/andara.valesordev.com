@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-35 stories — 2 in-progress · 3 review · 24 ready · 6 done
+35 stories — 1 in-progress · 4 review · 24 ready · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -15,11 +15,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-008  Account store, registration modes, and authentication
-         branch aw-srv-008-account-store-and-authentication
+  now    — nothing in flight
   next   AW-SRV-022  ready  Template definitions — schema, flattened loading, and E…  (unblocks 5)
   next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
-  review AW-SRV-021 — run the §8 checklist, then flip to done
+  review AW-SRV-021, AW-SRV-008 — run the §8 checklist, then flip to done
   held   19 ready, blocked: AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007, AW-SRV-011,…
 
 ## Decisions the lanes are waiting on
