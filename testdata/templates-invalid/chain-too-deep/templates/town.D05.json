@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "name": "town.D05",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "town.D01",
+    "town.D02",
+    "town.D03",
+    "town.D04",
+    "town.D05"
+  ],
+  "resolved": true
+}

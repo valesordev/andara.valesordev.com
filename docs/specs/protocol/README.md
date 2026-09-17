@@ -13,7 +13,10 @@ andara/game/v1/       Game service — OpenSession, Submit, Subscribe   (AW-SRV-
 andara/admin/v1/      Admin service — operator and builder surface    (AW-SRV-005)
 andara/log/v1/        LoggedCommand, Event, TickCompleted             (AW-SRV-004, AW-SRV-005)
 andara/state/v1/      snapshot envelope with state_version            (AW-SRV-006)
-andara/content/v1/    ZoneDefinition (AW-SRV-001); blobs, version manifests, active pointer (AW-SRV-012, AW-SRV-013)
+andara/content/v1/    ZoneDefinition (AW-SRV-001); TemplateDefinition (AW-SRV-022); blobs, version manifests, active pointer (AW-SRV-012, AW-SRV-013)
+andara/accounts/v1/   AccountRecord — the compacted account topic          (AW-SRV-008)
+andara/audit/v1/      AuditRecord — the privileged-action record           (AW-SRV-008)
+andara/auth/v1/       Auth service — Register, Authenticate, Refresh, Revoke (AW-SRV-008)
 ```
 
 Generated Go, Python, and TypeScript live in `gen/` and are **committed**, so a clone builds without a

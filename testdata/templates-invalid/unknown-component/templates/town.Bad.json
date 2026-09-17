@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "name": "town.Bad",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "town.Bad"
+  ],
+  "components": [
+    {
+      "type": "town.Aggro"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "town/npcs.aw",
+    "line": 8
+  }
+}

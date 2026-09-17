@@ -106,10 +106,12 @@ func TestBuildTemplates_UnknownComponent(t *testing.T) {
 		t.Fatalf("reg=%v errs=%v", reg, errs)
 	}
 	e := errs[0]
-	if e.Template != "town.Bad" || e.File != "town/Bad.json" || e.Line != 1 {
+	// File is the blob; the compiler's source is a different file in a
+	// different language, so it is named in the detail, never in Line.
+	if e.Template != "town.Bad" || e.File != "town/Bad.json" || e.Line != 0 {
 		t.Errorf("finding %+v", e)
 	}
-	for _, want := range []string{"town.Aggro", "Template town.Bad", "defined on the server"} {
+	for _, want := range []string{"town.Aggro", "Template town.Bad", "defined on the server", "declared at town.Bad.aw:1"} {
 		if !strings.Contains(e.Detail, want) {
 			t.Errorf("detail lacks %q: %s", want, e.Detail)
 		}
@@ -270,6 +272,20 @@ func TestBuildTemplates_ChainFindings(t *testing.T) {
 	deep = append(deep, TemplateInput{File: "deepest", Def: tdef("town.Deepest", entity, chain)})
 	if _, errs := BuildTemplates(deep, TemplateOptions{}); len(errs) == 0 || errs[0].Code != ErrChainTooDeep {
 		t.Fatalf("depth %d accepted: %v", MaxChainDepth+1, errs)
+	}
+}
+
+// A parent that exists but was refused is reported as refused, not missing.
+func TestBuildTemplates_RefusedParent(t *testing.T) {
+	d := tdef("town.Base", entity, []string{"andara.core.Entity", "town.Base"})
+	d.Resolved = false
+	sub := TemplateInput{File: "town/Sub.json", Def: tdef("town.Sub", entity, []string{"andara.core.Entity", "town.Base", "town.Sub"})}
+	_, errs := BuildTemplates(append(core(), TemplateInput{File: "town/Base.json", Def: d}, sub), TemplateOptions{})
+	if !slices.Equal(errCodes(errs), []ErrCode{ErrUnflattenedTemplate, ErrUnresolvedExtends}) {
+		t.Fatalf("codes %v", errCodes(errs))
+	}
+	if !strings.Contains(errs[1].Detail, "was refused") || !strings.Contains(errs[1].Detail, "town/Base.json") || !strings.Contains(errs[1].Detail, "declared at town.Sub.aw:1") {
+		t.Errorf("detail: %s", errs[1].Detail)
 	}
 }
 

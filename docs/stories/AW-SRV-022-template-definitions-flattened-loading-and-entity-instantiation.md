@@ -181,6 +181,8 @@ gains no fields; Templates are their own blobs in the pack, one per declaration,
   `TestLoadContent_NoTemplates`, `TestLoadContent_TemplateFindingRefusesBoot`.
 - The manual plan's `andara-server --content-source=dir --content-path=testdata/templates` logs
   `templates loaded` for `andara.core` (4) and `town` (3).
+- Every Template error code has a fixture under `testdata/templates-invalid/<code>/`, loaded through
+  the dir loader in `TestLoadTemplatesDir_Findings`.
 - **Waiting on other stories:** the `AW-CLI-005` corpus `town` pack end to end (the fixture is
   hand-flattened until AW-CLI-006 exists); `andara-cli content inspect template` (AW-CLI-002).
 
@@ -198,5 +200,12 @@ Template entry names this story.
 - `[ASSUMPTION]` `andara.core.Npc` carries `andara.core.Memory` and nothing else; `Entity`,
   `Character`, and `Item` carry no Components. Data only, and what AW-SRV-014 and AW-SRV-009 add is
   additive.
+- **For AW-SRV-012:** `TemplateRef.Pack()` is derived from the name, and the dir loader has no
+  pack context to hold it against. When Templates arrive from the broker, a blob whose name-pack
+  differs from the pack it was published in must be rejected — otherwise a Builder pack can publish
+  `andara.core.Npc.json` and, depending on load order, collide with or stand in for core.
+- **For AW-CLI-005:** its identifier grammar is `[a-z][a-z0-9_]*`, but its own example and this
+  story's AC-1 write `Merchant`, `Npc`, `Entity`. The shared fixture follows the names; the grammar
+  needs reconciling with them before the corpus is written.
 - `[ASSUMPTION]` `MaxChainDepth` = 16, self included. Deep enough for any hierarchy a Builder would
   want to read, shallow enough that a runaway compiler is caught.

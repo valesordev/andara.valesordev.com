@@ -52,7 +52,8 @@ type Template struct {
 	Chain      []TemplateRef     // root first, self last
 	Components []Component       // sorted by type; at most one of each
 	Provenance []FieldProvenance // sorted by (component, field)
-	File       string            // where it was loaded from, for errors
+	File       string            // the blob it was loaded from
+	Source     string            // "file:line" of the declaration the compiler saw, or ""
 }
 
 // Pack is the Template's Content Pack.
@@ -106,6 +107,9 @@ type TemplateRegistry struct {
 	corePack  string
 	templates map[TemplateRef]*Template
 	byPack    map[string][]TemplateRef
+	// refused is every name whose definition failed pass one, by file, so a
+	// chain finding can say "your parent was refused" rather than "not found".
+	refused map[TemplateRef]string
 }
 
 // Get returns the Template named by ref.
@@ -166,7 +170,7 @@ func BuildTemplates(inputs []TemplateInput, opts TemplateOptions) (*TemplateRegi
 	if core == "" {
 		core = DefaultCorePack
 	}
-	reg := &TemplateRegistry{corePack: core, templates: map[TemplateRef]*Template{}, byPack: map[string][]TemplateRef{}}
+	reg := &TemplateRegistry{corePack: core, templates: map[TemplateRef]*Template{}, byPack: map[string][]TemplateRef{}, refused: map[TemplateRef]string{}}
 	var errs []ValidationError
 	firstFile := map[TemplateRef]string{}
 
@@ -175,6 +179,9 @@ func BuildTemplates(inputs []TemplateInput, opts TemplateOptions) (*TemplateRegi
 		t, terrs := validateTemplate(in)
 		errs = append(errs, terrs...)
 		if t == nil {
+			if name := TemplateRef(in.Def.GetName()); name != "" {
+				reg.refused[name] = in.File
+			}
 			continue
 		}
 		if prev, dup := firstFile[t.Ref]; dup {
@@ -214,12 +221,24 @@ func BuildTemplates(inputs []TemplateInput, opts TemplateOptions) (*TemplateRegi
 	return reg, errs
 }
 
-func templateFinding(in TemplateInput, ref TemplateRef, code ErrCode, detail string) ValidationError {
-	e := ValidationError{File: in.File, Template: ref, Code: code, Detail: detail}
-	if src := in.Def.GetSource(); src != nil && src.GetFile() != "" {
-		e.Detail += fmt.Sprintf(" (declared at %s:%d)", src.GetFile(), src.GetLine())
+// sourceOf renders a definition's SourceRef as "file:line", or "".
+func sourceOf(def *contentv1.TemplateDefinition) string {
+	src := def.GetSource()
+	if src == nil || src.GetFile() == "" {
+		return ""
 	}
-	return e
+	return fmt.Sprintf("%s:%d", src.GetFile(), src.GetLine())
+}
+
+// templateFinding is one finding on a Template. File is the blob the loader
+// read; the declaration the compiler saw is a different file in a different
+// language, so it goes in the detail as "declared at file:line" rather than
+// in Line, where it would send a Builder to the wrong line of the JSON.
+func templateFinding(file string, source string, ref TemplateRef, code ErrCode, detail string) ValidationError {
+	if source != "" {
+		detail += " (declared at " + source + ")"
+	}
+	return ValidationError{File: file, Template: ref, Code: code, Detail: detail}
 }
 
 // validateTemplate checks one definition in isolation.
@@ -229,12 +248,13 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 		return nil, []ValidationError{{File: in.File, Code: ErrMalformed, Detail: "template definition is empty"}}
 	}
 	ref := TemplateRef(def.GetName())
+	source := sourceOf(def)
 	if ref == "" || ref.Pack() == "" || strings.HasSuffix(string(ref), ".") {
-		return nil, []ValidationError{templateFinding(in, ref, ErrMalformed,
+		return nil, []ValidationError{templateFinding(in.File, source, ref, ErrMalformed,
 			fmt.Sprintf("template name %q must be <pack>.<Name>", def.GetName()))}
 	}
 	if v := def.GetFormatVersion(); v != TemplateFormatVersion {
-		return nil, []ValidationError{templateFinding(in, ref, ErrUnsupportedVersion,
+		return nil, []ValidationError{templateFinding(in.File, source, ref, ErrUnsupportedVersion,
 			fmt.Sprintf("Template %q has format_version %d; this server supports %d", ref, v, TemplateFormatVersion))}
 	}
 	if !def.GetResolved() {
@@ -242,12 +262,12 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 		// Template is the compiler's output before its last stage, or a
 		// hand-written file that skipped the compiler; either way it is not
 		// something the server can make sense of.
-		return nil, []ValidationError{templateFinding(in, ref, ErrUnflattenedTemplate,
+		return nil, []ValidationError{templateFinding(in.File, source, ref, ErrUnflattenedTemplate,
 			fmt.Sprintf("Template %q is not resolved; the server loads only compiler-flattened Templates (ADR-0010 decision 9)", ref))}
 	}
 	kind, ok := kindFromProto(def.GetKind())
 	if !ok {
-		return nil, []ValidationError{templateFinding(in, ref, ErrMalformed,
+		return nil, []ValidationError{templateFinding(in.File, source, ref, ErrMalformed,
 			fmt.Sprintf("Template %q has no kind; ENTITY, ITEM, or BEHAVIOR is required", ref))}
 	}
 
@@ -258,19 +278,19 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 	}
 	switch {
 	case len(chain) == 0:
-		errs = append(errs, templateFinding(in, ref, ErrChainMismatch,
+		errs = append(errs, templateFinding(in.File, source, ref, ErrChainMismatch,
 			fmt.Sprintf("Template %q has an empty chain; a root's chain is [self]", ref)))
 	case chain[len(chain)-1] != ref:
-		errs = append(errs, templateFinding(in, ref, ErrChainMismatch,
+		errs = append(errs, templateFinding(in.File, source, ref, ErrChainMismatch,
 			fmt.Sprintf("Template %q has a chain ending in %q; the chain ends in the Template itself", ref, chain[len(chain)-1])))
 	case len(chain) > MaxChainDepth:
-		errs = append(errs, templateFinding(in, ref, ErrChainTooDeep,
+		errs = append(errs, templateFinding(in.File, source, ref, ErrChainTooDeep,
 			fmt.Sprintf("Template %q has an inheritance chain of depth %d; the bound is %d", ref, len(chain), MaxChainDepth)))
 	}
 	seenInChain := map[TemplateRef]bool{}
 	for _, c := range chain {
 		if seenInChain[c] {
-			errs = append(errs, templateFinding(in, ref, ErrChainMismatch,
+			errs = append(errs, templateFinding(in.File, source, ref, ErrChainMismatch,
 				fmt.Sprintf("Template %q names %q twice in its chain; inheritance is acyclic", ref, c)))
 			break
 		}
@@ -278,13 +298,12 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 	}
 
 	site := componentSite{file: in.File, what: fmt.Sprintf("Template %s", ref)}
-	if src := def.GetSource(); src != nil && src.GetLine() > 0 {
-		line := int(src.GetLine())
-		site.line = func(int) int { return line }
-	}
 	comps, cerrs := validateComponents(def.GetComponents(), site)
 	for i := range cerrs {
 		cerrs[i].Template = ref
+		if source != "" {
+			cerrs[i].Detail += " (declared at " + source + ")"
+		}
 	}
 	errs = append(errs, cerrs...)
 
@@ -301,17 +320,17 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 	for _, p := range prov {
 		c, ok := findComponent(comps, p.Component)
 		if !ok {
-			errs = append(errs, templateFinding(in, ref, ErrInvalidProvenance,
+			errs = append(errs, templateFinding(in.File, source, ref, ErrInvalidProvenance,
 				fmt.Sprintf("Template %q records provenance for component %q, which it does not carry", ref, p.Component)))
 			continue
 		}
 		if _, ok := c.Field(p.Field); !ok {
-			errs = append(errs, templateFinding(in, ref, ErrInvalidProvenance,
+			errs = append(errs, templateFinding(in.File, source, ref, ErrInvalidProvenance,
 				fmt.Sprintf("Template %q records provenance for %s.%s, a field it does not carry", ref, p.Component, p.Field)))
 			continue
 		}
 		if !seenInChain[p.From] {
-			errs = append(errs, templateFinding(in, ref, ErrInvalidProvenance,
+			errs = append(errs, templateFinding(in.File, source, ref, ErrInvalidProvenance,
 				fmt.Sprintf("Template %q records %s.%s as set by %q, which is not in its chain", ref, p.Component, p.Field, p.From)))
 		}
 	}
@@ -319,16 +338,15 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 	if len(errs) > 0 {
 		return nil, errs
 	}
-	return &Template{Ref: ref, Kind: kind, Chain: chain, Components: comps, Provenance: prov, File: in.File}, nil
+	return &Template{Ref: ref, Kind: kind, Chain: chain, Components: comps, Provenance: prov, File: in.File, Source: source}, nil
 }
 
 // validateChain checks t against its ancestors, which must all be in the
 // registry: in t's pack, or in the core pack.
 func (r *TemplateRegistry) validateChain(t *Template) []ValidationError {
 	var errs []ValidationError
-	in := TemplateInput{File: t.File, Def: &contentv1.TemplateDefinition{}}
 	finding := func(code ErrCode, detail string) ValidationError {
-		return templateFinding(in, t.Ref, code, detail)
+		return templateFinding(t.File, t.Source, t.Ref, code, detail)
 	}
 	if len(t.Chain) < 2 {
 		return nil
@@ -344,6 +362,13 @@ func (r *TemplateRegistry) validateChain(t *Template) []ValidationError {
 	}
 	parent, ok := r.templates[parentRef]
 	if !ok {
+		if refusedFile, refused := r.refused[parentRef]; refused {
+			// The parent is in the pack and was refused above; fixing it is
+			// what fixes this, and the Builder should not go hunting for a
+			// file that is right there.
+			return []ValidationError{finding(ErrUnresolvedExtends,
+				fmt.Sprintf("Template %q extends %q, which was refused (see the findings for %s)", t.Ref, parentRef, refusedFile))}
+		}
 		return []ValidationError{finding(ErrUnresolvedExtends,
 			fmt.Sprintf("Template %q extends %q, which is not in pack %q or in %q", t.Ref, parentRef, t.Pack(), r.corePack))}
 	}

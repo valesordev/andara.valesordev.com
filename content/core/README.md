@@ -9,7 +9,9 @@ Builder pack pins the core version it compiled against so skew is a legible erro
 and activates as `andara.core@<tag>` before a pod reports ready (AW-INF-007). The `.aw` sources
 these compile from arrive with the Content Language (AW-CLI-005, AW-CLI-006); until then the
 compiled form is authored by hand and `testdata/templates/templates/` carries a byte-identical
-copy that `TestCoreSeedMatchesFixture` holds against this directory.
+copy that `TestCoreSeedMatchesFixture` holds against this directory. Each file's `source`
+(`core/entity.aw:1` and so on) names the `.aw` file that will exist once the compiler does; it is
+the provenance a finding quotes, not a path the loader opens.
 
 | Template | Kind | Chain | Components |
 |----------|------|-------|------------|

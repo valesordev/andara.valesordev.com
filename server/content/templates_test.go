@@ -76,9 +76,14 @@ func TestLoadTemplatesDir_Findings(t *testing.T) {
 		code sim.ErrCode
 		line int
 	}{
-		"malformed":   {sim.ErrMalformed, 2},
-		"unflattened": {sim.ErrUnflattenedTemplate, 0},
-		"duplicate":   {sim.ErrDuplicateTemplate, 0},
+		"malformed":          {sim.ErrMalformed, 2},
+		"unflattened":        {sim.ErrUnflattenedTemplate, 0},
+		"duplicate":          {sim.ErrDuplicateTemplate, 0},
+		"unknown-component":  {sim.ErrUnknownComponent, 0},
+		"unresolved-extends": {sim.ErrUnresolvedExtends, 0},
+		"chain-mismatch":     {sim.ErrChainMismatch, 0},
+		"chain-too-deep":     {sim.ErrChainTooDeep, 0},
+		"invalid-provenance": {sim.ErrInvalidProvenance, 0},
 	}
 	for name, c := range cases {
 		t.Run(name, func(t *testing.T) {
