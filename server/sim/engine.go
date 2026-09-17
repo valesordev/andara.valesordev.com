@@ -140,10 +140,20 @@ func (a *ApplyContext) Produce(cmd *logv1.LoggedCommand) {
 	*a.outbound = append(*a.outbound, cmd)
 }
 
+// ZoneTimer lets the loop attribute tick time to Zones without the core
+// reading a clock: Begin is called before a record is applied to a Zone and
+// the returned func after. The loop's implementation observes the per-Zone
+// histogram and span (ADR-0001's starving-Zone signal).
+type ZoneTimer interface {
+	Begin(zone ZoneID) (end func())
+}
+
 // Config configures an Engine.
 type Config struct {
 	Seed       uint64
 	Partitions []int32
+	// ZoneTimer is optional.
+	ZoneTimer ZoneTimer
 	// Handlers is the verb table's apply column. A Command with no handler
 	// advances its offset and is rejected with unsupported_command: the log
 	// only ever carries parsed, authorized Commands (AW-SRV-010), so this is
@@ -337,6 +347,9 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 	actx := &ApplyContext{
 		Tick: tick, World: e.world, Templates: e.templates, Zone: zone, State: e.state, RNG: e.state.RNG, Record: r,
 		emit: emit, outbound: &res.Outbound,
+	}
+	if e.cfg.ZoneTimer != nil {
+		defer e.cfg.ZoneTimer.Begin(zone.ID)()
 	}
 	if err := handler(actx, r.Command); err != nil {
 		// A handler's error is a rejection the player sees, never a fault:
