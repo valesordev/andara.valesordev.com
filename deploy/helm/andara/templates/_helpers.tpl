@@ -70,3 +70,9 @@ limits:
   {{- toYaml . | nindent 2 }}
 {{- end }}
 {{- end -}}
+
+{{- /*
+The Secret cert-manager writes the edge certificate into and the Ingresses read it from
+(AW-INF-006). One helper so the Certificate and both Ingresses cannot disagree.
+*/ -}}
+{{- define "andara.edgeSecretName" -}}{{ include "andara.name" . }}-edge-tls{{- end -}}

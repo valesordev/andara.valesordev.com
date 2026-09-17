@@ -6,6 +6,11 @@
 # (AW-INF-003 AC-1). Validation is against the pinned Kubernetes version in strict mode,
 # and kubeconform is required, not optional: a skipped schema check is a green build that
 # proves nothing.
+#
+# The chart also renders cert-manager and Traefik CRDs (AW-INF-006 AC-7), whose schemas
+# are not in the Kubernetes set; they come from the CRDs-catalog, the same way the core
+# schemas come from kubernetes-json-schema. Not -ignore-missing-schemas: that is a
+# skipped check wearing a green badge.
 set -euo pipefail
 
 ENVNAME="${1:-all}"
@@ -14,6 +19,7 @@ cd "$REPO"
 
 CHART="deploy/helm/andara"
 KUBE_VERSION="1.36.1"   # the kind cluster on Brian's box (decided 2026-09-10)
+CRD_SCHEMAS='https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json'
 
 for tool in helm kubeconform; do
   command -v "$tool" >/dev/null 2>&1 || {
@@ -36,7 +42,12 @@ for e in "${envs[@]}"; do
   }
   rendered="$(helm template andara "$CHART" --kube-version "$KUBE_VERSION" --values "$values")"
   printf '%s\n' "$rendered" | kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
-    -schema-location default \
+    -schema-location default -schema-location "$CRD_SCHEMAS" \
     | sed "s/^/k8s-dry [$e]: /"
 done
+
+# The CA bootstrap `make helm-install` applies ahead of the chart is a manifest too.
+kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  -schema-location default -schema-location "$CRD_SCHEMAS" \
+  deploy/k8s/cert-manager/andara-ca.yaml | sed "s/^/k8s-dry [cert-manager]: /"
 echo "k8s-dry: ${envs[*]} render and validate against Kubernetes $KUBE_VERSION"

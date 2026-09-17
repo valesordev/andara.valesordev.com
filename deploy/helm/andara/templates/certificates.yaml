@@ -1,0 +1,58 @@
+# Two leaves from cert-manager (AW-INF-006). The server certificate is what the pod
+# presents — to Traefik on the second leg, or to whatever dials it when there is no edge
+# — and the server has no plaintext mode (AW-SRV-005), so it renders whether or not
+# ingress.enabled. The edge certificate is what Traefik presents to players on `host`,
+# so HTTP/2 over TLS runs end to end and nothing re-originates as HTTP/1.1. Both are
+# Secrets cert-manager owns; nothing here is key material (AC-5).
+#
+# Rotation: Traefik reloads the edge Secret live, so a renewal drops no stream (AC-3).
+# The pod loads its certificate once at start (AW-SRV-005), so a renewed server
+# certificate is served only after a restart — see docs/runbooks/certificate-expiring.md.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "andara.name" . }}-server
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  secretName: {{ .Values.secrets.tlsCert.secretName }}
+  # Pod-0's stable name and the headless Service; Traefik verifies against the second
+  # (ServersTransport.serverName), and the first is what a runbook `grpcurl`s.
+  dnsNames:
+    - {{ printf "%s-0.%s.%s.svc" (include "andara.name" .) (include "andara.name" .) .Release.Namespace | quote }}
+    - {{ printf "%s.%s.svc" (include "andara.name" .) .Release.Namespace | quote }}
+  duration: {{ .Values.tls.duration }}
+  renewBefore: {{ .Values.tls.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    # Always the private CA, whatever issues the edge: Traefik trusts this CA for the
+    # second leg and nothing else, and an ACME issuer cannot sign a .svc name anyway.
+    name: {{ .Values.tls.privateIssuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+{{- if .Values.ingress.enabled }}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ include "andara.name" . }}-edge
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+spec:
+  secretName: {{ include "andara.edgeSecretName" . }}
+  dnsNames:
+    - {{ .Values.host | quote }}
+  duration: {{ .Values.tls.duration }}
+  renewBefore: {{ .Values.tls.renewBefore }}
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Always
+  issuerRef:
+    name: {{ .Values.tls.issuer }}
+    kind: ClusterIssuer
+    group: cert-manager.io
+{{- end }}

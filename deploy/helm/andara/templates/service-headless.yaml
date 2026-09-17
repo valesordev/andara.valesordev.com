@@ -1,11 +1,19 @@
 # Headless: stable per-pod DNS (andara-0.andara.<ns>.svc) is what makes the StatefulSet
-# identity real. Client-facing exposure is AW-INF-006's Service and Ingress, not this.
+# identity real. It is also the Ingress backend (AW-INF-006): Traefik routes to the
+# ready endpoints behind it, and the annotations tell Traefik to reach them over HTTPS
+# through the ServersTransport that trusts the private CA — HTTP/2 to the pod, no
+# re-origination as HTTP/1.1.
 apiVersion: v1
 kind: Service
 metadata:
   name: {{ include "andara.name" . }}
   labels:
     {{- include "andara.labels" . | nindent 4 }}
+  {{- if .Values.ingress.enabled }}
+  annotations:
+    traefik.ingress.kubernetes.io/service.serversscheme: https
+    traefik.ingress.kubernetes.io/service.serverstransport: {{ .Release.Namespace }}-{{ include "andara.name" . }}@kubernetescrd
+  {{- end }}
 spec:
   clusterIP: None
   publishNotReadyAddresses: false

@@ -20,6 +20,8 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 |------|-------|-------|
 | `server-unavailable.md` | `AW-INF-003` | `AndaraServerUnavailable` |
 | `server-crashlooping.md` | `AW-INF-003` | `AndaraServerCrashLooping` |
+| `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
+| `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
 
 ## Planned
 
@@ -33,7 +35,5 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
 | `content-load-failing.md` | `AW-SRV-012` | `ContentLoadFailing` |
-| `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
-| `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
 | `npcs-unattended.md` | `AW-SRV-009` | `NPCsUnattended` |

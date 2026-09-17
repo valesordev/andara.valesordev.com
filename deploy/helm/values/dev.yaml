@@ -13,3 +13,7 @@ server:
 snapshots:
   size: 5Gi
   storageClass: standard
+
+# [ASSUMPTION] host under the box's solo7.valesordev.com zone, private CA until Brian
+# picks a public name; `tls.issuer: letsencrypt` is the switch (DNS-01, already on the cluster).
+host: andara-dev.solo7.valesordev.com
