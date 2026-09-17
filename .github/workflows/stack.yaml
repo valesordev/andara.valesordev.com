@@ -119,9 +119,11 @@ jobs:
       - name: a Session opens over TLS and Prometheus sees it
         run: make stack-smoke
 
-      # AW-SRV-008's record-log adapter against the real broker: append with acks=all,
-      # replay from the start, on a throwaway compacted topic.
-      - name: the record log appends and replays on the broker
+      # AW-SRV-008's record-log adapter and AW-SRV-002's tick loop against the real
+      # broker, on throwaway topics: append and replay; apply, then replay from the
+      # recorded boundaries; kill a loop with SIGKILL and recover the next one from the
+      # boundaries it left.
+      - name: the record log and the tick loop on the broker
         run: make test-integration
 
       - name: a trace round-trips through the collector

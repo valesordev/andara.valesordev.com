@@ -85,3 +85,23 @@ jobs:
         run: make helm-test
       - name: license-check
         run: make license-check
+
+  # AW-SRV-002 AC-3 and its Definition of Done: replay equality and the golden State Hash
+  # sequence run on every architecture a replica or a developer might be, and a
+  # determinism regression cannot merge. darwin/arm64 is a real macOS runner, not an
+  # emulation; linux/arm64 is the runner the chart would land on if the cluster were.
+  # These are a subset of `make test` — they run there too — repeated here per platform.
+  determinism:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: replay equality and golden hashes on ${{ runner.os }}/${{ runner.arch }}
+        run: make test-determinism
