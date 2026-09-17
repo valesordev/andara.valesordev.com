@@ -1,0 +1,23 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square of packed earth.",
+      "exits": [
+        {"direction": "north", "toRoom": "lane"}
+      ]
+    },
+    {
+      "id": "lane",
+      "title": "Tanners' Lane",
+      "description": "Narrow and sour-smelling.",
+      "exits": [
+        {"direction": "south", "toRoom": "plaza"}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "formatVersion": 1,
+  "name": "town.Guard",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc",
+    "town.Guard"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "town.guard"
+        }
+      ]
+    },
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "town.Guard"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "town/npcs.aw",
+    "line": 30
+  }
+}

@@ -293,6 +293,14 @@ design and is `[NEEDS BRIAN]`; the list is expected to grow from real content.
 | `andara.core.Indoors` | The Room is enclosed; weather and sky do not reach it. |
 | `andara.core.NoRecall` | Recall and other self-teleport effects do not leave from here. |
 
+Two more arrived with Templates (AW-SRV-022), and — one vocabulary for every carrier — are legal on
+a Room or Zone too, where they mean nothing until a system reads them:
+
+| Component | Means |
+|-----------|-------|
+| `andara.core.Behavior{name}` | Binds a Behavior to a Template: the one seam between the Template hierarchy and the Python class hierarchy in a Behavior Agent. The name is recorded, not validated — AW-CLI-006 checks it at compile, AW-SRV-009 at claim. |
+| `andara.core.Memory` | The Entity remembers: NPC memory as World state (AW-SRV-009). The slots are runtime state set by Command, not Template data, so as a Template Component this is a marker. |
+
 Each is data today. The system that reads `Dark` and suppresses a Room description belongs to the
 story that adds looking in the dark, not to the one that adds the Component.
 

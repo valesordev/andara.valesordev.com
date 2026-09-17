@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "name": "andara.core.Character",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Character"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core/character.aw",
+    "line": 1
+  }
+}

@@ -63,6 +63,17 @@ func CanonicalBytes(w *World) []byte {
 	return []byte(b.String())
 }
 
+// EntityCanonicalBytes serializes one Entity the way CanonicalBytes
+// serializes topology: injective, sorted, tagged. It is how AW-SRV-022 AC-5
+// is asserted — two Instantiate calls with the same inputs encode
+// byte-identically — and, like CanonicalBytes, it is not the State Hash.
+func EntityCanonicalBytes(e EntityState) []byte {
+	var b strings.Builder
+	writeFields(&b, "entity", string(e.ID), string(e.Template), e.ContentVersion)
+	writeComponents(&b, "entity_component", "entity_field", []string{string(e.ID)}, e.Components)
+	return []byte(b.String())
+}
+
 // writeComponents emits a record per Component and a record per field beneath
 // it. Both are already sorted — by type at load, by name at load — and are
 // sorted again here rather than trusted, because a World assembled by hand in a

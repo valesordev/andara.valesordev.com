@@ -39,6 +39,7 @@ type Metrics struct {
 	ValidationErrors *prometheus.CounterVec
 	Components       *prometheus.CounterVec
 	LoadWarnings     *prometheus.CounterVec
+	TemplatesLoaded  *prometheus.GaugeVec // AW-SRV-022; label pack, bounded by the packs loaded
 }
 
 // Setup builds a JSON slog logger, a Prometheus registry, and a tracer.
@@ -70,7 +71,7 @@ func Setup(cfg config.Config, stderr io.Writer) *Telemetry {
 	reg := prometheus.NewRegistry()
 	m := newMetrics()
 	reg.MustRegister(m.ZonesLoaded, m.RoomsLoaded, m.LoadDuration, m.ValidationErrors,
-		m.Components, m.LoadWarnings)
+		m.Components, m.LoadWarnings, m.TemplatesLoaded)
 
 	tp := newTracerProvider(cfg)
 	otel.SetTracerProvider(tp)
@@ -162,6 +163,13 @@ func newMetrics() *Metrics {
 			Name:      "content_load_warnings_total",
 			Help:      "Advisory content findings by kind: content loaded, but something looks unfinished.",
 		}, []string{"kind"}),
+		// pack is bounded by the Content Packs the server follows — a handful,
+		// named in configuration — not by anything a player does.
+		TemplatesLoaded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Namespace: "andara",
+			Name:      "content_templates_loaded",
+			Help:      "Templates in the loaded registry, by Content Pack.",
+		}, []string{"pack"}),
 	}
 }
 
@@ -194,6 +202,7 @@ func LogFinding(ctx context.Context, log *slog.Logger, e sim.ValidationError, st
 		"file", e.File,
 		"zone", string(e.Zone),
 		"room", string(e.Room),
+		"template", string(e.Template),
 		"detail", e.Detail,
 		"trace_id", TraceID(ctx),
 	}
