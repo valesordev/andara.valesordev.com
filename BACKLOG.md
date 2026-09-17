@@ -10,7 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 2 |
-| `ready` | 30 |
+| `in-progress` | 1 |
+| `ready` | 29 |
 | `done` | 9 |
 | **total** | **41** |
 
@@ -30,7 +31,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 
-### `ready` (30)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
+
+### `ready` (29)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -61,7 +68,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `EPIC-10` | server | M | medium | implementation | Redis hot projection from the state topic | `AW-SRV-019` |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `EPIC-10` | server | M | medium | implementation | Postgres tabular projection for accounts, rosters, and builder queries | `AW-SRV-017` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `EPIC-03` | server | S | low | implementation | Gateway TLS hot-reload — serve a renewed certificate without a restart | `AW-SRV-005` |
 | [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `EPIC-07` | server | S | low | implementation | Export logs over OTLP so the log sink carries what stderr carries | `AW-SRV-001` |
 
@@ -105,7 +111,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `ready` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set |
-| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `ready` | Template definitions — schema, flattened loading, and Entity instantiation |
+| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `in-progress` | Template definitions — schema, flattened loading, and Entity instantiation |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
