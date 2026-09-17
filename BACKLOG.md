@@ -9,8 +9,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 3 |
-| `in-progress` | 2 |
+| `review` | 4 |
+| `in-progress` | 1 |
 | `ready` | 24 |
 | `done` | 6 |
 | **total** | **35** |
@@ -21,24 +21,25 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|--------|-------|------------------------|
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command | review by brian |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server | review by brian |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication | review by brian |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set | review by brian |
 
 ## By status
 
-### `review` (3)
+### `review` (4)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | architecture | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 
-### `in-progress` (2)
+### `in-progress` (1)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 
 ### `ready` (24)
 
@@ -155,7 +156,7 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0006
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `in-progress` | Account store, registration modes, and authentication |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `ready` | Character roster, creation, selection, and binding |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `ready` | Session lifecycle and linkdead grace period |
 
