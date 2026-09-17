@@ -1,9 +1,9 @@
 apiVersion: v2
 name: andara
-description: andara-server as a StatefulSet with honest readiness, retained snapshot storage, and one Deployment per projector (AW-INF-003, ADR-0001).
+description: andara-server as a StatefulSet with honest readiness, retained snapshot storage, one Deployment per projector (AW-INF-003, ADR-0001), and its edge — Traefik ingress, cert-manager TLS, gRPC routing (AW-INF-006).
 type: application
 # Chart version tracks the chart's own contract; appVersion is overridden per deploy by
 # `make deploy TAG=` (AW-INF-007) and is only a placeholder here.
-version: 0.1.0
+version: 0.2.0
 appVersion: "dev"
 kubeVersion: ">=1.30.0-0"

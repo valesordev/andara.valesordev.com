@@ -16,6 +16,11 @@ image:
 server:
   telemetry:
     environment: dev
+  grpc:
+    # Where the chart mounts secrets.tlsCert (AW-SRV-005: no plaintext mode, so every
+    # environment needs these). The Secret is issued by cert-manager (AW-INF-006).
+    tls_cert_file: /etc/andara/secrets/tls/tls.crt
+    tls_key_file: /etc/andara/secrets/tls/tls.key
 
 # Secret *references*. Never material. Each mounts under /etc/andara/secrets/<name>/ with
 # mode 0400 when secretName is set; the env var naming the file is a server key set under
@@ -24,8 +29,10 @@ secrets:
   tokenKey:
     secretName: ""
     key: token.keys
+  # Issued by cert-manager from `tls.privateIssuer` when ingress.enabled (AW-INF-006);
+  # the name is the Certificate's secretName, so the pod mounts what it issues.
   tlsCert:
-    secretName: ""
+    secretName: andara-server-tls
     certKey: tls.crt
     keyKey: tls.key
   kafkaCreds:
@@ -71,11 +78,36 @@ pdb:
   # 0 at replicaCount 1: a deploy *is* the interruption until sharding is active (ADR-0001).
   minAvailable: 0
 
+# Edge (AW-INF-006): TLS terminated by the cluster's Traefik, re-originated to the pod as
+# HTTPS/HTTP-2 through a ServersTransport that trusts the private CA. Two Ingresses on
+# `host`: `/` for Game, `/andara.admin.v1.Admin/` behind the operator allowlist.
+ingress:
+  enabled: true
+  className: traefik
+  entrypoint: websecure
+host: andara.local
+
+tls:
+  # ClusterIssuer for the edge certificate. `andara-ca` is the cluster's private CA,
+  # bootstrapped by `make helm-install` from deploy/k8s/cert-manager/; the ACME issuers
+  # already on the cluster are selectable for a public host.
+  issuer: andara-ca
+  # ClusterIssuer for the server (pod) certificate; always the private CA, because the
+  # second leg is verified against it and an ACME issuer cannot sign a .svc name.
+  privateIssuer: andara-ca
+  duration: 2160h     # 90 d
+  renewBefore: 240h   # 10 d
+
+admin:
+  # Source ranges the Admin Ingress admits; everything else is 403 at the edge and the
+  # server never sees it. Traffic from the box itself reaches Traefik from the docker
+  # bridge (172.16.0.0/12) — see values/local.yaml.
+  allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16"]
+
 networkPolicy:
-  # Skeleton. AW-INF-006 adds the gRPC ingress rules and enables it.
-  enabled: false
+  enabled: true
   observabilityNamespace: observability
-  ingressNamespace: ingress-nginx
+  ingressNamespace: traefik
   agentNamespace: andara-agents
 
 serviceAccount:

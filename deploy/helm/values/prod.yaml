@@ -16,10 +16,12 @@ snapshots:
 secrets:
   tokenKey:
     secretName: andara-token-key
-  tlsCert:
-    secretName: andara-server-tls
   kafkaCreds:
     secretName: andara-kafka-creds
+
+# [ASSUMPTION] host under the box's solo7.valesordev.com zone, private CA until Brian
+# picks a public name; `tls.issuer: letsencrypt` is the switch (DNS-01, already on the cluster).
+host: andara.solo7.valesordev.com
 
 pdb:
   enabled: true

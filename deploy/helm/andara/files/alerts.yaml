@@ -31,3 +31,41 @@ groups:
         annotations:
           summary: "andara-server restarted more than 3 times in 10 minutes"
           runbook: docs/runbooks/server-crashlooping.md
+  - name: andara-edge
+    # The edge (AW-INF-006): Traefik in front, cert-manager underneath. Both are cluster
+    # services the observability stack scrapes (EPIC-07); in the compose stack neither
+    # series exists and these rules stay silent rather than fire on absence — an absent
+    # edge is AndaraServerUnavailable's job, not a second page.
+    rules:
+      - alert: CertificateExpiringSoon
+        # cert-manager's own view of every Certificate this chart issues. Below 7 d is a
+        # renewal that did not happen: renewBefore is 10 d, so a healthy issuer has
+        # already replaced it by now.
+        expr: |
+          (certmanager_certificate_expiration_timestamp_seconds{name=~"andara-.*"} - time()) < 7 * 24 * 3600
+        for: 15m
+        labels:
+          severity: page
+          slo: edge-availability
+        annotations:
+          summary: "Certificate {{ $labels.namespace }}/{{ $labels.name }} expires in under 7 days and has not renewed"
+          runbook: docs/runbooks/certificate-expiring.md
+      - alert: IngressErrorRateHigh
+        # Router-level, not service-level: a request Traefik cannot forward (no ready
+        # endpoint, backend TLS verification failed) is counted on the router and never
+        # reaches a service counter. gRPC-protocol responses carry code="2" in Traefik
+        # 3.7 whatever happened, so this ratio sees Connect and gRPC-Web clients; the
+        # gRPC leg is covered from the server side by AndaraServerUnavailable.
+        expr: |
+          (
+            sum(rate(traefik_router_requests_total{router=~"andara-.*", code=~"5.."}[10m]))
+            /
+            sum(rate(traefik_router_requests_total{router=~"andara-.*"}[10m]))
+          ) > 0.01
+        for: 10m
+        labels:
+          severity: page
+          slo: edge-availability
+        annotations:
+          summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+          runbook: docs/runbooks/ingress-error-rate.md

@@ -32,6 +32,7 @@ IMAGE       ?= andara-server
 TAG         ?= dev
 KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
 DURATION    ?= 300
+SOAK        ?= 5m
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -46,7 +47,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
-        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke
+        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke \
+        kind-platform stream-soak
 
 ## help: print this target list
 help:
@@ -259,6 +261,14 @@ helm-install:
 ## stack-smoke: open a Session on the running stack and verify Prometheus counted it — needs `make up`
 stack-smoke:
 	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stack_smoke.sh
+
+## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
+kind-platform:
+	@$(SCRIPTS)/kind_platform.sh "$(KIND_CLUSTER)"
+
+## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>
+stream-soak:
+	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stream_soak.sh "$(ENV)" "$(SOAK)"
 
 ## measure-tick: run the server against the sizing fixture and record p99 tick CPU and RSS into measurements.yaml — DURATION=<seconds>
 measure-tick:

@@ -1,0 +1,51 @@
+# The private CA every Andara environment on this cluster issues from (AW-INF-006).
+#
+# Outside the chart on purpose: a ClusterIssuer is cluster-scoped, and three releases
+# (local, dev, prod) installed into one cluster would each claim it. `make helm-install`
+# applies this file before the chart and waits for the issuer to be Ready, so a chart
+# install never races the CA it needs.
+#
+# Chain: a self-signed ClusterIssuer signs one CA certificate, whose Secret lives in
+# cert-manager's own namespace because that is the only namespace a ClusterIssuer's
+# `ca.secretName` can name. The `andara-ca` ClusterIssuer then signs every leaf: the
+# edge certificate Traefik presents and the server certificate the pod presents.
+#
+# The CA key is rotationPolicy: Never. Renewing the root with a fresh key would
+# invalidate every leaf and every `andara-cli` trust bundle at once; a CA rotation is a
+# runbook procedure, not a background renewal.
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: andara-selfsigned
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: andara-ca
+  namespace: cert-manager
+spec:
+  isCA: true
+  commonName: Andara Cluster CA
+  subject:
+    organizations: ["Andara's World"]
+  secretName: andara-ca-tls
+  duration: 87600h    # 10 y
+  renewBefore: 8760h  # 1 y
+  privateKey:
+    algorithm: ECDSA
+    size: 256
+    rotationPolicy: Never
+  issuerRef:
+    name: andara-selfsigned
+    kind: ClusterIssuer
+    group: cert-manager.io
+---
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: andara-ca
+spec:
+  ca:
+    secretName: andara-ca-tls

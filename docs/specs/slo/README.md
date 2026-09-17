@@ -21,6 +21,7 @@ in `docs/runbooks/` is incomplete.
 | `tick-health.md` | proposed targets | `AW-SRV-002` | tick budget adherence, simulation lag |
 | `recovery.md` | proposed targets | `AW-SRV-006`, `AW-SRV-007` | RPO and RTO |
 | `world-write-availability.md` | proposed targets | `AW-INF-005` | the World accepting Commands |
+| `edge-availability.md` | proposed targets | `AW-INF-006` | the edge letting players through: 5xx ratio, certificate validity |
 
 "Proposed targets" means the number was reasoned from the architecture but not yet checked against a
 running system. The owning story validates it against first measurement and either confirms it or comes

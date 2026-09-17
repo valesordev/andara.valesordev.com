@@ -1,0 +1,60 @@
+# Traefik as the box has it (helm chart traefik/traefik 41.4.0, Traefik v3.7), for
+# `make kind-platform` to reproduce on a fresh cluster (AW-INF-006). The parts the chart
+# depends on: hostPort :80/:443 on the ingress-ready node, `traefik` as the default
+# IngressClass, the CRD provider (ServersTransport, Middleware), Prometheus metrics with
+# router and service labels (the IngressErrorRateHigh alert reads them), JSON access logs.
+# One difference from the box: the Gateway API provider is off, because nothing here
+# uses it and enabling it needs the Gateway CRDs installed first.
+deployment:
+  replicas: 1
+updateStrategy:
+  type: Recreate
+  rollingUpdate: null
+nodeSelector:
+  ingress-ready: "true"
+tolerations:
+  - key: node-role.kubernetes.io/control-plane
+    operator: Exists
+    effect: NoSchedule
+service:
+  spec:
+    type: ClusterIP
+ports:
+  web:
+    port: 8000
+    hostPort: 80
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    port: 8443
+    hostPort: 443
+    http:
+      tls:
+        enabled: true
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+providers:
+  kubernetesIngress:
+    enabled: true
+    publishedService:
+      enabled: false
+  kubernetesGateway:
+    enabled: false
+gateway:
+  enabled: false
+metrics:
+  prometheus:
+    entryPoint: metrics
+    addRoutersLabels: true
+    addServicesLabels: true
+log:
+  format: json
+  level: INFO
+accessLog:
+  enabled: true
+  format: json

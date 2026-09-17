@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""Render-level tests for deploy/helm/andara (AW-INF-003 test plan, unit half).
+"""Render-level tests for deploy/helm/andara (AW-INF-003 and AW-INF-006 test plans, unit half).
 
 `helm unittest` is a plugin that cannot be pinned the way ./bin tools are, so these are the
 same assertions over `helm template` output, in the language the rest of the repo's checks
@@ -168,6 +168,124 @@ def test_measurements():
               "(%dm, %dMi)" % (cpu, mem, m["server"]["cpu_millicores_p99"], m["server"]["memory_mib_p99"]))
 
 
+def test_edge(env):
+    """AW-INF-006: the edge renders as one coherent set — two Ingresses on one host and one
+    edge Secret, the Admin one behind the allowlist Middleware, the Service annotated for
+    HTTPS through a ServersTransport whose serverName is in the server certificate's SANs,
+    both Certificates from ClusterIssuers, and no private key anywhere (AC-5)."""
+    code, out, err = render(env)
+    if code:
+        return fail("%s: render failed: %s" % (env, err.strip()))
+    if "PRIVATE KEY" in out:
+        fail("%s: a private key is rendered (AC-5)" % env)
+    ds = docs(out)
+    ns = next((d["metadata"].get("namespace") for d in ds if d["metadata"].get("namespace")), "default")
+    host = yaml.safe_load(open(os.path.join(VALUES, env + ".yaml"))).get("host")
+    if not host:
+        return fail("%s: values file sets no host" % env)
+
+    game, admin = find(ds, "Ingress", "andara"), find(ds, "Ingress", "andara-admin")
+    if game is None or admin is None:
+        return fail("%s: expected Ingresses andara and andara-admin" % env)
+    for ing in (game, admin):
+        name = ing["metadata"]["name"]
+        if ing["spec"].get("ingressClassName") != "traefik":
+            fail("%s: %s ingressClassName is not traefik" % (env, name))
+        tls = ing["spec"].get("tls") or []
+        if len(tls) != 1 or tls[0].get("hosts") != [host] or tls[0].get("secretName") != "andara-edge-tls":
+            fail("%s: %s tls is %r, want host %s from andara-edge-tls" % (env, name, tls, host))
+        rules = ing["spec"]["rules"]
+        if len(rules) != 1 or rules[0]["host"] != host:
+            fail("%s: %s does not serve exactly host %s" % (env, name, host))
+        backend = rules[0]["http"]["paths"][0]["backend"]["service"]
+        if backend["name"] != "andara" or backend["port"].get("name") != "grpc":
+            fail("%s: %s backend is %r, want andara:grpc" % (env, name, backend))
+    if game["spec"]["rules"][0]["http"]["paths"][0]["path"] != "/":
+        fail("%s: the Game Ingress path is not /" % env)
+    if admin["spec"]["rules"][0]["http"]["paths"][0]["path"] != "/andara.admin.v1.Admin/":
+        fail("%s: the Admin Ingress path is not the Admin service prefix" % env)
+    mw_ref = admin["metadata"]["annotations"].get("traefik.ingress.kubernetes.io/router.middlewares")
+    if mw_ref != "%s-andara-admin-allowlist@kubernetescrd" % ns:
+        fail("%s: Admin Ingress middleware reference is %r" % (env, mw_ref))
+    if "traefik.ingress.kubernetes.io/router.middlewares" in game["metadata"].get("annotations", {}):
+        fail("%s: the Game Ingress must not carry the allowlist" % env)
+
+    mw = find(ds, "Middleware", "andara-admin-allowlist")
+    if mw is None:
+        fail("%s: no allowlist Middleware" % env)
+    elif not mw["spec"].get("ipAllowList", {}).get("sourceRange"):
+        fail("%s: allowlist Middleware has no sourceRange" % env)
+
+    svc = find(ds, "Service", "andara")
+    ann = svc["metadata"].get("annotations") or {}
+    if ann.get("traefik.ingress.kubernetes.io/service.serversscheme") != "https":
+        fail("%s: Service is not annotated for HTTPS to the pod" % env)
+    if ann.get("traefik.ingress.kubernetes.io/service.serverstransport") != "%s-andara@kubernetescrd" % ns:
+        fail("%s: Service serverstransport reference is %r" % (env, ann.get("traefik.ingress.kubernetes.io/service.serverstransport")))
+
+    st = find(ds, "ServersTransport", "andara")
+    server_cert = find(ds, "Certificate", "andara-server")
+    edge_cert = find(ds, "Certificate", "andara-edge")
+    if st is None or server_cert is None or edge_cert is None:
+        return fail("%s: ServersTransport and both Certificates must render" % env)
+    if st["spec"].get("serverName") not in server_cert["spec"]["dnsNames"]:
+        fail("%s: ServersTransport serverName %r is not among the server certificate SANs %r"
+             % (env, st["spec"].get("serverName"), server_cert["spec"]["dnsNames"]))
+    if [r.get("secret") for r in st["spec"].get("rootCAs", [])] != [server_cert["spec"]["secretName"]]:
+        fail("%s: ServersTransport rootCAs must read the server certificate's Secret" % env)
+    if edge_cert["spec"]["dnsNames"] != [host] or edge_cert["spec"]["secretName"] != "andara-edge-tls":
+        fail("%s: edge Certificate is for %r into %r" % (env, edge_cert["spec"]["dnsNames"], edge_cert["spec"]["secretName"]))
+    for c in (edge_cert, server_cert):
+        if c["spec"]["issuerRef"].get("kind") != "ClusterIssuer":
+            fail("%s: %s issuerRef is not a ClusterIssuer" % (env, c["metadata"]["name"]))
+        if c["spec"].get("renewBefore") != "240h":
+            fail("%s: %s renewBefore is %r, want 240h" % (env, c["metadata"]["name"], c["spec"].get("renewBefore")))
+    if server_cert["spec"]["issuerRef"]["name"] != "andara-ca":
+        fail("%s: the server certificate must come from the private CA" % env)
+    sts = find(ds, "StatefulSet", "andara")
+    vols = {v["name"]: v for v in sts["spec"]["template"]["spec"]["volumes"]}
+    if vols.get("tls", {}).get("secret", {}).get("secretName") != server_cert["spec"]["secretName"]:
+        fail("%s: the pod does not mount the Secret the server Certificate issues into" % env)
+
+    np = find(ds, "NetworkPolicy", "andara")
+    if np is None:
+        return fail("%s: NetworkPolicy must render (AC-6)" % env)
+    grpc_rule = next((r for r in np["spec"]["ingress"] if any(p.get("port") == "grpc" for p in r["ports"])), None)
+    admitted = sorted(f["namespaceSelector"]["matchLabels"]["kubernetes.io/metadata.name"] for f in grpc_rule["from"])
+    if admitted != ["andara-agents", "traefik"]:
+        fail("%s: grpc port admits %r, want the Traefik and agent namespaces only" % (env, admitted))
+
+
+def test_edge_off():
+    """ingress.enabled=false renders none of the edge and the schema rejects a bad host,
+    CIDR, or issuer (the values contract)."""
+    code, out, err = render("local", "--set", "ingress.enabled=false")
+    if code:
+        return fail("ingress.enabled=false failed to render: %s" % err.strip())
+    ds = docs(out)
+    kinds = {d["kind"] for d in ds}
+    for k in ("Ingress", "Middleware", "ServersTransport"):
+        if k in kinds:
+            fail("ingress.enabled=false still renders a %s" % k)
+    if find(ds, "Certificate", "andara-edge") is not None:
+        fail("ingress.enabled=false still renders the edge Certificate")
+    if find(ds, "Certificate", "andara-server") is None:
+        fail("ingress.enabled=false dropped the server Certificate; the server has no plaintext mode")
+    svc = find(ds, "Service", "andara")
+    if "traefik.ingress.kubernetes.io/service.serverstransport" in (svc["metadata"].get("annotations") or {}):
+        fail("ingress.enabled=false still points the Service at a ServersTransport")
+    for setting, needle in [
+        ("host=Andara_Local", "/host"),
+        ("admin.allowedCIDRs[0]=everyone", "/admin/allowedCIDRs"),
+        ("tls.issuer=some-other-issuer", "/tls/issuer"),
+    ]:
+        code, out, err = render("local", "--set", setting)
+        if code == 0:
+            fail("--set %s rendered; the schema should reject it" % setting)
+        elif needle not in err:
+            fail("--set %s rejected but the message does not name %r" % (setting, needle))
+
+
 def test_projectors_render_when_enabled():
     code, out, err = render("prod", "--set", "projectors.state.enabled=true")
     if code:
@@ -185,6 +303,8 @@ def main():
         test_no_secret_material(env)
         test_schema_rejects(env)
         test_probes(env)
+        test_edge(env)
+    test_edge_off()
     test_ordinal_partitions()
     test_measurements()
     test_projectors_render_when_enabled()

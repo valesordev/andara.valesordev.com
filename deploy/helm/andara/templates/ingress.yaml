@@ -1,0 +1,65 @@
+{{- if .Values.ingress.enabled }}
+# Two Ingresses, one host (AW-INF-006). `/` carries Game and the public surface; the
+# Admin service's own path prefix gets a second Ingress with the operator allowlist
+# middleware in front. Traefik ranks routers by rule length, so the longer Admin rule
+# wins for its prefix and the catch-all takes the rest — the "same listener, restricted
+# by network" decision, honoured at L7 for traffic that comes through the edge.
+#
+# The backend is the headless Service; its annotations tell Traefik to speak HTTPS to
+# the pod through the ServersTransport that trusts the private CA. TLS is terminated
+# at the edge and re-originated as HTTP/2 — there is no HTTP/1.1 hop for a server
+# stream to die on.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "andara.name" . }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.host | quote }}]
+      secretName: {{ include "andara.edgeSecretName" . }}
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "andara.name" . }}
+                port:
+                  name: grpc
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "andara.name" . }}-admin
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: {{ .Values.ingress.entrypoint }}
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    # <namespace>-<name>@kubernetescrd is how the Ingress provider names a Middleware CRD.
+    traefik.ingress.kubernetes.io/router.middlewares: {{ .Release.Namespace }}-{{ include "andara.name" . }}-admin-allowlist@kubernetescrd
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.host | quote }}]
+      secretName: {{ include "andara.edgeSecretName" . }}
+  rules:
+    - host: {{ .Values.host | quote }}
+      http:
+        paths:
+          - path: /andara.admin.v1.Admin/
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "andara.name" . }}
+                port:
+                  name: grpc
+{{- end }}
