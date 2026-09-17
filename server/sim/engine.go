@@ -228,6 +228,9 @@ var (
 	// ErrUnownedPartition: a record on a Partition this process is not
 	// assigned.
 	ErrUnownedPartition = errors.New("partition not assigned to this process")
+	// ErrBoundaryGap: the recorded boundaries skip a tick, so the batching
+	// decision for that tick is lost and exact replay is impossible.
+	ErrBoundaryGap = errors.New("tick boundary gap")
 	// ErrHashMismatch: replay reached a boundary with a different State
 	// Hash than the record says (ADR-0002 §4). The World is not the one that
 	// was running; halt rather than serve it.
@@ -391,15 +394,17 @@ func rejected(code, msg string) *gamev1.EventEnvelope {
 	return &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CommandRejected{CommandRejected: &gamev1.CommandRejected{Code: code, Message: msg}}}
 }
 
-// Stop emits SimulationStopped through the sinks. It does not advance the
-// tick: a stop is not a step, and the hash does not move.
+// Stop emits SimulationStopped through the sinks. It is a lifecycle
+// notification, not World history: it carries event_id 0, consumes no ID,
+// does not advance the tick, and does not move the hash — a recovered
+// process replays to the last boundary and the next real Event takes the
+// ID it would have taken had nothing stopped.
 func (e *Engine) Stop(reason string) Event {
 	env := &gamev1.EventEnvelope{
-		EventId: e.state.NextEventID, Tick: uint64(e.state.Tick),
+		EventId: 0, Tick: uint64(e.state.Tick),
 		Payload: &gamev1.EventEnvelope_SimulationStopped{SimulationStopped: &gamev1.SimulationStopped{Reason: reason}},
 	}
-	e.state.NextEventID++
-	ev := Event{ID: env.EventId, Tick: e.state.Tick, Type: EvSimulationStopped, Envelope: env}
+	ev := Event{ID: 0, Tick: e.state.Tick, Type: EvSimulationStopped, Envelope: env}
 	for _, s := range e.sinks {
 		s.Publish(ev)
 	}
@@ -420,7 +425,15 @@ type RecordSource interface {
 func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 	for _, b := range boundaries {
 		if b.Tick != e.state.Tick+1 {
-			return fmt.Errorf("replay: boundary for tick %d follows tick %d", b.Tick, e.state.Tick)
+			// A missing boundary is a tick whose batching decision was
+			// lost — usually a boundary the process could not publish
+			// before it died. Exact replay past it is impossible, and an
+			// approximate one is a World nobody was in (ADR-0002 §4).
+			// Recovery policy for this case is AW-SRV-007's; until then
+			// the operator's path is a snapshot newer than the gap, or an
+			// empty log.
+			return fmt.Errorf("%w: boundary for tick %d follows tick %d; ticks %d..%d have no Tick Boundary Record and cannot be replayed exactly",
+				ErrBoundaryGap, b.Tick, e.state.Tick, e.state.Tick+1, b.Tick-1)
 		}
 		if b.StateVersion != e.state.Version {
 			return fmt.Errorf("replay: boundary for tick %d has state_version %d, this binary reads %d", b.Tick, b.StateVersion, e.state.Version)

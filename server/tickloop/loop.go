@@ -191,7 +191,11 @@ func (l *Loop) run(ctx context.Context) error {
 // tick runs one tick end to end.
 func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error {
 	e := l.opts.Engine
-	tctx, span := l.tracer.Start(ctx, "sim.tick", trace.WithAttributes(attribute.Int64("tick", int64(tick))))
+	// The tick's own I/O must outlive a shutdown that arrives mid-tick: a
+	// boundary record for a tick that was applied but never published is
+	// exactly the history recovery cannot reproduce. The drain, not the
+	// cancellation, is what stops the loop (AC-15).
+	tctx, span := l.tracer.Start(context.WithoutCancel(ctx), "sim.tick", trace.WithAttributes(attribute.Int64("tick", int64(tick))))
 	defer span.End()
 
 	records, err := l.opts.Source.Poll(e.FaultedPartitions(), l.opts.MaxPerTick)
@@ -304,6 +308,13 @@ func (l *Loop) drain(e *sim.Engine) error {
 	if err := l.opts.Publisher.Publish(ctx, []sim.Event{ev}, sim.TickCompleted{}); err != nil {
 		l.metrics.PublishFailures.WithLabelValues("events").Inc()
 	}
+	// Close flushes what the asynchronous publisher still holds — the last
+	// ticks' boundaries among it — within its own bound.
+	if err := l.opts.Publisher.Close(); err != nil {
+		l.metrics.PublishFailures.WithLabelValues("events").Inc()
+		l.log.LogAttrs(ctx, slog.LevelWarn, "publisher did not flush", slog.String("detail", err.Error()))
+	}
+	_ = l.opts.Source.Close()
 	l.log.LogAttrs(ctx, slog.LevelInfo, "tick loop stopped", slog.Uint64("tick", uint64(e.Tick())))
 	return nil
 }

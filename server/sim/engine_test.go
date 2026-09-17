@@ -205,12 +205,13 @@ func TestStop_EmitsAndDoesNotTick(t *testing.T) {
 	e := newEngine(t, 1)
 	sink := &recordingSink{}
 	e.Subscribe(sink)
+	before := e.StateHash()
 	ev := e.Stop("draining")
-	if ev.Type != sim.EvSimulationStopped || ev.Envelope.GetSimulationStopped().GetReason() != "draining" || ev.ID != 1 {
+	if ev.Type != sim.EvSimulationStopped || ev.Envelope.GetSimulationStopped().GetReason() != "draining" || ev.ID != 0 {
 		t.Fatalf("event %+v", ev)
 	}
-	if e.Tick() != 0 || len(sink.events) != 1 {
-		t.Error("Stop ticked, or did not publish")
+	if e.Tick() != 0 || len(sink.events) != 1 || e.StateHash() != before {
+		t.Error("Stop ticked, moved the hash, or did not publish")
 	}
 }
 
@@ -278,8 +279,8 @@ func TestEngine_ReplayFromBoundaries(t *testing.T) {
 	if err := bad.Replay(boundaries, src); !errors.Is(err, sim.ErrHashMismatch) || !strings.Contains(err.Error(), "tick 1") {
 		t.Fatalf("mismatch: %v", err)
 	}
-	if err := newEngine(t, 3).Replay(boundaries[1:], src); err == nil {
-		t.Fatal("replay accepted boundaries starting at tick 2")
+	if err := newEngine(t, 3).Replay(boundaries[1:], src); !errors.Is(err, sim.ErrBoundaryGap) {
+		t.Fatalf("replay accepted boundaries starting at tick 2: %v", err)
 	}
 	b0 := boundaries[0]
 	b0.StateVersion = 99

@@ -36,6 +36,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	var (
 		source    tickloop.Source
 		publisher tickloop.Publisher
+		loop      *tickloop.Loop
 		err       error
 	)
 	switch cfg.SimSource {
@@ -43,6 +44,19 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "sim.source=memory: the World ticks with no Command input and nothing is published")
 		source, publisher = tickloop.NewMemorySource(), &tickloop.MemoryPublisher{}
 	case "kafka":
+		// Recovery (ADR-0002 §4): replay the recorded boundaries before
+		// going live, so the World that starts ticking is the one that was
+		// running, verified tick by tick against its own hashes.
+		rctx, rspan := rt.Tel.Tracer.Start(ctx, "sim.recover")
+		replayed, err := tickloop.Recover(rctx, cfg.KafkaBrokers, tickloop.CommandsTopic, tickloop.EventsTopic, engine)
+		rspan.End()
+		if err != nil {
+			return nil, fmt.Errorf("recovery: %w", err)
+		}
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
+			slog.Int("ticks_replayed", replayed),
+			slog.Uint64("tick", uint64(engine.Tick())),
+		)
 		source, err = tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{
 			Brokers:  cfg.KafkaBrokers,
 			Group:    "andara-sim-" + cfg.Environment,
@@ -52,16 +66,31 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		if err != nil {
 			return nil, err
 		}
-		publisher, err = tickloop.NewKafkaPublisher(ctx, cfg.KafkaBrokers, cfg.ServiceName)
+		kp, err := tickloop.NewKafkaPublisher(ctx, cfg.KafkaBrokers, cfg.ServiceName)
 		if err != nil {
 			_ = source.Close()
 			return nil, err
 		}
+		publisher = kp
+		defer func() {
+			// Delivery failures arrive after Publish returned; count them
+			// against the loop's metric by topic.
+			if loop != nil {
+				kp.OnFailure = func(topic string, err error) {
+					kind := "events"
+					if topic == tickloop.CommandsTopic {
+						kind = "commands"
+					}
+					loop.Metrics().PublishFailures.WithLabelValues(kind).Inc()
+					rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "record never acknowledged", slog.String("topic", topic), slog.String("detail", err.Error()))
+				}
+			}
+		}()
 	default:
 		return nil, fmt.Errorf("sim.source %q is not kafka or memory", cfg.SimSource)
 	}
 
-	loop, err := tickloop.New(tickloop.Options{
+	loop, err = tickloop.New(tickloop.Options{
 		Engine:          engine,
 		Source:          source,
 		Publisher:       publisher,

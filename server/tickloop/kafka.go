@@ -49,6 +49,8 @@ type KafkaSourceOptions struct {
 	// LagEvery is how often end offsets are read for andara_consumer_lag.
 	// Zero means 1s.
 	LagEvery time.Duration
+	// Topic overrides CommandsTopic; tests use throwaway topics.
+	Topic string
 }
 
 // KafkaSource consumes andara.commands.v1 for the loop. A goroutine fetches
@@ -86,6 +88,9 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	if o.LagEvery <= 0 {
 		o.LagEvery = time.Second
 	}
+	if o.Topic == "" {
+		o.Topic = CommandsTopic
+	}
 	assign := map[int32]kgo.Offset{}
 	for p, off := range o.Start {
 		assign[p] = kgo.NewOffset().At(off)
@@ -93,7 +98,7 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(o.Brokers...),
 		kgo.ClientID(o.ClientID+"-sim"),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{CommandsTopic: assign}),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{o.Topic: assign}),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: consumer: %w", err)
@@ -112,13 +117,13 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	// A Partition whose start is past the engine's next-to-read is history
 	// the log no longer has. Refuse now, with the numbers, rather than at
 	// the first fetch.
-	starts, err := s.adm.ListStartOffsets(ctx, CommandsTopic)
+	starts, err := s.adm.ListStartOffsets(ctx, o.Topic)
 	if err != nil {
 		client.Close()
 		return nil, fmt.Errorf("tickloop: start offsets: %w", err)
 	}
 	for p, off := range o.Start {
-		if so, ok := starts.Lookup(CommandsTopic, p); ok && so.Offset > off {
+		if so, ok := starts.Lookup(o.Topic, p); ok && so.Offset > off {
 			client.Close()
 			return nil, fmt.Errorf("%w: partition %d begins at %d, the World needs %d", sim.ErrOffsetGap, p, so.Offset, off)
 		}
@@ -134,6 +139,7 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 	defer close(s.done)
 	lagTick := time.NewTicker(s.opts.LagEvery)
 	defer lagTick.Stop()
+	var lastPing time.Time
 	for ctx.Err() == nil {
 		select {
 		case <-lagTick.C:
@@ -146,10 +152,32 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
+		// franz-go retries a lost broker internally and a poll just comes
+		// back empty, so an empty poll is checked with a ping: a broker that
+		// answers is a quiet log, one that does not is starvation (AC-9).
+		var pingErr error
+		pinged := false
+		var fetchErr error
+		for _, fe := range fetches.Errors() {
+			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
+				fetchErr = fe.Err
+				break
+			}
+		}
+		if fetches.NumRecords() == 0 && time.Since(lastPing) >= s.opts.LagEvery {
+			lastPing = time.Now()
+			pinged = true
+			pctx, pcancel := context.WithTimeout(ctx, 500*time.Millisecond)
+			pingErr = s.client.Ping(pctx)
+			pcancel()
+		}
 		s.mu.Lock()
-		if err := fetches.Err0(); err != nil && !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) {
-			s.fetchErr = err
-		} else if len(fetches) > 0 && fetches.Err0() == nil {
+		switch {
+		case fetchErr != nil:
+			s.fetchErr = fetchErr
+		case pinged && pingErr != nil && ctx.Err() == nil:
+			s.fetchErr = fmt.Errorf("broker unreachable: %w", pingErr)
+		case fetches.NumRecords() > 0 || (pinged && pingErr == nil):
 			s.fetchErr = nil
 		}
 		fetches.EachRecord(func(r *kgo.Record) {
@@ -191,24 +219,24 @@ func (s *KafkaSource) applyBackpressureLocked() {
 		}
 	}
 	if len(pause) > 0 {
-		s.client.PauseFetchPartitions(map[string][]int32{CommandsTopic: pause})
+		s.client.PauseFetchPartitions(map[string][]int32{s.opts.Topic: pause})
 	}
 	if len(resume) > 0 {
-		s.client.ResumeFetchPartitions(map[string][]int32{CommandsTopic: resume})
+		s.client.ResumeFetchPartitions(map[string][]int32{s.opts.Topic: resume})
 	}
 }
 
 func (s *KafkaSource) listEnds(ctx context.Context) {
 	lctx, cancel := context.WithTimeout(ctx, time.Second)
 	defer cancel()
-	ends, err := s.adm.ListEndOffsets(lctx, CommandsTopic)
+	ends, err := s.adm.ListEndOffsets(lctx, s.opts.Topic)
 	if err != nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for p := range s.expected {
-		if e, ok := ends.Lookup(CommandsTopic, p); ok {
+		if e, ok := ends.Lookup(s.opts.Topic, p); ok {
 			s.end[p] = e.Offset
 		}
 	}
@@ -238,9 +266,13 @@ func (s *KafkaSource) Requeue(recs []sim.Record) {
 // Commit implements Source: the offsets are committed under the group so a
 // dashboard, a runbook, and AW-SRV-006's recovery can read them.
 func (s *KafkaSource) Commit(ctx context.Context, offsets map[int32]int64) error {
+	// Bounded: a checkpoint during an outage must fail fast, not hold the
+	// tick until the broker returns.
+	ctx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
 	var o kadm.Offsets
 	for p, off := range offsets {
-		o.Add(kadm.Offset{Topic: CommandsTopic, Partition: p, At: off, LeaderEpoch: -1})
+		o.Add(kadm.Offset{Topic: s.opts.Topic, Partition: p, At: off, LeaderEpoch: -1})
 	}
 	resp, err := s.adm.CommitOffsets(ctx, s.opts.Group, o)
 	if err != nil {
@@ -299,8 +331,20 @@ func (s *KafkaSource) Close() error {
 // andara.events.v1 and cross-Zone Commands to andara.commands.v1, each on
 // the Partition sim.PartitionFor names — never a client default partitioner
 // (AW-SRV-001), which is why the client is built with ManualPartitioner.
+//
+// Produce is asynchronous: records go into the client's bounded buffer and
+// the tick continues, because Events are derived and a broker stall must
+// not be a tick stall (ADR-0002 §3). A delivery that fails after the
+// client's retries is counted through OnFailure; a full buffer refuses the
+// tick's records outright rather than blocking. The drain flushes.
 type KafkaPublisher struct {
 	client *kgo.Client
+	// Commands and Events override the topic names; tests use throwaway
+	// topics.
+	Commands, Events string
+	// OnFailure, if set, is called once per record the broker never
+	// acknowledged, with the topic it was for.
+	OnFailure func(topic string, err error)
 }
 
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
@@ -314,8 +358,10 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		kgo.ClientID(clientID+"-tick"),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-		kgo.ProduceRequestTimeout(5*time.Second),
-		kgo.RecordDeliveryTimeout(5*time.Second),
+		// A record is retried for a minute before it is given up on, so an
+		// outage shorter than that loses nothing; a longer one is counted.
+		kgo.RecordDeliveryTimeout(time.Minute),
+		kgo.MaxBufferedRecords(1<<16),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: producer: %w", err)
@@ -324,7 +370,32 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		client.Close()
 		return nil, fmt.Errorf("tickloop: ping brokers: %w", err)
 	}
-	return &KafkaPublisher{client: client}, nil
+	return &KafkaPublisher{client: client, Commands: CommandsTopic, Events: EventsTopic}, nil
+}
+
+// send buffers records without blocking. ErrMaxBuffered — the buffer is
+// full — is returned; delivery failures arrive later through OnFailure.
+func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
+	var full error
+	for _, r := range recs {
+		k.client.TryProduce(ctx, r, func(r *kgo.Record, err error) {
+			if err == nil {
+				return
+			}
+			if errors.Is(err, kgo.ErrMaxBuffered) {
+				// Refused now, synchronously: the promise runs inline.
+				full = fmt.Errorf("tickloop: produce to %s: %w", r.Topic, err)
+				return
+			}
+			if k.OnFailure != nil {
+				k.OnFailure(r.Topic, err)
+			}
+		})
+		if full != nil {
+			return full
+		}
+	}
+	return nil
 }
 
 // Publish implements Publisher. A zero-tick TickCompleted (the drain's) is
@@ -344,22 +415,16 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 		if ev.Zone != "" {
 			p = sim.PartitionFor(ev.Zone)
 		}
-		recs = append(recs, &kgo.Record{Topic: EventsTopic, Partition: p, Key: []byte(ev.Zone), Value: body})
+		recs = append(recs, &kgo.Record{Topic: k.Events, Partition: p, Key: []byte(ev.Zone), Value: body})
 	}
 	if tc.Tick > 0 {
 		body, err := proto.Marshal(tc.Proto())
 		if err != nil {
 			return err
 		}
-		recs = append(recs, &kgo.Record{Topic: EventsTopic, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body})
+		recs = append(recs, &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body})
 	}
-	if len(recs) == 0 {
-		return nil
-	}
-	if err := k.client.ProduceSync(ctx, recs...).FirstErr(); err != nil {
-		return fmt.Errorf("tickloop: publish to %s: %w", EventsTopic, err)
-	}
-	return nil
+	return k.send(ctx, recs)
 }
 
 // Produce implements Publisher.
@@ -371,41 +436,44 @@ func (k *KafkaPublisher) Produce(ctx context.Context, cmds []*logv1.LoggedComman
 			return err
 		}
 		zone := sim.ZoneID(cmd.GetZoneId())
-		recs = append(recs, &kgo.Record{Topic: CommandsTopic, Partition: sim.PartitionFor(zone), Key: []byte(zone), Value: body})
+		recs = append(recs, &kgo.Record{Topic: k.Commands, Partition: sim.PartitionFor(zone), Key: []byte(zone), Value: body})
 	}
-	if len(recs) == 0 {
-		return nil
-	}
-	if err := k.client.ProduceSync(ctx, recs...).FirstErr(); err != nil {
-		return fmt.Errorf("tickloop: produce to %s: %w", CommandsTopic, err)
-	}
-	return nil
+	return k.send(ctx, recs)
 }
 
-// Close implements Publisher.
+// Flush waits for buffered records to be acknowledged, or for ctx.
+func (k *KafkaPublisher) Flush(ctx context.Context) error { return k.client.Flush(ctx) }
+
+// Close flushes for up to ten seconds, then closes.
 func (k *KafkaPublisher) Close() error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	err := k.client.Flush(ctx)
 	k.client.Close()
-	return nil
+	return err
 }
 
 // ReadBoundaries reads every TickCompleted on andara.events.v1 from the
 // start, in order, for replay (ADR-0002 §4). The RecordSource for replay
 // is KafkaRecords.
-func ReadBoundaries(ctx context.Context, brokers []string) ([]sim.TickCompleted, error) {
+func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) ([]sim.TickCompleted, error) {
+	if eventsTopic == "" {
+		eventsTopic = EventsTopic
+	}
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{EventsTopic: {BoundaryPartition: kgo.NewOffset().AtStart()}}),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{eventsTopic: {BoundaryPartition: kgo.NewOffset().AtStart()}}),
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer client.Close()
 	adm := kadm.NewClient(client)
-	ends, err := adm.ListEndOffsets(ctx, EventsTopic)
+	ends, err := adm.ListEndOffsets(ctx, eventsTopic)
 	if err != nil {
 		return nil, err
 	}
-	end, _ := ends.Lookup(EventsTopic, BoundaryPartition)
+	end, _ := ends.Lookup(eventsTopic, BoundaryPartition)
 	var out []sim.TickCompleted
 	var next int64
 	for next < end.Offset {
@@ -431,15 +499,20 @@ func ReadBoundaries(ctx context.Context, brokers []string) ([]sim.TickCompleted,
 // KafkaRecords is a sim.RecordSource over andara.commands.v1.
 type KafkaRecords struct {
 	Brokers []string
+	Topic   string // empty means CommandsTopic
 }
 
 // Fetch implements sim.RecordSource.
 func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	topic := k.Topic
+	if topic == "" {
+		topic = CommandsTopic
+	}
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(k.Brokers...),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{CommandsTopic: {partition: kgo.NewOffset().At(from)}}),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {partition: kgo.NewOffset().At(from)}}),
 	)
 	if err != nil {
 		return nil, err
@@ -474,4 +547,32 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 		}
 	}
 	return out, nil
+}
+
+// Recover replays every Tick Boundary Record on the events topic onto e,
+// fetching the records each boundary names from the commands topic, and
+// returns how many ticks were replayed. This is the restart path until
+// AW-SRV-006 gives it a snapshot to start from: correct and slow, and
+// exact — a hash that does not match a recorded boundary is
+// sim.ErrHashMismatch, and the process must not serve that World.
+func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic string, e *sim.Engine) (int, error) {
+	boundaries, err := ReadBoundaries(ctx, brokers, eventsTopic)
+	if err != nil {
+		return 0, fmt.Errorf("tickloop: read boundaries: %w", err)
+	}
+	// Boundaries from before the engine's tick — a restart that already
+	// replayed part of the log from a snapshot — are skipped; the rest must
+	// be contiguous from it.
+	i := 0
+	for i < len(boundaries) && boundaries[i].Tick <= e.Tick() {
+		i++
+	}
+	boundaries = boundaries[i:]
+	if len(boundaries) == 0 {
+		return 0, nil
+	}
+	if err := e.Replay(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}); err != nil {
+		return 0, err
+	}
+	return len(boundaries), nil
 }
