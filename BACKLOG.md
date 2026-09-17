@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 1 |
-| `in-progress` | 1 |
+| `review` | 2 |
 | `ready` | 30 |
 | `done` | 9 |
 | **total** | **41** |
@@ -19,21 +18,17 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication | review by brian |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set | review by brian |
 
 ## By status
 
-### `review` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
-
-### `in-progress` (1)
+### `review` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 
 ### `ready` (30)
 
@@ -172,7 +167,7 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0006
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `in-progress` | Account store, registration modes, and authentication |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `ready` | Character roster, creation, selection, and binding |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `ready` | Session lifecycle and linkdead grace period |
 
