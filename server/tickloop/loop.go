@@ -248,6 +248,10 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 		l.metrics.ConsumerLag.WithLabelValues(strconv.Itoa(int(p))).Set(float64(lagRecs))
 	}
 	overrun := duration > l.opts.TickBudget
+	// Head-sampled one tick in a hundred, tail-sampled at 100% on overrun:
+	// the span always starts, and telemetry.TickSampler exports only the
+	// ones marked here.
+	keep := overrun || tick%TraceEveryTicks == 0
 	if overrun {
 		l.metrics.Overruns.Inc()
 		l.log.LogAttrs(tctx, slog.LevelWarn, "tick overran its budget",
@@ -257,13 +261,14 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 			slog.String("zone", l.slowestZone()),
 			slog.String("trace_id", traceID(tctx)))
 	}
-	l.observeZones(tctx, tick)
+	l.observeZones(tctx, tick, keep)
 	span.SetAttributes(
 		attribute.Int("record_count", len(records)),
 		attribute.Int("event_count", len(res.Events)),
 		attribute.Bool("overrun", overrun),
 		attribute.Bool("starved", starved),
 		attribute.Float64("lag_seconds", lag.Seconds()),
+		attribute.Bool("andara.keep", keep),
 	)
 
 	if tick%sim.Tick(l.opts.CheckpointEvery) == 0 {
@@ -355,16 +360,21 @@ func (l *Loop) Begin(zone sim.ZoneID) func() {
 // observeZones flushes the per-Zone accumulators into the histogram and a
 // sim.zone_tick span each, then clears them. Per-Entity spans are not
 // emitted.
-func (l *Loop) observeZones(ctx context.Context, tick sim.Tick) {
+func (l *Loop) observeZones(ctx context.Context, tick sim.Tick, keep bool) {
 	for zone, d := range l.zoneTimes {
 		l.metrics.ZoneTickDuration.WithLabelValues(string(zone)).Observe(d.Seconds())
 		_, span := l.tracer.Start(ctx, "sim.zone_tick", trace.WithAttributes(
 			attribute.Int64("tick", int64(tick)), attribute.String("zone", string(zone)),
-			attribute.Float64("duration_ms", float64(d.Microseconds())/1000)))
+			attribute.Float64("duration_ms", float64(d.Microseconds())/1000),
+			attribute.Bool("andara.keep", keep)))
 		span.End()
 		delete(l.zoneTimes, zone)
 	}
 }
+
+// TraceEveryTicks is the head-sample rate for sim.tick spans: one in a
+// hundred, plus every overrun.
+const TraceEveryTicks = 100
 
 // slowestZone names the Zone that took the most of this tick, for the
 // overrun line, or "" when no Zone was applied to.

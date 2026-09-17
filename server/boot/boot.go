@@ -35,7 +35,9 @@ type Runtime struct {
 	// Templates is the loaded Template registry (AW-SRV-022); nil until
 	// LoadContent succeeds.
 	Templates *sim.TemplateRegistry
-	ready     atomic.Bool
+	// Engine is the running simulation (AW-SRV-002); nil until StartTickLoop.
+	Engine *sim.Engine
+	ready  atomic.Bool
 }
 
 // New constructs a Runtime. Telemetry must already be set up.

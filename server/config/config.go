@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,6 +66,17 @@ type Config struct {
 	// Session lifecycle (ADR-0006). Only the ceiling is read today, because
 	// auth.session_ttl must exceed it; AW-SRV-015 reads the rest.
 	SessionLinkdeadMax time.Duration
+
+	// The tick loop (AW-SRV-002, ADR-0008). SimSource is kafka or memory;
+	// memory ticks a World with no input and exists for development.
+	SimSource               string
+	SimTickRate             int
+	SimTickBudget           time.Duration
+	SimMaxPerTick           int
+	SimDrainTimeout         time.Duration
+	SimSeed                 uint64
+	SimPartitions           []int32
+	SimCheckpointEveryTicks int
 }
 
 const (
@@ -94,6 +106,13 @@ const (
 	DefaultAuthInviteTTL       = 168 * time.Hour
 	DefaultAuthRecheckInterval = 30 * time.Second
 	DefaultSessionLinkdeadMax  = 300 * time.Second
+
+	DefaultSimSource               = "kafka"
+	DefaultSimTickRate             = 10
+	DefaultSimTickBudgetMS         = 50
+	DefaultSimMaxPerTick           = 1024
+	DefaultSimDrainTimeoutMS       = 5000
+	DefaultSimCheckpointEveryTicks = 100
 )
 
 // EnvLookup looks up an environment variable.
@@ -131,6 +150,14 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		AuthInviteTTL:       DefaultAuthInviteTTL,
 		AuthRecheckInterval: DefaultAuthRecheckInterval,
 		SessionLinkdeadMax:  DefaultSessionLinkdeadMax,
+
+		SimSource:               DefaultSimSource,
+		SimTickRate:             DefaultSimTickRate,
+		SimTickBudget:           DefaultSimTickBudgetMS * time.Millisecond,
+		SimMaxPerTick:           DefaultSimMaxPerTick,
+		SimDrainTimeout:         DefaultSimDrainTimeoutMS * time.Millisecond,
+		SimPartitions:           allPartitions(),
+		SimCheckpointEveryTicks: DefaultSimCheckpointEveryTicks,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -185,6 +212,25 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.AuthK8sIssuer, "auth-k8s-issuer", c.AuthK8sIssuer, "issuer of workload JWTs for agent accounts; unset disables the kind (ANDARA_AUTH_K8S_ISSUER)")
 	fs.StringVar(&c.AuthK8sJWKSURL, "auth-k8s-jwks-url", c.AuthK8sJWKSURL, "JWKS endpoint for auth.k8s_issuer (ANDARA_AUTH_K8S_JWKS_URL)")
 	fs.StringVar(&c.AuthBootstrapOperator, "auth-bootstrap-operator", c.AuthBootstrapOperator, "username:password for the first operator account; ignored once one exists (ANDARA_AUTH_BOOTSTRAP_OPERATOR)")
+	fs.StringVar(&c.SimSource, "sim-source", c.SimSource, "command source for the tick loop: kafka or memory (ANDARA_SIM_SOURCE)")
+	fs.IntVar(&c.SimTickRate, "sim-tick-rate", c.SimTickRate, "ticks per second (ANDARA_TICK_RATE)")
+	fs.Func("sim-tick-budget-ms", "overrun threshold in milliseconds (ANDARA_TICK_BUDGET_MS)", func(v string) error {
+		return parseMillis("sim.tick_budget_ms", v, &c.SimTickBudget)
+	})
+	fs.IntVar(&c.SimMaxPerTick, "sim-max-per-tick", c.SimMaxPerTick, "records applied per tick; excess deferred (ANDARA_MAX_PER_TICK)")
+	fs.Func("sim-drain-timeout-ms", "graceful shutdown budget in milliseconds (ANDARA_DRAIN_TIMEOUT_MS)", func(v string) error {
+		return parseMillis("sim.drain_timeout_ms", v, &c.SimDrainTimeout)
+	})
+	fs.Uint64Var(&c.SimSeed, "sim-seed", c.SimSeed, "PRNG seed; 0 derives one from the World (ANDARA_SIM_SEED)")
+	fs.Func("sim-partitions", "assigned Partitions, e.g. 0-63 or 0,2,4 (ANDARA_SIM_PARTITIONS)", func(v string) error {
+		ps, err := ParsePartitions(v)
+		if err != nil {
+			return err
+		}
+		c.SimPartitions = ps
+		return nil
+	})
+	fs.IntVar(&c.SimCheckpointEveryTicks, "sim-checkpoint-every-ticks", c.SimCheckpointEveryTicks, "offset commit cadence in ticks (ANDARA_CHECKPOINT_EVERY_TICKS)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -198,7 +244,109 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	if err := c.validateAuth(); err != nil {
 		return Config{}, err
 	}
+	if err := c.validateSim(); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// validateSim rejects a tick configuration the loop cannot run. The budget
+// must fit inside the interval: a budget past it means overruns can never
+// warn before lag accrues, which is the point of the budget (ADR-0008).
+func (c Config) validateSim() error {
+	switch c.SimSource {
+	case "kafka":
+		if !c.ValidateOnly && len(c.KafkaBrokers) == 0 {
+			return fmt.Errorf("sim.source=kafka requires kafka.brokers (ANDARA_KAFKA_BROKERS)")
+		}
+	case "memory":
+	default:
+		return fmt.Errorf("sim.source must be kafka or memory, got %q", c.SimSource)
+	}
+	if c.SimTickRate < 1 || c.SimTickRate > 100 {
+		return fmt.Errorf("sim.tick_rate must be 1..100, got %d", c.SimTickRate)
+	}
+	if c.SimTickBudget <= 0 {
+		return fmt.Errorf("sim.tick_budget_ms must be positive, got %s", c.SimTickBudget)
+	}
+	if interval := time.Second / time.Duration(c.SimTickRate); c.SimTickBudget > interval {
+		return fmt.Errorf("sim.tick_budget_ms (%s) must not exceed the tick interval (%s at %d Hz)", c.SimTickBudget, interval, c.SimTickRate)
+	}
+	if c.SimMaxPerTick < 1 || c.SimCheckpointEveryTicks < 1 {
+		return fmt.Errorf("sim.max_per_tick and sim.checkpoint_every_ticks must be positive")
+	}
+	if c.SimDrainTimeout < 0 {
+		return fmt.Errorf("sim.drain_timeout_ms must not be negative")
+	}
+	if len(c.SimPartitions) == 0 {
+		return fmt.Errorf("sim.partitions must name at least one Partition")
+	}
+	return nil
+}
+
+func parseMillis(key, v string, dst *time.Duration) error {
+	n, err := strconv.Atoi(strings.TrimSpace(v))
+	if err != nil || n < 0 {
+		return fmt.Errorf("%s must be a non-negative integer of milliseconds, got %q", key, v)
+	}
+	*dst = time.Duration(n) * time.Millisecond
+	return nil
+}
+
+func allPartitions() []int32 {
+	out := make([]int32, 64)
+	for i := range out {
+		out[i] = int32(i)
+	}
+	return out
+}
+
+// ParsePartitions reads the two forms sim.partitions takes: a range
+// (`0-63`) or a comma-separated list (`0,2,4`, which is what the chart's
+// init container writes from the pod ordinal). Sorted, deduplicated, each
+// in [0, 64).
+func ParsePartitions(v string) ([]int32, error) {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return nil, fmt.Errorf("sim.partitions must not be empty")
+	}
+	seen := map[int32]bool{}
+	add := func(n int) error {
+		if n < 0 || n >= 64 {
+			return fmt.Errorf("sim.partitions: %d is outside 0..63", n)
+		}
+		seen[int32(n)] = true
+		return nil
+	}
+	for _, part := range strings.Split(v, ",") {
+		part = strings.TrimSpace(part)
+		if lo, hi, ok := strings.Cut(part, "-"); ok {
+			a, err1 := strconv.Atoi(strings.TrimSpace(lo))
+			b, err2 := strconv.Atoi(strings.TrimSpace(hi))
+			if err1 != nil || err2 != nil || a > b {
+				return nil, fmt.Errorf("sim.partitions: bad range %q", part)
+			}
+			for n := a; n <= b; n++ {
+				if err := add(n); err != nil {
+					return nil, err
+				}
+			}
+			continue
+		}
+		n, err := strconv.Atoi(part)
+		if err != nil {
+			return nil, fmt.Errorf("sim.partitions: %q is not a partition", part)
+		}
+		if err := add(n); err != nil {
+			return nil, err
+		}
+	}
+	out := make([]int32, 0, len(seen))
+	for p := range seen {
+		out = append(out, p)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out, nil
 }
 
 // validateAuth rejects a configuration the account store cannot serve.
@@ -353,6 +501,16 @@ type fileConfig struct {
 	Session *struct {
 		LinkdeadMax *string `yaml:"linkdead_max"`
 	} `yaml:"session"`
+	Sim *struct {
+		Source               *string `yaml:"source"`
+		TickRate             *int    `yaml:"tick_rate"`
+		TickBudgetMS         *int    `yaml:"tick_budget_ms"`
+		MaxPerTick           *int    `yaml:"max_per_tick"`
+		DrainTimeoutMS       *int    `yaml:"drain_timeout_ms"`
+		Seed                 *uint64 `yaml:"seed"`
+		Partitions           *string `yaml:"partitions"`
+		CheckpointEveryTicks *int    `yaml:"checkpoint_every_ticks"`
+	} `yaml:"sim"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -497,6 +655,36 @@ func applyFile(c *Config, path string) error {
 			return fmt.Errorf("config file %s: %w", path, err)
 		}
 	}
+	if sm := fc.Sim; sm != nil {
+		if sm.Source != nil {
+			c.SimSource = *sm.Source
+		}
+		if sm.TickRate != nil {
+			c.SimTickRate = *sm.TickRate
+		}
+		if sm.TickBudgetMS != nil {
+			c.SimTickBudget = time.Duration(*sm.TickBudgetMS) * time.Millisecond
+		}
+		if sm.MaxPerTick != nil {
+			c.SimMaxPerTick = *sm.MaxPerTick
+		}
+		if sm.DrainTimeoutMS != nil {
+			c.SimDrainTimeout = time.Duration(*sm.DrainTimeoutMS) * time.Millisecond
+		}
+		if sm.Seed != nil {
+			c.SimSeed = *sm.Seed
+		}
+		if sm.Partitions != nil {
+			ps, err := ParsePartitions(*sm.Partitions)
+			if err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
+			c.SimPartitions = ps
+		}
+		if sm.CheckpointEveryTicks != nil {
+			c.SimCheckpointEveryTicks = *sm.CheckpointEveryTicks
+		}
+	}
 	return nil
 }
 
@@ -606,6 +794,49 @@ func applyEnv(c *Config, env EnvLookup) error {
 				return err
 			}
 		}
+	}
+	if v, ok := env("ANDARA_SIM_SOURCE"); ok {
+		c.SimSource = v
+	}
+	for _, iv := range []struct {
+		name string
+		dst  *int
+	}{
+		{"ANDARA_TICK_RATE", &c.SimTickRate},
+		{"ANDARA_MAX_PER_TICK", &c.SimMaxPerTick},
+		{"ANDARA_CHECKPOINT_EVERY_TICKS", &c.SimCheckpointEveryTicks},
+	} {
+		if v, ok := env(iv.name); ok {
+			n, err := strconv.Atoi(strings.TrimSpace(v))
+			if err != nil {
+				return fmt.Errorf("%s must be an integer, got %q", iv.name, v)
+			}
+			*iv.dst = n
+		}
+	}
+	if v, ok := env("ANDARA_TICK_BUDGET_MS"); ok {
+		if err := parseMillis("ANDARA_TICK_BUDGET_MS", v, &c.SimTickBudget); err != nil {
+			return err
+		}
+	}
+	if v, ok := env("ANDARA_DRAIN_TIMEOUT_MS"); ok {
+		if err := parseMillis("ANDARA_DRAIN_TIMEOUT_MS", v, &c.SimDrainTimeout); err != nil {
+			return err
+		}
+	}
+	if v, ok := env("ANDARA_SIM_SEED"); ok {
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return fmt.Errorf("ANDARA_SIM_SEED must be an unsigned integer, got %q", v)
+		}
+		c.SimSeed = n
+	}
+	if v, ok := env("ANDARA_SIM_PARTITIONS"); ok {
+		ps, err := ParsePartitions(v)
+		if err != nil {
+			return fmt.Errorf("ANDARA_SIM_PARTITIONS: %w", err)
+		}
+		c.SimPartitions = ps
 	}
 	for _, uv := range []struct {
 		name string

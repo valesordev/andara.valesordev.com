@@ -5,6 +5,7 @@ package config
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -393,5 +394,68 @@ session:
 		if _, err := Parse(bad, withTLS(nil), nil); err == nil {
 			t.Errorf("%v accepted", bad)
 		}
+	}
+}
+
+func TestParse_SimKeys(t *testing.T) {
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimSource != "kafka" || c.SimTickRate != 10 || c.SimTickBudget != 50*time.Millisecond || c.SimMaxPerTick != 1024 ||
+		c.SimDrainTimeout != 5*time.Second || c.SimSeed != 0 || len(c.SimPartitions) != 64 || c.SimCheckpointEveryTicks != 100 {
+		t.Errorf("defaults: %+v", c)
+	}
+	env := withTLS(func(k string) (string, bool) {
+		switch k {
+		case "ANDARA_TICK_RATE":
+			return "20", true
+		case "ANDARA_TICK_BUDGET_MS":
+			return "25", true
+		case "ANDARA_SIM_PARTITIONS":
+			return "0,2,4", true
+		case "ANDARA_SIM_SEED":
+			return "99", true
+		case "ANDARA_DRAIN_TIMEOUT_MS":
+			return "0", true
+		}
+		return "", false
+	})
+	c, err = Parse([]string{"--sim-max-per-tick=7", "--sim-checkpoint-every-ticks=3"}, env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimTickRate != 20 || c.SimTickBudget != 25*time.Millisecond || fmt.Sprint(c.SimPartitions) != "[0 2 4]" || c.SimSeed != 99 ||
+		c.SimDrainTimeout != 0 || c.SimMaxPerTick != 7 || c.SimCheckpointEveryTicks != 3 {
+		t.Errorf("env+flags: %+v", c)
+	}
+	// File keys.
+	dir := t.TempDir()
+	path := dir + "/server.yaml"
+	if err := os.WriteFile(path, []byte("sim:\n  source: memory\n  tick_rate: 5\n  tick_budget_ms: 100\n  partitions: 8-11\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Parse([]string{"--config", path}, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimSource != "memory" || c.SimTickRate != 5 || c.SimTickBudget != 100*time.Millisecond || fmt.Sprint(c.SimPartitions) != "[8 9 10 11]" {
+		t.Errorf("file: %+v", c)
+	}
+	// Refusals.
+	for _, bad := range [][]string{
+		{"--sim-source=redis"},
+		{"--sim-tick-rate=0"},
+		{"--sim-tick-budget-ms=150"}, // past the 100 ms interval
+		{"--sim-partitions=64"},
+		{"--sim-partitions=5-2"},
+		{"--sim-max-per-tick=0"},
+	} {
+		if _, err := Parse(bad, withTLS(nil), nil); err == nil {
+			t.Errorf("%v accepted", bad)
+		}
+	}
+	if ps, err := ParsePartitions(" 3, 1 ,3,0-1"); err != nil || fmt.Sprint(ps) != "[0 1 3]" {
+		t.Errorf("ParsePartitions = %v, %v", ps, err)
 	}
 }

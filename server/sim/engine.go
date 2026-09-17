@@ -183,6 +183,10 @@ func NewEngine(w *World, templates *TemplateRegistry, cfg Config) *Engine {
 	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts)}
 }
 
+// SetZoneTimer attaches the per-Zone timer after construction; the loop
+// that implements it is built around the engine.
+func (e *Engine) SetZoneTimer(t ZoneTimer) { e.cfg.ZoneTimer = t }
+
 // State exposes the mutable state, for snapshots and tests. Callers must
 // not mutate it outside a handler.
 func (e *Engine) State() *WorldState { return e.state }

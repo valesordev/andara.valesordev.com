@@ -100,7 +100,7 @@ def test_schema_rejects(env):
     cases = [
         ("server.http.port=ten", "/server/http/port"),
         ("probes.startup.periodSeconds=0", "/probes/startup/periodSeconds"),
-        ("server.sim.tick_rate=10", "/server"),        # groomed, not in code: rejected
+        ("server.snapshot.interval=60s", "/server"),   # groomed, not in code: rejected (AW-SRV-006)
         ("snapshots.size=20GB", "/snapshots/size"),
         ("nonsense=1", "additional properties"),
     ]

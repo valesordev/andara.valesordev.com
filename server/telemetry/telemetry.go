@@ -118,7 +118,7 @@ func newTracerProvider(cfg config.Config, extra ...sdktrace.TracerProviderOption
 	if err != nil {
 		return sdktrace.NewTracerProvider(opts...)
 	}
-	opts = append(opts, sdktrace.WithBatcher(exp))
+	opts = append(opts, sdktrace.WithSpanProcessor(NewTickSampler(sdktrace.NewBatchSpanProcessor(exp))))
 	return sdktrace.NewTracerProvider(opts...)
 }
 
