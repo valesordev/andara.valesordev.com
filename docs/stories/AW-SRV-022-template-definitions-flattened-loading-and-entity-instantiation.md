@@ -4,7 +4,7 @@ title: Template definitions — schema, flattened loading, and Entity instantiat
 epic: EPIC-02
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-020, AW-SRV-021]
 blocks: [AW-SRV-009, AW-SRV-012, AW-SRV-014, AW-CLI-005, AW-CLI-006]
