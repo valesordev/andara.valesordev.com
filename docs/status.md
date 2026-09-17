@@ -2,14 +2,14 @@
 
 # Status — Andara's World
 
-35 stories — 4 review · 25 ready · 6 done
+38 stories — 4 review · 27 ready · 1 draft · 6 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    — nothing in flight
-  next   — nothing groomed and unblocked
-  review AW-INF-002, AW-INF-003, AW-INF-006 — run the §8 checklist, then flip to done
+  next   AW-INF-008  ready  Cluster observability wiring — the chart's metrics, log…  (unblocks 1)
+  review AW-INF-003, AW-INF-002, AW-INF-006 — run the §8 checklist, then flip to done
   held   3 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007
 
 ## Implementation lane — server and cli source, tests
@@ -24,7 +24,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   AW-SRV-021  The core component vocabulary beyond the four seeded here.
   AW-SRV-022  The andara.core Template vocabulary beyond the four seeded here — the same question…
-              13 more, attached to stories neither lane has reached
+              15 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

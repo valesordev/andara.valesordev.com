@@ -62,8 +62,8 @@ kubectl -n andara-<env> rollout restart statefulset/andara    # AW-INF-007's pre
 The edge certificate has no such step: Traefik reloads `andara-edge-tls` live, and `make
 stream-soak` proves a renewal mid-stream drops nothing.
 
-`[FOLLOW-UP]` Hot-reload of TLS material in the gateway is an implementation-lane story; until it
-lands, this restart is the procedure and `CertificateExpiringSoon` is what reminds you.
+`AW-SRV-023` is the hot-reload of TLS material in the gateway; until it lands, this restart is the
+procedure and `CertificateExpiringSoon` is what reminds you.
 
 ## How to diagnose
 

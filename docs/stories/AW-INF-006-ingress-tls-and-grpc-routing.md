@@ -7,7 +7,7 @@ type: infra
 status: review
 size: M
 depends_on: [AW-INF-003, AW-SRV-005]
-blocks: []
+blocks: [AW-INF-008]
 lane: architecture
 risk: medium
 ---
@@ -229,8 +229,8 @@ CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `d
   (`AW-SRV-005`, a static `Certificates` slice); a renewed `andara-server-tls` is served only after the
   pod restarts, and past the old certificate's expiry Traefik's verification fails (`502`). The window is
   `renewBefore` (10 d), which any deploy closes; `certificate-expiring.md` carries the manual step.
-  `[FOLLOW-UP, implementation lane]` hot-reload of TLS material in the gateway (`GetCertificate` over a
-  watched mount) — a small `SRV` story, not touched on this branch.
+  `AW-SRV-023` (implementation lane, groomed 2026-09-17) is the hot-reload of TLS material in the gateway;
+  when it lands, AC-3's "edge only" scope goes away.
 - **Traefik's entrypoint `readTimeout` (60 s) is cluster-level and outside this repo.** It stops when the
   client half-closes the request, which every RPC in `andara.game.v1` does today; a future
   client-streaming or bidi RPC would be reset at 60 s of open request body. Whoever adds one raises the
