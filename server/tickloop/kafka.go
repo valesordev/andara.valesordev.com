@@ -388,6 +388,7 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 // full — is returned; delivery failures arrive later through OnFailure.
 func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 	var full error
+	ctx = context.WithoutCancel(ctx)
 	for _, r := range recs {
 		k.client.TryProduce(ctx, r, func(r *kgo.Record, err error) {
 			if err == nil {
@@ -420,9 +421,9 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 // World that cannot boot. So: once one boundary is lost, this process
 // publishes no more. It keeps ticking and Events keep flowing (AC-9); the
 // next restart recovers exactly to the last delivered boundary and
-// re-batches after it, which is the policy AW-SRV-007 inherits. The
-// boundary is produced with a short blocking bound rather than TryProduce
-// so a momentarily full buffer does not itself open a gap.
+// re-batches after it, which is the policy AW-SRV-007 inherits. A full
+// buffer counts as a loss for the same reason — the boundary was not
+// enqueued, and the next one must not be either.
 func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim.TickCompleted) error {
 	recs := make([]*kgo.Record, 0, len(events)+1)
 	for _, ev := range events {
@@ -453,20 +454,26 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 	if err != nil {
 		return err
 	}
-	bctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
-	defer cancel()
+	// The record's own context is never cancelled: franz-go fails a record
+	// whose context ends before delivery, and the tick's context ends with
+	// the tick.
 	tick := tc.Tick
-	k.client.Produce(bctx, &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body}, func(_ *kgo.Record, err error) {
-		if err == nil {
-			return
-		}
+	lost := func(err error) {
 		if k.boundaryLost.CompareAndSwap(false, true) {
 			k.lostAtTick.Store(uint64(tick))
 			if k.OnBoundaryLost != nil {
 				k.OnBoundaryLost(tick, err)
 			}
 		}
+	}
+	k.client.TryProduce(context.WithoutCancel(ctx), &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body}, func(_ *kgo.Record, err error) {
+		if err != nil {
+			lost(err)
+		}
 	})
+	if k.boundaryLost.Load() {
+		return fmt.Errorf("%w (since tick %d)", ErrBoundaryLost, k.lostAtTick.Load())
+	}
 	return nil
 }
 
