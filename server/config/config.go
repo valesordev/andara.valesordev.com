@@ -38,6 +38,33 @@ type Config struct {
 	GRPCDrainTimeout      time.Duration
 	ProtocolMinVersion    uint32
 	ProtocolMaxVersion    uint32
+
+	// Broker (AW-SRV-008 is the first story to open a client). Comma-separated
+	// in the env var and the flag, a list in the file.
+	KafkaBrokers []string
+
+	// Accounts and authentication (AW-SRV-008). AuthStore is kafka or memory;
+	// memory loses every Account on restart and exists for development.
+	AuthStore           string
+	AuthSessionTTL      time.Duration
+	AuthRefreshTTL      time.Duration
+	AuthTokenKeyFile    string
+	AuthArgon2MemoryKiB uint32
+	AuthArgon2Time      uint32
+	AuthArgon2Threads   uint32
+	AuthRateLimit       string
+	AuthInviteTTL       time.Duration
+	AuthRecheckInterval time.Duration
+	AuthK8sIssuer       string
+	AuthK8sJWKSURL      string
+	// AuthBootstrapOperator is `username:password` for the first operator,
+	// applied only when the index holds no operator at all. Every later
+	// operator is created by one through Admin.CreateAccount.
+	AuthBootstrapOperator string
+
+	// Session lifecycle (ADR-0006). Only the ceiling is read today, because
+	// auth.session_ttl must exceed it; AW-SRV-015 reads the rest.
+	SessionLinkdeadMax time.Duration
 }
 
 const (
@@ -56,6 +83,17 @@ const (
 	DefaultGRPCDrainTimeout      = 15 * time.Second
 	DefaultProtocolMinVersion    = 1
 	DefaultProtocolMaxVersion    = 1
+
+	DefaultAuthStore           = "kafka"
+	DefaultAuthSessionTTL      = time.Hour
+	DefaultAuthRefreshTTL      = 720 * time.Hour
+	DefaultAuthArgon2MemoryKiB = 65536
+	DefaultAuthArgon2Time      = 3
+	DefaultAuthArgon2Threads   = 4
+	DefaultAuthRateLimit       = "10/m"
+	DefaultAuthInviteTTL       = 168 * time.Hour
+	DefaultAuthRecheckInterval = 30 * time.Second
+	DefaultSessionLinkdeadMax  = 300 * time.Second
 )
 
 // EnvLookup looks up an environment variable.
@@ -82,6 +120,17 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		GRPCDrainTimeout:      DefaultGRPCDrainTimeout,
 		ProtocolMinVersion:    DefaultProtocolMinVersion,
 		ProtocolMaxVersion:    DefaultProtocolMaxVersion,
+
+		AuthStore:           DefaultAuthStore,
+		AuthSessionTTL:      DefaultAuthSessionTTL,
+		AuthRefreshTTL:      DefaultAuthRefreshTTL,
+		AuthArgon2MemoryKiB: DefaultAuthArgon2MemoryKiB,
+		AuthArgon2Time:      DefaultAuthArgon2Time,
+		AuthArgon2Threads:   DefaultAuthArgon2Threads,
+		AuthRateLimit:       DefaultAuthRateLimit,
+		AuthInviteTTL:       DefaultAuthInviteTTL,
+		AuthRecheckInterval: DefaultAuthRecheckInterval,
+		SessionLinkdeadMax:  DefaultSessionLinkdeadMax,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -113,6 +162,30 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.Func("protocol-max-version", "highest Protocol version accepted (ANDARA_PROTOCOL_MAX)", func(v string) error {
 		return parseVersion(v, &c.ProtocolMaxVersion)
 	})
+	fs.Func("kafka-brokers", "comma-separated broker addresses (ANDARA_KAFKA_BROKERS)", func(v string) error {
+		c.KafkaBrokers = splitList(v)
+		return nil
+	})
+	fs.StringVar(&c.AuthStore, "auth-store", c.AuthStore, "account store: kafka or memory (ANDARA_AUTH_STORE)")
+	fs.DurationVar(&c.AuthSessionTTL, "auth-session-ttl", c.AuthSessionTTL, "session token lifetime; must exceed session.linkdead_max (ANDARA_AUTH_SESSION_TTL)")
+	fs.DurationVar(&c.AuthRefreshTTL, "auth-refresh-ttl", c.AuthRefreshTTL, "refresh token lifetime (ANDARA_AUTH_REFRESH_TTL)")
+	fs.StringVar(&c.AuthTokenKeyFile, "auth-token-key-file", c.AuthTokenKeyFile, "file of `key_id: base64` signing keys, first is current; required, mode 0400 (ANDARA_AUTH_TOKEN_KEY_FILE)")
+	fs.Func("auth-argon2-memory-kib", "Argon2id memory in KiB (ANDARA_AUTH_ARGON2_MEMORY_KIB)", func(v string) error {
+		return parseUint32("auth.argon2.memory_kib", v, &c.AuthArgon2MemoryKiB)
+	})
+	fs.Func("auth-argon2-time", "Argon2id time parameter (ANDARA_AUTH_ARGON2_TIME)", func(v string) error {
+		return parseUint32("auth.argon2.time", v, &c.AuthArgon2Time)
+	})
+	fs.Func("auth-argon2-threads", "Argon2id parallelism (ANDARA_AUTH_ARGON2_THREADS)", func(v string) error {
+		return parseUint32("auth.argon2.threads", v, &c.AuthArgon2Threads)
+	})
+	fs.StringVar(&c.AuthRateLimit, "auth-rate-limit", c.AuthRateLimit, "auth attempts per username and per peer, N/period (ANDARA_AUTH_RATE_LIMIT)")
+	fs.DurationVar(&c.AuthInviteTTL, "auth-invite-ttl", c.AuthInviteTTL, "invite code lifetime (ANDARA_AUTH_INVITE_TTL)")
+	fs.DurationVar(&c.AuthRecheckInterval, "auth-recheck-interval", c.AuthRecheckInterval, "how often open Sessions re-read Account status and roles (ANDARA_AUTH_RECHECK_INTERVAL)")
+	fs.StringVar(&c.AuthK8sIssuer, "auth-k8s-issuer", c.AuthK8sIssuer, "issuer of workload JWTs for agent accounts; unset disables the kind (ANDARA_AUTH_K8S_ISSUER)")
+	fs.StringVar(&c.AuthK8sJWKSURL, "auth-k8s-jwks-url", c.AuthK8sJWKSURL, "JWKS endpoint for auth.k8s_issuer (ANDARA_AUTH_K8S_JWKS_URL)")
+	fs.StringVar(&c.AuthBootstrapOperator, "auth-bootstrap-operator", c.AuthBootstrapOperator, "username:password for the first operator account; ignored once one exists (ANDARA_AUTH_BOOTSTRAP_OPERATOR)")
+	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -122,7 +195,69 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	if err := c.validateGateway(); err != nil {
 		return Config{}, err
 	}
+	if err := c.validateAuth(); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// validateAuth rejects a configuration the account store cannot serve.
+// Like TLS, the key file is required to serve and --validate-only is
+// exempt. The session_ttl > linkdead_max assertion is ADR-0006's: a token
+// that expires inside the grace period turns every linkdead reconnect into
+// an authentication failure.
+func (c Config) validateAuth() error {
+	switch c.AuthStore {
+	case "kafka":
+		if !c.ValidateOnly && len(c.KafkaBrokers) == 0 {
+			return fmt.Errorf("auth.store=kafka requires kafka.brokers (ANDARA_KAFKA_BROKERS)")
+		}
+	case "memory":
+	default:
+		return fmt.Errorf("auth.store must be kafka or memory, got %q", c.AuthStore)
+	}
+	if !c.ValidateOnly && c.AuthTokenKeyFile == "" {
+		return fmt.Errorf("auth.token_key_file is required (ANDARA_AUTH_TOKEN_KEY_FILE)")
+	}
+	if c.AuthSessionTTL <= 0 || c.AuthRefreshTTL <= 0 || c.AuthInviteTTL <= 0 || c.AuthRecheckInterval <= 0 {
+		return fmt.Errorf("auth.session_ttl, auth.refresh_ttl, auth.invite_ttl, and auth.recheck_interval must be positive")
+	}
+	if c.SessionLinkdeadMax <= 0 {
+		return fmt.Errorf("session.linkdead_max must be positive, got %s", c.SessionLinkdeadMax)
+	}
+	if c.AuthSessionTTL <= c.SessionLinkdeadMax {
+		return fmt.Errorf("auth.session_ttl (%s) must exceed session.linkdead_max (%s), or a linkdead reconnect fails on authentication", c.AuthSessionTTL, c.SessionLinkdeadMax)
+	}
+	if c.AuthArgon2MemoryKiB < 8 || c.AuthArgon2Time < 1 || c.AuthArgon2Threads < 1 || c.AuthArgon2Threads > 255 {
+		return fmt.Errorf("auth.argon2: memory_kib >= 8, time >= 1, 1 <= threads <= 255 required")
+	}
+	if (c.AuthK8sIssuer == "") != (c.AuthK8sJWKSURL == "") {
+		return fmt.Errorf("auth.k8s_issuer and auth.k8s_jwks_url must be set together")
+	}
+	if c.AuthBootstrapOperator != "" && !strings.Contains(c.AuthBootstrapOperator, ":") {
+		return fmt.Errorf("auth.bootstrap_operator must be username:password")
+	}
+	return nil
+}
+
+func parseUint32(key, v string, dst *uint32) error {
+	n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 32)
+	if err != nil {
+		return fmt.Errorf("%s must be an unsigned integer, got %q", key, v)
+	}
+	*dst = uint32(n)
+	return nil
+}
+
+// splitList reads a comma-separated list, dropping empties.
+func splitList(v string) []string {
+	var out []string
+	for _, p := range strings.Split(v, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // validateGateway rejects a configuration the gateway cannot serve. TLS
@@ -195,6 +330,29 @@ type fileConfig struct {
 		MinVersion *uint32 `yaml:"min_version"`
 		MaxVersion *uint32 `yaml:"max_version"`
 	} `yaml:"protocol"`
+	Kafka *struct {
+		Brokers []string `yaml:"brokers"`
+	} `yaml:"kafka"`
+	Auth *struct {
+		Store        *string `yaml:"store"`
+		SessionTTL   *string `yaml:"session_ttl"`
+		RefreshTTL   *string `yaml:"refresh_ttl"`
+		TokenKeyFile *string `yaml:"token_key_file"`
+		Argon2       *struct {
+			MemoryKiB *uint32 `yaml:"memory_kib"`
+			Time      *uint32 `yaml:"time"`
+			Threads   *uint32 `yaml:"threads"`
+		} `yaml:"argon2"`
+		RateLimit         *string `yaml:"rate_limit"`
+		InviteTTL         *string `yaml:"invite_ttl"`
+		RecheckInterval   *string `yaml:"recheck_interval"`
+		K8sIssuer         *string `yaml:"k8s_issuer"`
+		K8sJWKSURL        *string `yaml:"k8s_jwks_url"`
+		BootstrapOperator *string `yaml:"bootstrap_operator"`
+	} `yaml:"auth"`
+	Session *struct {
+		LinkdeadMax *string `yaml:"linkdead_max"`
+	} `yaml:"session"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -284,6 +442,61 @@ func applyFile(c *Config, path string) error {
 			c.ProtocolMaxVersion = *fc.Protocol.MaxVersion
 		}
 	}
+	if fc.Kafka != nil && fc.Kafka.Brokers != nil {
+		c.KafkaBrokers = fc.Kafka.Brokers
+	}
+	if a := fc.Auth; a != nil {
+		if a.Store != nil {
+			c.AuthStore = *a.Store
+		}
+		if a.TokenKeyFile != nil {
+			c.AuthTokenKeyFile = *a.TokenKeyFile
+		}
+		if a.RateLimit != nil {
+			c.AuthRateLimit = *a.RateLimit
+		}
+		if a.K8sIssuer != nil {
+			c.AuthK8sIssuer = *a.K8sIssuer
+		}
+		if a.K8sJWKSURL != nil {
+			c.AuthK8sJWKSURL = *a.K8sJWKSURL
+		}
+		if a.BootstrapOperator != nil {
+			c.AuthBootstrapOperator = *a.BootstrapOperator
+		}
+		if a.Argon2 != nil {
+			if a.Argon2.MemoryKiB != nil {
+				c.AuthArgon2MemoryKiB = *a.Argon2.MemoryKiB
+			}
+			if a.Argon2.Time != nil {
+				c.AuthArgon2Time = *a.Argon2.Time
+			}
+			if a.Argon2.Threads != nil {
+				c.AuthArgon2Threads = *a.Argon2.Threads
+			}
+		}
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"auth.session_ttl", a.SessionTTL, &c.AuthSessionTTL},
+			{"auth.refresh_ttl", a.RefreshTTL, &c.AuthRefreshTTL},
+			{"auth.invite_ttl", a.InviteTTL, &c.AuthInviteTTL},
+			{"auth.recheck_interval", a.RecheckInterval, &c.AuthRecheckInterval},
+		} {
+			if d.v != nil {
+				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+					return fmt.Errorf("config file %s: %w", path, err)
+				}
+			}
+		}
+	}
+	if fc.Session != nil && fc.Session.LinkdeadMax != nil {
+		if err := parseDuration("session.linkdead_max", *fc.Session.LinkdeadMax, &c.SessionLinkdeadMax); err != nil {
+			return fmt.Errorf("config file %s: %w", path, err)
+		}
+	}
 	return nil
 }
 
@@ -358,6 +571,54 @@ func applyEnv(c *Config, env EnvLookup) error {
 	if v, ok := env("ANDARA_PROTOCOL_MAX"); ok {
 		if err := parseVersion(v, &c.ProtocolMaxVersion); err != nil {
 			return fmt.Errorf("ANDARA_PROTOCOL_MAX: %w", err)
+		}
+	}
+	if v, ok := env("ANDARA_KAFKA_BROKERS"); ok {
+		c.KafkaBrokers = splitList(v)
+	}
+	for _, sv := range []struct {
+		name string
+		dst  *string
+	}{
+		{"ANDARA_AUTH_STORE", &c.AuthStore},
+		{"ANDARA_AUTH_TOKEN_KEY_FILE", &c.AuthTokenKeyFile},
+		{"ANDARA_AUTH_RATE_LIMIT", &c.AuthRateLimit},
+		{"ANDARA_AUTH_K8S_ISSUER", &c.AuthK8sIssuer},
+		{"ANDARA_AUTH_K8S_JWKS_URL", &c.AuthK8sJWKSURL},
+		{"ANDARA_AUTH_BOOTSTRAP_OPERATOR", &c.AuthBootstrapOperator},
+	} {
+		if v, ok := env(sv.name); ok {
+			*sv.dst = v
+		}
+	}
+	for _, dv := range []struct {
+		name string
+		dst  *time.Duration
+	}{
+		{"ANDARA_AUTH_SESSION_TTL", &c.AuthSessionTTL},
+		{"ANDARA_AUTH_REFRESH_TTL", &c.AuthRefreshTTL},
+		{"ANDARA_AUTH_INVITE_TTL", &c.AuthInviteTTL},
+		{"ANDARA_AUTH_RECHECK_INTERVAL", &c.AuthRecheckInterval},
+		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
+	} {
+		if v, ok := env(dv.name); ok {
+			if err := parseDuration(dv.name, v, dv.dst); err != nil {
+				return err
+			}
+		}
+	}
+	for _, uv := range []struct {
+		name string
+		dst  *uint32
+	}{
+		{"ANDARA_AUTH_ARGON2_MEMORY_KIB", &c.AuthArgon2MemoryKiB},
+		{"ANDARA_AUTH_ARGON2_TIME", &c.AuthArgon2Time},
+		{"ANDARA_AUTH_ARGON2_THREADS", &c.AuthArgon2Threads},
+	} {
+		if v, ok := env(uv.name); ok {
+			if err := parseUint32(uv.name, v, uv.dst); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

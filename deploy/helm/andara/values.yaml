@@ -37,6 +37,12 @@ secrets:
     keyKey: tls.key
   kafkaCreds:
     secretName: ""
+  # `username:password` for the first operator Account (AW-SRV-008). Injected as
+  # ANDARA_AUTH_BOOTSTRAP_OPERATOR from the Secret, applied by the server only while no
+  # operator exists, and ignored afterwards — so it can stay set without being a back door.
+  bootstrapOperator:
+    secretName: ""
+    key: bootstrap-operator
 
 # Empty means "derive from measurements.yaml × resourcesMultiplier". Set explicitly only
 # when a measurement is not what you want to run against.

@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"connectrpc.com/connect"
+	authv1 "github.com/valesordev/andara/gen/go/andara/auth/v1"
+	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"golang.org/x/net/http2"
@@ -61,11 +63,18 @@ func client(t *testing.T) gamev1connect.GameClient {
 
 // AC-3 and AC-5 against the running server: the handshake succeeds against the
 // local CA, and an in-range version comes back with a SessionID and the
-// negotiated version.
+// negotiated version. The token is a real one since AW-SRV-008; auth_test.go
+// covers what a made-up one gets.
 func TestLive_OpenSession(t *testing.T) {
+	user, pass := operator(t)
+	tokens, err := authv1connect.NewAuthClient(httpClient(t), baseURL(), connect.WithGRPC()).Authenticate(context.Background(),
+		connect.NewRequest(&authv1.AuthenticateRequest{Username: user, Password: pass}))
+	if err != nil {
+		t.Fatalf("Authenticate: %v", err)
+	}
 	resp, err := client(t).OpenSession(context.Background(),
 		connect.NewRequest(&gamev1.OpenSessionRequest{
-			ProtocolVersion: 1, AuthToken: "smoke-token", ClientName: "stack-smoke/0.1",
+			ProtocolVersion: 1, AuthToken: tokens.Msg.GetTokens().GetSessionToken(), ClientName: "stack-smoke/0.1",
 		}))
 	if err != nil {
 		t.Fatalf("OpenSession: %v", err)

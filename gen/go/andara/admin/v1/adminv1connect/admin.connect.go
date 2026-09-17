@@ -49,6 +49,24 @@ const (
 const (
 	// AdminGetServerInfoProcedure is the fully-qualified name of the Admin's GetServerInfo RPC.
 	AdminGetServerInfoProcedure = "/andara.admin.v1.Admin/GetServerInfo"
+	// AdminCreateAccountProcedure is the fully-qualified name of the Admin's CreateAccount RPC.
+	AdminCreateAccountProcedure = "/andara.admin.v1.Admin/CreateAccount"
+	// AdminResetPasswordProcedure is the fully-qualified name of the Admin's ResetPassword RPC.
+	AdminResetPasswordProcedure = "/andara.admin.v1.Admin/ResetPassword"
+	// AdminSetRolesProcedure is the fully-qualified name of the Admin's SetRoles RPC.
+	AdminSetRolesProcedure = "/andara.admin.v1.Admin/SetRoles"
+	// AdminSetAccountStatusProcedure is the fully-qualified name of the Admin's SetAccountStatus RPC.
+	AdminSetAccountStatusProcedure = "/andara.admin.v1.Admin/SetAccountStatus"
+	// AdminIssueInviteProcedure is the fully-qualified name of the Admin's IssueInvite RPC.
+	AdminIssueInviteProcedure = "/andara.admin.v1.Admin/IssueInvite"
+	// AdminRevokeInviteProcedure is the fully-qualified name of the Admin's RevokeInvite RPC.
+	AdminRevokeInviteProcedure = "/andara.admin.v1.Admin/RevokeInvite"
+	// AdminSetRegistrationModeProcedure is the fully-qualified name of the Admin's SetRegistrationMode
+	// RPC.
+	AdminSetRegistrationModeProcedure = "/andara.admin.v1.Admin/SetRegistrationMode"
+	// AdminCreateAgentAccountProcedure is the fully-qualified name of the Admin's CreateAgentAccount
+	// RPC.
+	AdminCreateAgentAccountProcedure = "/andara.admin.v1.Admin/CreateAgentAccount"
 )
 
 // AdminClient is a client for the andara.admin.v1.Admin service.
@@ -57,6 +75,31 @@ type AdminClient interface {
 	// content from code, so reproducing a bug requires naming both — this is the
 	// RPC form of the andara_build_info metric (AW-INF-002).
 	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
+	// Create a PASSWORD Account directly. The only path to an Account while
+	// the Registration Mode is `closed`.
+	CreateAccount(context.Context, *connect.Request[v1.CreateAccountRequest]) (*connect.Response[v1.CreateAccountResponse], error)
+	// Replace an Account's password. No email flow exists in Phase 1
+	// (ADR-0006); this is how a locked-out player gets back in.
+	ResetPassword(context.Context, *connect.Request[v1.ResetPasswordRequest]) (*connect.Response[v1.ResetPasswordResponse], error)
+	// Replace the role set. Open Sessions on the Account are closed within
+	// auth.recheck_interval so they reopen with the new roles.
+	SetRoles(context.Context, *connect.Request[v1.SetRolesRequest]) (*connect.Response[v1.SetRolesResponse], error)
+	// ACTIVE or DISABLED. A DISABLED Account's still-valid session token is
+	// refused by OpenSession, and its open Sessions are closed within
+	// auth.recheck_interval.
+	SetAccountStatus(context.Context, *connect.Request[v1.SetAccountStatusRequest]) (*connect.Response[v1.SetAccountStatusResponse], error)
+	// Mint Invite Codes scoped to the caller's Account. The codes are in the
+	// response and nowhere else; only their hashes are stored.
+	IssueInvite(context.Context, *connect.Request[v1.IssueInviteRequest]) (*connect.Response[v1.IssueInviteResponse], error)
+	RevokeInvite(context.Context, *connect.Request[v1.RevokeInviteRequest]) (*connect.Response[v1.RevokeInviteResponse], error)
+	// Flip the Registration Mode. A write to andara.accounts.v1 under the key
+	// "config/registration", not a deploy.
+	SetRegistrationMode(context.Context, *connect.Request[v1.SetRegistrationModeRequest]) (*connect.Response[v1.SetRegistrationModeResponse], error)
+	// Create an AGENT Account scoped to one Content Pack. With an API_KEY
+	// credential the key is in the response exactly once; with WORKLOAD_JWT
+	// there is no secret to return and workload_subject is what the projected
+	// token's `sub` must equal.
+	CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error)
 }
 
 // NewAdminClient constructs a client for the andara.admin.v1.Admin service. By default, it uses the
@@ -76,17 +119,113 @@ func NewAdminClient(httpClient connect.HTTPClient, baseURL string, opts ...conne
 			connect.WithSchema(adminMethods.ByName("GetServerInfo")),
 			connect.WithClientOptions(opts...),
 		),
+		createAccount: connect.NewClient[v1.CreateAccountRequest, v1.CreateAccountResponse](
+			httpClient,
+			baseURL+AdminCreateAccountProcedure,
+			connect.WithSchema(adminMethods.ByName("CreateAccount")),
+			connect.WithClientOptions(opts...),
+		),
+		resetPassword: connect.NewClient[v1.ResetPasswordRequest, v1.ResetPasswordResponse](
+			httpClient,
+			baseURL+AdminResetPasswordProcedure,
+			connect.WithSchema(adminMethods.ByName("ResetPassword")),
+			connect.WithClientOptions(opts...),
+		),
+		setRoles: connect.NewClient[v1.SetRolesRequest, v1.SetRolesResponse](
+			httpClient,
+			baseURL+AdminSetRolesProcedure,
+			connect.WithSchema(adminMethods.ByName("SetRoles")),
+			connect.WithClientOptions(opts...),
+		),
+		setAccountStatus: connect.NewClient[v1.SetAccountStatusRequest, v1.SetAccountStatusResponse](
+			httpClient,
+			baseURL+AdminSetAccountStatusProcedure,
+			connect.WithSchema(adminMethods.ByName("SetAccountStatus")),
+			connect.WithClientOptions(opts...),
+		),
+		issueInvite: connect.NewClient[v1.IssueInviteRequest, v1.IssueInviteResponse](
+			httpClient,
+			baseURL+AdminIssueInviteProcedure,
+			connect.WithSchema(adminMethods.ByName("IssueInvite")),
+			connect.WithClientOptions(opts...),
+		),
+		revokeInvite: connect.NewClient[v1.RevokeInviteRequest, v1.RevokeInviteResponse](
+			httpClient,
+			baseURL+AdminRevokeInviteProcedure,
+			connect.WithSchema(adminMethods.ByName("RevokeInvite")),
+			connect.WithClientOptions(opts...),
+		),
+		setRegistrationMode: connect.NewClient[v1.SetRegistrationModeRequest, v1.SetRegistrationModeResponse](
+			httpClient,
+			baseURL+AdminSetRegistrationModeProcedure,
+			connect.WithSchema(adminMethods.ByName("SetRegistrationMode")),
+			connect.WithClientOptions(opts...),
+		),
+		createAgentAccount: connect.NewClient[v1.CreateAgentAccountRequest, v1.CreateAgentAccountResponse](
+			httpClient,
+			baseURL+AdminCreateAgentAccountProcedure,
+			connect.WithSchema(adminMethods.ByName("CreateAgentAccount")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // adminClient implements AdminClient.
 type adminClient struct {
-	getServerInfo *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	getServerInfo       *connect.Client[v1.GetServerInfoRequest, v1.GetServerInfoResponse]
+	createAccount       *connect.Client[v1.CreateAccountRequest, v1.CreateAccountResponse]
+	resetPassword       *connect.Client[v1.ResetPasswordRequest, v1.ResetPasswordResponse]
+	setRoles            *connect.Client[v1.SetRolesRequest, v1.SetRolesResponse]
+	setAccountStatus    *connect.Client[v1.SetAccountStatusRequest, v1.SetAccountStatusResponse]
+	issueInvite         *connect.Client[v1.IssueInviteRequest, v1.IssueInviteResponse]
+	revokeInvite        *connect.Client[v1.RevokeInviteRequest, v1.RevokeInviteResponse]
+	setRegistrationMode *connect.Client[v1.SetRegistrationModeRequest, v1.SetRegistrationModeResponse]
+	createAgentAccount  *connect.Client[v1.CreateAgentAccountRequest, v1.CreateAgentAccountResponse]
 }
 
 // GetServerInfo calls andara.admin.v1.Admin.GetServerInfo.
 func (c *adminClient) GetServerInfo(ctx context.Context, req *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
 	return c.getServerInfo.CallUnary(ctx, req)
+}
+
+// CreateAccount calls andara.admin.v1.Admin.CreateAccount.
+func (c *adminClient) CreateAccount(ctx context.Context, req *connect.Request[v1.CreateAccountRequest]) (*connect.Response[v1.CreateAccountResponse], error) {
+	return c.createAccount.CallUnary(ctx, req)
+}
+
+// ResetPassword calls andara.admin.v1.Admin.ResetPassword.
+func (c *adminClient) ResetPassword(ctx context.Context, req *connect.Request[v1.ResetPasswordRequest]) (*connect.Response[v1.ResetPasswordResponse], error) {
+	return c.resetPassword.CallUnary(ctx, req)
+}
+
+// SetRoles calls andara.admin.v1.Admin.SetRoles.
+func (c *adminClient) SetRoles(ctx context.Context, req *connect.Request[v1.SetRolesRequest]) (*connect.Response[v1.SetRolesResponse], error) {
+	return c.setRoles.CallUnary(ctx, req)
+}
+
+// SetAccountStatus calls andara.admin.v1.Admin.SetAccountStatus.
+func (c *adminClient) SetAccountStatus(ctx context.Context, req *connect.Request[v1.SetAccountStatusRequest]) (*connect.Response[v1.SetAccountStatusResponse], error) {
+	return c.setAccountStatus.CallUnary(ctx, req)
+}
+
+// IssueInvite calls andara.admin.v1.Admin.IssueInvite.
+func (c *adminClient) IssueInvite(ctx context.Context, req *connect.Request[v1.IssueInviteRequest]) (*connect.Response[v1.IssueInviteResponse], error) {
+	return c.issueInvite.CallUnary(ctx, req)
+}
+
+// RevokeInvite calls andara.admin.v1.Admin.RevokeInvite.
+func (c *adminClient) RevokeInvite(ctx context.Context, req *connect.Request[v1.RevokeInviteRequest]) (*connect.Response[v1.RevokeInviteResponse], error) {
+	return c.revokeInvite.CallUnary(ctx, req)
+}
+
+// SetRegistrationMode calls andara.admin.v1.Admin.SetRegistrationMode.
+func (c *adminClient) SetRegistrationMode(ctx context.Context, req *connect.Request[v1.SetRegistrationModeRequest]) (*connect.Response[v1.SetRegistrationModeResponse], error) {
+	return c.setRegistrationMode.CallUnary(ctx, req)
+}
+
+// CreateAgentAccount calls andara.admin.v1.Admin.CreateAgentAccount.
+func (c *adminClient) CreateAgentAccount(ctx context.Context, req *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error) {
+	return c.createAgentAccount.CallUnary(ctx, req)
 }
 
 // AdminHandler is an implementation of the andara.admin.v1.Admin service.
@@ -95,6 +234,31 @@ type AdminHandler interface {
 	// content from code, so reproducing a bug requires naming both — this is the
 	// RPC form of the andara_build_info metric (AW-INF-002).
 	GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error)
+	// Create a PASSWORD Account directly. The only path to an Account while
+	// the Registration Mode is `closed`.
+	CreateAccount(context.Context, *connect.Request[v1.CreateAccountRequest]) (*connect.Response[v1.CreateAccountResponse], error)
+	// Replace an Account's password. No email flow exists in Phase 1
+	// (ADR-0006); this is how a locked-out player gets back in.
+	ResetPassword(context.Context, *connect.Request[v1.ResetPasswordRequest]) (*connect.Response[v1.ResetPasswordResponse], error)
+	// Replace the role set. Open Sessions on the Account are closed within
+	// auth.recheck_interval so they reopen with the new roles.
+	SetRoles(context.Context, *connect.Request[v1.SetRolesRequest]) (*connect.Response[v1.SetRolesResponse], error)
+	// ACTIVE or DISABLED. A DISABLED Account's still-valid session token is
+	// refused by OpenSession, and its open Sessions are closed within
+	// auth.recheck_interval.
+	SetAccountStatus(context.Context, *connect.Request[v1.SetAccountStatusRequest]) (*connect.Response[v1.SetAccountStatusResponse], error)
+	// Mint Invite Codes scoped to the caller's Account. The codes are in the
+	// response and nowhere else; only their hashes are stored.
+	IssueInvite(context.Context, *connect.Request[v1.IssueInviteRequest]) (*connect.Response[v1.IssueInviteResponse], error)
+	RevokeInvite(context.Context, *connect.Request[v1.RevokeInviteRequest]) (*connect.Response[v1.RevokeInviteResponse], error)
+	// Flip the Registration Mode. A write to andara.accounts.v1 under the key
+	// "config/registration", not a deploy.
+	SetRegistrationMode(context.Context, *connect.Request[v1.SetRegistrationModeRequest]) (*connect.Response[v1.SetRegistrationModeResponse], error)
+	// Create an AGENT Account scoped to one Content Pack. With an API_KEY
+	// credential the key is in the response exactly once; with WORKLOAD_JWT
+	// there is no secret to return and workload_subject is what the projected
+	// token's `sub` must equal.
+	CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error)
 }
 
 // NewAdminHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -110,10 +274,74 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 		connect.WithSchema(adminMethods.ByName("GetServerInfo")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminCreateAccountHandler := connect.NewUnaryHandler(
+		AdminCreateAccountProcedure,
+		svc.CreateAccount,
+		connect.WithSchema(adminMethods.ByName("CreateAccount")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminResetPasswordHandler := connect.NewUnaryHandler(
+		AdminResetPasswordProcedure,
+		svc.ResetPassword,
+		connect.WithSchema(adminMethods.ByName("ResetPassword")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminSetRolesHandler := connect.NewUnaryHandler(
+		AdminSetRolesProcedure,
+		svc.SetRoles,
+		connect.WithSchema(adminMethods.ByName("SetRoles")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminSetAccountStatusHandler := connect.NewUnaryHandler(
+		AdminSetAccountStatusProcedure,
+		svc.SetAccountStatus,
+		connect.WithSchema(adminMethods.ByName("SetAccountStatus")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminIssueInviteHandler := connect.NewUnaryHandler(
+		AdminIssueInviteProcedure,
+		svc.IssueInvite,
+		connect.WithSchema(adminMethods.ByName("IssueInvite")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminRevokeInviteHandler := connect.NewUnaryHandler(
+		AdminRevokeInviteProcedure,
+		svc.RevokeInvite,
+		connect.WithSchema(adminMethods.ByName("RevokeInvite")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminSetRegistrationModeHandler := connect.NewUnaryHandler(
+		AdminSetRegistrationModeProcedure,
+		svc.SetRegistrationMode,
+		connect.WithSchema(adminMethods.ByName("SetRegistrationMode")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminCreateAgentAccountHandler := connect.NewUnaryHandler(
+		AdminCreateAgentAccountProcedure,
+		svc.CreateAgentAccount,
+		connect.WithSchema(adminMethods.ByName("CreateAgentAccount")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/andara.admin.v1.Admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminGetServerInfoProcedure:
 			adminGetServerInfoHandler.ServeHTTP(w, r)
+		case AdminCreateAccountProcedure:
+			adminCreateAccountHandler.ServeHTTP(w, r)
+		case AdminResetPasswordProcedure:
+			adminResetPasswordHandler.ServeHTTP(w, r)
+		case AdminSetRolesProcedure:
+			adminSetRolesHandler.ServeHTTP(w, r)
+		case AdminSetAccountStatusProcedure:
+			adminSetAccountStatusHandler.ServeHTTP(w, r)
+		case AdminIssueInviteProcedure:
+			adminIssueInviteHandler.ServeHTTP(w, r)
+		case AdminRevokeInviteProcedure:
+			adminRevokeInviteHandler.ServeHTTP(w, r)
+		case AdminSetRegistrationModeProcedure:
+			adminSetRegistrationModeHandler.ServeHTTP(w, r)
+		case AdminCreateAgentAccountProcedure:
+			adminCreateAgentAccountHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -125,4 +353,36 @@ type UnimplementedAdminHandler struct{}
 
 func (UnimplementedAdminHandler) GetServerInfo(context.Context, *connect.Request[v1.GetServerInfoRequest]) (*connect.Response[v1.GetServerInfoResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.GetServerInfo is not implemented"))
+}
+
+func (UnimplementedAdminHandler) CreateAccount(context.Context, *connect.Request[v1.CreateAccountRequest]) (*connect.Response[v1.CreateAccountResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.CreateAccount is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ResetPassword(context.Context, *connect.Request[v1.ResetPasswordRequest]) (*connect.Response[v1.ResetPasswordResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ResetPassword is not implemented"))
+}
+
+func (UnimplementedAdminHandler) SetRoles(context.Context, *connect.Request[v1.SetRolesRequest]) (*connect.Response[v1.SetRolesResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.SetRoles is not implemented"))
+}
+
+func (UnimplementedAdminHandler) SetAccountStatus(context.Context, *connect.Request[v1.SetAccountStatusRequest]) (*connect.Response[v1.SetAccountStatusResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.SetAccountStatus is not implemented"))
+}
+
+func (UnimplementedAdminHandler) IssueInvite(context.Context, *connect.Request[v1.IssueInviteRequest]) (*connect.Response[v1.IssueInviteResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.IssueInvite is not implemented"))
+}
+
+func (UnimplementedAdminHandler) RevokeInvite(context.Context, *connect.Request[v1.RevokeInviteRequest]) (*connect.Response[v1.RevokeInviteResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.RevokeInvite is not implemented"))
+}
+
+func (UnimplementedAdminHandler) SetRegistrationMode(context.Context, *connect.Request[v1.SetRegistrationModeRequest]) (*connect.Response[v1.SetRegistrationModeResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.SetRegistrationMode is not implemented"))
+}
+
+func (UnimplementedAdminHandler) CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.CreateAgentAccount is not implemented"))
 }

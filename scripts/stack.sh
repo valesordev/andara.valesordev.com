@@ -98,10 +98,10 @@ case "$ACTION" in
     fi
 
     "$REPO/scripts/tls.sh"
+    "$REPO/scripts/auth_keys.sh"
 
     echo "up: starting the $PROFILE stack (this blocks until every service is healthy)"
-    # shellcheck disable=SC2046
-    dc --profile "$PROFILE" $(server_profile_args) up -d --wait --remove-orphans \
+    dc --profile "$PROFILE" up -d --wait --remove-orphans \
       || fail "one or more services did not become healthy; \`make logs\` shows why"
 
     # Topics come from deploy/kafka/topics.yaml, applied by AW-INF-004's tool. The compose
@@ -112,6 +112,16 @@ case "$ACTION" in
     # Subjects come from deploy/kafka/schemas.yaml the same way (AW-INF-004), so a local
     # registry holds what production holds rather than whatever the first producer wrote.
     ANDARA_ENV=local "${PY:-python3}" "$REPO/scripts/schemas.py" apply --env local
+
+    # The server starts only after the topics exist: it replays andara.accounts.v1 at
+    # boot and refuses to run against a topic it would have had to create (AW-SRV-008).
+    # It runs as the host uid so the 0600 keyring bind-mounted from .local/auth is
+    # readable inside the container.
+    if [[ -n "$(server_profile_args)" ]]; then
+      export ANDARA_UID="$(id -u)" ANDARA_GID="$(id -g)"
+      dc --profile "$PROFILE" --profile server up -d --wait andara-server \
+        || fail "andara-server did not become ready; \`make logs SVC=andara-server\` shows why"
+    fi
 
     # A ready-to-use CLI config, so "the CA is trusted out of the box" (AW-INF-002 AC-5)
     # is one export rather than two flags on every invocation. Written into the repo's
@@ -148,6 +158,7 @@ CLICONF
     if [[ -n "$(server_profile_args)" ]]; then
       printf '  %-24s %s\n' "andara-server"  "localhost:${ANDARA_GRPC_PORT:-8443} (gRPC, TLS)"
       printf '  %-24s %s\n' "server health"  "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/readyz"
+      printf '  %-24s %s\n' "bootstrap operator" "${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local} (local only; ANDARA_BOOTSTRAP_OPERATOR overrides)"
     fi
     printf '  %-24s %s\n' "TLS CA"           "$TLS_DIR/ca.pem"
     echo

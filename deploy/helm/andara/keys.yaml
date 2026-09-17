@@ -18,6 +18,7 @@
 ignore_env:
   - ANDARA_CONFIG          # the config file path; the chart uses env, not a file
   - ANDARA_SIM_PARTITIONS  # written by the init container from the pod ordinal, never a value
+  - ANDARA_AUTH_BOOTSTRAP_OPERATOR  # username:password — a Secret, injected by secrets.bootstrapOperator, never a value
 
 keys:
   # --- AW-SRV-001 / AW-INF-002: in code ---
@@ -85,6 +86,10 @@ keys:
   - {key: deploy.expected_back,      env: ANDARA_DEPLOY_EXPECTED_BACK,    type: duration, default: 60s, story: AW-INF-007}
 
   # --- AW-SRV-008 / AW-SRV-014 / AW-SRV-015: identity and sessions ---
+  # kafka.brokers is read by the account store first (AW-SRV-008); the command log
+  # producer (AW-SRV-010) and the tick consumers (AW-SRV-002) read the same key.
+  - {key: kafka.brokers,             env: ANDARA_KAFKA_BROKERS,           type: string, default: "", story: AW-SRV-008}
+  - {key: auth.store,                env: ANDARA_AUTH_STORE,              type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-008}
   - {key: auth.session_ttl,          env: ANDARA_AUTH_SESSION_TTL,        type: duration, default: 1h, story: AW-SRV-008}
   - {key: auth.refresh_ttl,          env: ANDARA_AUTH_REFRESH_TTL,        type: duration, default: 720h, story: AW-SRV-008}
   - {key: auth.token_key_file,       env: ANDARA_AUTH_TOKEN_KEY_FILE,     type: string, default: "", story: AW-SRV-008}
@@ -94,15 +99,16 @@ keys:
   - {key: auth.rate_limit,           env: ANDARA_AUTH_RATE_LIMIT,         type: string, default: 10/m, story: AW-SRV-008}
   - {key: auth.invite_ttl,           env: ANDARA_AUTH_INVITE_TTL,         type: duration, default: 168h, story: AW-SRV-008}
   - {key: auth.recheck_interval,     env: ANDARA_AUTH_RECHECK_INTERVAL,   type: duration, default: 30s, story: AW-SRV-008}
-  - {key: auth.k8s_issuer,           env: ANDARA_AUTH_K8S_ISSUER,         type: string, default: "", story: AW-SRV-009}
-  - {key: auth.k8s_jwks_url,         env: ANDARA_AUTH_K8S_JWKS_URL,       type: string, default: "", story: AW-SRV-009}
+  - {key: auth.k8s_issuer,           env: ANDARA_AUTH_K8S_ISSUER,         type: string, default: "", story: AW-SRV-008}
+  - {key: auth.k8s_jwks_url,         env: ANDARA_AUTH_K8S_JWKS_URL,       type: string, default: "", story: AW-SRV-008}
   - {key: character.max_per_account, env: ANDARA_CHARACTER_MAX_PER_ACCOUNT, type: int, default: 5, min: 1, story: AW-SRV-014}
   - {key: character.spawn_room,      env: ANDARA_CHARACTER_SPAWN_ROOM,    type: string, default: "", story: AW-SRV-014}
   - {key: character.delete_retention, env: ANDARA_CHARACTER_DELETE_RETENTION, type: duration, default: 720h, story: AW-SRV-014}
   - {key: character.name_pattern,    env: ANDARA_CHARACTER_NAME_PATTERN,  type: string, default: "", story: AW-SRV-014}
   - {key: session.linkdead_grace,    env: ANDARA_LINKDEAD_GRACE,          type: duration, default: 180s, story: AW-SRV-015}
   - {key: session.linkdead_combat_extension, env: ANDARA_LINKDEAD_COMBAT_EXTENSION, type: duration, default: 60s, story: AW-SRV-015}
-  - {key: session.linkdead_max,      env: ANDARA_LINKDEAD_MAX,            type: duration, default: 300s, story: AW-SRV-015}
+  # Read since AW-SRV-008, which asserts auth.session_ttl > session.linkdead_max at boot.
+  - {key: session.linkdead_max,      env: ANDARA_LINKDEAD_MAX,            type: duration, default: 300s, story: AW-SRV-008}
   - {key: session.linkdead_detect,   env: ANDARA_LINKDEAD_DETECT,         type: duration, default: 5s, story: AW-SRV-015}
 
   # --- AW-SRV-009: behavior agents ---

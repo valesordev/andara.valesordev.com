@@ -28,6 +28,10 @@ fail() { echo "stack-smoke: $*" >&2; exit 1; }
 # relative to the repo root would resolve under internal/smoke/.
 export ANDARA_TLS_CA_FILE="${ANDARA_TLS_CA_FILE:-$PWD/.local/tls/ca.pem}"
 export ANDARA_SMOKE_ADDR="${ANDARA_SMOKE_ADDR:-localhost:${ANDARA_GRPC_PORT:-8443}}"
+# AW-SRV-008: the bootstrap operator `make up` configured, and the broker the audit
+# record is read back from.
+export ANDARA_SMOKE_OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}"
+export ANDARA_KAFKA_BROKERS="${ANDARA_KAFKA_BROKERS:-localhost:${ANDARA_KAFKA_PORT:-9092}}"
 
 echo "stack-smoke: opening a Session over TLS ..."
 $GO test -tags smoke -count=1 -v ./internal/smoke/ || fail "the live Session tests failed"

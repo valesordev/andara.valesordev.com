@@ -41,6 +41,21 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `grpc.drain_timeout` | `ANDARA_GRPC_DRAIN_TIMEOUT` | `15s` | How long shutdown waits for in-flight RPCs after refusing new ones. Past it, remaining connections are closed. |
 | `protocol.min_version` | `ANDARA_PROTOCOL_MIN` | `1` | Lowest Protocol version `OpenSession` accepts. Must be at least 1: `0` is what proto3 sends for an unset field. |
 | `protocol.max_version` | `ANDARA_PROTOCOL_MAX` | `1` | Highest Protocol version accepted. |
+| `kafka.brokers` | `ANDARA_KAFKA_BROKERS` | — | Comma-separated. **Required** when `auth.store=kafka`. |
+| `auth.store` | `ANDARA_AUTH_STORE` | `kafka` | `kafka` or `memory`. `memory` loses every Account on restart and warns at boot; it exists for development and tests. |
+| `auth.token_key_file` | `ANDARA_AUTH_TOKEN_KEY_FILE` | — | **Required.** Session-token signing keys, one `key_id: base64` per line, first signs. Mode `0400`/`0600`, or `0440`/`0640` for a Kubernetes Secret with `fsGroup`. See *Key rotation*. |
+| `auth.bootstrap_operator` | `ANDARA_AUTH_BOOTSTRAP_OPERATOR` | — | `username:password` for the first operator; applied only while no operator Account exists, ignored afterwards. Never a value in the chart — `secrets.bootstrapOperator` injects it from a Secret. |
+| `auth.session_ttl` | `ANDARA_AUTH_SESSION_TTL` | `1h` | Session token lifetime. **Must exceed `session.linkdead_max`** or boot fails: a token that expires inside the grace period fails every linkdead reconnect. |
+| `auth.refresh_ttl` | `ANDARA_AUTH_REFRESH_TTL` | `720h` | Refresh token lifetime, 30 days. |
+| `auth.argon2.memory_kib` | `ANDARA_AUTH_ARGON2_MEMORY_KIB` | `65536` | Argon2id cost. Changing any of the three rehashes each Account on its next successful login. |
+| `auth.argon2.time` | `ANDARA_AUTH_ARGON2_TIME` | `3` | |
+| `auth.argon2.threads` | `ANDARA_AUTH_ARGON2_THREADS` | `4` | |
+| `auth.rate_limit` | `ANDARA_AUTH_RATE_LIMIT` | `10/m` | Auth attempts per username and per peer address, `N/period`; `off` disables. No lockout, ever — a lockout is a denial-of-service lever. |
+| `auth.invite_ttl` | `ANDARA_AUTH_INVITE_TTL` | `168h` | Invite Code lifetime, 7 days. |
+| `auth.recheck_interval` | `ANDARA_AUTH_RECHECK_INTERVAL` | `30s` | How often every open Session re-reads its Account's status and roles; the bound on how long a disabled Account stays connected. |
+| `auth.k8s_issuer` | `ANDARA_AUTH_K8S_ISSUER` | — | Issuer of projected service-account tokens for `WORKLOAD_JWT` agent Accounts. Unset disables the kind. Set together with `auth.k8s_jwks_url`. |
+| `auth.k8s_jwks_url` | `ANDARA_AUTH_K8S_JWKS_URL` | — | JWKS endpoint for `auth.k8s_issuer`. |
+| `session.linkdead_max` | `ANDARA_LINKDEAD_MAX` | `300s` | ADR-0006's hard ceiling on linkdead duration. Read here for the `auth.session_ttl` assertion; `AW-SRV-015` reads it for what it means. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext
 mode and no flag to create one; `make up` provisions certificates so nobody needs one
@@ -99,8 +114,8 @@ the `OpenSession` RPC that created it.
 **Seams.** `Submit` hands off to a `gateway.Ingress` (`AW-SRV-010`; the stub answers
 `UNIMPLEMENTED`), `Subscribe` to a `gateway.Egress` (`AW-SRV-011`; the stub holds the stream open
 with no Events until the Session ends or the server drains), and tokens to a
-`gateway.TokenVerifier` (`AW-SRV-008`; the stub accepts any non-empty token). Each is an
-`Options` field.
+`gateway.TokenVerifier`, which is `auth.Store` — there is no accept-anything verifier outside the
+tests, and `gateway.New` refuses a nil one. Each is an `Options` field.
 
 **Drain.** On `SIGTERM`/`SIGINT`, `/readyz` goes 503, new RPCs get `UNAVAILABLE` (retryable),
 every Session is closed with reason `server draining` and every open stream ends with
@@ -115,13 +130,103 @@ invalid token, or unknown Session, `UNAUTHENTICATED`; authenticated but not perm
 ```
 make up
 grpcurl -cacert .local/tls/ca.pem localhost:8443 list
-grpcurl -cacert .local/tls/ca.pem -d '{"protocol_version":1,"auth_token":"x","client_name":"grpcurl"}' \
+TOKEN=$(grpcurl -cacert .local/tls/ca.pem -d '{"username":"operator","password":"andara-local"}' \
+    localhost:8443 andara.auth.v1.Auth/Authenticate | jq -r .tokens.sessionToken)
+grpcurl -cacert .local/tls/ca.pem -d "{\"protocol_version\":1,\"auth_token\":\"$TOKEN\",\"client_name\":\"grpcurl\"}" \
     localhost:8443 andara.game.v1.Game/OpenSession
 grpcurl -cacert .local/tls/ca.pem -d '{"protocol_version":99}' \
     localhost:8443 andara.game.v1.Game/OpenSession   # FailedPrecondition, names 99 and 1..1
-grpcurl -cacert .local/tls/ca.pem -H 'Authorization: Bearer x' \
+grpcurl -cacert .local/tls/ca.pem -H "Authorization: Bearer $TOKEN" \
     localhost:8443 andara.admin.v1.Admin/GetServerInfo
 ```
+
+## Accounts and authentication (AW-SRV-008)
+
+`server/auth` owns who a caller is and what they may do. Account state is **not** World state
+(ADR-0006): it lives on `andara.accounts.v1`, compacted, keyed by `account_id` plus one
+`config/registration` key, written only by this process and replayed into an in-memory index at
+boot. Nothing under `server/sim` can reach it, and no credential rides in a Snapshot.
+`andara.audit.v1` gets one record per privileged action, keyed by actor. `server/recordlog` is the
+adapter behind both: `Memory` for `auth.store=memory` and tests, `Kafka` (franz-go, `acks=all`,
+idempotent producer) for the broker. The topics must already exist — `make topics-apply` — and
+`make up` starts the server only after they do.
+
+**Credentials.** Passwords and agent API keys are Argon2id with the parameters stored beside
+the hash; a login under stale parameters rewrites the record with the current ones. A
+`WORKLOAD_JWT` agent Account holds no secret at all: the projected service-account token is
+verified against `auth.k8s_jwks_url` (RS256 or ES256, `iss`, `exp`, `nbf`) and its `sub` must
+equal the Account's `workload_subject`. Failed authentication is `UNAUTHENTICATED` with one
+message whether the username is unknown or the password wrong, and the two paths cost the same —
+an unknown username is verified against a dummy credential. Rate limiting is a token bucket per
+username and per peer address, never a lockout.
+
+**Tokens.** A session token is `base64url(payload).base64url(HMAC-SHA256)` signed with the
+first key in `auth.token_key_file`, carrying `account_id`, `exp`, `kid`, and a nonce — never
+roles. Roles and status are read from the index every time a token is verified, so disabling an
+Account takes effect on its next `OpenSession` and, for Sessions already open, within
+`auth.recheck_interval` (closed with outcome `revoked`). Session tokens are stateless and survive
+a restart. A refresh token is 32 random bytes; only its SHA-256 is stored, `Refresh` rotates it,
+and presenting a revoked one is refused and audited.
+
+**Registration.** `closed` (the default and the only mode with no `AuthConfig` record on the
+topic): `Register` is `FAILED_PRECONDITION` and Accounts come from `Admin.CreateAccount`. `invite`:
+a valid unredeemed Invite Code is required; the code is burned on the issuer's record, durably,
+before the new Account is written, under the one write lock — fifty concurrent presentations of
+one code yield one Account. `open`: self-service. `Admin.SetRegistrationMode` writes the switch
+to the topic; it is not a deploy.
+
+**The first operator.** Every Admin RPC requires `operator`, so the first one cannot be created
+through Admin. `auth.bootstrap_operator` (`username:password`) creates it at boot when the index
+holds no operator, and is ignored once one exists — it can stay configured without being a back
+door. Rotate the password with `Admin.ResetPassword` afterwards. `make up` sets
+`operator:andara-local`; the chart injects it from `secrets.bootstrapOperator`.
+
+**Acting as.** `OpenSessionRequest.act_as_account_id` lets an `operator` or `game_master` open
+a Session as another Account: the Session gets the target's roles, and every audit record in it
+carries both `actor_account_id` and `acting_as_account_id`. Anyone else setting the field gets
+`PERMISSION_DENIED`, audited.
+
+**Authorize.** `auth.Authorizer` is the `authorize` stage's decision: a verb table column
+(`VerbRoles`, verb → required role; roles are a set, not a ladder) and the agent scope check
+(`AuthorizeBind`: an agent may bind only Entities whose Template comes from its own pack). A
+rejection is `ErrNotAuthorized` → `PERMISSION_DENIED`, audited with actor, verb, and Session,
+and consumes no log offset. `AW-SRV-010` calls it from `Submit`.
+
+### Key rotation
+
+`auth.token_key_file` is one `key_id: base64` per line. The **first** line signs; every line
+verifies. Rotation never invalidates a token in flight:
+
+1. Add the new key **below** the current one. Deploy. Tokens still sign with the old key; both verify.
+2. Move the new key to the **first** line. Deploy. New tokens sign with the new key; old ones still verify.
+3. After `auth.session_ttl` has elapsed since step 2, remove the old key. Deploy.
+
+A key is at least 32 bytes (`openssl rand -base64 32`). Key IDs contain no spaces or dots and
+are never reused. Locally, `make auth-keys FORCE=1` generates a fresh single-key file, which
+invalidates every local token — fine for a development stack, which is why it is not the
+procedure above. In the chart the file is `secrets.tokenKey`, mounted `0400` at
+`/etc/andara/secrets/token-key/token.keys`; with `fsGroup` set the kubelet presents it `0440`,
+which the server accepts.
+
+### Auth metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_auth_attempts_total` | counter | `outcome` | `ok`, `bad_credential`, `rate_limited`, `disabled` |
+| `andara_auth_verify_duration_seconds` | histogram | — | 1 — the Argon2id cost as seen in production |
+| `andara_registrations_total` | counter | `mode` | `closed`, `invite`, `open` |
+| `andara_invite_redemptions_total` | counter | `outcome` | `ok`, `invalid`, `race_lost` |
+| `andara_privileged_actions_total` | counter | `action` | the audited action list in `server/auth/audit.go` |
+| `andara_accounts_total` | gauge | `role` | the five roles; an Account holding two counts under both |
+| `andara_audit_write_failures_total` | counter | — | 1; anything above zero is an operator page |
+
+Account ID, username, token, and hash are never labels, never span attributes, and never in
+an error message; `TestNoSecretLeaks` plants every secret the flows produce and scans. Logs:
+`authentication attempt` at `info` with `outcome`, and `account_id` on success only — never the
+username on a failure, which may be a password typed in the wrong box; `privileged action` at
+`info` with `actor_account_id`, `acting_as_account_id`, `action`, `target`, `outcome`. Spans:
+`session.authenticate` under the `OpenSession` RPC span (which `session.lifetime` links to);
+`auth.verify_credential` under `Authenticate` with `argon2.memory_kib`.
 
 `canonical.Marshal` (`server/canonical`) is the encoder for anything that feeds the State Hash
 (ADR-0007 rule 3): deterministic protobuf, and it refuses a message whose descriptor contains a

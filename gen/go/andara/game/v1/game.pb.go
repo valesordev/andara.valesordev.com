@@ -42,9 +42,14 @@ type OpenSessionRequest struct {
 	// that the seam exists rather than being retrofitted.
 	AuthToken string `protobuf:"bytes,2,opt,name=auth_token,json=authToken,proto3" json:"auth_token,omitempty"`
 	// "andara-cli/0.1", "agent-sdk/0.1". Diagnostic only, never authorization.
-	ClientName    string `protobuf:"bytes,3,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	ClientName string `protobuf:"bytes,3,opt,name=client_name,json=clientName,proto3" json:"client_name,omitempty"`
+	// Open the Session as another Account (AW-SRV-008 AC-10). Requires the
+	// token's Account to hold `operator` or `game_master`; anyone else setting
+	// it gets PERMISSION_DENIED. Every audit record in the resulting Session
+	// names both identities — acting as someone never hides who was acting.
+	ActAsAccountId string `protobuf:"bytes,4,opt,name=act_as_account_id,json=actAsAccountId,proto3" json:"act_as_account_id,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
 }
 
 func (x *OpenSessionRequest) Reset() {
@@ -94,6 +99,13 @@ func (x *OpenSessionRequest) GetAuthToken() string {
 func (x *OpenSessionRequest) GetClientName() string {
 	if x != nil {
 		return x.ClientName
+	}
+	return ""
+}
+
+func (x *OpenSessionRequest) GetActAsAccountId() string {
+	if x != nil {
+		return x.ActAsAccountId
 	}
 	return ""
 }
@@ -430,13 +442,14 @@ var File_andara_game_v1_game_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\n" +
-	"\x19andara/game/v1/game.proto\x12\x0eandara.game.v1\x1a\x1aandara/game/v1/event.proto\"\x7f\n" +
+	"\x19andara/game/v1/game.proto\x12\x0eandara.game.v1\x1a\x1aandara/game/v1/event.proto\"\xaa\x01\n" +
 	"\x12OpenSessionRequest\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n" +
 	"\n" +
 	"auth_token\x18\x02 \x01(\tR\tauthToken\x12\x1f\n" +
 	"\vclient_name\x18\x03 \x01(\tR\n" +
-	"clientName\"\xbf\x01\n" +
+	"clientName\x12)\n" +
+	"\x11act_as_account_id\x18\x04 \x01(\tR\x0eactAsAccountId\"\xbf\x01\n" +
 	"\x13OpenSessionResponse\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12-\n" +

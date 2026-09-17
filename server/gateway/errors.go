@@ -9,6 +9,8 @@ import (
 
 	"connectrpc.com/connect"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+
+	"github.com/valesordev/andara/server/auth"
 )
 
 // The error taxonomy from AW-SRV-005's interface contract, as sentinel errors
@@ -49,6 +51,11 @@ func codeOf(err error) connect.Code {
 		return connect.CodeResourceExhausted
 	case errors.Is(err, ErrDraining):
 		return connect.CodeUnavailable
+	}
+	// A seam that reached into auth — an Ingress rejecting at authorize —
+	// returns auth's errors; they cross the wire with auth's mapping.
+	if c := auth.Code(err); c != connect.CodeInternal {
+		return c
 	}
 	return connect.CodeInternal
 }

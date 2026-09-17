@@ -22,6 +22,7 @@ import (
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"github.com/valesordev/andara/internal/testpki"
+	"github.com/valesordev/andara/server/auth"
 )
 
 // harness is one running Server with the telemetry a test asserts on.
@@ -52,8 +53,25 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// acceptAnyVerifier is the AW-SRV-005-era stub, now test-only: any
+// non-empty token speaks for a fixed player Account, and act-as is refused.
+// Production wiring is auth.Store; New refuses a nil Verifier.
+type acceptAnyVerifier struct{}
+
+func (acceptAnyVerifier) Verify(_ context.Context, token string) (Principal, error) {
+	if strings.TrimSpace(token) == "" {
+		return Principal{}, ErrUnauthenticated
+	}
+	return Principal{AccountID: "stub", Roles: []auth.Role{auth.RolePlayer}}, nil
+}
+
+func (acceptAnyVerifier) ActAs(context.Context, Principal, string) (Principal, error) {
+	return Principal{}, ErrPermissionDenied
+}
+
 func defaultOptions(pki *testpki.PKI) Options {
 	return Options{
+		Verifier:          acceptAnyVerifier{},
 		Listen:            "127.0.0.1:0",
 		TLSCertFile:       pki.CertFile,
 		TLSKeyFile:        pki.KeyFile,

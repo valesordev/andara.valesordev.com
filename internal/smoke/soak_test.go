@@ -19,10 +19,13 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
+	authv1 "github.com/valesordev/andara/gen/go/andara/auth/v1"
+	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"golang.org/x/net/http2"
@@ -40,6 +43,29 @@ func soakEnv(key, fallback string) string {
 // issuer). No http.Client Timeout — a timeout there would close the stream from the
 // client side and look exactly like the ingress close this test exists to detect.
 func soakClient(t *testing.T) gamev1connect.GameClient {
+	t.Helper()
+	return gamev1connect.NewGameClient(soakHTTP(t), "https://"+soakEnv("ANDARA_SOAK_ADDR", "andara.local:443"),
+		connect.WithGRPC())
+}
+
+// soakToken authenticates as the bootstrap operator (ANDARA_SOAK_OPERATOR,
+// `username:password`) through the same edge and returns the session token —
+// since AW-SRV-008 a Session needs a real one.
+func soakToken(t *testing.T) string {
+	t.Helper()
+	user, pass, ok := strings.Cut(soakEnv("ANDARA_SOAK_OPERATOR", "operator:andara-local"), ":")
+	if !ok {
+		t.Fatal("ANDARA_SOAK_OPERATOR must be username:password")
+	}
+	ac := authv1connect.NewAuthClient(soakHTTP(t), "https://"+soakEnv("ANDARA_SOAK_ADDR", "andara.local:443"), connect.WithGRPC())
+	resp, err := ac.Authenticate(context.Background(), connect.NewRequest(&authv1.AuthenticateRequest{Username: user, Password: pass}))
+	if err != nil {
+		t.Fatalf("Authenticate through the edge: %v", err)
+	}
+	return resp.Msg.GetTokens().GetSessionToken()
+}
+
+func soakHTTP(t *testing.T) *http.Client {
 	t.Helper()
 	tc := &tls.Config{MinVersion: tls.VersionTLS12}
 	if caFile := os.Getenv("ANDARA_TLS_CA_FILE"); caFile != "" {
@@ -67,9 +93,7 @@ func soakClient(t *testing.T) gamev1connect.GameClient {
 			return d.DialContext(ctx, network, net.JoinHostPort(ip, port))
 		}
 	}
-	hc := &http.Client{Transport: tr}
-	return gamev1connect.NewGameClient(hc, "https://"+soakEnv("ANDARA_SOAK_ADDR", "andara.local:443"),
-		connect.WithGRPC())
+	return &http.Client{Transport: tr}
 }
 
 // TestSoak_SubscribeStaysOpen opens a Session and a Subscribe through the edge and
@@ -85,7 +109,7 @@ func TestSoak_SubscribeStaysOpen(t *testing.T) {
 	}
 	c := soakClient(t)
 	open, err := c.OpenSession(context.Background(), connect.NewRequest(&gamev1.OpenSessionRequest{
-		ProtocolVersion: 1, AuthToken: "soak-token", ClientName: "stream-soak/0.1",
+		ProtocolVersion: 1, AuthToken: soakToken(t), ClientName: "stream-soak/0.1",
 	}))
 	if err != nil {
 		t.Fatalf("OpenSession through the edge: %v", err)
