@@ -2,29 +2,31 @@
 
 # Status — Andara's World
 
-41 stories — 1 in-progress · 2 review · 29 ready · 9 done
+41 stories — 3 review · 29 ready · 9 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    — nothing in flight
+  next   AW-CLI-005  ready  Content Language v1 — grammar, semantics, error contrac…  (unblocks 1)
   next   AW-INF-008  ready  Cluster observability wiring — the chart's metrics, log…  (unblocks 1)
-  held   6 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007, AW-INF-009, AW-INF-010, AW-INF-011
+  held   5 ready, blocked: AW-INF-005, AW-INF-007, AW-INF-009, AW-INF-010, AW-INF-011
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-022  Template definitions — schema, flattened loading, and Entity instantiation
-         branch aw-srv-022-template-definitions-flattened-loading-and-entity-instantiation
+  now    — nothing in flight
   next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 4)
-  next   AW-SRV-024  ready  Export logs over OTLP so the log sink carries what stde…  (unblocks 1)
-  review AW-SRV-021, AW-SRV-008 — run the §8 checklist, then flip to done
-  held   19 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
+  next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
+  review AW-SRV-021, AW-SRV-022, AW-SRV-008 — run the §8 checklist, then flip to done
+  held   18 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
 
 ## Decisions the lanes are waiting on
 
+  AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
+  AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-021  The core component vocabulary beyond the four seeded here.
   AW-SRV-022  The andara.core Template vocabulary beyond the four seeded here — the same question…
-              13 more, attached to stories neither lane has reached
+              11 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
