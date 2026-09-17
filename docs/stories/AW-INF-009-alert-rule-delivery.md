@@ -4,7 +4,7 @@ title: Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
 epic: EPIC-07
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-INF-008]
 blocks: []
@@ -24,8 +24,9 @@ nothing that watches the cluster.
 The rules can be evaluated where the series are: Mimir's ruler accepts Prometheus rule files as they
 are. Keeping one file with three consumers (compose, ConfigMap, ruler) preserves the INF-003 decision;
 what changes is that a CI job syncs the file to the tenant on merge to `main`. That needs a Grafana
-Cloud access policy with `alerts:write`/`rules:write` on the tenant — Brian's account — which is why
-this is `draft` and not `ready`.
+Cloud access policy with `alerts:write`/`rules:write` on the tenant — Brian's account. **Decided
+2026-09-17 (Brian): the key lives in a GitHub repository secret.** Creating the policy is the one
+operator step this story cannot script; it is the first line of the runbook.
 
 ## User story
 
@@ -53,10 +54,6 @@ by an alert and not by a player.
 
 ## Acceptance criteria
 
-`[NEEDS BRIAN]` before this story is groomed to `ready`: an access policy on the `solo7-local`
-tenant with ruler read/write, and whether the three secrets may live in the GitHub repository. Until
-then the criteria below are the shape, not the contract.
-
 1. **Given** `make alerts-sync ENV=prod` **when** it runs twice **then** the second run reports no
    change and exits `0`.
 2. **Given** a rule edited on a branch **when** the pull request runs **then** `alerts-diff` names the
@@ -69,9 +66,31 @@ then the criteria below are the shape, not the contract.
 
 ## Interface contract
 
-To be written at grooming. Fixed points: one file, `deploy/helm/andara/files/alerts.yaml`; ruler
-namespace `andara`; `mimirtool` version pinned; secrets named above; runbook
-`docs/runbooks/alert-routing.md` for the contact-point procedure.
+### Make targets
+
+| Target | Does | Exit |
+|--------|------|-----:|
+| `make alerts-sync` | `mimirtool rules sync --namespaces andara deploy/helm/andara/files/alerts.yaml`; prints groups created/updated/deleted | `0` ok · `1` API error · `3` secrets unset |
+| `make alerts-diff` | `mimirtool rules diff --namespaces andara …`; prints the diff | `0` no drift · `1` drift · `3` secrets unset |
+
+Both read `MIMIR_ADDRESS`, `MIMIR_TENANT_ID`, `MIMIR_API_KEY` from the environment and nothing else;
+`make bootstrap` pins `mimirtool` (`github.com/grafana/mimir/cmd/mimirtool`) like the other Go tools.
+The ruler namespace is `andara` in every environment: rules are grouped `by (namespace)` (`AW-INF-008`),
+so one rule set serves `dev` and `prod` and there is nothing per-environment to sync.
+
+### CI
+
+`check` workflow: `alerts-diff` as a named step, skipped with a visible notice when the secrets are
+absent (a fork). `kind` workflow on `push` to `main`: `alerts-sync`. The secrets are repository
+secrets; the policy's scopes are `rules:read`, `rules:write`, `alerts:read` on the `solo7-local` stack
+and nothing wider.
+
+### Runbook
+
+`docs/runbooks/alert-routing.md`: creating the access policy, adding the three secrets, the
+notification policy that routes `severity=page` to the contact point, and how to confirm a rule is
+loaded (`mimirtool rules get`). The one document in this story that describes clicking, because
+Grafana Cloud's notification policy has no file form this repo owns.
 
 ## Data / state impact
 
@@ -86,7 +105,11 @@ whose alerts this story makes real.
 
 ## Test plan
 
-At grooming. The fixed point: AC-3 is executed against the tenant and recorded, not reasoned.
+- **Unit:** none — the file is already `promtool`-checked by `AW-INF-003`.
+- **Integration (CI):** AC-1 on `main` (sync twice, second is a no-op); AC-2 on a pull request with a
+  deliberately edited rule, once, recorded.
+- **Manual/operator (recorded in the verification table):** AC-3 — scale `andara-dev` to zero, watch
+  `mimirtool alerts list`, receive the page, scale back, watch it resolve. AC-4 by `make up`.
 
 ## Definition of done
 
@@ -95,8 +118,7 @@ the tenant at least once.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` Grafana Cloud access policy for the ruler, and where its key lives (GitHub secret
-  recommended; the alternative is a one-machine `make alerts-sync` from Brian's shell, which is a
-  documented sequence of commands nobody else can run — CLAUDE.md §9 calls that a defect).
-- `[NEEDS BRIAN]` Who is paged, and how (Grafana OnCall, email, a phone). The routing is a Grafana
-  Cloud setting; the story records the procedure.
+- **Resolved 2026-09-17 (Brian): a GitHub repository secret.**
+- `[ASSUMPTION]` Pages go to the stack's default contact point (the account email) until Brian says
+  otherwise. The routing is a Grafana Cloud setting and does not touch the interface contract; the
+  runbook records whichever it is.

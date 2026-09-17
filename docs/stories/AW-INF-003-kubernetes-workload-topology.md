@@ -4,10 +4,10 @@ title: Kubernetes workload topology, volumes, and probes for andara-server
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001, AW-INF-002]
-blocks: [AW-INF-006, AW-INF-007, AW-INF-008]
+blocks: [AW-INF-006, AW-INF-007, AW-INF-008, AW-INF-011]
 lane: architecture
 risk: high
 ---
@@ -221,9 +221,12 @@ Contract amendments made while implementing, all above in place:
 - projectors are disabled in every environment until their binaries exist;
 - `helm-test` replaces `helm unittest`; `AndaraServerUnavailable` keys on the scrape, not `kube_*`.
 
-Owed elsewhere, named so nothing is quietly skipped: AC-2 and the AC-7 comparison (AW-SRV-007),
-AC-8 and the AC-10 measurement (AW-SRV-002), the `andara_probe_state` gauge (implementation lane,
-with whichever of those lands first). Observed in passing: `ANDARA_LOG_FORMAT=text` is accepted by
+Owed elsewhere, named so nothing is quietly skipped — and since 2026-09-17 carried by `AW-INF-011`
+(Brian: split, not block): AC-2 and the AC-7 comparison (AW-SRV-007), AC-8 and the AC-10 measurement
+(AW-SRV-002), the `andara_probe_state` gauge (implementation lane, with whichever of those lands
+first). "Verified against a real backend" for the cluster's copy of the alert rules is `AW-INF-008`
+and `AW-INF-009`: there is no cluster Prometheus, and this story's README sentence saying there must
+be is corrected there. This story is `done` on what it built. Observed in passing: `ANDARA_LOG_FORMAT=text` is accepted by
 config and ignored by `server/telemetry` — logs stay JSON; an AW-SRV-001 follow-up.
 
 ## Open questions
@@ -232,7 +235,7 @@ config and ignored by `server/telemetry` — logs stay JSON; an AW-SRV-001 follo
   on one machine. RF=3 with `min.insync.replicas=2` is three replicas on one disk, so
   `slo/recovery.md`'s zero-RPO is a claim about one machine until this moves. The chart is **not**
   softened to match; ADR-0002 carries the note under `Revisit when`.
-- `[ASSUMPTION]` Environments are `local`, `dev`, `prod`. Adding staging later is cheap.
-- `[ASSUMPTION]` Resource requests are parametrized on `measurements.yaml` rather than guessed;
-  `AW-SRV-002` produces the first measurement and this story's `make measure-tick` records it. Until
-  then the file carries a placeholder flagged `measured: false`, which `make check` warns on.
+- **Resolved 2026-09-17 (closed at §8):** environments are `local`, `dev`, `prod` — three values files,
+  three namespaces, `AW-INF-006`'s hostnames. Resource requests derive from `measurements.yaml`; the
+  placeholder (`measured: false`, warned on every `make check`) is replaced by `AW-INF-011`'s run of
+  `make measure-tick` once `AW-SRV-002` exposes the tick.

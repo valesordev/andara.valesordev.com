@@ -1,0 +1,136 @@
+---
+id: AW-SRV-024
+title: Export logs over OTLP so the log sink carries what stderr carries
+epic: EPIC-07
+component: server
+type: bug
+status: ready
+size: S
+depends_on: [AW-SRV-001]
+blocks: [AW-INF-010]
+lane: implementation
+risk: low
+---
+
+## Context
+
+`AW-INF-002` built the local stack on the premise its collector config states: "the server exports
+traces, metrics, and logs over OTLP" — one receiver, three exporters, Loki fed from the OTLP logs
+pipeline. The server never did the third. `server/telemetry` wires `otlptracegrpc` for spans and a
+`slog.JSONHandler` to stderr for logs, and nothing bridges the two. Loki in the compose stack has
+carried zero lines since it was provisioned; `AW-INF-002` AC-7 was recorded "partial" on 2026-09-11
+against a synthetic line pushed by hand, and on 2026-09-17 a real Session's `session opened` line was
+in `docker logs` and nowhere else. A log sink that has never received a log is the vacuous pass this
+repo hunts (`AW-INF-001` PR #17 found two of the same shape).
+
+This story adds the bridge. It does not change what is logged, at what level, or with which fields —
+those are `AW-SRV-001`'s and `CLAUDE.md` §7's — only where it goes: stderr *and* the collector, the
+same records, so the cluster's stdout-reading path (`AW-INF-008`) and the compose stack's OTLP path
+see identical lines.
+
+## User story
+
+As a developer, I want to grep the log sink for a Session's correlation ID and get the server's lines
+back, so that "what happened to this player" is one query and not `docker logs | grep`.
+
+## Scope
+
+### In scope
+- An `slog.Handler` that fans out to the existing JSON stderr handler and an OTLP log exporter
+  (`otlploggrpc`, the `otelslog` bridge), sharing the endpoint, resource attributes, and
+  insecure/TLS settings the trace exporter already uses.
+- Trace correlation: `trace_id` and `span_id` on every record emitted inside a span, as the stderr
+  handler does today, and as OTLP log record fields — not only as attributes — so Loki's
+  trace-to-logs link works.
+- Backpressure: the exporter is batched and bounded; when the collector is down, records are dropped
+  after the buffer fills, counted, and the process neither blocks nor grows.
+- `telemetry.otlp_endpoint: ""` disables the log exporter with the trace exporter, as today.
+
+### Out of scope
+- Log content, levels, or field names. `ANDARA_LOG_FORMAT=text` being accepted and ignored is a
+  separate `AW-SRV-001` follow-up and stays one.
+- Metrics over OTLP. Prometheus scrape of `/metrics` is the metrics path (`AW-INF-003`, `AW-INF-008`).
+- Shipping stdout with a sidecar in compose. Rejected: it would make the local and cluster paths
+  carry different records, and the collector config already names the OTLP path as the design.
+
+## Acceptance criteria
+
+1. **Given** the compose stack **when** a Session is opened (`make stack-smoke`) **then** within 15 s
+   `{service_name="andara-server"} | json | session_id="<id>"` in Loki returns the `session opened`
+   line with `level`, `msg`, `session_id`, `trace_id`, `client_name` — the same fields as the stderr
+   line, byte-for-byte equal values.
+2. **Given** that line **when** Loki's trace-to-logs link is followed **then** Tempo returns the
+   `andara.game.v1.Game/OpenSession` trace with the same `trace_id`.
+3. **Given** `telemetry.otlp_endpoint: ""` **when** the server boots **then** stderr logging is unchanged
+   and no exporter is created — no connection attempt, no `otlp export failed` line.
+4. **Given** the collector unreachable at boot **when** the server runs for 60 s **then** it is serving
+   (readiness unaffected), stderr carries every line, and `andara_log_export_dropped_total` counts what
+   the bounded queue discarded; **given** the collector returns **then** new lines arrive in Loki and
+   RSS is within 10% of the pre-outage figure.
+5. **Given** `make test` **when** it runs **then** a unit test asserts the fan-out handler emits every
+   record to both handlers with equal attributes and that a `WithAttrs`/`WithGroup` on the fan-out
+   reaches both.
+6. **Given** the `stack` workflow **when** it runs `make stack-smoke` **then** the smoke asserts AC-1
+   through the Loki API, replacing the synthetic push in `AW-INF-002`'s record.
+
+## Interface contract
+
+### Configuration
+
+No new keys. `telemetry.otlp_endpoint` (`ANDARA_OTLP_ENDPOINT`) governs both exporters;
+`telemetry.log_level` governs both handlers.
+
+### Telemetry package
+
+```go
+// CONTRACT SKETCH — not an implementation
+// telemetry.Init returns the same Telemetry; Log is now slog.New(fanout{stderr, otelslog})
+// when OTLPEndpoint != "", else slog.New(stderr) as today.
+// Shutdown flushes the log exporter before the trace exporter; bounded by the existing timeout.
+type fanoutHandler struct{ handlers []slog.Handler }   // Enabled = any; Handle = all, first error returned
+```
+
+### Error taxonomy
+
+| Condition | Effect |
+|-----------|--------|
+| collector unreachable | stderr unaffected; exporter retries with backoff; queue full → drop + count |
+| exporter init fails at boot | fatal, same as the trace exporter today (a misconfigured endpoint is a configuration error) |
+
+## Data / state impact
+
+None.
+
+## Observability requirements
+
+- **Metrics:** `andara_log_export_dropped_total` (counter, no labels); `andara_log_export_queue_size`
+  (gauge). No per-record labels.
+- **Logs:** the exporter's own failures go to stderr only at `warn`, rate-limited to one line per
+  minute — an exporter that logs its failure to itself is a loop.
+- **Traces:** none new; the point is that existing spans and logs share `trace_id`.
+- **Alerts:** none. A dropped-logs rate is a cause, not a symptom.
+
+## Test plan
+
+- **Unit:** fan-out semantics (AC-5); `otlp_endpoint: ""` builds no exporter (AC-3); record → OTLP log
+  record mapping carries `trace_id`/`span_id` as record fields.
+- **Integration (compose, `stack` workflow):** AC-1, AC-2 in `make stack-smoke`; AC-4 with
+  `docker stop andara-otel-collector-1` for 60 s in the workflow.
+- **Manual/operator:**
+  ```
+  make up && make stack-smoke
+  curl -sG http://localhost:3100/loki/api/v1/query_range \
+    --data-urlencode 'query={service_name="andara-server"} | json | msg="session opened"' --data-urlencode 'since=5m'
+  # expect: one stream, the session_id from stack-smoke's output
+  ```
+
+## Definition of done
+
+CLAUDE.md §8, plus: `AW-INF-002`'s record for AC-7 is superseded by a real query, recorded in
+`AW-INF-010`.
+
+## Open questions
+
+- `[ASSUMPTION]` The OTel `otelslog` bridge rather than a hand-rolled OTLP log encoder. It is the
+  supported path and carries the trace context correctly; the fan-out is the only custom code.
+- `[ASSUMPTION]` Bounded queue of 2048 records, batch every 1 s. Nothing here is player-visible.

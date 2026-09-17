@@ -4,10 +4,10 @@ title: Local stack — Redpanda, datastores, observability, and TLS with one com
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-INF-001, AW-INF-004]
-blocks: [AW-INF-003, AW-SRV-002]
+blocks: [AW-INF-003, AW-SRV-002, AW-INF-010]
 lane: architecture
 risk: medium
 ---
@@ -220,14 +220,14 @@ Executed against a running stack on a clean machine.
 | 2 | Second `make up` recreates nothing; a record produced before it survives (high-watermark unchanged). |
 | 3 | `make down` exits 0; a second `make down` on a stopped stack also exits 0. |
 | 4 | All eight declared topics exist. `andara.commands.v1` has 64 partitions; `andara.state.v1`, `andara.accounts.v1`, and the three content topics carry `cleanup.policy=compact`. `make topics-diff` reports no drift. |
-| 5 | **Pending `AW-SRV-005`.** The CA, the certificate, and its SANs (`localhost`, `127.0.0.1`, `andara-server`) are provisioned and verify against each other, and `make up` generates `.local/cli.yaml` naming the endpoint and the CA. There is no server or `andara-cli` to connect yet. |
-| 6 | **Partial.** A synthetic OTLP trace with `command.execute` as parent and `log.produce` as child, carrying `session_id`, round-trips through the collector and is retrievable from Tempo by trace ID. The real spans arrive with `AW-SRV-005` and `AW-SRV-002`. |
-| 7 | **Partial.** A synthetic OTLP log line is retrievable from Loki filtered by its Session correlation ID. |
-| 8 | **Partial.** Datasources and the dashboard are provisioned from files and load with no manual configuration; all six panels are present. The `andara_*` panels have no data until the server emits, which is the point of provisioning them now. The broker-side lag query returns live data. |
+| 5 | **Moved to `AW-INF-010`** (2026-09-17). The CA, the certificate, and its SANs are provisioned and `make stack-smoke` opens a Session over TLS against them (`AW-SRV-005`, done); `andara-cli play` itself is `AW-CLI-002`. |
+| 6 | **Moved to `AW-INF-010`** (2026-09-17). Real now: the `andara.game.v1.Game/OpenSession` span from a `make stack-smoke` Session is retrievable from Tempo by its `trace_id` (2026-09-17). The `command.execute`, produce, and tick-apply spans are `AW-SRV-010` and `AW-SRV-002`. |
+| 7 | **Moved to `AW-INF-010`, with a finding** (2026-09-17). With a real server, Loki holds no lines at all: the server logs to stderr and has no OTLP log exporter, so the collector's logs pipeline has never received a record. The synthetic line proved the sink, not the path. `AW-SRV-024` adds the exporter. |
+| 8 | **Moved to `AW-INF-010`** (2026-09-17). Datasources and the dashboard are provisioned from files and load with no manual configuration; the `andara_*` panels wait on `AW-SRV-002`'s tick metrics. |
 | 9 | `make up` with 8081 held by another process: `port 8081 is already in use (schema registry). Override it with ANDARA_SCHEMA_REGISTRY_PORT=<port>`. Exits non-zero before starting anything. |
 | 10 | `make down VOLUMES=1` removes all seven volumes and `ANDARA_DATA_DIR`; the next `make up` recreates all eight topics and the log is empty. |
 | 11 | Five consecutive `make up` / `make down` cycles leave no orphaned containers and no orphaned networks. |
-| 12 | **Pending `AW-SRV-010`.** Read-only degradation is server behavior; there is no server to degrade. |
+| 12 | **Moved to `AW-INF-010`** (2026-09-17). Read-only degradation is `AW-SRV-010`'s behavior. |
 
 Three findings worth carrying forward:
 
@@ -260,12 +260,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` Docker Compose is the local orchestrator; podman-compose is best-effort.
-- `[ASSUMPTION]` Redpanda locally, real Kafka in production, per ADR-0002 §7. Redpanda is Kafka-API
-  compatible and single-binary; the risk is behavioral divergence under rebalance and tiered storage,
-  neither of which M1 exercises. `AW-INF-005` must test against real Kafka before production.
-- `[ASSUMPTION]` Observability stack is OTLP Collector + Prometheus + a trace backend + Grafana.
-  Concrete choices are implementation details behind OTLP.
+- **Resolved 2026-09-17 (by ten days of use, closed at §8):** Docker Compose is the local orchestrator;
+  Redpanda locally with real Kafka asserted by `AW-INF-005` before production (ADR-0002 §7); the
+  observability stack is OTLP Collector + Prometheus + Tempo + Loki + Grafana. None of the three moved
+  in the four stories built on them.
+- **Closed 2026-09-17 (Brian: split, not block).** AC-5, 6, 7, 8, 12 are `AW-INF-010`'s, each named with
+  the story it waits on. This story is `done` on what it built; the stack is what four merged stories
+  have run on.
 - **Follow-ups recorded 2026-09-11** (not reopened; this story stays at `review`): `AW-SRV-006` wants a
   MinIO service so the `s3` snapshot store is exercised locally, and `AW-SRV-016` wants a `pypiserver`
   so `andara-sdk` installs the way a Builder installs it. Both are one compose service each and land
