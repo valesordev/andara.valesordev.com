@@ -237,7 +237,7 @@ Direction, Components by type and their fields by name — with free-text fields
 encoding is injective. It is how AW-SRV-001 AC-10 is asserted, and it is deliberately not ADR-0002's
 State Hash, which covers mutable state and arrives with `AW-SRV-002`.
 
-## Content validation (AW-SRV-001, AW-SRV-021)
+## Content validation (AW-SRV-001, AW-SRV-021, AW-SRV-022)
 
 `sim.BuildWorld` is the one validator — the same code serves boot, `content validate`, and the
 publish path (ADR-0004). It returns every finding, never only the first, so a Builder fixing ten
@@ -246,7 +246,9 @@ broken Exits needs one boot rather than ten.
 **Findings that refuse the load** (the process exits 1 and `/readyz` stays 503):
 `unknown_room`, `unknown_zone`, `duplicate_room`, `duplicate_zone`, `unsupported_format_version`,
 `malformed_file`, `no_zones_found`, `unknown_direction`, `unknown_component_type`,
-`duplicate_component_type`, `invalid_component_field`.
+`duplicate_component_type`, `invalid_component_field`; and for Templates `unresolved_extends`,
+`unflattened_template`, `duplicate_template`, `chain_mismatch`, `chain_too_deep`,
+`invalid_provenance`.
 
 **Findings that are advisory** — the World loads and the process serves, and each is logged at
 `warn`: `missing_reverse_exit`, and `orphan_room` unless `content.strict_orphans` is set, which
@@ -265,6 +267,25 @@ load error, and adding one is a code change and a release. A registry entry decl
 name and kind, so a field the entry does not declare is also a load error rather than something the
 State Hash covers and nothing reads.
 
+**Templates are loaded flattened and never resolved here** (`sim.BuildTemplates`, ADR-0010
+decision 9). A pack keeps one `TemplateDefinition` per declaration at `templates/<name>.json` — in
+dir mode a `templates/` subdirectory of `content.path`, which may be absent; a World of Rooms with
+nothing in them is still a World. The loader checks what the compiler emitted rather than
+recomputing it: every Component type is registered; the chain is the parent's chain plus the
+Template itself, at most `sim.MaxChainDepth` (16) long, and of one kind; every ancestor is in the
+same pack or in the core pack (`andara.core`) and the loader resolves across no other pack boundary;
+everything an ancestor carries is present, because a subtype may override and extend but never
+remove (decision 5); provenance names real fields and chain members; names are unique per pack. A
+definition with `resolved: false` is `unflattened_template` — the server carries no resolver. The
+registry is `Runtime.Templates`; `sim.Instantiate(t, id, contentVersion)` makes an `EntityState`
+that names its Template (and so its pack) and the content version it came from, with its Components
+sorted by type, deterministically.
+
+`content/core/templates/` is the `andara.core` seed in compiled form — `Entity`, `Character`,
+`Npc` (carrying `andara.core.Memory`), and `Item`, which is its own root because a chain has one
+kind. `testdata/templates/` carries a byte-identical copy, plus a `town` pack, and
+`TestCoreSeedMatchesFixture` holds the two together.
+
 ### Content-load metrics
 
 | Metric | Type | Labels | Cardinality bound |
@@ -275,6 +296,7 @@ State Hash covers and nothing reads.
 | `andara_content_validation_errors_total` | counter | `code` | the `ErrCode` set, closed in `server/sim/errors.go` |
 | `andara_content_components_total` | counter | `component_type` | the Component registry, closed by construction |
 | `andara_content_load_warnings_total` | counter | `kind` | `orphan_room`, `missing_reverse_exit` |
+| `andara_content_templates_loaded` | gauge | `pack` | the Content Packs the server follows |
 
 Warnings appear in both counters: `validation_errors_total` counts every finding by code,
 `load_warnings_total` counts only the advisory ones, so an operator can ask whether a content pack is
@@ -282,6 +304,6 @@ sloppy without knowing which codes happen to be advisory. `room_id` is a label o
 the unbounded cardinality CLAUDE.md §7 rejects on sight, and it lives on the log line instead.
 
 Every rejection and every warning logs one structured line carrying `code`, `file`, `line`,
-`zone`, `room`, `detail`, and `trace_id`. Component and Direction validation are attributes on the
+`zone`, `room`, `template`, `detail`, and `trace_id`; each pack's Template count logs at `info`. Component and Direction validation are attributes on the
 existing `content.load` and `content.validate` spans (`component_count`, `error_count`,
 `warning_count`), not spans of their own: a span per Room would be one span per Room.

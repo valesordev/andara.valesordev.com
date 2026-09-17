@@ -321,6 +321,15 @@ anything holding a `SWORD` must keep working when handed a `FIRE_SWORD`. Base Te
 server's `andara.core` Content Pack; Builder Templates extend them and pin the core version they
 compiled against (ADR-0010).
 
+The server sees a Template only **flattened** (AW-SRV-022): the compiler resolves the chain and
+merges the Components, and publishes `andara.content.v1.TemplateDefinition` — `<pack>.<Name>`, a
+kind, the chain root-first, the merged Component set, per-field provenance naming which ancestor set
+each value, and `resolved: true`. The loader checks that output rather than recomputing it, resolves
+ancestors only within the pack or `andara.core`, bounds the chain at `sim.MaxChainDepth` (16), and
+holds every Template in a chain to one kind — so `andara.core.Item` is its own root, not an Entity.
+`sim.Instantiate` makes an Entity from a Template; the Entity names its Template, and therefore its
+pack, forever.
+
 Overriding a *function* is not part of this hierarchy. Functions live in Behaviors, which are Python
 classes in Behavior Agents, where inheritance is Python's own and Builders may subtype freely
 (ADR-0005). A Behavior is bound to a Template by a Component, which is the single seam between the two
