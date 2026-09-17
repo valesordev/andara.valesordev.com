@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 3 |
-| `in-progress` | 1 |
+| `review` | 4 |
 | `ready` | 25 |
 | `done` | 6 |
 | **total** | **35** |
@@ -21,23 +20,19 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|--------|-------|------------------------|
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command | review by brian |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server | review by brian |
+| [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `review` | Ingress, certificate management, and gRPC/Connect routing | review by brian |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set | review by brian |
 
 ## By status
 
-### `review` (3)
+### `review` (4)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | architecture | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
-| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 
 ### `ready` (25)
 
@@ -91,7 +86,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `done` | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `review` | Local stack — Redpanda, datastores, observability, and TLS with one command |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `review` | Kubernetes workload topology, volumes, and probes for andara-server |
-| [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `in-progress` | Ingress, certificate management, and gRPC/Connect routing |
+| [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `review` | Ingress, certificate management, and gRPC/Connect routing |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `ready` | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback |
 
 ### `EPIC-02` — World model and simulation core
