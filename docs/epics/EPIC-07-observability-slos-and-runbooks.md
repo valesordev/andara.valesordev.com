@@ -36,9 +36,12 @@ An Operator can answer "is the World healthy" from one dashboard, and every aler
 a runbook that resolves it.
 
 ## Stories
-This epic owns no stories of its own, by design. Its work is carried inside the stories that create
-the thing being observed, because CLAUDE.md §7 makes instrumentation part of acceptance criteria
-rather than a follow-up. What it is accountable for:
+`AW-INF-008` (the chart's signals reach Grafana Cloud), `AW-INF-009` (the chart's rules are evaluated
+there). Added 2026-09-17: until then this epic owned no stories by design, its work being carried
+inside the stories that create the thing being observed (CLAUDE.md §7 makes instrumentation part of
+acceptance criteria rather than a follow-up). The wiring from the chart to a backend that nobody's
+story owned is the gap that design left, and these two are it. What the epic is accountable for
+beyond them:
 
 | Document | Written by |
 |----------|------------|

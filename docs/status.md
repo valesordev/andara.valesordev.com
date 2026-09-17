@@ -2,24 +2,22 @@
 
 # Status — Andara's World
 
-35 stories — 1 in-progress · 4 review · 24 ready · 6 done
+41 stories — 2 review · 30 ready · 9 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    AW-INF-006  Ingress, certificate management, and gRPC/Connect routing
-         branch aw-inf-006-ingress-tls-and-grpc-routing
-  next   — nothing groomed and unblocked
-  review AW-INF-002, AW-INF-003 — run the §8 checklist, then flip to done
-  held   3 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007
+  now    — nothing in flight
+  next   AW-INF-008  ready  Cluster observability wiring — the chart's metrics, log…  (unblocks 1)
+  held   6 ready, blocked: AW-CLI-005, AW-INF-005, AW-INF-007, AW-INF-009, AW-INF-010, AW-INF-011
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
   next   AW-SRV-022  ready  Template definitions — schema, flattened loading, and E…  (unblocks 5)
-  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 2)
+  next   AW-SRV-002  ready  Deterministic tick loop driven by partition consumers,…  (unblocks 4)
   review AW-SRV-021, AW-SRV-008 — run the §8 checklist, then flip to done
-  held   19 ready, blocked: AW-SRV-004, AW-CLI-006, AW-SRV-003, AW-SRV-006, AW-SRV-007, AW-SRV-011,…
+  held   19 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
 
 ## Decisions the lanes are waiting on
 

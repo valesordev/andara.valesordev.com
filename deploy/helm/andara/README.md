@@ -85,5 +85,6 @@ a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && m
 `local` is kind on the developer's box (v1.36.1): `pullPolicy: Never`, content from a ConfigMap,
 1 Gi claim, OTLP export off, `host: andara.local` (an `/etc/hosts` line; `make helm-install` prints
 it), and `172.16.0.0/12` in the Admin allowlist because a connection from the box reaches Traefik
-from the docker bridge, not from 127.0.0.1. `dev` and `prod` pull from `ghcr.io/valesordev/andara-server`;
+from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
+cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`;
 `prod`'s tag is always overridden by `make deploy TAG=` (AW-INF-007).

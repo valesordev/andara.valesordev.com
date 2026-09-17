@@ -4,10 +4,10 @@ title: Ingress, certificate management, and gRPC/Connect routing
 epic: EPIC-01
 component: infra
 type: infra
-status: in-progress
+status: done
 size: M
 depends_on: [AW-INF-003, AW-SRV-005]
-blocks: []
+blocks: [AW-INF-008]
 lane: architecture
 risk: medium
 ---
@@ -221,16 +221,17 @@ CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `d
   through Traefik with the edge certificate renewed at +30 s (serial changed, stream open) and a `helm
   upgrade` of the release mid-soak; `traefik_router_requests_total{protocol="grpc"}` = 14 on the
   release's routers. AC-1 and AC-3 hold as written.
-- `[ASSUMPTION]` Private CA for the box, ACME selectable by values for a public host. `dev` and `prod`
-  values name `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` under the zone the
-  cluster's `letsencrypt` issuer already solves for, on `andara-ca` until Brian picks public names —
-  `tls.issuer: letsencrypt` is the switch and needs no other change.
+- **Resolved 2026-09-17 (Brian): `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com`,
+  issued by the cluster's `letsencrypt` ClusterIssuer.** `dev` and `prod` values set `tls.issuer:
+  letsencrypt`; `local` stays on `andara-ca`. Proven before the flip: a Certificate for the dev name
+  from `letsencrypt` went Ready in under a minute (DNS-01, Cloudflare), issuer `Let's Encrypt YR2`,
+  90 d. The server certificate on the second leg stays on `andara-ca` in every environment.
 - **Server certificate renewal needs a restart.** `andara-server` loads `tls.crt`/`tls.key` once
   (`AW-SRV-005`, a static `Certificates` slice); a renewed `andara-server-tls` is served only after the
   pod restarts, and past the old certificate's expiry Traefik's verification fails (`502`). The window is
   `renewBefore` (10 d), which any deploy closes; `certificate-expiring.md` carries the manual step.
-  `[FOLLOW-UP, implementation lane]` hot-reload of TLS material in the gateway (`GetCertificate` over a
-  watched mount) — a small `SRV` story, not touched on this branch.
+  `AW-SRV-023` (implementation lane, groomed 2026-09-17) is the hot-reload of TLS material in the gateway;
+  when it lands, AC-3's "edge only" scope goes away.
 - **Traefik's entrypoint `readTimeout` (60 s) is cluster-level and outside this repo.** It stops when the
   client half-closes the request, which every RPC in `andara.game.v1` does today; a future
   client-streaming or bidi RPC would be reset at 60 s of open request body. Whoever adds one raises the

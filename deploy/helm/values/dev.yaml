@@ -14,6 +14,9 @@ snapshots:
   size: 5Gi
   storageClass: standard
 
-# [ASSUMPTION] host under the box's solo7.valesordev.com zone, private CA until Brian
-# picks a public name; `tls.issuer: letsencrypt` is the switch (DNS-01, already on the cluster).
+# Public name under the box's solo7.valesordev.com zone, issued by the cluster's Let's Encrypt
+# ClusterIssuer (DNS-01 via Cloudflare) — decided 2026-09-17 (Brian). Clients trust the system
+# store; the private CA still signs the server certificate on the second leg.
 host: andara-dev.solo7.valesordev.com
+tls:
+  issuer: letsencrypt
