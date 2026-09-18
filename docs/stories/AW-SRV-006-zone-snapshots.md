@@ -242,6 +242,12 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-003` (2026-09-18):** `andara.log.v1.Entity` is the Entity by value as
+  it crosses a Zone boundary — id, template, content version, sorted Components, and
+  `handoff_seq` once `AW-SRV-028` lands — with a round-trip test against `sim.EntityState`. The
+  snapshot body may reuse it rather than define a second shape; if it does, the round-trip test
+  covers both.
+
 - `[ASSUMPTION]` Copy-on-write at the tick boundary rather than stop-the-world serialize. The copy is
   O(state) and measured by AC-1; if it ever exceeds the stall budget, the fallback is to stagger Zones
   across boundaries, which reintroduces the cross-Zone consistency problem this story avoids by taking

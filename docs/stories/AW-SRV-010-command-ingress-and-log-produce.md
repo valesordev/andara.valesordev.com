@@ -190,6 +190,32 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-003` (2026-09-18 review of PR #30), contract-bearing:**
+  1. **The Gateway produces only what `command.Parse` returned.** `andara.log.v1.LoggedCommand`
+     now carries `Arrive` with an Entity by value (and `AW-SRV-028` adds `HandoffAck`/
+     `HandoffRejected`); a client-supplied record reaching the log would forge World state. The
+     invariant is security, not hygiene: `Submit` accepts `Intent`, never a `LoggedCommand`, and a
+     test asserts the produced record is byte-equal to `Parse`'s output plus the Gateway's own
+     correlation fields.
+  2. **Span sampling.** `command.apply` inherits its parent's sampled flag through the record's
+     traceparent, so the sampling decision is made where the root span is: `command.execute` is
+     head-sampled at `telemetry.trace_sample_ratio` and **every rejection is kept** (the same shape
+     as `AW-SRV-002`'s overrun tail-sample). A record with no traceparent (tick-produced) inherits
+     `sim.tick`'s one-in-a-hundred. This answers `AW-SRV-003`'s ~10k spans/s question; it is a
+     `telemetry` change that lands here because this story creates the root span. *(Confirmed by
+     Brian 2026-09-18.)*
+  3. **Hold a Session's Commands while its Character is in transit** (Brian, 2026-09-18: the
+     one-tick cross-Zone delay stays perceptible in the Events — `CharacterLeft` on *T*,
+     `CharacterArrived` on *T+1* — but a player must never see "you are not here" for typing
+     during it). `Submit` keeps the Intents of a Session whose `Binding` is in transit — from the
+     Session's own `CharacterLeft` until its `CharacterArrived` or a `HandoffRejected`-restore —
+     and releases them in order to the new Zone's Partition on arrival. Bounded: `ingress.transit_hold`
+     (default 2 s) after which held Intents are rejected pre-log `in_transit` and the hold is
+     cleared, so a stuck handoff (`AW-SRV-028`) surfaces to the player rather than to a queue.
+     The sim still rejects `in_transit` post-log; the hold is what makes that path unreachable
+     from a well-behaved Gateway. Add `ingress.transit_hold` to this story's configuration table
+     and `andara_ingress_held_intents` (gauge) to its metrics when implementing.
+
 - `[ASSUMPTION]` Default per-Session rate limit of 20/s. A human types perhaps 2/s; 20 leaves room for
   a client with macros without leaving room for a flood. Tune with real traffic.
 - `[ASSUMPTION]` `Submit` is unary rather than client-streaming. Streaming would cut per-Intent overhead

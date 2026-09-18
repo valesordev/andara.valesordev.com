@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-45 stories — 1 in-progress · 30 ready · 14 done
+46 stories — 1 review · 31 ready · 14 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,19 +14,18 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-003  Command pipeline stages split across the log boundary, with look and move
-         branch aw-srv-003-command-pipeline-look-and-move
-  next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  next   AW-SRV-025  ready  Client address behind the ingress — trusted proxies and…  (unblocks 1)
-  held   17 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-006, AW-SRV-010,…
+  now    — nothing in flight
+  next   AW-SRV-004  ready  Event emission, subscription seam, and perception scopi…  (unblocks 3)
+  next   AW-SRV-010  ready  Command ingress — parse, authorize, and produce to the…  (unblocks 2)
+  review AW-SRV-003 — run the §8 checklist, then flip to done
+  held   15 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-006, AW-SRV-011, AW-SRV-013,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
-  AW-SRV-003  Sampling for command.apply spans. The story asks for a span per Command and that is…
-  AW-SRV-003  Whether the one-tick cross-Zone delay should be perceptible to the player or masked…
-  AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
-              12 more, attached to stories neither lane has reached
+  AW-SRV-004  Whether a Character perceives Events in an adjacent Room at all (hearing a fight ne…
+  AW-SRV-010  What a player should see when the World goes read-only. A typed error is the mechan…
+              11 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
