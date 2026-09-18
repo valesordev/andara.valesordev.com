@@ -4,7 +4,7 @@ title: Deterministic tick loop driven by partition consumers, with tick SLIs
 epic: EPIC-02
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-INF-002, AW-INF-004]
 blocks: [AW-SRV-003, AW-SRV-004, AW-INF-010, AW-INF-011]
