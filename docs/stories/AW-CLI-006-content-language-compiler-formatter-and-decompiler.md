@@ -127,5 +127,11 @@ publish gate in `AW-SRV-013`'s equivalence test.
 
 ## Open questions
 
+- **Inherited from `AW-SRV-022` (2026-09-18):** the compiler emits one blob per declaration at
+  `templates/<name>.json` (the `BlobRef.path` convention the loader reads), `resolved: true`,
+  `chain` root-first ending in self, Components and provenance sorted, and rejects a chain deeper
+  than `sim.MaxChainDepth` (16). Its output for the seed must be byte-identical to
+  `content/core/templates/`, held today by `TestCoreSeedMatchesFixture`.
+
 - `[ASSUMPTION]` Hand-written recursive-descent parser rather than a generated one; the grammar is
   small and the error messages are the product.

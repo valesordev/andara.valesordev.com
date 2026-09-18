@@ -77,6 +77,10 @@ on an engineering release.
    in-tick cost and it stays under `sim.tick_budget_ms / 2`.
 10. **Given** a fallback Room that the new version also removed **when** validation runs **then** it is a
     finding (`fallback_missing`) and the version is rejected — the one Room a Zone may not delete.
+11. **Given** pack `town@9` whose manifest lists a blob at `templates/andara.core.Npc.json` **when**
+    resolved **then** the version is rejected with `pack_mismatch` naming the blob, the name's pack
+    (`andara.core`), and the publishing pack (`town`); no Template from that version is registered,
+    and `andara.core`'s own `Npc` is untouched. *(Added 2026-09-18 from `AW-SRV-022`.)*
 
 ## Interface contract
 
@@ -126,7 +130,8 @@ EntityRelocated { string entity_id = 1; RoomRef from = 2; RoomRef to = 3; Reloca
 ### Error taxonomy
 
 `ErrFormatVersion{Have, Want}`, `ErrCoreVersion{Compiled, Active}`, `ErrBlobMissing{Hash, Path}`,
-`ErrValidation{Findings}` (from `AW-SRV-001`), `ErrFallbackMissing{Zone, Room}`. All are load
+`ErrValidation{Findings}` (from `AW-SRV-001`), `ErrFallbackMissing{Zone, Room}`,
+`ErrPackMismatch{Blob, NamePack, PublishedPack}` (AC-11; finding code `pack_mismatch`). All are load
 rejections; none are boot failures once one version has loaded. A boot with no loadable version exits
 `1` naming the reason — there is nothing to retain.
 
@@ -182,6 +187,14 @@ never out of band.
 CLAUDE.md §8, plus: the replay-across-swap test; `docs/specs/slo/content-freshness.md` and the runbook.
 
 ## Open questions
+
+- **Inherited from `AW-SRV-022` (2026-09-18), contract-bearing:** (1) Templates arrive as one blob
+  per declaration at `templates/<name>.json`, carrying their own `format_version` (field 8); there
+  is no pack-level container. (2) `TemplateRef.Pack()` is derived from the name, and the dir loader
+  has no pack context to hold it against — when Templates arrive from the broker, a blob whose
+  name-pack differs from the pack it was published in **must be rejected**, or a Builder pack can
+  publish `andara.core.Npc.json` and, depending on load order, collide with or stand in for core.
+  AC-11 and `ErrPackMismatch` are that check.
 
 - `[NEEDS BRIAN]` The player-facing wording for relocation. `EntityRelocated` carries the reason; the
   text is rendered by the client from it, so the words do not affect this contract.

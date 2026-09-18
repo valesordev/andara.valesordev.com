@@ -4,7 +4,7 @@ title: Template definitions — schema, flattened loading, and Entity instantiat
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-020, AW-SRV-021]
 blocks: [AW-SRV-009, AW-SRV-012, AW-SRV-014, AW-CLI-005, AW-CLI-006]
@@ -168,7 +168,7 @@ gains no fields; Templates are their own blobs in the pack, one per declaration,
   andara-cli content inspect template town.Merchant                       # AW-CLI-002: provenance shown
   ```
 
-### Verification record (2026-09-17)
+### Verification record (2026-09-17; §8 clean, moved to `done` 2026-09-18)
 
 - **AC-1** `TestBuildTemplates_Merchant` and, through the dir loader, `TestLoadTemplatesDir_Fixture`.
   **AC-2** `TestBuildTemplates_UnknownComponent`. **AC-3** `TestBuildTemplates_UnresolvedExtends`,
@@ -195,11 +195,12 @@ Template entry names this story.
 
 - `[NEEDS BRIAN]` The `andara.core` Template vocabulary beyond the four seeded here — the same question
   `AW-SRV-021` carries for Components; a data change, not a contract change.
-- `[ASSUMPTION]` `TemplateKind` is an open enum with three values now; the kind set is incomplete by
-  Brian's own statement (ADR-0010 §1).
-- `[ASSUMPTION]` `andara.core.Npc` carries `andara.core.Memory` and nothing else; `Entity`,
-  `Character`, and `Item` carry no Components. Data only, and what AW-SRV-014 and AW-SRV-009 add is
-  additive.
+- **Resolved 2026-09-18 (review pass):** `TemplateKind` is an open enum — that is ADR-0010 §1's
+  statement, not an assumption; a new kind is an additive enum value and a `buf breaking`-clean
+  change.
+- **Resolved 2026-09-18 (review pass):** the seed Templates carry what they carry — `Npc` has
+  `andara.core.Memory`, the other three nothing. It is data, every later addition is additive, and
+  the vocabulary question above is where Brian changes it; nothing in the contract depends on it.
 - **For AW-SRV-012:** `TemplateRef.Pack()` is derived from the name, and the dir loader has no
   pack context to hold it against. When Templates arrive from the broker, a blob whose name-pack
   differs from the pack it was published in must be rejected — otherwise a Builder pack can publish
@@ -207,5 +208,6 @@ Template entry names this story.
 - **For AW-CLI-005:** its identifier grammar is `[a-z][a-z0-9_]*`, but its own example and this
   story's AC-1 write `Merchant`, `Npc`, `Entity`. The shared fixture follows the names; the grammar
   needs reconciling with them before the corpus is written.
-- `[ASSUMPTION]` `MaxChainDepth` = 16, self included. Deep enough for any hierarchy a Builder would
-  want to read, shallow enough that a runaway compiler is caught.
+- **Resolved 2026-09-18 (review pass):** `MaxChainDepth` = 16, self included, exported so
+  `AW-CLI-006` rejects at the same depth. An engineering bound; raising it is a one-constant change
+  on both sides and needs no story.

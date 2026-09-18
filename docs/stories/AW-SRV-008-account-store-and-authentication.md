@@ -7,7 +7,7 @@ type: feature
 status: review
 size: M
 depends_on: [AW-SRV-005]
-blocks: [AW-SRV-009, AW-SRV-013, AW-SRV-014]
+blocks: [AW-SRV-003, AW-SRV-009, AW-SRV-013, AW-SRV-014, AW-SRV-025]
 lane: implementation
 risk: high
 ---
@@ -333,21 +333,22 @@ state and World state are separately stored (AC-7); the key-rotation procedure i
   per Content Pack (`agent_pack_id`), not merely per deployment: one Agent deployment per pack, one
   `agent` Account per deployment, and a Builder's code can drive only that pack's NPCs. ADR-0006's
   "per deployment" wording stands; the deployment unit became the pack.
-- `[ASSUMPTION]` Token lifetimes 1 h / 30 d. Security-versus-annoyance; both are config keys.
-- `[ASSUMPTION]` Argon2id 64 MiB / t=3 / p=4, targeting ~100 ms on the kind box. Re-tuned as a config
-  change, which AC-13 makes safe.
-- `[ASSUMPTION]` Stateless signed session tokens rather than a server-side session table, because
-  AC-8 requires tokens to survive a restart and a table would put tokens in a topic.
-- `[ASSUMPTION]` Usernames are 3–32 characters of `a-z 0-9 _ -`, compared case-insensitively;
-  passwords are at least 8 characters. Neither was specified; both are one constant each.
-- `[ASSUMPTION]` Acting as another Account gives the Session the target's roles, not the actor's.
-  The alternative — keeping operator powers while impersonating — makes "see what the player sees"
-  impossible and is the more dangerous default.
-- `[ASSUMPTION]` Roles form a set, not a hierarchy. An operator who needs to build is granted
-  `builder`. The alternative hides the grant.
-- **For AW-INF-006:** the per-peer half of `auth.rate_limit` keys on the direct TCP peer. Behind an
-  ingress every player arrives from one address and `10/m` becomes ten logins a minute for the whole
-  game. The ingress story must forward the client address (proxy protocol or a trusted header the
-  Gateway reads) or the peer bucket is a self-inflicted outage on launch day.
+- **Resolved 2026-09-18 (review pass):** token lifetimes 1 h / 30 d, Argon2id 64 MiB / t=3 / p=4
+  (~100 ms on the kind box), and the username and password rules (3–32 of `a-z 0-9 _ -`,
+  case-insensitive; passwords ≥ 8). Each is one config key or one constant, AC-13 makes the Argon2
+  parameters safe to re-tune, and none is in the wire contract.
+- **Resolved 2026-09-18 (review pass):** stateless signed session tokens rather than a server-side
+  session table — AC-8 requires tokens to survive a restart and a table would put tokens in a topic.
+- `[NEEDS BRIAN]` **Role semantics, two halves.** (a) Acting as another Account gives the Session
+  the *target's* roles, not the actor's — "see what the player sees", and the less dangerous
+  default; (b) roles are a set, not a ladder — an operator who needs to build is granted `builder`
+  rather than inheriting it. Both are policy the game runs on, both are pinned by tests
+  (`TestActAs`, `TestAuthorize`), and a change to either is a visible test change. *(Asked on the
+  2026-09-18 review pass.)*
+- **For AW-INF-006 — missed, then found (2026-09-18):** the per-peer half of `auth.rate_limit` keys
+  on the direct TCP peer, so behind an ingress every player shares one bucket. `AW-INF-006` closed
+  without picking this up; the review pass also found the bucket keyed on `ip:port`, so each new
+  connection was its own bucket even without a proxy. `AW-SRV-025` (the Gateway's trusted-proxy
+  client address) and `AW-INF-012` (the chart's CIDRs, verified on kind) close both.
 - **For AW-SRV-013:** that story reads `Account.builder_packs`, which this record does not carry.
   Additive, and AW-SRV-013's to add.

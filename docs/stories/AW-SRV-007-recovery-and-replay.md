@@ -235,6 +235,15 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-002` (2026-09-18):** `tickloop.Recover` already replays recorded
+  boundaries at boot and refuses a missing one as `ErrBoundaryGap` — a tick applied but never
+  published. Once one boundary is lost the process publishes no more and keeps ticking; the next
+  restart recovers to the last delivered boundary. The policy for that case (keep ticking
+  unpublished vs. exit so Kubernetes restarts into exact recovery) is open with Brian on `AW-SRV-002`
+  and lands in this story's taxonomy and exit codes either way; `ErrBoundaryGap` joins `ErrLogGap`
+  and `ErrOffsetGap` here. Also for this story: whether a Zone panic should crash-and-recover rather
+  than quarantine, now that recovery is exact.
+
 - **Resolved 2026-09-11 (Brian): refuse on hash mismatch.** No automatic search for an older round.
 - **RTO is decided**: 120 s p99 at M2, 60 s p99 at Phase 1 exit (`docs/specs/slo/recovery.md`). The
   dominant terms are Kubernetes detection and pod startup; optimizing this means `AW-INF-003`'s probes

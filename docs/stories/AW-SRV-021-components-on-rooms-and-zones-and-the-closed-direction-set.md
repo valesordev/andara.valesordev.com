@@ -4,7 +4,7 @@ title: Components on Rooms and Zones, and the closed Direction set
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-001]
 blocks: [AW-CLI-003, AW-CLI-005, AW-CLI-006, AW-SRV-012, AW-SRV-022]
@@ -154,6 +154,14 @@ A Room's component set feeds the State Hash, so it obeys the determinism rules i
   is visible.
 - **Manual/operator:** `make up && make check`. Author a Room with `andara.core.Drak`, boot, and read
   the error — it should name the typo and say component types are server-defined.
+
+### Verification record (2026-09-14, closed 2026-09-18)
+
+Recorded in PR #18: every AC mapped to a test, the byte-identical serialization test extended to
+out-of-order components, AC-2 and AC-6 exercised against the running stack with the error text
+read back, and `make schemas-diff` clean before and after. Metrics `andara_content_components_total`
+and `andara_content_load_warnings_total` scraped from the compose Prometheus. The one `[ASSUMPTION]`
+was resolved by Brian the same day (below). §8 clean; moved to `done` on the 2026-09-18 review pass.
 
 ## Definition of done
 

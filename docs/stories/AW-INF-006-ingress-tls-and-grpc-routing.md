@@ -7,7 +7,7 @@ type: infra
 status: done
 size: M
 depends_on: [AW-INF-003, AW-SRV-005]
-blocks: [AW-INF-008]
+blocks: [AW-INF-008, AW-INF-012]
 lane: architecture
 risk: medium
 ---
@@ -210,6 +210,10 @@ rendered manifest.
 CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `docs/specs/slo/edge-availability.md` exists.
 
 ## Open questions
+
+- **Found after `done` (2026-09-18):** `AW-SRV-008` had handed this story a note — forward the
+  client address or the per-peer login limit becomes one bucket for the whole game — and it was not
+  picked up. `AW-SRV-025` and `AW-INF-012` carry it now; this story's contract is unchanged.
 
 - **Resolved 2026-09-10 (Brian): Admin restricted by network, same listener.** Honored at L7 for
   external traffic and at L3 for in-cluster traffic. In-cluster callers that reach the pod (Agents) are

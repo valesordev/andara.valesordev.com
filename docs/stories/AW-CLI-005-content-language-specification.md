@@ -141,6 +141,12 @@ CLAUDE.md §8, plus: every error code in `errors.md` has at least one corpus fil
 
 ## Open questions
 
+- **Inherited from `AW-SRV-022` (2026-09-18), for the syntax review:** the identifier grammar says
+  `[a-z][a-z0-9_]*`, but this story's own example and the shipped seed and fixtures write
+  `Merchant`, `Npc`, `Entity`, `Character`, `Item`. The names are now on disk under
+  `content/core/templates/` and `testdata/templates/`; the grammar must admit them or the seed must
+  be renamed before the corpus is written. `MAX_DEPTH` is `sim.MaxChainDepth` = 16, exported.
+
 - `[NEEDS BRIAN]` Syntax review (AC-10). The sketch above is the starting point, not the answer.
 - `[ASSUMPTION]` `MAX_DEPTH` 16. Deep enough for any hierarchy a Builder would want to read.
 - `[ASSUMPTION]` Source blobs are published alongside compiled output (ADR-0009), so `content fetch`
