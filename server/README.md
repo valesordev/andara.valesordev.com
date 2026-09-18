@@ -293,7 +293,9 @@ The export queue is bounded (2,048 records, flushed every second or at 512) and 
 caller: with the collector away, records are dropped and counted in
 `andara_log_export_dropped_total`, `andara_log_export_queue_size` shows what waits, the exporter's
 own failure goes to stderr alone at `warn` once a minute (an exporter that logs through itself is
-a loop), and the process neither stalls nor grows. `make stack-smoke` asserts a real Session's
+a loop), and the process neither stalls nor grows. The exporter's own retry is bounded (5 s per
+attempt, 15 s elapsed), so a dead collector is reported within seconds rather than after the OTel
+default minute of backoff. `make stack-smoke` asserts a real Session's
 line in Loki matches its stderr line and follows its trace into Tempo; the stack workflow stops
 the collector for a minute and asserts the same afterwards.
 
