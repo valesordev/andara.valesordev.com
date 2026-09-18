@@ -70,6 +70,14 @@ ANDARA_SIM_SEED: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CHECKPOINT_EVERY_TICKS: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "command" "max_intent_bytes" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_MAX_INTENT_BYTES: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "command" "verb_table_path" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_VERB_TABLE: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "grpc" "listen" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_GRPC_LISTEN: {{ $v | toString | quote }}

@@ -26,6 +26,7 @@
 
 import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
+import type { ComponentValue } from "../../content/v1/zone_pb";
 
 /**
  * Describes the file andara/log/v1/log.proto.
@@ -106,6 +107,12 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: Move;
     case: "move";
+  } | {
+    /**
+     * @generated from field: andara.log.v1.Arrive arrive = 12;
+     */
+    value: Arrive;
+    case: "arrive";
   } | { case: undefined; value?: undefined };
 };
 
@@ -149,6 +156,102 @@ export declare type Move = Message<"andara.log.v1.Move"> & {
  * Use `create(MoveSchema)` to create a new message.
  */
 export declare const MoveSchema: GenMessage<Move>;
+
+/**
+ * The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The
+ * source Zone's tick removed the Entity from its own state and produced this
+ * to the target Zone's partition; the target's tick places it. It is never a
+ * player's verb — the verb table has no entry that binds it, so `parse` cannot
+ * produce one — and it is always produced by a tick, so it is already ordered
+ * with respect to everything else in the target Zone.
+ *
+ * The Entity travels by value because there is no other way for it to cross
+ * a partition boundary: the target process, which may be a different one,
+ * holds nothing of it (ADR-0001 consequences).
+ *
+ * @generated from message andara.log.v1.Arrive
+ */
+export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
+  /**
+   * The Room inside the target Zone (LoggedCommand.zone_id) to place it in.
+   *
+   * @generated from field: string room_id = 1;
+   */
+  roomId: string;
+
+  /**
+   * The Direction it came through, for CharacterArrived.from_direction.
+   *
+   * @generated from field: string from_direction = 2;
+   */
+  fromDirection: string;
+
+  /**
+   * The Entity as the source Zone last held it.
+   *
+   * @generated from field: andara.log.v1.Entity entity = 3;
+   */
+  entity?: Entity | undefined;
+
+  /**
+   * Where it left from, so a target that no longer has room_id — content
+   * moved under the log — can send it back rather than lose it. Cleared on
+   * the way back, so a bounce is one hop, never a loop.
+   *
+   * @generated from field: string origin_zone_id = 4;
+   */
+  originZoneId: string;
+
+  /**
+   * @generated from field: string origin_room_id = 5;
+   */
+  originRoomId: string;
+};
+
+/**
+ * Describes the message andara.log.v1.Arrive.
+ * Use `create(ArriveSchema)` to create a new message.
+ */
+export declare const ArriveSchema: GenMessage<Arrive>;
+
+/**
+ * An Entity in transit between Zones: the same shape server/sim holds, so the
+ * target rebuilds it exactly and the State Hash is the same as if it had been
+ * there all along. Nothing mutable that is not here can be carried across a
+ * Zone boundary; a field added to the sim's EntityState is added here in the
+ * same change. AW-SRV-006's snapshot body may reuse it.
+ *
+ * @generated from message andara.log.v1.Entity
+ */
+export declare type Entity = Message<"andara.log.v1.Entity"> & {
+  /**
+   * @generated from field: string id = 1;
+   */
+  id: string;
+
+  /**
+   * @generated from field: string template = 2;
+   */
+  template: string;
+
+  /**
+   * @generated from field: string content_version = 3;
+   */
+  contentVersion: string;
+
+  /**
+   * Sorted by type, one of each — the invariant every reader assumes.
+   *
+   * @generated from field: repeated andara.content.v1.ComponentValue components = 4;
+   */
+  components: ComponentValue[];
+};
+
+/**
+ * Describes the message andara.log.v1.Entity.
+ * Use `create(EntitySchema)` to create a new message.
+ */
+export declare const EntitySchema: GenMessage<Entity>;
 
 /**
  * An Event as it was emitted by the simulation and written to the log. This is

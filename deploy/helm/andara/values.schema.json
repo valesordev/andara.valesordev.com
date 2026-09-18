@@ -170,6 +170,21 @@
             }
           }
         },
+        "command": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_intent_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_MAX_INTENT_BYTES (AW-SRV-003). Default when unset: 4096."
+            },
+            "verb_table_path": {
+              "type": "string",
+              "description": "ANDARA_VERB_TABLE (AW-SRV-003). Default when unset: ''."
+            }
+          }
+        },
         "grpc": {
           "type": "object",
           "additionalProperties": false,

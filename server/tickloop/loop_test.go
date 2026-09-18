@@ -101,7 +101,7 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 	if mutate != nil {
 		mutate(&o)
 	}
-	// The engine needs the loop as its ZoneTimer, and the loop needs the
+	// The engine needs the loop as its Observer, and the loop needs the
 	// engine: build the loop with a placeholder and swap.
 	cfg := sim.Config{Seed: 11, Partitions: simtest.AllPartitions(), Handlers: handlers}
 	h.engine = sim.NewEngine(w, reg, cfg)
@@ -111,7 +111,7 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 		t.Fatal(err)
 	}
 	h.loop = loop
-	cfg.ZoneTimer = loop
+	cfg.Observer = loop
 	h.engine = sim.NewEngine(w, reg, cfg)
 	loop.opts.Engine = h.engine
 	return h

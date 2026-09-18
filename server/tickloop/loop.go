@@ -18,6 +18,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -37,6 +38,10 @@ type Options struct {
 	Log      *slog.Logger
 	Tracer   trace.Tracer
 	Registry prometheus.Registerer
+	// Commands is the post-log half of the command pipeline's metrics
+	// (AW-SRV-003): the Gateway holds the same instance for the pre-log
+	// half. Nil observes nothing.
+	Commands *command.Metrics
 	// OnTick, if set, is called after every tick with its result. Tests use
 	// it; production leaves it nil.
 	OnTick func(sim.StepResult, time.Duration)
@@ -57,6 +62,10 @@ type Loop struct {
 	lastCommitted sim.Tick
 
 	zoneTimes map[sim.ZoneID]time.Duration
+	// tickCtx is the running tick's span context, the parent for
+	// command.apply spans; set for the duration of tick().
+	tickCtx context.Context
+	tickNo  sim.Tick
 }
 
 // DrainTimeoutError is what Run returns when shutdown outlasted
@@ -197,6 +206,7 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// cancellation, is what stops the loop (AC-15).
 	tctx, span := l.tracer.Start(context.WithoutCancel(ctx), "sim.tick", trace.WithAttributes(attribute.Int64("tick", int64(tick))))
 	defer span.End()
+	l.tickCtx, l.tickNo = tctx, tick
 
 	records, err := l.opts.Source.Poll(e.FaultedPartitions(), l.opts.MaxPerTick)
 	starved := false
@@ -363,12 +373,51 @@ func offsetsForLog(in map[int32]int64) map[string]int64 {
 
 // --- per-Zone timing -------------------------------------------------------
 
-// Begin implements sim.ZoneTimer: the loop attributes handler time to
-// Zones without the core reading a clock.
-func (l *Loop) Begin(zone sim.ZoneID) func() {
+// Begin implements sim.Observer: the loop attributes handler time to
+// Zones without the core reading a clock, and observes each Command's
+// post-log outcome — the metric, the debug line, and the command.apply
+// span, which continues the trace the Gateway started (the record's
+// trace_id) so one trace shows the queue time in the log, and links to
+// sim.tick.
+func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 	start := l.clock.Now()
-	return func() {
-		l.zoneTimes[zone] += l.clock.Now().Sub(start)
+	ctx := l.tickCtx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	tickSpan := trace.SpanFromContext(ctx)
+	parent := command.ParentFrom(ctx, r.Command.GetTraceId())
+	_, span := l.tracer.Start(parent, "command.apply",
+		trace.WithLinks(trace.Link{SpanContext: tickSpan.SpanContext()}),
+		trace.WithAttributes(
+			attribute.String("verb", string(sim.KindOf(r.Command))),
+			attribute.Bool("pre_log", false),
+			attribute.Int64("tick", int64(l.tickNo)),
+			attribute.Int64("partition", int64(r.Partition)),
+			attribute.Int64("offset", r.Offset),
+		))
+	return func(out sim.Outcome) {
+		d := l.clock.Now().Sub(start)
+		l.zoneTimes[zone] += d
+		verb := string(out.Kind)
+		if l.opts.Commands != nil {
+			l.opts.Commands.Duration.WithLabelValues(verb, command.PhasePostLog).Observe(d.Seconds())
+			if out.Code != "" {
+				l.opts.Commands.Reject(command.Stage(out.Stage), out.Code)
+			}
+		}
+		if out.Code != "" {
+			span.SetAttributes(attribute.String("stage_failed", out.Stage), attribute.String("code", out.Code))
+			span.SetStatus(codes.Error, out.Code)
+		}
+		span.End()
+		l.log.LogAttrs(ctx, slog.LevelDebug, "command applied",
+			slog.String("verb", verb), slog.String("actor", r.Command.GetActorId()),
+			slog.String("session_id", r.Command.GetSessionId()),
+			slog.Uint64("tick", uint64(l.tickNo)), slog.Int64("partition", int64(r.Partition)), slog.Int64("offset", r.Offset),
+			slog.String("code", out.Code), slog.String("stage", out.Stage),
+			slog.Float64("duration_ms", float64(d.Microseconds())/1000),
+			slog.String("trace_id", span.SpanContext().TraceID().String()))
 	}
 }
 

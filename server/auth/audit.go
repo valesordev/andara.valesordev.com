@@ -56,6 +56,23 @@ type Auditor struct {
 	now     func() time.Time
 }
 
+// NewAuditor builds an Auditor over an audit log outside a Store, for the
+// command pipeline's tests and harnesses (AW-SRV-003): the Authorizer it
+// calls audits every denial, so an Authorizer needs one even where no
+// Account store exists. metrics may be nil.
+func NewAuditor(log recordlog.Log, logger *slog.Logger, metrics *Metrics, now func() time.Time) *Auditor {
+	if metrics == nil {
+		metrics = NewMetrics(nil)
+	}
+	if logger == nil {
+		logger = slog.New(slog.DiscardHandler)
+	}
+	if now == nil {
+		now = time.Now
+	}
+	return &Auditor{log: log, slog: logger, metrics: metrics, now: now}
+}
+
 // Entry is one privileged action to record. Session and trace IDs are read
 // from ctx.
 type Entry struct {

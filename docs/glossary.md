@@ -377,6 +377,30 @@ Gateway before the produce; validate and apply need authoritative World state an
 after the consume (ADR-0002 §2). Rejection at any stage produces a typed error, not a silent drop.
 
 **Command Verb** — The first token of an Intent, resolved against the verb table to a Command type.
+Resolution is exact name, then alias, then the unique abbreviable prefix; a prefix two Verbs claim
+resolves to neither and the rejection names both (AW-SRV-003).
+
+**Verb Table** — The closed set of Command Verbs a Gateway accepts: for each, the word, the Command
+kind it binds (`look`, `move`), the Role it requires, its arguments, and its aliases. Built into the
+server; `command.verb_table_path` replaces it from a file. The table's Role column is what
+`authorize` reads. A Command kind a Tick produces for itself — Arrive — has no Verb and cannot be
+bound from a file (AW-SRV-003).
+
+**Binding** — What a Session knows about its Character: which Entity acts, and which Zone it was
+last seen in, hence which Partition its Commands go to. Session state, not World state, so
+`authorize` may read it; a Session with no Binding may submit nothing (AW-SRV-003). How a Binding is
+made and kept current across a Zone boundary is the Gateway's (AW-SRV-010, AW-SRV-015).
+
+**Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
+cross-Zone Exit (ADR-0001 rule 4): the Entity by value, the Room to place it in, and the Direction it
+came through. Resolves on a later Tick — one, in a single process — never as a call. Not a Command
+Verb: no Intent parses to it (AW-SRV-003).
+
+**Rejection Code** — The stable, snake_case, additive-only name a rejected Command carries:
+pre-log on the Submit response (`unknown_verb`, `missing_argument`, `invalid_argument`,
+`intent_too_large`, `not_authorized`), post-log in a `CommandRejected` Event (`no_such_exit`,
+`exit_blocked`, `actor_not_found`, `unknown_room`, `zone_faulted`, `unsupported_command`). The set is
+closed, which is what makes it a metric label (AW-SRV-003).
 
 ---
 

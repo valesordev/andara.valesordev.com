@@ -115,7 +115,7 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 	if err != nil {
 		return nil, nil, err
 	}
-	e.SetZoneTimer(loop)
+	e.SetObserver(loop)
 	return loop, e, nil
 }
 

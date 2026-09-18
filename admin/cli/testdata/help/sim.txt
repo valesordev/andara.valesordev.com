@@ -1,0 +1,23 @@
+Run the simulation in-process against content on disk (developer)
+
+Usage:
+  andara-cli sim [flags]
+  andara-cli sim [command]
+
+Available Commands:
+  repl        Read Intents from stdin, run them through parse → authorize → [log] → validate → apply, print the Events
+
+Flags:
+  -h, --help   help for sim
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)
+
+Use "andara-cli sim [command] --help" for more information about a command.

@@ -25,12 +25,13 @@
 /* eslint-disable */
 
 import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import { file_andara_content_v1_zone } from "../../content/v1/zone_pb";
 
 /**
  * Describes the file andara/log/v1/log.proto.
  */
 export const file_andara_log_v1_log = /*@__PURE__*/
-  fileDesc("ChdhbmRhcmEvbG9nL3YxL2xvZy5wcm90bxINYW5kYXJhLmxvZy52MSLgAQoNTG9nZ2VkQ29tbWFuZBIPCgd6b25lX2lkGAEgASgJEhAKCGFjdG9yX2lkGAIgASgJEhIKCnNlc3Npb25faWQYAyABKAkSEgoKY2xpZW50X3JlZhgEIAEoCRIQCgh0cmFjZV9pZBgFIAEoCRIdChVhY2NlcHRlZF9hdF91bml4X25hbm8YBiABKAMSIwoEbG9vaxgKIAEoCzITLmFuZGFyYS5sb2cudjEuTG9va0gAEiMKBG1vdmUYCyABKAsyEy5hbmRhcmEubG9nLnYxLk1vdmVIAEIJCgdjb21tYW5kIgYKBExvb2siGQoETW92ZRIRCglkaXJlY3Rpb24YASABKAkihgEKBUV2ZW50EhAKCGV2ZW50X2lkGAEgASgEEgwKBHRpY2sYAiABKAQSDwoHem9uZV9pZBgDIAEoCRIWCg5zY2hlbWFfdmVyc2lvbhgEIAEoDRIPCgdwYXlsb2FkGAUgASgMEiMKBXNjb3BlGAYgASgLMhQuYW5kYXJhLmxvZy52MS5TY29wZSJRCgVTY29wZRIUCgxyb29tX3pvbmVfaWQYASABKAkSDwoHcm9vbV9pZBgCIAEoCRISCgplbnRpdHlfaWRzGAMgAygJEg0KBXdvcmxkGAQgASgIIqsBCg1UaWNrQ29tcGxldGVkEgwKBHRpY2sYASABKAQSLwoHb2Zmc2V0cxgCIAMoCzIeLmFuZGFyYS5sb2cudjEuUGFydGl0aW9uT2Zmc2V0EhIKCnN0YXRlX2hhc2gYAyABKAwSFQoNc3RhdGVfdmVyc2lvbhgEIAEoDRIWCg5ldmVudHNfZW1pdHRlZBgFIAEoBBIYChBjb21tYW5kc19hcHBsaWVkGAYgASgEIjQKD1BhcnRpdGlvbk9mZnNldBIRCglwYXJ0aXRpb24YASABKAUSDgoGb2Zmc2V0GAIgASgDQqwBChFjb20uYW5kYXJhLmxvZy52MUIITG9nUHJvdG9QAVo3Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2xvZy92MTtsb2d2MaICA0FMWKoCDUFuZGFyYS5Mb2cuVjHKAg1BbmRhcmFcTG9nXFYx4gIZQW5kYXJhXExvZ1xWMVxHUEJNZXRhZGF0YeoCD0FuZGFyYTo6TG9nOjpWMWIGcHJvdG8z");
+  fileDesc("ChdhbmRhcmEvbG9nL3YxL2xvZy5wcm90bxINYW5kYXJhLmxvZy52MSKJAgoNTG9nZ2VkQ29tbWFuZBIPCgd6b25lX2lkGAEgASgJEhAKCGFjdG9yX2lkGAIgASgJEhIKCnNlc3Npb25faWQYAyABKAkSEgoKY2xpZW50X3JlZhgEIAEoCRIQCgh0cmFjZV9pZBgFIAEoCRIdChVhY2NlcHRlZF9hdF91bml4X25hbm8YBiABKAMSIwoEbG9vaxgKIAEoCzITLmFuZGFyYS5sb2cudjEuTG9va0gAEiMKBG1vdmUYCyABKAsyEy5hbmRhcmEubG9nLnYxLk1vdmVIABInCgZhcnJpdmUYDCABKAsyFS5hbmRhcmEubG9nLnYxLkFycml2ZUgAQgkKB2NvbW1hbmQiBgoETG9vayIZCgRNb3ZlEhEKCWRpcmVjdGlvbhgBIAEoCSKIAQoGQXJyaXZlEg8KB3Jvb21faWQYASABKAkSFgoOZnJvbV9kaXJlY3Rpb24YAiABKAkSJQoGZW50aXR5GAMgASgLMhUuYW5kYXJhLmxvZy52MS5FbnRpdHkSFgoOb3JpZ2luX3pvbmVfaWQYBCABKAkSFgoOb3JpZ2luX3Jvb21faWQYBSABKAkidgoGRW50aXR5EgoKAmlkGAEgASgJEhAKCHRlbXBsYXRlGAIgASgJEhcKD2NvbnRlbnRfdmVyc2lvbhgDIAEoCRI1Cgpjb21wb25lbnRzGAQgAygLMiEuYW5kYXJhLmNvbnRlbnQudjEuQ29tcG9uZW50VmFsdWUihgEKBUV2ZW50EhAKCGV2ZW50X2lkGAEgASgEEgwKBHRpY2sYAiABKAQSDwoHem9uZV9pZBgDIAEoCRIWCg5zY2hlbWFfdmVyc2lvbhgEIAEoDRIPCgdwYXlsb2FkGAUgASgMEiMKBXNjb3BlGAYgASgLMhQuYW5kYXJhLmxvZy52MS5TY29wZSJRCgVTY29wZRIUCgxyb29tX3pvbmVfaWQYASABKAkSDwoHcm9vbV9pZBgCIAEoCRISCgplbnRpdHlfaWRzGAMgAygJEg0KBXdvcmxkGAQgASgIIqsBCg1UaWNrQ29tcGxldGVkEgwKBHRpY2sYASABKAQSLwoHb2Zmc2V0cxgCIAMoCzIeLmFuZGFyYS5sb2cudjEuUGFydGl0aW9uT2Zmc2V0EhIKCnN0YXRlX2hhc2gYAyABKAwSFQoNc3RhdGVfdmVyc2lvbhgEIAEoDRIWCg5ldmVudHNfZW1pdHRlZBgFIAEoBBIYChBjb21tYW5kc19hcHBsaWVkGAYgASgEIjQKD1BhcnRpdGlvbk9mZnNldBIRCglwYXJ0aXRpb24YASABKAUSDgoGb2Zmc2V0GAIgASgDQqwBChFjb20uYW5kYXJhLmxvZy52MUIITG9nUHJvdG9QAVo3Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2xvZy92MTtsb2d2MaICA0FMWKoCDUFuZGFyYS5Mb2cuVjHKAg1BbmRhcmFcTG9nXFYx4gIZQW5kYXJhXExvZ1xWMVxHUEJNZXRhZGF0YeoCD0FuZGFyYTo6TG9nOjpWMWIGcHJvdG8z", [file_andara_content_v1_zone]);
 
 /**
  * Describes the message andara.log.v1.LoggedCommand.
@@ -54,30 +55,44 @@ export const MoveSchema = /*@__PURE__*/
   messageDesc(file_andara_log_v1_log, 2);
 
 /**
+ * Describes the message andara.log.v1.Arrive.
+ * Use `create(ArriveSchema)` to create a new message.
+ */
+export const ArriveSchema = /*@__PURE__*/
+  messageDesc(file_andara_log_v1_log, 3);
+
+/**
+ * Describes the message andara.log.v1.Entity.
+ * Use `create(EntitySchema)` to create a new message.
+ */
+export const EntitySchema = /*@__PURE__*/
+  messageDesc(file_andara_log_v1_log, 4);
+
+/**
  * Describes the message andara.log.v1.Event.
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 3);
+  messageDesc(file_andara_log_v1_log, 5);
 
 /**
  * Describes the message andara.log.v1.Scope.
  * Use `create(ScopeSchema)` to create a new message.
  */
 export const ScopeSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 4);
+  messageDesc(file_andara_log_v1_log, 6);
 
 /**
  * Describes the message andara.log.v1.TickCompleted.
  * Use `create(TickCompletedSchema)` to create a new message.
  */
 export const TickCompletedSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 5);
+  messageDesc(file_andara_log_v1_log, 7);
 
 /**
  * Describes the message andara.log.v1.PartitionOffset.
  * Use `create(PartitionOffsetSchema)` to create a new message.
  */
 export const PartitionOffsetSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 6);
+  messageDesc(file_andara_log_v1_log, 8);
 

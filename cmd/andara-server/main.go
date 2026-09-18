@@ -55,6 +55,13 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return code
 	}
 
+	// The verb table (AW-SRV-003): what the Gateway will accept. A file
+	// that does not parse fails the boot.
+	if err := rt.LoadVerbs(ctx); err != nil {
+		tel.Log.Error("verb table", "detail", err.Error())
+		return boot.ExitFail
+	}
+
 	// The account store (AW-SRV-008): keyring, broker, index replay,
 	// bootstrap operator. A server that cannot authenticate anyone has
 	// nothing to serve, so this is a boot failure like a bad certificate.

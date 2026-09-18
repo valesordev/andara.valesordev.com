@@ -12,6 +12,7 @@ Available Commands:
   help         Help about any command
   invite       Issue and revoke invite codes (operator)
   registration Switch the registration mode (operator)
+  sim          Run the simulation in-process against content on disk (developer)
   version      Print version, commit, and build date
 
 Flags:

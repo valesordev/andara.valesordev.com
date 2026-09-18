@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -25,11 +26,11 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	engineCfg := sim.Config{
 		Seed:       cfg.SimSeed,
 		Partitions: cfg.SimPartitions,
-		// Verb handlers arrive with AW-SRV-003; until then every logged
-		// Command is rejected with unsupported_command and the offsets
-		// advance, which is what keeps the World replayable through a
-		// binary that cannot yet act.
-		Handlers: map[sim.CommandKind]sim.Apply{},
+		// The verb handlers (AW-SRV-003). A logged arm with no handler is
+		// rejected with unsupported_command and the offsets advance, which
+		// is what keeps the World replayable through a binary behind its
+		// content.
+		Handlers: sim.Handlers(),
 	}
 	engine := sim.NewEngine(rt.World, rt.Templates, engineCfg)
 
@@ -42,7 +43,10 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	switch cfg.SimSource {
 	case "memory":
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "sim.source=memory: the World ticks with no Command input and nothing is published")
-		source, publisher = tickloop.NewMemorySource(), &tickloop.MemoryPublisher{}
+		ms := tickloop.NewMemorySource()
+		// Cross-Zone Commands loop back into the source, so an arrival
+		// resolves on a later tick here as it would through the broker.
+		source, publisher = ms, &tickloop.MemoryPublisher{OnProduce: func(c *logv1.LoggedCommand) { ms.Push(c) }}
 	case "kafka":
 		// Recovery (ADR-0002 §4): replay the recorded boundaries before
 		// going live, so the World that starts ticking is the one that was
@@ -107,6 +111,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		Log:             rt.Tel.Log,
 		Tracer:          rt.Tel.Tracer,
 		Registry:        rt.Tel.Reg,
+		Commands:        rt.Commands,
 	})
 	if err != nil {
 		_ = source.Close()
@@ -115,7 +120,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	}
 	// The loop times Zones for the engine; the engine was built before the
 	// loop existed, so attach it now.
-	engine.SetZoneTimer(loop)
+	engine.SetObserver(loop)
 	rt.Engine = engine
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "tick loop configured",
 		slog.String("source", cfg.SimSource),

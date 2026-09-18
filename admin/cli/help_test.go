@@ -22,6 +22,8 @@ func TestHelpGoldens(t *testing.T) {
 		{file: "config.txt", args: []string{"config", "--help"}},
 		{file: "config-show.txt", args: []string{"config", "show", "--help"}},
 		{file: "completion.txt", args: []string{"completion", "--help"}},
+		{file: "sim.txt", args: []string{"sim", "--help"}},
+		{file: "sim-repl.txt", args: []string{"sim", "repl", "--help"}},
 	}
 
 	dir := filepath.Join("testdata", "help")

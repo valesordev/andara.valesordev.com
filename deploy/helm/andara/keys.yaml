@@ -41,6 +41,10 @@ keys:
   - {key: sim.seed,                    env: ANDARA_SIM_SEED,               type: int, default: 0, story: AW-SRV-002}
   - {key: sim.checkpoint_every_ticks,  env: ANDARA_CHECKPOINT_EVERY_TICKS, type: int, default: 100, min: 1, story: AW-SRV-002}
 
+  # --- AW-SRV-003: command pipeline ---
+  - {key: command.max_intent_bytes,    env: ANDARA_MAX_INTENT_BYTES,       type: int, default: 4096, min: 1, story: AW-SRV-003}
+  - {key: command.verb_table_path,     env: ANDARA_VERB_TABLE,             type: string, default: "", story: AW-SRV-003}
+
   # --- AW-SRV-005: gateway — env names and defaults are the story's config table, which
   # AW-INF-002's compose file and server/config/config.go both follow ---
   - {key: grpc.listen,               env: ANDARA_GRPC_LISTEN,              type: string, default: ":8443", story: AW-SRV-005}

@@ -25,10 +25,15 @@ compatibility: BACKWARD
 # subject name, and that name must equal the import path. They carry no topic, so
 # `schemas-diff` does not look for one.
 #
-# Empty today: no topic carries a .proto that imports another. `schemas-check` fails the
-# moment one does, naming the import — so this stays correct without anyone remembering it.
-# snapshot.proto imports log.proto but has no topic; Zone Snapshots are AW-SRV-006.
+# `schemas-check` fails the moment a subject's file imports a .proto not listed here, naming
+# the import — so this stays correct without anyone remembering it. snapshot.proto imports
+# log.proto but has no topic; Zone Snapshots are AW-SRV-006.
+#
+# log.proto imports zone.proto for ComponentValue: an Entity crossing a Zone boundary
+# travels in the log by value (AW-SRV-003 AC-9, ADR-0001 rule 4), Components and all.
 references:
+  - subject: andara/content/v1/zone.proto
+    file: andara/content/v1/zone.proto
 
 # strategy is informational but load-bearing for a reader: TopicNameStrategy means one type
 # on the topic and the subject is `<topic>-value`. TopicRecordNameStrategy means the topic

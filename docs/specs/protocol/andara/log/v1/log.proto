@@ -24,6 +24,8 @@ syntax = "proto3";
 
 package andara.log.v1;
 
+import "andara/content/v1/zone.proto";
+
 // A Command that has been parsed and authorized at the Gateway and produced to
 // its Zone's partition. `Validate` and `Apply` accept only this type, so the
 // log boundary cannot be bypassed by accident (AW-SRV-003).
@@ -58,10 +60,11 @@ message LoggedCommand {
   oneof command {
     Look look = 10;
     Move move = 11;
+    Arrive arrive = 12;
   }
 
-  // Verbs beyond look and move arrive with their own stories, taking numbers
-  // from 12 upward — deliberately NOT `reserved`. A reserved range would have
+  // Verbs beyond these arrive with their own stories, taking numbers from 13
+  // upward — deliberately NOT `reserved`. A reserved range would have
   // to shrink to add a verb, and buf treats shrinking one as a breaking change,
   // so reserving numbers "to hold them" makes the most routine schema change in
   // the project fail CI. `reserved` is for numbers that have been used and
@@ -78,6 +81,46 @@ message Move {
   // with a real error where the wire would silently drop an unknown enum
   // member, and it lets the set grow without a schema change.
   string direction = 1;
+}
+
+// The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The
+// source Zone's tick removed the Entity from its own state and produced this
+// to the target Zone's partition; the target's tick places it. It is never a
+// player's verb — the verb table has no entry that binds it, so `parse` cannot
+// produce one — and it is always produced by a tick, so it is already ordered
+// with respect to everything else in the target Zone.
+//
+// The Entity travels by value because there is no other way for it to cross
+// a partition boundary: the target process, which may be a different one,
+// holds nothing of it (ADR-0001 consequences).
+message Arrive {
+  // The Room inside the target Zone (LoggedCommand.zone_id) to place it in.
+  string room_id = 1;
+
+  // The Direction it came through, for CharacterArrived.from_direction.
+  string from_direction = 2;
+
+  // The Entity as the source Zone last held it.
+  Entity entity = 3;
+
+  // Where it left from, so a target that no longer has room_id — content
+  // moved under the log — can send it back rather than lose it. Cleared on
+  // the way back, so a bounce is one hop, never a loop.
+  string origin_zone_id = 4;
+  string origin_room_id = 5;
+}
+
+// An Entity in transit between Zones: the same shape server/sim holds, so the
+// target rebuilds it exactly and the State Hash is the same as if it had been
+// there all along. Nothing mutable that is not here can be carried across a
+// Zone boundary; a field added to the sim's EntityState is added here in the
+// same change. AW-SRV-006's snapshot body may reuse it.
+message Entity {
+  string id = 1;
+  string template = 2;
+  string content_version = 3;
+  // Sorted by type, one of each — the invariant every reader assumes.
+  repeated andara.content.v1.ComponentValue components = 4;
 }
 
 // An Event as it was emitted by the simulation and written to the log. This is
