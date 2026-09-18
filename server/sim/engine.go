@@ -107,9 +107,19 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "look"
 	case *logv1.LoggedCommand_Move:
 		return "move"
+	case *logv1.LoggedCommand_Arrive:
+		return "arrive"
 	}
 	return ""
 }
+
+// The CommandKinds this binary serves. KindArrive has no verb: only a tick
+// produces one (ADR-0001 rule 4), so the pre-log verb table cannot bind it.
+const (
+	KindLook   CommandKind = "look"
+	KindMove   CommandKind = "move"
+	KindArrive CommandKind = "arrive"
+)
 
 // Apply is the handler seam: AW-SRV-003 registers one per verb. It runs
 // inside the tick with the Zone's state and an Emitter, and must be a pure
@@ -127,7 +137,19 @@ type ApplyContext struct {
 	Record    Record
 	emit      func(ZoneID, string, *gamev1.EventEnvelope)
 	outbound  *[]*logv1.LoggedCommand
+	// consumed is set only by Step, for a Record it took from the log.
+	// Handlers refuse a context without it (AW-SRV-003 AC-11): the log
+	// boundary is a guard, not a convention.
+	consumed bool
 }
+
+// ErrNotConsumed is what a handler returns for an ApplyContext that Step
+// did not build: validate and apply are reachable only through a consumed
+// Record (AW-SRV-003 AC-11).
+var ErrNotConsumed = errors.New("command did not come from a consumed record")
+
+// Consumed reports whether Step built this context from a log Record.
+func (a *ApplyContext) Consumed() bool { return a != nil && a.consumed }
 
 // Emit publishes an Event from this Zone, echoing the Command's client_ref.
 func (a *ApplyContext) Emit(env *gamev1.EventEnvelope) {
@@ -140,20 +162,38 @@ func (a *ApplyContext) Produce(cmd *logv1.LoggedCommand) {
 	*a.outbound = append(*a.outbound, cmd)
 }
 
-// ZoneTimer lets the loop attribute tick time to Zones without the core
-// reading a clock: Begin is called before a record is applied to a Zone and
-// the returned func after. The loop's implementation observes the per-Zone
-// histogram and span (ADR-0001's starving-Zone signal).
-type ZoneTimer interface {
-	Begin(zone ZoneID) (end func())
+// Observer lets the loop attribute tick time to Zones and outcomes to
+// Commands without the core reading a clock or holding a metric: Begin is
+// called before a Record is handed to its handler and the returned func
+// after, with what happened. The loop's implementation observes the
+// per-Zone histogram and span (ADR-0001's starving-Zone signal) and the
+// post-log command metrics, log line, and span (AW-SRV-003).
+type Observer interface {
+	Begin(zone ZoneID, r Record) (end func(Outcome))
 }
+
+// Outcome is what applying one Record came to. Code is empty when the
+// handler accepted it, else the rejection code, and Stage names the stage
+// that rejected: validate, apply, or fault for a panic.
+type Outcome struct {
+	Kind  CommandKind
+	Code  string
+	Stage string
+}
+
+// The post-log stages an Outcome names.
+const (
+	StageValidate = "validate"
+	StageApply    = "apply"
+	StageFault    = "fault"
+)
 
 // Config configures an Engine.
 type Config struct {
 	Seed       uint64
 	Partitions []int32
-	// ZoneTimer is optional.
-	ZoneTimer ZoneTimer
+	// Observer is optional.
+	Observer Observer
 	// Handlers is the verb table's apply column. A Command with no handler
 	// advances its offset and is rejected with unsupported_command: the log
 	// only ever carries parsed, authorized Commands (AW-SRV-010), so this is
@@ -183,9 +223,9 @@ func NewEngine(w *World, templates *TemplateRegistry, cfg Config) *Engine {
 	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts)}
 }
 
-// SetZoneTimer attaches the per-Zone timer after construction; the loop
-// that implements it is built around the engine.
-func (e *Engine) SetZoneTimer(t ZoneTimer) { e.cfg.ZoneTimer = t }
+// SetObserver attaches the Observer after construction; the loop that
+// implements it is built around the engine.
+func (e *Engine) SetObserver(o Observer) { e.cfg.Observer = o }
 
 // State exposes the mutable state, for snapshots and tests. Callers must
 // not mutate it outside a handler.
@@ -293,13 +333,15 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 				// A Zone the World does not have. Content moved under the
 				// log (AW-SRV-012 owns that transition); the record is
 				// consumed and rejected so the Partition keeps moving.
-				emit("", r.Command.GetClientRef(), rejected("unknown_zone", "that place is not in this world"))
+				emit("", r.Command.GetClientRef(), rejected(CodeUnknownZone, "that place is not in this world"))
+				e.observe("", r, Outcome{Kind: KindOf(r.Command), Code: CodeUnknownZone, Stage: StageApply})
 				res.Completed.CommandsApplied++
 				s.Offsets[p] = r.Offset + 1
 				continue
 			}
 			if PartitionFor(zone.ID) != p {
-				emit(zone.ID, r.Command.GetClientRef(), rejected("misrouted", "the command reached the wrong partition"))
+				emit(zone.ID, r.Command.GetClientRef(), rejected(CodeMisrouted, "the command reached the wrong partition"))
+				e.observe(zone.ID, r, Outcome{Kind: KindOf(r.Command), Code: CodeMisrouted, Stage: StageApply})
 				res.Completed.CommandsApplied++
 				s.Offsets[p] = r.Offset + 1
 				continue
@@ -339,8 +381,13 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 	kind := KindOf(r.Command)
 	handler, known := e.cfg.Handlers[kind]
 	if !known {
-		emit(zone.ID, r.Command.GetClientRef(), rejected("unsupported_command", "this server cannot act on that yet"))
+		emit(zone.ID, r.Command.GetClientRef(), rejected(CodeUnsupportedCommand, "this server cannot act on that yet"))
+		e.observe(zone.ID, r, Outcome{Kind: kind, Code: CodeUnsupportedCommand, Stage: StageApply})
 		return true
+	}
+	end := func(Outcome) {}
+	if e.cfg.Observer != nil {
+		end = e.cfg.Observer.Begin(zone.ID, r)
 	}
 	defer func() {
 		if p := recover(); p != nil {
@@ -348,28 +395,39 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 			zone.FaultedTick = tick
 			emit(zone.ID, "", &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_ZoneFaulted{ZoneFaulted: &gamev1.ZoneFaulted{ZoneId: string(zone.ID)}}})
 			res.Faults = append(res.Faults, Fault{Zone: zone.ID, Tick: tick, Partition: r.Partition, Offset: r.Offset, Panic: fmt.Sprint(p)})
+			end(Outcome{Kind: kind, Code: CodeZoneFaulted, Stage: StageFault})
 			ok = false
 		}
 	}()
 	actx := &ApplyContext{
 		Tick: tick, World: e.world, Templates: e.templates, Zone: zone, State: e.state, RNG: e.state.RNG, Record: r,
-		emit: emit, outbound: &res.Outbound,
+		emit: emit, outbound: &res.Outbound, consumed: true,
 	}
-	if e.cfg.ZoneTimer != nil {
-		defer e.cfg.ZoneTimer.Begin(zone.ID)()
-	}
+	out := Outcome{Kind: kind}
 	if err := handler(actx, r.Command); err != nil {
 		// A handler's error is a rejection the player sees, never a fault:
 		// the Command was legitimately ordered and turned out to be illegal
 		// (AW-SRV-003 AC-8).
-		code, msg := "rejected", err.Error()
+		out.Code, out.Stage = CodeRejected, StageApply
+		msg := err.Error()
 		var re *RejectError
 		if errors.As(err, &re) {
-			code, msg = re.Code, re.Message
+			out.Code, out.Stage, msg = re.Code, re.Stage, re.Message
+			if out.Stage == "" {
+				out.Stage = StageApply
+			}
 		}
-		emit(zone.ID, r.Command.GetClientRef(), rejected(code, msg))
+		emit(zone.ID, r.Command.GetClientRef(), rejected(out.Code, msg))
 	}
+	end(out)
 	return true
+}
+
+// observe reports an Outcome the engine decided without a handler.
+func (e *Engine) observe(zone ZoneID, r Record, out Outcome) {
+	if e.cfg.Observer != nil {
+		e.cfg.Observer.Begin(zone, r)(out)
+	}
 }
 
 // Fault records a Zone fault for the loop's log line and counter.
@@ -382,13 +440,22 @@ type Fault struct {
 }
 
 // RejectError is how a handler rejects a Command with a stable code and a
-// player-safe message (AW-SRV-003's taxonomy).
+// player-safe message (AW-SRV-003's taxonomy). Stage is StageValidate or
+// StageApply; empty means apply.
 type RejectError struct {
 	Code    string
+	Stage   string
 	Message string
 }
 
 func (e *RejectError) Error() string { return e.Code + ": " + e.Message }
+
+// Is lets errors.Is match a RejectError by code alone: a test asserts
+// `errors.Is(err, ErrNoSuchExit)` without caring about the message.
+func (e *RejectError) Is(target error) bool {
+	t, ok := target.(*RejectError)
+	return ok && t.Code == e.Code
+}
 
 func rejected(code, msg string) *gamev1.EventEnvelope {
 	return &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CommandRejected{CommandRejected: &gamev1.CommandRejected{Code: code, Message: msg}}}

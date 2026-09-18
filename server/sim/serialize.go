@@ -67,9 +67,18 @@ func CanonicalBytes(w *World) []byte {
 // serializes topology: injective, sorted, tagged. It is how AW-SRV-022 AC-5
 // is asserted — two Instantiate calls with the same inputs encode
 // byte-identically — and, like CanonicalBytes, it is not the State Hash.
+//
+// Position is its own record, omitted when unset, the way Components are:
+// an Entity that is nowhere encodes exactly as it did before position was
+// state, so the hashes recorded before AW-SRV-003 still replay
+// (StateVersion stays 1 — an added record is additive, not a change in
+// what the state means).
 func EntityCanonicalBytes(e EntityState) []byte {
 	var b strings.Builder
 	writeFields(&b, "entity", string(e.ID), string(e.Template), e.ContentVersion)
+	if e.Room != "" {
+		writeFields(&b, "entity_room", string(e.ID), string(e.Room))
+	}
 	writeComponents(&b, "entity_component", "entity_field", []string{string(e.ID)}, e.Components)
 	return []byte(b.String())
 }

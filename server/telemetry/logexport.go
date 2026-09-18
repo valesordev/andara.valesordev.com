@@ -184,6 +184,17 @@ func newLogExport(cfg config.Config, stderr *slog.Logger, reg prometheus.Registe
 	exp, err := otlploggrpc.New(ctx,
 		otlploggrpc.WithEndpoint(cfg.OTLPEndpoint),
 		otlploggrpc.WithInsecure(),
+		// The exporter's own retry is bounded well under a minute. Its
+		// defaults (5s..30s backoff, 1 min elapsed, 10s per attempt) mean
+		// a dead collector holds one batch for up to a minute before Export
+		// returns and the failure is counted and warned — which made the
+		// stack workflow's collector-outage step, a ~60 s window, a coin
+		// toss. The queue in front of it already bounds memory (LogQueueSize)
+		// and drops on its own clock; retrying longer here buys nothing.
+		otlploggrpc.WithTimeout(5*time.Second),
+		otlploggrpc.WithRetry(otlploggrpc.RetryConfig{
+			Enabled: true, InitialInterval: time.Second, MaxInterval: 5 * time.Second, MaxElapsedTime: 15 * time.Second,
+		}),
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("telemetry: otlp log exporter: %w", err)

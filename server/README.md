@@ -64,6 +64,8 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the World's topology. Overriding is a debugging affordance. |
 | `sim.partitions` | `ANDARA_SIM_PARTITIONS` | `0-63` | Assigned Partitions: a range, or the comma list the chart's init container writes from the pod ordinal. |
 | `sim.checkpoint_every_ticks` | `ANDARA_CHECKPOINT_EVERY_TICKS` | `100` | Offset commit cadence — a startup-cost knob, not a correctness one. |
+| `command.max_intent_bytes` | `ANDARA_MAX_INTENT_BYTES` | `4096` | Largest Intent `parse` will read; over it is `intent_too_large` on the length alone, before tokenizing. |
+| `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in | JSON verb table that *replaces* the built-in one (`look`, `move`, the twelve Directions and their compass aliases). A file that does not parse fails the boot. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext
 mode and no flag to create one; `make up` provisions certificates so nobody needs one
@@ -213,6 +215,70 @@ Logs: `tick` at `info` once a second with `tick`, `lag_ms`, `consumer_lag`, `def
 always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`). Per-Entity
 spans are not emitted. The dashboard is `andara-tick-health`; the SLO is
 `docs/specs/slo/tick-health.md`.
+## The command pipeline (AW-SRV-003)
+
+Five stages, with the log in the middle (CLAUDE.md §10, ADR-0002):
+
+```
+Gateway:  parse ──▶ authorize ──▶ [ produce to andara.commands.v1 ] ──▶ ack "accepted"
+Tick:     [ consume ] ──▶ validate ──▶ apply ──▶ emit events
+```
+
+`server/command` is the pre-log half. `Parse` is stateless: it knows the verb table and nothing
+else, resolves the verb (exact name, then alias, then the unique abbreviable prefix — `no` is
+refused naming `north`, `northeast`, `northwest`), binds and checks the arguments, and produces a
+`LoggedCommand` arm. `Authorize` is `auth.Authorizer` from `AW-SRV-008` — the verb's role from the
+table's role column — plus the one rule this story adds: a Session bound to no Character may submit
+nothing. Both reject before the produce, so **the log holds only Commands that parsed and were
+authorized**; an unauthorized attempt goes to `andara.audit.v1` instead. An ack means *accepted and
+ordered*, never *succeeded* — the outcome arrives later as an Event.
+
+`server/sim` is the post-log half. `sim.Handlers()` is the apply column — `look`, `move`, and
+`arrive` — and each handler is `validate` then `apply`: validate reads state and never mutates it,
+apply is the only mutating stage, and a validate failure returns before apply runs. Both are
+reachable only through a `Record` that `Step` took from the log: a handler refuses an
+`ApplyContext` it did not build (`ErrNotConsumed`), so the boundary is a guard, not a convention. A
+post-log rejection has consumed its offset — it was legitimately ordered and turned out to be
+illegal — and is a `CommandRejected` Event to the actor with a stable code and a player-safe message
+(`there is no exit west`, never the Room beyond it); World state is unchanged.
+
+**Position** is `EntityState.Room`, owned by the Zone that holds the Room and hashed. **A cross-Zone
+move** removes the Character from the source Zone and produces an `Arrive` — the Entity by value,
+Components and all — to the target Zone's Partition, where the next tick places it (ADR-0001 rule
+4). It is never a call, whichever process owns the target, so the arrival is one tick later even in
+a single process; in between, a Command on either Zone is `actor_not_found`. `Arrive` is not a verb:
+only a tick produces one, and the verb table cannot bind it. An `Arrive` whose Room is gone
+(content moved under the log) is bounced back to its origin once, and rejected `unknown_room` if
+that is gone too.
+
+| Code | Stage | Pre-log |
+|------|-------|:-------:|
+| `unknown_verb`, `missing_argument`, `invalid_argument`, `intent_too_large` | parse | yes |
+| `not_authorized` | authorize | yes |
+| `no_such_exit`, `exit_blocked`, `actor_not_found`, `unknown_room` | validate | no |
+| `zone_faulted`, `unsupported_command`, `unknown_zone`, `misrouted`, `rejected` | apply | no |
+
+`andara-cli sim repl --content <dir>` drives the whole pipeline in-process with a fake log —
+parse, authorize, append, tick, print — which is how it is exercised before `AW-SRV-010` puts a
+broker behind `Game.Submit`; `Ingress` stays `UNIMPLEMENTED` until then.
+
+### Command metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_commands_total` | counter | `verb` | the verb table; an unknown verb is never a label |
+| `andara_command_rejected_total` | counter | `stage`, `code`, `pre_log` | 5 stages × the code table × 2 |
+| `andara_command_duration_seconds` | histogram | `verb`, `phase` | verbs × `pre_log`, `post_log` |
+
+Session ID, Entity ID, Room ID, and raw Intent text are never labels. Logs: `command rejected` at
+`info` for an authorize rejection and `debug` otherwise, with `session_id`, `verb`, `stage`, `code`,
+`detail`; `intent received` at `debug` with the raw text quoted and escaped; `command applied` at
+`debug` per record with `verb`, `actor`, `session_id`, `tick`, `partition`, `offset`, `code`,
+`stage`, `duration_ms`. Spans: `command.execute` per Submit with `command.parse` and
+`command.authorize` beneath it; the record's `trace_id` carries the W3C traceparent, and the tick's
+`command.apply` span (`verb`, `partition`, `offset`, `stage_failed`, `code`) is its child, linked to
+`sim.tick` — one trace from keystroke to Event, with the queue time in the log visible as the gap.
+
 ## Logs (AW-SRV-001, AW-SRV-024)
 
 Every line goes to stderr as JSON and, when `telemetry.otlp_endpoint` is set, to the collector
@@ -227,7 +293,9 @@ The export queue is bounded (2,048 records, flushed every second or at 512) and 
 caller: with the collector away, records are dropped and counted in
 `andara_log_export_dropped_total`, `andara_log_export_queue_size` shows what waits, the exporter's
 own failure goes to stderr alone at `warn` once a minute (an exporter that logs through itself is
-a loop), and the process neither stalls nor grows. `make stack-smoke` asserts a real Session's
+a loop), and the process neither stalls nor grows. The exporter's own retry is bounded (5 s per
+attempt, 15 s elapsed), so a dead collector is reported within seconds rather than after the OTel
+default minute of backoff. `make stack-smoke` asserts a real Session's
 line in Loki matches its stderr line and follows its trace into Tempo; the stack workflow stops
 the collector for a minute and asserts the same afterwards.
 

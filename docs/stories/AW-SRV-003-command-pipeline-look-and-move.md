@@ -4,7 +4,7 @@ title: Command pipeline stages split across the log boundary, with look and move
 epic: EPIC-03
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-001, AW-SRV-002, AW-SRV-008]
 blocks: [AW-SRV-004, AW-SRV-010]
@@ -154,6 +154,21 @@ func applyMove(a *ApplyContext, m *logv1.Move)            // in-Zone; or Produce
 | `command.max_intent_bytes` | `ANDARA_MAX_INTENT_BYTES` | `4096` |
 | `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in |
 
+### As built (2026-09-18)
+
+- `server/command`: `Intent{SessionID, Raw, ClientRef}`, `Verb`, `VerbTable` (`Builtin()`,
+  `NewVerbTable`, `LoadVerbTable` — a JSON file that *replaces* the built-in table), `Parse(in, table,
+  maxBytes)`, `Pipeline{Table, MaxBytes, Authorizer, Bindings, Log, Metrics, Tracer, Logger}.Submit`
+  → `Accepted{Partition, Offset, Verb}`; seams `Binder` (Session → `Binding{Actor, Zone}`) and
+  `Producer` (the log); `*command.Error{Stage, Code, Detail, Arg}` with `errors.Is` sentinels.
+- `server/sim`: `EntityState.Room`; `sim.Handlers()` → `look`, `move`, `arrive`; `ApplyContext.Consumed()`
+  and `ErrNotConsumed` (the AC-11 guard); `*RejectError{Code, Stage, Message}` with sentinels;
+  `RejectCodes()`; the `ZoneTimer` seam widened to `Observer.Begin(zone, Record) func(Outcome)` so the
+  loop observes post-log outcomes without the core holding a metric.
+- `andara.log.v1.Arrive` (arm 12) and `andara.log.v1.Entity` — see Open questions.
+- `andara-cli sim repl`; `boot.Runtime.LoadVerbs`; `tickloop.Options.Commands`;
+  `MemoryPublisher.OnProduce` so `sim.source=memory` resolves cross-Zone moves too.
+
 ## Data / state impact
 
 Introduces Character position as mutable state — an `EntityID → RoomRef` mapping owned by the Zone
@@ -228,10 +243,54 @@ CLAUDE.md §8, plus:
   `LoggedCommand` Go types and a stub `authorize` that `AW-SRV-002` and `AW-SRV-008` had since
   replaced; an implementation written to it would have had nothing to be checked against. The
   Interface contract now names the shipped seams. Back to `ready` in the same pass.
-- `[ASSUMPTION]` Verb abbreviation resolves to the shortest unambiguous prefix, with single-letter
-  direction aliases. MUD convention. A richer parser changes `parse` substantially but not the stage
-  boundaries.
 - **Resolved 2026-09-18:** `authorize` is `auth.Authorizer` from `AW-SRV-008`, not a stub; the
   Character-bound check is the one rule this story adds to it. `depends_on` gains `AW-SRV-008`.
+  The unbound denial is audited like a role denial (`action=authorize`, `detail="no character bound"`).
+- **Corrected 2026-09-18 (implementation): the cross-Zone arrival had no wire form.** AC-9 and
+  ADR-0001 say the mover is removed from the source Zone and a Command produced to the target
+  Partition, but `LoggedCommand` had only `Look` and `Move`, and a `Move` to a Zone that does not hold
+  the Entity cannot place it. `log.proto` gains `Arrive` (arm 12: `room_id`, `from_direction`,
+  `entity`, `origin_zone_id`, `origin_room_id`) and `Entity` (id, template, content version,
+  `ComponentValue`s — the Entity by value, since the target may be another process). `log.proto`
+  therefore imports `zone.proto`, declared under `references:` in `deploy/kafka/schemas.yaml`. `Arrive`
+  is not a verb: the table refuses to bind it and `parse` cannot produce one. An `Arrive` whose Room is
+  gone is bounced to its origin once (the bounce carries no origin), then rejected `unknown_room`.
+  `AW-SRV-006` may reuse `Entity` for the snapshot body.
+- **Corrected 2026-09-18 (implementation): codes added, additively.** `invalid_argument` (parse):
+  `move frobnicate` is rejected before the log, because the story's reason for the split is to keep
+  garbage out of a log we retain — sending it through as `no_such_exit` would spend an offset on it.
+  `unknown_room` (validate): the `Arrive` case above. An ambiguous abbreviation (`no` → north,
+  northeast, northwest) is `unknown_verb` with a detail naming the candidates, not a new code.
+  `exit_blocked` is defined and no rule produces it — doors and locks come with their story.
+- **Corrected 2026-09-18 (implementation): post-log spans.** One `command.apply` span per record —
+  validate and apply run inside the handler, and the core cannot open spans — carrying `verb`,
+  `partition`, `offset`, `stage_failed`, `code`. It is a child of the Gateway's `command.execute`
+  (the record's `trace_id` is the W3C traceparent) with a *link* to `sim.tick`, rather than a child of
+  `sim.tick` as written: `sim.tick` is head-sampled one in a hundred and a child of a dropped parent
+  is an orphan, whereas this way one trace runs from keystroke to Event and the queue time in the log
+  is the visible gap. A record with no trace parent (produced by a tick) parents on `sim.tick`.
+  Verified in Tempo against the compose stack.
+- **Corrected 2026-09-18 (implementation): position is hashed without moving `state_version`.**
+  `EntityState.Room` is its own canonical record, omitted when unset — the AW-SRV-021 AC-8 pattern —
+  so an Entity that is nowhere encodes as it did before and the recorded golden hashes still replay.
+- **Resolved 2026-09-18:** verb abbreviation is the shortest unambiguous prefix among abbreviable
+  verbs, after exact names and aliases; compass aliases `n ne e se s sw w nw u d`; `in` and `out`
+  have none. Tokens past the last argument are ignored (`look around`). Verbs and Directions fold to
+  lowercase at parse.
+- `[ASSUMPTION]` Display name is the EntityID: a Character's name is globally unique and immutable
+  (glossary), which is what an EntityID is. What a Character carries beyond that is `AW-SRV-014`'s;
+  nothing here invents naming.
+- `[ASSUMPTION]` `sim repl` keeps the Session's Zone binding current by reading engine state after
+  each tick — a harness that owns the engine may look. A Gateway learns it from `CharacterArrived`
+  (`AW-SRV-010`); `Binding` is the seam that keeps the difference outside `command`.
+- `[NEEDS BRIAN]` Sampling for `command.apply` spans. The story asks for a span per Command and
+  that is what ships — exported unconditionally, where `sim.tick` is head-sampled one in a hundred
+  (`telemetry.TickSampler`). At `sim.max_per_tick × sim.tick_rate` that ceiling is ~10k spans/s, a
+  collector bill the moment `AW-SRV-010` puts real load behind `Submit`. The options are head-sample
+  by trace (keeps keystroke-to-Event traces whole), or keep only rejections plus one in *n*; either
+  is a `telemetry` change, not a pipeline one. Forwarded to `AW-INF-008` (cluster observability).
 - `[NEEDS BRIAN]` Whether the one-tick cross-Zone delay should be perceptible to the player or masked.
-  The delay is architectural; its presentation is a design call.
+  The delay is architectural; its presentation is a design call. **As built it is perceptible:**
+  `CharacterLeft` on tick *T*, `CharacterArrived` on *T+1*, and a Command in between is
+  `actor_not_found` ("you are not here"). Masking it is a Gateway/AW-SRV-011 presentation change,
+  not a sim change.

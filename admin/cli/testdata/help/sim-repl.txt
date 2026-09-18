@@ -1,0 +1,37 @@
+Read Intents from stdin, one per line, and drive them through the Command
+Pipeline in-process: parse and authorize as the Gateway would, append to an
+in-memory log, tick the engine, and print what the tick emitted. A pre-log
+rejection is reported as such and reaches no log; a post-log rejection is a
+CommandRejected Event with the offset it consumed.
+
+The Character named by --character is placed in --start (zone/room; default
+the first Room of the first Zone) before the first Intent.
+
+Usage:
+  andara-cli sim repl [flags]
+
+Examples:
+  andara-cli sim repl --content ./testdata/content/valid
+  > look
+  > north
+  > west          # no_such_exit, post-log
+  > frobnicate    # unknown_verb, pre-log, nothing in the log
+
+Flags:
+      --character string       the Character to bind the Session to (default "you")
+      --content string         content directory: zone files, with templates/ beneath it
+  -h, --help                   help for repl
+      --max-intent-bytes int   largest Intent parse will read (default 4096)
+      --seed uint              PRNG seed; 0 derives one from the World
+      --start string           zone/room to place the Character in (default: the first Room of the first Zone)
+      --verb-table string      JSON verb table replacing the built-in one
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

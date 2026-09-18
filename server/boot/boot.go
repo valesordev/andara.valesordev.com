@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/sim"
@@ -41,7 +42,38 @@ type Runtime struct {
 	// another goroutine, a probe or a projector, is a data race. What they
 	// need is on /metrics or, later, a snapshot.
 	Engine *sim.Engine
-	ready  atomic.Bool
+	// Verbs is the verb table (AW-SRV-003): built in, or the file
+	// command.verb_table_path names. Commands is the pipeline's metrics,
+	// one instance for the Gateway's pre-log half and the loop's post-log
+	// half. Both are nil until LoadVerbs.
+	Verbs    *command.VerbTable
+	Commands *command.Metrics
+	ready    atomic.Bool
+}
+
+// LoadVerbs builds the verb table and the command metrics. A verb table
+// file that does not parse is a boot failure: a Gateway that accepts a
+// different vocabulary than the operator configured is worse than one
+// that does not start.
+func (rt *Runtime) LoadVerbs(ctx context.Context) error {
+	table := command.Builtin()
+	source := "builtin"
+	if path := rt.Cfg.VerbTablePath; path != "" {
+		t, err := command.LoadVerbTable(path)
+		if err != nil {
+			return err
+		}
+		table, source = t, path
+	}
+	names := make([]string, 0, len(table.Verbs()))
+	for _, v := range table.Verbs() {
+		names = append(names, v.Name)
+	}
+	rt.Verbs = table
+	rt.Commands = command.NewMetrics(rt.Tel.Reg, names)
+	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "verb table loaded",
+		slog.String("source", source), slog.Int("verbs", len(names)), slog.Int("max_intent_bytes", rt.Cfg.MaxIntentBytes))
+	return nil
 }
 
 // New constructs a Runtime. Telemetry must already be set up.

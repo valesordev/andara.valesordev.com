@@ -9,7 +9,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `ready` | 31 |
+| `in-progress` | 1 |
+| `ready` | 30 |
 | `done` | 14 |
 | **total** | **45** |
 
@@ -19,7 +20,13 @@ Nothing blocked or in review.
 
 ## By status
 
-### `ready` (31)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
+
+### `ready` (30)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -35,7 +42,6 @@ Nothing blocked or in review.
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | architecture | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | architecture | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
-| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026` |
@@ -111,7 +117,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `ready` | andara-cli play — the text interface as a first-class protocol client |
-| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `ready` | Command pipeline stages split across the log boundary, with look and move |
+| [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `in-progress` | Command pipeline stages split across the log boundary, with look and move |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `done` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `ready` | Command ingress — parse, authorize, and produce to the command log |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `ready` | Event egress — server-streaming subscription with per-session backpressure |

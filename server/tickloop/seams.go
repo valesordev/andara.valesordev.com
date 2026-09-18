@@ -226,6 +226,10 @@ type MemoryPublisher struct {
 	Completed []sim.TickCompleted
 	Produced  []*logv1.LoggedCommand
 	Fail      error
+	// OnProduce, if set, receives every cross-Zone Command as well: the
+	// memory stack feeds them back into its MemorySource so an arrival
+	// resolves on a later tick the way it would through the broker.
+	OnProduce func(*logv1.LoggedCommand)
 }
 
 // Publish implements Publisher.
@@ -248,6 +252,11 @@ func (m *MemoryPublisher) Produce(_ context.Context, cmds []*logv1.LoggedCommand
 		return m.Fail
 	}
 	m.Produced = append(m.Produced, cmds...)
+	if m.OnProduce != nil {
+		for _, c := range cmds {
+			m.OnProduce(c)
+		}
+	}
 	return nil
 }
 

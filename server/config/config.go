@@ -77,6 +77,12 @@ type Config struct {
 	SimSeed                 uint64
 	SimPartitions           []int32
 	SimCheckpointEveryTicks int
+
+	// The command pipeline (AW-SRV-003). MaxIntentBytes bounds what parse
+	// will read; VerbTablePath replaces the built-in verb table, empty
+	// meaning built in.
+	MaxIntentBytes int
+	VerbTablePath  string
 }
 
 const (
@@ -113,6 +119,8 @@ const (
 	DefaultSimMaxPerTick           = 1024
 	DefaultSimDrainTimeoutMS       = 5000
 	DefaultSimCheckpointEveryTicks = 100
+
+	DefaultMaxIntentBytes = 4096
 )
 
 // EnvLookup looks up an environment variable.
@@ -158,6 +166,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		SimDrainTimeout:         DefaultSimDrainTimeoutMS * time.Millisecond,
 		SimPartitions:           allPartitions(),
 		SimCheckpointEveryTicks: DefaultSimCheckpointEveryTicks,
+		MaxIntentBytes:          DefaultMaxIntentBytes,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -231,6 +240,8 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		return nil
 	})
 	fs.IntVar(&c.SimCheckpointEveryTicks, "sim-checkpoint-every-ticks", c.SimCheckpointEveryTicks, "offset commit cadence in ticks (ANDARA_CHECKPOINT_EVERY_TICKS)")
+	fs.IntVar(&c.MaxIntentBytes, "max-intent-bytes", c.MaxIntentBytes, "largest Intent parse will read, in bytes (ANDARA_MAX_INTENT_BYTES)")
+	fs.StringVar(&c.VerbTablePath, "verb-table", c.VerbTablePath, "JSON verb table replacing the built-in one; empty uses the built-in (ANDARA_VERB_TABLE)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -280,6 +291,9 @@ func (c Config) validateSim() error {
 	}
 	if len(c.SimPartitions) == 0 {
 		return fmt.Errorf("sim.partitions must name at least one Partition")
+	}
+	if c.MaxIntentBytes < 1 {
+		return fmt.Errorf("command.max_intent_bytes must be positive, got %d", c.MaxIntentBytes)
 	}
 	return nil
 }
@@ -511,6 +525,10 @@ type fileConfig struct {
 		Partitions           *string `yaml:"partitions"`
 		CheckpointEveryTicks *int    `yaml:"checkpoint_every_ticks"`
 	} `yaml:"sim"`
+	Command *struct {
+		MaxIntentBytes *int    `yaml:"max_intent_bytes"`
+		VerbTablePath  *string `yaml:"verb_table_path"`
+	} `yaml:"command"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -685,6 +703,14 @@ func applyFile(c *Config, path string) error {
 			c.SimCheckpointEveryTicks = *sm.CheckpointEveryTicks
 		}
 	}
+	if cm := fc.Command; cm != nil {
+		if cm.MaxIntentBytes != nil {
+			c.MaxIntentBytes = *cm.MaxIntentBytes
+		}
+		if cm.VerbTablePath != nil {
+			c.VerbTablePath = *cm.VerbTablePath
+		}
+	}
 	return nil
 }
 
@@ -805,6 +831,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_TICK_RATE", &c.SimTickRate},
 		{"ANDARA_MAX_PER_TICK", &c.SimMaxPerTick},
 		{"ANDARA_CHECKPOINT_EVERY_TICKS", &c.SimCheckpointEveryTicks},
+		{"ANDARA_MAX_INTENT_BYTES", &c.MaxIntentBytes},
 	} {
 		if v, ok := env(iv.name); ok {
 			n, err := strconv.Atoi(strings.TrimSpace(v))
@@ -823,6 +850,9 @@ func applyEnv(c *Config, env EnvLookup) error {
 		if err := parseMillis("ANDARA_DRAIN_TIMEOUT_MS", v, &c.SimDrainTimeout); err != nil {
 			return err
 		}
+	}
+	if v, ok := env("ANDARA_VERB_TABLE"); ok {
+		c.VerbTablePath = v
 	}
 	if v, ok := env("ANDARA_SIM_SEED"); ok {
 		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)

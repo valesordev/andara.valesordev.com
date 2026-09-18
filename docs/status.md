@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-45 stories — 31 ready · 14 done
+45 stories — 1 in-progress · 30 ready · 14 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,14 +14,16 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
-  next   AW-SRV-003  ready  Command pipeline stages split across the log boundary,…  (unblocks 2)
+  now    AW-SRV-003  Command pipeline stages split across the log boundary, with look and move
+         branch aw-srv-003-command-pipeline-look-and-move
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
+  next   AW-SRV-025  ready  Client address behind the ingress — trusted proxies and…  (unblocks 1)
   held   17 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-006, AW-SRV-010,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
+  AW-SRV-003  Sampling for command.apply spans. The story asks for a span per Command and that is…
   AW-SRV-003  Whether the one-tick cross-Zone delay should be perceptible to the player or masked…
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
               12 more, attached to stories neither lane has reached

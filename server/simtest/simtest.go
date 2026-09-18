@@ -50,6 +50,66 @@ func World() (*sim.World, error) {
 	return w, nil
 }
 
+// CrossingWorld is the World in testdata/content/valid, built in code so
+// the core's tests may use it: town (plaza, hall), docks (pier, warehouse),
+// wilds (trail, clearing), with plaza's east Exit into wilds and south Exit
+// into docks — the cross-Zone edges AW-SRV-003 AC-9 needs.
+func CrossingWorld() (*sim.World, error) {
+	exit := func(dir, zone, room string) *contentv1.ExitDefinition {
+		return &contentv1.ExitDefinition{Direction: dir, ToZone: zone, ToRoom: room}
+	}
+	town := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "town", Name: "Town", Rooms: []*contentv1.RoomDefinition{
+		{Id: "plaza", Title: "Market Plaza", Description: "A dusty square of packed earth.",
+			Exits: []*contentv1.ExitDefinition{exit("north", "", "hall"), exit("east", "wilds", "trail"), exit("south", "docks", "pier")}},
+		{Id: "hall", Title: "Town Hall", Description: "Stone walls and faded banners.",
+			Exits: []*contentv1.ExitDefinition{exit("south", "", "plaza")}},
+	}}
+	docks := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "docks", Name: "Docks", Rooms: []*contentv1.RoomDefinition{
+		{Id: "pier", Title: "The Pier", Description: "Salt air and creaking boards.",
+			Exits: []*contentv1.ExitDefinition{exit("north", "town", "plaza"), exit("south", "", "warehouse")}},
+		{Id: "warehouse", Title: "Warehouse", Description: "Barrels and rope.",
+			Exits: []*contentv1.ExitDefinition{exit("north", "", "pier")}},
+	}}
+	wilds := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "wilds", Name: "Wilds", Rooms: []*contentv1.RoomDefinition{
+		{Id: "trail", Title: "Forest Trail", Description: "A narrow path under pines.",
+			Exits: []*contentv1.ExitDefinition{exit("west", "town", "plaza"), exit("east", "", "clearing")}},
+		{Id: "clearing", Title: "Clearing", Description: "Sunlight on moss.",
+			Exits: []*contentv1.ExitDefinition{exit("west", "", "trail")}},
+	}}
+	w, errs := sim.BuildWorld([]sim.Input{
+		{File: "town.json", Def: town}, {File: "docks.json", Def: docks}, {File: "wilds.json", Def: wilds},
+	}, sim.Options{})
+	for _, e := range errs {
+		if !sim.IsWarning(e, false) {
+			return nil, e
+		}
+	}
+	return w, nil
+}
+
+// Place puts a Character in a Room of e's World, the way AW-SRV-014's
+// spawn will: the andara.core.Character Template, no Components, the
+// EntityID as its name.
+func Place(e *sim.Engine, id, zone, room string) {
+	e.State().Zones[sim.ZoneID(zone)].Entities[sim.EntityID(id)] = &sim.EntityState{
+		ID: sim.EntityID(id), Template: "andara.core.Character", ContentVersion: "core@1", Room: sim.RoomID(room),
+	}
+}
+
+// NewVerbEngine builds an Engine over CrossingWorld with the real verb
+// handlers (sim.Handlers) — the fixture for look and move.
+func NewVerbEngine(seed uint64) (*sim.Engine, error) {
+	w, err := CrossingWorld()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := Templates()
+	if err != nil {
+		return nil, err
+	}
+	return sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: AllPartitions(), Handlers: sim.Handlers()}), nil
+}
+
 func tdef(name string, kind contentv1.TemplateKind, chain []string, comps ...*contentv1.ComponentValue) sim.TemplateInput {
 	return sim.TemplateInput{File: name + ".json", Def: &contentv1.TemplateDefinition{
 		FormatVersion: sim.TemplateFormatVersion, Name: name, Kind: kind, Chain: chain, Components: comps, Resolved: true,
