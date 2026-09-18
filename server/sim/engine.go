@@ -135,7 +135,7 @@ type ApplyContext struct {
 	State     *WorldState
 	RNG       *RNG
 	Record    Record
-	emit      func(ZoneID, string, *gamev1.EventEnvelope)
+	emit      func(ZoneID, string, Scope, *gamev1.EventEnvelope)
 	outbound  *[]*logv1.LoggedCommand
 	// consumed is set only by Step, for a Record it took from the log.
 	// Handlers refuse a context without it (AW-SRV-003 AC-11): the log
@@ -151,10 +151,15 @@ var ErrNotConsumed = errors.New("command did not come from a consumed record")
 // Consumed reports whether Step built this context from a log Record.
 func (a *ApplyContext) Consumed() bool { return a != nil && a.consumed }
 
-// Emit publishes an Event from this Zone, echoing the Command's client_ref.
-func (a *ApplyContext) Emit(env *gamev1.EventEnvelope) {
-	a.emit(a.Zone.ID, a.Record.Command.GetClientRef(), env)
+// Emit publishes an Event from this Zone to the observers scope names,
+// echoing the Command's client_ref. The handler decides who may perceive
+// what it did; nothing downstream widens it.
+func (a *ApplyContext) Emit(scope Scope, env *gamev1.EventEnvelope) {
+	a.emit(a.Zone.ID, a.Record.Command.GetClientRef(), scope, env)
 }
+
+// Actor is the Command's actor, for scoping an Event to it.
+func (a *ApplyContext) Actor() EntityID { return EntityID(a.Record.Command.GetActorId()) }
 
 // Produce sends a Command to another Zone's Partition. It is applied on a
 // later tick, after the log has ordered it (ADR-0001 §4).
@@ -317,12 +322,12 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 	}
 
 	res := StepResult{Tick: tick}
-	emit := func(zone ZoneID, clientRef string, env *gamev1.EventEnvelope) {
+	emit := func(zone ZoneID, clientRef string, scope Scope, env *gamev1.EventEnvelope) {
 		env.EventId = s.NextEventID
 		env.Tick = uint64(tick)
 		env.ClientRef = clientRef
 		s.NextEventID++
-		res.Events = append(res.Events, Event{ID: env.EventId, Tick: tick, Zone: zone, Type: typeOf(env), Envelope: env})
+		res.Events = append(res.Events, Event{ID: env.EventId, Tick: tick, Zone: zone, Type: typeOf(env), Scope: scope, Envelope: env, Redacted: redact(env)})
 	}
 
 	for _, p := range parts {
@@ -333,14 +338,14 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 				// A Zone the World does not have. Content moved under the
 				// log (AW-SRV-012 owns that transition); the record is
 				// consumed and rejected so the Partition keeps moving.
-				emit("", r.Command.GetClientRef(), rejected(CodeUnknownZone, "that place is not in this world"))
+				emit("", r.Command.GetClientRef(), ScopeEntities(EntityID(r.Command.GetActorId())), rejected(CodeUnknownZone, "that place is not in this world"))
 				e.observe("", r, Outcome{Kind: KindOf(r.Command), Code: CodeUnknownZone, Stage: StageApply})
 				res.Completed.CommandsApplied++
 				s.Offsets[p] = r.Offset + 1
 				continue
 			}
 			if PartitionFor(zone.ID) != p {
-				emit(zone.ID, r.Command.GetClientRef(), rejected(CodeMisrouted, "the command reached the wrong partition"))
+				emit(zone.ID, r.Command.GetClientRef(), ScopeEntities(EntityID(r.Command.GetActorId())), rejected(CodeMisrouted, "the command reached the wrong partition"))
 				e.observe(zone.ID, r, Outcome{Kind: KindOf(r.Command), Code: CodeMisrouted, Stage: StageApply})
 				res.Completed.CommandsApplied++
 				s.Offsets[p] = r.Offset + 1
@@ -377,11 +382,12 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 
 // applyOne dispatches one record to its handler inside a recover. It
 // returns false if the Zone faulted.
-func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID, string, *gamev1.EventEnvelope), res *StepResult) (ok bool) {
+func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID, string, Scope, *gamev1.EventEnvelope), res *StepResult) (ok bool) {
 	kind := KindOf(r.Command)
+	actor := ScopeEntities(EntityID(r.Command.GetActorId()))
 	handler, known := e.cfg.Handlers[kind]
 	if !known {
-		emit(zone.ID, r.Command.GetClientRef(), rejected(CodeUnsupportedCommand, "this server cannot act on that yet"))
+		emit(zone.ID, r.Command.GetClientRef(), actor, rejected(CodeUnsupportedCommand, "this server cannot act on that yet"))
 		e.observe(zone.ID, r, Outcome{Kind: kind, Code: CodeUnsupportedCommand, Stage: StageApply})
 		return true
 	}
@@ -393,7 +399,9 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 		if p := recover(); p != nil {
 			zone.Faulted = true
 			zone.FaultedTick = tick
-			emit(zone.ID, "", &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_ZoneFaulted{ZoneFaulted: &gamev1.ZoneFaulted{ZoneId: string(zone.ID)}}})
+			// Everyone in the Zone learns it is stuck; which Zone, and
+			// that it is a fault, is the operator's (World) to see whole.
+			emit(zone.ID, "", ScopeZone(zone.ID).AndWorld(), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_ZoneFaulted{ZoneFaulted: &gamev1.ZoneFaulted{ZoneId: string(zone.ID)}}})
 			res.Faults = append(res.Faults, Fault{Zone: zone.ID, Tick: tick, Partition: r.Partition, Offset: r.Offset, Panic: fmt.Sprint(p)})
 			end(Outcome{Kind: kind, Code: CodeZoneFaulted, Stage: StageFault})
 			ok = false
@@ -417,7 +425,7 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 				out.Stage = StageApply
 			}
 		}
-		emit(zone.ID, r.Command.GetClientRef(), rejected(out.Code, msg))
+		emit(zone.ID, r.Command.GetClientRef(), actor, rejected(out.Code, msg))
 	}
 	end(out)
 	return true
@@ -471,7 +479,7 @@ func (e *Engine) Stop(reason string) Event {
 		EventId: 0, Tick: uint64(e.state.Tick),
 		Payload: &gamev1.EventEnvelope_SimulationStopped{SimulationStopped: &gamev1.SimulationStopped{Reason: reason}},
 	}
-	ev := Event{ID: 0, Tick: e.state.Tick, Type: EvSimulationStopped, Envelope: env}
+	ev := Event{ID: 0, Tick: e.state.Tick, Type: EvSimulationStopped, Scope: ScopeWorld(), Envelope: env, Redacted: redact(env)}
 	for _, s := range e.sinks {
 		s.Publish(ev)
 	}

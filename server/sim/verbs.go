@@ -96,7 +96,9 @@ func applyLook(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if err != nil {
 		return err
 	}
-	a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: describe(a.Zone, v.room, v.actor.ID)}})
+	// A description is what one Character saw: addressed to it alone. A
+	// bystander in the same Room does not learn what the actor looked at.
+	a.Emit(ScopeEntities(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: describe(a.Zone, v.room, v.actor.ID)}})
 	return nil
 }
 
@@ -162,13 +164,16 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	}
 	name := v.actor.DisplayName()
 	dir := string(v.exit.Direction)
-	a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{
+	// The source Room sees the departure and the target Room the arrival;
+	// the mover is addressed on both, so it sees its own move wherever the
+	// fan-out currently places it.
+	a.Emit(ScopeRoom(a.Zone.ID, v.from.ID).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{
 		ZoneId: string(a.Zone.ID), RoomId: string(v.from.ID), CharacterName: name, ToDirection: dir,
 	}}})
 	from, _ := v.exit.Direction.Reverse()
 	if !v.exit.CrossZone {
 		v.actor.Room = v.exit.To.Room
-		a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
+		a.Emit(ScopeRoom(a.Zone.ID, v.exit.To.Room).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
 			ZoneId: string(a.Zone.ID), RoomId: string(v.exit.To.Room), CharacterName: name, FromDirection: string(from),
 		}}})
 		return nil
@@ -228,7 +233,7 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	}
 	ent := EntityFromProto(arr.GetEntity(), room.ID)
 	a.Zone.Entities[ent.ID] = &ent
-	a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
+	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
 		ZoneId: string(a.Zone.ID), RoomId: string(room.ID), CharacterName: ent.DisplayName(), FromDirection: arr.GetFromDirection(),
 	}}})
 	return nil

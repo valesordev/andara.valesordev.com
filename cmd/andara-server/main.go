@@ -147,8 +147,11 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		// emits SimulationStopped. Past sim.drain_timeout_ms it exits 1
 		// naming the tick that would not complete (AW-SRV-002 AC-15).
 		stopLoop()
-		if err := <-loopErr; err != nil {
-			tel.Log.Error("tick loop drain", "detail", err.Error())
+		loopDrain := <-loopErr
+		// SimulationStopped has reached every subscriber; end them.
+		rt.Events.Close()
+		if loopDrain != nil {
+			tel.Log.Error("tick loop drain", "detail", loopDrain.Error())
 			return boot.ExitFail
 		}
 		return boot.ExitOK

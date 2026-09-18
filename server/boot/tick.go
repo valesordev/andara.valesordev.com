@@ -7,8 +7,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/auth"
+	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -33,6 +36,22 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		Handlers: sim.Handlers(),
 	}
 	engine := sim.NewEngine(rt.World, rt.Templates, engineCfg)
+
+	// The fan-out is the Engine's one sink (AW-SRV-004): Publish is one
+	// enqueue from the tick; scoping, redaction form, and delivery happen
+	// on the Hub's goroutine behind bounded per-subscriber buffers.
+	var audit *auth.Auditor
+	if rt.Accounts != nil {
+		audit = rt.Accounts.Auditor()
+	}
+	rt.Events = events.New(events.Options{
+		Buffer:         cfg.SubscriberBuffer,
+		MaxSubscribers: cfg.MaxSubscribers,
+		Audit:          audit,
+		Log:            rt.Tel.Log,
+		Tracer:         rt.Tel.Tracer,
+		Registry:       rt.Tel.Reg,
+	})
 
 	var (
 		source    tickloop.Source
@@ -85,6 +104,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 					rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "tick boundary lost: this process publishes no more boundaries; the next restart recovers exactly to the last delivered one and re-batches after it",
 						slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()))
 				}
+				kp.OnBoundaryAcked = func(_ sim.Tick, lag time.Duration) {
+					rt.Events.Metrics().PublishLag.Set(lag.Seconds())
+				}
 				kp.OnFailure = func(topic string, err error) {
 					kind := "events"
 					if topic == tickloop.CommandsTopic {
@@ -98,6 +120,11 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	default:
 		return nil, fmt.Errorf("sim.source %q is not kafka or memory", cfg.SimSource)
 	}
+
+	// Subscribed after recovery, so replayed Events — history, already
+	// delivered by the process that first emitted them — are not fanned
+	// out or counted again.
+	engine.Subscribe(rt.Events)
 
 	loop, err = tickloop.New(tickloop.Options{
 		Engine:          engine,

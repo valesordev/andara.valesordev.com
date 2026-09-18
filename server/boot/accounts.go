@@ -96,5 +96,6 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 			rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "bootstrap operator ignored: an operator account already exists")
 		}
 	}
+	rt.Accounts = store
 	return store, nil
 }

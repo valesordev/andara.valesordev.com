@@ -39,7 +39,7 @@ func consumedContext(t *testing.T, w *World, cmd *logv1.LoggedCommand) (*ApplyCo
 	a := &ApplyContext{
 		Tick: 1, World: w, Zone: st.Zones["z"], State: st, RNG: st.RNG,
 		Record:   Record{Partition: PartitionFor("z"), Command: cmd},
-		emit:     func(_ ZoneID, _ string, env *gamev1.EventEnvelope) { emitted = append(emitted, env) },
+		emit:     func(_ ZoneID, _ string, _ Scope, env *gamev1.EventEnvelope) { emitted = append(emitted, env) },
 		outbound: &outbound,
 		consumed: true,
 	}

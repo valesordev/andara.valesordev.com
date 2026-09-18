@@ -13,9 +13,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 )
@@ -48,6 +50,12 @@ type Runtime struct {
 	// half. Both are nil until LoadVerbs.
 	Verbs    *command.VerbTable
 	Commands *command.Metrics
+	// Events is the fan-out behind the Engine's sink (AW-SRV-004): what a
+	// Session stream, the CLI's tap, or a projector subscribes to. Built
+	// by StartTickLoop; the drain closes it after SimulationStopped.
+	Events *events.Hub
+	// Accounts is the account store (AW-SRV-008); nil until OpenAccounts.
+	Accounts *auth.Store
 	ready    atomic.Bool
 }
 

@@ -31,6 +31,9 @@ const (
 	ActionActAs               = "act_as"
 	ActionAuthorize           = "authorize"
 	ActionBind                = "bind"
+	// ActionSubscribeWorld: a World-visibility Event subscription — a
+	// privileged read of everything that happens (AW-SRV-004 AC-8).
+	ActionSubscribeWorld = "subscribe_world"
 )
 
 // AllActions lists every audited action, for metric pre-seeding.
@@ -38,7 +41,7 @@ var AllActions = []string{
 	ActionCreateAccount, ActionResetPassword, ActionSetRoles, ActionSetAccountStatus,
 	ActionIssueInvite, ActionRevokeInvite, ActionSetRegistrationMode, ActionCreateAgentAccount,
 	ActionRedeemInvite, ActionRefreshRevoked, ActionRevokeRefresh, ActionActAs,
-	ActionAuthorize, ActionBind,
+	ActionAuthorize, ActionBind, ActionSubscribeWorld,
 }
 
 // Audit outcomes.

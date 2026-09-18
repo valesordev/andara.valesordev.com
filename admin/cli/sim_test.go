@@ -96,3 +96,33 @@ func TestSimRepl_Flags(t *testing.T) {
 		t.Fatalf("empty content: exit=%d stderr=%s", res.exit, res.stderr)
 	}
 }
+
+// AW-SRV-004's operator plan: two observers in different Rooms watch a
+// move; each is sent only what its Room perceives, and a world tap sees
+// everything.
+func TestSimRepl_TapEvents(t *testing.T) {
+	res := runRepl(t, "north\nlook\n", "--start", "town/plaza", "--tap-events", "town/hall,docks/pier,world")
+	if res.exit != ExitOK {
+		t.Fatalf("exit=%d stderr=%s", res.exit, res.stderr)
+	}
+	for _, want := range []string{
+		"[tick 1] you leaves north.",
+		"[tick 1] you arrives from the south.",
+		"[tick 1, town/hall] you arrives from the south.",
+		"[tick 1, world] you leaves north.",
+		"[tick 2] Town Hall",
+	} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("stdout lacks %q:\n%s", want, res.stdout)
+		}
+	}
+	if strings.Contains(res.stdout, "docks/pier]") {
+		t.Errorf("the pier perceived a move in town:\n%s", res.stdout)
+	}
+	if strings.Contains(res.stdout, "town/hall] Town Hall") {
+		t.Errorf("a bystander in the hall was sent the looker's description:\n%s", res.stdout)
+	}
+	if res := runRepl(t, "", "--tap-events", "nowhere"); res.exit != ExitUsage {
+		t.Fatalf("bad tap: exit=%d stderr=%s", res.exit, res.stderr)
+	}
+}

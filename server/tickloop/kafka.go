@@ -350,8 +350,28 @@ type KafkaPublisher struct {
 	// Boundary Record is not delivered.
 	OnBoundaryLost func(tick sim.Tick, err error)
 
+	// OnBoundaryAcked, if set, is called when a Tick Boundary Record is
+	// acknowledged, with how long after Publish that was — the Event
+	// producer's lag behind the tick (andara_event_publish_lag_seconds).
+	OnBoundaryAcked func(tick sim.Tick, lag time.Duration)
+
 	boundaryLost atomic.Bool
 	lostAtTick   atomic.Uint64
+}
+
+// canonical is the one marshal every log record goes through: deterministic,
+// so two serializations of one Event are byte-identical (AW-SRV-004 AC-3).
+// Protobuf is not canonical by default; with no map fields in log.v1 (a test
+// walks the descriptors) and this option set, it is here.
+var canonical = proto.MarshalOptions{Deterministic: true}
+
+// EventRecord renders one Event as its andara.events.v1 record.
+func EventRecord(ev sim.Event) (*logv1.Event, error) {
+	payload, err := canonical.Marshal(ev.Envelope)
+	if err != nil {
+		return nil, fmt.Errorf("tickloop: marshal event %d: %w", ev.ID, err)
+	}
+	return &logv1.Event{EventId: ev.ID, Tick: uint64(ev.Tick), ZoneId: string(ev.Zone), SchemaVersion: EventSchemaVersion, Payload: payload, Scope: ev.Scope.Proto()}, nil
 }
 
 // ErrBoundaryLost: a Tick Boundary Record was not delivered, so no later
@@ -427,11 +447,11 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim.TickCompleted) error {
 	recs := make([]*kgo.Record, 0, len(events)+1)
 	for _, ev := range events {
-		payload, err := proto.Marshal(ev.Envelope)
+		rec, err := EventRecord(ev)
 		if err != nil {
-			return fmt.Errorf("tickloop: marshal event %d: %w", ev.ID, err)
+			return err
 		}
-		body, err := proto.Marshal(&logv1.Event{EventId: ev.ID, Tick: uint64(ev.Tick), ZoneId: string(ev.Zone), SchemaVersion: EventSchemaVersion, Payload: payload})
+		body, err := canonical.Marshal(rec)
 		if err != nil {
 			return err
 		}
@@ -450,10 +470,11 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 	if k.boundaryLost.Load() {
 		return fmt.Errorf("%w (since tick %d)", ErrBoundaryLost, k.lostAtTick.Load())
 	}
-	body, err := proto.Marshal(tc.Proto())
+	body, err := canonical.Marshal(tc.Proto())
 	if err != nil {
 		return err
 	}
+	published := time.Now()
 	// The record's own context is never canceled: franz-go fails a record
 	// whose context ends before delivery, and the tick's context ends with
 	// the tick.
@@ -469,6 +490,10 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 	k.client.TryProduce(context.WithoutCancel(ctx), &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body}, func(_ *kgo.Record, err error) {
 		if err != nil {
 			lost(err)
+			return
+		}
+		if k.OnBoundaryAcked != nil {
+			k.OnBoundaryAcked(tick, time.Since(published))
 		}
 	})
 	if k.boundaryLost.Load() {
@@ -481,7 +506,7 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 func (k *KafkaPublisher) Produce(ctx context.Context, cmds []*logv1.LoggedCommand) error {
 	recs := make([]*kgo.Record, 0, len(cmds))
 	for _, cmd := range cmds {
-		body, err := proto.Marshal(cmd)
+		body, err := canonical.Marshal(cmd)
 		if err != nil {
 			return err
 		}

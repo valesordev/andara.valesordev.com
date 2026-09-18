@@ -110,6 +110,14 @@ ANDARA_PROTOCOL_MIN: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_PROTOCOL_MAX: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "events" "subscriber_buffer" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SUBSCRIBER_BUFFER: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "events" "max_subscribers" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_MAX_SUBSCRIBERS: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}
