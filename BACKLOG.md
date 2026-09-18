@@ -9,28 +9,17 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 2 |
-| `ready` | 29 |
-| `done` | 12 |
-| **total** | **43** |
+| `ready` | 31 |
+| `done` | 14 |
+| **total** | **45** |
 
 ## Attention first
 
-| ID | Status | Title | Blocked by / awaiting |
-|----|--------|-------|------------------------|
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `review` | Deterministic tick loop driven by partition consumers, with tick SLIs | review by brian |
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication | review by brian |
+Nothing blocked or in review.
 
 ## By status
 
-### `review` (2)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
-
-### `ready` (29)
+### `ready` (31)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -49,7 +38,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
-| [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006` |
+| [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
@@ -63,8 +52,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `EPIC-03` | server | S | low | implementation | Gateway TLS hot-reload — serve a renewed certificate without a restart | `AW-SRV-005` |
 | [`AW-SRV-025`](docs/stories/AW-SRV-025-client-address-behind-the-ingress.md) | `EPIC-08` | server | S | medium | implementation | Client address behind the ingress — trusted proxies and the forwarded peer | `AW-SRV-008` |
+| [`AW-SRV-026`](docs/stories/AW-SRV-026-exit-into-exact-recovery-when-a-tick-boundary-record-is-lost.md) | `EPIC-04` | server | S | medium | implementation | Exit into exact recovery when a Tick Boundary Record is lost | `AW-SRV-002` |
+| [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `EPIC-02` | server | S | medium | implementation | Per-Zone quarantine on a tick fault | `AW-SRV-002` |
 
-### `done` (12)
+### `done` (14)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -75,7 +66,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | architecture | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | implementation | World model types and zone definition loading with referential validation at boot | `AW-INF-001`, `AW-SRV-020` |
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
@@ -105,10 +98,11 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `done` | World model types and zone definition loading with referential validation at boot |
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `review` | Deterministic tick loop driven by partition consumers, with tick SLIs |
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `done` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `done` | Components on Rooms and Zones, and the closed Direction set |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `done` | Template definitions — schema, flattened loading, and Entity instantiation |
+| [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
@@ -132,6 +126,7 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 |----|--------|-------|
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `ready` | Zone snapshots keyed to partition offsets |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `ready` | Recovery from snapshot and log tail, verified in CI |
+| [`AW-SRV-026`](docs/stories/AW-SRV-026-exit-into-exact-recovery-when-a-tick-boundary-record-is-lost.md) | `ready` | Exit into exact recovery when a Tick Boundary Record is lost |
 
 ### `EPIC-05` — Content pipeline and zone authoring
 
@@ -170,7 +165,7 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0006
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `done` | Account store, registration modes, and authentication |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `ready` | Character roster, creation, selection, and binding |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `ready` | Session lifecycle and linkdead grace period |
 | [`AW-SRV-025`](docs/stories/AW-SRV-025-client-address-behind-the-ingress.md) | `ready` | Client address behind the ingress — trusted proxies and the forwarded peer |

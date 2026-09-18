@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-43 stories — 2 review · 29 ready · 12 done
+45 stories — 31 ready · 14 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -17,16 +17,12 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-003  ready  Command pipeline stages split across the log boundary,…  (unblocks 2)
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  review AW-SRV-008, AW-SRV-002 — run the §8 checklist, then flip to done
   held   17 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-006, AW-SRV-010,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
-  AW-SRV-002  A Zone fault freezes the Zone's whole Partition.
-  AW-SRV-002  Lost-boundary policy: keep ticking unpublished, or exit into exact recovery?
   AW-SRV-003  Whether the one-tick cross-Zone delay should be perceptible to the player or masked…
-  AW-SRV-008  Role semantics, two halves.
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
               12 more, attached to stories neither lane has reached
 

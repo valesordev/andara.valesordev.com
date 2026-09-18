@@ -4,7 +4,7 @@ title: Account store, registration modes, and authentication
 epic: EPIC-08
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-005]
 blocks: [AW-SRV-003, AW-SRV-009, AW-SRV-013, AW-SRV-014, AW-SRV-025]
@@ -172,8 +172,8 @@ func (a *Authorizer) AuthorizeBind(ctx, p Principal, templatePackID, sessionID s
 than `sim.Command` and `*gateway.Session` — the Gateway imports `auth` for its Verifier, so `auth`
 importing the Gateway would be a cycle, and `sim.Command` does not exist until AW-SRV-003. The
 information is the same. When acting as another Account the Session takes the **target's** roles
-(an operator sees what the player sees) and the audit record names both; `[ASSUMPTION]` until
-Brian says otherwise. Roles are a set, not a ladder: an operator needing a builder-gated verb holds
+(an operator sees what the player sees) and the audit record names both; confirmed by Brian
+2026-09-18. Roles are a set, not a ladder: an operator needing a builder-gated verb holds
 `builder` too.
 
 ### Admin RPCs
@@ -290,7 +290,7 @@ availability SLO in `EPIC-07`.
   andara-cli play --as <account>                                   # expect: audit records name both identities (AW-CLI-004)
   ```
 
-### Verification record (2026-09-14)
+### Verification record (2026-09-14; §8 clean, moved to `done` 2026-09-18)
 
 Every AC passes in-process except where a dependency does not exist yet, and those are stated
 rather than claimed:
@@ -339,12 +339,9 @@ state and World state are separately stored (AC-7); the key-rotation procedure i
   parameters safe to re-tune, and none is in the wire contract.
 - **Resolved 2026-09-18 (review pass):** stateless signed session tokens rather than a server-side
   session table — AC-8 requires tokens to survive a restart and a table would put tokens in a topic.
-- `[NEEDS BRIAN]` **Role semantics, two halves.** (a) Acting as another Account gives the Session
-  the *target's* roles, not the actor's — "see what the player sees", and the less dangerous
-  default; (b) roles are a set, not a ladder — an operator who needs to build is granted `builder`
-  rather than inheriting it. Both are policy the game runs on, both are pinned by tests
-  (`TestActAs`, `TestAuthorize`), and a change to either is a visible test change. *(Asked on the
-  2026-09-18 review pass.)*
+- **Resolved 2026-09-18 (Brian): both halves confirmed.** Acting as another Account gives the
+  Session the *target's* roles ("see what the player sees"); roles are a set, not a ladder — an
+  operator who needs to build is granted `builder`. Pinned by `TestActAs` and `TestAuthorize`.
 - **For AW-INF-006 — missed, then found (2026-09-18):** the per-peer half of `auth.rate_limit` keys
   on the direct TCP peer, so behind an ingress every player shares one bucket. `AW-INF-006` closed
   without picking this up; the review pass also found the bucket keyed on `ip:port`, so each new

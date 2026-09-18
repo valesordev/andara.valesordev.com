@@ -71,10 +71,11 @@ visible symptom, and therefore the thing that alerts (`SimulationLagging`, over 
 minutes; `docs/runbooks/simulation-lagging.md`).
 
 **Zone Fault** — A panic inside a tick while applying a Command to a Zone. Contained at the Zone
-boundary: the Zone is marked faulted with a `ZoneFaulted` Event, the record that panicked and
-everything behind it on that Partition wait, the Partition's offset stops advancing, and other Zones
-keep ticking. Deterministic — replay faults at the same record — and cleared only by a restart into
-a binary that does not panic there (AW-SRV-002).
+boundary: the Zone is marked faulted with a `ZoneFaulted` Event and other Zones keep ticking.
+Deterministic — replay faults at the same record — and cleared only by a restart into a binary that
+does not panic there (AW-SRV-002). As shipped, the faulted Zone's whole Partition stops advancing;
+Brian decided on 2026-09-18 that the quarantine is the Zone alone — its later Commands are consumed
+and rejected `zone_faulted` while the Partition moves on (AW-SRV-027).
 
 **World** — The complete set of Zones, Entities, and simulation state under a single authority.
 

@@ -144,7 +144,7 @@ func applyMove(a *ApplyContext, m *logv1.Move)            // in-Zone; or Produce
 | `unknown_verb`, `missing_argument`, `intent_too_large` | parse | yes | `command` |
 | `not_authorized` | authorize | yes | `auth.ErrNotAuthorized` (exists) |
 | `no_such_exit`, `exit_blocked`, `actor_not_found` | validate | no | `sim.RejectError` codes |
-| `zone_faulted` | apply | no | `sim.ErrZoneFaulted` (exists; a frozen Partition refuses the Step) |
+| `zone_faulted` | apply | no | `sim` (exists); its scope — Zone, not Partition — is `AW-SRV-027`'s, and this story adds no handling |
 | `unsupported_command` | apply | no | exists in `sim` — a binary behind its content |
 
 ### Configuration

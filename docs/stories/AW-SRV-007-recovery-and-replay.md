@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-SRV-006]
+depends_on: [AW-SRV-006, AW-SRV-026]
 blocks: [AW-INF-007, AW-SRV-014, AW-INF-011]
 lane: implementation
 risk: high
@@ -238,11 +238,11 @@ CLAUDE.md §8, plus:
 - **Inherited from `AW-SRV-002` (2026-09-18):** `tickloop.Recover` already replays recorded
   boundaries at boot and refuses a missing one as `ErrBoundaryGap` — a tick applied but never
   published. Once one boundary is lost the process publishes no more and keeps ticking; the next
-  restart recovers to the last delivered boundary. The policy for that case (keep ticking
-  unpublished vs. exit so Kubernetes restarts into exact recovery) is open with Brian on `AW-SRV-002`
-  and lands in this story's taxonomy and exit codes either way; `ErrBoundaryGap` joins `ErrLogGap`
-  and `ErrOffsetGap` here. Also for this story: whether a Zone panic should crash-and-recover rather
-  than quarantine, now that recovery is exact.
+  restart recovers to the last delivered boundary. **Decided 2026-09-18 (Brian): exit into exact
+  recovery** — `AW-SRV-026` wires it (exit `5`), and this story inherits a process that never runs
+  past a lost boundary; `ErrBoundaryGap` joins `ErrLogGap` and `ErrOffsetGap` here as the backstop.
+  Zone faults quarantine the Zone, not the Partition (`AW-SRV-027`); whether a panic should instead
+  crash-and-recover, now that recovery is exact, is still this story's to weigh.
 
 - **Resolved 2026-09-11 (Brian): refuse on hash mismatch.** No automatic search for an older round.
 - **RTO is decided**: 120 s p99 at M2, 60 s p99 at Phase 1 exit (`docs/specs/slo/recovery.md`). The
