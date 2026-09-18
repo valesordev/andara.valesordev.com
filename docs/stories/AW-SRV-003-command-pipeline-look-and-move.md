@@ -4,10 +4,10 @@ title: Command pipeline stages split across the log boundary, with look and move
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-002, AW-SRV-008]
-blocks: [AW-SRV-004, AW-SRV-010]
+blocks: [AW-SRV-004, AW-SRV-010, AW-SRV-028]
 lane: implementation
 risk: medium
 ---
@@ -283,14 +283,23 @@ CLAUDE.md §8, plus:
 - `[ASSUMPTION]` `sim repl` keeps the Session's Zone binding current by reading engine state after
   each tick — a harness that owns the engine may look. A Gateway learns it from `CharacterArrived`
   (`AW-SRV-010`); `Binding` is the seam that keeps the difference outside `command`.
-- `[NEEDS BRIAN]` Sampling for `command.apply` spans. The story asks for a span per Command and
+- **Resolved 2026-09-18 (Brian):** head-sample by trace at the Gateway root, keep every rejection —
+  lands in `AW-SRV-010`, which creates the root span. Originally: sampling for `command.apply` spans. The story asks for a span per Command and
   that is what ships — exported unconditionally, where `sim.tick` is head-sampled one in a hundred
   (`telemetry.TickSampler`). At `sim.max_per_tick × sim.tick_rate` that ceiling is ~10k spans/s, a
   collector bill the moment `AW-SRV-010` puts real load behind `Submit`. The options are head-sample
   by trace (keeps keystroke-to-Event traces whole), or keep only rejections plus one in *n*; either
   is a `telemetry` change, not a pipeline one. Forwarded to `AW-INF-008` (cluster observability).
-- `[NEEDS BRIAN]` Whether the one-tick cross-Zone delay should be perceptible to the player or masked.
+- **Resolved 2026-09-18 (Brian): perceptible as built, and the Gateway holds a Session's Commands
+  during transit** (`AW-SRV-010`, bounded by `ingress.transit_hold`). Originally: whether the delay
+  should be perceptible or masked.
   The delay is architectural; its presentation is a design call. **As built it is perceptible:**
   `CharacterLeft` on tick *T*, `CharacterArrived` on *T+1*, and a Command in between is
   `actor_not_found` ("you are not here"). Masking it is a Gateway/AW-SRV-011 presentation change,
   not a sim change.
+- **Found on the 2026-09-18 architecture review (PR #30), a grooming gap:** AC-9 never said what
+  happens when the `Arrive` is not delivered. As built, the Entity is deleted from the source Zone
+  before an asynchronous produce, and `Replay` discards outbound, so a crash between the boundary
+  and the ack, or an outage past the delivery timeout, loses the Character. `AW-SRV-028` is the
+  log-driven handshake that closes it and retires the one-hop bounce; this story's record stands as
+  what it verified.

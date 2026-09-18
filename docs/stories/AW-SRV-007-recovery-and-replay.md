@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-SRV-006, AW-SRV-026]
+depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028]
 blocks: [AW-INF-007, AW-SRV-014, AW-INF-011]
 lane: implementation
 risk: high
