@@ -34,7 +34,10 @@ export ANDARA_SMOKE_OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local
 export ANDARA_KAFKA_BROKERS="${ANDARA_KAFKA_BROKERS:-localhost:${ANDARA_KAFKA_PORT:-9092}}"
 
 echo "stack-smoke: opening a Session over TLS ..."
-$GO test -tags smoke -count=1 -v ./internal/smoke/ || fail "the live Session tests failed"
+SMOKE_OUT="$(mktemp -t stack-smoke.XXXXXX)"
+$GO test -tags smoke -count=1 -v ./internal/smoke/ | tee "$SMOKE_OUT" || fail "the live Session tests failed"
+SESSION_ID="$(grep -o 'session_id=[0-9a-f]\{32\}' "$SMOKE_OUT" | head -1 | cut -d= -f2)"
+[[ -n "$SESSION_ID" ]] || fail "the smoke test did not print a session_id"
 
 # Prometheus scrapes every 15s by default; the Session above may not be in a
 # completed scrape yet. Poll rather than sleep a fixed amount.
@@ -91,3 +94,53 @@ print(r[0]["value"][1] if r else "0")')"
 [[ "${rejected%.*}" -ge 1 ]] || fail "the out-of-range Session was not counted as rejected_version"
 
 echo "stack-smoke: a Session opened over TLS and Prometheus counted it"
+
+# AW-SRV-024 AC-1 and AC-2: the same `session opened` line stderr carries is in Loki
+# within 15 s, with the same values, and its trace_id resolves in Tempo to the
+# OpenSession trace. This replaces the synthetic push AW-INF-002 AC-7 was recorded against.
+LOKI="http://localhost:${ANDARA_LOKI_PORT:-3100}"
+echo "stack-smoke: waiting for Loki to carry session $SESSION_ID ..."
+LINE=""
+for _ in $(seq 1 15); do
+  LINE="$(curl -sf --get "$LOKI/loki/api/v1/query_range" \
+    --data-urlencode "query={service_name=\"andara-server\"} | session_id=\"$SESSION_ID\"" \
+    --data-urlencode 'since=10m' \
+    | "${PY:-python3}" -c 'import json,sys
+for s in json.load(sys.stdin)["data"]["result"]:
+    for v in s["values"]:
+        if v[1] == "session opened":
+            print(json.dumps(s["stream"])); sys.exit(0)' 2>/dev/null || true)"
+  [[ -n "$LINE" ]] && break
+  sleep 1
+done
+[[ -n "$LINE" ]] || fail "Loki never carried the session opened line for $SESSION_ID (15s)"
+
+# The stderr line for the same Session, from the container.
+STDERR_LINE="$(docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server logs --no-log-prefix andara-server 2>/dev/null \
+  | grep "\"session_id\":\"$SESSION_ID\"" | grep '"msg":"session opened"' | head -1)"
+[[ -n "$STDERR_LINE" ]] || fail "no session opened line on stderr for $SESSION_ID"
+
+TRACE_ID="$("${PY:-python3}" - "$LINE" "$STDERR_LINE" <<'PY'
+import json, sys
+loki, stderr = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+# Loki carries the message as the body and the level as severity_text; every other
+# field is structured metadata under its own name.
+for k in ("session_id", "trace_id", "client_name"):
+    assert loki.get(k) == str(stderr[k]), "%s: loki=%r stderr=%r" % (k, loki.get(k), stderr[k])
+assert loki.get("severity_text") == stderr["level"], "level: loki=%r stderr=%r" % (loki.get("severity_text"), stderr["level"])
+print(loki["trace_id"])
+PY
+)" || fail "the Loki record and the stderr line disagree"
+echo "  session opened line in Loki matches stderr (session_id, trace_id, client_name, level)"
+
+echo "stack-smoke: following the trace link $TRACE_ID into Tempo ..."
+found=0
+for _ in $(seq 1 20); do
+  if docker compose -f deploy/compose/docker-compose.yaml exec -T tempo \
+       wget -qO- "http://localhost:3200/api/traces/$TRACE_ID" 2>/dev/null | grep -q 'andara.game.v1.Game/OpenSession'; then
+    found=1; break
+  fi
+  sleep 3
+done
+[[ "$found" == "1" ]] || fail "Tempo has no OpenSession trace for $TRACE_ID"
+echo "stack-smoke: the log line's trace_id resolves to the OpenSession trace in Tempo"

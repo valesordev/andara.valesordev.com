@@ -39,6 +39,12 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 
 	tel := telemetry.Setup(cfg, stderr)
 	defer tel.Shutdown(context.Background())
+	if tel.SetupErr != nil {
+		// A misconfigured endpoint is a configuration error, fatal like a
+		// bad certificate (AW-SRV-024).
+		tel.Log.Error("telemetry", "detail", tel.SetupErr.Error())
+		return boot.ExitFail
+	}
 
 	rt := boot.New(cfg, tel)
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

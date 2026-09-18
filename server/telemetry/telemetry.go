@@ -13,6 +13,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdkresource "go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.34.0"
@@ -29,6 +30,13 @@ type Telemetry struct {
 	Tracer  trace.Tracer
 	TP      *sdktrace.TracerProvider
 	Reg     *prometheus.Registry
+	// LP is the OTLP log provider (AW-SRV-024); nil when export is off.
+	LP *sdklog.LoggerProvider
+	// LogExport is the bounded queue behind LP, for tests; nil when off.
+	LogExport *queueProcessor
+	// SetupErr is set when an exporter could not be built — a
+	// configuration error the caller treats as fatal.
+	SetupErr error
 }
 
 // Metrics is the content-load instrument set.
@@ -63,21 +71,30 @@ func Setup(cfg config.Config, stderr io.Writer) *Telemetry {
 			return a
 		},
 	})
-	log := slog.New(h).With(
-		"service", cfg.ServiceName,
-		"env", cfg.Environment,
-	)
-
 	reg := prometheus.NewRegistry()
 	m := newMetrics()
 	reg.MustRegister(m.ZonesLoaded, m.RoomsLoaded, m.LoadDuration, m.ValidationErrors,
 		m.Components, m.LoadWarnings, m.TemplatesLoaded)
 
+	// Logs go to stderr and, with an endpoint, to the collector as the
+	// same records (AW-SRV-024). The exporter's own failures go to the
+	// stderr handler alone, so they cannot loop.
+	stderrLog := slog.New(h).With("service", cfg.ServiceName, "env", cfg.Environment)
+	var handler slog.Handler = h
+	otelHandler, lp, proc, err := newLogExport(cfg, stderrLog, reg, stderr)
+	if otelHandler != nil {
+		handler = newFanout(h, otelHandler)
+	}
+	log := slog.New(handler).With(
+		"service", cfg.ServiceName,
+		"env", cfg.Environment,
+	)
+
 	tp := newTracerProvider(cfg)
 	otel.SetTracerProvider(tp)
 	tr := tp.Tracer("andara-server")
 
-	return &Telemetry{Log: log, Metrics: m, Tracer: tr, TP: tp, Reg: reg}
+	return &Telemetry{Log: log, Metrics: m, Tracer: tr, TP: tp, Reg: reg, LP: lp, LogExport: proc, SetupErr: err}
 }
 
 // bootResource identifies this process to a trace backend.
@@ -175,10 +192,19 @@ func newMetrics() *Metrics {
 
 // Shutdown flushes the tracer provider.
 func (t *Telemetry) Shutdown(ctx context.Context) {
-	if t == nil || t.TP == nil {
+	if t == nil {
 		return
 	}
-	_ = t.TP.Shutdown(ctx)
+	// Logs first, so the last lines — including a fatal one — reach the
+	// sink before the trace exporter they correlate with closes.
+	if t.LP != nil {
+		lctx, cancel := context.WithTimeout(ctx, logExportTimeout)
+		_ = t.LP.Shutdown(lctx)
+		cancel()
+	}
+	if t.TP != nil {
+		_ = t.TP.Shutdown(ctx)
+	}
 }
 
 // TraceID returns the current span's trace id, or empty.

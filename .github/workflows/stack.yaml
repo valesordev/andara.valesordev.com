@@ -153,6 +153,31 @@ jobs:
           assert ta - td >= 60, "the loop stalled after the broker returned"
           assert sa - s <= 30, "starvation kept rising after the broker returned"
           PY
+      # AW-SRV-024 AC-4: the collector goes away for sixty seconds while lines are being
+      # written. The server keeps serving, stderr keeps every line, the bounded queue
+      # counts what it discards (nothing, at this rate), RSS stays within 10%, and when the
+      # collector returns new lines reach Loki — which the smoke asserts again.
+      - name: the log exporter survives a collector outage
+        run: |
+          set -euo pipefail
+          rss() { docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server exec -T andara-server sh -c 'grep VmRSS /proc/1/status' | awk '{print $2}'; }
+          export ANDARA_TLS_CA_FILE="$PWD/.local/tls/ca.pem" ANDARA_SMOKE_ADDR="localhost:${ANDARA_GRPC_PORT:-8443}"
+          go test -tags smoke -count=1 -run '^TestLive_OpenSession$' ./internal/smoke/ >/dev/null
+          before=$(rss)
+          docker compose -f deploy/compose/docker-compose.yaml --profile full stop otel-collector
+          for _ in 1 2 3 4 5 6; do
+            go test -tags smoke -count=1 -run '^TestLive_OpenSession$' ./internal/smoke/ >/dev/null
+            sleep 9
+          done
+          curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/readyz" >/dev/null
+          during=$(rss)
+          dropped=$(curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" | awk '$1 == "andara_log_export_dropped_total" { print $2 }')
+          docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server logs --no-log-prefix andara-server | grep -q '"msg":"otlp log export failed"'
+          docker compose -f deploy/compose/docker-compose.yaml --profile full start otel-collector
+          echo "rss before=${before}kB during=${during}kB dropped=${dropped}"
+          python3 -c "import sys; b,d=float('$before'),float('$during'); assert d <= b*1.10, 'RSS grew %.0f%% during the outage' % ((d-b)*100/b)"
+          sleep 10
+          make stack-smoke
 
       - name: a trace round-trips through the collector
         run: |

@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-41 stories — 1 in-progress · 3 review · 28 ready · 9 done
+41 stories — 2 in-progress · 3 review · 27 ready · 9 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -17,7 +17,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    AW-SRV-002  Deterministic tick loop driven by partition consumers, with tick SLIs
          branch aw-srv-002-deterministic-tick-loop-and-tick-slis
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  next   AW-SRV-024  ready  Export logs over OTLP so the log sink carries what stde…  (unblocks 1)
+  next   AW-SRV-023  ready  Gateway TLS hot-reload — serve a renewed certificate without a restart
   review AW-SRV-021, AW-SRV-022, AW-SRV-008 — run the §8 checklist, then flip to done
   held   18 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
 
