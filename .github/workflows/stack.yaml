@@ -172,7 +172,11 @@ jobs:
           curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/readyz" >/dev/null
           during=$(rss)
           dropped=$(curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" | awk '$1 == "andara_log_export_dropped_total" { print $2 }')
-          docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server logs --no-log-prefix andara-server | grep -q '"msg":"otlp log export failed"'
+          # Not `logs | grep -q`: grep -q exits on the first match and closes the pipe, `docker
+          # compose logs` dies on EPIPE with 255, and pipefail reports that — the step failed
+          # exactly when the line was found.
+          docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server logs --no-log-prefix andara-server > server.log
+          grep -q '"msg":"otlp log export failed"' server.log
           docker compose -f deploy/compose/docker-compose.yaml --profile full start otel-collector
           echo "rss before=${before}kB during=${during}kB dropped=${dropped}"
           python3 -c "import sys; b,d=float('$before'),float('$during'); assert d <= b*1.10, 'RSS grew %.0f%% during the outage' % ((d-b)*100/b)"
