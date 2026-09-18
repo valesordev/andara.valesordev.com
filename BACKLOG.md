@@ -10,7 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 3 |
-| `ready` | 29 |
+| `in-progress` | 1 |
+| `ready` | 28 |
 | `done` | 9 |
 | **total** | **41** |
 
@@ -32,7 +33,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 
-### `ready` (29)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
+
+### `ready` (28)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -47,7 +54,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `EPIC-07` | infra | S | medium | architecture | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud | `AW-INF-008` |
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | architecture | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
@@ -103,7 +109,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `done` | World model types and zone definition loading with referential validation at boot |
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `ready` | Deterministic tick loop driven by partition consumers, with tick SLIs |
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `in-progress` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `review` | Template definitions — schema, flattened loading, and Entity instantiation |

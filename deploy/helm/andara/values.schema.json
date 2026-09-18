@@ -126,6 +126,50 @@
             }
           }
         },
+        "sim": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "source": {
+              "type": "string",
+              "enum": [
+                "kafka",
+                "memory"
+              ],
+              "description": "ANDARA_SIM_SOURCE (AW-SRV-002). Default when unset: 'kafka'."
+            },
+            "tick_rate": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100,
+              "description": "ANDARA_TICK_RATE (AW-SRV-002). Default when unset: 10."
+            },
+            "tick_budget_ms": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_TICK_BUDGET_MS (AW-SRV-002). Default when unset: 50."
+            },
+            "max_per_tick": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_MAX_PER_TICK (AW-SRV-002). Default when unset: 1024."
+            },
+            "drain_timeout_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "ANDARA_DRAIN_TIMEOUT_MS (AW-SRV-002). Default when unset: 5000."
+            },
+            "seed": {
+              "type": "integer",
+              "description": "ANDARA_SIM_SEED (AW-SRV-002). Default when unset: 0."
+            },
+            "checkpoint_every_ticks": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_CHECKPOINT_EVERY_TICKS (AW-SRV-002). Default when unset: 100."
+            }
+          }
+        },
         "grpc": {
           "type": "object",
           "additionalProperties": false,

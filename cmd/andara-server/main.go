@@ -5,6 +5,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"os"
@@ -91,6 +92,19 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return boot.ExitFail
 	}
 
+	// The tick loop (AW-SRV-002): built after the gateway so a bad broker
+	// fails the boot before anything is served, run until the drain.
+	loop, err := rt.StartTickLoop(ctx)
+	if err != nil {
+		tel.Log.Error("tick loop", "detail", err.Error())
+		_ = gw.Shutdown(context.Background())
+		return boot.ExitFail
+	}
+	loopCtx, stopLoop := context.WithCancel(context.Background())
+	defer stopLoop()
+	loopErr := make(chan error, 1)
+	go func() { loopErr <- loop.Run(loopCtx) }()
+
 	srv := &http.Server{
 		Addr:              cfg.HTTPListen(),
 		Handler:           rt.Handler(),
@@ -116,7 +130,25 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 			tel.Log.Warn("gateway shutdown", "detail", err.Error())
 		}
 		_ = srv.Shutdown(shctx)
+		// Then the loop: it completes the in-flight tick, checkpoints, and
+		// emits SimulationStopped. Past sim.drain_timeout_ms it exits 1
+		// naming the tick that would not complete (AW-SRV-002 AC-15).
+		stopLoop()
+		if err := <-loopErr; err != nil {
+			tel.Log.Error("tick loop drain", "detail", err.Error())
+			return boot.ExitFail
+		}
 		return boot.ExitOK
+	case err := <-loopErr:
+		// The loop stopped on its own: an offset gap, or a source the
+		// process cannot continue past. Exit 1 rather than serve a World
+		// that has stopped moving.
+		if err == nil {
+			err = errors.New("tick loop exited")
+		}
+		tel.Log.Error("tick loop", "detail", err.Error())
+		_ = gw.Shutdown(context.Background())
+		return boot.ExitFail
 	case err := <-gwErr:
 		if err != nil {
 			tel.Log.Error("gateway", "detail", err.Error())

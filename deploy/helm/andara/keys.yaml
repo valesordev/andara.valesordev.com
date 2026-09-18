@@ -33,6 +33,7 @@ keys:
   - {key: telemetry.otlp_endpoint, env: ANDARA_OTLP_ENDPOINT,    type: string, default: localhost:4317, story: AW-SRV-001}
 
   # --- AW-SRV-002: tick loop ---
+  - {key: sim.source,                  env: ANDARA_SIM_SOURCE,             type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-002}
   - {key: sim.tick_rate,               env: ANDARA_TICK_RATE,              type: int, default: 10, min: 1, max: 100, story: AW-SRV-002}
   - {key: sim.tick_budget_ms,          env: ANDARA_TICK_BUDGET_MS,         type: int, default: 50, min: 1, story: AW-SRV-002}
   - {key: sim.max_per_tick,            env: ANDARA_MAX_PER_TICK,           type: int, default: 1024, min: 1, story: AW-SRV-002}

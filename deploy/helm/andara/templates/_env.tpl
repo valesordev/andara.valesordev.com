@@ -42,6 +42,34 @@ ANDARA_LOG_LEVEL: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_OTLP_ENDPOINT: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "sim" "source" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SIM_SOURCE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "tick_rate" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TICK_RATE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "tick_budget_ms" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TICK_BUDGET_MS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "max_per_tick" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_MAX_PER_TICK: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "drain_timeout_ms" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_DRAIN_TIMEOUT_MS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "seed" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SIM_SEED: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "checkpoint_every_ticks" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHECKPOINT_EVERY_TICKS: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "grpc" "listen" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_GRPC_LISTEN: {{ $v | toString | quote }}

@@ -21,6 +21,10 @@ server:
     # The mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the
     # Secret from `make auth-keys`.
     token_key_file: /etc/andara/secrets/token-key/token.keys
+  sim:
+    # Same reason: the tick loop runs on the memory source — the World ticks with no
+    # Command input and publishes nothing — until the local cluster has a broker.
+    source: memory
 # The box's Traefik holds :80/:443 on the kind control plane (the kind port mapping was
 # made for it), so the chart binds no host port of its own (AC-8). `andara.local` resolves
 # by the /etc/hosts line `make helm-install` prints. Connections from the box arrive at

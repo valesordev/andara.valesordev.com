@@ -35,7 +35,13 @@ type Runtime struct {
 	// Templates is the loaded Template registry (AW-SRV-022); nil until
 	// LoadContent succeeds.
 	Templates *sim.TemplateRegistry
-	ready     atomic.Bool
+	// Engine is the running simulation (AW-SRV-002); nil until StartTickLoop.
+	// Its State is mutated by the loop goroutine and is safe to read only
+	// from there (a handler, or tickloop.Options.OnTick) — a reader on
+	// another goroutine, a probe or a projector, is a data race. What they
+	// need is on /metrics or, later, a snapshot.
+	Engine *sim.Engine
+	ready  atomic.Bool
 }
 
 // New constructs a Runtime. Telemetry must already be set up.

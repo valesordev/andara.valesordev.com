@@ -4,7 +4,7 @@ title: Deterministic tick loop driven by partition consumers, with tick SLIs
 epic: EPIC-02
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-001, AW-INF-002, AW-INF-004]
 blocks: [AW-SRV-003, AW-SRV-004, AW-INF-010, AW-INF-011]
@@ -160,6 +160,45 @@ The consumer, the offset checkpointer, and the producer all live **outside** `se
 handed `TickInput` and returns Events. That is the seam that keeps `depguard` satisfied and keeps
 `Step` a pure function.
 
+*Corrected 2026-09-17 during implementation:*
+
+- **`TickClock` cannot live in `sim`.** `depguard` denies `time` to the core outright — durations enter
+  it as Tick counts — so the clock (`tickloop.Clock`: real, and `SteppedClock` for tests) is the
+  loop's, and `Step` takes no time at all.
+- **`Step` returns a `StepResult`**, not `(Tick, []Event)`: the Events, the cross-Zone Commands to
+  produce (AC-11 has to come out of `Step` somewhere), the records it did not apply after a Zone
+  fault, the faults, and the `TickCompleted`. It also returns an error — an offset gap or an unowned
+  Partition refuses the whole input and moves nothing.
+- **`TickInput.Applied` is derived, not supplied.** `Step` reads the range from the records it is
+  handed and validates contiguity against the state; a caller stating the range separately is a
+  second thing that can disagree.
+- **`TickCompleted` carries one offset per Partition — the next-to-read, Kafka's committed-offset
+  convention — not a range.** A tick's applied range is between consecutive records, and the record
+  can be handed straight to a consumer commit. Every owned Partition is named, moved or not.
+- **Events and the `EventSink` are the minimal shape AW-SRV-004 fills in** — `Event{ID, Tick, Zone,
+  Type, Envelope}` and `Publish(Event)`; Scope and redaction are 004's. The Event ID counter is in
+  the State Hash from this commit, because adding it later is a history migration.
+- **The handler seam.** `sim.Config.Handlers` maps a `LoggedCommand` arm to an `Apply`; AW-SRV-003
+  registers `look` and `move`. With none registered a record advances its offset and is rejected
+  `unsupported_command` — a binary behind its content, not an unknown verb.
+- **`sim.tick_budget_ms` must not exceed the tick interval**; a budget past it can never warn before
+  lag accrues, which is the budget's whole purpose.
+- **`sim.source` (`kafka` | `memory`) was added**, mirroring `auth.store`, so a developer without a
+  broker has a ticking World.
+- **Recovery at boot replays the recorded boundaries** (`tickloop.Recover`) before going live, so a
+  restart is exact rather than a free-running re-batch. A missing boundary — a tick applied but never
+  published, which the synchronous publisher lost during a broker outage before it became
+  asynchronous — is `ErrBoundaryGap`: refused, with the ticks named. Recovery policy for that case is
+  AW-SRV-007's; the operator's path today is a snapshot newer than the gap or an empty log.
+- **The per-Zone histogram is `andara_zone_tick_duration_seconds{zone}`**, a separate name: a
+  labeled variant of `andara_tick_duration_seconds` would double-count the unlabeled SLI series.
+- **`SimulationStopped` carries `event_id` 0** and consumes no ID: it is a lifecycle notification,
+  not World history, and a recovered process's next real Event takes the ID it would have taken.
+- **`andara_tick_publish_failures_total{kind}`** was added: publishing is asynchronous, so a
+  delivery failure has to be counted somewhere the tick is not waiting.
+- **`andara-cli world status`** has no story and no RPC; the manual plan reads `/metrics` and the
+  dashboard instead, and the command is owed to a CLI story.
+
 ### Configuration
 
 | Key | Env | Default | Notes |
@@ -247,10 +286,50 @@ panel and a diagnostic step inside the runbook.
 - **Manual/operator:**
   ```
   make up
-  andara-cli world status                  # tick, lag, consumer lag, checkpoint age
-  ANDARA_TICK_BUDGET_MS=1 make up          # force overruns; watch the alert fire
-  docker compose stop redpanda             # expect: starvation, not a crash
+  curl -s http://127.0.0.1:8080/metrics | grep -E '^andara_(ticks_total|simulation_lag|consumer_lag|checkpoint_age)'
+  ANDARA_TICK_BUDGET_MS=1 make up          # force overruns — needs Commands that cost something (AW-SRV-003)
+  docker compose stop redpanda             # expect: starvation counted, schedule kept, no crash
+  make measure-tick DURATION=60            # p99 CPU and RSS of the loop over the fixture
   ```
+
+### Verification record (2026-09-17)
+
+- **AC-1** `TestLoop_GoldenHashSequence`: 1,000 ticks over the scripted log against the committed
+  golden. **AC-2, AC-5** `TestEngine_ReplayFromBoundaries` (uneven batches replayed from boundaries
+  alone) and, on the broker, `TestKafka_ApplyThenReplay` (the broker's own batching) and
+  `TestKafka_CrashAndRecover` (a loop killed with `SIGKILL` in a separate process, the next process
+  recovering from its boundaries and continuing at the tick after the last one recorded, the whole
+  sequence replayed by a third engine). **AC-3** the `determinism` CI job runs the golden and replay
+  tests on `ubuntu-latest`, `ubuntu-24.04-arm`, and `macos-latest` — darwin/arm64 for real.
+  **AC-4** every boundary's fields asserted in `TestStep_RejectionsAndOffsets` and on the broker.
+- **AC-6, AC-16** `TestLoop_ScheduleAdherence`: 100 ticks in ten stepped seconds, `0.05` on a bucket
+  boundary. **AC-7, AC-8** `TestLoop_OverrunAndLag`: 3× load, lag monotone over forty ticks, every
+  record applied. **AC-9** `TestLoop_Starvation` on the stepped clock, and on the stack: a ten-second
+  `docker compose stop redpanda` kept 10 Hz, counted 85 starved ticks, dropped nothing, and the
+  restart afterwards replayed every tick including the outage's.
+- **AC-10** `TestKafka_CrashAndRecover` (above): the re-applied ticks hash to the recorded values or
+  recovery halts. **AC-11** `TestStep_CrossZoneIsProduced`. **AC-12** `TestStep_ZoneFaultIsContained`
+  and `TestLoop_ZoneFault`, including that a replayed fault hashes identically. **AC-13** `make lint`
+  runs `depguard` over `server/sim` including its tests. **AC-14** every panel's query on
+  `andara-tick-health` returned live series from the compose Prometheus. **AC-15**
+  `TestLoop_DrainTimeout` names the wedged tick; the process test sees `tick loop draining` and
+  `tick loop stopped`.
+- **The first measurement:** p99 tick under 1 ms, 10 mCPU, 94 MiB at the idle floor; a burst of
+  20,000 rejected Commands at 1,024 per tick stayed under 1 ms per tick. The SLO's targets hold
+  with two orders of magnitude of margin there and are to be re-validated on the sizing fixture
+  once handlers spend the budget. `measurements.yaml` keeps its placeholder: sizing production on an
+  idle loop would be worse than one. What will spend the budget first is not a handler:
+  `WorldState.CanonicalBytes` re-serializes every Entity every tick, so the hash is O(Entities) per
+  tick, and the sizing fixture's 10,000 Entities will show it. An incremental hash is the fix when
+  it does.
+- **AC-5's teeth:** the fixture's `look` handler stamps the tick into the Entity it spawns, so the
+  same records in a different batching reach a different hash — asserted by the negative in
+  `TestEngine_ReplayFromBoundaries`. A replay that re-derived boundaries would fail the positive.
+- **AC-9 in CI:** the stack workflow stops Redpanda for eight seconds and asserts the loop kept
+  ticking, counted starvation, stayed healthy, and stopped counting once the broker returned.
+- **Waiting on other stories:** the timing-independence test with artificially varied fetch batching
+  is covered by uneven in-process batches and the broker's own; a fetch-batch knob on the consumer
+  is not exposed. Overruns on the stack need Commands that cost something (AW-SRV-003).
 
 ## Definition of done
 
@@ -271,3 +350,24 @@ CLAUDE.md §8, plus:
   exists, crash-and-recover becomes a defensible alternative; revisit then.
 - `[ASSUMPTION]` `max_per_tick` deferral is FIFO across Partitions round-robin, so one busy Zone cannot
   starve another. Worth confirming against how it feels in play.
+- `[ASSUMPTION]` A Zone fault freezes the Zone's whole Partition. Partition→Zone is many-to-one in
+  general, so every other Zone on that Partition waits too; with 64 Partitions and a handful of Zones
+  they rarely share, but a per-Zone quarantine that lets the Partition's other Zones continue is a
+  different rule and Brian's call once AW-SRV-003 makes faults possible.
+- `[ASSUMPTION]` The default seed is derived from the World's topology (`sim.DeriveSeed`: the first
+  eight bytes of the SHA-256 of `CanonicalBytes(world)`), so two processes loading the same content
+  agree without anyone choosing.
+- `[ASSUMPTION]` `SimulationStopped` is not World history (event_id 0), so that a recovered process
+  reuses no Event ID. AW-SRV-004 owns Event IDs and may want it otherwise.
+- **Lost-boundary policy — `[ASSUMPTION]`, and for AW-SRV-007.** A Tick Boundary Record lost during
+  an outage makes exact replay past it impossible. franz-go fails everything buffered behind a failed
+  record on the same Partition, so an outage longer than the delivery timeout (one minute) would
+  have left `…, N, [gap], M, …` on the topic and a World that refuses to boot — worse than the
+  synchronous publisher it replaced. The invariant now enforced: **once one boundary is lost, this
+  process publishes no more.** It keeps ticking and Events keep flowing (AC-9 holds); the next restart
+  recovers exactly to the last delivered boundary and re-batches after it; `Recover` still refuses a
+  gap as the backstop. The alternative — exit on a lost boundary so Kubernetes restarts into exact
+  recovery — has the cleaner invariant and kills the sim on every long outage. Brian's call; the
+  seventy-second outage is the scenario to decide against.
+- **For AW-SRV-004:** `sim.Event` and `EventSink` are the minimal shape; Scope, redaction, buffering,
+  and the drop rule are yours, on top of them.

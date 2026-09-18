@@ -243,6 +243,9 @@ services:
       ANDARA_ENV: "local"
       ANDARA_LOG_FORMAT: "json"
       ANDARA_LOG_LEVEL: "${ANDARA_LOG_LEVEL:-info}"
+      # AW-SRV-002's manual plan: ANDARA_TICK_BUDGET_MS=1 make up forces every tick to
+      # overrun so the warn line, the counter, and the alert can be watched.
+      ANDARA_TICK_BUDGET_MS: "${ANDARA_TICK_BUDGET_MS:-50}"
     ports:
       - "${ANDARA_GRPC_PORT:-8443}:8443"
       # Health and metrics are plaintext and loopback-only on purpose: they are an

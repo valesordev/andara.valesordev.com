@@ -44,7 +44,7 @@ LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -
 HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*' -print -quit 2>/dev/null)
 
 .PHONY: help bootstrap up down logs ps tls auth-keys topics-apply topics-diff \
-        schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration \
+        schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
         values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke \
@@ -170,10 +170,14 @@ else
 	@$(GO) test -race -count=1 $(PKG)
 endif
 
+## test-determinism: the replay-equality and golden-hash tests, what CI runs on every architecture
+test-determinism:
+	@$(GO) test -count=1 -run 'GoldenHash|Replay|RNG|StateHash|Deterministic|ZoneFault' ./server/sim/ ./server/tickloop/
+
 ## test-integration: run the broker-backed tests against the running stack — needs `make up`
 test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
-	  $(GO) test -tags integration -race -count=1 -v ./server/recordlog/
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:

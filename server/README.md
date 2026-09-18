@@ -56,6 +56,14 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `auth.k8s_issuer` | `ANDARA_AUTH_K8S_ISSUER` | — | Issuer of projected service-account tokens for `WORKLOAD_JWT` agent Accounts. Unset disables the kind. Set together with `auth.k8s_jwks_url`. |
 | `auth.k8s_jwks_url` | `ANDARA_AUTH_K8S_JWKS_URL` | — | JWKS endpoint for `auth.k8s_issuer`. |
 | `session.linkdead_max` | `ANDARA_LINKDEAD_MAX` | `300s` | ADR-0006's hard ceiling on linkdead duration. Read here for the `auth.session_ttl` assertion; `AW-SRV-015` reads it for what it means. |
+| `sim.source` | `ANDARA_SIM_SOURCE` | `kafka` | `kafka` or `memory`. `memory` ticks the World with no Command input and publishes nothing; development only. |
+| `sim.tick_rate` | `ANDARA_TICK_RATE` | `10` | Ticks per second (ADR-0008). 1..100. |
+| `sim.tick_budget_ms` | `ANDARA_TICK_BUDGET_MS` | `50` | Overrun threshold — half the interval, so overruns warn before lag accrues. Must not exceed the interval. |
+| `sim.max_per_tick` | `ANDARA_MAX_PER_TICK` | `1024` | Records applied per tick, taken round-robin across Partitions; the rest wait. |
+| `sim.drain_timeout_ms` | `ANDARA_DRAIN_TIMEOUT_MS` | `5000` | Shutdown budget for the in-flight tick, the checkpoint, and `SimulationStopped`; past it, exit 1 naming the tick. |
+| `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the World's topology. Overriding is a debugging affordance. |
+| `sim.partitions` | `ANDARA_SIM_PARTITIONS` | `0-63` | Assigned Partitions: a range, or the comma list the chart's init container writes from the pod ordinal. |
+| `sim.checkpoint_every_ticks` | `ANDARA_CHECKPOINT_EVERY_TICKS` | `100` | Offset commit cadence — a startup-cost knob, not a correctness one. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext
 mode and no flag to create one; `make up` provisions certificates so nobody needs one
@@ -139,6 +147,72 @@ grpcurl -cacert .local/tls/ca.pem -d '{"protocol_version":99}' \
 grpcurl -cacert .local/tls/ca.pem -H "Authorization: Bearer $TOKEN" \
     localhost:8443 andara.admin.v1.Admin/GetServerInfo
 ```
+
+## The tick loop (AW-SRV-002)
+
+`server/sim` is the core and `server/tickloop` schedules it. The core is handed a `TickInput` of
+records — Partition, offset, typed Command — and returns a `StepResult`: the Events it emitted,
+the cross-Zone Commands to produce, the records it did not apply, and the `TickCompleted` boundary.
+It reads no clock and imports nothing on `depguard`'s denied list (AC-13); the loop owns the clock
+(real, or stepped for tests), the franz-go consumer and producer, checkpoints, and every SLI.
+
+**Determinism.** `sim.WorldState` is everything mutable — `state_version`, tick, seed, the
+xoshiro256** RNG state, the next Event ID, the next-to-read offset per Partition, each Zone's
+faulted flag and Entities — and `Hash` is SHA-256 over its canonical serialization. `Step` is a pure
+function of (state, input): the same records in the same batches produce the same hash on every
+platform, which `make test-determinism` runs on linux/amd64, linux/arm64, and darwin/arm64 in CI,
+against a committed golden sequence of 1,000 hashes (`server/tickloop/testdata/golden_hashes.txt`).
+A golden mismatch is a determinism regression, or an intended state change that needs a
+`state_version` decision — never a `-update` on its own.
+
+**Boundaries and recovery** (ADR-0002 §4). Every tick publishes a `TickCompleted` — tick,
+next-to-read offset per Partition, hash — to Partition 0 of `andara.events.v1` under the key
+`tick-boundary`. `Engine.Replay` drives `Step` from those records rather than re-deciding how records
+were batched, and halts with `ErrHashMismatch` if a hash disagrees. Until `AW-SRV-006` gives it a
+snapshot, a boot recovers this way from tick 0: correct, exact, and slow in proportion to the log. A
+missing boundary is a lost batching decision; recovery refuses to replay past it (`ErrBoundaryGap`)
+rather than guess — the policy for that case is `AW-SRV-007`'s, and the operator's path today is an
+empty log.
+
+**The schedule.** Anchored at start and never moved: tick *n* is due at `start + n·interval`, lag is
+the distance behind that, and a late tick is never skipped — so `andara_simulation_lag_seconds` is
+honest under overload rather than something the loop resets by falling behind. Records are taken
+round-robin across Partitions up to `sim.max_per_tick`; the rest wait and show as
+`andara_tick_deferred_records`. Publishing is asynchronous with a minute of retries, because Events
+are derived (ADR-0002 §3) and a broker stall must not be a tick stall; a lost broker is a starved
+tick, counted, never a crash. A handler panic is contained at the Zone: the Zone is marked faulted
+with a `ZoneFaulted` Event, its Partition freezes at the panicking record, and the other Zones keep
+ticking. Verb handlers register on `sim.Config.Handlers` (`AW-SRV-003`); a Command with none is
+rejected `unsupported_command` and its offset advances.
+
+**Drain.** On `SIGTERM` the gateway drains first, then the loop finishes its in-flight tick,
+checkpoints, emits `SimulationStopped` (event_id 0 — a notification, not World history), flushes the
+publisher, and exits 0; past `sim.drain_timeout_ms` it exits 1 naming the tick.
+
+### Tick metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_tick_duration_seconds` | histogram | — | 1; a bucket boundary at exactly `0.05` |
+| `andara_zone_tick_duration_seconds` | histogram | `zone` | Zones |
+| `andara_ticks_total`, `andara_tick_overruns_total` | counter | — | 1 |
+| `andara_simulation_lag_seconds` | gauge | — | 1 — the symptom; `SimulationLagging` |
+| `andara_tick_applied_records_total` | counter | — | 1 |
+| `andara_tick_deferred_records` | gauge | — | 1 |
+| `andara_tick_input_starved_total` | counter | — | 1 |
+| `andara_consumer_lag` | gauge | `partition` | 64 |
+| `andara_checkpoint_age_ticks` | gauge | — | 1 |
+| `andara_tick_zone_faults_total` | counter | `zone` | Zones |
+| `andara_tick_publish_failures_total` | counter | `kind` | `events`, `commands`, `checkpoint` |
+
+Logs: `tick` at `info` once a second with `tick`, `lag_ms`, `consumer_lag`, `deferred`,
+`checkpoint_age_ticks`, `applied_offsets`; `tick overran its budget` at `warn` with `tick`,
+`duration_ms`, `budget_ms`, and the slowest `zone`; `tick input starved` at `warn`; `zone faulted` at
+`error` with `tick`, `zone`, `partition`, `offset`, `panic`. Spans: `sim.tick` per tick with
+`record_count`, `event_count`, `overrun`, `starved`, `lag_seconds`, and `sim.zone_tick` per Zone —
+always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`). Per-Entity
+spans are not emitted. The dashboard is `andara-tick-health`; the SLO is
+`docs/specs/slo/tick-health.md`.
 
 ## Accounts and authentication (AW-SRV-008)
 

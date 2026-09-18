@@ -51,7 +51,7 @@ func TestRun_BadTLSExitsOne(t *testing.T) {
 	}
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--content-source=dir", "--content-path=" + path, "--grpc-listen=127.0.0.1:0", "--http-port=0",
-		"--tls-cert-file=" + junk, "--tls-key-file=" + junk, "--auth-store=memory", "--auth-token-key-file=" + keyFile(t)},
+		"--tls-cert-file=" + junk, "--tls-key-file=" + junk, "--auth-store=memory", "--sim-source=memory", "--auth-token-key-file=" + keyFile(t)},
 		emptyEnv, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1; stderr=%s", code, stderr.String())
@@ -85,7 +85,7 @@ func TestRun_ServesAndDrainsOnSIGTERM(t *testing.T) {
 			// AW-SRV-008: a real store, a real key file, and the first
 			// operator, so the token below is a real one. Argon2 is turned
 			// down so the test does not spend seconds hashing under -race.
-			"--auth-store=memory", "--auth-token-key-file=" + keyFile(t),
+			"--auth-store=memory", "--sim-source=memory", "--auth-token-key-file=" + keyFile(t),
 			"--auth-bootstrap-operator=brian:" + bootstrapPassword,
 			"--auth-argon2-memory-kib=64", "--auth-argon2-time=1", "--auth-argon2-threads=1",
 		}, emptyEnv, &stdout, stderr)
@@ -158,7 +158,8 @@ func TestRun_ServesAndDrainsOnSIGTERM(t *testing.T) {
 			t.Error("a credential appeared on stderr")
 		}
 	}
-	for _, want := range []string{"account index loaded", "bootstrap operator created", `"outcome":"ok"`} {
+	for _, want := range []string{"account index loaded", "bootstrap operator created", `"outcome":"ok"`,
+		"tick loop started", "tick loop draining", "tick loop stopped"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("stderr lacks %q", want)
 		}

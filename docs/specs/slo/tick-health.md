@@ -1,7 +1,13 @@
 # SLO — Tick health
 
-> **Status: proposed targets, 2026-09-07.** Derived from ADR-0008's proposed 10 Hz tick rate.
-> `AW-SRV-002` validates these against first measurement.
+> **Status: targets confirmed against first measurement, 2026-09-17** (`AW-SRV-002`). At the
+> idle floor — `testdata/content/valid`, no Commands, memory source — p99 tick duration is
+> under 1 ms, a burst of 20,000 rejected Commands at 1,024 per tick stays under 1 ms per tick,
+> and lag holds under 1 ms; through a ten-second broker outage the loop kept 10 Hz applying
+> nothing. Both targets hold with two orders of magnitude of margin at the floor. They are to be
+> **re-validated on the sizing fixture** (2,000 Rooms / 10,000 Entities / 500 Characters,
+> `AW-SRV-006`) once verb handlers exist (`AW-SRV-003`), which is where the budget will first
+> be spent. The alert rule and runbook ship with `AW-SRV-002`.
 
 Tick duration, tick overrun, and simulation lag are first-class SLIs from the first server story onward,
 not retrofitted (CLAUDE.md §7). This document is what the alert hangs from.
@@ -67,7 +73,7 @@ that should have resolved in 65 ms typical (ADR-0008) resolving in 565 ms crosse
 Runbook: `docs/runbooks/simulation-lagging.md`, which ships in `AW-SRV-002`. Diagnostic order, from the
 metrics this SLO's stories emit:
 
-1. `andara_tick_duration_seconds{zone}` — is one Zone dominating? (ADR-0001's sharding signal)
+1. `andara_zone_tick_duration_seconds{zone}` — is one Zone dominating? (ADR-0001's sharding signal)
 2. `andara_consumer_lag{partition}` — is the loop behind on input rather than slow to process?
 3. `andara_tick_deferred_records` — is the World simply receiving more than `max_per_tick` allows?
 4. `andara_ingress_partition_skew{partition}` — is one Zone hot?

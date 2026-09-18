@@ -30,15 +30,22 @@ Deterministic given a starting state, a tick number, and an ordered input sequen
 `depguard`, not by convention.
 
 **State Hash** — A hash over complete World state at a Tick. The determinism assertion point, the
-identity recovery verifies against, and a field on every Tick Boundary Record.
+identity recovery verifies against, and a field on every Tick Boundary Record. SHA-256 over a
+canonical serialization of: `state_version`, the tick, the seed and the RNG's state, the next Event
+ID, the next-to-read offset per Partition, and every Zone's faulted flag and Entities (AW-SRV-002).
+Topology is not in it — content is versioned by `AW-SRV-012`'s `ContentSwap` — and nothing that
+depends on when a tick ran is either.
 
 **Tick** — One discrete advancement of the world simulation. The unit of simulation time. Tick
 numbers are monotonic and are the simulation's only notion of time.
 
 **Tick Boundary Record** — A `TickCompleted` record on the Event topic carrying the tick number, the
-per-partition Offset range the tick applied, the `state_version`, and the State Hash. Replay reads
-tick boundaries from these records rather than re-deriving them, which is what makes replay exact
-rather than approximately exact (ADR-0002 §4).
+next-to-read Offset on every owned Partition when the tick ended (so a tick's applied range is
+between consecutive records), the `state_version`, and the State Hash. Replay reads tick boundaries
+from these records rather than re-deriving them, which is what makes replay exact rather than
+approximately exact (ADR-0002 §4). All of them live on Partition 0 of `andara.events.v1` under the key
+`tick-boundary`, so recovery reads one Partition in order. A missing one is a batching decision lost:
+recovery refuses to replay past it rather than guess (AW-SRV-002).
 
 **Tick Budget** — The overrun threshold and the tick-health SLI boundary: **50 ms**, deliberately half
 the 100 ms interval so that overruns appear as a warning band well before Simulation Lag accrues. The
@@ -46,6 +53,11 @@ budget is per-process and shared across every Partition the process owns.
 
 **Tick Loop** — The process loop that consumes Commands from its assigned Partitions, advances the
 simulation by one Tick, and emits Events. First-class source of SLIs from the first server story.
+`server/tickloop` (AW-SRV-002): the schedule is anchored at start and never moves, a late tick is
+never skipped, records are taken round-robin across Partitions up to `sim.max_per_tick`, a broker
+outage is a starved tick rather than a crash, a Zone panic freezes that Zone's Partition and the
+rest keep ticking, and a drain finishes the tick, checkpoints, and emits `SimulationStopped`. The
+core (`sim.Engine.Step`) sees none of this: it is handed records and returns Events.
 
 **Tick Overrun** — A Tick whose processing exceeded the Tick Budget. Counted; a cause, not a symptom,
 and therefore never alerted on directly.
@@ -55,7 +67,14 @@ mechanics — combat rounds, regeneration, spawns — are expressed as a *number
 tick", so game pacing and engine rate stay independently tunable.
 
 **Simulation Lag** — Wall-clock time by which the Tick Loop trails its ideal schedule. The player-
-visible symptom, and therefore the thing that alerts.
+visible symptom, and therefore the thing that alerts (`SimulationLagging`, over 500 ms for two
+minutes; `docs/runbooks/simulation-lagging.md`).
+
+**Zone Fault** — A panic inside a tick while applying a Command to a Zone. Contained at the Zone
+boundary: the Zone is marked faulted with a `ZoneFaulted` Event, the record that panicked and
+everything behind it on that Partition wait, the Partition's offset stops advancing, and other Zones
+keep ticking. Deterministic — replay faults at the same record — and cleared only by a restart into
+a binary that does not panic there (AW-SRV-002).
 
 **World** — The complete set of Zones, Entities, and simulation state under a single authority.
 
