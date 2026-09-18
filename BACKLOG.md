@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 3 |
-| `in-progress` | 2 |
+| `review` | 5 |
 | `ready` | 27 |
 | `done` | 9 |
 | **total** | **41** |
@@ -19,25 +18,22 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `review` | Deterministic tick loop driven by partition consumers, with tick SLIs | review by brian |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `review` | Account store, registration modes, and authentication | review by brian |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set | review by brian |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `review` | Template definitions — schema, flattened loading, and Entity instantiation | review by brian |
+| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `review` | Export logs over OTLP so the log sink carries what stderr carries | review by brian |
 
 ## By status
 
-### `review` (3)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
-| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
-| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
-
-### `in-progress` (2)
+### `review` (5)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
+| [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
+| [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
+| [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 | [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `EPIC-07` | server | S | low | implementation | Export logs over OTLP so the log sink carries what stderr carries | `AW-SRV-001` |
 
 ### `ready` (27)
@@ -109,7 +105,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `done` | World model types and zone definition loading with referential validation at boot |
-| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `in-progress` | Deterministic tick loop driven by partition consumers, with tick SLIs |
+| [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `review` | Deterministic tick loop driven by partition consumers, with tick SLIs |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `review` | Components on Rooms and Zones, and the closed Direction set |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `review` | Template definitions — schema, flattened loading, and Entity instantiation |
@@ -166,7 +162,7 @@ Milestone `M1-M4` · status `ready` · ADR gates: none · constrained by: —
 |----|--------|-------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `ready` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `ready` | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud |
-| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `in-progress` | Export logs over OTLP so the log sink carries what stderr carries |
+| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `review` | Export logs over OTLP so the log sink carries what stderr carries |
 
 ### `EPIC-08` — Identity, accounts, and sessions
 

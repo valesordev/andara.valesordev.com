@@ -4,7 +4,7 @@ title: Export logs over OTLP so the log sink carries what stderr carries
 epic: EPIC-07
 component: server
 type: bug
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-001]
 blocks: [AW-INF-010]

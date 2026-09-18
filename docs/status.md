@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-41 stories — 2 in-progress · 3 review · 27 ready · 9 done
+41 stories — 5 review · 27 ready · 9 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,20 +14,20 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-002  Deterministic tick loop driven by partition consumers, with tick SLIs
-         branch aw-srv-002-deterministic-tick-loop-and-tick-slis
+  now    — nothing in flight
+  next   AW-SRV-003  ready  Command pipeline stages split across the log boundary,…  (unblocks 2)
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  next   AW-SRV-023  ready  Gateway TLS hot-reload — serve a renewed certificate without a restart
-  review AW-SRV-021, AW-SRV-022, AW-SRV-008 — run the §8 checklist, then flip to done
-  held   18 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-003, AW-SRV-006,…
+  review AW-SRV-021, AW-SRV-022, AW-SRV-002, AW-SRV-008, AW-SRV-024 — run the §8 checklist,…
+  held   17 ready, blocked: AW-SRV-004, AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-006, AW-SRV-010,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
+  AW-SRV-003  Whether the one-tick cross-Zone delay should be perceptible to the player or masked…
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-021  The core component vocabulary beyond the four seeded here.
   AW-SRV-022  The andara.core Template vocabulary beyond the four seeded here — the same question…
-              11 more, attached to stories neither lane has reached
+              10 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
