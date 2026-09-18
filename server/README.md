@@ -28,7 +28,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `content.path` | `ANDARA_CONTENT_PATH` | `./content` | Directory of Zone Definition JSON files. Used only when `content.source=dir`. |
 | `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. |
 | `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/readyz`, `/metrics`. Plaintext, operator surface. |
-| `telemetry.otlp_endpoint` | `ANDARA_OTLP_ENDPOINT` | `localhost:4317` | Empty disables export. |
+| `telemetry.otlp_endpoint` | `ANDARA_OTLP_ENDPOINT` | `localhost:4317` | Traces and logs go to this collector over OTLP/gRPC (AW-SRV-024). Empty disables both exporters; an endpoint the exporter cannot be built for is fatal. |
 | `telemetry.service_name` | `ANDARA_SERVICE_NAME` | `andara-server` | |
 | `telemetry.environment` | `ANDARA_ENV` | `local` | |
 | `telemetry.log_format` | `ANDARA_LOG_FORMAT` | `json` | |
@@ -213,6 +213,23 @@ Logs: `tick` at `info` once a second with `tick`, `lag_ms`, `consumer_lag`, `def
 always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`). Per-Entity
 spans are not emitted. The dashboard is `andara-tick-health`; the SLO is
 `docs/specs/slo/tick-health.md`.
+## Logs (AW-SRV-001, AW-SRV-024)
+
+Every line goes to stderr as JSON and, when `telemetry.otlp_endpoint` is set, to the collector
+over OTLP as the same record — a `slog` fan-out handler in front of the stderr handler and the
+`otelslog` bridge, so `service`, `env`, and every attribute reach both. A line emitted inside a
+span carries `trace_id` as an attribute (what stderr shows) *and* as the OTLP record's trace
+context, which is what makes Loki's trace-to-logs link resolve in Tempo. In Loki the message is
+the body, the level is `severity_text`, and every other field is structured metadata under its
+own name: `{service_name="andara-server"} | session_id="<id>"`.
+
+The export queue is bounded (2,048 records, flushed every second or at 512) and never blocks a
+caller: with the collector away, records are dropped and counted in
+`andara_log_export_dropped_total`, `andara_log_export_queue_size` shows what waits, the exporter's
+own failure goes to stderr alone at `warn` once a minute (an exporter that logs through itself is
+a loop), and the process neither stalls nor grows. `make stack-smoke` asserts a real Session's
+line in Loki matches its stderr line and follows its trace into Tempo; the stack workflow stops
+the collector for a minute and asserts the same afterwards.
 
 ## Accounts and authentication (AW-SRV-008)
 

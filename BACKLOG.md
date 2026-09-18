@@ -10,8 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 3 |
-| `in-progress` | 1 |
-| `ready` | 28 |
+| `in-progress` | 2 |
+| `ready` | 27 |
 | `done` | 9 |
 | **total** | **41** |
 
@@ -33,13 +33,14 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 
-### `in-progress` (1)
+### `in-progress` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
+| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `EPIC-07` | server | S | low | implementation | Export logs over OTLP so the log sink carries what stderr carries | `AW-SRV-001` |
 
-### `ready` (28)
+### `ready` (27)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -70,7 +71,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `EPIC-10` | server | M | medium | implementation | Postgres tabular projection for accounts, rosters, and builder queries | `AW-SRV-017` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `EPIC-03` | server | S | low | implementation | Gateway TLS hot-reload — serve a renewed certificate without a restart | `AW-SRV-005` |
-| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `EPIC-07` | server | S | low | implementation | Export logs over OTLP so the log sink carries what stderr carries | `AW-SRV-001` |
 
 ### `done` (9)
 
@@ -166,7 +166,7 @@ Milestone `M1-M4` · status `ready` · ADR gates: none · constrained by: —
 |----|--------|-------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `ready` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `ready` | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud |
-| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `ready` | Export logs over OTLP so the log sink carries what stderr carries |
+| [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `in-progress` | Export logs over OTLP so the log sink carries what stderr carries |
 
 ### `EPIC-08` — Identity, accounts, and sessions
 

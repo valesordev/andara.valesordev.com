@@ -4,7 +4,7 @@ title: Export logs over OTLP so the log sink carries what stderr carries
 epic: EPIC-07
 component: server
 type: bug
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-001]
 blocks: [AW-INF-010]
@@ -59,6 +59,9 @@ back, so that "what happened to this player" is one query and not `docker logs |
    `{service_name="andara-server"} | json | session_id="<id>"` in Loki returns the `session opened`
    line with `level`, `msg`, `session_id`, `trace_id`, `client_name` — the same fields as the stderr
    line, byte-for-byte equal values.
+   *(Corrected 2026-09-18: the query is `{service_name="andara-server"} | session_id="<id>"` — over
+   OTLP, Loki holds the message as the body, the level as `severity_text`, and every other field as
+   structured metadata under its own name; there is no JSON body to parse. The values are equal.)*
 2. **Given** that line **when** Loki's trace-to-logs link is followed **then** Tempo returns the
    `andara.game.v1.Game/OpenSession` trace with the same `trace_id`.
 3. **Given** `telemetry.otlp_endpoint: ""` **when** the server boots **then** stderr logging is unchanged
@@ -124,6 +127,23 @@ None.
   # expect: one stream, the session_id from stack-smoke's output
   ```
 
+### Verification record (2026-09-18)
+
+- **AC-1, AC-2** `make stack-smoke`: the smoke's `session opened` line found in Loki by
+  `session_id` within 15 s, its `session_id`, `trace_id`, `client_name`, and level equal to the
+  stderr line's, and its `trace_id` resolving in Tempo to the `andara.game.v1.Game/OpenSession`
+  trace. **AC-3** `TestSetup_NoEndpointNoExporter`. **AC-4** on the stack: a sixty-second
+  `docker compose stop otel-collector` with Sessions opening throughout — `/readyz` 200 throughout,
+  stderr complete, one rate-limited `otlp log export failed` line, nothing dropped at that rate
+  (the queue holds 2,048; dropping under a flood is `TestLogExport_BoundedQueueDropsAndCounts`),
+  RSS +2.3% from a warm heap against +2.9% for the same load with the collector up, and the smoke
+  green again once the collector returned. **AC-5** `TestFanout_BothHandlersSeeEverything`.
+  **AC-6** the smoke asserts AC-1 and AC-2 through the Loki and Tempo APIs; the stack workflow
+  runs it and the outage.
+- The record mapping — body, attributes, resource, and `trace_id`/`span_id` as record fields —
+  is `TestLogExport_RecordCarriesTraceContext`.
+- **For AW-INF-010:** `AW-INF-002` AC-7's synthetic push is superseded by the smoke's real query.
+
 ## Definition of done
 
 CLAUDE.md §8, plus: `AW-INF-002`'s record for AC-7 is superseded by a real query, recorded in
@@ -134,3 +154,11 @@ CLAUDE.md §8, plus: `AW-INF-002`'s record for AC-7 is superseded by a real quer
 - `[ASSUMPTION]` The OTel `otelslog` bridge rather than a hand-rolled OTLP log encoder. It is the
   supported path and carries the trace context correctly; the fan-out is the only custom code.
 - `[ASSUMPTION]` Bounded queue of 2048 records, batch every 1 s. Nothing here is player-visible.
+- **Corrected 2026-09-18:** the queue is the package's own `sdklog.Processor`, not the SDK's
+  `BatchProcessor` — which also drops on a full queue but does not say how many, and the count is
+  the point of AC-4. The bridge and the exporter are the SDK's.
+- **Corrected 2026-09-18:** the exporter's own failure is reported at `warn` on stderr once a
+  minute, as specified, and a first RSS measurement that started from an idle heap showed +47% —
+  the Argon2id buffers of the Sessions the test opened warming the heap, not the queue; the same
+  load with the collector up grew it 2.9%, and from a warm heap the outage grew it 2.3%. The
+  workflow measures from a warm heap for that reason.
