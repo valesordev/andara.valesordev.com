@@ -4,10 +4,10 @@ title: Deterministic tick loop driven by partition consumers, with tick SLIs
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-001, AW-INF-002, AW-INF-004]
-blocks: [AW-SRV-003, AW-SRV-004, AW-INF-010, AW-INF-011]
+blocks: [AW-SRV-003, AW-SRV-004, AW-INF-010, AW-INF-011, AW-SRV-026, AW-SRV-027]
 lane: implementation
 risk: high
 ---
@@ -292,7 +292,7 @@ panel and a diagnostic step inside the runbook.
   make measure-tick DURATION=60            # p99 CPU and RSS of the loop over the fixture
   ```
 
-### Verification record (2026-09-17)
+### Verification record (2026-09-17; §8 clean, moved to `done` 2026-09-18)
 
 - **AC-1** `TestLoop_GoldenHashSequence`: 1,000 ticks over the scripted log against the committed
   golden. **AC-2, AC-5** `TestEngine_ReplayFromBoundaries` (uneven batches replayed from boundaries
@@ -346,28 +346,23 @@ CLAUDE.md §8, plus:
   SLO target against real measurement, which this story's DoD requires.
 - ADR-0008 is explicit that combat rounds and every other periodic mechanic are a *number of Ticks*, not
   "every tick". Nothing in this story may hard-code a game mechanic to the tick interval.
-- `[ASSUMPTION]` A Zone panic quarantines the Zone rather than crashing the process. Once `AW-SRV-007`
-  exists, crash-and-recover becomes a defensible alternative; revisit then.
-- `[ASSUMPTION]` `max_per_tick` deferral is FIFO across Partitions round-robin, so one busy Zone cannot
-  starve another. Worth confirming against how it feels in play.
-- `[ASSUMPTION]` A Zone fault freezes the Zone's whole Partition. Partition→Zone is many-to-one in
-  general, so every other Zone on that Partition waits too; with 64 Partitions and a handful of Zones
-  they rarely share, but a per-Zone quarantine that lets the Partition's other Zones continue is a
-  different rule and Brian's call once AW-SRV-003 makes faults possible.
-- `[ASSUMPTION]` The default seed is derived from the World's topology (`sim.DeriveSeed`: the first
-  eight bytes of the SHA-256 of `CanonicalBytes(world)`), so two processes loading the same content
-  agree without anyone choosing.
-- `[ASSUMPTION]` `SimulationStopped` is not World history (event_id 0), so that a recovered process
-  reuses no Event ID. AW-SRV-004 owns Event IDs and may want it otherwise.
-- **Lost-boundary policy — `[ASSUMPTION]`, and for AW-SRV-007.** A Tick Boundary Record lost during
-  an outage makes exact replay past it impossible. franz-go fails everything buffered behind a failed
-  record on the same Partition, so an outage longer than the delivery timeout (one minute) would
-  have left `…, N, [gap], M, …` on the topic and a World that refuses to boot — worse than the
-  synchronous publisher it replaced. The invariant now enforced: **once one boundary is lost, this
-  process publishes no more.** It keeps ticking and Events keep flowing (AC-9 holds); the next restart
-  recovers exactly to the last delivered boundary and re-batches after it; `Recover` still refuses a
-  gap as the backstop. The alternative — exit on a lost boundary so Kubernetes restarts into exact
-  recovery — has the cleaner invariant and kills the sim on every long outage. Brian's call; the
-  seventy-second outage is the scenario to decide against.
+- **Resolved 2026-09-18 (review pass):** a Zone panic quarantines the Zone; the process stays up.
+  Crash-and-recover is `AW-SRV-007`'s alternative to weigh once exact recovery exists, and its story
+  carries the pointer.
+- **Resolved 2026-09-18 (review pass):** deferral is FIFO round-robin across Partitions. It only
+  matters under overload, which needs Commands that cost something (`AW-SRV-003`); play data revisits
+  it, not a story.
+- **Resolved 2026-09-18 (Brian): quarantine the Zone, not the Partition.** What shipped freezes the
+  Partition (AC-12 as written, `TestStep_ZoneFaultIsContained`); `AW-SRV-027` changes the rule and
+  rewrites those tests. This story's record stands as what it verified.
+- **Resolved 2026-09-18 (review pass):** the default seed is `sim.DeriveSeed` — the first eight
+  bytes of the SHA-256 of `CanonicalBytes(world)` — so two processes loading the same content agree
+  without anyone choosing; `sim.seed` remains the debugging override.
+- **Resolved 2026-09-18 (review pass):** `SimulationStopped` carries `event_id` 0 and consumes no
+  ID. `AW-SRV-004` owns Event IDs and its story now names this as the rule it inherits.
+- **Resolved 2026-09-18 (Brian): exit into exact recovery.** What shipped keeps ticking unpublished
+  after a lost boundary (the invariant above); `AW-SRV-026` wires `OnBoundaryLost` to a drain and
+  exit `5`, so the seventy-second outage restarts the sim once rather than leaving history that
+  cannot be replayed. `AW-SRV-007` inherits the resolved policy.
 - **For AW-SRV-004:** `sim.Event` and `EventSink` are the minimal shape; Scope, redaction, buffering,
   and the drop rule are yours, on top of them.

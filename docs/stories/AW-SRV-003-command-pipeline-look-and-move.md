@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-SRV-001, AW-SRV-002]
+depends_on: [AW-SRV-001, AW-SRV-002, AW-SRV-008]
 blocks: [AW-SRV-004, AW-SRV-010]
 lane: implementation
 risk: medium
@@ -51,8 +51,8 @@ world's rules are legible to me rather than mysterious.
   story is driven by an in-process harness that stands in for the Gateway and a fake record source
   that stands in for the consumer.
 - Event delivery to Sessions — `AW-SRV-011`.
-- Real authentication and permissions — `AW-SRV-008`. The `authorize` stage exists and is exercised
-  against a stub permission model, so the seam is not retrofitted.
+- Authentication, roles, and the audit record — `AW-SRV-008`, which shipped `auth.Authorizer`. This
+  story calls it; it does not extend the role model.
 - Every other verb.
 
 ## Acceptance criteria
@@ -91,72 +91,61 @@ world's rules are legible to me rather than mysterious.
 
 ## Interface contract
 
+*Re-groomed 2026-09-18 to the seams `AW-SRV-002` and `AW-SRV-008` shipped; the original sketch
+predated both and named types that do not exist. The stage rules and ACs are unchanged.*
+
+**Shipped types this story implements against** (not sketches — read the code):
+
+| Seam | Where | What this story does with it |
+|------|-------|------------------------------|
+| `andara.log.v1.LoggedCommand` with `Look` (10) and `Move` (11) arms, `zone_id`, `actor_id`, `session_id`, `client_ref` | `docs/specs/protocol/andara/log/v1/log.proto` | the only post-log input; `parse` produces one, `apply` consumes one |
+| `sim.Record{Partition, Offset, Command}` | `server/sim/engine.go` | the consumed form; `validate`/`apply` are reachable only through it (AC-11) |
+| `sim.Apply func(*sim.ApplyContext, *logv1.LoggedCommand) error`, registered in `sim.Config.Handlers[sim.CommandKind]` | `server/sim/engine.go` | one handler per verb: `"look"`, `"move"`; unregistered kinds are already rejected `unsupported_command` |
+| `sim.ApplyContext{Tick, World, Templates, Zone, State, RNG, Record}` with `Emit(env)` and `Produce(cmd)` | same | `Emit` for `RoomDescribed`/`CharacterLeft`/`CharacterArrived`; `Produce` for the cross-Zone arrival (AC-9) |
+| `*sim.RejectError{Code, Message}` → `CommandRejected{code, message}` to the actor | same | the post-log rejection path (AC-8); `Message` is `Detail` below |
+| `auth.Authorizer.Authorize(ctx, verb, auth.Principal, sessionID) error`, `auth.VerbRoles map[verb]Role`, `auth.ErrNotAuthorized` | `server/auth/authorize.go` | the `authorize` stage; the verb table's role column is `VerbRoles` |
+
 ```go
-// CONTRACT SKETCH — not an implementation
+// CONTRACT SKETCH — not an implementation; the parts that do not exist yet
+package command   // server/command: pre-log, imported by the Gateway, never by sim
+
+type Intent struct { SessionID string; Raw string }          // untrusted
+type Verb struct { Name string; Role auth.Role; Args []ArgSpec; Abbrev bool }
+type VerbTable struct { /* built in; command.verb_table_path overrides */ }
+// Parse binds an Intent to a LoggedCommand arm. No World, no Session state.
+func Parse(in Intent, t *VerbTable) (*logv1.LoggedCommand, string /*verb*/, error)
+// Authorize is auth.Authorizer.Authorize; this package adds the Character-bound
+// check: a Session with no bound Entity is ErrNotAuthorized (AC-7).
 
 package sim
-
-// Intent is untrusted input. It has crossed no trust boundary yet.
-type Intent struct {
-    SessionID SessionID
-    Raw       string
-}
-
-// Command is parsed and authorized, ready to be logged.
-type Command interface {
-    Verb() string
-    Actor() EntityID
-    Zone() ZoneID     // determines the Partition it is produced to
-}
-
-// LoggedCommand is a Command that came out of the log. validate and apply accept
-// only this type, so the log boundary cannot be bypassed by accident.
-type LoggedCommand struct {
-    Command
-    Partition int32
-    Offset    Offset
-}
-
-type MoveCommand struct { actor EntityID; Direction Direction }
-type LookCommand struct { actor EntityID }
-
-// --- pre-log, at the Gateway; no World state ---
-func Parse(Intent, *VerbTable) (Command, error)
-func Authorize(Command, *Session) error
-
-// --- post-log, inside the tick; authoritative World state ---
-func Validate(LoggedCommand, *World) error
-func Apply(LoggedCommand, *WorldState) ([]Event, error)
-
-type PipelineError struct {
-    Stage   Stage    // parse | authorize | validate | apply
-    PreLog  bool     // true for parse and authorize
-    Code    ErrCode
-    Detail  string   // player-safe; must not leak imperceptible world state
-}
-
-const (
-    ErrUnknownVerb     ErrCode = "unknown_verb"       // pre-log
-    ErrMissingArgument ErrCode = "missing_argument"   // pre-log
-    ErrIntentTooLarge  ErrCode = "intent_too_large"   // pre-log
-    ErrNotAuthorized   ErrCode = "not_authorized"     // pre-log
-    ErrNoSuchExit      ErrCode = "no_such_exit"       // post-log
-    ErrExitBlocked     ErrCode = "exit_blocked"       // post-log
-    ErrActorNotFound   ErrCode = "actor_not_found"    // post-log
-    ErrZoneFaulted     ErrCode = "zone_faulted"       // post-log
-)
+// validate reads state and never mutates it; apply mutates. Both are called
+// by the registered handler, in that order, inside applyOne.
+func validateMove(a *ApplyContext, m *logv1.Move) error   // ErrNoSuchExit, ErrActorNotFound
+func applyMove(a *ApplyContext, m *logv1.Move)            // in-Zone; or Produce for cross-Zone
+// EntityState gains position: Room RoomID — hashed, Zone-owned (Data / state impact).
 ```
 
-**Stage rules, enforced by test:**
+### Stage rules, enforced by test
 
 - `Parse` reads no World state and no Session state. It knows the verb table.
-- `Authorize` reads Session and Account state, never World state.
+- `Authorize` reads Session and Account state (`auth.Principal`), never World state.
 - `Validate` is read-only with respect to World state; a test asserts the State Hash is unchanged.
-- `Apply` is the only mutating stage and runs inside the tick.
+- `Apply` is the only mutating stage and runs inside the tick, through `sim.Config.Handlers`.
 - A failure at stage `N` means stages `N+1..5` did not execute, asserted by test.
-- Pre-log failures produce no log record. Post-log failures produce a `CommandRejected` Event.
-- `PipelineError.Detail` is player-facing and must not reveal state the actor cannot perceive.
-  "There is no exit west" is fine; "the door west is locked with key #4471" is an information leak.
+- Pre-log failures produce no log record. Post-log failures produce a `CommandRejected` Event with a
+  stable code and a player-safe message, via `*sim.RejectError`.
+- The message is player-facing and must not reveal state the actor cannot perceive. "There is no
+  exit west" is fine; "the door west is locked with key #4471" is an information leak.
+
+### Error taxonomy
+
+| Code | Stage | Pre-log | Where it lives |
+|------|-------|:-------:|----------------|
+| `unknown_verb`, `missing_argument`, `intent_too_large` | parse | yes | `command` |
+| `not_authorized` | authorize | yes | `auth.ErrNotAuthorized` (exists) |
+| `no_such_exit`, `exit_blocked`, `actor_not_found` | validate | no | `sim.RejectError` codes |
+| `zone_faulted` | apply | no | `sim` (exists); its scope — Zone, not Partition — is `AW-SRV-027`'s, and this story adds no handling |
+| `unsupported_command` | apply | no | exists in `sim` — a binary behind its content |
 
 ### Configuration
 
@@ -235,10 +224,14 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Re-groomed 2026-09-18 (review pass).** The original contract named `Command` and
+  `LoggedCommand` Go types and a stub `authorize` that `AW-SRV-002` and `AW-SRV-008` had since
+  replaced; an implementation written to it would have had nothing to be checked against. The
+  Interface contract now names the shipped seams. Back to `ready` in the same pass.
 - `[ASSUMPTION]` Verb abbreviation resolves to the shortest unambiguous prefix, with single-letter
   direction aliases. MUD convention. A richer parser changes `parse` substantially but not the stage
   boundaries.
-- `[ASSUMPTION]` The `authorize` stage runs against a stub returning "allowed for a Session bound to a
-  Character" until `AW-SRV-008`.
+- **Resolved 2026-09-18:** `authorize` is `auth.Authorizer` from `AW-SRV-008`, not a stub; the
+  Character-bound check is the one rule this story adds to it. `depends_on` gains `AW-SRV-008`.
 - `[NEEDS BRIAN]` Whether the one-tick cross-Zone delay should be perceptible to the player or masked.
   The delay is architectural; its presentation is a design call.

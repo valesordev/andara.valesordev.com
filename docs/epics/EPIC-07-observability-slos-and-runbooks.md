@@ -37,7 +37,9 @@ a runbook that resolves it.
 
 ## Stories
 `AW-INF-008` (the chart's signals reach Grafana Cloud), `AW-INF-009` (the chart's rules are evaluated
-there). Added 2026-09-17: until then this epic owned no stories by design, its work being carried
+there), and `AW-SRV-024` (done 2026-09-18: the server exports logs over OTLP, so the log sink carries
+what stderr carries — the first story here that was a bug, found when `AW-INF-002`'s "partial" turned
+out to be a sink that had never received a line). Added 2026-09-17: until then this epic owned no stories by design, its work being carried
 inside the stories that create the thing being observed (CLAUDE.md §7 makes instrumentation part of
 acceptance criteria rather than a follow-up). The wiring from the chart to a backend that nobody's
 story owned is the gap that design left, and these two are it. What the epic is accountable for

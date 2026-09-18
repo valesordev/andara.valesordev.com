@@ -182,6 +182,11 @@ and runbook.
 
 ## Open questions
 
+- **Inherited from `AW-SRV-022` (2026-09-18):** `andara.core.Memory` on a Template is a marker —
+  `ComponentField`'s string/int/bool oneof cannot carry `repeated MemorySlot{slot, value}`, and the
+  slots are runtime state set by `SetMemory`, so the Template form declares nothing. This story owns
+  the runtime representation and must not expect the registry's field model to hold slots.
+
 - **Carried from `AW-INF-004` on 2026-09-14:** registry compatibility is `BACKWARD` — new readers read
   old data, which replay requires. `FULL` would additionally forbid schema changes that break *old*
   readers of *new* data. That only matters once something older than the server reads the log, which

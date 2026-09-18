@@ -4,7 +4,7 @@ title: Export logs over OTLP so the log sink carries what stderr carries
 epic: EPIC-07
 component: server
 type: bug
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-001]
 blocks: [AW-INF-010]
@@ -127,7 +127,7 @@ None.
   # expect: one stream, the session_id from stack-smoke's output
   ```
 
-### Verification record (2026-09-18)
+### Verification record (2026-09-18; §8 clean, moved to `done` the same day)
 
 - **AC-1, AC-2** `make stack-smoke`: the smoke's `session opened` line found in Loki by
   `session_id` within 15 s, its `session_id`, `trace_id`, `client_name`, and level equal to the
@@ -151,9 +151,11 @@ CLAUDE.md §8, plus: `AW-INF-002`'s record for AC-7 is superseded by a real quer
 
 ## Open questions
 
-- `[ASSUMPTION]` The OTel `otelslog` bridge rather than a hand-rolled OTLP log encoder. It is the
-  supported path and carries the trace context correctly; the fan-out is the only custom code.
-- `[ASSUMPTION]` Bounded queue of 2048 records, batch every 1 s. Nothing here is player-visible.
+- **Resolved 2026-09-18 (review pass):** the `otelslog` bridge and the SDK exporter, with the
+  package's own bounded processor so the drop count is real (the correction below). The supported
+  path; the fan-out and the processor are the only custom code.
+- **Resolved 2026-09-18 (review pass):** 2,048 records, 1 s batches. Nothing player-visible; AC-4
+  measured the outage behaviour at that size.
 - **Corrected 2026-09-18:** the queue is the package's own `sdklog.Processor`, not the SDK's
   `BatchProcessor` — which also drops on a full queue but does not say how many, and the count is
   the point of AC-4. The bridge and the exporter are the SDK's.

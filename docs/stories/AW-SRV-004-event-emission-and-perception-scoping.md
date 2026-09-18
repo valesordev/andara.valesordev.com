@@ -231,6 +231,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-002` (2026-09-18):** the shipped seam is `sim.Event{ID, Tick, Zone,
+  Type, Envelope}`, `sim.EventSink{Publish(Event)}`, and `Engine.Subscribe(EventSink)` with no
+  `SubscriptionID` — this sketch's return value is yours to add if you need it. The Event ID counter
+  is already in the State Hash. `SimulationStopped` carries `event_id` 0 and consumes no ID; it is a
+  lifecycle notification, not World history, and a recovered process's next real Event takes the ID
+  it would have taken. Keep it or argue it here before implementing.
+
 - `[ASSUMPTION]` Perception is Room-scoped for Phase 1. Senses with longer reach — shouting, scrying,
   a Zone-wide announcement — are additional `Scope` shapes, not a different mechanism, and are added
   by the stories that introduce them.

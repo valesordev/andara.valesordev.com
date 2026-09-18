@@ -157,7 +157,8 @@ def test_measurements():
     m = yaml.safe_load(open(os.path.join(CHART, "measurements.yaml")))
     if not m.get("measured"):
         print("helm-test: warn: measurements.yaml is a placeholder (measured: false); "
-              "run `make measure-tick` once AW-SRV-002 has a tick loop")
+              "run `make measure-tick` once handlers spend the Tick Budget (AW-SRV-003); "
+              "AW-SRV-002 measured an idle loop and kept the placeholder on purpose")
     code, out, err = render("prod")
     sts = find(docs(out), "StatefulSet", "andara")
     c = next(c for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "server")
