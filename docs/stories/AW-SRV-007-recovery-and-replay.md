@@ -235,6 +235,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from the review of PR #32 (2026-09-19), measured by implementation:** `tickloop.Recover`
+  reads every `TickCompleted` on the topic into memory before replaying — on a local log of ~180k
+  ticks, RSS sat at ~4 GB for the first 40 s after boot before settling at 270 MB. Recovery memory is
+  linear in log length until a snapshot bounds the replay window. This story's contract must have
+  `Recover` stream boundaries from the round's tick forward rather than load the topic, and its
+  RTO measurement must state peak RSS alongside seconds.
+
 - **Inherited from `AW-SRV-002` (2026-09-18):** `tickloop.Recover` already replays recorded
   boundaries at boot and refuses a missing one as `ErrBoundaryGap` — a tick applied but never
   published. Once one boundary is lost the process publishes no more and keeps ticking; the next

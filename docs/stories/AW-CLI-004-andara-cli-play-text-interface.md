@@ -190,6 +190,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-029` (2026-09-19), contract-bearing:** an envelope may carry
+  `perceived_from` (a Direction) — the perceived-through form of a `CharacterArrived`/`CharacterLeft`
+  in an adjacent Room. Render it by that Direction ("someone arrives to the north"), never by the
+  payload's movement direction, which is the mover's own and would mislead the observer. Empty
+  `perceived_from` is the whole form and renders as the table above says. Additive: this story
+  needs no dependency on 029, only the rule.
+
 - `[ASSUMPTION]` The client uses Connect's Go implementation, which speaks gRPC, gRPC-Web, and Connect
   from one generated client — matching what the server serves (ADR-0003). Moved here from
   `AW-CLI-001` on 2026-09-11: that story ships no Protocol client, so the assumption sat in a story

@@ -24,7 +24,9 @@ So the model is: an Exit declares the **senses** that pass through it into the R
 The sim, when it emits a Room-scoped Event that carries a sense, also emits a *perceived-through*
 form to every neighbouring Room whose Exit into the source lets that sense through, naming the
 Direction the observer perceives it from. Scope remains the sim's decision (perception is computed
-inside the simulation, `AW-SRV-004`); the Hub keeps matching Rooms and never edits an envelope.
+inside the simulation, `AW-SRV-004`); the Hub keeps matching Rooms and never edits the sim's
+envelope — it chooses among the forms the sim prepared and withholds the actor's `client_ref` from
+every other Session (`AW-SRV-004` as merged), which is delivery, not redaction.
 Senses are a server-defined closed vocabulary, like Component types (ADR-0010 decision 7): Builders
 compose them, they do not invent them.
 
@@ -46,7 +48,10 @@ tavern's noise spills into the street but not through the cellar door.
 - A sense on each Event type that has one, declared in `server/sim` beside the type: `CharacterArrived`
   and `CharacterLeft` are `sight`; `RoomDescribed`, `CommandRejected`, `ZoneFaulted`,
   `SimulationStopped` carry none and never cross an Exit. Types added later declare theirs or are
-  Room-bound.
+  Room-bound. **No shipped Event type carries `sound` yet** — the first is the communication verb
+  (`say`), which has no story; `sound` is in the registry so a Builder can declare it today and the
+  content stays valid when that Event arrives. Until then a `sound`-only Exit passes nothing, which
+  AC-1 pins.
 - The perceived-through form: for a Room-scoped emit with sense `S`, one additional envelope per
   neighbouring Room `N` whose Exit `N → source` lists `S`, scoped to `N`, with
   `EventEnvelope.perceived_from` = the Direction of that Exit (what the observer in `N` would walk
@@ -58,6 +63,9 @@ tavern's noise spills into the street but not through the cellar door.
 ### Out of scope
 - What a perceived-through Event *says* to the player ("you hear footsteps to the north") — the
   client renders from `perceived_from` and the type; wording is `AW-CLI-004`'s and Brian's.
+  `AW-CLI-004` carries the rule as an inherited item: a `CharacterArrived`/`CharacterLeft` with
+  `perceived_from` set is rendered by that Direction, never by the payload's movement direction,
+  which is the mover's and not the observer's.
 - Senses with range beyond one hop (shouting across a Zone, scrying) — a later Scope shape, and
   Brian's design call when a mechanic needs it.
 - Exit conditions (doors that close, locks) changing what passes — `[NEEDS BRIAN]` on the Exit
@@ -76,8 +84,8 @@ tavern's noise spills into the street but not through the cellar door.
    the observer in B receives nothing: perception is per Exit and per direction.
 4. **Given** A → B (`sight`) and B → C (`sight`) and an Event in C **when** the tick completes
    **then** A receives nothing — one hop.
-5. **Given** an Exit crossing a Zone boundary with `perceives: [sound]` **when** a `sound` Event is
-   emitted in the target **then** the observer in the other Zone receives the perceived-through
+5. **Given** an Exit crossing a Zone boundary with `perceives: [sight]` **when** `CharacterArrived`
+   is emitted in the target **then** the observer in the other Zone receives the perceived-through
    form, and the Event record on `andara.events.v1` names both Rooms in its Scope.
 6. **Given** a Zone file whose Exit declares `perceives: [smell]` **when** the World is loaded
    **then** load fails with exit code 1 naming the file, line, Room, Direction, `smell`, and the
@@ -89,6 +97,10 @@ tavern's noise spills into the street but not through the cellar door.
 9. **Given** an observer whose Entity is the actor of the Event (the one who arrived) **when** the
    perceived-through form is delivered to neighbours **then** the actor receives only the whole form,
    never its own perceived-through echo.
+10. **Given** a Zone file whose Exit declares `perceives: [sound]` **when** loaded **then** it is
+    valid content, `andara_content_exit_senses_total{sense="sound"}` counts it, and a test asserts
+    that `SenseOf` maps no shipped type to `sound` — so the day one does, the test names it and
+    the sound path gets its own AC rather than being switched on silently.
 
 ## Interface contract
 
