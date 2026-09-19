@@ -154,6 +154,19 @@ cannot protect against the disk they share (`AW-INF-003`). Retention: infinite o
 
 CLAUDE.md §8, plus: both SLO documents exist with a first measurement table; both runbooks resolve their
 alerts; one rehearsal report is committed.
+- **From the review of PR #34 (2026-09-19), a blind spot this story's alert must not inherit:**
+  `andara_ingress_degraded` flips on a failed *broker ping*, which is process-wide. A Partition
+  whose leader or ISR is gone while another broker answers `Ping` — `NOT_ENOUGH_REPLICAS` under
+  `min.insync.replicas=2` with one broker down, a leader election — never degrades: every Submit
+  for that Zone waits the full `ingress.produce_deadline` and returns `DEADLINE_EXCEEDED`, the
+  gauge stays 0, and `WorldReadOnly` never fires. This story's contract therefore requires the
+  server-side change it depends on: the degraded state is **per Partition** — a produce failing
+  with a broker-side retriable error (`NOT_ENOUGH_REPLICAS`, `LEADER_NOT_AVAILABLE`,
+  `NOT_LEADER_OR_FOLLOWER`) marks that Partition read-only, the probe checks each Partition's
+  leader and ISR through metadata rather than pinging any broker, and `andara_ingress_degraded`
+  gains a `partition` label (cardinality 64). The alert becomes `max(andara_ingress_degraded) == 1`
+  unchanged in shape. Groom the `SRV` story when this one is unblocked; until then the runbook's
+  "brokers up, gauge still 1" row is a "brokers up, gauge 0, one Zone slow" row too.
 
 ## Open questions
 

@@ -204,3 +204,13 @@ CLAUDE.md §8, plus: the concurrent-binding test (AC-7) and the rollback name-re
   way to hold six names.
 - `[ASSUMPTION]` One-live is enforced at the Gateway in process memory. Correct under ADR-0001; the
   sharding story moves it.
+- **Corrected 2026-09-19 (review of PR #34): the contract sketch's arm numbers are taken.**
+  `Arrive` shipped as `LoggedCommand` arm 12 (`AW-SRV-003`) and `AW-SRV-028` takes 13
+  (`HandoffAck`) and 14 (`HandoffRejected`). `BindCharacter` and `UnbindCharacter` are 15 and 16.
+  Two things this story must do that the sketch does not say: (1) `ingress.Bindings.Publish` moves
+  only Sessions whose Character is already in its table, so `SelectCharacter` calls
+  `Bindings.Bind(session, {Actor, Zone})` with the roster's last-known Zone *before* the
+  `BindCharacter` Command's `CharacterArrived` materializes the Character — otherwise the arrival
+  is not routed and the Session's first Submit goes to the roster's Zone by luck. (2) An
+  `UnbindCharacter` reaching the sim must also `Bindings.Unbind` on the Gateway, or a switched
+  Character keeps routing to the old one until the Session ends.
