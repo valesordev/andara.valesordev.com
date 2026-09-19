@@ -349,3 +349,12 @@ state and World state are separately stored (AC-7); the key-rotation procedure i
   client address) and `AW-INF-012` (the chart's CIDRs, verified on kind) close both.
 - **For AW-SRV-013:** that story reads `Account.builder_packs`, which this record does not carry.
   Additive, and AW-SRV-013's to add.
+- **Amended 2026-09-19 (by `AW-SRV-010`, owned here):** `Auditor.Record` waits `AuditWriteTimeout`
+  (2 s) for the audit write and then returns with the write finishing in the background — a denial
+  response may precede its audit record's durability. Before, a refused Submit during a broker
+  outage waited 20 s for an audit record the idempotent producer was holding. The record is never
+  dropped by a live process; a write that fails is still counted (`AuditWriteFailures`) and logged
+  at `error`. Two consequences worth knowing: the audit topic shares the broker with the Command
+  log, so denials *during* a read-only outage are lost once the audit client's delivery timeout
+  passes, and `andara_audit_write_failures_total` is the only signal of that; and the constant
+  should follow `ingress.produce_deadline` rather than be a second number — asked for on PR #34.

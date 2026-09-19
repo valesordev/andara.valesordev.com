@@ -246,6 +246,9 @@ services:
       # AW-SRV-002's manual plan: ANDARA_TICK_BUDGET_MS=1 make up forces every tick to
       # overrun so the warn line, the counter, and the alert can be watched.
       ANDARA_TICK_BUDGET_MS: "${ANDARA_TICK_BUDGET_MS:-50}"
+      # AW-SRV-010 head-samples Game/Submit at 1 % in production; locally a produced
+      # Submit's trace is the thing you came to look at, so keep every one.
+      ANDARA_TRACE_SAMPLE_RATIO: "${ANDARA_TRACE_SAMPLE_RATIO:-1}"
     ports:
       - "${ANDARA_GRPC_PORT:-8443}:8443"
       # Health and metrics are plaintext and loopback-only on purpose: they are an
