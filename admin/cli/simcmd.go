@@ -223,11 +223,11 @@ func newRepl(rt *runtime, o replOptions) (*repl, error) {
 	r.pipeline = &command.Pipeline{
 		Table:    table,
 		MaxBytes: o.maxIntent,
-		Bindings: command.BinderFunc(func(id string) (command.Binding, bool) {
+		Bindings: command.BinderFunc(func(_ context.Context, id string) (command.Binding, error) {
 			if id != replSession || r.zone == "" {
-				return command.Binding{}, false
+				return command.Binding{}, command.ErrNoBinding
 			}
-			return command.Binding{Actor: r.actor, Zone: r.zone}, true
+			return command.Binding{Actor: r.actor, Zone: r.zone}, nil
 		}),
 		Log:    command.ProducerFunc(r.produce),
 		Tracer: rt.tp.Tracer("andara-cli"),

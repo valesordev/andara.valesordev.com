@@ -122,6 +122,10 @@ func bootResource(cfg config.Config) *sdkresource.Resource {
 func newTracerProvider(cfg config.Config, extra ...sdktrace.TracerProviderOption) *sdktrace.TracerProvider {
 	opts := append([]sdktrace.TracerProviderOption{
 		sdktrace.WithResource(bootResource(cfg)),
+		// The head decision (AW-SRV-010): Game/Submit roots at
+		// telemetry.trace_sample_ratio, a client's own decision honored,
+		// every other root sampled. SpanFilter below is the tail half.
+		sdktrace.WithSampler(NewSampler(cfg.TraceSampleRatio)),
 	}, extra...)
 	if cfg.OTLPEndpoint == "" {
 		return sdktrace.NewTracerProvider(opts...)
@@ -135,7 +139,7 @@ func newTracerProvider(cfg config.Config, extra ...sdktrace.TracerProviderOption
 	if err != nil {
 		return sdktrace.NewTracerProvider(opts...)
 	}
-	opts = append(opts, sdktrace.WithSpanProcessor(NewTickSampler(sdktrace.NewBatchSpanProcessor(exp))))
+	opts = append(opts, sdktrace.WithSpanProcessor(NewSpanFilter(sdktrace.NewBatchSpanProcessor(exp))))
 	return sdktrace.NewTracerProvider(opts...)
 }
 

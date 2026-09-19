@@ -10,7 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 2 |
-| `ready` | 31 |
+| `in-progress` | 1 |
+| `ready` | 30 |
 | `done` | 14 |
 | **total** | **47** |
 
@@ -30,7 +31,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 
-### `ready` (31)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
+
+### `ready` (30)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -49,7 +56,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
-| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
@@ -126,7 +132,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `ready` | andara-cli play — the text interface as a first-class protocol client |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `review` | Command pipeline stages split across the log boundary, with look and move |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `done` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
-| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `ready` | Command ingress — parse, authorize, and produce to the command log |
+| [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `in-progress` | Command ingress — parse, authorize, and produce to the command log |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `ready` | Event egress — server-streaming subscription with per-session backpressure |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `done` | Protobuf schema as the wire, log, snapshot, and content contract |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |

@@ -51,12 +51,19 @@ const (
 	AuditConflict = "conflict"
 )
 
+// AuditWriteTimeout is how long Record waits for the write before
+// returning with it still in flight. A produce normally takes
+// milliseconds.
+const AuditWriteTimeout = 2 * time.Second
+
 // Auditor writes andara.audit.v1 records, keyed by actor.
 type Auditor struct {
 	log     recordlog.Log
 	slog    *slog.Logger
 	metrics *Metrics
 	now     func() time.Time
+	// WriteTimeout overrides AuditWriteTimeout; zero means the default.
+	WriteTimeout time.Duration
 }
 
 // NewAuditor builds an Auditor over an audit log outside a Store, for the
@@ -112,18 +119,53 @@ func (a *Auditor) Record(ctx context.Context, e Entry) {
 		slog.String("trace_id", rec.TraceId),
 	)
 	body, err := proto.Marshal(rec)
-	if err == nil {
-		err = a.log.Append(ctx, rec.ActorAccountId, body)
-	}
 	if err != nil {
-		a.metrics.AuditWriteFailures.Inc()
-		a.slog.LogAttrs(ctx, slog.LevelError, "audit record not written",
+		a.failed(ctx, rec, err)
+		return
+	}
+	// The write is waited on for AuditWriteTimeout and no longer. With the
+	// broker gone the idempotent producer keeps the record until a broker
+	// returns — minutes, perhaps — and the player whose Command was
+	// refused must not wait with it (AW-SRV-010 AC-5). The record is not
+	// dropped: the write finishes in the background and a failure is
+	// counted and logged then.
+	done := make(chan error, 1)
+	bg := context.WithoutCancel(ctx)
+	go func() { done <- a.log.Append(bg, rec.ActorAccountId, body) }()
+	timeout := a.WriteTimeout
+	if timeout <= 0 {
+		timeout = AuditWriteTimeout
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case err := <-done:
+		if err != nil {
+			a.failed(ctx, rec, err)
+		}
+	case <-timer.C:
+		a.slog.LogAttrs(ctx, slog.LevelWarn, "audit record write pending past its timeout; it completes in the background",
 			slog.String("action", rec.Action),
 			slog.String("actor_account_id", rec.ActorAccountId),
-			slog.String("detail", err.Error()),
 			slog.String("trace_id", rec.TraceId),
 		)
+		go func() {
+			if err := <-done; err != nil {
+				a.failed(bg, rec, err)
+			}
+		}()
 	}
+}
+
+// failed counts and logs an audit record that was not written.
+func (a *Auditor) failed(ctx context.Context, rec *auditv1.AuditRecord, err error) {
+	a.metrics.AuditWriteFailures.Inc()
+	a.slog.LogAttrs(ctx, slog.LevelError, "audit record not written",
+		slog.String("action", rec.Action),
+		slog.String("actor_account_id", rec.ActorAccountId),
+		slog.String("detail", err.Error()),
+		slog.String("trace_id", rec.TraceId),
+	)
 }
 
 func traceID(ctx context.Context) string {

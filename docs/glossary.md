@@ -406,8 +406,29 @@ bound from a file (AW-SRV-003).
 
 **Binding** — What a Session knows about its Character: which Entity acts, and which Zone it was
 last seen in, hence which Partition its Commands go to. Session state, not World state, so
-`authorize` may read it; a Session with no Binding may submit nothing (AW-SRV-003). How a Binding is
-made and kept current across a Zone boundary is the Gateway's (AW-SRV-010, AW-SRV-015).
+`authorize` may read it; a Session with no Binding may submit nothing (AW-SRV-003). Made by
+`SelectCharacter` (AW-SRV-014); kept current by the Gateway from the sim's own Events — a
+`CharacterLeft` addressed to the bound Character puts the Binding in Transit, the `CharacterArrived`
+settles it on the new Zone (AW-SRV-010).
+
+**Transit** — The state of a Binding between its Character's `CharacterLeft` and the
+`CharacterArrived` that follows: one Tick across a Zone boundary, or as long as a stuck handoff
+lasts. A Session in Transit has its Intents held, in order, and released to the new Zone's
+Partition on arrival, so the cross-Zone delay stays visible in the Events without a player ever
+seeing *you are not here* for typing during it. The hold is bounded by `ingress.transit_hold` from
+the `CharacterLeft`; past it, Intents are rejected `in_transit` until an arrival resolves the
+Session (AW-SRV-010).
+
+**Ingress** — The Gateway's Submit path (AW-SRV-010): per-Session rate limit, the Session's queue,
+the pre-log Command Pipeline, and the produce to the Command Log. Its answer names the Partition
+and Offset a Command landed on, meaning *accepted and ordered*, never *succeeded*. Distinct from the
+Edge, which is the cluster's ingress in front of the Gateway.
+
+**Read-only World** — The World while the Command Log is unreachable (AW-SRV-010): the Tick runs,
+Sessions stay connected and receive Events, and no Command is accepted — every Submit is
+`UNAVAILABLE` at once with reason `world_read_only`. Deliberate, typed, and bounded, because the
+Log's availability bounds the World's (ADR-0002) and a Command is acknowledged only when it is
+durable. `andara_ingress_degraded` is 1 for its duration; `WorldReadOnly` (AW-INF-005) is the alert.
 
 **Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
 cross-Zone Exit (ADR-0001 rule 4): the Entity by value, the Room to place it in, and the Direction it
@@ -416,7 +437,7 @@ Verb: no Intent parses to it (AW-SRV-003).
 
 **Rejection Code** — The stable, snake_case, additive-only name a rejected Command carries:
 pre-log on the Submit response (`unknown_verb`, `missing_argument`, `invalid_argument`,
-`intent_too_large`, `not_authorized`), post-log in a `CommandRejected` Event (`no_such_exit`,
+`intent_too_large`, `not_authorized`, `in_transit`), post-log in a `CommandRejected` Event (`no_such_exit`,
 `exit_blocked`, `actor_not_found`, `unknown_room`, `zone_faulted`, `unsupported_command`). The set is
 closed, which is what makes it a metric label (AW-SRV-003).
 

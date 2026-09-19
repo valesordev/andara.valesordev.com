@@ -5,6 +5,8 @@ package command
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"strconv"
 	"time"
@@ -30,17 +32,29 @@ type Binding struct {
 }
 
 // Binder answers "which Character is this Session bound to?". A Session
-// bound to none may submit nothing (AC-7). How a binding is made and kept
-// current across a cross-Zone move is AW-SRV-010's and AW-SRV-015's.
+// bound to none may submit nothing (AC-7): ErrNoBinding. A Session whose
+// Character is between Zones is held here until it arrives (AW-SRV-010,
+// bounded by ingress.transit_hold, or by ctx), and ErrBindingInTransit when the
+// hold runs out. How a binding is made is AW-SRV-014's; how it is kept
+// current across a cross-Zone move is AW-SRV-010's.
 type Binder interface {
-	Binding(sessionID string) (Binding, bool)
+	Binding(ctx context.Context, sessionID string) (Binding, error)
 }
 
 // BinderFunc adapts a func to Binder.
-type BinderFunc func(sessionID string) (Binding, bool)
+type BinderFunc func(ctx context.Context, sessionID string) (Binding, error)
 
 // Binding implements Binder.
-func (f BinderFunc) Binding(id string) (Binding, bool) { return f(id) }
+func (f BinderFunc) Binding(ctx context.Context, id string) (Binding, error) { return f(ctx, id) }
+
+// Binder outcomes other than a Binding.
+var (
+	// ErrNoBinding: the Session is bound to no Character.
+	ErrNoBinding = errors.New("no character bound")
+	// ErrBindingInTransit: the Session's Character left its Zone and has not
+	// arrived in the next, and the hold for it ran out.
+	ErrBindingInTransit = errors.New("character in transit between zones")
+)
 
 // Producer is the log. Produce appends one Command to its Zone's Partition
 // and returns where it landed, durably (ADR-0002). AW-SRV-010 implements
@@ -129,6 +143,12 @@ func (p *Pipeline) Submit(ctx context.Context, in Intent, principal auth.Princip
 	binding, err := p.authorize(actx, verb, principal, in.SessionID)
 	aspan.End()
 	if err != nil {
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			// The caller gave up during the transit hold: not a rejection,
+			// nothing to count against the Intent.
+			span.SetStatus(codes.Error, err.Error())
+			return Accepted{}, err
+		}
 		return Accepted{}, p.reject(ctx, span, in, verb, err)
 	}
 	cmd.ZoneId = string(binding.Zone)
@@ -161,17 +181,29 @@ func (p *Pipeline) authorize(ctx context.Context, verb string, principal auth.Pr
 			return Binding{}, &Error{Stage: StageAuthorize, Code: CodeNotAuthorized, Detail: "you may not " + verb, err: err}
 		}
 	}
-	b, ok := Binding{}, false
-	if p.Bindings != nil {
-		b, ok = p.Bindings.Binding(sessionID)
+	if p.Bindings == nil {
+		return Binding{}, p.unbound(ctx, principal, verb, ErrNoBinding)
 	}
-	if !ok || b.Actor == "" || b.Zone == "" {
-		if p.Authorizer != nil && p.Authorizer.Audit != nil {
-			p.Authorizer.Audit.Record(ctx, auth.Entry{Actor: principal, Action: auth.ActionAuthorize, Target: verb, Outcome: auth.AuditDenied, Detail: "no character bound"})
-		}
-		return Binding{}, &Error{Stage: StageAuthorize, Code: CodeNotAuthorized, Detail: "you are not in the world", err: auth.ErrNotAuthorized}
+	b, err := p.Bindings.Binding(ctx, sessionID)
+	switch {
+	case errors.Is(err, ErrBindingInTransit):
+		return Binding{}, &Error{Stage: StageAuthorize, Code: CodeInTransit, Detail: "you are between zones; try again", err: err}
+	case err != nil && ctx.Err() != nil && errors.Is(err, ctx.Err()):
+		return Binding{}, err
+	case err != nil:
+		return Binding{}, p.unbound(ctx, principal, verb, err)
+	case b.Actor == "" || b.Zone == "":
+		return Binding{}, p.unbound(ctx, principal, verb, ErrNoBinding)
 	}
 	return b, nil
+}
+
+// unbound is the audited denial for a Session with no Character.
+func (p *Pipeline) unbound(ctx context.Context, principal auth.Principal, verb string, cause error) error {
+	if p.Authorizer != nil && p.Authorizer.Audit != nil {
+		p.Authorizer.Audit.Record(ctx, auth.Entry{Actor: principal, Action: auth.ActionAuthorize, Target: verb, Outcome: auth.AuditDenied, Detail: "no character bound"})
+	}
+	return &Error{Stage: StageAuthorize, Code: CodeNotAuthorized, Detail: "you are not in the world", err: fmt.Errorf("%w: %w", auth.ErrNotAuthorized, cause)}
 }
 
 // reject counts, logs, and marks a pre-log rejection and returns it.

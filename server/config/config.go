@@ -88,6 +88,22 @@ type Config struct {
 	// before it is dropped, and how many subscriptions the process accepts.
 	SubscriberBuffer int
 	MaxSubscribers   int
+
+	// Command ingress (AW-SRV-010). RateLimit and AgentRateLimit are
+	// N/period per Session, Burst the bucket depth; ProduceDeadline bounds
+	// one produce; MaxPending bounds a Session's Submits in flight;
+	// TransitHold is how long a Session's Intents wait for its Character
+	// to arrive in the next Zone.
+	IngressRateLimit       string
+	IngressAgentRateLimit  string
+	IngressBurst           int
+	IngressProduceDeadline time.Duration
+	IngressMaxPending      int
+	IngressTransitHold     time.Duration
+
+	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
+	// trace root (AW-SRV-010); rejections are kept whatever it says.
+	TraceSampleRatio float64
 }
 
 const (
@@ -129,6 +145,15 @@ const (
 
 	DefaultSubscriberBuffer = 1024
 	DefaultMaxSubscribers   = 10000
+
+	DefaultIngressRateLimit       = "20/s"
+	DefaultIngressAgentRateLimit  = "100/s"
+	DefaultIngressBurst           = 40
+	DefaultIngressProduceDeadline = 2 * time.Second
+	DefaultIngressMaxPending      = 256
+	DefaultIngressTransitHold     = 2 * time.Second
+
+	DefaultTraceSampleRatio = 0.01
 )
 
 // EnvLookup looks up an environment variable.
@@ -177,6 +202,13 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		MaxIntentBytes:          DefaultMaxIntentBytes,
 		SubscriberBuffer:        DefaultSubscriberBuffer,
 		MaxSubscribers:          DefaultMaxSubscribers,
+		IngressRateLimit:        DefaultIngressRateLimit,
+		IngressAgentRateLimit:   DefaultIngressAgentRateLimit,
+		IngressBurst:            DefaultIngressBurst,
+		IngressProduceDeadline:  DefaultIngressProduceDeadline,
+		IngressMaxPending:       DefaultIngressMaxPending,
+		IngressTransitHold:      DefaultIngressTransitHold,
+		TraceSampleRatio:        DefaultTraceSampleRatio,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -254,6 +286,13 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.IntVar(&c.SubscriberBuffer, "subscriber-buffer", c.SubscriberBuffer, "Events a subscriber may leave unread before it is dropped (ANDARA_SUBSCRIBER_BUFFER)")
 	fs.IntVar(&c.MaxSubscribers, "max-subscribers", c.MaxSubscribers, "Event subscriptions this process accepts (ANDARA_MAX_SUBSCRIBERS)")
 	fs.StringVar(&c.VerbTablePath, "verb-table", c.VerbTablePath, "JSON verb table replacing the built-in one; empty uses the built-in (ANDARA_VERB_TABLE)")
+	fs.StringVar(&c.IngressRateLimit, "ingress-rate-limit", c.IngressRateLimit, "Submits per Session, N/period (ANDARA_INGRESS_RATE_LIMIT)")
+	fs.StringVar(&c.IngressAgentRateLimit, "ingress-agent-rate-limit", c.IngressAgentRateLimit, "Submits per agent Session, N/period (ANDARA_AGENT_RATE_LIMIT)")
+	fs.IntVar(&c.IngressBurst, "ingress-burst", c.IngressBurst, "Submit token bucket depth per Session (ANDARA_INGRESS_BURST)")
+	fs.DurationVar(&c.IngressProduceDeadline, "ingress-produce-deadline", c.IngressProduceDeadline, "how long one produce to the Command log may take (ANDARA_PRODUCE_DEADLINE)")
+	fs.IntVar(&c.IngressMaxPending, "ingress-max-pending", c.IngressMaxPending, "Submits one Session may have in flight (ANDARA_INGRESS_MAX_PENDING)")
+	fs.DurationVar(&c.IngressTransitHold, "ingress-transit-hold", c.IngressTransitHold, "how long a Session's Intents wait for its Character to arrive in the next Zone (ANDARA_INGRESS_TRANSIT_HOLD)")
+	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -309,6 +348,15 @@ func (c Config) validateSim() error {
 	}
 	if c.SubscriberBuffer < 1 || c.MaxSubscribers < 1 {
 		return fmt.Errorf("events.subscriber_buffer and events.max_subscribers must be positive")
+	}
+	if c.IngressBurst < 1 || c.IngressMaxPending < 1 {
+		return fmt.Errorf("ingress.burst and ingress.max_pending must be positive")
+	}
+	if c.IngressProduceDeadline <= 0 || c.IngressTransitHold < 0 {
+		return fmt.Errorf("ingress.produce_deadline must be positive and ingress.transit_hold must not be negative")
+	}
+	if c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
+		return fmt.Errorf("telemetry.trace_sample_ratio must be in [0, 1], got %g", c.TraceSampleRatio)
 	}
 	return nil
 }
@@ -489,11 +537,12 @@ type fileConfig struct {
 		Port *string `yaml:"port"`
 	} `yaml:"http"`
 	Telemetry *struct {
-		OTLPEndpoint *string `yaml:"otlp_endpoint"`
-		ServiceName  *string `yaml:"service_name"`
-		Environment  *string `yaml:"environment"`
-		LogFormat    *string `yaml:"log_format"`
-		LogLevel     *string `yaml:"log_level"`
+		OTLPEndpoint     *string  `yaml:"otlp_endpoint"`
+		ServiceName      *string  `yaml:"service_name"`
+		Environment      *string  `yaml:"environment"`
+		LogFormat        *string  `yaml:"log_format"`
+		LogLevel         *string  `yaml:"log_level"`
+		TraceSampleRatio *float64 `yaml:"trace_sample_ratio"`
 	} `yaml:"telemetry"`
 	GRPC *struct {
 		Listen            *string `yaml:"listen"`
@@ -548,6 +597,14 @@ type fileConfig struct {
 		SubscriberBuffer *int `yaml:"subscriber_buffer"`
 		MaxSubscribers   *int `yaml:"max_subscribers"`
 	} `yaml:"events"`
+	Ingress *struct {
+		RateLimit       *string `yaml:"rate_limit"`
+		AgentRateLimit  *string `yaml:"agent_rate_limit"`
+		Burst           *int    `yaml:"burst"`
+		ProduceDeadline *string `yaml:"produce_deadline"`
+		MaxPending      *int    `yaml:"max_pending"`
+		TransitHold     *string `yaml:"transit_hold"`
+	} `yaml:"ingress"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -597,6 +654,9 @@ func applyFile(c *Config, path string) error {
 		}
 		if fc.Telemetry.Environment != nil {
 			c.Environment = *fc.Telemetry.Environment
+		}
+		if fc.Telemetry.TraceSampleRatio != nil {
+			c.TraceSampleRatio = *fc.Telemetry.TraceSampleRatio
 		}
 		if fc.Telemetry.LogFormat != nil {
 			c.LogFormat = *fc.Telemetry.LogFormat
@@ -738,6 +798,34 @@ func applyFile(c *Config, path string) error {
 			c.MaxSubscribers = *ev.MaxSubscribers
 		}
 	}
+	if in := fc.Ingress; in != nil {
+		if in.RateLimit != nil {
+			c.IngressRateLimit = *in.RateLimit
+		}
+		if in.AgentRateLimit != nil {
+			c.IngressAgentRateLimit = *in.AgentRateLimit
+		}
+		if in.Burst != nil {
+			c.IngressBurst = *in.Burst
+		}
+		if in.MaxPending != nil {
+			c.IngressMaxPending = *in.MaxPending
+		}
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"ingress.produce_deadline", in.ProduceDeadline, &c.IngressProduceDeadline},
+			{"ingress.transit_hold", in.TransitHold, &c.IngressTransitHold},
+		} {
+			if d.v != nil {
+				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+					return fmt.Errorf("config file %s: %w", path, err)
+				}
+			}
+		}
+	}
 	return nil
 }
 
@@ -804,6 +892,26 @@ func applyEnv(c *Config, env EnvLookup) error {
 			return err
 		}
 	}
+	for _, dv := range []struct {
+		name string
+		dst  *time.Duration
+	}{
+		{"ANDARA_PRODUCE_DEADLINE", &c.IngressProduceDeadline},
+		{"ANDARA_INGRESS_TRANSIT_HOLD", &c.IngressTransitHold},
+	} {
+		if v, ok := env(dv.name); ok {
+			if err := parseDuration(dv.name, v, dv.dst); err != nil {
+				return err
+			}
+		}
+	}
+	if v, ok := env("ANDARA_TRACE_SAMPLE_RATIO"); ok {
+		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
+		if err != nil {
+			return fmt.Errorf("ANDARA_TRACE_SAMPLE_RATIO must be a number in [0, 1], got %q", v)
+		}
+		c.TraceSampleRatio = f
+	}
 	if v, ok := env("ANDARA_PROTOCOL_MIN"); ok {
 		if err := parseVersion(v, &c.ProtocolMinVersion); err != nil {
 			return fmt.Errorf("ANDARA_PROTOCOL_MIN: %w", err)
@@ -827,6 +935,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_K8S_ISSUER", &c.AuthK8sIssuer},
 		{"ANDARA_AUTH_K8S_JWKS_URL", &c.AuthK8sJWKSURL},
 		{"ANDARA_AUTH_BOOTSTRAP_OPERATOR", &c.AuthBootstrapOperator},
+		{"ANDARA_INGRESS_RATE_LIMIT", &c.IngressRateLimit},
+		{"ANDARA_AGENT_RATE_LIMIT", &c.IngressAgentRateLimit},
 	} {
 		if v, ok := env(sv.name); ok {
 			*sv.dst = v
@@ -861,6 +971,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_MAX_INTENT_BYTES", &c.MaxIntentBytes},
 		{"ANDARA_SUBSCRIBER_BUFFER", &c.SubscriberBuffer},
 		{"ANDARA_MAX_SUBSCRIBERS", &c.MaxSubscribers},
+		{"ANDARA_INGRESS_BURST", &c.IngressBurst},
+		{"ANDARA_INGRESS_MAX_PENDING", &c.IngressMaxPending},
 	} {
 		if v, ok := env(iv.name); ok {
 			n, err := strconv.Atoi(strings.TrimSpace(v))

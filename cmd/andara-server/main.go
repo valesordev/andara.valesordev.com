@@ -72,6 +72,15 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 	defer accounts.Close()
 
+	// The Submit path (AW-SRV-010): parse, authorize, produce. Built
+	// before the gateway, which takes it as a seam; its producer is
+	// closed after the gateway has drained.
+	if err := rt.StartIngress(ctx); err != nil {
+		tel.Log.Error("ingress", "detail", err.Error())
+		return boot.ExitFail
+	}
+	defer func() { _ = rt.CloseIngress() }()
+
 	// The Protocol endpoint (AW-SRV-005). Built before the health server
 	// listens so that a bad certificate fails the boot rather than a boot
 	// that reports live and never serves.
@@ -91,6 +100,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Accounts:          auth.NewAdmin(accounts),
 		Rechecker:         accounts,
 		RecheckInterval:   cfg.AuthRecheckInterval,
+		Ingress:           rt.Ingress,
 		OnDrain:           rt.Drain,
 		Log:               tel.Log,
 		Tracer:            tel.Tracer,

@@ -123,6 +123,12 @@
             "otlp_endpoint": {
               "type": "string",
               "description": "ANDARA_OTLP_ENDPOINT (AW-SRV-001). Default when unset: 'localhost:4317'."
+            },
+            "trace_sample_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "ANDARA_TRACE_SAMPLE_RATIO (AW-SRV-010). Default when unset: 0.01."
             }
           }
         },
@@ -247,6 +253,40 @@
               "type": "integer",
               "minimum": 1,
               "description": "ANDARA_MAX_SUBSCRIBERS (AW-SRV-004). Default when unset: 10000."
+            }
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rate_limit": {
+              "type": "string",
+              "description": "ANDARA_INGRESS_RATE_LIMIT (AW-SRV-010). Default when unset: '20/s'."
+            },
+            "burst": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_INGRESS_BURST (AW-SRV-010). Default when unset: 40."
+            },
+            "produce_deadline": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_PRODUCE_DEADLINE (AW-SRV-010). Default when unset: '2s'."
+            },
+            "max_pending": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_INGRESS_MAX_PENDING (AW-SRV-010). Default when unset: 256."
+            },
+            "agent_rate_limit": {
+              "type": "string",
+              "description": "ANDARA_AGENT_RATE_LIMIT (AW-SRV-010). Default when unset: '100/s'."
+            },
+            "transit_hold": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_INGRESS_TRANSIT_HOLD (AW-SRV-010). Default when unset: '2s'."
             }
           }
         },

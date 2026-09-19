@@ -4,7 +4,7 @@ title: Command ingress — parse, authorize, and produce to the command log
 epic: EPIC-03
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-003, AW-SRV-005, AW-INF-004]
 blocks: [AW-INF-005, AW-INF-010]
@@ -120,6 +120,42 @@ splits its history across two Partitions and is unrecoverable.
 The last row is the honest one: a produce deadline is genuinely ambiguous. The idempotent producer
 makes a retry safe, and the client should retry rather than assume failure.
 
+### As built (2026-09-19)
+
+- `server/ingress`: `Ingress` (implements `gateway.Ingress`) — `New(Options{Pipeline, Bindings,
+  RateLimit, AgentRateLimit, Burst, MaxPending, Metrics, Log, Now})`, `Submit`; per-Session token
+  bucket (`auth.Limiter`, now exported with a burst depth), per-Session FIFO queue so offsets follow
+  arrival order, pending bound. `KafkaProducer` (implements `command.Producer`) —
+  `NewKafkaProducer(ProducerOptions{Brokers, Topic, ClientID, Deadline, MaxBuffered, ProbeInterval,
+  Dialer, ClientLogger, Metrics, Log, Tracer})`, `Produce`, `Degraded`, `Close`; acks=all, idempotent,
+  `ManualPartitioner` + `sim.PartitionFor`, `RecordDeliveryTimeout = deadline`,
+  `ProduceRequestTimeout = deadline/2`, `MetadataMinAge = deadline/4` (a failed produce waits for a
+  metadata refresh before its retry; the library's five-second floor put every retry past the
+  deadline). `Bindings` (implements `command.Binder` and `sim.EventSink`) — `NewBindings(hold, now,
+  heldGauge)`, `Bind`, `Unbind`, `Lookup`, `Binding(ctx, session)` (blocks through Transit),
+  `Publish(sim.Event)` (follows `CharacterLeft`/`CharacterArrived` addressed to the bound Character).
+  Errors `ErrRateLimited`, `ErrPendingFull`, `ErrUnavailable`, `ErrDeadline`; every wire error carries
+  `errdetails.ErrorInfo{domain: andara.command, reason}` (+ `stage`, `pre_log`, `arg` for a pipeline
+  rejection) and `UNAVAILABLE` a `RetryInfo` of 1 s. `ReadOnlyMessage` is a marked placeholder.
+- `server/command`: `Binder.Binding(ctx, sessionID) (Binding, error)` with `ErrNoBinding` and
+  `ErrBindingInTransit`; `CodeInTransit` pre-log at `authorize`; a Binder returning ctx's error
+  is not a rejection. The produced record is `Parse`'s output plus `zone_id`, `actor_id`,
+  `accepted_at_unix_nano`, `trace_id` — asserted byte-for-byte.
+- `server/telemetry`: `Sampler` (head: `Game/Submit` roots at `telemetry.trace_sample_ratio`,
+  parent-based otherwise, every other root sampled) and `SpanFilter` (tail: `sim.tick` /
+  `sim.zone_tick` keep rule as before; `command.apply` on a tick-produced record keeps its tick's one
+  in a hundred; a rejected `command.execute` under an unsampled root is exported with the flag set).
+  `config.TraceSampleRatio`, default `0.01`.
+- `server/auth`: `Auditor.Record` waits `AuditWriteTimeout` (2 s) for the write and then lets it
+  finish in the background — a refused Submit during a broker outage was waiting 20 s for its audit
+  record, which the idempotent producer holds until a broker returns.
+- `boot.Runtime.StartIngress` / `CloseIngress`, `Runtime.Ingress`, `Runtime.Bindings`; the engine
+  subscribes `Bindings` after recovery beside the Hub; `sim.source=memory` produces into the loop's
+  in-memory source, so `Submit` → tick → Event runs in one process with no broker.
+- Config: `ingress.rate_limit`, `ingress.agent_rate_limit`, `ingress.burst`,
+  `ingress.produce_deadline`, `ingress.max_pending`, `ingress.transit_hold`,
+  `telemetry.trace_sample_ratio`; `keys.yaml` gains a `number` type. `docs/runbooks/world-read-only.md`.
+
 ## Data / state impact
 
 This story is what fills `andara.commands.v1`, the topic that is the World's entire history. Two
@@ -223,4 +259,68 @@ CLAUDE.md §8, plus:
   Behavior Agents at 100/s may change this calculus — revisit at `AW-SRV-009`.
 - `[NEEDS BRIAN]` What a player should see when the World goes read-only. A typed error is the
   mechanism; the wording is a design call, and it is the one error message every player will
-  eventually see.
+  eventually see. **As built:** `ingress.ReadOnlyMessage`, marked as a placeholder — *"The world is
+  read-only for a moment: your command was not taken. Try it again shortly."* — on the `UNAVAILABLE`
+  with reason `world_read_only`. One constant to change.
+- **Resolved 2026-09-19 (inherited items 1–3):** (1) `Submit` takes raw text and the produced record
+  is byte-equal to `Parse`'s output plus the Gateway's four correlation fields, asserted by
+  `TestSubmit_ProducesExactlyWhatParseReturned`. (2) Sampling as specified: the `Game/Submit` root is
+  head-sampled at `telemetry.trace_sample_ratio` (default `0.01`), the flag rides
+  `LoggedCommand.trace_id` into `command.apply`, a client's own `traceparent` decision is honored,
+  every rejection is exported, and a tick-produced record keeps `sim.tick`'s one in a hundred. What
+  it took: the rejection is kept *after* the head said no, which the SDK's exporters refuse, so
+  `SpanFilter` forwards a rejected `command.execute` claiming the sampled flag — the child spans of
+  such a rejection are not exported, the execute span with `stage_failed` and `code` is.
+  (3) The transit hold, as specified, with `ingress.transit_hold` and `andara_ingress_held_intents`
+  added. A held Submit is also bounded by the RPC deadline; the hold is measured from the
+  `CharacterLeft`, so a stuck handoff surfaces at a bounded time whenever the player types. Past the
+  hold the Session's Intents are rejected `in_transit` at once until an arrival resolves it.
+- **Corrected 2026-09-19 (implementation): the read-only state is detected by a probe, and the
+  Submit in flight when the log goes away is ambiguous, not `UNAVAILABLE`.** AC-5 reads as if
+  unreachability were known at the call. It is known when a ping fails: a probe pings once a second
+  regardless of traffic (so `andara_ingress_degraded` moves while nobody is playing, and a Submit
+  after detection fails at once), and a produce that fails pings too. The record of the Submit that
+  discovers the outage had already been handed to the client and may have reached the broker, so it
+  is answered `DEADLINE_EXCEEDED` (reason `produce_deadline`, outcome unknown) — never `UNAVAILABLE`,
+  which promises nothing was written. Every Submit after detection is `UNAVAILABLE` within
+  microseconds. Entering the state swaps the producer client and closes the old one: the idempotent
+  producer cannot take back a record it has tried to send, and would have delivered it when a broker
+  returned, minutes later, to a player who was told the World was read-only. Dropping the client is
+  the bounded buffer; the one record that may have reached the broker in the outage's first moment
+  is the residual ambiguity, and the runbook says so.
+- **Corrected 2026-09-19 (implementation): metric outcomes.** `andara_ingress_submits_total{outcome}`
+  gains `pending_full`, `in_transit`, `canceled`, and `internal` beside the six listed — each row of
+  the error taxonomy is one outcome, and a bug is counted as one rather than hidden in `deadline`.
+- **Corrected 2026-09-19 (implementation): `max.in.flight.requests.per.connection = 5` is not set.**
+  franz-go pins the idempotent producer to five in flight and ignores the option; setting it would
+  read as if it did something. The comment on `KafkaProducer` says so.
+- `[ASSUMPTION]` `andara_ingress_partition_skew{partition}` is Commands produced to each Partition
+  since boot: the spread across the 64 is the skew, and `rate()` over it is the hot-Zone signal. The
+  story names a gauge without a definition; a counter would be the idiomatic shape, and the
+  architecture lane may rename it.
+- `[ASSUMPTION]` Per-Session Submits are serialized through the whole pipeline — parse, authorize,
+  produce, ack — one at a time. Ordering is then structural rather than a property of the client's
+  in-flight window, and a human's 2/s never notices. A Behavior Agent at 100/s over one Session is
+  bounded by produce latency (~10 ms locally → ~100/s); if `AW-SRV-009` needs more, the queue can
+  release after enqueue rather than after ack, keeping the order the client library preserves.
+- **Verification 2026-09-19.** Against the compose Redpanda (`make test-integration`): AC-1/2/3/4/7/9
+  and the partitioner discriminator (a Zone the library default and `sim.PartitionFor` disagree on
+  lands where `PartitionFor` says); a dialer fault that loses one produce response after the broker
+  has it — retried, counted, landed once; a dialer refusal — the discovering Submit `DEADLINE_EXCEEDED`
+  or `UNAVAILABLE` if the probe won, the next `UNAVAILABLE` in microseconds, recovery on the first
+  successful ping, exactly two records on the topic. AC-10 read back from Tempo:
+  `Game/Submit → command.execute → command.parse, command.authorize, log.produce{partition, offset,
+  retries, acks_wait_ms}`. Against the running server, with no Character bound (`AW-SRV-014`):
+  `frobnicate` → `INVALID_ARGUMENT{unknown_verb}`, `move sideways` →
+  `INVALID_ARGUMENT{invalid_argument, arg=direction}`, `look` → `PERMISSION_DENIED{not_authorized}`
+  with one `andara.audit.v1` record naming the actor, verb, and Session and `andara.commands.v1`'s
+  end offsets unchanged; 60 Submits in 0.6 s → 51 taken, 9 `RESOURCE_EXHAUSTED{rate_limited}`;
+  `docker compose stop redpanda` with a Session submitting every second → `andara_ingress_degraded`
+  1 within a second, `/readyz` 200, the tick running, the Session alive, every refused Submit back
+  in 2.0 s (the audit write's bound) rather than 20; `start redpanda` → 0 within a second, no
+  restart. Prometheus holds the ingress series (64 `partition_skew`), Loki the `command log
+  unreachable`/`reachable`, `session rate limited`, `audit record write pending`, and `command
+  rejected` lines with `session_id`, `trace_id`, `verb`, `stage`, `code`; Tempo holds 175 rejected
+  `command.execute` spans and zero `Game/Submit` roots at the 1 % default. The story's manual plan
+  (`andara-cli play`, `north` → movement) needs `AW-SRV-014` to bind a Character and `AW-CLI-004` for
+  the client; the produce path is verified by the integration suite until then.

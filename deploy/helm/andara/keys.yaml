@@ -31,6 +31,7 @@ keys:
   - {key: telemetry.log_format,    env: ANDARA_LOG_FORMAT,       type: enum, values: [json, text], default: json, story: AW-SRV-001}
   - {key: telemetry.log_level,     env: ANDARA_LOG_LEVEL,        type: enum, values: [debug, info, warn, error], default: info, story: AW-SRV-001}
   - {key: telemetry.otlp_endpoint, env: ANDARA_OTLP_ENDPOINT,    type: string, default: localhost:4317, story: AW-SRV-001}
+  - {key: telemetry.trace_sample_ratio, env: ANDARA_TRACE_SAMPLE_RATIO, type: number, default: 0.01, min: 0, max: 1, story: AW-SRV-010}
 
   # --- AW-SRV-002: tick loop ---
   - {key: sim.source,                  env: ANDARA_SIM_SOURCE,             type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-002}
@@ -71,6 +72,7 @@ keys:
   - {key: ingress.produce_deadline,  env: ANDARA_PRODUCE_DEADLINE,     type: duration, default: 2s, story: AW-SRV-010}
   - {key: ingress.max_pending,       env: ANDARA_INGRESS_MAX_PENDING,  type: int, default: 256, min: 1, story: AW-SRV-010}
   - {key: ingress.agent_rate_limit,  env: ANDARA_AGENT_RATE_LIMIT,     type: string, default: 100/s, story: AW-SRV-010}
+  - {key: ingress.transit_hold,      env: ANDARA_INGRESS_TRANSIT_HOLD, type: duration, default: 2s, story: AW-SRV-010}
 
   # --- AW-SRV-006 / AW-SRV-007 / AW-INF-007: snapshots, recovery, deploy ---
   - {key: snapshot.interval,         env: ANDARA_SNAPSHOT_INTERVAL,       type: duration, default: 60s, story: AW-SRV-006}

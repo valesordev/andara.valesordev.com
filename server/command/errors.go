@@ -45,12 +45,18 @@ const (
 	// CodeNotAuthorized: the Principal lacks the verb's role, or the
 	// Session is bound to no Character (auth.ErrNotAuthorized).
 	CodeNotAuthorized = "not_authorized"
+	// CodeInTransit: the Session's Character is between Zones and the
+	// Gateway's hold for it ran out (AW-SRV-010, ingress.transit_hold).
+	// The same code the sim uses post-log for a Command that reached the
+	// Zone the Character left; the hold is what makes that path
+	// unreachable from a well-behaved Gateway.
+	CodeInTransit = "in_transit"
 )
 
 // PreLogCodes is every pre-log code by stage, for metric pre-seeding.
 var PreLogCodes = map[Stage][]string{
 	StageParse:     {CodeUnknownVerb, CodeMissingArgument, CodeInvalidArgument, CodeIntentTooLarge},
-	StageAuthorize: {CodeNotAuthorized},
+	StageAuthorize: {CodeNotAuthorized, CodeInTransit},
 }
 
 // Error is a pre-log rejection: which stage, which code, and a detail the
@@ -83,6 +89,7 @@ var (
 	ErrInvalidArgument = &Error{Stage: StageParse, Code: CodeInvalidArgument}
 	ErrIntentTooLarge  = &Error{Stage: StageParse, Code: CodeIntentTooLarge}
 	ErrNotAuthorized   = &Error{Stage: StageAuthorize, Code: CodeNotAuthorized, err: auth.ErrNotAuthorized}
+	ErrInTransit       = &Error{Stage: StageAuthorize, Code: CodeInTransit}
 )
 
 // AsError returns the *Error in err's chain, if any.

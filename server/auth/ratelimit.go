@@ -58,11 +58,15 @@ func (r RateLimit) String() string {
 	return fmt.Sprintf("%d/%s", r.N, r.Period)
 }
 
-// limiter is a token bucket per key. There is no lockout and no penalty
-// beyond the bucket: an attacker who can name a username must not be able
-// to deny its owner the game (AW-SRV-008 configuration notes).
-type limiter struct {
+// Limiter is a token bucket per key: N tokens per Period refill a bucket
+// Burst deep. There is no lockout and no penalty beyond the bucket: an
+// attacker who can name a username must not be able to deny its owner the
+// game (AW-SRV-008 configuration notes). The account store keys it by
+// username and peer; command ingress (AW-SRV-010) keys it by Session with
+// a burst deeper than the rate.
+type Limiter struct {
 	limit RateLimit
+	burst float64
 	now   func() time.Time
 
 	mu      sync.Mutex
@@ -75,28 +79,39 @@ type bucket struct {
 	last   time.Time
 }
 
-func newLimiter(limit RateLimit, now func() time.Time) *limiter {
-	return &limiter{limit: limit, now: now, buckets: map[string]*bucket{}, lastGC: now()}
+// NewLimiter builds a limiter. burst is the bucket depth; zero or less
+// means the rate's N. A nil now reads the wall clock.
+func NewLimiter(limit RateLimit, burst int, now func() time.Time) *Limiter {
+	if now == nil {
+		now = time.Now
+	}
+	if burst <= 0 {
+		burst = limit.N
+	}
+	return &Limiter{limit: limit, burst: float64(burst), now: now, buckets: map[string]*bucket{}, lastGC: now()}
 }
 
-// allow takes one token from key's bucket, reporting false when it is empty.
-func (l *limiter) allow(key string) bool {
+func newLimiter(limit RateLimit, now func() time.Time) *Limiter { return NewLimiter(limit, 0, now) }
+
+// Allow takes one token from key's bucket, reporting false when it is
+// empty. A zero rate allows everything.
+func (l *Limiter) Allow(key string) bool {
 	if l.limit.N <= 0 {
 		return true
 	}
 	now := l.now()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if now.Sub(l.lastGC) > l.limit.Period {
+	if now.Sub(l.lastGC) > l.refillTime() {
 		l.gc(now)
 	}
 	b := l.buckets[key]
 	if b == nil {
-		b = &bucket{tokens: float64(l.limit.N), last: now}
+		b = &bucket{tokens: l.burst, last: now}
 		l.buckets[key] = b
 	}
 	refill := now.Sub(b.last).Seconds() / l.limit.Period.Seconds() * float64(l.limit.N)
-	b.tokens = min(float64(l.limit.N), b.tokens+refill)
+	b.tokens = min(l.burst, b.tokens+refill)
 	b.last = now
 	if b.tokens < 1 {
 		return false
@@ -105,11 +120,24 @@ func (l *limiter) allow(key string) bool {
 	return true
 }
 
+// Forget drops key's bucket; a Session that has ended keeps no state.
+func (l *Limiter) Forget(key string) {
+	l.mu.Lock()
+	delete(l.buckets, key)
+	l.mu.Unlock()
+}
+
+// refillTime is how long an empty bucket takes to fill completely.
+func (l *Limiter) refillTime() time.Duration {
+	return time.Duration(l.burst / float64(l.limit.N) * float64(l.limit.Period))
+}
+
 // gc drops buckets that have refilled completely; they are indistinguishable
-// from absent ones. Bounds the map to the keys seen in the last period.
-func (l *limiter) gc(now time.Time) {
+// from absent ones. Bounds the map to the keys seen in the last refill time.
+func (l *Limiter) gc(now time.Time) {
+	full := l.refillTime()
 	for k, b := range l.buckets {
-		if now.Sub(b.last) >= l.limit.Period {
+		if now.Sub(b.last) >= full {
 			delete(l.buckets, k)
 		}
 	}
