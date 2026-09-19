@@ -6,6 +6,8 @@ package events_test
 import (
 	"context"
 	"errors"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	auditv1 "github.com/valesordev/andara/gen/go/andara/audit/v1"
+	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/events"
@@ -401,18 +404,146 @@ func TestShutdown(t *testing.T) {
 	f.hub.Close() // idempotent
 }
 
-// Move relocates an Observer for the next Event.
-func TestObserverMove(t *testing.T) {
-	f := newFixture(t, 16)
-	s := f.sub(events.Observer{Room: room("town", "plaza")}, player)
-	f.step(simtest.Move("town", "alice", "north"))
-	if got := types(drain(s)); len(got) != 1 || got[0] != sim.EvCharacterLeft {
-		t.Fatalf("saw %v", got)
+// An Observer bound to an Entity follows it inside the Hub, in Event
+// order: after its Character moves A→B, an Event in A later in the same
+// tick is not delivered and an Event in B is — never a consumer's read
+// latency behind the sim (AC-1).
+func TestObserverFollowsEntity(t *testing.T) {
+	f := newFixture(t, 32)
+	alice := f.sub(events.Observer{Entity: "alice", Room: room("town", "plaza")}, player)
+	p := sim.PartitionFor("town")
+	// One tick: alice plaza→hall, then carol hall→plaza. Carol leaving the
+	// hall is in alice's new Room; carol arriving in the plaza is in her
+	// old one.
+	if _, err := f.e.Step(sim.TickInput{Records: []sim.Record{
+		{Partition: p, Offset: 0, Command: simtest.Move("town", "alice", "north")},
+		{Partition: p, Offset: 1, Command: simtest.Move("town", "carol", "south")},
+	}}); err != nil {
+		t.Fatal(err)
 	}
-	s.Move(room("town", "hall"))
-	f.step(simtest.Move("town", "alice", "south"))
-	if got := types(drain(s)); len(got) != 1 || got[0] != sim.EvCharacterLeft {
-		t.Fatalf("after move saw %v", got)
+	f.hub.Flush()
+	got := drain(alice)
+	names := make([]string, 0, len(got))
+	for _, d := range got {
+		switch pl := d.Envelope.GetPayload().(type) {
+		case *gamev1.EventEnvelope_CharacterLeft:
+			names = append(names, "left:"+pl.CharacterLeft.GetCharacterName()+"@"+pl.CharacterLeft.GetRoomId())
+		case *gamev1.EventEnvelope_CharacterArrived:
+			names = append(names, "arrived:"+pl.CharacterArrived.GetCharacterName()+"@"+pl.CharacterArrived.GetRoomId())
+		}
+	}
+	want := []string{"left:alice@plaza", "arrived:alice@hall", "left:carol@hall"}
+	if !slices.Equal(names, want) {
+		t.Fatalf("alice perceived %v, want %v", names, want)
+	}
+
+	// Cross-Zone: leaving clears the Room, so nothing in the old Room
+	// reaches her in transit; arriving sets it, so the new Room does.
+	f.step(simtest.Move("town", "alice", "south")) // hall → plaza
+	drain(alice)
+	res := f.step(simtest.Move("town", "alice", "south")) // plaza → docks/pier, Arrive outbound
+	if got := types(drain(alice)); len(got) != 1 || got[0] != sim.EvCharacterLeft {
+		t.Fatalf("in transit saw %v", got)
+	}
+	f.step(simtest.Move("town", "bob", "north")) // plaza: alice must not hear it
+	if got := drain(alice); len(got) != 0 {
+		t.Fatalf("in transit, alice heard her old Room: %v", types(got))
+	}
+	f.step(res.Outbound[0]) // arrives at the pier
+	if got := types(drain(alice)); len(got) != 1 || got[0] != sim.EvCharacterArrived {
+		t.Fatalf("arrival saw %v", got)
+	}
+	simtest.Place(f.e, "dave", "docks", "pier")
+	f.step(simtest.Move("docks", "dave", "south")) // pier → warehouse: alice hears it
+	if got := types(drain(alice)); len(got) != 1 || got[0] != sim.EvCharacterLeft {
+		t.Fatalf("at the pier saw %v", got)
+	}
+}
+
+// client_ref reaches the Session whose Command caused the Event and no
+// one else — blanked in the Hub, not in every transport. The sim's own
+// envelope is untouched.
+func TestClientRefOnlyToOwnSession(t *testing.T) {
+	f := newFixture(t, 16)
+	bob := f.sub(events.Observer{Entity: "bob", Room: room("town", "plaza")}, player)     // session s-bob
+	alice := f.sub(events.Observer{Entity: "alice", Room: room("town", "plaza")}, player) // session s-alice
+	world := f.sub(events.Observer{World: true}, gm)
+	cmd := simtest.Move("town", "bob", "north")
+	cmd.SessionId, cmd.ClientRef = "s-bob", "ref-42"
+	res := f.step(cmd)
+	if res.Events[0].Envelope.GetClientRef() != "ref-42" {
+		t.Fatal("the sim's envelope lost its client_ref")
+	}
+	if got := drain(bob); len(got) != 2 || got[0].Envelope.GetClientRef() != "ref-42" {
+		t.Fatalf("bob got %v", got)
+	}
+	if got := drain(alice); len(got) != 1 || got[0].Envelope.GetClientRef() != "" {
+		t.Fatalf("alice got another Session's client_ref: %v", got)
+	}
+	if got := drain(world); len(got) != 2 || got[0].Envelope.GetClientRef() != "" {
+		t.Fatalf("GM got another Session's client_ref: %v", got)
+	}
+}
+
+// Close delivers what is queued before ending the streams: a subscriber
+// promised SimulationStopped gets it even when Close follows Stop with no
+// Flush between.
+func TestCloseDeliversQueued(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		f := newFixture(t, 64)
+		s := f.sub(events.Observer{Entity: "alice", Room: room("town", "plaza")}, player)
+		for j := 0; j < 5; j++ {
+			f.step(simtest.Look("town", "alice"))
+		}
+		f.e.Stop("drain")
+		f.hub.Close()
+		var got []events.Delivery
+		for d := range s.Events() {
+			got = append(got, d)
+		}
+		if len(got) != 6 || got[5].Type != sim.EvSimulationStopped {
+			t.Fatalf("run %d: got %v", i, types(got))
+		}
+		if s.Reason() != events.ReasonShutdown {
+			t.Fatalf("reason = %q", s.Reason())
+		}
+	}
+}
+
+// Subscribe racing Close: every subscription that was handed out ends,
+// and none is handed out after the fan-out is gone.
+func TestSubscribeRacesClose(t *testing.T) {
+	hub := events.New(events.Options{Buffer: 1})
+	var mu sync.Mutex
+	var subs []*events.Subscription
+	var wg sync.WaitGroup
+	for g := 0; g < 8; g++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				s, err := hub.Subscribe(context.Background(), events.Subscriber{Observer: events.Observer{Entity: "x"}, Principal: player})
+				if err != nil {
+					return
+				}
+				mu.Lock()
+				subs = append(subs, s)
+				mu.Unlock()
+			}
+		}()
+	}
+	time.Sleep(5 * time.Millisecond)
+	hub.Close()
+	wg.Wait()
+	for _, s := range subs {
+		select {
+		case _, ok := <-s.Events():
+			if ok {
+				t.Fatal("delivery after Close")
+			}
+		case <-time.After(time.Second):
+			t.Fatal("a subscription handed out around Close never ended")
+		}
 	}
 }
 

@@ -30,6 +30,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
+	"google.golang.org/protobuf/proto"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/server/auth"
@@ -62,6 +63,14 @@ var (
 // Observer is where a subscriber perceives from: the Room it stands in,
 // the Entity it is, and whether it holds World visibility. Any of the
 // three may be unset; an Observer with none set receives nothing.
+//
+// An Observer bound to an Entity follows it: the Hub sees every
+// CharacterLeft and CharacterArrived addressed to the Entity, in order,
+// before anything is delivered after them, and moves the Observer's Room
+// there and then — cleared on leaving, set on arriving. So a Session's
+// perception is never a consumer's read latency behind the sim (AC-1),
+// and between a cross-Zone departure and the arrival the Observer is in
+// no Room, which is where the Character is.
 type Observer struct {
 	Entity sim.EntityID
 	Room   sim.RoomRef
@@ -97,6 +106,7 @@ type Subscription struct {
 	// close on ch never race.
 	mu      sync.Mutex
 	obs     Observer
+	session string
 	ch      chan Delivery
 	dropped bool
 	reason  string
@@ -113,18 +123,32 @@ func (s *Subscription) Reason() string {
 	return s.reason
 }
 
-// Move relocates the Observer — a Session following its Character across
-// Rooms. Takes effect for the next Event delivered.
-func (s *Subscription) Move(room sim.RoomRef) {
-	s.mu.Lock()
-	s.obs.Room = room
-	s.mu.Unlock()
-}
-
 func (s *Subscription) observer() Observer {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.obs
+}
+
+// follow moves the Observer with its Entity: a CharacterLeft addressed to
+// it clears the Room, a CharacterArrived sets it. Position tracking is
+// independent of delivery — it applies to Events before the start tick
+// too, so a subscription registered mid-move is not left in the Room its
+// Character had already left.
+func (s *Subscription) follow(ev sim.Event) {
+	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.obs.Entity == "" || !addressed(ev.Scope, s.obs.Entity) {
+		return
+	}
+	switch p := ev.Envelope.GetPayload().(type) {
+	case *gamev1.EventEnvelope_CharacterLeft:
+		s.obs.Room = sim.RoomRef{}
+	case *gamev1.EventEnvelope_CharacterArrived:
+		s.obs.Room = sim.RoomRef{Zone: sim.ZoneID(p.CharacterArrived.GetZoneId()), Room: sim.RoomID(p.CharacterArrived.GetRoomId())}
+	}
 }
 
 // push delivers without blocking. full reports a buffer that could not
@@ -293,22 +317,25 @@ func (h *Hub) Flush() {
 // tick (AC-10). World visibility requires the game_master or operator role
 // and is audited as a privileged read (AC-8).
 func (h *Hub) Subscribe(ctx context.Context, s Subscriber) (*Subscription, error) {
-	if h.closed.Load() {
-		return nil, ErrClosed
-	}
 	if s.Observer.World {
 		if !s.Principal.Has(auth.RoleGameMaster) && !s.Principal.Has(auth.RoleOperator) {
 			return nil, ErrNotPrivileged
 		}
 	}
 	h.mu.Lock()
+	// closed is decided under the same lock dropAll sets it under, so a
+	// subscription is never inserted after the last one was ended.
+	if h.closed.Load() {
+		h.mu.Unlock()
+		return nil, ErrClosed
+	}
 	if len(h.subs) >= h.opts.MaxSubscribers {
 		h.mu.Unlock()
 		return nil, ErrTooManySubscribers
 	}
 	h.nextID++
 	sub := &Subscription{
-		ID: h.nextID, hub: h, obs: s.Observer,
+		ID: h.nextID, hub: h, obs: s.Observer, session: s.SessionID,
 		// One slot past the buffer is reserved for the SubscriberDropped
 		// Event, so it always fits when the buffer is what filled.
 		ch:    make(chan Delivery, h.opts.Buffer+1),
@@ -352,9 +379,9 @@ func (h *Hub) end(sub *Subscription, reason string, tick sim.Tick) {
 	}
 }
 
-// Close ends every subscription with reason shutdown and stops the
-// fan-out. Idempotent. The drain's SimulationStopped, published before
-// this, has already reached every subscriber.
+// Close delivers whatever is still queued — the drain's SimulationStopped
+// among it — ends every subscription with reason shutdown, and stops the
+// fan-out. Idempotent.
 func (h *Hub) Close() {
 	h.closed.Store(true)
 	h.stopOnce.Do(func() { close(h.stop) })
@@ -374,19 +401,27 @@ func (h *Hub) run() {
 		case it := <-h.in:
 			batch = append(batch, it)
 		case <-h.stop:
+			// Stopping delivers what was queued before it: a subscriber
+			// promised SimulationStopped gets it before the stream ends.
+			h.deliver(h.drainQueued(nil))
 			return
 		}
-	drain:
-		for len(batch) < 4096 {
-			select {
-			case next := <-h.in:
-				batch = append(batch, next)
-			default:
-				break drain
-			}
-		}
-		h.deliver(batch)
+		h.deliver(h.drainQueued(batch))
 	}
+}
+
+// drainQueued appends what is immediately available on the inbound
+// channel, up to a batch bound.
+func (h *Hub) drainQueued(batch []item) []item {
+	for len(batch) < 4096 {
+		select {
+		case next := <-h.in:
+			batch = append(batch, next)
+		default:
+			return batch
+		}
+	}
+	return batch
 }
 
 func (h *Hub) deliver(batch []item) {
@@ -406,27 +441,26 @@ func (h *Hub) deliver(batch []item) {
 		}
 		events++
 		tick = it.ev.Tick
+		f := forms{ev: it.ev}
 		if it.ev.Type == sim.EvSimulationStopped && it.ev.ID == 0 {
 			// Lifecycle: everyone hears it, in the form their privilege
 			// allows, then everyone is dropped. Not scoped, not gated on
 			// the start tick — a subscriber that just arrived should not
 			// wait for a tick that will never come.
 			for _, s := range subs {
-				h.send(s, it.ev, s.observer().World, tick)
+				h.send(s, &f, tick)
 			}
-			h.closed.Store(true)
 			h.dropAll()
 			continue
 		}
 		for _, s := range subs {
-			if it.ev.Tick < s.start {
-				continue
-			}
 			obs := s.observer()
-			if !visible(it.ev.Scope, obs) {
-				continue
+			if it.ev.Tick >= s.start && visible(it.ev.Scope, obs) {
+				h.send(s, &f, tick)
 			}
-			h.send(s, it.ev, obs.World, tick)
+			// After delivery, in Event order: the next Event is filtered
+			// against where the Character is now.
+			s.follow(it.ev)
 		}
 	}
 	if events > 0 {
@@ -439,29 +473,72 @@ func (h *Hub) deliver(batch []item) {
 	}
 }
 
+// forms is one Event's deliverable envelopes, built on first use: whole
+// or redacted by privilege, and with client_ref only for the Session
+// whose Command caused it — every other recipient gets it blank, as
+// event.proto promises, here rather than in every transport.
+type forms struct {
+	ev       sim.Event
+	stripped [2]*gamev1.EventEnvelope // [privileged]
+}
+
+func (f *forms) envelope(privileged, ownSession bool) *gamev1.EventEnvelope {
+	env := f.ev.Deliverable(privileged)
+	if ownSession || env.GetClientRef() == "" {
+		return env
+	}
+	i := 0
+	if privileged {
+		i = 1
+	}
+	if f.stripped[i] == nil {
+		c := proto.Clone(env).(*gamev1.EventEnvelope)
+		c.ClientRef = ""
+		f.stripped[i] = c
+	}
+	return f.stripped[i]
+}
+
 // send delivers one Event to one subscriber without blocking; a full
 // buffer drops the subscriber (AC-5).
-func (h *Hub) send(s *Subscription, ev sim.Event, privileged bool, tick sim.Tick) {
-	env := ev.Deliverable(privileged)
-	ok, full := s.push(Delivery{ID: ev.ID, Tick: ev.Tick, Type: ev.Type, Envelope: env})
-	if ok && env != ev.Envelope {
-		h.metrics.Redactions.WithLabelValues(string(ev.Type)).Inc()
+func (h *Hub) send(s *Subscription, f *forms, tick sim.Tick) {
+	s.mu.Lock()
+	privileged, own := s.obs.World, f.ev.Session != "" && s.session == f.ev.Session
+	s.mu.Unlock()
+	env := f.envelope(privileged, own)
+	ok, full := s.push(Delivery{ID: f.ev.ID, Tick: f.ev.Tick, Type: f.ev.Type, Envelope: env})
+	if ok && !privileged && f.ev.Redacted != nil {
+		h.metrics.Redactions.WithLabelValues(string(f.ev.Type)).Inc()
 	}
 	if full {
 		h.end(s, ReasonBufferFull, tick)
 	}
 }
 
+// dropAll ends every subscription with reason shutdown and closes the
+// Hub to new ones, under the lock Subscribe checks, so nothing is
+// inserted after the last one is ended.
 func (h *Hub) dropAll() {
-	h.mu.RLock()
+	h.mu.Lock()
+	h.closed.Store(true)
 	subs := make([]*Subscription, 0, len(h.subs))
 	for _, s := range h.subs {
 		subs = append(subs, s)
 	}
-	h.mu.RUnlock()
+	h.mu.Unlock()
 	for _, s := range subs {
 		h.end(s, ReasonShutdown, sim.Tick(h.lastTick.Load()))
 	}
+}
+
+// addressed reports whether the Scope names the Entity explicitly.
+func addressed(scope sim.Scope, id sim.EntityID) bool {
+	for _, e := range scope.Entities {
+		if e == id {
+			return true
+		}
+	}
+	return false
 }
 
 // visible applies a Scope to an Observer. Shapes are additive: any one
@@ -475,14 +552,7 @@ func visible(scope sim.Scope, obs Observer) bool {
 	if scope.Zoned() && obs.Room.Zone == scope.Room.Zone && (scope.Room.Room == "" || scope.Room.Room == obs.Room.Room) {
 		return true
 	}
-	if obs.Entity != "" {
-		for _, id := range scope.Entities {
-			if id == obs.Entity {
-				return true
-			}
-		}
-	}
-	return false
+	return obs.Entity != "" && addressed(scope, obs.Entity)
 }
 
 // Visible is visible, exported for tests and for the CLI's event tap.

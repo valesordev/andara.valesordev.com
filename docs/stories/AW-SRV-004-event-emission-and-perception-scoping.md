@@ -169,10 +169,12 @@ const (
   (Room empty = every Room in the Zone), `ScopeEntities`, `ScopeWorld`, `.With(...)`, `.AndWorld()`;
   `ApplyContext.Emit(scope, env)`; `Event` gains `Scope` and `Redacted` (the player-safe form the sim
   prepares when the type carries operator detail); `Event.Deliverable(privileged)`.
-- `server/events`: `Hub` (the Engine's one sink), `Observer{Entity, Room, World}`,
-  `Subscriber{Observer, Principal, SessionID}`, `Hub.Subscribe` → `*Subscription` with `Events()`,
-  `Reason()`, `Move(room)`; `Hub.Unsubscribe`, `Flush`, `Close`; `Delivery{ID, Tick, Type, Envelope}`;
-  errors `ErrTooManySubscribers`, `ErrNotPrivileged`, `ErrClosed`.
+- `server/events`: `Hub` (the Engine's one sink), `Observer{Entity, Room, World}` — an Entity-bound
+  Observer follows its Entity inside the Hub — `Subscriber{Observer, Principal, SessionID}`,
+  `Hub.Subscribe` → `*Subscription` with `Events()`, `Reason()`; `Hub.Unsubscribe`, `Flush`, `Close`
+  (delivers what is queued first); `Delivery{ID, Tick, Type, Envelope}`; errors
+  `ErrTooManySubscribers`, `ErrNotPrivileged`, `ErrClosed`. `sim.Event.Session` (in-process only)
+  lets the Hub hand `client_ref` to the causing Session alone.
 - `server/tickloop`: `EventRecord` (deterministic marshal, Scope on `log.v1.Event`),
   `KafkaPublisher.OnBoundaryAcked` for the publish-lag gauge.
 - `auth.ActionSubscribeWorld`; `boot.Runtime.Events`; `andara-cli sim repl --tap-events`.
@@ -284,12 +286,18 @@ CLAUDE.md §8, plus:
   a Zone-wide announcement — are additional `Scope` shapes, not a different mechanism, and are added
   by the stories that introduce them. **Zone-wide already exists** (a Room-less `RoomRef`), used by
   `ZoneFaulted`.
-- **Forwarded to `AW-SRV-011` (2026-09-18):** `ApplyContext.Emit` echoes the actor's `client_ref` on
-  the envelope for every recipient, so a Room observer is sent another Session's ref; `event.proto`
-  says it is empty for anyone but the submitting Session. The Session stream blanks it per Session
-  before sending — the Hub delivers the sim's envelope as is.
-- `[NEEDS BRIAN]` Whether a Character perceives Events in an adjacent Room at all (hearing a fight
-  next door is a MUD staple). This adds a `Scope` shape but does not change the seam.
+- **Review of PR #32 (2026-09-19), both findings taken:** (1) an Observer bound to an Entity follows
+  it *inside the Hub*, in Event order — `CharacterLeft` addressed to it clears the Room,
+  `CharacterArrived` sets it, before the next delivery — rather than a `Move` the Session stream
+  would call after reading its own buffer, which left perception a read latency behind the sim
+  (AC-1). Cross-Zone transit is a Room-less Observer, which is where the Character is; `Move` is gone
+  and `AW-SRV-011` has nothing to build there. (2) `client_ref` is blanked in one place: `sim.Event`
+  carries the causing `Session` (in-process only, not on the log record) and the Hub hands the ref to
+  that Session alone. Two Codex findings taken with them: `Close` delivers what is queued before
+  ending streams, and `closed` is decided under the lock `dropAll` sets it under.
+- **Resolved by Brian (2026-09-19):** perceiving into an adjacent Room is an attribute on the Exit,
+  set by the Builder per connection — a `Scope` shape plus a `zone.proto` Exit field, groomed as its
+  own story. Nothing here changes.
 - Serialization is protobuf, per ADR-0007. AC-3 is asserted in `make test`: every log record goes
   through one `Deterministic` marshal, and a descriptor walk over `log.v1` and the Event payloads
   fails on any `map` or float field.

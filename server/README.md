@@ -298,7 +298,11 @@ from the tick; delivery runs on the Hub's goroutine, subscriber by subscriber, e
 buffer (`events.subscriber_buffer`). A subscriber that stops reading is dropped with a
 `SubscriberDropped` Event as its last and counted; the tick never waits. An observer is a Room, an
 Entity, and/or World visibility — World requires `game_master` or `operator` and is audited
-(`subscribe_world`) as a privileged read. A subscription registered while tick *T* is publishing
+(`subscribe_world`) as a privileged read. An observer bound to an Entity follows it inside the Hub,
+in Event order — `CharacterLeft` addressed to it clears the Room, `CharacterArrived` sets it — so a
+Session's perception is never its own read latency behind the sim, and in cross-Zone transit it is
+in no Room, which is where the Character is. `client_ref` is handed to the Session whose Command
+caused the Event and blanked for every other recipient, here rather than in each transport. A subscription registered while tick *T* is publishing
 starts at *T+1*, never a partial tick. `SimulationStopped` reaches everyone in the form their
 privilege allows, then every subscription ends with reason `shutdown`. The Kafka producer stays
 independent: a broker outage counts `andara_tick_publish_failures_total` and the Hub keeps

@@ -115,6 +115,10 @@ type Event struct {
 	Scope    Scope
 	Envelope *gamev1.EventEnvelope
 	Redacted *gamev1.EventEnvelope
+	// Session is the Session whose Command caused this Event, or empty.
+	// In-process correlation only — it is not on the log record — so the
+	// fan-out can hand the Command's client_ref to that Session alone.
+	Session string
 }
 
 // Deliverable returns the form an observer with the given privilege may

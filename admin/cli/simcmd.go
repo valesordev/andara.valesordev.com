@@ -133,10 +133,6 @@ type repl struct {
 	hub      *events.Hub
 	me       *events.Subscription
 	taps     []tap
-	// lastRef is the client_ref of the Intent just submitted; the Events
-	// it caused echo it, which is how the harness knows an arrival is its
-	// own Character's without reading a name.
-	lastRef string
 }
 
 // tap is one extra observer whose stream is printed with a label.
@@ -295,8 +291,7 @@ func (r *repl) run(in io.Reader) error {
 			r.prompt()
 			continue
 		}
-		r.lastRef = fmt.Sprint(n)
-		acc, err := r.pipeline.Submit(context.Background(), command.Intent{SessionID: replSession, Raw: raw, ClientRef: r.lastRef}, principal)
+		acc, err := r.pipeline.Submit(context.Background(), command.Intent{SessionID: replSession, Raw: raw, ClientRef: fmt.Sprint(n)}, principal)
 		if err != nil {
 			if e, ok := command.AsError(err); ok {
 				r.emit(fmt.Sprintf("rejected (pre-log, %s): %s: %s — nothing in the log", e.Stage, e.Code, e.Detail),
@@ -347,11 +342,6 @@ func (r *repl) tick() error {
 		r.hub.Flush()
 		for _, d := range pending(r.me) {
 			r.printDelivery("", d)
-			if a := d.Envelope.GetCharacterArrived(); a != nil && d.Envelope.GetClientRef() == r.lastRef {
-				// A Session follows its Character (AW-SRV-011); the harness
-				// does the same from the Event it caused, as a Gateway would.
-				r.me.Move(sim.RoomRef{Zone: sim.ZoneID(a.GetZoneId()), Room: sim.RoomID(a.GetRoomId())})
-			}
 		}
 		for _, t := range r.taps {
 			for _, d := range pending(t.sub) {
