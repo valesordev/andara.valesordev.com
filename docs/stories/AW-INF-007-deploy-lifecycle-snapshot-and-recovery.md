@@ -6,7 +6,7 @@ component: infra
 type: infra
 status: ready
 size: M
-depends_on: [AW-INF-003, AW-SRV-007]
+depends_on: [AW-INF-003, AW-SRV-007, AW-SRV-030]
 blocks: []
 lane: architecture
 risk: high
@@ -168,6 +168,10 @@ retention (30 d) bounds how old a pinned round may be, and `AW-SRV-007` exits `3
 
 CLAUDE.md §8, plus: the rolling-update test runs in CI; `docs/runbooks/deploy-and-rollback.md` states
 the expected interruption as a number from the last CI run, and every step is a make target.
+- **Gate, 2026-09-19:** `replicaCount > 1` is not a supported configuration until `AW-SRV-030`
+  lands — the Gateway's routing table and Hub read the local engine, so a Character crossing to a
+  Zone another pod consumes leaves its Session `in_transit` and unperceiving. The chart pins one
+  replica; this story's rebalance procedure assumes `AW-SRV-030`.
 
 ## Open questions
 
