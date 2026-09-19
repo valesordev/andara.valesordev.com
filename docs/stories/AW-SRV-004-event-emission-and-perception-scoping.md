@@ -4,7 +4,7 @@ title: Event emission, subscription seam, and perception scoping
 epic: EPIC-02
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-002, AW-SRV-003]
 blocks: [AW-SRV-006, AW-SRV-011, AW-SRV-019]
@@ -163,6 +163,22 @@ const (
 | `events.subscriber_buffer` | `ANDARA_SUBSCRIBER_BUFFER` | `1024` | per-subscriber; overflow drops the subscriber |
 | `events.max_subscribers` | `ANDARA_MAX_SUBSCRIBERS` | `10000` | registration beyond this is rejected |
 
+### As built (2026-09-18)
+
+- `server/sim`: `Scope{Room RoomRef, Entities []EntityID, World bool}` with `ScopeRoom`, `ScopeZone`
+  (Room empty = every Room in the Zone), `ScopeEntities`, `ScopeWorld`, `.With(...)`, `.AndWorld()`;
+  `ApplyContext.Emit(scope, env)`; `Event` gains `Scope` and `Redacted` (the player-safe form the sim
+  prepares when the type carries operator detail); `Event.Deliverable(privileged)`.
+- `server/events`: `Hub` (the Engine's one sink), `Observer{Entity, Room, World}` — an Entity-bound
+  Observer follows its Entity inside the Hub — `Subscriber{Observer, Principal, SessionID}`,
+  `Hub.Subscribe` → `*Subscription` with `Events()`, `Reason()`; `Hub.Unsubscribe`, `Flush`, `Close`
+  (delivers what is queued first); `Delivery{ID, Tick, Type, Envelope}`; errors
+  `ErrTooManySubscribers`, `ErrNotPrivileged`, `ErrClosed`. `sim.Event.Session` (in-process only)
+  lets the Hub hand `client_ref` to the causing Session alone.
+- `server/tickloop`: `EventRecord` (deterministic marshal, Scope on `log.v1.Event`),
+  `KafkaPublisher.OnBoundaryAcked` for the publish-lag gauge.
+- `auth.ActionSubscribeWorld`; `boot.Runtime.Events`; `andara-cli sim repl --tap-events`.
+
 ## Data / state impact
 
 `EventID` and the next-ID counter become part of World state and therefore part of `StateHash` and
@@ -237,14 +253,54 @@ CLAUDE.md §8, plus:
   is already in the State Hash. `SimulationStopped` carries `event_id` 0 and consumes no ID; it is a
   lifecycle notification, not World history, and a recovered process's next real Event takes the ID
   it would have taken. Keep it or argue it here before implementing.
-
+  **Kept, 2026-09-18.** The Engine keeps one sink and no `SubscriptionID`; subscriptions and their
+  IDs live on `events.Hub`, which is the one sink boot registers — after recovery, so replayed
+  history is neither fanned out nor counted again. `SimulationStopped` stays `event_id` 0: the Hub
+  treats it as lifecycle — delivered to every subscriber in the form its privilege allows, not
+  scoped and not gated on the start tick, then every subscription ends with reason `shutdown`.
+- **Resolved 2026-09-18: what 002 already built.** `TickCompleted` published last (AC-11), the async
+  Kafka producer keyed by Zone with retries (AC-12), IDs monotonic across recovery, `schema_version` on
+  `log.v1.Event`. AC-12's `andara_event_publish_failures_total{reason}` is 002's
+  `andara_tick_publish_failures_total{kind}` — one series, not two; verified by stopping Redpanda under
+  the compose stack: 206 ticks during the outage, `/readyz` 200, ticking resumed on return.
+- **Corrected 2026-09-18 (implementation): World visibility is the view of everything.** AC-8 says a
+  Game Master observer receives *any* Event; so an Observer with `World` sees every Event, and a
+  Scope's `World` flag marks detail only such observers may see whole. World subscriptions require
+  `game_master` or `operator`, are refused otherwise (`ErrNotPrivileged`), and are audited once, at
+  subscription (`subscribe_world`) — not per Event, which is what the Logs section already said.
+- **Corrected 2026-09-18 (implementation): redaction is two forms, chosen by privilege.** "Before
+  Publish, not by the subscriber" and "depends on the observer" meet in the middle: the sim emits the
+  whole envelope and, for a type carrying operator detail, a redacted one beside it (`ZoneFaulted`
+  without the Zone ID, `SimulationStopped` without the reason). The Hub picks a form by the
+  observer's privilege and never edits one. The DoD's leak case is `RoomDescribed` and
+  `CommandRejected`: addressed to the actor alone, so a bystander in the same Room — who a transport
+  filtering by Room would have sent them to — receives nothing.
+- **Resolved 2026-09-18:** `SchemaVersion` is one number on `log.v1.Event` (`tickloop.EventSchemaVersion`
+  = 1) rather than a per-type table: every payload type shares the envelope and the one field is what
+  an older reader checks. A per-type bump is a per-type field when a type first needs one.
+- **Added 2026-09-18:** `andara_event_fanout_dropped_total` — Events the Hub could not even queue
+  because its own goroutine was starved. Not in the metric list; any value above zero is a process
+  problem, and silently blocking the tick would have been the alternative.
+  `andara_event_publish_lag_seconds` is measured as Tick Boundary Record publish → broker ack.
 - `[ASSUMPTION]` Perception is Room-scoped for Phase 1. Senses with longer reach — shouting, scrying,
   a Zone-wide announcement — are additional `Scope` shapes, not a different mechanism, and are added
-  by the stories that introduce them.
-- `[NEEDS BRIAN]` Whether a Character perceives Events in an adjacent Room at all (hearing a fight
-  next door is a MUD staple). This adds a `Scope` shape but does not change the seam.
-- Serialization is protobuf, per ADR-0007. The canonical-encoding requirement in AC-3 is the part
-  most likely to be got subtly wrong; it is asserted by test, not by review.
+  by the stories that introduce them. **Zone-wide already exists** (a Room-less `RoomRef`), used by
+  `ZoneFaulted`.
+- **Review of PR #32 (2026-09-19), both findings taken:** (1) an Observer bound to an Entity follows
+  it *inside the Hub*, in Event order — `CharacterLeft` addressed to it clears the Room,
+  `CharacterArrived` sets it, before the next delivery — rather than a `Move` the Session stream
+  would call after reading its own buffer, which left perception a read latency behind the sim
+  (AC-1). Cross-Zone transit is a Room-less Observer, which is where the Character is; `Move` is gone
+  and `AW-SRV-011` has nothing to build there. (2) `client_ref` is blanked in one place: `sim.Event`
+  carries the causing `Session` (in-process only, not on the log record) and the Hub hands the ref to
+  that Session alone. Two Codex findings taken with them: `Close` delivers what is queued before
+  ending streams, and `closed` is decided under the lock `dropAll` sets it under.
+- **Resolved by Brian (2026-09-19):** perceiving into an adjacent Room is an attribute on the Exit,
+  set by the Builder per connection — a `Scope` shape plus a `zone.proto` Exit field, groomed as its
+  own story. Nothing here changes.
+- Serialization is protobuf, per ADR-0007. AC-3 is asserted in `make test`: every log record goes
+  through one `Deterministic` marshal, and a descriptor walk over `log.v1` and the Event payloads
+  fails on any `map` or float field.
 - `[ASSUMPTION]` `TickCompleted` goes on `andara.events.v1` rather than its own topic, so a replay
   reads one ordered stream. Splitting it would mean correlating two streams by offset, which is
-  strictly worse.
+  strictly worse. **As shipped by 002.**

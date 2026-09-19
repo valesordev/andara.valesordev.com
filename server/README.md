@@ -64,6 +64,8 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the World's topology. Overriding is a debugging affordance. |
 | `sim.partitions` | `ANDARA_SIM_PARTITIONS` | `0-63` | Assigned Partitions: a range, or the comma list the chart's init container writes from the pod ordinal. |
 | `sim.checkpoint_every_ticks` | `ANDARA_CHECKPOINT_EVERY_TICKS` | `100` | Offset commit cadence — a startup-cost knob, not a correctness one. |
+| `events.subscriber_buffer` | `ANDARA_SUBSCRIBER_BUFFER` | `1024` | Events a subscriber may leave unread before it is dropped with `SubscriberDropped`. |
+| `events.max_subscribers` | `ANDARA_MAX_SUBSCRIBERS` | `10000` | Event subscriptions this process accepts; registration past it is refused. |
 | `command.max_intent_bytes` | `ANDARA_MAX_INTENT_BYTES` | `4096` | Largest Intent `parse` will read; over it is `intent_too_large` on the length alone, before tokenizing. |
 | `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in | JSON verb table that *replaces* the built-in one (`look`, `move`, the twelve Directions and their compass aliases). A file that does not parse fails the boot. |
 
@@ -278,6 +280,56 @@ Session ID, Entity ID, Room ID, and raw Intent text are never labels. Logs: `com
 `command.authorize` beneath it; the record's `trace_id` carries the W3C traceparent, and the tick's
 `command.apply` span (`verb`, `partition`, `offset`, `stage_failed`, `code`) is its child, linked to
 `sim.tick` — one trace from keystroke to Event, with the queue time in the log visible as the gap.
+
+## Events and perception (AW-SRV-004)
+
+Events are the sim's only output and they are *derived*: replaying the log regenerates them, so a
+player is told the outcome before anything durable happens. Every Event carries a **Scope**,
+computed inside the sim at emit — a Room (or a whole Zone with the Room empty), explicitly addressed
+Entities, and World, the privileged view — and, when the type carries operator detail (`ZoneFaulted`'s
+Zone ID, `SimulationStopped`'s reason), a **redacted form** prepared alongside it. Scoping is a
+security boundary, which is why it lives in `server/sim` and not in a transport: a Character cannot
+learn what happens two Rooms away whatever client it uses, and a bystander is not sent the
+description the Character next to it just read. `look` and rejections are addressed to the actor;
+a move reaches the source Room, the target Room, and the mover.
+
+`server/events` is the fan-out behind the Engine's one sink. `Publish` is one non-blocking enqueue
+from the tick; delivery runs on the Hub's goroutine, subscriber by subscriber, each behind a bounded
+buffer (`events.subscriber_buffer`). A subscriber that stops reading is dropped with a
+`SubscriberDropped` Event as its last and counted; the tick never waits. An observer is a Room, an
+Entity, and/or World visibility — World requires `game_master` or `operator` and is audited
+(`subscribe_world`) as a privileged read. An observer bound to an Entity follows it inside the Hub,
+in Event order — `CharacterLeft` addressed to it clears the Room, `CharacterArrived` sets it — so a
+Session's perception is never its own read latency behind the sim, and in cross-Zone transit it is
+in no Room, which is where the Character is. `client_ref` is handed to the Session whose Command
+caused the Event and blanked for every other recipient, here rather than in each transport. A subscription registered while tick *T* is publishing
+starts at *T+1*, never a partial tick. `SimulationStopped` reaches everyone in the form their
+privilege allows, then every subscription ends with reason `shutdown`. The Kafka producer stays
+independent: a broker outage counts `andara_tick_publish_failures_total` and the Hub keeps
+delivering.
+
+Every log record is marshaled deterministically, log.v1 has no `map` or float fields (asserted by a
+descriptor walk in `make test`), and `andara.events.v1` records now carry the Scope.
+
+`andara-cli sim repl --tap-events town/hall,docks/pier,world` prints, beside the Character's own
+stream, what observers elsewhere are sent — the scoping watched from two Rooms at once.
+
+### Event metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_events_emitted_total` | counter | `type` | the EventType enum |
+| `andara_event_fanout_duration_seconds` | histogram | — | 1; per batch, outside the tick |
+| `andara_subscribers` | gauge | — | 1 |
+| `andara_subscriber_drops_total` | counter | `reason` | `buffer_full`, `unsubscribed`, `shutdown` |
+| `andara_event_scope_redactions_total` | counter | `type` | the EventType enum |
+| `andara_event_fanout_dropped_total` | counter | — | 1; above zero is a process problem |
+| `andara_event_publish_lag_seconds` | gauge | — | 1; boundary publish → ack |
+
+Logs: `subscriber dropped: buffer full` at `warn` with `subscription_id`, `reason`, `buffered`,
+`tick`; `world-scope subscription: privileged read` at `info` naming the actor and Session. Spans:
+`event.fanout` per batch with `event_count`, `subscriber_count`, `tick`; per-Event spans are not
+emitted.
 
 ## Logs (AW-SRV-001, AW-SRV-024)
 

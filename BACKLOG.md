@@ -10,7 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 1 |
-| `ready` | 31 |
+| `in-progress` | 1 |
+| `ready` | 30 |
 | `done` | 14 |
 | **total** | **46** |
 
@@ -28,7 +29,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
 
-### `ready` (31)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
+
+### `ready` (30)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -44,7 +51,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | architecture | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | architecture | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
-| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
@@ -108,7 +114,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 |----|--------|-------|
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `done` | World model types and zone definition loading with referential validation at boot |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `done` | Deterministic tick loop driven by partition consumers, with tick SLIs |
-| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `ready` | Event emission, subscription seam, and perception scoping |
+| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `in-progress` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `done` | Components on Rooms and Zones, and the closed Direction set |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `done` | Template definitions — schema, flattened loading, and Entity instantiation |
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |

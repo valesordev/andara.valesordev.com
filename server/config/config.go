@@ -83,6 +83,11 @@ type Config struct {
 	// meaning built in.
 	MaxIntentBytes int
 	VerbTablePath  string
+
+	// The Event fan-out (AW-SRV-004): Events a subscriber may leave unread
+	// before it is dropped, and how many subscriptions the process accepts.
+	SubscriberBuffer int
+	MaxSubscribers   int
 }
 
 const (
@@ -121,6 +126,9 @@ const (
 	DefaultSimCheckpointEveryTicks = 100
 
 	DefaultMaxIntentBytes = 4096
+
+	DefaultSubscriberBuffer = 1024
+	DefaultMaxSubscribers   = 10000
 )
 
 // EnvLookup looks up an environment variable.
@@ -167,6 +175,8 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		SimPartitions:           allPartitions(),
 		SimCheckpointEveryTicks: DefaultSimCheckpointEveryTicks,
 		MaxIntentBytes:          DefaultMaxIntentBytes,
+		SubscriberBuffer:        DefaultSubscriberBuffer,
+		MaxSubscribers:          DefaultMaxSubscribers,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -241,6 +251,8 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	})
 	fs.IntVar(&c.SimCheckpointEveryTicks, "sim-checkpoint-every-ticks", c.SimCheckpointEveryTicks, "offset commit cadence in ticks (ANDARA_CHECKPOINT_EVERY_TICKS)")
 	fs.IntVar(&c.MaxIntentBytes, "max-intent-bytes", c.MaxIntentBytes, "largest Intent parse will read, in bytes (ANDARA_MAX_INTENT_BYTES)")
+	fs.IntVar(&c.SubscriberBuffer, "subscriber-buffer", c.SubscriberBuffer, "Events a subscriber may leave unread before it is dropped (ANDARA_SUBSCRIBER_BUFFER)")
+	fs.IntVar(&c.MaxSubscribers, "max-subscribers", c.MaxSubscribers, "Event subscriptions this process accepts (ANDARA_MAX_SUBSCRIBERS)")
 	fs.StringVar(&c.VerbTablePath, "verb-table", c.VerbTablePath, "JSON verb table replacing the built-in one; empty uses the built-in (ANDARA_VERB_TABLE)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
@@ -294,6 +306,9 @@ func (c Config) validateSim() error {
 	}
 	if c.MaxIntentBytes < 1 {
 		return fmt.Errorf("command.max_intent_bytes must be positive, got %d", c.MaxIntentBytes)
+	}
+	if c.SubscriberBuffer < 1 || c.MaxSubscribers < 1 {
+		return fmt.Errorf("events.subscriber_buffer and events.max_subscribers must be positive")
 	}
 	return nil
 }
@@ -529,6 +544,10 @@ type fileConfig struct {
 		MaxIntentBytes *int    `yaml:"max_intent_bytes"`
 		VerbTablePath  *string `yaml:"verb_table_path"`
 	} `yaml:"command"`
+	Events *struct {
+		SubscriberBuffer *int `yaml:"subscriber_buffer"`
+		MaxSubscribers   *int `yaml:"max_subscribers"`
+	} `yaml:"events"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -711,6 +730,14 @@ func applyFile(c *Config, path string) error {
 			c.VerbTablePath = *cm.VerbTablePath
 		}
 	}
+	if ev := fc.Events; ev != nil {
+		if ev.SubscriberBuffer != nil {
+			c.SubscriberBuffer = *ev.SubscriberBuffer
+		}
+		if ev.MaxSubscribers != nil {
+			c.MaxSubscribers = *ev.MaxSubscribers
+		}
+	}
 	return nil
 }
 
@@ -832,6 +859,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_MAX_PER_TICK", &c.SimMaxPerTick},
 		{"ANDARA_CHECKPOINT_EVERY_TICKS", &c.SimCheckpointEveryTicks},
 		{"ANDARA_MAX_INTENT_BYTES", &c.MaxIntentBytes},
+		{"ANDARA_SUBSCRIBER_BUFFER", &c.SubscriberBuffer},
+		{"ANDARA_MAX_SUBSCRIBERS", &c.MaxSubscribers},
 	} {
 		if v, ok := env(iv.name); ok {
 			n, err := strconv.Atoi(strings.TrimSpace(v))

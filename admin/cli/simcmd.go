@@ -19,6 +19,7 @@ import (
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -56,6 +57,7 @@ func newSimReplCmd(rt *runtime) *cobra.Command {
 		seed       uint64
 		maxIntent  int
 		verbTable  string
+		taps       []string
 	)
 	cmd := &cobra.Command{
 		Use:   "repl",
@@ -67,12 +69,18 @@ rejection is reported as such and reaches no log; a post-log rejection is a
 CommandRejected Event with the offset it consumed.
 
 The Character named by --character is placed in --start (zone/room; default
-the first Room of the first Zone) before the first Intent.`,
+the first Room of the first Zone) before the first Intent. What is printed is
+what that Character's Session perceives — the sim's Scope applied by the same
+fan-out a Session stream reads from. --tap-events adds observers elsewhere,
+so scoping can be watched from two Rooms at once.`,
 		Example: `  andara-cli sim repl --content ./testdata/content/valid
   > look
   > north
   > west          # no_such_exit, post-log
-  > frobnicate    # unknown_verb, pre-log, nothing in the log`,
+  > frobnicate    # unknown_verb, pre-log, nothing in the log
+
+  andara-cli sim repl --content ./testdata/content/valid --start town/plaza --tap-events town/hall,docks/pier
+  > north         # the tap in the hall sees the arrival; the pier sees nothing`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -80,7 +88,7 @@ the first Room of the first Zone) before the first Intent.`,
 			if contentDir == "" {
 				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--content is required", Detail: map[string]any{"flag": "--content"}}
 			}
-			r, err := newRepl(rt, replOptions{content: contentDir, character: character, start: start, seed: seed, maxIntent: maxIntent, verbTable: verbTable})
+			r, err := newRepl(rt, replOptions{content: contentDir, character: character, start: start, seed: seed, maxIntent: maxIntent, verbTable: verbTable, taps: taps})
 			if err != nil {
 				return err
 			}
@@ -93,6 +101,7 @@ the first Room of the first Zone) before the first Intent.`,
 	cmd.Flags().Uint64Var(&seed, "seed", 0, "PRNG seed; 0 derives one from the World")
 	cmd.Flags().IntVar(&maxIntent, "max-intent-bytes", command.DefaultMaxIntentBytes, "largest Intent parse will read")
 	cmd.Flags().StringVar(&verbTable, "verb-table", "", "JSON verb table replacing the built-in one")
+	cmd.Flags().StringSliceVar(&taps, "tap-events", nil, "also print the scoped Event stream of an observer in zone/room (repeatable); \"world\" taps a Game Master's world view")
 	return cmd
 }
 
@@ -110,6 +119,7 @@ type replOptions struct {
 	seed      uint64
 	maxIntent int
 	verbTable string
+	taps      []string
 }
 
 // repl is the harness: the pre-log pipeline, the fake log, and the engine.
@@ -120,6 +130,15 @@ type repl struct {
 	log      map[int32][]sim.Record
 	actor    sim.EntityID
 	zone     sim.ZoneID
+	hub      *events.Hub
+	me       *events.Subscription
+	taps     []tap
+}
+
+// tap is one extra observer whose stream is printed with a label.
+type tap struct {
+	label string
+	sub   *events.Subscription
 }
 
 const replSession = "repl"
@@ -167,6 +186,40 @@ func newRepl(rt *runtime, o replOptions) (*repl, error) {
 	r := &repl{rt: rt, log: map[int32][]sim.Record{}, actor: sim.EntityID(o.character), zone: zone}
 	r.engine = sim.NewEngine(world, templates, sim.Config{Seed: o.seed, Partitions: allPartitions(), Handlers: sim.Handlers()})
 	r.engine.State().Zones[zone].Entities[r.actor] = &sim.EntityState{ID: r.actor, Template: "andara.core.Character", Room: room}
+	// The same fan-out a Session stream reads from, so what the repl
+	// prints is exactly what a Session would be sent.
+	r.hub = events.New(events.Options{Buffer: 256, MaxSubscribers: 64})
+	r.engine.Subscribe(r.hub)
+	player := auth.Principal{AccountID: "repl", Roles: []auth.Role{auth.RolePlayer}}
+	me, err := r.hub.Subscribe(context.Background(), events.Subscriber{
+		Observer: events.Observer{Entity: r.actor, Room: sim.RoomRef{Zone: zone, Room: room}}, Principal: player, SessionID: replSession,
+	})
+	if err != nil {
+		return nil, &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: err.Error()}
+	}
+	r.me = me
+	for _, t := range o.taps {
+		obs := events.Observer{}
+		principal := player
+		if t == "world" {
+			obs.World = true
+			principal = auth.Principal{AccountID: "repl-gm", Roles: []auth.Role{auth.RoleGameMaster}}
+		} else {
+			zid, rid, ok := strings.Cut(t, "/")
+			if !ok {
+				return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--tap-events takes zone/room or world", Detail: map[string]any{"flag": "--tap-events", "value": t}}
+			}
+			if _, ok := world.Resolve(sim.RoomRef{Zone: sim.ZoneID(zid), Room: sim.RoomID(rid)}); !ok {
+				return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "no such room " + t, Detail: map[string]any{"flag": "--tap-events", "value": t}}
+			}
+			obs.Room = sim.RoomRef{Zone: sim.ZoneID(zid), Room: sim.RoomID(rid)}
+		}
+		sub, err := r.hub.Subscribe(context.Background(), events.Subscriber{Observer: obs, Principal: principal, SessionID: "tap-" + t})
+		if err != nil {
+			return nil, &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: err.Error()}
+		}
+		r.taps = append(r.taps, tap{label: t, sub: sub})
+	}
 	r.pipeline = &command.Pipeline{
 		Table:    table,
 		MaxBytes: o.maxIntent,
@@ -284,8 +337,16 @@ func (r *repl) tick() error {
 		if err != nil {
 			return &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: "tick: " + err.Error()}
 		}
-		for _, ev := range res.Events {
-			r.printEvent(res.Tick, ev)
+		// Deliver, then print what each observer was sent — in step with
+		// the tick, so the transcript is deterministic.
+		r.hub.Flush()
+		for _, d := range pending(r.me) {
+			r.printDelivery("", d)
+		}
+		for _, t := range r.taps {
+			for _, d := range pending(t.sub) {
+				r.printDelivery(t.label, d)
+			}
 		}
 		for _, out := range res.Outbound {
 			if _, err := r.produce(context.Background(), out); err != nil {
@@ -304,9 +365,28 @@ func (r *repl) tick() error {
 	return nil
 }
 
-func (r *repl) printEvent(tick sim.Tick, ev sim.Event) {
-	env := ev.Envelope
-	j := map[string]any{"event_id": ev.ID, "tick": uint64(tick), "type": string(ev.Type), "zone": string(ev.Zone), "client_ref": env.GetClientRef()}
+// pending reads what a subscription has been sent so far.
+func pending(s *events.Subscription) []events.Delivery {
+	var out []events.Delivery
+	for {
+		select {
+		case d, ok := <-s.Events():
+			if !ok {
+				return out
+			}
+			out = append(out, d)
+		default:
+			return out
+		}
+	}
+}
+
+func (r *repl) printDelivery(label string, d events.Delivery) {
+	env := d.Envelope
+	j := map[string]any{"event_id": d.ID, "tick": uint64(d.Tick), "type": string(d.Type), "client_ref": env.GetClientRef()}
+	if label != "" {
+		j["observer"] = label
+	}
 	var human string
 	switch p := env.GetPayload().(type) {
 	case *gamev1.EventEnvelope_RoomDescribed:
@@ -338,11 +418,20 @@ func (r *repl) printEvent(tick sim.Tick, ev sim.Event) {
 		human = fmt.Sprintf("rejected (post-log): %s: %s", p.CommandRejected.GetCode(), p.CommandRejected.GetMessage())
 		j["rejected"] = map[string]any{"code": p.CommandRejected.GetCode(), "message": p.CommandRejected.GetMessage(), "pre_log": false}
 	case *gamev1.EventEnvelope_ZoneFaulted:
-		human = "zone faulted: " + p.ZoneFaulted.GetZoneId()
+		human = "zone faulted"
+		if z := p.ZoneFaulted.GetZoneId(); z != "" {
+			human += ": " + z
+		}
+	case *gamev1.EventEnvelope_SubscriberDropped:
+		human = "dropped: " + p.SubscriberDropped.GetReason()
 	default:
-		human = string(ev.Type)
+		human = string(d.Type)
 	}
-	r.emit(fmt.Sprintf("[tick %d] %s", tick, human), j)
+	prefix := fmt.Sprintf("[tick %d] ", d.Tick)
+	if label != "" {
+		prefix = fmt.Sprintf("[tick %d, %s] ", d.Tick, label)
+	}
+	r.emit(prefix+human, j)
 }
 
 func (r *repl) emit(human string, j map[string]any) {

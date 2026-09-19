@@ -165,7 +165,7 @@ func Handlers(reg *sim.TemplateRegistry) map[sim.CommandKind]sim.Apply {
 				}
 			}
 			a.Zone.Entities[id] = &ent
-			a.Emit(&gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: &gamev1.RoomDescribed{ZoneId: string(a.Zone.ID), RoomId: "plaza"}}})
+			a.Emit(sim.ScopeEntities(a.Actor()), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: &gamev1.RoomDescribed{ZoneId: string(a.Zone.ID), RoomId: "plaza"}}})
 			return nil
 		},
 		"move": func(a *sim.ApplyContext, cmd *logv1.LoggedCommand) error {

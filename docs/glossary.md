@@ -21,6 +21,17 @@ instance, a Container. Entities have an `EntityID` (opaque, stable for the entit
 simulation core. Events are **derived**: replaying the Command log regenerates them identically, which
 is why they need not be durable before a player is told the outcome (ADR-0002).
 
+**Scope** — Who may perceive an Event, computed inside the simulation at emit and never by a
+transport (AW-SRV-004): a Room, a whole Zone, explicitly addressed Entities, and/or World — the
+privileged view of everything, held only by a Game Master or Operator subscription and audited. Shapes
+are additive. An Event whose type carries operator detail is emitted with a redacted form beside it,
+and an unprivileged observer receives that form; the fan-out chooses a form and never edits one.
+
+**Observer** — Where a subscriber perceives from: the Room it stands in, the Entity it is, and
+whether it holds World visibility. An Observer bound to an Entity follows it inside the fan-out, in
+Event order — cleared on `CharacterLeft`, set on `CharacterArrived` — so perception is never a
+consumer's read latency behind the simulation (AW-SRV-004).
+
 **Intent** — A player's expressed desire as received from a client, before parsing and authorization.
 `move north` typed into a terminal is an Intent. Intents are untrusted input.
 

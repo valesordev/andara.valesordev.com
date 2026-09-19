@@ -234,6 +234,22 @@
             }
           }
         },
+        "events": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "subscriber_buffer": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_SUBSCRIBER_BUFFER (AW-SRV-004). Default when unset: 1024."
+            },
+            "max_subscribers": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_MAX_SUBSCRIBERS (AW-SRV-004). Default when unset: 10000."
+            }
+          }
+        },
         "kafka": {
           "type": "object",
           "additionalProperties": false,
