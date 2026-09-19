@@ -68,7 +68,7 @@ type Store struct {
 	tracer  trace.Tracer
 	metrics *Metrics
 	audit   *Auditor
-	limiter *limiter
+	limiter *Limiter
 
 	// wmu serializes writers end to end: read, decide, append, swap. AC-4's
 	// atomicity is this lock plus acks=all before the response.

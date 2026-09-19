@@ -40,6 +40,12 @@ func (s *syncBuffer) Write(p []byte) (int, error) {
 	return s.b.Write(p)
 }
 
+func (s *syncBuffer) reset() {
+	s.mu.Lock()
+	s.b.Reset()
+	s.mu.Unlock()
+}
+
 func (s *syncBuffer) String() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -28,7 +28,7 @@ import (
 func (s *Server) interceptors() connect.HandlerOption {
 	return connect.WithInterceptors(
 		&metricsInterceptor{m: s.metrics},
-		&traceInterceptor{tracer: s.tracer},
+		&traceInterceptor{tracer: s.tracer, trust: s.opts.TrustInboundTraceparent},
 		&drainInterceptor{s: s},
 		&deadlineInterceptor{max: s.opts.MaxRequestTimeout},
 		&authInterceptor{verifier: s.opts.Verifier},
@@ -80,26 +80,36 @@ func (i *metricsInterceptor) observe(spec connect.Spec, start time.Time, err err
 
 // --- trace -----------------------------------------------------------------
 
-// traceInterceptor makes the incoming trace context the parent of the
-// server's work, so andara-cli's cli.command span (AW-CLI-001) is the root
-// and this RPC is under it. W3C traceparent, which is what the OTel SDKs on
-// every client speak.
-type traceInterceptor struct{ tracer trace.Tracer }
+// traceInterceptor starts the server's span for each RPC. With trust, the
+// incoming W3C traceparent is its parent, so andara-cli's cli.command span
+// (AW-CLI-001) is the root and this RPC is under it — and the client's
+// sampled flag is the decision. Without it the RPC span is a new root
+// that links to the client's context: correlated, but sampled here.
+type traceInterceptor struct {
+	tracer trace.Tracer
+	trust  bool
+}
 
 var propagator = propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{})
 
 func (i *traceInterceptor) start(ctx context.Context, spec connect.Spec, header propagation.TextMapCarrier) (context.Context, trace.Span) {
-	ctx = propagator.Extract(ctx, header)
 	method := methodLabel(spec)
 	service, rpc, _ := strings.Cut(method, "/")
-	return i.tracer.Start(ctx, method,
+	opts := []trace.SpanStartOption{
 		trace.WithSpanKind(trace.SpanKindServer),
 		trace.WithAttributes(
 			attribute.String("rpc.system", "connect_rpc"),
 			attribute.String("rpc.service", service),
 			attribute.String("rpc.method", rpc),
 		),
-	)
+	}
+	inbound := propagator.Extract(context.Background(), header)
+	if i.trust {
+		ctx = propagator.Extract(ctx, header)
+	} else if sc := trace.SpanContextFromContext(inbound); sc.IsValid() {
+		opts = append(opts, trace.WithLinks(trace.Link{SpanContext: sc}))
+	}
+	return i.tracer.Start(ctx, method, opts...)
 }
 
 func end(span trace.Span, err error) {

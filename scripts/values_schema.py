@@ -59,7 +59,7 @@ def load_registry():
         for field in ("key", "env", "type", "story"):
             if field not in k:
                 sys.exit("values-schema: %s: entry %r lacks %r" % (rel(KEYS), k, field))
-        if k["type"] not in ("string", "int", "bool", "duration", "enum"):
+        if k["type"] not in ("string", "int", "number", "bool", "duration", "enum"):
             sys.exit("values-schema: %s: %s has unknown type %r" % (rel(KEYS), k["key"], k["type"]))
         if k["type"] == "enum" and not k.get("values"):
             sys.exit("values-schema: %s: enum %s has no values" % (rel(KEYS), k["key"]))
@@ -89,8 +89,8 @@ def prop_for(k):
     desc = "%s (%s). Default when unset: %r." % (k["env"], k["story"], k.get("default"))
     if t == "string":
         p = {"type": "string"}
-    elif t == "int":
-        p = {"type": "integer"}
+    elif t in ("int", "number"):
+        p = {"type": "integer" if t == "int" else "number"}
         if "min" in k:
             p["minimum"] = k["min"]
         if "max" in k:

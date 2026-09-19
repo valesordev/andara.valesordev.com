@@ -68,6 +68,14 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `events.max_subscribers` | `ANDARA_MAX_SUBSCRIBERS` | `10000` | Event subscriptions this process accepts; registration past it is refused. |
 | `command.max_intent_bytes` | `ANDARA_MAX_INTENT_BYTES` | `4096` | Largest Intent `parse` will read; over it is `intent_too_large` on the length alone, before tokenizing. |
 | `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in | JSON verb table that *replaces* the built-in one (`look`, `move`, the twelve Directions and their compass aliases). A file that does not parse fails the boot. |
+| `ingress.rate_limit` | `ANDARA_INGRESS_RATE_LIMIT` | `20/s` | Submits per Session, `N/period`; `off` disables. Applied before parse. |
+| `ingress.agent_rate_limit` | `ANDARA_AGENT_RATE_LIMIT` | `100/s` | The rate for `agent` Principals, which drive many NPCs per Session (ADR-0005). |
+| `ingress.burst` | `ANDARA_INGRESS_BURST` | `40` | Token bucket depth per Session: how many Submits may arrive at once before the rate applies. |
+| `ingress.produce_deadline` | `ANDARA_PRODUCE_DEADLINE` | `2s` | How long one produce may take. It is the client's record delivery timeout; a produce request times out at half of it, so one idempotent retry fits inside. |
+| `ingress.max_pending` | `ANDARA_INGRESS_MAX_PENDING` | `256` | Submits one Session may have in flight; past it, `RESOURCE_EXHAUSTED` rather than a growing queue. |
+| `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
+| `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
+| `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext
 mode and no flag to create one; `make up` provisions certificates so nobody needs one
@@ -261,8 +269,101 @@ that is gone too.
 | `zone_faulted`, `unsupported_command`, `unknown_zone`, `misrouted`, `rejected` | apply | no |
 
 `andara-cli sim repl --content <dir>` drives the whole pipeline in-process with a fake log —
-parse, authorize, append, tick, print — which is how it is exercised before `AW-SRV-010` puts a
-broker behind `Game.Submit`; `Ingress` stays `UNIMPLEMENTED` until then.
+parse, authorize, append, tick, print — the same stages `Game.Submit` runs against the broker.
+
+### Command ingress (AW-SRV-010)
+
+`server/ingress` is what `Game.Submit` plugs into: the produce between the two halves, the
+moment an Intent stops being a client's assertion and becomes an ordered fact. A Submit is:
+
+1. **Rate limited** per Session before anything is parsed — `ingress.rate_limit` refilling a
+   bucket `ingress.burst` deep, `ingress.agent_rate_limit` for agents. Over it is
+   `RESOURCE_EXHAUSTED` (`rate_limited`); nothing is produced and the Session survives.
+2. **Queued behind the Session's earlier Submits** — each waits for the one before it, so a
+   Session's Commands reach the log in the order its Submits arrived, whatever goroutine each ran
+   on. More than `ingress.max_pending` in flight is `RESOURCE_EXHAUSTED` (`pending_full`).
+3. **Run through the pipeline** — `command.Parse`, `auth.Authorizer`, the Character binding. The
+   record produced is exactly what `Parse` returned plus `zone_id`, `actor_id`,
+   `accepted_at_unix_nano`, and `trace_id`; `Submit` takes raw text, never a `LoggedCommand`, so a
+   client can put nothing in the log it did not type.
+4. **Produced** to `andara.commands.v1` on the Zone's Partition — `sim.PartitionFor`, FNV-1a of the
+   ZoneID, never the library's default hash, because a library upgrade that remapped Zones would
+   split their history across Partitions unrecoverably; the client is built with a manual
+   partitioner so an unset Partition is a bug rather than a fallback — with `acks=all`, the
+   idempotent producer (five requests in flight per broker, the number it preserves order at),
+   the record keyed by ZoneID, and `ingress.produce_deadline` bounding the wait.
+5. **Answered** with the actual Partition and offset. That means *accepted and ordered*, not
+   *succeeded*.
+
+**Bindings.** `ingress.Bindings` is the Gateway's routing view: which Character each Session
+drives and which Zone it was last seen in. It is Session state, not World state. It is kept
+current from the sim's own Events — a `CharacterLeft` addressed to a bound Character puts its
+Session *in transit*, the `CharacterArrived` that follows settles it on the new Zone — so any
+Gateway routes to the right Partition whichever process owns the Zone (AC-9). While in transit a
+Session's Intents are **held**, in order, and released to the new Zone's Partition on arrival:
+the one-tick cross-Zone delay stays visible in the Events, but a player never sees *you are not
+here* for typing during it. The hold is bounded by `ingress.transit_hold` from the `CharacterLeft`;
+past it, held and later Intents are rejected `in_transit` (`UNAVAILABLE`, retryable) until an
+arrival resolves the Session, so a stuck handoff surfaces to the player rather than to a queue.
+`Bind` is the seam `AW-SRV-014` fills when `SelectCharacter` lands; until then no Session is bound
+on a running server and every Submit is `not_authorized: you are not in the world`, audited.
+
+**Read-only World.** The log's availability bounds the World's (ADR-0002): with no broker, no
+Command can be accepted. A probe pings the brokers once a second, always; when none answers — or a
+produce fails and a ping then fails — the ingress is *degraded*: `andara_ingress_degraded` reads
+1, an `info` line names the broker error, and every Submit fails at once with `UNAVAILABLE`
+(reason `world_read_only`, a `RetryInfo` of one second) — no wait, no buffer. The tick and the
+Event stream do not pass through here and carry on; `/readyz` stays 200. The Submits in flight when
+the outage was detected are the ambiguous ones: their records were already handed to the client
+and may have reached the broker, so each is answered `DEADLINE_EXCEEDED` (reason
+`produce_deadline`, *outcome unknown*), and entering the degraded state swaps the producer client
+so nothing it still held lands minutes later on a player who was told the World was read-only. When a broker answers the
+probe again the state clears without a restart. `docs/runbooks/world-read-only.md` is the runbook.
+
+| Condition | gRPC code | `ErrorInfo.reason` | Log record written |
+|-----------|-----------|--------------------|--------------------|
+| parse failure | `INVALID_ARGUMENT` | the pre-log code | none |
+| unauthorized, or no Character bound | `PERMISSION_DENIED` | `not_authorized` | audit only |
+| Character in transit past the hold | `UNAVAILABLE` | `in_transit` | none |
+| rate limited | `RESOURCE_EXHAUSTED` | `rate_limited` | none |
+| pending queue full | `RESOURCE_EXHAUSTED` | `pending_full` | none |
+| log unreachable | `UNAVAILABLE` (retryable) | `world_read_only` | none |
+| produce deadline exceeded | `DEADLINE_EXCEEDED` | `produce_deadline` | possibly — the outcome is unknown |
+
+Every error carries an `ErrorInfo` with `domain: andara.command`, the reason above, and for a
+pipeline rejection `stage`, `pre_log`, and `arg`. The `UNAVAILABLE` message is the read-only
+wording every player eventually sees; its text is a placeholder until Brian sets it.
+
+#### Ingress metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_ingress_submits_total` | counter | `outcome` | `produced`, `rejected_parse`, `rejected_authz`, `rate_limited`, `pending_full`, `in_transit`, `unavailable`, `deadline`, `canceled`, `internal` |
+| `andara_ingress_produce_duration_seconds` | histogram | — | enqueue to acknowledgement: what a player waits for the ack |
+| `andara_ingress_produce_retries_total` | counter | — | produce requests sent again after a transport failure |
+| `andara_ingress_pending` | gauge | — | Submits in flight on this process |
+| `andara_ingress_held_intents` | gauge | — | Intents waiting for their Character to arrive |
+| `andara_ingress_degraded` | gauge | — | 1 while the World is read-only; `AW-INF-005` alerts on it |
+| `andara_ingress_produced_total` | counter | `partition` | 64; Commands produced by Partition — `topk(5, rate(...[5m]))` is the hot-Zone view |
+
+Logs: `command log unreachable` / `command log reachable` at `info` on degradation entry and exit
+with the broker error; `command rejected` at `info` per authorize rejection (the pipeline's line,
+with `session_id`, `verb`, `trace_id`); `session rate limited`, `session pending queue full`, and
+`produce request failed` at `warn`, sampled to one line a second; `command accepted` at `debug`
+with `partition` and `offset`. Spans: `log.produce` is the child of `command.execute` after
+`command.parse` and `command.authorize`, with `partition`, `offset`, `retries`, `acks_wait_ms`.
+
+**Sampling.** `Game/Submit` is the one root per keystroke, so it is head-sampled at
+`telemetry.trace_sample_ratio`; the decision is made where the root starts, rides the sampled flag
+into `LoggedCommand.trace_id`, and the tick's `command.apply` inherits it as a remote parent — a
+sampled trace is whole, an unsampled one is absent from both ends. A client's own `traceparent`
+(andara-cli sends one) parents the RPC — and decides — only under
+`telemetry.trust_inbound_traceparent`; otherwise a client that flagged every request sampled
+would hold the collector's cost lever, so the RPC is a new root that links to it. Every
+rejection is exported whatever the head said — `command.execute` records under an unsampled root
+and `telemetry.SpanFilter` forwards it when `stage_failed` is set — and a tick-produced record with
+no Gateway root (an `Arrive`) keeps `sim.tick`'s one in a hundred. Every other root — a Session's
+lifetime, recovery, the other RPCs — is sampled.
 
 ### Command metrics, logs, and traces
 

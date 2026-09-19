@@ -76,7 +76,7 @@ metrics this SLO's stories emit:
 1. `andara_zone_tick_duration_seconds{zone}` — is one Zone dominating? (ADR-0001's sharding signal)
 2. `andara_consumer_lag{partition}` — is the loop behind on input rather than slow to process?
 3. `andara_tick_deferred_records` — is the World simply receiving more than `max_per_tick` allows?
-4. `andara_ingress_partition_skew{partition}` — is one Zone hot?
+4. `topk(5, rate(andara_ingress_produced_total{partition}[5m]))` — is one Zone hot?
 
 No alert fires on any of these four. They are the runbook's diagnostic path, not independent alerts.
 

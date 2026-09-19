@@ -90,7 +90,7 @@ func newFixture(t *testing.T, roles auth.VerbRoles) *fixture {
 	f.p = &command.Pipeline{
 		Table:      table,
 		Authorizer: &auth.Authorizer{Table: table.Roles(), Audit: auth.NewAuditor(f.audit, nil, nil, nil)},
-		Bindings:   command.BinderFunc(func(id string) (command.Binding, bool) { b, ok := f.bindings[id]; return b, ok }),
+		Bindings:   command.BinderFunc(func(_ context.Context, id string) (command.Binding, error) { return f.binding(id) }),
 		Log:        f.log,
 		Metrics:    command.NewMetrics(f.reg, names),
 		Tracer:     tp.Tracer("test"),
@@ -100,6 +100,14 @@ func newFixture(t *testing.T, roles auth.VerbRoles) *fixture {
 }
 
 var player = auth.Principal{AccountID: "acct-alice", Roles: []auth.Role{auth.RolePlayer}}
+
+func (f *fixture) binding(id string) (command.Binding, error) {
+	b, ok := f.bindings[id]
+	if !ok {
+		return command.Binding{}, command.ErrNoBinding
+	}
+	return b, nil
+}
 
 func (f *fixture) submit(t *testing.T, session, raw string) (command.Accepted, error) {
 	t.Helper()
@@ -381,7 +389,7 @@ func TestSubmit_Produces(t *testing.T) {
 func TestSubmit_ParseFailureProducesNothing(t *testing.T) {
 	f := newFixture(t, nil)
 	authorized := 0
-	f.p.Bindings = command.BinderFunc(func(id string) (command.Binding, bool) { authorized++; b, ok := f.bindings[id]; return b, ok })
+	f.p.Bindings = command.BinderFunc(func(_ context.Context, id string) (command.Binding, error) { authorized++; return f.binding(id) })
 	for raw, code := range map[string]string{
 		"frobnicate": command.CodeUnknownVerb, "move": command.CodeMissingArgument,
 		"move frobnicate": command.CodeInvalidArgument, strings.Repeat("l", 5000): command.CodeIntentTooLarge,

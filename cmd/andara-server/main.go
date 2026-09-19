@@ -72,29 +72,40 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 	defer accounts.Close()
 
+	// The Submit path (AW-SRV-010): parse, authorize, produce. Built
+	// before the gateway, which takes it as a seam; its producer is
+	// closed after the gateway has drained.
+	if err := rt.StartIngress(ctx); err != nil {
+		tel.Log.Error("ingress", "detail", err.Error())
+		return boot.ExitFail
+	}
+	defer func() { _ = rt.CloseIngress() }()
+
 	// The Protocol endpoint (AW-SRV-005). Built before the health server
 	// listens so that a bad certificate fails the boot rather than a boot
 	// that reports live and never serves.
 	gw, err := gateway.New(gateway.Options{
-		Listen:            cfg.GRPCListen,
-		TLSCertFile:       cfg.TLSCertFile,
-		TLSKeyFile:        cfg.TLSKeyFile,
-		MaxRecvBytes:      cfg.GRPCMaxRecvBytes,
-		MaxRequestTimeout: cfg.GRPCMaxRequestTimeout,
-		DrainTimeout:      cfg.GRPCDrainTimeout,
-		ProtocolMin:       cfg.ProtocolMinVersion,
-		ProtocolMax:       cfg.ProtocolMaxVersion,
-		Build:             gateway.BuildInfo{Version: version, Commit: commit},
-		Environment:       cfg.Environment,
-		Verifier:          accounts,
-		Auth:              auth.NewService(accounts),
-		Accounts:          auth.NewAdmin(accounts),
-		Rechecker:         accounts,
-		RecheckInterval:   cfg.AuthRecheckInterval,
-		OnDrain:           rt.Drain,
-		Log:               tel.Log,
-		Tracer:            tel.Tracer,
-		Registry:          tel.Reg,
+		Listen:                  cfg.GRPCListen,
+		TLSCertFile:             cfg.TLSCertFile,
+		TLSKeyFile:              cfg.TLSKeyFile,
+		MaxRecvBytes:            cfg.GRPCMaxRecvBytes,
+		MaxRequestTimeout:       cfg.GRPCMaxRequestTimeout,
+		DrainTimeout:            cfg.GRPCDrainTimeout,
+		ProtocolMin:             cfg.ProtocolMinVersion,
+		ProtocolMax:             cfg.ProtocolMaxVersion,
+		Build:                   gateway.BuildInfo{Version: version, Commit: commit},
+		Environment:             cfg.Environment,
+		Verifier:                accounts,
+		Auth:                    auth.NewService(accounts),
+		Accounts:                auth.NewAdmin(accounts),
+		Rechecker:               accounts,
+		RecheckInterval:         cfg.AuthRecheckInterval,
+		Ingress:                 rt.Ingress,
+		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
+		OnDrain:                 rt.Drain,
+		Log:                     tel.Log,
+		Tracer:                  tel.Tracer,
+		Registry:                tel.Reg,
 	})
 	if err != nil {
 		tel.Log.Error("gateway", "detail", err.Error())

@@ -267,7 +267,7 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	}
 	overrun := duration > l.opts.TickBudget
 	// Head-sampled one tick in a hundred, tail-sampled at 100% on overrun:
-	// the span always starts, and telemetry.TickSampler exports only the
+	// the span always starts, and telemetry.SpanFilter exports only the
 	// ones marked here.
 	keep := overrun || tick%TraceEveryTicks == 0
 	if overrun {
@@ -386,16 +386,23 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 		ctx = context.Background()
 	}
 	tickSpan := trace.SpanFromContext(ctx)
+	attrs := []attribute.KeyValue{
+		attribute.String("verb", string(sim.KindOf(r.Command))),
+		attribute.Bool("pre_log", false),
+		attribute.Int64("tick", int64(l.tickNo)),
+		attribute.Int64("partition", int64(r.Partition)),
+		attribute.Int64("offset", r.Offset),
+	}
+	if r.Command.GetTraceId() == "" {
+		// Tick-produced — an Arrive — with no Gateway root to inherit a
+		// sampling decision from: it keeps sim.tick's one in a hundred
+		// (AW-SRV-010), marked for telemetry.SpanFilter.
+		attrs = append(attrs, attribute.Bool("andara.keep", l.tickNo%TraceEveryTicks == 0))
+	}
 	parent := command.ParentFrom(ctx, r.Command.GetTraceId())
 	_, span := l.tracer.Start(parent, "command.apply",
 		trace.WithLinks(trace.Link{SpanContext: tickSpan.SpanContext()}),
-		trace.WithAttributes(
-			attribute.String("verb", string(sim.KindOf(r.Command))),
-			attribute.Bool("pre_log", false),
-			attribute.Int64("tick", int64(l.tickNo)),
-			attribute.Int64("partition", int64(r.Partition)),
-			attribute.Int64("offset", r.Offset),
-		))
+		trace.WithAttributes(attrs...))
 	return func(out sim.Outcome) {
 		d := l.clock.Now().Sub(start)
 		l.zoneTimes[zone] += d

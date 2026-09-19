@@ -70,8 +70,13 @@ func newVerbHarness(t *testing.T) *verbHarness {
 	bindings := map[string]command.Binding{"s-alice": {Actor: "alice", Zone: "town"}, "s-bob": {Actor: "bob", Zone: "town"}}
 	vh := &verbHarness{harness: h, metrics: metrics}
 	vh.pipeline = &command.Pipeline{
-		Table:    table,
-		Bindings: command.BinderFunc(func(id string) (command.Binding, bool) { b, ok := bindings[id]; return b, ok }),
+		Table: table,
+		Bindings: command.BinderFunc(func(_ context.Context, id string) (command.Binding, error) {
+			if b, ok := bindings[id]; ok {
+				return b, nil
+			}
+			return command.Binding{}, command.ErrNoBinding
+		}),
 		Log: command.ProducerFunc(func(_ context.Context, c *logv1.LoggedCommand) (command.Accepted, error) {
 			r := h.source.Push(c)
 			return command.Accepted{Partition: r.Partition, Offset: r.Offset}, nil

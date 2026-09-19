@@ -23,6 +23,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `certificate-expiring.md` | `AW-INF-006` | `CertificateExpiringSoon` |
 | `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
+| `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
 
 ## Planned
 
@@ -32,7 +33,6 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
 | `projection-stale.md` | `AW-SRV-019` (shared with `AW-SRV-017`, `AW-SRV-018`) | `ProjectionStale` |
-| `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
 | `content-load-failing.md` | `AW-SRV-012` | `ContentLoadFailing` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |

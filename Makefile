@@ -177,7 +177,7 @@ test-determinism:
 ## test-integration: run the broker-backed tests against the running stack — needs `make up`
 test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
-	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:
