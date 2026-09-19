@@ -217,9 +217,10 @@ func TestOpenSession_Token(t *testing.T) {
 }
 
 // Session open and close lines carry the required fields; the trace of the
-// OpenSession RPC is the CLI's when it propagates one.
+// OpenSession RPC is the CLI's when it propagates one and the gateway is
+// told to trust it (telemetry.trust_inbound_traceparent).
 func TestSession_LogsAndTraces(t *testing.T) {
-	h := start(t, nil)
+	h := start(t, func(o *Options) { o.TrustInboundTraceparent = true })
 	client := h.game()
 
 	// A client-side root span, propagated as W3C traceparent, becomes the
@@ -292,6 +293,30 @@ func TestSession_LogsAndTraces(t *testing.T) {
 
 // AC-10 on the wire: Admin without a bearer token is refused with
 // UNAUTHENTICATED; with one, GetServerInfo reports the build and the range.
+// AW-SRV-010 (architecture review of PR #34): by default a client's
+// traceparent does not parent the RPC span — its sampled flag would
+// otherwise decide what the collector pays for. The RPC is a new root,
+// linked to the client's context so the two can still be found together.
+func TestTrace_InboundTraceparentNotTrustedByDefault(t *testing.T) {
+	h := start(t, nil)
+	client := h.game()
+	clientTracer := h.tp.Tracer("andara-cli")
+	ctx, cliSpan := clientTracer.Start(context.Background(), "cli.command")
+	req := connect.NewRequest(&gamev1.OpenSessionRequest{ProtocolVersion: 1, AuthToken: "tok", ClientName: "andara-cli/0.1"})
+	propagator.Inject(ctx, propagationCarrier(req.Header()))
+	if _, err := client.OpenSession(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	cliSpan.End()
+	rpc := spanByName(t, h.rec, "andara.game.v1.Game/OpenSession")
+	if rpc.Parent().IsValid() || rpc.SpanContext().TraceID() == cliSpan.SpanContext().TraceID() {
+		t.Fatalf("rpc span joined the client's trace: parent %v trace %s", rpc.Parent(), rpc.SpanContext().TraceID())
+	}
+	if len(rpc.Links()) != 1 || rpc.Links()[0].SpanContext.SpanID() != cliSpan.SpanContext().SpanID() {
+		t.Fatalf("rpc span links = %v, want one to cli.command", rpc.Links())
+	}
+}
+
 func TestAdmin_RequiresToken(t *testing.T) {
 	h := start(t, nil)
 	c, _ := h.httpClient()

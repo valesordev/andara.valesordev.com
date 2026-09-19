@@ -16,11 +16,12 @@ The log's availability bounds the World's by design (ADR-0002): a Command is ack
 when it is durable, so with no broker there is nothing to acknowledge. The degradation is
 deliberate, typed, and bounded — there is no queue filling up behind it.
 
-One player per outage may have seen something else: the Submit in flight when the log went away
-is answered `DEADLINE_EXCEEDED` (reason `produce_deadline`, *outcome unknown*), because its record
-had already been handed to the producer and may have reached the broker. The ingress drops what
-the producer still held when it entered the read-only state, so that Command lands only if the
-broker had it before the outage; it never appears minutes later.
+Players whose Submits were in flight when the outage was detected saw something else: every
+Submit whose record had already been handed to the producer at that moment is answered
+`DEADLINE_EXCEEDED` (reason `produce_deadline`, *outcome unknown*), because the record may have
+reached the broker. The ingress drops what the producer still held when it entered the read-only
+state, so those Commands land only if the broker had them before the outage; none appears minutes
+later. Detection takes at most the probe interval (one second), so that is the window.
 
 ## How to confirm
 

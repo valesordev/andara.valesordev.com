@@ -53,8 +53,9 @@ const (
 )
 
 // AuditWriteTimeout is how long Record waits for the write before
-// returning with it still in flight. A produce normally takes
-// milliseconds.
+// returning with it still in flight, when WriteTimeout is unset; the
+// boot sets WriteTimeout to ingress.produce_deadline so there is one
+// deadline for a write to the log. A produce normally takes milliseconds.
 const AuditWriteTimeout = 2 * time.Second
 
 // Auditor writes andara.audit.v1 records, keyed by actor.

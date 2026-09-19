@@ -43,6 +43,15 @@ type Options struct {
 	Build       BuildInfo
 	Environment string
 
+	// TrustInboundTraceparent makes a client's W3C traceparent the parent
+	// of the RPC span — and its sampled flag the sampling decision. Off
+	// (the default) the RPC span is a new root that only links to the
+	// client's context, so telemetry.trace_sample_ratio applies whatever
+	// the client sent: a client that flagged every request sampled would
+	// otherwise hold the collector's cost lever (AW-SRV-010). On for local
+	// development, where andara-cli's cli.command root is worth having.
+	TrustInboundTraceparent bool // telemetry.trust_inbound_traceparent
+
 	// Verifier is required: there is no stub that accepts any token, and
 	// no code path that serves the Protocol without authentication.
 	Verifier TokenVerifier

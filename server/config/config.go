@@ -103,7 +103,10 @@ type Config struct {
 
 	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
 	// trace root (AW-SRV-010); rejections are kept whatever it says.
-	TraceSampleRatio float64
+	// TrustInboundTraceparent lets a client's traceparent parent the RPC
+	// span — and carry the sampling decision. Off by default.
+	TraceSampleRatio        float64
+	TrustInboundTraceparent bool
 }
 
 const (
@@ -293,6 +296,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.IntVar(&c.IngressMaxPending, "ingress-max-pending", c.IngressMaxPending, "Submits one Session may have in flight (ANDARA_INGRESS_MAX_PENDING)")
 	fs.DurationVar(&c.IngressTransitHold, "ingress-transit-hold", c.IngressTransitHold, "how long a Session's Intents wait for its Character to arrive in the next Zone (ANDARA_INGRESS_TRANSIT_HOLD)")
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
+	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
@@ -537,12 +541,13 @@ type fileConfig struct {
 		Port *string `yaml:"port"`
 	} `yaml:"http"`
 	Telemetry *struct {
-		OTLPEndpoint     *string  `yaml:"otlp_endpoint"`
-		ServiceName      *string  `yaml:"service_name"`
-		Environment      *string  `yaml:"environment"`
-		LogFormat        *string  `yaml:"log_format"`
-		LogLevel         *string  `yaml:"log_level"`
-		TraceSampleRatio *float64 `yaml:"trace_sample_ratio"`
+		OTLPEndpoint            *string  `yaml:"otlp_endpoint"`
+		ServiceName             *string  `yaml:"service_name"`
+		Environment             *string  `yaml:"environment"`
+		LogFormat               *string  `yaml:"log_format"`
+		LogLevel                *string  `yaml:"log_level"`
+		TraceSampleRatio        *float64 `yaml:"trace_sample_ratio"`
+		TrustInboundTraceparent *bool    `yaml:"trust_inbound_traceparent"`
 	} `yaml:"telemetry"`
 	GRPC *struct {
 		Listen            *string `yaml:"listen"`
@@ -657,6 +662,9 @@ func applyFile(c *Config, path string) error {
 		}
 		if fc.Telemetry.TraceSampleRatio != nil {
 			c.TraceSampleRatio = *fc.Telemetry.TraceSampleRatio
+		}
+		if fc.Telemetry.TrustInboundTraceparent != nil {
+			c.TrustInboundTraceparent = *fc.Telemetry.TrustInboundTraceparent
 		}
 		if fc.Telemetry.LogFormat != nil {
 			c.LogFormat = *fc.Telemetry.LogFormat
@@ -904,6 +912,13 @@ func applyEnv(c *Config, env EnvLookup) error {
 				return err
 			}
 		}
+	}
+	if v, ok := env("ANDARA_TRUST_INBOUND_TRACEPARENT"); ok {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("ANDARA_TRUST_INBOUND_TRACEPARENT must be true or false, got %q", v)
+		}
+		c.TrustInboundTraceparent = b
 	}
 	if v, ok := env("ANDARA_TRACE_SAMPLE_RATIO"); ok {
 		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)

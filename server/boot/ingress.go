@@ -67,6 +67,9 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 	var audit *auth.Auditor
 	if rt.Accounts != nil {
 		audit = rt.Accounts.Auditor()
+		// One deadline for a write to the log, whichever topic: an audit
+		// record behind a refused Submit waits as long as a produce would.
+		audit.WriteTimeout = cfg.IngressProduceDeadline
 	}
 	rt.Ingress = ingress.New(ingress.Options{
 		Pipeline: &command.Pipeline{

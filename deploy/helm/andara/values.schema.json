@@ -129,6 +129,10 @@
               "minimum": 0,
               "maximum": 1,
               "description": "ANDARA_TRACE_SAMPLE_RATIO (AW-SRV-010). Default when unset: 0.01."
+            },
+            "trust_inbound_traceparent": {
+              "type": "boolean",
+              "description": "ANDARA_TRUST_INBOUND_TRACEPARENT (AW-SRV-010). Default when unset: False."
             }
           }
         },

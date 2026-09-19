@@ -46,6 +46,10 @@ ANDARA_OTLP_ENDPOINT: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_TRACE_SAMPLE_RATIO: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "telemetry" "trust_inbound_traceparent" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TRUST_INBOUND_TRACEPARENT: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "sim" "source" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_SIM_SOURCE: {{ $v | toString | quote }}

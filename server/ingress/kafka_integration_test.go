@@ -290,8 +290,8 @@ func TestKafka_ProduceLandsWhereItSays(t *testing.T) {
 			t.Fatalf("record at %d/%d = %v key=%q", resp.GetPartition(), resp.GetAcceptedOffset(), &cmd, rec.Key)
 		}
 	}
-	if got := testutil.ToFloat64(f.in.Metrics().PartitionSkew.WithLabelValues(fmt.Sprint(sim.PartitionFor("town")))); got != 1 {
-		t.Fatalf("partition_skew[town] = %v", got)
+	if got := testutil.ToFloat64(f.in.Metrics().Produced.WithLabelValues(fmt.Sprint(sim.PartitionFor("town")))); got != 1 {
+		t.Fatalf("produced_total[town] = %v", got)
 	}
 }
 

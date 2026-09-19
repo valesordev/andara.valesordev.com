@@ -32,6 +32,7 @@ keys:
   - {key: telemetry.log_level,     env: ANDARA_LOG_LEVEL,        type: enum, values: [debug, info, warn, error], default: info, story: AW-SRV-001}
   - {key: telemetry.otlp_endpoint, env: ANDARA_OTLP_ENDPOINT,    type: string, default: localhost:4317, story: AW-SRV-001}
   - {key: telemetry.trace_sample_ratio, env: ANDARA_TRACE_SAMPLE_RATIO, type: number, default: 0.01, min: 0, max: 1, story: AW-SRV-010}
+  - {key: telemetry.trust_inbound_traceparent, env: ANDARA_TRUST_INBOUND_TRACEPARENT, type: bool, default: false, story: AW-SRV-010}
 
   # --- AW-SRV-002: tick loop ---
   - {key: sim.source,                  env: ANDARA_SIM_SOURCE,             type: enum, values: [kafka, memory], default: kafka, story: AW-SRV-002}

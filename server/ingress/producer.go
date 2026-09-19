@@ -224,7 +224,7 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	}
 	if k.metrics != nil {
 		k.metrics.ProduceDuration.Observe(wait.Seconds())
-		k.metrics.PartitionSkew.WithLabelValues(strconv.Itoa(int(partition))).Inc()
+		k.metrics.Produced.WithLabelValues(strconv.Itoa(int(partition))).Inc()
 	}
 	span.SetAttributes(attribute.Int64("offset", rec.Offset))
 	return command.Accepted{Partition: rec.Partition, Offset: rec.Offset}, nil

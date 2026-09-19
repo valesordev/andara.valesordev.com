@@ -75,6 +75,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `ingress.max_pending` | `ANDARA_INGRESS_MAX_PENDING` | `256` | Submits one Session may have in flight; past it, `RESOURCE_EXHAUSTED` rather than a growing queue. |
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
+| `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext
 mode and no flag to create one; `make up` provisions certificates so nobody needs one
@@ -312,11 +313,11 @@ Command can be accepted. A probe pings the brokers once a second, always; when n
 produce fails and a ping then fails — the ingress is *degraded*: `andara_ingress_degraded` reads
 1, an `info` line names the broker error, and every Submit fails at once with `UNAVAILABLE`
 (reason `world_read_only`, a `RetryInfo` of one second) — no wait, no buffer. The tick and the
-Event stream do not pass through here and carry on; `/readyz` stays 200. The Submit in flight when
-the log went away is the one ambiguous case: its record was already handed to the client and may
-have reached the broker, so it is answered `DEADLINE_EXCEEDED` (reason `produce_deadline`, *outcome
-unknown*), and entering the degraded state swaps the producer client so nothing it still held
-lands minutes later on a player who was told the World was read-only. When a broker answers the
+Event stream do not pass through here and carry on; `/readyz` stays 200. The Submits in flight when
+the outage was detected are the ambiguous ones: their records were already handed to the client
+and may have reached the broker, so each is answered `DEADLINE_EXCEEDED` (reason
+`produce_deadline`, *outcome unknown*), and entering the degraded state swaps the producer client
+so nothing it still held lands minutes later on a player who was told the World was read-only. When a broker answers the
 probe again the state clears without a restart. `docs/runbooks/world-read-only.md` is the runbook.
 
 | Condition | gRPC code | `ErrorInfo.reason` | Log record written |
@@ -343,7 +344,7 @@ wording every player eventually sees; its text is a placeholder until Brian sets
 | `andara_ingress_pending` | gauge | — | Submits in flight on this process |
 | `andara_ingress_held_intents` | gauge | — | Intents waiting for their Character to arrive |
 | `andara_ingress_degraded` | gauge | — | 1 while the World is read-only; `AW-INF-005` alerts on it |
-| `andara_ingress_partition_skew` | gauge | `partition` | 64; Commands produced to each Partition since boot |
+| `andara_ingress_produced_total` | counter | `partition` | 64; Commands produced by Partition — `topk(5, rate(...[5m]))` is the hot-Zone view |
 
 Logs: `command log unreachable` / `command log reachable` at `info` on degradation entry and exit
 with the broker error; `command rejected` at `info` per authorize rejection (the pipeline's line,
@@ -355,8 +356,10 @@ with `partition` and `offset`. Spans: `log.produce` is the child of `command.exe
 **Sampling.** `Game/Submit` is the one root per keystroke, so it is head-sampled at
 `telemetry.trace_sample_ratio`; the decision is made where the root starts, rides the sampled flag
 into `LoggedCommand.trace_id`, and the tick's `command.apply` inherits it as a remote parent — a
-sampled trace is whole, an unsampled one is absent from both ends. A client that sent a
-`traceparent` (andara-cli does) made the decision itself and is honored either way. Every
+sampled trace is whole, an unsampled one is absent from both ends. A client's own `traceparent`
+(andara-cli sends one) parents the RPC — and decides — only under
+`telemetry.trust_inbound_traceparent`; otherwise a client that flagged every request sampled
+would hold the collector's cost lever, so the RPC is a new root that links to it. Every
 rejection is exported whatever the head said — `command.execute` records under an unsampled root
 and `telemetry.SpanFilter` forwards it when `stage_failed` is set — and a tick-produced record with
 no Gateway root (an `Arrive`) keeps `sim.tick`'s one in a hundred. Every other root — a Session's

@@ -107,8 +107,10 @@ func TestSampler_SubmitRootAtRatio(t *testing.T) {
 	}
 }
 
-// A client that sent a traceparent decided already: sampled is honored
-// under a ratio of zero, unsampled under a ratio of one.
+// A remote parent that reached the sampler decided already: sampled is
+// honored under a ratio of zero, unsampled under a ratio of one. The
+// gateway admits a client's traceparent this far only under
+// telemetry.trust_inbound_traceparent (its own test pins the default).
 func TestSampler_HonorsRemoteParent(t *testing.T) {
 	tp, exp := sampledProvider(0)
 	remote := propagation.TraceContext{}.Extract(context.Background(), propagation.MapCarrier{"traceparent": "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"})
