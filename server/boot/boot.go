@@ -18,8 +18,10 @@ import (
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/events"
+	"github.com/valesordev/andara/server/ingress"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
+	"github.com/valesordev/andara/server/tickloop"
 )
 
 const (
@@ -56,7 +58,16 @@ type Runtime struct {
 	Events *events.Hub
 	// Accounts is the account store (AW-SRV-008); nil until OpenAccounts.
 	Accounts *auth.Store
-	ready    atomic.Bool
+	// Ingress is the Submit path and Bindings its routing table
+	// (AW-SRV-010); both nil until StartIngress.
+	Ingress  *ingress.Ingress
+	Bindings *ingress.Bindings
+	// producer is the Kafka producer behind Ingress, closed by
+	// CloseIngress; memSource is the loopback for sim.source=memory,
+	// built by StartIngress and consumed by StartTickLoop.
+	producer  *ingress.KafkaProducer
+	memSource *tickloop.MemorySource
+	ready     atomic.Bool
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table

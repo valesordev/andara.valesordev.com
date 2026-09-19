@@ -42,6 +42,14 @@ ANDARA_LOG_LEVEL: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_OTLP_ENDPOINT: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "telemetry" "trace_sample_ratio" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TRACE_SAMPLE_RATIO: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "telemetry" "trust_inbound_traceparent" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_TRUST_INBOUND_TRACEPARENT: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "sim" "source" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_SIM_SOURCE: {{ $v | toString | quote }}
@@ -117,6 +125,30 @@ ANDARA_SUBSCRIBER_BUFFER: {{ $v | toString | quote }}
 {{- $v := dig "events" "max_subscribers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_MAX_SUBSCRIBERS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "rate_limit" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_INGRESS_RATE_LIMIT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "burst" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_INGRESS_BURST: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "produce_deadline" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_PRODUCE_DEADLINE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "max_pending" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_INGRESS_MAX_PENDING: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "agent_rate_limit" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_AGENT_RATE_LIMIT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "ingress" "transit_hold" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_INGRESS_TRANSIT_HOLD: {{ $v | toString | quote }}
 {{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}

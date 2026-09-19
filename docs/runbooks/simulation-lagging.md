@@ -38,7 +38,7 @@ the first that explains the lag.
 | 5 | `andara_tick_publish_failures_total{kind}` | The producer's buffer is full or the broker refused; the tick does not wait for either, so this is not itself lag — but it says the broker is unhealthy. |
 | 6 | `andara_tick_duration_seconds` p99 low, lag rising anyway | The loop goroutine is stalled outside `Step` — a wedged handler, a checkpoint commit past its two-second bound, GC. Take a goroutine dump (`kill -QUIT`) and look for the tick goroutine. |
 
-`andara_ingress_partition_skew{partition}` (AW-SRV-010) joins this table when ingress exists.
+`rate(andara_ingress_produced_total{partition}[5m])` (AW-SRV-010) joins this table when ingress exists.
 
 ## How to mitigate
 

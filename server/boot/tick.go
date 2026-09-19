@@ -62,9 +62,13 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	switch cfg.SimSource {
 	case "memory":
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "sim.source=memory: the World ticks with no Command input and nothing is published")
-		ms := tickloop.NewMemorySource()
-		// Cross-Zone Commands loop back into the source, so an arrival
-		// resolves on a later tick here as it would through the broker.
+		// The source StartIngress built, so Submits land on it; cross-Zone
+		// Commands loop back into it too, so an arrival resolves on a later
+		// tick here as it would through the broker.
+		ms := rt.memSource
+		if ms == nil {
+			ms = tickloop.NewMemorySource()
+		}
 		source, publisher = ms, &tickloop.MemoryPublisher{OnProduce: func(c *logv1.LoggedCommand) { ms.Push(c) }}
 	case "kafka":
 		// Recovery (ADR-0002 §4): replay the recorded boundaries before
@@ -123,8 +127,12 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 
 	// Subscribed after recovery, so replayed Events — history, already
 	// delivered by the process that first emitted them — are not fanned
-	// out or counted again.
+	// out or counted again. The routing table follows the same Events
+	// (AW-SRV-010): a Character's Session moves Partition when it does.
 	engine.Subscribe(rt.Events)
+	if rt.Bindings != nil {
+		engine.Subscribe(rt.Bindings)
+	}
 
 	loop, err = tickloop.New(tickloop.Options{
 		Engine:          engine,

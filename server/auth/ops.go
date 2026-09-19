@@ -33,8 +33,8 @@ type Peer string
 // checkRate takes a token from the username's and the peer's buckets.
 // Either empty is ErrRateLimited, counted and logged without the username.
 func (s *Store) checkRate(ctx context.Context, username string, peer Peer) error {
-	okUser := username == "" || s.limiter.allow("u:"+username)
-	okPeer := peer == "" || s.limiter.allow("p:"+string(peer))
+	okUser := username == "" || s.limiter.Allow("u:"+username)
+	okPeer := peer == "" || s.limiter.Allow("p:"+string(peer))
 	if okUser && okPeer {
 		return nil
 	}
