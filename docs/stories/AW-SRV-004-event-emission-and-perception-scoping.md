@@ -4,7 +4,7 @@ title: Event emission, subscription seam, and perception scoping
 epic: EPIC-02
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-002, AW-SRV-003]
 blocks: [AW-SRV-006, AW-SRV-011, AW-SRV-019, AW-SRV-029]
