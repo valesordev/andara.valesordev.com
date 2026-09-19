@@ -6,7 +6,7 @@ component: cli
 type: feature
 status: ready
 size: M
-depends_on: [AW-CLI-001, AW-SRV-005, AW-SRV-011]
+depends_on: [AW-CLI-001, AW-SRV-005, AW-SRV-011, AW-SRV-031]
 blocks: []
 lane: implementation
 risk: medium
@@ -187,6 +187,12 @@ CLAUDE.md §8, plus:
 - The renderer is a pure function with golden-file coverage, so Phase 2 can replace it rather than
   reverse-engineer it.
 - A player cannot tell from the output whether a rejection was pre-log or post-log.
+- **Inherited from `AW-SRV-010` (Brian, 2026-09-19):** server-side rejection text is *system voice* —
+  plain, out of fiction, says what happened and what to do, never why. `play` prints the server's
+  message as given for every typed error (`INVALID_ARGUMENT`, `PERMISSION_DENIED`, `UNAVAILABLE`
+  with `world_read_only` or `in_transit`, `RESOURCE_EXHAUSTED`) and switches on
+  `ErrorInfo.reason` only for behavior (retry after `RetryInfo`, hold the prompt during
+  `in_transit`), not for wording. Changing the voice is a design decision, not a client one.
 
 ## Open questions
 

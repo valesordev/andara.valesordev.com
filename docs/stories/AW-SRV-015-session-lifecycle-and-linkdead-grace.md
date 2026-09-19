@@ -202,3 +202,9 @@ invariant test.
   pacing exists. `andara_linkdead_ceiling_despawns_total` says when the ceiling is too short.
 - `[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.
 - `[ASSUMPTION]` `session.linkdead_detect` 5 s. The gRPC keepalive from `AW-SRV-005` is the detector.
+- **Inherited from `AW-SRV-010` (2026-09-19):** the ingress forgets a Session when its context
+  ends — `Ingress.forget` drops its queue, its rate-limit bucket, and its `Bindings` entry. A resumed
+  Session (linkdead grace) is therefore unbound on the Gateway and must be re-bound from the
+  Character it drives (`AW-SRV-014`'s binding state) before its first Submit, or that Submit is
+  `not_authorized` ("you are not in the world"). Resume also lands the Session on one pod; `AW-SRV-031`'s
+  idempotency window is per process and relies on that.
