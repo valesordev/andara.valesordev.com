@@ -4,7 +4,7 @@ title: Command ingress — parse, authorize, and produce to the command log
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-003, AW-SRV-005, AW-INF-004]
 blocks: [AW-INF-005, AW-INF-010, AW-SRV-030, AW-SRV-031]
@@ -237,6 +237,11 @@ CLAUDE.md §8, plus:
   broker, not inferred from a return value.
 - `docs/runbooks/world-read-only.md` exists.
 - The explicit partitioner is covered by a test that would fail if it fell back to a library default.
+- Inherited from `AW-SRV-003`'s §8 pass (2026-09-19): this story is the first in-cluster caller of
+  `Pipeline.Submit`, so §8's backend verification here includes showing `andara_commands_total{verb}`,
+  `andara_command_duration_seconds{phase="pre_log"}`, and the `command.parse`/`command.authorize` spans
+  under `command.execute` on the compose stack's Prometheus and Tempo — the pre-log half `AW-SRV-003`
+  could only exercise in-process.
 
 ## Open questions
 

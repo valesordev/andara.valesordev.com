@@ -196,6 +196,11 @@ CLAUDE.md §8, plus:
 - The stalled-client test asserts a memory bound, not merely that the tick survived.
 - `docs/specs/slo/session-availability.md` and `docs/runbooks/sessions-dropping.md` exist.
 - The resume-window and linkdead-grace interaction is reconciled with `AW-SRV-015` before either ships.
+- Inherited from `AW-SRV-004`'s §8 pass (2026-09-19): this story is the first in-cluster subscriber
+  of `events.Hub`, so §8's backend verification here includes showing `andara_subscribers` above zero,
+  `andara_subscriber_drops_total{reason="buffer_full"}` from a deliberately stalled Session, the `warn`
+  drop line in Loki with `session_id`, and the `subscribe_world` audit record for a Game Master stream
+  — the subscriber-side series `AW-SRV-004` could only exercise in tests and `sim repl`.
 
 ## Open questions
 
