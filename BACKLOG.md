@@ -9,33 +9,28 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 1 |
-| `in-progress` | 1 |
-| `ready` | 30 |
+| `review` | 2 |
+| `ready` | 31 |
 | `done` | 14 |
-| **total** | **46** |
+| **total** | **47** |
 
 ## Attention first
 
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `review` | Command pipeline stages split across the log boundary, with look and move | review by brian |
+| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `review` | Event emission, subscription seam, and perception scoping | review by brian |
 
 ## By status
 
-### `review` (1)
+### `review` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 
-### `ready` (30)
+### `ready` (31)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -69,6 +64,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-026`](docs/stories/AW-SRV-026-exit-into-exact-recovery-when-a-tick-boundary-record-is-lost.md) | `EPIC-04` | server | S | medium | implementation | Exit into exact recovery when a Tick Boundary Record is lost | `AW-SRV-002` |
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `EPIC-02` | server | S | medium | implementation | Per-Zone quarantine on a tick fault | `AW-SRV-002` |
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `EPIC-02` | server | M | high | implementation | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry | `AW-SRV-003` |
+| [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `EPIC-02` | server | M | medium | implementation | Perception through Exits — Builder-declared senses on a room connection | `AW-SRV-004`, `AW-SRV-021` |
 
 ### `done` (14)
 
@@ -114,11 +110,12 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 |----|--------|-------|
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `done` | World model types and zone definition loading with referential validation at boot |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `done` | Deterministic tick loop driven by partition consumers, with tick SLIs |
-| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `in-progress` | Event emission, subscription seam, and perception scoping |
+| [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `review` | Event emission, subscription seam, and perception scoping |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `done` | Components on Rooms and Zones, and the closed Direction set |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `done` | Template definitions — schema, flattened loading, and Entity instantiation |
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
+| [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 

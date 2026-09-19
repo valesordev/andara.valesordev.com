@@ -199,6 +199,28 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **Inherited from `AW-SRV-004` (2026-09-19 review of PR #32), contract-bearing — re-groom before
+  start.** The seam this story consumes is `events.Hub`, not the `SessionSink.Publish(ScopedEvent)`
+  sketched above: `Hub.Subscribe(ctx, Subscriber{Observer{Entity, Room, World}, Principal,
+  SessionID}) → *Subscription` with `Events() <-chan Delivery`, `Reason()`, drop-on-full ending the
+  subscription with `SubscriberDropped`, `events.subscriber_buffer` / `events.max_subscribers`
+  already configured. Two rules this story must carry:
+  1. **An Observer bound to an Entity follows that Entity inside the Hub.** As built, the
+     Subscription's Room is moved by the consumer (`Subscription.Move`) after it reads
+     `CharacterArrived` off its own buffer — so between the sim moving the Character and the
+     Session calling back, Room-scoped Events in the new Room are missed and old-Room Events still
+     arrive: perception eventually-consistent with the consumer's read latency, which AC-1 of 004
+     exists to forbid. The Hub sees `CharacterLeft`/`CharacterArrived` first, in order, addressed to
+     the Entity, with the target Room on the envelope; it updates the Observer's Room before the
+     next delivery. `Move` is not a Gateway duty. During an `AW-SRV-028` transit the Observer is
+     Room-less and Entity-addressed Events still reach it — the correct state. Requested on #32; if
+     it lands there this item is a confirmation, not work.
+  2. **`client_ref` is blanked in one place.** The envelope echoes the actor's `client_ref` to every
+     recipient. Rather than every transport remembering to blank it, `sim.Event` carries the
+     originating `SessionID` (in-process only, from the Record) and the Hub blanks `client_ref` at
+     `send` for any subscriber whose `SessionID` differs. This story asserts a bystander's stream
+     never carries another Session's ref.
+
 - `[ASSUMPTION]` Disconnect-on-overflow rather than drop-and-continue, for the reason in the drop policy
   above. If a lossy mode is ever wanted for a spectator or replay client, it is a distinct subscription
   type, not a degraded version of this one.

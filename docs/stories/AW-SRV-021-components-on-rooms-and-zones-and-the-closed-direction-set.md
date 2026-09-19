@@ -7,7 +7,7 @@ type: feature
 status: done
 size: M
 depends_on: [AW-SRV-001]
-blocks: [AW-CLI-003, AW-CLI-005, AW-CLI-006, AW-SRV-012, AW-SRV-022]
+blocks: [AW-CLI-003, AW-CLI-005, AW-CLI-006, AW-SRV-012, AW-SRV-022, AW-SRV-029]
 lane: implementation
 risk: medium
 ---

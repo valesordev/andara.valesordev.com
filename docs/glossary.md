@@ -88,6 +88,13 @@ does not panic there (AW-SRV-002). As shipped, the faulted Zone's whole Partitio
 Brian decided on 2026-09-18 that the quarantine is the Zone alone — its later Commands are consumed
 and rejected `zone_faulted` while the Partition moves on (AW-SRV-027).
 
+**Sense** — What an Event can be perceived *as* — `sight`, `sound` — and therefore what an Exit can
+let through. Senses are a server-defined closed vocabulary (the Component-type rule, ADR-0010
+decision 7): a Builder declares on an Exit which senses pass through it into the Room that owns it,
+and the sim emits a perceived-through form of a sensed Event to each neighbouring Room whose Exit
+allows it, one hop, naming the Direction (AW-SRV-029; decided by Brian 2026-09-19). Which senses
+Andara has is game design.
+
 **World** — The complete set of Zones, Entities, and simulation state under a single authority.
 
 ---
