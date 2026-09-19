@@ -384,7 +384,12 @@ func TestSubmit_TransitHold(t *testing.T) {
 			results[i] = result{r, err}
 		}()
 	}
-	waitFor(t, func() bool { return testutil.ToFloat64(f.in.Metrics().Held) == 1 }, "one intent held (the second queued behind it)")
+	// Both queued before the arrival: the first in the hold, the second
+	// behind it — otherwise the second could go looking for a Pending of
+	// one after the first had already left.
+	waitFor(t, func() bool {
+		return testutil.ToFloat64(f.in.Metrics().Held) == 1 && testutil.ToFloat64(f.in.Metrics().Pending) == 2
+	}, "one intent held, the second queued behind it")
 	if len(f.log.records) != 0 {
 		t.Fatal("produced during transit")
 	}
