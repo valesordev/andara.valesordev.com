@@ -73,7 +73,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `ingress.burst` | `ANDARA_INGRESS_BURST` | `40` | Token bucket depth per Session: how many Submits may arrive at once before the rate applies. |
 | `ingress.produce_deadline` | `ANDARA_PRODUCE_DEADLINE` | `2s` | How long one produce may take. It is the client's record delivery timeout; a produce request times out at half of it, so one idempotent retry fits inside. |
 | `ingress.max_pending` | `ANDARA_INGRESS_MAX_PENDING` | `256` | Submits one Session may have in flight; past it, `RESOURCE_EXHAUSTED` rather than a growing queue. |
-| `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). |
+| `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 
 Starting without TLS material is a fatal configuration error (exit 1). There is no plaintext

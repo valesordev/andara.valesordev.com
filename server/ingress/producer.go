@@ -255,7 +255,9 @@ func (k *KafkaProducer) classify(ctx context.Context, err error) error {
 // degrade enters the read-only state once: the gauge, the log line, and
 // the client swap that drops what the old one held.
 func (k *KafkaProducer) degrade(cause error) {
-	if !k.degraded.CompareAndSwap(false, true) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if k.closed || !k.degraded.CompareAndSwap(false, true) {
 		return
 	}
 	if k.metrics != nil {
@@ -263,11 +265,6 @@ func (k *KafkaProducer) degrade(cause error) {
 	}
 	k.log.LogAttrs(context.Background(), slog.LevelInfo, "command log unreachable: the World is read-only until a broker answers",
 		slog.String("detail", cause.Error()))
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.closed {
-		return
-	}
 	fresh, err := kgo.NewClient(k.opts...)
 	if err != nil {
 		// The options built a client once; they will again. Keep the old.

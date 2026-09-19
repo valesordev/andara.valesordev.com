@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"log/slog"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/trace"
@@ -63,7 +64,8 @@ type Auditor struct {
 	metrics *Metrics
 	now     func() time.Time
 	// WriteTimeout overrides AuditWriteTimeout; zero means the default.
-	WriteTimeout time.Duration
+	WriteTimeout  time.Duration
+	pendingWarnAt atomic.Int64
 }
 
 // NewAuditor builds an Auditor over an audit log outside a Store, for the
@@ -144,11 +146,15 @@ func (a *Auditor) Record(ctx context.Context, e Entry) {
 			a.failed(ctx, rec, err)
 		}
 	case <-timer.C:
-		a.slog.LogAttrs(ctx, slog.LevelWarn, "audit record write pending past its timeout; it completes in the background",
-			slog.String("action", rec.Action),
-			slog.String("actor_account_id", rec.ActorAccountId),
-			slog.String("trace_id", rec.TraceId),
-		)
+		// One line a second: during a broker outage every denial is late.
+		now := a.now().UnixNano()
+		if last := a.pendingWarnAt.Load(); now-last >= int64(time.Second) && a.pendingWarnAt.CompareAndSwap(last, now) {
+			a.slog.LogAttrs(ctx, slog.LevelWarn, "audit record write pending past its timeout; it completes in the background",
+				slog.String("action", rec.Action),
+				slog.String("actor_account_id", rec.ActorAccountId),
+				slog.String("trace_id", rec.TraceId),
+			)
+		}
 		go func() {
 			if err := <-done; err != nil {
 				a.failed(bg, rec, err)

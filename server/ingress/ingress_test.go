@@ -204,8 +204,6 @@ func TestSubmit_ProducesExactlyWhatParseReturned(t *testing.T) {
 // AC-3, AC-4, and the error taxonomy row by row.
 func TestSubmit_ErrorMapping(t *testing.T) {
 	f := newFixture(t, nil)
-	f.bindings.Bind("s-bob", command.Binding{Actor: "bob", Zone: "town"})
-	_ = f.bindings
 
 	// parse → INVALID_ARGUMENT, typed, nothing produced.
 	_, err := f.submit(context.Background(), "s-alice", "frobnicate")

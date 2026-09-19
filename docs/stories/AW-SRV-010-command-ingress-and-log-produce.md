@@ -105,6 +105,8 @@ splits its history across two Partitions and is unrecoverable.
 | `ingress.produce_deadline` | `ANDARA_PRODUCE_DEADLINE` | `2s` | bounds AC-5 |
 | `ingress.max_pending` | `ANDARA_INGRESS_MAX_PENDING` | `256` | per Session; beyond this, `RESOURCE_EXHAUSTED` |
 | `ingress.agent_rate_limit` | `ANDARA_AGENT_RATE_LIMIT` | `100/s` | Behavior Agents drive many NPCs per Session (ADR-0005) |
+| `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | how long a Session's Intents wait for its Character to arrive in the next Zone, from the `CharacterLeft`; past it, `in_transit` (inherited item 3, added 2026-09-19) |
+| `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | head-sampling ratio for the `Game/Submit` root; rejections are kept regardless (inherited item 2, added 2026-09-19) |
 
 ### Error taxonomy
 
@@ -175,6 +177,8 @@ No schema migration; the record type is `andara.log.v1.LoggedCommand` from `AW-S
 - `andara_ingress_produce_duration_seconds` — histogram. The latency a player feels before the ack.
 - `andara_ingress_produce_retries_total` — counter.
 - `andara_ingress_pending` — gauge. Per-process, not per-Session.
+- `andara_ingress_held_intents` — gauge. Intents held while their Character is between Zones
+  (inherited item 3, added 2026-09-19).
 - `andara_ingress_degraded` — gauge, 0 or 1. 1 when the World is read-only because the log is
   unreachable. This is the metric `AW-INF-005` alerts on.
 - `andara_ingress_partition_skew` — gauge, label `partition`. Cardinality 64. Reveals a hot Zone long
