@@ -19,6 +19,10 @@ const (
 	ReasonClientGone = "client_gone"
 	// ReasonDraining: the server is shutting down.
 	ReasonDraining = "draining"
+	// ReasonRevoked: the Session's Account was disabled or its roles
+	// changed (AW-SRV-008 AC-12); the stream ended with a
+	// SubscriberDropped{reason=revoked} as its last frame.
+	ReasonRevoked = "revoked"
 )
 
 // Frame types with no EventType: the `type` label values this package
@@ -52,6 +56,11 @@ type Metrics struct {
 	// Resyncs counts resumes the server could not honor, by reason. A
 	// rising rate means egress.resume_window is too small.
 	Resyncs *prometheus.CounterVec
+	// InDropState is Sessions whose last stream the server ended
+	// (buffer_full, draining) and that have neither reopened one nor
+	// ended: the unavailable Session-seconds of the Session availability
+	// SLI, integrated by the query.
+	InDropState prometheus.Gauge
 }
 
 // NewMetrics registers the stream metrics on reg (nil registers nothing)
@@ -79,20 +88,24 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_stream_resyncs_total",
 			Help: "Resumes the server could not honor, by reason. Rising means egress.resume_window is too small.",
 		}, []string{"reason"}),
+		InDropState: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "andara_sessions_in_drop_state",
+			Help: "Sessions whose last Subscribe stream the server ended (buffer_full, draining) and that have neither reopened one nor ended.",
+		}),
 	}
 	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped} {
 		m.Sent.WithLabelValues(string(t))
 	}
 	m.Sent.WithLabelValues(TypeHeartbeat)
 	m.Sent.WithLabelValues(TypeResync)
-	for _, r := range []string{ReasonBufferFull, ReasonClientGone, ReasonDraining} {
+	for _, r := range []string{ReasonBufferFull, ReasonClientGone, ReasonDraining, ReasonRevoked} {
 		m.Drops.WithLabelValues(r)
 	}
 	for _, r := range []string{ResyncWindowExceeded, ResyncNoHistory} {
 		m.Resyncs.WithLabelValues(r)
 	}
 	if reg != nil {
-		reg.MustRegister(m.Streams, m.Sent, m.Drops, m.BufferDepth, m.Resyncs)
+		reg.MustRegister(m.Streams, m.Sent, m.Drops, m.BufferDepth, m.Resyncs, m.InDropState)
 	}
 	return m
 }

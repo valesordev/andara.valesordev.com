@@ -36,6 +36,10 @@ var (
 	ErrNotPrivileged = errors.New("world visibility requires game_master or operator")
 	// ErrDraining: the fan-out has shut down. UNAVAILABLE.
 	ErrDraining = errors.New("event stream closed: server draining")
+	// ErrRevoked: the Session was revoked (AW-SRV-008 AC-12); the
+	// stream's last frame was SubscriberDropped{reason=revoked}.
+	// PERMISSION_DENIED.
+	ErrRevoked = errors.New("event stream closed: session revoked")
 )
 
 // Reasons, the ErrorInfo.reason a client switches on.
@@ -69,6 +73,8 @@ func connectError(err error) error {
 		return withInfo(connect.NewError(connect.CodePermissionDenied, ErrNotPrivileged), ReasonNotPrivileged)
 	case errors.Is(err, ErrDraining), errors.Is(err, events.ErrClosed):
 		return withInfo(connect.NewError(connect.CodeUnavailable, ErrDraining), ReasonDraining)
+	case errors.Is(err, ErrRevoked):
+		return withInfo(connect.NewError(connect.CodePermissionDenied, err), ReasonRevoked)
 	case errors.Is(err, context.Canceled):
 		return connect.NewError(connect.CodeCanceled, err)
 	case errors.Is(err, context.DeadlineExceeded):

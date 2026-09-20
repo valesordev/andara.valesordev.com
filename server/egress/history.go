@@ -33,6 +33,11 @@ type history struct {
 	// resume is checked against. Lifecycle frames (ID 0) count for neither.
 	evicted uint64
 	newest  uint64
+	// floor is the newest ID of any earlier perception — the last Event
+	// the Session was sent before a reset — and survives resets: a resume
+	// at or below it holds a view of another perception, and no history
+	// answers it, whatever the window has since retained.
+	floor uint64
 }
 
 func newHistory(window int) history {
@@ -72,9 +77,12 @@ func (h *history) append(f frame) {
 }
 
 // reset forgets everything: a Session whose perception changed has no
-// history a client could resume against. The ring's memory is released
-// too; it grows again as the new perception delivers.
+// history a client could resume against, and the floor rises to what the
+// old perception had sent, so a resume from before the reset stays a
+// Resync after the new one delivers. The ring's memory is released too;
+// it grows again as the new perception delivers.
 func (h *history) reset() {
+	h.floor = max(h.floor, h.newest, h.evicted)
 	h.start = h.end()
 	h.base = h.start
 	h.buf = nil
@@ -91,6 +99,10 @@ func (h *history) resume(last uint64) (uint64, string) {
 	switch {
 	case last == 0:
 		return h.end(), ""
+	case last <= h.floor:
+		// At or below: the client that saw exactly the old perception's
+		// last Event still holds that perception's view.
+		return h.end(), ResyncNoHistory
 	case last > h.newest:
 		return h.end(), ResyncNoHistory
 	case last < h.evicted:

@@ -142,6 +142,7 @@ disconnect it.
 | `events.max_subscribers` reached | `RESOURCE_EXHAUSTED` | `too_many_subscribers` |
 | `world` without `game_master` or `operator` | `PERMISSION_DENIED` | `world_visibility` |
 | fan-out shut down | `UNAVAILABLE` | `draining` |
+| Session revoked (AW-SRV-008 AC-12) | `PERMISSION_DENIED` | `revoked`, after a final `SubscriberDropped{reason=revoked}` frame |
 | gateway draining (AW-SRV-005) | `UNAVAILABLE` | — (`server draining`) |
 
 ### Configuration
@@ -207,7 +208,9 @@ and silently misorder its view.
 - `andara_stream_events_sent_total` — counter, label `type`. The EventType enum plus `heartbeat`
   and `resync`.
 - `andara_session_egress_drops_total` — counter, label `reason` (`buffer_full`, `client_gone`,
-  `draining`).
+  `draining`, `revoked`).
+- `andara_sessions_in_drop_state` — gauge: Sessions whose last stream the server ended
+  (`buffer_full`, `draining`) and that have neither reopened one nor ended. The SLI integrates it.
 - `andara_stream_buffer_depth` — histogram, sampled across Sessions. Not per-Session — that is a
   cardinality bomb.
 - `andara_stream_resyncs_total` — counter, label `reason` (`resume_window_exceeded`,
@@ -239,8 +242,10 @@ This story writes `docs/specs/slo/session-availability.md`:
 - **Alert:** `SessionsDroppingAtRate` on `andara_session_egress_drops_total` rate against the SLO,
   paired with `docs/runbooks/sessions-dropping.md`, shipped in this story.
 
-As built: SLI `1 − server-ended streams / stream-seconds` (`client_gone` excluded); alert
-`buffer_full`+`draining` above 1 % of open streams per minute for 5 m.
+As built: SLI `1 − ∫drop-state Sessions / ∫(streams + drop-state Sessions)` over 28 d, from
+`andara_sessions_in_drop_state` (review of PR #37: the first cut divided a drop rate by streams,
+which is a frequency, not a fraction); alert `buffer_full`+`draining` above 1 % of open streams
+per minute for 5 m.
 
 ## Test plan
 
@@ -341,7 +346,35 @@ CLAUDE.md §8, plus:
      `Egress.Rebind` replaces the Hub subscription and discards the old perception's history —
      a later resume from before it is `no_history`.
   8. **The resume window and `AW-SRV-015`** reconciled as written under Configuration: keyed by
-     Session here, handed to the Character there.
+     Session here, handed to the Character there. One consequence for 015 to carry:
+     `events.max_subscribers` now bounds Sessions that have *ever* subscribed — each holding a pump
+     goroutine and up to `resume_window` retained envelopes for the Session's life — not concurrent
+     streams; linkdead makes Sessions linger, so 015 owns the number.
+
+- **Resolved 2026-09-20 (review of PR #37, four findings):**
+  1. `history.reset` kept no floor, so a resume from before a rebind became a silent replay once
+     the new perception had delivered. A `floor` now survives resets — the old perception's last
+     ID — and a resume at or below it is `no_history`; `resume_window_exceeded` keeps meaning the
+     window is too small.
+  2. A fan-out drop wedged the Session: every later `Subscribe` reported `buffer_full` with no
+     subscription held. A subscription the fan-out ended no longer counts as one; the next
+     `Subscribe` subscribes again, history discarded, and a resume from before it is
+     `Resync{no_history}`.
+  3. The SLI could not measure the decided target (a drop rate over streams is a frequency, not a
+     fraction of Session-seconds). `andara_sessions_in_drop_state` is the drop state as a gauge;
+     the SLI is the 28-day ratio of integrals; the budget line says 0.5 % of the fleet's
+     Session-seconds; the deploy blind spot is stated.
+  4. `SubscriberDropped{reason=REVOKED}`, handed here by `AW-SRV-008` AC-12 and never groomed in:
+     landed. The gateway's close for outcome `revoked` calls `Egress.EndSession` before the
+     cancellation (`gateway.SessionEnder`), the stream's last frame is the notice, the stream ends
+     `PERMISSION_DENIED revoked`, and a code a seam chose stands in `mapSeamError` even when the
+     Session has since closed. `client_gone` now means the client.
+  Also from the review: a World stream is re-audited on every resubscribe — intended, each
+  subscription is one privileged read (AC-9's *once* is per subscription, not per Event); the Resync
+  frame's failed `Send` is counted like any other end; `Rebind` compares against the subscribe-time
+  Observer, not the Room the Hub has since followed the Entity to, so a same-Actor `Bind` after a
+  sim-driven move discards history spuriously — rare, noted, and `AW-SRV-014` decides whether its
+  `Bind` carries the Room.
 
 - **Inherited from `AW-SRV-004` (2026-09-19 review of PR #32), contract-bearing — confirmed
   2026-09-20.** The seam this story consumes is `events.Hub`, not the `SessionSink.Publish(ScopedEvent)`

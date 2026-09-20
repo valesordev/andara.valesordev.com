@@ -16,31 +16,43 @@ one bad network — and the whole point of `AW-SRV-011` is that it stays that wa
 **Definition:** the fraction of Session-seconds during which the Session was connected and its Event
 stream was not in a drop state.
 
-The server does not yet export Session-seconds directly; the SLI is measured from the pieces that
-exist, as the ratio of server-ended streams to stream-seconds served:
+A Session is *in a drop state* from the moment the server ends its stream for a reason the client did
+not choose (`buffer_full`, `draining`) until the client reopens a stream or the Session ends. The
+server exports that as a gauge, `andara_sessions_in_drop_state`, beside the open-stream gauge, and
+the SLI is the ratio of the two integrals over the window:
 
 ```promql
 1 - (
-  sum(rate(andara_session_egress_drops_total{reason!="client_gone"}[5m]))
+  sum_over_time(andara_sessions_in_drop_state[28d])
   /
-  sum(avg_over_time(andara_stream_subscribers[5m]))
+  sum_over_time((andara_stream_subscribers + andara_sessions_in_drop_state)[28d:])
 )
 ```
 
-A `client_gone` drop is the client closing its stream or its connection: not a server-side
-availability loss, and excluded. `buffer_full` and `draining` are the server ending a stream the
-client wanted open — the former because the client could not keep up, which is still the player's
-experience of losing the stream; the latter a deploy. Both count.
+The denominator is every Session-second that had a stream or was waiting to get one back; a
+Session that never subscribed is in neither. `client_gone` — the client closing its stream or its
+connection — is not a drop state: the player left. `revoked` — the server closing the Session because
+its Account was disabled or its roles changed (`AW-SRV-008` AC-12) — is not one either: the player
+may not play. `buffer_full` and `draining` are the server ending a stream the client wanted open —
+the former because the client could not keep up, which is still the player's experience of losing
+the stream; the latter a deploy. Both count, for as long as the Session stays without a stream.
 
 | | |
 |---|---|
 | **Target** | 99.5% |
 | **Window** | rolling 28 days |
-| **Error budget** | **3.4 hours of Session-seconds per 28 days**, spread across every Session |
+| **Error budget** | **0.5 % of the fleet's Session-seconds: 3.36 hours × the average number of concurrent Sessions, per 28 days** |
 
 The budget is in Session-seconds, not wall-clock: a drop that costs one player thirty seconds costs
-thirty Session-seconds, whatever the other five hundred players were doing. That is what makes a
-per-player failure and a whole-World failure commensurable.
+thirty Session-seconds, whatever the other five hundred players were doing. With 500 concurrent
+Sessions the budget is ~1,680 Session-hours; with one, 3.36 hours. That is what makes a per-player
+failure and a whole-World failure commensurable.
+
+**What the measurement does not yet see.** The gauge dies with the process, and a deploy's
+`draining` drops are not scraped before it exits (the §8 record for `AW-SRV-011` found the counter
+missing), so the query does not see a deploy's Session-seconds today. "Deploys are counted" below
+holds by policy, not by measurement, until `AW-INF-007` gives the drain a scrape or a pushed final
+sample.
 
 ## Why 99.5% and not 99.9%
 
@@ -83,6 +95,8 @@ Runbook: `docs/runbooks/sessions-dropping.md`. Diagnostic order:
 - A client that reads its stream but renders nothing. The server cannot tell.
 - A Session that never subscribes. It is connected and has no stream to drop; it does not count
   toward the denominator either.
+- A revoked Session. Its stream ends with `SubscriberDropped{reason=revoked}` and
+  `PERMISSION_DENIED`; the drop is counted under `revoked` and is not unavailability.
 - Resyncs. A `Resync` frame is a stream that stayed up and delivered a typed gap — the honest
   outcome, and a separate signal (`andara_stream_resyncs_total`) that says `egress.resume_window`
   is too small, not that availability was lost.
@@ -106,4 +120,5 @@ player disconnected by a deploy is as disconnected as one dropped by a full buff
 
 - `AW-SRV-015` landing: linkdead grace makes the Session outlive the stream, and the SLI should
   then count a Session in its grace window as connected-but-not-delivering rather than dropped.
-- A Session-seconds counter on the server, which would make the SLI direct rather than a ratio.
+- `AW-INF-007` making a drain's last samples visible, which would make "deploys are counted" a
+  measurement.

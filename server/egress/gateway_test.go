@@ -45,6 +45,7 @@ type stack struct {
 	eg  *egress.Egress
 	reg *prometheus.Registry
 	log *logBuffer
+	v   *verifier
 
 	mu   sync.Mutex
 	obs  map[string]events.Observer // by session ID
@@ -69,10 +70,18 @@ func (l *logBuffer) String() string {
 	return l.b.String()
 }
 
-// verifier: any non-empty token is a player; "gm" is a Game Master.
-type verifier struct{}
+// verifier: any non-empty token is a player; "gm" is a Game Master. It is
+// also the Rechecker: revoke marks every Session revoked at the next pass.
+type verifier struct{ revoke atomic.Bool }
 
-func (verifier) Verify(_ context.Context, token string) (auth.Principal, error) {
+func (v *verifier) Recheck(auth.Principal) error {
+	if v.revoke.Load() {
+		return errors.New("account disabled")
+	}
+	return nil
+}
+
+func (*verifier) Verify(_ context.Context, token string) (auth.Principal, error) {
 	switch token {
 	case "":
 		return auth.Principal{}, gateway.ErrUnauthenticated
@@ -82,13 +91,13 @@ func (verifier) Verify(_ context.Context, token string) (auth.Principal, error) 
 	return auth.Principal{AccountID: token, Roles: []auth.Role{auth.RolePlayer}}, nil
 }
 
-func (verifier) ActAs(context.Context, auth.Principal, string) (auth.Principal, error) {
+func (*verifier) ActAs(context.Context, auth.Principal, string) (auth.Principal, error) {
 	return auth.Principal{}, gateway.ErrPermissionDenied
 }
 
 func newStack(t *testing.T, buffer, window int, hubBuffer int, mutate func(*egress.Options)) *stack {
 	t.Helper()
-	s := &stack{t: t, pki: testpki.New(t), reg: prometheus.NewRegistry(), log: &logBuffer{}, obs: map[string]events.Observer{}}
+	s := &stack{t: t, pki: testpki.New(t), reg: prometheus.NewRegistry(), log: &logBuffer{}, obs: map[string]events.Observer{}, v: &verifier{}}
 	logger := slog.New(slog.NewJSONHandler(s.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	s.hub = events.New(events.Options{Buffer: hubBuffer, Registry: s.reg, Log: logger})
 	t.Cleanup(s.hub.Close)
@@ -107,10 +116,11 @@ func newStack(t *testing.T, buffer, window int, hubBuffer int, mutate func(*egre
 	}
 	s.eg = egress.New(opts)
 	srv, err := gateway.New(gateway.Options{
-		Verifier: verifier{}, Listen: "127.0.0.1:0",
+		Verifier: s.v, Listen: "127.0.0.1:0",
 		TLSCertFile: s.pki.CertFile, TLSKeyFile: s.pki.KeyFile,
 		MaxRecvBytes: 1 << 20, MaxRequestTimeout: 30 * time.Second, DrainTimeout: 5 * time.Second,
 		ProtocolMin: 1, ProtocolMax: 1, Environment: "test",
+		Rechecker: s.v, RecheckInterval: 50 * time.Millisecond,
 		Egress:  s.eg,
 		OnDrain: s.eg.Drain,
 		Log:     logger, Registry: s.reg,
@@ -431,7 +441,7 @@ func (droppingEgress) Subscribe(ctx context.Context, _ *gateway.Session, _ *game
 func TestDropConnection_TearsDownSessions(t *testing.T) {
 	pki := testpki.New(t)
 	srv, err := gateway.New(gateway.Options{
-		Verifier: verifier{}, Listen: "127.0.0.1:0", TLSCertFile: pki.CertFile, TLSKeyFile: pki.KeyFile,
+		Verifier: &verifier{}, Listen: "127.0.0.1:0", TLSCertFile: pki.CertFile, TLSKeyFile: pki.KeyFile,
 		MaxRecvBytes: 1 << 20, MaxRequestTimeout: 30 * time.Second, DrainTimeout: 5 * time.Second,
 		ProtocolMin: 1, ProtocolMax: 1, Environment: "test", Egress: droppingEgress{},
 	})
@@ -485,6 +495,37 @@ func TestDrain_EndsStreamTyped(t *testing.T) {
 	}
 	if got := gauge(t, s.eg.Metrics().Streams); got != 0 {
 		t.Errorf("streams after drain = %v", got)
+	}
+}
+
+// AW-SRV-008 AC-12 through the gateway: a Session revoked by the recheck
+// loop sees SubscriberDropped{reason=revoked} as its stream's last frame,
+// then PERMISSION_DENIED with reason revoked — not a bare cancellation.
+func TestRevoked_StreamEndsWithFrame(t *testing.T) {
+	s := newStack(t, 32, 64, 64, nil)
+	c := s.client(nil)
+	id := s.open(c, "p", "alice", "town", "plaza")
+	stream, err := c.Subscribe(context.Background(), connect.NewRequest(&gamev1.SubscribeRequest{SessionId: id}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "stream open")
+	s.v.revoke.Store(true)
+	if !stream.Receive() {
+		t.Fatalf("no final frame: %v", stream.Err())
+	}
+	if stream.Msg().GetSubscriberDropped().GetReason() != egress.ReasonRevoked {
+		t.Fatalf("final frame = %v", stream.Msg())
+	}
+	for stream.Receive() {
+	}
+	var ce *connect.Error
+	if !errors.As(stream.Err(), &ce) || ce.Code() != connect.CodePermissionDenied || !strings.Contains(ce.Message(), "revoked") {
+		t.Fatalf("revoked stream ended with %v", stream.Err())
+	}
+	waitFor(t, func() bool { return s.srv.SessionCount() == 0 }, "session closed")
+	if got := gauge(t, s.eg.Metrics().Drops.WithLabelValues(egress.ReasonRevoked)); got != 1 {
+		t.Errorf("drops{revoked} = %v", got)
 	}
 }
 

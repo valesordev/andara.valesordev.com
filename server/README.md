@@ -459,6 +459,10 @@ been sent, `egress.resume_window` deep. The stream is a cursor over that ring. S
   every Session perceives from nowhere and a stream carries heartbeats and World-scope Events only.
 - **Drain.** The gateway ends every stream with `UNAVAILABLE` (`server draining`), and a stream
   the Hub ends at shutdown is `UNAVAILABLE` (`draining`) too.
+- **Revoked.** A Session the recheck loop closes (`AW-SRV-008` AC-12) has its stream told first:
+  the gateway calls `Egress.EndSession` before it cancels the Session, the stream's last frame is
+  `SubscriberDropped{reason=revoked}`, and it ends `PERMISSION_DENIED` (`revoked`). A code a seam
+  chose itself stands in the gateway even when the Session has since closed.
 
 The tick never passes through here: `Publish` is the Hub's one enqueue, the Hub fills the
 subscription buffer, the pump drains it, and the stream writes on its own goroutine. The Hub's
@@ -469,6 +473,7 @@ the next `Subscribe` starts over.
 | Condition | gRPC code | `ErrorInfo.reason` |
 |-----------|-----------|--------------------|
 | client trailed by more than `egress.buffer` | `RESOURCE_EXHAUSTED` | `buffer_full` |
+| Session revoked | `PERMISSION_DENIED` | `revoked` |
 | a stream already open on the Session | `FAILED_PRECONDITION` | `already_subscribed` |
 | `events.max_subscribers` reached | `RESOURCE_EXHAUSTED` | `too_many_subscribers` |
 | `world` without the role | `PERMISSION_DENIED` | `world_visibility` |
@@ -483,7 +488,8 @@ runbook for `SessionsDroppingAtRate`.
 |--------|------|--------|-------------------|
 | `andara_stream_subscribers` | gauge | — | 1; open `Subscribe` streams |
 | `andara_stream_events_sent_total` | counter | `type` | the EventType enum + `heartbeat`, `resync` |
-| `andara_session_egress_drops_total` | counter | `reason` | `buffer_full`, `client_gone`, `draining` |
+| `andara_session_egress_drops_total` | counter | `reason` | `buffer_full`, `client_gone`, `draining`, `revoked` |
+| `andara_sessions_in_drop_state` | gauge | — | 1; Sessions whose last stream the server ended (`buffer_full`, `draining`) and that have not reopened one — the SLI's unavailable Session-seconds |
 | `andara_stream_buffer_depth` | histogram | — | 1; a stream's unsent count when an Event was appended for it, across Sessions |
 | `andara_stream_resyncs_total` | counter | `reason` | `resume_window_exceeded`, `no_history` |
 

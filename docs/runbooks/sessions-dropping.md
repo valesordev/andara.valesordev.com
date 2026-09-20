@@ -21,7 +21,8 @@ Two reasons end a stream from the server's side, and they mean different things:
 | `draining` | the server is shutting down and ended every stream `UNAVAILABLE` (`server draining`). Expected once per deploy, for the drain's duration; sustained, the drain is stuck. |
 
 `client_gone` — the client closing its stream or dropping its connection — is not counted by this
-alert. It is the player leaving.
+alert. It is the player leaving. `revoked` — the server closing the Session because its Account was
+disabled or its roles changed — is not counted either; the stream's last frame said so.
 
 The tick is not affected by any of this, by construction: the fan-out is one enqueue from the tick
 and every buffer and every write sits on the far side. If `andara_tick_duration_seconds` moved with
@@ -30,7 +31,7 @@ the drops, that is a bug, and the first escalation below.
 ## How to confirm
 
 ```
-curl -s http://<server>:8080/metrics | grep -E 'andara_session_egress_drops_total|andara_stream_subscribers'
+curl -s http://<server>:8080/metrics | grep -E 'andara_session_egress_drops_total|andara_stream_subscribers|andara_sessions_in_drop_state'
 kubectl -n andara-<env> logs statefulset/andara | grep 'stream ended'        # warn, one per drop: session_id, buffered, last_sent, tick
 kubectl -n andara-<env> logs statefulset/andara | grep 'closing the connection'   # the escalation: a client not reading its socket
 ```

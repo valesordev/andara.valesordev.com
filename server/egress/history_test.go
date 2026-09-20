@@ -63,6 +63,9 @@ func TestHistory_Resume(t *testing.T) {
 	if len(h.buf) != 0 {
 		t.Error("reset kept the ring's memory")
 	}
+	if h.floor != 18 {
+		t.Errorf("floor after reset = %d, want 18", h.floor)
+	}
 	// Growing again from a non-zero base: slots follow the seq.
 	end := h.end()
 	for id := uint64(20); id <= 30; id += 2 {
@@ -74,5 +77,18 @@ func TestHistory_Resume(t *testing.T) {
 	}
 	if seq, _ := h.resume(24); seq != end+3 {
 		t.Errorf("resume(24) after regrowth = %d, want %d", seq, end+3)
+	}
+	// A resume from the old perception — at its last Event, or before —
+	// is no_history once the new one has delivered, not a silent replay
+	// and not "the window is too small" (review of PR #37).
+	for _, last := range []uint64{18, 16, 9} {
+		if seq, reason := h.resume(last); reason != ResyncNoHistory || seq != h.end() {
+			t.Errorf("resume(%d) across a reset = %d %q, want end %q", last, seq, reason, ResyncNoHistory)
+		}
+	}
+	// And the window's own meaning survives: 20 fell out of this
+	// perception's window.
+	if _, reason := h.resume(20); reason != ResyncWindowExceeded {
+		t.Errorf("resume(20) = %q, want %q", reason, ResyncWindowExceeded)
 	}
 }

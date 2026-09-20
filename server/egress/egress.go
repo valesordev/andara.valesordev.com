@@ -183,24 +183,26 @@ func (e *Egress) subscribe(ctx context.Context, sessionID string, principal auth
 		return connectError(err)
 	}
 	e.metrics.Streams.Inc()
-	defer e.metrics.Streams.Dec()
-	if resync != "" {
-		span.SetAttributes(attribute.String("stream.resync", resync))
-		e.metrics.Resyncs.WithLabelValues(resync).Inc()
-		e.log.LogAttrs(ctx, slog.LevelInfo, "stream resync: resume point not retained",
-			slog.String("session_id", sessionID), slog.Uint64("last_event_id", req.GetLastEventId()),
-			slog.String("reason", resync), slog.String("trace_id", traceID(ctx)))
-		env := &gamev1.EventEnvelope{Tick: e.opts.LastTick(), Payload: &gamev1.EventEnvelope_Resync{Resync: &gamev1.Resync{LastEventId: req.GetLastEventId(), Reason: resync}}}
-		if err := st.send(out, frame{typ: TypeResync, env: env}); err != nil {
-			sess.detach(st)
-			return connectError(st.sendErr(err))
+	err = func() error {
+		if resync != "" {
+			span.SetAttributes(attribute.String("stream.resync", resync))
+			e.metrics.Resyncs.WithLabelValues(resync).Inc()
+			e.log.LogAttrs(ctx, slog.LevelInfo, "stream resync: resume point not retained",
+				slog.String("session_id", sessionID), slog.Uint64("last_event_id", req.GetLastEventId()),
+				slog.String("reason", resync), slog.String("trace_id", traceID(ctx)))
+			env := &gamev1.EventEnvelope{Tick: e.opts.LastTick(), Payload: &gamev1.EventEnvelope_Resync{Resync: &gamev1.Resync{LastEventId: req.GetLastEventId(), Reason: resync}}}
+			if err := st.send(out, frame{typ: TypeResync, env: env}); err != nil {
+				return st.sendErr(err)
+			}
+		} else if req.GetLastEventId() != 0 {
+			span.SetAttributes(attribute.Bool("stream.resumed", true))
 		}
-	} else if req.GetLastEventId() != 0 {
-		span.SetAttributes(attribute.Bool("stream.resumed", true))
-	}
-	err = st.run(ctx, out)
-	sess.detach(st)
-	if reason := e.dropReason(ctx, st, err); reason != "" {
+		return st.run(ctx, out)
+	}()
+	e.metrics.Streams.Dec()
+	reason := e.dropReason(err)
+	sess.detach(st, reason)
+	if reason != "" {
 		e.metrics.Drops.WithLabelValues(reason).Inc()
 	}
 	return connectError(err)
@@ -208,17 +210,63 @@ func (e *Egress) subscribe(ctx context.Context, sessionID string, principal auth
 
 // dropReason names why a stream ended, for the drops counter: empty when
 // the client ended it cleanly.
-func (e *Egress) dropReason(ctx context.Context, st *stream, err error) string {
+func (e *Egress) dropReason(err error) string {
 	switch {
 	case err == nil:
 		return ""
 	case errors.Is(err, ErrBufferFull):
 		return ReasonBufferFull
+	case errors.Is(err, ErrRevoked):
+		return ReasonRevoked
 	case errors.Is(err, ErrDraining), e.draining.Load():
 		return ReasonDraining
 	}
 	return ReasonClientGone
 }
+
+// unavailable reports whether a stream ended for reason leaves the Session
+// in the drop state the availability SLI counts: the server ended a stream
+// the client wanted open, and the client has not reopened one.
+func unavailable(reason string) bool {
+	return reason == ReasonBufferFull || reason == ReasonDraining
+}
+
+// EndSession ends sessionID's stream because the Session is being closed
+// for reason — revoked (AW-SRV-008 AC-12) — with a final
+// SubscriberDropped{reason} frame before the typed error, and returns
+// once the stream has gone or endGrace has passed. The gateway calls it
+// before it cancels the Session's context, so the frame gets out ahead
+// of the cancellation; a Session with no stream is untouched.
+func (e *Egress) EndSession(sessionID, reason string) {
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	e.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	st := s.stream
+	if st == nil || st.ended || st.terminal != "" {
+		s.mu.Unlock()
+		return
+	}
+	st.terminal = reason
+	env := &gamev1.EventEnvelope{Tick: e.opts.LastTick(), Payload: &gamev1.EventEnvelope_SubscriberDropped{SubscriberDropped: &gamev1.SubscriberDropped{Reason: reason}}}
+	s.hist.append(frame{typ: string(sim.EvSubscriberDropped), env: env})
+	close(s.notify)
+	s.notify = make(chan struct{})
+	done := st.done
+	s.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(endGrace):
+		// The client is not reading; the frame stays behind its Send and
+		// the cancellation that follows this call ends the stream.
+	}
+}
+
+// endGrace is how long EndSession waits for the final frame to be sent.
+const endGrace = time.Second
 
 // session is the Session's retained state, made on its first Subscribe
 // and kept until the Session ends. The fan-out subscription is made
@@ -246,7 +294,10 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
-	closing, subscribed, cur, open := s.closing, s.sub != nil, s.world, s.stream != nil
+	// A subscription the fan-out ended is not one: the next Subscribe
+	// starts the Session over, history discarded — a resume from before
+	// it is a Resync — rather than reporting the drop forever.
+	closing, subscribed, cur, open := s.closing, s.sub != nil && !s.ended, s.world, s.stream != nil
 	s.mu.Unlock()
 	switch {
 	case closing:
@@ -353,12 +404,15 @@ type session struct {
 	// subscription ends: what a caught-up stream waits on.
 	notify chan struct{}
 	// ended is set when the current fan-out subscription closed, reason
-	// saying why: from then on the Session is unusable and the stream
-	// ends with the reason. closing is set by close: the Session is
-	// going away and no subscription is made for it again.
+	// saying why: the stream ends with the reason, the history is
+	// discarded, and the next Subscribe subscribes again. closing is set
+	// by close: the Session is going away and no subscription is made
+	// for it again. inDrop is the availability SLI's drop state: the
+	// server ended the last stream and the client has not reopened one.
 	ended   bool
 	reason  string
 	closing bool
+	inDrop  bool
 	stream  *stream
 }
 
@@ -464,7 +518,8 @@ func (s *session) pump(sub *events.Subscription) {
 }
 
 // attach opens a stream on the Session: one at a time. It resolves the
-// resume point and reports the Resync reason when there is one.
+// resume point and reports the Resync reason when there is one. A Session
+// in the drop state leaves it here: the client reopened.
 func (s *session) attach(ctx context.Context, last uint64) (*stream, string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -475,36 +530,63 @@ func (s *session) attach(ctx context.Context, last uint64) (*stream, string, err
 		return nil, "", hubEnded(s.reason)
 	}
 	seq, resync := s.hist.resume(last)
-	st := &stream{ctx: ctx, s: s, cursor: seq}
+	st := &stream{ctx: ctx, s: s, cursor: seq, done: make(chan struct{})}
 	if resync == "" && last != 0 {
 		st.lastSent = last
 	}
 	s.stream = st
+	if s.inDrop {
+		s.inDrop = false
+		s.e.metrics.InDropState.Dec()
+	}
 	return st, resync, nil
 }
 
-// detach closes the stream on the Session.
-func (s *session) detach(st *stream) {
+// detach closes the stream on the Session, entering the drop state when
+// the server ended it for a reason the client did not choose.
+func (s *session) detach(st *stream, reason string) {
 	s.mu.Lock()
 	if s.stream == st {
 		s.stream = nil
 	}
+	if unavailable(reason) && !s.inDrop && !s.closing {
+		s.inDrop = true
+		s.e.metrics.InDropState.Inc()
+	}
+	close(st.done)
 	s.mu.Unlock()
 }
 
 // close ends the fan-out subscription and marks the Session closing, so
 // nothing subscribes for it again; the pump marks it ended and the
-// stream, if any, returns.
+// stream, if any, returns. A writer blocked in Send on a client that is
+// not reading is reset, as a buffer_full drop resets it; the Session's
+// connection is the gateway's to close.
 func (s *session) close() {
 	s.rebind.Lock()
 	s.mu.Lock()
 	s.closing = true
 	sub := s.sub
+	if s.inDrop {
+		s.inDrop = false
+		s.e.metrics.InDropState.Dec()
+	}
+	if st := s.stream; st != nil && st.sending {
+		s.e.opts.Abort(st.ctx)
+	}
 	s.mu.Unlock()
 	s.rebind.Unlock()
 	if sub != nil {
 		s.e.opts.Hub.Unsubscribe(sub)
 	}
+}
+
+// terminalErr is the error a stream ends with after its final frame.
+func terminalErr(reason string) error {
+	if reason == ReasonRevoked {
+		return ErrRevoked
+	}
+	return context.Canceled
 }
 
 // hubEnded maps the fan-out's reason for ending a subscription to the
@@ -529,9 +611,13 @@ type stream struct {
 	cursor   uint64
 	lastSent uint64
 	// sending is set while the writer is inside Send; ended by the pump
-	// when the cursor trails by more than the buffer.
-	sending bool
-	ended   bool
+	// when the cursor trails by more than the buffer; terminal by
+	// EndSession, naming the frame the stream ends after sending.
+	sending  bool
+	ended    bool
+	terminal string
+	// done is closed when the stream has detached.
+	done chan struct{}
 }
 
 // run sends from the cursor until ctx is done, the Session ends, or the
@@ -556,6 +642,9 @@ func (st *stream) run(ctx context.Context, out Sender) error {
 		case st.cursor < s.hist.end():
 			next, have = s.hist.at(st.cursor), true
 			st.cursor++
+		case st.terminal != "":
+			// The final frame is sent; the Session is closing.
+			err = terminalErr(st.terminal)
 		case s.ended:
 			err = hubEnded(s.reason)
 		default:

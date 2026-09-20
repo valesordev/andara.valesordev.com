@@ -184,6 +184,12 @@ func (f *fixture) subscribe(session string, p auth.Principal, last uint64, world
 // next waits for one frame.
 func (c *client) next() *gamev1.EventEnvelope {
 	c.f.t.Helper()
+	// A frame already delivered comes before the stream's end.
+	select {
+	case env := <-c.recv:
+		return env
+	default:
+	}
 	select {
 	case env := <-c.recv:
 		return env
@@ -285,7 +291,9 @@ func TestScope_RoomDelivery(t *testing.T) {
 // AC-2: Events arrive in publication order with strictly increasing IDs,
 // across ticks.
 func TestOrdering(t *testing.T) {
-	f := newFixture(t, nil)
+	// Room for the burst: the writer may lag the pump by a few Events
+	// under the race detector, and that is not what this test is about.
+	f := newFixture(t, func(o *Options) { o.Buffer, o.ResumeWindow = 64, 64 })
 	f.place("a", "alice", "town", "plaza")
 	a := f.subscribe("a", player, 0, false, nil)
 	defer a.end()
@@ -418,6 +426,10 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	if got := counter(t, f.e.Metrics().Drops.WithLabelValues(ReasonBufferFull)); got != 1 {
 		t.Errorf("drops{buffer_full} = %v", got)
 	}
+	// The Session is in the drop state until the client reopens.
+	if got := counter(t, f.e.Metrics().InDropState); got != 1 {
+		t.Errorf("sessions_in_drop_state after the drop = %v", got)
+	}
 	logs := f.logs.String()
 	if !strings.Contains(logs, `"msg":"stream ended: client not reading, buffer full"`) || !strings.Contains(logs, `"session_id":"a"`) || !strings.Contains(logs, `"buffered":8`) {
 		t.Errorf("warn line missing or incomplete:\n%s", logs)
@@ -438,6 +450,9 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	f.settled("a", sent[len(sent)-1]+1)
 	again := f.subscribe("a", player, 0, false, func(c *client) { c.ended = stalled.ended })
 	again.quiet()
+	if got := counter(t, f.e.Metrics().InDropState); got != 0 {
+		t.Errorf("sessions_in_drop_state after reopening = %v", got)
+	}
 	live := f.emit(plaza())
 	healthy.next()
 	if got := again.next().GetEventId(); got != live {
@@ -451,6 +466,56 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 		t.Fatalf("resume from %d got %d", sent[len(sent)-1], got)
 	}
 	back.end()
+	waitFor(t, func() bool { return f.e.Sessions() == 1 }, "first session forgotten")
+	// A Session that ends while in the drop state leaves it.
+	f.place("c", "carol", "town", "plaza")
+	gone := f.subscribe("c", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
+	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 2 }, "third subscribed")
+	for i := 0; i < 10; i++ {
+		f.emit(plaza())
+		healthy.next()
+	}
+	<-f.aborted
+	close(gone.block)
+	gone.wait()
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().InDropState) == 1 }, "third in drop state")
+	gone.end()
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().InDropState) == 0 }, "drop state released on session end")
+}
+
+// A Session closed as revoked: its stream's last frame is
+// SubscriberDropped{reason=revoked}, then PERMISSION_DENIED revoked, and
+// the drop is counted as revoked — not as the client leaving, and not as
+// unavailability.
+func TestEndSession_Revoked(t *testing.T) {
+	f := newFixture(t, nil)
+	f.place("a", "alice", "town", "plaza")
+	a := f.subscribe("a", player, 0, false, nil)
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "stream open")
+	id := f.emit(plaza())
+	a.next()
+	f.e.EndSession("a", ReasonRevoked)
+	got := a.next()
+	if got.GetSubscriberDropped().GetReason() != ReasonRevoked || got.GetEventId() != 0 {
+		t.Fatalf("final frame = %v", got)
+	}
+	if code, reason := reasonOf(t, a.wait()); code != connect.CodePermissionDenied || reason != ReasonRevoked {
+		t.Fatalf("revoked stream ended %s/%s", code, reason)
+	}
+	if got := counter(t, f.e.Metrics().Drops.WithLabelValues(ReasonRevoked)); got != 1 {
+		t.Errorf("drops{revoked} = %v", got)
+	}
+	if got := counter(t, f.e.Metrics().Drops.WithLabelValues(ReasonClientGone)); got != 0 {
+		t.Errorf("drops{client_gone} = %v", got)
+	}
+	if got := counter(t, f.e.Metrics().InDropState); got != 0 {
+		t.Errorf("a revoked Session is not in the drop state: %v", got)
+	}
+	_ = id
+	a.end()
+	// No stream: nothing to end.
+	f.e.EndSession("a", ReasonRevoked)
+	f.e.EndSession("nobody", ReasonRevoked)
 }
 
 // A reset that does not return the writer within a heartbeat interval —
@@ -632,7 +697,9 @@ func TestRebind(t *testing.T) {
 
 // The fan-out dropping the Session's subscription — the pump starved,
 // a process problem — ends the stream buffer_full and the next Subscribe
-// starts over; a resume against the discarded history is a Resync.
+// starts the Session over with a fresh subscription; a resume against the
+// discarded history is a Resync, not the drop reported forever (review of
+// PR #37).
 func TestHubDrop(t *testing.T) {
 	f := newFixture(t, nil)
 	f.place("a", "alice", "town", "plaza")
@@ -658,10 +725,24 @@ func TestHubDrop(t *testing.T) {
 	if got := counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonBufferFull)); got != 1 {
 		t.Errorf("hub drops{buffer_full} = %v", got)
 	}
+	// The stream may have ended on its own backlog before the pump saw the
+	// fan-out close its channel; wait for the pump to have seen it.
+	waitFor(t, func() bool {
+		sess.mu.Lock()
+		defer sess.mu.Unlock()
+		return sess.ended
+	}, "pump to observe the fan-out drop")
 	b := f.subscribe("a", player, first, false, func(c *client) { c.ended = a.ended })
-	if code, reason := reasonOf(t, b.wait()); code != connect.CodeResourceExhausted || reason != ReasonBufferFull {
-		t.Fatalf("subscribe on a dropped session: %s/%s; want the drop reported once more", code, reason)
+	if got := b.next(); got.GetResync().GetReason() != ResyncNoHistory {
+		t.Fatalf("resume across a fan-out drop: got %v, want no_history resync", got)
 	}
+	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "resubscribed")
+	live := f.emit(plaza())
+	if got := b.next().GetEventId(); got != live {
+		t.Fatalf("after the fresh subscription got %d, want %d", got, live)
+	}
+	b.cancel()
+	b.wait()
 	a.end()
 }
 

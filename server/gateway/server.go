@@ -151,6 +151,9 @@ func New(opts Options) (*Server, error) {
 	s.conns.ids = map[net.Conn]uint64{}
 	s.conns.byID = map[uint64]net.Conn{}
 	s.sessions = newSessionStore(s.metrics, s.log, s.tracer)
+	if ender, ok := opts.Egress.(SessionEnder); ok {
+		s.sessions.ender = ender
+	}
 	s.drainCtx, s.drainStop = context.WithCancel(context.Background())
 
 	handlerOpts := []connect.HandlerOption{
