@@ -234,8 +234,8 @@ This story writes `docs/specs/slo/session-availability.md`:
 
 - **SLI:** fraction of Session-seconds during which the Session was connected and its stream was not
   in a drop state.
-- **Target / window:** proposed 99.5% over a rolling 28 days. `[NEEDS BRIAN]` — this is a player
-  experience target before it is an engineering one.
+- **Target / window:** 99.5% over a rolling 28 days. Proposed as a player experience target before
+  an engineering one; **decided by Brian 2026-09-20.**
 - **Alert:** `SessionsDroppingAtRate` on `andara_session_egress_drops_total` rate against the SLO,
   paired with `docs/runbooks/sessions-dropping.md`, shipped in this story.
 
@@ -379,5 +379,5 @@ CLAUDE.md §8, plus:
   the role. An operator playing a Character sees what the Character sees; the privileged view is
   a deliberate act, audited each time it is taken. Nothing in `AW-SRV-004` decides this either way;
   the Hub's `ErrNotPrivileged` ("asked for without the role") presumes asking.
-- `[NEEDS BRIAN]` The Session availability target. The SLO ships at 99.5 % marked proposed; the
-  alert threshold moves with the decision.
+- **Resolved 2026-09-20 (Brian): the Session availability target is 99.5 % over 28 days**, as
+  proposed. `AW-SRV-014` validates it against first measurement.

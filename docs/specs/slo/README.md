@@ -22,7 +22,7 @@ in `docs/runbooks/` is incomplete.
 | `recovery.md` | proposed targets | `AW-SRV-006`, `AW-SRV-007` | RPO and RTO |
 | `world-write-availability.md` | proposed targets | `AW-INF-005` | the World accepting Commands |
 | `edge-availability.md` | proposed targets | `AW-INF-006` | the edge letting players through: 5xx ratio, certificate validity |
-| `session-availability.md` | proposed targets, number `[NEEDS BRIAN]` | `AW-SRV-011` | the Event stream staying open: server-ended streams per stream-second |
+| `session-availability.md` | target decided 2026-09-20 | `AW-SRV-011` | the Event stream staying open: server-ended streams per stream-second |
 
 "Proposed targets" means the number was reasoned from the architecture but not yet checked against a
 running system. The owning story validates it against first measurement and either confirms it or comes

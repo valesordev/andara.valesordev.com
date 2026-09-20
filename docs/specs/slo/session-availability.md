@@ -1,8 +1,9 @@
 # SLO — Session availability
 
-> **Status: proposed targets, 2026-09-20.** `AW-SRV-011` writes it; the number is `[NEEDS BRIAN]` —
-> this is a player experience target before it is an engineering one. The rule ships at the
-> proposed number and moves with the decision.
+> **Status: target decided by Brian, 2026-09-20 — 99.5 % over 28 days.** `AW-SRV-011` writes it;
+> the number was proposed as a player experience target before an engineering one and accepted as
+> such. Validation against first measurement is `AW-SRV-014`'s, the first story with Sessions that
+> receive Events.
 
 A player experiences the World through a Session and its Event stream. World write availability
 (`world-write-availability.md`) is whether they can *act*; this is whether they can *see* — whether
@@ -33,7 +34,7 @@ experience of losing the stream; the latter a deploy. Both count.
 
 | | |
 |---|---|
-| **Target** | 99.5% (proposed) |
+| **Target** | 99.5% |
 | **Window** | rolling 28 days |
 | **Error budget** | **3.4 hours of Session-seconds per 28 days**, spread across every Session |
 
@@ -103,7 +104,6 @@ player disconnected by a deploy is as disconnected as one dropped by a full buff
 
 ## What would change this document
 
-- Brian's number.
 - `AW-SRV-015` landing: linkdead grace makes the Session outlive the stream, and the SLI should
   then count a Session in its grace window as connected-but-not-delivering rather than dropped.
 - A Session-seconds counter on the server, which would make the SLI direct rather than a ratio.

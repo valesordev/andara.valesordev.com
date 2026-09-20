@@ -50,7 +50,7 @@ groups:
     # The Event stream (AW-SRV-011). One alert, on the symptom: players' streams are being
     # ended by the server faster than the Session availability budget allows
     # (docs/specs/slo/session-availability.md). client_gone is the player leaving and is
-    # not a drop. The target is proposed pending Brian's number; the ratio moves with it.
+    # not a drop. The target is 99.5 % over 28 days (Brian, 2026-09-20).
     rules:
       - alert: SessionsDroppingAtRate
         expr: |

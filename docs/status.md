@@ -23,8 +23,6 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
-  AW-SRV-011  — this is a player experience target before it is an engineering one.
-  AW-SRV-011  The Session availability target. The SLO ships at 99.5 % marked proposed; the alert…
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
               10 more, attached to stories neither lane has reached
 
