@@ -248,6 +248,16 @@ A story is done when all of the following hold. Claude Code checks this list at 
 - [ ] The glossary contains every domain term the code introduces.
 - [ ] No `[ASSUMPTION]` remains unresolved.
 
+**"Verified against a real backend" when no in-cluster caller exists yet.** Stories land
+bottom-up, so a story's instruments are often unreachable from the running server until a later
+story supplies the caller (a bound Character, a subscriber). The check is then satisfied by the
+integration suite exercising the story's own code against the local stack's backends (Redpanda,
+Tempo) with assertions on the metric objects, plus a scrape of the same registry's sibling series
+from the server. The story's §8 record says exactly which series the server itself has not yet
+emitted, and the first story that can make the live observation carries it as an inherited
+Definition-of-done line. Deferring the observation this way is not deferring the check; holding a
+story in `review` until a caller two milestones away lands is what `review` does not mean.
+
 ---
 
 ## 9. Automation contract

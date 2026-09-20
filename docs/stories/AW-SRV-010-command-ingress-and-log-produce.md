@@ -4,7 +4,7 @@ title: Command ingress — parse, authorize, and produce to the command log
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: done
 size: M
 depends_on: [AW-SRV-003, AW-SRV-005, AW-INF-004]
 blocks: [AW-INF-005, AW-INF-010, AW-SRV-030, AW-SRV-031]
@@ -73,7 +73,8 @@ received it even before I see what it did.
    on the produce path. The World becomes read-only, not unavailable.
 7. **Given** a produce that times out with an indeterminate outcome **when** it is retried **then** the
    idempotent producer prevents a duplicate record. A player must never move twice because a retry
-   succeeded after an ambiguous timeout.
+   succeeded after an ambiguous timeout. *(This holds for the producer's own retry of one record; a
+   client that submits again after `DEADLINE_EXCEEDED` is a second record — `AW-SRV-031`.)*
 8. **Given** a Session exceeding `ingress.rate_limit` **when** it submits **then** excess Intents are
    rejected with `RESOURCE_EXHAUSTED`, the Session survives, and nothing is produced.
 9. **Given** a Command whose actor is in a Zone owned by a different process **when** it is submitted
@@ -237,6 +238,11 @@ CLAUDE.md §8, plus:
   broker, not inferred from a return value.
 - `docs/runbooks/world-read-only.md` exists.
 - The explicit partitioner is covered by a test that would fail if it fell back to a library default.
+- Inherited from `AW-SRV-003`'s §8 pass (2026-09-19): this story is the first in-cluster caller of
+  `Pipeline.Submit`, so §8's backend verification here includes showing `andara_commands_total{verb}`,
+  `andara_command_duration_seconds{phase="pre_log"}`, and the `command.parse`/`command.authorize` spans
+  under `command.execute` on the compose stack's Prometheus and Tempo — the pre-log half `AW-SRV-003`
+  could only exercise in-process.
 
 ## Open questions
 
@@ -266,16 +272,19 @@ CLAUDE.md §8, plus:
      from a well-behaved Gateway. Add `ingress.transit_hold` to this story's configuration table
      and `andara_ingress_held_intents` (gauge) to its metrics when implementing.
 
-- `[ASSUMPTION]` Default per-Session rate limit of 20/s. A human types perhaps 2/s; 20 leaves room for
-  a client with macros without leaving room for a flood. Tune with real traffic.
-- `[ASSUMPTION]` `Submit` is unary rather than client-streaming. Streaming would cut per-Intent overhead
-  but complicates rate limiting and error mapping, and at human typing rates the overhead is irrelevant.
-  Behavior Agents at 100/s may change this calculus — revisit at `AW-SRV-009`.
-- `[NEEDS BRIAN]` What a player should see when the World goes read-only. A typed error is the
-  mechanism; the wording is a design call, and it is the one error message every player will
-  eventually see. **As built:** `ingress.ReadOnlyMessage`, marked as a placeholder — *"The world is
-  read-only for a moment: your command was not taken. Try it again shortly."* — on the `UNAVAILABLE`
-  with reason `world_read_only`. One constant to change.
+- **Resolved 2026-09-20 (review): 20/s per Session is the default.** A human types perhaps 2/s; 20
+  leaves room for a client with macros without leaving room for a flood. It is a tunable
+  (`ingress.rate_limit`), not a contract; retuning with real traffic is operations, not a reopened
+  question.
+- **Resolved 2026-09-20 (review): `Submit` is unary.** Streaming would cut per-Intent overhead but
+  complicates rate limiting and error mapping, and at human typing rates the overhead is irrelevant.
+  Behavior Agents at 100/s may change this calculus; `AW-SRV-009` owns the revisit and carries it.
+- **Resolved 2026-09-19 (Brian): the read-only wording stands as written.** *"The world is
+  read-only for a moment: your command was not taken. Try it again shortly."* on the `UNAVAILABLE`
+  with reason `world_read_only` is the message. It is system voice — the server speaking as itself,
+  not the World — and `AW-CLI-004` prints server rejection text as given, switching on
+  `ErrorInfo.reason` for behavior only. The `PLACEHOLDER` marker on `ingress.ReadOnlyMessage` is
+  now wrong and comes off with the next PR that touches `server/ingress` (`AW-SRV-031`'s DoD).
 - **Resolved 2026-09-19 (inherited items 1–3):** (1) `Submit` takes raw text and the produced record
   is byte-equal to `Parse`'s output plus the Gateway's four correlation fields, asserted by
   `TestSubmit_ProducesExactlyWhatParseReturned`. (2) Sampling as specified: the `Game/Submit` root is
@@ -314,11 +323,12 @@ CLAUDE.md §8, plus:
 - **Resolved 2026-09-19 (review of PR #34):** `andara_ingress_partition_skew` (a gauge that only
   `Inc()`ed) is `andara_ingress_produced_total{partition}`, a counter; skew is the dashboard's
   `topk(5, rate(...[5m]))`. `docs/specs/slo/tick-health.md` and `simulation-lagging.md` follow.
-- `[ASSUMPTION]` Per-Session Submits are serialized through the whole pipeline — parse, authorize,
-  produce, ack — one at a time. Ordering is then structural rather than a property of the client's
-  in-flight window, and a human's 2/s never notices. A Behavior Agent at 100/s over one Session is
-  bounded by produce latency (~10 ms locally → ~100/s); if `AW-SRV-009` needs more, the queue can
-  release after enqueue rather than after ack, keeping the order the client library preserves.
+- **Resolved 2026-09-20 (review): per-Session Submits are serialized through the whole pipeline** —
+  parse, authorize, produce, ack — one at a time. Ordering is then structural rather than a property
+  of the client's in-flight window, and a human's 2/s never notices. A Behavior Agent at 100/s over
+  one Session is bounded by produce latency (~10 ms locally → ~100/s); if `AW-SRV-009` needs more,
+  the queue can release after enqueue rather than after ack, keeping the order the client library
+  preserves. `AW-SRV-009` carries this beside the unary question.
 - **Verification 2026-09-19.** Against the compose Redpanda (`make test-integration`): AC-1/2/3/4/7/9
   and the partitioner discriminator (a Zone the library default and `sim.PartitionFor` disagree on
   lands where `PartitionFor` says); a dialer fault that loses one produce response after the broker
@@ -340,3 +350,36 @@ CLAUDE.md §8, plus:
   `command.execute` spans and zero `Game/Submit` roots at the 1 % default. The story's manual plan
   (`andara-cli play`, `north` → movement) needs `AW-SRV-014` to bind a Character and `AW-CLI-004` for
   the client; the produce path is verified by the integration suite until then.
+- **§8 pass, 2026-09-20 — done.** Repeated against the compose stack on `main` (`bcbd662`, image
+  rebuilt): `make test-integration` green — AC-1/2/3/4/7/9/10 and the partitioner discriminator
+  (`TestKafka_ExplicitPartitioner`), AC-5/6 by `TestKafka_UnreachableIsReadOnlyThenRecovers` and
+  `TestKafka_ProbeDetectsOutageWithoutTraffic`, AC-7 by `TestKafka_AmbiguousTimeoutNoDuplicate`, AC-8
+  by `TestSubmit_RateLimit`; unit and integration run in CI (`ci.yaml`, `stack.yaml`). Against the
+  running server, over TLS with the bootstrap operator and no Character bound: `frobnicate` →
+  `INVALID_ARGUMENT{unknown_verb}`, `move sideways` → `INVALID_ARGUMENT{invalid_argument}`, `look`
+  and `north` → `PERMISSION_DENIED{not_authorized}`; 60 Submits in 0.5 s → 46 taken to `authorize`,
+  14 `RESOURCE_EXHAUSTED{rate_limited}`; `docker compose stop redpanda` with a Submit every second →
+  `andara_ingress_degraded` 1 within a second, the `command log unreachable` line with the dial
+  error, every denied Submit back in 2.001 s (the audit bound; four `audit record write pending`
+  warnings, `andara_audit_write_failures_total` 4 — the `AW-SRV-008` amendment observed), the tick
+  rate never below 4.5/s and zero overruns across the outage, `/readyz` 200; `start redpanda` → 0
+  and `command log reachable` within a second. Prometheus holds every ingress series
+  (`submits_total` across all ten outcomes, 64 `produced_total`, `pending`, `held_intents`,
+  `produce_duration_seconds`, `produce_retries_total`) and `andara_commands_total{verb}` moving;
+  Loki the `command rejected` lines with `session_id`, `trace_id`, `verb`, `stage`, `code`; Tempo 74
+  `command.parse`/`command.authorize` under `command.execute{verb, stage_failed, code}` under
+  `Game/Submit` from the server. AC-10's `log.produce{partition, offset, retries, acks_wait_ms}` was
+  read back from the stack's Tempo through the integration suite's exporter (the same sampler and
+  filter the server boots), not from the server process.
+
+  **Reach.** With no Character bound, no live Submit reaches the produce: on the server's own series
+  `submits_total{produced}`, `produced_total`, `produce_duration_seconds`, and
+  `andara_command_duration_seconds{phase="pre_log"}` stayed at 0, and `UNAVAILABLE{world_read_only}`
+  never left the server — the outage-period denials fell at `authorize` before it. Those are proven
+  by the integration suite against the same Redpanda, not by the running server. `AW-SRV-014`, the
+  first story that binds a Character in-cluster, inherits showing them from the server. One
+  observation for `AW-SRV-003`, not a defect here: `pre_log` duration is observed only for a Command
+  that passes `authorize` (`pipeline.go`), so a rejection counts in `commands_total` and not in the
+  histogram; if a rejection's stage time should be visible, that is a one-line `AW-SRV-003` follow-up.
+  AC-7 passes for the producer's own retry; the client-retry duplicate and the taxonomy row's "rely
+  on idempotence" are `AW-SRV-031`'s, groomed on the review of PR #34.

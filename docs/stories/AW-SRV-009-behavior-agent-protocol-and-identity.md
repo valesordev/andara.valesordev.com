@@ -201,3 +201,11 @@ and runbook.
 - `[ASSUMPTION]` `WORKLOAD_JWT` in the cluster honors ADR-0005's "workload identity"; `API_KEY` exists
   for `make up` where there is no issuer.
 - `[ASSUMPTION]` One Session drives many NPCs (up to 500); per-NPC Sessions would not scale.
+- **Inherited from `AW-SRV-010`'s §8 pass (2026-09-20), the two questions it deferred here:**
+  `Submit` is unary, and a Session's Submits are serialized through parse → authorize → produce → ack
+  one at a time, so one Session's throughput is bounded by produce latency (~10 ms locally → ~100/s).
+  A Behavior Agent driving many NPCs over one Session at `ingress.agent_rate_limit` (100/s) sits at
+  that bound. If this story needs more, the cheaper change is releasing the per-Session queue after
+  enqueue rather than after ack (the client library preserves order); client-streaming `Submit` is
+  the larger one and reopens rate limiting and error mapping. Decide here, with the agent's real rate.
+

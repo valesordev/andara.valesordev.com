@@ -4,7 +4,7 @@ title: Command pipeline stages split across the log boundary, with look and move
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-001, AW-SRV-002, AW-SRV-008]
 blocks: [AW-SRV-004, AW-SRV-010, AW-SRV-028]
@@ -277,12 +277,14 @@ CLAUDE.md §8, plus:
   verbs, after exact names and aliases; compass aliases `n ne e se s sw w nw u d`; `in` and `out`
   have none. Tokens past the last argument are ignored (`look around`). Verbs and Directions fold to
   lowercase at parse.
-- `[ASSUMPTION]` Display name is the EntityID: a Character's name is globally unique and immutable
-  (glossary), which is what an EntityID is. What a Character carries beyond that is `AW-SRV-014`'s;
-  nothing here invents naming.
-- `[ASSUMPTION]` `sim repl` keeps the Session's Zone binding current by reading engine state after
-  each tick — a harness that owns the engine may look. A Gateway learns it from `CharacterArrived`
-  (`AW-SRV-010`); `Binding` is the seam that keeps the difference outside `command`.
+- **Resolved 2026-09-19 (review):** display name is the EntityID. The glossary's Character entry
+  fixes the name as globally unique and immutable, and `RoomDescribed.occupants` and
+  `CharacterArrived.character_name` carry exactly that. What a Character carries beyond its name is
+  `AW-SRV-014`'s; nothing here invents naming.
+- **Resolved 2026-09-19 (review):** `sim repl` keeps the Session's Zone binding current by reading
+  engine state after each tick — a harness that owns the engine may look. A Gateway learns it from
+  `CharacterArrived` (`AW-SRV-010`); `Binding` is the seam that keeps the difference outside
+  `command`. Held-during-transit is `AW-SRV-010`'s `ingress.transit_hold`.
 - **Resolved 2026-09-18 (Brian):** head-sample by trace at the Gateway root, keep every rejection —
   lands in `AW-SRV-010`, which creates the root span. Originally: sampling for `command.apply` spans. The story asks for a span per Command and
   that is what ships — exported unconditionally, where `sim.tick` is head-sampled one in a hundred
@@ -303,3 +305,23 @@ CLAUDE.md §8, plus:
   and the ack, or an outage past the delivery timeout, loses the Character. `AW-SRV-028` is the
   log-driven handshake that closes it and retires the one-hop bounce; this story's record stands as
   what it verified.
+- **§8 pass, 2026-09-19 — done.** Every AC has a named test (`server/command/command_test.go`,
+  `server/sim/verbs_test.go`, `server/sim/stages_test.go`); the AC-11 guard is `ErrNotConsumed`
+  asserted by `TestHandlers_RefuseUnconsumedContext`; the leak fixture is
+  `TestRejection_MessagesLeakNothing`; both config keys are in the README, `keys.yaml`, and the values
+  schema; `Command`, `Intent`, `Command Pipeline`, `Command Verb`, `Verb Table`, and `Arrive` are in
+  the glossary. `log.proto` changes are additive and `EntityState.Room` is hashed without moving
+  `state_version`. **Backend verification, as observed:** PR #30 showed
+  `andara_command_rejected_total{stage="validate"}` in Prometheus, the `command applied` line in Loki,
+  and the `command.apply` span in Tempo — the post-log side. The pre-log side (`andara_commands_total`,
+  `andara_command_duration_seconds{phase="pre_log"}`, `command.parse`/`command.authorize` spans) has no
+  in-cluster caller until `AW-SRV-010` puts `Pipeline.Submit` behind the Gateway; it is exercised by
+  `sim repl` and unit tests only. `AW-SRV-010`'s DoD carries showing those series on a real backend. On the compose stack at this
+  pass, `andara_commands_total` and `andara_command_duration_seconds` are pre-seeded across the
+  fourteen built-in verbs and both phases, as the metrics contract asks.
+- **Observed on `AW-SRV-010`'s §8 pass (2026-09-20), not a defect:** `andara_command_duration_seconds{phase="pre_log"}`
+  is observed only for a Command that passes `authorize`; a rejection counts in
+  `andara_commands_total{verb}` and not in the histogram. The contract does not say either way. If a
+  rejection's stage time should be visible, it is a one-line change in `Pipeline.Submit` and a
+  sentence here — a follow-up chore, if wanted, not a reopened story.
+

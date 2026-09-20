@@ -4,7 +4,7 @@ title: Event emission, subscription seam, and perception scoping
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-002, AW-SRV-003]
 blocks: [AW-SRV-006, AW-SRV-011, AW-SRV-019, AW-SRV-029, AW-SRV-030]
@@ -282,10 +282,11 @@ CLAUDE.md §8, plus:
   because its own goroutine was starved. Not in the metric list; any value above zero is a process
   problem, and silently blocking the tick would have been the alternative.
   `andara_event_publish_lag_seconds` is measured as Tick Boundary Record publish → broker ack.
-- `[ASSUMPTION]` Perception is Room-scoped for Phase 1. Senses with longer reach — shouting, scrying,
-  a Zone-wide announcement — are additional `Scope` shapes, not a different mechanism, and are added
-  by the stories that introduce them. **Zone-wide already exists** (a Room-less `RoomRef`), used by
-  `ZoneFaulted`.
+- **Resolved 2026-09-19:** perception is Room-scoped as the base, and every longer reach is an
+  additional `Scope` shape on the same mechanism, not a different one. Zone-wide already exists (a
+  Room-less `RoomRef`, used by `ZoneFaulted`); one-hop perception through an Exit is `AW-SRV-029`
+  (the perceived-through form, `perceived_from`); shouting and scrying wait for the mechanic that
+  needs them.
 - **Review of PR #32 (2026-09-19), both findings taken:** (1) an Observer bound to an Entity follows
   it *inside the Hub*, in Event order — `CharacterLeft` addressed to it clears the Room,
   `CharacterArrived` sets it, before the next delivery — rather than a `Move` the Session stream
@@ -301,6 +302,39 @@ CLAUDE.md §8, plus:
 - Serialization is protobuf, per ADR-0007. AC-3 is asserted in `make test`: every log record goes
   through one `Deterministic` marshal, and a descriptor walk over `log.v1` and the Event payloads
   fails on any `map` or float field.
-- `[ASSUMPTION]` `TickCompleted` goes on `andara.events.v1` rather than its own topic, so a replay
-  reads one ordered stream. Splitting it would mean correlating two streams by offset, which is
-  strictly worse. **As shipped by 002.**
+- **Resolved 2026-09-18 (shipped by `AW-SRV-002`):** `TickCompleted` goes on `andara.events.v1`
+  rather than its own topic, so a replay reads one ordered stream. Splitting it would mean
+  correlating two streams by offset, which is strictly worse.
+- **Corrected 2026-09-19 (review): AC-9's "serialization-library" clause, as worded, is not what
+  the lint checks.** `server/sim` holds the generated protobuf *types* — `LoggedCommand` is its
+  input and `EventEnvelope` its output. ADR-0007 chose protobuf as the format; putting the
+  generated types inside the core was `AW-SRV-002`'s as-built choice, closed at its own §8 pass
+  and never written down as a rule — so the protobuf runtime is in the core's transitive
+  dependency set, and this pass is where that is recorded as decided. What the core does not do is serialize:
+  no `proto.Marshal`, no `protojson`, no descriptor walk lives under `server/sim`; the one
+  `Deterministic` marshal and the canonical-encoding check are `tickloop`'s. The depguard rule
+  (`.golangci.yml`, `sim-core-is-dependency-free`) denies transport, datastore, filesystem, wall
+  clock, and global randomness, and that is the invariant AC-9 protects. Widening the deny list to
+  the protobuf runtime would mean the sim cannot name its own wire types; it is not being widened.
+  The alternative — native Go types in the core with proto conversion at `tickloop` and the Gateway
+  — is a real option with a real cost (a second copy of every message and a conversion layer that
+  must stay lossless), and choosing it would be an ADR. Decided this way on review; Brian may
+  overrule.
+- **§8 pass, 2026-09-19 — done.** Every AC has a named test: AC-1/7/8 `TestScope_*`, AC-2
+  `TestOrdering`, AC-3/4 `server/tickloop/event_record_test.go` (the descriptor walk and the
+  unknown-field parse), AC-5 `TestDropNotBlock`, AC-6 `TestFanoutOutsideTick` (500 subscribers,
+  10 ticks, each `Step` under 250 ms with 100 stalled), AC-8's audit record asserted in
+  `TestScope_RedactionAndWorld`, AC-9 `make lint`, AC-10 `TestSubscribeMidTick`, AC-11/12 shipped
+  and verified under `AW-SRV-002`. Both config keys are in the README, `keys.yaml`, and the values
+  schema; `Event`, `Scope`, `Observer`, `Projection`, and `Sense` are in the glossary. The
+  DoD's transport-leak case is `TestScope_LookIsAddressedToTheLooker`. **Backend verification, as
+  observed:** PR #32 showed `andara_events_emitted_total` in Prometheus (no double count after
+  recovery), `event.fanout` spans in Tempo, and a decoded `andara.events.v1` record carrying its
+  Scope. On the compose stack at this pass (image rebuilt from `main` at #33):
+  `andara_event_publish_lag_seconds` live at ~10 ms after the first boundaries acked;
+  `andara_subscribers` and `andara_event_fanout_dropped_total` registered at 0;
+  `andara_events_emitted_total` pre-seeded per type. The subscriber-side series — `andara_subscribers` above zero,
+  `andara_subscriber_drops_total`, `andara_event_scope_redactions_total`, the `warn` drop line,
+  the `subscribe_world` audit record — have no in-cluster caller until `AW-SRV-011` opens a
+  Session stream; they are exercised by `hub_test.go` and `sim repl --tap-events` only, and
+  `AW-SRV-011`'s DoD carries showing them on a real backend.
