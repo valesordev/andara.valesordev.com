@@ -177,7 +177,10 @@ stream drops — the ring and the pump are built to be handed over, not rebuilt.
   `ErrDraining`; the Hub's `ErrClosed`/`ErrNotPrivileged`/`ErrTooManySubscribers` map onto them.
 - `server/gateway`: `AbortStream(ctx)` (the request's `http.ResponseController`, stashed in ctx by a
   handler wrapper; a past write deadline resets the stream) and `DropConnection(ctx)` (closes the
-  request's `net.Conn`; `connState` tears its Sessions down as for a dropped client).
+  request's `net.Conn`; `connState` tears its Sessions down as for a dropped client);
+  `SessionEnder`, the optional interface an Egress implements to be told of a revoked Session before
+  its context is canceled (`Egress.EndSession(id, reason)`, bounded at 1 s); `mapSeamError` lets a
+  code a seam chose itself, other than `CANCELED`, stand ahead of the session-closed mapping.
 - `server/events`: `Hub.LastTick()`.
 - `server/command`: `Binding.Room`; `ingress.Bindings` clears it on `CharacterLeft`, sets it on
   `CharacterArrived`, and gains `OnChange func(sessionID)` called after `Bind`/`Unbind`.
@@ -314,6 +317,16 @@ CLAUDE.md §8, plus:
 - `andara_session_egress_drops_total{reason="draining"}` was not caught by a scrape: the drain
   ends the process within three seconds. `TestDrain_EndsStreamTyped` asserts it through the
   gateway's `OnDrain`.
+- **After the review of PR #37** (image rebuilt at `c9d2b88`+): `andara_sessions_in_drop_state`
+  and `andara_session_egress_drops_total{reason="revoked"}` are registered and scraped at zero
+  from the running server. The drop state needs a stream ended `buffer_full` — `AW-SRV-014`'s
+  observation with the rest; the revoked path needs the bootstrap operator's Account disabled
+  under an open stream, which the local stack has no second operator to do from, so it is
+  `TestRevoked_StreamEndsWithFrame` through the gateway's recheck loop.
+- A revoked Session whose client has stopped reading its socket: `EndSession` returns after its
+  second, the writer stays blocked until the close's reset, and there is no `Disconnect` escalation
+  on that path — the goroutine lives until the connection dies, as any 005 teardown of a stalled
+  client does. Noted, not changed.
 
 ## Open questions
 

@@ -276,7 +276,7 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 	e.mu.Lock()
 	s, ok := e.sessions[id]
 	if !ok {
-		s = &session{e: e, id: id, principal: principal, hist: newHistory(e.opts.ResumeWindow), notify: make(chan struct{})}
+		s = &session{e: e, id: id, principal: principal, ended: ended, hist: newHistory(e.opts.ResumeWindow), notify: make(chan struct{})}
 		e.sessions[id] = s
 		// The Session ending frees everything: the fan-out subscription,
 		// the history, and the stream, which the gateway has already
@@ -297,7 +297,7 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 	// A subscription the fan-out ended is not one: the next Subscribe
 	// starts the Session over, history discarded — a resume from before
 	// it is a Resync — rather than reporting the drop forever.
-	closing, subscribed, cur, open := s.closing, s.sub != nil && !s.ended, s.world, s.stream != nil
+	closing, subscribed, cur, open := s.closing || s.over(), s.sub != nil && !s.hubEnded, s.world, s.stream != nil
 	s.mu.Unlock()
 	switch {
 	case closing:
@@ -358,9 +358,13 @@ func (e *Egress) Rebind(sessionID string) {
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
-	closing, cur, world := s.closing, s.obs, s.world
+	closing, cur, world := s.closing || s.over(), s.obs, s.world
 	s.mu.Unlock()
 	if closing {
+		// The Session has ended and forget is on its way: the routing
+		// table's Unbind woke on the same signal. Nothing is subscribed
+		// for a Session that is over — no throwaway subscription, no
+		// second subscribe_world record.
 		return
 	}
 	obs := e.observer(sessionID, world)
@@ -389,6 +393,10 @@ type session struct {
 	e         *Egress
 	id        string
 	principal auth.Principal
+	// ended is closed when the Session ends (nil for a harness's Session
+	// with no lifetime): the same signal forget wakes on, read directly
+	// where forget's scheduling would otherwise be a race.
+	ended <-chan struct{}
 
 	// rebind serializes whoever replaces the fan-out subscription —
 	// Subscribe, Rebind, close — so two do not race to be current. Taken
@@ -403,17 +411,28 @@ type session struct {
 	// notify is closed and replaced whenever hist grows or the fan-out
 	// subscription ends: what a caught-up stream waits on.
 	notify chan struct{}
-	// ended is set when the current fan-out subscription closed, reason
-	// saying why: the stream ends with the reason, the history is
+	// hubEnded is set when the current fan-out subscription closed,
+	// reason saying why: the stream ends with the reason, the history is
 	// discarded, and the next Subscribe subscribes again. closing is set
 	// by close: the Session is going away and no subscription is made
 	// for it again. inDrop is the availability SLI's drop state: the
 	// server ended the last stream and the client has not reopened one.
-	ended   bool
-	reason  string
-	closing bool
-	inDrop  bool
-	stream  *stream
+	hubEnded bool
+	reason   string
+	closing  bool
+	inDrop   bool
+	stream   *stream
+}
+
+// over reports whether the Session's lifetime has ended, whether or not
+// forget has run yet.
+func (s *session) over() bool {
+	select {
+	case <-s.ended:
+		return true
+	default:
+		return false
+	}
 }
 
 // resubscribe subscribes to the fan-out as obs, replacing any current
@@ -428,7 +447,7 @@ func (s *session) resubscribe(ctx context.Context, obs events.Observer) error {
 	old := s.sub
 	s.sub, s.obs, s.world = sub, obs, obs.World
 	s.hist.reset()
-	s.ended, s.reason = false, ""
+	s.hubEnded, s.reason = false, ""
 	if s.stream != nil {
 		s.stream.cursor = s.hist.end()
 	}
@@ -510,7 +529,7 @@ func (s *session) pump(sub *events.Subscription) {
 	}
 	s.mu.Lock()
 	if s.sub == sub {
-		s.ended, s.reason = true, sub.Reason()
+		s.hubEnded, s.reason = true, sub.Reason()
 		close(s.notify)
 		s.notify = make(chan struct{})
 	}
@@ -526,7 +545,7 @@ func (s *session) attach(ctx context.Context, last uint64) (*stream, string, err
 	if s.stream != nil {
 		return nil, "", ErrAlreadySubscribed
 	}
-	if s.ended {
+	if s.hubEnded {
 		return nil, "", hubEnded(s.reason)
 	}
 	seq, resync := s.hist.resume(last)
@@ -645,7 +664,7 @@ func (st *stream) run(ctx context.Context, out Sender) error {
 		case st.terminal != "":
 			// The final frame is sent; the Session is closing.
 			err = terminalErr(st.terminal)
-		case s.ended:
+		case s.hubEnded:
 			err = hubEnded(s.reason)
 		default:
 			notify = s.notify

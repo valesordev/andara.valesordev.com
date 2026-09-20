@@ -677,7 +677,7 @@ func TestDraining(t *testing.T) {
 func TestRebind(t *testing.T) {
 	f := newFixture(t, nil)
 	a := f.subscribe("a", player, 0, false, nil)
-	defer a.end()
+	defer a.cancel()
 	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
 	f.emit(plaza())
 	a.quiet() // nowhere yet
@@ -693,6 +693,25 @@ func TestRebind(t *testing.T) {
 		t.Errorf("no-op rebind resubscribed: drops = %v", got)
 	}
 	f.e.Rebind("nobody") // no state: no-op
+
+	// The Session ends: the routing table's Unbind wakes on the same
+	// signal as forget and calls Rebind with a changed perception, in
+	// whichever order the scheduler picks. Nothing is subscribed for a
+	// Session that is over (review of PR #37).
+	f.place("a", "alice", "town", "hall")
+	close(a.ended)
+	for i := 0; i < 20; i++ {
+		f.e.Rebind("a")
+	}
+	a.cancel()
+	a.wait()
+	waitFor(t, func() bool { return f.e.Sessions() == 0 }, "session forgotten")
+	if got := counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed)); got != 2 {
+		t.Errorf("rebind after the session ended resubscribed: unsubscribed drops = %v, want 2 (the rebind, then forget)", got)
+	}
+	if got := counter(t, f.hub.Metrics().Subscribers); got != 0 {
+		t.Errorf("subscriptions left behind: %v", got)
+	}
 }
 
 // The fan-out dropping the Session's subscription — the pump starved,
@@ -730,7 +749,7 @@ func TestHubDrop(t *testing.T) {
 	waitFor(t, func() bool {
 		sess.mu.Lock()
 		defer sess.mu.Unlock()
-		return sess.ended
+		return sess.hubEnded
 	}, "pump to observe the fan-out drop")
 	b := f.subscribe("a", player, first, false, func(c *client) { c.ended = a.ended })
 	if got := b.next(); got.GetResync().GetReason() != ResyncNoHistory {
