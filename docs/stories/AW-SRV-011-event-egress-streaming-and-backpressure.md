@@ -279,6 +279,36 @@ CLAUDE.md §8, plus:
   `andara_subscriber_drops_total{reason="buffer_full"}` from a deliberately stalled Session, the `warn`
   drop line in Loki with `session_id`, and the `subscribe_world` audit record for a Game Master stream
   — the subscriber-side series `AW-SRV-004` could only exercise in tests and `sim repl`.
+  **Restated 2026-09-20:** with the Hub subscription per Session and drained by the egress's own
+  goroutine, a stalled Session shows on `andara_session_egress_drops_total{reason="buffer_full"}` and
+  the Hub's `buffer_full` is the starved-process case. `andara_subscribers` and `subscribe_world`
+  were shown live (verification record); the stalled-Session drop and its warn line need a Session
+  that receives Events, and are carried to `AW-SRV-014` with the rest of the Event-delivery record.
+
+### Verification record (2026-09-20, compose stack, image built from this branch)
+
+- `make check` clean; `server/egress` under `-race` ×5.
+- **Live, from the running server** (`.local/probe`, an operator Session): a player-scope stream
+  and a World-scope stream open together — `andara_stream_subscribers` and `andara_subscribers` both
+  2 in Prometheus; heartbeats at 20 s carrying the loop's Tick (`tick=1681390` → `1681590`, 200
+  ticks apart at 10/s; the first build reported `tick=0` on a World that emits nothing, which is
+  why the loop's `OnTick` now feeds the egress); a resume from `last_event_id=5` opens with
+  `Resync{no_history}` and `andara_stream_resyncs_total{reason="no_history"}` 1; a second
+  `Subscribe` on the Session is `FAILED_PRECONDITION already_subscribed`; `docker compose restart
+  andara-server` under an open stream ends it `UNAVAILABLE server draining` (AC-8). Loki: `stream
+  resync: resume point not retained` with `session_id`, `last_event_id`, `reason`, `trace_id`;
+  `world-scope subscription: privileged read` with `actor_account_id`. Tempo: the `Game/Subscribe`
+  root with `stream.world`, `stream.last_event_id`, and `stream.resync`. `andara.audit.v1`: one
+  `subscribe_world` record per World stream, two streams → two records (AC-9, once, not per Event).
+  `SessionsDroppingAtRate` loaded by the compose Prometheus (`health: ok`, inactive).
+- **Not reachable from the running server until `AW-SRV-014` binds a Character** (§8's
+  no-caller rule): Event delivery on a stream (AC-1, AC-2), a stream ended `buffer_full` and its
+  `warn` line, a resume that replays retained Events, `andara_stream_buffer_depth` samples,
+  `andara_stream_events_sent_total` for an EventType. Each is exercised over a real TLS gateway by
+  the tests named in the test plan, and `AW-SRV-014` carries the live observation.
+- `andara_session_egress_drops_total{reason="draining"}` was not caught by a scrape: the drain
+  ends the process within three seconds. `TestDrain_EndsStreamTyped` asserts it through the
+  gateway's `OnDrain`.
 
 ## Open questions
 

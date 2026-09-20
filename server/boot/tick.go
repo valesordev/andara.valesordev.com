@@ -136,6 +136,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		Tracer:          rt.Tel.Tracer,
 		Registry:        rt.Tel.Reg,
 		Commands:        rt.Commands,
+		OnTick:          rt.onTick(),
 	})
 	if err != nil {
 		_ = source.Close()
@@ -154,4 +155,15 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		slog.Uint64("seed", engine.State().Seed),
 	)
 	return loop, nil
+}
+
+// onTick is what the loop tells after every tick: the egress, so a
+// Heartbeat on a quiet World carries the Tick that just completed. Nil
+// when there is no egress.
+func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
+	if rt.Egress == nil {
+		return nil
+	}
+	eg := rt.Egress
+	return func(res sim.StepResult, _ time.Duration) { eg.ObserveTick(uint64(res.Tick)) }
 }

@@ -42,8 +42,9 @@ type Options struct {
 	// (AW-SRV-003): the Gateway holds the same instance for the pre-log
 	// half. Nil observes nothing.
 	Commands *command.Metrics
-	// OnTick, if set, is called after every tick with its result. Tests use
-	// it; production leaves it nil.
+	// OnTick, if set, is called after every tick with its result, on the
+	// loop's goroutine: tests use it, and the boot hands the Tick to the
+	// egress for its heartbeats (AW-SRV-011). It must not block.
 	OnTick func(sim.StepResult, time.Duration)
 }
 

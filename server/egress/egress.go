@@ -65,7 +65,9 @@ type Options struct {
 	// Sender needs its own.
 	Abort      func(ctx context.Context) bool
 	Disconnect func(ctx context.Context) bool
-	// LastTick is what a Heartbeat reports; defaults to the Hub's.
+	// LastTick is what a Heartbeat reports. Defaults to the later of the
+	// Hub's last published Tick and what ObserveTick was told — the Hub
+	// sees only ticks that emitted something.
 	LastTick func() uint64
 
 	Log      *slog.Logger
@@ -82,6 +84,8 @@ type Egress struct {
 	// draining is set by Drain: a stream that ends after it ended because
 	// the server is going away, whatever the ctx says.
 	draining atomic.Bool
+	// tick is the last Tick ObserveTick reported.
+	tick atomic.Uint64
 
 	mu       sync.Mutex
 	sessions map[string]*session
@@ -107,9 +111,10 @@ func New(opts Options) *Egress {
 	if opts.Disconnect == nil {
 		opts.Disconnect = gateway.DropConnection
 	}
+	e := &Egress{sessions: map[string]*session{}}
 	if opts.LastTick == nil {
 		hub := opts.Hub
-		opts.LastTick = func() uint64 { return uint64(hub.LastTick()) }
+		opts.LastTick = func() uint64 { return max(uint64(hub.LastTick()), e.tick.Load()) }
 	}
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.DiscardHandler)
@@ -117,12 +122,19 @@ func New(opts Options) *Egress {
 	if opts.Tracer == nil {
 		opts.Tracer = noop.NewTracerProvider().Tracer("andara-server")
 	}
-	return &Egress{
-		opts:     opts,
-		log:      opts.Log,
-		tracer:   opts.Tracer,
-		metrics:  NewMetrics(opts.Registry),
-		sessions: map[string]*session{},
+	e.opts, e.log, e.tracer, e.metrics = opts, opts.Log, opts.Tracer, NewMetrics(opts.Registry)
+	return e
+}
+
+// LastTick is what the next Heartbeat would report.
+func (e *Egress) LastTick() uint64 { return e.opts.LastTick() }
+
+// ObserveTick records that the simulation completed tick t, so a
+// Heartbeat on a quiet World still shows it moving. The tick loop calls
+// it after every tick; one atomic store.
+func (e *Egress) ObserveTick(t uint64) {
+	if t > e.tick.Load() {
+		e.tick.Store(t)
 	}
 }
 

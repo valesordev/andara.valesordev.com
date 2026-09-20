@@ -184,6 +184,9 @@ func TestStartEgress_MemoryLoopback(t *testing.T) {
 	}
 	cancelStream()
 	<-streamDone
+	if rt.Egress.LastTick() == 0 {
+		t.Error("the loop's ticks never reached the egress; a heartbeat would report tick 0")
+	}
 	stop()
 	if err := <-done; err != nil {
 		t.Fatalf("loop: %v", err)
