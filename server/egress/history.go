@@ -17,10 +17,15 @@ type frame struct {
 
 // history is a Session's retained deliveries: the last window frames
 // appended, each at a sequence number that only grows, so a stream is a
-// cursor and a resume is a search. Not safe for concurrent use; the
-// session's lock covers it.
+// cursor and a resume is a search. The ring grows as it fills, up to
+// window, so a Session that has been sent little holds little. Not safe
+// for concurrent use; the session's lock covers it.
 type history struct {
-	buf   []frame
+	window int
+	buf    []frame
+	// base is the seq of buf's slot 0: a frame's slot is (seq-base) mod
+	// window once the ring is full, and simply seq-base while it grows.
+	base  uint64
 	start uint64 // seq of buf's oldest frame
 	n     int
 	// evicted is the ID of the newest Event that has fallen out of the
@@ -31,7 +36,7 @@ type history struct {
 }
 
 func newHistory(window int) history {
-	return history{buf: make([]frame, window)}
+	return history{window: window}
 }
 
 // end is the seq the next frame will take: where a fresh stream starts.
@@ -40,20 +45,26 @@ func (h *history) end() uint64 { return h.start + uint64(h.n) }
 // at is the frame at seq, which must be in [start, end). A seq's slot
 // never moves, so eviction is a bound moving, not a copy.
 func (h *history) at(seq uint64) frame {
-	return h.buf[seq%uint64(len(h.buf))]
+	return h.buf[(seq-h.base)%uint64(h.window)]
 }
 
-// append retains f, evicting the oldest once the window is full.
+// append retains f, growing the ring until it is window deep and then
+// evicting the oldest.
 func (h *history) append(f frame) {
-	if h.n == len(h.buf) {
-		old := h.at(h.start)
-		if old.id != 0 {
-			h.evicted = old.id
+	if len(h.buf) < h.window {
+		// Growing: seq-base is the index, and nothing has been evicted.
+		h.buf = append(h.buf, f)
+	} else {
+		if h.n == h.window {
+			old := h.at(h.start)
+			if old.id != 0 {
+				h.evicted = old.id
+			}
+			h.start++
+			h.n--
 		}
-		h.start++
-		h.n--
+		h.buf[(h.end()-h.base)%uint64(h.window)] = f
 	}
-	h.buf[h.end()%uint64(len(h.buf))] = f
 	h.n++
 	if f.id != 0 {
 		h.newest = f.id
@@ -61,9 +72,12 @@ func (h *history) append(f frame) {
 }
 
 // reset forgets everything: a Session whose perception changed has no
-// history a client could resume against.
+// history a client could resume against. The ring's memory is released
+// too; it grows again as the new perception delivers.
 func (h *history) reset() {
 	h.start = h.end()
+	h.base = h.start
+	h.buf = nil
 	h.n = 0
 	h.evicted, h.newest = 0, 0
 }

@@ -267,7 +267,10 @@ func (s *Server) closeConn(id uint64) bool {
 	if !ok {
 		return false
 	}
-	return c.Close() == nil
+	// A TLS close on a wedged socket may not deliver its close_notify;
+	// the connection is closed either way.
+	_ = c.Close()
+	return true
 }
 
 // connState tears down every Session on a connection when it closes

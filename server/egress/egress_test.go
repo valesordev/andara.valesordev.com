@@ -548,6 +548,41 @@ func TestWorld(t *testing.T) {
 	}
 }
 
+// A second Subscribe that toggles World visibility while a stream is open
+// is refused without disturbing the open stream's perception or history.
+func TestWorldToggle_RefusedWhileStreamOpen(t *testing.T) {
+	f := newFixture(t, nil)
+	f.place("g", "alice", "town", "plaza")
+	g := f.subscribe("g", gm, 0, false, nil)
+	defer g.end()
+	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	first := f.emit(plaza())
+	g.next()
+	second := f.subscribe("g", gm, 0, true, func(c *client) { c.ended = g.ended })
+	if code, reason := reasonOf(t, second.wait()); code != connect.CodeFailedPrecondition || reason != ReasonAlreadySubscribed {
+		t.Fatalf("second stream: %s/%s", code, reason)
+	}
+	if got := counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed)); got != 0 {
+		t.Fatalf("the open stream's subscription was replaced: drops = %v", got)
+	}
+	// Still the Character's perception, history intact.
+	f.emit(hall())
+	g.quiet()
+	next := f.emit(plaza())
+	if got := g.next().GetEventId(); got != next {
+		t.Fatalf("got %d, want %d", got, next)
+	}
+	g.cancel()
+	g.wait()
+	f.settled("g", next)
+	back := f.subscribe("g", gm, first, false, func(c *client) { c.ended = g.ended })
+	if got := back.next().GetEventId(); got != next {
+		t.Fatalf("resume after the refused toggle got %d, want %d", got, next)
+	}
+	back.cancel()
+	back.wait()
+}
+
 // AC-8 at the seam: the fan-out shutting down ends the stream with
 // draining, and so does the Session ending after Drain.
 func TestDraining(t *testing.T) {

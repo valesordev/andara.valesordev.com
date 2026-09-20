@@ -221,36 +221,64 @@ func (e *Egress) dropReason(ctx context.Context, st *stream, err error) string {
 }
 
 // session is the Session's retained state, made on its first Subscribe
-// and kept until the Session ends.
+// and kept until the Session ends. The fan-out subscription is made
+// outside e.mu — a World subscription audits, and an audit write waits on
+// the log — under the Session's own rebind lock.
 func (e *Egress) session(ctx context.Context, id string, principal auth.Principal, ended <-chan struct{}, world bool) (*session, error) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
-	if s, ok := e.sessions[id]; ok {
-		if world != s.world {
-			// The privileged view is asked for per stream; changing it is
-			// a new perception, with no history to resume against.
-			if err := s.resubscribe(ctx, e.observer(id, world)); err != nil {
-				return nil, err
-			}
+	s, ok := e.sessions[id]
+	if !ok {
+		s = &session{e: e, id: id, principal: principal, hist: newHistory(e.opts.ResumeWindow), notify: make(chan struct{})}
+		e.sessions[id] = s
+		// The Session ending frees everything: the fan-out subscription,
+		// the history, and the stream, which the gateway has already
+		// canceled. A Session with no lifetime — a harness's — is kept
+		// until the Hub closes.
+		if ended != nil {
+			go func() {
+				<-ended
+				e.forget(id)
+			}()
 		}
-		return s, nil
 	}
-	s := &session{e: e, id: id, principal: principal, hist: newHistory(e.opts.ResumeWindow), notify: make(chan struct{})}
+	e.mu.Unlock()
+
+	s.rebind.Lock()
+	defer s.rebind.Unlock()
+	s.mu.Lock()
+	closing, subscribed, cur, open := s.closing, s.sub != nil, s.world, s.stream != nil
+	s.mu.Unlock()
+	switch {
+	case closing:
+		return nil, context.Canceled
+	case subscribed && cur == world:
+		return s, nil
+	case open:
+		// The privileged view is asked for per stream; changing it is a
+		// new perception, and the stream that has the old one is not
+		// disturbed by a second Subscribe that will be refused anyway.
+		return nil, ErrAlreadySubscribed
+	}
 	if err := s.resubscribe(ctx, e.observer(id, world)); err != nil {
+		if !subscribed {
+			e.discard(id, s)
+		}
 		return nil, err
 	}
-	e.sessions[id] = s
-	// The Session ending frees everything: the fan-out subscription, the
-	// history, and the stream, which the gateway has already canceled.
-	// A Session with no lifetime — a harness's — is kept until the Hub
-	// closes.
-	if ended != nil {
-		go func() {
-			<-ended
-			e.forget(id)
-		}()
-	}
 	return s, nil
+}
+
+// discard removes a Session whose first subscription never happened, so
+// the next Subscribe starts clean and nothing is retained for nobody.
+func (e *Egress) discard(id string, s *session) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	s.mu.Lock()
+	empty := s.sub == nil
+	s.mu.Unlock()
+	if empty && e.sessions[id] == s {
+		delete(e.sessions, id)
+	}
 }
 
 func (e *Egress) observer(id string, world bool) events.Observer {
@@ -267,16 +295,25 @@ func (e *Egress) observer(id string, world bool) events.Observer {
 // discarded — it was another perception's — so a stream open at the time
 // continues from the new subscription and a later resume from before it
 // is a Resync. The routing table calls this when a Character is bound or
-// unbound (AW-SRV-014); a Session with no stream state is untouched.
+// unbound (AW-SRV-014); a Session with no stream state, or one that is
+// ending, is untouched.
 func (e *Egress) Rebind(sessionID string) {
 	e.mu.Lock()
-	defer e.mu.Unlock()
 	s, ok := e.sessions[sessionID]
+	e.mu.Unlock()
 	if !ok {
 		return
 	}
-	obs := e.observer(sessionID, s.world)
-	if obs == s.obs {
+	s.rebind.Lock()
+	defer s.rebind.Unlock()
+	s.mu.Lock()
+	closing, cur, world := s.closing, s.obs, s.world
+	s.mu.Unlock()
+	if closing {
+		return
+	}
+	obs := e.observer(sessionID, world)
+	if obs == cur {
 		return
 	}
 	if err := s.resubscribe(context.Background(), obs); err != nil {
@@ -302,6 +339,11 @@ type session struct {
 	id        string
 	principal auth.Principal
 
+	// rebind serializes whoever replaces the fan-out subscription —
+	// Subscribe, Rebind, close — so two do not race to be current. Taken
+	// before mu, never inside it.
+	rebind sync.Mutex
+
 	mu    sync.Mutex
 	obs   events.Observer
 	world bool
@@ -312,15 +354,17 @@ type session struct {
 	notify chan struct{}
 	// ended is set when the current fan-out subscription closed, reason
 	// saying why: from then on the Session is unusable and the stream
-	// ends with the reason.
-	ended  bool
-	reason string
-	stream *stream
+	// ends with the reason. closing is set by close: the Session is
+	// going away and no subscription is made for it again.
+	ended   bool
+	reason  string
+	closing bool
+	stream  *stream
 }
 
 // resubscribe subscribes to the fan-out as obs, replacing any current
 // subscription. History is reset and an attached stream continues from
-// the new subscription's first delivery.
+// the new subscription's first delivery. Called under rebind.
 func (s *session) resubscribe(ctx context.Context, obs events.Observer) error {
 	sub, err := s.e.opts.Hub.Subscribe(ctx, events.Subscriber{Observer: obs, Principal: s.principal, SessionID: s.id})
 	if err != nil {
@@ -366,6 +410,20 @@ func (s *session) pump(sub *events.Subscription) {
 			if backlog > uint64(e.opts.Buffer) {
 				st.ended = true
 				drop, lastSent, abort = st, st.lastSent, st.sending
+				if abort {
+					// The writer is inside Send, on a client that is not
+					// consuming: reset the stream so it returns. Under
+					// the lock, deliberately: the writer re-takes it when
+					// Send returns, so the handler cannot return — and
+					// the HTTP/2 server cannot retire the ResponseWriter
+					// the reset acts on — until this call is done. The
+					// reset itself only enqueues a frame for the
+					// connection's serve loop; it never waits on the
+					// socket. A writer between Sends sees ended on its
+					// next pass and ends the stream itself, with the
+					// typed reason on the wire.
+					e.opts.Abort(st.ctx)
+				}
 			}
 		}
 		close(s.notify)
@@ -376,12 +434,6 @@ func (s *session) pump(sub *events.Subscription) {
 				slog.String("session_id", s.id), slog.Uint64("buffered", uint64(e.opts.Buffer)),
 				slog.Uint64("last_sent", lastSent), slog.Uint64("tick", uint64(d.Tick)), slog.String("trace_id", traceID(drop.ctx)))
 			if abort {
-				// The writer is inside Send, on a client that is not
-				// consuming: reset the stream so it returns. Outside the
-				// lock — this reaches into the HTTP/2 server. A writer
-				// between Sends sees ended on its next pass and ends the
-				// stream itself, with the typed reason on the wire.
-				e.opts.Abort(drop.ctx)
 				// A reset cannot get past a socket the client has stopped
 				// reading: every frame for that connection is queued
 				// behind the one blocked in the kernel. If the Send is
@@ -440,12 +492,16 @@ func (s *session) detach(st *stream) {
 	s.mu.Unlock()
 }
 
-// close ends the fan-out subscription; the pump marks the Session ended
-// and the stream, if any, returns.
+// close ends the fan-out subscription and marks the Session closing, so
+// nothing subscribes for it again; the pump marks it ended and the
+// stream, if any, returns.
 func (s *session) close() {
+	s.rebind.Lock()
 	s.mu.Lock()
+	s.closing = true
 	sub := s.sub
 	s.mu.Unlock()
+	s.rebind.Unlock()
 	if sub != nil {
 		s.e.opts.Hub.Unsubscribe(sub)
 	}
