@@ -126,6 +126,18 @@ ANDARA_SUBSCRIBER_BUFFER: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_MAX_SUBSCRIBERS: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "egress" "buffer" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_EGRESS_BUFFER: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "egress" "resume_window" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_EGRESS_RESUME_WINDOW: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "egress" "heartbeat_interval" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_HEARTBEAT_INTERVAL: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "ingress" "rate_limit" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_INGRESS_RATE_LIMIT: {{ $v | toString | quote }}

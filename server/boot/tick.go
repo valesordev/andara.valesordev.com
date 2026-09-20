@@ -10,8 +10,6 @@ import (
 	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
-	"github.com/valesordev/andara/server/auth"
-	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -37,21 +35,12 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	}
 	engine := sim.NewEngine(rt.World, rt.Templates, engineCfg)
 
-	// The fan-out is the Engine's one sink (AW-SRV-004): Publish is one
-	// enqueue from the tick; scoping, redaction form, and delivery happen
-	// on the Hub's goroutine behind bounded per-subscriber buffers.
-	var audit *auth.Auditor
-	if rt.Accounts != nil {
-		audit = rt.Accounts.Auditor()
+	// The fan-out is the Engine's one sink (AW-SRV-004). Built by
+	// StartEvents before the gateway, which streams from it (AW-SRV-011);
+	// here for a boot that has no gateway.
+	if rt.Events == nil {
+		rt.StartEvents()
 	}
-	rt.Events = events.New(events.Options{
-		Buffer:         cfg.SubscriberBuffer,
-		MaxSubscribers: cfg.MaxSubscribers,
-		Audit:          audit,
-		Log:            rt.Tel.Log,
-		Tracer:         rt.Tel.Tracer,
-		Registry:       rt.Tel.Reg,
-	})
 
 	var (
 		source    tickloop.Source

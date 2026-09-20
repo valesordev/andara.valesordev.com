@@ -24,6 +24,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `ingress-error-rate.md` | `AW-INF-006` | `IngressErrorRateHigh` |
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 | `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
+| `sessions-dropping.md` | `AW-SRV-011` | `SessionsDroppingAtRate` |
 
 ## Planned
 

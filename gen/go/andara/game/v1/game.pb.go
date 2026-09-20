@@ -309,7 +309,13 @@ type SubscribeRequest struct {
 	// Resume point. Zero means "from now". If the requested ID is older than the
 	// server can serve, the stream opens with a resync rather than a gap —
 	// AW-SRV-011 owns that behavior.
-	LastEventId   uint64 `protobuf:"varint,2,opt,name=last_event_id,json=lastEventId,proto3" json:"last_event_id,omitempty"`
+	LastEventId uint64 `protobuf:"varint,2,opt,name=last_event_id,json=lastEventId,proto3" json:"last_event_id,omitempty"`
+	// Ask for World visibility: every Event, whole, wherever it happens
+	// (AW-SRV-004 AC-8). Requires game_master or operator; anyone else gets
+	// PERMISSION_DENIED, and a privileged stream is audited once at subscribe
+	// time. Off, a Game Master perceives from their Character like anyone
+	// else — the privileged view is asked for, never implied by the role.
+	World         bool `protobuf:"varint,3,opt,name=world,proto3" json:"world,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -356,6 +362,13 @@ func (x *SubscribeRequest) GetLastEventId() uint64 {
 		return x.LastEventId
 	}
 	return 0
+}
+
+func (x *SubscribeRequest) GetWorld() bool {
+	if x != nil {
+		return x.World
+	}
+	return false
 }
 
 type CloseSessionRequest struct {
@@ -464,11 +477,12 @@ const file_andara_game_v1_game_proto_rawDesc = "" +
 	"client_ref\x18\x03 \x01(\tR\tclientRef\"W\n" +
 	"\x0eSubmitResponse\x12'\n" +
 	"\x0faccepted_offset\x18\x01 \x01(\x03R\x0eacceptedOffset\x12\x1c\n" +
-	"\tpartition\x18\x02 \x01(\x05R\tpartition\"U\n" +
+	"\tpartition\x18\x02 \x01(\x05R\tpartition\"k\n" +
 	"\x10SubscribeRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12\"\n" +
-	"\rlast_event_id\x18\x02 \x01(\x04R\vlastEventId\"4\n" +
+	"\rlast_event_id\x18\x02 \x01(\x04R\vlastEventId\x12\x14\n" +
+	"\x05world\x18\x03 \x01(\bR\x05world\"4\n" +
 	"\x13CloseSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +

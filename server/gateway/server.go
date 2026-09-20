@@ -101,6 +101,7 @@ type Server struct {
 		sync.Mutex
 		next uint64
 		ids  map[net.Conn]uint64
+		byID map[uint64]net.Conn
 	}
 }
 
@@ -148,6 +149,7 @@ func New(opts Options) (*Server, error) {
 		serveErr: make(chan error, 1),
 	}
 	s.conns.ids = map[net.Conn]uint64{}
+	s.conns.byID = map[uint64]net.Conn{}
 	s.sessions = newSessionStore(s.metrics, s.log, s.tracer)
 	s.drainCtx, s.drainStop = context.WithCancel(context.Background())
 
@@ -169,7 +171,7 @@ func New(opts Options) (*Server, error) {
 	mux.Handle(grpcreflect.NewHandlerV1Alpha(reflector))
 
 	s.http = &http.Server{
-		Handler: mux,
+		Handler: withResponseController(mux),
 		TLSConfig: &tls.Config{
 			Certificates: []tls.Certificate{cert},
 			MinVersion:   tls.VersionTLS12,
@@ -189,6 +191,55 @@ func New(opts Options) (*Server, error) {
 
 type connIDKey struct{}
 
+type responseControllerKey struct{}
+
+// withResponseController puts the request's http.ResponseController where
+// a streaming seam can reach it through ctx (AbortStream). Connect writes
+// through the ResponseWriter the mux hands it, so this is the same one;
+// nothing is wrapped, so Connect's own flushing sees the real writer.
+func withResponseController(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := context.WithValue(r.Context(), responseControllerKey{}, http.NewResponseController(w))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// AbortStream resets the stream ctx belongs to, from any goroutine: a Send
+// blocked on the client's flow-control window fails at once, and so does
+// every Send after. The connection and the other streams on it are left
+// alone — this is how a Subscribe whose client has stopped consuming is
+// ended without waiting for it (AW-SRV-011 AC-4). Reports whether ctx
+// named a stream.
+//
+// Mechanism: a write deadline in the past. On HTTP/2 that is RST_STREAM
+// to the client; on HTTP/1.1 the connection's write fails and the server
+// closes it after the handler returns.
+//
+// It cannot help when the client has stopped reading its socket: then
+// the connection's writer is blocked in the kernel with every stream's
+// frames behind it, the reset among them, and only DropConnection ends
+// the Send.
+func AbortStream(ctx context.Context) bool {
+	rc, ok := ctx.Value(responseControllerKey{}).(*http.ResponseController)
+	if !ok {
+		return false
+	}
+	return rc.SetWriteDeadline(time.Now().Add(-time.Second)) == nil
+}
+
+// DropConnection closes the connection ctx's request arrived on, from any
+// goroutine. Every stream on it fails, and every Session on it is torn
+// down as if the client had dropped (AC-7). The escalation for a client
+// that has stopped reading its socket, where AbortStream cannot reach.
+// Reports whether ctx named an open connection.
+func DropConnection(ctx context.Context) bool {
+	closer, ok := ctx.Value(connCloserKey{}).(func(uint64) bool)
+	if !ok {
+		return false
+	}
+	return closer(connIDFrom(ctx))
+}
+
 // connContext stamps a connection identity into every request context on
 // that connection — HTTP/1.1 and HTTP/2 both derive request contexts from
 // it — so OpenSession can bind the Session to the connection.
@@ -197,9 +248,26 @@ func (s *Server) connContext(ctx context.Context, c net.Conn) context.Context {
 	s.conns.next++
 	id := s.conns.next
 	s.conns.ids[c] = id
+	s.conns.byID[id] = c
 	s.conns.Unlock()
 	s.sessions.connOpened(id)
-	return context.WithValue(ctx, connIDKey{}, id)
+	ctx = context.WithValue(ctx, connIDKey{}, id)
+	return context.WithValue(ctx, connCloserKey{}, s.closeConn)
+}
+
+type connCloserKey struct{}
+
+// closeConn closes connection id, if it is still open. Its serve loop
+// ends, connState observes the close, and every Session on it is torn
+// down (AC-7) — the same path a client dropping takes.
+func (s *Server) closeConn(id uint64) bool {
+	s.conns.Lock()
+	c, ok := s.conns.byID[id]
+	s.conns.Unlock()
+	if !ok {
+		return false
+	}
+	return c.Close() == nil
 }
 
 // connState tears down every Session on a connection when it closes
@@ -214,6 +282,7 @@ func (s *Server) connState(c net.Conn, st http.ConnState) {
 	s.conns.Lock()
 	id, ok := s.conns.ids[c]
 	delete(s.conns.ids, c)
+	delete(s.conns.byID, id)
 	s.conns.Unlock()
 	if ok {
 		s.sessions.connClosed(id)

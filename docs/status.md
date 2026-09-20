@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-49 stories — 32 ready · 17 done
+49 stories — 1 in-progress · 31 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,17 +14,19 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
+  now    AW-SRV-011  Event egress — server-streaming subscription with per-session backpressure
+         branch aw-srv-011-event-egress-streaming-and-backpressure
   next   AW-SRV-006  ready  Zone snapshots keyed to partition offsets  (unblocks 2)
-  next   AW-SRV-011  ready  Event egress — server-streaming subscription with per-s…  (unblocks 2)
+  next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
   held   13 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-009, AW-SRV-014,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
   AW-SRV-011  — this is a player experience target before it is an engineering one.
-  AW-SRV-011  The Session availability target.
-              11 more, attached to stories neither lane has reached
+  AW-SRV-011  The Session availability target. The SLO ships at 99.5 % marked proposed; the alert…
+  AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
+              10 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

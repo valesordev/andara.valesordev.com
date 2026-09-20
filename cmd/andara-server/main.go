@@ -72,14 +72,17 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 	defer accounts.Close()
 
-	// The Submit path (AW-SRV-010): parse, authorize, produce. Built
-	// before the gateway, which takes it as a seam; its producer is
-	// closed after the gateway has drained.
+	// The Event fan-out (AW-SRV-004) and the two halves of the Protocol
+	// the gateway takes as seams: Submit (AW-SRV-010) — parse, authorize,
+	// produce — and Subscribe (AW-SRV-011), which streams from the fan-out.
+	// The producer is closed after the gateway has drained.
+	rt.StartEvents()
 	if err := rt.StartIngress(ctx); err != nil {
 		tel.Log.Error("ingress", "detail", err.Error())
 		return boot.ExitFail
 	}
 	defer func() { _ = rt.CloseIngress() }()
+	rt.StartEgress(ctx)
 
 	// The Protocol endpoint (AW-SRV-005). Built before the health server
 	// listens so that a bad certificate fails the boot rather than a boot
@@ -101,8 +104,9 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Rechecker:               accounts,
 		RecheckInterval:         cfg.AuthRecheckInterval,
 		Ingress:                 rt.Ingress,
+		Egress:                  rt.Egress,
 		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
-		OnDrain:                 rt.Drain,
+		OnDrain:                 func() { rt.Egress.Drain(); rt.Drain() },
 		Log:                     tel.Log,
 		Tracer:                  tel.Tracer,
 		Registry:                tel.Reg,

@@ -46,6 +46,23 @@ groups:
         annotations:
           summary: "The simulation is more than 500 ms behind schedule — the World is responding late"
           runbook: docs/runbooks/simulation-lagging.md
+  - name: andara-sessions
+    # The Event stream (AW-SRV-011). One alert, on the symptom: players' streams are being
+    # ended by the server faster than the Session availability budget allows
+    # (docs/specs/slo/session-availability.md). client_gone is the player leaving and is
+    # not a drop. The target is proposed pending Brian's number; the ratio moves with it.
+    rules:
+      - alert: SessionsDroppingAtRate
+        expr: |
+          sum(rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
+            > 0.01 * sum(avg_over_time(andara_stream_subscribers[5m]))
+        for: 5m
+        labels:
+          severity: page
+          slo: session-availability
+        annotations:
+          summary: "Server-ended Event streams above 1% of open streams per minute for 5 minutes — players are losing the World"
+          runbook: docs/runbooks/sessions-dropping.md
   - name: andara-edge
     # The edge (AW-INF-006): Traefik in front, cert-manager underneath. Both are cluster
     # services the observability stack scrapes (EPIC-07); in the compose stack neither

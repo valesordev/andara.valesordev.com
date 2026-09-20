@@ -92,6 +92,21 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: SimulationStopped;
     case: "simulationStopped";
+  } | {
+    /**
+     * Stream frames (AW-SRV-011), not Events: the sim never emits them and
+     * they carry event_id 0, so they do not move a client's resume point.
+     *
+     * @generated from field: andara.game.v1.Heartbeat heartbeat = 17;
+     */
+    value: Heartbeat;
+    case: "heartbeat";
+  } | {
+    /**
+     * @generated from field: andara.game.v1.Resync resync = 18;
+     */
+    value: Resync;
+    case: "resync";
   } | { case: undefined; value?: undefined };
 };
 
@@ -293,4 +308,52 @@ export declare type SimulationStopped = Message<"andara.game.v1.SimulationStoppe
  * Use `create(SimulationStoppedSchema)` to create a new message.
  */
 export declare const SimulationStoppedSchema: GenMessage<SimulationStopped>;
+
+/**
+ * Sent when heartbeat_interval passes with nothing else to send, so a client
+ * can tell a quiet World from a dead connection (AW-SRV-011). tick on the
+ * envelope is the last Tick the server has seen, so an advancing value says
+ * the simulation is running too.
+ *
+ * @generated from message andara.game.v1.Heartbeat
+ */
+export declare type Heartbeat = Message<"andara.game.v1.Heartbeat"> & {
+};
+
+/**
+ * Describes the message andara.game.v1.Heartbeat.
+ * Use `create(HeartbeatSchema)` to create a new message.
+ */
+export declare const HeartbeatSchema: GenMessage<Heartbeat>;
+
+/**
+ * The stream could not resume from SubscribeRequest.last_event_id: the
+ * Events after it are no longer retained, or were never received by this
+ * server (AW-SRV-011). The client's view has a gap it must rebuild — a
+ * `look` — rather than one the server silently skipped. The stream then
+ * runs live from now. last_event_id echoes what was asked for.
+ *
+ * @generated from message andara.game.v1.Resync
+ */
+export declare type Resync = Message<"andara.game.v1.Resync"> & {
+  /**
+   * @generated from field: uint64 last_event_id = 1;
+   */
+  lastEventId: bigint;
+
+  /**
+   * resume_window_exceeded: retained history no longer reaches back that
+   * far. no_history: this server retained nothing for the Session — a fresh
+   * process, or a Session whose retained history was discarded.
+   *
+   * @generated from field: string reason = 2;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message andara.game.v1.Resync.
+ * Use `create(ResyncSchema)` to create a new message.
+ */
+export declare const ResyncSchema: GenMessage<Resync>;
 

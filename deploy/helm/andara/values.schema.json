@@ -260,6 +260,27 @@
             }
           }
         },
+        "egress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "buffer": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_EGRESS_BUFFER (AW-SRV-011). Default when unset: 1024."
+            },
+            "resume_window": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_EGRESS_RESUME_WINDOW (AW-SRV-011). Default when unset: 2048."
+            },
+            "heartbeat_interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_HEARTBEAT_INTERVAL (AW-SRV-011). Default when unset: '20s'."
+            }
+          }
+        },
         "ingress": {
           "type": "object",
           "additionalProperties": false,

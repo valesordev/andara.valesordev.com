@@ -101,6 +101,15 @@ type Config struct {
 	IngressMaxPending      int
 	IngressTransitHold     time.Duration
 
+	// Event egress (AW-SRV-011). EgressBuffer is how many Events a
+	// Session's stream may leave unsent before the stream is ended;
+	// EgressResumeWindow how many delivered Events the Session retains for
+	// a resume; HeartbeatInterval how long a stream may be silent before a
+	// heartbeat frame is sent.
+	EgressBuffer       int
+	EgressResumeWindow int
+	HeartbeatInterval  time.Duration
+
 	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
 	// trace root (AW-SRV-010); rejections are kept whatever it says.
 	// TrustInboundTraceparent lets a client's traceparent parent the RPC
@@ -155,6 +164,9 @@ const (
 	DefaultIngressProduceDeadline = 2 * time.Second
 	DefaultIngressMaxPending      = 256
 	DefaultIngressTransitHold     = 2 * time.Second
+	DefaultEgressBuffer           = 1024
+	DefaultEgressResumeWindow     = 2048
+	DefaultHeartbeatInterval      = 20 * time.Second
 
 	DefaultTraceSampleRatio = 0.01
 )
@@ -211,6 +223,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		IngressProduceDeadline:  DefaultIngressProduceDeadline,
 		IngressMaxPending:       DefaultIngressMaxPending,
 		IngressTransitHold:      DefaultIngressTransitHold,
+		EgressBuffer:            DefaultEgressBuffer,
+		EgressResumeWindow:      DefaultEgressResumeWindow,
+		HeartbeatInterval:       DefaultHeartbeatInterval,
 		TraceSampleRatio:        DefaultTraceSampleRatio,
 	}
 	configPath := peekConfigPath(args, env)
@@ -295,6 +310,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.DurationVar(&c.IngressProduceDeadline, "ingress-produce-deadline", c.IngressProduceDeadline, "how long one produce to the Command log may take (ANDARA_PRODUCE_DEADLINE)")
 	fs.IntVar(&c.IngressMaxPending, "ingress-max-pending", c.IngressMaxPending, "Submits one Session may have in flight (ANDARA_INGRESS_MAX_PENDING)")
 	fs.DurationVar(&c.IngressTransitHold, "ingress-transit-hold", c.IngressTransitHold, "how long a Session's Intents wait for its Character to arrive in the next Zone (ANDARA_INGRESS_TRANSIT_HOLD)")
+	fs.IntVar(&c.EgressBuffer, "egress-buffer", c.EgressBuffer, "Events a Session's stream may leave unsent before it is ended (ANDARA_EGRESS_BUFFER)")
+	fs.IntVar(&c.EgressResumeWindow, "egress-resume-window", c.EgressResumeWindow, "delivered Events a Session retains for a resume (ANDARA_EGRESS_RESUME_WINDOW)")
+	fs.DurationVar(&c.HeartbeatInterval, "heartbeat-interval", c.HeartbeatInterval, "how long a stream may be silent before a heartbeat frame is sent (ANDARA_HEARTBEAT_INTERVAL)")
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
@@ -358,6 +376,12 @@ func (c Config) validateSim() error {
 	}
 	if c.IngressProduceDeadline <= 0 || c.IngressTransitHold < 0 {
 		return fmt.Errorf("ingress.produce_deadline must be positive and ingress.transit_hold must not be negative")
+	}
+	if c.EgressBuffer < 1 || c.EgressResumeWindow < c.EgressBuffer {
+		return fmt.Errorf("egress.buffer must be positive and egress.resume_window at least egress.buffer")
+	}
+	if c.HeartbeatInterval <= 0 {
+		return fmt.Errorf("egress.heartbeat_interval must be positive")
 	}
 	if c.TraceSampleRatio < 0 || c.TraceSampleRatio > 1 {
 		return fmt.Errorf("telemetry.trace_sample_ratio must be in [0, 1], got %g", c.TraceSampleRatio)
@@ -610,6 +634,11 @@ type fileConfig struct {
 		MaxPending      *int    `yaml:"max_pending"`
 		TransitHold     *string `yaml:"transit_hold"`
 	} `yaml:"ingress"`
+	Egress *struct {
+		Buffer            *int    `yaml:"buffer"`
+		ResumeWindow      *int    `yaml:"resume_window"`
+		HeartbeatInterval *string `yaml:"heartbeat_interval"`
+	} `yaml:"egress"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -834,6 +863,19 @@ func applyFile(c *Config, path string) error {
 			}
 		}
 	}
+	if eg := fc.Egress; eg != nil {
+		if eg.Buffer != nil {
+			c.EgressBuffer = *eg.Buffer
+		}
+		if eg.ResumeWindow != nil {
+			c.EgressResumeWindow = *eg.ResumeWindow
+		}
+		if eg.HeartbeatInterval != nil {
+			if err := parseDuration("egress.heartbeat_interval", *eg.HeartbeatInterval, &c.HeartbeatInterval); err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
+		}
+	}
 	return nil
 }
 
@@ -906,6 +948,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}{
 		{"ANDARA_PRODUCE_DEADLINE", &c.IngressProduceDeadline},
 		{"ANDARA_INGRESS_TRANSIT_HOLD", &c.IngressTransitHold},
+		{"ANDARA_HEARTBEAT_INTERVAL", &c.HeartbeatInterval},
 	} {
 		if v, ok := env(dv.name); ok {
 			if err := parseDuration(dv.name, v, dv.dst); err != nil {
@@ -988,6 +1031,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_MAX_SUBSCRIBERS", &c.MaxSubscribers},
 		{"ANDARA_INGRESS_BURST", &c.IngressBurst},
 		{"ANDARA_INGRESS_MAX_PENDING", &c.IngressMaxPending},
+		{"ANDARA_EGRESS_BUFFER", &c.EgressBuffer},
+		{"ANDARA_EGRESS_RESUME_WINDOW", &c.EgressResumeWindow},
 	} {
 		if v, ok := env(iv.name); ok {
 			n, err := strconv.Atoi(strings.TrimSpace(v))
