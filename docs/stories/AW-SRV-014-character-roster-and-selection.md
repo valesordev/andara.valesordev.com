@@ -193,6 +193,13 @@ None. Roster problems present as authentication or Session problems, which alrea
 ## Definition of done
 
 CLAUDE.md §8, plus: the concurrent-binding test (AC-7) and the rollback name-reservation test (AC-9).
+Inherited from `AW-SRV-010`'s §8 pass (2026-09-20): this is the first story that binds a Character
+in-cluster, so a live `Submit` first reaches the produce here. §8's backend verification includes
+showing, from the running server on the compose stack, `andara_ingress_submits_total{outcome="produced"}`,
+`andara_ingress_produced_total{partition}` moving, `andara_ingress_produce_duration_seconds`,
+`andara_command_duration_seconds{phase="pre_log"}`, the `log.produce` span under `command.execute`
+in Tempo, and one `UNAVAILABLE{world_read_only}` on the wire during `docker compose stop redpanda` —
+`AW-SRV-010` proved each by the integration suite only, every live Submit having fallen at `authorize`.
 
 ## Open questions
 

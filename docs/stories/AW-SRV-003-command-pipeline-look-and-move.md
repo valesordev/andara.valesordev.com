@@ -319,3 +319,9 @@ CLAUDE.md §8, plus:
   `sim repl` and unit tests only. `AW-SRV-010`'s DoD carries showing those series on a real backend. On the compose stack at this
   pass, `andara_commands_total` and `andara_command_duration_seconds` are pre-seeded across the
   fourteen built-in verbs and both phases, as the metrics contract asks.
+- **Observed on `AW-SRV-010`'s §8 pass (2026-09-20), not a defect:** `andara_command_duration_seconds{phase="pre_log"}`
+  is observed only for a Command that passes `authorize`; a rejection counts in
+  `andara_commands_total{verb}` and not in the histogram. The contract does not say either way. If a
+  rejection's stage time should be visible, it is a one-line change in `Pipeline.Submit` and a
+  sentence here — a follow-up chore, if wanted, not a reopened story.
+

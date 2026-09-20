@@ -129,7 +129,9 @@ and per key by the window.
 ## Definition of done
 
 CLAUDE.md §8, plus: `AW-SRV-010`'s taxonomy row and README paragraph are corrected in this story;
-`AW-CLI-004` inherits "always send `client_ref`; retry `DEADLINE_EXCEEDED` with the same one".
+`AW-CLI-004` inherits "always send `client_ref`; retry `DEADLINE_EXCEEDED` with the same one"; the
+`PLACEHOLDER` marker on `ingress.ReadOnlyMessage` comes off — Brian accepted the wording as written
+on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
 
 ## Open questions
 
