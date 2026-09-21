@@ -108,3 +108,104 @@ func allPartitionsForTest() []int32 {
 	}
 	return out
 }
+
+// AW-SRV-011 at the boot layer: the egress built over the fan-out
+// streams the Submit's outcome to the Session that sent it, perceiving
+// from where the routing table put its Character.
+func TestStartEgress_MemoryLoopback(t *testing.T) {
+	rt, _, _ := recordingRuntime(t, fixture(t, "valid"), false)
+	rt.Cfg.SimSource = "memory"
+	rt.Cfg.SimTickRate = 50
+	rt.Cfg.SimTickBudget = 10 * time.Millisecond
+	rt.Cfg.SimMaxPerTick = config.DefaultSimMaxPerTick
+	rt.Cfg.SimDrainTimeout = time.Second
+	rt.Cfg.SimPartitions = allPartitionsForTest()
+	rt.Cfg.SimCheckpointEveryTicks = 10
+	rt.Cfg.SubscriberBuffer = 64
+	rt.Cfg.MaxSubscribers = 10
+	rt.Cfg.MaxIntentBytes = 4096
+	rt.Cfg.IngressRateLimit = config.DefaultIngressRateLimit
+	rt.Cfg.IngressAgentRateLimit = config.DefaultIngressAgentRateLimit
+	rt.Cfg.IngressBurst = config.DefaultIngressBurst
+	rt.Cfg.IngressMaxPending = config.DefaultIngressMaxPending
+	rt.Cfg.IngressProduceDeadline = config.DefaultIngressProduceDeadline
+	rt.Cfg.IngressTransitHold = config.DefaultIngressTransitHold
+	rt.Cfg.EgressBuffer = 16
+	rt.Cfg.EgressResumeWindow = 32
+	rt.Cfg.HeartbeatInterval = time.Hour
+	ctx := context.Background()
+	if code := rt.LoadContent(ctx); code != ExitOK {
+		t.Fatalf("load content: exit %d", code)
+	}
+	if err := rt.LoadVerbs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rt.StartEvents()
+	if err := rt.StartIngress(ctx); err != nil {
+		t.Fatal(err)
+	}
+	rt.StartEgress(ctx)
+	if rt.Egress == nil || rt.Bindings.OnChange == nil {
+		t.Fatal("egress not built or not wired to the routing table")
+	}
+	loop, err := rt.StartTickLoop(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(loopCtx) }()
+
+	principal := auth.Principal{AccountID: "acct", Roles: []auth.Role{auth.RolePlayer}}
+	sess := sessionFor("s-1", principal)
+	recv := make(chan *gamev1.EventEnvelope, 16)
+	streamDone := make(chan error, 1)
+	streamCtx, cancelStream := context.WithCancel(ctx)
+	go func() {
+		streamDone <- rt.Egress.SubscribeWith(streamCtx, sess, &gamev1.SubscribeRequest{SessionId: "s-1"}, sendFunc(func(env *gamev1.EventEnvelope) error { recv <- env; return nil }))
+	}()
+	waitFor(t, func() bool { return testutil.ToFloat64(rt.Events.Metrics().Subscribers) == 1 }, "subscribed")
+	// Binding after subscribing: the routing table tells the egress, which
+	// re-reads where the Session perceives from.
+	rt.Bindings.Bind("s-1", command.Binding{Actor: "ghost", Zone: "town"})
+	waitFor(t, func() bool {
+		return testutil.ToFloat64(rt.Events.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed)) == 1
+	}, "resubscribed on bind")
+	if _, err := rt.Ingress.Submit(ctx, sess, &gamev1.SubmitRequest{SessionId: "s-1", Raw: "look", ClientRef: "c1"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case env := <-recv:
+		if env.GetCommandRejected().GetCode() != "actor_not_found" || env.GetClientRef() != "c1" {
+			t.Fatalf("stream got %v", env)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the Submit's outcome never reached the stream")
+	}
+	cancelStream()
+	<-streamDone
+	if rt.Egress.LastTick() == 0 {
+		t.Error("the loop's ticks never reached the egress; a heartbeat would report tick 0")
+	}
+	stop()
+	if err := <-done; err != nil {
+		t.Fatalf("loop: %v", err)
+	}
+	rt.Events.Close()
+}
+
+type sendFunc func(*gamev1.EventEnvelope) error
+
+func (f sendFunc) Send(env *gamev1.EventEnvelope) error { return f(env) }
+
+func waitFor(t *testing.T, cond func() bool, what string) {
+	t.Helper()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for %s", what)
+}

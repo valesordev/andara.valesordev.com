@@ -25,10 +25,14 @@ import (
 // Binding is what a Session knows about its Character: which Entity acts
 // and which Zone it is in, and therefore which Partition its Commands go
 // to. It is Session state, not World state — the Gateway's routing view of
-// where the Character was last seen — so authorize may read it.
+// where the Character was last seen — so authorize may read it. Room is
+// where in the Zone, for the Session's Event stream to perceive from
+// (AW-SRV-011); empty between a departure and the arrival, and until
+// whoever binds says (AW-SRV-014).
 type Binding struct {
 	Actor sim.EntityID
 	Zone  sim.ZoneID
+	Room  sim.RoomID
 }
 
 // Binder answers "which Character is this Session bound to?". A Session

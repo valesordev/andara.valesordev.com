@@ -29,6 +29,10 @@ type Bindings struct {
 	hold time.Duration
 	now  func() time.Time
 	held prometheus.Gauge
+	// OnChange, if set, is called after Bind and Unbind with the Session
+	// whose binding changed, outside the lock: the Event stream re-reads
+	// where the Session perceives from (egress.Rebind, AW-SRV-011).
+	OnChange func(sessionID string)
 
 	mu        sync.Mutex
 	bySession map[string]*binding
@@ -64,21 +68,32 @@ func NewBindings(hold time.Duration, now func() time.Time, held prometheus.Gauge
 // abandoned: whoever bound knows where the Character is.
 func (t *Bindings) Bind(sessionID string, b command.Binding) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	t.unbindLocked(sessionID)
-	if prev, ok := t.byActor[b.Actor]; ok {
+	prev, hadPrev := t.byActor[b.Actor]
+	if hadPrev {
 		t.unbindLocked(prev)
 	}
 	t.bySession[sessionID] = &binding{cmd: b}
 	t.byActor[b.Actor] = sessionID
+	t.mu.Unlock()
+	if t.OnChange != nil {
+		if hadPrev && prev != sessionID {
+			t.OnChange(prev)
+		}
+		t.OnChange(sessionID)
+	}
 }
 
 // Unbind forgets sessionID. Intents held for it are released to be
 // rejected as unbound.
 func (t *Bindings) Unbind(sessionID string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
+	_, had := t.bySession[sessionID]
 	t.unbindLocked(sessionID)
+	t.mu.Unlock()
+	if had && t.OnChange != nil {
+		t.OnChange(sessionID)
+	}
 }
 
 func (t *Bindings) unbindLocked(sessionID string) {
@@ -175,9 +190,10 @@ func (t *Bindings) expire(sessionID string, tr *transit) {
 
 // Publish implements sim.EventSink on the tick goroutine: a map update
 // under the lock and nothing else. Only the Events addressed to a bound
-// Character move it — CharacterLeft begins a transit, CharacterArrived
-// ends one on the Zone it names — the same reading the events.Hub gives
-// an Observer. HandoffRejected (AW-SRV-028) will end one on the origin.
+// Character move it — CharacterLeft begins a transit and clears the Room,
+// CharacterArrived ends one on the Zone and Room it names — the same
+// reading the events.Hub gives an Observer. HandoffRejected (AW-SRV-028)
+// will end one on the origin.
 func (t *Bindings) Publish(ev sim.Event) {
 	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived {
 		return
@@ -192,11 +208,13 @@ func (t *Bindings) Publish(ev sim.Event) {
 		e := t.bySession[sessionID]
 		switch p := ev.Envelope.GetPayload().(type) {
 		case *gamev1.EventEnvelope_CharacterLeft:
+			e.cmd.Room = ""
 			if e.transit == nil {
 				e.transit = &transit{since: t.now(), settled: make(chan struct{})}
 			}
 		case *gamev1.EventEnvelope_CharacterArrived:
 			e.cmd.Zone = sim.ZoneID(p.CharacterArrived.GetZoneId())
+			e.cmd.Room = sim.RoomID(p.CharacterArrived.GetRoomId())
 			if e.transit != nil {
 				close(e.transit.settled)
 				e.transit = nil

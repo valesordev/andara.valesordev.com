@@ -30,6 +30,15 @@ type Egress interface {
 	Subscribe(ctx context.Context, s *Session, req *gamev1.SubscribeRequest, stream *connect.ServerStream[gamev1.EventEnvelope]) error
 }
 
+// SessionEnder is what an Egress may also implement: told, before the
+// Session's context is canceled, that the Session is being closed for a
+// reason the client did not choose, so its stream can end with a final
+// frame rather than a bare cancellation — SubscriberDropped{reason=revoked}
+// for AW-SRV-008 AC-12. The call is bounded by the implementation.
+type SessionEnder interface {
+	EndSession(sessionID, reason string)
+}
+
 // UnimplementedIngress is the Submit seam before AW-SRV-010: the RPC is
 // accepted by the gateway, then refused with UNIMPLEMENTED so a client
 // learns what is missing rather than what is broken.

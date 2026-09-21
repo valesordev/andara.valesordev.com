@@ -32,6 +32,11 @@ message EventEnvelope {
     ZoneFaulted zone_faulted = 14;
     SubscriberDropped subscriber_dropped = 15;
     SimulationStopped simulation_stopped = 16;
+
+    // Stream frames (AW-SRV-011), not Events: the sim never emits them and
+    // they carry event_id 0, so they do not move a client's resume point.
+    Heartbeat heartbeat = 17;
+    Resync resync = 18;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -39,7 +44,8 @@ message EventEnvelope {
   // because a reserved range must shrink to be used and buf counts that as a
   // breaking change. AW-SRV-004's EventType strings map one-to-one onto this
   // oneof; the string form is derived from the field, never carried alongside
-  // it, so the two cannot disagree.
+  // it, so the two cannot disagree. Heartbeat and Resync are the two
+  // payloads with no EventType: they are about the stream, not the World.
 }
 
 message RoomDescribed {
@@ -92,4 +98,23 @@ message SubscriberDropped {
 
 message SimulationStopped {
   string reason = 1;
+}
+
+// Sent when heartbeat_interval passes with nothing else to send, so a client
+// can tell a quiet World from a dead connection (AW-SRV-011). tick on the
+// envelope is the last Tick the server has seen, so an advancing value says
+// the simulation is running too.
+message Heartbeat {}
+
+// The stream could not resume from SubscribeRequest.last_event_id: the
+// Events after it are no longer retained, or were never received by this
+// server (AW-SRV-011). The client's view has a gap it must rebuild — a
+// `look` — rather than one the server silently skipped. The stream then
+// runs live from now. last_event_id echoes what was asked for.
+message Resync {
+  uint64 last_event_id = 1;
+  // resume_window_exceeded: retained history no longer reaches back that
+  // far. no_history: this server retained nothing for the Session — a fresh
+  // process, or a Session whose retained history was discarded.
+  string reason = 2;
 }

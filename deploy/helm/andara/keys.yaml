@@ -61,10 +61,9 @@ keys:
   # --- AW-SRV-004 / AW-SRV-011: events and egress ---
   - {key: events.subscriber_buffer,  env: ANDARA_SUBSCRIBER_BUFFER,      type: int, default: 1024, min: 1, story: AW-SRV-004}
   - {key: events.max_subscribers,    env: ANDARA_MAX_SUBSCRIBERS,        type: int, default: 10000, min: 1, story: AW-SRV-004}
-  - {key: egress.buffer,             env: ANDARA_EGRESS_BUFFER,          type: int, default: 256, min: 1, story: AW-SRV-011}
+  - {key: egress.buffer,             env: ANDARA_EGRESS_BUFFER,          type: int, default: 1024, min: 1, story: AW-SRV-011}
   - {key: egress.resume_window,      env: ANDARA_EGRESS_RESUME_WINDOW,   type: int, default: 2048, min: 1, story: AW-SRV-011}
-  - {key: egress.heartbeat_interval, env: ANDARA_EGRESS_HEARTBEAT_INTERVAL, type: duration, default: 15s, story: AW-SRV-011}
-  - {key: egress.max_sessions,       env: ANDARA_EGRESS_MAX_SESSIONS,    type: int, default: 5000, min: 1, story: AW-SRV-011}
+  - {key: egress.heartbeat_interval, env: ANDARA_HEARTBEAT_INTERVAL,     type: duration, default: 20s, story: AW-SRV-011}
   - {key: egress.assumed_event_rate, env: ANDARA_EGRESS_ASSUMED_EVENT_RATE, type: int, default: 5, min: 1, story: AW-SRV-015}
 
   # --- AW-SRV-010: ingress ---

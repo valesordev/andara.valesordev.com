@@ -145,10 +145,17 @@ func (g *gameService) CloseSession(ctx context.Context, req *connect.Request[gam
 // mapSeamError names why a seam call ended when the cause was the gateway
 // rather than the seam: drain and Session teardown are typed here so that
 // Ingress and Egress implementations do not each invent a code for them.
+// A code the seam chose itself, other than a cancellation, stands even
+// when the Session has since closed: a stream ended revoked, or a Submit
+// refused, is what happened, and the teardown that follows is not.
 func (s *Server) mapSeamError(ctx context.Context, sess *Session, err error) error {
+	var ce *connect.Error
+	typed := errors.As(err, &ce) && ce.Code() != connect.CodeCanceled
 	switch {
 	case s.drainCtx.Err() != nil:
 		return connectError(ErrDraining)
+	case typed:
+		return err
 	case sess.Context().Err() != nil:
 		return connect.NewError(connect.CodeCanceled, errSessionClosed)
 	case err == nil:

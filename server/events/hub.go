@@ -294,6 +294,10 @@ func (h *Hub) Publish(ev sim.Event) {
 	}
 }
 
+// LastTick is the Tick of the last Event published: what a stream's
+// heartbeat reports so a quiet World is seen to be ticking (AW-SRV-011).
+func (h *Hub) LastTick() sim.Tick { return sim.Tick(h.lastTick.Load()) }
+
 // Flush blocks until every Event published before the call has been
 // delivered to its subscribers' buffers. For harnesses that need the
 // stream in step with the tick; a transport never calls it.

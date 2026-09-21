@@ -424,6 +424,26 @@ the pre-log Command Pipeline, and the produce to the Command Log. Its answer nam
 and Offset a Command landed on, meaning *accepted and ordered*, never *succeeded*. Distinct from the
 Edge, which is the cluster's ingress in front of the Gateway.
 
+**Egress** — The Gateway's Subscribe path (AW-SRV-011): one fan-out subscription per Session for
+as long as it lives, the Session's retained history (the Resume Window), and the stream as a cursor
+over it. A stream that trails by more than `egress.buffer` is ended with a typed reason rather than
+an Event being skipped; the Session survives and the client reopens the stream.
+
+**Resume Window** — The last `egress.resume_window` Events a Session was sent, retained by the
+Egress after they were sent and while no stream is open, so a stream reopened with
+`last_event_id` continues from the next Event with no gap and no duplicate. Process-local: a
+restart, a rebind, or a fan-out drop discards it. Sized with `session.linkdead_grace`
+(AW-SRV-015): a linkdead Character's reconnect must be able to resume.
+
+**Resync** — The stream frame sent instead of a resume the server cannot honor: the resume point is
+older than the Resume Window (`resume_window_exceeded`) or was never sent to this Session by this
+server (`no_history`). The client's view has a gap it must rebuild — a `look` — and the stream then
+runs live. A Resync is always explicit; a silent gap is never sent (AW-SRV-011).
+
+**Heartbeat** — The stream frame sent when `egress.heartbeat_interval` passes with nothing else to
+send, carrying the last Tick the server has seen. A quiet World and a dead connection look
+different, and an advancing Tick says the simulation is running. Not an Event: `event_id` 0.
+
 **Read-only World** — The World while the Command Log is unreachable (AW-SRV-010): the Tick runs,
 Sessions stay connected and receive Events, and no Command is accepted — every Submit is
 `UNAVAILABLE` at once with reason `world_read_only`. Deliberate, typed, and bounded, because the

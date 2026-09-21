@@ -73,6 +73,9 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `ingress.burst` | `ANDARA_INGRESS_BURST` | `40` | Token bucket depth per Session: how many Submits may arrive at once before the rate applies. |
 | `ingress.produce_deadline` | `ANDARA_PRODUCE_DEADLINE` | `2s` | How long one produce may take. It is the client's record delivery timeout; a produce request times out at half of it, so one idempotent retry fits inside. |
 | `ingress.max_pending` | `ANDARA_INGRESS_MAX_PENDING` | `256` | Submits one Session may have in flight; past it, `RESOURCE_EXHAUSTED` rather than a growing queue. |
+| `egress.buffer` | `ANDARA_EGRESS_BUFFER` | `1024` | Events a Session's stream may leave unsent before the stream is ended with `buffer_full`. The Session survives; the client reopens the stream. |
+| `egress.resume_window` | `ANDARA_EGRESS_RESUME_WINDOW` | `2048` | Delivered Events retained per Session, for a stream reopened with `last_event_id`. At least `egress.buffer`. A resume from before the window is a `Resync` frame. |
+| `egress.heartbeat_interval` | `ANDARA_HEARTBEAT_INTERVAL` | `20s` | How long a stream may be silent before a `Heartbeat` frame is sent. Also how long a stream reset is given to return a blocked writer before its connection is closed. |
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 | `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
@@ -414,6 +417,89 @@ descriptor walk in `make test`), and `andara.events.v1` records now carry the Sc
 
 `andara-cli sim repl --tap-events town/hall,docks/pier,world` prints, beside the Character's own
 stream, what observers elsewhere are sent — the scoping watched from two Rooms at once.
+
+### Event egress (AW-SRV-011)
+
+`server/egress` is what `Game.Subscribe` plugs into: the Session's side of the stream, between the
+fan-out's buffer and the client's socket. A Session that subscribes gets **one Hub subscription for
+as long as it lives**, read by its own goroutine — the pump — into a ring of what the Session has
+been sent, `egress.resume_window` deep. The stream is a cursor over that ring. So:
+
+- **Resume.** A stream that ends and is reopened with `last_event_id` continues from the next
+  retained Event with no gap and no duplicate, including Events that arrived while no stream was
+  open — the pump kept retaining. A resume point the window no longer reaches, or one this server
+  never sent the Session (a fresh process, a Session whose perception was rebound), opens the
+  stream with a `Resync` frame (`reason` `resume_window_exceeded` or `no_history`) and then runs
+  live: the client rebuilds its view with a `look`. A silent gap is never sent.
+- **Backpressure.** A client that stops consuming leaves the cursor behind; when it trails by more
+  than `egress.buffer` the stream is ended with `RESOURCE_EXHAUSTED` (`buffer_full`), never by
+  skipping an Event. The warn line names the Session, `buffered`, and `last_sent`. If the writer is
+  blocked inside a Send at that moment the stream is reset from the pump's goroutine
+  (`gateway.AbortStream`: a write deadline in the past, `RST_STREAM` on HTTP/2), which returns a
+  writer held by the client's flow-control window while the connection and its other streams
+  survive. A client that has stopped reading its **socket** cannot be reached that way — the
+  connection's writer is blocked in the kernel with every frame behind it — so a reset that has not
+  returned the writer within `egress.heartbeat_interval` closes the connection
+  (`gateway.DropConnection`): the Session is disconnected as a pulled cable would disconnect it,
+  and nothing else on the server notices. Either way memory attributable to the Session is the ring
+  plus the Hub buffer, whatever the client does.
+- **Heartbeat.** A stream with nothing to send for `egress.heartbeat_interval` sends a `Heartbeat`
+  frame carrying the last Tick the server has seen, so a quiet World and a dead connection look
+  different, and an advancing Tick says the simulation is running.
+- **World visibility** is asked for per stream (`SubscribeRequest.world`), refused with
+  `PERMISSION_DENIED` (`world_visibility`) without `game_master` or `operator`, and audited once
+  by the Hub at subscribe (`subscribe_world`). A Game Master who does not ask perceives from their
+  Character like anyone else.
+- **One stream per Session.** A second `Subscribe` while one is open is `FAILED_PRECONDITION`
+  (`already_subscribed`); a client wanting a new stream ends the old one.
+- **Perception** comes from the routing table: `ingress.Bindings` knows which Character a Session
+  drives and the Room it was last seen in, and tells the egress when a binding changes
+  (`Bindings.OnChange` → `Egress.Rebind`), which replaces the Session's Hub subscription and
+  discards the old perception's history. Until `AW-SRV-014` binds Characters on a running server,
+  every Session perceives from nowhere and a stream carries heartbeats and World-scope Events only.
+- **Drain.** The gateway ends every stream with `UNAVAILABLE` (`server draining`), and a stream
+  the Hub ends at shutdown is `UNAVAILABLE` (`draining`) too.
+- **Revoked.** A Session the recheck loop closes (`AW-SRV-008` AC-12) has its stream told first:
+  the gateway calls `Egress.EndSession` before it cancels the Session, the stream's last frame is
+  `SubscriberDropped{reason=revoked}`, and it ends `PERMISSION_DENIED` (`revoked`). A code a seam
+  chose itself stands in the gateway even when the Session has since closed.
+
+The tick never passes through here: `Publish` is the Hub's one enqueue, the Hub fills the
+subscription buffer, the pump drains it, and the stream writes on its own goroutine. The Hub's
+`buffer_full` drop now guards the pump — a process that cannot keep its own goroutines fed — not
+the client; when it happens the stream ends `buffer_full`, the Session's history is discarded, and
+the next `Subscribe` starts over.
+
+| Condition | gRPC code | `ErrorInfo.reason` |
+|-----------|-----------|--------------------|
+| client trailed by more than `egress.buffer` | `RESOURCE_EXHAUSTED` | `buffer_full` |
+| Session revoked | `PERMISSION_DENIED` | `revoked` |
+| a stream already open on the Session | `FAILED_PRECONDITION` | `already_subscribed` |
+| `events.max_subscribers` reached | `RESOURCE_EXHAUSTED` | `too_many_subscribers` |
+| `world` without the role | `PERMISSION_DENIED` | `world_visibility` |
+| fan-out shut down | `UNAVAILABLE` | `draining` |
+
+`docs/specs/slo/session-availability.md` is the SLO; `docs/runbooks/sessions-dropping.md` the
+runbook for `SessionsDroppingAtRate`.
+
+#### Egress metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_stream_subscribers` | gauge | — | 1; open `Subscribe` streams |
+| `andara_stream_events_sent_total` | counter | `type` | the EventType enum + `heartbeat`, `resync` |
+| `andara_session_egress_drops_total` | counter | `reason` | `buffer_full`, `client_gone`, `draining`, `revoked` |
+| `andara_sessions_in_drop_state` | gauge | — | 1; Sessions whose last stream the server ended (`buffer_full`, `draining`) and that have not reopened one — the SLI's unavailable Session-seconds |
+| `andara_stream_buffer_depth` | histogram | — | 1; a stream's unsent count when an Event was appended for it, across Sessions |
+| `andara_stream_resyncs_total` | counter | `reason` | `resume_window_exceeded`, `no_history` |
+
+The fan-out's series (`andara_subscribers`, `andara_event_fanout_duration_seconds`, the
+`event.fanout` span) are the egress's fan-out numbers too; they are not duplicated. Logs: `stream
+ended: client not reading, buffer full` at `warn` with `session_id`, `buffered`, `last_sent`,
+`tick`, `trace_id`; `stream reset did not return: client not reading its socket; closing the
+connection` at `warn`; `stream resync: resume point not retained` at `info` with `last_event_id`
+and `reason`; the Hub's privileged-read line for World streams. The `Game/Subscribe` span carries
+`stream.world`, `stream.last_event_id`, `stream.resumed` or `stream.resync`; no per-Event span.
 
 ### Event metrics, logs, and traces
 

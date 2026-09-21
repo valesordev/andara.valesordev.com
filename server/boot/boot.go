@@ -17,6 +17,7 @@ import (
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/egress"
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/ingress"
 	"github.com/valesordev/andara/server/sim"
@@ -62,6 +63,8 @@ type Runtime struct {
 	// (AW-SRV-010); both nil until StartIngress.
 	Ingress  *ingress.Ingress
 	Bindings *ingress.Bindings
+	// Egress is the Subscribe path (AW-SRV-011); nil until StartEgress.
+	Egress *egress.Egress
 	// producer is the Kafka producer behind Ingress, closed by
 	// CloseIngress; memSource is the loopback for sim.source=memory,
 	// built by StartIngress and consumed by StartTickLoop.

@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from andara.game.v1 import event_pb2 as andara_dot_game_dot_v1_dot_event__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19\x61ndara/game/v1/game.proto\x12\x0e\x61ndara.game.v1\x1a\x1a\x61ndara/game/v1/event.proto\"\xaa\x01\n\x12OpenSessionRequest\x12)\n\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n\nauth_token\x18\x02 \x01(\tR\tauthToken\x12\x1f\n\x0b\x63lient_name\x18\x03 \x01(\tR\nclientName\x12)\n\x11\x61\x63t_as_account_id\x18\x04 \x01(\tR\x0e\x61\x63tAsAccountId\"\xbf\x01\n\x13OpenSessionResponse\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12-\n\x12negotiated_version\x18\x02 \x01(\rR\x11negotiatedVersion\x12,\n\x12server_min_version\x18\x03 \x01(\rR\x10serverMinVersion\x12,\n\x12server_max_version\x18\x04 \x01(\rR\x10serverMaxVersion\"_\n\rSubmitRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n\x03raw\x18\x02 \x01(\tR\x03raw\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\"W\n\x0eSubmitResponse\x12\'\n\x0f\x61\x63\x63\x65pted_offset\x18\x01 \x01(\x03R\x0e\x61\x63\x63\x65ptedOffset\x12\x1c\n\tpartition\x18\x02 \x01(\x05R\tpartition\"U\n\x10SubscribeRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\"\n\rlast_event_id\x18\x02 \x01(\x04R\x0blastEventId\"4\n\x13\x43loseSessionRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\"\x16\n\x14\x43loseSessionResponse2\xd2\x02\n\x04Game\x12V\n\x0bOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n\tSubscribe\x12 .andara.game.v1.SubscribeRequest\x1a\x1d.andara.game.v1.EventEnvelope0\x01\x12Y\n\x0c\x43loseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponseB\xb4\x01\n\x12\x63om.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19\x61ndara/game/v1/game.proto\x12\x0e\x61ndara.game.v1\x1a\x1a\x61ndara/game/v1/event.proto\"\xaa\x01\n\x12OpenSessionRequest\x12)\n\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n\nauth_token\x18\x02 \x01(\tR\tauthToken\x12\x1f\n\x0b\x63lient_name\x18\x03 \x01(\tR\nclientName\x12)\n\x11\x61\x63t_as_account_id\x18\x04 \x01(\tR\x0e\x61\x63tAsAccountId\"\xbf\x01\n\x13OpenSessionResponse\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12-\n\x12negotiated_version\x18\x02 \x01(\rR\x11negotiatedVersion\x12,\n\x12server_min_version\x18\x03 \x01(\rR\x10serverMinVersion\x12,\n\x12server_max_version\x18\x04 \x01(\rR\x10serverMaxVersion\"_\n\rSubmitRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n\x03raw\x18\x02 \x01(\tR\x03raw\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\"W\n\x0eSubmitResponse\x12\'\n\x0f\x61\x63\x63\x65pted_offset\x18\x01 \x01(\x03R\x0e\x61\x63\x63\x65ptedOffset\x12\x1c\n\tpartition\x18\x02 \x01(\x05R\tpartition\"k\n\x10SubscribeRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\"\n\rlast_event_id\x18\x02 \x01(\x04R\x0blastEventId\x12\x14\n\x05world\x18\x03 \x01(\x08R\x05world\"4\n\x13\x43loseSessionRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\"\x16\n\x14\x43loseSessionResponse2\xd2\x02\n\x04Game\x12V\n\x0bOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n\tSubscribe\x12 .andara.game.v1.SubscribeRequest\x1a\x1d.andara.game.v1.EventEnvelope0\x01\x12Y\n\x0c\x43loseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponseB\xb4\x01\n\x12\x63om.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -42,11 +42,11 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_SUBMITRESPONSE']._serialized_start=537
   _globals['_SUBMITRESPONSE']._serialized_end=624
   _globals['_SUBSCRIBEREQUEST']._serialized_start=626
-  _globals['_SUBSCRIBEREQUEST']._serialized_end=711
-  _globals['_CLOSESESSIONREQUEST']._serialized_start=713
-  _globals['_CLOSESESSIONREQUEST']._serialized_end=765
-  _globals['_CLOSESESSIONRESPONSE']._serialized_start=767
-  _globals['_CLOSESESSIONRESPONSE']._serialized_end=789
-  _globals['_GAME']._serialized_start=792
-  _globals['_GAME']._serialized_end=1130
+  _globals['_SUBSCRIBEREQUEST']._serialized_end=733
+  _globals['_CLOSESESSIONREQUEST']._serialized_start=735
+  _globals['_CLOSESESSIONREQUEST']._serialized_end=787
+  _globals['_CLOSESESSIONRESPONSE']._serialized_start=789
+  _globals['_CLOSESESSIONRESPONSE']._serialized_end=811
+  _globals['_GAME']._serialized_start=814
+  _globals['_GAME']._serialized_end=1152
 # @@protoc_insertion_point(module_scope)

@@ -63,6 +63,9 @@ type sessionStore struct {
 	metrics *Metrics
 	log     *slog.Logger
 	tracer  trace.Tracer
+	// ender, if set, hears about a revoked Session before its context is
+	// canceled, so the stream's last frame says why (AW-SRV-011).
+	ender SessionEnder
 }
 
 func newSessionStore(m *Metrics, log *slog.Logger, tracer trace.Tracer) *sessionStore {
@@ -193,6 +196,12 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 		}
 		st.mu.Unlock()
 
+		if outcome == OutcomeRevoked && st.ender != nil {
+			// The stream learns why before it is canceled: its last
+			// frame is SubscriberDropped{reason=revoked} (AW-SRV-008
+			// AC-12), then PERMISSION_DENIED.
+			st.ender.EndSession(s.ID, "revoked")
+		}
 		s.cancel()
 		dur := time.Since(s.OpenedAt)
 		st.metrics.SessionsActive.Dec()
@@ -237,9 +246,9 @@ func (st *sessionStore) closeAll(outcome, reason string) {
 // recheckLoop is AW-SRV-008 AC-12: every interval, every open Session's
 // Principal is re-read against the Account index, and a Session whose
 // Account was disabled or whose roles changed is closed with outcome
-// "revoked". The Subscribe stream on it ends the way any teardown ends it;
-// SubscriberDropped{reason=REVOKED} as an Event is AW-SRV-011's, when there
-// is an Egress that delivers Events.
+// "revoked". An Egress that is a SessionEnder ends the Subscribe stream on
+// it with SubscriberDropped{reason=revoked} as its last frame (AW-SRV-011);
+// any other ends the way any teardown ends it.
 func (st *sessionStore) recheckLoop(ctx context.Context, interval time.Duration, r Rechecker) {
 	t := time.NewTicker(interval)
 	defer t.Stop()

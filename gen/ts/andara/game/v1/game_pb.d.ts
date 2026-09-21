@@ -179,6 +179,17 @@ export declare type SubscribeRequest = Message<"andara.game.v1.SubscribeRequest"
    * @generated from field: uint64 last_event_id = 2;
    */
   lastEventId: bigint;
+
+  /**
+   * Ask for World visibility: every Event, whole, wherever it happens
+   * (AW-SRV-004 AC-8). Requires game_master or operator; anyone else gets
+   * PERMISSION_DENIED, and a privileged stream is audited once at subscribe
+   * time. Off, a Game Master perceives from their Character like anyone
+   * else — the privileged view is asked for, never implied by the role.
+   *
+   * @generated from field: bool world = 3;
+   */
+  world: boolean;
 };
 
 /**
