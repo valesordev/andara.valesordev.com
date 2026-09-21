@@ -67,7 +67,9 @@ func loadHistory(path string) *fileHistory {
 }
 
 // Add records a line: blank lines and a repeat of the last entry are
-// dropped, and the file is appended best-effort.
+// dropped, and the file is written best-effort — appended while under
+// the limit, rewritten from the kept lines once over it, so the file
+// holds the advertised historyLimit lines and no more.
 func (h *fileHistory) Add(entry string) {
 	entry = strings.TrimSpace(entry)
 	if entry == "" {
@@ -77,13 +79,19 @@ func (h *fileHistory) Add(entry string) {
 		return
 	}
 	h.lines = append(h.lines, entry)
+	compact := false
 	if len(h.lines) > historyLimit {
 		h.lines = h.lines[1:]
+		compact = true
 	}
 	if h.path == "" {
 		return
 	}
 	if err := os.MkdirAll(filepath.Dir(h.path), 0o700); err != nil {
+		return
+	}
+	if compact {
+		h.rewrite()
 		return
 	}
 	f, err := os.OpenFile(h.path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
@@ -92,6 +100,17 @@ func (h *fileHistory) Add(entry string) {
 	}
 	defer f.Close()
 	_, _ = f.WriteString(entry + "\n")
+}
+
+// rewrite replaces the file with the kept lines, atomically.
+func (h *fileHistory) rewrite() {
+	tmp := h.path + ".tmp"
+	if err := os.WriteFile(tmp, []byte(strings.Join(h.lines, "\n")+"\n"), 0o600); err != nil {
+		return
+	}
+	if err := os.Rename(tmp, h.path); err != nil {
+		_ = os.Remove(tmp)
+	}
 }
 
 func (h *fileHistory) Len() int { return len(h.lines) }

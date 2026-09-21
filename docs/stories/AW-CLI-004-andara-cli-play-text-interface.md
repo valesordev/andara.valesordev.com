@@ -229,14 +229,22 @@ CLAUDE.md §8, plus:
   than a terminal there is no prompt, and each line is held until the previous one's Events have
   arrived and the stream has been quiet 50 ms — bounded at 3 s — and end of input lingers the
   same, so a scripted transcript reads in the order it was typed. A person's lines are never held.
+  The 50 ms rests on a sim property, not a client one: one Command's Events are emitted in one
+  tick (`AW-SRV-003`) and so arrive together. A sim that spread a Command's Events over ticks
+  would make piped transcripts interleave, and this is where it would show. A new Session clears
+  what the old one had accepted; no Event on it will answer them.
 - **Refusals** print the server's message and nothing else, from `Submit` or from
   `CommandRejected` alike (AC-4, AC-5). Behavior switches on `ErrorInfo.reason` only:
   `world_read_only` / `in_transit` hold the prompt for `RetryInfo` (500 ms without one) and retry
   the same line up to three times before printing the message (AC-6); `produce_deadline` — or the
-  client's own deadline — retries with the same `client_ref` up to four attempts; `outcome_unknown`
-  stops and tells the player to `look`; `UNAUTHENTICATED` on `Submit` drops the line and hands the
-  reconnect to the stream loop. `client_ref` is `<8 hex per process>-<n>`: fresh per typed line,
-  never reused, unique across the Sessions one process opens.
+  client's own deadline — retries with the same `client_ref` up to four attempts, **on the Session
+  the line started in**: the Idempotency Key is `(Session, client_ref)`, so a retry on a Session
+  opened since would be a fresh key and a second produce. If the Session changed under a retry, or
+  a retry is answered `UNAUTHENTICATED`, the first attempt's fate is unknown and the player is told
+  so (the `outcome_unknown` wording). `outcome_unknown` itself stops and tells the player to
+  `look`; `UNAUTHENTICATED` on a first attempt drops the line ("not sent") and hands the reconnect
+  to the stream loop. `client_ref` is `<8 hex per process>-<n>`: fresh per typed line, never
+  reused, unique across the Sessions one process opens.
 - **Reconnect** (AC-7): the stream loop owns it. A stream that ends `UNAUTHENTICATED`,
   `UNAVAILABLE`, `CANCELED`, or without a Protocol answer is announced once (`-- Connection lost;
   reconnecting.`), then `OpenSession` is retried on a jittered 1 s → 15 s backoff — a refused
@@ -244,7 +252,14 @@ CLAUDE.md §8, plus:
   last `event_id`. A Session dies with its connection until `AW-SRV-015`, so today every
   reconnect is a new Session and the resume is answered `Resync{no_history}`: announced, then
   `look`. `buffer_full` resubscribes on the same Session without the loss notice. A
-  `PERMISSION_DENIED` stream end (revoked) is exit 1.
+  `PERMISSION_DENIED` stream end (revoked) is exit 1. A connection that died without a RST is
+  noticed by the transport: the stream client's `http2.Transport` pings after 30 s of silence
+  (`ReadIdleTimeout`, above `egress.heartbeat_interval`'s 20 s, so a live stream never pings) and
+  the default 15 s `PingTimeout` turns a dead one into the reconnect path within ~45 s. A session
+  token expired since login (`auth.session_ttl` is from login, not from `play`) is refreshed once
+  on an `UNAUTHENTICATED` `OpenSession` — `Auth.Refresh` and the credential file updated, as
+  `auth refresh` does — before the refusal stands. SIGINT/SIGTERM cancel play from their own
+  goroutine, so a signal mid-retry ends play at once with `CloseSession` sent.
 - **Exit codes** per `AW-CLI-001`: 0 on Ctrl-C, Ctrl-D, `/quit`, or end of input — `CloseSession`
   is sent on each (AC-11); 2 with `not_logged_in` when no credential is stored; 3 with
   `protocol_version` naming both ranges (AC-12, read from the `PreconditionFailure` detail, the
@@ -259,14 +274,24 @@ CLAUDE.md §8, plus:
 - **Trace:** `client.go`'s interceptor now injects the `cli.command` context on streaming calls
   too, so `Subscribe` is parented like `Submit`; the compose stack (trust-inbound on) shows one
   trace holding `OpenSession`, both `Submit`s, and `Subscribe`.
+- **Review of PR #39 (2026-09-21), applied:** the deadline retry bound to its Session (above);
+  the transport ping; the token refresh; the signal goroutine; `«` lines carry `session_id`; the
+  history file is rewritten from the kept lines when it crosses 1000, not appended forever;
+  `SubscriberDropped`'s `buffer_full`/`revoked` render as prose; a new Session clears `pending`;
+  `stack_play.sh` matches any address and restarts `andara-server` under an open session (AC-7,
+  AC-8's `no_history` resync — no Character needed). Rulings taken as given: `--as <account-id>`;
+  `--reconnect` default on; `/` reserved for the client (contract at §8 — no game verb may begin
+  with one); heartbeats stay in the JSON stream, the `jq` filter is documented instead.
 
 ### Verification record (2026-09-21, compose stack, `main` at `fb4902e`)
 
 - `make check` clean. `admin/cli` under `-race` ×5: `TestPlay_*` (transcript, JSON split,
-  read-only hold, same-ref deadline retry, reconnect + resync against a server stopped and
-  started again on the same address, `--reconnect=false`, `buffer_full` resubscribe, version
-  mismatch, not logged in, protocol visibility, Session closed behind the client's back) over an
-  in-process gateway with fake seams speaking the wire contract; `TestRender_*` goldens.
+  read-only hold, same-ref deadline retry, the retry staying in its Session when the Session is
+  replaced under it, reconnect + resync against a server stopped and started again on the same
+  address, `--reconnect=false`, `buffer_full` resubscribe, version mismatch, not logged in,
+  expired token refreshed and the credential file updated, SIGTERM mid-retry, protocol
+  visibility, Session closed behind the client's back) over an in-process gateway with fake seams
+  speaking the wire contract; `TestRender_*` goldens; `TestHistory_Bounded`.
 - **Live** (`make stack-play`, and by hand): `auth login` as the bootstrap operator; `play` opens
   a Session over TLS, subscribes, `look`/`north`/`west` are refused before the log with "you are
   not in the world" — printed as prose, nothing about stages or offsets — `frobnicate` with the
@@ -274,10 +299,12 @@ CLAUDE.md §8, plus:
   lines; `CloseSession` on quit, `andara_sessions_total{outcome="closed"}` +1,
   `andara_ingress_submits_total{rejected_authz}` +3 and `{rejected_parse}` +1 on the server;
   a pty-driven session with history recall and Ctrl-C / Ctrl-D exiting 0; `docker compose restart
-  andara-server` mid-session → `server draining` on the stream, `-- Connection lost;
-  reconnecting.`, a new Session within the backoff, the automatic `look`; a `Heartbeat` frame 20 s
-  later printing nothing (AC-9); Tempo holding the CLI's trace across `OpenSession`, `Submit`,
-  and `Subscribe`.
+  andara-server` under an open session — now a step of `stack_play.sh` — → `server draining` on
+  the stream, `-- Connection lost; reconnecting.`, a new Session within the backoff, the
+  automatic `look`, nothing false in between; a `Heartbeat` frame 20 s later printing nothing
+  (AC-9); Tempo holding the CLI's trace across `OpenSession`, `Submit`, and `Subscribe`. The
+  transport ping is not exercised live (it needs a peer that stops forwarding without a RST); the
+  two `http2.Transport` fields are set and their behavior is x/net's documented one.
 - **Not observable live until `AW-SRV-014` binds a Character**, and carried by that story as an
   inherited Definition-of-done line: the Room after `look` (AC-1), Events after `north` (AC-2), a
   second client seeing the departure (AC-3), a post-log `CommandRejected` (AC-4), read-only under a
@@ -286,6 +313,25 @@ CLAUDE.md §8, plus:
   emits; `scripts/stack_play.sh` says in its header which assertions `AW-SRV-014` extends.
 
 ## Open questions
+
+- `[NEEDS BRIAN]` **The client's own system-voice lines** — what `play` says when the server has
+  said nothing a player could read. The analog of `AW-SRV-010`'s `ReadOnlyMessage`; accept or
+  reword in one pass. Verbatim, from `render.go` and `play.go`:
+  - `Resync`: "You may have missed some events; the world continues from here."
+  - `ZoneFaulted`: "This part of the world has stopped responding; your commands here are not being applied."
+  - `SubscriberDropped`: "The server stopped sending you events: you fell behind." (`buffer_full`) /
+    "The server stopped sending you events: your session was revoked." (`revoked`) /
+    "The server stopped sending you events." (any other reason)
+  - `SimulationStopped`: "The world has stopped: <reason>" / "The world has stopped."
+  - unknown Event type: "Something happened here that this client cannot describe (event <id>)."
+  - `outcome_unknown`, or a retry whose Session changed: "No answer for that: the world may or may
+    not have taken it. Use `look` to see where things stand."
+  - deadline retries exhausted: "The world has not answered that yet; it may still take it. Use
+    `look` to see where things stand."
+  - a line not taken: "That was not sent: your session ended." / "That was not sent: <error>"
+  - notices: "Connection lost; reconnecting." / "You fell behind the world's events; the stream is
+    being reopened." / "Session token refreshed." / "Connected to <server> as <who> (session <id>,
+    protocol <n>)."
 
 - **Inherited from `AW-SRV-029` (2026-09-19), contract-bearing:** an envelope may carry
   `perceived_from` (a Direction) — the perceived-through form of a `CharacterArrived`/`CharacterLeft`

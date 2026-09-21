@@ -130,7 +130,7 @@ another against the same recorded stream.
 | `CommandRejected` | the message, verbatim — the same voice as a refusal returned on `Submit` |
 | `Heartbeat` | nothing |
 | `Resync` | "You may have missed some events; the world continues from here." and a fresh `look` |
-| `ZoneFaulted`, `SubscriberDropped`, `SimulationStopped` | one system-voice line each |
+| `ZoneFaulted`, `SubscriberDropped`, `SimulationStopped` | one system-voice line each (`SubscriberDropped`'s `buffer_full` and `revoked` as prose; the token stays under `/protocol`) |
 | anything newer than this client | "Something happened here that this client cannot describe (event N)." |
 
 Lines that start with `/` are for the client, never sent:
@@ -148,7 +148,7 @@ happened; the `ErrorInfo.reason` steers only behavior (`AW-SRV-010`,
 | Server answer | Client behavior |
 |---------------|-----------------|
 | `UNAVAILABLE` `world_read_only` / `in_transit` | hold the prompt for `RetryInfo` (500 ms without one), retry the same line up to 3 times, then print the message |
-| `DEADLINE_EXCEEDED` `produce_deadline`, or the client's own `--client-timeout` | retry with the **same** `client_ref` up to 4 attempts — the server answers with the original outcome |
+| `DEADLINE_EXCEEDED` `produce_deadline`, or the client's own `--client-timeout` | retry with the **same** `client_ref` up to 4 attempts, on the **same Session** — the server answers with the original outcome. If the Session changed under the retry (a reconnect), the outcome is unknown and the player is told to `look`; a retry is never sent on a Session the line did not start in |
 | `DEADLINE_EXCEEDED` `outcome_unknown` | stop; "the world may or may not have taken it. Use `look`" |
 | `UNAUTHENTICATED` on `Submit` | the Session is gone: the line is dropped and the stream loop reopens a Session |
 | anything else typed | the message, once |
@@ -156,9 +156,16 @@ happened; the `ErrorInfo.reason` steers only behavior (`AW-SRV-010`,
 A dropped connection is announced (`-- Connection lost; reconnecting.`), retried
 with backoff (1 s doubling to 15 s, jittered), and the stream resumed from the last
 `event_id` seen; a resume the server cannot honor arrives as a `Resync`, which is
-announced and followed by a `look`. `--reconnect=false` makes a drop exit 3
-(`disconnected`) instead, for scripts. A server whose Protocol range excludes
-this client's version (1) exits 3 with `protocol_version`, naming both ranges.
+announced and followed by a `look`. A connection that died without saying so is
+noticed by the transport, not by luck: the stream connection is health-checked with
+an HTTP/2 ping after 30 s of silence — above the server's 20 s heartbeat, so a live
+stream never pings — and errors within ~45 s of dying. If the stored session token
+has expired by the time of a reconnect (`auth.session_ttl` counts from login), the
+refresh token is exchanged once and the credential file updated, as `auth refresh`
+does. `--reconnect=false` makes a drop exit 3 (`disconnected`) instead, for scripts.
+A server whose Protocol range excludes this client's version (1) exits 3 with
+`protocol_version`, naming both ranges. SIGINT and SIGTERM end play at once, even
+mid-retry, with the Session closed.
 
 `--output json` writes the raw stream — every envelope, heartbeats included —
 to stdout as one `protojson` object per line, and everything else (notices,
@@ -171,7 +178,12 @@ it was typed:
 ```
 printf 'look\nnorth\n' | andara-cli play
 printf 'look\n' | andara-cli play --output json | jq .
+printf 'look\n' | andara-cli play --output json | jq 'select(.heartbeat == null)'   # Events only
 ```
+
+Heartbeats are in the JSON stream on purpose: the proto calls them stream
+frames, and a heartbeat's `tick` is the only liveness a script can see. Filter
+them out with the `jq` above rather than expecting the client to.
 
 History lives at `$XDG_STATE_HOME/andara/history` (`~/.local/state/andara/history`),
 last 1000 lines, opt out with `--no-history`. `--timeout` bounds opening the

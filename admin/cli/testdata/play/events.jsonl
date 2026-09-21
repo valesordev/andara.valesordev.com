@@ -11,5 +11,7 @@
 {"tick":"16","resync":{"last_event_id":"8","reason":"no_history"}}
 {"event_id":"9","tick":"17","zone_faulted":{"zone_id":"town"}}
 {"event_id":"10","tick":"18","subscriber_dropped":{"reason":"revoked"}}
+{"tick":"18","subscriber_dropped":{"reason":"buffer_full"}}
+{"tick":"18","subscriber_dropped":{"reason":"shutdown"}}
 {"event_id":"11","tick":"19","simulation_stopped":{"reason":"operator stop"}}
 {"event_id":"12","tick":"19","simulation_stopped":{}}

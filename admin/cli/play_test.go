@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -670,12 +671,12 @@ func TestPlay_ProtocolVisibility(t *testing.T) {
 		"« OpenSessionResponse session_id=",
 		"» Subscribe session_id=",
 		"» Submit session_id=", "raw=\"look\"",
-		"« SubmitResponse client_ref=", "partition=3 accepted_offset=1",
-		"« RoomDescribed event_id=1 tick=10 client_ref=",
-		"« CommandRejected event_id=2 tick=12",
+		"« SubmitResponse session_id=", "partition=3 accepted_offset=1",
+		"« RoomDescribed session_id=", "event_id=1 tick=10 client_ref=",
+		"« CommandRejected session_id=", "event_id=2 tick=12",
 		"Protocol visibility off.",
 		"Protocol visibility on (session ",
-		"« error code=invalid_argument reason=unknown_verb stage=parse pre_log=true message=\"I don't know how to frobnicate.\"",
+		"« error session_id=", "code=invalid_argument reason=unknown_verb stage=parse pre_log=true message=\"I don't know how to frobnicate.\"",
 		"/protocol [on|off]",
 		"Unknown client command /bogus",
 		"» CloseSession session_id=",
@@ -728,5 +729,125 @@ func TestPlay_SessionGoneReopens(t *testing.T) {
 	subs := w.submitted()
 	if got := subs[len(subs)-1].GetSessionId(); got == first {
 		t.Errorf("west went out on the closed Session")
+	}
+}
+
+// AW-SRV-031's key is (Session, client_ref): a deadline retry must never
+// leave the Session it started in. The first north hangs; the Session is
+// closed behind the client's back and a new one opened; the hung Submit
+// then answers produce_deadline — and the retry does not go out on the
+// new Session as a fresh key. The player is told the outcome is unknown.
+func TestPlay_DeadlineRetryStaysInItsSession(t *testing.T) {
+	prev := backoffInitial
+	backoffInitial = 20 * time.Millisecond
+	t.Cleanup(func() { backoffInitial = prev })
+
+	w := newWorld()
+	release := make(chan struct{})
+	var norths atomic.Int32
+	w.answer = func(w *world, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error) {
+		if req.GetRaw() == "north" {
+			if norths.Add(1) == 1 {
+				<-release
+				return nil, ingressError(connect.CodeDeadlineExceeded, "produce_deadline", "produce deadline exceeded; outcome unknown", 0)
+			}
+			return defaultAnswer(w, req)
+		}
+		return defaultAnswer(w, req)
+	}
+	s, env := playServer(t, w, nil)
+	sc := newScript()
+	stdout, _, wait := playLive(t, env, sc)
+	stdout.await(t, "Here: Mara")
+	first := w.subscribed()[0].GetSessionId()
+
+	sc.line(t, "north")
+	deadline := time.Now().Add(5 * time.Second)
+	for norths.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	// The Session goes away under the hung Submit, and the client has
+	// reconnected — a second subscription exists — before it is answered.
+	game, _ := newTestGameClient(t, s)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := game.CloseSession(ctx, connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: first})); err != nil {
+		t.Fatal(err)
+	}
+	for len(w.subscribed()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(w.subscribed()) < 2 {
+		t.Fatal("no reconnect")
+	}
+	close(release)
+	stdout.await(t, outcomeUnknownMessage)
+	sc.close()
+	if code := wait(); code != 0 {
+		t.Fatalf("exit=%d\n%s", code, stdout.String())
+	}
+	if n := norths.Load(); n != 1 {
+		t.Errorf("north reached the world %d times, want 1", n)
+	}
+	for _, sub := range w.submitted() {
+		if sub.GetRaw() == "north" && sub.GetSessionId() != first {
+			t.Errorf("north was retried on Session %s, not %s", sub.GetSessionId(), first)
+		}
+	}
+}
+
+// A session token that has expired since login: OpenSession is refused,
+// the refresh token is exchanged once, the credential file updated, and
+// play goes on.
+func TestPlay_RefreshesAnExpiredToken(t *testing.T) {
+	w := newWorld()
+	_, env := playServer(t, w, nil)
+	credPath := filepath.Join(env["XDG_CONFIG_HOME"], "andara", "credentials.yaml")
+	entries, err := readCredentialFile(credPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var key string
+	for k := range entries {
+		key = k
+	}
+	cred := entries[key]
+	stale := "stale." + cred.SessionToken
+	cred.SessionToken = stale
+	entries[key] = cred
+	if err := writeCredentialFile(credPath, entries); err != nil {
+		t.Fatal(err)
+	}
+
+	res := play(t, env, strings.NewReader("west\n"), "--show-protocol")
+	if res.exit != 0 {
+		t.Fatalf("exit=%d\nstdout:\n%s\nstderr:\n%s", res.exit, res.stdout, res.stderr)
+	}
+	for _, want := range []string{"« error code=unauthenticated", "» Auth.Refresh", "-- Session token refreshed.", "There is no exit west."} {
+		if !strings.Contains(res.stdout, want) {
+			t.Errorf("transcript lacks %q:\n%s", want, res.stdout)
+		}
+	}
+	after, err := readCredentialFile(credPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after[key].SessionToken; got == stale || got == "" {
+		t.Errorf("the credential file was not updated")
+	}
+	if strings.Contains(res.stdout, stale) || strings.Contains(res.stdout, after[key].SessionToken) {
+		t.Error("a token was printed")
+	}
+
+	// No refresh token at all: the refusal stands, exit 3.
+	cred.RefreshToken = ""
+	cred.SessionToken = stale
+	entries[key] = cred
+	if err := writeCredentialFile(credPath, entries); err != nil {
+		t.Fatal(err)
+	}
+	res = play(t, env, strings.NewReader(""))
+	if res.exit != ExitConnect {
+		t.Fatalf("exit=%d, want %d: %s", res.exit, ExitConnect, res.stderr)
 	}
 }

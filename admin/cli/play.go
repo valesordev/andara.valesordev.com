@@ -23,6 +23,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/protobuf/encoding/protojson"
 
+	authv1 "github.com/valesordev/andara/gen/go/andara/auth/v1"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 )
@@ -59,6 +60,17 @@ const (
 	maxHoldAttempts   = 3
 	holdDelay         = 500 * time.Millisecond
 	maxRetryAfter     = 5 * time.Second
+)
+
+// The client's own system-voice lines: what it says when the server has
+// said nothing a player could read. Listed under the story's Open
+// questions for Brian, as AW-SRV-010's ReadOnlyMessage was.
+const (
+	outcomeUnknownMessage = "No answer for that: the world may or may not have taken it. Use `look` to see where things stand."
+	notAnsweredMessage    = "The world has not answered that yet; it may still take it. Use `look` to see where things stand."
+	notSentMessage        = "That was not sent: "
+	lostMessage           = "Connection lost; reconnecting."
+	behindMessage         = "You fell behind the world's events; the stream is being reopened."
 )
 
 // Reconnect backoff (AC-7). The initial delay is a variable so a test can
@@ -177,28 +189,76 @@ func (p *player) wait(d time.Duration) {
 
 // connect opens a Session (AC-1, AC-12) bounded by --timeout, and remembers
 // it. A version outside the server's range names both and is exit 3.
+//
+// A session token expires an hour after login, not after play started, so
+// a reconnect late in a long session may be refused UNAUTHENTICATED with
+// nothing wrong but the clock. The stored refresh token is exchanged once
+// and the credential file updated — what `auth refresh` does — before that
+// is taken as an answer.
 func (p *player) connect(ctx context.Context) error {
-	cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
-	defer cancel()
-	p.protof("» OpenSession protocol_version=%d client_name=%q act_as=%q", clientProtocolVersion, clientName(), p.o.as)
-	resp, err := p.game.OpenSession(cctx, connect.NewRequest(&gamev1.OpenSessionRequest{
-		ProtocolVersion: clientProtocolVersion,
-		AuthToken:       p.cred.SessionToken,
-		ClientName:      clientName(),
-		ActAsAccountId:  p.o.as,
-	}))
-	if err != nil {
+	refreshed := false
+	for {
+		cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
+		p.protof("» OpenSession protocol_version=%d client_name=%q act_as=%q", clientProtocolVersion, clientName(), p.o.as)
+		resp, err := p.game.OpenSession(cctx, connect.NewRequest(&gamev1.OpenSessionRequest{
+			ProtocolVersion: clientProtocolVersion,
+			AuthToken:       p.cred.SessionToken,
+			ClientName:      clientName(),
+			ActAsAccountId:  p.o.as,
+		}))
+		cancel()
+		if err == nil {
+			return p.opened(resp.Msg)
+		}
 		p.protof("« error %s", describeError(err))
 		if ve := versionError(err); ve != nil {
 			return ve
 		}
+		if connect.CodeOf(err) == connect.CodeUnauthenticated && !refreshed && p.cred.RefreshToken != "" {
+			refreshed = true
+			if rerr := p.refresh(ctx); rerr == nil {
+				continue
+			} else {
+				p.rt.log("debug", "refresh: "+rerr.Error())
+			}
+		}
 		return rpcError(err)
 	}
-	msg := resp.Msg
+}
+
+// refresh exchanges the refresh token for a fresh pair and stores it.
+func (p *player) refresh(ctx context.Context) error {
+	client, err := p.rt.authClient()
+	if err != nil {
+		return err
+	}
+	cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
+	defer cancel()
+	p.protof("» Auth.Refresh")
+	resp, err := client.Refresh(cctx, connect.NewRequest(&authv1.RefreshRequest{RefreshToken: p.cred.RefreshToken}))
+	if err != nil {
+		p.protof("« error %s", describeError(err))
+		return err
+	}
+	p.protof("« RefreshResponse")
+	pair := resp.Msg.GetTokens()
+	p.cred.SessionToken, p.cred.SessionExpires = pair.GetSessionToken(), unixTime(pair.GetSessionExpiresUnix())
+	p.cred.RefreshToken, p.cred.RefreshExpires = pair.GetRefreshToken(), unixTime(pair.GetRefreshExpiresUnix())
+	if err := p.rt.storeCredential(*p.cred); err != nil {
+		return err
+	}
+	p.con.notice("info", "Session token refreshed.")
+	return nil
+}
+
+// opened records a new Session.
+func (p *player) opened(msg *gamev1.OpenSessionResponse) error {
 	p.protof("« OpenSessionResponse session_id=%s negotiated_version=%d server_range=%d..%d",
 		msg.GetSessionId(), msg.GetNegotiatedVersion(), msg.GetServerMinVersion(), msg.GetServerMaxVersion())
 	p.mu.Lock()
 	p.sessionID = msg.GetSessionId()
+	// What the old Session accepted, no Event on this one will answer.
+	clear(p.pending)
 	p.mu.Unlock()
 	p.looked.Store(false)
 	who := p.cred.Username
@@ -259,15 +319,23 @@ func (p *player) repl() error {
 			}
 		}
 	}()
+	// A signal ends play from its own goroutine: the loop below may be
+	// inside a Submit being retried, and signal.Notify has taken the
+	// default action away, so nothing else would.
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sig)
+	go func() {
+		select {
+		case <-sig:
+			p.cancel()
+		case <-p.ctx.Done():
+		}
+	}()
 
 	// The Room first (AC-1); what is typed follows it.
 	select {
 	case <-p.ready:
-	case <-sig:
-		return nil
 	case err := <-p.fatal:
 		return err
 	case <-p.ctx.Done():
@@ -275,7 +343,7 @@ func (p *player) repl() error {
 	}
 	for {
 		select {
-		case <-sig:
+		case <-p.ctx.Done():
 			return nil
 		case err := <-p.fatal:
 			return err
@@ -395,22 +463,35 @@ func (p *player) look() {
 // ack is not game output (AC-2): it is shown only under protocol
 // visibility. A refusal is printed as the server worded it, wherever in
 // the pipeline it happened (AC-5); the reason steers behavior only.
+//
+// A line lives and dies in the Session it was first sent on. The
+// idempotency key is (Session, client_ref) — AW-SRV-031's table is per
+// Session — so a retry on a Session opened since would be a fresh key, a
+// new produce, and possibly the double move the retry exists to prevent.
+// If the Session changed under a retry, or the old one answers that it is
+// gone, the outcome of the first attempt is unknown and the player is
+// told so.
 func (p *player) submit(raw string) {
 	ref := p.nextRef()
 	p.expect(ref)
 	held := 0
+	id := p.session()
 	for attempt := 1; ; attempt++ {
-		id := p.session()
+		if p.session() != id {
+			p.answered(ref)
+			p.con.game(outcomeUnknownMessage)
+			return
+		}
 		ctx, cancel := context.WithTimeout(p.ctx, p.o.clientTimeout)
 		p.protof("» Submit session_id=%s client_ref=%s raw=%q", id, ref, raw)
 		resp, err := p.game.Submit(ctx, connect.NewRequest(&gamev1.SubmitRequest{SessionId: id, Raw: raw, ClientRef: ref}))
 		cancel()
 		if err == nil {
 			// Accepted: the outcome arrives on the stream, carrying ref.
-			p.protof("« SubmitResponse client_ref=%s partition=%d accepted_offset=%d", ref, resp.Msg.GetPartition(), resp.Msg.GetAcceptedOffset())
+			p.protof("« SubmitResponse session_id=%s client_ref=%s partition=%d accepted_offset=%d", id, ref, resp.Msg.GetPartition(), resp.Msg.GetAcceptedOffset())
 			return
 		}
-		p.protof("« error %s", describeError(err))
+		p.protof("« error session_id=%s %s", id, describeError(err))
 		if p.ctx.Err() != nil {
 			p.answered(ref)
 			return
@@ -426,9 +507,9 @@ func (p *player) submit(raw string) {
 			}
 			p.answered(ref)
 			if reason == reasonOutcomeUnknown {
-				p.con.game("No answer for that: the world may or may not have taken it. Use `look` to see where things stand.")
+				p.con.game(outcomeUnknownMessage)
 			} else {
-				p.con.game("The world has not answered that yet; it may still take it. Use `look` to see where things stand.")
+				p.con.game(notAnsweredMessage)
 			}
 			return
 		case connect.CodeUnavailable:
@@ -446,10 +527,15 @@ func (p *player) submit(raw string) {
 			p.con.game(connectMessage(err))
 			return
 		case connect.CodeUnauthenticated:
-			// The Session is gone: this line was not taken, and the
-			// stream loop reconnects.
+			// The Session is gone. On the first attempt the line was
+			// not taken; on a retry, the first attempt may have been.
+			// Either way the stream loop reconnects.
 			p.answered(ref)
-			p.con.game("That was not sent: your session ended.")
+			if attempt > 1 {
+				p.con.game(outcomeUnknownMessage)
+			} else {
+				p.con.game(notSentMessage + "your session ended.")
+			}
 			p.endStream()
 			return
 		}
@@ -462,7 +548,7 @@ func (p *player) submit(raw string) {
 		}
 		// Not a Protocol answer: the connection itself. The stream loop
 		// will notice and say so.
-		p.con.game("That was not sent: " + firstLine(err.Error()))
+		p.con.game(notSentMessage + firstLine(err.Error()))
 		return
 	}
 }
@@ -516,7 +602,7 @@ func (p *player) streamLoop() {
 			}
 			continue
 		case code == connect.CodeResourceExhausted && reason == reasonBufferFull:
-			p.con.notice("warn", "You fell behind the world's events; the stream is being reopened.")
+			p.con.notice("warn", behindMessage)
 			continue
 		case code == connect.CodePermissionDenied:
 			p.fatal <- &AppError{Exit: ExitFail, Code: CodePermissionDenied, Message: connectMessage(err), Detail: map[string]any{"grpc_code": code.String()}}
@@ -529,7 +615,7 @@ func (p *player) streamLoop() {
 			}
 			if !lost {
 				lost = true
-				p.con.notice("warn", "Connection lost; reconnecting.")
+				p.con.notice("warn", lostMessage)
 			}
 			if !p.sleep(jitter(backoff)) {
 				return
@@ -582,7 +668,7 @@ func (p *player) stream() error {
 	p.protof("» Subscribe session_id=%s last_event_id=%d world=%t", id, last, p.o.world)
 	st, err := p.game.Subscribe(sctx, connect.NewRequest(&gamev1.SubscribeRequest{SessionId: id, LastEventId: last, World: p.o.world}))
 	if err != nil {
-		p.protof("« error %s", describeError(err))
+		p.protof("« error session_id=%s %s", id, describeError(err))
 		return err
 	}
 	defer func() { _ = st.Close() }()
@@ -601,11 +687,11 @@ func (p *player) stream() error {
 	err = st.Err()
 	switch {
 	case p.ctx.Err() != nil:
-		p.protof("« stream ended: leaving")
+		p.protof("« stream ended session_id=%s: leaving", id)
 	case err != nil:
-		p.protof("« error %s", describeError(err))
+		p.protof("« error session_id=%s %s", id, describeError(err))
 	default:
-		p.protof("« stream closed by the server")
+		p.protof("« stream closed by the server session_id=%s", id)
 	}
 	return err
 }
@@ -618,7 +704,7 @@ func (p *player) handle(env *gamev1.EventEnvelope) {
 	}
 	p.lastFrame.Store(time.Now().UnixNano())
 	p.answered(env.GetClientRef())
-	p.protof("« %s event_id=%d tick=%d client_ref=%s", eventName(env), env.GetEventId(), env.GetTick(), env.GetClientRef())
+	p.protof("« %s session_id=%s event_id=%d tick=%d client_ref=%s", eventName(env), p.session(), env.GetEventId(), env.GetTick(), env.GetClientRef())
 	p.con.event(env)
 	if _, ok := env.GetPayload().(*gamev1.EventEnvelope_Resync); ok {
 		// The server could not resume: the player was told (the

@@ -24,7 +24,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
-              10 more, attached to stories neither lane has reached
+              11 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

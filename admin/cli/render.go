@@ -50,7 +50,15 @@ func renderEvent(env *gamev1.EventEnvelope) []string {
 	case *gamev1.EventEnvelope_ZoneFaulted:
 		return []string{"This part of the world has stopped responding; your commands here are not being applied."}
 	case *gamev1.EventEnvelope_SubscriberDropped:
-		return []string{"The server stopped sending you events (" + p.SubscriberDropped.GetReason() + ")."}
+		// The reasons the server emits (AW-SRV-011, AW-SRV-008 AC-12),
+		// as prose; the token itself stays visible under /protocol.
+		switch p.SubscriberDropped.GetReason() {
+		case "buffer_full":
+			return []string{"The server stopped sending you events: you fell behind."}
+		case "revoked":
+			return []string{"The server stopped sending you events: your session was revoked."}
+		}
+		return []string{"The server stopped sending you events."}
 	case *gamev1.EventEnvelope_SimulationStopped:
 		if r := p.SimulationStopped.GetReason(); r != "" {
 			return []string{"The world has stopped: " + r}

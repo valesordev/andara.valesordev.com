@@ -65,16 +65,27 @@ func (rt *runtime) httpClient() (*http.Client, error) {
 	}, nil
 }
 
+// streamReadIdle is how long the Subscribe connection may be silent
+// before the transport pings it. It is above the server's
+// egress.heartbeat_interval (20 s): a live stream carries a Heartbeat
+// inside it and never pings, and a connection that died without a RST —
+// a NAT drop, a suspended laptop — errors within this plus the ping
+// timeout (15 s) and falls into the reconnect path, rather than waiting
+// on the kernel's keepalive. Any frame resets the timer.
+const streamReadIdle = 30 * time.Second
+
 // streamClient is httpClient without the whole-request deadline: a play
 // Session's Subscribe stream lives for as long as the player does, and
 // --timeout bounds establishing the connection, not the session
-// (AW-CLI-004). Every unary call on it carries its own context deadline.
+// (AW-CLI-004). Every unary call on it carries its own context deadline,
+// and the connection itself is health-checked with HTTP/2 pings.
 func (rt *runtime) streamClient() (*http.Client, error) {
 	hc, err := rt.httpClient()
 	if err != nil {
 		return nil, err
 	}
 	hc.Timeout = 0
+	hc.Transport.(*http2.Transport).ReadIdleTimeout = streamReadIdle
 	return hc, nil
 }
 

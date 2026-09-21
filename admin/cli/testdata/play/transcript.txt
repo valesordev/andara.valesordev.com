@@ -40,7 +40,13 @@ You may have missed some events; the world continues from here.
 This part of the world has stopped responding; your commands here are not being applied.
 
 # SubscriberDropped event_id=10 tick=18 client_ref=""
-The server stopped sending you events (revoked).
+The server stopped sending you events: your session was revoked.
+
+# SubscriberDropped event_id=0 tick=18 client_ref=""
+The server stopped sending you events: you fell behind.
+
+# SubscriberDropped event_id=0 tick=18 client_ref=""
+The server stopped sending you events.
 
 # SimulationStopped event_id=11 tick=19 client_ref=""
 The world has stopped: operator stop

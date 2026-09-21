@@ -11,7 +11,8 @@
 # about stages or offsets in it, the client leaves cleanly with exit 0 and the
 # Session closed, and under --output json stdout is JSON and nothing else.
 # AW-SRV-014 carries the other half as an inherited line: the Room, the move, the
-# second client seeing the departure (AC-3), and the broker stop (AC-6).
+# second client seeing the departure (AC-3), and the broker stop (AC-6). The
+# server restart (AC-7, AC-8's no_history resync) needs no Character and runs here.
 #
 # Requires a stack: `make up` first, and `make build`. CI runs it as a step of
 # the `stack` workflow.
@@ -60,7 +61,7 @@ sed 's/^/  | /' "$OUT"
 [[ ! -s "$ERR" ]] || { cat "$ERR" >&2; fail "play wrote to stderr in human mode"; }
 
 # The Session opened over TLS and subscribed (AC-1).
-grep -q '^-- Connected to localhost:8443 as operator (session [0-9a-f]\{32\}, protocol 1)\.$' "$OUT" \
+grep -q '^-- Connected to [^ ]\+ as operator (session [0-9a-f]\{32\}, protocol 1)\.$' "$OUT" \
   || fail "no connection notice"
 grep -q '» Subscribe session_id=[0-9a-f]\{32\} last_event_id=0 world=false' "$OUT" || fail "no Subscribe"
 
@@ -121,6 +122,59 @@ for l in err.splitlines():
         assert k in rec, (k, rec)
 PY
 echo "stack-play: stdout carried only JSON; the prose went to stderr as log lines"
+
+# AC-7 and AC-8 against the real server: restart it under an open session. The
+# client announces the loss, reopens a Session within its backoff, subscribes
+# again, and — a Session dying with its connection until AW-SRV-014/015 — looks
+# again on the new one. Nothing false is printed in between: a refused connect
+# during the restart is a debug line, not a notice.
+COMPOSE="docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server"
+echo "stack-play: restarting andara-server under an open session ..."
+ROUT="$WORK/restart-out.txt"
+RERR="$WORK/restart-err.txt"
+FIFO="$WORK/stdin"
+mkfifo "$FIFO"
+bin/andara-cli play --show-protocol <"$FIFO" >"$ROUT" 2>"$RERR" &
+PLAY=$!
+exec 3>"$FIFO"
+wait_for() {  # wait_for <pattern> <seconds>
+  for _ in $(seq 1 "$(( $2 * 2 ))"); do
+    grep -q "$1" "$ROUT" && return 0
+    kill -0 "$PLAY" 2>/dev/null || { cat "$RERR" >&2; fail "play exited early"; }
+    sleep 0.5
+  done
+  sed 's/^/  | /' "$ROUT" >&2
+  fail "play never showed '$1' ($2s)"
+}
+wait_for '^-- Connected to ' 20
+$COMPOSE restart andara-server >/dev/null 2>&1 || fail "could not restart andara-server"
+wait_for '^-- Connection lost; reconnecting\.$' 30
+# Twice connected: the second is the new Session, and it looked on its own.
+for _ in $(seq 1 120); do
+  [[ "$(grep -c '^-- Connected to ' "$ROUT")" -ge 2 ]] && break
+  sleep 0.5
+done
+[[ "$(grep -c '^-- Connected to ' "$ROUT")" -ge 2 ]] || { sed 's/^/  | /' "$ROUT" >&2; fail "no reconnect within 60s"; }
+wait_for '» Subscribe session_id=' 5
+printf 'look\n' >&3
+wait_for 'raw="look"' 10
+exec 3>&-
+set +e
+wait "$PLAY"
+rcode=$?
+set -e
+sed 's/^/  | /' "$ROUT"
+[[ "$rcode" == "0" ]] || { cat "$RERR" >&2; fail "play exited $rcode after the restart, want 0"; }
+[[ "$(grep -o 'session_id=[0-9a-f]\{32\}' "$ROUT" | sort -u | wc -l)" -ge 2 ]] || fail "the reconnect did not open a new Session"
+[[ "$(grep -c '» Submit .*raw="look"' "$ROUT")" -ge 3 ]] || fail "the client did not look again on the new Session"
+! grep -q 'Something happened\|not answered\|not sent' "$ROUT" || fail "something false was printed during the restart"
+# The stack is back for whatever runs next.
+for _ in $(seq 1 60); do
+  curl -sf "http://localhost:${HTTP_PORT}/readyz" >/dev/null 2>&1 && break
+  sleep 1
+done
+curl -sf "http://localhost:${HTTP_PORT}/readyz" >/dev/null || fail "andara-server not ready after the restart"
+echo "stack-play: the connection loss was announced, a Session reopened within the backoff, and the Room asked for again"
 
 # AC-12: the client says what it speaks. The server's range cannot be moved
 # from here; the mismatch itself is unit-tested (TestPlay_VersionMismatch).
