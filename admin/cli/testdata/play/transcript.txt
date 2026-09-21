@@ -1,0 +1,53 @@
+# RoomDescribed event_id=1 tick=10 client_ref="r-1"
+Town Square
+A wide square of worn flagstones, ringed by shuttered stalls.
+Exits: east, north, west
+Here: Mara, Tobin
+
+# RoomDescribed event_id=2 tick=11 client_ref=""
+Bare Cell
+Four walls and nothing else.
+Exits: none
+
+# CharacterLeft event_id=3 tick=12 client_ref="r-2"
+Mara leaves north.
+
+# CharacterArrived event_id=4 tick=12 client_ref=""
+Mara arrives from the south.
+
+# CharacterArrived event_id=5 tick=13 client_ref=""
+Tobin arrives.
+
+# CharacterLeft event_id=6 tick=13 client_ref=""
+Tobin leaves.
+
+# CommandRejected event_id=7 tick=14 client_ref="r-3"
+There is no exit west.
+
+# CommandRejected event_id=8 tick=15 client_ref="r-4"
+The door is barred from the other side.
+
+# Heartbeat event_id=0 tick=15 client_ref=""
+(nothing)
+
+# Resync event_id=0 tick=16 client_ref=""
+You may have missed some events; the world continues from here.
+
+# Resync event_id=0 tick=16 client_ref=""
+You may have missed some events; the world continues from here.
+
+# ZoneFaulted event_id=9 tick=17 client_ref=""
+This part of the world has stopped responding; your commands here are not being applied.
+
+# SubscriberDropped event_id=10 tick=18 client_ref=""
+The server stopped sending you events (revoked).
+
+# SimulationStopped event_id=11 tick=19 client_ref=""
+The world has stopped: operator stop
+
+# SimulationStopped event_id=12 tick=19 client_ref=""
+The world has stopped.
+
+# unknown event_id=99 tick=500 client_ref=""
+Something happened here that this client cannot describe (event 99).
+

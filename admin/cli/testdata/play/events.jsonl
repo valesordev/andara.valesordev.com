@@ -1,0 +1,15 @@
+{"event_id":"1","tick":"10","client_ref":"r-1","room_described":{"zone_id":"town","room_id":"square","title":"Town Square","description":"A wide square of worn flagstones, ringed by shuttered stalls.","exits":["east","north","west"],"occupants":["Mara","Tobin"]}}
+{"event_id":"2","tick":"11","room_described":{"zone_id":"town","room_id":"cell","title":"Bare Cell","description":"Four walls and nothing else.","exits":[]}}
+{"event_id":"3","tick":"12","client_ref":"r-2","character_left":{"zone_id":"town","room_id":"square","character_name":"Mara","to_direction":"north"}}
+{"event_id":"4","tick":"12","character_arrived":{"zone_id":"town","room_id":"hall","character_name":"Mara","from_direction":"south"}}
+{"event_id":"5","tick":"13","character_arrived":{"zone_id":"town","room_id":"hall","character_name":"Tobin"}}
+{"event_id":"6","tick":"13","character_left":{"zone_id":"town","room_id":"hall","character_name":"Tobin"}}
+{"event_id":"7","tick":"14","client_ref":"r-3","command_rejected":{"code":"no_such_exit","message":"There is no exit west."}}
+{"event_id":"8","tick":"15","client_ref":"r-4","command_rejected":{"code":"exit_blocked","message":"The door is barred from the other side."}}
+{"tick":"15","heartbeat":{}}
+{"tick":"16","resync":{"last_event_id":"8","reason":"resume_window_exceeded"}}
+{"tick":"16","resync":{"last_event_id":"8","reason":"no_history"}}
+{"event_id":"9","tick":"17","zone_faulted":{"zone_id":"town"}}
+{"event_id":"10","tick":"18","subscriber_dropped":{"reason":"revoked"}}
+{"event_id":"11","tick":"19","simulation_stopped":{"reason":"operator stop"}}
+{"event_id":"12","tick":"19","simulation_stopped":{}}

@@ -11,6 +11,7 @@ Available Commands:
   config       Show and inspect CLI configuration
   help         Help about any command
   invite       Issue and revoke invite codes (operator)
+  play         Enter the world: a text interface over the Protocol
   registration Switch the registration mode (operator)
   sim          Run the simulation in-process against content on disk (developer)
   version      Print version, commit, and build date

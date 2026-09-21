@@ -47,7 +47,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
-        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke \
+        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke stack-play \
         kind-platform stream-soak
 
 ## help: print this target list
@@ -266,6 +266,10 @@ helm-install:
 stack-smoke:
 	@GO=$(GO) PY=$(PY) $(SCRIPTS)/stack_smoke.sh
 
+## stack-play: the M1 gate scripted — `andara-cli play` against the running stack — needs `make up` and `make build`
+stack-play: build
+	@$(SCRIPTS)/stack_play.sh
+
 ## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
 kind-platform:
 	@$(SCRIPTS)/kind_platform.sh "$(KIND_CLUSTER)"
@@ -285,10 +289,10 @@ build:
 	@$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/andara-server ./cmd/andara-server
 	@echo "build: bin/andara-cli bin/andara-server"
 
-## goldens: regenerate CLI --help golden files
+## goldens: regenerate CLI --help golden files and the play rendering transcript
 goldens:
-	@$(GO) test ./admin/cli -count=1 -run '^TestHelpGoldens$$' -args -update
-	@echo "goldens: updated admin/cli/testdata/help"
+	@$(GO) test ./admin/cli -count=1 -run '^(TestHelpGoldens|TestRender_Golden)$$' -args -update
+	@echo "goldens: updated admin/cli/testdata/help and admin/cli/testdata/play/transcript.txt"
 
 ## clean: remove build artifacts and local state
 clean:
