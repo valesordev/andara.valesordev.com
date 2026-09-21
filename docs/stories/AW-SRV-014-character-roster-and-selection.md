@@ -200,6 +200,23 @@ showing, from the running server on the compose stack, `andara_ingress_submits_t
 `andara_command_duration_seconds{phase="pre_log"}`, the `log.produce` span under `command.execute`
 in Tempo, and one `UNAVAILABLE{world_read_only}` on the wire during `docker compose stop redpanda` —
 `AW-SRV-010` proved each by the integration suite only, every live Submit having fallen at `authorize`.
+Inherited from `AW-SRV-011`'s flip to `review` (2026-09-21) and `AW-CLI-004`'s (PR #39), the same
+bound Character on the same compose stack: Event delivery on a `Subscribe` stream (011 AC-1, AC-2),
+a stream ended `buffer_full` from a deliberately stalled `play` with its `warn` line in Loki
+(`session_id`, `buffered`, `last_sent`), `andara_session_egress_drops_total{reason="buffer_full"}`
+and `andara_sessions_in_drop_state` moving, a resume that replays retained Events
+(`stream.resumed` on the `Game/Subscribe` span, and `play`'s AC-8 with `resume_window_exceeded`),
+`andara_stream_buffer_depth` samples, `andara_stream_events_sent_total{type}` for an EventType; and
+from `play` (`scripts/stack_play.sh`'s header names them): the Room after `look` (AC-1), Events
+after `north` (AC-2), a second client seeing the departure (AC-3), a post-log `CommandRejected`
+(AC-4), and read-only under `docker compose stop redpanda` (AC-6). The Session availability SLO
+(99.5 % over 28 d) gets its first measurement here.
+Inherited from `AW-SRV-031`'s flip to `review` (2026-09-21): the first *produced* Submit's dedup —
+the same `client_ref` again answered `{partition, offset N}` with `andara_ingress_submits_total{outcome="deduplicated"}`
+moving and the topic's end offset still — and the ambiguous fates on the running server (`play
+--client-timeout 50ms` against `docker compose pause redpanda`, retry `north`, unpause: one
+`CharacterArrived`, per 031's manual step); 031 showed both by the integration suite against the
+stack's broker only.
 
 ## Open questions
 
@@ -211,6 +228,12 @@ in Tempo, and one `UNAVAILABLE{world_read_only}` on the wire during `docker comp
   way to hold six names.
 - `[ASSUMPTION]` One-live is enforced at the Gateway in process memory. Correct under ADR-0001; the
   sharding story moves it.
+- **Inherited from `AW-SRV-011` (review of PR #37, 2026-09-20):** `Egress.Rebind` compares the new
+  binding against the subscribe-time Observer, not the Room the Hub has since followed the Entity
+  to, so a same-Actor `Bind` after a sim-driven move discards the Session's retained history and a
+  resume from before it is `no_history`. Rare, and this story decides whether `Bindings.Bind`
+  carries the Room (so `Rebind` can tell "same perception" from "new one") or accepts the spurious
+  discard.
 - **Corrected 2026-09-19 (review of PR #34): the contract sketch's arm numbers are taken.**
   `Arrive` shipped as `LoggedCommand` arm 12 (`AW-SRV-003`) and `AW-SRV-028` takes 13
   (`HandoffAck`) and 14 (`HandoffRejected`). `BindCharacter` and `UnbindCharacter` are 15 and 16.

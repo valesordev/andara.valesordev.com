@@ -208,3 +208,12 @@ invariant test.
   Character it drives (`AW-SRV-014`'s binding state) before its first Submit, or that Submit is
   `not_authorized` ("you are not in the world"). Resume also lands the Session on one pod; `AW-SRV-031`'s
   idempotency window is per process and relies on that.
+- **Inherited from `AW-SRV-011` (flip to `review`, 2026-09-21):** the egress retains a Session's
+  sent Events in a ring `egress.resume_window` deep, keyed by **Session**, fed by a pump goroutine
+  that holds the Session's one Hub subscription for the Session's life. A linkdead reconnect is a
+  *new* Session selecting the same Character, so this story moves the key to the Character and
+  keeps the ring and pump alive for `linkdead_grace` after the stream drops — they were built to be
+  handed over, not rebuilt — or every linkdead resume is a `Resync{no_history}`. Consequence to
+  own: `events.max_subscribers` bounds Sessions that have *ever* subscribed (each a pump and up to
+  `resume_window` envelopes), not concurrent streams, and linkdead makes Sessions linger; the
+  number is this story's to size with AC-7's invariant.

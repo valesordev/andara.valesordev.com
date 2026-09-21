@@ -505,6 +505,20 @@ subscription buffer, the pump drains it, and the stream writes on its own gorout
 the client; when it happens the stream ends `buffer_full`, the Session's history is discarded, and
 the next `Subscribe` starts over.
 
+**Two moments, in order, on a Session's first `Subscribe`:** the Hub subscription is made first —
+`andara_subscribers` rises, the pump starts retaining — and the stream attaches to the ring after
+it, at which point `andara_stream_subscribers` rises. A stream opened with `last_event_id` 0 starts
+*from now*, meaning from the moment it attaches: an Event the pump retained in the gap between the
+two moments is history to that stream, not backlog, and is never sent to it. The gap is
+microseconds on a running server and matters to nobody but a test. **A test that emits right after
+subscribing and expects the stream to carry the Events waits on the egress's `Streams` gauge
+(`andara_stream_subscribers`), never on the fan-out's `Subscribers`** — the fan-out's count is
+satisfied before attach, so a stream that loses that race sees nothing, and a test waiting on
+what it would have sent (a `buffer_full`, an abort) waits forever. That is how
+`TestEscalation_DisconnectsWhenResetDoesNotReturn` hung CI for `go test`'s ten-minute limit on
+2026-09-21 (PR #39, fixed in `e1622aa`); the eleven waits in `server/egress/egress_test.go` that
+precede an emit read `Streams` since.
+
 | Condition | gRPC code | `ErrorInfo.reason` |
 |-----------|-----------|--------------------|
 | client trailed by more than `egress.buffer` | `RESOURCE_EXHAUSTED` | `buffer_full` |

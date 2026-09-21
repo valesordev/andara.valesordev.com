@@ -4,7 +4,7 @@ title: Event egress — server-streaming subscription with per-session backpress
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-004, AW-SRV-005]
 blocks: [AW-SRV-009, AW-CLI-004]
@@ -60,8 +60,13 @@ connection to cost only me, so that one bad network does not lag everyone in the
    control must not become an unbounded server-side queue.
 6. **Given** a Session that reconnects with `last_event_id` **when** the requested Events are still
    within the resume window **then** the stream resumes from the next Event with no gap and no
-   duplicate; **and given** they are not **then** the server returns a typed `resync_required` rather
-   than silently skipping. A silent gap is worse than an explicit resync.
+   duplicate; **and given** they are not **then** the stream opens with a `Resync` frame naming the
+   reason (`resume_window_exceeded`, or `no_history` when this process retained nothing for the
+   Session) and runs live from there, rather than silently skipping. A silent gap is worse than an
+   explicit resync. *(Reconciled 2026-09-21 at the flip to `review`: the sketch said "a typed
+   `resync_required`" error; as built and tested the resync is a stream frame, because an error
+   would end the stream the client just opened and make it open another to get what it asked for.
+   `andara_stream_resyncs_total{reason}` counts it.)*
 7. **Given** an idle World **when** `heartbeat_interval` elapses with no Events **then** a heartbeat
    frame is sent, so a client can distinguish a quiet world from a dead connection.
 8. **Given** a Session subscribed **when** the server begins draining for shutdown **then** the stream
@@ -293,6 +298,14 @@ CLAUDE.md §8, plus:
   were shown live (verification record); the stalled-Session drop and its warn line need a Session
   that receives Events, and are carried to `AW-SRV-014` with the rest of the Event-delivery record.
 
+**Merged 2026-09-21 as PR #37 (`72ff7f2`); `status: review`.** Carried out of this story at the
+flip: the live observations that need a bound Character to `AW-SRV-014` (its Definition of done
+names each series), the Session→Character handover of the ring and pump and the
+`events.max_subscribers` reading to `AW-SRV-015`, and the frame handling to `AW-CLI-004`, which
+has since landed it (PR #39: `Heartbeat` renders nothing, `Resync` is announced and followed by a
+`look`, `buffer_full` resubscribes on the Session, `SubscriberDropped{revoked}` ends play). AC-6
+reconciled above.
+
 ### Verification record (2026-09-20, compose stack, image built from this branch)
 
 - `make check` clean; `server/egress` under `-race` ×5.
@@ -327,6 +340,19 @@ CLAUDE.md §8, plus:
   second, the writer stays blocked until the close's reset, and there is no `Disconnect` escalation
   on that path — the goroutine lives until the connection dies, as any 005 teardown of a stalled
   client does. Noted, not changed.
+- **2026-09-21, after merge (PR #39's CI).** `TestEscalation_DisconnectsWhenResetDoesNotReturn`
+  hung the `check` job to `go test`'s ten-minute limit, blocked on `<-f.aborted`. Cause: the test
+  waited for the fan-out's `Subscribers` gauge — which rises when the Session's Hub subscription is
+  made, *before* the stream attaches — then emitted ten Events. When attach lost that race,
+  `history.resume(0)` placed the cursor at the end of the ring ("from now"), the ten Events were
+  never a backlog for the stream, and the abort the test waited on had nothing to fire it. Ten
+  other waits in the file, across seven more tests, had the same wait-then-emit shape and passed
+  only because attach usually wins by microseconds. Fixed in `e1622aa` (landed with PR #39):
+  every wait that precedes an emit reads the egress's `Streams` gauge
+  (`andara_stream_subscribers`), which moves after attach. The rule is recorded in
+  `server/README.md` under Event egress. Not a defect in the egress — the from-now contract is
+  what the story asks for — but the two gauges do not mean the same moment, and a test that needs
+  the later one must read the later one.
 
 ## Open questions
 

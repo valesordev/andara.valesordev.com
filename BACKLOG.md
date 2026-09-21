@@ -9,18 +9,22 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `in-progress` | 3 |
+| `review` | 3 |
 | `ready` | 29 |
 | `done` | 17 |
 | **total** | **49** |
 
 ## Attention first
 
-Nothing blocked or in review.
+| ID | Status | Title | Blocked by / awaiting |
+|----|--------|-------|------------------------|
+| [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client | review by brian |
+| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command | review by brian |
 
 ## By status
 
-### `in-progress` (3)
+### `review` (3)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -122,15 +126,15 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `in-progress` | andara-cli play — the text interface as a first-class protocol client |
+| [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `done` | Command pipeline stages split across the log boundary, with look and move |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `done` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `done` | Command ingress — parse, authorize, and produce to the command log |
-| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `in-progress` | Event egress — server-streaming subscription with per-session backpressure |
+| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `done` | Protobuf schema as the wire, log, snapshot, and content contract |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `ready` | Gateway read path from the Event topic — routing and perception for Zones another process owns |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `in-progress` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
 
 ### `EPIC-04` — Snapshots and recovery
 
