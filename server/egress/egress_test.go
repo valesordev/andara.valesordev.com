@@ -62,6 +62,12 @@ func (s *syncBuffer) String() string {
 	return s.b.String()
 }
 
+// A test that emits right after subscribing waits on the egress's open
+// stream count, not the fan-out's subscriber count: the hub subscription
+// is made before the stream attaches, and a stream that attaches after an
+// Event was emitted starts "from now" and never sees it — which once left
+// TestEscalation_DisconnectsWhenResetDoesNotReturn waiting on an abort
+// that no backlog would ever cause.
 func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	t.Helper()
 	f := &fixture{t: t, reg: prometheus.NewRegistry(), logs: &syncBuffer{}, aborted: make(chan context.Context, 16), obs: map[string]events.Observer{}}
@@ -297,7 +303,7 @@ func TestOrdering(t *testing.T) {
 	f.place("a", "alice", "town", "plaza")
 	a := f.subscribe("a", player, 0, false, nil)
 	defer a.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	for i := 0; i < 20; i++ {
 		f.emit(plaza())
 	}
@@ -319,7 +325,7 @@ func TestResume(t *testing.T) {
 	f := newFixture(t, nil)
 	f.place("a", "alice", "town", "plaza")
 	a := f.subscribe("a", player, 0, false, nil)
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	first := f.emit(plaza())
 	second := f.emit(plaza())
 	if got := ids(a.next(), a.next()); got[0] != first || got[1] != second {
@@ -398,7 +404,7 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	stalled := f.subscribe("a", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	healthy := f.subscribe("b", player, 0, false, nil)
 	defer healthy.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 2 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "subscribed")
 
 	// The first Event parks the stalled writer inside Send; eight more
 	// fill its buffer; the ninth exceeds it.
@@ -470,7 +476,7 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	// A Session that ends while in the drop state leaves it.
 	f.place("c", "carol", "town", "plaza")
 	gone := f.subscribe("c", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 2 }, "third subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "third subscribed")
 	for i := 0; i < 10; i++ {
 		f.emit(plaza())
 		healthy.next()
@@ -530,7 +536,7 @@ func TestEscalation_DisconnectsWhenResetDoesNotReturn(t *testing.T) {
 	f.place("a", "alice", "town", "plaza")
 	stalled := f.subscribe("a", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	defer stalled.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	for i := 0; i < 10; i++ {
 		f.emit(plaza())
 	}
@@ -550,7 +556,7 @@ func TestEscalation_DisconnectsWhenResetDoesNotReturn(t *testing.T) {
 	f.place("b", "bob", "town", "plaza")
 	quick := f.subscribe("b", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	defer quick.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 2 }, "second subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "second subscribed")
 	for i := 0; i < 10; i++ {
 		f.emit(plaza())
 	}
@@ -606,7 +612,7 @@ func TestWorld(t *testing.T) {
 	}
 	g := f.subscribe("g", gm, 0, true, nil)
 	defer g.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	one, two := f.emit(plaza()), f.emit(hall())
 	if got := ids(g.next(), g.next()); got[0] != one || got[1] != two {
 		t.Fatalf("gm got %v", got)
@@ -620,7 +626,7 @@ func TestWorldToggle_RefusedWhileStreamOpen(t *testing.T) {
 	f.place("g", "alice", "town", "plaza")
 	g := f.subscribe("g", gm, 0, false, nil)
 	defer g.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	first := f.emit(plaza())
 	g.next()
 	second := f.subscribe("g", gm, 0, true, func(c *client) { c.ended = g.ended })
@@ -678,7 +684,7 @@ func TestRebind(t *testing.T) {
 	f := newFixture(t, nil)
 	a := f.subscribe("a", player, 0, false, nil)
 	defer a.cancel()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	f.emit(plaza())
 	a.quiet() // nowhere yet
 	f.place("a", "alice", "town", "plaza")
@@ -723,7 +729,7 @@ func TestHubDrop(t *testing.T) {
 	f := newFixture(t, nil)
 	f.place("a", "alice", "town", "plaza")
 	a := f.subscribe("a", player, 0, false, nil)
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	first := f.emit(plaza())
 	a.next()
 	// Starve the pump: the fan-out's buffer (64) is filled while the
@@ -755,7 +761,7 @@ func TestHubDrop(t *testing.T) {
 	if got := b.next(); got.GetResync().GetReason() != ResyncNoHistory {
 		t.Fatalf("resume across a fan-out drop: got %v, want no_history resync", got)
 	}
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "resubscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "resubscribed")
 	live := f.emit(plaza())
 	if got := b.next().GetEventId(); got != live {
 		t.Fatalf("after the fresh subscription got %d, want %d", got, live)
