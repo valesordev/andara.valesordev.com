@@ -148,8 +148,12 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
 
 - `server/ingress`: the key lives on the Session's ingress state (`session.keys`, a `table` in
   `idempotency.go`): `lookup(ref, raw, now, window, max)` sweeps expired entries, answers a hit,
-  refuses a different `raw` with `ErrDuplicateClientRef`, or makes an `entry` — evicting the oldest
-  at `max` keys. The entry is made **before** the Submit takes its place in the Session's queue, so
+  refuses a different `raw` with `ErrDuplicateClientRef`, or makes an `entry` — at `max` keys
+  evicting the oldest *resolved* one, never one still in flight (its retry must find it); with
+  every key in flight the Session has `max_pending` Submits pending and the new ref is refused
+  `pending_full`. The entry holds the Intent's SHA-256, not its text — the text is bounded only by
+  the message limit and a key outlives its Submit by the window. The entry is made **before** the
+  Submit takes its place in the Session's queue, so
   a retry finds it while the original is in flight (AC-5) and waits on it without queueing; a wait
   is bounded by the retry's own context. `resolve(e, resp, err, kept, now)` records the outcome and
   wakes waiters; `at` is the resolution time, so the window counts from when the outcome was known,
@@ -197,8 +201,8 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   inherited line.
 - Test plan as built: unit `idempotency_test.go` — AC-1, AC-4 (parse and authorize, one audit
   record for two calls), AC-5 (three callers, one pending, one record), AC-6, AC-7 (window by the
-  stepped clock, eviction oldest-first, `forget`), AC-8, transient-not-remembered (incl. a waiter
-  that runs the Command), the three fates at the seam through the fake log's `Unsettled`, the
+  stepped clock, eviction oldest-first, `forget`), in-flight keys never evicted, AC-8,
+  transient-not-remembered (incl. a waiter that runs the Command), the three fates at the seam through the fake log's `Unsettled`, the
   dedup trace shape. Integration `TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand` (AC-2: the
   response to the produce dropped, the caller's 100 ms deadline fires first, the retry is answered
   the offset the idempotent producer's retry landed at, end offset +1, the record at that offset

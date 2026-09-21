@@ -363,3 +363,45 @@ func TestIdempotency_TraceShape(t *testing.T) {
 		t.Fatalf("attributes = %v", spans[0].Attributes())
 	}
 }
+
+// A key still in flight is never evicted to make room — its retry must
+// find it — so with every key in flight the Session is at its pending
+// ceiling and a new ref is refused pending_full, while the retry of an
+// in-flight key still joins it.
+func TestIdempotency_InFlightKeysAreNotEvicted(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.MaxPending = 2 })
+	f.log.gate = make(chan struct{})
+	var wg sync.WaitGroup
+	for _, ref := range []string{"r1", "r2"} {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if _, err := f.submitRef(context.Background(), "s-alice", "look", ref); err != nil {
+				t.Errorf("%s: %v", ref, err)
+			}
+		}()
+	}
+	waitFor(t, func() bool { return testutil.ToFloat64(f.in.Metrics().Pending) == 2 }, "two in flight")
+	_, err := f.submitRef(context.Background(), "s-alice", "look", "r3")
+	if codeOf(t, err) != connect.CodeResourceExhausted || infoOf(t, err).GetReason() != ReasonPendingFull {
+		t.Fatalf("third ref with both in flight: %v", err)
+	}
+	if f.keys() != 2 {
+		t.Fatalf("keys = %v: an in-flight key was evicted", f.keys())
+	}
+	retried := make(chan error, 1)
+	go func() { _, err := f.submitRef(context.Background(), "s-alice", "look", "r1"); retried <- err }()
+	time.Sleep(20 * time.Millisecond)
+	close(f.log.gate)
+	wg.Wait()
+	if err := <-retried; err != nil {
+		t.Fatalf("retry of an in-flight key: %v", err)
+	}
+	if f.outcome(OutcomeDeduplicated) != 1 || len(f.log.records) != 2 {
+		t.Fatalf("deduplicated=%v records=%d", f.outcome(OutcomeDeduplicated), len(f.log.records))
+	}
+	// Resolved now: a new ref evicts the oldest.
+	if _, err := f.submitRef(context.Background(), "s-alice", "look", "r3"); err != nil || f.keys() != 2 {
+		t.Fatalf("after resolution: %v, keys %v", err, f.keys())
+	}
+}

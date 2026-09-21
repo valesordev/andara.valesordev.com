@@ -150,7 +150,11 @@ func (i *Ingress) submit(ctx context.Context, sessionID string, principal auth.P
 		e, hit, err = i.lookup(st, ref, req.GetRaw())
 		if err != nil {
 			i.metrics.Submits.WithLabelValues(outcomeOf(err)).Inc()
-			i.warn(ctx, "client_ref reused for a different command", sessionID)
+			if errors.Is(err, ErrPendingFull) {
+				i.warn(ctx, "session pending queue full", sessionID)
+			} else {
+				i.warn(ctx, "client_ref reused for a different command", sessionID)
+			}
 			return nil, connectError(err)
 		}
 		if !hit {
