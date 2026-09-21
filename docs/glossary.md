@@ -419,6 +419,14 @@ seeing *you are not here* for typing during it. The hold is bounded by `ingress.
 the `CharacterLeft`; past it, Intents are rejected `in_transit` until an arrival resolves the
 Session (AW-SRV-010).
 
+**Idempotency Key** — `(Session, client_ref)`: what makes a client's retry of a Submit the same
+Command rather than a second one. The Gateway remembers a Submit's outcome against its key for
+`ingress.idempotency_window` once the outcome is known — an offset, or a rejection of the Intent —
+and answers a retry with it; a Submit whose outcome was unknown at the produce deadline keeps its
+key open until the record's fate is: landed, not written, or still unknown. Transient refusals are
+not remembered, so the retry a player was told to make runs. Per process, at most
+`ingress.max_pending` keys per Session; an empty `client_ref` has no key (AW-SRV-031).
+
 **Ingress** — The Gateway's Submit path (AW-SRV-010): per-Session rate limit, the Session's queue,
 the pre-log Command Pipeline, and the produce to the Command Log. Its answer names the Partition
 and Offset a Command landed on, meaning *accepted and ordered*, never *succeeded*. Distinct from the

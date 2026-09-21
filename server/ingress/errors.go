@@ -29,11 +29,56 @@ var (
 	// read-only. UNAVAILABLE, retryable; nothing produced.
 	ErrUnavailable = errors.New("command log unreachable")
 	// ErrDeadline: the produce deadline passed with the outcome unknown —
-	// the record may be in the log. DEADLINE_EXCEEDED. The client should
-	// retry; the idempotent producer makes the ingress's own retries safe,
-	// and a client retry after this is a new Command.
+	// the record may be in the log. DEADLINE_EXCEEDED. The client retries
+	// with the same client_ref and gets the original outcome once the
+	// record's fate is known (AW-SRV-031); the idempotent producer makes
+	// only the ingress's own retries safe.
 	ErrDeadline = errors.New("produce deadline exceeded; outcome unknown")
+	// ErrDuplicateClientRef: the Session reused a client_ref inside the
+	// idempotency window for a different Intent. INVALID_ARGUMENT; nothing
+	// produced. A client bug, answered as one rather than with the first
+	// Intent's outcome (AW-SRV-031).
+	ErrDuplicateClientRef = errors.New("client_ref already used for a different command")
+	// ErrNotWritten is an Unsettled record's fate when no produce request
+	// left the process after it was enqueued: nothing carrying it can have
+	// reached a broker. Never crosses the wire; the ingress reads it.
+	ErrNotWritten = errors.New("record dropped before any produce request left the process")
 )
+
+// Unsettled is the error Produce returns when the caller's wait ended —
+// the produce deadline, or the caller's own context — with the record
+// still live in the client: ErrDeadline (or the context's error) on the
+// surface, and underneath, a future for the record's fate. The promise
+// still fires, so the fate is always known within the client's delivery
+// timeout: landed, with Outcome's Accepted; not written, ErrNotWritten;
+// or ErrDeadline again, when a request carrying it may have reached a
+// broker and the client that held its retry is gone (AW-SRV-031).
+type Unsettled struct {
+	cause error
+	done  chan struct{}
+	acc   command.Accepted
+	err   error
+}
+
+func newUnsettled(cause error) *Unsettled {
+	return &Unsettled{cause: cause, done: make(chan struct{})}
+}
+
+func (u *Unsettled) Error() string { return u.cause.Error() }
+
+// Unwrap is the surface error, so errors.Is(u, ErrDeadline) holds.
+func (u *Unsettled) Unwrap() error { return u.cause }
+
+// Settled is closed once the record's fate is known.
+func (u *Unsettled) Settled() <-chan struct{} { return u.done }
+
+// Outcome is the fate; valid after Settled is closed.
+func (u *Unsettled) Outcome() (command.Accepted, error) { return u.acc, u.err }
+
+func (u *Unsettled) settle(acc command.Accepted, err error) {
+	u.acc, u.err = acc, err
+	close(u.done)
+}
 
 // Reasons, the ErrorInfo.reason a client switches on.
 const (
@@ -41,13 +86,15 @@ const (
 	ReasonPendingFull = "pending_full"
 	ReasonReadOnly    = "world_read_only"
 	ReasonDeadline    = "produce_deadline"
+	// ReasonDuplicateClientRef: the reused client_ref (AW-SRV-031).
+	ReasonDuplicateClientRef = "duplicate_client_ref"
 	// ErrorDomain is ErrorInfo.domain for every ingress error.
 	ErrorDomain = "andara.command"
 )
 
-// ReadOnlyMessage is what a player reads when the World is read-only.
-// PLACEHOLDER: the wording is Brian's call (AW-SRV-010 open question) and
-// this is the one message every player eventually sees.
+// ReadOnlyMessage is what a player reads when the World is read-only: the
+// one message every player eventually sees. Brian accepted the wording on
+// 2026-09-19 (AW-SRV-010).
 const ReadOnlyMessage = "The world is read-only for a moment: your command was not taken. Try it again shortly."
 
 // readOnly is ErrUnavailable's face on the wire: the player's message,
@@ -87,6 +134,8 @@ func connectError(err error) error {
 		return ce
 	case errors.Is(err, ErrDeadline):
 		return withInfo(connect.NewError(connect.CodeDeadlineExceeded, err), ReasonDeadline, nil)
+	case errors.Is(err, ErrDuplicateClientRef):
+		return withInfo(connect.NewError(connect.CodeInvalidArgument, err), ReasonDuplicateClientRef, nil)
 	case errors.Is(err, context.DeadlineExceeded):
 		return connect.NewError(connect.CodeDeadlineExceeded, err)
 	case errors.Is(err, context.Canceled):
@@ -144,6 +193,8 @@ func outcomeOf(err error) string {
 		return OutcomePendingFull
 	case errors.Is(err, ErrUnavailable):
 		return OutcomeUnavailable
+	case errors.Is(err, ErrDuplicateClientRef):
+		return OutcomeRejectedParse
 	case errors.Is(err, ErrDeadline), errors.Is(err, context.DeadlineExceeded):
 		return OutcomeDeadline
 	case errors.Is(err, context.Canceled):

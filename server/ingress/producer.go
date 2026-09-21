@@ -106,7 +106,8 @@ type KafkaProducer struct {
 	client   atomic.Pointer[kgo.Client]
 	degraded atomic.Bool
 	retries  atomic.Uint64
-	warnAt   atomic.Int64 // unix nanos of the last sampled warning
+	written  atomic.Uint64 // produce requests that left this process
+	warnAt   atomic.Int64  // unix nanos of the last sampled warning
 
 	mu     sync.Mutex
 	closed bool
@@ -203,24 +204,37 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 	// and those belong to other Sessions. The deadline is ours to wait
 	// on; the client's delivery timeout bounds the record.
 	done := make(chan error, 1)
-	retriesBefore := k.retries.Load()
+	retriesBefore, writtenBefore := k.retries.Load(), k.written.Load()
 	enqueued := time.Now()
 	k.client.Load().TryProduce(context.WithoutCancel(ctx), rec, func(_ *kgo.Record, err error) { done <- err })
 
 	dctx, cancel := context.WithTimeout(ctx, k.deadline)
 	defer cancel()
+	fired := true // the promise, or the wait ran out first
 	select {
 	case err = <-done:
 	case <-dctx.Done():
-		err = dctx.Err()
+		err, fired = dctx.Err(), false
 	}
 	wait := time.Since(enqueued)
 	retries := k.retries.Load() - retriesBefore
 	span.SetAttributes(attribute.Int64("retries", int64(retries)), attribute.Float64("acks_wait_ms", float64(wait.Microseconds())/1000))
 	if err != nil {
+		promised := err
 		err = k.classify(ctx, err)
 		span.SetStatus(codes.Error, err.Error())
-		return command.Accepted{}, err
+		if errors.Is(err, ErrPendingFull) {
+			return command.Accepted{}, err
+		}
+		// The record was live in the client: its fate goes with the error
+		// (AW-SRV-031), now if the promise already fired, else when it does.
+		u := newUnsettled(err)
+		if fired {
+			k.settle(u, rec, promised, writtenBefore)
+		} else {
+			go func() { k.settle(u, rec, <-done, writtenBefore) }()
+		}
+		return command.Accepted{}, u
 	}
 	if k.metrics != nil {
 		k.metrics.ProduceDuration.Observe(wait.Seconds())
@@ -250,6 +264,29 @@ func (k *KafkaProducer) classify(ctx context.Context, err error) error {
 		}
 	}
 	return fmt.Errorf("%w: %w", ErrDeadline, err)
+}
+
+// settle names the fate of a record whose Submit was answered with the
+// outcome unknown, from its promise: landed, at the offset the promise
+// reports; not written, when no produce request left this process since
+// the record was enqueued — nothing carrying it can have reached a
+// broker; or still unknown, when one did and the promise failed anyway.
+// The last is the honest residue: a request that went out and whose
+// response was lost may have been written, and the client that held its
+// retry is gone, so the outcome stays ErrDeadline for the idempotency
+// window rather than becoming a second record (AW-SRV-031).
+func (k *KafkaProducer) settle(u *Unsettled, rec *kgo.Record, err error, writtenBefore uint64) {
+	switch {
+	case err == nil:
+		if k.metrics != nil {
+			k.metrics.Produced.WithLabelValues(strconv.Itoa(int(rec.Partition))).Inc()
+		}
+		u.settle(command.Accepted{Partition: rec.Partition, Offset: rec.Offset}, nil)
+	case k.written.Load() == writtenBefore:
+		u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrNotWritten, err))
+	default:
+		u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrDeadline, err))
+	}
 }
 
 // degrade enters the read-only state once: the gauge, the log line, and
@@ -341,9 +378,14 @@ type retryHook struct{ k *KafkaProducer }
 const produceKey = 0
 
 func (h retryHook) OnBrokerWrite(meta kgo.BrokerMetadata, key int16, _ int, _, _ time.Duration, err error) {
-	if key == produceKey && err != nil {
-		h.k.retry(meta, "write", err)
+	if key != produceKey {
+		return
 	}
+	if err != nil {
+		h.k.retry(meta, "write", err)
+		return
+	}
+	h.k.written.Add(1)
 }
 
 func (h retryHook) OnBrokerRead(meta kgo.BrokerMetadata, key int16, _ int, _, _ time.Duration, err error) {

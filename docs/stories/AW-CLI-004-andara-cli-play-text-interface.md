@@ -193,6 +193,13 @@ CLAUDE.md §8, plus:
   with `world_read_only` or `in_transit`, `RESOURCE_EXHAUSTED`) and switches on
   `ErrorInfo.reason` only for behavior (retry after `RetryInfo`, hold the prompt during
   `in_transit`), not for wording. Changing the voice is a design decision, not a client one.
+- **Inherited from `AW-SRV-031` (2026-09-21):** `play` always sends a `client_ref` — one fresh
+  value per typed line — and retries `DEADLINE_EXCEEDED` (`produce_deadline`) with the *same* one,
+  so the retry is the same Command: the server answers it with the original outcome once the
+  record's fate is known, or with `DEADLINE_EXCEEDED` again when the fate is still unknown, in
+  which case `play` stops retrying and tells the player to `look`. A `client_ref` is never reused
+  for a different line (`duplicate_client_ref` is a client bug). An empty `client_ref` is not
+  deduplicated.
 
 ## Open questions
 

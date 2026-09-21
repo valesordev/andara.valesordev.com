@@ -5,12 +5,16 @@ package ingress
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/server/auth"
@@ -31,11 +35,16 @@ type Options struct {
 	RateLimit      auth.RateLimit
 	AgentRateLimit auth.RateLimit
 	Burst          int
-	// MaxPending bounds one Session's Submits in flight. Zero means 256.
+	// MaxPending bounds one Session's Submits in flight, and the
+	// idempotency keys it may hold. Zero means 256.
 	MaxPending int
+	// IdempotencyWindow is how long a Submit's outcome is remembered
+	// against its (Session, client_ref) (AW-SRV-031). Zero means 30s.
+	IdempotencyWindow time.Duration
 
 	Metrics *Metrics
 	Log     *slog.Logger
+	Tracer  trace.Tracer
 	Now     func() time.Time
 }
 
@@ -47,19 +56,22 @@ type Ingress struct {
 	limiter  *auth.Limiter
 	agents   *auth.Limiter
 	log      *slog.Logger
+	tracer   trace.Tracer
 	warnAt   atomic.Int64
 	mu       sync.Mutex
 	sessions map[string]*session
 }
 
 // session is one Session's ingress state: how many Submits it has in
-// flight, and the tail of the queue they wait in. Each Submit waits for
-// the one before it, so a Session's Commands reach the log in the order
-// its Submits arrived (AC-2), whatever goroutine each ran on.
+// flight, the tail of the queue they wait in, and the idempotency keys
+// it holds. Each Submit waits for the one before it, so a Session's
+// Commands reach the log in the order its Submits arrived (AC-2),
+// whatever goroutine each ran on.
 type session struct {
 	mu      sync.Mutex
 	pending int
 	tail    chan struct{}
+	keys    table
 }
 
 type turn struct {
@@ -75,8 +87,14 @@ func New(o Options) *Ingress {
 	if o.Log == nil {
 		o.Log = slog.New(slog.DiscardHandler)
 	}
+	if o.IdempotencyWindow <= 0 {
+		o.IdempotencyWindow = 30 * time.Second
+	}
 	if o.Now == nil {
 		o.Now = time.Now
+	}
+	if o.Tracer == nil {
+		o.Tracer = noop.NewTracerProvider().Tracer("andara-server")
 	}
 	if o.Metrics == nil {
 		o.Metrics = NewMetrics(nil)
@@ -88,6 +106,7 @@ func New(o Options) *Ingress {
 		limiter:  auth.NewLimiter(o.RateLimit, o.Burst, o.Now),
 		agents:   auth.NewLimiter(o.AgentRateLimit, o.Burst, o.Now),
 		log:      o.Log,
+		tracer:   o.Tracer,
 		sessions: map[string]*session{},
 	}
 }
@@ -119,8 +138,34 @@ func (i *Ingress) submit(ctx context.Context, sessionID string, principal auth.P
 		return nil, connectError(ErrRateLimited)
 	}
 	st := i.session(sessionID, ended)
+
+	// The idempotency key (AW-SRV-031): a known client_ref is answered
+	// with its outcome — waiting for it if the original is still in
+	// flight — without queueing or running anything. An empty ref is not
+	// deduplicated.
+	var e *entry
+	for ref := req.GetClientRef(); ref != ""; {
+		var hit bool
+		var err error
+		e, hit, err = i.lookup(st, ref, req.GetRaw())
+		if err != nil {
+			i.metrics.Submits.WithLabelValues(outcomeOf(err)).Inc()
+			i.warn(ctx, "client_ref reused for a different command", sessionID)
+			return nil, connectError(err)
+		}
+		if !hit {
+			break
+		}
+		resp, again, err := i.await(ctx, sessionID, ref, e)
+		if again {
+			continue
+		}
+		return resp, err
+	}
+
 	t, ok := st.enter(i.opts.MaxPending)
 	if !ok {
+		i.resolve(st, e, nil, ErrPendingFull, false)
 		i.metrics.Submits.WithLabelValues(OutcomePendingFull).Inc()
 		i.warn(ctx, "session pending queue full", sessionID)
 		return nil, connectError(ErrPendingFull)
@@ -133,6 +178,7 @@ func (i *Ingress) submit(ctx context.Context, sessionID string, principal auth.P
 	case <-t.prev:
 	case <-ctx.Done():
 		st.leaveAfter(t)
+		i.resolve(st, e, nil, ctx.Err(), false)
 		i.metrics.Submits.WithLabelValues(outcomeOf(ctx.Err())).Inc()
 		return nil, connectError(ctx.Err())
 	}
@@ -140,9 +186,92 @@ func (i *Ingress) submit(ctx context.Context, sessionID string, principal auth.P
 	st.leave(t)
 	i.metrics.Submits.WithLabelValues(outcomeOf(err)).Inc()
 	if err != nil {
+		i.settle(st, e, err)
 		return nil, connectError(err)
 	}
-	return &gamev1.SubmitResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}, nil
+	resp := &gamev1.SubmitResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}
+	i.resolve(st, e, resp, nil, true)
+	return resp, nil
+}
+
+// lookup finds or makes the key's entry, keeping the gauge current.
+func (i *Ingress) lookup(st *session, ref, raw string) (*entry, bool, error) {
+	st.mu.Lock()
+	e, hit, n, err := st.keys.lookup(ref, raw, i.opts.Now(), i.opts.IdempotencyWindow, i.opts.MaxPending)
+	st.mu.Unlock()
+	i.metrics.IdempotencyKeys.Add(float64(n))
+	return e, hit, err
+}
+
+// await is a dedup hit: wait for the entry's outcome, bounded by the
+// caller, and return it. again reports that the outcome was transient
+// and not kept, so the caller should run the Command itself.
+func (i *Ingress) await(ctx context.Context, sessionID, ref string, e *entry) (resp *gamev1.SubmitResponse, again bool, err error) {
+	ctx, span := i.tracer.Start(ctx, "command.execute", trace.WithAttributes(attribute.Bool("pre_log", true), attribute.Bool("deduplicated", true)))
+	defer span.End()
+	select {
+	case <-e.done:
+	case <-ctx.Done():
+		span.SetStatus(codes.Error, ctx.Err().Error())
+		i.metrics.Submits.WithLabelValues(outcomeOf(ctx.Err())).Inc()
+		return nil, false, connectError(ctx.Err())
+	}
+	if !e.kept {
+		span.SetAttributes(attribute.Bool("deduplicated", false))
+		return nil, true, nil
+	}
+	i.metrics.Submits.WithLabelValues(OutcomeDeduplicated).Inc()
+	i.log.LogAttrs(ctx, slog.LevelDebug, "submit deduplicated",
+		slog.String("session_id", sessionID), slog.String("client_ref", ref), slog.String("trace_id", traceID(ctx)))
+	if e.err != nil {
+		span.SetStatus(codes.Error, e.err.Error())
+		return nil, false, connectError(e.err)
+	}
+	return e.resp, false, nil
+}
+
+// settle resolves the entry from a pipeline error. A rejection of the
+// Intent is the Command's fate and is kept; a transient refusal is not.
+// An Unsettled produce — the deadline passed with the record live — keeps
+// the entry open until the producer knows the record's fate: landed, and
+// a retry gets the offset; not written, and a retry is a new Command;
+// still unknown, and a retry inside the window is told so again.
+func (i *Ingress) settle(st *session, e *entry, err error) {
+	if e == nil {
+		return
+	}
+	var u *Unsettled
+	if errors.As(err, &u) {
+		go func() {
+			<-u.Settled()
+			acc, ferr := u.Outcome()
+			switch {
+			case ferr == nil:
+				i.resolve(st, e, &gamev1.SubmitResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}, nil, true)
+			case errors.Is(ferr, ErrNotWritten):
+				i.resolve(st, e, nil, ferr, false)
+			default:
+				i.resolve(st, e, nil, ferr, true)
+			}
+		}()
+		return
+	}
+	if ce, ok := command.AsError(err); ok && ce.Code != command.CodeInTransit {
+		i.resolve(st, e, nil, err, true)
+		return
+	}
+	i.resolve(st, e, nil, err, false)
+}
+
+// resolve records an entry's outcome; nil e is a Submit without a key.
+func (i *Ingress) resolve(st *session, e *entry, resp *gamev1.SubmitResponse, err error, kept bool) {
+	if e == nil {
+		return
+	}
+	st.mu.Lock()
+	n := st.keys.resolve(e, resp, err, kept, i.opts.Now())
+	st.mu.Unlock()
+	i.metrics.IdempotencyKeys.Add(float64(n))
 }
 
 // session finds or creates the Session's state. The first sight of a
@@ -170,8 +299,15 @@ func (i *Ingress) session(id string, ended <-chan struct{}) *session {
 // forget drops everything the ingress holds for a Session.
 func (i *Ingress) forget(id string) {
 	i.mu.Lock()
+	st := i.sessions[id]
 	delete(i.sessions, id)
 	i.mu.Unlock()
+	if st != nil {
+		st.mu.Lock()
+		n := st.keys.forget()
+		st.mu.Unlock()
+		i.metrics.IdempotencyKeys.Add(float64(n))
+	}
 	i.limiter.Forget(id)
 	i.agents.Forget(id)
 	if i.opts.Bindings != nil {

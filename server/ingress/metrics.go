@@ -24,10 +24,13 @@ const (
 	OutcomeDeadline      = "deadline"
 	OutcomeCanceled      = "canceled"
 	OutcomeInternal      = "internal"
+	// OutcomeDeduplicated: a retry answered with the original Submit's
+	// outcome; nothing ran (AW-SRV-031).
+	OutcomeDeduplicated = "deduplicated"
 )
 
 // Outcomes is every outcome, for pre-seeding.
-var Outcomes = []string{OutcomeProduced, OutcomeRejectedParse, OutcomeRejectedAuthz, OutcomeRateLimited, OutcomePendingFull, OutcomeInTransit, OutcomeUnavailable, OutcomeDeadline, OutcomeCanceled, OutcomeInternal}
+var Outcomes = []string{OutcomeProduced, OutcomeRejectedParse, OutcomeRejectedAuthz, OutcomeRateLimited, OutcomePendingFull, OutcomeInTransit, OutcomeUnavailable, OutcomeDeadline, OutcomeCanceled, OutcomeInternal, OutcomeDeduplicated}
 
 // Metrics is the ingress instrumentation (AW-SRV-010).
 type Metrics struct {
@@ -41,6 +44,9 @@ type Metrics struct {
 	ProduceRetries prometheus.Counter
 	// Pending is Submits in flight on this process.
 	Pending prometheus.Gauge
+	// IdempotencyKeys is (Session, client_ref) keys the ingress remembers
+	// on this process (AW-SRV-031).
+	IdempotencyKeys prometheus.Gauge
 	// Held is Intents waiting for their Character to arrive in the next
 	// Zone.
 	Held prometheus.Gauge
@@ -74,6 +80,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_ingress_pending",
 			Help: "Submits in flight on this process.",
 		}),
+		IdempotencyKeys: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "andara_ingress_idempotency_keys",
+			Help: "Submit idempotency keys remembered on this process: in flight, or resolved inside ingress.idempotency_window.",
+		}),
 		Held: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "andara_ingress_held_intents",
 			Help: "Intents held while their Character is between Zones.",
@@ -94,7 +104,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.Produced.WithLabelValues(strconv.Itoa(int(p)))
 	}
 	if reg != nil {
-		reg.MustRegister(m.Submits, m.ProduceDuration, m.ProduceRetries, m.Pending, m.Held, m.Degraded, m.Produced)
+		reg.MustRegister(m.Submits, m.ProduceDuration, m.ProduceRetries, m.Pending, m.IdempotencyKeys, m.Held, m.Degraded, m.Produced)
 	}
 	return m
 }

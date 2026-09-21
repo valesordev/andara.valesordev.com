@@ -124,10 +124,12 @@ splits its history across two Partitions and is unrecoverable.
 | rate limited | `RESOURCE_EXHAUSTED` | none |
 | pending queue full | `RESOURCE_EXHAUSTED` | none |
 | broker unreachable | `UNAVAILABLE` (retryable) | none |
-| produce deadline exceeded | `DEADLINE_EXCEEDED` | possibly — the client must treat this as unknown and rely on idempotence |
+| produce deadline exceeded | `DEADLINE_EXCEEDED` | possibly — the client retries with the same `client_ref` and gets the original outcome |
 
 The last row is the honest one: a produce deadline is genuinely ambiguous. The idempotent producer
-makes a retry safe, and the client should retry rather than assume failure.
+makes only the producer's *own* retry of one record safe; a client's retry is the same Command
+because `(Session, client_ref)` is its idempotency key at the ingress (`AW-SRV-031`, corrected there
+on 2026-09-21 — the row read "rely on idempotence" until then).
 
 ### As built (2026-09-19)
 
