@@ -252,7 +252,7 @@ commands, reconnect, Submit behavior, the JSON stream, and the exit codes above 
 what was built and ruled; the rendering table gains the three system rows. Carried to `AW-SRV-014`
 (with `AW-SRV-011`'s): the Room after `look`, Events after `north`, a second client, a post-log
 `CommandRejected`, read-only under a broker stop, a retained-history resume. The `/` reservation
-is a `[NEEDS BRIAN]` below, as is the wording list.
+and the wording list were both decided by Brian the same day; see Open questions.
 
 ## As built (2026-09-21)
 
@@ -370,9 +370,12 @@ is a `[NEEDS BRIAN]` below, as is the wording list.
   `/help`, `/quit` itself and never sends a line beginning with `/`, so no game verb, emote, or
   channel shorthand may ever begin with one — a constraint on `AW-SRV-003`'s parser and on every
   later vocabulary. The glossary's Text Interface entry carries the rule.
-- `[NEEDS BRIAN]` **The client's own system-voice lines** — what `play` says when the server has
-  said nothing a player could read. The analog of `AW-SRV-010`'s `ReadOnlyMessage`; accept or
-  reword in one pass. Verbatim, from `render.go` and `play.go`:
+- **Resolved 2026-09-21 (Brian): the client's own system-voice lines are accepted as written** —
+  what `play` says when the server has said nothing a player could read, the analog of
+  `AW-SRV-010`'s `ReadOnlyMessage`. Changing any of them is a design decision from here, not a
+  client one. The two doubled-up cases were shown and accepted with the rest: `buffer_full` prints
+  the Event's line and the reopen notice back to back, and `SimulationStopped` appends the
+  operator's reason. Verbatim, from `render.go` and `play.go`:
   - `Resync`: "You may have missed some events; the world continues from here."
   - `ZoneFaulted`: "This part of the world has stopped responding; your commands here are not being applied."
   - `SubscriberDropped`: "The server stopped sending you events: you fell behind." (`buffer_full`) /
