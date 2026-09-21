@@ -130,6 +130,12 @@ jobs:
       # nothing — starvation counted, the container still healthy — and when the broker
       # returns the counter stops moving. The loop is read through /metrics because that is
       # what an operator has.
+      #
+      # "Stops moving" is read as a second sample after the broker is back: the counter
+      # must be still between the two. How much it rose between `start redpanda` and the
+      # first sample is the broker's boot time plus where the fetch cycle stood when the
+      # outage began, which is not the loop's to answer — the same run has landed at 9 and
+      # at 31 with nothing changed (the 30-tick bound tripped on 2026-09-21 at 31).
       - name: the tick loop survives a broker outage
         run: |
           set -euo pipefail
@@ -144,14 +150,18 @@ jobs:
           sleep 12
           starved_after=$(metric andara_tick_input_starved_total)
           ticks_after=$(metric andara_ticks_total)
-          echo "ticks $ticks_before -> $ticks_during -> $ticks_after; starved $starved -> $starved_after"
-          python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$starved" "$starved_after" <<'PY'
+          sleep 5
+          starved_settled=$(metric andara_tick_input_starved_total)
+          ticks_settled=$(metric andara_ticks_total)
+          echo "ticks $ticks_before -> $ticks_during -> $ticks_after -> $ticks_settled; starved $starved -> $starved_after -> $starved_settled"
+          python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$ticks_settled" "$starved" "$starved_after" "$starved_settled" <<'PY'
           import sys
-          tb, td, ta, s, sa = map(float, sys.argv[1:])
+          tb, td, ta, ts, s, sa, ss = map(float, sys.argv[1:])
           assert td - tb >= 40, "the loop stalled while the broker was down"
           assert s >= 20, "no starvation counted during the outage"
           assert ta - td >= 60, "the loop stalled after the broker returned"
-          assert sa - s <= 30, "starvation kept rising after the broker returned"
+          assert ts - ta >= 25, "the loop stalled once the broker was back"
+          assert ss == sa, "starvation kept rising after the broker returned"
           PY
       # AW-SRV-024 AC-4: the collector goes away for sixty seconds while lines are being
       # written. The server keeps serving, stderr keeps every line, the bounded queue
