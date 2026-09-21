@@ -22,7 +22,6 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Decisions the lanes are waiting on
 
-  AW-CLI-004  / is reserved for the client.
   AW-CLI-004  The client's own system-voice lines
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…

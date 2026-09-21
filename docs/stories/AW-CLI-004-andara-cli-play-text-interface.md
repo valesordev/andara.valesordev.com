@@ -366,11 +366,10 @@ is a `[NEEDS BRIAN]` below, as is the wording list.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` **`/` is reserved for the client.** `play` handles `/protocol`, `/help`, `/quit`
-  itself and never sends a line beginning with `/`, so no game verb, emote, or channel shorthand
-  may ever begin with one — a constraint on `AW-SRV-003`'s parser and on every later vocabulary.
-  The alternative is a different escape (the client has to own *some* syntax for a toggle
-  mid-session), and the character is yours to spend: accept `/`, or name another.
+- **Resolved 2026-09-21 (Brian): `/` is reserved for the client.** `play` handles `/protocol`,
+  `/help`, `/quit` itself and never sends a line beginning with `/`, so no game verb, emote, or
+  channel shorthand may ever begin with one — a constraint on `AW-SRV-003`'s parser and on every
+  later vocabulary. The glossary's Text Interface entry carries the rule.
 - `[NEEDS BRIAN]` **The client's own system-voice lines** — what `play` says when the server has
   said nothing a player could read. The analog of `AW-SRV-010`'s `ReadOnlyMessage`; accept or
   reword in one pass. Verbatim, from `render.go` and `play.go`:
