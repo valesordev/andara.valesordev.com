@@ -327,6 +327,19 @@ CLAUDE.md §8, plus:
   second, the writer stays blocked until the close's reset, and there is no `Disconnect` escalation
   on that path — the goroutine lives until the connection dies, as any 005 teardown of a stalled
   client does. Noted, not changed.
+- **2026-09-21, after merge (PR #39's CI).** `TestEscalation_DisconnectsWhenResetDoesNotReturn`
+  hung the `check` job to `go test`'s ten-minute limit, blocked on `<-f.aborted`. Cause: the test
+  waited for the fan-out's `Subscribers` gauge — which rises when the Session's Hub subscription is
+  made, *before* the stream attaches — then emitted ten Events. When attach lost that race,
+  `history.resume(0)` placed the cursor at the end of the ring ("from now"), the ten Events were
+  never a backlog for the stream, and the abort the test waited on had nothing to fire it. Ten
+  other waits in the file, across seven more tests, had the same wait-then-emit shape and passed
+  only because attach usually wins by microseconds. Fixed in `e1622aa` (landed with PR #39):
+  every wait that precedes an emit reads the egress's `Streams` gauge
+  (`andara_stream_subscribers`), which moves after attach. The rule is recorded in
+  `server/README.md` under Event egress. Not a defect in the egress — the from-now contract is
+  what the story asks for — but the two gauges do not mean the same moment, and a test that needs
+  the later one must read the later one.
 
 ## Open questions
 
