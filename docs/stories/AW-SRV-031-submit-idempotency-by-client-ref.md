@@ -140,9 +140,9 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   `ingress.idempotency_window` moves it.*
 - `[ASSUMPTION]` The same `client_ref` with different text is a client bug worth a typed rejection
   rather than a silent dedup. A silent answer would hide the bug behind a correct-looking response.
-  *Built as assumed: `INVALID_ARGUMENT` `duplicate_client_ref`, a sampled `warn`, counted under
-  `rejected_parse` — the story contracts no outcome label for it, and adding one silently is the
-  thing not to do; split it if the warn line proves the wrong signal.*
+  *Built as assumed: `INVALID_ARGUMENT` `duplicate_client_ref`, a sampled `warn`, counted as
+  `outcome="rejected_ref"` (ruled on the review of PR #38: its own series, so a client release
+  that starts reusing refs is not a rise in typos).*
 
 ### As built (2026-09-21)
 
@@ -156,41 +156,58 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   Submit takes its place in the Session's queue, so
   a retry finds it while the original is in flight (AC-5) and waits on it without queueing; a wait
   is bounded by the retry's own context. `resolve(e, resp, err, kept, now)` records the outcome and
-  wakes waiters; `at` is the resolution time, so the window counts from when the outcome was known,
-  and an entry never resolved cannot outlive the window from its making either.
+  wakes waiters; `at` is the resolution time, so the window counts from when the outcome was known.
+  Only a *resolved* entry expires: one in flight lives until its outcome is known, however long
+  the queue wait, the transit hold, and the produce took (the queue wait alone is bounded by
+  `grpc.max_request_timeout`, 30 s — the window's own length), because a retry arriving past the
+  window must find it and wait, not run the Command beside it (review of PR #38, Codex P1). Every
+  path resolves an entry — a refused `enter`, the caller's context before its turn, the pipeline's
+  outcome, the `Unsettled` goroutine — and `forget` bounds the rest by the Session's life.
 - **What is remembered.** `kept` is true for an offset and for a `parse`/`authorize` rejection
   (`*command.Error` other than `in_transit`): the Command's fate. It is false for a transient
   refusal — `pending_full`, `world_read_only`, `in_transit`, the caller's context ending before its
   turn — which is dropped from the keys at once; a retry that was waiting on it runs the Command
   itself (`await` reports *again*). `rate_limited` is checked before the lookup and makes no entry.
   Caching `UNAVAILABLE` would answer the retry the client was told to make with the refusal again,
-  for the whole window.
+  for the whole window. One consequence: an `authorize` rejection for *no Character bound* is the
+  Command's fate and is remembered, so a Submit that failed just before `AW-SRV-014`'s bind is still
+  refused if retried with the same ref inside the window; a fresh ref per typed line makes it moot.
 - **The outcome-unknown case.** `KafkaProducer.Produce` returns `*Unsettled` when its wait ended —
   the produce deadline, or the caller's context — with the record still live in the client:
   `ErrDeadline` (or the context's error) on the surface via `Unwrap`, and `Settled()`/`Outcome()`
   underneath. The pipeline passes it through untouched; `Ingress.settle` sees it with `errors.As`
   and keeps the entry open until the fate is known. The fate is classified from the record's
-  promise and a counter of produce requests that left the process (`retryHook.OnBrokerWrite` with
+  promise and a process-wide counter of produce requests written (`retryHook.OnBrokerWrite` with
   a nil error): the promise succeeded → **landed**, resolved with the offset, `produced_total`
-  incremented; the promise failed and no produce request was written since the record was enqueued
-  → **not written** (`ErrNotWritten`), the entry dropped, the retry a new Command; the promise
-  failed and one was → **still unknown**, resolved `kept` with `ErrDeadline`, so a retry inside the
-  window is told `DEADLINE_EXCEEDED` again rather than becoming a second record. That third case
-  is a refinement of AC-3's premise: a record dropped with the producer client was *never sent*
-  only when nothing carrying it went out; franz-go fails an in-flight batch with the same
-  `ErrClientClosed` as a never-sent one and `kgo.Record` does not say which, so the counter is the
-  discriminator, conservative by construction. When the promise had already fired when the wait
+  incremented; the promise failed and no produce request from this process reached a socket since
+  the record was enqueued → **not written** (`ErrNotWritten`), the entry dropped, the retry a new
+  Command; the promise failed and one did → **outcome unknown** (`ErrOutcomeUnknown`), resolved
+  `kept`, so a retry inside the window is answered `DEADLINE_EXCEEDED` with reason
+  `outcome_unknown` — a distinct, terminal reason (added on the review of PR #38): the client
+  stops retrying and the player `look`s, whereas `produce_deadline` is what it retries on. The
+  rule as it is, not as AC-3 wished it: franz-go's promise does not say whether a failed record
+  was ever sent — a written-then-failed batch and a never-written one arrive at the promise
+  identical, and the field that knows is unexported — so the counter is the discriminator, a
+  sound over-approximation of "sent": it is loaded before `TryProduce`, so any write of this
+  record's batch bumps it, and an errored `conn.Write` is not counted because a produce request is
+  one frame per `Write`, so an error means no frame the broker could process. It is imprecise in
+  the safe direction only: under concurrent produce traffic another Session's request turns a
+  never-sent record into *unknown*, and the retry is told `outcome_unknown` rather than becoming a
+  new produce. AC-3 as written holds in a quiet process, which is what its integration test
+  exercises; the review owns its rewrite at §8. When the promise had already fired when the wait
   ended (the record timed out in the client, or was dropped by the client swap) the fate is
   settled at once; otherwise a goroutine waits for it — the promise fires within the client's
   delivery timeout, which is `ingress.produce_deadline`.
-- Taxonomy: `ErrDuplicateClientRef` → `INVALID_ARGUMENT` `duplicate_client_ref`; `ErrDeadline`'s
-  comment corrected; `ReadOnlyMessage` no longer `PLACEHOLDER`. `memoryProducer` never returns
+- Taxonomy: `ErrDuplicateClientRef` → `INVALID_ARGUMENT` `duplicate_client_ref`, outcome
+  `rejected_ref`; `ErrOutcomeUnknown` → `DEADLINE_EXCEEDED` `outcome_unknown`, outcome `deadline`;
+  `ErrDeadline`'s comment corrected; `ReadOnlyMessage` no longer `PLACEHOLDER`. `memoryProducer` never returns
   `Unsettled` (no outcome-unknown case in memory).
 - Config: `ingress.idempotency_window` / `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` / `--ingress-idempotency-window`,
   `30s`, validated `> ingress.produce_deadline`; `keys.yaml`, `values.schema.json`, `_env.tpl`;
   `Options.IdempotencyWindow` and `Options.Tracer` on the ingress; boot logs it on
   `command ingress configured`.
-- Observability: `andara_ingress_submits_total{outcome="deduplicated"}` pre-seeded;
+- Observability: `andara_ingress_submits_total{outcome="deduplicated"}` and `{outcome="rejected_ref"}`
+  pre-seeded;
   `andara_ingress_idempotency_keys` gauge (in flight or resolved inside the window; `forget`
   releases a Session's); `submit deduplicated` at `debug` with `session_id`, `client_ref`,
   `trace_id`; `client_ref reused for a different command` at `warn`, sampled with the rate-limit
@@ -201,9 +218,12 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   inherited line.
 - Test plan as built: unit `idempotency_test.go` — AC-1, AC-4 (parse and authorize, one audit
   record for two calls), AC-5 (three callers, one pending, one record), AC-6, AC-7 (window by the
-  stepped clock, eviction oldest-first, `forget`), in-flight keys never evicted, AC-8,
-  transient-not-remembered (incl. a waiter that runs the Command), the three fates at the seam through the fake log's `Unsettled`, the
-  dedup trace shape. Integration `TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand` (AC-2: the
+  stepped clock, eviction oldest-first, `forget`), in-flight keys never evicted, an in-flight key
+  outliving the window (at the table and through the ingress: the retry waits, one record lands),
+  AC-8, transient-not-remembered (incl. a waiter that runs the Command), the three fates at the seam through the fake log's `Unsettled`, the
+  dedup trace shape; `producer_test.go` the fate discriminator alone (promise failed with the
+  counter unmoved → `ErrNotWritten`; bumped by an unrelated write → `ErrOutcomeUnknown`; promise
+  succeeded → landed). Integration `TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand` (AC-2: the
   response to the produce dropped, the caller's 100 ms deadline fires first, the retry is answered
   the offset the idempotent producer's retry landed at, end offset +1, the record at that offset
   carries the `client_ref`) and `TestKafka_RetryAfterDroppedRecordIsANewCommand` (AC-3: dial refused,
@@ -221,8 +241,8 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   so every Submit is the `authorize` rejection — which is the Command's fate and so is remembered):
   `look r1` → `PERMISSION_DENIED not_authorized` in 12 ms; `look r1` again → the same error in 0 ms;
   `north r1` → `INVALID_ARGUMENT duplicate_client_ref`; `look` with no ref twice → two rejections,
-  no dedup. Scraped: `submits_total{deduplicated}=1`, `{rejected_authz}=3`, `{rejected_parse}=1`
-  (the duplicate), `idempotency_keys` 1 while the Session lived and 0 after `CloseSession`. Loki:
+  no dedup. Scraped: `submits_total{deduplicated}=1`, `{rejected_authz}=3`, `{rejected_ref}=1`
+  (the duplicate; re-run after the review's relabel), `idempotency_keys` 1 while the Session lived and 0 after `CloseSession`. Loki:
   the `debug` `submit deduplicated` line with `session_id`, `client_ref=r1`, `trace_id`; the sampled
   `warn` line. Tempo: the retry's trace is `Game/Submit` → one `command.execute` with
   `deduplicated=true`, `pre_log=true`, no children. `command ingress configured` reports

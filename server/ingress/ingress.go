@@ -239,7 +239,8 @@ func (i *Ingress) await(ctx context.Context, sessionID, ref string, e *entry) (r
 // An Unsettled produce — the deadline passed with the record live — keeps
 // the entry open until the producer knows the record's fate: landed, and
 // a retry gets the offset; not written, and a retry is a new Command;
-// still unknown, and a retry inside the window is told so again.
+// ErrOutcomeUnknown, kept, and a retry inside the window is told so —
+// terminally, unlike the produce_deadline it retried on.
 func (i *Ingress) settle(st *session, e *entry, err error) {
 	if e == nil {
 		return

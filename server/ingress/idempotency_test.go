@@ -137,8 +137,8 @@ func TestIdempotency_DuplicateClientRef(t *testing.T) {
 	if codeOf(t, err) != connect.CodeInvalidArgument || infoOf(t, err).GetReason() != ReasonDuplicateClientRef || infoOf(t, err).GetDomain() != ErrorDomain {
 		t.Fatalf("different text: %v", err)
 	}
-	if len(f.log.records) != 1 {
-		t.Fatalf("records = %d", len(f.log.records))
+	if len(f.log.records) != 1 || f.outcome(OutcomeRejectedRef) != 1 {
+		t.Fatalf("records=%d rejected_ref=%v", len(f.log.records), f.outcome(OutcomeRejectedRef))
 	}
 	// The original's outcome is still there for its own retry.
 	if resp, err := f.submitRef(context.Background(), "s-alice", "north", "r1"); err != nil || resp.GetAcceptedOffset() != 0 {
@@ -306,17 +306,18 @@ func TestIdempotency_UnsettledFate(t *testing.T) {
 		t.Fatalf("retry after not-written: %v %v, records %d", r, err, len(f.log.records))
 	}
 
-	// Unknown: the retry gets the deadline again, not a record.
+	// Unknown: the retry is told so, terminally — outcome_unknown, not
+	// the produce_deadline it retried on — and no record.
 	f.log.unsettled = make(chan *Unsettled, 1)
 	_, err = f.submitRef(context.Background(), "s-alice", "north", "r3")
-	if codeOf(t, err) != connect.CodeDeadlineExceeded {
+	if codeOf(t, err) != connect.CodeDeadlineExceeded || infoOf(t, err).GetReason() != ReasonDeadline {
 		t.Fatalf("deadline: %v", err)
 	}
 	u = <-f.log.unsettled
-	u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrDeadline, errors.New("records have timed out")))
+	u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrOutcomeUnknown, errors.New("records have timed out")))
 	f.log.unsettled = nil
 	_, err = f.submitRef(context.Background(), "s-alice", "north", "r3")
-	if codeOf(t, err) != connect.CodeDeadlineExceeded || infoOf(t, err).GetReason() != ReasonDeadline {
+	if codeOf(t, err) != connect.CodeDeadlineExceeded || infoOf(t, err).GetReason() != ReasonOutcomeUnknown || infoOf(t, err).GetDomain() != ErrorDomain {
 		t.Fatalf("retry after unknown: %v", err)
 	}
 	if len(f.log.records) != 1 || f.outcome(OutcomeDeduplicated) != 2 {
@@ -403,5 +404,55 @@ func TestIdempotency_InFlightKeysAreNotEvicted(t *testing.T) {
 	// Resolved now: a new ref evicts the oldest.
 	if _, err := f.submitRef(context.Background(), "s-alice", "look", "r3"); err != nil || f.keys() != 2 {
 		t.Fatalf("after resolution: %v, keys %v", err, f.keys())
+	}
+}
+
+// A key in flight does not expire: however long the queue wait, the
+// hold, and the produce took, the retry that arrives past the window
+// must find the entry and wait on it, not run the Command beside it.
+func TestIdempotency_InFlightKeyOutlivesTheWindow(t *testing.T) {
+	// At the table.
+	var tb table
+	t0 := time.Unix(1_700_000_000, 0)
+	e, hit, _, err := tb.lookup("r1", "look", t0, 30*time.Second, 4)
+	if err != nil || hit {
+		t.Fatalf("first lookup: hit=%v err=%v", hit, err)
+	}
+	e2, hit, n, err := tb.lookup("r1", "look", t0.Add(31*time.Second), 30*time.Second, 4)
+	if err != nil || !hit || e2 != e || n != 0 {
+		t.Fatalf("past the window, unresolved: hit=%v same=%v n=%d err=%v", hit, e2 == e, n, err)
+	}
+	tb.resolve(e, nil, nil, true, t0.Add(31*time.Second))
+	if _, hit, _, _ := tb.lookup("r1", "look", t0.Add(62*time.Second), 30*time.Second, 4); hit {
+		t.Fatal("resolved and past the window: still a hit")
+	}
+
+	// Through the ingress: the original is gated in the log while the
+	// clock steps past the window; the retry waits, and one record lands.
+	f := newFixture(t, func(o *Options) { o.IdempotencyWindow = 30 * time.Second })
+	f.log.gate = make(chan struct{})
+	done := make(chan error, 1)
+	go func() { _, err := f.submitRef(context.Background(), "s-alice", "look", "r1"); done <- err }()
+	waitFor(t, func() bool { return testutil.ToFloat64(f.in.Metrics().Pending) == 1 }, "original pending")
+	f.clock.step(31 * time.Second)
+	retried := make(chan error, 1)
+	go func() { _, err := f.submitRef(context.Background(), "s-alice", "look", "r1"); retried <- err }()
+	select {
+	case err := <-retried:
+		t.Fatalf("the retry returned while the original was in flight: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	if testutil.ToFloat64(f.in.Metrics().Pending) != 1 || f.keys() != 1 {
+		t.Fatalf("pending=%v keys=%v: the retry ran beside the original", testutil.ToFloat64(f.in.Metrics().Pending), f.keys())
+	}
+	close(f.log.gate)
+	if err := <-done; err != nil {
+		t.Fatalf("original: %v", err)
+	}
+	if err := <-retried; err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if len(f.log.records) != 1 || f.outcome(OutcomeDeduplicated) != 1 {
+		t.Fatalf("records=%d deduplicated=%v", len(f.log.records), f.outcome(OutcomeDeduplicated))
 	}
 }

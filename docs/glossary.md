@@ -423,9 +423,12 @@ Session (AW-SRV-010).
 Command rather than a second one. The Gateway remembers a Submit's outcome against its key for
 `ingress.idempotency_window` once the outcome is known — an offset, or a rejection of the Intent —
 and answers a retry with it; a Submit whose outcome was unknown at the produce deadline keeps its
-key open until the record's fate is: landed, not written, or still unknown. Transient refusals are
-not remembered, so the retry a player was told to make runs. Per process, at most
-`ingress.max_pending` keys per Session; an empty `client_ref` has no key (AW-SRV-031).
+key open until the record's fate is: landed, not written (no produce request from the process
+reached a socket since the record was enqueued — under concurrent produce traffic a never-sent
+record is classified unknown instead), or outcome unknown, which a retry is told terminally. A key
+in flight never expires. Transient refusals are not remembered, so the retry a player was told to
+make runs. Per process, at most `ingress.max_pending` keys per Session; an empty `client_ref` has
+no key (AW-SRV-031).
 
 **Ingress** — The Gateway's Submit path (AW-SRV-010): per-Session rate limit, the Session's queue,
 the pre-log Command Pipeline, and the produce to the Command Log. Its answer names the Partition

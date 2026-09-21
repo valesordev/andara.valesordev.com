@@ -135,7 +135,8 @@ jobs:
       # must be still between the two. How much it rose between `start redpanda` and the
       # first sample is the broker's boot time plus where the fetch cycle stood when the
       # outage began, which is not the loop's to answer — the same run has landed at 9 and
-      # at 31 with nothing changed (the 30-tick bound tripped on 2026-09-21 at 31).
+      # at 31 with nothing changed (the 30-tick bound tripped on 2026-09-21 at 31). The
+      # first sample waits for the broker to report healthy, then eight seconds more.
       - name: the tick loop survives a broker outage
         run: |
           set -euo pipefail
@@ -147,7 +148,12 @@ jobs:
           ticks_during=$(metric andara_ticks_total)
           docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'andara-server-1 healthy'
           docker compose -f deploy/compose/docker-compose.yaml start redpanda
-          sleep 12
+          # A slow broker boot moves the test's clock, not its verdict.
+          for _ in $(seq 60); do
+            docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'redpanda-1 healthy' && break
+            sleep 1
+          done
+          sleep 8
           starved_after=$(metric andara_tick_input_starved_total)
           ticks_after=$(metric andara_ticks_total)
           sleep 5

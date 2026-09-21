@@ -193,13 +193,14 @@ CLAUDE.md §8, plus:
   with `world_read_only` or `in_transit`, `RESOURCE_EXHAUSTED`) and switches on
   `ErrorInfo.reason` only for behavior (retry after `RetryInfo`, hold the prompt during
   `in_transit`), not for wording. Changing the voice is a design decision, not a client one.
-- **Inherited from `AW-SRV-031` (2026-09-21):** `play` always sends a `client_ref` — one fresh
-  value per typed line — and retries `DEADLINE_EXCEEDED` (`produce_deadline`) with the *same* one,
-  so the retry is the same Command: the server answers it with the original outcome once the
-  record's fate is known, or with `DEADLINE_EXCEEDED` again when the fate is still unknown, in
-  which case `play` stops retrying and tells the player to `look`. A `client_ref` is never reused
-  for a different line (`duplicate_client_ref` is a client bug). An empty `client_ref` is not
-  deduplicated.
+- **Inherited from `AW-SRV-031` (2026-09-21, rewritten on the review of PR #38):** `play` always
+  sends a `client_ref` — one fresh value per typed line — and switches on `ErrorInfo.reason` under
+  `DEADLINE_EXCEEDED`: `produce_deadline` → retry with the *same* `client_ref` (the retry waits for
+  the record's fate, bounded by the client's own patience) and the server answers it with the
+  original outcome; `outcome_unknown` → stop; tell the player the World may or may not have taken
+  the command and to `look`. The Events the Command causes carry the `client_ref`, so a client
+  watching its stream learns the truth. A `client_ref` is never reused for a different line
+  (`duplicate_client_ref` is a client bug). An empty `client_ref` is not deduplicated.
 
 ## Open questions
 

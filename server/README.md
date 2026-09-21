@@ -77,7 +77,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `egress.resume_window` | `ANDARA_EGRESS_RESUME_WINDOW` | `2048` | Delivered Events retained per Session, for a stream reopened with `last_event_id`. At least `egress.buffer`. A resume from before the window is a `Resync` frame. |
 | `egress.heartbeat_interval` | `ANDARA_HEARTBEAT_INTERVAL` | `20s` | How long a stream may be silent before a `Heartbeat` frame is sent. Also how long a stream reset is given to return a blocked writer before its connection is closed. |
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
-| `ingress.idempotency_window` | `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` | `30s` | How long a Submit's outcome is remembered against its `(Session, client_ref)` once known, so a retry inside it is the same Command. Must exceed `ingress.produce_deadline`. Per process; at most `ingress.max_pending` keys per Session, the oldest resolved one evicted first — a key still in flight is never evicted. |
+| `ingress.idempotency_window` | `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` | `30s` | How long a Submit's outcome is remembered against its `(Session, client_ref)` once known, so a retry inside it is the same Command. It governs *resolved* keys; a key still in flight lives until its outcome is known, however long that takes. Must exceed `ingress.produce_deadline`. Per process; at most `ingress.max_pending` keys per Session, the oldest resolved one evicted first — a key still in flight is never evicted. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 | `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
@@ -308,18 +308,24 @@ original is still in flight waits for it, bounded by its own deadline, and does 
 in the Session's queue. Only outcomes that are the Command's fate are remembered: an offset, or a
 `parse`/`authorize` rejection. A transient refusal — `rate_limited`, `pending_full`,
 `world_read_only`, `in_transit`, the caller giving up — is not, so the retry the client was told
-to make runs the Command. A Submit answered `DEADLINE_EXCEEDED` keeps its key open: the record is
-still live in the producer and its promise still fires, so the key is resolved by the record's
-fate — *landed*, and a retry gets the offset it landed at; *not written* (no produce request left
-the process after the record was enqueued, so nothing carrying it reached a broker), and the
-retry is a new Command; *still unknown* (a request carrying it went out, its response was lost,
-and the client that held its idempotent retry is gone), and a retry inside the window is told
-`DEADLINE_EXCEEDED` again rather than becoming a second record — the player `look`s. The same
-`client_ref` with different text inside the window is a client bug and is rejected
-`INVALID_ARGUMENT` `duplicate_client_ref`, nothing produced; an empty `client_ref` is not
+to make runs the Command. A Submit answered `DEADLINE_EXCEEDED` `produce_deadline` keeps its key
+open: the record is still live in the producer and its promise still fires, so the key is resolved
+by the record's fate — *landed*, and a retry gets the offset it landed at; *not written*, and the
+retry is a new Command; *outcome unknown*, and a retry inside the window is answered
+`DEADLINE_EXCEEDED` `outcome_unknown`, which is terminal: the record may be in the log and nothing
+will ever say, so the client stops retrying and tells the player to `look`. The Events a Command
+causes carry its `client_ref`, so a client watching its stream learns the truth without asking.
+*Not written* means exactly this: no produce request from this process reached a socket since the
+record was enqueued — franz-go's promise does not say whether a failed record was ever sent, so a
+process-wide count of produce requests written is the discriminator, sound in the safe direction
+and imprecise in the other: under concurrent produce traffic a never-sent record is classified
+unknown. The same `client_ref` with different text inside the window is a client bug and is
+rejected `INVALID_ARGUMENT` `duplicate_client_ref`, nothing produced; an empty `client_ref` is not
 deduplicated at all — two Submits with none are two Commands — and `andara-cli` and the client
 always send one. The table is per process: a retry after a restart or on another pod is a new
-Command.
+Command. `ingress.max_pending` bounds keys as well as Submits in flight; a key kept open by an
+unsettled record counts while its Submit has already returned, so during an outage burst
+`pending_full` can be answered with the queue itself not full.
 
 **Bindings.** `ingress.Bindings` is the Gateway's routing view: which Character each Session
 drives and which Zone it was last seen in. It is Session state, not World state. It is kept
@@ -355,6 +361,7 @@ probe again the state clears without a restart. `docs/runbooks/world-read-only.m
 | pending queue full | `RESOURCE_EXHAUSTED` | `pending_full` | none |
 | log unreachable | `UNAVAILABLE` (retryable) | `world_read_only` | none |
 | produce deadline exceeded | `DEADLINE_EXCEEDED` | `produce_deadline` | possibly — the outcome is unknown; the client retries with the same `client_ref` and gets the original outcome once the record's fate is known |
+| the record's fate settled unknown | `DEADLINE_EXCEEDED` | `outcome_unknown` | possibly, and nothing will ever say — terminal; the client stops and the player `look`s |
 | `client_ref` reused for a different Intent inside the window | `INVALID_ARGUMENT` | `duplicate_client_ref` | none |
 
 Every error carries an `ErrorInfo` with `domain: andara.command`, the reason above, and for a
@@ -365,7 +372,7 @@ wording every player eventually sees (Brian, 2026-09-19).
 
 | Metric | Type | Labels | Cardinality bound |
 |--------|------|--------|-------------------|
-| `andara_ingress_submits_total` | counter | `outcome` | `produced`, `rejected_parse`, `rejected_authz`, `rate_limited`, `pending_full`, `in_transit`, `unavailable`, `deadline`, `canceled`, `internal`, `deduplicated` — a `duplicate_client_ref` rejection counts as `rejected_parse` |
+| `andara_ingress_submits_total` | counter | `outcome` | `produced`, `rejected_parse`, `rejected_authz`, `rate_limited`, `pending_full`, `in_transit`, `unavailable`, `deadline`, `canceled`, `internal`, `deduplicated`, `rejected_ref` (a `client_ref` reused for a different Intent) |
 | `andara_ingress_produce_duration_seconds` | histogram | — | enqueue to acknowledgement: what a player waits for the ack |
 | `andara_ingress_produce_retries_total` | counter | — | produce requests sent again after a transport failure |
 | `andara_ingress_pending` | gauge | — | Submits in flight on this process |

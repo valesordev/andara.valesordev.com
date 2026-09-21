@@ -31,8 +31,9 @@ type entry struct {
 	err      error
 	kept     bool
 	// at is when the entry was made and then, once resolved, when: the
-	// window counts from the latter, and a never-settled entry cannot
-	// outlive it either.
+	// window counts from the latter. An entry in flight does not expire —
+	// its retry must find it however long the queue, the hold, and the
+	// produce took; every path resolves it, and forget bounds the rest.
 	at time.Time
 }
 
@@ -81,12 +82,12 @@ func (t *table) lookup(ref, raw string, now time.Time, window time.Duration, max
 	return e, false, n + 1, nil
 }
 
-// sweep removes entries past the window, and from the order those a
-// transient outcome already dropped, and returns the change.
+// sweep removes resolved entries past the window, and from the order
+// those a transient outcome already dropped, and returns the change.
 func (t *table) sweep(now time.Time, window time.Duration) (n int) {
 	kept := t.order[:0]
 	for _, e := range t.order {
-		if t.keys[e.ref] != e || now.Sub(e.at) > window {
+		if t.keys[e.ref] != e || (e.resolved && now.Sub(e.at) > window) {
 			n += t.drop(e)
 			continue
 		}

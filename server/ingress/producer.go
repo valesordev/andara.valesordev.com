@@ -268,13 +268,21 @@ func (k *KafkaProducer) classify(ctx context.Context, err error) error {
 
 // settle names the fate of a record whose Submit was answered with the
 // outcome unknown, from its promise: landed, at the offset the promise
-// reports; not written, when no produce request left this process since
-// the record was enqueued — nothing carrying it can have reached a
-// broker; or still unknown, when one did and the promise failed anyway.
-// The last is the honest residue: a request that went out and whose
-// response was lost may have been written, and the client that held its
-// retry is gone, so the outcome stays ErrDeadline for the idempotency
-// window rather than becoming a second record (AW-SRV-031).
+// reports; not written, when no produce request from this process
+// reached a socket since the record was enqueued — nothing carrying it
+// can have reached a broker; or ErrOutcomeUnknown, when one did and the
+// promise failed anyway. franz-go's promise does not say whether a
+// failed record was ever sent (a written-then-failed batch and a
+// never-written one arrive identical), so the counter of produce
+// requests written is the discriminator, and it is process-wide: under
+// concurrent produce traffic a never-sent record is classified unknown.
+// That is the safe direction. The dangerous one — calling a sent record
+// not written, and letting a retry produce it again — cannot happen:
+// the counter is loaded before TryProduce, so any write of this record's
+// batch bumps it; and an errored conn.Write is not counted because a
+// produce request is one frame per Write, so a Write that returned an
+// error did not hand the broker a frame it could process. Do not "fix"
+// the nil-error filter (AW-SRV-031).
 func (k *KafkaProducer) settle(u *Unsettled, rec *kgo.Record, err error, writtenBefore uint64) {
 	switch {
 	case err == nil:
@@ -285,7 +293,7 @@ func (k *KafkaProducer) settle(u *Unsettled, rec *kgo.Record, err error, written
 	case k.written.Load() == writtenBefore:
 		u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrNotWritten, err))
 	default:
-		u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrDeadline, err))
+		u.settle(command.Accepted{}, fmt.Errorf("%w: %w", ErrOutcomeUnknown, err))
 	}
 }
 

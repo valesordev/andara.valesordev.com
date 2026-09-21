@@ -43,6 +43,14 @@ var (
 	// left the process after it was enqueued: nothing carrying it can have
 	// reached a broker. Never crosses the wire; the ingress reads it.
 	ErrNotWritten = errors.New("record dropped before any produce request left the process")
+	// ErrOutcomeUnknown is an Unsettled record's fate when a produce
+	// request left the process after it was enqueued and the promise
+	// failed anyway: the record may be in the log and the client that held
+	// its idempotent retry is gone, so nothing will ever say. DEADLINE_EXCEEDED
+	// with reason outcome_unknown — terminal for the client, unlike
+	// produce_deadline, which it retries: the player is told the World may
+	// or may not have taken the command, and looks (AW-SRV-031).
+	ErrOutcomeUnknown = errors.New("outcome unknown: the command may be in the log and its fate will not be known")
 )
 
 // Unsettled is the error Produce returns when the caller's wait ended —
@@ -88,6 +96,8 @@ const (
 	ReasonDeadline    = "produce_deadline"
 	// ReasonDuplicateClientRef: the reused client_ref (AW-SRV-031).
 	ReasonDuplicateClientRef = "duplicate_client_ref"
+	// ReasonOutcomeUnknown: the settled-unknown fate, terminal (AW-SRV-031).
+	ReasonOutcomeUnknown = "outcome_unknown"
 	// ErrorDomain is ErrorInfo.domain for every ingress error.
 	ErrorDomain = "andara.command"
 )
@@ -134,6 +144,8 @@ func connectError(err error) error {
 		return ce
 	case errors.Is(err, ErrDeadline):
 		return withInfo(connect.NewError(connect.CodeDeadlineExceeded, err), ReasonDeadline, nil)
+	case errors.Is(err, ErrOutcomeUnknown):
+		return withInfo(connect.NewError(connect.CodeDeadlineExceeded, err), ReasonOutcomeUnknown, nil)
 	case errors.Is(err, ErrDuplicateClientRef):
 		return withInfo(connect.NewError(connect.CodeInvalidArgument, err), ReasonDuplicateClientRef, nil)
 	case errors.Is(err, context.DeadlineExceeded):
@@ -194,8 +206,8 @@ func outcomeOf(err error) string {
 	case errors.Is(err, ErrUnavailable):
 		return OutcomeUnavailable
 	case errors.Is(err, ErrDuplicateClientRef):
-		return OutcomeRejectedParse
-	case errors.Is(err, ErrDeadline), errors.Is(err, context.DeadlineExceeded):
+		return OutcomeRejectedRef
+	case errors.Is(err, ErrDeadline), errors.Is(err, ErrOutcomeUnknown), errors.Is(err, context.DeadlineExceeded):
 		return OutcomeDeadline
 	case errors.Is(err, context.Canceled):
 		return OutcomeCanceled

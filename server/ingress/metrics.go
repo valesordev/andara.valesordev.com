@@ -27,10 +27,14 @@ const (
 	// OutcomeDeduplicated: a retry answered with the original Submit's
 	// outcome; nothing ran (AW-SRV-031).
 	OutcomeDeduplicated = "deduplicated"
+	// OutcomeRejectedRef: a client_ref reused for a different Intent
+	// inside the window — a client bug, its own series so a release that
+	// starts reusing refs is not a rise in typos (AW-SRV-031).
+	OutcomeRejectedRef = "rejected_ref"
 )
 
 // Outcomes is every outcome, for pre-seeding.
-var Outcomes = []string{OutcomeProduced, OutcomeRejectedParse, OutcomeRejectedAuthz, OutcomeRateLimited, OutcomePendingFull, OutcomeInTransit, OutcomeUnavailable, OutcomeDeadline, OutcomeCanceled, OutcomeInternal, OutcomeDeduplicated}
+var Outcomes = []string{OutcomeProduced, OutcomeRejectedParse, OutcomeRejectedAuthz, OutcomeRateLimited, OutcomePendingFull, OutcomeInTransit, OutcomeUnavailable, OutcomeDeadline, OutcomeCanceled, OutcomeInternal, OutcomeDeduplicated, OutcomeRejectedRef}
 
 // Metrics is the ingress instrumentation (AW-SRV-010).
 type Metrics struct {
