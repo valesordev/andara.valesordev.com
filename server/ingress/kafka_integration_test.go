@@ -610,3 +610,94 @@ func TestKafka_AmbiguousTimeoutNoDuplicate(t *testing.T) {
 		t.Fatalf("records %v", refs)
 	}
 }
+
+// AW-SRV-031 AC-2: a Submit answered DEADLINE_EXCEEDED — here the
+// caller's own deadline, with the produce response lost after the broker
+// has it — keeps its key open until the record's fate is known. The
+// idempotent producer's retry lands the record; the client's retry with
+// the same client_ref is answered with that offset, and the topic's end
+// offset advanced by exactly one across both calls.
+func TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand(t *testing.T) {
+	d := &faultDialer{}
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
+		t.Fatal(err)
+	}
+	before := endOffsets(t, f.topic)
+	d.dropOneProduceResponse.Store(true)
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, err := f.submitRef(ctx, "s-alice", "north", "r1")
+	if codeOf(t, err) != connect.CodeDeadlineExceeded || infoOf(t, err).GetReason() != ReasonDeadline {
+		t.Fatalf("ambiguous submit: %v", err)
+	}
+	if d.dropOneProduceResponse.Load() {
+		t.Fatal("the fault never fired")
+	}
+	resp, err := f.submitRef(context.Background(), "s-alice", "north", "r1")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	after := endOffsets(t, f.topic)
+	if sumOffsets(after) != sumOffsets(before)+1 {
+		t.Fatalf("end offsets %v → %v: the retry was a second record", before, after)
+	}
+	p := sim.PartitionFor("town")
+	if resp.GetPartition() != p || resp.GetAcceptedOffset() != after[p]-1 {
+		t.Fatalf("retry answered %v; the record landed at %d", resp, after[p]-1)
+	}
+	if f.outcome(OutcomeDeduplicated) != 1 || f.outcome(OutcomeDeadline) != 1 {
+		t.Fatalf("deduplicated=%v deadline=%v", f.outcome(OutcomeDeduplicated), f.outcome(OutcomeDeadline))
+	}
+	rec := readRecord(t, f.topic, p, resp.GetAcceptedOffset())
+	var cmd logv1.LoggedCommand
+	if err := proto.Unmarshal(rec.Value, &cmd); err != nil {
+		t.Fatal(err)
+	}
+	if cmd.GetClientRef() != "r1" {
+		t.Fatalf("record at the answered offset carries client_ref %q", cmd.GetClientRef())
+	}
+}
+
+// AW-SRV-031 AC-3: a Submit answered DEADLINE_EXCEEDED whose record never
+// left the process — the broker gone, the record dropped with the
+// producer client on entering the read-only state — has a known fate:
+// not written. The retry once the World accepts Commands again is a new
+// produce, and exactly one record lands.
+func TestKafka_RetryAfterDroppedRecordIsANewCommand(t *testing.T) {
+	d := &faultDialer{}
+	f := newKafkaFixture(t, func(o *ProducerOptions) { o.Dialer = d.dial })
+	if _, err := f.submit(context.Background(), "s-alice", "look"); err != nil {
+		t.Fatal(err)
+	}
+	before := endOffsets(t, f.topic)
+	d.refuse.Store(true)
+	d.cut()
+	_, err := f.submitRef(context.Background(), "s-alice", "north", "r1")
+	switch codeOf(t, err) {
+	case connect.CodeDeadlineExceeded:
+	case connect.CodeUnavailable:
+		t.Skip("the probe noticed the outage before the Submit enqueued: nothing to settle")
+	default:
+		t.Fatalf("broker gone: %v", err)
+	}
+	waitFor(t, func() bool { return f.producer.Degraded() }, "degraded")
+	// The record's fate is settled — not written — so the key is gone.
+	waitFor(t, func() bool { return testutil.ToFloat64(f.in.Metrics().IdempotencyKeys) == 1 }, "the dropped record's key released")
+	d.refuse.Store(false)
+	waitFor(t, func() bool { return !f.producer.Degraded() }, "probe recovery")
+	resp, err := f.submitRef(context.Background(), "s-alice", "north", "r1")
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	after := endOffsets(t, f.topic)
+	if sumOffsets(after) != sumOffsets(before)+1 {
+		t.Fatalf("end offsets %v → %v", before, after)
+	}
+	if resp.GetAcceptedOffset() != after[sim.PartitionFor("town")]-1 {
+		t.Fatalf("retry answered %v", resp)
+	}
+	if f.outcome(OutcomeDeduplicated) != 0 || f.outcome(OutcomeProduced) != 2 {
+		t.Fatalf("deduplicated=%v produced=%v", f.outcome(OutcomeDeduplicated), f.outcome(OutcomeProduced))
+	}
+}

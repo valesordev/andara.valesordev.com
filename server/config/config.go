@@ -93,13 +93,15 @@ type Config struct {
 	// N/period per Session, Burst the bucket depth; ProduceDeadline bounds
 	// one produce; MaxPending bounds a Session's Submits in flight;
 	// TransitHold is how long a Session's Intents wait for its Character
-	// to arrive in the next Zone.
-	IngressRateLimit       string
-	IngressAgentRateLimit  string
-	IngressBurst           int
-	IngressProduceDeadline time.Duration
-	IngressMaxPending      int
-	IngressTransitHold     time.Duration
+	// to arrive in the next Zone; IdempotencyWindow is how long a Submit's
+	// outcome is remembered against its client_ref (AW-SRV-031).
+	IngressRateLimit         string
+	IngressAgentRateLimit    string
+	IngressBurst             int
+	IngressProduceDeadline   time.Duration
+	IngressMaxPending        int
+	IngressTransitHold       time.Duration
+	IngressIdempotencyWindow time.Duration
 
 	// Event egress (AW-SRV-011). EgressBuffer is how many Events a
 	// Session's stream may leave unsent before the stream is ended;
@@ -158,15 +160,16 @@ const (
 	DefaultSubscriberBuffer = 1024
 	DefaultMaxSubscribers   = 10000
 
-	DefaultIngressRateLimit       = "20/s"
-	DefaultIngressAgentRateLimit  = "100/s"
-	DefaultIngressBurst           = 40
-	DefaultIngressProduceDeadline = 2 * time.Second
-	DefaultIngressMaxPending      = 256
-	DefaultIngressTransitHold     = 2 * time.Second
-	DefaultEgressBuffer           = 1024
-	DefaultEgressResumeWindow     = 2048
-	DefaultHeartbeatInterval      = 20 * time.Second
+	DefaultIngressRateLimit         = "20/s"
+	DefaultIngressAgentRateLimit    = "100/s"
+	DefaultIngressBurst             = 40
+	DefaultIngressProduceDeadline   = 2 * time.Second
+	DefaultIngressMaxPending        = 256
+	DefaultIngressTransitHold       = 2 * time.Second
+	DefaultIngressIdempotencyWindow = 30 * time.Second
+	DefaultEgressBuffer             = 1024
+	DefaultEgressResumeWindow       = 2048
+	DefaultHeartbeatInterval        = 20 * time.Second
 
 	DefaultTraceSampleRatio = 0.01
 )
@@ -207,26 +210,27 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		AuthRecheckInterval: DefaultAuthRecheckInterval,
 		SessionLinkdeadMax:  DefaultSessionLinkdeadMax,
 
-		SimSource:               DefaultSimSource,
-		SimTickRate:             DefaultSimTickRate,
-		SimTickBudget:           DefaultSimTickBudgetMS * time.Millisecond,
-		SimMaxPerTick:           DefaultSimMaxPerTick,
-		SimDrainTimeout:         DefaultSimDrainTimeoutMS * time.Millisecond,
-		SimPartitions:           allPartitions(),
-		SimCheckpointEveryTicks: DefaultSimCheckpointEveryTicks,
-		MaxIntentBytes:          DefaultMaxIntentBytes,
-		SubscriberBuffer:        DefaultSubscriberBuffer,
-		MaxSubscribers:          DefaultMaxSubscribers,
-		IngressRateLimit:        DefaultIngressRateLimit,
-		IngressAgentRateLimit:   DefaultIngressAgentRateLimit,
-		IngressBurst:            DefaultIngressBurst,
-		IngressProduceDeadline:  DefaultIngressProduceDeadline,
-		IngressMaxPending:       DefaultIngressMaxPending,
-		IngressTransitHold:      DefaultIngressTransitHold,
-		EgressBuffer:            DefaultEgressBuffer,
-		EgressResumeWindow:      DefaultEgressResumeWindow,
-		HeartbeatInterval:       DefaultHeartbeatInterval,
-		TraceSampleRatio:        DefaultTraceSampleRatio,
+		SimSource:                DefaultSimSource,
+		SimTickRate:              DefaultSimTickRate,
+		SimTickBudget:            DefaultSimTickBudgetMS * time.Millisecond,
+		SimMaxPerTick:            DefaultSimMaxPerTick,
+		SimDrainTimeout:          DefaultSimDrainTimeoutMS * time.Millisecond,
+		SimPartitions:            allPartitions(),
+		SimCheckpointEveryTicks:  DefaultSimCheckpointEveryTicks,
+		MaxIntentBytes:           DefaultMaxIntentBytes,
+		SubscriberBuffer:         DefaultSubscriberBuffer,
+		MaxSubscribers:           DefaultMaxSubscribers,
+		IngressRateLimit:         DefaultIngressRateLimit,
+		IngressAgentRateLimit:    DefaultIngressAgentRateLimit,
+		IngressBurst:             DefaultIngressBurst,
+		IngressProduceDeadline:   DefaultIngressProduceDeadline,
+		IngressMaxPending:        DefaultIngressMaxPending,
+		IngressTransitHold:       DefaultIngressTransitHold,
+		IngressIdempotencyWindow: DefaultIngressIdempotencyWindow,
+		EgressBuffer:             DefaultEgressBuffer,
+		EgressResumeWindow:       DefaultEgressResumeWindow,
+		HeartbeatInterval:        DefaultHeartbeatInterval,
+		TraceSampleRatio:         DefaultTraceSampleRatio,
 	}
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
@@ -310,6 +314,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.DurationVar(&c.IngressProduceDeadline, "ingress-produce-deadline", c.IngressProduceDeadline, "how long one produce to the Command log may take (ANDARA_PRODUCE_DEADLINE)")
 	fs.IntVar(&c.IngressMaxPending, "ingress-max-pending", c.IngressMaxPending, "Submits one Session may have in flight (ANDARA_INGRESS_MAX_PENDING)")
 	fs.DurationVar(&c.IngressTransitHold, "ingress-transit-hold", c.IngressTransitHold, "how long a Session's Intents wait for its Character to arrive in the next Zone (ANDARA_INGRESS_TRANSIT_HOLD)")
+	fs.DurationVar(&c.IngressIdempotencyWindow, "ingress-idempotency-window", c.IngressIdempotencyWindow, "how long a Submit's outcome is remembered against its client_ref; must exceed the produce deadline (ANDARA_INGRESS_IDEMPOTENCY_WINDOW)")
 	fs.IntVar(&c.EgressBuffer, "egress-buffer", c.EgressBuffer, "Events a Session's stream may leave unsent before it is ended (ANDARA_EGRESS_BUFFER)")
 	fs.IntVar(&c.EgressResumeWindow, "egress-resume-window", c.EgressResumeWindow, "delivered Events a Session retains for a resume (ANDARA_EGRESS_RESUME_WINDOW)")
 	fs.DurationVar(&c.HeartbeatInterval, "heartbeat-interval", c.HeartbeatInterval, "how long a stream may be silent before a heartbeat frame is sent (ANDARA_HEARTBEAT_INTERVAL)")
@@ -376,6 +381,9 @@ func (c Config) validateSim() error {
 	}
 	if c.IngressProduceDeadline <= 0 || c.IngressTransitHold < 0 {
 		return fmt.Errorf("ingress.produce_deadline must be positive and ingress.transit_hold must not be negative")
+	}
+	if c.IngressIdempotencyWindow <= c.IngressProduceDeadline {
+		return fmt.Errorf("ingress.idempotency_window must exceed ingress.produce_deadline")
 	}
 	if c.EgressBuffer < 1 || c.EgressResumeWindow < c.EgressBuffer {
 		return fmt.Errorf("egress.buffer must be positive and egress.resume_window at least egress.buffer")
@@ -627,12 +635,13 @@ type fileConfig struct {
 		MaxSubscribers   *int `yaml:"max_subscribers"`
 	} `yaml:"events"`
 	Ingress *struct {
-		RateLimit       *string `yaml:"rate_limit"`
-		AgentRateLimit  *string `yaml:"agent_rate_limit"`
-		Burst           *int    `yaml:"burst"`
-		ProduceDeadline *string `yaml:"produce_deadline"`
-		MaxPending      *int    `yaml:"max_pending"`
-		TransitHold     *string `yaml:"transit_hold"`
+		RateLimit         *string `yaml:"rate_limit"`
+		AgentRateLimit    *string `yaml:"agent_rate_limit"`
+		Burst             *int    `yaml:"burst"`
+		ProduceDeadline   *string `yaml:"produce_deadline"`
+		MaxPending        *int    `yaml:"max_pending"`
+		TransitHold       *string `yaml:"transit_hold"`
+		IdempotencyWindow *string `yaml:"idempotency_window"`
 	} `yaml:"ingress"`
 	Egress *struct {
 		Buffer            *int    `yaml:"buffer"`
@@ -855,6 +864,7 @@ func applyFile(c *Config, path string) error {
 		}{
 			{"ingress.produce_deadline", in.ProduceDeadline, &c.IngressProduceDeadline},
 			{"ingress.transit_hold", in.TransitHold, &c.IngressTransitHold},
+			{"ingress.idempotency_window", in.IdempotencyWindow, &c.IngressIdempotencyWindow},
 		} {
 			if d.v != nil {
 				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
@@ -948,6 +958,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}{
 		{"ANDARA_PRODUCE_DEADLINE", &c.IngressProduceDeadline},
 		{"ANDARA_INGRESS_TRANSIT_HOLD", &c.IngressTransitHold},
+		{"ANDARA_INGRESS_IDEMPOTENCY_WINDOW", &c.IngressIdempotencyWindow},
 		{"ANDARA_HEARTBEAT_INTERVAL", &c.HeartbeatInterval},
 	} {
 		if v, ok := env(dv.name); ok {

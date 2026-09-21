@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -34,6 +35,10 @@ type fakeLog struct {
 	records []*logv1.LoggedCommand
 	fail    error
 	gate    chan struct{} // when set, Produce waits on it
+	// unsettled, when set, makes Produce answer ErrDeadline with the
+	// record's fate pending; the Unsettled is sent here for the test to
+	// settle (AW-SRV-031).
+	unsettled chan *Unsettled
 }
 
 func (f *fakeLog) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
@@ -48,6 +53,11 @@ func (f *fakeLog) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (comman
 	defer f.mu.Unlock()
 	if f.fail != nil {
 		return command.Accepted{}, f.fail
+	}
+	if f.unsettled != nil {
+		u := newUnsettled(ErrDeadline)
+		f.unsettled <- u
+		return command.Accepted{}, u
 	}
 	if f.next == nil {
 		f.next = map[int32]int64{}
@@ -78,6 +88,7 @@ type fixture struct {
 	audit    *recordlog.Memory
 	clock    *clock
 	reg      *prometheus.Registry
+	refs     atomic.Uint64
 }
 
 var (
@@ -118,12 +129,18 @@ func newFixture(t *testing.T, mutate func(*Options)) *fixture {
 	return f
 }
 
+// submit sends raw with a fresh client_ref: each call is its own
+// Command. submitRef is the retry: the same client_ref again.
 func (f *fixture) submit(ctx context.Context, session, raw string) (*gamev1.SubmitResponse, error) {
+	return f.submitRef(ctx, session, raw, fmt.Sprintf("ref-%d", f.refs.Add(1)))
+}
+
+func (f *fixture) submitRef(ctx context.Context, session, raw, ref string) (*gamev1.SubmitResponse, error) {
 	p := player
 	if session == "s-agent" {
 		p = agent
 	}
-	return f.in.submit(ctx, session, p, nil, &gamev1.SubmitRequest{SessionId: session, Raw: raw, ClientRef: "ref-" + raw})
+	return f.in.submit(ctx, session, p, nil, &gamev1.SubmitRequest{SessionId: session, Raw: raw, ClientRef: ref})
 }
 
 func (f *fixture) outcome(o string) float64 {
@@ -181,11 +198,11 @@ func TestSubmit_Produced(t *testing.T) {
 // client-supplied record never reaches the log.
 func TestSubmit_ProducesExactlyWhatParseReturned(t *testing.T) {
 	f := newFixture(t, nil)
-	if _, err := f.submit(context.Background(), "s-alice", "move north"); err != nil {
+	if _, err := f.submitRef(context.Background(), "s-alice", "move north", "ref-move-north"); err != nil {
 		t.Fatal(err)
 	}
 	got := f.log.records[0]
-	want, _, err := command.Parse(command.Intent{SessionID: "s-alice", Raw: "move north", ClientRef: "ref-move north"}, command.Builtin(), 4096)
+	want, _, err := command.Parse(command.Intent{SessionID: "s-alice", Raw: "move north", ClientRef: "ref-move-north"}, command.Builtin(), 4096)
 	if err != nil {
 		t.Fatal(err)
 	}

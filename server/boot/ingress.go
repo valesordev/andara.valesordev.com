@@ -82,13 +82,15 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 			Tracer:     rt.Tel.Tracer,
 			Logger:     rt.Tel.Log,
 		},
-		Bindings:       rt.Bindings,
-		RateLimit:      rate,
-		AgentRateLimit: agentRate,
-		Burst:          cfg.IngressBurst,
-		MaxPending:     cfg.IngressMaxPending,
-		Metrics:        metrics,
-		Log:            rt.Tel.Log,
+		Bindings:          rt.Bindings,
+		RateLimit:         rate,
+		AgentRateLimit:    agentRate,
+		Burst:             cfg.IngressBurst,
+		MaxPending:        cfg.IngressMaxPending,
+		IdempotencyWindow: cfg.IngressIdempotencyWindow,
+		Metrics:           metrics,
+		Log:               rt.Tel.Log,
+		Tracer:            rt.Tel.Tracer,
 	})
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "command ingress configured",
 		slog.String("source", cfg.SimSource),
@@ -96,6 +98,7 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 		slog.Int("burst", cfg.IngressBurst), slog.Int("max_pending", cfg.IngressMaxPending),
 		slog.String("produce_deadline", cfg.IngressProduceDeadline.String()),
 		slog.String("transit_hold", cfg.IngressTransitHold.String()),
+		slog.String("idempotency_window", cfg.IngressIdempotencyWindow.String()),
 	)
 	return nil
 }

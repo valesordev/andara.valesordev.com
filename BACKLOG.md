@@ -9,8 +9,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `in-progress` | 1 |
-| `ready` | 31 |
+| `in-progress` | 2 |
+| `ready` | 30 |
 | `done` | 17 |
 | **total** | **49** |
 
@@ -20,13 +20,14 @@ Nothing blocked or in review.
 
 ## By status
 
-### `in-progress` (1)
+### `in-progress` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
-### `ready` (31)
+### `ready` (30)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -60,7 +61,6 @@ Nothing blocked or in review.
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `EPIC-02` | server | M | high | implementation | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry | `AW-SRV-003` |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `EPIC-02` | server | M | medium | implementation | Perception through Exits — Builder-declared senses on a room connection | `AW-SRV-004`, `AW-SRV-021` |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
 ### `done` (17)
 
@@ -130,7 +130,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `done` | Protobuf schema as the wire, log, snapshot, and content contract |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `ready` | Gateway read path from the Event topic — routing and perception for Zones another process owns |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `ready` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `in-progress` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
 
 ### `EPIC-04` — Snapshots and recovery
 

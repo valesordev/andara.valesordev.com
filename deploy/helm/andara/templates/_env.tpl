@@ -162,6 +162,10 @@ ANDARA_AGENT_RATE_LIMIT: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_INGRESS_TRANSIT_HOLD: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "ingress" "idempotency_window" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_INGRESS_IDEMPOTENCY_WINDOW: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}

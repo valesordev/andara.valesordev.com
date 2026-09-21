@@ -586,9 +586,10 @@ func TestFanout_500Streams(t *testing.T) {
 	if bad.Load() != 0 {
 		t.Fatalf("%d streams missed or misordered events", bad.Load())
 	}
-	if got := gauge(t, s.eg.Metrics().Sent.WithLabelValues(string(sim.EvRoomDescribed))); got != n*events {
-		t.Errorf("sent = %v, want %d", got, n*events)
-	}
+	// The counter moves after Send returns, and a frame reaches the client
+	// before that: the last increment can trail the last Receive.
+	sent := s.eg.Metrics().Sent.WithLabelValues(string(sim.EvRoomDescribed))
+	waitFor(t, func() bool { return gauge(t, sent) == n*events }, fmt.Sprintf("%d sent", n*events))
 }
 
 // AC-9 through the gateway: a Game Master asks for World visibility and

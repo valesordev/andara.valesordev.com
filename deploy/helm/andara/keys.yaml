@@ -73,6 +73,7 @@ keys:
   - {key: ingress.max_pending,       env: ANDARA_INGRESS_MAX_PENDING,  type: int, default: 256, min: 1, story: AW-SRV-010}
   - {key: ingress.agent_rate_limit,  env: ANDARA_AGENT_RATE_LIMIT,     type: string, default: 100/s, story: AW-SRV-010}
   - {key: ingress.transit_hold,      env: ANDARA_INGRESS_TRANSIT_HOLD, type: duration, default: 2s, story: AW-SRV-010}
+  - {key: ingress.idempotency_window, env: ANDARA_INGRESS_IDEMPOTENCY_WINDOW, type: duration, default: 30s, story: AW-SRV-031}
 
   # --- AW-SRV-006 / AW-SRV-007 / AW-INF-007: snapshots, recovery, deploy ---
   - {key: snapshot.interval,         env: ANDARA_SNAPSHOT_INTERVAL,       type: duration, default: 60s, story: AW-SRV-006}

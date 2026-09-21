@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-49 stories — 1 in-progress · 31 ready · 17 done
+49 stories — 2 in-progress · 30 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
