@@ -135,14 +135,14 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
 
 ## Open questions
 
-- `[ASSUMPTION]` A 30 s window. A human retries within seconds; a client library within its own
-  backoff. Longer only costs memory bounded by `max_pending` per Session. *Built as assumed;
-  `ingress.idempotency_window` moves it.*
-- `[ASSUMPTION]` The same `client_ref` with different text is a client bug worth a typed rejection
-  rather than a silent dedup. A silent answer would hide the bug behind a correct-looking response.
-  *Built as assumed: `INVALID_ARGUMENT` `duplicate_client_ref`, a sampled `warn`, counted as
-  `outcome="rejected_ref"` (ruled on the review of PR #38: its own series, so a client release
-  that starts reusing refs is not a rise in typos).*
+- **Resolved 2026-09-21 (Brian):** a 30 s window. A human retries within seconds; a client library
+  within its own backoff. Longer only costs memory bounded by `max_pending` per Session. Built so;
+  `ingress.idempotency_window` moves it.
+- **Resolved 2026-09-21 (Brian):** the same `client_ref` with different text is a client bug worth a
+  typed rejection rather than a silent dedup — a silent answer would hide the bug behind a
+  correct-looking response. Built so: `INVALID_ARGUMENT` `duplicate_client_ref`, a sampled `warn`,
+  counted as `outcome="rejected_ref"` (ruled on the review of PR #38: its own series, so a client
+  release that starts reusing refs is not a rise in typos).
 
 ### As built (2026-09-21)
 
