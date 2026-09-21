@@ -415,12 +415,13 @@ CLAUDE.md §8, plus:
   `TestObserverFollowsEntity` in `server/events` assert them, and the egress hands the Hub's
   envelope to the wire unedited, so neither needed work here.
 
-- `[ASSUMPTION]` Disconnect-on-overflow rather than drop-and-continue, for the reason in the drop policy
-  above. If a lossy mode is ever wanted for a spectator or replay client, it is a distinct subscription
-  type, not a degraded version of this one.
-- `[ASSUMPTION]` One `Subscribe` stream per Session. Multiplexing several would let a client separate
-  chat from combat; nothing here forecloses it. As built: a second `Subscribe` is
-  `FAILED_PRECONDITION` (`already_subscribed`); the client ends the first.
+- **Resolved 2026-09-20 (review of PR #37, the drop policy accepted as written):** end the stream on
+  overflow rather than drop-and-continue, for the reason in the drop policy above. If a lossy mode is
+  ever wanted for a spectator or replay client, it is a distinct subscription type, not a degraded
+  version of this one.
+- **Resolved 2026-09-20 (review of PR #37):** one `Subscribe` stream per Session. Multiplexing
+  several would let a client separate chat from combat; nothing here forecloses it. As built: a
+  second `Subscribe` is `FAILED_PRECONDITION` (`already_subscribed`); the client ends the first.
 - **Resolved 2026-09-21 (Brian): World visibility is opt-in per stream** (`SubscribeRequest.world`),
   never implied by the role. An operator playing a Character sees what the Character sees; the
   privileged view is a deliberate act, audited each time it is taken. The wire contract stands as
