@@ -20,6 +20,7 @@ import (
 
 	"github.com/valesordev/andara/gen/go/andara/admin/v1/adminv1connect"
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
+	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 )
 
 // The Protocol client for the commands that connect (AW-SRV-008's account
@@ -64,21 +65,89 @@ func (rt *runtime) httpClient() (*http.Client, error) {
 	}, nil
 }
 
+// streamReadIdle is how long the Subscribe connection may be silent
+// before the transport pings it. It is above the server's
+// egress.heartbeat_interval (20 s): a live stream carries a Heartbeat
+// inside it and never pings, and a connection that died without a RST —
+// a NAT drop, a suspended laptop — errors within this plus the ping
+// timeout (15 s) and falls into the reconnect path, rather than waiting
+// on the kernel's keepalive. Any frame resets the timer.
+const streamReadIdle = 30 * time.Second
+
+// streamClient is httpClient without the whole-request deadline: a play
+// Session's Subscribe stream lives for as long as the player does, and
+// --timeout bounds establishing the connection, not the session
+// (AW-CLI-004). Every unary call on it carries its own context deadline,
+// and the connection itself is health-checked with HTTP/2 pings.
+func (rt *runtime) streamClient() (*http.Client, error) {
+	hc, err := rt.httpClient()
+	if err != nil {
+		return nil, err
+	}
+	hc.Timeout = 0
+	hc.Transport.(*http2.Transport).ReadIdleTimeout = streamReadIdle
+	return hc, nil
+}
+
+// gameClient is the Game service, and the stored credential OpenSession
+// carries in its message. The Game RPCs read no bearer header — after
+// OpenSession the session_id is the credential — so none is sent: a token
+// goes where it is read and nowhere else.
+func (rt *runtime) gameClient() (gamev1connect.GameClient, *storedCredential, error) {
+	cred, err := rt.loadCredential()
+	if err != nil {
+		return nil, nil, err
+	}
+	if cred == nil {
+		return nil, nil, &AppError{Exit: ExitUsage, Code: CodeNotLoggedIn,
+			Message: fmt.Sprintf("no credential for %s; run `andara-cli auth login`", rt.settings.ServerAddress),
+			Detail:  map[string]any{"server": rt.settings.ServerAddress}}
+	}
+	hc, err := rt.streamClient()
+	if err != nil {
+		return nil, nil, err
+	}
+	return gamev1connect.NewGameClient(hc, rt.baseURL(), rt.clientOptions("")...), cred, nil
+}
+
 // clientOptions propagates the cli.command trace and, when a bearer token
-// is given, sends it on every request.
+// is given, sends it on every request — unary and streaming alike, so a
+// Subscribe stream's span is parented the same way a Submit's is.
 func (rt *runtime) clientOptions(bearer string) []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithGRPC(),
-		connect.WithInterceptors(connect.UnaryInterceptorFunc(func(next connect.UnaryFunc) connect.UnaryFunc {
-			return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-				propagator.Inject(ctx, propagation.HeaderCarrier(req.Header()))
-				if bearer != "" {
-					req.Header().Set("Authorization", "Bearer "+bearer)
-				}
-				return next(ctx, req)
-			}
-		})),
+		connect.WithInterceptors(headerInterceptor{bearer: bearer}),
 	}
+}
+
+// headerInterceptor injects the trace context and the bearer token into
+// every outgoing request's headers.
+type headerInterceptor struct{ bearer string }
+
+func (h headerInterceptor) set(ctx context.Context, header http.Header) {
+	propagator.Inject(ctx, propagation.HeaderCarrier(header))
+	if h.bearer != "" {
+		header.Set("Authorization", "Bearer "+h.bearer)
+	}
+}
+
+func (h headerInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
+	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
+		h.set(ctx, req.Header())
+		return next(ctx, req)
+	}
+}
+
+func (h headerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) connect.StreamingClientFunc {
+	return func(ctx context.Context, spec connect.Spec) connect.StreamingClientConn {
+		conn := next(ctx, spec)
+		h.set(ctx, conn.RequestHeader())
+		return conn
+	}
+}
+
+func (headerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
+	return next
 }
 
 func (rt *runtime) baseURL() string { return "https://" + rt.settings.ServerAddress }

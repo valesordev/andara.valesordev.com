@@ -20,6 +20,7 @@ on:
       - "deploy/**"
       - "scripts/stack.sh"
       - "scripts/stack_smoke.sh"
+      - "scripts/stack_play.sh"
       - "scripts/tls.sh"
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
@@ -28,7 +29,9 @@ on:
       - ".github/workflows/stack.yaml"
       # The server is part of the stack since AW-SRV-005, and the account store talks to
       # the broker since AW-SRV-008; a Go change can break what only this workflow checks.
+      # andara-cli plays against it since AW-CLI-004.
       - "server/**"
+      - "admin/**"
       - "cmd/**"
       - "internal/**"
       - "gen/**"
@@ -40,6 +43,7 @@ on:
       - "deploy/**"
       - "scripts/stack.sh"
       - "scripts/stack_smoke.sh"
+      - "scripts/stack_play.sh"
       - "scripts/tls.sh"
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
@@ -47,6 +51,7 @@ on:
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
       - "server/**"
+      - "admin/**"
       - "cmd/**"
       - "internal/**"
       - "gen/**"
@@ -236,6 +241,15 @@ jobs:
           assert len(d['panels']) >= 6, d['panels']
           print(d['title'], '-', len(d['panels']), 'panels')
           "
+
+      # AW-CLI-004's M1 gate, scripted: andara-cli play against the running stack —
+      # log in, connect, look, north, west, quit — asserting the transcript. Until
+      # AW-SRV-014 binds a Character every Intent is refused before the log, so this
+      # asserts the half of the gate that exists today; that story extends it. Last,
+      # because it restarts andara-server under an open session (AC-7), which resets
+      # the server's counters; the steps above read what earlier steps counted.
+      - name: andara-cli play against the stack (M1 gate)
+        run: make stack-play
 
       - name: down leaves nothing behind
         run: |

@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/valesordev/andara/internal/testpki"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/gateway"
@@ -25,11 +27,36 @@ import (
 type liveServer struct {
 	addr  string
 	ca    string
+	pki   *testpki.PKI
 	store *auth.Store
+	srv   *gateway.Server
+	reg   *prometheus.Registry
 }
 
 func startServer(t *testing.T) *liveServer {
 	t.Helper()
+	return startServerWith(t, nil, nil)
+}
+
+// startServerWith is startServer with the gateway options adjusted — the
+// seams behind Submit and Subscribe, the Protocol range. With a base, it
+// is that server started again: same address, certificate, and accounts,
+// as a restarted process would have.
+func startServerWith(t *testing.T, base *liveServer, adjust func(*gateway.Options)) *liveServer {
+	t.Helper()
+	if base != nil {
+		opts := gateway.Options{
+			Listen: base.addr, TLSCertFile: base.pki.CertFile, TLSKeyFile: base.pki.KeyFile,
+			MaxRecvBytes: 65536, MaxRequestTimeout: 10 * time.Second, DrainTimeout: 2 * time.Second,
+			ProtocolMin: 1, ProtocolMax: 1,
+			Verifier: base.store, Auth: auth.NewService(base.store), Accounts: auth.NewAdmin(base.store),
+			Registry: prometheus.NewRegistry(),
+		}
+		if adjust != nil {
+			adjust(&opts)
+		}
+		return serve(t, opts, base.pki, base.store)
+	}
 	pki := testpki.New(t)
 	kr, err := auth.ParseKeyring(strings.NewReader("k1: " + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)) + "\n"))
 	if err != nil {
@@ -50,12 +77,23 @@ func startServer(t *testing.T) *liveServer {
 	if _, err := store.Bootstrap(context.Background(), "oper", "operator-password"); err != nil {
 		t.Fatal(err)
 	}
-	srv, err := gateway.New(gateway.Options{
+	reg := prometheus.NewRegistry()
+	opts := gateway.Options{
 		Listen: "127.0.0.1:0", TLSCertFile: pki.CertFile, TLSKeyFile: pki.KeyFile,
 		MaxRecvBytes: 65536, MaxRequestTimeout: 10 * time.Second, DrainTimeout: 2 * time.Second,
 		ProtocolMin: 1, ProtocolMax: 1,
 		Verifier: store, Auth: auth.NewService(store), Accounts: auth.NewAdmin(store),
-	})
+		Registry: reg,
+	}
+	if adjust != nil {
+		adjust(&opts)
+	}
+	return serve(t, opts, pki, store)
+}
+
+func serve(t *testing.T, opts gateway.Options, pki *testpki.PKI, store *auth.Store) *liveServer {
+	t.Helper()
+	srv, err := gateway.New(opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +105,53 @@ func startServer(t *testing.T) *liveServer {
 		defer cancel()
 		_ = srv.Shutdown(ctx)
 	})
-	return &liveServer{addr: srv.Addr().String(), ca: pki.CAFile, store: store}
+	reg, _ := opts.Registry.(*prometheus.Registry)
+	return &liveServer{addr: srv.Addr().String(), ca: pki.CAFile, pki: pki, store: store, srv: srv, reg: reg}
+}
+
+// stop shuts the server down now, as a crash or a restart would.
+func (s *liveServer) stop(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := s.srv.Shutdown(ctx); err != nil {
+		t.Logf("shutdown: %v", err)
+	}
+}
+
+// counter reads one series off the server's registry.
+func (s *liveServer) counter(t *testing.T, name string, labels map[string]string) float64 {
+	t.Helper()
+	families, err := s.reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range families {
+		if f.GetName() != name {
+			continue
+		}
+	metrics:
+		for _, m := range f.GetMetric() {
+			for k, v := range labels {
+				found := false
+				for _, l := range m.GetLabel() {
+					if l.GetName() == k && l.GetValue() == v {
+						found = true
+					}
+				}
+				if !found {
+					continue metrics
+				}
+			}
+			if c := m.GetCounter(); c != nil {
+				return c.GetValue()
+			}
+			if g := m.GetGauge(); g != nil {
+				return g.GetValue()
+			}
+		}
+	}
+	return 0
 }
 
 func (s *liveServer) env(t *testing.T) map[string]string {

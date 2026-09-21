@@ -10,4 +10,6 @@ direct datastore access.
 ```
 make build
 ./bin/andara-cli version
+./bin/andara-cli auth login --username operator
+./bin/andara-cli play
 ```

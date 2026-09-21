@@ -4,8 +4,9 @@ Operator, builder, and player tooling. Reaches the server over the same versione
 Protocol as every other client — no privileged back door, no direct datastore
 access (`CLAUDE.md` §10).
 
-This package is the command tree and shared chassis (`AW-CLI-001`). Protocol
-commands arrive in later stories (`play` in `AW-CLI-004`, `content` in `AW-CLI-002`).
+This package is the command tree and shared chassis (`AW-CLI-001`), the account
+and auth commands (`AW-SRV-008`), the in-process `sim repl` harness, and `play`,
+the Text Interface (`AW-CLI-004`). `content` arrives with `AW-CLI-002`.
 
 ```
 make build
@@ -23,6 +24,10 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli version` | version, commit, and build date |
 | `andara-cli config show` | effective settings and the source of each |
 | `andara-cli completion zsh` | shell completion script (`bash`/`fish`/`powershell` also) |
+| `andara-cli auth login` / `logout` / `refresh` / `whoami` | the stored credential (`AW-SRV-008`) |
+| `andara-cli account …` / `invite …` / `registration …` | account administration (operator) |
+| `andara-cli sim repl` | drive the Command Pipeline in-process against content on disk (developer) |
+| `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`) |
 
 ## Global flags
 
@@ -97,4 +102,95 @@ chatter and diagnostics go to stderr. On failure, stdout is:
 `unknown_flag`, `unknown_config_key`, `unsupported_flag`, `invalid_value`,
 `config_not_found`, `invalid_config`, `credential_file_mode`.
 
-Help text is golden-tested. Regenerate with `make goldens`.
+Codes `play` adds: `not_logged_in`, `protocol_version`, `disconnected`, and
+the connected commands' `connect_failed`, `unauthenticated`,
+`permission_denied`, `server_error`, `timeout`.
+
+Help text is golden-tested, as is `play`'s rendering over a recorded Event
+stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
+
+## play — the Text Interface
+
+```
+andara-cli auth login --username <you>
+andara-cli play [--as <account-id>] [--world] [--show-protocol] [--no-history] [--reconnect=false] [--client-timeout 10s]
+```
+
+`play` opens a Session with the stored credential, subscribes to its Events,
+asks the world for the Room, and then reads lines. What you type is sent as
+typed — the server parses it (`AW-SRV-003`); this client decides nothing — and
+what the world says arrives as prose. The renderer is a pure function from
+`EventEnvelope` to lines (`admin/cli/render.go`); a Phase 2 client substitutes
+another against the same recorded stream.
+
+| Event | Rendered as |
+|-------|-------------|
+| `RoomDescribed` | title, description, `Exits: …`, `Here: …` |
+| `CharacterArrived` / `CharacterLeft` | one line naming the Character and the direction |
+| `CommandRejected` | the message, verbatim — the same voice as a refusal returned on `Submit` |
+| `Heartbeat` | nothing |
+| `Resync` | "You may have missed some events; the world continues from here." and a fresh `look` |
+| `ZoneFaulted`, `SubscriberDropped`, `SimulationStopped` | one system-voice line each (`SubscriberDropped`'s `buffer_full` and `revoked` as prose; the token stays under `/protocol`) |
+| anything newer than this client | "Something happened here that this client cannot describe (event N)." |
+
+Lines that start with `/` are for the client, never sent:
+
+| Line | Effect |
+|------|--------|
+| `/protocol [on\|off]` | protocol visibility: every Intent sent and Event received, with message name, session ID, `client_ref`, `event_id`, and tick, indented and marked `»` (sent) / `«` (received). `--show-protocol` starts with it on. |
+| `/help` | the list |
+| `/quit` | leave, as do Ctrl-C and Ctrl-D at an empty line: the Session is closed and the exit code is 0 |
+
+Refusals print the server's message as given, wherever in the pipeline they
+happened; the `ErrorInfo.reason` steers only behavior (`AW-SRV-010`,
+`AW-SRV-031`):
+
+| Server answer | Client behavior |
+|---------------|-----------------|
+| `UNAVAILABLE` `world_read_only` / `in_transit` | hold the prompt for `RetryInfo` (500 ms without one), retry the same line up to 3 times, then print the message |
+| `DEADLINE_EXCEEDED` `produce_deadline`, or the client's own `--client-timeout` | retry with the **same** `client_ref` up to 4 attempts, on the **same Session** — the server answers with the original outcome. If the Session changed under the retry (a reconnect), the outcome is unknown and the player is told to `look`; a retry is never sent on a Session the line did not start in |
+| `DEADLINE_EXCEEDED` `outcome_unknown` | stop; "the world may or may not have taken it. Use `look`" |
+| `UNAUTHENTICATED` on `Submit` | the Session is gone: the line is dropped and the stream loop reopens a Session |
+| anything else typed | the message, once |
+
+A dropped connection is announced (`-- Connection lost; reconnecting.`), retried
+with backoff (1 s doubling to 15 s, jittered), and the stream resumed from the last
+`event_id` seen; a resume the server cannot honor arrives as a `Resync`, which is
+announced and followed by a `look`. A connection that died without saying so is
+noticed by the transport, not by luck: the stream connection is health-checked with
+an HTTP/2 ping after 30 s of silence — above the server's 20 s heartbeat, so a live
+stream never pings — and errors within ~45 s of dying. If the stored session token
+has expired by the time of a reconnect (`auth.session_ttl` counts from login), the
+refresh token is exchanged once and the credential file updated, as `auth refresh`
+does. `--reconnect=false` makes a drop exit 3 (`disconnected`) instead, for scripts.
+A server whose Protocol range excludes this client's version (1) exits 3 with
+`protocol_version`, naming both ranges. SIGINT and SIGTERM end play at once, even
+mid-retry, with the Session closed.
+
+`--output json` writes the raw stream — every envelope, heartbeats included —
+to stdout as one `protojson` object per line, and everything else (notices,
+refusals, protocol lines) to stderr, notices and refusals as the structured log
+lines of `AW-CLI-001`. On a pipe rather than a terminal, `play` shows no prompt,
+holds each line until the previous one's Events have arrived (up to 3 s), and
+lingers the same at end of input, so a scripted transcript reads in the order
+it was typed:
+
+```
+printf 'look\nnorth\n' | andara-cli play
+printf 'look\n' | andara-cli play --output json | jq .
+printf 'look\n' | andara-cli play --output json | jq 'select(.heartbeat == null)'   # Events only
+```
+
+Heartbeats are in the JSON stream on purpose: the proto calls them stream
+frames, and a heartbeat's `tick` is the only liveness a script can see. Filter
+them out with the `jq` above rather than expecting the client to.
+
+History lives at `$XDG_STATE_HOME/andara/history` (`~/.local/state/andara/history`),
+last 1000 lines, opt out with `--no-history`. `--timeout` bounds opening the
+Session; `--client-timeout` (default: `--timeout`) bounds one `Submit`; the play
+session itself has no deadline. `--as` opens the Session acting as another
+account (operator or game master; every audit record names both). `--world`
+asks for World visibility on the stream (`AW-SRV-011`); the role alone never
+implies it.
+
+`make stack-play` runs the M1 gate against the local stack (`scripts/stack_play.sh`).

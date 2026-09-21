@@ -1,0 +1,48 @@
+Open a Session on the server, subscribe to its Events, and read Intents
+from the terminal. What the world says arrives as prose; what you type is
+sent as typed, and the server parses it — this client decides nothing.
+
+Lines starting with / are for the client, not the world:
+  /protocol [on|off]   show the Intents sent and the Events received
+  /help                list these
+  /quit                leave (as does Ctrl-C, or Ctrl-D at an empty line)
+
+A dropped connection is announced and retried with backoff; the stream
+resumes from the last Event seen, and a resume the server cannot honor is
+announced too — the transcript never silently skips. --output json writes
+the raw Event stream to stdout, one envelope per line, and everything else
+to stderr.
+
+A stored credential is required: run `andara-cli auth login` first.
+
+Usage:
+  andara-cli play [flags]
+
+Examples:
+  andara-cli play
+  > look
+  > north
+  > /protocol on
+  > west
+  ^C
+
+  printf 'look\n' | andara-cli play --output json | jq .
+
+Flags:
+      --as string                 open the Session acting as this account ID (operator or game master; audited)
+      --client-timeout duration   how long one Submit may wait for its answer (0 means --timeout)
+  -h, --help                      help for play
+      --no-history                do not read or write $XDG_STATE_HOME/andara/history
+      --reconnect                 retry a dropped connection with backoff and resume the stream (default true)
+      --show-protocol             start with protocol visibility on (/protocol toggles it)
+      --world                     ask for World visibility: every Event, wherever it happens (game master or operator)
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

@@ -131,6 +131,7 @@ func newRoot(rt *runtime) *cobra.Command {
 	root.AddCommand(newAccountCmd(rt))
 	root.AddCommand(newInviteCmd(rt))
 	root.AddCommand(newRegistrationCmd(rt))
+	root.AddCommand(newPlayCmd(rt))
 	root.AddCommand(newSimCmd(rt))
 	root.AddCommand(newCompletionCmd(rt))
 	return root
