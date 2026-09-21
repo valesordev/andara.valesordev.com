@@ -124,13 +124,6 @@ jobs:
       - name: a Session opens over TLS and Prometheus sees it
         run: make stack-smoke
 
-      # AW-CLI-004's M1 gate, scripted: andara-cli play against the running stack —
-      # log in, connect, look, north, west, quit — asserting the transcript. Until
-      # AW-SRV-014 binds a Character every Intent is refused before the log, so this
-      # asserts the half of the gate that exists today; that story extends it.
-      - name: andara-cli play against the stack (M1 gate)
-        run: make stack-play
-
       # AW-SRV-008's record-log adapter and AW-SRV-002's tick loop against the real
       # broker, on throwaway topics: append and replay; apply, then replay from the
       # recorded boundaries; kill a loop with SIGKILL and recover the next one from the
@@ -248,6 +241,15 @@ jobs:
           assert len(d['panels']) >= 6, d['panels']
           print(d['title'], '-', len(d['panels']), 'panels')
           "
+
+      # AW-CLI-004's M1 gate, scripted: andara-cli play against the running stack —
+      # log in, connect, look, north, west, quit — asserting the transcript. Until
+      # AW-SRV-014 binds a Character every Intent is refused before the log, so this
+      # asserts the half of the gate that exists today; that story extends it. Last,
+      # because it restarts andara-server under an open session (AC-7), which resets
+      # the server's counters; the steps above read what earlier steps counted.
+      - name: andara-cli play against the stack (M1 gate)
+        run: make stack-play
 
       - name: down leaves nothing behind
         run: |
