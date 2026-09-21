@@ -344,7 +344,7 @@ CLAUDE.md §8, plus:
      `event_id` 0 and no EventType, not a wrapper around `Event`. AC-2's *strictly increasing*
      applies to Events; stream frames do not move a resume point.
   3. **World visibility is asked for** (`SubscribeRequest.world = 3`), not implied by the role: a
-     Game Master who does not ask perceives from their Character. `[ASSUMPTION]` recorded below.
+     Game Master who does not ask perceives from their Character. Decided by Brian 2026-09-21.
   4. **AC-4's *disconnected* means the stream, then the connection.** A stream that trails is ended
      typed and the Session survives (the SLI counts a Session as connected and not in a drop state;
      `SubscriberDropped` says *resubscribe*); a client that has stopped reading its socket cannot be
@@ -421,9 +421,9 @@ CLAUDE.md §8, plus:
 - `[ASSUMPTION]` One `Subscribe` stream per Session. Multiplexing several would let a client separate
   chat from combat; nothing here forecloses it. As built: a second `Subscribe` is
   `FAILED_PRECONDITION` (`already_subscribed`); the client ends the first.
-- `[ASSUMPTION]` World visibility is opt-in per stream (`SubscribeRequest.world`), never implied by
-  the role. An operator playing a Character sees what the Character sees; the privileged view is
-  a deliberate act, audited each time it is taken. Nothing in `AW-SRV-004` decides this either way;
-  the Hub's `ErrNotPrivileged` ("asked for without the role") presumes asking.
+- **Resolved 2026-09-21 (Brian): World visibility is opt-in per stream** (`SubscribeRequest.world`),
+  never implied by the role. An operator playing a Character sees what the Character sees; the
+  privileged view is a deliberate act, audited each time it is taken. The wire contract stands as
+  built; `AW-CLI-004` carries the flag.
 - **Resolved 2026-09-20 (Brian): the Session availability target is 99.5 % over 28 days**, as
   proposed. `AW-SRV-014` validates it against first measurement.
