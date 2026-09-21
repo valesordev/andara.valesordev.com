@@ -4,7 +4,7 @@ title: andara-cli play — the text interface as a first-class protocol client
 epic: EPIC-03
 component: cli
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-CLI-001, AW-SRV-005, AW-SRV-011, AW-SRV-031]
 blocks: []
@@ -103,11 +103,44 @@ pixel is rendered.
 ### Command
 
 ```
-andara-cli play [--as <character-name>] [--reconnect] [--output human|json]
+andara-cli play [--as <account-id>] [--reconnect=false] [--world] [--show-protocol]
+                [--no-history] [--client-timeout <duration>] [--output human|json]
 ```
 
-Global flags from `AW-CLI-001` apply. `--server-address`, `--config`, and `--timeout` behave as
-everywhere else; `--timeout` bounds connection establishment, not the play session.
+*(Rewritten 2026-09-21 at the flip to `review`, to what was built and ruled on the review of PR #39.
+The groomed line read `[--as <character-name>] [--reconnect]`.)* Global flags from `AW-CLI-001`
+apply. `--server-address`, `--config`, and `--timeout` behave as everywhere else; `--timeout`
+bounds `OpenSession`, not the play session, which has no deadline. `--as` takes an **account ID**
+(`OpenSessionRequest.act_as_account_id`, `AW-SRV-008` AC-10; operator or game master, audited) —
+acting-as is an account relation, and nothing binds a Character before `AW-SRV-014`. `--reconnect`
+is on by default because AC-7 has no precondition; `--reconnect=false` makes a dropped connection
+exit 3 with `error.code` `disconnected`, for scripts. `--world` asks for World visibility on the
+stream (`SubscribeRequest.world`, `AW-SRV-011`); the role alone never implies it. `--show-protocol`
+starts with protocol visibility on. `--client-timeout` bounds one `Submit` (default: `--timeout`).
+
+**Client commands.** A line beginning with `/` is the client's and is never Submitted: `/protocol
+[on|off]` toggles protocol visibility mid-session, `/help` lists them, `/quit` leaves (as do Ctrl-C
+and Ctrl-D at an empty line). This reserves the character: **no game verb may ever begin with
+`/`**, a constraint on `AW-SRV-003`'s parser and on every later command vocabulary. It is the one
+thing typed that the server does not see, and it is the whole list.
+
+**Reconnect** (AC-7) is the stream loop's: a stream that ends `UNAUTHENTICATED`, `UNAVAILABLE`,
+`CANCELED`, or without a Protocol answer is announced once, `OpenSession` retried on a jittered
+1 s → 15 s backoff, and `Subscribe` resumed from the last `event_id`. A connection that died
+without a RST is noticed by the transport (`http2.Transport.ReadIdleTimeout` 30 s, above
+`egress.heartbeat_interval`, so a live stream never pings; the default 15 s `PingTimeout`) and
+falls into the same path within ~45 s. A session token expired since login is refreshed once
+(`Auth.Refresh`, the credential file rewritten) before an `UNAUTHENTICATED` `OpenSession` stands.
+
+**Submit behavior on `ErrorInfo.reason`** (wording never; see the Definition of done): `world_read_only`
+/ `in_transit` → hold the prompt for `RetryInfo` (500 ms without one), retry the same line up to
+three times, then print the message; `produce_deadline`, or the client's own deadline → retry with
+the same `client_ref` up to four attempts, **on the Session the line started in** — the Idempotency
+Key is `(Session, client_ref)`, so a retry on a Session opened since would be a fresh key and a
+second produce; a Session that changed under a retry, or `UNAUTHENTICATED` on a retry, is the
+`outcome_unknown` case; `outcome_unknown` → stop, tell the player to `look`; `UNAUTHENTICATED` on a
+first attempt → the line is dropped ("not sent") and the stream loop reconnects. `client_ref` is
+`<8 hex per process>-<n>`: one per typed line, never reused.
 
 ### Rendering contract
 
@@ -119,19 +152,31 @@ client is substituting a different pure function against the same input.
 |-------|-------------|
 | `RoomDescribed` | title, description, exits, entities present |
 | `CharacterArrived` / `CharacterLeft` | one line naming the Character and the direction |
-| `CommandRejected` | the `Detail` string, verbatim |
+| `CommandRejected` | the `message` string, verbatim (`Detail` in the sketch; `CommandRejected.message` on the wire) |
 | `Heartbeat` | nothing |
-| `Resync` | a notice that events may have been missed |
-| unknown type | a single generic line, never a crash |
+| `Resync` | a notice that events may have been missed — and the client `look`s, so the Room is rebuilt rather than guessed (AC-8) |
+| `ZoneFaulted`, `SubscriberDropped`, `SimulationStopped` | one system-voice line each; `SubscriberDropped`'s `buffer_full` and `revoked` as prose, never the wire token *(added at the flip to `review`)* |
+| unknown type | a single generic line naming the `event_id`, never a crash |
 
 The unknown-type row is a requirement, not politeness: a newer server will emit Event types this
 client does not know, and ADR-0007's additive evolution only helps if readers actually tolerate what
 they do not recognise.
 
+**`--output json`** (AC-10) writes every frame of the stream — heartbeats included: they are stream
+frames with `event_id` 0, and the `tick` a heartbeat carries is the only liveness a script can
+see — as one `protojson` object per line on stdout; notices and refusals are `AW-CLI-001` log lines
+on stderr. A script that wants Events only filters: `jq 'select(.heartbeat == null)'`. On a pipe
+rather than a terminal there is no prompt, and each line is held until the previous one's Events
+have arrived and the stream has been quiet 50 ms, bounded at 3 s, so a scripted transcript reads
+in typed order; the 50 ms rests on `AW-SRV-003`'s property that one Command's Events are emitted in
+one tick.
+
 ### Exit codes
 
 Per `AW-CLI-001`: `0` clean quit, `1` server-side failure, `2` usage, `3` connection or version
-mismatch, `4` timeout.
+mismatch, `4` timeout. `play` adds the codes `not_logged_in` (2), `protocol_version` (3, naming both
+ranges), `disconnected` (3, under `--reconnect=false`); a `PERMISSION_DENIED` stream end
+(`revoked`, or `--world` without the role) is 1 `permission_denied`.
 
 ## Data / state impact
 
@@ -201,6 +246,13 @@ CLAUDE.md §8, plus:
   the command and to `look`. The Events the Command causes carry the `client_ref`, so a client
   watching its stream learns the truth. A `client_ref` is never reused for a different line
   (`duplicate_client_ref` is a client bug). An empty `client_ref` is not deduplicated.
+
+**Merged 2026-09-21 as PR #39 (`d919904`); `status: review`.** The Command line, the client
+commands, reconnect, Submit behavior, the JSON stream, and the exit codes above are rewritten to
+what was built and ruled; the rendering table gains the three system rows. Carried to `AW-SRV-014`
+(with `AW-SRV-011`'s): the Room after `look`, Events after `north`, a second client, a post-log
+`CommandRejected`, read-only under a broker stop, a retained-history resume. The `/` reservation
+is a `[NEEDS BRIAN]` below, as is the wording list.
 
 ## As built (2026-09-21)
 
@@ -314,6 +366,11 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- `[NEEDS BRIAN]` **`/` is reserved for the client.** `play` handles `/protocol`, `/help`, `/quit`
+  itself and never sends a line beginning with `/`, so no game verb, emote, or channel shorthand
+  may ever begin with one — a constraint on `AW-SRV-003`'s parser and on every later vocabulary.
+  The alternative is a different escape (the client has to own *some* syntax for a toggle
+  mid-session), and the character is yours to spend: accept `/`, or name another.
 - `[NEEDS BRIAN]` **The client's own system-voice lines** — what `play` says when the server has
   said nothing a player could read. The analog of `AW-SRV-010`'s `ReadOnlyMessage`; accept or
   reword in one pass. Verbatim, from `render.go` and `play.go`:

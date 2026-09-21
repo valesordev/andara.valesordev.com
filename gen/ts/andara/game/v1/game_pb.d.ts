@@ -125,7 +125,12 @@ export declare type SubmitRequest = Message<"andara.game.v1.SubmitRequest"> & {
 
   /**
    * Client-supplied, echoed on the resulting Events so a client can correlate
-   * its own submission without guessing. Not an idempotency key.
+   * its own submission without guessing. Since AW-SRV-031 it is also the
+   * Idempotency Key: (session_id, client_ref) names one Command, and a retry
+   * with the same value inside ingress.idempotency_window is answered with
+   * the original outcome, never produced twice. One fresh value per intended
+   * Command; the same value with different raw is INVALID_ARGUMENT
+   * duplicate_client_ref. Empty is not deduplicated.
    *
    * @generated from field: string client_ref = 3;
    */

@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-49 stories — 2 in-progress · 1 review · 29 ready · 17 done
+49 stories — 3 review · 29 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,18 +14,19 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-031  Submit idempotency — a client retry after an ambiguous outcome is the same Com…
-         branch aw-srv-031-submit-idempotency-by-client-ref
+  now    — nothing in flight
   next   AW-SRV-006  ready  Zone snapshots keyed to partition offsets  (unblocks 2)
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  review AW-SRV-011 — run the §8 checklist, then flip to done
+  review AW-SRV-011, AW-SRV-031, AW-CLI-004 — run the §8 checklist, then flip to done
   held   12 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-009, AW-SRV-014,…
 
 ## Decisions the lanes are waiting on
 
+  AW-CLI-004  / is reserved for the client.
+  AW-CLI-004  The client's own system-voice lines
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
-              11 more, attached to stories neither lane has reached
+              10 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

@@ -192,7 +192,12 @@ type SubmitRequest struct {
 	// The parsed form is andara.log.v1.LoggedCommand, written after authorize.
 	Raw string `protobuf:"bytes,2,opt,name=raw,proto3" json:"raw,omitempty"`
 	// Client-supplied, echoed on the resulting Events so a client can correlate
-	// its own submission without guessing. Not an idempotency key.
+	// its own submission without guessing. Since AW-SRV-031 it is also the
+	// Idempotency Key: (session_id, client_ref) names one Command, and a retry
+	// with the same value inside ingress.idempotency_window is answered with
+	// the original outcome, never produced twice. One fresh value per intended
+	// Command; the same value with different raw is INVALID_ARGUMENT
+	// duplicate_client_ref. Empty is not deduplicated.
 	ClientRef     string `protobuf:"bytes,3,opt,name=client_ref,json=clientRef,proto3" json:"client_ref,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

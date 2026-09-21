@@ -504,7 +504,9 @@ only place a schema is checked (ADR-0007).
 **Text Interface** — The Phase 1 player surface: `andara-cli play`, a first-class gRPC client that
 renders Events as prose in a terminal. Not telnet — a human cannot telnet into a gRPC server
 (ADR-0003). Permanent, text-only, and an operator and developer tool as much as a player one
-(Brian, 2026-09-07): it never renders, and it shows the Protocol on request (`AW-CLI-004`).
+(Brian, 2026-09-07): it never renders, and it shows the Protocol on request (`AW-CLI-004`). A
+typed line beginning with `/` is the client's own command and is never sent, so no game verb may
+begin with one.
 
 **Protocol Visibility** — The Text Interface's view of the wire alongside the prose: every
 Intent sent and Event received, named, with the Session ID, `client_ref`, `event_id`, and Tick.

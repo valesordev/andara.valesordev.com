@@ -211,6 +211,12 @@ from `play` (`scripts/stack_play.sh`'s header names them): the Room after `look`
 after `north` (AC-2), a second client seeing the departure (AC-3), a post-log `CommandRejected`
 (AC-4), and read-only under `docker compose stop redpanda` (AC-6). The Session availability SLO
 (99.5 % over 28 d) gets its first measurement here.
+Inherited from `AW-SRV-031`'s flip to `review` (2026-09-21): the first *produced* Submit's dedup —
+the same `client_ref` again answered `{partition, offset N}` with `andara_ingress_submits_total{outcome="deduplicated"}`
+moving and the topic's end offset still — and the ambiguous fates on the running server (`play
+--client-timeout 50ms` against `docker compose pause redpanda`, retry `north`, unpause: one
+`CharacterArrived`, per 031's manual step); 031 showed both by the integration suite against the
+stack's broker only.
 
 ## Open questions
 

@@ -4,7 +4,7 @@ title: Submit idempotency — a client retry after an ambiguous outcome is the s
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-010]
 blocks: [AW-CLI-004]
@@ -62,9 +62,17 @@ flaky connection costs me a moment and not a mistake.
 2. **Given** a Submit answered `DEADLINE_EXCEEDED` whose record later lands at offset *N* **when** the
    Session retries the `client_ref` **then** the response is offset *N* and the topic's end offset
    advanced by exactly one across both calls.
-3. **Given** a Submit answered `DEADLINE_EXCEEDED` whose record was dropped with the producer client
-   on entering the read-only state **when** the Session retries **then** the retry is a new produce
-   (the original's fate is known: not written) and exactly one record lands.
+3. *(Rewritten 2026-09-21 at the flip to `review`, after the review of PR #38: the producer library
+   cannot say whether a failed record was ever sent, so the fate has two answers, not one.)*
+   **3a. Given** a Submit answered `DEADLINE_EXCEEDED` whose record failed in the producer client
+   with no produce request from this process having reached a socket since it was enqueued
+   **when** the Session retries **then** the retry is a new produce (the original's fate is known:
+   not written) and exactly one record lands.
+   **3b. Given** the same, but a produce request *did* reach a socket in that interval **when** the
+   Session retries inside the window **then** it is answered `DEADLINE_EXCEEDED` with reason
+   `outcome_unknown` — terminal: no `RetryInfo`, the client stops and the player `look`s — and at
+   most one record lands. 3b is a sound over-approximation of "sent": it can call a never-sent
+   record unknown under concurrent produce traffic, never a sent one not-written.
 4. **Given** a Submit rejected `INVALID_ARGUMENT` **when** retried with the same `client_ref` **then**
    the same rejection is returned without re-parsing, counted as `deduplicated`.
 5. **Given** a retry arriving while the original is still in flight **when** the original completes
@@ -73,8 +81,11 @@ flaky connection costs me a moment and not a mistake.
    submitted **then** it is rejected `INVALID_ARGUMENT` with reason `duplicate_client_ref` and nothing
    is produced.
 7. **Given** a key older than `ingress.idempotency_window` **when** it is retried **then** it is a new
-   Command; the table holds at most `ingress.max_pending` keys per Session and evicts oldest-first,
-   so a Session cannot grow the table without bound.
+   Command; the table holds at most `ingress.max_pending` keys per Session and evicts the oldest
+   *resolved* key first — a key still in flight is never evicted and never expires, whatever its
+   age, because its retry must find it (reconciled 2026-09-21; the sketch said "oldest-first") —
+   so a Session cannot grow the table without bound; with every key in flight a new ref is refused
+   `pending_full`.
 8. **Given** an empty `client_ref` **when** submitted twice **then** two records land; the README
    says so.
 
@@ -96,6 +107,18 @@ type outcome struct { resp *gamev1.SubmitResponse; err error; raw string; done c
   what AC-2 and AC-3 read.
 - The taxonomy row in `AW-SRV-010` changes from "the client should retry and rely on idempotence" to
   "the client retries with the same `client_ref` and gets the original outcome".
+- **Added at the flip to `review` (2026-09-21), as built:**
+
+  | Condition | gRPC code | `ErrorInfo.reason` | `RetryInfo` | outcome label |
+  |-----------|-----------|--------------------|-------------|---------------|
+  | same `client_ref`, different `raw`, inside the window | `INVALID_ARGUMENT` | `duplicate_client_ref` | — | `rejected_ref` (its own series, not `rejected_parse`) |
+  | the record's fate settled unknown (AC-3b) | `DEADLINE_EXCEEDED` | `outcome_unknown` | none — terminal | `deadline` |
+  | the produce deadline, fate still open | `DEADLINE_EXCEEDED` | `produce_deadline` | — | `deadline` |
+
+  The client rule that follows (`AW-CLI-004` carries it): `produce_deadline` → retry with the same
+  `client_ref` **on the same Session**; `outcome_unknown` → stop and `look`. The fate surfaces as
+  `*ingress.Unsettled` returned by `KafkaProducer.Produce` (the "returned future" above), and
+  `SubmitRequest.client_ref`'s comment in `game.proto` now says it is the Idempotency Key.
 
 ### Configuration
 
@@ -143,6 +166,11 @@ on 2026-09-19 (`AW-SRV-010`), and the constant is no longer provisional.
   correct-looking response. Built so: `INVALID_ARGUMENT` `duplicate_client_ref`, a sampled `warn`,
   counted as `outcome="rejected_ref"` (ruled on the review of PR #38: its own series, so a client
   release that starts reusing refs is not a rise in typos).
+
+**Merged 2026-09-21 as PR #38 (`fb4902e`); `status: review`.** AC-3 and AC-7 reconciled above; the
+`outcome_unknown` and `rejected_ref` rows added to the contract; `AW-CLI-004` has since landed the
+client rule (PR #39, the retry bound to its Session). Carried to `AW-SRV-014`: a *produced* Submit's
+dedup and the AC-2/AC-3 fates observed on the running server.
 
 ### As built (2026-09-21)
 
