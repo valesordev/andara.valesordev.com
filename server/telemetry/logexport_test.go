@@ -22,6 +22,7 @@ import (
 	sdklog "go.opentelemetry.io/otel/sdk/log"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/config"
 )
 
@@ -196,13 +197,12 @@ func TestLogExport_RecordCarriesTraceContext(t *testing.T) {
 	ctx, span := tp.Tracer("t").Start(context.Background(), "andara.game.v1.Game/OpenSession")
 	log.LogAttrs(ctx, slog.LevelInfo, "session opened", slog.String("session_id", "s-1"), slog.String("trace_id", span.SpanContext().TraceID().String()))
 	span.End()
-	if err := proc.ForceFlush(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if exp.count() != 1 {
-		t.Fatalf("%d records exported", exp.count())
-	}
+	// The export is the run loop's, on its own schedule: poll for it rather
+	// than lean on ForceFlush, which waits a fixed interval and hopes.
+	eventually.True(t, 5*time.Second, "the record exported", func() bool { return exp.count() == 1 })
+	exp.mu.Lock()
 	rec := exp.records[0]
+	exp.mu.Unlock()
 	if rec.Body().AsString() != "session opened" {
 		t.Errorf("body %q", rec.Body().AsString())
 	}
@@ -256,28 +256,25 @@ func TestLogExport_BoundedQueueDropsAndCounts(t *testing.T) {
 		t.Fatal("queue gauge above the bound")
 	}
 	// The exporter's failure was reported through the rate-limited warn,
-	// not through the logger.
-	_ = proc.ForceFlush(context.Background())
-	if warnings.Load() == 0 {
-		t.Error("no warning for a failing export")
-	}
+	// not through the logger. The export runs on the loop's schedule, so
+	// this and the export below are polled for rather than read after
+	// ForceFlush's fixed wait (docs/specs/testing/live-assertions.md, rule 1).
+	eventually.True(t, 5*time.Second, "a warning for the failing export", func() bool { return warnings.Load() > 0 })
 	// The collector returns: new lines land.
 	exp.mu.Lock()
 	exp.fail = nil
 	exp.mu.Unlock()
 	log.Info("after outage")
-	_ = proc.ForceFlush(context.Background())
-	found := false
-	exp.mu.Lock()
-	for _, r := range exp.records {
-		if r.Body().AsString() == "after outage" {
-			found = true
+	eventually.True(t, 5*time.Second, "the line after the outage exported", func() bool {
+		exp.mu.Lock()
+		defer exp.mu.Unlock()
+		for _, r := range exp.records {
+			if r.Body().AsString() == "after outage" {
+				return true
+			}
 		}
-	}
-	exp.mu.Unlock()
-	if !found {
-		t.Error("a line after the outage was not exported")
-	}
+		return false
+	})
 	if err := lp.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
 	}
