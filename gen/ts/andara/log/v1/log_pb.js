@@ -24,14 +24,14 @@
 // @generated from file andara/log/v1/log.proto (package andara.log.v1, syntax proto3)
 /* eslint-disable */
 
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, tsEnum } from "@bufbuild/protobuf/codegenv2";
 import { file_andara_content_v1_zone } from "../../content/v1/zone_pb";
 
 /**
  * Describes the file andara/log/v1/log.proto.
  */
 export const file_andara_log_v1_log = /*@__PURE__*/
-  fileDesc("ChdhbmRhcmEvbG9nL3YxL2xvZy5wcm90bxINYW5kYXJhLmxvZy52MSKJAgoNTG9nZ2VkQ29tbWFuZBIPCgd6b25lX2lkGAEgASgJEhAKCGFjdG9yX2lkGAIgASgJEhIKCnNlc3Npb25faWQYAyABKAkSEgoKY2xpZW50X3JlZhgEIAEoCRIQCgh0cmFjZV9pZBgFIAEoCRIdChVhY2NlcHRlZF9hdF91bml4X25hbm8YBiABKAMSIwoEbG9vaxgKIAEoCzITLmFuZGFyYS5sb2cudjEuTG9va0gAEiMKBG1vdmUYCyABKAsyEy5hbmRhcmEubG9nLnYxLk1vdmVIABInCgZhcnJpdmUYDCABKAsyFS5hbmRhcmEubG9nLnYxLkFycml2ZUgAQgkKB2NvbW1hbmQiBgoETG9vayIZCgRNb3ZlEhEKCWRpcmVjdGlvbhgBIAEoCSKIAQoGQXJyaXZlEg8KB3Jvb21faWQYASABKAkSFgoOZnJvbV9kaXJlY3Rpb24YAiABKAkSJQoGZW50aXR5GAMgASgLMhUuYW5kYXJhLmxvZy52MS5FbnRpdHkSFgoOb3JpZ2luX3pvbmVfaWQYBCABKAkSFgoOb3JpZ2luX3Jvb21faWQYBSABKAkidgoGRW50aXR5EgoKAmlkGAEgASgJEhAKCHRlbXBsYXRlGAIgASgJEhcKD2NvbnRlbnRfdmVyc2lvbhgDIAEoCRI1Cgpjb21wb25lbnRzGAQgAygLMiEuYW5kYXJhLmNvbnRlbnQudjEuQ29tcG9uZW50VmFsdWUihgEKBUV2ZW50EhAKCGV2ZW50X2lkGAEgASgEEgwKBHRpY2sYAiABKAQSDwoHem9uZV9pZBgDIAEoCRIWCg5zY2hlbWFfdmVyc2lvbhgEIAEoDRIPCgdwYXlsb2FkGAUgASgMEiMKBXNjb3BlGAYgASgLMhQuYW5kYXJhLmxvZy52MS5TY29wZSJRCgVTY29wZRIUCgxyb29tX3pvbmVfaWQYASABKAkSDwoHcm9vbV9pZBgCIAEoCRISCgplbnRpdHlfaWRzGAMgAygJEg0KBXdvcmxkGAQgASgIIqsBCg1UaWNrQ29tcGxldGVkEgwKBHRpY2sYASABKAQSLwoHb2Zmc2V0cxgCIAMoCzIeLmFuZGFyYS5sb2cudjEuUGFydGl0aW9uT2Zmc2V0EhIKCnN0YXRlX2hhc2gYAyABKAwSFQoNc3RhdGVfdmVyc2lvbhgEIAEoDRIWCg5ldmVudHNfZW1pdHRlZBgFIAEoBBIYChBjb21tYW5kc19hcHBsaWVkGAYgASgEIjQKD1BhcnRpdGlvbk9mZnNldBIRCglwYXJ0aXRpb24YASABKAUSDgoGb2Zmc2V0GAIgASgDQqwBChFjb20uYW5kYXJhLmxvZy52MUIITG9nUHJvdG9QAVo3Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2xvZy92MTtsb2d2MaICA0FMWKoCDUFuZGFyYS5Mb2cuVjHKAg1BbmRhcmFcTG9nXFYx4gIZQW5kYXJhXExvZ1xWMVxHUEJNZXRhZGF0YeoCD0FuZGFyYTo6TG9nOjpWMWIGcHJvdG8z", [file_andara_content_v1_zone]);
+  fileDesc("ChdhbmRhcmEvbG9nL3YxL2xvZy5wcm90bxINYW5kYXJhLmxvZy52MSL9AgoNTG9nZ2VkQ29tbWFuZBIPCgd6b25lX2lkGAEgASgJEhAKCGFjdG9yX2lkGAIgASgJEhIKCnNlc3Npb25faWQYAyABKAkSEgoKY2xpZW50X3JlZhgEIAEoCRIQCgh0cmFjZV9pZBgFIAEoCRIdChVhY2NlcHRlZF9hdF91bml4X25hbm8YBiABKAMSIwoEbG9vaxgKIAEoCzITLmFuZGFyYS5sb2cudjEuTG9va0gAEiMKBG1vdmUYCyABKAsyEy5hbmRhcmEubG9nLnYxLk1vdmVIABInCgZhcnJpdmUYDCABKAsyFS5hbmRhcmEubG9nLnYxLkFycml2ZUgAEjYKDmJpbmRfY2hhcmFjdGVyGA8gASgLMhwuYW5kYXJhLmxvZy52MS5CaW5kQ2hhcmFjdGVySAASOgoQdW5iaW5kX2NoYXJhY3RlchgQIAEoCzIeLmFuZGFyYS5sb2cudjEuVW5iaW5kQ2hhcmFjdGVySABCCQoHY29tbWFuZCIGCgRMb29rIhkKBE1vdmUSEQoJZGlyZWN0aW9uGAEgASgJIogBCgZBcnJpdmUSDwoHcm9vbV9pZBgBIAEoCRIWCg5mcm9tX2RpcmVjdGlvbhgCIAEoCRIlCgZlbnRpdHkYAyABKAsyFS5hbmRhcmEubG9nLnYxLkVudGl0eRIWCg5vcmlnaW5fem9uZV9pZBgEIAEoCRIWCg5vcmlnaW5fcm9vbV9pZBgFIAEoCSJeCg1CaW5kQ2hhcmFjdGVyEhQKDGNoYXJhY3Rlcl9pZBgBIAEoCRISCgphY2NvdW50X2lkGAIgASgJEgwKBG5hbWUYAyABKAkSFQoNc3Bhd25fcm9vbV9pZBgEIAEoCSJUCg9VbmJpbmRDaGFyYWN0ZXISFAoMY2hhcmFjdGVyX2lkGAEgASgJEisKBnJlYXNvbhgCIAEoDjIbLmFuZGFyYS5sb2cudjEuVW5iaW5kUmVhc29uIoQBCgZFbnRpdHkSCgoCaWQYASABKAkSEAoIdGVtcGxhdGUYAiABKAkSFwoPY29udGVudF92ZXJzaW9uGAMgASgJEjUKCmNvbXBvbmVudHMYBCADKAsyIS5hbmRhcmEuY29udGVudC52MS5Db21wb25lbnRWYWx1ZRIMCgRuYW1lGAUgASgJIoYBCgVFdmVudBIQCghldmVudF9pZBgBIAEoBBIMCgR0aWNrGAIgASgEEg8KB3pvbmVfaWQYAyABKAkSFgoOc2NoZW1hX3ZlcnNpb24YBCABKA0SDwoHcGF5bG9hZBgFIAEoDBIjCgVzY29wZRgGIAEoCzIULmFuZGFyYS5sb2cudjEuU2NvcGUiUQoFU2NvcGUSFAoMcm9vbV96b25lX2lkGAEgASgJEg8KB3Jvb21faWQYAiABKAkSEgoKZW50aXR5X2lkcxgDIAMoCRINCgV3b3JsZBgEIAEoCCKrAQoNVGlja0NvbXBsZXRlZBIMCgR0aWNrGAEgASgEEi8KB29mZnNldHMYAiADKAsyHi5hbmRhcmEubG9nLnYxLlBhcnRpdGlvbk9mZnNldBISCgpzdGF0ZV9oYXNoGAMgASgMEhUKDXN0YXRlX3ZlcnNpb24YBCABKA0SFgoOZXZlbnRzX2VtaXR0ZWQYBSABKAQSGAoQY29tbWFuZHNfYXBwbGllZBgGIAEoBCI0Cg9QYXJ0aXRpb25PZmZzZXQSEQoJcGFydGl0aW9uGAEgASgFEg4KBm9mZnNldBgCIAEoAypRCgxVbmJpbmRSZWFzb24SHQoZVU5CSU5EX1JFQVNPTl9VTlNQRUNJRklFRBAAEggKBFFVSVQQARIKCgZTV0lUQ0gQAhIMCghMSU5LREVBRBADQqwBChFjb20uYW5kYXJhLmxvZy52MUIITG9nUHJvdG9QAVo3Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2xvZy92MTtsb2d2MaICA0FMWKoCDUFuZGFyYS5Mb2cuVjHKAg1BbmRhcmFcTG9nXFYx4gIZQW5kYXJhXExvZ1xWMVxHUEJNZXRhZGF0YeoCD0FuZGFyYTo6TG9nOjpWMWIGcHJvdG8z", [file_andara_content_v1_zone]);
 
 /**
  * Describes the message andara.log.v1.LoggedCommand.
@@ -62,37 +62,63 @@ export const ArriveSchema = /*@__PURE__*/
   messageDesc(file_andara_log_v1_log, 3);
 
 /**
+ * Describes the message andara.log.v1.BindCharacter.
+ * Use `create(BindCharacterSchema)` to create a new message.
+ */
+export const BindCharacterSchema = /*@__PURE__*/
+  messageDesc(file_andara_log_v1_log, 4);
+
+/**
+ * Describes the message andara.log.v1.UnbindCharacter.
+ * Use `create(UnbindCharacterSchema)` to create a new message.
+ */
+export const UnbindCharacterSchema = /*@__PURE__*/
+  messageDesc(file_andara_log_v1_log, 5);
+
+/**
  * Describes the message andara.log.v1.Entity.
  * Use `create(EntitySchema)` to create a new message.
  */
 export const EntitySchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 4);
+  messageDesc(file_andara_log_v1_log, 6);
 
 /**
  * Describes the message andara.log.v1.Event.
  * Use `create(EventSchema)` to create a new message.
  */
 export const EventSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 5);
+  messageDesc(file_andara_log_v1_log, 7);
 
 /**
  * Describes the message andara.log.v1.Scope.
  * Use `create(ScopeSchema)` to create a new message.
  */
 export const ScopeSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 6);
+  messageDesc(file_andara_log_v1_log, 8);
 
 /**
  * Describes the message andara.log.v1.TickCompleted.
  * Use `create(TickCompletedSchema)` to create a new message.
  */
 export const TickCompletedSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 7);
+  messageDesc(file_andara_log_v1_log, 9);
 
 /**
  * Describes the message andara.log.v1.PartitionOffset.
  * Use `create(PartitionOffsetSchema)` to create a new message.
  */
 export const PartitionOffsetSchema = /*@__PURE__*/
-  messageDesc(file_andara_log_v1_log, 8);
+  messageDesc(file_andara_log_v1_log, 10);
+
+/**
+ * Describes the enum andara.log.v1.UnbindReason.
+ */
+export const UnbindReasonSchema = /*@__PURE__*/
+  enumDesc(file_andara_log_v1_log, 0);
+
+/**
+ * @generated from enum andara.log.v1.UnbindReason
+ */
+export const UnbindReason = /*@__PURE__*/
+  tsEnum(UnbindReasonSchema);
 

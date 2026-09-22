@@ -4,7 +4,7 @@ title: Character creation, selection, and binding — a Session enters the World
 epic: EPIC-08
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-008, AW-SRV-022]
 blocks: [AW-SRV-015, AW-SRV-032, AW-CLI-007]

@@ -46,7 +46,7 @@ const (
 func RejectCodes() []string {
 	return []string{
 		CodeActorNotFound, CodeExitBlocked, CodeMisrouted, CodeNoSuchExit, CodeRejected,
-		CodeUnknownRoom, CodeUnknownZone, CodeUnsupportedCommand, CodeZoneFaulted,
+		CodeTemplateMissing, CodeUnknownRoom, CodeUnknownZone, CodeUnsupportedCommand, CodeZoneFaulted,
 	}
 }
 
@@ -65,9 +65,11 @@ var (
 // rule AW-SRV-003 asserts by test.
 func Handlers() map[CommandKind]Apply {
 	return map[CommandKind]Apply{
-		KindLook:   applyLook,
-		KindMove:   applyMove,
-		KindArrive: applyArrive,
+		KindLook:            applyLook,
+		KindMove:            applyMove,
+		KindArrive:          applyArrive,
+		KindBindCharacter:   applyBindCharacter,
+		KindUnbindCharacter: applyUnbindCharacter,
 	}
 }
 
@@ -112,7 +114,7 @@ func describe(z *ZoneState, room *Room, viewer EntityID) *gamev1.RoomDescribed {
 	}
 	sort.Strings(out.Exits)
 	for id, ent := range z.Entities {
-		if id != viewer && ent.Room == room.ID {
+		if id != viewer && ent.Room == room.ID && !ent.Dormant {
 			out.Occupants = append(out.Occupants, ent.DisplayName())
 		}
 	}
@@ -240,11 +242,12 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 }
 
 // locate finds the Command's actor in this Zone and the Room it stands in.
-// ErrActorNotFound covers both an actor the Zone does not hold and one with
-// no position; the message says where the actor is not, never why.
+// ErrActorNotFound covers an actor the Zone does not hold, one with no
+// position, and a dormant one — a body no Session drives acts for nobody;
+// the message says where the actor is not, never why.
 func locate(a *ApplyContext, cmd *logv1.LoggedCommand) (*EntityState, *Room, error) {
 	actor, ok := a.Zone.Entities[EntityID(cmd.GetActorId())]
-	if !ok || actor.Room == "" {
+	if !ok || !actor.Present() {
 		return nil, nil, &RejectError{Code: CodeActorNotFound, Stage: StageValidate, Message: "you are not here"}
 	}
 	room, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: actor.Room})

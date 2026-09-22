@@ -45,7 +45,13 @@ func (s *Session) Context() context.Context { return s.ctx }
 
 // SpanContext is the session.lifetime span, so that command.execute
 // (AW-SRV-003) can link to it and one trace runs from keystroke to Event.
-func (s *Session) SpanContext() trace.SpanContext { return s.span.SpanContext() }
+func (s *Session) SpanContext() trace.SpanContext {
+	if s.span == nil {
+		// A Session built by hand in a test has no lifetime span.
+		return trace.SpanContext{}
+	}
+	return s.span.SpanContext()
+}
 
 // sessionStore owns every live Session on this process. It is the only
 // thing that increments or decrements andara_sessions_active, so the gauge
@@ -66,6 +72,10 @@ type sessionStore struct {
 	// ender, if set, hears about a revoked Session before its context is
 	// canceled, so the stream's last frame says why (AW-SRV-011).
 	ender SessionEnder
+	// roster hears about every Session's end before its context is
+	// canceled, so the Character it drives is unbound while the routing
+	// table still says where it is (AW-SRV-014).
+	roster Roster
 }
 
 func newSessionStore(m *Metrics, log *slog.Logger, tracer trace.Tracer) *sessionStore {
@@ -201,6 +211,9 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			// frame is SubscriberDropped{reason=revoked} (AW-SRV-008
 			// AC-12), then PERMISSION_DENIED.
 			st.ender.EndSession(s.ID, "revoked")
+		}
+		if st.roster != nil {
+			st.roster.ReleaseSession(s)
 		}
 		s.cancel()
 		dur := time.Since(s.OpenedAt)

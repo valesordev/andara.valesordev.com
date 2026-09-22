@@ -50,6 +50,12 @@ const (
 	GameSubscribeProcedure = "/andara.game.v1.Game/Subscribe"
 	// GameCloseSessionProcedure is the fully-qualified name of the Game's CloseSession RPC.
 	GameCloseSessionProcedure = "/andara.game.v1.Game/CloseSession"
+	// GameListCharactersProcedure is the fully-qualified name of the Game's ListCharacters RPC.
+	GameListCharactersProcedure = "/andara.game.v1.Game/ListCharacters"
+	// GameCreateCharacterProcedure is the fully-qualified name of the Game's CreateCharacter RPC.
+	GameCreateCharacterProcedure = "/andara.game.v1.Game/CreateCharacter"
+	// GameSelectCharacterProcedure is the fully-qualified name of the Game's SelectCharacter RPC.
+	GameSelectCharacterProcedure = "/andara.game.v1.Game/SelectCharacter"
 )
 
 // GameClient is a client for the andara.game.v1.Game service.
@@ -66,6 +72,21 @@ type GameClient interface {
 	// Server-streaming, perception-scoped Events for this Session (AW-SRV-004).
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest]) (*connect.ServerStreamForClient[v1.EventEnvelope], error)
 	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
+	// The roster (AW-SRV-014, ADR-0006): the Session's Account owns up to
+	// character.max_per_account Characters and drives one at a time. Every
+	// roster error carries ErrorInfo{domain: andara.character, reason}:
+	// roster_full (RESOURCE_EXHAUSTED), name_taken (ALREADY_EXISTS),
+	// name_invalid (INVALID_ARGUMENT), already_live (FAILED_PRECONDITION),
+	// no_such_character (NOT_FOUND).
+	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
+	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
+	// Enter the World as one of the Account's Characters. The response has
+	// Submit's shape and meaning: the BindCharacter Command is durable in
+	// the log at the returned offset, and the arrival — CharacterArrived
+	// with an empty from_direction — comes on the Event stream when the
+	// tick applies it. The Session's teardown, whichever way it ends,
+	// produces the UnbindCharacter that makes the body dormant.
+	SelectCharacter(context.Context, *connect.Request[v1.SelectCharacterRequest]) (*connect.Response[v1.SelectCharacterResponse], error)
 }
 
 // NewGameClient constructs a client for the andara.game.v1.Game service. By default, it uses the
@@ -103,15 +124,36 @@ func NewGameClient(httpClient connect.HTTPClient, baseURL string, opts ...connec
 			connect.WithSchema(gameMethods.ByName("CloseSession")),
 			connect.WithClientOptions(opts...),
 		),
+		listCharacters: connect.NewClient[v1.ListCharactersRequest, v1.ListCharactersResponse](
+			httpClient,
+			baseURL+GameListCharactersProcedure,
+			connect.WithSchema(gameMethods.ByName("ListCharacters")),
+			connect.WithClientOptions(opts...),
+		),
+		createCharacter: connect.NewClient[v1.CreateCharacterRequest, v1.CreateCharacterResponse](
+			httpClient,
+			baseURL+GameCreateCharacterProcedure,
+			connect.WithSchema(gameMethods.ByName("CreateCharacter")),
+			connect.WithClientOptions(opts...),
+		),
+		selectCharacter: connect.NewClient[v1.SelectCharacterRequest, v1.SelectCharacterResponse](
+			httpClient,
+			baseURL+GameSelectCharacterProcedure,
+			connect.WithSchema(gameMethods.ByName("SelectCharacter")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
 // gameClient implements GameClient.
 type gameClient struct {
-	openSession  *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
-	submit       *connect.Client[v1.SubmitRequest, v1.SubmitResponse]
-	subscribe    *connect.Client[v1.SubscribeRequest, v1.EventEnvelope]
-	closeSession *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
+	openSession     *connect.Client[v1.OpenSessionRequest, v1.OpenSessionResponse]
+	submit          *connect.Client[v1.SubmitRequest, v1.SubmitResponse]
+	subscribe       *connect.Client[v1.SubscribeRequest, v1.EventEnvelope]
+	closeSession    *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
+	listCharacters  *connect.Client[v1.ListCharactersRequest, v1.ListCharactersResponse]
+	createCharacter *connect.Client[v1.CreateCharacterRequest, v1.CreateCharacterResponse]
+	selectCharacter *connect.Client[v1.SelectCharacterRequest, v1.SelectCharacterResponse]
 }
 
 // OpenSession calls andara.game.v1.Game.OpenSession.
@@ -134,6 +176,21 @@ func (c *gameClient) CloseSession(ctx context.Context, req *connect.Request[v1.C
 	return c.closeSession.CallUnary(ctx, req)
 }
 
+// ListCharacters calls andara.game.v1.Game.ListCharacters.
+func (c *gameClient) ListCharacters(ctx context.Context, req *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error) {
+	return c.listCharacters.CallUnary(ctx, req)
+}
+
+// CreateCharacter calls andara.game.v1.Game.CreateCharacter.
+func (c *gameClient) CreateCharacter(ctx context.Context, req *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error) {
+	return c.createCharacter.CallUnary(ctx, req)
+}
+
+// SelectCharacter calls andara.game.v1.Game.SelectCharacter.
+func (c *gameClient) SelectCharacter(ctx context.Context, req *connect.Request[v1.SelectCharacterRequest]) (*connect.Response[v1.SelectCharacterResponse], error) {
+	return c.selectCharacter.CallUnary(ctx, req)
+}
+
 // GameHandler is an implementation of the andara.game.v1.Game service.
 type GameHandler interface {
 	// Establish a Session. Returns a SessionID and the negotiated protocol version.
@@ -148,6 +205,21 @@ type GameHandler interface {
 	// Server-streaming, perception-scoped Events for this Session (AW-SRV-004).
 	Subscribe(context.Context, *connect.Request[v1.SubscribeRequest], *connect.ServerStream[v1.EventEnvelope]) error
 	CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error)
+	// The roster (AW-SRV-014, ADR-0006): the Session's Account owns up to
+	// character.max_per_account Characters and drives one at a time. Every
+	// roster error carries ErrorInfo{domain: andara.character, reason}:
+	// roster_full (RESOURCE_EXHAUSTED), name_taken (ALREADY_EXISTS),
+	// name_invalid (INVALID_ARGUMENT), already_live (FAILED_PRECONDITION),
+	// no_such_character (NOT_FOUND).
+	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
+	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
+	// Enter the World as one of the Account's Characters. The response has
+	// Submit's shape and meaning: the BindCharacter Command is durable in
+	// the log at the returned offset, and the arrival — CharacterArrived
+	// with an empty from_direction — comes on the Event stream when the
+	// tick applies it. The Session's teardown, whichever way it ends,
+	// produces the UnbindCharacter that makes the body dormant.
+	SelectCharacter(context.Context, *connect.Request[v1.SelectCharacterRequest]) (*connect.Response[v1.SelectCharacterResponse], error)
 }
 
 // NewGameHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -181,6 +253,24 @@ func NewGameHandler(svc GameHandler, opts ...connect.HandlerOption) (string, htt
 		connect.WithSchema(gameMethods.ByName("CloseSession")),
 		connect.WithHandlerOptions(opts...),
 	)
+	gameListCharactersHandler := connect.NewUnaryHandler(
+		GameListCharactersProcedure,
+		svc.ListCharacters,
+		connect.WithSchema(gameMethods.ByName("ListCharacters")),
+		connect.WithHandlerOptions(opts...),
+	)
+	gameCreateCharacterHandler := connect.NewUnaryHandler(
+		GameCreateCharacterProcedure,
+		svc.CreateCharacter,
+		connect.WithSchema(gameMethods.ByName("CreateCharacter")),
+		connect.WithHandlerOptions(opts...),
+	)
+	gameSelectCharacterHandler := connect.NewUnaryHandler(
+		GameSelectCharacterProcedure,
+		svc.SelectCharacter,
+		connect.WithSchema(gameMethods.ByName("SelectCharacter")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/andara.game.v1.Game/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case GameOpenSessionProcedure:
@@ -191,6 +281,12 @@ func NewGameHandler(svc GameHandler, opts ...connect.HandlerOption) (string, htt
 			gameSubscribeHandler.ServeHTTP(w, r)
 		case GameCloseSessionProcedure:
 			gameCloseSessionHandler.ServeHTTP(w, r)
+		case GameListCharactersProcedure:
+			gameListCharactersHandler.ServeHTTP(w, r)
+		case GameCreateCharacterProcedure:
+			gameCreateCharacterHandler.ServeHTTP(w, r)
+		case GameSelectCharacterProcedure:
+			gameSelectCharacterHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -214,4 +310,16 @@ func (UnimplementedGameHandler) Subscribe(context.Context, *connect.Request[v1.S
 
 func (UnimplementedGameHandler) CloseSession(context.Context, *connect.Request[v1.CloseSessionRequest]) (*connect.Response[v1.CloseSessionResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.CloseSession is not implemented"))
+}
+
+func (UnimplementedGameHandler) ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.ListCharacters is not implemented"))
+}
+
+func (UnimplementedGameHandler) CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.CreateCharacter is not implemented"))
+}
+
+func (UnimplementedGameHandler) SelectCharacter(context.Context, *connect.Request[v1.SelectCharacterRequest]) (*connect.Response[v1.SelectCharacterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.SelectCharacter is not implemented"))
 }

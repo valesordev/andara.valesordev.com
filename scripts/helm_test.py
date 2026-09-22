@@ -288,6 +288,26 @@ def test_edge_off():
             fail("--set %s rejected but the message does not name %r" % (setting, needle))
 
 
+def test_spawn_room_required_outside_local():
+    """AW-SRV-014: character.spawn_room's default is the dev fixture's Room, so a
+    values file for any other environment must set it, and local need not."""
+    with open(os.path.join(VALUES, "dev.yaml")) as f:
+        dev = yaml.safe_load(f)
+    dev["server"].pop("character", None)
+    with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as tmp:
+        yaml.safe_dump(dev, tmp)
+    try:
+        cmd = ["helm", "template", "andara", CHART, "--kube-version", KUBE_VERSION, "--values", tmp.name]
+        p = subprocess.run(cmd, capture_output=True, text=True)
+    finally:
+        os.unlink(tmp.name)
+    if p.returncode == 0:
+        fail("dev rendered without server.character.spawn_room; the schema should require it")
+    elif "character" not in p.stderr:
+        fail("dev without spawn_room rejected but the message does not name the key: %s" % p.stderr.strip())
+    # local.yaml sets none and renders (every other assertion here proves that).
+
+
 def test_projectors_render_when_enabled():
     code, out, err = render("prod", "--set", "projectors.state.enabled=true")
     if code:
@@ -310,6 +330,7 @@ def main():
     test_ordinal_partitions()
     test_measurements()
     test_projectors_render_when_enabled()
+    test_spawn_room_required_outside_local()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

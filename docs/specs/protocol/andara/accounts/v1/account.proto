@@ -24,6 +24,11 @@ message AccountRecord {
   oneof record {
     Account account = 1;
     AuthConfig config = 2;
+    // Keyed "name/{fold(name)}" (AW-SRV-014): a Character name, reserved
+    // across every Account. Written before the Account record that names
+    // the Character, so a crash between the two leaves a reservation with
+    // no Character — the name is lost, the Account is not corrupted.
+    NameReservation name_reservation = 3;
   }
 }
 
@@ -59,9 +64,45 @@ message Account {
   // over a change it did not see.
   uint64 record_version = 10;
 
+  // The Account's Characters (AW-SRV-014, ADR-0006: up to
+  // character.max_per_account), sorted by character_id. Identity is
+  // Account state; the body is World state — the roster's zone_id and
+  // room_id are the Gateway's last knowledge of where the body is, and the
+  // sim's position is authoritative.
+  repeated CharacterRef characters = 11;
+
   // AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
-  // must carry. 11 and 12 are unused, not reserved — see zone.proto for why.
+  // must carry. 12 is unused, not reserved — see zone.proto for why.
   string workload_subject = 13;
+}
+
+// One Character on an Account's roster (AW-SRV-014). The name is as typed;
+// uniqueness is on the folded form the NameReservation is keyed by.
+message CharacterRef {
+  string character_id = 1;
+  string name = 2;
+  CharacterStatus status = 3;
+  // Where the Gateway last knew the body to be: the spawn Room at create,
+  // and the routing table's entry at unbind. Routes the next BindCharacter.
+  string zone_id = 4;
+  string room_id = 5;
+  int64 created_unix = 6;
+}
+
+// The record under "name/{fold(name)}": who holds the name. A DELETED
+// Character keeps its reservation (AW-SRV-032).
+message NameReservation {
+  string character_id = 1;
+  string account_id = 2;
+}
+
+// Prefixed, unlike the other enums here, because AccountStatus already
+// holds ACTIVE in this package. DELETED is declared so the field never
+// changes shape; nothing writes it before AW-SRV-032.
+enum CharacterStatus {
+  CHARACTER_STATUS_UNSPECIFIED = 0;
+  CHARACTER_STATUS_ACTIVE = 1;
+  CHARACTER_STATUS_DELETED = 2;
 }
 
 message Credential {

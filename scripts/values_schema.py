@@ -118,10 +118,42 @@ def server_schema(keys):
     return root
 
 
+def required_outside_local(keys):
+    """A conditional for keys flagged `required_outside_local: true` in keys.yaml.
+
+    Such a key has a default that only the local dev content satisfies (AW-SRV-014's
+    character.spawn_room is the dev fixture's Room), so a values file for any other
+    environment must set it: the schema requires it unless server.telemetry.environment
+    is local — which is also what an unset environment means, the server's default.
+    """
+    flagged = [k for k in keys if k.get("required_outside_local")]
+    if not flagged:
+        return None
+    required = {"type": "object", "properties": {}}
+    for k in flagged:
+        node = required
+        parts = k["key"].split(".")
+        for part in parts[:-1]:
+            node.setdefault("required", [])
+            if part not in node["required"]:
+                node["required"].append(part)
+            node = node["properties"].setdefault(part, {"type": "object", "properties": {}})
+        node.setdefault("required", []).append(parts[-1])
+    return {
+        "if": {"properties": {"server": {"properties": {"telemetry": {"properties": {
+            "environment": {"const": "local"}}}}}}},
+        "then": {},
+        "else": {"properties": {"server": required}, "required": ["server"]},
+    }
+
+
 def render_schema(keys):
     with open(BASE) as f:
         base = yaml.safe_load(f)
     base.setdefault("properties", {})["server"] = server_schema(keys)
+    cond = required_outside_local(keys)
+    if cond is not None:
+        base.setdefault("allOf", []).append(cond)
     return json.dumps(base, indent=2, sort_keys=False) + "\n"
 
 

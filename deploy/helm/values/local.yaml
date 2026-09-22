@@ -45,5 +45,8 @@ snapshots:
 
 contentVolume:
   configMapName: andara-content
+  # The core Template pack, mounted beneath the Zones: a ConfigMap holds no
+  # subdirectory, and a Character is made from andara.core.Character (AW-SRV-014).
+  templatesConfigMapName: andara-content-templates
 
 resourcesMultiplier: 1

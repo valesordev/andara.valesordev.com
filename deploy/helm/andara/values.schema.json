@@ -401,6 +401,25 @@
             }
           }
         },
+        "character": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "max_per_account": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_CHARACTER_MAX_PER_ACCOUNT (AW-SRV-014). Default when unset: 5."
+            },
+            "spawn_room": {
+              "type": "string",
+              "description": "ANDARA_CHARACTER_SPAWN_ROOM (AW-SRV-014). Default when unset: 'town/plaza'."
+            },
+            "name_pattern": {
+              "type": "string",
+              "description": "ANDARA_CHARACTER_NAME_PATTERN (AW-SRV-014). Default when unset: \"^[\\\\p{L}][\\\\p{L}' -]{2,23}$\"."
+            }
+          }
+        },
         "session": {
           "type": "object",
           "additionalProperties": false,
@@ -702,9 +721,12 @@
     "contentVolume": {
       "type": "object",
       "additionalProperties": false,
-      "description": "When configMapName is set, that ConfigMap is mounted read-only at /content for server.content.source=dir (local and CI). Production content comes from the store (ADR-0004).",
+      "description": "When configMapName is set, that ConfigMap is mounted read-only at /content for server.content.source=dir (local and CI); templatesConfigMapName, a ConfigMap cannot hold a subdirectory, is mounted at /content/templates \u2014 the core pack a Character is made from (AW-SRV-014). Production content comes from the store (ADR-0004).",
       "properties": {
         "configMapName": {
+          "type": "string"
+        },
+        "templatesConfigMapName": {
           "type": "string"
         }
       }
@@ -786,5 +808,47 @@
         }
       }
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "server": {
+            "properties": {
+              "telemetry": {
+                "properties": {
+                  "environment": {
+                    "const": "local"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "then": {},
+      "else": {
+        "properties": {
+          "server": {
+            "type": "object",
+            "properties": {
+              "character": {
+                "type": "object",
+                "properties": {},
+                "required": [
+                  "spawn_room"
+                ]
+              }
+            },
+            "required": [
+              "character"
+            ]
+          }
+        },
+        "required": [
+          "server"
+        ]
+      }
+    }
+  ]
 }

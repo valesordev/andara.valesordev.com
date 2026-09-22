@@ -70,6 +70,7 @@ type Options struct {
 	// Seams. Nil selects the stub for each.
 	Ingress Ingress
 	Egress  Egress
+	Roster  Roster
 
 	// OnDrain is called once when Shutdown begins, before any connection is
 	// closed, so readiness can flip to "not ready" while in-flight work
@@ -134,6 +135,9 @@ func New(opts Options) (*Server, error) {
 	if opts.Egress == nil {
 		opts.Egress = HoldingEgress{}
 	}
+	if opts.Roster == nil {
+		opts.Roster = UnimplementedRoster{}
+	}
 	if opts.Log == nil {
 		opts.Log = slog.New(slog.DiscardHandler)
 	}
@@ -154,6 +158,7 @@ func New(opts Options) (*Server, error) {
 	if ender, ok := opts.Egress.(SessionEnder); ok {
 		s.sessions.ender = ender
 	}
+	s.sessions.roster = opts.Roster
 	s.drainCtx, s.drainStop = context.WithCancel(context.Background())
 
 	handlerOpts := []connect.HandlerOption{

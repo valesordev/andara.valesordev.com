@@ -36,6 +36,58 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+// Prefixed, unlike the other enums here, because AccountStatus already
+// holds ACTIVE in this package. DELETED is declared so the field never
+// changes shape; nothing writes it before AW-SRV-032.
+type CharacterStatus int32
+
+const (
+	CharacterStatus_CHARACTER_STATUS_UNSPECIFIED CharacterStatus = 0
+	CharacterStatus_CHARACTER_STATUS_ACTIVE      CharacterStatus = 1
+	CharacterStatus_CHARACTER_STATUS_DELETED     CharacterStatus = 2
+)
+
+// Enum value maps for CharacterStatus.
+var (
+	CharacterStatus_name = map[int32]string{
+		0: "CHARACTER_STATUS_UNSPECIFIED",
+		1: "CHARACTER_STATUS_ACTIVE",
+		2: "CHARACTER_STATUS_DELETED",
+	}
+	CharacterStatus_value = map[string]int32{
+		"CHARACTER_STATUS_UNSPECIFIED": 0,
+		"CHARACTER_STATUS_ACTIVE":      1,
+		"CHARACTER_STATUS_DELETED":     2,
+	}
+)
+
+func (x CharacterStatus) Enum() *CharacterStatus {
+	p := new(CharacterStatus)
+	*p = x
+	return p
+}
+
+func (x CharacterStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (CharacterStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_andara_accounts_v1_account_proto_enumTypes[0].Descriptor()
+}
+
+func (CharacterStatus) Type() protoreflect.EnumType {
+	return &file_andara_accounts_v1_account_proto_enumTypes[0]
+}
+
+func (x CharacterStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use CharacterStatus.Descriptor instead.
+func (CharacterStatus) EnumDescriptor() ([]byte, []int) {
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{0}
+}
+
 type Role int32
 
 const (
@@ -78,11 +130,11 @@ func (x Role) String() string {
 }
 
 func (Role) Descriptor() protoreflect.EnumDescriptor {
-	return file_andara_accounts_v1_account_proto_enumTypes[0].Descriptor()
+	return file_andara_accounts_v1_account_proto_enumTypes[1].Descriptor()
 }
 
 func (Role) Type() protoreflect.EnumType {
-	return &file_andara_accounts_v1_account_proto_enumTypes[0]
+	return &file_andara_accounts_v1_account_proto_enumTypes[1]
 }
 
 func (x Role) Number() protoreflect.EnumNumber {
@@ -91,7 +143,7 @@ func (x Role) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use Role.Descriptor instead.
 func (Role) EnumDescriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{0}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{1}
 }
 
 type AccountStatus int32
@@ -127,11 +179,11 @@ func (x AccountStatus) String() string {
 }
 
 func (AccountStatus) Descriptor() protoreflect.EnumDescriptor {
-	return file_andara_accounts_v1_account_proto_enumTypes[1].Descriptor()
+	return file_andara_accounts_v1_account_proto_enumTypes[2].Descriptor()
 }
 
 func (AccountStatus) Type() protoreflect.EnumType {
-	return &file_andara_accounts_v1_account_proto_enumTypes[1]
+	return &file_andara_accounts_v1_account_proto_enumTypes[2]
 }
 
 func (x AccountStatus) Number() protoreflect.EnumNumber {
@@ -140,7 +192,7 @@ func (x AccountStatus) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use AccountStatus.Descriptor instead.
 func (AccountStatus) EnumDescriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{1}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{2}
 }
 
 type CredentialKind int32
@@ -183,11 +235,11 @@ func (x CredentialKind) String() string {
 }
 
 func (CredentialKind) Descriptor() protoreflect.EnumDescriptor {
-	return file_andara_accounts_v1_account_proto_enumTypes[2].Descriptor()
+	return file_andara_accounts_v1_account_proto_enumTypes[3].Descriptor()
 }
 
 func (CredentialKind) Type() protoreflect.EnumType {
-	return &file_andara_accounts_v1_account_proto_enumTypes[2]
+	return &file_andara_accounts_v1_account_proto_enumTypes[3]
 }
 
 func (x CredentialKind) Number() protoreflect.EnumNumber {
@@ -196,7 +248,7 @@ func (x CredentialKind) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use CredentialKind.Descriptor instead.
 func (CredentialKind) EnumDescriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{2}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{3}
 }
 
 // The registration phases ADR-0006 decided: closed at launch, then invite-only
@@ -237,11 +289,11 @@ func (x RegistrationMode) String() string {
 }
 
 func (RegistrationMode) Descriptor() protoreflect.EnumDescriptor {
-	return file_andara_accounts_v1_account_proto_enumTypes[3].Descriptor()
+	return file_andara_accounts_v1_account_proto_enumTypes[4].Descriptor()
 }
 
 func (RegistrationMode) Type() protoreflect.EnumType {
-	return &file_andara_accounts_v1_account_proto_enumTypes[3]
+	return &file_andara_accounts_v1_account_proto_enumTypes[4]
 }
 
 func (x RegistrationMode) Number() protoreflect.EnumNumber {
@@ -250,7 +302,7 @@ func (x RegistrationMode) Number() protoreflect.EnumNumber {
 
 // Deprecated: Use RegistrationMode.Descriptor instead.
 func (RegistrationMode) EnumDescriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{3}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{4}
 }
 
 // One record on andara.accounts.v1. The key is account_id for an Account and
@@ -262,6 +314,7 @@ type AccountRecord struct {
 	//
 	//	*AccountRecord_Account
 	//	*AccountRecord_Config
+	//	*AccountRecord_NameReservation
 	Record        isAccountRecord_Record `protobuf_oneof:"record"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -322,6 +375,15 @@ func (x *AccountRecord) GetConfig() *AuthConfig {
 	return nil
 }
 
+func (x *AccountRecord) GetNameReservation() *NameReservation {
+	if x != nil {
+		if x, ok := x.Record.(*AccountRecord_NameReservation); ok {
+			return x.NameReservation
+		}
+	}
+	return nil
+}
+
 type isAccountRecord_Record interface {
 	isAccountRecord_Record()
 }
@@ -334,9 +396,19 @@ type AccountRecord_Config struct {
 	Config *AuthConfig `protobuf:"bytes,2,opt,name=config,proto3,oneof"`
 }
 
+type AccountRecord_NameReservation struct {
+	// Keyed "name/{fold(name)}" (AW-SRV-014): a Character name, reserved
+	// across every Account. Written before the Account record that names
+	// the Character, so a crash between the two leaves a reservation with
+	// no Character — the name is lost, the Account is not corrupted.
+	NameReservation *NameReservation `protobuf:"bytes,3,opt,name=name_reservation,json=nameReservation,proto3,oneof"`
+}
+
 func (*AccountRecord_Account) isAccountRecord_Record() {}
 
 func (*AccountRecord_Config) isAccountRecord_Record() {}
+
+func (*AccountRecord_NameReservation) isAccountRecord_Record() {}
 
 type Account struct {
 	state     protoimpl.MessageState `protogen:"open.v1"`
@@ -365,8 +437,14 @@ type Account struct {
 	// other than the current one is refused with ABORTED rather than applied
 	// over a change it did not see.
 	RecordVersion uint64 `protobuf:"varint,10,opt,name=record_version,json=recordVersion,proto3" json:"record_version,omitempty"`
+	// The Account's Characters (AW-SRV-014, ADR-0006: up to
+	// character.max_per_account), sorted by character_id. Identity is
+	// Account state; the body is World state — the roster's zone_id and
+	// room_id are the Gateway's last knowledge of where the body is, and the
+	// sim's position is authoritative.
+	Characters []*CharacterRef `protobuf:"bytes,11,rep,name=characters,proto3" json:"characters,omitempty"`
 	// AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
-	// must carry. 11 and 12 are unused, not reserved — see zone.proto for why.
+	// must carry. 12 is unused, not reserved — see zone.proto for why.
 	WorkloadSubject string `protobuf:"bytes,13,opt,name=workload_subject,json=workloadSubject,proto3" json:"workload_subject,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -472,9 +550,158 @@ func (x *Account) GetRecordVersion() uint64 {
 	return 0
 }
 
+func (x *Account) GetCharacters() []*CharacterRef {
+	if x != nil {
+		return x.Characters
+	}
+	return nil
+}
+
 func (x *Account) GetWorkloadSubject() string {
 	if x != nil {
 		return x.WorkloadSubject
+	}
+	return ""
+}
+
+// One Character on an Account's roster (AW-SRV-014). The name is as typed;
+// uniqueness is on the folded form the NameReservation is keyed by.
+type CharacterRef struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CharacterId string                 `protobuf:"bytes,1,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Status      CharacterStatus        `protobuf:"varint,3,opt,name=status,proto3,enum=andara.accounts.v1.CharacterStatus" json:"status,omitempty"`
+	// Where the Gateway last knew the body to be: the spawn Room at create,
+	// and the routing table's entry at unbind. Routes the next BindCharacter.
+	ZoneId        string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId        string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CreatedUnix   int64  `protobuf:"varint,6,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterRef) Reset() {
+	*x = CharacterRef{}
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterRef) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterRef) ProtoMessage() {}
+
+func (x *CharacterRef) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterRef.ProtoReflect.Descriptor instead.
+func (*CharacterRef) Descriptor() ([]byte, []int) {
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *CharacterRef) GetCharacterId() string {
+	if x != nil {
+		return x.CharacterId
+	}
+	return ""
+}
+
+func (x *CharacterRef) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CharacterRef) GetStatus() CharacterStatus {
+	if x != nil {
+		return x.Status
+	}
+	return CharacterStatus_CHARACTER_STATUS_UNSPECIFIED
+}
+
+func (x *CharacterRef) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterRef) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterRef) GetCreatedUnix() int64 {
+	if x != nil {
+		return x.CreatedUnix
+	}
+	return 0
+}
+
+// The record under "name/{fold(name)}": who holds the name. A DELETED
+// Character keeps its reservation (AW-SRV-032).
+type NameReservation struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CharacterId   string                 `protobuf:"bytes,1,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`
+	AccountId     string                 `protobuf:"bytes,2,opt,name=account_id,json=accountId,proto3" json:"account_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NameReservation) Reset() {
+	*x = NameReservation{}
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NameReservation) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NameReservation) ProtoMessage() {}
+
+func (x *NameReservation) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NameReservation.ProtoReflect.Descriptor instead.
+func (*NameReservation) Descriptor() ([]byte, []int) {
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *NameReservation) GetCharacterId() string {
+	if x != nil {
+		return x.CharacterId
+	}
+	return ""
+}
+
+func (x *NameReservation) GetAccountId() string {
+	if x != nil {
+		return x.AccountId
 	}
 	return ""
 }
@@ -495,7 +722,7 @@ type Credential struct {
 
 func (x *Credential) Reset() {
 	*x = Credential{}
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[2]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -507,7 +734,7 @@ func (x *Credential) String() string {
 func (*Credential) ProtoMessage() {}
 
 func (x *Credential) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[2]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -520,7 +747,7 @@ func (x *Credential) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Credential.ProtoReflect.Descriptor instead.
 func (*Credential) Descriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{2}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Credential) GetKind() CredentialKind {
@@ -563,7 +790,7 @@ type Argon2Params struct {
 
 func (x *Argon2Params) Reset() {
 	*x = Argon2Params{}
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[3]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +802,7 @@ func (x *Argon2Params) String() string {
 func (*Argon2Params) ProtoMessage() {}
 
 func (x *Argon2Params) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[3]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +815,7 @@ func (x *Argon2Params) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Argon2Params.ProtoReflect.Descriptor instead.
 func (*Argon2Params) Descriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{3}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *Argon2Params) GetMemoryKib() uint32 {
@@ -631,7 +858,7 @@ type RefreshTokenRecord struct {
 
 func (x *RefreshTokenRecord) Reset() {
 	*x = RefreshTokenRecord{}
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[4]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -643,7 +870,7 @@ func (x *RefreshTokenRecord) String() string {
 func (*RefreshTokenRecord) ProtoMessage() {}
 
 func (x *RefreshTokenRecord) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[4]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -656,7 +883,7 @@ func (x *RefreshTokenRecord) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RefreshTokenRecord.ProtoReflect.Descriptor instead.
 func (*RefreshTokenRecord) Descriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{4}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *RefreshTokenRecord) GetHash() []byte {
@@ -703,7 +930,7 @@ type Invite struct {
 
 func (x *Invite) Reset() {
 	*x = Invite{}
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[5]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -715,7 +942,7 @@ func (x *Invite) String() string {
 func (*Invite) ProtoMessage() {}
 
 func (x *Invite) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[5]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -728,7 +955,7 @@ func (x *Invite) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Invite.ProtoReflect.Descriptor instead.
 func (*Invite) Descriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{5}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *Invite) GetCodeHash() []byte {
@@ -786,7 +1013,7 @@ type AuthConfig struct {
 
 func (x *AuthConfig) Reset() {
 	*x = AuthConfig{}
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[6]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -798,7 +1025,7 @@ func (x *AuthConfig) String() string {
 func (*AuthConfig) ProtoMessage() {}
 
 func (x *AuthConfig) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_accounts_v1_account_proto_msgTypes[6]
+	mi := &file_andara_accounts_v1_account_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -811,7 +1038,7 @@ func (x *AuthConfig) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AuthConfig.ProtoReflect.Descriptor instead.
 func (*AuthConfig) Descriptor() ([]byte, []int) {
-	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{6}
+	return file_andara_accounts_v1_account_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *AuthConfig) GetMode() RegistrationMode {
@@ -839,11 +1066,12 @@ var File_andara_accounts_v1_account_proto protoreflect.FileDescriptor
 
 const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	"\n" +
-	" andara/accounts/v1/account.proto\x12\x12andara.accounts.v1\"\x8c\x01\n" +
+	" andara/accounts/v1/account.proto\x12\x12andara.accounts.v1\"\xde\x01\n" +
 	"\rAccountRecord\x127\n" +
 	"\aaccount\x18\x01 \x01(\v2\x1b.andara.accounts.v1.AccountH\x00R\aaccount\x128\n" +
-	"\x06config\x18\x02 \x01(\v2\x1e.andara.accounts.v1.AuthConfigH\x00R\x06configB\b\n" +
-	"\x06record\"\x8d\x04\n" +
+	"\x06config\x18\x02 \x01(\v2\x1e.andara.accounts.v1.AuthConfigH\x00R\x06config\x12P\n" +
+	"\x10name_reservation\x18\x03 \x01(\v2#.andara.accounts.v1.NameReservationH\x00R\x0fnameReservationB\b\n" +
+	"\x06record\"\xcf\x04\n" +
 	"\aAccount\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1a\n" +
@@ -858,8 +1086,22 @@ const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	"\ainvites\x18\b \x03(\v2\x1a.andara.accounts.v1.InviteR\ainvites\x12\"\n" +
 	"\ragent_pack_id\x18\t \x01(\tR\vagentPackId\x12%\n" +
 	"\x0erecord_version\x18\n" +
-	" \x01(\x04R\rrecordVersion\x12)\n" +
-	"\x10workload_subject\x18\r \x01(\tR\x0fworkloadSubject\"\xa6\x01\n" +
+	" \x01(\x04R\rrecordVersion\x12@\n" +
+	"\n" +
+	"characters\x18\v \x03(\v2 .andara.accounts.v1.CharacterRefR\n" +
+	"characters\x12)\n" +
+	"\x10workload_subject\x18\r \x01(\tR\x0fworkloadSubject\"\xd7\x01\n" +
+	"\fCharacterRef\x12!\n" +
+	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
+	"\x06status\x18\x03 \x01(\x0e2#.andara.accounts.v1.CharacterStatusR\x06status\x12\x17\n" +
+	"\azone_id\x18\x04 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x05 \x01(\tR\x06roomId\x12!\n" +
+	"\fcreated_unix\x18\x06 \x01(\x03R\vcreatedUnix\"S\n" +
+	"\x0fNameReservation\x12!\n" +
+	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x1d\n" +
+	"\n" +
+	"account_id\x18\x02 \x01(\tR\taccountId\"\xa6\x01\n" +
 	"\n" +
 	"Credential\x126\n" +
 	"\x04kind\x18\x01 \x01(\x0e2\".andara.accounts.v1.CredentialKindR\x04kind\x12\x12\n" +
@@ -891,7 +1133,11 @@ const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	"\x04mode\x18\x01 \x01(\x0e2$.andara.accounts.v1.RegistrationModeR\x04mode\x12\x1d\n" +
 	"\n" +
 	"changed_by\x18\x02 \x01(\tR\tchangedBy\x12!\n" +
-	"\fchanged_unix\x18\x03 \x01(\x03R\vchangedUnix*_\n" +
+	"\fchanged_unix\x18\x03 \x01(\x03R\vchangedUnix*n\n" +
+	"\x0fCharacterStatus\x12 \n" +
+	"\x1cCHARACTER_STATUS_UNSPECIFIED\x10\x00\x12\x1b\n" +
+	"\x17CHARACTER_STATUS_ACTIVE\x10\x01\x12\x1c\n" +
+	"\x18CHARACTER_STATUS_DELETED\x10\x02*_\n" +
 	"\x04Role\x12\x14\n" +
 	"\x10ROLE_UNSPECIFIED\x10\x00\x12\n" +
 	"\n" +
@@ -931,37 +1177,43 @@ func file_andara_accounts_v1_account_proto_rawDescGZIP() []byte {
 	return file_andara_accounts_v1_account_proto_rawDescData
 }
 
-var file_andara_accounts_v1_account_proto_enumTypes = make([]protoimpl.EnumInfo, 4)
-var file_andara_accounts_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_andara_accounts_v1_account_proto_enumTypes = make([]protoimpl.EnumInfo, 5)
+var file_andara_accounts_v1_account_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_andara_accounts_v1_account_proto_goTypes = []any{
-	(Role)(0),                  // 0: andara.accounts.v1.Role
-	(AccountStatus)(0),         // 1: andara.accounts.v1.AccountStatus
-	(CredentialKind)(0),        // 2: andara.accounts.v1.CredentialKind
-	(RegistrationMode)(0),      // 3: andara.accounts.v1.RegistrationMode
-	(*AccountRecord)(nil),      // 4: andara.accounts.v1.AccountRecord
-	(*Account)(nil),            // 5: andara.accounts.v1.Account
-	(*Credential)(nil),         // 6: andara.accounts.v1.Credential
-	(*Argon2Params)(nil),       // 7: andara.accounts.v1.Argon2Params
-	(*RefreshTokenRecord)(nil), // 8: andara.accounts.v1.RefreshTokenRecord
-	(*Invite)(nil),             // 9: andara.accounts.v1.Invite
-	(*AuthConfig)(nil),         // 10: andara.accounts.v1.AuthConfig
+	(CharacterStatus)(0),       // 0: andara.accounts.v1.CharacterStatus
+	(Role)(0),                  // 1: andara.accounts.v1.Role
+	(AccountStatus)(0),         // 2: andara.accounts.v1.AccountStatus
+	(CredentialKind)(0),        // 3: andara.accounts.v1.CredentialKind
+	(RegistrationMode)(0),      // 4: andara.accounts.v1.RegistrationMode
+	(*AccountRecord)(nil),      // 5: andara.accounts.v1.AccountRecord
+	(*Account)(nil),            // 6: andara.accounts.v1.Account
+	(*CharacterRef)(nil),       // 7: andara.accounts.v1.CharacterRef
+	(*NameReservation)(nil),    // 8: andara.accounts.v1.NameReservation
+	(*Credential)(nil),         // 9: andara.accounts.v1.Credential
+	(*Argon2Params)(nil),       // 10: andara.accounts.v1.Argon2Params
+	(*RefreshTokenRecord)(nil), // 11: andara.accounts.v1.RefreshTokenRecord
+	(*Invite)(nil),             // 12: andara.accounts.v1.Invite
+	(*AuthConfig)(nil),         // 13: andara.accounts.v1.AuthConfig
 }
 var file_andara_accounts_v1_account_proto_depIdxs = []int32{
-	5,  // 0: andara.accounts.v1.AccountRecord.account:type_name -> andara.accounts.v1.Account
-	10, // 1: andara.accounts.v1.AccountRecord.config:type_name -> andara.accounts.v1.AuthConfig
-	6,  // 2: andara.accounts.v1.Account.credential:type_name -> andara.accounts.v1.Credential
-	0,  // 3: andara.accounts.v1.Account.roles:type_name -> andara.accounts.v1.Role
-	1,  // 4: andara.accounts.v1.Account.status:type_name -> andara.accounts.v1.AccountStatus
-	8,  // 5: andara.accounts.v1.Account.refresh_tokens:type_name -> andara.accounts.v1.RefreshTokenRecord
-	9,  // 6: andara.accounts.v1.Account.invites:type_name -> andara.accounts.v1.Invite
-	2,  // 7: andara.accounts.v1.Credential.kind:type_name -> andara.accounts.v1.CredentialKind
-	7,  // 8: andara.accounts.v1.Credential.params:type_name -> andara.accounts.v1.Argon2Params
-	3,  // 9: andara.accounts.v1.AuthConfig.mode:type_name -> andara.accounts.v1.RegistrationMode
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	6,  // 0: andara.accounts.v1.AccountRecord.account:type_name -> andara.accounts.v1.Account
+	13, // 1: andara.accounts.v1.AccountRecord.config:type_name -> andara.accounts.v1.AuthConfig
+	8,  // 2: andara.accounts.v1.AccountRecord.name_reservation:type_name -> andara.accounts.v1.NameReservation
+	9,  // 3: andara.accounts.v1.Account.credential:type_name -> andara.accounts.v1.Credential
+	1,  // 4: andara.accounts.v1.Account.roles:type_name -> andara.accounts.v1.Role
+	2,  // 5: andara.accounts.v1.Account.status:type_name -> andara.accounts.v1.AccountStatus
+	11, // 6: andara.accounts.v1.Account.refresh_tokens:type_name -> andara.accounts.v1.RefreshTokenRecord
+	12, // 7: andara.accounts.v1.Account.invites:type_name -> andara.accounts.v1.Invite
+	7,  // 8: andara.accounts.v1.Account.characters:type_name -> andara.accounts.v1.CharacterRef
+	0,  // 9: andara.accounts.v1.CharacterRef.status:type_name -> andara.accounts.v1.CharacterStatus
+	3,  // 10: andara.accounts.v1.Credential.kind:type_name -> andara.accounts.v1.CredentialKind
+	10, // 11: andara.accounts.v1.Credential.params:type_name -> andara.accounts.v1.Argon2Params
+	4,  // 12: andara.accounts.v1.AuthConfig.mode:type_name -> andara.accounts.v1.RegistrationMode
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_andara_accounts_v1_account_proto_init() }
@@ -972,14 +1224,15 @@ func file_andara_accounts_v1_account_proto_init() {
 	file_andara_accounts_v1_account_proto_msgTypes[0].OneofWrappers = []any{
 		(*AccountRecord_Account)(nil),
 		(*AccountRecord_Config)(nil),
+		(*AccountRecord_NameReservation)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_accounts_v1_account_proto_rawDesc), len(file_andara_accounts_v1_account_proto_rawDesc)),
-			NumEnums:      4,
-			NumMessages:   7,
+			NumEnums:      5,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

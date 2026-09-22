@@ -57,6 +57,13 @@ if [[ "$ENVNAME" == "local" ]]; then
     --from-file=testdata/content/valid \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: configmap andara-content from testdata/content/valid"
+  # The core Template pack (AW-SRV-022), mounted at /content/templates: a ConfigMap
+  # cannot hold the templates/ subdirectory, and a Character is made from
+  # andara.core.Character (AW-SRV-014), so the boot refuses a World without it.
+  kubectl -n "$NS" create configmap andara-content-templates \
+    --from-file=content/core/templates \
+    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
+  echo "helm-install: configmap andara-content-templates from content/core/templates"
 
   # The session-token keyring (AW-SRV-008), same per-machine key `make up` uses, under the
   # name values/local.yaml gives secrets.tokenKey. A real deployment provisions this

@@ -70,6 +70,7 @@ func (rt *Runtime) OpenAccounts(ctx context.Context) (*auth.Store, error) {
 		InviteTTL:  cfg.AuthInviteTTL,
 		RateLimit:  limit,
 		Workload:   workload,
+		Characters: auth.CharacterOptions{MaxPerAccount: cfg.CharacterMaxPerAccount, NamePattern: cfg.CharacterNamePattern},
 		Log:        rt.Tel.Log,
 		Tracer:     rt.Tel.Tracer,
 		Registry:   rt.Tel.Reg,

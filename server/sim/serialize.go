@@ -72,12 +72,20 @@ func CanonicalBytes(w *World) []byte {
 // an Entity that is nowhere encodes exactly as it did before position was
 // state, so the hashes recorded before AW-SRV-003 still replay
 // (StateVersion stays 1 — an added record is additive, not a change in
-// what the state means).
+// what the state means). Name and dormancy (AW-SRV-014) follow the same
+// rule: omitted when unset, so nothing that existed before them encodes
+// differently.
 func EntityCanonicalBytes(e EntityState) []byte {
 	var b strings.Builder
 	writeFields(&b, "entity", string(e.ID), string(e.Template), e.ContentVersion)
 	if e.Room != "" {
 		writeFields(&b, "entity_room", string(e.ID), string(e.Room))
+	}
+	if e.Name != "" {
+		writeFields(&b, "entity_name", string(e.ID), e.Name)
+	}
+	if e.Dormant {
+		writeFields(&b, "entity_dormant", string(e.ID), strconv.FormatUint(uint64(e.DormantSince), 10))
 	}
 	writeComponents(&b, "entity_component", "entity_field", []string{string(e.ID)}, e.Components)
 	return []byte(b.String())

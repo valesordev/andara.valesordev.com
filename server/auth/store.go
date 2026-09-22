@@ -41,6 +41,9 @@ type Options struct {
 	// Workload verifies WORKLOAD_JWT credentials. Nil disables the kind.
 	Workload WorkloadVerifier
 
+	// Characters is the roster's cap and name rule (AW-SRV-014).
+	Characters CharacterOptions
+
 	Log      *slog.Logger
 	Tracer   trace.Tracer
 	Registry prometheus.Registerer
@@ -69,6 +72,7 @@ type Store struct {
 	metrics *Metrics
 	audit   *Auditor
 	limiter *Limiter
+	roster  *roster
 
 	// wmu serializes writers end to end: read, decide, append, swap. AC-4's
 	// atomicity is this lock plus acks=all before the response.
@@ -114,6 +118,10 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
+	ros, err := newRoster(o.Characters)
+	if err != nil {
+		return nil, err
+	}
 	m := NewMetrics(o.Registry)
 	s := &Store{
 		opts:       o,
@@ -129,12 +137,13 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 		refresh:    map[[32]byte]string{},
 		mode:       accountsv1.RegistrationMode_CLOSED,
 		dummy:      hashCredential(accountsv1.CredentialKind_PASSWORD, "dummy", o.Argon2),
+		roster:     ros,
 	}
 	s.audit = &Auditor{log: o.Audit, slog: o.Log, metrics: m, now: o.Now}
 
 	start := o.Now()
 	n := 0
-	err := o.Accounts.Replay(ctx, func(r recordlog.Record) error {
+	err = o.Accounts.Replay(ctx, func(r recordlog.Record) error {
 		n++
 		var rec accountsv1.AccountRecord
 		if err := proto.Unmarshal(r.Value, &rec); err != nil {
@@ -148,8 +157,13 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 			s.index(v.Account)
 		case *accountsv1.AccountRecord_Config:
 			s.mode = v.Config.GetMode()
+		case *accountsv1.AccountRecord_NameReservation:
+			if !strings.HasPrefix(r.Key, NamePrefix) {
+				return fmt.Errorf("auth: name reservation under key %q, want %s*", r.Key, NamePrefix)
+			}
+			s.indexReservation(r.Key, v.NameReservation)
 		default:
-			return fmt.Errorf("auth: record %q on andara.accounts.v1 is neither Account nor AuthConfig", r.Key)
+			return fmt.Errorf("auth: record %q on andara.accounts.v1 is neither Account, AuthConfig, nor NameReservation", r.Key)
 		}
 		return nil
 	})
@@ -160,6 +174,7 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	o.Log.LogAttrs(ctx, slog.LevelInfo, "account index loaded",
 		slog.Int("records", n),
 		slog.Int("accounts", len(s.byID)),
+		slog.Int("character_names", len(s.roster.names)),
 		slog.String("registration_mode", modeLabel(s.mode)),
 		slog.Any("token_key_ids", o.Keys.KeyIDs()),
 		slog.Float64("duration_ms", float64(o.Now().Sub(start).Microseconds())/1000),
@@ -304,6 +319,7 @@ func normalize(acc *accountsv1.Account) {
 	slices.SortFunc(acc.Invites, func(a, b *accountsv1.Invite) int {
 		return strings.Compare(string(a.GetCodeHash()), string(b.GetCodeHash()))
 	})
+	normalizeCharacters(acc)
 }
 
 // clone returns a copy the caller may mutate. Caller holds wmu; the read is

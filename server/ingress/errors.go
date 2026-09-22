@@ -117,6 +117,12 @@ func (readOnly) Error() string { return ReadOnlyMessage }
 // waits before trying again.
 const retryAfter = time.Second
 
+// WireError maps an ingress or pipeline error to the wire for a caller
+// outside this package that produces through the same log — the roster's
+// SelectCharacter (AW-SRV-014), whose produce failures are answered as
+// Submit's are.
+func WireError(err error) error { return connectError(err) }
+
 // connectError maps an ingress or pipeline error to the wire. A
 // *connect.Error passes through. Anything outside the taxonomy is
 // INTERNAL: an unmapped error is a bug.

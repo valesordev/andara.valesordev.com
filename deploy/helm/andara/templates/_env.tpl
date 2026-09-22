@@ -218,6 +218,18 @@ ANDARA_AUTH_K8S_ISSUER: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_AUTH_K8S_JWKS_URL: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "character" "max_per_account" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHARACTER_MAX_PER_ACCOUNT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "character" "spawn_room" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHARACTER_SPAWN_ROOM: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "character" "name_pattern" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHARACTER_NAME_PATTERN: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "session" "linkdead_max" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_LINKDEAD_MAX: {{ $v | toString | quote }}
