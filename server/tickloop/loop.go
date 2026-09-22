@@ -248,7 +248,14 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 			slog.String("panic", f.Panic), slog.String("trace_id", traceID(tctx)))
 	}
 
+	// boundaryPublished gates the snapshot round below. Every path that
+	// returns an error here leaves this tick without a TickCompleted: an
+	// Events send that fails returns before the boundary is even attempted,
+	// and ErrBoundaryLost means this process has stopped publishing them
+	// altogether.
+	boundaryPublished := true
 	if err := l.opts.Publisher.Publish(tctx, res.Events, res.Completed); err != nil {
+		boundaryPublished = false
 		kind := "events"
 		if errors.Is(err, ErrBoundaryLost) {
 			kind = "boundary"
@@ -297,11 +304,17 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	if tick%sim.Tick(l.opts.CheckpointEvery) == 0 {
 		l.checkpoint(tctx, res.Completed)
 	}
-	// After the boundary is published, so the envelope's tick is one whose
-	// TickCompleted exists (AC-8), and on the boundary rather than mid-tick
-	// because this is the only place the loop is between ticks. The copy is
-	// inside this call; everything after it is not.
-	l.opts.Snapshotter.Maybe(tctx, e)
+	// On the boundary rather than mid-tick, because this is the only place
+	// the loop is between ticks — and only when the boundary was actually
+	// published. AC-8 requires the envelope's tick to be one a TickCompleted
+	// was emitted for, and AW-SRV-007 verifies a snapshot through that
+	// record; a snapshot for a tick with no boundary cannot be verified and
+	// would report a healthy round while recovery quietly degraded. Skipping
+	// costs an RTO optimisation for one cadence, which is the cheap side of
+	// that trade. The copy is inside this call; everything after it is not.
+	if boundaryPublished {
+		l.opts.Snapshotter.Maybe(tctx, e)
+	}
 	l.mu.Lock()
 	l.metrics.CheckpointAge.Set(float64(tick - l.lastCommitted))
 	l.mu.Unlock()

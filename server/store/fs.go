@@ -22,7 +22,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/valesordev/andara/server/sim"
@@ -171,14 +170,14 @@ func (f *FS) Get(ctx context.Context, key string) ([]byte, error) {
 	return b, nil
 }
 
-// List returns a Zone's keys, newest offset first. Implements sim.WorldStore.
+// List returns a Zone's keys, newest first. Implements sim.WorldStore.
 //
-// Ordered by offset descending rather than by the key string, so that a tree
-// holding more than one state_version still answers "the newest snapshot"
-// correctly: lexical order would rank every version-2 object above every
-// version-1 one regardless of which is further along the log. Ties — the same
-// offset written under two versions, which a migration leaves behind — put the
-// higher version first.
+// Ordered by tick descending — the recency the caller means by "newest" — with
+// the offset as a tiebreak that cannot actually tie, since a Zone gets one
+// object per boundary. Parsed rather than sorted lexically, so a tree holding
+// more than one state_version still answers correctly: a lexical sort would
+// rank every version-2 object above every version-1 one regardless of which is
+// further along.
 //
 // A Zone with no objects is an empty list and no error: a Zone that has never
 // been snapshotted is a normal state at startup, not a missing store.
@@ -190,6 +189,9 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	var found []snapshotEntry
+	// {zone}/{state_version}/{tick}/{offset}: walk the two levels beneath the
+	// Zone and keep whatever parses as a key.
 	versions, err := os.ReadDir(dir)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
@@ -197,48 +199,63 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 	case err != nil:
 		return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 	}
-	type entry struct {
-		key     string
-		version uint64
-		offset  int64
-	}
-	var found []entry
 	for _, v := range versions {
 		if !v.IsDir() {
 			continue
 		}
-		ver, err := strconv.ParseUint(v.Name(), 10, 32)
-		if err != nil {
-			continue // not a state_version directory; not ours
-		}
-		objects, err := os.ReadDir(filepath.Join(dir, v.Name()))
+		ticks, err := os.ReadDir(filepath.Join(dir, v.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 		}
-		for _, o := range objects {
-			if o.IsDir() || strings.HasSuffix(o.Name(), TempSuffix) {
+		for _, tk := range ticks {
+			if !tk.IsDir() {
 				continue
 			}
-			off, err := strconv.ParseInt(o.Name(), 10, 64)
+			objects, err := os.ReadDir(filepath.Join(dir, v.Name(), tk.Name()))
 			if err != nil {
-				continue
+				return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 			}
-			found = append(found, entry{
-				key:     string(zone) + "/" + v.Name() + "/" + o.Name(),
-				version: ver,
-				offset:  off,
-			})
+			for _, o := range objects {
+				if o.IsDir() || strings.HasSuffix(o.Name(), TempSuffix) {
+					continue
+				}
+				key := strings.Join([]string{string(zone), v.Name(), tk.Name(), o.Name()}, "/")
+				if e, ok := newSnapshotEntry(key); ok {
+					found = append(found, e)
+				}
+			}
 		}
 	}
+	return sortSnapshotKeys(found), nil
+}
+
+// snapshotEntry is one parsed key, for ordering a listing.
+type snapshotEntry struct {
+	key    string
+	tick   sim.Tick
+	offset int64
+}
+
+func newSnapshotEntry(key string) (snapshotEntry, bool) {
+	_, _, tick, offset, ok := sim.ParseSnapshotKey(key)
+	if !ok {
+		return snapshotEntry{}, false
+	}
+	return snapshotEntry{key: key, tick: tick, offset: offset}, true
+}
+
+// sortSnapshotKeys orders newest first: by tick, then by offset. Shared by both
+// stores so `snapshot list` reads the same against a volume and a bucket.
+func sortSnapshotKeys(found []snapshotEntry) []string {
 	sort.Slice(found, func(i, j int) bool {
-		if found[i].offset != found[j].offset {
-			return found[i].offset > found[j].offset
+		if found[i].tick != found[j].tick {
+			return found[i].tick > found[j].tick
 		}
-		return found[i].version > found[j].version
+		return found[i].offset > found[j].offset
 	})
 	keys := make([]string, len(found))
 	for i, e := range found {
 		keys[i] = e.key
 	}
-	return keys, nil
+	return keys
 }

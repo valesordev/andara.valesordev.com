@@ -8,8 +8,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"sort"
-	"strconv"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -125,23 +123,18 @@ func (s *S3) readErr(key string, err error) error {
 	return fmt.Errorf("%w: get %s: %w", sim.ErrStoreUnavailable, key, err)
 }
 
-// List returns a Zone's keys, newest offset first. Implements sim.WorldStore.
+// List returns a Zone's keys, newest first. Implements sim.WorldStore.
 //
-// Ordered by offset rather than by the key string, for the same reason the
-// filesystem store is: lexical order would rank every state_version 2 object
-// above every version 1 one regardless of which is further along the log.
+// Ordered by tick descending, the same as the filesystem store and for the same
+// reason: a lexical sort would rank state_version above recency.
 func (s *S3) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 	if zone == "" {
 		return nil, fmt.Errorf("store: empty zone")
 	}
-	type entry struct {
-		key     string
-		version uint64
-		offset  int64
-	}
-	var found []entry
+	var found []snapshotEntry
 	// A prefix scan under the Zone, which is one call's worth of pagination
-	// rather than a listing of the whole bucket.
+	// rather than a listing of the whole bucket. The trailing slash is what
+	// keeps a Zone whose ID is a prefix of this one's out of the results.
 	for obj := range s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
 		Prefix:    string(zone) + "/",
 		Recursive: true,
@@ -149,32 +142,14 @@ func (s *S3) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 		if obj.Err != nil {
 			return nil, fmt.Errorf("%w: list %s: %w", sim.ErrStoreUnavailable, zone, obj.Err)
 		}
-		// {zone}/{state_version}/{offset}. Anything else under the prefix is
-		// not ours — including a Zone whose ID is a prefix of this one's,
-		// which the trailing slash above already excludes.
-		parts := strings.Split(obj.Key, "/")
-		if len(parts) != 3 || parts[0] != string(zone) {
+		e, ok := newSnapshotEntry(obj.Key)
+		if !ok {
+			continue // not a snapshot key; a bucket may hold anything
+		}
+		if z, _, _, _, _ := sim.ParseSnapshotKey(obj.Key); z != zone {
 			continue
 		}
-		ver, err := strconv.ParseUint(parts[1], 10, 32)
-		if err != nil {
-			continue
-		}
-		off, err := strconv.ParseInt(parts[2], 10, 64)
-		if err != nil {
-			continue
-		}
-		found = append(found, entry{key: obj.Key, version: ver, offset: off})
+		found = append(found, e)
 	}
-	sort.Slice(found, func(i, j int) bool {
-		if found[i].offset != found[j].offset {
-			return found[i].offset > found[j].offset
-		}
-		return found[i].version > found[j].version
-	})
-	keys := make([]string, len(found))
-	for i, e := range found {
-		keys[i] = e.key
-	}
-	return keys, nil
+	return sortSnapshotKeys(found), nil
 }

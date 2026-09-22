@@ -1026,8 +1026,11 @@ type SnapshotWritten struct {
 	// envelope hash equals this (AC-7).
 	StateHash []byte `protobuf:"bytes,5,opt,name=state_hash,json=stateHash,proto3" json:"state_hash,omitempty"`
 	// Where the object is, in the store's key space:
-	// {zone_id}/{state_version}/{offset}, the offset zero-padded so lexical
-	// order is offset order.
+	// {zone_id}/{state_version}/{tick}/{offset}, both numbers zero-padded so
+	// lexical order is tick order. The tick keeps a round's objects immutable:
+	// an idle Zone holds its offset, so an offset-only key let a later round
+	// overwrite an earlier one and a partial failure then left no complete
+	// round at all (AC-5).
 	Key           string `protobuf:"bytes,6,opt,name=key,proto3" json:"key,omitempty"`
 	SizeBytes     uint64 `protobuf:"varint,7,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
 	unknownFields protoimpl.UnknownFields

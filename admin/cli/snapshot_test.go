@@ -127,7 +127,7 @@ func TestSnapshotListOnAnEmptyStoreSaysSo(t *testing.T) {
 func TestSnapshotListReportsAnUnreadableObjectAsARow(t *testing.T) {
 	dir := seedSnapshots(t, 10)
 	ws := store.NewFS(dir)
-	if err := ws.Put(context.Background(), sim.SnapshotKey("town", sim.StateVersion, 20), []byte("not an envelope")); err != nil {
+	if err := ws.Put(context.Background(), sim.SnapshotKey("town", sim.StateVersion, 20, 20), []byte("not an envelope")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	res := runCLI(t, []string{"snapshot", "list", "--zone", "town", "--fs-path", dir, "-o", "json"}, isolatedEnv(t, nil))

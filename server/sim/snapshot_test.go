@@ -186,28 +186,55 @@ func TestSnapshotOffsetsAreSortedAndComplete(t *testing.T) {
 		if po.Partition != PartitionFor(s.Zone) {
 			t.Fatalf("zone %q: PartitionOf returned partition %d", s.Zone, po.Partition)
 		}
-		if want := SnapshotKey(s.Zone, s.StateVersion, po.Offset); s.Key() != want {
+		if want := SnapshotKey(s.Zone, s.StateVersion, s.Tick, po.Offset); s.Key() != want {
 			t.Fatalf("zone %q: Key = %q, want %q", s.Zone, s.Key(), want)
 		}
 	}
 }
 
-// A Zone with no Command since the last round is at the same offset, so it
-// writes the same key: an overwrite, not a new object. Pinned because
-// AW-SRV-007 must not assume a key identifies a round
-// (docs/feedback/AW-SRV-006-zone-snapshots.md §5).
-func TestAnIdleZoneRepeatsItsKey(t *testing.T) {
+// A Zone with no Command since the last round keeps its offset but still gets
+// a distinct key, because the key carries the tick. This is what makes a
+// round's objects immutable: a later round cannot overwrite an earlier one, so
+// a partial failure cannot destroy the last complete round (AC-5, and
+// docs/feedback/AW-SRV-006-zone-snapshots.md §5).
+func TestAnIdleZoneStillGetsItsOwnKeyPerRound(t *testing.T) {
 	t.Parallel()
 	e := snapshotEngine(t)
 	first := e.SnapshotAll(0)
 	e.state.Tick += 600 // a minute of ticks, no Commands
 	second := e.SnapshotAll(0)
 	for i := range first {
-		if first[i].Key() != second[i].Key() {
-			t.Fatalf("zone %q changed key without changing offset: %q then %q", first[i].Zone, first[i].Key(), second[i].Key())
-		}
 		if first[i].Tick == second[i].Tick {
 			t.Fatalf("zone %q: the test did not advance the tick", first[i].Zone)
+		}
+		a, b := first[i], second[i]
+		if a.Key() == b.Key() {
+			t.Fatalf("zone %q reused key %q across two rounds; a later round would overwrite the earlier", a.Zone, a.Key())
+		}
+		// The offset is unchanged — it is only the tick that separates them.
+		pa, _ := a.PartitionOf()
+		pb, _ := b.PartitionOf()
+		if pa.Offset != pb.Offset {
+			t.Fatalf("zone %q: the test's Zone was not idle (offsets %d then %d)", a.Zone, pa.Offset, pb.Offset)
+		}
+	}
+}
+
+// A key round-trips through its parser, and anything that is not a key is
+// reported as such rather than erroring a listing.
+func TestSnapshotKeyParses(t *testing.T) {
+	t.Parallel()
+	key := SnapshotKey("village", 3, 4200, 91)
+	zone, version, tick, offset, ok := ParseSnapshotKey(key)
+	if !ok || zone != "village" || version != 3 || tick != 4200 || offset != 91 {
+		t.Fatalf("ParseSnapshotKey(%q) = %q %d %d %d %v", key, zone, version, tick, offset, ok)
+	}
+	for _, bad := range []string{
+		"", "village", "village/1", "village/1/2", "village/1/2/3/4",
+		"village/x/2/3", "village/1/x/3", "village/1/2/x", "/1/2/3",
+	} {
+		if _, _, _, _, ok := ParseSnapshotKey(bad); ok {
+			t.Errorf("ParseSnapshotKey(%q) reported a key", bad)
 		}
 	}
 }

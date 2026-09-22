@@ -16,7 +16,7 @@ import (
 func TestFSPutGetRoundTrips(t *testing.T) {
 	t.Parallel()
 	s := NewFS(t.TempDir())
-	key := sim.SnapshotKey("village", 1, 42)
+	key := sim.SnapshotKey("village", 1, 42, 42)
 	want := []byte("envelope bytes")
 	if err := s.Put(context.Background(), key, want); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -33,7 +33,7 @@ func TestFSPutGetRoundTrips(t *testing.T) {
 func TestFSGetMissingIsNotFound(t *testing.T) {
 	t.Parallel()
 	s := NewFS(t.TempDir())
-	_, err := s.Get(context.Background(), sim.SnapshotKey("village", 1, 7))
+	_, err := s.Get(context.Background(), sim.SnapshotKey("village", 1, 7, 7))
 	if !errors.Is(err, sim.ErrSnapshotNotFound) {
 		t.Fatalf("Get missing = %v, want ErrSnapshotNotFound", err)
 	}
@@ -47,15 +47,18 @@ func TestFSPartialWriteIsNotListedAndDoesNotShadowThePreviousRound(t *testing.T)
 	s := NewFS(root)
 	ctx := context.Background()
 
-	complete := sim.SnapshotKey("village", 1, 10)
+	complete := sim.SnapshotKey("village", 1, 10, 10)
 	if err := s.Put(ctx, complete, []byte("round one")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
 	// Simulate the kill: the tmp file for the next round exists, the rename
 	// never happened.
-	interrupted := sim.SnapshotKey("village", 1, 20)
+	interrupted := sim.SnapshotKey("village", 1, 20, 20)
 	tmp := filepath.Join(root, filepath.FromSlash(interrupted)) + TempSuffix
+	if err := os.MkdirAll(filepath.Dir(tmp), 0o755); err != nil {
+		t.Fatalf("seed tmp: %v", err)
+	}
 	if err := os.WriteFile(tmp, []byte("half a round"), 0o644); err != nil {
 		t.Fatalf("seed tmp: %v", err)
 	}
@@ -79,7 +82,7 @@ func TestFSPutIsAtomicOverAnExistingKey(t *testing.T) {
 	root := t.TempDir()
 	s := NewFS(root)
 	ctx := context.Background()
-	key := sim.SnapshotKey("village", 1, 10)
+	key := sim.SnapshotKey("village", 1, 10, 10)
 	if err := s.Put(ctx, key, []byte("old and rather long")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -102,17 +105,21 @@ func TestFSPutIsAtomicOverAnExistingKey(t *testing.T) {
 	}
 }
 
-func TestFSListIsNewestOffsetFirstAcrossStateVersions(t *testing.T) {
+// Newest means newest by tick, and the ordering survives a tree holding more
+// than one state_version — which a lexical sort of the key strings would not,
+// because the version sorts before the tick.
+func TestFSListIsNewestTickFirstAcrossStateVersions(t *testing.T) {
 	t.Parallel()
 	s := NewFS(t.TempDir())
 	ctx := context.Background()
-	// Written out of order, and the higher offset is under the *lower*
-	// state_version: a lexical sort of the key strings would get this wrong.
+	// Written out of order, and the newest tick is under the *lower*
+	// state_version, so a lexical sort would rank it last.
 	for _, w := range []struct {
 		version uint32
+		tick    sim.Tick
 		offset  int64
-	}{{1, 30}, {2, 20}, {1, 10}} {
-		if err := s.Put(ctx, sim.SnapshotKey("village", w.version, w.offset), []byte("x")); err != nil {
+	}{{1, 300, 30}, {2, 200, 20}, {1, 100, 10}} {
+		if err := s.Put(ctx, sim.SnapshotKey("village", w.version, w.tick, w.offset), []byte("x")); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 	}
@@ -121,9 +128,9 @@ func TestFSListIsNewestOffsetFirstAcrossStateVersions(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	want := []string{
-		sim.SnapshotKey("village", 1, 30),
-		sim.SnapshotKey("village", 2, 20),
-		sim.SnapshotKey("village", 1, 10),
+		sim.SnapshotKey("village", 1, 300, 30),
+		sim.SnapshotKey("village", 2, 200, 20),
+		sim.SnapshotKey("village", 1, 100, 10),
 	}
 	if len(keys) != len(want) {
 		t.Fatalf("List = %v, want %v", keys, want)
@@ -158,7 +165,7 @@ func TestFSRefusesAKeyThatEscapesTheRoot(t *testing.T) {
 	ctx := context.Background()
 	for _, key := range []string{
 		"../escaped/1/00000000000000000000",
-		sim.SnapshotKey("../../etc", 1, 1),
+		sim.SnapshotKey("../../etc", 1, 1, 1),
 		"",
 	} {
 		if err := s.Put(ctx, key, []byte("x")); err == nil {
@@ -173,12 +180,13 @@ func TestFSRefusesAKeyThatEscapesTheRoot(t *testing.T) {
 	}
 }
 
-// The key's zero-padding is what makes a lexical listing an offset-ordered
-// listing, and it is permanent: changing the width renames every object.
-func TestSnapshotKeyIsZeroPaddedToTwentyDigits(t *testing.T) {
+// The key's shape and zero-padding are permanent: changing either renames
+// every object in the store. Tick leads offset, so a listing is in recency
+// order, and both are padded to the same width.
+func TestSnapshotKeyShape(t *testing.T) {
 	t.Parallel()
-	got := sim.SnapshotKey("village", 1, 42)
-	want := "village/1/00000000000000000042"
+	got := sim.SnapshotKey("village", 1, 4200, 42)
+	want := "village/1/00000000000000004200/00000000000000000042"
 	if got != want {
 		t.Fatalf("SnapshotKey = %q, want %q", got, want)
 	}

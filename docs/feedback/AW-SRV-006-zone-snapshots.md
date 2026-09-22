@@ -102,18 +102,65 @@ construction, and a Zone restored alone still has the PRNG state replay needs.
 It does mean AW-SRV-007 must decide which Zone's copy wins when a round is restored, and must
 refuse a round whose copies disagree. Flagged for that story; this one writes them consistently.
 
-## 5. The key has no tick, and an idle Zone repeats its key
+## 5. The key format could not satisfy AC-5 — resolved: the key now carries the tick
 
-`{zone_id}/{state_version}/{offset}` is offset-keyed. A Zone that received no Command since the
-last round is at the same offset, so the next round writes the same key — an overwrite, which is
-harmless (the write is atomic, so AC-5 holds) but means the object count is not the round count.
+**Corrected 2026-09-22.** An earlier draft of this section called the overwrite below "harmless
+(the write is atomic)". That was wrong, and the rest of this section replaces it. Raised on PR #46
+by an automated reviewer; verified and reproduced here.
 
-More consequentially for AW-SRV-007: **a key does not identify a round.** Grouping the Zones of
-one round requires reading each envelope's `tick`, because a busy Zone and an idle one at the
-same boundary have unrelated offsets. `WorldStore.List` returns keys only, so round selection is
-a `List` plus one `Get` per candidate. That is still bounded and still beats a backwards log
-scan, but it is not the one-call discovery the story's third Open question implies. Noted for
-AW-SRV-007; no change made here.
+**Finding.** `{zone_id}/{state_version}/{offset}` keys an object by offset. A Zone that received no
+Command since the last round is at the same offset, so the next round writes **the same key** and
+overwrites it. While every round succeeds that is merely surprising. When one does not, it is a
+durability failure:
+
+1. Round N writes every Zone at tick 100. Complete.
+2. Round N+1 at tick 700. Zone A is idle — same offset, same key — and its `Put` succeeds,
+   advancing that object to tick 700. Zone B's `Put` fails.
+3. The store now holds A at tick 700 and B at tick 100. **No tick has a complete set of Zone
+   objects.** Round N is no longer reconstructible; round N+1 never was.
+
+AC-5 says "the previous round remains the newest complete one". After a partial write there is no
+complete round at all — and a partial write is exactly the circumstance AC-5 is about.
+
+**Not an implementation bug.** Three things the story specifies are jointly unsatisfiable: an
+offset-only key, idle Zones (which repeat offsets by definition), and a promise that the previous
+round survives a partial write. Any two hold; the third cannot. Atomicity of a single `Put` — which
+both stores do provide — is a claim about one object, not about a round.
+
+**Reproduced**, and committed as `TestPartialRoundDestroysThePreviousOne_KnownGap` in
+`server/tickloop/snapshot_test.go`. It asserts today's behaviour so the gap is executable rather
+than a paragraph, and it carries the instruction to invert it when the format changes. Observed:
+survivors at tick 142, the failed Zone at tick 42.
+
+**Resolved 2026-09-22 (architecture review of PR #46): the key carries the tick.**
+`{zone_id}/{state_version}/{tick}/{offset}`, both numbers zero-padded to 20 digits so lexical order
+is tick order. A round's objects are immutable, so a partial failure cannot touch an earlier round.
+Implemented on this branch; `TestPartialRoundDestroysThePreviousOne_KnownGap` became
+`TestPartialRoundLeavesThePreviousOneComplete`, which is AC-5's second clause and which fails
+against the old key.
+
+It also resolves this section's other half at no extra cost. `{zone}/{version}/{tick}` is now a
+prefix, so AW-SRV-007's `ListRounds` groups by a listing instead of a `Get` on every candidate to
+read the tick out of its envelope — which is what the earlier draft of this section handed forward
+as an inconvenience for that story to absorb.
+
+The alternative considered and not taken was staging and promoting: keep the key, write every Zone
+to a staging key, promote only when all succeed. It preserves the key format at the cost of a new
+method on `sim.WorldStore` and a second write per object — a rename on `fs`, a server-side copy on
+`s3`. The key change is smaller and fixes the round-grouping problem as well.
+
+**On the ordering, since architecture asked.** Tick leading offset is right, and the two orders
+mostly agree anyway: a Zone's offset is monotonic in its tick, so sorting by offset and sorting by
+tick differ only where the offset ties — which is precisely the idle Zone, the case this section is
+about. Leading with the tick is what makes "newest" mean recency rather than progress, and it is
+what makes the round prefix groupable. Both stores now parse the key and order by tick descending
+rather than sorting the strings, because a lexical sort ranks `state_version` above everything
+after it.
+
+**Related:** §4. Part of what makes an idle Zone's object non-reusable across rounds is that it
+carries process-wide `prng_state` and `next_event_id`, which change even when the Zone does not. If
+those moved out of the per-Zone body, an idle Zone's object would be genuinely identical between
+rounds and the overwrite would be a no-op.
 
 ## 6. The Definition-of-done line on a "real" `state_version` bump is inherited
 
@@ -220,7 +267,25 @@ two names.
   literally an edit to `docs/stories/`, which this lane may not make. §7's table has the
   numbers; architecture needs to copy them across.
 
-## 11. Follow-ups this story unblocks but does not carry
+## 11. A round is skipped when the tick's boundary was not published
+
+Raised on PR #46 and fixed on this branch. `Publisher.Publish` failing was logged and swallowed,
+and the round ran anyway — producing a snapshot for a tick with no `TickCompleted`. AC-8 requires
+the envelope's tick to be one a boundary was emitted for, and AW-SRV-007 verifies a round through
+that record, so such a snapshot cannot be verified. The worse half is the reporting: rounds kept
+recording success, so the metrics showed healthy snapshots throughout a boundary outage and
+`SnapshotStale` stayed silent through exactly the failure it exists to surface.
+
+The loop now gates the round on the publish succeeding. Every error path out of
+`KafkaPublisher.Publish` leaves the tick without a boundary — an Events send that fails returns
+before the boundary is attempted, and `ErrBoundaryLost` means the process has stopped publishing
+them — so the gate is on the error, not on its kind. It is per tick rather than a latch: rounds
+resume when boundaries do. Skipping costs one cadence of an RTO optimisation, which is the cheap
+side of the trade.
+
+`sim.source=memory` has no publish failure mode, so a development process still snapshots.
+
+## 12. Follow-ups this story unblocks but does not carry
 
 - **`make measure-tick` against the sizing fixture.** `deploy/helm/andara/measurements.yaml` is
   a placeholder whose header says to flip it "once AW-SRV-006 defines" the sizing fixture, and

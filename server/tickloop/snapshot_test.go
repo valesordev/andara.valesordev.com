@@ -455,3 +455,112 @@ func counterValue(t *testing.T, v *prometheus.CounterVec, label, value string) f
 	}
 	return m.GetCounter().GetValue()
 }
+
+// The alert reads the cadence off the process rather than assuming the
+// default, and reports zero when snapshots are off so the rule can tell
+// "disabled" from "stale".
+func TestIntervalIsExported(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		interval time.Duration
+		want     float64
+	}{
+		{60 * time.Second, 60},
+		{10 * time.Minute, 600},
+		{0, 0},
+	} {
+		o := tickloop.SnapshotOptions{Interval: tc.interval, UploadTimeout: time.Second, MaxStall: time.Millisecond}
+		if tc.interval > 0 {
+			o.Store = store.NewFS(t.TempDir())
+		}
+		s, err := tickloop.NewSnapshotter(o)
+		if err != nil {
+			t.Fatalf("NewSnapshotter(%s): %v", tc.interval, err)
+		}
+		if got := gaugeValue(t, s.Metrics().IntervalSec); got != tc.want {
+			t.Errorf("interval %s: andara_snapshot_interval_seconds = %v, want %v", tc.interval, got, tc.want)
+		}
+	}
+}
+
+func gaugeValue(t *testing.T, g prometheus.Gauge) float64 {
+	t.Helper()
+	var m dto.Metric
+	if err := g.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	return m.GetGauge().GetValue()
+}
+
+// AC-5, second clause: "the previous round remains the newest complete one".
+//
+// The case that breaks it is specific, and the story's original key format
+// could not survive it. A Zone idle across two rounds keeps its offset, so an
+// offset-only key was the same string both times and the second round
+// overwrote the first — advancing the idle Zones to a new tick while a Zone
+// whose Put failed stayed behind, leaving no tick with a complete set. An
+// offset-only key, idle Zones that repeat offsets by definition, and a promise
+// that the previous round survives a partial write cannot all hold.
+//
+// The key now carries the tick, so a round's objects are immutable and a later
+// round cannot touch an earlier one. Architecture's amendment on the review of
+// PR #46; feedback §5 has the reasoning and the alternative that was not taken.
+func TestPartialRoundLeavesThePreviousOneComplete(t *testing.T) {
+	t.Parallel()
+	h := newRoundHarness(t, nil)
+	e := snapshotEngine(t)
+	zones := []sim.ZoneID{"town", "docks", "wilds"}
+
+	h.advance(60 * time.Second)
+	h.s.Maybe(context.Background(), e)
+	if err := h.await(t); err != nil {
+		t.Fatalf("first round: %v", err)
+	}
+	firstTick := e.Tick()
+
+	// Time passes and no Zone receives a Command, so every Zone is idle and
+	// every offset is unchanged — the condition that used to collide.
+	for i := 0; i < 100; i++ {
+		if _, err := e.Step(sim.TickInput{}); err != nil {
+			t.Fatalf("Step: %v", err)
+		}
+	}
+	h.fail.fail["docks"] = fmt.Errorf("%w: the volume went away", sim.ErrStoreUnavailable)
+	h.advance(60 * time.Second)
+	h.s.Maybe(context.Background(), e)
+	if err := h.await(t); err == nil {
+		t.Fatal("the second round should have been incomplete")
+	}
+
+	// The first round is still there, in full, at the tick it was taken.
+	for _, z := range zones {
+		key := sim.SnapshotKey(z, sim.StateVersion, firstTick, 0)
+		b, err := h.fs.Get(context.Background(), key)
+		if err != nil {
+			t.Fatalf("zone %s: the first round's object is gone: %v", z, err)
+		}
+		env, _, err := store.Decode(b)
+		if err != nil {
+			t.Fatalf("zone %s: Decode: %v", z, err)
+		}
+		if env.GetTick() != uint64(firstTick) {
+			t.Errorf("zone %s: object at the first round's key carries tick %d, want %d — it was overwritten",
+				z, env.GetTick(), firstTick)
+		}
+	}
+
+	// And the failed round left its survivors behind as their own objects
+	// rather than in place of the first round's.
+	for _, z := range []sim.ZoneID{"town", "wilds"} {
+		keys, err := h.fs.List(context.Background(), z)
+		if err != nil {
+			t.Fatalf("zone %s: List: %v", z, err)
+		}
+		if len(keys) != 2 {
+			t.Errorf("zone %s: %d object(s), want the first round's and the second's", z, len(keys))
+		}
+	}
+	if keys, _ := h.fs.List(context.Background(), "docks"); len(keys) != 1 {
+		t.Errorf("docks: %d object(s), want only the first round's", len(keys))
+	}
+}

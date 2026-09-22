@@ -5,7 +5,10 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # SnapshotStale
 
-**Alert:** `andara_snapshot_age_seconds > 3 × snapshot.interval` (180 s at the default cadence) for 5 m.
+**Alert:** `andara_snapshot_age_seconds > 3 × andara_snapshot_interval_seconds` for 5 m — 180 s at
+the default cadence, and it follows the cadence if you change it. The rule reads the configured
+interval from the process rather than assuming the default, and does not fire at all when
+snapshots are switched off (`snapshot.interval: 0`), because that is not a stale snapshot.
 **Severity:** ticket, not a page. **SLO:** `docs/specs/slo/recovery.md` (RTO).
 **Ships with:** `AW-SRV-006`.
 

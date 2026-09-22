@@ -42,6 +42,7 @@ type SnapshotMetrics struct {
 	Age         prometheus.GaugeFunc   // derived, so it rises without a round running
 	Failures    *prometheus.CounterVec // {reason}: store, encode, timeout, stall
 	Rounds      *prometheus.CounterVec // {outcome}: complete, incomplete
+	IntervalSec prometheus.Gauge       // andara_snapshot_interval_seconds; 0 when disabled
 	lastRoundAt atomic.Int64           // unix nanos of the last complete round; 0 = none yet
 	startedAt   time.Time
 }
@@ -81,6 +82,14 @@ func NewSnapshotMetrics(reg prometheus.Registerer) *SnapshotMetrics {
 		}
 		return time.Since(m.startedAt).Seconds()
 	})
+	// The configured cadence, exported so SnapshotStale can be written
+	// against it instead of against a number baked into the rule. A chart
+	// value the alert cannot see is an alert that is wrong for every
+	// deployment that changes it — and at interval 0 it would fire forever,
+	// because snapshots being off is not a stale snapshot.
+	m.IntervalSec = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "andara_snapshot_interval_seconds", Help: "Configured snapshot.interval in seconds; 0 when snapshots are disabled.",
+	})
 	m.Failures = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "andara_snapshot_failures_total", Help: "Snapshot failures by reason. store, encode, and timeout count once per Zone that failed; stall counts once per round.",
 	}, []string{"reason"})
@@ -96,7 +105,7 @@ func NewSnapshotMetrics(reg prometheus.Registerer) *SnapshotMetrics {
 		m.Rounds.WithLabelValues(o)
 	}
 	if reg != nil {
-		reg.MustRegister(m.Duration, m.TickStall, m.Bytes, m.LastTick, m.Age, m.Failures, m.Rounds)
+		reg.MustRegister(m.Duration, m.TickStall, m.Bytes, m.LastTick, m.Age, m.Failures, m.Rounds, m.IntervalSec)
 	}
 	return m
 }
@@ -166,6 +175,7 @@ func NewSnapshotter(o SnapshotOptions) (*Snapshotter, error) {
 		o.Now = time.Now
 	}
 	s := &Snapshotter{opts: o, log: o.Log, tracer: o.Tracer, metrics: NewSnapshotMetrics(o.Registry), now: o.Now}
+	s.metrics.IntervalSec.Set(o.Interval.Seconds())
 	s.lastRound = o.Now()
 	return s, nil
 }

@@ -81,7 +81,7 @@ func s3Store(t *testing.T) (*S3, string) {
 func TestS3PutGetRoundTrips(t *testing.T) {
 	s, _ := s3Store(t)
 	ctx := context.Background()
-	key := sim.SnapshotKey("village", 1, 42)
+	key := sim.SnapshotKey("village", 1, 42, 42)
 	want := []byte("envelope bytes")
 	if err := s.Put(ctx, key, want); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -101,7 +101,7 @@ func TestS3PutGetRoundTrips(t *testing.T) {
 // not on the call — which is the bug this pins.
 func TestS3GetMissingIsNotFound(t *testing.T) {
 	s, _ := s3Store(t)
-	_, err := s.Get(context.Background(), sim.SnapshotKey("village", 1, 7))
+	_, err := s.Get(context.Background(), sim.SnapshotKey("village", 1, 7, 7))
 	if !errors.Is(err, sim.ErrSnapshotNotFound) {
 		t.Fatalf("Get missing = %v, want ErrSnapshotNotFound", err)
 	}
@@ -114,7 +114,7 @@ func TestS3ListIsNewestOffsetFirstAcrossStateVersions(t *testing.T) {
 		version uint32
 		offset  int64
 	}{{1, 30}, {2, 20}, {1, 10}} {
-		if err := s.Put(ctx, sim.SnapshotKey("village", w.version, w.offset), []byte("x")); err != nil {
+		if err := s.Put(ctx, sim.SnapshotKey("village", w.version, sim.Tick(w.offset), w.offset), []byte("x")); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
 	}
@@ -123,9 +123,9 @@ func TestS3ListIsNewestOffsetFirstAcrossStateVersions(t *testing.T) {
 		t.Fatalf("List: %v", err)
 	}
 	want := []string{
-		sim.SnapshotKey("village", 1, 30),
-		sim.SnapshotKey("village", 2, 20),
-		sim.SnapshotKey("village", 1, 10),
+		sim.SnapshotKey("village", 1, 30, 30),
+		sim.SnapshotKey("village", 2, 20, 20),
+		sim.SnapshotKey("village", 1, 10, 10),
 	}
 	if len(keys) != len(want) {
 		t.Fatalf("List = %v, want %v", keys, want)
@@ -154,17 +154,17 @@ func TestS3ListUnknownZoneIsEmpty(t *testing.T) {
 func TestS3ListDoesNotLeakAcrossZonePrefixes(t *testing.T) {
 	s, _ := s3Store(t)
 	ctx := context.Background()
-	if err := s.Put(ctx, sim.SnapshotKey("town", 1, 1), []byte("x")); err != nil {
+	if err := s.Put(ctx, sim.SnapshotKey("town", 1, 1, 1), []byte("x")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if err := s.Put(ctx, sim.SnapshotKey("townsquare", 1, 2), []byte("x")); err != nil {
+	if err := s.Put(ctx, sim.SnapshotKey("townsquare", 1, 2, 2), []byte("x")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	keys, err := s.List(ctx, "town")
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(keys) != 1 || keys[0] != sim.SnapshotKey("town", 1, 1) {
+	if len(keys) != 1 || keys[0] != sim.SnapshotKey("town", 1, 1, 1) {
 		t.Fatalf("List(town) = %v, want only town's own object", keys)
 	}
 }
@@ -174,7 +174,7 @@ func TestS3ListDoesNotLeakAcrossZonePrefixes(t *testing.T) {
 func TestS3ListSkipsForeignKeys(t *testing.T) {
 	s, bucket := s3Store(t)
 	ctx := context.Background()
-	if err := s.Put(ctx, sim.SnapshotKey("village", 1, 5), []byte("x")); err != nil {
+	if err := s.Put(ctx, sim.SnapshotKey("village", 1, 5, 5), []byte("x")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	for _, foreign := range []string{
@@ -191,7 +191,7 @@ func TestS3ListSkipsForeignKeys(t *testing.T) {
 	if err != nil {
 		t.Fatalf("List: %v", err)
 	}
-	if len(keys) != 1 || keys[0] != sim.SnapshotKey("village", 1, 5) {
+	if len(keys) != 1 || keys[0] != sim.SnapshotKey("village", 1, 5, 5) {
 		t.Fatalf("List = %v, want only the one real snapshot", keys)
 	}
 }
