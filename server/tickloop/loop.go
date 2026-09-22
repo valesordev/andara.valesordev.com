@@ -28,6 +28,10 @@ type Options struct {
 	Source    Source
 	Publisher Publisher
 	Clock     Clock
+	// Snapshotter takes snapshot rounds at tick boundaries (AW-SRV-006).
+	// Nil takes none, which is what sim.source=memory and the loop's own
+	// tests want.
+	Snapshotter *Snapshotter
 
 	TickRate        int           // sim.tick_rate, Hz
 	TickBudget      time.Duration // sim.tick_budget_ms
@@ -293,6 +297,11 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	if tick%sim.Tick(l.opts.CheckpointEvery) == 0 {
 		l.checkpoint(tctx, res.Completed)
 	}
+	// After the boundary is published, so the envelope's tick is one whose
+	// TickCompleted exists (AC-8), and on the boundary rather than mid-tick
+	// because this is the only place the loop is between ticks. The copy is
+	// inside this call; everything after it is not.
+	l.opts.Snapshotter.Maybe(tctx, e)
 	l.mu.Lock()
 	l.metrics.CheckpointAge.Set(float64(tick - l.lastCommitted))
 	l.mu.Unlock()
@@ -318,6 +327,12 @@ func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
 func (l *Loop) drain(e *sim.Engine) error {
 	ctx := context.Background()
 	l.log.LogAttrs(ctx, slog.LevelInfo, "tick loop draining", slog.Uint64("tick", uint64(e.Tick())))
+	// A round in flight owns an immutable body and a deadline of its own, so
+	// waiting for it is bounded by snapshot.upload_timeout. Abandoning it
+	// would leave a round half written — not a correctness problem, since
+	// the previous complete one is still newest, but a puzzle for whoever
+	// listed the store next.
+	l.opts.Snapshotter.Wait()
 	l.checkpoint(ctx, sim.TickCompleted{Tick: e.Tick(), Offsets: copyOffsets(e.State().Offsets)})
 	ev := e.Stop("draining")
 	if err := l.opts.Publisher.Publish(ctx, []sim.Event{ev}, sim.TickCompleted{}); err != nil {
