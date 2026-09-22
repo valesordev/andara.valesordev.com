@@ -87,12 +87,13 @@ waited on — the reasoning rule 2 asks for, recorded so nobody re-derives it:
 
 ## 5. For architecture
 
-1. **`scripts/stack_smoke.sh` is still wrong on `main`.** The spec and the README record it as
+1. **`scripts/stack_smoke.sh` was still wrong on `main`.** The spec and the README record it as
    fixed in PR #47, but #47 is open (branch `arch/aw-srv-006-key-and-contract-amendments`),
-   and `main` still waits on `andara_grpc_requests_total` having series before asserting the
-   value of `andara_sessions_total{outcome="rejected_version"}`. A second copy of the same fix
-   sits on the local branch `fix-flaky-stack-smoke` (no PR). This sweep did not touch the
-   script: a third copy would only conflict. One of the two should land.
+   and `main` still waited on `andara_grpc_requests_total` having series before asserting the
+   value of `andara_sessions_total{outcome="rejected_version"}` — which is exactly how this
+   PR's first `stack` run failed. The fix from the local branch `fix-flaky-stack-smoke` is
+   cherry-picked here (5eb1522, Brian's commit); #47 carries the same change and will
+   conflict on whichever lands second.
 2. **`.github/workflows/stack.yaml`, "the tick loop survives a broker outage"**: fixed sleeps
    with metric samples either side, and `starved_settled == starved_after` is absence over a
    5 s window. It is a rate measurement, and CI config is architecture's; noted, not changed.
@@ -108,7 +109,7 @@ waited on — the reasoning rule 2 asks for, recorded so nobody re-derives it:
 | Area | State |
 |------|-------|
 | `server/egress` | `TestRebind`, `TestResume` fixed in `PR #45`; `TestHeartbeat` fixed in the sweep (counter written after the frame) |
-| `scripts/stack_smoke.sh` | fix in `PR #47`, **not on `main`** as of 2026-09-22 (§5.1) |
+| `scripts/stack_smoke.sh` | fixed: waits on the value it asserts (cherry-picked into the sweep PR; the same change is in `PR #47`) |
 | `internal/smoke` | `TestLive_M1Gate` polls the instruments as one predicate (issue #48); the roster and audit waits converge on `internal/eventually` |
 | `server/gateway` | `TestConnectionDrop_TearsDownSessions`, `TestRecheck_ClosesRevokedSessions` fixed (waited on the store, asserted on the counters) |
 | `server/tickloop`, `server/roster`, `server/ingress` | one sleep-as-proxy each, fixed; `idempotency_test.go`'s windows recorded as false-pass-only (§5.3) |
