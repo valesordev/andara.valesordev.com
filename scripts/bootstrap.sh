@@ -175,5 +175,52 @@ HOOK
   ok "git hooks" "pre-commit installed in $(basename "$(dirname "$HOOKS_DIR")")/hooks"
 fi
 
+# Commit signing. `main` requires signed commits (GitHub branch protection, 2026-09-22), so
+# an unsigned commit is not a style preference — it is a commit that cannot merge, and the
+# discovery point would otherwise be a rejected push at the end of a day's work.
+#
+# SSH signing rather than GPG: the key that already pushes to origin can sign, so there is
+# no second key to create, distribute, or lose. Configured per-repo, never globally — this
+# script does not get to change how a developer signs in their other repositories.
+#
+# Idempotent: it verifies what is already set, sets what it can infer, and fails with the
+# exact commands when it cannot.
+SIGNKEY="$(git config --local --get user.signingkey || true)"
+if [ -z "$SIGNKEY" ]; then
+  # Prefer a key the developer already uses for origin. ed25519 first: it is what GitHub
+  # recommends and what this repo's contributors have.
+  for cand in id_ed25519 id_ecdsa id_rsa; do
+    if [ -f "$HOME/.ssh/$cand.pub" ]; then SIGNKEY="$HOME/.ssh/$cand.pub"; break; fi
+  done
+  [ -n "$SIGNKEY" ] || fail "no SSH public key in ~/.ssh to sign with. Create one (ssh-keygen -t ed25519),
+  add it to GitHub as a *signing* key (Settings > SSH and GPG keys > New SSH key, type
+  'Signing Key' — an authentication key is a separate list and will not verify), then:
+    git config --local gpg.format ssh
+    git config --local user.signingkey ~/.ssh/id_ed25519.pub
+    git config --local commit.gpgsign true"
+  git config --local gpg.format ssh
+  git config --local user.signingkey "$SIGNKEY"
+fi
+[ "$(git config --local --get gpg.format || true)" = "ssh" ] || git config --local gpg.format ssh
+[ "$(git config --local --get commit.gpgsign || true)" = "true" ] || git config --local commit.gpgsign true
+[ "$(git config --local --get tag.gpgsign || true)" = "true" ] || git config --local tag.gpgsign true
+
+# Verification needs to know which keys are trusted, or `git log --show-signature` reports
+# an error per commit instead of a signature. The file is tracked, so adding a contributor
+# is a reviewed change rather than a local edit nobody else sees.
+git config --local gpg.ssh.allowedSignersFile .github/allowed_signers
+
+# Prove the key actually signs before a commit depends on it. A passphrase-protected key
+# with no agent fails here, where the message can say so, rather than at commit time with
+# the work already staged.
+SIGNKEY="$(git config --local --get user.signingkey)"
+if ! printf 'bootstrap' | ssh-keygen -Y sign -f "$SIGNKEY" -n git - >/dev/null 2>&1; then
+  fail "the signing key $SIGNKEY cannot sign unattended.
+  If it is passphrase-protected, start an agent and add it:
+    eval \"\$(ssh-agent -s)\" && ssh-add ${SIGNKEY%.pub}
+  Then re-run bootstrap."
+fi
+ok "commit signing" "ssh, $(basename "$(git config --local --get user.signingkey)")"
+
 mkdir -p .local/data
 echo "bootstrap: ok"

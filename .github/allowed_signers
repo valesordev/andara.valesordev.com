@@ -1,0 +1,7 @@
+# Keys trusted to sign commits in this repository (git gpg.ssh.allowedSignersFile).
+# Adding a contributor is a reviewed change, not a local edit nobody else sees.
+# The key must also be registered on GitHub as a *signing* key for the Verified badge —
+# authentication keys are a separate list and do not verify commits.
+#
+# Format: <email used in git user.email> <key-type> <key>
+solo7@valesordev.com ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBrkQ8byjMQ1MqDq2q/ZMlCpcpWRWvG2GBd2lWX4j8VH

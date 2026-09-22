@@ -34,6 +34,12 @@ Two constraints worth knowing before you write code:
 - Branch from `main`. Work that belongs to a story is named for it:
   `aw-srv-014-room-graph-loader`.
 - Commits that belong to a story end with a `Story: AW-SRV-014` trailer.
+- **Commits must be signed.** `main` requires signatures (GitHub branch protection), so an
+  unsigned commit is not a style problem — it is a commit that cannot merge. `make bootstrap`
+  configures SSH signing with the key you already push with, and fails with the exact commands
+  if it cannot. The key must also be registered on GitHub as a **signing** key; authentication
+  keys are a separate list and do not verify. Add yours to `.github/allowed_signers` in the same
+  PR as your first commit, so `git log --show-signature` works for everyone.
 - Keep PRs to one story or one concern. CI must be green.
 - Architectural decisions get an ADR in `docs/adr/`; ADRs are never deleted, only
   superseded.
