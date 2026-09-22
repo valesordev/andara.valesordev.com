@@ -40,7 +40,7 @@ type fakeLog struct {
 	fail atomic.Pointer[error]
 	// slow, when set, is how long a produce takes.
 	slow time.Duration
-	// entered, when set, is signalled without blocking as each produce
+	// entered, when set, is signaled without blocking as each produce
 	// begins; gate, when set, holds every produce until it is closed. A
 	// test that must act while a produce is in flight waits on the one and
 	// then releases the other, rather than sleeping and hoping the
