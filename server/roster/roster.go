@@ -163,6 +163,13 @@ func (r *Roster) Wait() { r.releases.Wait() }
 // none free is dropped — the re-route covers it. Same-Zone Room changes
 // are not written: they are every step a player takes, and the sim's
 // position is authoritative for all of them.
+//
+// Best-effort and unordered, in both directions: nothing sequences one of
+// these writes against another, or against the teardown's, so a straggler
+// can leave the roster naming an older Zone than the one the Session
+// ended in. That is the same stale roster the re-route handles, and
+// spawn_room_id is ignored for a body that exists — but it means nothing
+// may be built on the roster's position being current.
 func (r *Roster) ObserveMove(sessionID string, b command.Binding) {
 	r.mu.Lock()
 	l, ok := r.bySession[sessionID]

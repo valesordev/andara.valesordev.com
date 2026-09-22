@@ -476,9 +476,14 @@ Three required changes from architecture's review — all three found by Codex, 
    lock it registers under**. A registration therefore either lands before the teardown looks or
    is refused; the Session's context cannot serve, because it is canceled after the release, so a
    check on it passes in exactly the window that leaked. The refusal is `CANCELED` — there is
-   nobody left to tell — and is logged at `info` and counted nowhere: the Character was never
-   live, and `andara_character_bindings_total`'s label set is the story's. If architecture wants
-   the path visible it takes an outcome value; say so and it is one line.
+   nobody left to tell — and is logged at `info` and counted nowhere. **Ruled at the re-review:**
+   no outcome label. `andara_character_bindings_total{outcome}` counts what a client is told about
+   an attempt that reached the rule; this is a Session that stopped existing, the `info` line with
+   `session_id` is the record, and `AW-CLI-007`'s reconnect always selects on a fresh Session, so
+   the path is rare by construction. The label is one line away if that stops being true.
+   Architecture reproduced the leak on `baabb71` with a scratch stress — 400 iterations of
+   `CloseSession` racing `SelectCharacter` over a real gateway, leaking at iteration 31 and
+   permanently thereafter — and ran it 400/400 clean on `26533d8` under `-race`.
 2. **A present body reclaimed in its own Zone kept the roster's stale Room.** The present-here
    branch returned with no Emit while the cross-Zone one emitted; after a crash the body can have
    walked on inside the Zone, and the Session's routing and Observer stayed on the older Room. Now
@@ -487,7 +492,8 @@ Three required changes from architecture's review — all three found by Codex, 
    contract: an Event consumes an `event_id`, which the State Hash covers, so AC-11's "the State
    Hash is unchanged by the apply" now reads as *the Zone's Entities are unchanged* — asserted
    byte-for-byte in `TestBind_PresentBodyIsIdempotent`. (Every apply moves the hash through the
-   offsets and the tick regardless; what AC-11 is about is that no body moves.)
+   offsets and the tick regardless; what AC-11 is about is that no body moves.) Architecture takes
+   that clause at §8.
 3. **`FoldName` trimmed before NFKC.** The contract is NFKC → casefold → trim, and NFKC can put a
    space at an edge — U+037A becomes a space and an iota — so `ͺab` and `ιab` took two keys. One
    line, a table row, and no reservations existed to migrate.
@@ -499,6 +505,15 @@ position from it, on its own goroutine, bounded by `PositionWrites` (32) with a 
 full: correctness does not depend on it, since the sim's re-route covers a stale roster. Same-Zone
 Room changes are not written — they are every step a player takes. A crash now leaves the roster
 naming the wrong Zone only if it lands between the arrival and the write.
+
+The write is **best-effort and unordered** (re-review of PR #43): it is dropped when the bound is
+reached, and nothing sequences one against another or against the teardown's
+`SetCharacterPosition` — both take the store's `wmu`, which serializes them but does not order
+them — so a straggler can leave the roster naming an older Zone than the one the Session ended
+in. Harmless, and the same staleness the re-route exists for: `spawn_room_id` is ignored for a
+body that exists. "The teardown has the last word" holds only in a quiescent sequence, which is
+what `TestRoster_FollowsTheBodyAcrossZones` measures; nothing may be built on the roster's
+position being current. The doc comment on `ObserveMove` and `server/README.md` both say so.
 
 **Drain and the N teardowns** (asked for). `closeAll` calls `close` per Session and each
 `ReleaseSession` returns as soon as it has spawned its produce, so the produces run

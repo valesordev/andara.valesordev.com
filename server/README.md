@@ -703,21 +703,34 @@ it actually stands, which after a crash need not be where the roster last wrote.
 The live flag and the Session's teardown are ordered by the roster's lock: `close` sets the
 Session's `Closing` before it tells the roster, and the roster reads it under the lock it
 registers under, so a `SelectCharacter` that resolved its Session a moment before the teardown is
-refused (`CANCELED`) rather than leaving a flag nothing will clear. A bound Character that crosses
-a Zone moves the roster with it — the Gateway already watches those arrivals to route the
-Session's Commands — so a crash leaves the roster naming the wrong Zone only if it lands inside
-that window; the sim's re-route covers what is left. A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own
-context bounded by `ingress.produce_deadline`, records the roster's position from the routing
-table, and frees the flag; a drain runs those produces concurrently, one per bound Session, so it
-costs about one `ingress.produce_deadline` however many there are, and `CloseIngress` waits for
-them before the producer closes. With the broker unreachable they all fail, and the drained
-server leaves its bodies **present**, not dormant — the next `SelectCharacter` takes each where
-it stands; the tick makes the body **dormant** — in no Room's occupants,
-invisible to `look`, acting for nobody — and emits `CharacterLeft` with an empty `to_direction`.
-Until the teardown has produced, the Character is `already_live` to the same Account, a
-reconnecting client included. Nothing at boot invents an unbind: a body left present by a crash
-is taken where it stands by the next select. A `BindCharacter` the roster routed to the wrong
-Zone is re-produced by the sim to the Zone that holds the body.
+refused (`CANCELED`) rather than leaving a flag nothing will clear.
+
+A bound Character that crosses a Zone moves the roster with it — the Gateway already watches
+those arrivals to route the Session's Commands — so a crash leaves the roster naming the wrong
+Zone only if it lands inside that window. The write is best-effort and unordered: it is dropped
+when too many are in flight, and nothing sequences it against another or against the teardown's,
+so the roster can end up naming an older Zone. That is exactly the stale roster the sim's
+re-route exists for, and `spawn_room_id` is ignored for a body that exists; nothing may be built
+on the roster's position being current.
+
+A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own context bounded by
+`ingress.produce_deadline`, records the roster's position from the routing table, and frees the
+flag; the tick makes the body **dormant** — in no Room's occupants, invisible to `look`, acting
+for nobody — and emits `CharacterLeft` with an empty `to_direction`. Until the teardown has
+produced, the Character is `already_live` to the same Account, a reconnecting client included.
+Nothing at boot invents an unbind: a body left present by a crash is taken where it stands by the
+next select. A `BindCharacter` the roster routed to the wrong Zone is re-produced by the sim to
+the Zone that holds the body.
+
+**A drain, and what it leaves.** Every bound Session is closed, so every teardown runs; the
+produces go concurrently, one per Session, so a drain costs about one `ingress.produce_deadline`
+in wall clock however many Sessions are bound, and `CloseIngress` waits for them before the
+producer closes. A clean drain therefore leaves its bodies **dormant**. With the broker
+unreachable every one of those produces fails instead — counted on
+`andara_character_unbinds_total{reason="quit",outcome="produce_failed"}`, each with a `warn` line
+naming the Session and the Character — and the restarted World holds those bodies **present with
+no Session**: the next `SelectCharacter` takes each where it stands, and until then they stand in
+their Rooms and are listed by `look`.
 
 The boot requires `character.spawn_room` to resolve and `andara.core.Character` to be loaded. The
 dev World (`testdata/content/valid`) carries the core pack under `templates/`; the kind chart
