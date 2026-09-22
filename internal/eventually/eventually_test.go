@@ -5,6 +5,7 @@ package eventually
 
 import (
 	"fmt"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -32,6 +33,24 @@ func TestTrue(t *testing.T) {
 	}
 	if calls.Load() < 2 {
 		t.Fatalf("sampled %d times; want at least one sample past the deadline", calls.Load())
+	}
+}
+
+// Observed carries the last report into the failure, and none when the
+// report is empty.
+func TestObserved(t *testing.T) {
+	var n atomic.Int32
+	ft := &fakeT{}
+	Observed(ft, 10*time.Millisecond, "three samples", func() (bool, string) {
+		return false, fmt.Sprintf("sample %d", n.Add(1))
+	})
+	if !ft.failed || !strings.HasPrefix(ft.msg, "timed out after 10ms waiting for three samples; last saw sample ") {
+		t.Fatalf("failed=%v msg=%q", ft.failed, ft.msg)
+	}
+	ft = &fakeT{}
+	Observed(ft, 10*time.Millisecond, "nothing", func() (bool, string) { return false, "" })
+	if ft.msg != "timed out after 10ms waiting for nothing" {
+		t.Fatalf("msg=%q", ft.msg)
 	}
 }
 

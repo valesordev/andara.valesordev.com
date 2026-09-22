@@ -39,13 +39,27 @@ import (
 // still seen.
 func True(t testing.TB, d time.Duration, what string, want func() bool) {
 	t.Helper()
+	Observed(t, d, what, func() (bool, string) { return want(), "" })
+}
+
+// Observed is True for a predicate that also reports what it saw. The
+// report from the last sample is part of the failure, so the failure says
+// what the value was, not only that it was wrong: "present=1 bound=2"
+// rather than "the gauges never settled". An empty report is left out.
+func Observed(t testing.TB, d time.Duration, what string, want func() (ok bool, saw string)) {
+	t.Helper()
 	deadline := time.Now().Add(d)
 	for {
-		if want() {
+		ok, saw := want()
+		if ok {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("timed out after %s waiting for %s", d, what)
+			if saw != "" {
+				t.Fatalf("timed out after %s waiting for %s; last saw %s", d, what, saw)
+			} else {
+				t.Fatalf("timed out after %s waiting for %s", d, what)
+			}
 			return
 		}
 		time.Sleep(interval(d))
