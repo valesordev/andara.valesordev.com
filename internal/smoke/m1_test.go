@@ -23,6 +23,7 @@ import (
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 )
 
 // The M1 gate against the running stack (AW-SRV-014): two players enter the
@@ -171,17 +172,14 @@ func TestLive_M1Gate(t *testing.T) {
 		t.Fatalf("a dormant body is listed: %v", r)
 	}
 	sA2 := open(tokA)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
+	eventually.Observed(t, 10*time.Second, "the roster to free "+nameA+" in the plaza", func() (bool, string) {
 		list, err := game.ListCharacters(ctx, connect.NewRequest(&gamev1.ListCharactersRequest{SessionId: sA2}))
-		if err == nil && len(list.Msg.GetCharacters()) == 1 && !list.Msg.GetCharacters()[0].GetLive() && list.Msg.GetCharacters()[0].GetRoomId() == "plaza" {
-			break
+		if err != nil {
+			return false, err.Error()
 		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the roster never freed %s in the plaza: %v %v", nameA, list, err)
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
+		cs := list.Msg.GetCharacters()
+		return len(cs) == 1 && !cs[0].GetLive() && cs[0].GetRoomId() == "plaza", list.Msg.String()
+	})
 	// AC-6: woken where it was.
 	streamA2 := newStream(ctx, t, game, sA2)
 	sel(sA2, chA)
@@ -193,9 +191,18 @@ func TestLive_M1Gate(t *testing.T) {
 	}
 
 	// The instruments, from the running server (AW-SRV-010, -011, -031,
-	// -014 §8): what only a bound Character could drive.
-	after := scrape(t)
-	for _, series := range []string{
+	// -014 §8): what only a bound Character could drive. Polled to a
+	// deadline as one predicate, never read once: the stream reads above
+	// prove the binds were applied, not that every gauge derived from them
+	// has been written by the time /metrics serializes the registry.
+	// andara_sessions_bound is written gateway-side at bind time;
+	// andara_characters_total sim-side, on the loop, once the tick has
+	// applied the BindCharacter. A single scrape landing between them read
+	// bound=2, present=1 — internally consistent and half a tick early
+	// (issue #48; docs/specs/testing/live-assertions.md, rule 1). A 500 ms
+	// delay before the loop writes the gauges fails that single read on
+	// every run; this passes with the delay in.
+	moved := []string{
 		`andara_ingress_submits_total{outcome="produced"}`,
 		`andara_ingress_submits_total{outcome="deduplicated"}`,
 		fmt.Sprintf(`andara_ingress_produced_total{partition="%d"}`, first.GetPartition()),
@@ -208,16 +215,23 @@ func TestLive_M1Gate(t *testing.T) {
 		`andara_character_bindings_total{outcome="ok"}`,
 		`andara_character_unbinds_total{outcome="ok",reason="quit"}`,
 		`andara_character_creations_total{outcome="ok"}`,
-	} {
-		if !(value(after, series) > value(before, series)) {
-			t.Errorf("%s did not move: %v -> %v", series, value(before, series), value(after, series))
-		}
 	}
-	for _, series := range []string{`andara_characters_total{state="present"}`, `andara_sessions_bound`} {
-		if value(after, series) < 2 {
-			t.Errorf("%s = %v, want at least 2", series, value(after, series))
+	var after string
+	eventually.Observed(t, 30*time.Second, "the instruments to move", func() (bool, string) {
+		after = scrape(t)
+		var short []string
+		for _, series := range moved {
+			if !(value(after, series) > value(before, series)) {
+				short = append(short, fmt.Sprintf("%s did not move: %v -> %v", series, value(before, series), value(after, series)))
+			}
 		}
-	}
+		for _, series := range []string{`andara_characters_total{state="present"}`, `andara_sessions_bound`} {
+			if v := value(after, series); v < 2 {
+				short = append(short, fmt.Sprintf("%s = %v, want at least 2", series, v))
+			}
+		}
+		return len(short) == 0, strings.Join(short, "; ")
+	})
 	t.Logf("produced=%v deduplicated=%v present=%v bound=%v",
 		value(after, `andara_ingress_submits_total{outcome="produced"}`), value(after, `andara_ingress_submits_total{outcome="deduplicated"}`),
 		value(after, `andara_characters_total{state="present"}`), value(after, `andara_sessions_bound`))
