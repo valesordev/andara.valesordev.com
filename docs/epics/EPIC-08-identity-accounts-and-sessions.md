@@ -3,7 +3,7 @@ id: EPIC-08
 title: Identity, accounts, and sessions
 phase: 1
 component: server
-milestone: M2
+milestone: M1–M2
 status: ready
 adr_gates: []
 adr_refs: [ADR-0006, ADR-0002]
@@ -40,4 +40,8 @@ or span, and every privileged action in that window is in the audit topic with a
 correlation ID.
 
 ## Stories
-`AW-SRV-008`, `AW-SRV-014`, `AW-SRV-015`
+`AW-SRV-008`, `AW-SRV-014`, `AW-SRV-032`, `AW-SRV-015`
+
+M1 takes `AW-SRV-008` and `AW-SRV-014` (create, select, bind, quit — a Session cannot enter the
+World without them, and M1's gate needs one that has); M2 takes `AW-SRV-032` (deletion, retention,
+switching) and `AW-SRV-015` (linkdead). Re-sequenced 2026-09-21.

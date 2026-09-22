@@ -580,7 +580,11 @@ retention keeps longer (`AW-INF-007`).
 
 **Dormant** — A Character that exists in Zone state but is not present in any Room: despawned, or
 created and never bound. Keeps its last position so "where you were" survives restart and replay
-(`AW-SRV-014`).
+(`AW-SRV-014`). A dormant body is purged after the deletion retention window (`AW-SRV-032`).
+
+**Roster** — An Account's Characters, up to five, one live at a time (ADR-0006). Identity — name,
+status — is Account state; the body is World state. `andara-cli character` lists and creates;
+`play --character` chooses (`AW-SRV-014`, `AW-CLI-007`).
 
 **Write-Ahead Log (WAL)** — Here, the Command Log. Commands are durable before they are applied, by
 construction: the tick only ever sees records it consumed.

@@ -44,4 +44,4 @@ Two terminals connected simultaneously see each other's movement, a deliberately
 not increase tick duration, and a Command rejected at `authorize` never appears in the log.
 
 ## Stories
-`AW-SRV-003`, `AW-SRV-005`, `AW-SRV-010`, `AW-SRV-011`, `AW-CLI-004`
+`AW-SRV-003`, `AW-SRV-005`, `AW-SRV-010`, `AW-SRV-011`, `AW-CLI-004`, `AW-CLI-007`

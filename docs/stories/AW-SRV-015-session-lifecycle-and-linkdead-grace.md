@@ -64,7 +64,7 @@ not cost me my place in the world.
    that tick, marks it dormant with its position, emits `CharacterDespawned{reason=LINKDEAD}`, and it is
    no longer targetable.
 4. **Given** a despawned Character **when** the player logs back in and selects it **then** it spawns at
-   the position it held at despawn (`AW-SRV-014` AC-4).
+   the position it held at despawn (`AW-SRV-014` AC-6).
 5. **Given** `CloseSession` **when** it is called by a playing Session **then** an `UnbindCharacter{QUIT}`
    is produced and `CharacterDespawned{reason=QUIT}` follows; no linkdead body is left.
 6. **Given** a restart while a Character is linkdead **when** the World recovers **then** its deadline

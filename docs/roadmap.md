@@ -65,7 +65,7 @@ all in-memory state is derived from the log.
 | `EPIC-03` | Command pipeline and gRPC gateway | `SRV` | M1 | ADR-0003, ADR-0007 |
 | `EPIC-07` | Observability, SLOs, and runbooks | `INF` | M1–M4 | — |
 | `EPIC-04` | Snapshots and recovery | `SRV` | M2 | ADR-0002 |
-| `EPIC-08` | Identity, accounts, and sessions | `SRV` | M2 | ADR-0006 |
+| `EPIC-08` | Identity, accounts, and sessions | `SRV` | M1–M2 | ADR-0006 |
 | `EPIC-05` | Content pipeline and zone authoring | `SRV` + `CLI` | M3 | ADR-0004, ADR-0007 |
 | `EPIC-06` | Operator and builder CLI | `CLI` | M3 | ADR-0003, ADR-0004 |
 | `EPIC-09` | Behavior agents and Python SDK | `SRV` | M4 | ADR-0005 |
@@ -84,13 +84,15 @@ Epics: `EPIC-01`.
 #### M1 — Walking skeleton *(gate: a human runs `andara-cli play`, sees a room, types `north`, sees a different room — with the Command having gone through Kafka)*
 Protobuf schema and generated code. Redpanda locally with real topics. Simulation core with a Room
 graph and a deterministic Tick Loop consuming its Partitions. Command Pipeline split across the log
-boundary. gRPC Gateway with a streaming Event subscription. `andara-cli play`. Tick SLIs from day one.
-State is not yet snapshotted — a restart replays the whole log, deliberately, until M2.
-Epics: `EPIC-10` (first slice), `EPIC-02`, `EPIC-03`, `EPIC-07` (first slice).
+boundary. gRPC Gateway with a streaming Event subscription. Accounts and a Character to enter the
+World as — create, select, bind, quit (`AW-SRV-014`, `AW-CLI-007`; re-sequenced from M2 on 2026-09-21,
+because the gate needs a bound Character and no M1 story provided one). `andara-cli play`. Tick SLIs
+from day one. State is not yet snapshotted — a restart replays the whole log, deliberately, until M2.
+Epics: `EPIC-10` (first slice), `EPIC-02`, `EPIC-03`, `EPIC-07` (first slice), `EPIC-08` (first slice).
 
 #### M2 — Persistent world *(gate: `kill -9` the server; the World returns within 120 s with a matching State Hash, and every linkdead Character rebinds rather than despawning)*
 Zone Snapshots every 60 s keyed to offsets, recovery from snapshot plus log tail, exercised in CI.
-Accounts, Character rosters, Session lifecycle with the 180 s linkdead grace. The state projector and its
+Character deletion and name retention (`AW-SRV-032`), Session lifecycle with the 180 s linkdead grace. The state projector and its
 compacted topic, then the Redis index on top of it.
 Epics: `EPIC-04`, `EPIC-08`, `EPIC-10` (state projector, Redis).
 
@@ -210,8 +212,8 @@ place and the words or values left to Brian.
   lead time exist (`AW-INF-007`); the message does not.
 - **What players see on relocation** when a Room is removed by a content change (`AW-SRV-012`).
 - **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
-- **The spawn Room** for new Characters (`AW-SRV-014`, one values-file line) and what a Character *is*
-  beyond name and position.
+- **What a Character *is*** beyond name and position (`AW-SRV-014`). The spawn Room is decided:
+  `town/plaza` for the dev content (2026-09-21), one values-file line for real content.
 - **What an unattended NPC looks like** to players (`AW-SRV-009`).
 - **The Content Language syntax review** (`AW-CLI-005` AC-10) — Brian reads `town.aw` as the Builder
   in the room.
