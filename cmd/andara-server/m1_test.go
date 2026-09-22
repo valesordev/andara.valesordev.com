@@ -23,6 +23,7 @@ import (
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/internal/testpki"
 )
 
@@ -351,14 +352,8 @@ func metrics(t *testing.T, httpAddr string) string {
 	return string(b)
 }
 
+// waitUntil is eventually.True with the deadline a server under -race needs.
 func waitUntil(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 10*time.Second, what, cond)
 }

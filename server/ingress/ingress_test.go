@@ -20,6 +20,7 @@ import (
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/recordlog"
@@ -537,13 +538,8 @@ func until(cond func() bool) {
 	}
 }
 
+// waitFor is eventually.True with this package's in-process deadline.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
+	eventually.True(t, 5*time.Second, what, cond)
 }

@@ -21,6 +21,7 @@ import (
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/internal/testpki"
 	"github.com/valesordev/andara/server/auth"
 )
@@ -156,17 +157,10 @@ func (h *harness) open(t *testing.T, client gamev1connect.GameClient) *gamev1.Op
 	return resp.Msg
 }
 
-// waitFor polls until cond holds or the deadline passes.
+// waitFor is eventually.True with the deadline given.
 func waitFor(t *testing.T, d time.Duration, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(d)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, d, what, cond)
 }
 
 // findLog returns the first JSON log line whose msg contains needle.

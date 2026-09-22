@@ -19,6 +19,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
@@ -844,14 +845,8 @@ func (f *fixture) forgotten(sessions, subscribers int) {
 	}, fmt.Sprintf("teardown to settle at %d session(s) and %d subscription(s)", sessions, subscribers))
 }
 
+// waitFor is eventually.True with this package's in-process deadline.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 5*time.Second, what, cond)
 }
