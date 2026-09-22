@@ -30,19 +30,23 @@ const CodeTemplateMissing = "template_missing"
 //   - dormant in this Zone: cleared, and CharacterArrived with an empty
 //     from_direction emitted to its Room (AC-6) — the Room sees it appear
 //     where it was;
-//   - present in this Zone: taken where it stands, nothing emitted, the
-//     Entity untouched (AC-11) — a crash or a failed teardown left it, and
-//     the Room never saw it leave;
+//   - present in this Zone: taken where it stands, the Entity untouched
+//     (AC-11) — a crash or a failed teardown left it, and the Room never
+//     saw it leave, so the arrival is addressed to the Character alone;
 //   - absent: instantiated from andara.core.Character at spawn_room_id
 //     (AC-5), the arrival emitted there.
 //
-// A body in another Zone — the roster's last knowledge was stale, which a
-// crash after a cross-Zone move leaves behind — is re-routed: the same
-// Command is produced to the Zone that holds it (ADR-0001 §4: a later
-// tick, never a call), and the arrival that Zone emits is what moves the
-// Session's routing there. A present body found that way is announced to
-// the Character alone, so the Gateway learns where it stands without the
-// Room learning anything.
+// A present body is announced to the Character alone in both cases, the
+// same Zone and another: the Entity-addressed CharacterArrived is what
+// moves the routing table and the Session's perception to where the body
+// actually stands, which after a crash need not be where the roster last
+// wrote (review of PR #43). The Room learns nothing either way.
+//
+// A dormant body in another Zone — the roster's last knowledge was stale,
+// which a crash after a cross-Zone move leaves behind — is re-routed: the
+// same Command is produced to the Zone that holds it (ADR-0001 §4: a later
+// tick, never a call), and the arrival that Zone emits moves the Session's
+// routing there.
 func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !a.Consumed() {
 		return ErrNotConsumed
@@ -57,6 +61,7 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 			ent.Name = bind.GetName()
 		}
 		if !ent.Dormant {
+			a.Emit(ScopeEntities(ent.ID), arrived(a.Zone.ID, ent.Room, ent.DisplayName()))
 			return nil
 		}
 		ent.Dormant, ent.DormantSince = false, 0

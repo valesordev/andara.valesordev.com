@@ -25,6 +25,12 @@
 # from (AC-7, AC-8's no_history resync). AW-CLI-007 joins the halves: the Room
 # and the move in play's own transcript.
 #
+# The Protocol half creates two Accounts and two Characters per run, with
+# random suffixes: names are reserved forever and a roster holds five, so it
+# cannot reuse them. On CI's fresh stack that is two of each; on a developer's
+# long-lived stack they accumulate (`smoke-a-*`, `smoke-b-*`, `Smoke*`), which
+# is where those Accounts come from. `make down VOLUMES=1` clears them.
+#
 # Requires a stack: `make up` first, and `make build`. CI runs it as a step of
 # the `stack` workflow.
 

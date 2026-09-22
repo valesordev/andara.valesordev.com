@@ -132,18 +132,35 @@ func TestBind_WakesADormantBodyWhereItWas(t *testing.T) {
 }
 
 // AC-11: a BindCharacter for a body that is already present takes it where
-// it stands — no arrival, the Zone's Entities byte-identical.
+// it stands — the Zone's Entities byte-identical, the Room told nothing.
+// The Character alone is told where it stands, which is what moves the
+// Session's routing and perception: the body may have walked on after the
+// roster's last write (review of PR #43).
 func TestBind_PresentBodyIsIdempotent(t *testing.T) {
 	e := emptyEngine(t)
 	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
 	step(t, e, simtest.Move("town", "ch-1", "north"))
 	before := zoneBytes(e, "town")
+	// The roster still says the plaza; the body is in the hall.
 	res := step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
-	if len(res.Events) != 0 {
+	if len(res.Events) != 1 {
 		t.Fatalf("a present body's bind emitted %v", res.Events)
+	}
+	ev := res.Events[0]
+	if a := ev.Envelope.GetCharacterArrived(); a.GetRoomId() != "hall" || a.GetCharacterName() != "Aldric" || a.GetFromDirection() != "" {
+		t.Fatalf("arrival %v, want the hall where it stands", a)
+	}
+	if ev.Scope.Zoned() || !containsEntity(ev.Scope, "ch-1") {
+		t.Fatalf("scope %+v: the Character alone, never the Room", ev.Scope)
 	}
 	if !bytes.Equal(zoneBytes(e, "town"), before) {
 		t.Fatal("a present body's bind changed the Zone")
+	}
+	// A bystander in the hall hears nothing: the Room never saw it leave.
+	simtest.Place(e, "bob", "town", "hall")
+	res = step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	if len(res.Events) != 1 || !containsEntity(res.Events[0].Scope, "ch-1") || res.Events[0].Scope.Zoned() {
+		t.Fatalf("with a bystander present: %v", res.Events)
 	}
 }
 
@@ -287,9 +304,11 @@ func TestReplay_PresentAndDormantSurvive(t *testing.T) {
 	if r.Characters() != (sim.CharacterCounts{Present: 1, Dormant: 1}) {
 		t.Fatalf("counts %+v", r.Characters())
 	}
-	// The Account selects the present one again: taken where it stands.
+	// The Account selects the present one again: taken where it stands,
+	// and told so — the roster's record says the plaza, the body is in
+	// the hall.
 	res := step(t, r, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
-	if len(res.Events) != 0 {
+	if len(res.Events) != 1 || res.Events[0].Envelope.GetCharacterArrived().GetRoomId() != "hall" {
 		t.Fatalf("re-binding the present body emitted %v", res.Events)
 	}
 	desc := step(t, r, simtest.Look("town", "ch-1")).Events[0].Envelope.GetRoomDescribed()

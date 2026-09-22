@@ -50,6 +50,10 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 		return err
 	}
 	rt.Roster = r
+	// A Character that crosses a Zone moves the roster with it, so the
+	// next BindCharacter after a crash is routed to the Zone it is in
+	// rather than re-routed by the sim a tick later (AW-SRV-014).
+	rt.Bindings.OnZoneChange = r.ObserveMove
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "character roster configured",
 		slog.String("spawn_room", cfg.CharacterSpawnRoom),
 		slog.Int("max_per_account", cfg.CharacterMaxPerAccount),

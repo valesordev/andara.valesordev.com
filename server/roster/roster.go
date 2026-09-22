@@ -63,6 +63,10 @@ type Options struct {
 	// ProduceDeadline bounds the teardown's UnbindCharacter produce, which
 	// runs on its own context: ingress.produce_deadline. Zero means 2s.
 	ProduceDeadline time.Duration
+	// PositionWrites bounds the roster-position writes in flight behind
+	// ObserveMove. Zero means 32; a move observed with none free is
+	// dropped, which costs a re-route at worst (see ObserveMove).
+	PositionWrites int
 
 	Metrics *Metrics
 	Logger  *slog.Logger
@@ -81,9 +85,11 @@ type Roster struct {
 	mu        sync.Mutex
 	byAccount map[string]*live
 	bySession map[string]*live
-	// releases counts teardown produces in flight, so a drain or a test
-	// can wait for them.
+	// releases counts the work the roster started in the background — the
+	// teardown produces and the position writes — so a drain or a test can
+	// wait for it. writes bounds the position writes in flight.
 	releases sync.WaitGroup
+	writes   chan struct{}
 }
 
 // live is one Account's live flag: which Session drives which Character.
@@ -113,6 +119,9 @@ func New(o Options) (*Roster, error) {
 	if o.ProduceDeadline <= 0 {
 		o.ProduceDeadline = 2 * time.Second
 	}
+	if o.PositionWrites <= 0 {
+		o.PositionWrites = 32
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -128,15 +137,59 @@ func New(o Options) (*Roster, error) {
 	return &Roster{
 		opts: o, metrics: o.Metrics, log: o.Logger, tracer: o.Tracer, now: o.Now,
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
+		writes: make(chan struct{}, o.PositionWrites),
 	}, nil
 }
 
 // Metrics returns the roster metrics.
 func (r *Roster) Metrics() *Metrics { return r.metrics }
 
-// Wait blocks until every teardown produce in flight has finished. The
-// drain calls it before the producer closes; tests call it to observe.
+// Wait blocks until the background work the roster started — teardown
+// produces, position writes — has finished. The drain calls it before the
+// producer closes; tests call it to observe.
 func (r *Roster) Wait() { r.releases.Wait() }
+
+// ObserveMove is called by the routing table when a bound Session's
+// Character settles in a Zone other than the one it was in — the Gateway
+// already watches those arrivals to route the Session's Commands
+// (AW-SRV-010), and writing the roster's position here shrinks the window
+// in which a crash leaves the roster naming a Zone the body has left
+// (review of PR #43). Without it the next SelectCharacter is re-routed by
+// the sim, which is correct but costs a tick; with it that is a crash
+// inside the arrival-to-write window only.
+//
+// It runs on the tick goroutine and must not block: the write happens on
+// its own goroutine, bounded by PositionWrites, and a move observed with
+// none free is dropped — the re-route covers it. Same-Zone Room changes
+// are not written: they are every step a player takes, and the sim's
+// position is authoritative for all of them.
+func (r *Roster) ObserveMove(sessionID string, b command.Binding) {
+	r.mu.Lock()
+	l, ok := r.bySession[sessionID]
+	write := ok && l.confirmed && !l.releasing && b.Zone != "" && b.Room != ""
+	r.mu.Unlock()
+	if !write {
+		return
+	}
+	select {
+	case r.writes <- struct{}{}:
+	default:
+		r.log.LogAttrs(context.Background(), slog.LevelDebug, "character position not written: too many writes in flight",
+			slog.String("character_id", l.character), slog.String("session_id", sessionID))
+		return
+	}
+	r.releases.Add(1)
+	go func() {
+		defer func() { <-r.writes; r.releases.Done() }()
+		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+		defer cancel()
+		if err := r.opts.Accounts.SetCharacterPosition(ctx, l.account, l.character, string(b.Zone), string(b.Room)); err != nil {
+			r.log.LogAttrs(ctx, slog.LevelWarn, "character position not recorded",
+				slog.String("account_id", l.account), slog.String("character_id", l.character),
+				slog.String("session_id", sessionID), slog.String("detail", err.Error()))
+		}
+	}()
+}
 
 // Live reports which Character an Account drives right now, and on which
 // Session, or false. For tests and the readiness of AW-SRV-015.
@@ -216,6 +269,21 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		}
 		r.mu.Unlock()
 		return fail(outcome, alreadyLive(name))
+	}
+	// The Session's teardown and this registration are ordered by this
+	// lock: close sets Closing before it calls ReleaseSession, and
+	// ReleaseSession takes r.mu, so a flag installed here is either
+	// visible to the teardown or refused now. Reading the Session's
+	// context instead would not do — it is canceled after the teardown has
+	// run, so a check would pass in exactly the window that leaks the flag
+	// (review of PR #43).
+	if s.Closing() {
+		r.mu.Unlock()
+		r.log.LogAttrs(ctx, slog.LevelInfo, "character not bound: the session ended first",
+			slog.String("account_id", acct), slog.String("character_id", characterID),
+			slog.String("session_id", s.ID), slog.String("trace_id", traceID(ctx)))
+		span.SetStatus(codes.Error, errSessionClosing.Error())
+		return nil, connect.NewError(connect.CodeCanceled, errSessionClosing)
 	}
 	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId())}
 	r.byAccount[acct] = l
@@ -388,6 +456,12 @@ const (
 // ErrAlreadyLive: another Character is live on the Account, or this one is
 // bound to another Session. FAILED_PRECONDITION.
 var ErrAlreadyLive = errors.New("a character is already live on this account")
+
+// errSessionClosing: the Session ended between the RPC resolving it and
+// the roster registering the binding. CANCELED — there is nobody left to
+// tell, and no outcome label: the Character was never live. It is counted
+// nowhere on purpose; the log line is the record.
+var errSessionClosing = errors.New("the session ended before the character was bound")
 
 func alreadyLive(name string) error {
 	return withInfo(connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%w: %s", ErrAlreadyLive, name)), ReasonAlreadyLive, map[string]string{"character": name})

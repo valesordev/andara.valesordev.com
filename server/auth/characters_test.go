@@ -26,6 +26,11 @@ func TestFoldName(t *testing.T) {
 		{"Ångström", "ångström"}, // composed and decomposed agree
 		{"Ångström", "ångström"},
 		{"O'Neil", "o'neil"},
+		// NFKC puts a space at the edge that was not in the input: the
+		// trim is last, or these two names take two keys (review of
+		// PR #43). U+037A GREEK YPOGEGRAMMENI normalizes to " ι".
+		{"\u037aab", "\u03b9ab"},
+		{"\u03b9ab", "\u03b9ab"},
 	} {
 		if got := FoldName(tc.in); got != tc.want {
 			t.Errorf("FoldName(%q) = %q, want %q", tc.in, got, tc.want)

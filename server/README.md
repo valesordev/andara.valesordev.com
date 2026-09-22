@@ -696,9 +696,23 @@ roster's last-known Zone and Room so the stream perceives from the Room the body
 and produces `BindCharacter` to that Zone's Partition; the response is the offset. The tick
 materializes the body — at the spawn Room when never bound, where it went dormant otherwise, and
 untouched when a crash left it present — and emits `CharacterArrived` with an empty
-`from_direction`. A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own
+`from_direction`, to the Room when the body arrives in it and **to the Character alone when the
+body was already present**: the Room never saw it leave, and the Session still has to learn where
+it actually stands, which after a crash need not be where the roster last wrote.
+
+The live flag and the Session's teardown are ordered by the roster's lock: `close` sets the
+Session's `Closing` before it tells the roster, and the roster reads it under the lock it
+registers under, so a `SelectCharacter` that resolved its Session a moment before the teardown is
+refused (`CANCELED`) rather than leaving a flag nothing will clear. A bound Character that crosses
+a Zone moves the roster with it — the Gateway already watches those arrivals to route the
+Session's Commands — so a crash leaves the roster naming the wrong Zone only if it lands inside
+that window; the sim's re-route covers what is left. A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own
 context bounded by `ingress.produce_deadline`, records the roster's position from the routing
-table, and frees the flag; the tick makes the body **dormant** — in no Room's occupants,
+table, and frees the flag; a drain runs those produces concurrently, one per bound Session, so it
+costs about one `ingress.produce_deadline` however many there are, and `CloseIngress` waits for
+them before the producer closes. With the broker unreachable they all fail, and the drained
+server leaves its bodies **present**, not dormant — the next `SelectCharacter` takes each where
+it stands; the tick makes the body **dormant** — in no Room's occupants,
 invisible to `look`, acting for nobody — and emits `CharacterLeft` with an empty `to_direction`.
 Until the teardown has produced, the Character is `already_live` to the same Account, a
 reconnecting client included. Nothing at boot invents an unbind: a body left present by a crash

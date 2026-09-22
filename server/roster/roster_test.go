@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/base64"
 	"errors"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -20,7 +21,9 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/internal/testpki"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/gateway"
@@ -479,4 +482,165 @@ func charLeft(zone, room, dir string) *gamev1.EventEnvelope {
 
 func charArrived(zone, room, dir string) *gamev1.EventEnvelope {
 	return &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{ZoneId: zone, RoomId: room, FromDirection: dir}}}
+}
+
+// closingSession drives a real gateway to the state the leak was in: a
+// Session whose teardown has begun — Closing set, the roster told — and
+// whose pointer is still in hand, the way a SelectCharacter that resolved
+// the Session a moment earlier holds it.
+func closingSession(t *testing.T, account string) *gateway.Session {
+	t.Helper()
+	pki := testpki.New(t)
+	captured := make(chan *gateway.Session, 1)
+	srv, err := gateway.New(gateway.Options{
+		Listen: "127.0.0.1:0", TLSCertFile: pki.CertFile, TLSKeyFile: pki.KeyFile,
+		MaxRecvBytes: 1 << 16, MaxRequestTimeout: 5 * time.Second, DrainTimeout: time.Second,
+		ProtocolMin: 1, ProtocolMax: 1,
+		Verifier: accountVerifier(account),
+		Roster:   captureRoster{captured},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := srv.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	})
+	client := gamev1connect.NewGameClient(
+		&http.Client{Transport: &http.Transport{TLSClientConfig: pki.ClientTLS(), ForceAttemptHTTP2: true}},
+		"https://"+srv.Addr().String())
+	ctx := context.Background()
+	open, err := client.OpenSession(ctx, connect.NewRequest(&gamev1.OpenSessionRequest{ProtocolVersion: 1, AuthToken: "t", ClientName: "roster-test/0"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.CloseSession(ctx, connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: open.Msg.GetSessionId()})); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case s := <-captured:
+		if !s.Closing() {
+			t.Fatal("the captured Session does not report Closing")
+		}
+		return s
+	case <-time.After(5 * time.Second):
+		t.Fatal("the gateway never released the Session")
+		return nil
+	}
+}
+
+// accountVerifier accepts any token as one Account.
+type accountVerifier string
+
+func (v accountVerifier) Verify(context.Context, string) (auth.Principal, error) {
+	return auth.Principal{AccountID: string(v), Roles: []auth.Role{auth.RolePlayer}}, nil
+}
+
+func (accountVerifier) ActAs(context.Context, auth.Principal, string) (auth.Principal, error) {
+	return auth.Principal{}, gateway.ErrPermissionDenied
+}
+
+// captureRoster hands the Session its teardown names to whoever is waiting.
+type captureRoster struct{ out chan *gateway.Session }
+
+func (captureRoster) ListCharacters(context.Context, *gateway.Session) (*gamev1.ListCharactersResponse, error) {
+	return &gamev1.ListCharactersResponse{}, nil
+}
+
+func (captureRoster) CreateCharacter(context.Context, *gateway.Session, string) (*gamev1.CreateCharacterResponse, error) {
+	return &gamev1.CreateCharacterResponse{}, nil
+}
+
+func (captureRoster) SelectCharacter(context.Context, *gateway.Session, string) (*gamev1.SelectCharacterResponse, error) {
+	return &gamev1.SelectCharacterResponse{}, nil
+}
+
+func (c captureRoster) ReleaseSession(s *gateway.Session) {
+	select {
+	case c.out <- s:
+	default:
+	}
+}
+
+// A SelectCharacter that resolved its Session just before the teardown
+// began must not install the live flag: the teardown has already looked
+// and will not look again, so the Account would be already_live until the
+// process restarted (Codex on PR #43, confirmed by architecture). The
+// Session's context is not the guard — it is canceled after the release —
+// so the roster reads Closing under the lock it registers under.
+func TestRoster_SelectRefusesAClosingSession(t *testing.T) {
+	f := newFixture(t)
+	id := f.create("Aldric")
+	sess := closingSession(t, f.account)
+
+	_, err := f.roster.SelectCharacter(context.Background(), sess, id)
+	if connect.CodeOf(err) != connect.CodeCanceled {
+		t.Fatalf("select on a closing Session: %v, want CANCELED", err)
+	}
+	if _, _, ok := f.roster.Live(f.account); ok {
+		t.Fatal("a closing Session left a live flag")
+	}
+	if _, bound, _ := f.bindings.Lookup(sess.ID); bound {
+		t.Fatal("a closing Session left a binding")
+	}
+	if n := len(f.log.records()); n != 0 {
+		t.Fatalf("a closing Session produced %d records", n)
+	}
+	// The Account is free: a live Session selects the same Character.
+	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s-live"), id); err != nil {
+		t.Fatalf("after the refusal: %v", err)
+	}
+}
+
+// The roster follows a Character across a Zone (the hardening architecture
+// asked for on PR #43): the Gateway already watches the cross-Zone
+// arrivals it routes, so the roster's position is written there and the
+// next BindCharacter after a crash is routed to the Zone the body is in
+// rather than re-routed by the sim a tick later. A same-Zone move is not
+// written — that is every step a player takes.
+func TestRoster_FollowsTheBodyAcrossZones(t *testing.T) {
+	f := newFixture(t)
+	f.bindings.OnZoneChange = f.roster.ObserveMove
+	ctx := context.Background()
+	id := f.create("Aldric")
+	s := f.session("s1")
+	if _, err := f.roster.SelectCharacter(ctx, s, id); err != nil {
+		t.Fatal(err)
+	}
+
+	// A step inside the Zone: the routing table follows, the roster does
+	// not move.
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterLeft, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charLeft("town", "plaza", "north")})
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterArrived, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charArrived("town", "hall", "south")})
+	f.roster.Wait()
+	if ref, _ := f.store.Character(f.account, id); ref.GetRoomId() != "plaza" {
+		t.Fatalf("a same-Zone move wrote the roster: %v", ref)
+	}
+
+	// Across a Zone: written.
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterLeft, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charLeft("town", "hall", "east")})
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterArrived, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charArrived("wilds", "trail", "west")})
+	f.roster.Wait()
+	ref, err := f.store.Character(f.account, id)
+	if err != nil || ref.GetZoneId() != "wilds" || ref.GetRoomId() != "trail" {
+		t.Fatalf("roster after a cross-Zone move: %v %v, want wilds/trail", ref, err)
+	}
+
+	// The teardown still has the last word, and a Session the roster does
+	// not hold moves nothing.
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterArrived, Scope: sim.ScopeEntities(sim.EntityID("other")), Envelope: charArrived("docks", "pier", "")})
+	f.roster.ObserveMove("s-unknown", command.Binding{Actor: "x", Zone: "docks", Room: "pier"})
+	f.roster.Wait()
+	f.roster.ReleaseSession(s)
+	f.roster.Wait()
+	if ref, _ := f.store.Character(f.account, id); ref.GetZoneId() != "wilds" || ref.GetRoomId() != "trail" {
+		t.Fatalf("roster after the teardown: %v", ref)
+	}
+	if last := f.log.records()[len(f.log.records())-1]; last.GetZoneId() != "wilds" {
+		t.Fatalf("the UnbindCharacter went to %s, want wilds", last.GetZoneId())
+	}
 }

@@ -10,6 +10,7 @@ import (
 	"errors"
 	"log/slog"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -36,7 +37,17 @@ type Session struct {
 	cancel context.CancelFunc
 	span   trace.Span
 	once   sync.Once
+	// closing is set by close before anything is told the Session is
+	// ending, and before the context is canceled. A seam that registers
+	// Session state — the roster's live flag (AW-SRV-014) — reads it under
+	// the same lock it registers under, so a registration either lands
+	// before the teardown sees it or is refused; the context cannot serve
+	// for that, because it is canceled after the teardown has run.
+	closing atomic.Bool
 }
+
+// Closing reports whether the Session's teardown has begun.
+func (s *Session) Closing() bool { return s.closing.Load() }
 
 // Context is done when the Session ends, whichever way it ends. Anything
 // working on the Session's behalf — a Subscribe stream, an in-flight
@@ -196,6 +207,9 @@ func (st *sessionStore) get(id string) (*Session, bool) {
 // say — is a no-op rather than a second decrement.
 func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason string) {
 	s.once.Do(func() {
+		// Before anything else: a seam registering Session state now is
+		// refused rather than left behind by the release below.
+		s.closing.Store(true)
 		st.mu.Lock()
 		delete(st.byID, s.ID)
 		if conns := st.byConn[s.connID]; conns != nil {

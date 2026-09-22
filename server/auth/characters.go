@@ -95,10 +95,14 @@ func newRoster(o CharacterOptions) (*roster, error) {
 	return &roster{max: o.MaxPerAccount, pattern: re, names: map[string]*accountsv1.NameReservation{}}, nil
 }
 
-// FoldName is the reservation key: Unicode NFKC, case-folded, trimmed.
-// "Aldric", "aldric", "ALDRIC", and a fullwidth "Ａldric" are one name.
+// FoldName is the reservation key: Unicode NFKC, case-folded, trimmed, in
+// that order. "Aldric", "aldric", "ALDRIC", and a fullwidth "Ａldric" are
+// one name. The trim is last because NFKC can put a space at an edge that
+// was not there — U+037A normalizes to a space and an iota — and a
+// transform that trimmed first would give two keys to one name (review of
+// PR #43).
 func FoldName(name string) string {
-	return cases.Fold().String(norm.NFKC.String(strings.TrimSpace(name)))
+	return strings.TrimSpace(cases.Fold().String(norm.NFKC.String(name)))
 }
 
 // MaxCharacters is character.max_per_account.

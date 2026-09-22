@@ -463,6 +463,75 @@ stack's broker only.
 - `make check` clean (fmt, vet, lint, tests, proto-check with no breaking change, values-schema,
   k8s-dry, helm-test, license).
 
+### Review of PR #43 (2026-09-22)
+
+Three required changes from architecture's review — all three found by Codex, all three confirmed
+— plus the hardening it asked for and the questions it raised.
+
+1. **A Session closing mid-`SelectCharacter` left its live flag forever.** `sessionStore.close`
+   deletes the Session, tells the roster, then cancels; a Select that resolved the Session before
+   the delete registered *after* the release had looked, and nothing looked again — the Account
+   stayed `already_live` until restart. Fixed by the ordering, not a re-check: `gateway.Session`
+   gains `Closing`, set by `close` before it tells the roster, and the roster reads it **under the
+   lock it registers under**. A registration therefore either lands before the teardown looks or
+   is refused; the Session's context cannot serve, because it is canceled after the release, so a
+   check on it passes in exactly the window that leaked. The refusal is `CANCELED` — there is
+   nobody left to tell — and is logged at `info` and counted nowhere: the Character was never
+   live, and `andara_character_bindings_total`'s label set is the story's. If architecture wants
+   the path visible it takes an outcome value; say so and it is one line.
+2. **A present body reclaimed in its own Zone kept the roster's stale Room.** The present-here
+   branch returned with no Emit while the cross-Zone one emitted; after a crash the body can have
+   walked on inside the Zone, and the Session's routing and Observer stayed on the older Room. Now
+   **both** present cases emit the Entity-scoped `CharacterArrived` where the body stands. The
+   Room still learns nothing, which is AC-11 as intended. One wording consequence for the
+   contract: an Event consumes an `event_id`, which the State Hash covers, so AC-11's "the State
+   Hash is unchanged by the apply" now reads as *the Zone's Entities are unchanged* — asserted
+   byte-for-byte in `TestBind_PresentBodyIsIdempotent`. (Every apply moves the hash through the
+   offsets and the tick regardless; what AC-11 is about is that no body moves.)
+3. **`FoldName` trimmed before NFKC.** The contract is NFKC → casefold → trim, and NFKC can put a
+   space at an edge — U+037A becomes a space and an iota — so `ͺab` and `ιab` took two keys. One
+   line, a table row, and no reservations existed to migrate.
+
+**Hardening (asked for, non-blocking, done).** `ingress.Bindings` gains `OnZoneChange`, called on
+the tick goroutine when a bound Session's Character settles in a Zone other than the one it was in
+— the cross-Zone arrivals the table already watches. `Roster.ObserveMove` writes the roster's
+position from it, on its own goroutine, bounded by `PositionWrites` (32) with a drop-and-log when
+full: correctness does not depend on it, since the sim's re-route covers a stale roster. Same-Zone
+Room changes are not written — they are every step a player takes. A crash now leaves the roster
+naming the wrong Zone only if it lands between the arrival and the write.
+
+**Drain and the N teardowns** (asked for). `closeAll` calls `close` per Session and each
+`ReleaseSession` returns as soon as it has spawned its produce, so the produces run
+**concurrently**: a busy drain costs about one `ingress.produce_deadline` in wall clock however
+many Sessions are bound, and `CloseIngress` waits for all of them before the producer closes. With
+the broker unreachable every one fails, and the drained server leaves N bodies **present, not
+dormant** — the next `SelectCharacter` takes each where it stands (AC-11). The runbook line is in
+`server/README.md`.
+
+**`race_lost` vs `already_live`** are one wire error (`FAILED_PRECONDITION already_live`) with two
+metric labels, and yes, that is intended: the player is told the same thing either way, and the
+operator can tell a second client racing a first from a second client finding a settled Session.
+
+**Live gate accumulation** (asked for): `scripts/stack_play.sh`'s header now says that the
+Protocol half creates two Accounts and two Characters per run with random suffixes — names are
+reserved forever, so it cannot reuse them — and that on a long-lived developer stack they
+accumulate as `smoke-a-*`, `smoke-b-*`, `Smoke*`.
+
+**Rulings taken as given:** `CharacterStatus` in `andara.accounts.v1` and the separate
+`SelectCharacterResponse` stand; the cross-Zone re-route is a decision, resting on `Step` applying
+a tick's Partitions in ascending order over a record set the Tick Boundary Record fixes — which is
+what makes a handler's read of another Zone replay-stable — with the sharding ADR as its named
+revisiter; the in-transit unbind falls into AC-11; the empty `ContentVersion` is AW-SRV-012's; the
+glossary's Dormant line is architecture's at §8.
+
+New tests: `server/gateway` `TestRoster_ReleasedBeforeTheContextIsCanceled` (both ways a Session
+ends: the roster is told with `Closing` set and the context not yet canceled) and
+`TestUnimplementedRoster`; `server/roster` `TestRoster_SelectRefusesAClosingSession` (driving a
+real gateway to the closing state, then selecting: `CANCELED`, no flag, no binding, nothing
+produced, the Account free afterwards) and `TestRoster_FollowsTheBodyAcrossZones`; `server/sim`
+`TestBind_PresentBodyIsIdempotent` extended with the Entity-scoped arrival and a bystander who
+hears nothing; `server/auth` the U+037A fold row. All under `-race`.
+
 ## Open questions
 
 - **Resolved 2026-09-21 (Brian): `character.spawn_room` is `town/plaza`** for the dev content — a
