@@ -220,11 +220,18 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 	// The round's own root span, explicitly not inside sim.tick: a round
 	// outlives the tick, and hanging it under the tick would make every
 	// tick trace carry a span that ends after it.
+	// Linked to the tick that started it rather than parented to it: a link
+	// keeps the round correlatable without making a tick's trace contain a
+	// span that ends after the tick does. The link also survives the tick
+	// span being dropped, which most of them are — telemetry.SpanFilter
+	// keeps one tick in a hundred, and every round.
 	roundCtx, round := s.tracer.Start(context.WithoutCancel(ctx), "persistence.snapshot",
-		trace.WithNewRoot(), trace.WithAttributes(attribute.Int64("tick", int64(tick))))
+		trace.WithNewRoot(),
+		trace.WithLinks(trace.LinkFromContext(ctx)),
+		trace.WithAttributes(attribute.Int64("tick", int64(tick))))
 
 	// The copy: in-tick, but parented to the round.
-	copyCtx, copySpan := s.tracer.Start(roundCtx, "snapshot.copy")
+	_, copySpan := s.tracer.Start(roundCtx, "snapshot.copy")
 	// Wall clock for the record the snapshot carries, monotonic for the
 	// measurement: s.now is injectable so a test can control the *cadence*,
 	// and a duration measured against a clock a test holds still would be
@@ -234,7 +241,6 @@ func (s *Snapshotter) Maybe(ctx context.Context, e *sim.Engine) {
 	stall := time.Since(startedMono)
 	copySpan.SetAttributes(attribute.Int("zones", len(snaps)), attribute.Float64("stall_ms", float64(stall.Microseconds())/1000))
 	copySpan.End()
-	_ = copyCtx
 
 	s.metrics.TickStall.Observe(stall.Seconds())
 	if s.opts.MaxStall >= 0 && stall > s.opts.MaxStall {

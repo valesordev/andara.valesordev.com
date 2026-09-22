@@ -200,7 +200,27 @@ when no server is running, which is the state a recovery starts from. If archite
 rather have one command, the natural shape is `--local` on the AW-SRV-007 command rather than
 two names.
 
-## 10. Follow-ups this story unblocks but does not carry
+## 10. Notes for review
+
+- **AC-2 is met at the encoder, not across rounds.** "Identical Zone state snapshotted twice
+  is byte-identical" holds for the encoding: the same `Snapshot` encoded twice, and two
+  `Snapshot`s of identical state, produce identical bytes — the timestamp is stamped at the
+  boundary rather than read at encode time, and every `repeated` is sorted on the way out. Two
+  *rounds* over an idle Zone do differ, in `tick` and `taken_at_unix_nano`, by design; the live
+  run showed exactly that (tick 31 then 62, same `state_hash`). The hash, which is what
+  AW-SRV-007 compares, is stable.
+- **The `[ASSUMPTION]`s**: three of four are resolved. Copy-on-write holds (§7, measured).
+  World scale is committed as `server/simtest/sizing.go` and asserted by a test. Discovery via
+  `WorldStore.List` is implemented, with §5's caveat for AW-SRV-007. MinIO in the local stack
+  is **not** resolved and cannot be from this lane — the story itself defers it ("AW-INF-002
+  gains a service; recorded there as a follow-up"). The `s3` store is exercised against a real
+  MinIO instead, by `server/store/s3_test.go`, which skips unless `ANDARA_S3_TEST_ENDPOINT`
+  names one; it will start running in CI the day AW-INF-002 lands the service.
+- **The Definition-of-done line "the sizing fixture's numbers are recorded in the story"** is
+  literally an edit to `docs/stories/`, which this lane may not make. §7's table has the
+  numbers; architecture needs to copy them across.
+
+## 11. Follow-ups this story unblocks but does not carry
 
 - **`make measure-tick` against the sizing fixture.** `deploy/helm/andara/measurements.yaml` is
   a placeholder whose header says to flip it "once AW-SRV-006 defines" the sizing fixture, and
