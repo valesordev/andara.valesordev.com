@@ -166,6 +166,34 @@ ANDARA_INGRESS_TRANSIT_HOLD: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_INGRESS_IDEMPOTENCY_WINDOW: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "snapshot" "interval" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_INTERVAL: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "max_stall_ms" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_MAX_STALL_MS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "store" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_STORE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "fs_path" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_FS_PATH: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "s3_bucket" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_S3_BUCKET: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "s3_endpoint" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_S3_ENDPOINT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "snapshot" "upload_timeout" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_SNAPSHOT_UPLOAD_TIMEOUT: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_KAFKA_BROKERS: {{ $v | toString | quote }}

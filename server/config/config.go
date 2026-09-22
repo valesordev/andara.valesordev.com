@@ -432,8 +432,11 @@ func (c Config) validateSnapshot() error {
 	if c.SnapshotInterval < 0 {
 		return fmt.Errorf("snapshot.interval must not be negative, got %s", c.SnapshotInterval)
 	}
-	if c.SnapshotMaxStall <= 0 {
-		return fmt.Errorf("snapshot.max_stall_ms must be positive, got %s", c.SnapshotMaxStall)
+	// Zero is legal and the chart's registry allows it: a zero stall budget
+	// warns on every round, which is a way to watch the copy's cost rather
+	// than a misconfiguration.
+	if c.SnapshotMaxStall < 0 {
+		return fmt.Errorf("snapshot.max_stall_ms must not be negative, got %s", c.SnapshotMaxStall)
 	}
 	if c.SnapshotUploadTimeout <= 0 {
 		return fmt.Errorf("snapshot.upload_timeout must be positive, got %s", c.SnapshotUploadTimeout)
