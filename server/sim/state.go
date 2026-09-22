@@ -162,7 +162,10 @@ func (s *WorldState) ZoneHash(id ZoneID) ([32]byte, bool) {
 	if !ok {
 		return [32]byte{}, false
 	}
-	return zoneHash(z), true
+	return HashZone(z), true
 }
 
-func zoneHash(z *ZoneState) [32]byte { return sha256.Sum256(ZoneCanonicalBytes(z)) }
+// HashZone is the State Hash of one Zone, given the Zone. The form recovery
+// needs: AW-SRV-007 holds a Zone decoded from a snapshot body, which belongs
+// to no WorldState yet, and must hash it to check the envelope's claim.
+func HashZone(z *ZoneState) [32]byte { return sha256.Sum256(ZoneCanonicalBytes(z)) }

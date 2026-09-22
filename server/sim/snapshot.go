@@ -81,7 +81,7 @@ func (s *Snapshot) Body() *ZoneState { return s.body }
 // — the round that owns it.
 func (s *Snapshot) StateHash() [32]byte {
 	if !s.hashed {
-		s.hash, s.hashed = zoneHash(s.body), true
+		s.hash, s.hashed = HashZone(s.body), true
 	}
 	return s.hash
 }
