@@ -490,7 +490,8 @@ func TestSubmit_SessionCleanup(t *testing.T) {
 
 // Bind replaces: a Character bound to a second Session leaves the first.
 func TestBindings_Replace(t *testing.T) {
-	b := NewBindings(time.Second, nil, nil)
+	held := prometheus.NewGauge(prometheus.GaugeOpts{Name: "held"})
+	b := NewBindings(time.Second, nil, held)
 	b.Bind("s1", command.Binding{Actor: "alice", Zone: "town"})
 	b.Bind("s2", command.Binding{Actor: "alice", Zone: "town"})
 	if _, bound, _ := b.Lookup("s1"); bound {
@@ -502,9 +503,14 @@ func TestBindings_Replace(t *testing.T) {
 	// Unbind during transit releases the waiter as unbound.
 	b.Publish(sim.Event{Type: sim.EvCharacterLeft, Scope: sim.ScopeEntities("alice"),
 		Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{CharacterName: "alice"}}}})
+	// That the waiter is in the hold is read from the gauge, not assumed
+	// after a sleep: with a sleep the Unbind can land first and the call
+	// returns ErrNoBinding without ever having waited, which passes and
+	// exercises nothing — a 30 ms delay before the Binding call passes
+	// every run that way.
 	done := make(chan error, 1)
 	go func() { _, err := b.Binding(context.Background(), "s2"); done <- err }()
-	time.Sleep(10 * time.Millisecond)
+	waitFor(t, func() bool { return testutil.ToFloat64(held) == 1 }, "the waiter in the hold")
 	b.Unbind("s2")
 	if err := <-done; !errors.Is(err, command.ErrNoBinding) {
 		t.Fatalf("after unbind: %v", err)
