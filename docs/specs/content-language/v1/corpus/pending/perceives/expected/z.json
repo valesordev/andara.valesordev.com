@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "hall",
+      "title": "The Hall",
+      "exits": [
+        {
+          "direction": "north",
+          "toRoom": "yard",
+          "perceives": [
+            "sight",
+            "sound"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "yard",
+      "title": "The Yard",
+      "exits": [
+        {
+          "direction": "south",
+          "toRoom": "hall"
+        }
+      ]
+    }
+  ]
+}

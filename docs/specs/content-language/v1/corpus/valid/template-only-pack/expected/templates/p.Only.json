@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Only",
+  "kind": "ITEM",
+  "chain": [
+    "p.Only"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "template-only-pack/t.aw",
+    "line": 4
+  }
+}

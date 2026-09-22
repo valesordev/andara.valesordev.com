@@ -1,0 +1,9 @@
+a.aw:3:10: unknown_direction
+  z
+  r
+a.aw:4:19: unknown_room
+  z
+  r
+  north
+b.aw:2:13: unknown_component_type
+  p.T

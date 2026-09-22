@@ -51,13 +51,13 @@ settle every layout argument, so that I spend my time on the world and not the f
 3. **Given** unformatted source **when** `content fmt` runs **then** the file is rewritten to the
    canonical form and a second run is a no-op; `--check` exits `1` listing files that would change.
 4. **Given** a published version **when** `content decompile` runs **then** the produced `.aw` files
-   compile to the same `.pb` bytes and, if the version was published from formatted source, equal the
-   published source blobs.
+   compile to the same canonical blobs byte for byte and, if the version was published from canonical
+   source, equal the published source blobs.
 5. **Given** no network and a cached `andara.core@3` **when** `content compile` runs **then** it
-   succeeds; **given** no cache **then** it fails with `E_CORE_VERSION` telling the Builder to run
-   `content fetch-core`.
+   succeeds; **given** no cache **then** it fails with `core_version_mismatch` telling the Builder
+   to run `content fetch-core`.
 6. **Given** a pack declaring `requires andara.core@4` and a cache of `@3` **when** compiled **then**
-   `E_CORE_VERSION` names both.
+   `core_version_mismatch` names both.
 7. **Given** a 2,000-Room pack **when** compiled on the kind box **then** it completes in under 5 s.
 8. **Given** the compiler package **when** imported by `server/content` for the publish gate **then**
    `depguard` permits it and it imports nothing from `server/` except `sim` types via `gen/`.
@@ -68,7 +68,7 @@ settle every layout argument, so that I spend my time on the world and not the f
 // CONTRACT SKETCH — not an implementation
 package lang   // content/lang; imported by admin/cli and server/content
 
-type Diagnostic struct { File string; Line, Col int; Code string; Message string; Chain []string }
+type Diagnostic struct { File string; Line, Col int; Code string; Message string; Chain []string; Severity Severity }
 
 // Compile parses every *.aw under dir, resolves against core and deps, and emits
 // canonical blobs. Diagnostics are sorted by file, line, col. Pure; no network.
@@ -133,5 +133,20 @@ publish gate in `AW-SRV-013`'s equivalence test.
   than `sim.MaxChainDepth` (16). Its output for the seed must be byte-identical to
   `content/core/templates/`, held today by `TestCoreSeedMatchesFixture`.
 
+- **Inherited from `AW-CLI-005` (2026-09-22), when the spec landed:** diagnostics use `sim.ErrCode`
+  strings, not a parallel `E_*` set — `errors.md` §2, and the rename above is part of it. `Diagnostic`
+  gains `Severity`, because `orphan_room` and `missing_reverse_exit` are warnings that must not fail a
+  compile. Expected output is **canonical JSON**, not `.pb`: `formatVersion` first, then field-number
+  order, two-space indent, LF, sorted `repeated` fields (`semantics.md` §7) — and Go's `protojson`
+  injects non-deterministic whitespace, so emitting those bytes means re-serializing through a
+  deterministic encoder rather than trusting `protojson.MarshalOptions{Indent: "  "}`. Exits sort
+  lexicographically by direction string, matching `TestBuildWorld_ExitsSortedByDirection`.
+  `make content-conformance` skips `corpus/pending/`, printing the count and each case's gating story;
+  `corpus/invalid/encoding/` is checked before the grammar is reached. `make content-grammar-check`
+  already exists and is in `make check`.
+
 - `[ASSUMPTION]` Hand-written recursive-descent parser rather than a generated one; the grammar is
-  small and the error messages are the product.
+  small and the error messages are the product. The spec's grammar is checked with lark's Earley
+  parser and a dynamic lexer, because the language has no reserved words — a hand-written parser is
+  contextual by construction, so this is a property of the checking tool, not a constraint on the
+  compiler.

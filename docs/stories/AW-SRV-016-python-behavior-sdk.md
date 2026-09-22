@@ -47,7 +47,10 @@ behavior feels like writing a program rather than filling in a configuration fil
 
 ### Out of scope
 - The server protocol — `AW-SRV-009`. The compiler that validates Templates reference existing
-  Behaviors — `AW-CLI-006` (`E_UNRESOLVED` on a missing Behavior name).
+  Behaviors — `AW-CLI-006` (`unknown_behavior` on a missing Behavior name; renamed from
+  `E_UNRESOLVED` by `AW-CLI-005` on 2026-09-22, which also leaves this story the rule the name
+  resolves *against* — the Python pack layout is yours, and `corpus/pending/unknown-behavior/` waits
+  on it).
 - Model and vector-store integration. Allowed by construction; not built.
 - A language-level sandbox. Containment is the process, the network policy, and the pack scope
   (ADR-0005); this story does not pretend otherwise.

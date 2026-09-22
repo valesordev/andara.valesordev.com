@@ -71,12 +71,14 @@ install_pinned() {
 
 # Python dependencies beyond the standard library, pinned in scripts/requirements.txt:
 # PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003) — rendered
-# manifests are real YAML and deserve a real parser — and reuse backs `make license-check`.
+# manifests are real YAML and deserve a real parser — reuse backs `make license-check`, and
+# lark backs `make content-grammar-check` (AW-CLI-005 AC-1), which parses the Content
+# Language corpus against the grammar rather than taking the grammar's word for it.
 # Installed only when an import fails, so a distro-packaged copy is left alone; a refusal
 # (PEP 668 externally-managed environments) is reported with the file to install rather
 # than forced past.
 pydeps_missing=""
-for mod in yaml reuse; do
+for mod in yaml reuse lark; do
   ${PY:-python3} -c "import $mod" >/dev/null 2>&1 || pydeps_missing="$pydeps_missing $mod"
 done
 if [ -n "$pydeps_missing" ]; then
@@ -86,6 +88,7 @@ if [ -n "$pydeps_missing" ]; then
 fi
 ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
 ok reuse "$(${PY:-python3} -m reuse --version | awk 'NR==1{print $NF}')"
+ok lark "$(${PY:-python3} -c 'import lark; print(lark.__version__)')"
 
 # golangci-lint is needed by `make lint`, which is a no-op until Go sources exist. Install
 # it anyway once sources appear; before that, skip the download nobody needs yet.

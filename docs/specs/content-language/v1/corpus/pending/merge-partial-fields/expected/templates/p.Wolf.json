@@ -1,0 +1,41 @@
+{
+  "formatVersion": 1,
+  "name": "p.Wolf",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Beast",
+    "p.Wolf"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Aggro",
+      "fields": [
+        {
+          "name": "enabled",
+          "boolValue": true
+        },
+        {
+          "name": "threshold",
+          "intValue": "1"
+        }
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Aggro",
+      "field": "enabled",
+      "from": "p.Beast"
+    },
+    {
+      "component": "andara.core.Aggro",
+      "field": "threshold",
+      "from": "p.Wolf"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "merge-partial-fields/t.aw",
+    "line": 10
+  }
+}

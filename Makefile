@@ -48,7 +48,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
         values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke stack-play \
-        kind-platform stream-soak
+        kind-platform stream-soak content-grammar-check
 
 ## help: print this target list
 help:
@@ -112,7 +112,7 @@ schemas-check:
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
                  backlog-check status-check values-schema-check k8s-dry helm-test \
-                 license-check
+                 license-check content-grammar-check
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -206,6 +206,10 @@ status-check:
 ## validate-stories: schema-check frontmatter, resolve IDs, detect cycles
 validate-stories:
 	@$(PY) $(SCRIPTS)/validate_stories.py
+
+## content-grammar-check: parse the Content Language corpus against grammar.ebnf (AW-CLI-005 AC-1)
+content-grammar-check:
+	@$(PY) $(SCRIPTS)/content_grammar_check.py
 
 ## graph: emit the story dependency DAG as mermaid
 graph:

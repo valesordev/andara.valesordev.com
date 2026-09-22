@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "The \"Old\" Quarter",
+  "rooms": [
+    {
+      "id": "r",
+      "title": "Backslash \\ Alley",
+      "description": "First line.\nSecond line, after an explicit break."
+    }
+  ]
+}

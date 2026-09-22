@@ -2,14 +2,15 @@
 
 # Status — Andara's World
 
-51 stories — 1 in-progress · 3 review · 30 ready · 17 done
+51 stories — 2 in-progress · 3 review · 29 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    — nothing in flight
-  next   AW-CLI-005  ready  Content Language v1 — grammar, semantics, error contrac…  (unblocks 1)
+  now    AW-CLI-005  Content Language v1 — grammar, semantics, error contract, and conformance corp…
+         branch aw-cli-005-content-language-specification
   next   AW-INF-008  ready  Cluster observability wiring — the chart's metrics, log…  (unblocks 1)
+  next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   held   5 ready, blocked: AW-INF-007, AW-INF-009, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
@@ -23,7 +24,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Decisions the lanes are waiting on
 
-  AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
+  AW-CLI-005  Syntax review (AC-10)
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
               8 more, attached to stories neither lane has reached

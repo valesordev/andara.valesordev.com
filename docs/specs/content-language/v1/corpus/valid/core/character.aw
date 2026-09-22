@@ -1,0 +1,1 @@
+template Character extends Entity {}

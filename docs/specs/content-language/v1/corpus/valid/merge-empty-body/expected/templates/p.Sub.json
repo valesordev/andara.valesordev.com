@@ -1,0 +1,32 @@
+{
+  "formatVersion": 1,
+  "name": "p.Sub",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Base",
+    "p.Sub"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "base.idle"
+        }
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "p.Base"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "merge-empty-body/t.aw",
+    "line": 9
+  }
+}

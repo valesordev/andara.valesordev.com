@@ -1,0 +1,12 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "r",
+      "title": "Room",
+      "description": "Stalls crowd the cobbles, and the smell of tar comes up from the harbour whenever the wind turns. Nobody here will meet your eye for long."
+    }
+  ]
+}

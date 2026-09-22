@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "name": "andara.core.Npc",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core/npc.aw",
+    "line": 1
+  }
+}

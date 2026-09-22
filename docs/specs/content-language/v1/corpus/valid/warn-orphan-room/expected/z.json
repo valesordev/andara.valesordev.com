@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "dunes",
+      "title": "The Dunes",
+      "exits": [
+        {
+          "direction": "south",
+          "toRoom": "shore"
+        }
+      ]
+    },
+    {
+      "id": "island",
+      "title": "The Island"
+    },
+    {
+      "id": "shore",
+      "title": "The Shore",
+      "exits": [
+        {
+          "direction": "north",
+          "toRoom": "dunes"
+        }
+      ]
+    }
+  ]
+}

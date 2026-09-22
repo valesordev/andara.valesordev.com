@@ -7,3 +7,8 @@
 PyYAML==6.0.3
 # reuse verifies REUSE.toml and LICENSES/ for `make license-check` (LICENSING.md).
 reuse==6.2.0
+# lark parses docs/specs/content-language/v1/grammar.ebnf for `make content-grammar-check`
+# (AW-CLI-005 AC-1): the Content Language grammar is checked by a parser generator rather
+# than by reading, which is the only one of that story's criteria that does not need the
+# compiler AW-CLI-006 has yet to write.
+lark==1.2.2

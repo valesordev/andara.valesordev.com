@@ -1,0 +1,35 @@
+{
+  "formatVersion": 1,
+  "name": "p.Wolf",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Creature",
+    "p.Wolf"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "wilds.wolf"
+        }
+      ]
+    },
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "p.Wolf"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "templates/templates.aw",
+    "line": 7
+  }
+}

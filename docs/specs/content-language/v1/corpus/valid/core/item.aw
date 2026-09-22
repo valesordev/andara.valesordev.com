@@ -1,0 +1,1 @@
+template Item kind item {}

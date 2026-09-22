@@ -195,7 +195,8 @@ version needs no fresh approval (`AW-SRV-013`).
 **Content Language** — The purpose-built, text-based language Builders author content in, compiled by
 `andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
 of the compiled output. Source files use the `.aw` extension and are published alongside the compiled
-blobs so a Builder can fetch back what they wrote. Its specification is `AW-CLI-005`; its compiler,
+blobs so a Builder can fetch back what they wrote. Its specification is
+`docs/specs/content-language/v1/` (`AW-CLI-005`); its compiler,
 formatter, and decompiler are `AW-CLI-006`; the Builder commands are `AW-CLI-003`.
 
 **Content Pack** — A versioned bundle of Zone Definitions, Item Definitions, NPC Definitions, and

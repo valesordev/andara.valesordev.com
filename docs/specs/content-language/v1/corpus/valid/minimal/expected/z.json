@@ -1,0 +1,11 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "A Zone",
+  "rooms": [
+    {
+      "id": "r",
+      "title": "A Room"
+    }
+  ]
+}

@@ -23,13 +23,20 @@ SPDX-FileCopyrightText = "2026 Valesor Development"
 SPDX-License-Identifier = "CC-BY-SA-4.0"
 
 # Machine-readable artifacts under docs/ are source, not prose. The protocol compiles into
-# gen/, which inherits its license; migrations and schema files run against a database.
+# gen/, which inherits its license; migrations and schema files run against a database; the
+# Content Language grammar is consumed by a parser generator and its corpus is compiled by
+# andara-cli, so both are source in the same sense a .proto is (AW-CLI-005).
 [[annotations]]
 path = [
   "docs/specs/protocol/**/*.proto",
   "docs/specs/protocol/buf.yaml",
   "docs/specs/schema/**/*.sql",
   "docs/specs/schema/**/*.json",
+  "docs/specs/content-language/**/*.ebnf",
+  "docs/specs/content-language/**/corpus/**/*.aw",
+  "docs/specs/content-language/**/corpus/**/*.json",
+  "docs/specs/content-language/**/corpus/**/*.errors",
+  "docs/specs/content-language/**/corpus/**/PENDING",
 ]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Valesor Development"

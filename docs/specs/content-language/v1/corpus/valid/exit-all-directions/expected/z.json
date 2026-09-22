@@ -1,0 +1,181 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "down_room",
+      "title": "Room down",
+      "exits": [
+        {
+          "direction": "up",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "east_room",
+      "title": "Room east",
+      "exits": [
+        {
+          "direction": "west",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "hub",
+      "title": "The Hub",
+      "exits": [
+        {
+          "direction": "down",
+          "toRoom": "down_room"
+        },
+        {
+          "direction": "east",
+          "toRoom": "east_room"
+        },
+        {
+          "direction": "in",
+          "toRoom": "in_room"
+        },
+        {
+          "direction": "north",
+          "toRoom": "north_room"
+        },
+        {
+          "direction": "northeast",
+          "toRoom": "northeast_room"
+        },
+        {
+          "direction": "northwest",
+          "toRoom": "northwest_room"
+        },
+        {
+          "direction": "out",
+          "toRoom": "out_room"
+        },
+        {
+          "direction": "south",
+          "toRoom": "south_room"
+        },
+        {
+          "direction": "southeast",
+          "toRoom": "southeast_room"
+        },
+        {
+          "direction": "southwest",
+          "toRoom": "southwest_room"
+        },
+        {
+          "direction": "up",
+          "toRoom": "up_room"
+        },
+        {
+          "direction": "west",
+          "toRoom": "west_room"
+        }
+      ]
+    },
+    {
+      "id": "in_room",
+      "title": "Room in",
+      "exits": [
+        {
+          "direction": "out",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "north_room",
+      "title": "Room north",
+      "exits": [
+        {
+          "direction": "south",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "northeast_room",
+      "title": "Room northeast",
+      "exits": [
+        {
+          "direction": "southwest",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "northwest_room",
+      "title": "Room northwest",
+      "exits": [
+        {
+          "direction": "southeast",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "out_room",
+      "title": "Room out",
+      "exits": [
+        {
+          "direction": "in",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "south_room",
+      "title": "Room south",
+      "exits": [
+        {
+          "direction": "north",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "southeast_room",
+      "title": "Room southeast",
+      "exits": [
+        {
+          "direction": "northwest",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "southwest_room",
+      "title": "Room southwest",
+      "exits": [
+        {
+          "direction": "northeast",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "up_room",
+      "title": "Room up",
+      "exits": [
+        {
+          "direction": "down",
+          "toRoom": "hub"
+        }
+      ]
+    },
+    {
+      "id": "west_room",
+      "title": "Room west",
+      "exits": [
+        {
+          "direction": "east",
+          "toRoom": "hub"
+        }
+      ]
+    }
+  ]
+}

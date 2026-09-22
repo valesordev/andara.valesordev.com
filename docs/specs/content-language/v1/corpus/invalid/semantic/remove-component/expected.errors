@@ -1,0 +1,4 @@
+t.aw:4:3: removed_by_subtype
+  andara.core.Entity
+  andara.core.Npc
+  p.Forgetful

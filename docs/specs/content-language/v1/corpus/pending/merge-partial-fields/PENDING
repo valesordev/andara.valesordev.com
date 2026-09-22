@@ -1,0 +1,5 @@
+AW-SRV-021 — a core Component with more than one field
+The registry's only field-bearing Component is andara.core.Behavior{name: string},
+so field-by-field merge across two fields — and the int64 and bool literals the
+language specifies — are unreachable from valid content until the vocabulary grows.
+andara.core.Aggro{threshold: int64, enabled: bool} is ADR-0010's own example.

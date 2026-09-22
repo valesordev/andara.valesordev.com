@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Base",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Base"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "extends-bare-and-dotted/t.aw",
+    "line": 2
+  }
+}

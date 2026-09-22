@@ -1,0 +1,19 @@
+{
+  "formatVersion": 1,
+  "name": "p.D07",
+  "kind": "ENTITY",
+  "chain": [
+    "p.D01",
+    "p.D02",
+    "p.D03",
+    "p.D04",
+    "p.D05",
+    "p.D06",
+    "p.D07"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "chain-max-depth/t.aw",
+    "line": 15
+  }
+}
