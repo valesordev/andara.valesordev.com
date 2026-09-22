@@ -86,12 +86,30 @@ for outcome in closed dropped rejected_version rejected_auth; do
   [[ "$n" -gt 0 ]] || fail "andara_sessions_total{outcome=\"$outcome\"} is absent; the enum is not pre-seeded"
 done
 
-rejected="$(curl -sf --get "$PROM/api/v1/query" \
-  --data-urlencode 'query=andara_sessions_total{outcome="rejected_version"}' \
-  | "${PY:-python3}" -c 'import json,sys
+# Poll this one rather than asserting it once. The wait above proves a scrape has
+# happened, not that it happened *after* the rejection: the Go tests all complete
+# before polling starts, and andara_grpc_requests_total gains its series on the
+# first RPC of the run — which is several tests before the out-of-range Session.
+# A scrape landing mid-run therefore satisfies the wait while still carrying
+# rejected_version=0, and the assertion read a stale scrape. That is a race the
+# script loses roughly whenever a scrape falls inside the ~2s test window.
+value() {
+  curl -sf --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
+    | "${PY:-python3}" -c 'import json,sys
 r = json.load(sys.stdin)["data"]["result"]
-print(r[0]["value"][1] if r else "0")')"
-[[ "${rejected%.*}" -ge 1 ]] || fail "the out-of-range Session was not counted as rejected_version"
+print(r[0]["value"][1] if r else "0")'
+}
+
+counted=0
+for _ in $(seq 1 30); do
+  rejected="$(value 'andara_sessions_total{outcome="rejected_version"}' 2>/dev/null || echo 0)"
+  if [[ "${rejected%.*}" -ge 1 ]]; then
+    counted=1
+    break
+  fi
+  sleep 3
+done
+[[ "$counted" == "1" ]] || fail "the out-of-range Session was not counted as rejected_version (90s)"
 
 echo "stack-smoke: a Session opened over TLS and Prometheus counted it"
 
