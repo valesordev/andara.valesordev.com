@@ -237,7 +237,7 @@ from the newest snapshot the older binary can read, which is what `AW-INF-007` d
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
 | `snapshot.interval` | `ANDARA_SNAPSHOT_INTERVAL` | `60s` | per round; `slo/recovery.md`. **`0` disables snapshots entirely** |
-| `snapshot.max_stall_ms` | `ANDARA_SNAPSHOT_MAX_STALL_MS` | `5` | AC-1 threshold; a warn, not a refusal |
+| `snapshot.max_stall_ms` | `ANDARA_SNAPSHOT_MAX_STALL_MS` | `15` | AC-1 threshold; a warn, not a refusal |
 | `snapshot.store` | `ANDARA_SNAPSHOT_STORE` | `fs` | `fs` or `s3` |
 | `snapshot.fs_path` | `ANDARA_SNAPSHOT_FS_PATH` | `/var/lib/andara/snapshots` | the volume `AW-INF-003` mounts |
 | `snapshot.s3_bucket` | `ANDARA_SNAPSHOT_S3_BUCKET` | — | required when `store=s3` |
@@ -296,8 +296,16 @@ and `make check` fails a bump that arrives without a migration. See the Definiti
 Snapshot cadence trades storage and write cost against recovery time, and it is also the rebalance
 stall when ADR-0001's sharding is activated — a second consumer of the same number.
 
-Storage growth: one round per minute per Zone. No retention here; `AW-INF-007` decides how many rounds
-to keep, because that is a rollback-window question.
+Storage growth: one round per minute per Zone, and with the tick in the key an idle Zone now writes a
+new object each round rather than overwriting its last — the object count is the round count, which it
+was not before. No retention here; `AW-INF-007` decides how many rounds to keep, because that is a
+rollback-window question.
+
+At the 25,000-Entity fixture scale a body is roughly 2.5× what it was, which lands on the "load newest
+snapshot" term in `docs/specs/slo/recovery.md` — quoted there as 1–5 s inside a ~20–55 s total against
+a 120 s M2 target. That document's own conclusion is that Kubernetes failure detection and pod startup
+dominate recovery, not the simulation, so the target is not threatened; it is worth re-checking when
+the term is measured rather than estimated.
 
 ## Observability requirements
 
@@ -343,7 +351,7 @@ to keep, because that is a rollback-window question.
 - **Unit:** canonical encode byte-identity (AC-2); migration chain across `state_version` 1→2→3 with a
   refused 4 (AC-4); sorted `repeated` invariants; `Encode` of a Snapshot after the engine has advanced
   proves the copy is immutable.
-- **Integration:** sizing fixture — 2,000 Rooms across 16 Zones, 10,000 Entities, 500 Characters —
+- **Integration:** sizing fixture — 2,000 Rooms across 16 Zones, 25,000 Entities, 500 Characters —
   asserting AC-1 under a tick loop at 10 Hz; injected `Put` failure on one Zone asserting AC-5 and AC-6;
   filesystem store crash mid-write (kill between tmp write and rename) asserting AC-5; `SnapshotWritten`
   round-trip against a throwaway Redpanda (AC-7).
@@ -382,12 +390,41 @@ CLAUDE.md §8, plus:
 
 ### Sizing fixture, measured
 
-16 Zones, 2,000 Rooms, 10,000 Entities, 500 Characters. AMD Ryzen 9 3900X, worst of 5 rounds.
+**Fixture scale decided 2026-09-22 (Brian): 25,000 Entities**, up from 10,000, for headroom as the
+World grows. 16 Zones, 2,000 Rooms and 500 Characters are unchanged — see the note below on why.
+`snapshot.max_stall_ms` moves from `5` to `15` with it.
 
-| What the tick does at the boundary | Worst round | Budget |
+Measured at **10,000** Entities, AMD Ryzen 9 3900X, worst of 5 rounds:
+
+| What the tick does at the boundary | Worst round | Budget then |
 |---|---|---|
 | Copy **and hash** each Zone | 24.7 ms | 5 ms |
 | Copy only; hash off-tick | **2.7 ms** uncontended, **4.8 ms** under load | 5 ms |
+
+At **25,000**, *extrapolated linearly and not yet measured*: ~6.8 ms uncontended, ~12 ms under load.
+**Measure it and replace this line with the real numbers.** The extrapolation is from a single point,
+and the copy is O(Entities × Component fields), so it holds only while the Component mix per Entity
+stays roughly what the fixture builds.
+
+**Why `max_stall_ms` is `15` and not `5`.** The load-bearing constraint is ADR-0008's: the copy runs
+inside the tick, so what must hold is *copy + tick work under the 50 ms tick budget*. 15 ms of copy on
+top of a tick that measures under 1 ms at the idle floor is 16 ms of 50 — and the 5 ms was never
+derived from anything, it was headroom this story reserved for handler work that mostly does not exist
+yet. 15 ms clears the extrapolated loaded figure with margin, and if the measurement comes in
+differently the rule is roughly **twice the measured loaded number**.
+
+**And it does not move p50.** A round is one tick in 600 — a 60 s cadence at 10 Hz — so the stall is a
+p99.8 event, not a typical tick. That matters because ADR-0001's "revisit sharding when p50 tick
+duration exceeds 25 ms" is the trigger a large stall would otherwise threaten, and a once-a-minute
+spike cannot move a median. `andara_snapshot_tick_stall_seconds` is a separate histogram precisely so
+this is visible on its own rather than smeared into tick duration.
+
+**Why only the Entity count moved.** Rooms are topology: content-versioned and hashed by AW-SRV-012's
+`ContentSwap`, not carried in `ZoneState` at all, so Room count does not enter the boundary copy. The
+Character count is a concurrency assumption — how many bodies are bound at once — rather than a
+statement about World size, and 25,000 Entities over 2,000 Rooms does raise average Room occupancy to
+about 12.5, which is a perception-scoping cost (`AW-SRV-004`) and a `look` cost rather than a snapshot
+one. Both are worth their own look; neither is this story's.
 
 **The first row is why `StateHash` is a method.** A field is filled where the struct is built, and the
 struct is built inside the tick; a CPU profile put 18% of the round in `sim.writeEscaped`, because the
@@ -424,11 +461,10 @@ plus the recovery it implies, and recovery duration follows snapshot age.
 - ~~`[ASSUMPTION]` Copy-on-write at the tick boundary rather than stop-the-world serialize.~~
   **Holds, measured 2026-09-22** — see the fixture table above — but only once hashing moved off the
   tick, and with less headroom than the assumption implied.
-- `[ASSUMPTION]` **Open, and Brian's.** World scale for the sizing fixture: 2,000 Rooms, 10,000
-  Entities, 500 Characters. Now committed as `server/simtest/sizing.go` and asserted by a test, so
-  revising it is one change — but the measured margin above makes the number consequential rather than
-  illustrative, and doubling Entity count breaks AC-1. Worth deciding deliberately rather than
-  inheriting.
+- `[ASSUMPTION]` **Fixture scale decided 2026-09-22 (Brian): 2,000 Rooms, 25,000 Entities, 500
+  Characters**, with `snapshot.max_stall_ms` at `15` to match. What remains an assumption is that the
+  fixture stands in for the World the game actually holds; if it does not, `server/simtest/sizing.go`
+  is the one constant to change and a failing test is how you find out.
 - ~~`[ASSUMPTION]` Discovery via `WorldStore.List` rather than by reading the manifest out of the
   log.~~ **Resolved 2026-09-22, and cheaper than when it was written.** ADR-0002 says "recovery finds
   snapshots by reading the log it already reads"; this story keeps the manifest in the log for audit

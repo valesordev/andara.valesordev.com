@@ -5,9 +5,10 @@
 > under 1 ms, a burst of 20,000 rejected Commands at 1,024 per tick stays under 1 ms per tick,
 > and lag holds under 1 ms; through a ten-second broker outage the loop kept 10 Hz applying
 > nothing. Both targets hold with two orders of magnitude of margin at the floor. They are to be
-> **re-validated on the sizing fixture** (2,000 Rooms / 10,000 Entities / 500 Characters,
+> **re-validated on the sizing fixture** (2,000 Rooms / 25,000 Entities / 500 Characters,
 > `AW-SRV-006`) once verb handlers exist (`AW-SRV-003`), which is where the budget will first
-> be spent. The alert rule and runbook ship with `AW-SRV-002`.
+> be spent. The Entity count was 10,000 when this was written and is 25,000 as of 2026-09-22
+> (Brian); `server/simtest/sizing.go` is the one place it lives. The alert rule and runbook ship with `AW-SRV-002`.
 
 Tick duration, tick overrun, and simulation lag are first-class SLIs from the first server story onward,
 not retrofitted (CLAUDE.md §7). This document is what the alert hangs from.
