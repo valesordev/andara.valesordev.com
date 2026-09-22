@@ -77,7 +77,7 @@ func TestSnapshotOfIdenticalStateHashesIdentically(t *testing.T) {
 		if a[i].Zone != b[i].Zone {
 			t.Fatalf("round order is not stable: %q then %q", a[i].Zone, b[i].Zone)
 		}
-		if a[i].StateHash != b[i].StateHash {
+		if a[i].StateHash() != b[i].StateHash() {
 			t.Fatalf("zone %q hashed differently across two identical worlds", a[i].Zone)
 		}
 	}
@@ -92,8 +92,8 @@ func TestSnapshotStateHashIsTheZoneHash(t *testing.T) {
 		if !ok {
 			t.Fatalf("no zone hash for %q", s.Zone)
 		}
-		if s.StateHash != want {
-			t.Fatalf("zone %q: snapshot hash %x, sim hash %x", s.Zone, s.StateHash, want)
+		if s.StateHash() != want {
+			t.Fatalf("zone %q: snapshot hash %x, sim hash %x", s.Zone, s.StateHash(), want)
 		}
 	}
 }

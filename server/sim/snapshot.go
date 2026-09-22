@@ -42,9 +42,6 @@ type Snapshot struct {
 	// per object means a round remains restorable when only some of its
 	// objects survive.
 	Offsets []PartitionOffset
-	// StateHash is the Zone's hash at Tick — WorldState.ZoneHash, not the
-	// World's. See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
-	StateHash [32]byte
 	// TakenAtUnixNano is diagnostic only and is stamped at the boundary, not
 	// at Encode, so that encoding the same Snapshot twice produces the same
 	// bytes (AC-2).
@@ -54,6 +51,9 @@ type Snapshot struct {
 	// holds a reference to it once SnapshotAll returns, so the off-tick
 	// encoder races with nothing.
 	body *ZoneState
+	// hash caches what StateHash computed. See StateHash.
+	hash   [32]byte
+	hashed bool
 	// prng and nextEventID are process-wide rather than Zone-scoped, so every
 	// Snapshot in a round carries the same values. Copied here because the
 	// body must carry them and the body is per-Zone.
@@ -64,6 +64,27 @@ type Snapshot struct {
 // Body exposes the copied Zone state. It is the encoder's input and a test's
 // window onto what the boundary actually captured; callers must not mutate it.
 func (s *Snapshot) Body() *ZoneState { return s.body }
+
+// StateHash is the Zone's State Hash at Tick — the per-Zone hash the envelope
+// carries, not the World's. See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
+//
+// Computed here, off the tick, rather than at the boundary. Hashing is
+// encoding: it walks every Entity, every Component, and every field and
+// escapes each one into a canonical record, and at the sizing fixture's scale
+// it costs five times what the copy does. The story's rule — "the only work
+// inside the tick is the state copy; encoding and upload run off-tick" —
+// covers it, and measuring AC-1 is what showed that it had to.
+//
+// Safe to compute late because the body is immutable after the boundary: the
+// hash of a copy taken at tick N is the hash of the Zone at tick N whenever it
+// is taken. The result is cached, and one Snapshot is hashed by one goroutine
+// — the round that owns it.
+func (s *Snapshot) StateHash() [32]byte {
+	if !s.hashed {
+		s.hash, s.hashed = zoneHash(s.body), true
+	}
+	return s.hash
+}
 
 // PRNG returns the process-wide generator state the snapshot carries.
 func (s *Snapshot) PRNG() [4]uint64 { return s.prng }
@@ -138,7 +159,6 @@ func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot {
 			// Shared across the round: every Snapshot gets the same slice
 			// because nothing writes to it after this loop.
 			Offsets:         offsets,
-			StateHash:       zoneHash(z),
 			TakenAtUnixNano: takenAtUnixNano,
 			body:            z.Clone(),
 			prng:            s.RNG.State(),

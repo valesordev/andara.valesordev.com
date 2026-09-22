@@ -125,7 +125,47 @@ the test plan are all implemented and tested. The line is carried forward to the
 that genuinely changes what state *means* — AW-SRV-015 is the likely candidate, since
 `linkdead_since_tick` is listed in the sketch and is not in version 1.
 
-## 7. The `s3` store adds a third-party dependency
+## 7. AC-1 holds, but only because hashing moved off the tick — and the margin is thin
+
+**Measured**, `server/simtest` sizing fixture (16 Zones, 2,000 Rooms, 10,000 Entities, 500
+Characters), AMD Ryzen 9 3900X:
+
+| What the tick does at the boundary | Worst of 5 rounds | Budget |
+|---|---|---|
+| Copy **and hash** each Zone | **24.7 ms** | 5 ms |
+| Copy only; hash off-tick | **2.7 ms** uncontended, 4.8 ms under load | 5 ms |
+
+The first row was the obvious reading of the contract sketch, whose `Snapshot` carries
+`StateHash` as a field alongside the body — a field is naturally filled at construction, and
+`SnapshotAll` is the constructor. A CPU profile put 18% of the round in `sim.writeEscaped`:
+the per-Zone hash walks every Entity, Component, and field and escapes each into a canonical
+record, which is five times the cost of the copy itself.
+
+The story's own rule settles it — "the only work inside the tick is the state copy; encoding
+and upload run off-tick" — and hashing is encoding. `Snapshot.StateHash()` is therefore a
+method that computes off-tick and caches, not a field. This is safe precisely because of the
+copy-on-write design: the body is immutable after the boundary, so the hash of the copy is the
+hash of the Zone at that tick whenever it is taken.
+
+**Suggested amendment.** The contract sketch should show `StateHash()` as a method, or say in
+words that the hash is computed off-tick. As written it invites the 24.7 ms implementation, and
+the only thing that catches it is having built AC-1's fixture first.
+
+**The margin is worth architecture's attention.** 2.7 ms of a 5 ms stall budget, and 4.8 ms
+when the machine is otherwise busy, is not much headroom on a fixture whose Entity count is
+itself an `[ASSUMPTION]`. Two consequences follow, neither of them this story's to decide:
+
+- Entity count is the term that moves. Doubling to 20,000 Entities puts the copy over the
+  budget, and the story's stated fallback — staggering Zones across boundaries — reintroduces
+  the cross-Zone consistency problem the single cut exists to avoid.
+- The copy is also the rebalance stall when ADR-0001's sharding activates, which the story's
+  Data/state impact already names as a second consumer of the same number.
+
+No change made here beyond moving the hash: the story's assumption holds at the fixture's
+documented scale, and the fixture and its numbers are committed so that a later change to World
+scale is a visible change to a failing test rather than a silent drift.
+
+## 8. The `s3` store adds a third-party dependency
 
 `snapshot.store=s3` needs an S3 client; `go.mod` has none today. Recorded here because a new
 direct dependency is a standing architectural commitment (`LICENSES/`, `REUSE.toml`, and
