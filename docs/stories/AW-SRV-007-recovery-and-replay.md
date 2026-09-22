@@ -82,6 +82,17 @@ match, so that a crash is an interruption rather than an incident.
    every Partition and reaches ready with a hash matching the last `TickCompleted`.
 10. **Given** `recover --verify --round 4200` **when** it runs **then** it loads that round, replays to
     head, prints `match` or `mismatch` with both hashes, exits `0` or `2`, and never binds `grpc.listen`.
+11. **Given** a round whose Zone objects carry disagreeing `prng_state` or `next_event_id` **when** the
+    round is loaded **then** it is refused, naming the Zones and both values; the round is not
+    selectable and recovery falls back to the newest round that agrees.
+    **Added 2026-09-22, from `AW-SRV-006`'s implementation (feedback §4).** `sim.WorldState` holds one
+    PRNG and one `NextEventID` for the World, not one per Zone, but `ZoneState` carries both — so every
+    object in a round repeats the same two values. A round is one cut at one tick, so they agree by
+    construction, and the repetition is what lets a Zone be restored alone with the PRNG state replay
+    needs. Which means a round where they *disagree* is a round assembled from two different cuts, and
+    restoring it would seed replay with a generator that never produced the recorded history. This
+    criterion also fixes which copy wins when they agree: any of them, because they are equal — the
+    check is the contract, not a tie-break.
 
 ## Interface contract
 
@@ -98,6 +109,13 @@ type Round struct {
 
 // ListRounds groups WorldStore keys by tick and marks completeness against the
 // process's owned Zones. Newest first.
+//
+// The grouping is a prefix scan: the key is
+// {zone_id}/{state_version}/{tick}/{offset} (AW-SRV-006, amended 2026-09-22),
+// so the tick a key belongs to is in the key and a round needs no Get per
+// candidate to discover it. Completeness is still a per-object hash check, so
+// verifying a round does read every object it names — discovery is what the
+// key format makes cheap, not verification.
 func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error)
 
 // Recover is the whole boot-time path. It returns a ready Engine or a typed error.
@@ -142,8 +160,17 @@ completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 | Command | RPC | Output |
 |---------|-----|--------|
 | `andara-server recover --verify [--round T]` | — | `match`/`mismatch`, both hashes, phase timings; exit per table |
-| `andara-cli snapshot list [--zone Z]` | `Admin.ListSnapshotRounds` | table: tick, state_version, zones, complete, age |
+| `andara-cli snapshot list [--zone Z] [--local]` | `Admin.ListSnapshotRounds`, or none with `--local` | table: tick, state_version, zones, complete, age |
 | `andara-cli snapshot verify --round T` | `Admin.VerifySnapshotRound` | `match`/`mismatch`; runs server-side against a scratch Engine, never the live one |
+
+**`--local` reads the configured store directly and issues no RPC. Added 2026-09-22, from
+`AW-SRV-006`'s implementation (feedback §9).** That story's test plan called `andara-cli snapshot
+list` before this story's `Admin` RPC existed, and it was implemented against the store rather than by
+defining this story's contract from the implementation lane — which was the right call. The two
+readings are not redundant and both are worth keeping: the `Admin` path answers *what does the running
+server see*, `--local` answers *what is actually in the bucket*. A runbook wants the second precisely
+when the first disagrees with it, or when no server is running — which is the state a recovery starts
+from. One command with a flag rather than two command names, so an operator learns one.
 
 ```protobuf
 // CONTRACT SKETCH — added to andara/admin/v1/admin.proto

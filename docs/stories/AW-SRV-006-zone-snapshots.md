@@ -40,8 +40,8 @@ length of the world's entire history.
   run off-tick.
 - The snapshot **body** — `andara.state.v1.ZoneState` — and `state_version` handling from the first
   snapshot written.
-- Object storage keyed `{zone_id}/{state_version}/{offset}`; a filesystem implementation for `make up`
-  and tests, an S3-compatible implementation for the cluster.
+- Object storage keyed `{zone_id}/{state_version}/{tick}/{offset}`; a filesystem implementation for
+  `make up` and tests, an S3-compatible implementation for the cluster.
 - A `SnapshotWritten` control record on `andara.events.v1` after each object is durable.
 - Cadence: `snapshot.interval` **60 s** per round (`docs/specs/slo/recovery.md`).
 
@@ -77,6 +77,15 @@ length of the world's entire history.
 8. **Given** `snapshot.interval` elapsed **when** the next tick boundary arrives **then** the round
    starts on that boundary and not mid-tick; the envelope `tick` equals the `TickCompleted.tick`
    emitted for the same boundary.
+   **Amended 2026-09-22, with the failure mode that forced it.** A boundary that was *not* published
+   — `Publish` returning an error, `ErrBoundaryLost` most clearly — leaves no `TickCompleted` for the
+   round to equal, and the criterion as first written did not say what happens then. It says it now:
+   **no round starts on a boundary that was not published.** A snapshot without its boundary record is
+   one `AW-SRV-007` cannot verify (its AC-4 and AC-5 both compare against the log), and writing one
+   anyway keeps `andara_snapshot_age_seconds` reporting health through exactly the outage where
+   recovery time is about to matter. `AW-SRV-026` makes the `ErrBoundaryLost` case terminal by exiting
+   `5` within a tick; this criterion holds whether or not that story has landed, and covers the
+   non-terminal publish failures it does not.
 
 ## Interface contract
 
@@ -91,10 +100,22 @@ type Snapshot struct {
     Tick         Tick
     StateVersion uint32
     Offsets      []PartitionOffset   // sorted by partition
-    StateHash    [32]byte
     body         *ZoneState          // immutable after the boundary
 }
 func (s *Snapshot) Encode() ([]byte, error)      // canonical andara.state.v1.SnapshotEnvelope
+
+// StateHash is a METHOD, not a field, and this is load-bearing. See the
+// amendment below: a field is filled where the struct is built, which is
+// inside the tick, and the hash costs about five times the copy it would
+// accompany. It computes off-tick and caches. Safe because the body is
+// immutable after the boundary: the hash of the copy is the hash of the Zone
+// at that tick whenever it is taken.
+func (s *Snapshot) StateHash() [32]byte
+func (s *Snapshot) Key() string                  // SnapshotKey of this Snapshot's four values
+
+// Formatted in one place so the store, the CLI, and AW-SRV-007 produce the
+// same string from the same values rather than each formatting it by hand.
+func SnapshotKey(zone ZoneID, stateVersion uint32, tick Tick, offset int64) string
 
 // SnapshotAll is called by the loop at a boundary and never anywhere else.
 func (e *Engine) SnapshotAll() []Snapshot
@@ -104,38 +125,106 @@ func (e *Engine) SnapshotAll() []Snapshot
 type WorldStore interface {
     Put(ctx context.Context, key string, envelope []byte) error   // atomic: visible only when complete
     Get(ctx context.Context, key string) ([]byte, error)
-    List(ctx context.Context, zone ZoneID) ([]string, error)      // keys, newest offset first
+    List(ctx context.Context, zone ZoneID) ([]string, error)      // keys, newest tick first
 }
 ```
 
-Key format: `{zone_id}/{state_version}/{offset}` where `offset` is the Zone's Partition offset at the
-boundary, zero-padded to 20 digits so lexical order is offset order. `Put` is atomic in both
-implementations: S3 `PutObject` is; the filesystem store writes to `{key}.tmp` and renames.
+Key format: `{zone_id}/{state_version}/{tick}/{offset}`, where `tick` is the boundary the round was
+taken at and `offset` is the Zone's Partition offset there. Both are zero-padded to 20 digits, so a
+lexical listing is a tick-ordered listing and the newest round is the last key under a Zone's prefix.
+`Put` is atomic in both implementations: S3 `PutObject` is; the filesystem store writes to `{key}.tmp`
+and renames.
+
+**Amended 2026-09-22, with the failure mode that forced it.** This was
+`{zone_id}/{state_version}/{offset}`, with no tick. That is wrong in two ways, and both of them are
+mine rather than the implementation's — the branch followed the contract exactly as written.
+
+*It loses the previous complete round during a partial failure, which is the one case `AC-5` exists
+for.* A Zone that received no Command since the last round is at the same offset, so it writes the
+same key again. Zone A idle at offset 50 writes its object at tick 100; at tick 200 it is still at
+offset 50 and **overwrites that object** with tick 200. If Zone B's `Put` fails in that second round,
+tick 100 has lost A and tick 200 never got B: neither round is complete, and a store outage that
+should have cost one round has cost every round. `AC-5`'s "the previous round remains the newest
+complete one" does not hold, and `AC-6`'s "that round is reported incomplete" loses the premise that
+some *other* round is not.
+
+*And it cannot support the contract this story already hands to `AW-SRV-007`*, whose `ListRounds`
+"groups `WorldStore` keys by tick" and whose `recover --round T` and `snapshot verify --round T` both
+select a round by tick. A key with no tick in it supports none of the three. Discovery would have had
+to be a `List` plus a `Get` per candidate just to read each envelope's tick back out.
+
+The tick is therefore in the key, and the offset stays: it keeps the key self-describing for the seek
+and keeps `SnapshotKey` a pure function of values the `Snapshot` already holds. One object per Zone
+per round, no overwrite, and round grouping is a prefix scan. The story's own storage-growth line —
+"one round per minute per Zone" — already assumed this shape; offset-keying was quietly under-counting
+it. Raised by an automated review on `PR #46` and confirmed against `AW-SRV-007`'s contract.
 
 ### Body
 
-```protobuf
-// CONTRACT SKETCH — not an implementation; goes in andara/state/v1/zone_state.proto
-message ZoneState {
-  string zone_id = 1;
-  uint64 tick = 2;
-  bytes prng_state = 3;                       // the sim PRNG, so replay after restore is exact
-  repeated EntityState entities = 4;          // sorted by entity_id
-  repeated andara.log.v1.LoggedCommand deferred = 5;  // records deferred by sim.max_per_tick, in order
-  uint64 next_event_id = 6;
-}
-message EntityState {
-  string entity_id = 1;
-  string room_id = 2;
-  repeated andara.content.v1.ComponentValue components = 3;  // sorted by type
-  uint64 linkdead_deadline_tick = 4;          // 0 when not linkdead (AW-SRV-015)
-  // 5–9: dormant, dormant_since_tick (AW-SRV-014); linkdead_since_tick (AW-SRV-015);
-  //      template, content_version (AW-SRV-022). Each bumps state_version by one.
-}
-```
+The normative file is `docs/specs/protocol/andara/state/v1/zone_state.proto`. It arrives with
+`PR #46` and is not on `main` until that merges; the table below is what it says, so this story stands
+on its own in the meantime.
+
+| `ZoneState` | # | Notes |
+|---|---:|---|
+| `zone_id` | 1 | |
+| `tick` | 2 | equal to the envelope's tick and to `TickCompleted.tick` for the same boundary |
+| `prng_state` | 3 | the sim PRNG, four words big-endian. Process-wide — see below |
+| `entities` | 4 | sorted by `entity_id` |
+| `deferred` | 5 | defined, **never populated** — see below |
+| `next_event_id` | 6 | process-wide, like `prng_state` |
+| `faulted` | 7 | set when applying a Command panicked in this Zone (`AW-SRV-002` AC-12) |
+| `faulted_tick` | 8 | |
+
+| `EntityState` | # | Notes |
+|---|---:|---|
+| `entity_id` | 1 | |
+| `room_id` | 2 | the Zone is implicit (ADR-0001 rule 3), so a RoomID is the whole position |
+| `components` | 3 | sorted by type, fields sorted by name, both re-established on encode |
+| `linkdead_deadline_tick` | 4 | `AW-SRV-015`; nothing writes it yet |
+| `dormant` | 5 | `AW-SRV-014` |
+| `dormant_since_tick` | 6 | `AW-SRV-014`; `AW-SRV-032`'s retention reads it |
+| — | 7 | `AW-SRV-015`'s `linkdead_since_tick`. Left **unused, not reserved**: a reserved range has to shrink to be used, and `buf` counts that as breaking |
+| `template` | 8 | `AW-SRV-022` |
+| `content_version` | 9 | `AW-SRV-022` |
+| `name` | 10 | a Character's display name, immutable, carried by the `BindCharacter` that made the body (`AW-SRV-014`) |
 
 Determinism rules of `log.proto` apply. `SnapshotEnvelope.body` carries the serialized `ZoneState`;
 the envelope itself is unchanged.
+
+**Amended 2026-09-22, with the two stories that had merged underneath it.** The sketch this replaces
+reserved 5–9 in a comment for "dormant, dormant_since_tick (`AW-SRV-014`); linkdead_since_tick
+(`AW-SRV-015`); template, content_version (`AW-SRV-022`)" and assigned none of them, and it omitted
+`name` and `ZoneState.faulted`/`faulted_tick` entirely. `AW-SRV-014` and `AW-SRV-022` had both merged
+by the time this story was picked up; `sim.EntityCanonicalBytes` already hashed every one of those
+fields. **A body that omits a field the State Hash covers cannot reproduce that hash on restore**, and
+`AW-SRV-007` AC-5 exits `2` on exactly that mismatch — so the omission would have surfaced as a World
+that will not boot, months later, pointing nowhere near the cause. Field numbers are assigned above
+because a `ready` story that leaves them to be discovered is not a pinned contract; going forward the
+`.proto` itself is written before a story is marked `ready`, not a sketch with holes in it.
+
+**`state_version` stays `1`, and the sketch's "each bumps `state_version` by one" is retracted.** It
+contradicted `snapshot.proto`'s own text, which is the rule that stands: protobuf absorbs an added
+field, and `state_version` exists for a change in what the state *means*. Nothing above is a bump —
+no v1 snapshot has ever been written, so these fields are present from the first object rather than
+added to an existing one.
+
+**`deferred` (field 5) is defined and never populated**, and that is deliberate rather than
+unfinished. The deferred backlog is the tick loop's buffer, not simulation state: it lives in
+`tickloop.Source`'s per-Partition buffers, and `Engine.SnapshotAll` — which the loop calls at a
+boundary and nowhere else — cannot see it. It does not need to. `Engine.Step` advances a Partition's
+offset only past records it actually applied, so a deferred record sits *at or after* the offset the
+envelope records, and `AW-SRV-007` reads it back from the log in its original order. Populating the
+field would make the same Command replay twice, which is worse than replaying it once. The number is
+spent and the shape is on record; checkpointing the backlog for real would need a seam from the loop
+into `SnapshotAll` and a dedup rule in `AW-SRV-007`, which is a contract change rather than an
+implementation detail.
+
+**`prng_state` and `next_event_id` are process-wide, carried per-Zone.** `sim.WorldState` holds one
+RNG and one `NextEventID` for the World, not one per Zone, so every object in a round carries the same
+two values. A round is one cut at one tick, so the copies agree by construction, and a Zone restored
+alone still has the PRNG state replay needs. `AW-SRV-007` must decide which copy wins and must refuse
+a round whose copies disagree; that is carried into its acceptance criteria.
 
 ### Migration
 
@@ -148,18 +237,24 @@ from the newest snapshot the older binary can read, which is what `AW-INF-007` d
 
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
-| `snapshot.interval` | `ANDARA_SNAPSHOT_INTERVAL` | `60s` | per round; `slo/recovery.md` |
+| `snapshot.interval` | `ANDARA_SNAPSHOT_INTERVAL` | `60s` | per round; `slo/recovery.md`. **`0` disables snapshots entirely** |
 | `snapshot.max_stall_ms` | `ANDARA_SNAPSHOT_MAX_STALL_MS` | `5` | AC-1 threshold; a warn, not a refusal |
 | `snapshot.store` | `ANDARA_SNAPSHOT_STORE` | `fs` | `fs` or `s3` |
 | `snapshot.fs_path` | `ANDARA_SNAPSHOT_FS_PATH` | `/var/lib/andara/snapshots` | the volume `AW-INF-003` mounts |
 | `snapshot.s3_bucket` | `ANDARA_SNAPSHOT_S3_BUCKET` | — | required when `store=s3` |
 | `snapshot.s3_endpoint` | `ANDARA_SNAPSHOT_S3_ENDPOINT` | — | MinIO locally |
-| `snapshot.upload_timeout` | `ANDARA_SNAPSHOT_UPLOAD_TIMEOUT` | `30s` | a round exceeding it is failed, not queued behind the next |
+| `snapshot.upload_timeout` | `ANDARA_SNAPSHOT_UPLOAD_TIMEOUT` | `30s` | a round exceeding it is failed, not queued behind the next; kept at or under `interval` |
+
+**Amended 2026-09-22.** The `0` semantic was not in this table and needed to be. It is the obvious
+reading and implementation chose it, but it is not a free-floating convenience: a disabled cadence is
+what makes the `SnapshotStale` alert below fire forever if the alert is not written to account for it,
+so the two rows have to be read together. Recovery is still correct with snapshots off — replay from
+offset zero always is — which is why disabling them is allowed at all; what it costs is RTO.
 
 ### Control record
 
 ```protobuf
-// CONTRACT SKETCH — added to andara/log/v1/log.proto, next free number on the Event oneof carrier
+// CONTRACT SKETCH — added to andara/log/v1/log.proto as a top-level message
 message SnapshotWritten {
   string zone_id = 1; uint32 state_version = 2; uint64 tick = 3;
   repeated PartitionOffset offsets = 4; bytes state_hash = 5;
@@ -167,10 +262,19 @@ message SnapshotWritten {
 }
 ```
 
-Produced to the Zone's Partition on `andara.events.v1` after `Put` returns. It is an audit and tooling
-record; `AW-SRV-007` discovers snapshots through `WorldStore.List` and verifies through the envelope
-and `TickCompleted`, because a backwards scan of an Event Partition for the newest manifest is
-unbounded and a `List` is one call.
+Produced to the Zone's Partition on `andara.events.v1` after `Put` returns, under its own record key.
+It is an audit and tooling record; `AW-SRV-007` discovers snapshots through `WorldStore.List` and
+verifies through the envelope and `TickCompleted`, because a backwards scan of an Event Partition for
+the newest manifest is unbounded and a `List` is one call.
+
+Its `key` field carries the store key, so it moves with the amended format above.
+
+**Amended 2026-09-22, with the reading of `log.proto` that forced it.** The sketch said this record
+takes "the next free number on the Event oneof carrier." There is no oneof in `log.proto`: `Event` and
+`TickCompleted` are top-level messages, and a control record on `andara.events.v1` is told apart by
+its record key, not by its position in a union. `SnapshotWritten` is a third top-level message,
+registered as its own subject under `TopicRecordNameStrategy` in `deploy/kafka/schemas.yaml`
+(`AW-INF-004`). Caught in implementation and fixed correctly there before this amendment existed.
 
 ### Error taxonomy
 
@@ -199,6 +303,8 @@ to keep, because that is a rollback-window question.
 - `andara_snapshot_duration_seconds` — histogram, whole round, copy through last `Put`.
 - `andara_snapshot_tick_stall_seconds` — histogram, the in-tick copy. The part that can hurt players.
 - `andara_snapshot_bytes` — gauge, label `zone`. Zone count is bounded by content, not players.
+- `andara_snapshot_interval_seconds` — gauge, the configured cadence. *Recommended*, for the alert
+  below; see the note there for what is required and what is left to implementation.
 - `andara_snapshot_last_tick`, `andara_snapshot_age_seconds` — gauges, per process.
 - `andara_snapshot_failures_total` — counter, label `reason` (`store`, `encode`, `timeout`, `stall`).
 - `andara_snapshot_rounds_total` — counter, label `outcome` (`complete`, `incomplete`).
@@ -215,6 +321,20 @@ to keep, because that is a rollback-window question.
 ### Alerts
 - `SnapshotStale` on `andara_snapshot_age_seconds > 3 × snapshot.interval` for 5 m, tied to the RTO
   SLO: a stale snapshot is a recovery-time problem. Ships `docs/runbooks/snapshot-stale.md`.
+  **The threshold is derived from the configured cadence, not from the default**, and the alert does
+  not fire when `snapshot.interval` is `0`.
+  **Amended 2026-09-22, with the configurations that break a constant.** The `3 ×` was read as
+  decoration and rendered as the constant `3 * 60`. It is not decoration: `server.snapshot.interval`
+  is a free value in the chart, so a ten-minute cadence alerts at eight minutes — before the first
+  round has been taken — while a ten-second cadence is caught nearly a minute late. And because
+  `andara_snapshot_age_seconds` counts from process start when no round has been taken, `interval: 0`
+  alerts permanently on a configuration that was asked for.
+  *Recommended mechanism, not mandated:* export the configured cadence as a gauge and write the rule
+  against it —
+  `andara_snapshot_age_seconds > 3 * andara_snapshot_interval_seconds and andara_snapshot_interval_seconds > 0`.
+  That avoids parsing a Go duration string in a Helm template and stays correct if the value is ever
+  set somewhere the chart cannot see. Rendering the threshold from values is acceptable if it also
+  suppresses at `0`.
 
 ## Test plan
 
@@ -225,38 +345,86 @@ to keep, because that is a rollback-window question.
   asserting AC-1 under a tick loop at 10 Hz; injected `Put` failure on one Zone asserting AC-5 and AC-6;
   filesystem store crash mid-write (kill between tmp write and rename) asserting AC-5; `SnapshotWritten`
   round-trip against a throwaway Redpanda (AC-7).
+- **AC-5's second clause, explicitly.** *Two* rounds, with at least one Zone idle across both so that
+  it repeats its Partition offset, and a `Put` failing on a different Zone in the second round. Assert
+  the **first round is still complete and still selectable**. Added 2026-09-22: the injected-failure
+  test above asserts that the failing round is *counted* incomplete, which is AC-6, and nothing
+  asserted that the previous round survived it. Under the superseded key format that test fails, which
+  is what made the format wrong; it is the regression test for the amendment.
+- **A boundary that was not published starts no round** (AC-8, as amended). `Publish` returning an
+  error — including `ErrBoundaryLost` — and the next due interval elapsing produces no object and no
+  manifest.
 - **Manual/operator:**
   ```
   make up && andara-server
   andara-cli snapshot list --zone <zone>          # expect: one row per round, newest first
-  ls /var/lib/andara/snapshots/<zone>/1/           # expect: zero-padded offsets, no *.tmp
+  ls /var/lib/andara/snapshots/<zone>/1/           # expect: one dir per round tick, zero-padded
+  ls /var/lib/andara/snapshots/<zone>/1/*/         # expect: zero-padded offsets, no *.tmp
   ```
 
 ## Definition of done
 
 CLAUDE.md §8, plus:
-- `state_version` migration is tested across at least one real bump.
+- ~~`state_version` migration is tested across at least one real bump.~~ **Retired 2026-09-22, by the
+  versioning rule this story settled.** The line assumed a real bump would be along shortly — the
+  superseded body sketch had `AW-SRV-014`, `AW-SRV-015` and `AW-SRV-022` each bumping by one. Under
+  the rule that now stands, none of them bump: every field they add is additive and protobuf absorbs
+  it, and `state_version` moves only when the *meaning* of state changes. There is no scheduled bump
+  to carry this line forward to, so it does not move to another story — it retires. What it was
+  reaching for is already enforced: the synthetic 1→2→3-with-4-refused chain covers AC-4, and the
+  registry-completeness check fails `make check` on a `state_version` bump with no migration entry, so
+  the first real bump cannot ship untested whenever it comes.
 - `docs/runbooks/snapshot-stale.md` exists.
 - The sizing fixture is committed and its numbers are recorded in the story so that a later change to
-  World scale is a visible change to the test, not a silent drift.
+  World scale is a visible change to the test, not a silent drift. **Recorded below.**
+
+### Sizing fixture, measured
+
+16 Zones, 2,000 Rooms, 10,000 Entities, 500 Characters. AMD Ryzen 9 3900X, worst of 5 rounds.
+
+| What the tick does at the boundary | Worst round | Budget |
+|---|---|---|
+| Copy **and hash** each Zone | 24.7 ms | 5 ms |
+| Copy only; hash off-tick | **2.7 ms** uncontended, **4.8 ms** under load | 5 ms |
+
+**The first row is why `StateHash` is a method.** A field is filled where the struct is built, and the
+struct is built inside the tick; a CPU profile put 18% of the round in `sim.writeEscaped`, because the
+per-Zone hash walks every Entity, Component and field and escapes each into a canonical record — about
+five times the cost of the copy it accompanies. This story's own rule settles it: "the only work
+inside the tick is the state copy; encoding and upload run off-tick", and hashing is encoding.
+
+**The margin is thin and the World scale above is an `[ASSUMPTION]`.** 2.7 ms of a 5 ms budget, 4.8 ms
+on a busy machine. Entity count is the term that moves: doubling to 20,000 puts the copy over budget,
+and the stated fallback — staggering Zones across boundaries — reintroduces the cross-Zone consistency
+problem the single cut exists to avoid. The same copy is the rebalance stall when ADR-0001's sharding
+activates. Revising the scale is Brian's call and is one change to `server/simtest/sizing.go`; the
+point of committing the fixture is that revising it is a visibly failing test rather than a drift.
 
 ## Open questions
 
-- **Inherited from `AW-SRV-003` (2026-09-18):** `andara.log.v1.Entity` is the Entity by value as
-  it crosses a Zone boundary — id, template, content version, sorted Components, and
-  `handoff_seq` once `AW-SRV-028` lands — with a round-trip test against `sim.EntityState`. The
-  snapshot body may reuse it rather than define a second shape; if it does, the round-trip test
-  covers both.
+- ~~**Inherited from `AW-SRV-003` (2026-09-18):** whether the snapshot body reuses
+  `andara.log.v1.Entity` rather than defining a second shape.~~ **Resolved 2026-09-22: it does not.**
+  `log.v1.Entity` is the Entity *in transit* across a Zone boundary, and it deliberately carries no
+  position, because an `Arrive` names the target Room. A snapshot must carry position. Extending the
+  transit record with snapshot-only fields would put state that means nothing on the wire into a
+  record the cross-Zone path encodes on every handoff. `andara.state.v1.EntityState` is a separate
+  message, with the round-trip test against `sim.EntityState` that the question asked for.
 
-- `[ASSUMPTION]` Copy-on-write at the tick boundary rather than stop-the-world serialize. The copy is
-  O(state) and measured by AC-1; if it ever exceeds the stall budget, the fallback is to stagger Zones
-  across boundaries, which reintroduces the cross-Zone consistency problem this story avoids by taking
-  one cut.
-- `[ASSUMPTION]` World scale for the sizing fixture: 2,000 Rooms, 10,000 Entities, 500 Characters. A
-  starting point Brian can revise; the numbers live in one fixture so revising them is one change.
-- `[ASSUMPTION]` Discovery via `WorldStore.List` rather than by reading the manifest out of the log.
-  ADR-0002 says "recovery finds snapshots by reading the log it already reads"; this story keeps the
-  manifest in the log for audit and tooling and uses the store for discovery, for the reason stated in
-  the contract. Verification still goes through the log's `TickCompleted`.
-- `[ASSUMPTION]` MinIO in the local stack for the `s3` store, so the cluster path is exercised before
-  the cluster exists. `AW-INF-002` gains a service; recorded there as a follow-up.
+- ~~`[ASSUMPTION]` Copy-on-write at the tick boundary rather than stop-the-world serialize.~~
+  **Holds, measured 2026-09-22** — see the fixture table above — but only once hashing moved off the
+  tick, and with less headroom than the assumption implied.
+- `[ASSUMPTION]` **Open, and Brian's.** World scale for the sizing fixture: 2,000 Rooms, 10,000
+  Entities, 500 Characters. Now committed as `server/simtest/sizing.go` and asserted by a test, so
+  revising it is one change — but the measured margin above makes the number consequential rather than
+  illustrative, and doubling Entity count breaks AC-1. Worth deciding deliberately rather than
+  inheriting.
+- ~~`[ASSUMPTION]` Discovery via `WorldStore.List` rather than by reading the manifest out of the
+  log.~~ **Resolved 2026-09-22, and cheaper than when it was written.** ADR-0002 says "recovery finds
+  snapshots by reading the log it already reads"; this story keeps the manifest in the log for audit
+  and tooling and uses the store for discovery, because a backwards scan of an Event Partition is
+  unbounded and a `List` is one call. With the tick in the key, discovery is a `List` and a prefix
+  group — not a `List` plus a `Get` per candidate to read each envelope's tick back. Verification
+  still goes through the log's `TickCompleted`.
+- `[ASSUMPTION]` **Open, deferred by the story itself.** MinIO in the local stack, so the cluster path
+  is exercised before the cluster exists. `AW-INF-002` gains the service; until it does, the `s3`
+  store is covered by a test that skips unless an endpoint is named in the environment.

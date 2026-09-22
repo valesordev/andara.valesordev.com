@@ -59,16 +59,27 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
   offsets: PartitionOffset[];
 
   /**
-   * Hash of the state in `body`, comparable to the TickCompleted record for the
-   * same tick. Recovery verifies rather than trusts.
+   * Hash of the state in `body`: the hash of THIS ZONE at this tick, not the
+   * World's. Recovery verifies rather than trusts, and AW-SRV-007 AC-4's
+   * "missing or hash-invalid Zone object" is a per-object check against this.
+   *
+   * Not the same number as TickCompleted.state_hash, which is global and which
+   * AW-SRV-007 AC-5 compares against the recovered World after replay. The two
+   * are different assertions at different points; an earlier version of this
+   * comment said "comparable to the TickCompleted record for the same tick",
+   * which read as though they were interchangeable. They are kept provably
+   * consistent rather than merely similar: sim.WorldState.CanonicalBytes
+   * composes from a per-Zone section, and this is SHA-256 over that same
+   * section, so no second encoding exists to drift.
    *
    * @generated from field: bytes state_hash = 4;
    */
   stateHash: Uint8Array;
 
   /**
-   * Which Zone this snapshot covers. Snapshots are per-Zone and keyed to
-   * offsets (ADR-0002), so a Zone can be restored without the whole World.
+   * Which Zone this snapshot covers. Snapshots are per-Zone, and the store key
+   * is {zone_id}/{state_version}/{tick}/{offset} (AW-SRV-006), so a Zone can be
+   * restored without the whole World and a round is a prefix group.
    *
    * @generated from field: string zone_id = 5;
    */
@@ -83,10 +94,9 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
   takenAtUnixNano: bigint;
 
   /**
-   * The serialized Zone state. Its shape is AW-SRV-006's to define, and that
-   * story is `draft`: assigning field numbers to a guess about mutable World
-   * state would be assigning them permanently. Bytes keeps the envelope stable
-   * while the body evolves independently, versioned by state_version above.
+   * The serialized Zone state: andara.state.v1.ZoneState, in zone_state.proto.
+   * Bytes rather than a nested message keeps the envelope stable while the body
+   * evolves independently, versioned by state_version above.
    *
    * @generated from field: bytes body = 7;
    */
