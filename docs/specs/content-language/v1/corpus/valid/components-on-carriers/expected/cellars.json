@@ -1,0 +1,28 @@
+{
+  "formatVersion": 1,
+  "id": "cellars",
+  "name": "The Cellars",
+  "rooms": [
+    {
+      "id": "vault",
+      "title": "The Vault",
+      "description": "No lamp has been lit here in years.",
+      "components": [
+        {
+          "type": "andara.core.Dark"
+        },
+        {
+          "type": "andara.core.NoMagic"
+        }
+      ]
+    }
+  ],
+  "components": [
+    {
+      "type": "andara.core.Indoors"
+    },
+    {
+      "type": "andara.core.NoRecall"
+    }
+  ]
+}

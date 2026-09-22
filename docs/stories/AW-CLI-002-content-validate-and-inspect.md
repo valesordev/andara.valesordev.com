@@ -56,7 +56,7 @@ publish a Zone that fails to load.
 4. **Given** the equivalence fixture **when** run by the CLI, by `make content-conformance`, and by
    `AW-SRV-013`'s gate **then** all three produce identical diagnostics (code, position, chain).
 5. **Given** no network and a cached core **when** `validate --path` runs **then** it succeeds; with no
-   cache it fails with `E_CORE_VERSION` and the `fetch-core` hint, exit `1`.
+   cache it fails with `core_version_mismatch` and the `fetch-core` hint, exit `1`.
 6. **Given** `--pack town --version 8` **when** `validate` runs **then** it fetches the version over
    `Admin.GetVersion` and the blobs, validates, and exits `0`/`1` as above; server unreachable is exit
    `3`.

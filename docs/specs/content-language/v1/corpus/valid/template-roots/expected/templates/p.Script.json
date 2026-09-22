@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Script",
+  "kind": "BEHAVIOR",
+  "chain": [
+    "p.Script"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "template-roots/t.aw",
+    "line": 5
+  }
+}

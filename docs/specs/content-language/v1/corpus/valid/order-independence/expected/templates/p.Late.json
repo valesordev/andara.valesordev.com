@@ -1,0 +1,14 @@
+{
+  "formatVersion": 1,
+  "name": "p.Late",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Early",
+    "p.Late"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "order-independence/t.aw",
+    "line": 3
+  }
+}

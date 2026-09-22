@@ -1,0 +1,2 @@
+AW-SRV-016 — the Python pack layout a Behavior name resolves against
+AW-SRV-016 calls this E_UNRESOLVED; it is unknown_behavior under errors.md section 2.

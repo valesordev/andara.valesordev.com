@@ -1,0 +1,5 @@
+t.aw:1:10: extends_cycle
+  p.A
+  p.B
+  p.C
+  p.A

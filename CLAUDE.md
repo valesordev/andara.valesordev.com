@@ -106,6 +106,12 @@ backlog view is generated.
 - ADR ID: `ADR-<NNNN>`, monotonic, never deleted — superseded ADRs get `status: superseded by ADR-XXXX`.
 - Branch name: `<story-id-lower>-<slug>` → `aw-srv-014-room-graph-loader`. Both lanes use it.
 - Commit trailer: `Story: AW-SRV-014`.
+- **Commits are signed.** `main` is branch-protected to require signatures (2026-09-22), so an
+  unsigned commit cannot merge. `make bootstrap` configures per-repo SSH signing from the key
+  that already pushes to origin, and `.github/allowed_signers` is the tracked list of trusted
+  keys. History before that date is unsigned and stays that way: re-signing 152 commits would
+  change every SHA, break the other lane's clone, and dangle the commit references the
+  verification records in `docs/stories/` cite.
 
 ---
 

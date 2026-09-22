@@ -71,12 +71,14 @@ install_pinned() {
 
 # Python dependencies beyond the standard library, pinned in scripts/requirements.txt:
 # PyYAML backs scripts/values_schema.py and scripts/helm_test.py (AW-INF-003) — rendered
-# manifests are real YAML and deserve a real parser — and reuse backs `make license-check`.
+# manifests are real YAML and deserve a real parser — reuse backs `make license-check`, and
+# lark backs `make content-grammar-check` (AW-CLI-005 AC-1), which parses the Content
+# Language corpus against the grammar rather than taking the grammar's word for it.
 # Installed only when an import fails, so a distro-packaged copy is left alone; a refusal
 # (PEP 668 externally-managed environments) is reported with the file to install rather
 # than forced past.
 pydeps_missing=""
-for mod in yaml reuse; do
+for mod in yaml reuse lark; do
   ${PY:-python3} -c "import $mod" >/dev/null 2>&1 || pydeps_missing="$pydeps_missing $mod"
 done
 if [ -n "$pydeps_missing" ]; then
@@ -86,6 +88,7 @@ if [ -n "$pydeps_missing" ]; then
 fi
 ok PyYAML "$(${PY:-python3} -c 'import yaml; print(yaml.__version__)')"
 ok reuse "$(${PY:-python3} -m reuse --version | awk 'NR==1{print $NF}')"
+ok lark "$(${PY:-python3} -c 'import lark; print(lark.__version__)')"
 
 # golangci-lint is needed by `make lint`, which is a no-op until Go sources exist. Install
 # it anyway once sources appear; before that, skip the download nobody needs yet.
@@ -170,6 +173,60 @@ make $targets
 HOOK
   chmod +x "$HOOKS_DIR/pre-commit"
   ok "git hooks" "pre-commit installed in $(basename "$(dirname "$HOOKS_DIR")")/hooks"
+fi
+
+# Commit signing. `main` requires signed commits (GitHub branch protection, 2026-09-22), so
+# an unsigned commit is not a style preference — it is a commit that cannot merge, and the
+# discovery point would otherwise be a rejected push at the end of a day's work.
+#
+# SSH signing rather than GPG: the key that already pushes to origin can sign, so there is
+# no second key to create, distribute, or lose. Configured per-repo, never globally — this
+# script does not get to change how a developer signs in their other repositories.
+
+# Verification needs to know which keys are trusted, or `git log --show-signature` reports
+# an error per commit instead of a signature. The file is tracked, so adding a contributor
+# is a reviewed change rather than a local edit nobody else sees. Set unconditionally: it
+# costs nothing and it is just as useful on a runner inspecting history as on a laptop.
+git config --local gpg.ssh.allowedSignersFile .github/allowed_signers
+
+# Everything below is a developer-machine concern. CI verifies the tree; it never commits,
+# and a runner has no key in ~/.ssh — demanding one there fails every build for a capability
+# the build does not use, which is exactly what it did on the first run of PR #44.
+if [ -n "${CI:-}" ]; then
+  ok "commit signing" "skipped (CI does not commit)"
+else
+  SIGNKEY="$(git config --local --get user.signingkey || true)"
+  if [ -z "$SIGNKEY" ]; then
+    # Prefer a key the developer already uses for origin. ed25519 first: it is what GitHub
+    # recommends and what this repo's contributors have.
+    for cand in id_ed25519 id_ecdsa id_rsa; do
+      if [ -f "$HOME/.ssh/$cand.pub" ]; then SIGNKEY="$HOME/.ssh/$cand.pub"; break; fi
+    done
+    [ -n "$SIGNKEY" ] || fail "no SSH public key in ~/.ssh to sign with, and commits to this repo must
+  be signed. Create one (ssh-keygen -t ed25519), add it to GitHub as a *signing* key
+  (Settings > SSH and GPG keys > New SSH key, type 'Signing Key' — an authentication key is
+  a separate list and will not verify), add it to .github/allowed_signers, then:
+    git config --local gpg.format ssh
+    git config --local user.signingkey ~/.ssh/id_ed25519.pub
+    git config --local commit.gpgsign true"
+    git config --local gpg.format ssh
+    git config --local user.signingkey "$SIGNKEY"
+  fi
+  [ "$(git config --local --get gpg.format || true)" = "ssh" ] || git config --local gpg.format ssh
+  [ "$(git config --local --get commit.gpgsign || true)" = "true" ] || git config --local commit.gpgsign true
+  [ "$(git config --local --get tag.gpgsign || true)" = "true" ] || git config --local tag.gpgsign true
+
+  # Prove the key actually signs before a commit depends on it. A passphrase-protected key
+  # with no agent fails here, where the message can say so, rather than at commit time with
+  # the work already staged.
+  SIGNKEY="$(git config --local --get user.signingkey)"
+  if ! printf 'bootstrap' | ssh-keygen -Y sign -f "$SIGNKEY" -n git - >/dev/null 2>&1; then
+    fail "the signing key $SIGNKEY cannot sign unattended.
+  If it is passphrase-protected, start an agent and add it:
+    eval \"\$(ssh-agent -s)\" && ssh-add ${SIGNKEY%.pub}
+  Then re-run bootstrap."
+  fi
+  ok "commit signing" "ssh, $(basename "$SIGNKEY")"
 fi
 
 mkdir -p .local/data

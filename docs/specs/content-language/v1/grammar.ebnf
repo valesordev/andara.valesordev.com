@@ -1,0 +1,211 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+//
+// Andara Content Language v1 — lexical and syntactic grammar (AW-CLI-005).
+//
+// NORMATIVE. This file is the grammar; semantics.md is what a parse *means*,
+// errors.md is what a failure says, formatting.md is what `fmt` produces.
+//
+// Notation: EBNF in the Lark dialect, so that AC-1 is checked by a parser
+// generator rather than by reading. `make content-grammar-check` runs
+// scripts/content_grammar_check.py, which builds this grammar with
+// lark==1.2.2 (Earley) and parses every corpus file. A hand-written
+// recursive-descent parser is still what AW-CLI-006 ships (its own
+// [ASSUMPTION]); this file is the specification that parser conforms to, and
+// the tool is how the specification is kept honest.
+//
+// Reading it as plain EBNF: `rule: a b` is concatenation, `|` alternation,
+// `*` zero-or-more, `+` one-or-more, `?` optional, `()` grouping,
+// UPPERCASE names are terminals, "quoted" text is a literal.
+//
+// Deliberately absent, and each absence is a decision recorded in
+// semantics.md: expressions, arithmetic, conditionals, functions, variables,
+// includes, macros, and any form of nesting inside a Component field value.
+// Components hold data; logic lives in Go systems and Python Behaviors
+// (ADR-0005, ADR-0010).
+
+// ---------------------------------------------------------------------------
+// File
+// ---------------------------------------------------------------------------
+
+// A file is a flat sequence of declarations. A pack is a directory of files;
+// the order of files, and the order of declarations within a file, has no
+// effect on the compiled output (semantics.md §2).
+file: declaration*
+
+declaration: pack_decl
+           | zone_decl
+           | template_decl
+
+// ---------------------------------------------------------------------------
+// Pack
+// ---------------------------------------------------------------------------
+
+// Exactly one across the whole pack. `requires` pins the andara.core version
+// the pack compiled against, which becomes ContentVersion.core_version and
+// turns server skew into a legible error (ADR-0010 decision 8). The core pack
+// itself declares no `requires`.
+pack_decl: "pack" pack_ref requires_clause?
+
+requires_clause: "requires" pack_ref "@" INT
+
+// ---------------------------------------------------------------------------
+// Zone
+// ---------------------------------------------------------------------------
+
+// zone <id> "<name>" { ... }  ->  ZoneDefinition
+zone_decl: "zone" LOWER_ID STRING "{" zone_item* "}"
+
+zone_item: fallback_decl
+         | component_decl
+         | room_decl
+
+// The Room an Entity is relocated to when its Room is removed by a content
+// change (ADR-0004; ZoneDefinition.fallback_room, AW-SRV-012). PENDING: the
+// field does not exist in zone.proto yet — see semantics.md §9.
+fallback_decl: "fallback" LOWER_ID
+
+// room <id> "<title>" { ... }  ->  RoomDefinition
+room_decl: "room" LOWER_ID STRING "{" room_item* "}"
+
+room_item: desc_decl
+         | exit_decl
+         | component_decl
+
+// One or more adjacent string literals, joined with a single space. This is
+// how prose gets to be prose without the language becoming
+// indentation-sensitive, which ADR-0009 named as YAML's most reliable source
+// of mangled text. A paragraph break is an explicit \n.
+desc_decl: "desc" STRING+
+
+// exit <direction> -> <room>  ->  ExitDefinition
+//
+// `direction` is LOWER_ID rather than a closed set of keywords on purpose:
+// the canonical twelve are closed in validation, not in encoding
+// (zone.proto, glossary). A closed terminal here would report `norht` as a
+// parse error pointing at a token, where a validated identifier reports it
+// with the permitted twelve listed (errors.md, unknown_direction).
+exit_decl: "exit" LOWER_ID "->" room_ref exit_clause*
+
+// <room> within this Zone, or <zone>.<room> across a Zone boundary.
+room_ref: LOWER_ID ("." LOWER_ID)?
+
+// The senses that pass through this Exit into the Room that owns it
+// (ExitDefinition.perceives, AW-SRV-029). PENDING: the field does not exist
+// in zone.proto yet — see semantics.md §9.
+exit_clause: "perceives" "[" LOWER_ID ("," LOWER_ID)* "]"
+
+// ---------------------------------------------------------------------------
+// Template
+// ---------------------------------------------------------------------------
+
+// template <Name> (kind <kind> | extends <Ref>) { ... }  ->  TemplateDefinition
+//
+// Exactly one of `kind` and `extends`: a root Template states its kind, and a
+// subtype inherits its parent's, because a chain has one kind (AW-SRV-022).
+//
+// The grammar admits any number of heads and semantics requires exactly one,
+// rather than the grammar admitting exactly one. Stating both is a mistake a
+// Builder makes while learning the model, and "expected { but found extends"
+// teaches nothing about the model; `template_head` says a root states its kind
+// and a subtype inherits it (errors.md). Third use of the same technique, after
+// FLOAT and remove_decl.
+template_decl: "template" UPPER_ID template_head* "{" template_item* "}"
+
+template_item: component_decl
+             | remove_decl
+
+template_head: "kind" KIND
+             | "extends" template_ref
+
+KIND: "entity" | "item" | "behavior"
+
+// Bare within the declaring pack; dotted to reach another pack — which in v1
+// means andara.core and nothing else (semantics.md §4).
+template_ref: (LOWER_ID ".")* UPPER_ID
+
+// ---------------------------------------------------------------------------
+// Component
+// ---------------------------------------------------------------------------
+
+// component <pack>.<Type> { <field>: <value> ... }  ->  ComponentValue
+//
+// Always fully qualified. There is no import, alias, or `using` in v1: a
+// Component's pack is its provenance, and ADR-0010 decision 6 makes that
+// readable at a glance rather than resolvable by lookup.
+component_decl: "component" component_ref "{" field_assign* "}"
+
+component_ref: (LOWER_ID ".")+ UPPER_ID
+
+// Present only to be rejected. A subtype may override and extend; it may never
+// remove, because substitutability is the point — anything holding a SWORD has
+// to keep working when handed a FIRE_SWORD (ADR-0010 decision 5). A language
+// with no removal syntax at all would make that rule unteachable: a Builder
+// would write something, get a parse error pointing at a token, and learn
+// nothing. So the grammar admits the two forms a Builder actually reaches for,
+// and semantics rejects both with the rule and the `enabled: false` alternative
+// (errors.md, removed_by_subtype). Same technique as FLOAT.
+remove_decl: "remove" "component" component_ref
+           | "remove" "field" LOWER_ID "from" component_ref
+
+field_assign: LOWER_ID ":" value
+
+// ComponentField carries a string, an int64, or a bool, and may never carry a
+// float (ADR-0007 rule 3 — a float in the State Hash makes the hash
+// platform-dependent). FLOAT is a terminal here so that `3.5` is reported as
+// `float_literal` with the fixed-units advice, rather than as a parse error
+// pointing at a dot.
+value: STRING
+     | INT
+     | FLOAT
+     | BOOL
+
+BOOL: "true" | "false"
+
+// ---------------------------------------------------------------------------
+// Terminals
+// ---------------------------------------------------------------------------
+
+// Identifier casing is split by what the identifier names, which is what
+// reconciles the story's original `[a-z][a-z0-9_]*` with the `Merchant`,
+// `Npc`, `Entity` already on disk in content/core/ and testdata/templates/
+// (semantics.md §1):
+//
+//   LOWER_ID   pack segments, Zone ids, Room ids, Directions, senses,
+//              Component field names, Template kinds
+//   UPPER_ID   Template names, Component type names — the last segment of a
+//              dotted reference, always
+//
+// So every dotted reference in the language is lowercase segments ending in
+// one PascalCase segment, and "which part is the pack" needs no rule beyond
+// looking at it.
+LOWER_ID: /[a-z][a-z0-9_]*/
+UPPER_ID: /[A-Z][A-Za-z0-9]*/
+
+// A dotted pack name: `town`, `andara.core`.
+pack_ref: LOWER_ID ("." LOWER_ID)*
+
+// int64. A leading `+`, a leading zero, and `1_000` are not numbers: one
+// spelling per value, so that source diffs and canonical output agree.
+INT: /-?(0|[1-9][0-9]*)/
+
+// Present only to be rejected (see `value`).
+FLOAT: /-?(0|[1-9][0-9]*)\.[0-9]+/
+
+// Double-quoted, one line. The escape set is \n, \", \\ and nothing else —
+// but the terminal admits any \<char> so that `\t` is reported as
+// `invalid_escape` naming the escape, rather than as an unterminated string
+// naming the rest of the file. No raw newline inside a string: prose spans
+// lines by adjacency (desc_decl), never by a literal that swallows a
+// declaration when a Builder forgets a quote.
+STRING: /"([^"\\\n]|\\.)*"/
+
+// `//` to end of line. Retained by `fmt`, dropped by compile — they are not
+// in the compiled output, and the source blob published beside it is what
+// preserves them for `content fetch` (ADR-0009).
+COMMENT: /\/\/[^\n]*/
+
+WS: /[ \t\r\n]+/
+
+%ignore COMMENT
+%ignore WS

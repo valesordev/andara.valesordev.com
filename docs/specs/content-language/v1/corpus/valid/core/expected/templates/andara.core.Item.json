@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "andara.core.Item",
+  "kind": "ITEM",
+  "chain": [
+    "andara.core.Item"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core/item.aw",
+    "line": 1
+  }
+}

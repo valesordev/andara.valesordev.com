@@ -1,0 +1,41 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "east_gate",
+      "title": "East Gate",
+      "exits": [
+        {
+          "direction": "west",
+          "toRoom": "middle"
+        }
+      ]
+    },
+    {
+      "id": "middle",
+      "title": "The Middle",
+      "exits": [
+        {
+          "direction": "east",
+          "toRoom": "east_gate"
+        },
+        {
+          "direction": "west",
+          "toRoom": "west_gate"
+        }
+      ]
+    },
+    {
+      "id": "west_gate",
+      "title": "West Gate",
+      "exits": [
+        {
+          "direction": "east",
+          "toRoom": "middle"
+        }
+      ]
+    }
+  ]
+}

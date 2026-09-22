@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Thing",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Thing"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "template-roots/t.aw",
+    "line": 1
+  }
+}

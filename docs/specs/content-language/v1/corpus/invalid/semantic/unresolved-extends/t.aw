@@ -1,0 +1,1 @@
+template Orphan extends Nowhere {}

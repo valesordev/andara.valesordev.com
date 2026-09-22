@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Trinket",
+  "kind": "ITEM",
+  "chain": [
+    "p.Trinket"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "template-roots/t.aw",
+    "line": 3
+  }
+}

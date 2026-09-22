@@ -165,6 +165,15 @@ answer.
 
 ## Open questions
 
+- **Inherited from `AW-CLI-005` (2026-09-22):** the Content Language keyword is `perceives`, on the
+  exit clause — `exit north -> yard perceives [sound, sight]` — sorted in the compiled output like
+  every `repeated` field, validated against the same server sense registry the loader uses, and
+  `unknown_sense` when it is not, listing the permitted senses and saying senses are server-defined.
+  The corpus cases wait in `docs/specs/content-language/v1/corpus/pending/perceives/` and
+  `.../unknown-sense/`; **this story moves them** into `corpus/valid/` and `corpus/invalid/semantic/`
+  when it lands `ExitDefinition.perceives` (field 4). That closes the question this story handed to
+  `AW-CLI-005` on 2026-09-19.
+
 - **Resolved 2026-09-19 (Brian):** adjacent-Room perception is an attribute of the Exit, set by the
   Builder per connection.
 - `[NEEDS BRIAN]` The sense vocabulary beyond `sight` and `sound`. The mechanism is the story; adding

@@ -1,0 +1,39 @@
+{
+  "formatVersion": 1,
+  "id": "town",
+  "name": "Town",
+  "rooms": [
+    {
+      "id": "hall",
+      "title": "Town Hall",
+      "description": "Stone walls and faded banners.",
+      "exits": [
+        {
+          "direction": "south",
+          "toRoom": "plaza"
+        }
+      ]
+    },
+    {
+      "id": "plaza",
+      "title": "Market Plaza",
+      "description": "A dusty square of packed earth.",
+      "exits": [
+        {
+          "direction": "east",
+          "toZone": "wilds",
+          "toRoom": "trail"
+        },
+        {
+          "direction": "north",
+          "toRoom": "hall"
+        },
+        {
+          "direction": "south",
+          "toZone": "docks",
+          "toRoom": "pier"
+        }
+      ]
+    }
+  ]
+}

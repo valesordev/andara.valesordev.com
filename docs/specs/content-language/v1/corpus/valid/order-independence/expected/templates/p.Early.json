@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Early",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Early"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "order-independence/z.aw",
+    "line": 18
+  }
+}

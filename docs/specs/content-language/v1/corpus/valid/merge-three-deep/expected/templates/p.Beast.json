@@ -1,0 +1,35 @@
+{
+  "formatVersion": 1,
+  "name": "p.Beast",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Creature",
+    "p.Beast"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "core.idle"
+        }
+      ]
+    },
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "p.Creature"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "merge-three-deep/t.aw",
+    "line": 10
+  }
+}

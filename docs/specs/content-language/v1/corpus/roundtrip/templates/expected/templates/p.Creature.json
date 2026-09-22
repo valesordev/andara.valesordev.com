@@ -1,0 +1,31 @@
+{
+  "formatVersion": 1,
+  "name": "p.Creature",
+  "kind": "ENTITY",
+  "chain": [
+    "p.Creature"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "core.idle"
+        }
+      ]
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "p.Creature"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "templates/templates.aw",
+    "line": 1
+  }
+}

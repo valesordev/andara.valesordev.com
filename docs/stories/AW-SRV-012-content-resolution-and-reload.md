@@ -188,6 +188,16 @@ CLAUDE.md §8, plus: the replay-across-swap test; `docs/specs/slo/content-freshn
 
 ## Open questions
 
+- **Inherited from `AW-CLI-005` (2026-09-22):** the Content Language keyword for `fallback_room` is
+  `fallback <room>`, one per Zone, and it is already in the grammar and the spec — but the field is
+  not in `zone.proto`, so its two corpus cases wait in
+  `docs/specs/content-language/v1/corpus/pending/fallback/` and `.../fallback-missing/`. **This story
+  moves them** into `corpus/valid/` and `corpus/invalid/semantic/` when it lands field 6, and
+  `make content-conformance` stops skipping them. The finding code is `fallback_missing`, matching
+  this story's own AC-10. Worth knowing before starting: until the field exists, every Zone authored
+  in the Content Language is one a server requiring `fallback_room` would refuse — which is why the
+  keyword was specified now rather than deferred to a v2 of the language.
+
 - **Inherited from `AW-SRV-022` (2026-09-18), contract-bearing:** (1) Templates arrive as one blob
   per declaration at `templates/<name>.json`, carrying their own `format_version` (field 8); there
   is no pack-level container. (2) `TemplateRef.Pack()` is derived from the name, and the dir loader

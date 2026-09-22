@@ -170,6 +170,24 @@ the registry carries no subject this story touches.
 
 ## Open questions
 
+- **Inherited from `AW-CLI-005` (2026-09-22), two items.**
+
+  **The vocabulary question now has a concrete consequence.** The registry's only field-bearing
+  Component is `andara.core.Behavior{name: string}`, so ADR-0010 decision 4's *field-by-field* merge
+  cannot be exercised across two fields by any valid content, and neither can the Content Language's
+  `int64` and `bool` literals — all three are specified and unreachable. The case waits in
+  `docs/specs/content-language/v1/corpus/pending/merge-partial-fields/`, written against ADR-0010's
+  own `Aggro{threshold, enabled}` example, and moves to `corpus/valid/` when a Component with two
+  fields and an off switch exists. This is the `[NEEDS BRIAN]` above arriving with a cost attached
+  rather than as a preference, and it is also ADR-0010's predicted *"component design becomes the
+  mechanics-ceiling decision"* showing up on schedule.
+
+  **The loader has no `duplicate_direction`.** Two Exits with the same Direction in one Room is a
+  compile error in the Content Language and is silently accepted by `sim.BuildWorld`, which sorts and
+  keeps both — so hand-written JSON reaching the content store is not refused for it, and the Room
+  gets an Exit nobody can predict. A small additive code in this story's taxonomy, filed here rather
+  than fixed from the architecture lane.
+
 - `[NEEDS BRIAN]` **The core component vocabulary beyond the four seeded here.** `Dark`, `NoMagic`,
   `Indoors`, `NoRecall` are enough to prove the mechanism and are the ones that recur across every MUD;
   which Room and Zone properties Andara actually wants is game design, and game design is yours

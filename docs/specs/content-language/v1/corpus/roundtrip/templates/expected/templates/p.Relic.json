@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "name": "p.Relic",
+  "kind": "ITEM",
+  "chain": [
+    "p.Relic"
+  ],
+  "resolved": true,
+  "source": {
+    "file": "templates/templates.aw",
+    "line": 5
+  }
+}

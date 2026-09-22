@@ -1,0 +1,21 @@
+{
+  "formatVersion": 1,
+  "id": "z",
+  "name": "Zone",
+  "rooms": [
+    {
+      "id": "cellar",
+      "title": "The Cellar"
+    },
+    {
+      "id": "loft",
+      "title": "The Loft",
+      "exits": [
+        {
+          "direction": "down",
+          "toRoom": "cellar"
+        }
+      ]
+    }
+  ]
+}

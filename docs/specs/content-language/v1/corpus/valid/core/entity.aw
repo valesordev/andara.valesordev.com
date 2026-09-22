@@ -1,0 +1,1 @@
+template Entity kind entity {}

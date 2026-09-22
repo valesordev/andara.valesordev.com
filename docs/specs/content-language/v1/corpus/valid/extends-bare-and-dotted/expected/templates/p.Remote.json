@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "name": "p.Remote",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc",
+    "p.Remote"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "extends-bare-and-dotted/t.aw",
+    "line": 8
+  }
+}

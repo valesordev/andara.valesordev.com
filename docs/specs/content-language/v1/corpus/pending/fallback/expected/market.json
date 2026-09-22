@@ -1,0 +1,13 @@
+{
+  "formatVersion": 1,
+  "id": "market",
+  "name": "The Market",
+  "rooms": [
+    {
+      "id": "square",
+      "title": "Market Square",
+      "description": "Stalls crowd the cobbles."
+    }
+  ],
+  "fallbackRoom": "square"
+}
