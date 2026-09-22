@@ -288,7 +288,10 @@ registered as its own subject under `TopicRecordNameStrategy` in `deploy/kafka/s
 
 This is the story that creates persisted World state, and therefore the story where format versioning
 either happens or becomes impossible. `state_version` starts at `1` with this story; `AW-SRV-002`
-already hashes it. The first real bump is exercised by the migration test before this story is done.
+already hashes it. **Amended 2026-09-22:** no real bump is exercised here, and none is scheduled —
+under the rule this story settled, `state_version` moves only when the meaning of state changes, and
+nothing on the roadmap does that. The migration machinery is tested against a synthetic chain instead,
+and `make check` fails a bump that arrives without a migration. See the Definition of done.
 
 Snapshot cadence trades storage and write cost against recovery time, and it is also the rebalance
 stall when ADR-0001's sharding is activated — a second consumer of the same number.
@@ -395,9 +398,18 @@ inside the tick is the state copy; encoding and upload run off-tick", and hashin
 **The margin is thin and the World scale above is an `[ASSUMPTION]`.** 2.7 ms of a 5 ms budget, 4.8 ms
 on a busy machine. Entity count is the term that moves: doubling to 20,000 puts the copy over budget,
 and the stated fallback — staggering Zones across boundaries — reintroduces the cross-Zone consistency
-problem the single cut exists to avoid. The same copy is the rebalance stall when ADR-0001's sharding
-activates. Revising the scale is Brian's call and is one change to `server/simtest/sizing.go`; the
-point of committing the fixture is that revising it is a visibly failing test rather than a drift.
+problem the single cut exists to avoid. Revising the scale is Brian's call and is one change to
+`server/simtest/sizing.go`; the point of committing the fixture is that revising it is a visibly
+failing test rather than a drift.
+
+Two cautions on reading the numbers above. **The 20,000 figure is extrapolated linearly from a single
+measured point** — the fixture runs at one scale, and the copy is O(Entities × Component fields), so
+the real curve depends on how Components grow with Entity count. And **the 5 ms is a sub-budget this
+story set for itself**, not ADR-0008's: the tick budget is 50 ms against a 100 ms interval, and the
+copy is inside the tick, so the load-bearing constraint is *copy + tick work under 50 ms*. The 5 ms
+was headroom reserved for handler work that mostly does not exist yet. The rebalance stall is a
+different number again — ADR-0001 ties it to snapshot *cadence*, because the stall is the rebalance
+plus the recovery it implies, and recovery duration follows snapshot age.
 
 ## Open questions
 
