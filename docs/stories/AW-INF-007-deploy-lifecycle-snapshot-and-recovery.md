@@ -128,8 +128,15 @@ Chart value `terminationGracePeriodSeconds` default `90`, validated by AC-9.
 
 ### Round tags
 
-A tag is a zero-byte object at `{zone_id}/{state_version}/{offset}.tag/{name}`; `ListRounds` reports
-tags. Retention never deletes a tagged round while it is within `keep_deploy_rounds` of the newest tag.
+A tag is a zero-byte object at `{zone_id}/{state_version}/{tick}/{offset}.tag/{name}`; `ListRounds`
+reports tags. Retention never deletes a tagged round while it is within `keep_deploy_rounds` of the
+newest tag.
+
+**Amended 2026-09-22, following `AW-SRV-006`'s key format.** The tag path tracked a key that had no
+tick in it, and a tag is a statement about a *round* — which an offset does not identify, because an
+idle Zone repeats its offset across rounds. Under the superseded format, tagging a round and then
+having one of its Zones re-snapshot at the same offset would have moved the tag onto a different
+round's object. Same correction, same reason; see `AW-SRV-006`'s Interface contract.
 
 ## Data / state impact
 

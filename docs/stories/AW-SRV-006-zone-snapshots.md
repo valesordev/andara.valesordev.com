@@ -104,12 +104,8 @@ type Snapshot struct {
 }
 func (s *Snapshot) Encode() ([]byte, error)      // canonical andara.state.v1.SnapshotEnvelope
 
-// StateHash is a METHOD, not a field, and this is load-bearing. See the
-// amendment below: a field is filled where the struct is built, which is
-// inside the tick, and the hash costs about five times the copy it would
-// accompany. It computes off-tick and caches. Safe because the body is
-// immutable after the boundary: the hash of the copy is the hash of the Zone
-// at that tick whenever it is taken.
+// A METHOD, not a field: a field is filled where the struct is built, which is
+// inside the tick. Measured, under "Sizing fixture" below.
 func (s *Snapshot) StateHash() [32]byte
 func (s *Snapshot) Key() string                  // SnapshotKey of this Snapshot's four values
 
@@ -118,7 +114,10 @@ func (s *Snapshot) Key() string                  // SnapshotKey of this Snapshot
 func SnapshotKey(zone ZoneID, stateVersion uint32, tick Tick, offset int64) string
 
 // SnapshotAll is called by the loop at a boundary and never anywhere else.
-func (e *Engine) SnapshotAll() []Snapshot
+// The timestamp is passed in, not read here: it lands in the envelope's
+// taken_at_unix_nano, and reading a clock at encode time would make two encodes
+// of the same Snapshot differ (AC-2).
+func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot
 
 // WorldStore is owned by sim and implemented in server/store. It knows keys and
 // bytes; it does not know Kafka or the tick.

@@ -93,8 +93,18 @@ decisions — and its retention policy must reach back at least as far as the ol
 | content topics | — | compact | see ADR-0004 |
 
 Snapshots are **not** a Kafka topic. They are large, binary, and read once at recovery; object
-storage keyed by `{zone}/{state_version}/{offset}` is the right home, with the manifest recorded in
-`andara.events.v1` so recovery can find them by reading the log it already reads.
+storage keyed by Zone and version is the right home, with the manifest recorded in `andara.events.v1`
+so recovery can find them by reading the log it already reads.
+
+> **Annotation, 2026-09-22 — not a change to this decision.** This paragraph quoted the key as
+> `{zone}/{state_version}/{offset}`. The exact key is `AW-SRV-006`'s to specify, not this ADR's, and
+> that story amended it to `{zone_id}/{state_version}/{tick}/{offset}` — an offset alone does not
+> identify a round, because an idle Zone repeats it. The three decisions this section actually makes
+> are unchanged: snapshots live in object storage rather than on a topic, they are keyed per Zone so a
+> shard restores only its own, and the manifest goes in the log. The quoted string is replaced with a
+> description so this ADR stops carrying a copy of someone else's contract. Recorded here rather than
+> in a superseding ADR because no decision of this ADR changed; if you read the key as load-bearing
+> here, say so and it becomes ADR-0011 instead.
 
 ### 6. Partition count is chosen once, now, and over-provisioned
 
