@@ -178,6 +178,9 @@ Mandatory for server, cli, and infra stories. See §7.
 - Integration: which components, against what fixtures.
 - Manual/operator: exact commands to run and expected output.
 
+Any criterion asserting on a metric, projection, stream, or stored object follows
+`docs/specs/testing/live-assertions.md` — poll the assertion itself to a deadline, never read once.
+
 ## Definition of done
 Inherited from §8 plus any story-specific additions.
 
