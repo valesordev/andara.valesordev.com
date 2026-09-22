@@ -130,11 +130,20 @@ func TestRun_ServesAndDrainsOnSIGTERM(t *testing.T) {
 		t.Fatalf("made-up token: %v", err)
 	}
 
-	ready, err := http.Get("http://" + httpAddr + "/readyz")
-	if err != nil || ready.StatusCode != http.StatusOK {
-		t.Fatalf("readyz = %v %v", ready, err)
-	}
-	ready.Body.Close()
+	// The operator surface listens after the tick loop is built, on its own
+	// goroutine, while the Protocol is already serving, so a single GET here
+	// reads a listener whose readiness the gateway's says nothing about
+	// (docs/specs/testing/live-assertions.md, rule 1). A 500 ms delay in the
+	// tick loop's setup fails the single read on 4 of 5 runs with connection
+	// refused.
+	waitUntil(t, func() bool {
+		ready, err := http.Get("http://" + httpAddr + "/readyz")
+		if err != nil {
+			return false
+		}
+		ready.Body.Close()
+		return ready.StatusCode == http.StatusOK
+	}, "/readyz to answer 200")
 
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
