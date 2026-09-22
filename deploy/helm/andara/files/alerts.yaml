@@ -64,11 +64,15 @@ groups:
     # before the first round on a ten-minute cadence and detects far too late on a short
     # one. The `> 0` guard is the other half — snapshots being switched off is not a stale
     # snapshot, and without it the age gauge climbs forever and the alert never clears.
+    #
+    # The age is the left-hand side deliberately: `and` in PromQL yields the left side's
+    # values, so the firing alert carries the number the operator needs — how stale — and
+    # not the cadence it was measured against.
     rules:
       - alert: SnapshotStale
         expr: |
-          andara_snapshot_interval_seconds > 0
-            and andara_snapshot_age_seconds > 3 * andara_snapshot_interval_seconds
+          andara_snapshot_age_seconds > 3 * andara_snapshot_interval_seconds
+            and andara_snapshot_interval_seconds > 0
         for: 5m
         labels:
           severity: ticket
