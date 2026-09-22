@@ -628,9 +628,11 @@ func TestHeartbeat(t *testing.T) {
 		t.Fatalf("expected heartbeat at tick 1, got %v", got)
 	}
 	a.next()
-	if got := counter(t, f.e.Metrics().Sent.WithLabelValues(TypeHeartbeat)); got < 2 {
-		t.Errorf("sent{heartbeat} = %v", got)
-	}
+	// The frame is in hand before it is counted: stream.send increments
+	// Sent after out.Send returns. Wait on the counter itself (rule 2 of
+	// docs/specs/testing/live-assertions.md); a 20 ms sleep before the
+	// increment fails a single read on every run, reading 1.
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Sent.WithLabelValues(TypeHeartbeat)) >= 2 }, "two heartbeats counted")
 }
 
 // AC-9: World visibility is asked for per stream, refused without the
