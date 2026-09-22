@@ -85,6 +85,8 @@ jobs:
         run: make helm-test
       - name: license-check
         run: make license-check
+      - name: content-language corpus
+        run: make content-grammar-check
 
   # AW-SRV-002 AC-3 and its Definition of Done: replay equality and the golden State Hash
   # sequence run on every architecture a replica or a developer might be, and a
