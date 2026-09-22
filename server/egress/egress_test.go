@@ -745,13 +745,22 @@ func TestRebind(t *testing.T) {
 	a.cancel()
 	a.wait()
 	f.forgotten(0, 0)
-	// Exactly two unsubscribes over the Session's life — the rebind that
-	// moved alice from plaza to hall, and forget. The twenty Rebind calls
-	// after the Session ended must have added none: each would be an
-	// unsubscribe and a resubscribe, so a third drop here means one of them
-	// took a subscription out for a Session that was over. The counter is
-	// monotonic and the teardown has settled, so this is a stable read.
-	if got := counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed)); got != 2 {
+	// And then the drop accounting, which lands after the subscription is
+	// released (see forgotten). Waiting for at least two and asserting
+	// exactly two is not circular: the wait fails the test if the second
+	// unsubscribe never happens, and the assertion fails if a twenty-first
+	// one did. Nothing is subscribed by this point, so no later increment is
+	// possible and the read is stable.
+	unsubscribed := func() float64 {
+		return counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed))
+	}
+	waitFor(t, func() bool { return unsubscribed() >= 2 }, "both unsubscribes accounted")
+	// Exactly two over the Session's life — the rebind that moved alice from
+	// plaza to hall, and forget. The twenty Rebind calls after the Session
+	// ended must have added none: each would be an unsubscribe and a
+	// resubscribe, so a third here means one of them took a subscription out
+	// for a Session that was already over.
+	if got := unsubscribed(); got != 2 {
 		t.Errorf("rebind after the session ended resubscribed: unsubscribed drops = %v, want 2 (the rebind, then forget)", got)
 	}
 }
@@ -807,22 +816,27 @@ func TestHubDrop(t *testing.T) {
 	a.end()
 }
 
-// forgotten waits until a Session's teardown has actually finished: its
-// retained state dropped *and* its fan-out subscription released.
+// forgotten waits until a Session's retained state is dropped and its fan-out
+// subscription released.
 //
-// Egress.Sessions() alone is not that signal, and using it as one is a race.
-// forget deletes the map entry and only then calls s.close(), which is what
-// unsubscribes from the Hub — so between the two there is a window in which
-// Sessions() reads 0 while the subscription is still live and the Hub's
-// unsubscribed drop has not been counted. A test that waits on Sessions() and
-// then asserts on a Hub counter is reading the second thing before the first
-// has caused it. That is a real window, not a theoretical one: widening it
-// with a 20 ms sleep inside forget fails TestRebind and TestResume every run.
+// Egress.Sessions() alone is not that signal, and using it as one is a race:
+// forget deletes the map entry, releases the lock, and only then calls
+// s.close(), which is what unsubscribes from the Hub. Between the two the
+// Session reads as gone while its subscription is still live. Widening that
+// window with a 20 ms sleep inside forget fails TestRebind and TestResume on
+// every run, which is how it was pinned rather than guessed at.
 //
-// The ordering inside forget is not itself a bug — s.close() always follows,
-// nothing leaks, and Sessions() is documented "for tests" and has no other
-// caller — so the fix belongs here rather than in a teardown path that would
-// be reordered only to suit a test's polling.
+// What this does NOT cover is the Hub's drop accounting. Hub.end sets
+// Subscribers inside its lock and calls Drops.Inc() after releasing it, so
+// this predicate can be satisfied while the unsubscribed counter is still in
+// flight — a second window, nested inside the first, and the same 20 ms
+// experiment against hub.go proves it. A test that asserts on a drop count
+// must wait for that counter itself; see TestRebind.
+//
+// Neither ordering is a bug. s.close() always follows, Hub.end always counts,
+// nothing leaks, and Egress.Sessions() is documented "for tests" with no other
+// caller in the tree — so the fix belongs in the tests rather than in two
+// teardown paths reordered to suit a test's polling.
 func (f *fixture) forgotten(sessions, subscribers int) {
 	f.t.Helper()
 	waitFor(f.t, func() bool {
