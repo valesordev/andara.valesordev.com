@@ -23,7 +23,7 @@ import { enumDesc, fileDesc, messageDesc, tsEnum } from "@bufbuild/protobuf/code
  * Describes the file andara/accounts/v1/account.proto.
  */
 export const file_andara_accounts_v1_account = /*@__PURE__*/
-  fileDesc("CiBhbmRhcmEvYWNjb3VudHMvdjEvYWNjb3VudC5wcm90bxISYW5kYXJhLmFjY291bnRzLnYxInsKDUFjY291bnRSZWNvcmQSLgoHYWNjb3VudBgBIAEoCzIbLmFuZGFyYS5hY2NvdW50cy52MS5BY2NvdW50SAASMAoGY29uZmlnGAIgASgLMh4uYW5kYXJhLmFjY291bnRzLnYxLkF1dGhDb25maWdIAEIICgZyZWNvcmQiiwMKB0FjY291bnQSEgoKYWNjb3VudF9pZBgBIAEoCRIQCgh1c2VybmFtZRgCIAEoCRIyCgpjcmVkZW50aWFsGAMgASgLMh4uYW5kYXJhLmFjY291bnRzLnYxLkNyZWRlbnRpYWwSJwoFcm9sZXMYBCADKA4yGC5hbmRhcmEuYWNjb3VudHMudjEuUm9sZRIxCgZzdGF0dXMYBSABKA4yIS5hbmRhcmEuYWNjb3VudHMudjEuQWNjb3VudFN0YXR1cxIUCgxjcmVhdGVkX3VuaXgYBiABKAMSPgoOcmVmcmVzaF90b2tlbnMYByADKAsyJi5hbmRhcmEuYWNjb3VudHMudjEuUmVmcmVzaFRva2VuUmVjb3JkEisKB2ludml0ZXMYCCADKAsyGi5hbmRhcmEuYWNjb3VudHMudjEuSW52aXRlEhUKDWFnZW50X3BhY2tfaWQYCSABKAkSFgoOcmVjb3JkX3ZlcnNpb24YCiABKAQSGAoQd29ya2xvYWRfc3ViamVjdBgNIAEoCSKMAQoKQ3JlZGVudGlhbBIwCgRraW5kGAEgASgOMiIuYW5kYXJhLmFjY291bnRzLnYxLkNyZWRlbnRpYWxLaW5kEgwKBGhhc2gYAiABKAwSDAoEc2FsdBgDIAEoDBIwCgZwYXJhbXMYBCABKAsyIC5hbmRhcmEuYWNjb3VudHMudjEuQXJnb24yUGFyYW1zIlIKDEFyZ29uMlBhcmFtcxISCgptZW1vcnlfa2liGAEgASgNEgwKBHRpbWUYAiABKA0SDwoHdGhyZWFkcxgDIAEoDRIPCgdrZXlfbGVuGAQgASgNIl4KElJlZnJlc2hUb2tlblJlY29yZBIMCgRoYXNoGAEgASgMEhMKC2lzc3VlZF91bml4GAIgASgDEhQKDGV4cGlyZXNfdW5peBgDIAEoAxIPCgdyZXZva2VkGAQgASgIIokBCgZJbnZpdGUSEQoJY29kZV9oYXNoGAEgASgMEhMKC2lzc3VlZF91bml4GAIgASgDEhQKDGV4cGlyZXNfdW5peBgDIAEoAxIPCgdyZXZva2VkGAQgASgIEhAKCHJlZGVlbWVkGAUgASgIEh4KFnJlZGVlbWVkX2J5X2FjY291bnRfaWQYBiABKAkiagoKQXV0aENvbmZpZxIyCgRtb2RlGAEgASgOMiQuYW5kYXJhLmFjY291bnRzLnYxLlJlZ2lzdHJhdGlvbk1vZGUSEgoKY2hhbmdlZF9ieRgCIAEoCRIUCgxjaGFuZ2VkX3VuaXgYAyABKAMqXwoEUm9sZRIUChBST0xFX1VOU1BFQ0lGSUVEEAASCgoGUExBWUVSEAESCwoHQlVJTERFUhACEg8KC0dBTUVfTUFTVEVSEAMSDAoIT1BFUkFUT1IQBBIJCgVBR0VOVBAFKkkKDUFjY291bnRTdGF0dXMSHgoaQUNDT1VOVF9TVEFUVVNfVU5TUEVDSUZJRUQQABIKCgZBQ1RJVkUQARIMCghESVNBQkxFRBACKl4KDkNyZWRlbnRpYWxLaW5kEh8KG0NSRURFTlRJQUxfS0lORF9VTlNQRUNJRklFRBAAEgwKCFBBU1NXT1JEEAESCwoHQVBJX0tFWRACEhAKDFdPUktMT0FEX0pXVBADKlcKEFJlZ2lzdHJhdGlvbk1vZGUSIQodUkVHSVNUUkFUSU9OX01PREVfVU5TUEVDSUZJRUQQABIKCgZDTE9TRUQQARIKCgZJTlZJVEUQAhIICgRPUEVOEANC0wEKFmNvbS5hbmRhcmEuYWNjb3VudHMudjFCDEFjY291bnRQcm90b1ABWkFnaXRodWIuY29tL3ZhbGVzb3JkZXYvYW5kYXJhL2dlbi9nby9hbmRhcmEvYWNjb3VudHMvdjE7YWNjb3VudHN2MaICA0FBWKoCEkFuZGFyYS5BY2NvdW50cy5WMcoCEkFuZGFyYVxBY2NvdW50c1xWMeICHkFuZGFyYVxBY2NvdW50c1xWMVxHUEJNZXRhZGF0YeoCFEFuZGFyYTo6QWNjb3VudHM6OlYxYgZwcm90bzM");
+  fileDesc("CiBhbmRhcmEvYWNjb3VudHMvdjEvYWNjb3VudC5wcm90bxISYW5kYXJhLmFjY291bnRzLnYxIrwBCg1BY2NvdW50UmVjb3JkEi4KB2FjY291bnQYASABKAsyGy5hbmRhcmEuYWNjb3VudHMudjEuQWNjb3VudEgAEjAKBmNvbmZpZxgCIAEoCzIeLmFuZGFyYS5hY2NvdW50cy52MS5BdXRoQ29uZmlnSAASPwoQbmFtZV9yZXNlcnZhdGlvbhgDIAEoCzIjLmFuZGFyYS5hY2NvdW50cy52MS5OYW1lUmVzZXJ2YXRpb25IAEIICgZyZWNvcmQiwQMKB0FjY291bnQSEgoKYWNjb3VudF9pZBgBIAEoCRIQCgh1c2VybmFtZRgCIAEoCRIyCgpjcmVkZW50aWFsGAMgASgLMh4uYW5kYXJhLmFjY291bnRzLnYxLkNyZWRlbnRpYWwSJwoFcm9sZXMYBCADKA4yGC5hbmRhcmEuYWNjb3VudHMudjEuUm9sZRIxCgZzdGF0dXMYBSABKA4yIS5hbmRhcmEuYWNjb3VudHMudjEuQWNjb3VudFN0YXR1cxIUCgxjcmVhdGVkX3VuaXgYBiABKAMSPgoOcmVmcmVzaF90b2tlbnMYByADKAsyJi5hbmRhcmEuYWNjb3VudHMudjEuUmVmcmVzaFRva2VuUmVjb3JkEisKB2ludml0ZXMYCCADKAsyGi5hbmRhcmEuYWNjb3VudHMudjEuSW52aXRlEhUKDWFnZW50X3BhY2tfaWQYCSABKAkSFgoOcmVjb3JkX3ZlcnNpb24YCiABKAQSNAoKY2hhcmFjdGVycxgLIAMoCzIgLmFuZGFyYS5hY2NvdW50cy52MS5DaGFyYWN0ZXJSZWYSGAoQd29ya2xvYWRfc3ViamVjdBgNIAEoCSKfAQoMQ2hhcmFjdGVyUmVmEhQKDGNoYXJhY3Rlcl9pZBgBIAEoCRIMCgRuYW1lGAIgASgJEjMKBnN0YXR1cxgDIAEoDjIjLmFuZGFyYS5hY2NvdW50cy52MS5DaGFyYWN0ZXJTdGF0dXMSDwoHem9uZV9pZBgEIAEoCRIPCgdyb29tX2lkGAUgASgJEhQKDGNyZWF0ZWRfdW5peBgGIAEoAyI7Cg9OYW1lUmVzZXJ2YXRpb24SFAoMY2hhcmFjdGVyX2lkGAEgASgJEhIKCmFjY291bnRfaWQYAiABKAkijAEKCkNyZWRlbnRpYWwSMAoEa2luZBgBIAEoDjIiLmFuZGFyYS5hY2NvdW50cy52MS5DcmVkZW50aWFsS2luZBIMCgRoYXNoGAIgASgMEgwKBHNhbHQYAyABKAwSMAoGcGFyYW1zGAQgASgLMiAuYW5kYXJhLmFjY291bnRzLnYxLkFyZ29uMlBhcmFtcyJSCgxBcmdvbjJQYXJhbXMSEgoKbWVtb3J5X2tpYhgBIAEoDRIMCgR0aW1lGAIgASgNEg8KB3RocmVhZHMYAyABKA0SDwoHa2V5X2xlbhgEIAEoDSJeChJSZWZyZXNoVG9rZW5SZWNvcmQSDAoEaGFzaBgBIAEoDBITCgtpc3N1ZWRfdW5peBgCIAEoAxIUCgxleHBpcmVzX3VuaXgYAyABKAMSDwoHcmV2b2tlZBgEIAEoCCKJAQoGSW52aXRlEhEKCWNvZGVfaGFzaBgBIAEoDBITCgtpc3N1ZWRfdW5peBgCIAEoAxIUCgxleHBpcmVzX3VuaXgYAyABKAMSDwoHcmV2b2tlZBgEIAEoCBIQCghyZWRlZW1lZBgFIAEoCBIeChZyZWRlZW1lZF9ieV9hY2NvdW50X2lkGAYgASgJImoKCkF1dGhDb25maWcSMgoEbW9kZRgBIAEoDjIkLmFuZGFyYS5hY2NvdW50cy52MS5SZWdpc3RyYXRpb25Nb2RlEhIKCmNoYW5nZWRfYnkYAiABKAkSFAoMY2hhbmdlZF91bml4GAMgASgDKm4KD0NoYXJhY3RlclN0YXR1cxIgChxDSEFSQUNURVJfU1RBVFVTX1VOU1BFQ0lGSUVEEAASGwoXQ0hBUkFDVEVSX1NUQVRVU19BQ1RJVkUQARIcChhDSEFSQUNURVJfU1RBVFVTX0RFTEVURUQQAipfCgRSb2xlEhQKEFJPTEVfVU5TUEVDSUZJRUQQABIKCgZQTEFZRVIQARILCgdCVUlMREVSEAISDwoLR0FNRV9NQVNURVIQAxIMCghPUEVSQVRPUhAEEgkKBUFHRU5UEAUqSQoNQWNjb3VudFN0YXR1cxIeChpBQ0NPVU5UX1NUQVRVU19VTlNQRUNJRklFRBAAEgoKBkFDVElWRRABEgwKCERJU0FCTEVEEAIqXgoOQ3JlZGVudGlhbEtpbmQSHwobQ1JFREVOVElBTF9LSU5EX1VOU1BFQ0lGSUVEEAASDAoIUEFTU1dPUkQQARILCgdBUElfS0VZEAISEAoMV09SS0xPQURfSldUEAMqVwoQUmVnaXN0cmF0aW9uTW9kZRIhCh1SRUdJU1RSQVRJT05fTU9ERV9VTlNQRUNJRklFRBAAEgoKBkNMT1NFRBABEgoKBklOVklURRACEggKBE9QRU4QA0LTAQoWY29tLmFuZGFyYS5hY2NvdW50cy52MUIMQWNjb3VudFByb3RvUAFaQWdpdGh1Yi5jb20vdmFsZXNvcmRldi9hbmRhcmEvZ2VuL2dvL2FuZGFyYS9hY2NvdW50cy92MTthY2NvdW50c3YxogIDQUFYqgISQW5kYXJhLkFjY291bnRzLlYxygISQW5kYXJhXEFjY291bnRzXFYx4gIeQW5kYXJhXEFjY291bnRzXFYxXEdQQk1ldGFkYXRh6gIUQW5kYXJhOjpBY2NvdW50czo6VjFiBnByb3RvMw");
 
 /**
  * Describes the message andara.accounts.v1.AccountRecord.
@@ -40,45 +40,75 @@ export const AccountSchema = /*@__PURE__*/
   messageDesc(file_andara_accounts_v1_account, 1);
 
 /**
+ * Describes the message andara.accounts.v1.CharacterRef.
+ * Use `create(CharacterRefSchema)` to create a new message.
+ */
+export const CharacterRefSchema = /*@__PURE__*/
+  messageDesc(file_andara_accounts_v1_account, 2);
+
+/**
+ * Describes the message andara.accounts.v1.NameReservation.
+ * Use `create(NameReservationSchema)` to create a new message.
+ */
+export const NameReservationSchema = /*@__PURE__*/
+  messageDesc(file_andara_accounts_v1_account, 3);
+
+/**
  * Describes the message andara.accounts.v1.Credential.
  * Use `create(CredentialSchema)` to create a new message.
  */
 export const CredentialSchema = /*@__PURE__*/
-  messageDesc(file_andara_accounts_v1_account, 2);
+  messageDesc(file_andara_accounts_v1_account, 4);
 
 /**
  * Describes the message andara.accounts.v1.Argon2Params.
  * Use `create(Argon2ParamsSchema)` to create a new message.
  */
 export const Argon2ParamsSchema = /*@__PURE__*/
-  messageDesc(file_andara_accounts_v1_account, 3);
+  messageDesc(file_andara_accounts_v1_account, 5);
 
 /**
  * Describes the message andara.accounts.v1.RefreshTokenRecord.
  * Use `create(RefreshTokenRecordSchema)` to create a new message.
  */
 export const RefreshTokenRecordSchema = /*@__PURE__*/
-  messageDesc(file_andara_accounts_v1_account, 4);
+  messageDesc(file_andara_accounts_v1_account, 6);
 
 /**
  * Describes the message andara.accounts.v1.Invite.
  * Use `create(InviteSchema)` to create a new message.
  */
 export const InviteSchema = /*@__PURE__*/
-  messageDesc(file_andara_accounts_v1_account, 5);
+  messageDesc(file_andara_accounts_v1_account, 7);
 
 /**
  * Describes the message andara.accounts.v1.AuthConfig.
  * Use `create(AuthConfigSchema)` to create a new message.
  */
 export const AuthConfigSchema = /*@__PURE__*/
-  messageDesc(file_andara_accounts_v1_account, 6);
+  messageDesc(file_andara_accounts_v1_account, 8);
+
+/**
+ * Describes the enum andara.accounts.v1.CharacterStatus.
+ */
+export const CharacterStatusSchema = /*@__PURE__*/
+  enumDesc(file_andara_accounts_v1_account, 0);
+
+/**
+ * Prefixed, unlike the other enums here, because AccountStatus already
+ * holds ACTIVE in this package. DELETED is declared so the field never
+ * changes shape; nothing writes it before AW-SRV-032.
+ *
+ * @generated from enum andara.accounts.v1.CharacterStatus
+ */
+export const CharacterStatus = /*@__PURE__*/
+  tsEnum(CharacterStatusSchema);
 
 /**
  * Describes the enum andara.accounts.v1.Role.
  */
 export const RoleSchema = /*@__PURE__*/
-  enumDesc(file_andara_accounts_v1_account, 0);
+  enumDesc(file_andara_accounts_v1_account, 1);
 
 /**
  * @generated from enum andara.accounts.v1.Role
@@ -90,7 +120,7 @@ export const Role = /*@__PURE__*/
  * Describes the enum andara.accounts.v1.AccountStatus.
  */
 export const AccountStatusSchema = /*@__PURE__*/
-  enumDesc(file_andara_accounts_v1_account, 1);
+  enumDesc(file_andara_accounts_v1_account, 2);
 
 /**
  * @generated from enum andara.accounts.v1.AccountStatus
@@ -102,7 +132,7 @@ export const AccountStatus = /*@__PURE__*/
  * Describes the enum andara.accounts.v1.CredentialKind.
  */
 export const CredentialKindSchema = /*@__PURE__*/
-  enumDesc(file_andara_accounts_v1_account, 2);
+  enumDesc(file_andara_accounts_v1_account, 3);
 
 /**
  * @generated from enum andara.accounts.v1.CredentialKind
@@ -114,7 +144,7 @@ export const CredentialKind = /*@__PURE__*/
  * Describes the enum andara.accounts.v1.RegistrationMode.
  */
 export const RegistrationModeSchema = /*@__PURE__*/
-  enumDesc(file_andara_accounts_v1_account, 3);
+  enumDesc(file_andara_accounts_v1_account, 4);
 
 /**
  * The registration phases ADR-0006 decided: closed at launch, then invite-only

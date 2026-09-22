@@ -45,10 +45,33 @@ func TestLoadContent_Templates(t *testing.T) {
 	}
 }
 
+// zonesOnly is the valid fixture's Zone files without its templates/
+// directory — the dev World carries the core pack since AW-SRV-014, and
+// these tests want a World with none.
+func zonesOnly(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	valid := fixture(t, "valid")
+	entries, _ := os.ReadDir(valid)
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		b, err := os.ReadFile(filepath.Join(valid, e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return dir
+}
+
 // Content with no templates/ directory loads with an empty registry and no
 // gauge series: a World of Rooms is still a World.
 func TestLoadContent_NoTemplates(t *testing.T) {
-	rt, _, logs := recordingRuntime(t, fixture(t, "valid"), false)
+	rt, _, logs := recordingRuntime(t, zonesOnly(t), false)
 	if code := rt.LoadContent(context.Background()); code != ExitOK {
 		t.Fatalf("exit %d; logs=%s", code, logs.String())
 	}
@@ -63,18 +86,7 @@ func TestLoadContent_NoTemplates(t *testing.T) {
 // A refused Template refuses the boot: exit 1, the finding at error with
 // the template named, counted by code, and Ready() false.
 func TestLoadContent_TemplateFindingRefusesBoot(t *testing.T) {
-	dir := t.TempDir()
-	valid := fixture(t, "valid")
-	entries, _ := os.ReadDir(valid)
-	for _, e := range entries {
-		b, err := os.ReadFile(filepath.Join(valid, e.Name()))
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(dir, e.Name()), b, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
+	dir := zonesOnly(t)
 	if err := os.MkdirAll(filepath.Join(dir, "templates"), 0o700); err != nil {
 		t.Fatal(err)
 	}

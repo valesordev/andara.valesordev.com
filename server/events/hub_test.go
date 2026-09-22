@@ -585,11 +585,19 @@ func TestUnsubscribeDuringDelivery(t *testing.T) {
 	for i := range subs {
 		subs[i] = f.sub(events.Observer{Room: room("town", "plaza")}, player)
 	}
+	// The wait is for the Unsubscribes themselves, not for the loop that
+	// spawns them: closing on the spawn left the gauge assertion below
+	// racing calls still in flight, which is what made this test flake.
+	var unsubscribed sync.WaitGroup
+	unsubscribed.Add(len(subs))
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
 		for _, s := range subs {
-			go f.hub.Unsubscribe(s)
+			go func() {
+				defer unsubscribed.Done()
+				f.hub.Unsubscribe(s)
+			}()
 		}
 	}()
 	p := sim.PartitionFor("town")
@@ -600,6 +608,7 @@ func TestUnsubscribeDuringDelivery(t *testing.T) {
 		}
 	}
 	<-done
+	unsubscribed.Wait()
 	f.hub.Flush()
 	for _, s := range subs {
 		for range s.Events() {

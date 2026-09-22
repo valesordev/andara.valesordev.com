@@ -158,7 +158,7 @@ func (p *Pipeline) Submit(ctx context.Context, in Intent, principal auth.Princip
 	cmd.ZoneId = string(binding.Zone)
 	cmd.ActorId = string(binding.Actor)
 	cmd.AcceptedAtUnixNano = clock.Now().UnixNano()
-	cmd.TraceId = traceParent(ctx)
+	cmd.TraceId = TraceParent(ctx)
 	if p.Metrics != nil {
 		p.Metrics.Duration.WithLabelValues(verb, PhasePreLog).Observe(clock.Now().Sub(began).Seconds())
 	}
@@ -241,9 +241,9 @@ func IsPreLog(err error) bool {
 	return ok && e.Stage.PreLog()
 }
 
-// traceParent renders the W3C traceparent for ctx's span, the form
+// TraceParent renders the W3C traceparent for ctx's span, the form
 // LoggedCommand.trace_id carries so the tick can continue the trace.
-func traceParent(ctx context.Context) string {
+func TraceParent(ctx context.Context) string {
 	carrier := propagation.MapCarrier{}
 	propagation.TraceContext{}.Inject(ctx, carrier)
 	return carrier.Get("traceparent")

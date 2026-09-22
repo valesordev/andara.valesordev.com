@@ -33,6 +33,12 @@ type Bindings struct {
 	// whose binding changed, outside the lock: the Event stream re-reads
 	// where the Session perceives from (egress.Rebind, AW-SRV-011).
 	OnChange func(sessionID string)
+	// OnZoneChange, if set, is called after a Publish that settles a bound
+	// Session's Character in a Zone other than the one it was in — the
+	// cross-Zone arrivals this table already watches. The roster writes
+	// its position from it (AW-SRV-014). It runs on the tick goroutine,
+	// outside the lock, and must not block.
+	OnZoneChange func(sessionID string, b command.Binding)
 
 	mu        sync.Mutex
 	bySession map[string]*binding
@@ -198,8 +204,11 @@ func (t *Bindings) Publish(ev sim.Event) {
 	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived {
 		return
 	}
+	var moved []struct {
+		session string
+		binding command.Binding
+	}
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	for _, actor := range ev.Scope.Entities {
 		sessionID, ok := t.byActor[actor]
 		if !ok {
@@ -213,12 +222,26 @@ func (t *Bindings) Publish(ev sim.Event) {
 				e.transit = &transit{since: t.now(), settled: make(chan struct{})}
 			}
 		case *gamev1.EventEnvelope_CharacterArrived:
+			was := e.cmd.Zone
 			e.cmd.Zone = sim.ZoneID(p.CharacterArrived.GetZoneId())
 			e.cmd.Room = sim.RoomID(p.CharacterArrived.GetRoomId())
+			if was != e.cmd.Zone {
+				moved = append(moved, struct {
+					session string
+					binding command.Binding
+				}{sessionID, e.cmd})
+			}
 			if e.transit != nil {
 				close(e.transit.settled)
 				e.transit = nil
 			}
 		}
+	}
+	t.mu.Unlock()
+	if t.OnZoneChange == nil {
+		return
+	}
+	for _, m := range moved {
+		t.OnZoneChange(m.session, m.binding)
 	}
 }

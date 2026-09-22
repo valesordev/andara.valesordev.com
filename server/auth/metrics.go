@@ -17,6 +17,7 @@ type Metrics struct {
 	PrivilegedActions  *prometheus.CounterVec // andara_privileged_actions_total{action}
 	Accounts           *prometheus.GaugeVec   // andara_accounts_total{role}
 	AuditWriteFailures prometheus.Counter     // andara_audit_write_failures_total
+	CharacterCreations *prometheus.CounterVec // andara_character_creations_total{outcome} (AW-SRV-014)
 }
 
 // Attempt outcomes.
@@ -68,6 +69,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_audit_write_failures_total",
 			Help: "Audit records that could not be written to andara.audit.v1. Any value above zero is an operator page.",
 		}),
+		CharacterCreations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "andara_character_creations_total",
+			Help: "CreateCharacter calls by outcome.",
+		}, []string{"outcome"}),
+	}
+	for _, o := range []string{CreationOK, CreationRosterFull, CreationNameTaken, CreationNameInvalid} {
+		m.CharacterCreations.WithLabelValues(o)
 	}
 	for _, o := range []string{OutcomeOK, OutcomeBadCredential, OutcomeRateLimited, OutcomeDisabled} {
 		m.Attempts.WithLabelValues(o)
@@ -86,7 +94,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	if reg != nil {
 		reg.MustRegister(m.Attempts, m.VerifyDuration, m.Registrations, m.InviteRedemptions,
-			m.PrivilegedActions, m.Accounts, m.AuditWriteFailures)
+			m.PrivilegedActions, m.Accounts, m.AuditWriteFailures, m.CharacterCreations)
 	}
 	return m
 }

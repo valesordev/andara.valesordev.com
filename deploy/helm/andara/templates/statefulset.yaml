@@ -155,6 +155,11 @@ spec:
               mountPath: /content
               readOnly: true
             {{- end }}
+            {{- if .Values.contentVolume.templatesConfigMapName }}
+            - name: content-templates
+              mountPath: /content/templates
+              readOnly: true
+            {{- end }}
             {{- if .Values.secrets.tokenKey.secretName }}
             - name: token-key
               mountPath: /etc/andara/secrets/token-key
@@ -179,6 +184,11 @@ spec:
         - name: content
           configMap:
             name: {{ .Values.contentVolume.configMapName }}
+        {{- end }}
+        {{- if .Values.contentVolume.templatesConfigMapName }}
+        - name: content-templates
+          configMap:
+            name: {{ .Values.contentVolume.templatesConfigMapName }}
         {{- end }}
         {{- if .Values.secrets.tokenKey.secretName }}
         - name: token-key

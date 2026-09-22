@@ -22,10 +22,11 @@ _runtime_version.ValidateProtobufRuntimeVersion(
 _sym_db = _symbol_database.Default()
 
 
+from andara.accounts.v1 import account_pb2 as andara_dot_accounts_dot_v1_dot_account__pb2
 from andara.game.v1 import event_pb2 as andara_dot_game_dot_v1_dot_event__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19\x61ndara/game/v1/game.proto\x12\x0e\x61ndara.game.v1\x1a\x1a\x61ndara/game/v1/event.proto\"\xaa\x01\n\x12OpenSessionRequest\x12)\n\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n\nauth_token\x18\x02 \x01(\tR\tauthToken\x12\x1f\n\x0b\x63lient_name\x18\x03 \x01(\tR\nclientName\x12)\n\x11\x61\x63t_as_account_id\x18\x04 \x01(\tR\x0e\x61\x63tAsAccountId\"\xbf\x01\n\x13OpenSessionResponse\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12-\n\x12negotiated_version\x18\x02 \x01(\rR\x11negotiatedVersion\x12,\n\x12server_min_version\x18\x03 \x01(\rR\x10serverMinVersion\x12,\n\x12server_max_version\x18\x04 \x01(\rR\x10serverMaxVersion\"_\n\rSubmitRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n\x03raw\x18\x02 \x01(\tR\x03raw\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\"W\n\x0eSubmitResponse\x12\'\n\x0f\x61\x63\x63\x65pted_offset\x18\x01 \x01(\x03R\x0e\x61\x63\x63\x65ptedOffset\x12\x1c\n\tpartition\x18\x02 \x01(\x05R\tpartition\"k\n\x10SubscribeRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\"\n\rlast_event_id\x18\x02 \x01(\x04R\x0blastEventId\x12\x14\n\x05world\x18\x03 \x01(\x08R\x05world\"4\n\x13\x43loseSessionRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\"\x16\n\x14\x43loseSessionResponse2\xd2\x02\n\x04Game\x12V\n\x0bOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n\tSubscribe\x12 .andara.game.v1.SubscribeRequest\x1a\x1d.andara.game.v1.EventEnvelope0\x01\x12Y\n\x0c\x43loseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponseB\xb4\x01\n\x12\x63om.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19\x61ndara/game/v1/game.proto\x12\x0e\x61ndara.game.v1\x1a andara/accounts/v1/account.proto\x1a\x1a\x61ndara/game/v1/event.proto\"\xaa\x01\n\x12OpenSessionRequest\x12)\n\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n\nauth_token\x18\x02 \x01(\tR\tauthToken\x12\x1f\n\x0b\x63lient_name\x18\x03 \x01(\tR\nclientName\x12)\n\x11\x61\x63t_as_account_id\x18\x04 \x01(\tR\x0e\x61\x63tAsAccountId\"\xbf\x01\n\x13OpenSessionResponse\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12-\n\x12negotiated_version\x18\x02 \x01(\rR\x11negotiatedVersion\x12,\n\x12server_min_version\x18\x03 \x01(\rR\x10serverMinVersion\x12,\n\x12server_max_version\x18\x04 \x01(\rR\x10serverMaxVersion\"_\n\rSubmitRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\x10\n\x03raw\x18\x02 \x01(\tR\x03raw\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\"W\n\x0eSubmitResponse\x12\'\n\x0f\x61\x63\x63\x65pted_offset\x18\x01 \x01(\x03R\x0e\x61\x63\x63\x65ptedOffset\x12\x1c\n\tpartition\x18\x02 \x01(\x05R\tpartition\"k\n\x10SubscribeRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\"\n\rlast_event_id\x18\x02 \x01(\x04R\x0blastEventId\x12\x14\n\x05world\x18\x03 \x01(\x08R\x05world\"4\n\x13\x43loseSessionRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\"\x16\n\x14\x43loseSessionResponse\"6\n\x15ListCharactersRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\"\x82\x01\n\x16ListCharactersResponse\x12@\n\ncharacters\x18\x01 \x03(\x0b\x32 .andara.game.v1.CharacterSummaryR\ncharacters\x12&\n\x0fmax_per_account\x18\x02 \x01(\rR\rmaxPerAccount\"K\n\x16\x43reateCharacterRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\"\x81\x01\n\x17\x43reateCharacterResponse\x12>\n\tcharacter\x18\x01 \x01(\x0b\x32 .andara.game.v1.CharacterSummaryR\tcharacter\x12&\n\x0fmax_per_account\x18\x02 \x01(\rR\rmaxPerAccount\"Z\n\x16SelectCharacterRequest\x12\x1d\n\nsession_id\x18\x01 \x01(\tR\tsessionId\x12!\n\x0c\x63haracter_id\x18\x02 \x01(\tR\x0b\x63haracterId\"`\n\x17SelectCharacterResponse\x12\'\n\x0f\x61\x63\x63\x65pted_offset\x18\x01 \x01(\x03R\x0e\x61\x63\x63\x65ptedOffset\x12\x1c\n\tpartition\x18\x02 \x01(\x05R\tpartition\"\xef\x01\n\x10\x43haracterSummary\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x12\n\x04name\x18\x02 \x01(\tR\x04name\x12;\n\x06status\x18\x03 \x01(\x0e\x32#.andara.accounts.v1.CharacterStatusR\x06status\x12\x17\n\x07zone_id\x18\x04 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x05 \x01(\tR\x06roomId\x12\x12\n\x04live\x18\x06 \x01(\x08R\x04live\x12!\n\x0c\x63reated_unix\x18\x07 \x01(\x03R\x0b\x63reatedUnix2\xfb\x04\n\x04Game\x12V\n\x0bOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n\tSubscribe\x12 .andara.game.v1.SubscribeRequest\x1a\x1d.andara.game.v1.EventEnvelope0\x01\x12Y\n\x0c\x43loseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponse\x12_\n\x0eListCharacters\x12%.andara.game.v1.ListCharactersRequest\x1a&.andara.game.v1.ListCharactersResponse\x12\x62\n\x0f\x43reateCharacter\x12&.andara.game.v1.CreateCharacterRequest\x1a\'.andara.game.v1.CreateCharacterResponse\x12\x62\n\x0fSelectCharacter\x12&.andara.game.v1.SelectCharacterRequest\x1a\'.andara.game.v1.SelectCharacterResponseB\xb4\x01\n\x12\x63om.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,20 +34,34 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'andara.game.v1.game_pb2', _
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\022com.andara.game.v1B\tGameProtoP\001Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\242\002\003AGX\252\002\016Andara.Game.V1\312\002\016Andara\\Game\\V1\342\002\032Andara\\Game\\V1\\GPBMetadata\352\002\020Andara::Game::V1'
-  _globals['_OPENSESSIONREQUEST']._serialized_start=74
-  _globals['_OPENSESSIONREQUEST']._serialized_end=244
-  _globals['_OPENSESSIONRESPONSE']._serialized_start=247
-  _globals['_OPENSESSIONRESPONSE']._serialized_end=438
-  _globals['_SUBMITREQUEST']._serialized_start=440
-  _globals['_SUBMITREQUEST']._serialized_end=535
-  _globals['_SUBMITRESPONSE']._serialized_start=537
-  _globals['_SUBMITRESPONSE']._serialized_end=624
-  _globals['_SUBSCRIBEREQUEST']._serialized_start=626
-  _globals['_SUBSCRIBEREQUEST']._serialized_end=733
-  _globals['_CLOSESESSIONREQUEST']._serialized_start=735
-  _globals['_CLOSESESSIONREQUEST']._serialized_end=787
-  _globals['_CLOSESESSIONRESPONSE']._serialized_start=789
-  _globals['_CLOSESESSIONRESPONSE']._serialized_end=811
-  _globals['_GAME']._serialized_start=814
-  _globals['_GAME']._serialized_end=1152
+  _globals['_OPENSESSIONREQUEST']._serialized_start=108
+  _globals['_OPENSESSIONREQUEST']._serialized_end=278
+  _globals['_OPENSESSIONRESPONSE']._serialized_start=281
+  _globals['_OPENSESSIONRESPONSE']._serialized_end=472
+  _globals['_SUBMITREQUEST']._serialized_start=474
+  _globals['_SUBMITREQUEST']._serialized_end=569
+  _globals['_SUBMITRESPONSE']._serialized_start=571
+  _globals['_SUBMITRESPONSE']._serialized_end=658
+  _globals['_SUBSCRIBEREQUEST']._serialized_start=660
+  _globals['_SUBSCRIBEREQUEST']._serialized_end=767
+  _globals['_CLOSESESSIONREQUEST']._serialized_start=769
+  _globals['_CLOSESESSIONREQUEST']._serialized_end=821
+  _globals['_CLOSESESSIONRESPONSE']._serialized_start=823
+  _globals['_CLOSESESSIONRESPONSE']._serialized_end=845
+  _globals['_LISTCHARACTERSREQUEST']._serialized_start=847
+  _globals['_LISTCHARACTERSREQUEST']._serialized_end=901
+  _globals['_LISTCHARACTERSRESPONSE']._serialized_start=904
+  _globals['_LISTCHARACTERSRESPONSE']._serialized_end=1034
+  _globals['_CREATECHARACTERREQUEST']._serialized_start=1036
+  _globals['_CREATECHARACTERREQUEST']._serialized_end=1111
+  _globals['_CREATECHARACTERRESPONSE']._serialized_start=1114
+  _globals['_CREATECHARACTERRESPONSE']._serialized_end=1243
+  _globals['_SELECTCHARACTERREQUEST']._serialized_start=1245
+  _globals['_SELECTCHARACTERREQUEST']._serialized_end=1335
+  _globals['_SELECTCHARACTERRESPONSE']._serialized_start=1337
+  _globals['_SELECTCHARACTERRESPONSE']._serialized_end=1433
+  _globals['_CHARACTERSUMMARY']._serialized_start=1436
+  _globals['_CHARACTERSUMMARY']._serialized_end=1675
+  _globals['_GAME']._serialized_start=1678
+  _globals['_GAME']._serialized_end=2313
 # @@protoc_insertion_point(module_scope)

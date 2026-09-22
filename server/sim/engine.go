@@ -109,16 +109,24 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "move"
 	case *logv1.LoggedCommand_Arrive:
 		return "arrive"
+	case *logv1.LoggedCommand_BindCharacter:
+		return "bind_character"
+	case *logv1.LoggedCommand_UnbindCharacter:
+		return "unbind_character"
 	}
 	return ""
 }
 
 // The CommandKinds this binary serves. KindArrive has no verb: only a tick
 // produces one (ADR-0001 rule 4), so the pre-log verb table cannot bind it.
+// KindBindCharacter and KindUnbindCharacter have none either: the Gateway's
+// roster produces them (AW-SRV-014).
 const (
-	KindLook   CommandKind = "look"
-	KindMove   CommandKind = "move"
-	KindArrive CommandKind = "arrive"
+	KindLook            CommandKind = "look"
+	KindMove            CommandKind = "move"
+	KindArrive          CommandKind = "arrive"
+	KindBindCharacter   CommandKind = "bind_character"
+	KindUnbindCharacter CommandKind = "unbind_character"
 )
 
 // Apply is the handler seam: AW-SRV-003 registers one per verb. It runs

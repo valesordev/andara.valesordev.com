@@ -48,6 +48,17 @@ export declare type AccountRecord = Message<"andara.accounts.v1.AccountRecord"> 
      */
     value: AuthConfig;
     case: "config";
+  } | {
+    /**
+     * Keyed "name/{fold(name)}" (AW-SRV-014): a Character name, reserved
+     * across every Account. Written before the Account record that names
+     * the Character, so a crash between the two leaves a reservation with
+     * no Character — the name is lost, the Account is not corrupted.
+     *
+     * @generated from field: andara.accounts.v1.NameReservation name_reservation = 3;
+     */
+    value: NameReservation;
+    case: "nameReservation";
   } | { case: undefined; value?: undefined };
 };
 
@@ -133,8 +144,19 @@ export declare type Account = Message<"andara.accounts.v1.Account"> & {
   recordVersion: bigint;
 
   /**
+   * The Account's Characters (AW-SRV-014, ADR-0006: up to
+   * character.max_per_account), sorted by character_id. Identity is
+   * Account state; the body is World state — the roster's zone_id and
+   * room_id are the Gateway's last knowledge of where the body is, and the
+   * sim's position is authoritative.
+   *
+   * @generated from field: repeated andara.accounts.v1.CharacterRef characters = 11;
+   */
+  characters: CharacterRef[];
+
+  /**
    * AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
-   * must carry. 11 and 12 are unused, not reserved — see zone.proto for why.
+   * must carry. 12 is unused, not reserved — see zone.proto for why.
    *
    * @generated from field: string workload_subject = 13;
    */
@@ -146,6 +168,77 @@ export declare type Account = Message<"andara.accounts.v1.Account"> & {
  * Use `create(AccountSchema)` to create a new message.
  */
 export declare const AccountSchema: GenMessage<Account>;
+
+/**
+ * One Character on an Account's roster (AW-SRV-014). The name is as typed;
+ * uniqueness is on the folded form the NameReservation is keyed by.
+ *
+ * @generated from message andara.accounts.v1.CharacterRef
+ */
+export declare type CharacterRef = Message<"andara.accounts.v1.CharacterRef"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: andara.accounts.v1.CharacterStatus status = 3;
+   */
+  status: CharacterStatus;
+
+  /**
+   * Where the Gateway last knew the body to be: the spawn Room at create,
+   * and the routing table's entry at unbind. Routes the next BindCharacter.
+   *
+   * @generated from field: string zone_id = 4;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 5;
+   */
+  roomId: string;
+
+  /**
+   * @generated from field: int64 created_unix = 6;
+   */
+  createdUnix: bigint;
+};
+
+/**
+ * Describes the message andara.accounts.v1.CharacterRef.
+ * Use `create(CharacterRefSchema)` to create a new message.
+ */
+export declare const CharacterRefSchema: GenMessage<CharacterRef>;
+
+/**
+ * The record under "name/{fold(name)}": who holds the name. A DELETED
+ * Character keeps its reservation (AW-SRV-032).
+ *
+ * @generated from message andara.accounts.v1.NameReservation
+ */
+export declare type NameReservation = Message<"andara.accounts.v1.NameReservation"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: string account_id = 2;
+   */
+  accountId: string;
+};
+
+/**
+ * Describes the message andara.accounts.v1.NameReservation.
+ * Use `create(NameReservationSchema)` to create a new message.
+ */
+export declare const NameReservationSchema: GenMessage<NameReservation>;
 
 /**
  * @generated from message andara.accounts.v1.Credential
@@ -319,6 +412,35 @@ export declare type AuthConfig = Message<"andara.accounts.v1.AuthConfig"> & {
  * Use `create(AuthConfigSchema)` to create a new message.
  */
 export declare const AuthConfigSchema: GenMessage<AuthConfig>;
+
+/**
+ * Prefixed, unlike the other enums here, because AccountStatus already
+ * holds ACTIVE in this package. DELETED is declared so the field never
+ * changes shape; nothing writes it before AW-SRV-032.
+ *
+ * @generated from enum andara.accounts.v1.CharacterStatus
+ */
+export enum CharacterStatus {
+  /**
+   * @generated from enum value: CHARACTER_STATUS_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: CHARACTER_STATUS_ACTIVE = 1;
+   */
+  ACTIVE = 1,
+
+  /**
+   * @generated from enum value: CHARACTER_STATUS_DELETED = 2;
+   */
+  DELETED = 2,
+}
+
+/**
+ * Describes the enum andara.accounts.v1.CharacterStatus.
+ */
+export declare const CharacterStatusSchema: GenEnum<CharacterStatus>;
 
 /**
  * @generated from enum andara.accounts.v1.Role

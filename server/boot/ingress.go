@@ -64,6 +64,8 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 		return fmt.Errorf("sim.source %q is not kafka or memory", cfg.SimSource)
 	}
 
+	rt.commandLog = producer
+
 	var audit *auth.Auditor
 	if rt.Accounts != nil {
 		audit = rt.Accounts.Auditor()
@@ -104,8 +106,12 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 }
 
 // CloseIngress flushes and closes the producer. After the gateway drain:
-// nothing produces once the Protocol is down.
+// nothing produces once the Protocol is down — except the teardowns the
+// drain started, whose UnbindCharacters are waited for first (AW-SRV-014).
 func (rt *Runtime) CloseIngress() error {
+	if rt.Roster != nil {
+		rt.Roster.Wait()
+	}
 	if rt.producer == nil {
 		return nil
 	}

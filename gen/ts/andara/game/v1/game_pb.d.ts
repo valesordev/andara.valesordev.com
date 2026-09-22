@@ -14,6 +14,7 @@
 
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
+import type { CharacterStatus } from "../../accounts/v1/account_pb";
 import type { EventEnvelopeSchema } from "./event_pb";
 
 /**
@@ -232,6 +233,189 @@ export declare type CloseSessionResponse = Message<"andara.game.v1.CloseSessionR
 export declare const CloseSessionResponseSchema: GenMessage<CloseSessionResponse>;
 
 /**
+ * @generated from message andara.game.v1.ListCharactersRequest
+ */
+export declare type ListCharactersRequest = Message<"andara.game.v1.ListCharactersRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+};
+
+/**
+ * Describes the message andara.game.v1.ListCharactersRequest.
+ * Use `create(ListCharactersRequestSchema)` to create a new message.
+ */
+export declare const ListCharactersRequestSchema: GenMessage<ListCharactersRequest>;
+
+/**
+ * @generated from message andara.game.v1.ListCharactersResponse
+ */
+export declare type ListCharactersResponse = Message<"andara.game.v1.ListCharactersResponse"> & {
+  /**
+   * Sorted by character_id.
+   *
+   * @generated from field: repeated andara.game.v1.CharacterSummary characters = 1;
+   */
+  characters: CharacterSummary[];
+
+  /**
+   * character.max_per_account, so a client can say "1 of 5".
+   *
+   * @generated from field: uint32 max_per_account = 2;
+   */
+  maxPerAccount: number;
+};
+
+/**
+ * Describes the message andara.game.v1.ListCharactersResponse.
+ * Use `create(ListCharactersResponseSchema)` to create a new message.
+ */
+export declare const ListCharactersResponseSchema: GenMessage<ListCharactersResponse>;
+
+/**
+ * @generated from message andara.game.v1.CreateCharacterRequest
+ */
+export declare type CreateCharacterRequest = Message<"andara.game.v1.CreateCharacterRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+
+  /**
+   * As typed. Reserved case-insensitively and NFKC-folded across every
+   * Account; must match character.name_pattern.
+   *
+   * @generated from field: string name = 2;
+   */
+  name: string;
+};
+
+/**
+ * Describes the message andara.game.v1.CreateCharacterRequest.
+ * Use `create(CreateCharacterRequestSchema)` to create a new message.
+ */
+export declare const CreateCharacterRequestSchema: GenMessage<CreateCharacterRequest>;
+
+/**
+ * @generated from message andara.game.v1.CreateCharacterResponse
+ */
+export declare type CreateCharacterResponse = Message<"andara.game.v1.CreateCharacterResponse"> & {
+  /**
+   * @generated from field: andara.game.v1.CharacterSummary character = 1;
+   */
+  character?: CharacterSummary | undefined;
+
+  /**
+   * @generated from field: uint32 max_per_account = 2;
+   */
+  maxPerAccount: number;
+};
+
+/**
+ * Describes the message andara.game.v1.CreateCharacterResponse.
+ * Use `create(CreateCharacterResponseSchema)` to create a new message.
+ */
+export declare const CreateCharacterResponseSchema: GenMessage<CreateCharacterResponse>;
+
+/**
+ * @generated from message andara.game.v1.SelectCharacterRequest
+ */
+export declare type SelectCharacterRequest = Message<"andara.game.v1.SelectCharacterRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: string character_id = 2;
+   */
+  characterId: string;
+};
+
+/**
+ * Describes the message andara.game.v1.SelectCharacterRequest.
+ * Use `create(SelectCharacterRequestSchema)` to create a new message.
+ */
+export declare const SelectCharacterRequestSchema: GenMessage<SelectCharacterRequest>;
+
+/**
+ * SubmitResponse's fields, in a message of its own so the two RPCs can
+ * grow apart.
+ *
+ * @generated from message andara.game.v1.SelectCharacterResponse
+ */
+export declare type SelectCharacterResponse = Message<"andara.game.v1.SelectCharacterResponse"> & {
+  /**
+   * @generated from field: int64 accepted_offset = 1;
+   */
+  acceptedOffset: bigint;
+
+  /**
+   * @generated from field: int32 partition = 2;
+   */
+  partition: number;
+};
+
+/**
+ * Describes the message andara.game.v1.SelectCharacterResponse.
+ * Use `create(SelectCharacterResponseSchema)` to create a new message.
+ */
+export declare const SelectCharacterResponseSchema: GenMessage<SelectCharacterResponse>;
+
+/**
+ * One Character as its owner sees it.
+ *
+ * @generated from message andara.game.v1.CharacterSummary
+ */
+export declare type CharacterSummary = Message<"andara.game.v1.CharacterSummary"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: string name = 2;
+   */
+  name: string;
+
+  /**
+   * @generated from field: andara.accounts.v1.CharacterStatus status = 3;
+   */
+  status: CharacterStatus;
+
+  /**
+   * Where the Gateway last knew the body to be.
+   *
+   * @generated from field: string zone_id = 4;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 5;
+   */
+  roomId: string;
+
+  /**
+   * Bound to a Session right now — this one or another of the Account's.
+   *
+   * @generated from field: bool live = 6;
+   */
+  live: boolean;
+
+  /**
+   * @generated from field: int64 created_unix = 7;
+   */
+  createdUnix: bigint;
+};
+
+/**
+ * Describes the message andara.game.v1.CharacterSummary.
+ * Use `create(CharacterSummarySchema)` to create a new message.
+ */
+export declare const CharacterSummarySchema: GenMessage<CharacterSummary>;
+
+/**
  * @generated from service andara.game.v1.Game
  */
 export declare const Game: GenService<{
@@ -277,6 +461,44 @@ export declare const Game: GenService<{
     methodKind: "unary";
     input: typeof CloseSessionRequestSchema;
     output: typeof CloseSessionResponseSchema;
+  },
+  /**
+   * The roster (AW-SRV-014, ADR-0006): the Session's Account owns up to
+   * character.max_per_account Characters and drives one at a time. Every
+   * roster error carries ErrorInfo{domain: andara.character, reason}:
+   * roster_full (RESOURCE_EXHAUSTED), name_taken (ALREADY_EXISTS),
+   * name_invalid (INVALID_ARGUMENT), already_live (FAILED_PRECONDITION),
+   * no_such_character (NOT_FOUND).
+   *
+   * @generated from rpc andara.game.v1.Game.ListCharacters
+   */
+  listCharacters: {
+    methodKind: "unary";
+    input: typeof ListCharactersRequestSchema;
+    output: typeof ListCharactersResponseSchema;
+  },
+  /**
+   * @generated from rpc andara.game.v1.Game.CreateCharacter
+   */
+  createCharacter: {
+    methodKind: "unary";
+    input: typeof CreateCharacterRequestSchema;
+    output: typeof CreateCharacterResponseSchema;
+  },
+  /**
+   * Enter the World as one of the Account's Characters. The response has
+   * Submit's shape and meaning: the BindCharacter Command is durable in
+   * the log at the returned offset, and the arrival — CharacterArrived
+   * with an empty from_direction — comes on the Event stream when the
+   * tick applies it. The Session's teardown, whichever way it ends,
+   * produces the UnbindCharacter that makes the body dormant.
+   *
+   * @generated from rpc andara.game.v1.Game.SelectCharacter
+   */
+  selectCharacter: {
+    methodKind: "unary";
+    input: typeof SelectCharacterRequestSchema;
+    output: typeof SelectCharacterResponseSchema;
   },
 }>;
 

@@ -367,6 +367,8 @@ func TestHandlers_CoverEveryArm(t *testing.T) {
 		{Command: &logv1.LoggedCommand_Look{Look: &logv1.Look{}}},
 		{Command: &logv1.LoggedCommand_Move{Move: &logv1.Move{}}},
 		{Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{}}},
+		{Command: &logv1.LoggedCommand_BindCharacter{BindCharacter: &logv1.BindCharacter{}}},
+		{Command: &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{}}},
 	} {
 		if _, ok := h[sim.KindOf(cmd)]; !ok {
 			t.Errorf("no handler for %T", cmd.Command)

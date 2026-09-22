@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -66,6 +67,14 @@ type Config struct {
 	// Session lifecycle (ADR-0006). Only the ceiling is read today, because
 	// auth.session_ttl must exceed it; AW-SRV-015 reads the rest.
 	SessionLinkdeadMax time.Duration
+
+	// The roster (AW-SRV-014, ADR-0006): how many Characters an Account
+	// holds, where a new one spawns as zone_id/room_id — the boot refuses
+	// a value the loaded content does not resolve — and the RE2 rule a
+	// name must match.
+	CharacterMaxPerAccount int
+	CharacterSpawnRoom     string
+	CharacterNamePattern   string
 
 	// The tick loop (AW-SRV-002, ADR-0008). SimSource is kafka or memory;
 	// memory ticks a World with no input and exists for development.
@@ -148,6 +157,12 @@ const (
 	DefaultAuthRecheckInterval = 30 * time.Second
 	DefaultSessionLinkdeadMax  = 300 * time.Second
 
+	DefaultCharacterMaxPerAccount = 5
+	// DefaultCharacterSpawnRoom is the dev fixture's Room (Brian,
+	// 2026-09-21); real content sets its own.
+	DefaultCharacterSpawnRoom   = "town/plaza"
+	DefaultCharacterNamePattern = `^[\p{L}][\p{L}' -]{2,23}$`
+
 	DefaultSimSource               = "kafka"
 	DefaultSimTickRate             = 10
 	DefaultSimTickBudgetMS         = 50
@@ -209,6 +224,10 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		AuthInviteTTL:       DefaultAuthInviteTTL,
 		AuthRecheckInterval: DefaultAuthRecheckInterval,
 		SessionLinkdeadMax:  DefaultSessionLinkdeadMax,
+
+		CharacterMaxPerAccount: DefaultCharacterMaxPerAccount,
+		CharacterSpawnRoom:     DefaultCharacterSpawnRoom,
+		CharacterNamePattern:   DefaultCharacterNamePattern,
 
 		SimSource:                DefaultSimSource,
 		SimTickRate:              DefaultSimTickRate,
@@ -321,6 +340,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
+	fs.IntVar(&c.CharacterMaxPerAccount, "character-max-per-account", c.CharacterMaxPerAccount, "Characters an Account may hold (ANDARA_CHARACTER_MAX_PER_ACCOUNT)")
+	fs.StringVar(&c.CharacterSpawnRoom, "character-spawn-room", c.CharacterSpawnRoom, "zone_id/room_id a new Character spawns in; must resolve against the loaded content (ANDARA_CHARACTER_SPAWN_ROOM)")
+	fs.StringVar(&c.CharacterNamePattern, "character-name-pattern", c.CharacterNamePattern, "RE2 pattern a Character name must match (ANDARA_CHARACTER_NAME_PATTERN)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
 	}
@@ -489,6 +511,15 @@ func (c Config) validateAuth() error {
 	if c.AuthSessionTTL <= c.SessionLinkdeadMax {
 		return fmt.Errorf("auth.session_ttl (%s) must exceed session.linkdead_max (%s), or a linkdead reconnect fails on authentication", c.AuthSessionTTL, c.SessionLinkdeadMax)
 	}
+	if c.CharacterMaxPerAccount < 1 {
+		return fmt.Errorf("character.max_per_account must be positive, got %d", c.CharacterMaxPerAccount)
+	}
+	if _, _, err := c.SpawnRoom(); err != nil {
+		return err
+	}
+	if _, err := regexp.Compile(c.CharacterNamePattern); err != nil {
+		return fmt.Errorf("character.name_pattern: %w", err)
+	}
 	if c.AuthArgon2MemoryKiB < 8 || c.AuthArgon2Time < 1 || c.AuthArgon2Threads < 1 || c.AuthArgon2Threads > 255 {
 		return fmt.Errorf("auth.argon2: memory_kib >= 8, time >= 1, 1 <= threads <= 255 required")
 	}
@@ -616,6 +647,11 @@ type fileConfig struct {
 	Session *struct {
 		LinkdeadMax *string `yaml:"linkdead_max"`
 	} `yaml:"session"`
+	Character *struct {
+		MaxPerAccount *int    `yaml:"max_per_account"`
+		SpawnRoom     *string `yaml:"spawn_room"`
+		NamePattern   *string `yaml:"name_pattern"`
+	} `yaml:"character"`
 	Sim *struct {
 		Source               *string `yaml:"source"`
 		TickRate             *int    `yaml:"tick_rate"`
@@ -796,6 +832,17 @@ func applyFile(c *Config, path string) error {
 	if fc.Session != nil && fc.Session.LinkdeadMax != nil {
 		if err := parseDuration("session.linkdead_max", *fc.Session.LinkdeadMax, &c.SessionLinkdeadMax); err != nil {
 			return fmt.Errorf("config file %s: %w", path, err)
+		}
+	}
+	if ch := fc.Character; ch != nil {
+		if ch.MaxPerAccount != nil {
+			c.CharacterMaxPerAccount = *ch.MaxPerAccount
+		}
+		if ch.SpawnRoom != nil {
+			c.CharacterSpawnRoom = *ch.SpawnRoom
+		}
+		if ch.NamePattern != nil {
+			c.CharacterNamePattern = *ch.NamePattern
 		}
 	}
 	if sm := fc.Sim; sm != nil {
@@ -1042,6 +1089,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_MAX_SUBSCRIBERS", &c.MaxSubscribers},
 		{"ANDARA_INGRESS_BURST", &c.IngressBurst},
 		{"ANDARA_INGRESS_MAX_PENDING", &c.IngressMaxPending},
+		{"ANDARA_CHARACTER_MAX_PER_ACCOUNT", &c.CharacterMaxPerAccount},
 		{"ANDARA_EGRESS_BUFFER", &c.EgressBuffer},
 		{"ANDARA_EGRESS_RESUME_WINDOW", &c.EgressResumeWindow},
 	} {
@@ -1065,6 +1113,12 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}
 	if v, ok := env("ANDARA_VERB_TABLE"); ok {
 		c.VerbTablePath = v
+	}
+	if v, ok := env("ANDARA_CHARACTER_SPAWN_ROOM"); ok {
+		c.CharacterSpawnRoom = v
+	}
+	if v, ok := env("ANDARA_CHARACTER_NAME_PATTERN"); ok {
+		c.CharacterNamePattern = v
 	}
 	if v, ok := env("ANDARA_SIM_SEED"); ok {
 		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
@@ -1120,4 +1174,14 @@ func (c Config) ContentSourceName() string {
 		return "dir:" + c.ContentPath
 	}
 	return c.ContentSource
+}
+
+// SpawnRoom splits character.spawn_room into its Zone and Room. Whether
+// the pair resolves against the loaded content is the boot's check.
+func (c Config) SpawnRoom() (zone, room string, err error) {
+	zone, room, ok := strings.Cut(strings.TrimSpace(c.CharacterSpawnRoom), "/")
+	if !ok || zone == "" || room == "" || strings.Contains(room, "/") {
+		return "", "", fmt.Errorf("character.spawn_room must be zone_id/room_id, got %q", c.CharacterSpawnRoom)
+	}
+	return zone, room, nil
 }

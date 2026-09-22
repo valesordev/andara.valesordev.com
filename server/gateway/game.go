@@ -142,6 +142,52 @@ func (g *gameService) CloseSession(ctx context.Context, req *connect.Request[gam
 	return connect.NewResponse(&gamev1.CloseSessionResponse{}), nil
 }
 
+// The roster RPCs (AW-SRV-014): resolve the Session, bound the call, hand
+// off. The seam chooses every code; the gateway adds only what it knows —
+// drain, and a Session that ended under the call.
+
+func (g *gameService) ListCharacters(ctx context.Context, req *connect.Request[gamev1.ListCharactersRequest]) (*connect.Response[gamev1.ListCharactersResponse], error) {
+	sess, err := g.resolve(req.Msg.GetSessionId())
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
+	defer cancel()
+	resp, err := g.s.opts.Roster.ListCharacters(auth.WithSessionID(ctx, sess.ID), sess)
+	if err != nil {
+		return nil, g.s.mapSeamError(ctx, sess, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (g *gameService) CreateCharacter(ctx context.Context, req *connect.Request[gamev1.CreateCharacterRequest]) (*connect.Response[gamev1.CreateCharacterResponse], error) {
+	sess, err := g.resolve(req.Msg.GetSessionId())
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
+	defer cancel()
+	resp, err := g.s.opts.Roster.CreateCharacter(auth.WithSessionID(ctx, sess.ID), sess, req.Msg.GetName())
+	if err != nil {
+		return nil, g.s.mapSeamError(ctx, sess, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
+func (g *gameService) SelectCharacter(ctx context.Context, req *connect.Request[gamev1.SelectCharacterRequest]) (*connect.Response[gamev1.SelectCharacterResponse], error) {
+	sess, err := g.resolve(req.Msg.GetSessionId())
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
+	defer cancel()
+	resp, err := g.s.opts.Roster.SelectCharacter(auth.WithSessionID(ctx, sess.ID), sess, req.Msg.GetCharacterId())
+	if err != nil {
+		return nil, g.s.mapSeamError(ctx, sess, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
 // mapSeamError names why a seam call ended when the cause was the gateway
 // rather than the seam: drain and Session teardown are typed here so that
 // Ingress and Egress implementations do not each invent a code for them.

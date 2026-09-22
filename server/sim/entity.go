@@ -29,13 +29,32 @@ type EntityState struct {
 	// legal only in a test; every Entity a Room can list has one
 	// (AW-SRV-003 Data / state impact).
 	Room RoomID
+	// Name is the display name when the Entity has one apart from its ID:
+	// a Character's, immutable (docs/glossary.md), carried by the
+	// BindCharacter that made the body (AW-SRV-014). Empty for anything
+	// named by its ID.
+	Name string
+	// Dormant marks a Character whose Session left the World (AW-SRV-014):
+	// the body keeps its Room so "where you were" survives a restart, but
+	// it is in no Room's occupant list, invisible to look, and addressed by
+	// no Event, until the next BindCharacter clears it. DormantSince is the
+	// Tick it went dormant, for AW-SRV-032's retention.
+	Dormant      bool
+	DormantSince Tick
 }
 
 // DisplayName is how a Room lists the Entity and how CharacterArrived and
-// CharacterLeft name it. It is the EntityID: a Character's name is globally
-// unique and immutable (docs/glossary.md), which is exactly what an
-// EntityID is, and what a Character carries beyond that is AW-SRV-014's.
-func (e *EntityState) DisplayName() string { return string(e.ID) }
+// CharacterLeft name it: Name when set, else the EntityID.
+func (e *EntityState) DisplayName() string {
+	if e.Name != "" {
+		return e.Name
+	}
+	return string(e.ID)
+}
+
+// Present reports whether the Entity is in the World: in a Room and not
+// dormant. Only a present Entity is listed, addressed, or acted for.
+func (e *EntityState) Present() bool { return e != nil && e.Room != "" && !e.Dormant }
 
 // Component returns the Entity's Component of type ct, if it carries one.
 func (e *EntityState) Component(ct ComponentType) (Component, bool) {
@@ -64,7 +83,7 @@ func Instantiate(t *Template, id EntityID, contentVersion string) EntityState {
 // Proto renders the Entity for transit across a Zone boundary
 // (logv1.Arrive). Position is not carried: the Arrive names the target Room.
 func (e *EntityState) Proto() *logv1.Entity {
-	out := &logv1.Entity{Id: string(e.ID), Template: string(e.Template), ContentVersion: e.ContentVersion}
+	out := &logv1.Entity{Id: string(e.ID), Template: string(e.Template), ContentVersion: e.ContentVersion, Name: e.Name}
 	for _, c := range e.Components {
 		cv := &contentv1.ComponentValue{Type: string(c.Type)}
 		for _, f := range c.Fields {
@@ -88,7 +107,7 @@ func (e *EntityState) Proto() *logv1.Entity {
 // taken as carried — the source Zone validated them when it loaded the
 // Template — and sorted, so a hand-built record cannot break the invariant.
 func EntityFromProto(p *logv1.Entity, room RoomID) EntityState {
-	e := EntityState{ID: EntityID(p.GetId()), Template: TemplateRef(p.GetTemplate()), ContentVersion: p.GetContentVersion(), Room: room}
+	e := EntityState{ID: EntityID(p.GetId()), Template: TemplateRef(p.GetTemplate()), ContentVersion: p.GetContentVersion(), Room: room, Name: p.GetName()}
 	for _, cv := range p.GetComponents() {
 		c := Component{Type: ComponentType(cv.GetType())}
 		for _, fd := range cv.GetFields() {

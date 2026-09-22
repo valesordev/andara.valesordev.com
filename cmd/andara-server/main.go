@@ -83,6 +83,12 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 	defer func() { _ = rt.CloseIngress() }()
 	rt.StartEgress(ctx)
+	// The roster (AW-SRV-014): Characters, and the binding of one to a
+	// Session. A spawn Room the content lacks fails the boot.
+	if err := rt.StartRoster(ctx); err != nil {
+		tel.Log.Error("roster", "detail", err.Error())
+		return boot.ExitFail
+	}
 
 	// The Protocol endpoint (AW-SRV-005). Built before the health server
 	// listens so that a bad certificate fails the boot rather than a boot
@@ -105,6 +111,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		RecheckInterval:         cfg.AuthRecheckInterval,
 		Ingress:                 rt.Ingress,
 		Egress:                  rt.Egress,
+		Roster:                  rt.Roster,
 		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
 		OnDrain:                 func() { rt.Egress.Drain(); rt.Drain() },
 		Log:                     tel.Log,

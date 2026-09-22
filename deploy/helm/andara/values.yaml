@@ -137,5 +137,6 @@ projectors:
 # `make helm-install ENV=local` creates it from testdata/content/valid.
 contentVolume:
   configMapName: ""
+  templatesConfigMapName: ""
 
 podAnnotations: {}

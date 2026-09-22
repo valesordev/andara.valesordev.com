@@ -9,6 +9,11 @@ server:
   telemetry:
     environment: dev
     log_level: debug
+  character:
+    # Where a new Character enters the World (AW-SRV-014). Required outside local: the
+    # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content
+    # from the store this environment runs that fixture too.
+    spawn_room: town/plaza
 
 snapshots:
   size: 5Gi

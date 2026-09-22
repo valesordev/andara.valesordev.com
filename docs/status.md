@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-51 stories — 3 review · 31 ready · 17 done
+51 stories — 1 in-progress · 3 review · 30 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -14,17 +14,19 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
-  next   AW-SRV-014  ready  Character creation, selection, and binding — a Session…  (unblocks 3)
+  now    AW-SRV-014  Character creation, selection, and binding — a Session enters the World
+         branch aw-srv-014-character-roster-and-selection
   next   AW-SRV-006  ready  Zone snapshots keyed to partition offsets  (unblocks 2)
+  next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
   review AW-SRV-011, AW-CLI-004, AW-SRV-031 — run the §8 checklist, then flip to done
   held   13 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-009, AW-SRV-017,…
 
 ## Decisions the lanes are waiting on
 
   AW-CLI-005  Syntax review (AC-10). The sketch above is the starting point, not the answer.
+  AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
-              9 more, attached to stories neither lane has reached
+              8 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

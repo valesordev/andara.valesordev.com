@@ -147,6 +147,8 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	// loop existed, so attach it now.
 	engine.SetObserver(loop)
 	rt.Engine = engine
+	// The bodies as recovery left them; the loop keeps the gauge current.
+	rt.observeCharacters(engine)
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "tick loop configured",
 		slog.String("source", cfg.SimSource),
 		slog.Int("tick_rate", cfg.SimTickRate),
@@ -158,12 +160,20 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 }
 
 // onTick is what the loop tells after every tick: the egress, so a
-// Heartbeat on a quiet World carries the Tick that just completed. Nil
-// when there is no egress.
+// Heartbeat on a quiet World carries the Tick that just completed, and
+// the roster's body gauge, on a tick that applied something (nothing
+// else moves a body). Nil when there is neither.
 func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
-	if rt.Egress == nil {
+	if rt.Egress == nil && rt.Roster == nil {
 		return nil
 	}
 	eg := rt.Egress
-	return func(res sim.StepResult, _ time.Duration) { eg.ObserveTick(uint64(res.Tick)) }
+	return func(res sim.StepResult, _ time.Duration) {
+		if eg != nil {
+			eg.ObserveTick(uint64(res.Tick))
+		}
+		if res.Completed.CommandsApplied > 0 {
+			rt.observeCharacters(rt.Engine)
+		}
+	}
 }

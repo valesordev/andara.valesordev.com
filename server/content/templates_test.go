@@ -65,7 +65,7 @@ func TestLoadTemplatesDir_Fixture(t *testing.T) {
 
 // A content directory without templates/ has no Templates, which is legal.
 func TestLoadTemplatesDir_Absent(t *testing.T) {
-	inputs, errs := LoadTemplatesDir(fixture(t, "valid"))
+	inputs, errs := LoadTemplatesDir(t.TempDir())
 	if inputs != nil || errs != nil {
 		t.Fatalf("inputs=%v errs=%v", inputs, errs)
 	}
@@ -136,12 +136,20 @@ func TestCoreSeedMatchesFixture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		got, err := os.ReadFile(filepath.Join(tfixture(t, "templates"), "templates", e.Name()))
-		if err != nil {
-			t.Fatalf("fixture lacks %s: %v", e.Name(), err)
-		}
-		if !bytes.Equal(want, got) {
-			t.Errorf("testdata/templates/templates/%s differs from content/core/templates/%s", e.Name(), e.Name())
+		// Two copies: the Template fixture, and the dev World the stack,
+		// the kind cluster, and the boot tests load — which needs the
+		// core pack so a Character can be made in it (AW-SRV-014).
+		for _, dir := range []string{
+			filepath.Join(tfixture(t, "templates"), "templates"),
+			filepath.Join("..", "..", "testdata", "content", "valid", "templates"),
+		} {
+			got, err := os.ReadFile(filepath.Join(dir, e.Name()))
+			if err != nil {
+				t.Fatalf("fixture lacks %s: %v", e.Name(), err)
+			}
+			if !bytes.Equal(want, got) {
+				t.Errorf("%s differs from content/core/templates/%s", filepath.Join(dir, e.Name()), e.Name())
+			}
 		}
 	}
 	if n != 4 {

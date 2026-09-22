@@ -17,6 +17,7 @@
 package gamev1
 
 import (
+	v1 "github.com/valesordev/andara/gen/go/andara/accounts/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -456,11 +457,416 @@ func (*CloseSessionResponse) Descriptor() ([]byte, []int) {
 	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{6}
 }
 
+type ListCharactersRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCharactersRequest) Reset() {
+	*x = ListCharactersRequest{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[7]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCharactersRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCharactersRequest) ProtoMessage() {}
+
+func (x *ListCharactersRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[7]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCharactersRequest.ProtoReflect.Descriptor instead.
+func (*ListCharactersRequest) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{7}
+}
+
+func (x *ListCharactersRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+type ListCharactersResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Sorted by character_id.
+	Characters []*CharacterSummary `protobuf:"bytes,1,rep,name=characters,proto3" json:"characters,omitempty"`
+	// character.max_per_account, so a client can say "1 of 5".
+	MaxPerAccount uint32 `protobuf:"varint,2,opt,name=max_per_account,json=maxPerAccount,proto3" json:"max_per_account,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListCharactersResponse) Reset() {
+	*x = ListCharactersResponse{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListCharactersResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListCharactersResponse) ProtoMessage() {}
+
+func (x *ListCharactersResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListCharactersResponse.ProtoReflect.Descriptor instead.
+func (*ListCharactersResponse) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ListCharactersResponse) GetCharacters() []*CharacterSummary {
+	if x != nil {
+		return x.Characters
+	}
+	return nil
+}
+
+func (x *ListCharactersResponse) GetMaxPerAccount() uint32 {
+	if x != nil {
+		return x.MaxPerAccount
+	}
+	return 0
+}
+
+type CreateCharacterRequest struct {
+	state     protoimpl.MessageState `protogen:"open.v1"`
+	SessionId string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	// As typed. Reserved case-insensitively and NFKC-folded across every
+	// Account; must match character.name_pattern.
+	Name          string `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateCharacterRequest) Reset() {
+	*x = CreateCharacterRequest{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateCharacterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateCharacterRequest) ProtoMessage() {}
+
+func (x *CreateCharacterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateCharacterRequest.ProtoReflect.Descriptor instead.
+func (*CreateCharacterRequest) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *CreateCharacterRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *CreateCharacterRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+type CreateCharacterResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Character     *CharacterSummary      `protobuf:"bytes,1,opt,name=character,proto3" json:"character,omitempty"`
+	MaxPerAccount uint32                 `protobuf:"varint,2,opt,name=max_per_account,json=maxPerAccount,proto3" json:"max_per_account,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CreateCharacterResponse) Reset() {
+	*x = CreateCharacterResponse{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CreateCharacterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CreateCharacterResponse) ProtoMessage() {}
+
+func (x *CreateCharacterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CreateCharacterResponse.ProtoReflect.Descriptor instead.
+func (*CreateCharacterResponse) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *CreateCharacterResponse) GetCharacter() *CharacterSummary {
+	if x != nil {
+		return x.Character
+	}
+	return nil
+}
+
+func (x *CreateCharacterResponse) GetMaxPerAccount() uint32 {
+	if x != nil {
+		return x.MaxPerAccount
+	}
+	return 0
+}
+
+type SelectCharacterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	CharacterId   string                 `protobuf:"bytes,2,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SelectCharacterRequest) Reset() {
+	*x = SelectCharacterRequest{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectCharacterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectCharacterRequest) ProtoMessage() {}
+
+func (x *SelectCharacterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectCharacterRequest.ProtoReflect.Descriptor instead.
+func (*SelectCharacterRequest) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SelectCharacterRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *SelectCharacterRequest) GetCharacterId() string {
+	if x != nil {
+		return x.CharacterId
+	}
+	return ""
+}
+
+// SubmitResponse's fields, in a message of its own so the two RPCs can
+// grow apart.
+type SelectCharacterResponse struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	AcceptedOffset int64                  `protobuf:"varint,1,opt,name=accepted_offset,json=acceptedOffset,proto3" json:"accepted_offset,omitempty"`
+	Partition      int32                  `protobuf:"varint,2,opt,name=partition,proto3" json:"partition,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SelectCharacterResponse) Reset() {
+	*x = SelectCharacterResponse{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SelectCharacterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SelectCharacterResponse) ProtoMessage() {}
+
+func (x *SelectCharacterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SelectCharacterResponse.ProtoReflect.Descriptor instead.
+func (*SelectCharacterResponse) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *SelectCharacterResponse) GetAcceptedOffset() int64 {
+	if x != nil {
+		return x.AcceptedOffset
+	}
+	return 0
+}
+
+func (x *SelectCharacterResponse) GetPartition() int32 {
+	if x != nil {
+		return x.Partition
+	}
+	return 0
+}
+
+// One Character as its owner sees it.
+type CharacterSummary struct {
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	CharacterId string                 `protobuf:"bytes,1,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`
+	Name        string                 `protobuf:"bytes,2,opt,name=name,proto3" json:"name,omitempty"`
+	Status      v1.CharacterStatus     `protobuf:"varint,3,opt,name=status,proto3,enum=andara.accounts.v1.CharacterStatus" json:"status,omitempty"`
+	// Where the Gateway last knew the body to be.
+	ZoneId string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	// Bound to a Session right now — this one or another of the Account's.
+	Live          bool  `protobuf:"varint,6,opt,name=live,proto3" json:"live,omitempty"`
+	CreatedUnix   int64 `protobuf:"varint,7,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterSummary) Reset() {
+	*x = CharacterSummary{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterSummary) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterSummary) ProtoMessage() {}
+
+func (x *CharacterSummary) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterSummary.ProtoReflect.Descriptor instead.
+func (*CharacterSummary) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CharacterSummary) GetCharacterId() string {
+	if x != nil {
+		return x.CharacterId
+	}
+	return ""
+}
+
+func (x *CharacterSummary) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *CharacterSummary) GetStatus() v1.CharacterStatus {
+	if x != nil {
+		return x.Status
+	}
+	return v1.CharacterStatus(0)
+}
+
+func (x *CharacterSummary) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterSummary) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterSummary) GetLive() bool {
+	if x != nil {
+		return x.Live
+	}
+	return false
+}
+
+func (x *CharacterSummary) GetCreatedUnix() int64 {
+	if x != nil {
+		return x.CreatedUnix
+	}
+	return 0
+}
+
 var File_andara_game_v1_game_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\n" +
-	"\x19andara/game/v1/game.proto\x12\x0eandara.game.v1\x1a\x1aandara/game/v1/event.proto\"\xaa\x01\n" +
+	"\x19andara/game/v1/game.proto\x12\x0eandara.game.v1\x1a andara/accounts/v1/account.proto\x1a\x1aandara/game/v1/event.proto\"\xaa\x01\n" +
 	"\x12OpenSessionRequest\x12)\n" +
 	"\x10protocol_version\x18\x01 \x01(\rR\x0fprotocolVersion\x12\x1d\n" +
 	"\n" +
@@ -491,12 +897,45 @@ const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\x13CloseSessionRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\"\x16\n" +
-	"\x14CloseSessionResponse2\xd2\x02\n" +
+	"\x14CloseSessionResponse\"6\n" +
+	"\x15ListCharactersRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\"\x82\x01\n" +
+	"\x16ListCharactersResponse\x12@\n" +
+	"\n" +
+	"characters\x18\x01 \x03(\v2 .andara.game.v1.CharacterSummaryR\n" +
+	"characters\x12&\n" +
+	"\x0fmax_per_account\x18\x02 \x01(\rR\rmaxPerAccount\"K\n" +
+	"\x16CreateCharacterRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\"\x81\x01\n" +
+	"\x17CreateCharacterResponse\x12>\n" +
+	"\tcharacter\x18\x01 \x01(\v2 .andara.game.v1.CharacterSummaryR\tcharacter\x12&\n" +
+	"\x0fmax_per_account\x18\x02 \x01(\rR\rmaxPerAccount\"Z\n" +
+	"\x16SelectCharacterRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
+	"\fcharacter_id\x18\x02 \x01(\tR\vcharacterId\"`\n" +
+	"\x17SelectCharacterResponse\x12'\n" +
+	"\x0faccepted_offset\x18\x01 \x01(\x03R\x0eacceptedOffset\x12\x1c\n" +
+	"\tpartition\x18\x02 \x01(\x05R\tpartition\"\xef\x01\n" +
+	"\x10CharacterSummary\x12!\n" +
+	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x12\n" +
+	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
+	"\x06status\x18\x03 \x01(\x0e2#.andara.accounts.v1.CharacterStatusR\x06status\x12\x17\n" +
+	"\azone_id\x18\x04 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x05 \x01(\tR\x06roomId\x12\x12\n" +
+	"\x04live\x18\x06 \x01(\bR\x04live\x12!\n" +
+	"\fcreated_unix\x18\a \x01(\x03R\vcreatedUnix2\xfb\x04\n" +
 	"\x04Game\x12V\n" +
 	"\vOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n" +
 	"\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n" +
 	"\tSubscribe\x12 .andara.game.v1.SubscribeRequest\x1a\x1d.andara.game.v1.EventEnvelope0\x01\x12Y\n" +
-	"\fCloseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponseB\xb4\x01\n" +
+	"\fCloseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponse\x12_\n" +
+	"\x0eListCharacters\x12%.andara.game.v1.ListCharactersRequest\x1a&.andara.game.v1.ListCharactersResponse\x12b\n" +
+	"\x0fCreateCharacter\x12&.andara.game.v1.CreateCharacterRequest\x1a'.andara.game.v1.CreateCharacterResponse\x12b\n" +
+	"\x0fSelectCharacter\x12&.andara.game.v1.SelectCharacterRequest\x1a'.andara.game.v1.SelectCharacterResponseB\xb4\x01\n" +
 	"\x12com.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03AGX\xaa\x02\x0eAndara.Game.V1\xca\x02\x0eAndara\\Game\\V1\xe2\x02\x1aAndara\\Game\\V1\\GPBMetadata\xea\x02\x10Andara::Game::V1b\x06proto3"
 
 var (
@@ -511,31 +950,48 @@ func file_andara_game_v1_game_proto_rawDescGZIP() []byte {
 	return file_andara_game_v1_game_proto_rawDescData
 }
 
-var file_andara_game_v1_game_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_andara_game_v1_game_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_andara_game_v1_game_proto_goTypes = []any{
-	(*OpenSessionRequest)(nil),   // 0: andara.game.v1.OpenSessionRequest
-	(*OpenSessionResponse)(nil),  // 1: andara.game.v1.OpenSessionResponse
-	(*SubmitRequest)(nil),        // 2: andara.game.v1.SubmitRequest
-	(*SubmitResponse)(nil),       // 3: andara.game.v1.SubmitResponse
-	(*SubscribeRequest)(nil),     // 4: andara.game.v1.SubscribeRequest
-	(*CloseSessionRequest)(nil),  // 5: andara.game.v1.CloseSessionRequest
-	(*CloseSessionResponse)(nil), // 6: andara.game.v1.CloseSessionResponse
-	(*EventEnvelope)(nil),        // 7: andara.game.v1.EventEnvelope
+	(*OpenSessionRequest)(nil),      // 0: andara.game.v1.OpenSessionRequest
+	(*OpenSessionResponse)(nil),     // 1: andara.game.v1.OpenSessionResponse
+	(*SubmitRequest)(nil),           // 2: andara.game.v1.SubmitRequest
+	(*SubmitResponse)(nil),          // 3: andara.game.v1.SubmitResponse
+	(*SubscribeRequest)(nil),        // 4: andara.game.v1.SubscribeRequest
+	(*CloseSessionRequest)(nil),     // 5: andara.game.v1.CloseSessionRequest
+	(*CloseSessionResponse)(nil),    // 6: andara.game.v1.CloseSessionResponse
+	(*ListCharactersRequest)(nil),   // 7: andara.game.v1.ListCharactersRequest
+	(*ListCharactersResponse)(nil),  // 8: andara.game.v1.ListCharactersResponse
+	(*CreateCharacterRequest)(nil),  // 9: andara.game.v1.CreateCharacterRequest
+	(*CreateCharacterResponse)(nil), // 10: andara.game.v1.CreateCharacterResponse
+	(*SelectCharacterRequest)(nil),  // 11: andara.game.v1.SelectCharacterRequest
+	(*SelectCharacterResponse)(nil), // 12: andara.game.v1.SelectCharacterResponse
+	(*CharacterSummary)(nil),        // 13: andara.game.v1.CharacterSummary
+	(v1.CharacterStatus)(0),         // 14: andara.accounts.v1.CharacterStatus
+	(*EventEnvelope)(nil),           // 15: andara.game.v1.EventEnvelope
 }
 var file_andara_game_v1_game_proto_depIdxs = []int32{
-	0, // 0: andara.game.v1.Game.OpenSession:input_type -> andara.game.v1.OpenSessionRequest
-	2, // 1: andara.game.v1.Game.Submit:input_type -> andara.game.v1.SubmitRequest
-	4, // 2: andara.game.v1.Game.Subscribe:input_type -> andara.game.v1.SubscribeRequest
-	5, // 3: andara.game.v1.Game.CloseSession:input_type -> andara.game.v1.CloseSessionRequest
-	1, // 4: andara.game.v1.Game.OpenSession:output_type -> andara.game.v1.OpenSessionResponse
-	3, // 5: andara.game.v1.Game.Submit:output_type -> andara.game.v1.SubmitResponse
-	7, // 6: andara.game.v1.Game.Subscribe:output_type -> andara.game.v1.EventEnvelope
-	6, // 7: andara.game.v1.Game.CloseSession:output_type -> andara.game.v1.CloseSessionResponse
-	4, // [4:8] is the sub-list for method output_type
-	0, // [0:4] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	13, // 0: andara.game.v1.ListCharactersResponse.characters:type_name -> andara.game.v1.CharacterSummary
+	13, // 1: andara.game.v1.CreateCharacterResponse.character:type_name -> andara.game.v1.CharacterSummary
+	14, // 2: andara.game.v1.CharacterSummary.status:type_name -> andara.accounts.v1.CharacterStatus
+	0,  // 3: andara.game.v1.Game.OpenSession:input_type -> andara.game.v1.OpenSessionRequest
+	2,  // 4: andara.game.v1.Game.Submit:input_type -> andara.game.v1.SubmitRequest
+	4,  // 5: andara.game.v1.Game.Subscribe:input_type -> andara.game.v1.SubscribeRequest
+	5,  // 6: andara.game.v1.Game.CloseSession:input_type -> andara.game.v1.CloseSessionRequest
+	7,  // 7: andara.game.v1.Game.ListCharacters:input_type -> andara.game.v1.ListCharactersRequest
+	9,  // 8: andara.game.v1.Game.CreateCharacter:input_type -> andara.game.v1.CreateCharacterRequest
+	11, // 9: andara.game.v1.Game.SelectCharacter:input_type -> andara.game.v1.SelectCharacterRequest
+	1,  // 10: andara.game.v1.Game.OpenSession:output_type -> andara.game.v1.OpenSessionResponse
+	3,  // 11: andara.game.v1.Game.Submit:output_type -> andara.game.v1.SubmitResponse
+	15, // 12: andara.game.v1.Game.Subscribe:output_type -> andara.game.v1.EventEnvelope
+	6,  // 13: andara.game.v1.Game.CloseSession:output_type -> andara.game.v1.CloseSessionResponse
+	8,  // 14: andara.game.v1.Game.ListCharacters:output_type -> andara.game.v1.ListCharactersResponse
+	10, // 15: andara.game.v1.Game.CreateCharacter:output_type -> andara.game.v1.CreateCharacterResponse
+	12, // 16: andara.game.v1.Game.SelectCharacter:output_type -> andara.game.v1.SelectCharacterResponse
+	10, // [10:17] is the sub-list for method output_type
+	3,  // [3:10] is the sub-list for method input_type
+	3,  // [3:3] is the sub-list for extension type_name
+	3,  // [3:3] is the sub-list for extension extendee
+	0,  // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_andara_game_v1_game_proto_init() }
@@ -550,7 +1006,7 @@ func file_andara_game_v1_game_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_game_v1_game_proto_rawDesc), len(file_andara_game_v1_game_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   7,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

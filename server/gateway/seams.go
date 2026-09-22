@@ -39,6 +39,48 @@ type SessionEnder interface {
 	EndSession(sessionID, reason string)
 }
 
+// Roster is what the Character RPCs plug into (AW-SRV-014): the Account's
+// Characters, and the binding of one to the Session. The gateway has
+// resolved the Session by the time any of these is called; the one-live
+// rule, the cap, and the name rule live behind the seam.
+//
+// ReleaseSession is the teardown: told, before the Session's context is
+// canceled, that the Session is ending for any reason, so the Character
+// it drives is unbound — an UnbindCharacter produced, the routing table
+// cleared, the live flag released. It must not block on the log; the
+// produce runs on its own context.
+type Roster interface {
+	ListCharacters(ctx context.Context, s *Session) (*gamev1.ListCharactersResponse, error)
+	CreateCharacter(ctx context.Context, s *Session, name string) (*gamev1.CreateCharacterResponse, error)
+	SelectCharacter(ctx context.Context, s *Session, characterID string) (*gamev1.SelectCharacterResponse, error)
+	ReleaseSession(s *Session)
+}
+
+// UnimplementedRoster is the roster seam when none is wired: the RPCs are
+// refused with UNIMPLEMENTED, and a Session's end frees nothing because
+// nothing was bound.
+type UnimplementedRoster struct{}
+
+// ListCharacters returns UNIMPLEMENTED.
+func (UnimplementedRoster) ListCharacters(context.Context, *Session) (*gamev1.ListCharactersResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errRosterPending)
+}
+
+// CreateCharacter returns UNIMPLEMENTED.
+func (UnimplementedRoster) CreateCharacter(context.Context, *Session, string) (*gamev1.CreateCharacterResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errRosterPending)
+}
+
+// SelectCharacter returns UNIMPLEMENTED.
+func (UnimplementedRoster) SelectCharacter(context.Context, *Session, string) (*gamev1.SelectCharacterResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errRosterPending)
+}
+
+// ReleaseSession does nothing.
+func (UnimplementedRoster) ReleaseSession(*Session) {}
+
+var errRosterPending = errors.New("no character roster is wired into this gateway")
+
 // UnimplementedIngress is the Submit seam before AW-SRV-010: the RPC is
 // accepted by the gateway, then refused with UNIMPLEMENTED so a client
 // learns what is missing rather than what is broken.

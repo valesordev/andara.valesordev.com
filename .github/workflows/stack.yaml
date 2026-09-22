@@ -242,13 +242,16 @@ jobs:
           print(d['title'], '-', len(d['panels']), 'panels')
           "
 
-      # AW-CLI-004's M1 gate, scripted: andara-cli play against the running stack —
-      # log in, connect, look, north, west, quit — asserting the transcript. Until
-      # AW-SRV-014 binds a Character every Intent is refused before the log, so this
-      # asserts the half of the gate that exists today; that story extends it. Last,
-      # because it restarts andara-server under an open session (AC-7), which resets
-      # the server's counters; the steps above read what earlier steps counted.
-      - name: andara-cli play against the stack (M1 gate)
+      # The M1 gate, scripted (scripts/stack_play.sh). The Protocol half (AW-SRV-014):
+      # two players create a Character, enter the World, look, walk north through the
+      # broker and the tick, and quit, with the instruments scraped from the server.
+      # The client half (AW-CLI-004): andara-cli play — log in, connect, look, north,
+      # west, quit — asserting the transcript; play cannot select a Character until
+      # AW-CLI-007, so its Intents are refused before the log and that story joins the
+      # halves. Last, because it restarts andara-server under an open session (AC-7),
+      # which resets the server's counters; the steps above read what earlier steps
+      # counted.
+      - name: the M1 gate against the stack — the Protocol whole, andara-cli play up to AW-CLI-007
         run: make stack-play
 
       - name: down leaves nothing behind

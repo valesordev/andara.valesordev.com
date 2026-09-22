@@ -121,6 +121,7 @@ func Templates() (*sim.TemplateRegistry, error) {
 	entity := contentv1.TemplateKind_ENTITY
 	reg, errs := sim.BuildTemplates([]sim.TemplateInput{
 		tdef("andara.core.Entity", entity, []string{"andara.core.Entity"}),
+		tdef("andara.core.Character", entity, []string{"andara.core.Entity", "andara.core.Character"}),
 		tdef("andara.core.Npc", entity, []string{"andara.core.Entity", "andara.core.Npc"}, &contentv1.ComponentValue{Type: "andara.core.Memory"}),
 		tdef("town.Merchant", entity, []string{"andara.core.Entity", "andara.core.Npc", "town.Merchant"},
 			&contentv1.ComponentValue{Type: "andara.core.Memory"},
@@ -207,6 +208,21 @@ func Look(zone, actor string) *logv1.LoggedCommand {
 // Move is a move Command.
 func Move(zone, actor, dir string) *logv1.LoggedCommand {
 	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, Command: &logv1.LoggedCommand_Move{Move: &logv1.Move{Direction: dir}}}
+}
+
+// Bind is a BindCharacter for actor, named name, spawning in room of zone
+// when never bound (AW-SRV-014).
+func Bind(zone, actor, name, room string) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, SessionId: "s-" + actor, Command: &logv1.LoggedCommand_BindCharacter{BindCharacter: &logv1.BindCharacter{
+		CharacterId: actor, AccountId: "acct-" + actor, Name: name, SpawnRoomId: room,
+	}}}
+}
+
+// Unbind is an UnbindCharacter{QUIT} for actor in zone.
+func Unbind(zone, actor string) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, SessionId: "s-" + actor, Command: &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{
+		CharacterId: actor, Reason: logv1.UnbindReason_QUIT,
+	}}}
 }
 
 // Script is a deterministic log: n records on each Zone's Partition,

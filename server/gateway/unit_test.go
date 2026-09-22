@@ -280,6 +280,21 @@ func TestNew_RequiresTLS(t *testing.T) {
 	}
 }
 
+// The roster stub refuses every RPC rather than pretending, and frees
+// nothing at teardown because nothing was bound (AW-SRV-014).
+func TestUnimplementedRoster(t *testing.T) {
+	r := UnimplementedRoster{}
+	_, err1 := r.ListCharacters(context.Background(), &Session{})
+	_, err2 := r.CreateCharacter(context.Background(), &Session{}, "Aldric")
+	_, err3 := r.SelectCharacter(context.Background(), &Session{}, "ch-1")
+	for i, err := range []error{err1, err2, err3} {
+		if connect.CodeOf(err) != connect.CodeUnimplemented {
+			t.Errorf("roster rpc %d: %v, want UNIMPLEMENTED", i, err)
+		}
+	}
+	r.ReleaseSession(&Session{})
+}
+
 func TestUnimplementedIngress(t *testing.T) {
 	_, err := (UnimplementedIngress{}).Submit(context.Background(), &Session{}, &gamev1.SubmitRequest{})
 	if connect.CodeOf(err) != connect.CodeUnimplemented {

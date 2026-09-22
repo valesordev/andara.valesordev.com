@@ -20,6 +20,7 @@ import (
 	"github.com/valesordev/andara/server/egress"
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/ingress"
+	"github.com/valesordev/andara/server/roster"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 	"github.com/valesordev/andara/server/tickloop"
@@ -65,12 +66,18 @@ type Runtime struct {
 	Bindings *ingress.Bindings
 	// Egress is the Subscribe path (AW-SRV-011); nil until StartEgress.
 	Egress *egress.Egress
+	// Roster is the Character roster and binding (AW-SRV-014); nil until
+	// StartRoster.
+	Roster *roster.Roster
 	// producer is the Kafka producer behind Ingress, closed by
 	// CloseIngress; memSource is the loopback for sim.source=memory,
 	// built by StartIngress and consumed by StartTickLoop.
 	producer  *ingress.KafkaProducer
 	memSource *tickloop.MemorySource
-	ready     atomic.Bool
+	// commandLog is the producer behind Ingress, whichever source: the
+	// roster produces its BindCharacter and UnbindCharacter through it.
+	commandLog command.Producer
+	ready      atomic.Bool
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table

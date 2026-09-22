@@ -12,6 +12,7 @@ syntax = "proto3";
 
 package andara.game.v1;
 
+import "andara/accounts/v1/account.proto";
 import "andara/game/v1/event.proto";
 
 service Game {
@@ -30,6 +31,23 @@ service Game {
   rpc Subscribe(SubscribeRequest) returns (stream EventEnvelope);
 
   rpc CloseSession(CloseSessionRequest) returns (CloseSessionResponse);
+
+  // The roster (AW-SRV-014, ADR-0006): the Session's Account owns up to
+  // character.max_per_account Characters and drives one at a time. Every
+  // roster error carries ErrorInfo{domain: andara.character, reason}:
+  // roster_full (RESOURCE_EXHAUSTED), name_taken (ALREADY_EXISTS),
+  // name_invalid (INVALID_ARGUMENT), already_live (FAILED_PRECONDITION),
+  // no_such_character (NOT_FOUND).
+  rpc ListCharacters(ListCharactersRequest) returns (ListCharactersResponse);
+  rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
+
+  // Enter the World as one of the Account's Characters. The response has
+  // Submit's shape and meaning: the BindCharacter Command is durable in
+  // the log at the returned offset, and the arrival — CharacterArrived
+  // with an empty from_direction — comes on the Event stream when the
+  // tick applies it. The Session's teardown, whichever way it ends,
+  // produces the UnbindCharacter that makes the body dormant.
+  rpc SelectCharacter(SelectCharacterRequest) returns (SelectCharacterResponse);
 }
 
 message OpenSessionRequest {
@@ -112,3 +130,51 @@ message CloseSessionRequest {
 }
 
 message CloseSessionResponse {}
+
+message ListCharactersRequest {
+  string session_id = 1;
+}
+
+message ListCharactersResponse {
+  // Sorted by character_id.
+  repeated CharacterSummary characters = 1;
+  // character.max_per_account, so a client can say "1 of 5".
+  uint32 max_per_account = 2;
+}
+
+message CreateCharacterRequest {
+  string session_id = 1;
+  // As typed. Reserved case-insensitively and NFKC-folded across every
+  // Account; must match character.name_pattern.
+  string name = 2;
+}
+
+message CreateCharacterResponse {
+  CharacterSummary character = 1;
+  uint32 max_per_account = 2;
+}
+
+message SelectCharacterRequest {
+  string session_id = 1;
+  string character_id = 2;
+}
+
+// SubmitResponse's fields, in a message of its own so the two RPCs can
+// grow apart.
+message SelectCharacterResponse {
+  int64 accepted_offset = 1;
+  int32 partition = 2;
+}
+
+// One Character as its owner sees it.
+message CharacterSummary {
+  string character_id = 1;
+  string name = 2;
+  andara.accounts.v1.CharacterStatus status = 3;
+  // Where the Gateway last knew the body to be.
+  string zone_id = 4;
+  string room_id = 5;
+  // Bound to a Session right now — this one or another of the Account's.
+  bool live = 6;
+  int64 created_unix = 7;
+}

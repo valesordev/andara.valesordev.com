@@ -24,7 +24,7 @@
 // @generated from file andara/log/v1/log.proto (package andara.log.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { ComponentValue } from "../../content/v1/zone_pb";
 
@@ -113,6 +113,20 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: Arrive;
     case: "arrive";
+  } | {
+    /**
+     * 13 and 14 are AW-SRV-028's (HandoffAck, HandoffRejected).
+     *
+     * @generated from field: andara.log.v1.BindCharacter bind_character = 15;
+     */
+    value: BindCharacter;
+    case: "bindCharacter";
+  } | {
+    /**
+     * @generated from field: andara.log.v1.UnbindCharacter unbind_character = 16;
+     */
+    value: UnbindCharacter;
+    case: "unbindCharacter";
   } | { case: undefined; value?: undefined };
 };
 
@@ -215,6 +229,78 @@ export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
 export declare const ArriveSchema: GenMessage<Arrive>;
 
 /**
+ * A Session enters the World as a Character (AW-SRV-014). Produced by the
+ * Gateway's SelectCharacter after the roster's checks — ownership, the
+ * one-live rule — so the sim trusts it the way it trusts any authorized
+ * Command. actor_id is the character_id. The body is a dormant Entity in
+ * this Zone (cleared, and its arrival emitted where it stands), a present
+ * one (taken where it stands, nothing emitted — a crash or a failed teardown
+ * left it), or nothing yet (instantiated from andara.core.Character at
+ * spawn_room_id).
+ *
+ * @generated from message andara.log.v1.BindCharacter
+ */
+export declare type BindCharacter = Message<"andara.log.v1.BindCharacter"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: string account_id = 2;
+   */
+  accountId: string;
+
+  /**
+   * The display name, immutable, carried so the body needs no roster.
+   *
+   * @generated from field: string name = 3;
+   */
+  name: string;
+
+  /**
+   * The Room in LoggedCommand.zone_id to place a never-bound Character in:
+   * character.spawn_room. Ignored when the body exists.
+   *
+   * @generated from field: string spawn_room_id = 4;
+   */
+  spawnRoomId: string;
+};
+
+/**
+ * Describes the message andara.log.v1.BindCharacter.
+ * Use `create(BindCharacterSchema)` to create a new message.
+ */
+export declare const BindCharacterSchema: GenMessage<BindCharacter>;
+
+/**
+ * The Session left the World (AW-SRV-014): the body goes dormant where it
+ * stands — in no Room's occupant list, invisible to look, addressed by no
+ * Event — and its departure is emitted with an empty to_direction. Produced
+ * by the Session's teardown; a body with no UnbindCharacter in the log (a
+ * crash) stays present until the next BindCharacter takes it.
+ *
+ * @generated from message andara.log.v1.UnbindCharacter
+ */
+export declare type UnbindCharacter = Message<"andara.log.v1.UnbindCharacter"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: andara.log.v1.UnbindReason reason = 2;
+   */
+  reason: UnbindReason;
+};
+
+/**
+ * Describes the message andara.log.v1.UnbindCharacter.
+ * Use `create(UnbindCharacterSchema)` to create a new message.
+ */
+export declare const UnbindCharacterSchema: GenMessage<UnbindCharacter>;
+
+/**
  * An Entity in transit between Zones: the same shape server/sim holds, so the
  * target rebuilds it exactly and the State Hash is the same as if it had been
  * there all along. Nothing mutable that is not here can be carried across a
@@ -245,6 +331,15 @@ export declare type Entity = Message<"andara.log.v1.Entity"> & {
    * @generated from field: repeated andara.content.v1.ComponentValue components = 4;
    */
   components: ComponentValue[];
+
+  /**
+   * The display name, when the Entity has one apart from its ID: a
+   * Character's (AW-SRV-014). Dormancy is not carried — a dormant body
+   * never moves, so it never crosses a Zone.
+   *
+   * @generated from field: string name = 5;
+   */
+  name: string;
 };
 
 /**
@@ -418,4 +513,37 @@ export declare type PartitionOffset = Message<"andara.log.v1.PartitionOffset"> &
  * Use `create(PartitionOffsetSchema)` to create a new message.
  */
 export declare const PartitionOffsetSchema: GenMessage<PartitionOffset>;
+
+/**
+ * @generated from enum andara.log.v1.UnbindReason
+ */
+export enum UnbindReason {
+  /**
+   * @generated from enum value: UNBIND_REASON_UNSPECIFIED = 0;
+   */
+  UNBIND_REASON_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: QUIT = 1;
+   */
+  QUIT = 1,
+
+  /**
+   * SWITCH is AW-SRV-032's, LINKDEAD AW-SRV-015's; declared so the field
+   * never changes shape.
+   *
+   * @generated from enum value: SWITCH = 2;
+   */
+  SWITCH = 2,
+
+  /**
+   * @generated from enum value: LINKDEAD = 3;
+   */
+  LINKDEAD = 3,
+}
+
+/**
+ * Describes the enum andara.log.v1.UnbindReason.
+ */
+export declare const UnbindReasonSchema: GenEnum<UnbindReason>;
 

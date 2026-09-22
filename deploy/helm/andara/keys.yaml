@@ -110,10 +110,13 @@ keys:
   - {key: auth.k8s_issuer,           env: ANDARA_AUTH_K8S_ISSUER,         type: string, default: "", story: AW-SRV-008}
   - {key: auth.k8s_jwks_url,         env: ANDARA_AUTH_K8S_JWKS_URL,       type: string, default: "", story: AW-SRV-008}
   - {key: character.max_per_account, env: ANDARA_CHARACTER_MAX_PER_ACCOUNT, type: int, default: 5, min: 1, story: AW-SRV-014}
-  - {key: character.spawn_room,      env: ANDARA_CHARACTER_SPAWN_ROOM,    type: string, default: town/plaza, story: AW-SRV-014}
+  # The default is the dev fixture's Room (Brian, 2026-09-21); real content sets its own, so
+  # every values file outside ENV=local must set it — a refused render beats a spawn into a
+  # Room that does not exist.
+  - {key: character.spawn_room,      env: ANDARA_CHARACTER_SPAWN_ROOM,    type: string, default: town/plaza, story: AW-SRV-014, required_outside_local: true}
   - {key: character.delete_retention, env: ANDARA_CHARACTER_DELETE_RETENTION, type: duration, default: 720h, story: AW-SRV-032}
   - {key: character.purge_sweep_interval, env: ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL, type: duration, default: 10m, story: AW-SRV-032}
-  - {key: character.name_pattern,    env: ANDARA_CHARACTER_NAME_PATTERN,  type: string, default: "", story: AW-SRV-014}
+  - {key: character.name_pattern,    env: ANDARA_CHARACTER_NAME_PATTERN,  type: string, default: "^[\\p{L}][\\p{L}' -]{2,23}$", story: AW-SRV-014}
   - {key: session.linkdead_grace,    env: ANDARA_LINKDEAD_GRACE,          type: duration, default: 180s, story: AW-SRV-015}
   - {key: session.linkdead_combat_extension, env: ANDARA_LINKDEAD_COMBAT_EXTENSION, type: duration, default: 60s, story: AW-SRV-015}
   # Read since AW-SRV-008, which asserts auth.session_ttl > session.linkdead_max at boot.
