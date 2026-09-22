@@ -571,7 +571,7 @@ is a consumer-group rebalance, not a migration, and there is no handoff protocol
 state transfer (ADR-0001).
 
 **Snapshot** — A complete serialization of one Zone's state at a Tick, keyed to the Offsets that
-produced it. Stored in object storage under `{zone_id}/{state_version}/{tick}/{offset}`; a
+produced it. Stored in object storage under `{zone_id}/{tick}/{state_version}/{offset}`; a
 `SnapshotWritten` manifest is recorded on the Event Topic for audit and tooling. The replay origin
 (`AW-SRV-006`). The Tick is in the key because a Zone that received no Command repeats its Offset, so
 an Offset alone does not identify a Snapshot Round.

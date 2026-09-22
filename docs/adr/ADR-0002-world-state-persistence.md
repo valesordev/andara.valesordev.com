@@ -98,7 +98,7 @@ so recovery can find them by reading the log it already reads.
 
 > **Annotation, 2026-09-22 — not a change to this decision.** This paragraph quoted the key as
 > `{zone}/{state_version}/{offset}`. The exact key is `AW-SRV-006`'s to specify, not this ADR's, and
-> that story amended it to `{zone_id}/{state_version}/{tick}/{offset}` — an offset alone does not
+> that story amended it to `{zone_id}/{tick}/{state_version}/{offset}` — an offset alone does not
 > identify a round, because an idle Zone repeats it. The three decisions this section actually makes
 > are unchanged: snapshots live in object storage rather than on a topic, they are keyed per Zone so a
 > shard restores only its own, and the manifest goes in the log. The quoted string is replaced with a

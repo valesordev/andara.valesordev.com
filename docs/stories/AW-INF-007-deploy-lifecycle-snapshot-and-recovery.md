@@ -128,7 +128,7 @@ Chart value `terminationGracePeriodSeconds` default `90`, validated by AC-9.
 
 ### Round tags
 
-A tag is a zero-byte object at `{zone_id}/{state_version}/{tick}/{offset}.tag/{name}`; `ListRounds`
+A tag is a zero-byte object at `{zone_id}/{tick}/{state_version}/{offset}.tag/{name}`; `ListRounds`
 reports tags. Retention never deletes a tagged round while it is within `keep_deploy_rounds` of the
 newest tag.
 

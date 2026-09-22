@@ -40,7 +40,7 @@ length of the world's entire history.
   run off-tick.
 - The snapshot **body** — `andara.state.v1.ZoneState` — and `state_version` handling from the first
   snapshot written.
-- Object storage keyed `{zone_id}/{state_version}/{tick}/{offset}`; a filesystem implementation for
+- Object storage keyed `{zone_id}/{tick}/{state_version}/{offset}`; a filesystem implementation for
   `make up` and tests, an S3-compatible implementation for the cluster.
 - A `SnapshotWritten` control record on `andara.events.v1` after each object is durable.
 - Cadence: `snapshot.interval` **60 s** per round (`docs/specs/slo/recovery.md`).
@@ -61,7 +61,26 @@ length of the world's entire history.
    byte-identical — canonical encoding per ADR-0007 rule 3, every `repeated` sorted by key.
 3. **Given** a written snapshot **when** its envelope is decoded **then** it names `state_version`,
    `tick`, `zone_id`, the per-Partition `offsets` committed at that tick, and a `state_hash` equal to
-   the hash the sim would compute for that Zone at that tick.
+   the hash the sim would compute for that Zone at that tick — **covering every field the body
+   carries**, so that no single-field corruption of a stored object leaves it hash-valid.
+   **Amended 2026-09-22, with the gap a review found in the first amendment.** That amendment said the
+   per-Zone hash is SHA-256 over the Zone's section of `WorldState.CanonicalBytes`, and called the two
+   "provably consistent". The section covers the Zone's ID, its faulted flag and its Entities. It does
+   **not** cover `tick`, `prng_state` or `next_event_id` — `CanonicalBytes` writes those once in a
+   global header ahead of the per-Zone sections — and the body carries all three, per-Zone, because
+   they are process-wide values a Zone restored alone still needs.
+   So `state_hash`, documented as the hash of `body`, covered a strict subset of `body`. Corrupt
+   `prng_state` in a stored object and it stays hash-valid: `AW-SRV-007` AC-4 would not call the round
+   invalid, would not fall back to an older one, and would instead restore a World whose replay
+   diverges and exit `2` at AC-5 — turning a recoverable bad object into a stopped World.
+   **The hash is therefore over a documented superset**: `ZoneCanonicalBytes` unchanged, followed by a
+   snapshot record carrying `tick`, `prng_state` and `next_event_id`. `ZoneCanonicalBytes` keeps its
+   meaning and the global hash stays byte-for-byte what it was, so the existing determinism tests hold;
+   `HashZone` still hashes a Zone decoded from a body that belongs to no `WorldState` yet, which is the
+   form recovery needs. **The field-count tripwire's job grows with it**: every `ZoneState` proto field
+   must be covered by `ZoneCanonicalBytes` or by the snapshot record, and a field in neither fails the
+   build. That check is what makes "covering every field the body carries" true a year from now rather
+   than true today.
 4. **Given** an envelope whose `state_version` is older than the binary's **when** it is read **then**
    the body is migrated forward through every intermediate version; **given** one that is newer
    **then** the read fails with `ErrStateVersion{Have, Want}` naming both. Never a partial or silent
@@ -78,14 +97,26 @@ length of the world's entire history.
    starts on that boundary and not mid-tick; the envelope `tick` equals the `TickCompleted.tick`
    emitted for the same boundary.
    **Amended 2026-09-22, with the failure mode that forced it.** A boundary that was *not* published
-   — `Publish` returning an error, `ErrBoundaryLost` most clearly — leaves no `TickCompleted` for the
-   round to equal, and the criterion as first written did not say what happens then. It says it now:
-   **no round starts on a boundary that was not published.** A snapshot without its boundary record is
-   one `AW-SRV-007` cannot verify (its AC-4 and AC-5 both compare against the log), and writing one
-   anyway keeps `andara_snapshot_age_seconds` reporting health through exactly the outage where
-   recovery time is about to matter. `AW-SRV-026` makes the `ErrBoundaryLost` case terminal by exiting
-   `5` within a tick; this criterion holds whether or not that story has landed, and covers the
-   non-terminal publish failures it does not.
+   leaves no `TickCompleted` for the round to equal, and the criterion as first written did not say
+   what happens then. A snapshot without its boundary record is one `AW-SRV-007` cannot verify (its
+   AC-4 and AC-5 both compare against the log), and writing one anyway keeps
+   `andara_snapshot_age_seconds` reporting health through exactly the outage where recovery time is
+   about to matter.
+   **Amended again the same day, because "published" is not what `Publish` returning `nil` means.**
+   The boundary is produced asynchronously: the publisher enqueues the record and returns, and a
+   delivery failure arrives on a callback up to the delivery timeout later — about a minute. Gating
+   the round on the return value would therefore have written the forbidden object anyway and learned
+   about it afterwards. **The criterion is acknowledgement, not enqueue:** a round's objects become
+   durable only after the `TickCompleted` for that tick is acknowledged by the broker. The copy still
+   happens at the boundary — it has to, that is the consistent cut — but encode and `Put` wait, which
+   they already do, off-tick and inside `snapshot.upload_timeout`.
+   Three outcomes, and the labelling is deterministic: acknowledged, the round proceeds; the boundary
+   is reported lost, the round is abandoned and counted `reason=boundary`; neither arrives before
+   `upload_timeout`, the round is abandoned and counted `reason=timeout`. The last is the common one
+   when a broker is simply gone, because the delivery timeout is longer than the upload timeout by
+   default — that is correct, not a gap, and it is why both labels exist.
+   `AW-SRV-026` does **not** subsume this. It exits `5` on a lost boundary; it does not gate anything
+   on acknowledgement, so the window between enqueue and ack is open whether or not it has landed.
 
 ## Interface contract
 
@@ -119,6 +150,14 @@ func SnapshotKey(zone ZoneID, stateVersion uint32, tick Tick, offset int64) stri
 // of the same Snapshot differ (AC-2).
 func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot
 
+// The seam AC-8 needs. The publisher already reports both outcomes for a tick;
+// the loop wires them here so a round can wait for its own boundary rather than
+// trusting that enqueueing it was the same as publishing it.
+type BoundaryAcks interface {
+    OnBoundaryAcked(tick Tick)
+    OnBoundaryLost(tick Tick, err error)
+}
+
 // WorldStore is owned by sim and implemented in server/store. It knows keys and
 // bytes; it does not know Kafka or the tick.
 type WorldStore interface {
@@ -128,11 +167,11 @@ type WorldStore interface {
 }
 ```
 
-Key format: `{zone_id}/{state_version}/{tick}/{offset}`, where `tick` is the boundary the round was
+Key format: `{zone_id}/{tick}/{state_version}/{offset}`, where `tick` is the boundary the round was
 taken at and `offset` is the Zone's Partition offset there. Both are zero-padded to 20 digits, so a
 lexical listing is a tick-ordered listing and the newest round is the last key under a Zone's prefix.
-`Put` is atomic in both implementations: S3 `PutObject` is; the filesystem store writes to `{key}.tmp`
-and renames.
+A round's objects for one Zone live under the prefix `{zone_id}/{tick}/`. `Put` is atomic in both
+implementations: S3 `PutObject` is; the filesystem store writes to `{key}.tmp` and renames.
 
 **Amended 2026-09-22, with the failure mode that forced it.** This was
 `{zone_id}/{state_version}/{offset}`, with no tick. That is wrong in two ways, and both of them are
@@ -157,6 +196,21 @@ and keeps `SnapshotKey` a pure function of values the `Snapshot` already holds. 
 per round, no overwrite, and round grouping is a prefix scan. The story's own storage-growth line —
 "one round per minute per Zone" — already assumed this shape; offset-keying was quietly under-counting
 it. Raised by an automated review on `PR #46` and confirmed against `AW-SRV-007`'s contract.
+
+**Amended again 2026-09-22, same review, on the order of the two middle segments.** The first version
+of this amendment put `state_version` before `tick`, which does not make the listing tick-ordered:
+`state_version` sorts first, so a reverse-lexical listing returns every v2 object before any v1 one
+regardless of tick. That is not hypothetical — `AW-INF-007`'s rollback flow is exactly how a Zone
+comes to hold newer ticks at an older `state_version`, and after one, `List`'s "newest tick first"
+would have handed `AW-SRV-007` an older round first and a needlessly old recovery point with it.
+
+`tick` therefore comes first, and the listing is tick-ordered by construction rather than by every
+implementation remembering to sort. **What that costs:** a `state_version`'s objects are no longer
+under one prefix. Nothing depended on that — retention (`AW-INF-007`) is per round, and retiring a
+version is not a stated need — so it was grouping nobody had asked for, traded for an ordering
+guarantee the `WorldStore.List` contract actually makes. The alternative, keeping the old order and
+requiring `List` to parse and sort, was rejected because it leaves the obvious reading of a
+zero-padded key wrong, which is the trap the first version of this amendment fell into.
 
 ### Body
 
@@ -316,7 +370,8 @@ the term is measured rather than estimated.
 - `andara_snapshot_interval_seconds` — gauge, the configured cadence. *Recommended*, for the alert
   below; see the note there for what is required and what is left to implementation.
 - `andara_snapshot_last_tick`, `andara_snapshot_age_seconds` — gauges, per process.
-- `andara_snapshot_failures_total` — counter, label `reason` (`store`, `encode`, `timeout`, `stall`).
+- `andara_snapshot_failures_total` — counter, label `reason` (`store`, `encode`, `timeout`, `stall`,
+  `boundary` — the last added 2026-09-22 for AC-8's abandoned round).
 - `andara_snapshot_rounds_total` — counter, label `outcome` (`complete`, `incomplete`).
 
 ### Logs
@@ -361,15 +416,19 @@ the term is measured rather than estimated.
   test above asserts that the failing round is *counted* incomplete, which is AC-6, and nothing
   asserted that the previous round survived it. Under the superseded key format that test fails, which
   is what made the format wrong; it is the regression test for the amendment.
-- **A boundary that was not published starts no round** (AC-8, as amended). `Publish` returning an
-  error — including `ErrBoundaryLost` — and the next due interval elapsing produces no object and no
-  manifest.
+- **A boundary that was not acknowledged writes no object** (AC-8, as amended). Three cases, because
+  the interesting one is not the synchronous refusal: `Publish` returning an error outright; **a
+  delivery failure reported on the callback after `Publish` already returned `nil`**, which is the real
+  shape of a broker outage and the one a return-value check misses; and an acknowledgement that never
+  arrives, which must fail the round on `upload_timeout` rather than hang it. No object, no manifest,
+  and `andara_snapshot_failures_total{reason}` carries `boundary` for the second and `timeout` for the
+  third.
 - **Manual/operator:**
   ```
   make up && andara-server
   andara-cli snapshot list --zone <zone>          # expect: one row per round, newest first
-  ls /var/lib/andara/snapshots/<zone>/1/           # expect: one dir per round tick, zero-padded
-  ls /var/lib/andara/snapshots/<zone>/1/*/         # expect: zero-padded offsets, no *.tmp
+  ls /var/lib/andara/snapshots/<zone>/              # expect: one dir per round tick, zero-padded
+  ls /var/lib/andara/snapshots/<zone>/*/1/          # expect: zero-padded offsets, no *.tmp
   ```
 
 ## Definition of done

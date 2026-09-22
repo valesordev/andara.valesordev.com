@@ -56,17 +56,27 @@ type SnapshotEnvelope struct {
 	// World's. Recovery verifies rather than trusts, and AW-SRV-007 AC-4's
 	// "missing or hash-invalid Zone object" is a per-object check against this.
 	//
+	// It covers EVERY field the body carries. That is worth stating because the
+	// obvious construction does not: sim.WorldState.CanonicalBytes writes tick,
+	// the PRNG and next_event_id once in a global header, ahead of its per-Zone
+	// sections, while ZoneState repeats all three per Zone — they are
+	// process-wide values a Zone restored alone still needs. Hashing only the
+	// Zone's section would leave them unprotected, and a corrupted prng_state
+	// would stay hash-valid: AW-SRV-007 would not fall back to an older round,
+	// it would restore a World whose replay diverges and exit 2 at AC-5.
+	//
+	// So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
+	// carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is
+	// unchanged, so the World hash stays byte-for-byte what it was.
+	//
 	// Not the same number as TickCompleted.state_hash, which is global and which
 	// AW-SRV-007 AC-5 compares against the recovered World after replay. The two
 	// are different assertions at different points; an earlier version of this
 	// comment said "comparable to the TickCompleted record for the same tick",
-	// which read as though they were interchangeable. They are kept provably
-	// consistent rather than merely similar: sim.WorldState.CanonicalBytes
-	// composes from a per-Zone section, and this is SHA-256 over that same
-	// section, so no second encoding exists to drift.
+	// which read as though they were interchangeable.
 	StateHash []byte `protobuf:"bytes,4,opt,name=state_hash,json=stateHash,proto3" json:"state_hash,omitempty"`
 	// Which Zone this snapshot covers. Snapshots are per-Zone, and the store key
-	// is {zone_id}/{state_version}/{tick}/{offset} (AW-SRV-006), so a Zone can be
+	// is {zone_id}/{tick}/{state_version}/{offset} (AW-SRV-006), so a Zone can be
 	// restored without the whole World and a round is a prefix group.
 	ZoneId string `protobuf:"bytes,5,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
 	// Diagnostic only, never read by recovery logic — the same rule as

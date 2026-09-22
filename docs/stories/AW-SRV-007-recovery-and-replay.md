@@ -111,9 +111,11 @@ type Round struct {
 // process's owned Zones. Newest first.
 //
 // The grouping is a prefix scan: the key is
-// {zone_id}/{state_version}/{tick}/{offset} (AW-SRV-006, amended 2026-09-22),
-// so the tick a key belongs to is in the key and a round needs no Get per
-// candidate to discover it. Completeness is still a per-object hash check, so
+// {zone_id}/{tick}/{state_version}/{offset} (AW-SRV-006, amended 2026-09-22),
+// so one Zone's part of a round is the prefix {zone_id}/{tick}/ and a round
+// needs no Get per candidate to discover it. Tick precedes state_version so
+// that lexical order is tick order across a rollback, which writes newer
+// ticks at an older version. Completeness is still a per-object hash check, so
 // verifying a round does read every object it names — discovery is what the
 // key format makes cheap, not verification.
 func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error)
