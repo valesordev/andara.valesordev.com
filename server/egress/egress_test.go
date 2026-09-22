@@ -229,6 +229,23 @@ func (c *client) wait() error {
 	return nil
 }
 
+// parked waits until the writer is inside Send, blocked on c.block. A test
+// that wants the overflow to *abort* the stream — rather than be noticed by
+// the writer on its next pass — must emit the overflow after this: the
+// pump only calls Abort when the writer is inside Send, and a writer that
+// has taken a frame but not yet entered Send ends the stream itself with
+// the typed reason, which is correct and never reaches the fake's Abort.
+// That window is what hung TestEscalation_DisconnectsWhenResetDoesNotReturn
+// in CI (PR #41) after the attach-ordering fix.
+func (c *client) parked() {
+	c.f.t.Helper()
+	waitFor(c.f.t, func() bool {
+		c.sendMu.Lock()
+		defer c.sendMu.Unlock()
+		return c.inSend
+	}, "writer parked in Send")
+}
+
 func (c *client) end() {
 	close(c.ended)
 	c.cancel()
@@ -409,7 +426,10 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	// The first Event parks the stalled writer inside Send; eight more
 	// fill its buffer; the ninth exceeds it.
 	var sent []uint64
-	for i := 0; i < 10; i++ {
+	sent = append(sent, f.emit(plaza()))
+	healthy.next()
+	stalled.parked()
+	for i := 0; i < 9; i++ {
 		sent = append(sent, f.emit(plaza()))
 		healthy.next()
 	}
@@ -436,10 +456,12 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 	if got := counter(t, f.e.Metrics().InDropState); got != 1 {
 		t.Errorf("sessions_in_drop_state after the drop = %v", got)
 	}
-	logs := f.logs.String()
-	if !strings.Contains(logs, `"msg":"stream ended: client not reading, buffer full"`) || !strings.Contains(logs, `"session_id":"a"`) || !strings.Contains(logs, `"buffered":8`) {
-		t.Errorf("warn line missing or incomplete:\n%s", logs)
-	}
+	// The pump logs the drop after it has released the lock and called
+	// Abort, so the line can trail the abort the test just observed.
+	waitFor(t, func() bool {
+		logs := f.logs.String()
+		return strings.Contains(logs, `"msg":"stream ended: client not reading, buffer full"`) && strings.Contains(logs, `"session_id":"a"`) && strings.Contains(logs, `"buffered":8`)
+	}, "the buffer-full warn line")
 	// Neither the Session nor its fan-out subscription ended.
 	if got := counter(t, f.hub.Metrics().Subscribers); got != 2 {
 		t.Errorf("hub subscribers = %v; the Session's subscription should survive its stream", got)
@@ -472,12 +494,19 @@ func TestBufferFull_EndsStreamNotSession(t *testing.T) {
 		t.Fatalf("resume from %d got %d", sent[len(sent)-1], got)
 	}
 	back.end()
+	// wait: end() does not; the stream gauge is decremented before the
+	// stream's error is delivered, so after this Streams == 2 below can only
+	// mean the third stream attached — not this one still counted.
+	back.wait()
 	waitFor(t, func() bool { return f.e.Sessions() == 1 }, "first session forgotten")
 	// A Session that ends while in the drop state leaves it.
 	f.place("c", "carol", "town", "plaza")
 	gone := f.subscribe("c", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "third subscribed")
-	for i := 0; i < 10; i++ {
+	f.emit(plaza())
+	healthy.next()
+	gone.parked()
+	for i := 0; i < 9; i++ {
 		f.emit(plaza())
 		healthy.next()
 	}
@@ -537,7 +566,10 @@ func TestEscalation_DisconnectsWhenResetDoesNotReturn(t *testing.T) {
 	stalled := f.subscribe("a", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	defer stalled.end()
 	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
-	for i := 0; i < 10; i++ {
+	// One Event parks the writer inside Send; the overflow then aborts it.
+	f.emit(plaza())
+	stalled.parked()
+	for i := 0; i < 9; i++ {
 		f.emit(plaza())
 	}
 	<-f.aborted // the reset, which the fake ignores: Send stays blocked
@@ -557,7 +589,9 @@ func TestEscalation_DisconnectsWhenResetDoesNotReturn(t *testing.T) {
 	quick := f.subscribe("b", player, 0, false, func(c *client) { c.block = make(chan struct{}) })
 	defer quick.end()
 	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "second subscribed")
-	for i := 0; i < 10; i++ {
+	f.emit(plaza())
+	quick.parked()
+	for i := 0; i < 9; i++ {
 		f.emit(plaza())
 	}
 	<-f.aborted

@@ -346,9 +346,12 @@ func (h *Hub) Subscribe(ctx context.Context, s Subscriber) (*Subscription, error
 		start: sim.Tick(h.lastTick.Load()) + 1,
 	}
 	h.subs[sub.ID] = sub
-	n := len(h.subs)
+	// Set under the lock: two Subscribes (or a Subscribe and an end) that
+	// computed their counts in order but Set them out of order would leave
+	// the gauge wrong for good — as TestBufferFull_EndsStreamNotSession
+	// once saw, two subscriptions reading as one.
+	h.metrics.Subscribers.Set(float64(len(h.subs)))
 	h.mu.Unlock()
-	h.metrics.Subscribers.Set(float64(n))
 	if s.Observer.World {
 		ctx = auth.WithSessionID(ctx, s.SessionID)
 		h.log.LogAttrs(ctx, slog.LevelInfo, "world-scope subscription: privileged read",
@@ -374,9 +377,8 @@ func (h *Hub) end(sub *Subscription, reason string, tick sim.Tick) {
 	}
 	h.mu.Lock()
 	delete(h.subs, sub.ID)
-	n := len(h.subs)
+	h.metrics.Subscribers.Set(float64(len(h.subs)))
 	h.mu.Unlock()
-	h.metrics.Subscribers.Set(float64(n))
 	h.metrics.Drops.WithLabelValues(reason).Inc()
 	if reason == ReasonBufferFull {
 		h.log.Warn("subscriber dropped: buffer full", "subscription_id", sub.ID, "reason", reason, "buffered", cap(sub.ch)-1, "tick", uint64(tick))
