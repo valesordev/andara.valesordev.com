@@ -9,7 +9,7 @@ define not only the wire but also the Kafka record formats, the snapshot envelop
 ## Layout
 
 ```
-andara/game/v1/       Game service — OpenSession, Submit, Subscribe   (AW-SRV-005)
+andara/game/v1/       Game service — OpenSession, Submit, Subscribe   (AW-SRV-005); the roster RPCs (AW-SRV-014)
 andara/admin/v1/      Admin service — operator and builder surface    (AW-SRV-005)
 andara/log/v1/        LoggedCommand, Event, TickCompleted             (AW-SRV-004, AW-SRV-005)
 andara/state/v1/      snapshot envelope with state_version            (AW-SRV-006)

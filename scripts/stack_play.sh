@@ -2,17 +2,28 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 #
-# AW-CLI-004's M1 gate, scripted: `andara-cli play` against the running stack —
-# log in, connect over TLS, `look`, `north`, `west`, quit — and assert the
-# transcript. Until AW-SRV-014 binds a Character to the Session, every Intent is
-# refused before the log with "you are not in the world", so what this asserts
-# today is the half of the gate that exists: the Session opens and subscribes,
-# each line goes out with a client_ref, the refusal reads as prose with nothing
-# about stages or offsets in it, the client leaves cleanly with exit 0 and the
-# Session closed, and under --output json stdout is JSON and nothing else.
-# AW-SRV-014 carries the other half as an inherited line: the Room, the move, the
-# second client seeing the departure (AC-3), and the broker stop (AC-6). The
-# server restart (AC-7, AC-8's no_history resync) needs no Character and runs here.
+# The M1 gate, scripted against the running stack, in two halves.
+#
+# The Protocol half (AW-SRV-014): two players create a Character each and
+# enter the World over the generated client — the Room after look, the move
+# north through Redpanda and the tick on both Event streams, a post-log
+# rejection as prose, the quit seen by the other player, the body woken
+# where it went dormant — with the instruments AW-SRV-010, -011, and -031
+# could only drive in their integration suites scraped from the server. It
+# lives in Go (internal/smoke, TestLive_M1Gate) for the reason stack_smoke.sh
+# gives: the generated client is the only thing that speaks the Protocol.
+#
+# The client half (AW-CLI-004): `andara-cli play` — log in, connect over TLS,
+# `look`, `north`, `west`, quit — and the transcript asserted. play cannot yet
+# select a Character (AW-CLI-007 adds `character` and `play --character`), so
+# every Intent it sends is refused before the log with "you are not in the
+# world", and what this asserts is the half that exists: the Session opens and
+# subscribes, each line goes out with a client_ref, the refusal reads as prose
+# with nothing about stages or offsets in it, the client leaves cleanly with
+# exit 0 and the Session closed, under --output json stdout is JSON and nothing
+# else, and a server restart under an open session is announced and recovered
+# from (AC-7, AC-8's no_history resync). AW-CLI-007 joins the halves: the Room
+# and the move in play's own transcript.
 #
 # Requires a stack: `make up` first, and `make build`. CI runs it as a step of
 # the `stack` workflow.
@@ -40,6 +51,16 @@ export XDG_STATE_HOME="$WORK/state"
 metric() {
   curl -sf "$METRICS" | awk -v m="$1" '$1 == m { print $2; found = 1 } END { if (!found) print 0 }'
 }
+
+# The Protocol half first: it is the gate itself, and the play half below
+# reads counters it leaves behind, none of which it resets.
+echo "stack-play: the M1 gate over the Protocol (AW-SRV-014) ..."
+export ANDARA_TLS_CA_FILE="${ANDARA_TLS_CA_FILE:-$PWD/.local/tls/ca.pem}"
+export ANDARA_SMOKE_ADDR="${ANDARA_SMOKE_ADDR:-localhost:${ANDARA_GRPC_PORT:-8443}}"
+export ANDARA_SMOKE_OPERATOR="$OPERATOR"
+export ANDARA_SMOKE_METRICS_ADDR="localhost:${HTTP_PORT}"
+"${GO:-go}" test -tags smoke -count=1 -v -run TestLive_M1Gate ./internal/smoke/ || fail "the M1 gate over the Protocol failed"
+echo "stack-play: two players entered the World, looked, moved through the log, and left"
 
 echo "stack-play: logging in as ${OPERATOR%%:*} ..."
 printf '%s\n' "${OPERATOR#*:}" | bin/andara-cli auth login --username "${OPERATOR%%:*}" --password-stdin >/dev/null \
@@ -168,8 +189,10 @@ sed 's/^/  | /' "$ROUT"
 [[ "$(grep -o 'session_id=[0-9a-f]\{32\}' "$ROUT" | sort -u | wc -l)" -ge 2 ]] || fail "the reconnect did not open a new Session"
 [[ "$(grep -c '» Submit .*raw="look"' "$ROUT")" -ge 3 ]] || fail "the client did not look again on the new Session"
 ! grep -q 'Something happened\|not answered\|not sent' "$ROUT" || fail "something false was printed during the restart"
-# The stack is back for whatever runs next.
-for _ in $(seq 1 60); do
+# The stack is back for whatever runs next. Readiness follows recovery, which
+# replays the log from its beginning until AW-SRV-006 snapshots it: a stack
+# that has run for days takes a minute or more here.
+for _ in $(seq 1 180); do
   curl -sf "http://localhost:${HTTP_PORT}/readyz" >/dev/null 2>&1 && break
   sleep 1
 done
@@ -180,4 +203,4 @@ echo "stack-play: the connection loss was announced, a Session reopened within t
 # from here; the mismatch itself is unit-tested (TestPlay_VersionMismatch).
 bin/andara-cli play --help | grep -q -- '--show-protocol' || fail "play --help lacks --show-protocol"
 
-echo "stack-play: M1 gate — the half that exists before AW-SRV-014 — passes"
+echo "stack-play: M1 gate — the Protocol half whole, the play half up to AW-CLI-007 — passes"

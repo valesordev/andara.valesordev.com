@@ -78,6 +78,9 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `egress.heartbeat_interval` | `ANDARA_HEARTBEAT_INTERVAL` | `20s` | How long a stream may be silent before a `Heartbeat` frame is sent. Also how long a stream reset is given to return a blocked writer before its connection is closed. |
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `ingress.idempotency_window` | `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` | `30s` | How long a Submit's outcome is remembered against its `(Session, client_ref)` once known, so a retry inside it is the same Command. It governs *resolved* keys; a key still in flight lives until its outcome is known, however long that takes. Must exceed `ingress.produce_deadline`. Per process; at most `ingress.max_pending` keys per Session, the oldest resolved one evicted first — a key still in flight is never evicted. |
+| `character.max_per_account` | `ANDARA_CHARACTER_MAX_PER_ACCOUNT` | `5` | Characters an Account may hold (ADR-0006), ACTIVE or DELETED — a deleted one keeps its slot until purged (`AW-SRV-032`). A sixth is `RESOURCE_EXHAUSTED roster_full`. |
+| `character.spawn_room` | `ANDARA_CHARACTER_SPAWN_ROOM` | `town/plaza` | `zone_id/room_id` a never-bound Character is placed in. Resolved against the loaded content at boot; a value the World lacks fails the boot. The default is the dev fixture's Room, so every values file outside `ENV=local` must set it (the chart's schema requires it). |
+| `character.name_pattern` | `ANDARA_CHARACTER_NAME_PATTERN` | `^[\p{L}][\p{L}' -]{2,23}$` | RE2 a Character name must match, as typed. Uniqueness is on the folded form (NFKC, case-folded, trimmed), across every Account, forever. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 | `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
@@ -674,6 +677,56 @@ username on a failure, which may be a password typed in the wrong box; `privileg
 `info` with `actor_account_id`, `acting_as_account_id`, `action`, `target`, `outcome`. Spans:
 `session.authenticate` under the `OpenSession` RPC span (which `session.lifetime` links to);
 `auth.verify_credential` under `Authenticate` with `argon2.memory_kib`.
+
+## The roster and the binding (AW-SRV-014)
+
+`server/roster` is the Gateway's side of a Session entering the World. `Game.ListCharacters`,
+`CreateCharacter`, and `SelectCharacter` take a `session_id` like `Submit`; every refusal carries
+`ErrorInfo{domain: andara.character, reason}`: `roster_full` (`RESOURCE_EXHAUSTED`), `name_taken`
+(`ALREADY_EXISTS`, one message whatever the cause), `name_invalid` (`INVALID_ARGUMENT`, naming the
+rule), `already_live` (`FAILED_PRECONDITION`, naming the live Character), `no_such_character`
+(`NOT_FOUND`). A produce failure on select is answered as `Submit` answers it.
+
+A Character's identity is Account state — `Account.characters` and a `name/{fold}` reservation
+written first on `andara.accounts.v1`, both under the store's single-writer lock — and its body is
+World state: an Entity made from `andara.core.Character` whose `EntityID` is the `character_id`
+and whose display name is carried on it. `SelectCharacter` sets the Account's **live flag** (one
+live at a time; Session state in process memory, ADR-0001), binds the routing table with the
+roster's last-known Zone and Room so the stream perceives from the Room the body will appear in,
+and produces `BindCharacter` to that Zone's Partition; the response is the offset. The tick
+materializes the body — at the spawn Room when never bound, where it went dormant otherwise, and
+untouched when a crash left it present — and emits `CharacterArrived` with an empty
+`from_direction`. A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own
+context bounded by `ingress.produce_deadline`, records the roster's position from the routing
+table, and frees the flag; the tick makes the body **dormant** — in no Room's occupants,
+invisible to `look`, acting for nobody — and emits `CharacterLeft` with an empty `to_direction`.
+Until the teardown has produced, the Character is `already_live` to the same Account, a
+reconnecting client included. Nothing at boot invents an unbind: a body left present by a crash
+is taken where it stands by the next select. A `BindCharacter` the roster routed to the wrong
+Zone is re-produced by the sim to the Zone that holds the body.
+
+The boot requires `character.spawn_room` to resolve and `andara.core.Character` to be loaded. The
+dev World (`testdata/content/valid`) carries the core pack under `templates/`; the kind chart
+mounts it from `contentVolume.templatesConfigMapName`.
+
+### Roster metrics, logs, and traces
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_characters_total` | gauge | `state` | `present`, `dormant` — bodies in Zone state, set by the loop after recovery and after every tick that applied a Command; a present body with no Session counts as present |
+| `andara_sessions_bound` | gauge | — | Sessions whose `BindCharacter` is in the log and whose teardown has not run; `present − bound` is the bodies no Session drives |
+| `andara_character_creations_total` | counter | `outcome` | `ok`, `roster_full`, `name_taken`, `name_invalid` |
+| `andara_character_bindings_total` | counter | `outcome` | `ok`, `already_live`, `race_lost` (lost to a select whose produce was still in flight), `not_found`, `produce_failed` |
+| `andara_character_unbinds_total` | counter | `reason`, `outcome` | `quit` × `ok`, `produce_failed` |
+
+Character name and Account ID are never labels. Logs at `info`: `character created`,
+`character selected` (with `zone`, `partition`, `offset`), `character unbound` (with `reason`,
+`outcome`, `zone`, `room`), each with `account_id`, `character_id`, `session_id`, `trace_id`; the
+name appears quoted as a value on `created`, never as a key. A failed teardown produce is `warn`
+with the same fields. Spans: `character.create` and `character.select` under the RPC span, linked
+to `session.lifetime`; `log.produce` under `select`; the tick's `command.apply` for the
+`BindCharacter` joins through the record's `trace_id`; `character.unbind` is a root linked to the
+Session.
 
 `canonical.Marshal` (`server/canonical`) is the encoder for anything that feeds the State Hash
 (ADR-0007 rule 3): deterministic protobuf, and it refuses a message whose descriptor contains a
