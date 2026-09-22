@@ -1,0 +1,117 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
+// The snapshot body (AW-SRV-006). SnapshotEnvelope.body carries a serialized
+// ZoneState; the envelope stays stable while this evolves under state_version.
+//
+// The determinism rules of andara.log.v1 apply here and for the same reason:
+// no map, no float or double, no Any, no Timestamp. This record feeds the
+// State Hash — the per-Zone hash the envelope carries — so two binaries that
+// hold the same Zone must encode it to the same bytes.
+//
+// WHAT BELONGS HERE. Exactly what sim.WorldState.CanonicalBytes covers for one
+// Zone, and nothing else. A field the hash covers but the body omits cannot be
+// reproduced on restore, and AW-SRV-007 AC-5 exits 2 on that mismatch: the
+// omission surfaces as a World that will not boot, long after the snapshot was
+// written. Topology is not here — it is content-versioned and hashed by
+// AW-SRV-012's ContentSwap record, not by state.
+
+syntax = "proto3";
+
+package andara.state.v1;
+
+import "andara/content/v1/content.proto";
+import "andara/log/v1/log.proto";
+
+// One Zone's mutable state at a tick boundary.
+message ZoneState {
+  string zone_id = 1;
+
+  // The tick this state is exactly consistent with. Equal to the envelope's
+  // tick and to the TickCompleted emitted for the same boundary (AC-8).
+  uint64 tick = 2;
+
+  // The sim PRNG (xoshiro256**), its four words big-endian, so replay after
+  // restore draws the same numbers. Process-wide rather than per-Zone: one
+  // generator serves the World, so every Zone in a round carries the same 32
+  // bytes. AW-SRV-007 must refuse a round whose copies disagree.
+  bytes prng_state = 3;
+
+  // Sorted by entity_id. Sorted, not merely stable: a snapshot taken twice of
+  // the same state must be byte-identical (AC-2).
+  repeated EntityState entities = 4;
+
+  // Commands deferred past sim.max_per_tick, in order.
+  //
+  // Written by nothing today, and read by nothing: the deferred backlog is the
+  // tick loop's buffer, not simulation state, and Engine.Step advances a
+  // Partition's offset only past records it applied. A deferred record
+  // therefore sits at or after the offset this snapshot records, so AW-SRV-007
+  // reads it back from the log rather than from here — and populating it would
+  // make the same Command replay twice. The field exists so the number is
+  // spent and the shape is on record. See
+  // docs/feedback/AW-SRV-006-zone-snapshots.md §3.
+  repeated andara.log.v1.LoggedCommand deferred = 5;
+
+  // Next EventID to assign. Process-wide, like prng_state.
+  uint64 next_event_id = 6;
+
+  // Set when applying a Command panicked inside this Zone (AW-SRV-002 AC-12).
+  // A faulted Zone's Partition stops advancing until the process restarts, and
+  // the state left behind is deterministic — the same records panic at the
+  // same point on replay — so it is hashed, and snapshotted, as it stands.
+  bool faulted = 7;
+  uint64 faulted_tick = 8;
+}
+
+// One Entity as the simulation holds it. The Go form is sim.EntityState; a
+// round-trip test pins the two together.
+//
+// Distinct from andara.log.v1.Entity, which is the Entity *in transit* across a
+// Zone boundary and deliberately carries no position, because the Arrive names
+// the target Room. A snapshot must carry position, and extending the transit
+// record with fields that mean nothing on the wire would grow every handoff.
+message EntityState {
+  string entity_id = 1;
+
+  // Where the Entity is. The Zone is implicit — an Entity lives in the
+  // ZoneState whose Partition owns it (ADR-0001 rule 3) — so a RoomID is the
+  // whole position. Empty for an Entity that is nowhere.
+  string room_id = 2;
+
+  // Sorted by type, at most one of each; each Component's fields sorted by
+  // name. Both orders are invariants of a Component set, and both are
+  // re-established on encode rather than trusted (AC-2).
+  repeated andara.content.v1.ComponentValue components = 3;
+
+  // Deadline after which a linkdead Session's body is unbound; 0 when not
+  // linkdead. AW-SRV-015 has not landed, so nothing writes this yet. Defined
+  // now because the story's contract assigned it the number.
+  uint64 linkdead_deadline_tick = 4;
+
+  // A Character whose Session left the World (AW-SRV-014): the body keeps its
+  // Room, so "where you were" survives a restart, but it is in no Room's
+  // occupant list, invisible to look, and addressed by no Event, until the
+  // next BindCharacter clears it. dormant_since_tick is when it went dormant,
+  // for AW-SRV-032's retention.
+  bool dormant = 5;
+  uint64 dormant_since_tick = 6;
+
+  // 7 is AW-SRV-015's linkdead_since_tick. Left unused rather than reserved:
+  // a reserved range has to shrink to be used, and buf counts that as
+  // breaking (see andara/state/v1/snapshot.proto).
+
+  // The Template the Entity was made from and the content version that
+  // Template came from. The Template reference is what lets an Entity always
+  // name its pack (AW-SRV-009); the content version is provenance for
+  // AW-SRV-019's records.
+  string template = 8;
+  string content_version = 9;
+
+  // The display name when the Entity has one apart from its ID: a Character's,
+  // immutable, carried by the BindCharacter that made the body (AW-SRV-014).
+  // Empty for anything named by its ID. Absent from AW-SRV-006's contract
+  // sketch, which predates AW-SRV-014; the State Hash covers it, so the body
+  // must too. See docs/feedback/AW-SRV-006-zone-snapshots.md §1.
+  string name = 10;
+}

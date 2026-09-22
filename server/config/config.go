@@ -121,6 +121,25 @@ type Config struct {
 	EgressResumeWindow int
 	HeartbeatInterval  time.Duration
 
+	// Zone snapshots (AW-SRV-006). SnapshotInterval is the cadence of a
+	// round — one consistent cut of every owned Zone at a tick boundary —
+	// and it sets RTO, not RPO: RPO is zero and is decided by broker
+	// settings (docs/specs/slo/recovery.md). Zero disables snapshots, which
+	// is not a supported production posture; recovery then replays the log
+	// from its beginning, which is correct and slow.
+	//
+	// SnapshotMaxStall bounds the in-tick copy — the part players can feel —
+	// and is a warning threshold, not a refusal. SnapshotStore is fs or s3;
+	// SnapshotUploadTimeout fails a round rather than queueing it behind the
+	// next one.
+	SnapshotInterval      time.Duration
+	SnapshotMaxStall      time.Duration
+	SnapshotStore         string
+	SnapshotFSPath        string
+	SnapshotS3Bucket      string
+	SnapshotS3Endpoint    string
+	SnapshotUploadTimeout time.Duration
+
 	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
 	// trace root (AW-SRV-010); rejections are kept whatever it says.
 	// TrustInboundTraceparent lets a client's traceparent parent the RPC
@@ -186,7 +205,21 @@ const (
 	DefaultEgressResumeWindow       = 2048
 	DefaultHeartbeatInterval        = 20 * time.Second
 
+	// Snapshots (AW-SRV-006). The interval is docs/specs/slo/recovery.md's;
+	// the stall budget is AC-1's threshold.
+	DefaultSnapshotInterval      = 60 * time.Second
+	DefaultSnapshotMaxStallMS    = 5
+	DefaultSnapshotStore         = "fs"
+	DefaultSnapshotFSPath        = "/var/lib/andara/snapshots"
+	DefaultSnapshotUploadTimeout = 30 * time.Second
+
 	DefaultTraceSampleRatio = 0.01
+)
+
+// The stores snapshot.store accepts.
+const (
+	SnapshotStoreFS = "fs"
+	SnapshotStoreS3 = "s3"
 )
 
 // EnvLookup looks up an environment variable.
@@ -249,6 +282,11 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		EgressBuffer:             DefaultEgressBuffer,
 		EgressResumeWindow:       DefaultEgressResumeWindow,
 		HeartbeatInterval:        DefaultHeartbeatInterval,
+		SnapshotInterval:         DefaultSnapshotInterval,
+		SnapshotMaxStall:         DefaultSnapshotMaxStallMS * time.Millisecond,
+		SnapshotStore:            DefaultSnapshotStore,
+		SnapshotFSPath:           DefaultSnapshotFSPath,
+		SnapshotUploadTimeout:    DefaultSnapshotUploadTimeout,
 		TraceSampleRatio:         DefaultTraceSampleRatio,
 	}
 	configPath := peekConfigPath(args, env)
@@ -337,6 +375,15 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.IntVar(&c.EgressBuffer, "egress-buffer", c.EgressBuffer, "Events a Session's stream may leave unsent before it is ended (ANDARA_EGRESS_BUFFER)")
 	fs.IntVar(&c.EgressResumeWindow, "egress-resume-window", c.EgressResumeWindow, "delivered Events a Session retains for a resume (ANDARA_EGRESS_RESUME_WINDOW)")
 	fs.DurationVar(&c.HeartbeatInterval, "heartbeat-interval", c.HeartbeatInterval, "how long a stream may be silent before a heartbeat frame is sent (ANDARA_HEARTBEAT_INTERVAL)")
+	fs.DurationVar(&c.SnapshotInterval, "snapshot-interval", c.SnapshotInterval, "how often a snapshot round runs; 0 disables snapshots (ANDARA_SNAPSHOT_INTERVAL)")
+	fs.Func("snapshot-max-stall-ms", "budget for the in-tick snapshot copy in milliseconds; a warning, not a refusal (ANDARA_SNAPSHOT_MAX_STALL_MS)", func(v string) error {
+		return parseMillis("snapshot.max_stall_ms", v, &c.SnapshotMaxStall)
+	})
+	fs.StringVar(&c.SnapshotStore, "snapshot-store", c.SnapshotStore, "where snapshot objects go: fs or s3 (ANDARA_SNAPSHOT_STORE)")
+	fs.StringVar(&c.SnapshotFSPath, "snapshot-fs-path", c.SnapshotFSPath, "directory the fs store writes under (ANDARA_SNAPSHOT_FS_PATH)")
+	fs.StringVar(&c.SnapshotS3Bucket, "snapshot-s3-bucket", c.SnapshotS3Bucket, "bucket the s3 store writes to; required when snapshot.store=s3 (ANDARA_SNAPSHOT_S3_BUCKET)")
+	fs.StringVar(&c.SnapshotS3Endpoint, "snapshot-s3-endpoint", c.SnapshotS3Endpoint, "S3 endpoint; MinIO locally, empty for AWS (ANDARA_SNAPSHOT_S3_ENDPOINT)")
+	fs.DurationVar(&c.SnapshotUploadTimeout, "snapshot-upload-timeout", c.SnapshotUploadTimeout, "a round exceeding this is failed, not queued behind the next (ANDARA_SNAPSHOT_UPLOAD_TIMEOUT)")
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
@@ -358,7 +405,46 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	if err := c.validateSim(); err != nil {
 		return Config{}, err
 	}
+	if err := c.validateSnapshot(); err != nil {
+		return Config{}, err
+	}
 	return c, nil
+}
+
+// validateSnapshot rejects a snapshot configuration the round cannot run
+// under. A negative interval or stall budget is a typo; an s3 store with no
+// bucket is a deployment that would fail on its first round, sixty seconds
+// after the process looked healthy, which is exactly the kind of failure
+// that belongs at startup instead.
+func (c Config) validateSnapshot() error {
+	switch c.SnapshotStore {
+	case SnapshotStoreFS:
+		if c.SnapshotInterval > 0 && c.SnapshotFSPath == "" {
+			return fmt.Errorf("snapshot.store=fs requires snapshot.fs_path (ANDARA_SNAPSHOT_FS_PATH)")
+		}
+	case SnapshotStoreS3:
+		if c.SnapshotS3Bucket == "" {
+			return fmt.Errorf("snapshot.store=s3 requires snapshot.s3_bucket (ANDARA_SNAPSHOT_S3_BUCKET)")
+		}
+	default:
+		return fmt.Errorf("snapshot.store must be %s or %s, got %q", SnapshotStoreFS, SnapshotStoreS3, c.SnapshotStore)
+	}
+	if c.SnapshotInterval < 0 {
+		return fmt.Errorf("snapshot.interval must not be negative, got %s", c.SnapshotInterval)
+	}
+	if c.SnapshotMaxStall <= 0 {
+		return fmt.Errorf("snapshot.max_stall_ms must be positive, got %s", c.SnapshotMaxStall)
+	}
+	if c.SnapshotUploadTimeout <= 0 {
+		return fmt.Errorf("snapshot.upload_timeout must be positive, got %s", c.SnapshotUploadTimeout)
+	}
+	// A round that cannot finish before the next one starts would either
+	// queue or overlap; the story's answer is that it fails, so the two must
+	// not be configured to guarantee it.
+	if c.SnapshotInterval > 0 && c.SnapshotUploadTimeout > c.SnapshotInterval {
+		return fmt.Errorf("snapshot.upload_timeout (%s) must not exceed snapshot.interval (%s)", c.SnapshotUploadTimeout, c.SnapshotInterval)
+	}
+	return nil
 }
 
 // validateSim rejects a tick configuration the loop cannot run. The budget
@@ -684,6 +770,15 @@ type fileConfig struct {
 		ResumeWindow      *int    `yaml:"resume_window"`
 		HeartbeatInterval *string `yaml:"heartbeat_interval"`
 	} `yaml:"egress"`
+	Snapshot *struct {
+		Interval      *string `yaml:"interval"`
+		MaxStallMS    *int    `yaml:"max_stall_ms"`
+		Store         *string `yaml:"store"`
+		FSPath        *string `yaml:"fs_path"`
+		S3Bucket      *string `yaml:"s3_bucket"`
+		S3Endpoint    *string `yaml:"s3_endpoint"`
+		UploadTimeout *string `yaml:"upload_timeout"`
+	} `yaml:"snapshot"`
 }
 
 func peekConfigPath(args []string, env EnvLookup) string {
@@ -933,6 +1028,38 @@ func applyFile(c *Config, path string) error {
 			}
 		}
 	}
+	if sn := fc.Snapshot; sn != nil {
+		for _, sv := range []struct {
+			v   *string
+			dst *string
+		}{
+			{sn.Store, &c.SnapshotStore},
+			{sn.FSPath, &c.SnapshotFSPath},
+			{sn.S3Bucket, &c.SnapshotS3Bucket},
+			{sn.S3Endpoint, &c.SnapshotS3Endpoint},
+		} {
+			if sv.v != nil {
+				*sv.dst = *sv.v
+			}
+		}
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"snapshot.interval", sn.Interval, &c.SnapshotInterval},
+			{"snapshot.upload_timeout", sn.UploadTimeout, &c.SnapshotUploadTimeout},
+		} {
+			if d.v != nil {
+				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+					return fmt.Errorf("config file %s: %w", path, err)
+				}
+			}
+		}
+		if sn.MaxStallMS != nil {
+			c.SnapshotMaxStall = time.Duration(*sn.MaxStallMS) * time.Millisecond
+		}
+	}
 	return nil
 }
 
@@ -1053,6 +1180,10 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_BOOTSTRAP_OPERATOR", &c.AuthBootstrapOperator},
 		{"ANDARA_INGRESS_RATE_LIMIT", &c.IngressRateLimit},
 		{"ANDARA_AGENT_RATE_LIMIT", &c.IngressAgentRateLimit},
+		{"ANDARA_SNAPSHOT_STORE", &c.SnapshotStore},
+		{"ANDARA_SNAPSHOT_FS_PATH", &c.SnapshotFSPath},
+		{"ANDARA_SNAPSHOT_S3_BUCKET", &c.SnapshotS3Bucket},
+		{"ANDARA_SNAPSHOT_S3_ENDPOINT", &c.SnapshotS3Endpoint},
 	} {
 		if v, ok := env(sv.name); ok {
 			*sv.dst = v
@@ -1067,6 +1198,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_INVITE_TTL", &c.AuthInviteTTL},
 		{"ANDARA_AUTH_RECHECK_INTERVAL", &c.AuthRecheckInterval},
 		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
+		{"ANDARA_SNAPSHOT_INTERVAL", &c.SnapshotInterval},
+		{"ANDARA_SNAPSHOT_UPLOAD_TIMEOUT", &c.SnapshotUploadTimeout},
 	} {
 		if v, ok := env(dv.name); ok {
 			if err := parseDuration(dv.name, v, dv.dst); err != nil {
@@ -1108,6 +1241,11 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}
 	if v, ok := env("ANDARA_DRAIN_TIMEOUT_MS"); ok {
 		if err := parseMillis("ANDARA_DRAIN_TIMEOUT_MS", v, &c.SimDrainTimeout); err != nil {
+			return err
+		}
+	}
+	if v, ok := env("ANDARA_SNAPSHOT_MAX_STALL_MS"); ok {
+		if err := parseMillis("ANDARA_SNAPSHOT_MAX_STALL_MS", v, &c.SnapshotMaxStall); err != nil {
 			return err
 		}
 	}

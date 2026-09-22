@@ -225,3 +225,32 @@ message PartitionOffset {
   int32 partition = 1;
   int64 offset = 2;
 }
+
+// The snapshot manifest (AW-SRV-006). Produced to the Zone's Partition on
+// andara.events.v1 after the object is durable, under its own record key, the
+// way TickCompleted is — andara.log.v1 has no oneof carrier, and a control
+// record is told apart by its key, not by its position in a union.
+//
+// Audit and tooling only. AW-SRV-007 discovers snapshots through
+// WorldStore.List and verifies them through the envelope and TickCompleted,
+// because a backwards scan of an Event Partition for the newest manifest is
+// unbounded and a List is one call. Nothing in the recovery path reads this.
+message SnapshotWritten {
+  string zone_id = 1;
+  uint32 state_version = 2;
+  uint64 tick = 3;
+
+  // The offsets the snapshot was taken at, sorted by partition — the same
+  // values the envelope carries.
+  repeated PartitionOffset offsets = 4;
+
+  // The Zone's State Hash at that tick. Its key resolves to an object whose
+  // envelope hash equals this (AC-7).
+  bytes state_hash = 5;
+
+  // Where the object is, in the store's key space:
+  // {zone_id}/{state_version}/{offset}, the offset zero-padded so lexical
+  // order is offset order.
+  string key = 6;
+  uint64 size_bytes = 7;
+}
