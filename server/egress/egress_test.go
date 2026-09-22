@@ -404,10 +404,9 @@ func TestResume(t *testing.T) {
 		t.Error("no resync log line")
 	}
 	a.end()
-	waitFor(t, func() bool { return f.e.Sessions() == 0 }, "session state freed")
-	if got := counter(t, f.hub.Metrics().Subscribers); got != 0 {
-		t.Errorf("hub subscribers after session end = %v", got)
-	}
+	// Both halves of the teardown, not just the map entry: Sessions() reads
+	// 0 before the subscription is released (see fixture.forgotten).
+	f.forgotten(0, 0)
 }
 
 // AC-4: a client that stops reading trails the ring; past egress.buffer
@@ -745,12 +744,15 @@ func TestRebind(t *testing.T) {
 	}
 	a.cancel()
 	a.wait()
-	waitFor(t, func() bool { return f.e.Sessions() == 0 }, "session forgotten")
+	f.forgotten(0, 0)
+	// Exactly two unsubscribes over the Session's life — the rebind that
+	// moved alice from plaza to hall, and forget. The twenty Rebind calls
+	// after the Session ended must have added none: each would be an
+	// unsubscribe and a resubscribe, so a third drop here means one of them
+	// took a subscription out for a Session that was over. The counter is
+	// monotonic and the teardown has settled, so this is a stable read.
 	if got := counter(t, f.hub.Metrics().Drops.WithLabelValues(events.ReasonUnsubscribed)); got != 2 {
 		t.Errorf("rebind after the session ended resubscribed: unsubscribed drops = %v, want 2 (the rebind, then forget)", got)
-	}
-	if got := counter(t, f.hub.Metrics().Subscribers); got != 0 {
-		t.Errorf("subscriptions left behind: %v", got)
 	}
 }
 
@@ -803,6 +805,29 @@ func TestHubDrop(t *testing.T) {
 	b.cancel()
 	b.wait()
 	a.end()
+}
+
+// forgotten waits until a Session's teardown has actually finished: its
+// retained state dropped *and* its fan-out subscription released.
+//
+// Egress.Sessions() alone is not that signal, and using it as one is a race.
+// forget deletes the map entry and only then calls s.close(), which is what
+// unsubscribes from the Hub — so between the two there is a window in which
+// Sessions() reads 0 while the subscription is still live and the Hub's
+// unsubscribed drop has not been counted. A test that waits on Sessions() and
+// then asserts on a Hub counter is reading the second thing before the first
+// has caused it. That is a real window, not a theoretical one: widening it
+// with a 20 ms sleep inside forget fails TestRebind and TestResume every run.
+//
+// The ordering inside forget is not itself a bug — s.close() always follows,
+// nothing leaks, and Sessions() is documented "for tests" and has no other
+// caller — so the fix belongs here rather than in a teardown path that would
+// be reordered only to suit a test's polling.
+func (f *fixture) forgotten(sessions, subscribers int) {
+	f.t.Helper()
+	waitFor(f.t, func() bool {
+		return f.e.Sessions() == sessions && counter(f.t, f.hub.Metrics().Subscribers) == float64(subscribers)
+	}, fmt.Sprintf("teardown to settle at %d session(s) and %d subscription(s)", sessions, subscribers))
 }
 
 func waitFor(t *testing.T, cond func() bool, what string) {
