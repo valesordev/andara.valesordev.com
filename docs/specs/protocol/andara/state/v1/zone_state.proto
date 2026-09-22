@@ -20,7 +20,9 @@ syntax = "proto3";
 
 package andara.state.v1;
 
-import "andara/content/v1/content.proto";
+// ComponentValue lives in zone.proto, not content.proto, and proto imports are
+// not transitive: log.proto reaches it the same way.
+import "andara/content/v1/zone.proto";
 import "andara/log/v1/log.proto";
 
 // One Zone's mutable state at a tick boundary.

@@ -62,24 +62,24 @@ func TestSizingFixtureIsTheDocumentedScale(t *testing.T) {
 // AC-1: the in-tick copy of a snapshot round stays under snapshot.max_stall_ms
 // at the sizing fixture's scale.
 //
-// The threshold is the config default (5 ms). Measured as the worst of several
-// rounds rather than the mean: a stall is felt when it happens, not on average,
-// and the GC pause that lands inside one copy is exactly the case the budget
-// exists for. The assertion is generous by a factor of two against the
-// default, because this runs on CI hardware of unknown speed and a flaky
-// budget test gets deleted; what it is really defending against is a change
-// that makes the copy an order of magnitude slower — an encode that crept back
-// inside the tick, or a copy that started walking topology.
+// Not parallel, and measured as the worst of several rounds rather than the
+// mean: a stall is felt when it happens, not on average, and a timing
+// assertion racing the rest of the package measures the scheduler. The
+// threshold is the config default scaled by stallFactor, which moves with the
+// build — see stallfactor_race_test.go.
+//
+// What this defends against is not a slow machine but a structural change: an
+// encode creeping back inside the tick, or a copy that started walking
+// topology. That failure was real once — hashing at the boundary cost 24.7 ms
+// against a 5 ms budget — and it is the reason this test was written before
+// the rest of the story.
 func TestSnapshotCopyStaysInsideTheStallBudget(t *testing.T) {
-	if testing.Short() {
-		t.Skip("sizing fixture is slow to build")
-	}
-	t.Parallel()
 	e, err := simtest.SizingEngine(1)
 	if err != nil {
 		t.Fatalf("SizingEngine: %v", err)
 	}
 	const budget = 5 * time.Millisecond
+	limit := stallFactor * budget
 
 	var worst time.Duration
 	var snaps []sim.Snapshot
@@ -93,10 +93,10 @@ func TestSnapshotCopyStaysInsideTheStallBudget(t *testing.T) {
 	if len(snaps) != simtest.SizingZones {
 		t.Fatalf("round covered %d zones, want %d", len(snaps), simtest.SizingZones)
 	}
-	t.Logf("snapshot copy at the sizing fixture (%d zones, %d entities): worst of 5 rounds = %s, budget %s",
-		simtest.SizingZones, simtest.SizingEntities, worst.Round(time.Microsecond), budget)
-	if worst > 2*budget {
-		t.Fatalf("in-tick snapshot copy took %s, over twice the %s stall budget: the copy-on-write assumption in AW-SRV-006 does not hold at this scale", worst, budget)
+	t.Logf("snapshot copy at the sizing fixture (%d zones, %d entities): worst of 5 rounds = %s, budget %s, limit %s",
+		simtest.SizingZones, simtest.SizingEntities, worst.Round(time.Microsecond), budget, limit)
+	if worst > limit {
+		t.Fatalf("in-tick snapshot copy took %s, past the %s limit (%dx the %s stall budget): either the copy-on-write assumption in AW-SRV-006 no longer holds at this scale, or work that belongs off the tick has moved onto it", worst, limit, stallFactor, budget)
 	}
 }
 

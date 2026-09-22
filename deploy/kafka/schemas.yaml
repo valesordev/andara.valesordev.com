@@ -61,6 +61,16 @@ subjects:
     file: andara/log/v1/log.proto
     message: andara.log.v1.TickCompleted
 
+  # The third record type on andara.events.v1: the snapshot manifest
+  # (AW-SRV-006). Audit and tooling only — recovery discovers snapshots through
+  # WorldStore.List, not by scanning this topic — but it is on the topic, so it
+  # is a subject like the other two.
+  - subject: andara.events.v1-andara.log.v1.SnapshotWritten
+    topic: andara.events.v1
+    strategy: TopicRecordNameStrategy
+    file: andara/log/v1/log.proto
+    message: andara.log.v1.SnapshotWritten
+
   - subject: andara.content.blobs.v1-value
     topic: andara.content.blobs.v1
     strategy: TopicNameStrategy
