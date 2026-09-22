@@ -165,9 +165,51 @@ No change made here beyond moving the hash: the story's assumption holds at the 
 documented scale, and the fixture and its numbers are committed so that a later change to World
 scale is a visible change to a failing test rather than a silent drift.
 
-## 8. The `s3` store adds a third-party dependency
+## 8. The `s3` store adds a third-party dependency — `minio-go/v7`, Brian's call
 
-`snapshot.store=s3` needs an S3 client; `go.mod` has none today. Recorded here because a new
-direct dependency is a standing architectural commitment (`LICENSES/`, `REUSE.toml`, and
-`make license-check` all take an entry) rather than a detail of this story, and because the
-story's own MinIO assumption already defers a local-stack change to AW-INF-002.
+`snapshot.store=s3` needs an S3 client and `go.mod` had none. Raised rather than decided,
+because a new direct dependency is a standing architectural commitment rather than a detail
+of this story.
+
+**Resolved 2026-09-22 (Brian): `github.com/minio/minio-go/v7`**, over `aws-sdk-go-v2`. Lighter
+(a handful of transitive modules against roughly fifteen), Apache-2.0 so `REUSE.toml` and
+`make license-check` need no new entry, native to the MinIO the story's own assumption puts in
+the local stack, and it speaks to AWS S3 unchanged. Credentials come from the environment and
+then the IAM chain, so the cluster supplies a role or a web-identity token without
+configuration; the static pair exists for MinIO locally.
+
+`go get` also pulled cobra and pflag forward as a side effect. Both were pinned back: an
+unrelated dependency bump riding along in a story's diff is a change nobody reviewed.
+
+## 9. `andara-cli snapshot list` reads the store directly, not `Admin`
+
+**Finding.** The story's test plan and `docs/runbooks/snapshot-stale.md` both call
+`andara-cli snapshot list --zone <zone>`, but AW-SRV-006 defines no Admin RPC. AW-SRV-007's
+interface contract does: `andara-cli snapshot list` and `snapshot verify` over
+`Admin.ListSnapshotRounds`, with `ListSnapshotRoundsResponse` and friends.
+
+**Decision taken.** This story's `snapshot list` reads the configured store directly, the way
+`andara-cli sim repl` reads content from disk — no protocol change, no field numbers spent.
+Defining that RPC here would be the implementation lane writing AW-SRV-007's contract, which is
+the one thing the lane split exists to prevent.
+
+The two commands are not redundant when AW-SRV-007 lands, and the overlap is worth keeping:
+the Admin path answers *what does the running server see*, this one answers *what is actually
+in the bucket*, and a runbook wants the second precisely when the first disagrees with it — or
+when no server is running, which is the state a recovery starts from. If architecture would
+rather have one command, the natural shape is `--local` on the AW-SRV-007 command rather than
+two names.
+
+## 10. Follow-ups this story unblocks but does not carry
+
+- **`make measure-tick` against the sizing fixture.** `deploy/helm/andara/measurements.yaml` is
+  a placeholder whose header says to flip it "once AW-SRV-006 defines" the sizing fixture, and
+  `make helm-test` warns on every run until then. The fixture now exists, but as Go
+  (`server/simtest/sizing.go`), while `scripts/measure_tick.sh` boots a server against a
+  *content directory* — and the 10,000 Entities are runtime state that content does not carry,
+  so a naive run would measure another idle floor. Closing it needs a generated content form of
+  the fixture and a way to populate Entities in a running server. That is AW-INF-003 AC-10's
+  line, not this story's acceptance criteria, so it is left open rather than half-done.
+- **`TestRebind` in `server/egress` is flaky** — about one run in five, on `main`, independent
+  of this branch. Unrelated to snapshots, but it is in `make check`, so it is an intermittent
+  red build.
