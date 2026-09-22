@@ -515,6 +515,72 @@ export declare type PartitionOffset = Message<"andara.log.v1.PartitionOffset"> &
 export declare const PartitionOffsetSchema: GenMessage<PartitionOffset>;
 
 /**
+ * The snapshot manifest (AW-SRV-006). Produced to the Zone's Partition on
+ * andara.events.v1 after the object is durable, under its own record key, the
+ * way TickCompleted is — andara.log.v1 has no oneof carrier, and a control
+ * record is told apart by its key, not by its position in a union.
+ *
+ * Audit and tooling only. AW-SRV-007 discovers snapshots through
+ * WorldStore.List and verifies them through the envelope and TickCompleted,
+ * because a backwards scan of an Event Partition for the newest manifest is
+ * unbounded and a List is one call. Nothing in the recovery path reads this.
+ *
+ * @generated from message andara.log.v1.SnapshotWritten
+ */
+export declare type SnapshotWritten = Message<"andara.log.v1.SnapshotWritten"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: uint32 state_version = 2;
+   */
+  stateVersion: number;
+
+  /**
+   * @generated from field: uint64 tick = 3;
+   */
+  tick: bigint;
+
+  /**
+   * The offsets the snapshot was taken at, sorted by partition — the same
+   * values the envelope carries.
+   *
+   * @generated from field: repeated andara.log.v1.PartitionOffset offsets = 4;
+   */
+  offsets: PartitionOffset[];
+
+  /**
+   * The Zone's State Hash at that tick. Its key resolves to an object whose
+   * envelope hash equals this (AC-7).
+   *
+   * @generated from field: bytes state_hash = 5;
+   */
+  stateHash: Uint8Array;
+
+  /**
+   * Where the object is, in the store's key space:
+   * {zone_id}/{state_version}/{offset}, the offset zero-padded so lexical
+   * order is offset order.
+   *
+   * @generated from field: string key = 6;
+   */
+  key: string;
+
+  /**
+   * @generated from field: uint64 size_bytes = 7;
+   */
+  sizeBytes: bigint;
+};
+
+/**
+ * Describes the message andara.log.v1.SnapshotWritten.
+ * Use `create(SnapshotWrittenSchema)` to create a new message.
+ */
+export declare const SnapshotWrittenSchema: GenMessage<SnapshotWritten>;
+
+/**
  * @generated from enum andara.log.v1.UnbindReason
  */
 export enum UnbindReason {
