@@ -40,9 +40,29 @@ type fakeLog struct {
 	fail atomic.Pointer[error]
 	// slow, when set, is how long a produce takes.
 	slow time.Duration
+	// entered, when set, is signalled without blocking as each produce
+	// begins; gate, when set, holds every produce until it is closed. A
+	// test that must act while a produce is in flight waits on the one and
+	// then releases the other, rather than sleeping and hoping the
+	// scheduler agrees. Both are set before the roster is driven.
+	entered chan struct{}
+	gate    chan struct{}
 }
 
 func (f *fakeLog) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
+	if f.entered != nil {
+		select {
+		case f.entered <- struct{}{}:
+		default:
+		}
+	}
+	if f.gate != nil {
+		select {
+		case <-f.gate:
+		case <-ctx.Done():
+			return command.Accepted{}, ctx.Err()
+		}
+	}
 	if f.slow > 0 {
 		select {
 		case <-time.After(f.slow):
@@ -453,14 +473,27 @@ func TestRoster_ReleaseDuringSelect(t *testing.T) {
 	ctx := context.Background()
 	id := f.create("Aldric")
 	s := f.session("s1")
-	f.log.slow = 50 * time.Millisecond
+	// The bind's produce is held until the release has been asked for, and
+	// the release waits for the produce to have begun — by which point the
+	// flag is registered, which is what ReleaseSession has to find. A sleep
+	// in its place is a bet on the scheduler: a 30 ms delay before the
+	// SelectCharacter call loses it on every run, the release finds
+	// nothing, and the flag is left set — the leak this test exists to
+	// catch, reported by a test that never exercised the race.
+	f.log.entered = make(chan struct{}, 1)
+	f.log.gate = make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
 		_, err := f.roster.SelectCharacter(ctx, s, id)
 		done <- err
 	}()
-	time.Sleep(10 * time.Millisecond)
+	select {
+	case <-f.log.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the bind never reached the log")
+	}
 	f.roster.ReleaseSession(s)
+	close(f.log.gate)
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
