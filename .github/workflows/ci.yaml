@@ -87,6 +87,14 @@ jobs:
         run: make license-check
       - name: content-language corpus
         run: make content-grammar-check
+      - name: content-language conformance
+        run: make content-conformance
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: content-conformance
+          path: content-conformance.json
+          if-no-files-found: ignore
 
   # AW-SRV-002 AC-3 and its Definition of Done: replay equality and the golden State Hash
   # sequence run on every architecture a replica or a developer might be, and a

@@ -134,6 +134,7 @@ func newRoot(rt *runtime) *cobra.Command {
 	root.AddCommand(newPlayCmd(rt))
 	root.AddCommand(newSimCmd(rt))
 	root.AddCommand(newSnapshotCmd(rt))
+	root.AddCommand(newContentCmd(rt))
 	root.AddCommand(newCompletionCmd(rt))
 	return root
 }

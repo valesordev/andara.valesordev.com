@@ -95,8 +95,14 @@ func zoneToAST(z *contentv1.ZoneDefinition) (*ZoneDecl, error) {
 	}
 	for _, r := range z.GetRooms() {
 		room := &RoomDecl{ID: r.GetId(), Title: r.GetTitle()}
-		if r.GetDescription() != "" {
-			room.Descs = append(room.Descs, &DescDecl{Value: r.GetDescription()})
+		if d := r.GetDescription(); d != "" {
+			// One literal, which canonical printing then wraps at the budget:
+			// decompile has no record of where the Builder broke the prose, so
+			// it produces the one deterministic wrap (formatting.md §6).
+			room.Descs = append(room.Descs, &DescDecl{
+				Value: d,
+				Parts: []StringLit{{Raw: quote(d), Value: d}},
+			})
 		}
 		for _, e := range r.GetExits() {
 			room.Exits = append(room.Exits, &ExitDecl{

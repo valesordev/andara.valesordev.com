@@ -64,6 +64,38 @@ linters:
               desc: Postgres is a projection; the in-game read path is memory, not a datastore (ADR-0002)
             - pkg: github.com/lib/pq
               desc: Postgres is a projection (ADR-0002)
+        # AW-CLI-006 AC-8. content/lang is imported by admin/cli, by
+        # server/content for AW-SRV-013's publish gate, and by the conformance
+        # harness. It may quote server/sim — the Component registry, the
+        # Direction set, the ErrCode taxonomy, so the compiler and the loader
+        # speak one vocabulary rather than two (errors.md §2, ADR-0004) — and
+        # reach nothing else under server/. Importing server/content would be a
+        # cycle; importing the transport or storage packages would drag a Kafka
+        # client into a Builder's offline `content compile`.
+        #
+        # depguard has no "deny a prefix except one package", so this names the
+        # packages that exist. TestImportsNothingFromServerButSim is the
+        # exhaustive half and catches the one added next.
+        content-lang-reaches-only-sim:
+          files:
+            - '**/content/lang/**'
+          deny:
+            - pkg: github.com/valesordev/andara/server/content
+              desc: server/content imports content/lang for the publish gate; the reverse is a cycle (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/store
+              desc: the compiler is pure — it reads a directory and a cached core pack, and no object store (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/tickloop
+              desc: the compiler runs off-tick, in a Builder's terminal (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/gateway
+              desc: the compiler is transport-agnostic (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/egress
+              desc: the compiler is transport-agnostic (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/log
+              desc: the compiler does not reach the Kafka log; a Builder compiles offline (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/config
+              desc: the CLI resolves configuration and hands the compiler a directory (AW-CLI-006 AC-8)
+            - pkg: github.com/valesordev/andara/server/telemetry
+              desc: the CLI owns the span; the compiler returns diagnostics (AW-CLI-006 AC-8)
     misspell:
       locale: US
     revive:

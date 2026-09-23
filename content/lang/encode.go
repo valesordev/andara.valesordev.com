@@ -136,7 +136,7 @@ func writeScalar(sb *strings.Builder, fd protoreflect.FieldDescriptor, v protore
 	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
 		sb.WriteString(strconv.FormatUint(v.Uint(), 10))
 	default:
-		sb.WriteString(fmt.Sprintf("%v", v.Interface()))
+		fmt.Fprintf(sb, "%v", v.Interface())
 	}
 }
 
@@ -166,7 +166,7 @@ func writeJSONString(sb *strings.Builder, s string) {
 			sb.WriteString(`\f`)
 		default:
 			if r < 0x20 {
-				sb.WriteString(fmt.Sprintf(`\u%04x`, r))
+				fmt.Fprintf(sb, `\u%04x`, r)
 				continue
 			}
 			if r == utf8.RuneError {

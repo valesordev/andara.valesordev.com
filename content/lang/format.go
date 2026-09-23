@@ -37,6 +37,7 @@ type printer struct {
 	comments []Token
 	next     int
 	canon    bool // decompile: no comments, canonical order, one-line Components
+	prevLine int  // source line of the last thing emitted, for blank-line gaps
 }
 
 func newPrinter(f *File) *printer {
@@ -55,7 +56,7 @@ func (p *printer) file(f *File) string {
 		if i > 0 {
 			// Exactly one blank line between top-level declarations; none
 			// before the first or after the last (formatting.md §5).
-			p.sb.WriteByte('\n')
+			p.blank()
 		}
 		p.ownComments(d.declPos().Line, 0)
 		p.decl(d)
@@ -69,8 +70,24 @@ func (p *printer) file(f *File) string {
 	return out + "\n"
 }
 
+// blank emits a blank line unless one is already there. Idempotent, which is
+// what collapses a run of blank lines to one (formatting.md §5) without the
+// callers having to know what came before them.
+func (p *printer) blank() {
+	s := p.sb.String()
+	if s == "" || strings.HasSuffix(s, "\n\n") {
+		return
+	}
+	p.sb.WriteByte('\n')
+}
+
 // ownComments emits every pending comment that sits on its own line above
-// `line`, re-indented to depth.
+// `line`, re-indented to the line it precedes (formatting.md §5).
+//
+// A blank line the Builder left between two comments, or between a comment
+// block and the declaration it introduces, is preserved: it is the only
+// punctuation a comment block has, and a formatter that closed those gaps would
+// run a file header into the first declaration's own note.
 func (p *printer) ownComments(line, depth int) {
 	for p.next < len(p.comments) && p.comments[p.next].Pos.Line < line {
 		c := p.comments[p.next]
@@ -78,10 +95,18 @@ func (p *printer) ownComments(line, depth int) {
 		if p.canon {
 			continue
 		}
+		if p.prevLine > 0 && c.Pos.Line > p.prevLine+1 {
+			p.blank()
+		}
 		p.indent(depth)
 		p.sb.WriteString(c.Text)
 		p.sb.WriteByte('\n')
+		p.prevLine = c.Pos.Line
 	}
+	if !p.canon && p.prevLine > 0 && line > p.prevLine+1 {
+		p.blank()
+	}
+	p.prevLine = line
 }
 
 func (p *printer) trailingOwnComments(depth int, blankBefore bool) {
@@ -90,7 +115,7 @@ func (p *printer) trailingOwnComments(depth int, blankBefore bool) {
 		return
 	}
 	if blankBefore {
-		p.sb.WriteByte('\n')
+		p.blank()
 	}
 	for ; p.next < len(p.comments); p.next++ {
 		p.indent(depth)
@@ -159,7 +184,7 @@ func (p *printer) zone(d *ZoneDecl) {
 	p.sb.WriteByte('\n')
 	for i, it := range items {
 		if i > 0 && p.blankBetweenZoneItems(items[i-1], it) {
-			p.sb.WriteByte('\n')
+			p.blank()
 		}
 		p.ownComments(it.itemPos().Line, 1)
 		p.zoneItem(it, 1)
@@ -215,7 +240,7 @@ func (p *printer) room(d *RoomDecl, depth int) {
 	p.sb.WriteByte('\n')
 	for i, it := range items {
 		if !p.canon && i > 0 && it.roomItemPos().Line > items[i-1].roomItemPos().Line+1 {
-			p.sb.WriteByte('\n')
+			p.blank()
 		}
 		p.ownComments(it.roomItemPos().Line, depth+1)
 		p.roomItem(it, depth+1)
@@ -235,45 +260,75 @@ func (p *printer) roomItem(it RoomItem, depth int) {
 	}
 }
 
-// desc wraps at ProseWidth, breaking between string literals with continuation
-// literals aligned under the first. Adjacent literals join with a single space,
-// so the break points carry no meaning and fmt may move them freely — the one
-// place fmt rewrites a value's layout without touching the value
-// (formatting.md §4).
+// desc lays out a Room's prose. Continuation literals align under the first,
+// and the budget is ProseWidth (formatting.md §4).
+//
+// It re-wraps only when a literal overruns the budget. Adjacent literals join
+// with a single space so the break points carry no meaning and fmt *may* move
+// them freely — but formatting.md §4 also says fmt never merges a literal a
+// Builder split at a sentence boundary when the result would exceed the budget,
+// and a formatter that re-flowed every paragraph to the margin would destroy
+// every deliberate break in the corpus to no end. So the rule is: within
+// budget, the Builder's breaks stand.
+//
+// The wrap works on the *raw* spelling rather than the decoded value, which is
+// what makes it exact — `\n` is two columns on screen and one rune decoded —
+// and what keeps an escape the language does not have (invalid_escape, a
+// finding the compiler raises and fmt must not "fix") spelled as authored.
 func (p *printer) desc(d *DescDecl, depth int) {
 	prefix := strings.Repeat("  ", depth) + "desc "
 	cont := strings.Repeat(" ", utf8.RuneCountInString(prefix))
-	for i, line := range wrapProse(d.Value, utf8.RuneCountInString(prefix)) {
+	budget := ProseWidth - utf8.RuneCountInString(prefix) - 2 // the two quotes
+
+	parts := make([]string, len(d.Parts))
+	overrun := false
+	for i, lit := range d.Parts {
+		parts[i] = rawBody(lit.Raw)
+		if utf8.RuneCountInString(parts[i]) > budget {
+			overrun = true
+		}
+	}
+	if overrun || p.canon {
+		parts = wrapProse(strings.Join(parts, " "), budget)
+	}
+
+	for i, line := range parts {
 		if i == 0 {
 			p.sb.WriteString(prefix)
 		} else {
 			p.sb.WriteString(cont)
 		}
-		p.sb.WriteString(quote(line))
+		p.sb.WriteByte('"')
+		p.sb.WriteString(line)
+		p.sb.WriteByte('"')
 		if i == 0 {
 			p.trailing(d.Pos.Line)
 		}
 		p.sb.WriteByte('\n')
 	}
+	p.prevLine = d.Pos.Line
 }
 
-// wrapProse breaks the joined text at existing spaces so that each literal,
-// once quoted, fits the budget. It never breaks inside a word and never breaks
-// a run with no space in it (formatting.md §4).
-func wrapProse(s string, indent int) []string {
-	budget := ProseWidth - indent - 2 // the two quotes
-	if budget < 1 || utf8.RuneCountInString(escape(s)) <= budget {
+// rawBody is a string literal's spelling without its quotes.
+func rawBody(raw string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(raw, `"`), `"`)
+}
+
+// wrapProse breaks already-escaped text at existing spaces so each piece fits
+// the budget. It never breaks inside a word and never breaks a run with no
+// space in it (formatting.md §4).
+func wrapProse(s string, budget int) []string {
+	if budget < 1 || utf8.RuneCountInString(s) <= budget {
 		return []string{s}
 	}
-	words := strings.Split(s, " ")
 	var out []string
 	cur := ""
-	for _, w := range words {
+	for _, w := range strings.Split(s, " ") {
 		cand := w
 		if cur != "" {
 			cand = cur + " " + w
 		}
-		if cur != "" && utf8.RuneCountInString(escape(cand)) > budget {
+		if cur != "" && utf8.RuneCountInString(cand) > budget {
 			out = append(out, cur)
 			cur = w
 			continue
@@ -338,7 +393,7 @@ func (p *printer) template(d *TemplateDecl) {
 	p.sb.WriteByte('\n')
 	for i, it := range items {
 		if !p.canon && i > 0 && it.templateItemPos().Line > items[i-1].templateItemPos().Line+1 {
-			p.sb.WriteByte('\n')
+			p.blank()
 		}
 		p.ownComments(it.templateItemPos().Line, 1)
 		p.templateItem(it, 1)
@@ -423,13 +478,16 @@ func (p *printer) oneLineFits(d *ComponentDecl, depth int) bool {
 	return n <= ProseWidth
 }
 
-// canonical renders a value in the one spelling the language has for it.
+// canonical renders a value in the one spelling the language has for it. For a
+// string that is the authored literal: fmt reproduces escapes as written, so an
+// escape the language does not have survives to be reported by the compiler
+// rather than being silently rewritten by the formatter.
 func (v Value) canonical() string {
-	switch v.Kind {
-	case String:
-		return quote(v.Str)
-	case Int, Float, LowerID:
+	if v.Raw != "" {
 		return v.Raw
+	}
+	if v.Kind == String {
+		return quote(v.Str)
 	}
 	return v.Raw
 }

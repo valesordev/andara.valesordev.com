@@ -25,6 +25,11 @@ func TestHelpGoldens(t *testing.T) {
 		{file: "sim.txt", args: []string{"sim", "--help"}},
 		{file: "sim-repl.txt", args: []string{"sim", "repl", "--help"}},
 		{file: "play.txt", args: []string{"play", "--help"}},
+		{file: "content.txt", args: []string{"content", "--help"}},
+		{file: "content-compile.txt", args: []string{"content", "compile", "--help"}},
+		{file: "content-fmt.txt", args: []string{"content", "fmt", "--help"}},
+		{file: "content-decompile.txt", args: []string{"content", "decompile", "--help"}},
+		{file: "content-fetch-core.txt", args: []string{"content", "fetch-core", "--help"}},
 	}
 
 	dir := filepath.Join("testdata", "help")

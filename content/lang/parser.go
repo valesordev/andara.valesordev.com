@@ -40,10 +40,11 @@ func (e *errSyntax) Error() string { return "syntax error" }
 // message renders what errors.md §3.1 requires of syntax_error: what was
 // expected at that position, and what was found.
 func (e *errSyntax) message() string {
+	// A token with a spelling is quoted, because "found \"norht\"" tells a
+	// Builder more than "found a lowercase identifier".
 	got := e.got.Kind.String()
-	if e.got.Kind == LowerID || e.got.Kind == UpperID || e.got.Kind == Int || e.got.Kind == Float {
-		got = strconv.Quote(e.got.Text)
-	} else if e.got.Kind == Invalid {
+	switch e.got.Kind {
+	case LowerID, UpperID, Int, Float, Invalid:
 		got = strconv.Quote(e.got.Text)
 	}
 	return fmt.Sprintf("expected %s, found %s", e.want, got)
