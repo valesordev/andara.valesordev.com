@@ -4,7 +4,7 @@ title: Zone snapshots keyed to partition offsets
 epic: EPIC-04
 component: server
 type: feature
-status: done
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-004]
 blocks: [AW-SRV-007, AW-SRV-019]
