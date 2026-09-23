@@ -23,12 +23,17 @@ groups:
         # series to be zero. On the cluster the pod is scraped by annotation under
         # job="andara-server" (the chart's `observability.annotations`, AW-INF-008).
         #
-        # A deleted StatefulSet has no `up` at all, and absent() of the whole job would
-        # need every environment gone before it fired; so one absent() per environment that
-        # must exist, each carrying its namespace. Those lines are guarded by the presence
-        # of any namespaced series: compose has none, and there `absent(...andara-prod...)`
-        # would be true forever. Compose needs no absent() of its own — its scrape target is
-        # static, so a stopped server is `up == 0`, never no `up`.
+        # On the cluster, down is usually *absence*: the annotation scrape keeps only Ready
+        # pods, so a pod failing readiness — or deleted with its StatefulSet — drops out of
+        # the target list and its `up` goes stale. `up == 0` there is the rarer case, a
+        # Ready pod whose /metrics the scraper cannot reach. absent() of the whole job
+        # would need every environment gone before it fired; so one absent() per
+        # environment that must exist, each carrying its namespace. `andara-local` is not
+        # in the list on purpose: it is a developer install, not an environment that must
+        # be up. The absent() lines are guarded by the presence of any namespaced series:
+        # compose has none, and there `absent(...andara-prod...)` would be true forever.
+        # Compose is the reverse of the cluster — its scrape target is static, so a
+        # stopped server is `up == 0`, never no `up`, and it needs no absent() of its own.
         expr: |
           max by (namespace) (up{job="andara-server"}) == 0
             or (
@@ -162,7 +167,11 @@ groups:
         # Traefik's series carry Traefik's namespace. The environment is in the router
         # name instead — Traefik names an Ingress router `<namespace>-<ingress>-<host>…`,
         # and both Andara Ingresses are named `andara…` — so it is lifted out of there
-        # before the ratio is taken per environment.
+        # before the ratio is taken per environment. `make stream-soak` asserts a non-zero
+        # count on `router="<namespace>-andara-…"` on every kind run, which is what keeps
+        # that naming observed rather than assumed. (An Ingress that names no entrypoint
+        # gets one router per entrypoint, prefixed `websecure-…`; the chart always names
+        # one.)
         expr: |
           (
             sum by (namespace) (label_replace(

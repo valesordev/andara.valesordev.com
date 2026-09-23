@@ -1,6 +1,8 @@
 # IngressErrorRateHigh
 
-**Alert:** 5xx ratio on `traefik_router_requests_total{router=~"andara-.*"}` > 1% for 10 m.
+**Alert:** 5xx ratio on `traefik_router_requests_total{router=~"andara-.*"}` > 1% for 10 m, per
+environment — the alert's `namespace` label is taken from the router name, since Traefik's series
+carry Traefik's own namespace (`AW-INF-008`).
 **Severity:** page. **SLO:** `docs/specs/slo/edge-availability.md`.
 **Ships with:** `AW-INF-006`.
 

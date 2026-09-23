@@ -100,8 +100,9 @@ pods would carry it.
 
 A pod with two declared ports (`grpc`, `http`) yields two discovered targets; `prometheus.io/port`
 rewrites both to `:8080` and the scrape pool keeps one, because their labels are identical after
-relabelling. Traefik, which the platform already collects, has four ports and no port-name
-annotation, and is scraped once — the same mechanism.
+relabelling. Observed 2026-09-23: Traefik, which the platform already collects, declares four ports
+and no port-name annotation, and the live `annotation_autodiscovery_http` component lists it as one
+target (`10.244.0.2:9100/metrics`).
 
 ### Values
 
@@ -125,11 +126,14 @@ max by (namespace) (up{job="andara-server"}) == 0
   ) and on() count(up{namespace!=""}) > 0
 ```
 
-Compose has no `namespace` label; `max by (namespace)` over an unlabelled series yields one result
-with no `namespace`, which is the existing behavior. The `absent()` lines are the environments that
-must exist, and they are guarded: in compose no series has a namespace, so the guard is empty and
-`absent(...andara-prod...)` — true there forever — cannot fire. Compose needs no `absent()` of its
-own; its scrape target is static, so a stopped server is `up == 0`, never no `up`.
+On the cluster, down is usually *absence*: the platform's annotation scrape keeps only `Running`,
+`Ready` pods, so a pod failing readiness drops out of the target list exactly as a deleted
+StatefulSet does, and its `up` goes stale. `== 0` there is a Ready pod whose `/metrics` cannot be
+reached. The `absent()` lines are the environments that must exist — `andara-local` is deliberately
+not one — and they are guarded: in compose no series has a namespace, so the guard is empty and
+`absent(...andara-prod...)` — true there forever — cannot fire. Compose is the reverse of the
+cluster: its scrape target is static, so a stopped server is `up == 0`, never no `up`, and `max by
+(namespace)` over its unlabelled series is one result with no `namespace` — the existing behavior.
 
 The other rules, by what their series carry:
 
@@ -139,7 +143,7 @@ The other rules, by what their series carry:
 | `SimulationLagging`, `SnapshotStale` | per-series comparisons; the scrape's `namespace` rides through |
 | `SessionsDroppingAtRate` | both sides `sum by (namespace)` |
 | `CertificateExpiringSoon` | the platform scrapes cert-manager without `honor_labels`, so the Certificate's namespace arrives as `exported_namespace`; `label_replace` puts it back in `namespace` |
-| `IngressErrorRateHigh` | Traefik's series carry `namespace="traefik"`; the environment is the router name's prefix (`<namespace>-<ingress>-…`), lifted out by `label_replace` before the per-namespace ratio |
+| `IngressErrorRateHigh` | Traefik's series carry `namespace="traefik"`; the environment is the router name's prefix (`<namespace>-<ingress>-…`, the naming `make stream-soak` asserts on every kind run), lifted out by `label_replace` before the per-namespace ratio |
 
 `deploy/helm/tests/alerts_test.yaml` holds each row under `promtool test rules`.
 
@@ -221,7 +225,7 @@ The box ACs are therefore owed, with the exact command — not claimed.
 | 2 | **owed (box)** | as AC-1, once a projector binary exists (`AW-SRV-019` first); until then `helm-test` renders all three with distinct jobs |
 | 3 | **owed (box)** | as AC-1, after `make stream-soak ENV=dev`: observe-check fetches the `OpenSession` span by the logged `trace_id`; the five-minute log check is `kubectl -n andara-dev logs andara-0 --since=5m \| grep -c 'otlp log export failed'` → `0` |
 | 4 | **owed (box)** | as AC-3 — the same `session opened` line is what observe-check reads |
-| 5 | pass (unit) · CI (compose) | `promtool check rules`: 7 rules; `promtool test rules`: 7 groups pass, in `make helm-test`. The tests bite: the story's own sketch (no guard) fails both compose groups, and `main`'s rules fail the three per-environment groups. The compose half — every rule `health: ok`, `AndaraServerUnavailable` `inactive` → `pending` on `stop andara-server` → `inactive` on `start` — is a new `stack` workflow step, polled to deadlines, run on this PR |
+| 5 | pass (unit) · CI (compose) | `promtool check rules`: 7 rules; `promtool test rules`: 7 groups pass, in `make helm-test`. The tests bite: the story's own sketch (no guard) fails both compose groups, and `main`'s rules fail all five cluster groups while passing both compose ones. The compose half — every rule `health: ok`, `AndaraServerUnavailable` `inactive` → `pending` on `stop andara-server` → `inactive` on `start` — is a new `stack` workflow step, polled to deadlines, run on this PR |
 | 6 | half | the expressions return only the affected namespace against synthetic series in both label shapes (`promtool test rules`); against Grafana Cloud's series it is the last two lines of the operator test plan, owed with AC-1 |
 | 7 | pass | `observe_check.py` exits `3` with the exact message, naming whichever of token, URL, or user is unset first; `make` reports `Error 3`. Against a fake backend: `0` all present, `1` on an absent `up`, `2` on a 401 |
 | 8 | pass | `helm-test` for `local`, `dev`, `prod`; the StatefulSet's job mutated to `andara` fails naming both the job map and the unscraped `andara-server` selector |
@@ -231,7 +235,8 @@ pushed back on the spec — all in place above:
 - the `absent()` lines are guarded by the presence of namespaced series — as sketched they fire
   forever in compose, which AC-5 would have caught;
 - `CertificateExpiringSoon` and `IngressErrorRateHigh` take their namespace from `exported_namespace`
-  and the router name, because the platform's scrapes give those series cert-manager's and Traefik's;
+  and the router name, because the platform's scrapes give those series cert-manager's and Traefik's
+  — on the cluster the certificate summary would have read `cert-manager/andara-edge`;
 - AC-8 asserts the direction that can hold (alert selectors ⊆ scraped jobs), AC-7 says what `make`
   does with an exit code, AC-3 names the line the server actually logs;
 - `observability.collectorNamespace` dropped — it would have rendered nothing;
@@ -251,9 +256,12 @@ Found, and owed elsewhere:
   it doubles Andara's log bill. Recommendation: a server key to turn OTLP *log* export off
   independently of traces, set off on `dev`/`prod` — an implementation-lane story, not groomed here.
 - **For `AW-INF-009`:** a rule group loaded before an environment is installed pages for it —
-  `absent(...andara-prod...)` is true until prod exists. And `andara-local`, when installed on the
-  box, is scraped like the others, so `max by (namespace)` pages for it too. Both are routing
-  decisions, which is that story's.
+  `absent(...andara-prod...)` is true until prod exists. `andara-local` on the box is the other way
+  round: not in the `absent()` list, so a local pod that is not Ready is silent; it pages only when a
+  Ready local pod's scrape fails. Both are routing decisions, which is that story's.
+- The runbook and SLO expressions that quoted the old aggregate shapes
+  (`server-unavailable.md`, `ingress-error-rate.md`, `slo/edge-availability.md`,
+  `slo/session-availability.md`) now say what the rules evaluate.
 
 ## Open questions
 

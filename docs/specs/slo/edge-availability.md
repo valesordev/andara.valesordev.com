@@ -24,6 +24,10 @@ anything other than a 5xx.
 )
 ```
 
+Per environment, `sum by (namespace)` after lifting the namespace out of the router name
+(`<namespace>-<ingress>-…`), because on the cluster Traefik's series carry `namespace="traefik"` —
+the form `files/alerts.yaml` evaluates (`AW-INF-008`). The SLO is each environment's own.
+
 What it counts: Connect and gRPC-Web requests, and every request Traefik refused to forward — no
 ready endpoint (`503`), backend TLS verification failed or the dial timed out (`502`, `504`).
 Those are counted on the router, not the service, which is why the router series is the SLI and

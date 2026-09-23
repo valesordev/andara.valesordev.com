@@ -68,7 +68,9 @@ tests:
               summary: "No ready andara-server pod for 2 minutes — players cannot connect"
               runbook: docs/runbooks/server-unavailable.md
 
-  # The StatefulSet deleted outright: prod's `up` goes stale and there is nothing to be zero.
+  # prod's `up` goes stale and there is nothing to be zero. Not the rare case on the cluster
+  # but the usual one: the annotation scrape keeps only Ready pods, so a pod failing
+  # readiness drops out exactly as a deleted StatefulSet does.
   - name: cluster — prod deleted pages as prod only
     interval: 1m
     input_series:
