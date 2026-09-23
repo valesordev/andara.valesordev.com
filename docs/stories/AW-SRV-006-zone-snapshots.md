@@ -56,7 +56,7 @@ length of the world's entire history.
 
 1. **Given** a World of the sizing fixture (§Test plan) **when** a snapshot round overlaps a tick
    **then** `andara_snapshot_tick_stall_seconds` for that tick is under `snapshot.max_stall_ms`
-   (default 5 ms) and the tick stays inside the Tick Budget.
+   (default 15 ms) and the tick stays inside the Tick Budget.
 2. **Given** identical Zone state **when** it is snapshotted twice **then** the two objects are
    byte-identical — canonical encoding per ADR-0007 rule 3, every `repeated` sorted by key.
 3. **Given** a written snapshot **when** its envelope is decoded **then** it names `state_version`,
@@ -446,6 +446,29 @@ CLAUDE.md §8, plus:
 - `docs/runbooks/snapshot-stale.md` exists.
 - The sizing fixture is committed and its numbers are recorded in the story so that a later change to
   World scale is a visible change to the test, not a silent drift. **Recorded below.**
+- **Live-observation record (CLAUDE.md §8).** Scraped 2026-09-23 from the server's own registry —
+  `sim.source=memory`, `snapshot.store=fs`, `interval=5s`, over `testdata/content/valid`, six rounds
+  completed. Emitting with observations behind them: `andara_snapshot_duration_seconds` and
+  `andara_snapshot_tick_stall_seconds` (6 each), `andara_snapshot_bytes` (one series per Zone),
+  `andara_snapshot_last_tick`, `andara_snapshot_age_seconds`, `andara_snapshot_interval_seconds` —
+  the *recommended* gauge is implemented, not skipped — and
+  `andara_snapshot_rounds_total{outcome="complete"}`.
+  Present as pre-created zeroes, with nothing yet driving them, and why:
+  `andara_snapshot_rounds_total{outcome="incomplete"}` and
+  `andara_snapshot_failures_total{reason="store"|"encode"|"timeout"}` need a store that fails or
+  stalls, which the MinIO service above first makes reachable but no test yet induces against the
+  server's own registry; `{reason="stall"}` needs a copy over `max_stall_ms`, which the sizing
+  fixture measures at 8 ms of 15. `AW-SRV-007` is the story that drives a real failure through
+  recovery and inherits the live observation of these.
+  **One series is declared and not implemented, and it is an unmet acceptance criterion rather than
+  a documentation slip.** `andara_snapshot_failures_total{reason="boundary"}` is named by
+  §Observability *and required by AC-8* — "the boundary is reported lost, the round is abandoned and
+  counted `reason=boundary`". The code neither pre-creates nor increments it:
+  `server/tickloop/snapshot.go:101` registers `store`, `encode`, `timeout`, `stall` only, and
+  `server/tickloop/loop.go:315` gates the round on `boundaryPublished` so an abandoned round is
+  silently not taken. The tick's own `andara_tick_publish_failures_total{kind="boundary"}` records
+  that the boundary was lost, which is a different statement from a round having been abandoned.
+  DoD line 1 does not pass while this is open, which is why the story is `review` and not `done`.
 
 ### Sizing fixture, measured
 
@@ -483,8 +506,10 @@ stays roughly what the fixture builds.
 inside the tick, so what must hold is *copy + tick work under the 50 ms tick budget*. 15 ms of copy on
 top of a tick that measures under 1 ms at the idle floor is 16 ms of 50 — and the 5 ms was never
 derived from anything, it was headroom this story reserved for handler work that mostly does not exist
-yet. 15 ms clears the extrapolated loaded figure with margin, and if the measurement comes in
-differently the rule is roughly **twice the measured loaded number**.
+yet. 15 ms is twice the measured **uncontended** figure — the one this section says to reason from — which
+puts it at the floor of the 15–17 ms that rule gives. Twice the *loaded* number would ask for
+16–19 ms; 15 ms sits under that deliberately, because the loaded figures are the noisy pair and
+ADR-0008's 50 ms is the constraint that actually binds.
 
 **And it does not move p50.** A round is one tick in 600 — a 60 s cadence at 10 Hz — so the stall is a
 p99.8 event, not a typical tick. That matters because ADR-0001's "revisit sharding when p50 tick
@@ -505,21 +530,16 @@ per-Zone hash walks every Entity, Component and field and escapes each into a ca
 five times the cost of the copy it accompanies. This story's own rule settles it: "the only work
 inside the tick is the state copy; encoding and upload run off-tick", and hashing is encoding.
 
-**The margin is thin and the World scale above is an `[ASSUMPTION]`.** 2.7 ms of a 5 ms budget, 4.8 ms
-on a busy machine. Entity count is the term that moves: doubling to 20,000 puts the copy over budget,
-and the stated fallback — staggering Zones across boundaries — reintroduces the cross-Zone consistency
-problem the single cut exists to avoid. Revising the scale is Brian's call and is one change to
-`server/simtest/sizing.go`; the point of committing the fixture is that revising it is a visibly
-failing test rather than a drift.
+**The margin is no longer thin, and the World scale above is a decision rather than an assumption.**
+8 ms of a 15 ms budget at 25,000 Entities, and 8 ms of ADR-0008's 50 ms. Entity count is still the
+term that moves, and the stated fallback — staggering Zones across boundaries, which reintroduces the
+cross-Zone consistency problem the single cut exists to avoid — stays on the shelf rather than in
+use. Revising the scale is one change to `server/simtest/sizing.go`; the point of committing the
+fixture is that revising it is a visibly failing test rather than a drift.
 
-Two cautions on reading the numbers above. **The 20,000 figure is extrapolated linearly from a single
-measured point** — the fixture runs at one scale, and the copy is O(Entities × Component fields), so
-the real curve depends on how Components grow with Entity count. And **the 5 ms is a sub-budget this
-story set for itself**, not ADR-0008's: the tick budget is 50 ms against a 100 ms interval, and the
-copy is inside the tick, so the load-bearing constraint is *copy + tick work under 50 ms*. The 5 ms
-was headroom reserved for handler work that mostly does not exist yet. The rebalance stall is a
-different number again — ADR-0001 ties it to snapshot *cadence*, because the stall is the rebalance
-plus the recovery it implies, and recovery duration follows snapshot age.
+**The rebalance stall is a different number again.** ADR-0001 ties it to snapshot *cadence*, not to
+the copy: the stall is the rebalance plus the recovery it implies, and recovery duration follows
+snapshot age.
 
 ## Open questions
 
@@ -534,10 +554,10 @@ plus the recovery it implies, and recovery duration follows snapshot age.
 - ~~`[ASSUMPTION]` Copy-on-write at the tick boundary rather than stop-the-world serialize.~~
   **Holds, measured 2026-09-22** — see the fixture table above — but only once hashing moved off the
   tick, and with less headroom than the assumption implied.
-- `[ASSUMPTION]` **Fixture scale decided 2026-09-22 (Brian): 2,000 Rooms, 25,000 Entities, 500
-  Characters**, with `snapshot.max_stall_ms` at `15` to match. What remains an assumption is that the
-  fixture stands in for the World the game actually holds; if it does not, `server/simtest/sizing.go`
-  is the one constant to change and a failing test is how you find out.
+- ~~`[ASSUMPTION]` Fixture scale.~~ **Decided 2026-09-22 (Brian): 2,000 Rooms, 25,000 Entities, 500
+  Characters**, with `snapshot.max_stall_ms` at `15` to match, and measured above. Whether the fixture
+  stands in for the World the game actually holds is a standing caveat rather than an open question:
+  `server/simtest/sizing.go` is the one constant to change, and a failing test is how you find out.
 - ~~`[ASSUMPTION]` Discovery via `WorldStore.List` rather than by reading the manifest out of the
   log.~~ **Resolved 2026-09-22, and cheaper than when it was written.** ADR-0002 says "recovery finds
   snapshots by reading the log it already reads"; this story keeps the manifest in the log for audit
@@ -545,6 +565,10 @@ plus the recovery it implies, and recovery duration follows snapshot age.
   unbounded and a `List` is one call. With the tick in the key, discovery is a `List` and a prefix
   group — not a `List` plus a `Get` per candidate to read each envelope's tick back. Verification
   still goes through the log's `TickCompleted`.
-- `[ASSUMPTION]` **Open, deferred by the story itself.** MinIO in the local stack, so the cluster path
-  is exercised before the cluster exists. `AW-INF-002` gains the service; until it does, the `s3`
-  store is covered by a test that skips unless an endpoint is named in the environment.
+- ~~`[ASSUMPTION]` MinIO in the local stack, so the cluster path is exercised before the cluster
+  exists.~~ **Resolved 2026-09-23, by doing it here.** This deferred to `AW-INF-002`, which had
+  already deferred back — "one compose service each, and they land with the story that needs them" —
+  and `AW-INF-010` rules compose changes out of scope by name. So the service was always this story's.
+  `deploy/compose/docker-compose.yaml` carries it under the `full` profile, and the `stack` workflow
+  exports the three `ANDARA_S3_TEST_*` variables, so `server/store/s3_test.go` runs instead of
+  skipping.

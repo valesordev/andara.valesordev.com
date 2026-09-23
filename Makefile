@@ -175,9 +175,15 @@ test-determinism:
 	@$(GO) test -count=1 -run 'GoldenHash|Replay|RNG|StateHash|Deterministic|ZoneFault' ./server/sim/ ./server/tickloop/
 
 ## test-integration: run the broker-backed tests against the running stack — needs `make up`
+# The s3 store's tests skip unless ANDARA_S3_TEST_ENDPOINT names an endpoint, so `make up
+# PROFILE=min` — which has no MinIO — still passes. With the full stack, run them with
+# `ANDARA_S3_TEST_ENDPOINT=localhost:$${ANDARA_S3_PORT:-19000} make test-integration`; the
+# credentials default to the compose service's. CI exports all three (stack workflow).
 test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
-	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/
+	  ANDARA_S3_TEST_ACCESS_KEY="$${ANDARA_S3_TEST_ACCESS_KEY:-andaratest}" \
+	  ANDARA_S3_TEST_SECRET_KEY="$${ANDARA_S3_TEST_SECRET_KEY:-andaratest123}" \
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:
