@@ -551,11 +551,17 @@ hears nothing; `server/auth` the U+037A fold row. All under `-race`.
 
 PR #43 merged on 2026-09-22 and the frontmatter was not moved with it; `docs/status.md` kept naming
 this story as the implementation lane's `now` for a day it was not. `review` is the state: the branch
-is on `main`, and §8 has one line outstanding — the roadmap's M1 gate observed by a human on the kind
-cluster and recorded here — which the verification record above already hands to `AW-CLI-007`,
-because the observation needs `play` driving a bound Character. That story's merge is what earns
-`done` here, together with the inherited lines it closes for `AW-SRV-011`, `AW-CLI-004`, and
-`AW-SRV-031`.
+is on `main`, and `done` is gated on the roadmap's M1 gate observed by a human on the kind cluster and
+recorded here — which the verification record above already hands to `AW-CLI-007`, because the
+observation needs `play` driving a bound Character. That story's merge is what earns `done` here,
+together with the inherited lines it closes for `AW-SRV-011`, `AW-CLI-004`, and `AW-SRV-031`.
+
+The §8 pass itself still has work beyond that observation, all architecture's: the four
+`[ASSUMPTION]` bullets below (the sim re-route, the Entity-scoped arrival, `CharacterStatus` in
+`andara.accounts.v1`, the in-transit unbind) are recorded as decided in the PR #43 review but not yet
+struck; AC-11's "the State Hash is unchanged by the apply" has not been reworded to "the Zone's
+Entities are unchanged" as that review agreed; and the glossary's Dormant entry, which the review
+also left to §8, is in place at `docs/glossary.md`.
 
 ## Open questions
 
