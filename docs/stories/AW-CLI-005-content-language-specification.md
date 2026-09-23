@@ -215,9 +215,10 @@ past its merge (PR #44, 2026-09-22) for the same reason: `review` counts as a de
 flipping it would have put `AW-CLI-006` in the implementation lane's `next` against a spec whose own
 frontmatter said `draft` — a compiler written before the syntax is pinned, which is the failure the
 `AW-CLI-003` split existed to prevent. AC-10 landed 2026-09-23 and the four documents are `ready`, so
-the story is `review`: merged, syntax pinned, the §8 checklist outstanding. What §8 still needs is the
-one `[ASSUMPTION]` below — the `src/<path>.aw` publication prefix — which is `AW-CLI-003`'s to confirm
-or move, and the `make content-grammar-check` gate observed green on `main`.
+the story is `review`: merged, syntax pinned, the §8 checklist outstanding. No `[ASSUMPTION]` remains —
+the `src/<path>.aw` publication prefix was pinned on 2026-09-23 (below), because it is normative
+compiler output in `semantics.md` §6 and a dependency `AW-CLI-006` builds on cannot leave it movable.
+What §8 still needs is the record of `make content-grammar-check` green on `main`.
 
 ## Open questions
 
@@ -273,7 +274,10 @@ or move, and the `make content-grammar-check` gate observed green on `main`.
   `sim.MaxChainDepth`, exported by `AW-SRV-022` for exactly this, and the corpus pins both sides of
   the boundary.
 
-- `[ASSUMPTION]` Source blobs are published at `src/<path>.aw` with `media_type: text/x-andara`
-  (ADR-0009), so `content fetch` returns exactly what the Builder wrote, comments included. `src/`
-  keeps them clear of a loader that globs `*.json` at the pack root. `AW-CLI-003` owns `fetch` and
-  may move them; nothing in the language depends on the prefix.
+- **Resolved 2026-09-23 (architecture, at PR #55 review): `src/<path>.aw` with `media_type:
+  text/x-andara` is the contract, not an assumption.** Source blobs are published there (ADR-0009),
+  so `content fetch` returns exactly what the Builder wrote, comments included, and `src/` keeps them
+  clear of a loader that globs `*.json` at the pack root. It was written as `AW-CLI-003`'s to move,
+  but the path is normative `Compile` output in `semantics.md` §6 and `AW-CLI-006` AC-1 emits it, so
+  moving it later would rework the compiler, the corpus, and the fetch/decompile flow. `AW-CLI-003`'s
+  `fetch` reads the path the manifest names; it does not choose it.
