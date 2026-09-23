@@ -2,29 +2,27 @@
 
 # Status — Andara's World
 
-51 stories — 2 in-progress · 4 review · 28 ready · 17 done
+51 stories — 6 review · 28 ready · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    AW-CLI-005  Content Language v1 — grammar, semantics, error contract, and conformance corp…
-         branch aw-cli-005-content-language-specification
+  now    — nothing in flight
   next   AW-INF-008  ready  Cluster observability wiring — the chart's metrics, log…  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
+  review AW-CLI-005 — run the §8 checklist, then flip to done
   held   5 ready, blocked: AW-INF-007, AW-INF-009, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
 
-  now    AW-SRV-014  Character creation, selection, and binding — a Session enters the World
-         branch aw-srv-014-character-roster-and-selection
+  now    — nothing in flight
+  next   AW-CLI-006  ready  Content Language compiler, formatter, and decompiler  (unblocks 2)
   next   AW-SRV-012  ready  Content resolution from the store and reload at a tick…  (unblocks 1)
-  next   AW-SRV-019  ready  State projector and the compacted current-state topic  (unblocks 1)
-  review AW-SRV-006, AW-SRV-011, AW-CLI-004, AW-SRV-031 — run the §8 checklist, then flip to…
-  held   12 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-009, AW-SRV-017,…
+  review AW-SRV-014, AW-SRV-006, AW-SRV-011, AW-CLI-004, AW-SRV-031 — run the §8 checklist,…
+  held   9 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-013, AW-SRV-009, AW-SRV-017, AW-CLI-003,…
 
 ## Decisions the lanes are waiting on
 
-  AW-CLI-005  Syntax review (AC-10)
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
               8 more, attached to stories neither lane has reached

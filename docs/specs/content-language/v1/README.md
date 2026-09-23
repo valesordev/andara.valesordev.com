@@ -1,7 +1,7 @@
 ---
 spec: content-language
 version: v1
-status: draft
+status: ready
 story: AW-CLI-005
 ---
 
@@ -11,9 +11,10 @@ The language Builders author Zones, Rooms, and Templates in, and which compiles 
 `andara.content.v1` protobuf. ADR-0009 decided it exists and why; ADR-0010 decided the type system it
 has to express; this directory is the specification, and `AW-CLI-006` is the compiler written to it.
 
-**Status: `draft`.** It does not become `ready` until AC-10 — Brian reads
-[`corpus/valid/town/`](corpus/valid/town/) as the Builder in the room and the syntax is accepted or
-changed. Everything else is settled; see [Open](#open) below.
+**Status: `ready`.** AC-10 landed on 2026-09-23: Brian read
+[`corpus/valid/town/`](corpus/valid/town/) as the Builder in the room and accepted the syntax as
+written — `desc`, `->`, and PascalCase Template names stand. What remains open is listed under
+[Open](#open) below; none of it is syntax.
 
 ```
 pack town requires andara.core@1
@@ -74,9 +75,9 @@ output, the errors, and the round trip.
 
 ## Open
 
-- **AC-10, the syntax review.** `[NEEDS BRIAN]`. The three choices most worth disagreeing with are
-  `desc` as the keyword for a Room's prose, `->` as the exit arrow, and PascalCase Template names.
-  The last is the one with a cost attached: changing it means renaming the shipped `andara.core` seed.
+- ~~**AC-10, the syntax review.**~~ **Resolved 2026-09-23 (Brian): accepted as written.** `desc` for
+  a Room's prose, `->` as the exit arrow, and PascalCase Template names all stand, so the shipped
+  `andara.core` seed is not renamed.
 - **The core Component vocabulary.** Not this specification's, and not changed by it — but its
   thinness is now visible here, because the corpus cannot exercise field-by-field merge or the
   language's `int64` and `bool` literals with a registry whose only field-bearing Component has one

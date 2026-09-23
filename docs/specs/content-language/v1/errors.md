@@ -1,7 +1,7 @@
 ---
 spec: content-language
 version: v1
-status: draft
+status: ready
 story: AW-CLI-005
 ---
 

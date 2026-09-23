@@ -4,7 +4,7 @@ title: Character creation, selection, and binding — a Session enters the World
 epic: EPIC-08
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-008, AW-SRV-022]
 blocks: [AW-SRV-015, AW-SRV-032, AW-CLI-007]
@@ -546,6 +546,16 @@ real gateway to the closing state, then selecting: `CANCELED`, no flag, no bindi
 produced, the Account free afterwards) and `TestRoster_FollowsTheBodyAcrossZones`; `server/sim`
 `TestBind_PresentBodyIsIdempotent` extended with the Entity-scoped arrival and a bystander who
 hears nothing; `server/auth` the U+037A fold row. All under `-race`.
+
+### Set to review (2026-09-23)
+
+PR #43 merged on 2026-09-22 and the frontmatter was not moved with it; `docs/status.md` kept naming
+this story as the implementation lane's `now` for a day it was not. `review` is the state: the branch
+is on `main`, and §8 has one line outstanding — the roadmap's M1 gate observed by a human on the kind
+cluster and recorded here — which the verification record above already hands to `AW-CLI-007`,
+because the observation needs `play` driving a bound Character. That story's merge is what earns
+`done` here, together with the inherited lines it closes for `AW-SRV-011`, `AW-CLI-004`, and
+`AW-SRV-031`.
 
 ## Open questions
 

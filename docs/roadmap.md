@@ -215,10 +215,13 @@ place and the words or values left to Brian.
 - **What a Character *is*** beyond name and position (`AW-SRV-014`). The spawn Room is decided:
   `town/plaza` for the dev content (2026-09-21), one values-file line for real content.
 - **What an unattended NPC looks like** to players (`AW-SRV-009`).
-- **The Content Language syntax review** (`AW-CLI-005` AC-10) — Brian reads
-  `docs/specs/content-language/v1/corpus/valid/town/` as the Builder in the room. The spec is written
-  and the corpus is there to read; this is the one thing holding it out of `ready`.
 - **The wording of the read-only error** every player will eventually see (`AW-SRV-010`).
+
+### Resolved on 2026-09-23
+
+- **The Content Language syntax stands as specified** — `AW-CLI-005` AC-10. Brian read
+  `docs/specs/content-language/v1/corpus/valid/town/` and accepted `desc`, `->`, and PascalCase
+  Template names. The four v1 spec documents are `ready`; `AW-CLI-006` compiles to a pinned syntax.
 
 ### Resolved on 2026-09-11
 

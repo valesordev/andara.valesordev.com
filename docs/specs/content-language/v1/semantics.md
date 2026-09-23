@@ -1,7 +1,7 @@
 ---
 spec: content-language
 version: v1
-status: draft
+status: ready
 story: AW-CLI-005
 ---
 
@@ -523,7 +523,8 @@ corpus. The story's own numbering is preserved.
 7. §3 fixes `unknown_component_type` against the server registry, quoted rather than copied.
 8. §3 fixes `unknown_direction` against the glossary's twelve.
 9. §8 fixes both round-trip directions, and says which one comments survive.
-10. `corpus/valid/town/` is readable as something a Builder would write — **open**, AC-10 is Brian's.
+10. `corpus/valid/town/` is readable as something a Builder would write — **resolved 2026-09-23**,
+    accepted by Brian as written.
 
 ## Out of scope
 
