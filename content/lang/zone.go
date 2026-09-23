@@ -76,10 +76,12 @@ func (r *resolver) buildZone(zd zoneDecl, byID map[string]zoneDecl, rooms map[st
 			fmt.Sprintf("Zone %q declares `fallback` more than once; the first is at %s", z.ID, z.Fallbacks[0].Pos), chain...)
 	}
 
+	r.checkEscape(zd.file, z.Name, chain)
+
 	def := &contentv1.ZoneDefinition{
 		FormatVersion: FormatVersion,
 		Id:            z.ID,
-		Name:          z.Name,
+		Name:          z.Name.Value,
 		Components:    r.buildComponents(zd.file, z.Components, chain),
 	}
 
@@ -121,20 +123,20 @@ func (r *resolver) buildRoom(zd zoneDecl, rd *RoomDecl, byID map[string]zoneDecl
 		r.report(zd.file, d.Pos, CodeDuplicateDecl,
 			fmt.Sprintf("Room %q declares `desc` more than once; the first is at %s", rd.ID, rd.Descs[0].Pos), chain...)
 	}
+	r.checkEscape(zd.file, rd.Title, chain)
+
 	desc := ""
 	if len(rd.Descs) > 0 {
 		d := rd.Descs[0]
 		if d.BadEsc != nil {
-			r.report(zd.file, *d.BadEsc, CodeInvalidEscape,
-				fmt.Sprintf("%s is not an escape this language has; the three that exist are \\n, \\\" and \\\\", d.BadEscWh),
-				chain...)
+			r.reportBadEscape(zd.file, *d.BadEsc, d.BadEscWh, chain)
 		}
 		desc = d.Value
 	}
 
 	room := &contentv1.RoomDefinition{
 		Id:          rd.ID,
-		Title:       rd.Title,
+		Title:       rd.Title.Value,
 		Description: desc,
 		Components:  r.buildComponents(zd.file, rd.Components, chain),
 	}
@@ -298,6 +300,18 @@ func (r *resolver) warnOrphans(zd zoneDecl, rooms []*RoomDecl) {
 			r.warn(zd.file, rd.Pos, CodeOrphanRoom,
 				fmt.Sprintf("no Exit joins Room %q to any other Room in Zone %q", rd.ID, zd.d.ID), zd.d.ID, rd.ID)
 		}
+	}
+}
+
+// checkEscape validates a string literal the parser kept verbatim. Every
+// literal in the language reaches this or the DescDecl/Value path: a Zone name
+// and a Room title are prose a Builder writes as readily as a desc, and an
+// escape the language does not have has to be a finding there too — otherwise
+// `zone z "bad\t"` compiles, and fmt re-quoting it from the decoded value turns
+// it into `"bad\\t"`, which is a different string.
+func (r *resolver) checkEscape(file string, lit StringLit, chain []string) {
+	if pos, esc, bad := lit.badEscape(); bad {
+		r.reportBadEscape(file, pos, esc, chain)
 	}
 }
 

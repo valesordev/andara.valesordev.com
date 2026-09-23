@@ -109,7 +109,7 @@ func WriteCachedPack(root string, p *Pack) error {
 // It returns an empty CoreRef for a pack that requires nothing, which is
 // andara.core itself.
 func RequiredCore(dir string) (CoreRef, error) {
-	sources, err := readSources(dir)
+	sources, err := readSources(dir, nil)
 	if err != nil {
 		return CoreRef{}, err
 	}

@@ -337,8 +337,18 @@ func (r *resolver) buildTemplate(td templateDecl, byRef map[string]templateDecl,
 				mergeComponent(merged, markers, c, ref)
 			}
 		default:
-			for _, c := range core[ref].GetComponents() {
-				mergeComponent(merged, markers, c, ref)
+			// A core Template is already flattened and carries provenance
+			// naming the ancestor that actually set each field. Attributing
+			// its fields to `ref` would credit the immediate core parent for a
+			// value it inherited unchanged, which is the question provenance
+			// exists to answer (semantics.md §5).
+			anc := core[ref]
+			from := map[string]string{}
+			for _, pv := range anc.GetProvenance() {
+				from[pv.GetComponent()+"\x00"+pv.GetField()] = pv.GetFrom()
+			}
+			for _, c := range anc.GetComponents() {
+				mergeComponentFrom(merged, markers, c, ref, from)
 			}
 		}
 	}
@@ -365,6 +375,12 @@ func (r *resolver) buildTemplate(td templateDecl, byRef map[string]templateDecl,
 // ancestor's fields survive unchanged. It is how a Builder marks "this type is
 // mine to fill in later" (semantics.md §5).
 func mergeComponent(merged map[string]map[string]mergedField, markers map[string]string, c *contentv1.ComponentValue, from string) {
+	mergeComponentFrom(merged, markers, c, from, nil)
+}
+
+// mergeComponentFrom is mergeComponent with a per-field attribution override,
+// which a flattened ancestor supplies from its own provenance.
+func mergeComponentFrom(merged map[string]map[string]mergedField, markers map[string]string, c *contentv1.ComponentValue, from string, byField map[string]string) {
 	typ := c.GetType()
 	if _, seen := markers[typ]; !seen {
 		markers[typ] = from
@@ -373,7 +389,13 @@ func mergeComponent(merged map[string]map[string]mergedField, markers map[string
 		merged[typ] = map[string]mergedField{}
 	}
 	for _, f := range c.GetFields() {
-		merged[typ][f.GetName()] = mergedField{field: f, from: from}
+		setter := from
+		if byField != nil {
+			if real, ok := byField[typ+"\x00"+f.GetName()]; ok {
+				setter = real
+			}
+		}
+		merged[typ][f.GetName()] = mergedField{field: f, from: setter}
 	}
 }
 

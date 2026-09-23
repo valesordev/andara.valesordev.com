@@ -184,14 +184,17 @@ func (p *parser) parseZone() (*ZoneDecl, *errSyntax) {
 	if _, err := p.expect(LBrace, `"{"`); err != nil {
 		return nil, err
 	}
-	z := &ZoneDecl{Pos: kw.Pos, ID: id.Text, IDPos: id.Pos, Name: name.Value}
+	z := &ZoneDecl{Pos: kw.Pos, ID: id.Text, IDPos: id.Pos, Name: name}
 	for p.cur().Kind != RBrace {
 		if p.cur().Kind == EOF {
 			return nil, p.fail(`"}"`)
 		}
 		switch {
 		case p.atWord("fallback"):
-			f := p.parseFallback()
+			f, err := p.parseFallback()
+			if err != nil {
+				return nil, err
+			}
 			z.Fallbacks = append(z.Fallbacks, f)
 			z.Items = append(z.Items, f)
 		case p.atWord("component"):
@@ -212,19 +215,21 @@ func (p *parser) parseZone() (*ZoneDecl, *errSyntax) {
 			return nil, p.fail(`"fallback", "component", "room", or "}"`)
 		}
 	}
-	p.next() // }
+	z.Close = p.next().Pos // }
 	return z, nil
 }
 
-func (p *parser) parseFallback() *FallbackDecl {
+func (p *parser) parseFallback() (*FallbackDecl, *errSyntax) {
 	kw := p.next()
-	// The grammar says LOWER_ID; a missing one is caught by the caller's next
-	// iteration, which reports at the token that is actually there.
-	if p.cur().Kind != LowerID {
-		return &FallbackDecl{Pos: kw.Pos, RefPos: p.cur().Pos}
+	// The grammar is `"fallback" LOWER_ID`, so a missing Room id is a syntax
+	// error at whatever is there instead. Accepting it and dropping it would
+	// let `fallback` alone compile clean and let fmt print a bare keyword with
+	// a trailing space.
+	id, err := p.expect(LowerID, "a Room")
+	if err != nil {
+		return nil, err
 	}
-	id := p.next()
-	return &FallbackDecl{Pos: kw.Pos, Room: id.Text, RefPos: id.Pos}
+	return &FallbackDecl{Pos: kw.Pos, Room: id.Text, RefPos: id.Pos}, nil
 }
 
 func (p *parser) parseRoom() (*RoomDecl, *errSyntax) {
@@ -240,7 +245,7 @@ func (p *parser) parseRoom() (*RoomDecl, *errSyntax) {
 	if _, err := p.expect(LBrace, `"{"`); err != nil {
 		return nil, err
 	}
-	r := &RoomDecl{Pos: kw.Pos, ID: id.Text, IDPos: id.Pos, Title: title.Value}
+	r := &RoomDecl{Pos: kw.Pos, ID: id.Text, IDPos: id.Pos, Title: title}
 	for p.cur().Kind != RBrace {
 		if p.cur().Kind == EOF {
 			return nil, p.fail(`"}"`)
@@ -271,7 +276,7 @@ func (p *parser) parseRoom() (*RoomDecl, *errSyntax) {
 			return nil, p.fail(`"desc", "exit", "component", or "}"`)
 		}
 	}
-	p.next() // }
+	r.Close = p.next().Pos // }
 	return r, nil
 }
 
@@ -411,7 +416,7 @@ func (p *parser) parseTemplate() (*TemplateDecl, *errSyntax) {
 			return nil, p.fail(`"component", "remove", or "}"`)
 		}
 	}
-	p.next() // }
+	t.Close = p.next().Pos // }
 	return t, nil
 }
 
@@ -489,6 +494,7 @@ func (p *parser) parseComponent() (*ComponentDecl, *errSyntax) {
 		c.Fields = append(c.Fields, &FieldAssign{Name: name.Text, NamePos: name.Pos, Value: v})
 	}
 	closing := p.next() // }
+	c.Close = closing.Pos
 	c.MultiLine = closing.Pos.Line != open.Pos.Line
 	return c, nil
 }

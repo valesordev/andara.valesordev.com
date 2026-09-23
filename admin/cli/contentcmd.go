@@ -171,8 +171,12 @@ func newContentCompileCmd(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ignore, err := ignoredOutput(path, out)
+			if err != nil {
+				return err
+			}
 			_, span := rt.childSpan("content.compile")
-			result, ds := lang.Compile(path, core, nil)
+			result, ds := lang.CompileOpts(path, core, nil, lang.Options{Ignore: ignore})
 			span.SetAttributes(attribute.Int("diagnostics", len(ds)))
 			if result != nil {
 				span.SetAttributes(
@@ -239,9 +243,49 @@ func countSources(o *lang.Output) int {
 	return n
 }
 
+// ignoredOutput reports the --out directory as a path Compile should not read
+// back, when it sits inside --path.
+//
+// `content compile --path . --out build` is the natural local layout, and the
+// pack publishes its own sources under src/ (semantics.md §6) — so without this
+// the second run reads build/src/*.aw as pack input and reports duplicate_pack
+// against the Builder's own output.
+func ignoredOutput(path, out string) ([]string, error) {
+	if out == "" {
+		return nil, nil
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
+	}
+	absOut, err := filepath.Abs(out)
+	if err != nil {
+		return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
+	}
+	rel, err := filepath.Rel(absPath, absOut)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return nil, nil // outside the pack, or the pack itself — nothing to skip
+	}
+	return []string{filepath.ToSlash(rel)}, nil
+}
+
 // writeBlobs lays the compiled output out as a pack directory: Zones at the
 // root, Templates under templates/, sources under src/ (semantics.md §6).
+//
+// It prunes first. A Builder who deletes a Zone or a Template and recompiles
+// into the same --out would otherwise keep the old blob, and the directory
+// loader globs `*.json` — so the removed content stays live in a pack the
+// Builder believes they rebuilt. Only what this writer produces is pruned:
+// `*.json` at the root, `templates/*.json`, and `src/**.aw`. Anything else in
+// the directory is somebody else's and is left alone.
 func writeBlobs(dir string, o *lang.Output) error {
+	keep := make(map[string]bool, len(o.Blobs))
+	for _, b := range o.Blobs {
+		keep[filepath.FromSlash(b.Path)] = true
+	}
+	if err := pruneManaged(dir, keep); err != nil {
+		return err
+	}
 	for _, b := range o.Blobs {
 		target := filepath.Join(dir, filepath.FromSlash(b.Path))
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
@@ -252,6 +296,46 @@ func writeBlobs(dir string, o *lang.Output) error {
 		}
 	}
 	return nil
+}
+
+// pruneManaged removes the outputs a previous compile wrote that this one does
+// not.
+func pruneManaged(dir string, keep map[string]bool) error {
+	return filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if d.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil || keep[rel] {
+			return err
+		}
+		if !isManagedOutput(rel) {
+			return nil
+		}
+		return os.Remove(p)
+	})
+}
+
+// isManagedOutput reports whether a path inside --out is one `content compile`
+// produces, and therefore one it may remove.
+func isManagedOutput(rel string) bool {
+	rel = filepath.ToSlash(rel)
+	dir, base := filepath.Split(rel)
+	switch {
+	case dir == "" && strings.HasSuffix(base, ".json"):
+		return true // a Zone
+	case dir == "templates/" && strings.HasSuffix(base, ".json"):
+		return true // a Template
+	case strings.HasPrefix(rel, lang.SourcePrefix) && strings.HasSuffix(base, ".aw"):
+		return true // a published source
+	}
+	return false
 }
 
 func newContentFmtCmd(rt *runtime) *cobra.Command {

@@ -146,6 +146,25 @@ func (p *printer) trailing(line int) {
 
 func (p *printer) indent(depth int) { p.sb.WriteString(strings.Repeat("  ", depth)) }
 
+// pendingBefore reports whether an own-line comment sits above `line` and has
+// not been emitted. A block whose only content is a comment is still a block:
+// collapsing it to `{}` would move the comment outside the braces, which is the
+// one thing formatting.md §5 says fmt never does.
+func (p *printer) pendingBefore(line int) bool {
+	return !p.canon && p.next < len(p.comments) && p.comments[p.next].Pos.Line < line
+}
+
+// closeBlock flushes any comment sitting between the last item and the closing
+// brace, at the body's indent, then writes the brace at the opening line's
+// indent. Without it those comments fall out of the block and reappear at the
+// next declaration — fmt moving a comment across a declaration.
+func (p *printer) closeBlock(close Pos, depth int) {
+	p.ownComments(close.Line, depth+1)
+	p.indent(depth)
+	p.sb.WriteString("}\n")
+	p.prevLine = close.Line
+}
+
 func (p *printer) decl(d Decl) {
 	switch v := d.(type) {
 	case *PackDecl:
@@ -174,12 +193,12 @@ func (p *printer) zone(d *ZoneDecl) {
 	p.sb.WriteString("zone ")
 	p.sb.WriteString(d.ID)
 	p.sb.WriteByte(' ')
-	p.sb.WriteString(quote(d.Name))
+	p.sb.WriteString(d.Name.Raw)
 	items := d.Items
 	if p.canon {
 		items = canonicalZoneItems(d)
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !p.pendingBefore(d.Close.Line) {
 		p.sb.WriteString(" {}")
 		p.trailing(d.Pos.Line)
 		p.sb.WriteByte('\n')
@@ -195,7 +214,7 @@ func (p *printer) zone(d *ZoneDecl) {
 		p.ownComments(it.itemPos().Line, 1)
 		p.zoneItem(it, 1)
 	}
-	p.sb.WriteString("}\n")
+	p.closeBlock(d.Close, 0)
 }
 
 // blankBetweenZoneItems preserves a Builder's blank line between Rooms and
@@ -230,12 +249,12 @@ func (p *printer) room(d *RoomDecl, depth int) {
 	p.sb.WriteString("room ")
 	p.sb.WriteString(d.ID)
 	p.sb.WriteByte(' ')
-	p.sb.WriteString(quote(d.Title))
+	p.sb.WriteString(d.Title.Raw)
 	items := d.Items
 	if p.canon {
 		items = canonicalRoomItems(d)
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !p.pendingBefore(d.Close.Line) {
 		p.sb.WriteString(" {}")
 		p.trailing(d.Pos.Line)
 		p.sb.WriteByte('\n')
@@ -251,8 +270,7 @@ func (p *printer) room(d *RoomDecl, depth int) {
 		p.ownComments(it.roomItemPos().Line, depth+1)
 		p.roomItem(it, depth+1)
 	}
-	p.indent(depth)
-	p.sb.WriteString("}\n")
+	p.closeBlock(d.Close, depth)
 }
 
 func (p *printer) roomItem(it RoomItem, depth int) {
@@ -388,7 +406,7 @@ func (p *printer) template(d *TemplateDecl) {
 	if p.canon {
 		items = canonicalTemplateItems(d)
 	}
-	if len(items) == 0 {
+	if len(items) == 0 && !p.pendingBefore(d.Close.Line) {
 		p.sb.WriteString(" {}")
 		p.trailing(d.Pos.Line)
 		p.sb.WriteByte('\n')
@@ -404,7 +422,7 @@ func (p *printer) template(d *TemplateDecl) {
 		p.ownComments(it.templateItemPos().Line, 1)
 		p.templateItem(it, 1)
 	}
-	p.sb.WriteString("}\n")
+	p.closeBlock(d.Close, 0)
 }
 
 func (p *printer) templateItem(it TemplateItem, depth int) {
@@ -436,13 +454,13 @@ func (p *printer) component(d *ComponentDecl, depth int) {
 	p.indent(depth)
 	p.sb.WriteString("component ")
 	p.sb.WriteString(d.Type)
-	if len(d.Fields) == 0 {
+	if len(d.Fields) == 0 && !p.pendingBefore(d.Close.Line) {
 		p.sb.WriteString(" {}")
 		p.trailing(d.Pos.Line)
 		p.sb.WriteByte('\n')
 		return
 	}
-	if !d.MultiLine && p.oneLineFits(d, depth) {
+	if len(d.Fields) > 0 && !d.MultiLine && p.oneLineFits(d, depth) {
 		p.sb.WriteString(" { ")
 		for i, f := range d.Fields {
 			if i > 0 {
@@ -469,8 +487,7 @@ func (p *printer) component(d *ComponentDecl, depth int) {
 		p.trailing(f.NamePos.Line)
 		p.sb.WriteByte('\n')
 	}
-	p.indent(depth)
-	p.sb.WriteString("}\n")
+	p.closeBlock(d.Close, depth)
 }
 
 func (p *printer) oneLineFits(d *ComponentDecl, depth int) bool {

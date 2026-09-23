@@ -363,3 +363,70 @@ func TestContentCompileEmitsTheSpan(t *testing.T) {
 		}
 	}
 }
+
+// TestContentCompileOutPrunesStaleBlobs: a Builder who deletes a Template and
+// recompiles into the same --out kept the old JSON, and the directory loader
+// globs `templates/*.json` — so the removed content stayed live in a pack they
+// believed they had rebuilt.
+func TestContentCompileOutPrunesStaleBlobs(t *testing.T) {
+	env := contentEnv(t)
+	src, out := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(src, "pack.aw"), "pack p requires andara.core@1\n", 0o644)
+	writeFile(t, filepath.Join(src, "keep.aw"), "template Keep kind entity {}\n", 0o644)
+	writeFile(t, filepath.Join(src, "gone.aw"), "template Gone kind entity {}\n", 0o644)
+	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 0o644)
+
+	if res := runCLI(t, []string{"content", "compile", "--path", src, "--out", out}, env); res.exit != ExitOK {
+		t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+	}
+	// Something the compiler did not write stays put.
+	writeFile(t, filepath.Join(out, "NOTES.md"), "mine\n", 0o644)
+
+	if err := os.Remove(filepath.Join(src, "gone.aw")); err != nil {
+		t.Fatal(err)
+	}
+	if res := runCLI(t, []string{"content", "compile", "--path", src, "--out", out}, env); res.exit != ExitOK {
+		t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
+	}
+
+	for _, gone := range []string{
+		filepath.Join("templates", "p.Gone.json"),
+		filepath.Join("src", "gone.aw"),
+	} {
+		if _, err := os.Stat(filepath.Join(out, gone)); err == nil {
+			t.Errorf("%s survived the source being deleted", gone)
+		}
+	}
+	for _, kept := range []string{
+		filepath.Join("templates", "p.Keep.json"),
+		filepath.Join("src", "keep.aw"),
+		"z.json",
+		"NOTES.md",
+	} {
+		if _, err := os.Stat(filepath.Join(out, kept)); err != nil {
+			t.Errorf("%s was pruned and should not have been: %v", kept, err)
+		}
+	}
+}
+
+// TestContentCompileOutInsidePath: `--path . --out build` is the natural local
+// layout. A pack publishes its own sources under src/, so without excluding the
+// output tree the next run reads the last run's output back as pack input and
+// reports duplicate_pack against the Builder's own build directory.
+func TestContentCompileOutInsidePath(t *testing.T) {
+	env := contentEnv(t)
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "pack.aw"), "pack p requires andara.core@1\n", 0o644)
+	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 0o644)
+
+	out := filepath.Join(src, "build")
+	for i := 1; i <= 2; i++ {
+		res := runCLI(t, []string{"content", "compile", "--path", src, "--out", out}, env)
+		if res.exit != ExitOK {
+			t.Fatalf("run %d: exit=%d stderr=%q", i, res.exit, res.stderr)
+		}
+		if !strings.Contains(res.stdout, "1 zones, 1 rooms, 0 templates") {
+			t.Errorf("run %d: stdout=%q", i, res.stdout)
+		}
+	}
+}

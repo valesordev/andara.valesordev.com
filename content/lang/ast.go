@@ -48,9 +48,10 @@ func (d *PackDecl) declPos() Pos { return d.Pos }
 // ZoneDecl is `zone <id> "<name>" { … }`.
 type ZoneDecl struct {
 	Pos        Pos // the `zone` keyword
+	Close      Pos // the closing brace, so fmt can flush comments before it
 	ID         string
 	IDPos      Pos
-	Name       string
+	Name       StringLit
 	Fallbacks  []*FallbackDecl // more than one is duplicate_declaration
 	Components []*ComponentDecl
 	Rooms      []*RoomDecl
@@ -76,9 +77,10 @@ func (d *FallbackDecl) itemPos() Pos { return d.Pos }
 // RoomDecl is `room <id> "<title>" { … }`.
 type RoomDecl struct {
 	Pos        Pos // the `room` keyword
+	Close      Pos // the closing brace, so fmt can flush comments before it
 	ID         string
 	IDPos      Pos
-	Title      string
+	Title      StringLit
 	Descs      []*DescDecl // more than one is duplicate_declaration
 	Exits      []*ExitDecl
 	Components []*ComponentDecl
@@ -104,11 +106,20 @@ func (d *DescDecl) roomItemPos() Pos { return d.Pos }
 
 // StringLit is one string literal: the decoded value plus the position and raw
 // spelling fmt reproduces.
+//
+// fmt prints Raw rather than re-quoting Value, so an escape the language does
+// not have survives to be reported by the compiler as invalid_escape instead of
+// being silently rewritten by the formatter — `"a\tb"` re-quoted from its
+// decoded value is `"a\\tb"`, which is a different string.
 type StringLit struct {
 	Pos   Pos
 	Raw   string // with quotes and escapes as authored
 	Value string // decoded
 }
+
+// badEscape reports the first escape outside \n, \" and \\, at the position of
+// the backslash.
+func (s StringLit) badEscape() (Pos, string, bool) { return badEscape(s) }
 
 // ExitDecl is `exit <direction> -> <ref> [perceives [ … ]]`.
 type ExitDecl struct {
@@ -138,6 +149,7 @@ type Sense struct {
 // a subtype inherits it (grammar.ebnf, template_decl).
 type TemplateDecl struct {
 	Pos        Pos // the `template` keyword
+	Close      Pos // the closing brace, so fmt can flush comments before it
 	Name       string
 	NamePos    Pos
 	Heads      []TemplateHead
@@ -162,6 +174,7 @@ type TemplateHead struct {
 // ComponentDecl is `component <pack>.<Type> { <field>: <value> … }`.
 type ComponentDecl struct {
 	Pos       Pos // the `component` keyword
+	Close     Pos // the closing brace, so fmt can flush comments before it
 	Type      string
 	TypePos   Pos
 	Fields    []*FieldAssign

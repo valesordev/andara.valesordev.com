@@ -48,16 +48,29 @@ func Compile(dir string, core *Pack, deps []*Pack) (*Output, []Diagnostic) {
 // `pack p` out of a directory called `minimal`.
 type Options struct {
 	Pack string
+	// Ignore names directories, relative to dir and slash-separated, that are
+	// not part of the pack. `content compile --path . --out build` is the
+	// natural local layout, and without this the next run reads build/src/*.aw
+	// — the sources the last run published — back as pack input and reports
+	// duplicate_pack against the Builder's own output.
+	Ignore []string
 }
 
 // CompileOpts is Compile with the inputs a directory cannot supply.
 func CompileOpts(dir string, core *Pack, deps []*Pack, opts Options) (*Output, []Diagnostic) {
-	sources, err := readSources(dir)
+	sources, err := readSources(dir, opts.Ignore)
 	if err != nil {
 		return nil, []Diagnostic{{File: dir, Line: 1, Col: 1, Code: CodeEncoding, Message: err.Error()}}
 	}
 	if len(sources) == 0 {
-		return &Output{Pack: filepath.Base(dir)}, nil
+		// Not a successful empty pack: every pack declares `pack` exactly once
+		// (semantics.md §2), so a directory with no sources is a --path that
+		// points somewhere a Builder did not mean. Reporting success here would
+		// let `content compile` publish zero blobs for a typo.
+		return nil, []Diagnostic{{
+			File: ".", Line: 1, Col: 1, Code: CodePackMissing,
+			Message: fmt.Sprintf("no *.aw files under %s; a pack is a directory of sources, one of which declares `pack`", dir),
+		}}
 	}
 
 	// Encoding is checked before a grammar is reached (corpus README), and the
@@ -112,11 +125,21 @@ type source struct {
 // readSources reads every *.aw under dir, recursively, sorted by path. Sorted
 // because pack-level findings name "the first file" and two compiles of the
 // same pack have to agree on which that is.
-func readSources(dir string) ([]source, error) {
+func readSources(dir string, ignore []string) ([]source, error) {
+	skip := map[string]bool{}
+	for _, i := range ignore {
+		skip[path.Clean(filepath.ToSlash(i))] = true
+	}
 	var out []source
 	err := filepath.WalkDir(dir, func(p string, d os.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if rel, rerr := filepath.Rel(dir, p); rerr == nil && skip[path.Clean(filepath.ToSlash(rel))] {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
 		if d.IsDir() || !strings.HasSuffix(p, ".aw") {
 			return nil
@@ -188,6 +211,14 @@ func (r *resolver) report(file string, pos Pos, code, msg string, chain ...strin
 		File: file, Line: pos.Line, Col: pos.Col,
 		Code: code, Message: msg, Chain: chain, Severity: SeverityError,
 	})
+}
+
+// reportBadEscape is one message for every literal in the language, so that
+// improving the wording is one edit rather than four.
+func (r *resolver) reportBadEscape(file string, pos Pos, esc string, chain []string) {
+	r.report(file, pos, CodeInvalidEscape,
+		fmt.Sprintf("%s is not an escape this language has; the three that exist are \\n, \\\" and \\\\", esc),
+		chain...)
 }
 
 func (r *resolver) warn(file string, pos Pos, code, msg string, chain ...string) {
@@ -352,7 +383,19 @@ func (r *resolver) buildFields(file string, c *ComponentDecl, chain []string) []
 	typ := sim.ComponentType(c.Type)
 	cc := componentChain(chain, c.Type)
 	out := make([]*contentv1.ComponentField, 0, len(c.Fields))
+	seen := map[string]Pos{}
 	for _, f := range c.Fields {
+		// A field stated twice in one Component. The loader refuses it
+		// (sim.validateComponentFields) and the Template merge would silently
+		// let the later value win, so neither half of the system has an answer
+		// to "which one is it" — and every answer to that question is silent.
+		if first, dup := seen[f.Name]; dup {
+			r.report(file, f.NamePos, CodeInvalidComponentField,
+				fmt.Sprintf("Component %q states field %q twice, first at %s; a field has one value", c.Type, f.Name, first),
+				cc...)
+			continue
+		}
+		seen[f.Name] = f.NamePos
 		want, known := sim.ComponentFieldKind(typ, f.Name)
 		if !known {
 			r.report(file, f.NamePos, CodeInvalidComponentField,
@@ -383,9 +426,7 @@ func (r *resolver) fieldValue(file, typ string, f *FieldAssign, want sim.FieldKi
 		return nil, false
 	}
 	if v.Kind == String && v.BadEsc != nil {
-		r.report(file, *v.BadEsc, CodeInvalidEscape,
-			fmt.Sprintf("%s is not an escape this language has; the three that exist are \\n, \\\" and \\\\", v.BadEscWh),
-			carrier...)
+		r.reportBadEscape(file, *v.BadEsc, v.BadEscWh, carrier)
 		return nil, false
 	}
 	got := sim.FieldString

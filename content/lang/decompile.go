@@ -48,20 +48,29 @@ func DecompileWith(out *Output, core *Pack) (map[string][]byte, error) {
 	if out == nil {
 		return nil, fmt.Errorf("no output to decompile")
 	}
-	files := map[string][]byte{}
+	// Declarations are collected per file rather than written per file,
+	// because the canonical layout can put two of them in the same place: the
+	// language has no reserved words, so `zone pack "Pack"` is legal and lands
+	// on pack.aw, and a Template group's basename can equal a Zone's. A file is
+	// a flat sequence of declarations (grammar.ebnf), so sharing one is legal
+	// source — where overwriting the map entry silently dropped whichever came
+	// first, and for `pack.aw` that was the pack declaration itself, leaving
+	// source that cannot be recompiled.
+	decls := map[string][]Decl{}
+	add := func(name string, d Decl) { decls[name] = append(decls[name], d) }
 
 	pack := &PackDecl{Name: out.Pack}
 	if out.Requires.Pack != "" {
 		pack.Requires = &RequiresClause{Pack: out.Requires.Pack, Version: out.Requires.Version}
 	}
-	files["pack.aw"] = canonicalPrint(&File{Decls: []Decl{pack}})
+	add("pack.aw", pack)
 
 	for _, z := range out.Zones {
 		d, err := zoneToAST(z)
 		if err != nil {
 			return nil, err
 		}
-		files[z.GetId()+".aw"] = canonicalPrint(&File{Decls: []Decl{d}})
+		add(z.GetId()+".aw", d)
 	}
 
 	// Templates grouped by the basename of their SourceRef, so a pack authored
@@ -81,15 +90,18 @@ func DecompileWith(out *Output, core *Pack) (map[string][]byte, error) {
 	}
 	for name, ts := range groups {
 		sort.Slice(ts, func(i, j int) bool { return sourceLine(ts[i]) < sourceLine(ts[j]) })
-		f := &File{}
 		for _, t := range ts {
 			d, err := templateToAST(t, byName, out.Pack)
 			if err != nil {
 				return nil, err
 			}
-			f.Decls = append(f.Decls, d)
+			add(name, d)
 		}
-		files[name] = canonicalPrint(f)
+	}
+
+	files := map[string][]byte{}
+	for name, ds := range decls {
+		files[name] = canonicalPrint(&File{Decls: ds})
 	}
 	return files, nil
 }
@@ -102,6 +114,10 @@ func canonicalPrint(f *File) []byte {
 	return []byte(p.file(f))
 }
 
+// lit builds a literal from a compiled value, for the decompiler, which has no
+// authored spelling to reproduce.
+func lit(v string) StringLit { return StringLit{Raw: quote(v), Value: v} }
+
 func templateFile(t *contentv1.TemplateDefinition) string {
 	src := t.GetSource().GetFile()
 	if src == "" {
@@ -113,12 +129,12 @@ func templateFile(t *contentv1.TemplateDefinition) string {
 func sourceLine(t *contentv1.TemplateDefinition) uint32 { return t.GetSource().GetLine() }
 
 func zoneToAST(z *contentv1.ZoneDefinition) (*ZoneDecl, error) {
-	d := &ZoneDecl{ID: z.GetId(), Name: z.GetName()}
+	d := &ZoneDecl{ID: z.GetId(), Name: lit(z.GetName())}
 	for _, c := range z.GetComponents() {
 		d.Components = append(d.Components, componentToAST(c))
 	}
 	for _, r := range z.GetRooms() {
-		room := &RoomDecl{ID: r.GetId(), Title: r.GetTitle()}
+		room := &RoomDecl{ID: r.GetId(), Title: lit(r.GetTitle())}
 		if d := r.GetDescription(); d != "" {
 			// One literal, which canonical printing then wraps at the budget:
 			// decompile has no record of where the Builder broke the prose, so
