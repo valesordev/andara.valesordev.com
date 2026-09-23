@@ -161,7 +161,7 @@ func runCase(kind, dir string, core *Pack) CaseResult {
 	}
 
 	if kind == "roundtrip" && out != nil {
-		res.Reasons = append(res.Reasons, diffRoundTrip(dir, out)...)
+		res.Reasons = append(res.Reasons, diffRoundTrip(dir, out, against)...)
 	}
 
 	res.OK = len(res.Reasons) == 0
@@ -363,8 +363,8 @@ func diffExpected(expectedDir string, out *Output) []string {
 // diffRoundTrip is AC-4's compiled → source → compiled identity, and
 // formatting.md AC-3's stronger claim for canonical source: a pack authored in
 // canonical order decompiles to itself byte for byte.
-func diffRoundTrip(dir string, out *Output) []string {
-	files, err := Decompile(out)
+func diffRoundTrip(dir string, out *Output, core *Pack) []string {
+	files, err := DecompileWith(out, core)
 	if err != nil {
 		return []string{"decompile: " + err.Error()}
 	}

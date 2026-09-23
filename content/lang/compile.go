@@ -227,14 +227,12 @@ func (r *resolver) resolvePack() (CoreRef, bool) {
 			}
 		}
 	}
-	want := dirBase(r.dir)
-
 	switch {
 	case len(decls) == 0:
 		// At 1:1 of the first file in the pack: there is no declaration to
 		// point at, and the Builder has to add one somewhere.
 		r.report(r.files[0].Path, Pos{Line: 1, Col: 1}, CodePackMissing,
-			fmt.Sprintf("pack %q declares no `pack` line; one file in the pack must declare it", want))
+			fmt.Sprintf("pack %q declares no `pack` line; one file in the pack must declare it", dirBase(r.dir)))
 		return CoreRef{}, false
 	case len(decls) > 1:
 		// Positioned at the first declaration, not the second: this is a
@@ -260,7 +258,6 @@ func (r *resolver) resolvePack() (CoreRef, bool) {
 			fmt.Sprintf("this compile is of pack %q, but the declaration names %q", r.want, pd.Name))
 		return CoreRef{}, false
 	}
-	_ = want
 
 	if pd.Requires == nil {
 		// andara.core is the root pack: it requires nothing, because there is
@@ -354,7 +351,6 @@ func (r *resolver) buildComponents(file string, decls []*ComponentDecl, chain []
 func (r *resolver) buildFields(file string, c *ComponentDecl, chain []string) []*contentv1.ComponentField {
 	typ := sim.ComponentType(c.Type)
 	cc := componentChain(chain, c.Type)
-	_ = cc
 	out := make([]*contentv1.ComponentField, 0, len(c.Fields))
 	for _, f := range c.Fields {
 		want, known := sim.ComponentFieldKind(typ, f.Name)

@@ -472,3 +472,78 @@ func TestFormatPreservesComments(t *testing.T) {
 		}
 	}
 }
+
+// TestDecompileSubtractsTheCoreParent guards the un-flattening against the
+// case the corpus's round-trip pairs do not reach: a Template extending an
+// andara.core Template that carries Components.
+//
+// corpus/valid/town/ is that case — town.Merchant extends andara.core.Npc,
+// which carries andara.core.Memory. The compiled Merchant carries Memory
+// because flattening merges it down; the *source* must not, because Merchant
+// never wrote it.
+//
+// The round trip holds either way — an empty Component body is a no-op, not a
+// reset — so AC-4 cannot catch this. What it costs is the reading, which is the
+// whole point of `decompile`.
+func TestDecompileSubtractsTheCoreParent(t *testing.T) {
+	core := corpusCore(t)
+	out, ds := Compile(filepath.Join(corpusDir, "valid", "town"), core, nil)
+	if out == nil {
+		t.Fatalf("compile: %v", ds)
+	}
+
+	files, err := DecompileWith(out, core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(files["npcs.aw"])
+	want := "template Merchant extends andara.core.Npc {\n" +
+		"  component andara.core.Behavior { name: \"town.merchant\" }\n" +
+		"}\n\n" +
+		"template Guard extends andara.core.Npc {\n" +
+		"  component andara.core.Behavior { name: \"town.guard\" }\n" +
+		"}\n"
+	if got != want {
+		t.Errorf("decompiled npcs.aw:\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	}
+
+	// Without the core pack the marker cannot be subtracted, and the output
+	// restates it. Asserted rather than left implicit, so that the reason
+	// DecompileWith takes a core pack is visible from the test.
+	bare, err := Decompile(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(bare["npcs.aw"]), "andara.core.Memory") {
+		t.Error("without the core pack the inherited marker should be indistinguishable from an own declaration")
+	}
+
+	// Either way the Components round-trip, which is why AC-4 does not catch
+	// the difference: an empty Component body is a no-op rather than a reset,
+	// so the restatement recompiles to the same set.
+	//
+	// The blobs are *not* identical, and not because of the merge:
+	// TemplateDefinition.source.line moves, because decompile drops comments
+	// and town/npcs.aw opens Guard on line 30 behind 29 lines of them. That is
+	// the limit semantics.md §8 states for the other direction and does not
+	// state for this one; see the feedback file §12.
+	for _, files := range []map[string][]byte{files, bare} {
+		dir := filepath.Join(t.TempDir(), "town")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for name, body := range files {
+			write(t, filepath.Join(dir, name), string(body))
+		}
+		again, ds := Compile(dir, core, nil)
+		if again == nil {
+			t.Fatalf("the decompiled pack does not recompile: %v", ds)
+		}
+		for i, tmpl := range again.Templates {
+			got, want := stripSource(string(CanonicalJSON(tmpl))), stripSource(string(CanonicalJSON(out.Templates[i])))
+			if got != want {
+				t.Errorf("%s does not round-trip:\n--- got ---\n%s\n--- want ---\n%s", tmpl.GetName(), got, want)
+			}
+		}
+	}
+}

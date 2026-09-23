@@ -76,6 +76,36 @@ extend the chain past the carrier:
 the normative statement and it is narrower than the corpus it governs; a reader implementing
 from §1 alone would get four of these wrong.
 
+## 3b. Warnings are dropped when the compile fails, which `errors.md` does not say
+
+**Finding.** `errors.md` rule 7 says warnings do not *fail* a compile. It does not say what happens
+to them when something else does. The corpus does: not one of the 32 `invalid/semantic/` sidecars
+carries a warning, and several of the cases would produce one under the compiler's own rules —
+`multiple-findings` leaves Room `h` joined to nothing once both of Room `r`'s Exits fail to resolve,
+and `unknown-direction` leaves a one-way Exit whose reverse is absent.
+
+**Assumption taken.** A compile that reports an error reports only errors. A warning is advice about
+content the compiler otherwise accepted, and a compile that failed has not accepted anything —
+"no Exit joins Room h to any other Room" on a pack whose Exits did not resolve is a statement about
+the compiler's own half-finished analysis, not about the source.
+
+**Why it matters.** Without the rule, every invalid case's sidecar would need to enumerate the
+warnings that fall out of its errors, which would make each one a test of the resolver's recovery
+order rather than of the finding it exists to cover.
+
+## 3c. An `extends` cycle is reported once, at its lowest-named member
+
+**Finding.** `semantics.md` §4 says a cycle names every Template in it. It does not say how many
+findings a cycle produces, nor which member carries the position. `invalid/semantic/extends-cycle/`
+has three mutually-extending Templates and one finding, at `t.aw:1:10` — `p.A`.
+
+**Assumption taken.** One finding per cycle, positioned at the **lowest-named** member. A Builder
+fixing one cycle should not read three findings that describe it from three angles.
+
+The corpus cannot distinguish "lowest-named" from "first in the file": `p.A` is both. Sorted order
+was chosen because it does not depend on which file the Builder happened to put the declaration in,
+which is the same property `semantics.md` §2 asks of the compiled output.
+
 ## 4. Position conventions, extracted from the corpus rather than from `errors.md` rule 1
 
 **Finding.** Rule 1 says the position "names the token the Builder must look at — the offending
@@ -225,11 +255,75 @@ does not say so. Worth a one-word edit when `CLAUDE.md` is next touched; no acti
 ## 11. Measurements
 
 - **AC-7**, 2,000 Rooms across 16 Zones: **20 ms** uninstrumented, **122 ms** under `-race`, against
-  a 5 s budget. `TestSizingPackCompilesInBudget`. The threshold moves with the build for the reason
-  `server/simtest/stallfactor_race_test.go` records — CI runs `make check`, so a `!race` test never
-  runs outside a laptop.
+  a 5 s budget — measured on the **workstation**, not on the kind box the criterion names. At 250×
+  headroom the kind-box number is a formality, and the test runs in CI on the CI runner either way;
+  the same posture `AW-SRV-006` took on its own budget. `TestSizingPackCompilesInBudget`. The
+  threshold moves with the build for the reason `server/simtest/stallfactor_race_test.go` records —
+  CI runs `make check`, so a `!race` test never runs outside a laptop.
 - **AC-1**: 69 corpus cases agree, 6 pending skipped. `make content-conformance`, in `make check`.
 - The check was shown to be non-vacuous by breaking the compiler twice: reversing the Exit sort
   produced 7 failures, dropping the canonical trailing LF produced 110.
 - **AC-8** was shown to be non-vacuous by adding an import of `server/store`: depguard and
   `TestImportsNothingFromServerButSim` each failed, and each named the package.
+
+## 12. `compiled → source → compiled` is not byte-identity for a pack that had comments
+
+**Finding.** `semantics.md` §8 states two directions and qualifies only one of them:
+
+> **Compiled → source → compiled is identity.** `decompile` of a published version produces `.aw`
+> source that recompiles to the same blobs, byte for byte.
+>
+> **Source → compiled → source is identity for canonical source only.**
+
+The first is unqualified, and it does not hold for any pack whose source carried comments.
+`TemplateDefinition.source` is `{file, line}`, `decompile` output is comment-free, and dropping
+comments moves every line after them. `corpus/valid/town/npcs.aw` opens `template Guard` on line 30,
+behind 29 lines of commentary; the decompiled file opens it on line 5, so the recompiled
+`town.Guard.json` differs from the published one in `source.line` and in nothing else.
+
+**Why it matters.** It is the operational direction — "how a Builder who has lost their working copy
+gets it back" — and a Builder who decompiles, recompiles, and diffs against what is published will
+see every Template move. The difference is cosmetic and provenance-only, but a publish gate that
+compared compiled blobs for equality would reject the result.
+
+**Assumption taken.** Implemented as specified, and the qualification is treated as applying to both
+directions: the round trip is byte-identity for **canonical** source, which is comment-free, and is
+identity in everything but `SourceRef.line` otherwise. The corpus agrees — both `roundtrip/` cases are
+authored canonically, so the corpus cannot distinguish the two readings, and `AW-CLI-006` AC-4 passes
+under either.
+
+**Recommendation.** §8's first bullet gains the same qualification its second has. The alternative —
+making `decompile` preserve line numbers by padding with blank lines — would produce source no
+Builder would want, to satisfy a field that is documented as "provenance a finding quotes, **not** a
+path the loader opens" (§6).
+
+## 13. `Decompile` needs the core pack to un-flatten, so the API grew a variant
+
+**Finding.** Recovering what a Template's own file declared means subtracting the parent's flattened
+set from the child's. For a parent inside the pack that set is in `Output.Templates`; for a parent in
+`andara.core` it is not, and every inherited Component then looks like the subtype's own.
+
+The contract sketch is `Decompile(out *Output) (map[string][]byte, error)`, which cannot reach a
+parent it was not handed.
+
+**Why it matters.** Every Builder pack extends `andara.core`, so this is the ordinary case, not an
+edge. `decompile` of `corpus/valid/town/` emitted
+
+```
+template Merchant extends andara.core.Npc {
+  component andara.core.Behavior { name: "town.merchant" }
+  component andara.core.Memory {}      // inherited from andara.core.Npc; Merchant never wrote it
+}
+```
+
+AC-4 does not catch it: an empty Component body is a no-op rather than a reset (`semantics.md` §5),
+so the restatement recompiles to the same Components. Neither `roundtrip/` case extends a core
+Template that carries Components, so the corpus does not catch it either.
+
+**Assumption taken.** `Decompile(out)` keeps the contract's signature and delegates to
+`DecompileWith(out, core *Pack)` with a nil core. The CLI passes the core pack it already loaded, and
+`TestDecompileSubtractsTheCoreParent` asserts both halves — that `Memory` is absent with the core
+pack and present without it, so the reason the parameter exists is visible from the test.
+
+**Worth a corpus case.** A `roundtrip/` case whose Template extends `andara.core.Npc` would have
+caught this from the corpus rather than from a reviewer.

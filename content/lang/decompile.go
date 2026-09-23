@@ -26,6 +26,25 @@ import (
 // pack.aw alone, one file per Zone, Templates grouped by source.file's
 // basename or templates.aw when absent.
 func Decompile(out *Output) (map[string][]byte, error) {
+	return DecompileWith(out, nil)
+}
+
+// DecompileWith is Decompile against the core pack the output was compiled
+// against.
+//
+// It matters for un-flattening. A Template's compiled Components are the merged
+// set of everything its ancestors declare, and what the Template itself wrote is
+// recovered by subtracting the parent's set — so the parent has to be in hand.
+// A parent inside the pack is in out.Templates; a parent in andara.core is not,
+// and without it every inherited Component looks like the subtype's own.
+//
+// The round trip holds either way, because declaring a Component with an empty
+// body is a no-op rather than a reset (semantics.md §5), so the redundant line
+// recompiles to the same bytes. What it costs is the reading: every Builder
+// pack extends andara.core, so without the core pack `decompile` hands back
+// source carrying a restatement of every marker Component the chain inherits —
+// the ergonomic failure the whole model exists to avoid (ADR-0010 decision 4).
+func DecompileWith(out *Output, core *Pack) (map[string][]byte, error) {
 	if out == nil {
 		return nil, fmt.Errorf("no output to decompile")
 	}
@@ -54,6 +73,11 @@ func Decompile(out *Output) (map[string][]byte, error) {
 	byName := map[string]*contentv1.TemplateDefinition{}
 	for _, t := range out.Templates {
 		byName[t.GetName()] = t
+	}
+	if core != nil {
+		for _, t := range core.Templates {
+			byName[t.GetName()] = t
+		}
 	}
 	for name, ts := range groups {
 		sort.Slice(ts, func(i, j int) bool { return sourceLine(ts[i]) < sourceLine(ts[j]) })

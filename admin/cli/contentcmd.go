@@ -382,7 +382,7 @@ func newContentDecompileCmd(rt *runtime) *cobra.Command {
 			if result == nil {
 				return compileFailed(path, ds)
 			}
-			files, err := lang.Decompile(result)
+			files, err := lang.DecompileWith(result, core)
 			if err != nil {
 				return &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: err.Error()}
 			}
