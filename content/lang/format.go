@@ -89,21 +89,27 @@ func (p *printer) blank() {
 // punctuation a comment block has, and a formatter that closed those gaps would
 // run a file header into the first declaration's own note.
 func (p *printer) ownComments(line, depth int) {
+	emitted := false
 	for p.next < len(p.comments) && p.comments[p.next].Pos.Line < line {
 		c := p.comments[p.next]
 		p.next++
 		if p.canon {
 			continue
 		}
-		if p.prevLine > 0 && c.Pos.Line > p.prevLine+1 {
+		if emitted && c.Pos.Line > p.prevLine+1 {
 			p.blank()
 		}
 		p.indent(depth)
 		p.sb.WriteString(c.Text)
 		p.sb.WriteByte('\n')
 		p.prevLine = c.Pos.Line
+		emitted = true
 	}
-	if !p.canon && p.prevLine > 0 && line > p.prevLine+1 {
+	// Only the gap between the last *comment* and the declaration it
+	// introduces. A gap between two declarations is the item loops', which
+	// skip the first item — so that a blank line immediately after `{` is
+	// removed rather than reproduced (formatting.md §5).
+	if emitted && line > p.prevLine+1 {
 		p.blank()
 	}
 	p.prevLine = line

@@ -277,18 +277,26 @@ func TestOfflineCompileUsesTheCache(t *testing.T) {
 	}
 }
 
-// TestCoreVersionMismatchNamesBoth is AC-6.
+// TestCoreVersionMismatchNamesBoth is AC-6, in its own numbers: a pack
+// declaring `requires andara.core@4` against a cache of @3.
 func TestCoreVersionMismatchNamesBoth(t *testing.T) {
-	core := corpusCore(t)
+	cached := corpusCore(t)
+	cached.Version = 3
+
 	pack := t.TempDir()
 	write(t, filepath.Join(pack, "pack.aw"), "pack p requires andara.core@4\n")
 
-	_, ds := Compile(pack, core, nil)
+	_, ds := Compile(pack, cached, nil)
 	if len(ds) != 1 || ds[0].Code != CodeCoreVersionMismatch {
 		t.Fatalf("want core_version_mismatch, got %v", ds)
 	}
-	if !strings.Contains(ds[0].Message, "@4") || !strings.Contains(ds[0].Message, "@1") {
+	if !strings.Contains(ds[0].Message, "@4") || !strings.Contains(ds[0].Message, "@3") {
 		t.Errorf("the finding must name both versions; it says %q", ds[0].Message)
+	}
+	// AC-5's cached case, from the other side: @3 required against @3 compiles.
+	write(t, filepath.Join(pack, "pack.aw"), "pack p requires andara.core@3\n")
+	if out, ds := Compile(pack, cached, nil); out == nil {
+		t.Errorf("a matching cache did not satisfy the requirement: %v", ds)
 	}
 }
 
@@ -404,5 +412,63 @@ func write(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestFormatWhitespaceRules is formatting.md §2 and §5: two-space indent, never
+// a tab, exactly one LF at the end, a blank line immediately after `{` or
+// immediately before `}` removed, and a run of blank lines collapsed to one.
+func TestFormatWhitespaceRules(t *testing.T) {
+	src := []byte("zone z \"Z\" {\n\n  room a \"A\" {\n\n\t\texit north -> b\n\n\n  }\n\n\n  room b \"B\" {\n    exit south -> a\n\n  }\n\n}\n")
+	want := "zone z \"Z\" {\n  room a \"A\" {\n    exit north -> b\n  }\n\n  room b \"B\" {\n    exit south -> a\n  }\n}\n"
+
+	got, ds := Format(src)
+	if len(ds) > 0 {
+		t.Fatal(ds[0])
+	}
+	if string(got) != want {
+		t.Errorf("fmt output:\n%q\nwant:\n%q", got, want)
+	}
+	if strings.Contains(string(got), "\t") {
+		t.Error("fmt emitted a tab")
+	}
+	if !strings.HasSuffix(string(got), "}\n") || strings.HasSuffix(string(got), "\n\n") {
+		t.Error("the file does not end in exactly one LF")
+	}
+	for _, line := range strings.Split(string(got), "\n") {
+		if line != strings.TrimRight(line, " \t") {
+			t.Errorf("trailing whitespace on %q", line)
+		}
+	}
+}
+
+// TestFormatPreservesComments is formatting.md §5. A comment is the one thing
+// in the file the formatter has no way to understand, so it does the minimum
+// that keeps indentation honest: re-indent an own-line comment, keep a trailing
+// one on its line separated by two spaces, and never move one across a
+// declaration.
+func TestFormatPreservesComments(t *testing.T) {
+	src := []byte("// A file header.\n//\n// With a blank comment line in it.\n\n// The Zone's own note.\nzone market \"The Market\" {\n  // The square is the spawn Room.\n  room square \"Market Square\" {\n    exit east -> pier  // cross-Zone\n  }\n}\n")
+	got, ds := Format(src)
+	if len(ds) > 0 {
+		t.Fatal(ds[0])
+	}
+	if string(got) != string(src) {
+		t.Errorf("fmt moved a comment:\n--- got ---\n%s\n--- want ---\n%s", got, src)
+	}
+
+	// ... and compile drops them, because there is no field to hold them
+	// (semantics.md §1). The source blob is what carries them to publication.
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "pack.aw"), "pack p requires andara.core@1\n")
+	write(t, filepath.Join(dir, "z.aw"), "// a comment\nzone z \"Z\" {\n  room r \"R\" {}\n}\n")
+	out, ds := Compile(dir, corpusCore(t), nil)
+	if out == nil {
+		t.Fatalf("compile: %v", ds)
+	}
+	for _, b := range out.Blobs {
+		if b.MediaType == BlobMediaType && strings.Contains(string(b.Bytes), "a comment") {
+			t.Errorf("a comment reached the compiled blob %s", b.Path)
+		}
 	}
 }

@@ -171,20 +171,24 @@ func newContentCompileCmd(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			_, span := rt.childSpan("content.compile")
 			result, ds := lang.Compile(path, core, nil)
+			span.SetAttributes(attribute.Int("diagnostics", len(ds)))
+			if result != nil {
+				span.SetAttributes(
+					attribute.Int("files", countSources(result)),
+					attribute.Int("zones", len(result.Zones)),
+					attribute.Int("templates", len(result.Templates)),
+				)
+			}
+			span.End()
+
 			if err := rt.writeDiagnostics(ds, path); err != nil {
 				return err
 			}
 			if result == nil {
 				return compileFailed(path, ds)
 			}
-
-			rt.span.SetAttributes(
-				attribute.Int("files", countSources(result)),
-				attribute.Int("zones", len(result.Zones)),
-				attribute.Int("templates", len(result.Templates)),
-				attribute.Int("diagnostics", len(ds)),
-			)
 
 			if out != "" {
 				if err := writeBlobs(out, result); err != nil {
