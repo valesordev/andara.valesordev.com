@@ -7,7 +7,7 @@ type: bug
 status: done
 size: S
 depends_on: [AW-SRV-001]
-blocks: [AW-INF-010]
+blocks: [AW-INF-010, AW-SRV-033]
 lane: implementation
 risk: low
 ---
@@ -143,6 +143,10 @@ None.
 - The record mapping — body, attributes, resource, and `trace_id`/`span_id` as record fields —
   is `TestLogExport_RecordCarriesTraceContext`.
 - **For AW-INF-010:** `AW-INF-002` AC-7's synthetic push is superseded by the smoke's real query.
+- **Scoped after `done` (2026-09-23, Brian):** OTLP log export is the path for environments with no
+  stdout shipper — compose. On Kubernetes logs go through the container stream only, never both.
+  `AW-SRV-033` makes the log exporter switchable apart from traces; this story's behavior stays the
+  default.
 
 ## Definition of done
 

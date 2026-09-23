@@ -10,9 +10,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 7 |
-| `ready` | 27 |
+| `ready` | 28 |
 | `done` | 17 |
-| **total** | **51** |
+| **total** | **52** |
 
 ## Attention first
 
@@ -40,7 +40,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
-### `ready` (27)
+### `ready` (28)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -71,6 +71,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `EPIC-02` | server | M | medium | implementation | Perception through Exits — Builder-declared senses on a room connection | `AW-SRV-004`, `AW-SRV-021` |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
+| [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 
 ### `done` (17)
 
@@ -183,6 +184,7 @@ Milestone `M1-M4` · status `ready` · ADR gates: none · constrained by: —
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `ready` | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud |
 | [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `done` | Export logs over OTLP so the log sink carries what stderr carries |
+| [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `ready` | Turn off OTLP log export independently of traces |
 
 ### `EPIC-08` — Identity, accounts, and sessions
 

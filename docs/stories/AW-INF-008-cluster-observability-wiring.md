@@ -252,12 +252,14 @@ Found, and owed elsewhere:
   no `otel.SetErrorHandler`, so a failed span export goes to OpenTelemetry's default handler — the
   standard library logger, plain text on stderr — and nothing counts it. AC-3 can only assert the log
   exporter's line. An `AW-SRV-024` follow-up for the implementation lane.
-- **Every server log line reaches Loki twice on `dev`/`prod`.** `telemetry.otlp_endpoint` turns on both
-  exporters (`server/README.md`), and the platform already ships stdout: one copy from the node agent
-  (`container="server"`, what AC-4 queries), one through the receiver (`job`/`pod`, no `container`).
-  The OTLP log exporter was built for the compose stack, which had no stdout shipper; on the cluster
-  it doubles Andara's log bill. Recommendation: a server key to turn OTLP *log* export off
-  independently of traces, set off on `dev`/`prod` — an implementation-lane story, not groomed here.
+- **Every server log line would reach Loki twice on `dev`/`prod`.** `telemetry.otlp_endpoint` turns on
+  both exporters (`server/README.md`), and the platform already ships the container stream: one copy
+  from the node agent (`container="server"`, what AC-4 queries), one through the receiver
+  (`job`/`pod`, no `container`). **Decided 2026-09-23 (Brian): one log path per environment, and on
+  Kubernetes it is stdout via the node agent — the server does not send logs to the receiver there.**
+  `AW-SRV-033` (implementation lane, `ready`) adds `telemetry.otlp_logs` and sets it `false` in the
+  chart's defaults; the key is registered in `keys.yaml` now, pending. Until it lands, a `dev`/`prod`
+  install double-writes — neither is installed today, so nothing is paying for it yet.
 - **For `AW-INF-009`:** a rule group loaded before an environment is installed pages for it —
   `absent(...andara-prod...)` is true until prod exists. `andara-local` on the box is the other way
   round: not in the `absent()` list, so a local pod that is not Ready is silent; it pages only when a
