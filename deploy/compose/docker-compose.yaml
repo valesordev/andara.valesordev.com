@@ -184,6 +184,30 @@ services:
       start_period: 15s
     logging: *default-logging
 
+  # The s3 snapshot store's backend (AW-SRV-006). snapshot.store=s3 is what the cluster
+  # runs, so without a local S3 the production snapshot path has no executed coverage:
+  # server/store/s3_test.go skips unless ANDARA_S3_TEST_ENDPOINT names an endpoint, and
+  # the stack workflow exports it from here. Credentials are the throwaway pair that
+  # test's own comment documents — this service holds nothing worth protecting.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    profiles: [full]
+    command: ["server", "/data", "--console-address", ":9001"]
+    environment:
+      MINIO_ROOT_USER: andaratest
+      MINIO_ROOT_PASSWORD: andaratest123
+    ports:
+      - "${ANDARA_S3_PORT:-19000}:9000"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+      start_period: 10s
+    logging: *default-logging
+
   grafana:
     image: grafana/grafana:11.4.0
     profiles: [full]
@@ -290,3 +314,4 @@ volumes:
   tempo-data:
   loki-data:
   grafana-data:
+  minio-data:

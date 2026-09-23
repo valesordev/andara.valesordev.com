@@ -128,8 +128,18 @@ jobs:
       # broker, on throwaway topics: append and replay; apply, then replay from the
       # recorded boundaries; kill a loop with SIGKILL and recover the next one from the
       # boundaries it left.
+      #
+      # Also AW-SRV-006's s3 snapshot store against the stack's MinIO. server/store is in
+      # this target rather than `make test` because `make test` has no stack behind it:
+      # s3_test.go skips without ANDARA_S3_TEST_ENDPOINT, and s3 is what snapshot.store=s3
+      # selects in the cluster, so this is the only run that executes the production
+      # snapshot path.
       - name: the record log and the tick loop on the broker
         run: make test-integration
+        env:
+          ANDARA_S3_TEST_ENDPOINT: localhost:${{ env.ANDARA_S3_PORT || '19000' }}
+          ANDARA_S3_TEST_ACCESS_KEY: andaratest
+          ANDARA_S3_TEST_SECRET_KEY: andaratest123
 
       # AW-SRV-002 AC-9: the broker goes away and the tick loop keeps its schedule applying
       # nothing — starvation counted, the container still healthy — and when the broker

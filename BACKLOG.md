@@ -9,10 +9,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 4 |
+| `review` | 3 |
 | `in-progress` | 2 |
 | `ready` | 28 |
-| `done` | 17 |
+| `done` | 18 |
 | **total** | **51** |
 
 ## Attention first
@@ -20,18 +20,16 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client | review by brian |
-| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command | review by brian |
 
 ## By status
 
-### `review` (4)
+### `review` (3)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | implementation | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011`, `AW-SRV-031` |
-| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
@@ -75,7 +73,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
 
-### `done` (17)
+### `done` (18)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -90,6 +88,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
 | [`AW-SRV-004`](docs/stories/AW-SRV-004-event-emission-and-perception-scoping.md) | `EPIC-02` | server | M | medium | implementation | Event emission, subscription seam, and perception scoping | `AW-SRV-002`, `AW-SRV-003` |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
+| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
@@ -152,7 +151,7 @@ Milestone `M2` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets |
+| [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `done` | Zone snapshots keyed to partition offsets |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `ready` | Recovery from snapshot and log tail, verified in CI |
 | [`AW-SRV-026`](docs/stories/AW-SRV-026-exit-into-exact-recovery-when-a-tick-boundary-record-is-lost.md) | `ready` | Exit into exact recovery when a Tick Boundary Record is lost |
 
