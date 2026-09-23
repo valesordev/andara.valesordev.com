@@ -22,8 +22,12 @@ const (
 	// SizingRooms is the total Room count across every Zone.
 	SizingRooms = 2000
 	// SizingEntities is the total Entity count: props, NPCs, and the
-	// Characters below, all of which the boundary copy walks.
-	SizingEntities = 10000
+	// Characters below, all of which the boundary copy walks. Raised from
+	// 10,000 on 2026-09-22 (Brian) for headroom as the World grows; it is
+	// the only term of the four that moved, because Rooms are topology the
+	// copy never touches and the Character count is a concurrency
+	// assumption rather than a statement about World size.
+	SizingEntities = 25000
 	// SizingCharacters is how many of the Entities are Characters — bodies
 	// with a Name, and the ones a stall is felt by.
 	SizingCharacters = 500

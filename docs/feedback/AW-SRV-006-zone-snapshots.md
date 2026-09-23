@@ -212,6 +212,37 @@ No change made here beyond moving the hash: the story's assumption holds at the 
 documented scale, and the fixture and its numbers are committed so that a later change to World
 scale is a visible change to a failing test rather than a silent drift.
 
+## 7b. The 25,000-Entity fixture, measured — the extrapolation held
+
+The amended story asks for this in as many words: *"Measure it and replace this line with the real
+numbers."* Done. `server/simtest/sizing.go` is at 25,000 Entities and
+`snapshot.max_stall_ms` at `15`.
+
+Measured on the same machine as the 10,000 figures (AMD Ryzen 9 3900X), worst of 5 rounds,
+`make build` binary, `go test` without `-race` unless stated:
+
+| Condition | Extrapolated | **Measured** |
+|---|---|---|
+| Uncontended (benchmark, 60 rounds over 3 runs) | ~6.8 ms | **7.4 – 8.7 ms** |
+| Worst-of-5, package running alongside (5 runs) | ~12 ms | **8.1 – 9.6 ms** |
+| Worst-of-5, under `-race` | — | 34.7 ms |
+
+**The extrapolation was right for the uncontended case and pessimistic for the loaded one.** The
+loaded figure came in at roughly three-quarters of what a linear extrapolation from the 10,000-Entity
+loaded number predicted, not the 2.5× the Entity count would suggest — the copy is allocation-bound
+and the earlier loaded measurement was taken against a busier machine, so the two "under load"
+numbers are not measuring the same load. The honest reading is that both loaded figures are noisy and
+the uncontended one is the number to reason from: **it tracks Entity count near-linearly, 2.7 ms at
+10,000 and ~8 ms at 25,000**, which is 2.9× for 2.5× the Entities.
+
+Against the amended budget: 8 ms of 15 ms, and 8 ms of ADR-0008's 50 ms tick budget, which is the
+constraint that actually binds. The story's rule — "roughly twice the measured loaded number" — puts
+15 ms almost exactly where the measurement lands, so the budget needs no revision.
+
+The `-race` figure is why the AC-1 assertion scales its threshold by build rather than skipping under
+`-race`: `make test` runs `-race` and is the only Go test target in `make check`, so a `!race` test
+would never run in CI. See `stallfactor_race_test.go`.
+
 ## 8. The `s3` store adds a third-party dependency — `minio-go/v7`, Brian's call
 
 `snapshot.store=s3` needs an S3 client and `go.mod` had none. Raised rather than decided,

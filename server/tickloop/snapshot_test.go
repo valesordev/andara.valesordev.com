@@ -110,7 +110,16 @@ type roundHarness struct {
 	man  *recordingManifest
 	now  time.Time
 	mu   sync.Mutex
-	done chan error
+	done chan roundResult
+}
+
+// roundResult is which round finished, not merely that one did. The tick is
+// what lets a test tell "the round I expected" from "a round that should never
+// have started" — a count alone cannot, because the first completion to arrive
+// satisfies a wait whichever round it came from.
+type roundResult struct {
+	tick sim.Tick
+	err  error
 }
 
 func newRoundHarness(t *testing.T, mutate func(*tickloop.SnapshotOptions)) *roundHarness {
@@ -121,7 +130,7 @@ func newRoundHarness(t *testing.T, mutate func(*tickloop.SnapshotOptions)) *roun
 		fail: &failingStore{inner: fs, fail: map[string]error{}},
 		man:  &recordingManifest{},
 		now:  time.Unix(1758500000, 0),
-		done: make(chan error, 8),
+		done: make(chan roundResult, 8),
 	}
 	o := tickloop.SnapshotOptions{
 		Store:         h.fail,
@@ -134,7 +143,7 @@ func newRoundHarness(t *testing.T, mutate func(*tickloop.SnapshotOptions)) *roun
 			defer h.mu.Unlock()
 			return h.now
 		},
-		OnRound: func(_ sim.Tick, err error) { h.done <- err },
+		OnRound: func(tick sim.Tick, err error) { h.done <- roundResult{tick: tick, err: err} },
 	}
 	if mutate != nil {
 		mutate(&o)
@@ -153,14 +162,40 @@ func (h *roundHarness) advance(d time.Duration) {
 	h.mu.Unlock()
 }
 
-func (h *roundHarness) await(t *testing.T) error {
+// await returns the next round to finish. Tests assert on its tick rather than
+// only its error: a round that ran when none should have is a different bug
+// from a round that failed, and only the tick separates them.
+func (h *roundHarness) await(t *testing.T) roundResult {
 	t.Helper()
 	select {
-	case err := <-h.done:
-		return err
+	case r := <-h.done:
+		return r
 	case <-time.After(5 * time.Second):
 		t.Fatal("snapshot round did not finish")
-		return nil
+		return roundResult{}
+	}
+}
+
+// awaitTick waits for the round at want and fails naming what arrived instead.
+// Anchors an absence: seeing want complete means every round started before it
+// has already been delivered, so an unexpected earlier one shows up here rather
+// than being slept through (live-assertions §3).
+func (h *roundHarness) awaitTick(t *testing.T, want sim.Tick) roundResult {
+	t.Helper()
+	r := h.await(t)
+	if r.tick != want {
+		t.Fatalf("a round completed at tick %d; expected the next round to be tick %d, so one started that should not have", r.tick, want)
+	}
+	return r
+}
+
+// step advances the engine so the next round is distinguishable by tick.
+func (h *roundHarness) step(t *testing.T, e *sim.Engine, to sim.Tick) {
+	t.Helper()
+	for e.Tick() < to {
+		if _, err := e.Step(sim.TickInput{}); err != nil {
+			t.Fatalf("Step: %v", err)
+		}
 	}
 }
 
@@ -171,19 +206,20 @@ func TestRoundRunsOnTheBoundaryAfterTheInterval(t *testing.T) {
 	h := newRoundHarness(t, nil)
 	e := snapshotEngine(t)
 
-	// Before the interval: nothing.
+	// Before the interval: nothing. Anchored on the tick rather than slept on
+	// — a wait only shows a round has not run *yet* (live-assertions §3), and
+	// a bare count cannot tell which round it counted. The engine moves
+	// between the two calls, so a round from the first would arrive at tick
+	// 42 and awaitTick names it.
 	h.s.Maybe(context.Background(), e)
-	select {
-	case <-h.done:
-		t.Fatal("a round ran before snapshot.interval elapsed")
-	case <-time.After(50 * time.Millisecond):
-	}
 
+	h.step(t, e, 100)
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), e)
-	if err := h.await(t); err != nil {
-		t.Fatalf("round: %v", err)
+	if r := h.awaitTick(t, 100); r.err != nil {
+		t.Fatalf("round: %v", r.err)
 	}
+	assertCounter(t, h.s, "complete", 1)
 
 	keys, err := h.fs.List(context.Background(), "town")
 	if err != nil {
@@ -200,8 +236,8 @@ func TestRoundRunsOnTheBoundaryAfterTheInterval(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if env.GetTick() != 42 {
-		t.Errorf("envelope tick = %d, want the boundary's 42", env.GetTick())
+	if env.GetTick() != 100 {
+		t.Errorf("envelope tick = %d, want the boundary's 100", env.GetTick())
 	}
 	if zone.ID != "town" {
 		t.Errorf("zone = %q, want town", zone.ID)
@@ -218,8 +254,8 @@ func TestManifestResolvesToTheObjectItNames(t *testing.T) {
 	h := newRoundHarness(t, nil)
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), snapshotEngine(t))
-	if err := h.await(t); err != nil {
-		t.Fatalf("round: %v", err)
+	if r := h.await(t); r.err != nil {
+		t.Fatalf("round: %v", r.err)
 	}
 
 	recs := h.man.all()
@@ -259,7 +295,7 @@ func TestOneZoneFailingMakesTheRoundIncomplete(t *testing.T) {
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), snapshotEngine(t))
 
-	err := h.await(t)
+	err := h.await(t).err
 	if err == nil {
 		t.Fatal("a round with a failed Zone reported success")
 	}
@@ -303,22 +339,30 @@ func TestRoundsAreSingleFlight(t *testing.T) {
 	e := snapshotEngine(t)
 
 	h.advance(60 * time.Second)
-	h.s.Maybe(context.Background(), e)
+	h.s.Maybe(context.Background(), e) // the round at tick 42, blocked in Put
 
-	// Second interval elapses while the first round is blocked in Put.
+	// A second interval elapses while the first round is still in flight, at
+	// a tick of its own so a round from it would be identifiable.
+	h.step(t, e, 100)
 	h.advance(60 * time.Second)
-	h.s.Maybe(context.Background(), e)
+	h.s.Maybe(context.Background(), e) // must be skipped
 
 	close(release)
-	if err := h.await(t); err != nil {
-		t.Fatalf("first round: %v", err)
+	if r := h.awaitTick(t, 42); r.err != nil {
+		t.Fatalf("first round: %v", r.err)
 	}
-	select {
-	case <-h.done:
-		t.Fatal("a second round started while the first was in flight")
-	case <-time.After(100 * time.Millisecond):
+
+	// The skipped round is an absence, so it is anchored rather than slept on
+	// (live-assertions §3): run a third round at a third tick and require it
+	// to be the very next completion. If the middle call had started one, its
+	// tick-100 round would arrive here instead and awaitTick would name it.
+	h.step(t, e, 200)
+	h.advance(60 * time.Second)
+	h.s.Maybe(context.Background(), e)
+	if r := h.awaitTick(t, 200); r.err != nil {
+		t.Fatalf("third round: %v", r.err)
 	}
-	assertCounter(t, h.s, "complete", 1)
+	assertCounter(t, h.s, "complete", 2)
 }
 
 // A round that cannot finish inside snapshot.upload_timeout is failed with
@@ -332,7 +376,7 @@ func TestRoundPastItsUploadTimeoutIsFailed(t *testing.T) {
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), snapshotEngine(t))
 
-	err := h.await(t)
+	err := h.await(t).err
 	if err == nil {
 		t.Fatal("a round past its upload timeout reported success")
 	}
@@ -355,8 +399,8 @@ func TestAStallOverBudgetWarnsButCompletesTheRound(t *testing.T) {
 	})
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), snapshotEngine(t))
-	if err := h.await(t); err != nil {
-		t.Fatalf("a stall failed the round: %v", err)
+	if r := h.await(t); r.err != nil {
+		t.Fatalf("a stall failed the round: %v", r.err)
 	}
 	assertFailure(t, h.s, "stall", 1)
 	assertCounter(t, h.s, "complete", 1)
@@ -370,8 +414,8 @@ func TestAFailedManifestDoesNotFailTheRound(t *testing.T) {
 	h.man.err = errors.New("broker unreachable")
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), snapshotEngine(t))
-	if err := h.await(t); err != nil {
-		t.Fatalf("a failed manifest failed the round: %v", err)
+	if r := h.await(t); r.err != nil {
+		t.Fatalf("a failed manifest failed the round: %v", r.err)
 	}
 	assertCounter(t, h.s, "complete", 1)
 }
@@ -513,8 +557,8 @@ func TestPartialRoundLeavesThePreviousOneComplete(t *testing.T) {
 
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), e)
-	if err := h.await(t); err != nil {
-		t.Fatalf("first round: %v", err)
+	if r := h.await(t); r.err != nil {
+		t.Fatalf("first round: %v", r.err)
 	}
 	firstTick := e.Tick()
 
@@ -528,7 +572,7 @@ func TestPartialRoundLeavesThePreviousOneComplete(t *testing.T) {
 	h.fail.fail["docks"] = fmt.Errorf("%w: the volume went away", sim.ErrStoreUnavailable)
 	h.advance(60 * time.Second)
 	h.s.Maybe(context.Background(), e)
-	if err := h.await(t); err == nil {
+	if r := h.await(t); r.err == nil {
 		t.Fatal("the second round should have been incomplete")
 	}
 

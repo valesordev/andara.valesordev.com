@@ -205,10 +205,15 @@ const (
 	DefaultEgressResumeWindow       = 2048
 	DefaultHeartbeatInterval        = 20 * time.Second
 
-	// Snapshots (AW-SRV-006). The interval is docs/specs/slo/recovery.md's;
-	// the stall budget is AC-1's threshold.
+	// Snapshots (AW-SRV-006). The interval is docs/specs/slo/recovery.md's.
+	// The stall budget is AC-1's threshold, and it is a sub-budget of
+	// ADR-0008's rather than a constraint of its own: the copy runs inside
+	// the tick, so what has to hold is copy + tick work under the 50 ms tick
+	// budget. 15 ms on top of a tick that measures under 1 ms at the idle
+	// floor is 16 of 50. The rule if the measurement moves is roughly twice
+	// the measured loaded figure.
 	DefaultSnapshotInterval      = 60 * time.Second
-	DefaultSnapshotMaxStallMS    = 5
+	DefaultSnapshotMaxStallMS    = 15
 	DefaultSnapshotStore         = "fs"
 	DefaultSnapshotFSPath        = "/var/lib/andara/snapshots"
 	DefaultSnapshotUploadTimeout = 30 * time.Second

@@ -78,7 +78,7 @@ func TestSnapshotCopyStaysInsideTheStallBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SizingEngine: %v", err)
 	}
-	const budget = 5 * time.Millisecond
+	const budget = 15 * time.Millisecond // snapshot.max_stall_ms
 	limit := stallFactor * budget
 
 	var worst time.Duration
