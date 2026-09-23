@@ -156,7 +156,10 @@ The other rules, by what their series carry:
 Grafana Cloud's three backends are three hosts with three user IDs, so the environment is
 `GRAFANA_CLOUD_{PROM,LOKI,TEMPO}_URL` and `_USER`, plus the one token (an access policy with
 `metrics:read`, `logs:read`, `traces:read`). The URLs and IDs are on the stack's details page and are
-not secrets; the token is, and the script neither takes it as an argument nor prints it.
+not secrets; the token is, and the script neither takes it as an argument nor prints it. AC-2's
+expected projector jobs come from `PROJECTORS` (comma-separated, `none` for none) or else from the
+namespace's Deployments via `kubectl`; when neither can answer, the script exits `3` — an unknown
+projector set is not an empty one.
 
 `make bootstrap` pins `promtool` 3.1.0 — the compose Prometheus's version — from the upstream release
 tarball against a checksum in `scripts/bootstrap.sh`. Not `go install`: the Prometheus module carries

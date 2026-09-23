@@ -29,7 +29,10 @@ Credentials come from the environment and nowhere else; nothing here prints them
   GRAFANA_CLOUD_TEMPO_URL / _TEMPO_USER      e.g. https://tempo-prod-NN-….grafana.net/tempo
 
 The URLs and user IDs are on the stack's details page in the Grafana Cloud portal; they are
-not secrets, the token is. Optional: CLUSTER (default solo7-local), SINCE (default 1h).
+not secrets, the token is. Optional: CLUSTER (default solo7-local), SINCE (default 1h), and
+PROJECTORS — the enabled projector names, comma-separated, `none` for none — which otherwise
+come from the namespace's Deployments via kubectl. If neither can say which projectors run, the
+check does not guess: AC-2 unanswerable is exit 3, not a skipped check.
 
 Exit: 0 every signal present · 1 a signal absent · 2 a backend refused or failed the query
 · 3 a credential or URL unset — never a vacuous pass.
@@ -113,17 +116,22 @@ def labels(r):
 
 
 def projector_jobs(ns):
-    """The projector Deployments the namespace actually runs, from the cluster — the chart
-    renders only the enabled ones, so this is what `projectors.<name>.enabled` resolved to."""
+    """The projector jobs AC-2 expects: PROJECTORS if set, else the projector Deployments the
+    namespace actually runs — the chart renders only the enabled ones, so that is what
+    `projectors.<name>.enabled` resolved to. Not knowing is exit 3: an empty list here would
+    drop every projector query and let an absent projector pass."""
+    names = os.environ.get("PROJECTORS", "").strip()
+    if names:
+        return [] if names == "none" else ["andara-projector-" + n.strip() for n in names.split(",") if n.strip()]
     if not shutil.which("kubectl"):
-        say("warn: no kubectl; projector jobs not checked (AC-2)")
-        return []
+        say("no kubectl and no PROJECTORS; cannot verify AC-2")
+        sys.exit(3)
     p = subprocess.run(["kubectl", "-n", ns, "get", "deploy", "-l", "app.kubernetes.io/name=andara",
                         "-o", "jsonpath={.items[*].metadata.name}"], capture_output=True, text=True)
     if p.returncode:
-        say("warn: kubectl could not list %s deployments (%s); projector jobs not checked (AC-2)"
+        say("kubectl could not list %s deployments (%s) and no PROJECTORS; cannot verify AC-2"
             % (ns, p.stderr.strip()))
-        return []
+        sys.exit(3)
     return [n for n in p.stdout.split() if n.startswith("andara-projector-")]
 
 
