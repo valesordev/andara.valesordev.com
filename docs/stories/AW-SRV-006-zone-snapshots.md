@@ -4,7 +4,7 @@ title: Zone snapshots keyed to partition offsets
 epic: EPIC-04
 component: server
 type: feature
-status: done
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-004]
 blocks: [AW-SRV-007, AW-SRV-019]
@@ -460,12 +460,15 @@ CLAUDE.md §8, plus:
   server's own registry; `{reason="stall"}` needs a copy over `max_stall_ms`, which the sizing
   fixture measures at 8 ms of 15. `AW-SRV-007` is the story that drives a real failure through
   recovery and inherits the live observation of these.
-  One mismatch, for the record rather than as a deferral: §Observability declares
-  `andara_snapshot_failures_total{reason="boundary"}`, and the code neither pre-creates nor
-  increments it — `server/tickloop/snapshot.go:101` registers `store`, `encode`, `timeout`, `stall`
-  only. A round abandoned for an unpublished boundary is counted on
-  `andara_tick_publish_failures_total{kind="boundary"}` instead. The declaration is the thing that is
-  wrong, not the code; `docs/` prose is architecture's to correct.
+  **One series is declared and not implemented, and it is an unmet acceptance criterion rather than
+  a documentation slip.** `andara_snapshot_failures_total{reason="boundary"}` is named by
+  §Observability *and required by AC-8* — "the boundary is reported lost, the round is abandoned and
+  counted `reason=boundary`". The code neither pre-creates nor increments it:
+  `server/tickloop/snapshot.go:101` registers `store`, `encode`, `timeout`, `stall` only, and
+  `server/tickloop/loop.go:315` gates the round on `boundaryPublished` so an abandoned round is
+  silently not taken. The tick's own `andara_tick_publish_failures_total{kind="boundary"}` records
+  that the boundary was lost, which is a different statement from a round having been abandoned.
+  DoD line 1 does not pass while this is open, which is why the story is `review` and not `done`.
 
 ### Sizing fixture, measured
 
