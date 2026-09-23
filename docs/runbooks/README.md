@@ -25,13 +25,13 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `simulation-lagging.md` | `AW-SRV-002` | `SimulationLagging` |
 | `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
 | `sessions-dropping.md` | `AW-SRV-011` | `SessionsDroppingAtRate` |
+| `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
-| `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
 | `projection-stale.md` | `AW-SRV-019` (shared with `AW-SRV-017`, `AW-SRV-018`) | `ProjectionStale` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |

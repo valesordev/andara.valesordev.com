@@ -320,6 +320,47 @@
             }
           }
         },
+        "snapshot": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_SNAPSHOT_INTERVAL (AW-SRV-006). Default when unset: '60s'."
+            },
+            "max_stall_ms": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "ANDARA_SNAPSHOT_MAX_STALL_MS (AW-SRV-006). Default when unset: 15."
+            },
+            "store": {
+              "type": "string",
+              "enum": [
+                "fs",
+                "s3"
+              ],
+              "description": "ANDARA_SNAPSHOT_STORE (AW-SRV-006). Default when unset: 'fs'."
+            },
+            "fs_path": {
+              "type": "string",
+              "description": "ANDARA_SNAPSHOT_FS_PATH (AW-SRV-006). Default when unset: '/var/lib/andara/snapshots'."
+            },
+            "s3_bucket": {
+              "type": "string",
+              "description": "ANDARA_SNAPSHOT_S3_BUCKET (AW-SRV-006). Default when unset: ''."
+            },
+            "s3_endpoint": {
+              "type": "string",
+              "description": "ANDARA_SNAPSHOT_S3_ENDPOINT (AW-SRV-006). Default when unset: ''."
+            },
+            "upload_timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_SNAPSHOT_UPLOAD_TIMEOUT (AW-SRV-006). Default when unset: '30s'."
+            }
+          }
+        },
         "kafka": {
           "type": "object",
           "additionalProperties": false,

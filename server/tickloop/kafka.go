@@ -516,6 +516,28 @@ func (k *KafkaPublisher) Produce(ctx context.Context, cmds []*logv1.LoggedComman
 	return k.send(ctx, recs)
 }
 
+// ProduceSnapshots implements ManifestPublisher: the SnapshotWritten records
+// for a completed round, each to its Zone's Partition on the events topic
+// under the SnapshotKey record key (AW-SRV-006 AC-7).
+//
+// Its failure does not fail the round, and it deliberately does not take the
+// boundary-loss path TickCompleted does. A gapless sequence matters for
+// boundaries because recovery refuses to replay past a gap; a manifest is
+// audit and tooling, nothing in the recovery path reads it, and a missing one
+// costs an operator a `snapshot list` rather than a World that will not boot.
+func (k *KafkaPublisher) ProduceSnapshots(ctx context.Context, records []*logv1.SnapshotWritten) error {
+	recs := make([]*kgo.Record, 0, len(records))
+	for _, r := range records {
+		body, err := canonical.Marshal(r)
+		if err != nil {
+			return err
+		}
+		zone := sim.ZoneID(r.GetZoneId())
+		recs = append(recs, &kgo.Record{Topic: k.Events, Partition: sim.PartitionFor(zone), Key: []byte(SnapshotKey), Value: body})
+	}
+	return k.send(ctx, recs)
+}
+
 // Flush waits for buffered records to be acknowledged, or for ctx.
 func (k *KafkaPublisher) Flush(ctx context.Context) error { return k.client.Flush(ctx) }
 

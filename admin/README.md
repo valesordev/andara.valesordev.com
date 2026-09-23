@@ -27,6 +27,7 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli auth login` / `logout` / `refresh` / `whoami` | the stored credential (`AW-SRV-008`) |
 | `andara-cli account …` / `invite …` / `registration …` | account administration (operator) |
 | `andara-cli sim repl` | drive the Command Pipeline in-process against content on disk (developer) |
+| `andara-cli snapshot list` | list a Zone's snapshot objects in the configured store (`AW-SRV-006`, operator) |
 | `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`) |
 
 ## Global flags
@@ -108,6 +109,33 @@ the connected commands' `connect_failed`, `unauthenticated`,
 
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
 stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
+
+## snapshot — reading the store
+
+`snapshot list --zone <zone>` prints a Zone's snapshot objects, newest offset first: the
+tick each was taken at, its `state_version`, the Partition offset that keys it, its size,
+and the first twelve hex characters of its State Hash. `--output json` carries the full
+hash and every field.
+
+It reads the store **directly**, the way `sim repl` reads content on disk. Nothing here
+talks to a server, so `--server-address` and the stored credential are read and unused,
+and the command works when no server is running — which is when an operator most wants it
+(`docs/runbooks/snapshot-stale.md`). Point it at the store the server is configured with:
+
+```
+andara-cli snapshot list --zone town --fs-path /var/lib/andara/snapshots
+andara-cli snapshot list --zone town --store s3 --s3-bucket andara-prod --s3-endpoint minio:9000
+```
+
+An object that cannot be read or decoded is still a row, with its error in place of its
+fields. That includes an object written by a newer binary than this one, which is the case
+a rollback most needs to see; dropping it would make a corrupt or unreadable round look
+like a missing one.
+
+`snapshot verify`, and a `snapshot list` that asks the running server what *it* can see
+over `Admin`, are `AW-SRV-007`'s. The two are not redundant: that one answers what the
+server sees, this one answers what is actually in the bucket, and a runbook wants the
+second when the first disagrees with it.
 
 ## play — the Text Interface
 

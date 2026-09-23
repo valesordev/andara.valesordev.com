@@ -100,7 +100,10 @@ def test_schema_rejects(env):
     cases = [
         ("server.http.port=ten", "/server/http/port"),
         ("probes.startup.periodSeconds=0", "/probes/startup/periodSeconds"),
-        ("server.snapshot.interval=60s", "/server"),   # groomed, not in code: rejected (AW-SRV-006)
+        # A groomed key the server does not read yet stays out of the schema.
+        # snapshot.* moved into it with AW-SRV-006, so the example here is
+        # AW-SRV-007's, which is still pending.
+        ("server.recovery.require_snapshot=true", "/server"),
         ("snapshots.size=20GB", "/snapshots/size"),
         ("nonsense=1", "additional properties"),
     ]
@@ -111,6 +114,25 @@ def test_schema_rejects(env):
         elif needle not in err:
             fail("%s: --set %s rejected but the message does not name %r: %s"
                  % (env, setting, needle, err.strip().splitlines()[-1]))
+
+
+def test_snapshot_keys_render(env):
+    """AW-SRV-006: the snapshot.* keys the server reads are settable and reach the container."""
+    code, out, err = render(env,
+                            "--set", "server.snapshot.interval=30s",
+                            "--set", "server.snapshot.store=fs",
+                            "--set", "server.snapshot.max_stall_ms=7")
+    if code != 0:
+        fail("%s: the snapshot keys did not render: %s" % (env, err.strip().splitlines()[-1] if err.strip() else ""))
+    cm = find(docs(out), "ConfigMap", "andara-config")
+    if cm is None:
+        fail("%s: no andara-config ConfigMap in the rendered output" % env)
+    data = cm.get("data", {})
+    for name, want in (("ANDARA_SNAPSHOT_INTERVAL", "30s"),
+                       ("ANDARA_SNAPSHOT_STORE", "fs"),
+                       ("ANDARA_SNAPSHOT_MAX_STALL_MS", "7")):
+        if data.get(name) != want:
+            fail("%s: %s = %r, want %r" % (env, name, data.get(name), want))
 
 
 def test_probes(env):
@@ -324,6 +346,7 @@ def main():
         test_pvc_retained(env)
         test_no_secret_material(env)
         test_schema_rejects(env)
+        test_snapshot_keys_render(env)
         test_probes(env)
         test_edge(env)
     test_edge_off()

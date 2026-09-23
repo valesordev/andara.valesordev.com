@@ -1005,6 +1005,118 @@ func (x *PartitionOffset) GetOffset() int64 {
 	return 0
 }
 
+// The snapshot manifest (AW-SRV-006). Produced to the Zone's Partition on
+// andara.events.v1 after the object is durable, under its own record key, the
+// way TickCompleted is — andara.log.v1 has no oneof carrier, and a control
+// record is told apart by its key, not by its position in a union.
+//
+// Audit and tooling only. AW-SRV-007 discovers snapshots through
+// WorldStore.List and verifies them through the envelope and TickCompleted,
+// because a backwards scan of an Event Partition for the newest manifest is
+// unbounded and a List is one call. Nothing in the recovery path reads this.
+type SnapshotWritten struct {
+	state        protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId       string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	StateVersion uint32                 `protobuf:"varint,2,opt,name=state_version,json=stateVersion,proto3" json:"state_version,omitempty"`
+	Tick         uint64                 `protobuf:"varint,3,opt,name=tick,proto3" json:"tick,omitempty"`
+	// The offsets the snapshot was taken at, sorted by partition — the same
+	// values the envelope carries.
+	Offsets []*PartitionOffset `protobuf:"bytes,4,rep,name=offsets,proto3" json:"offsets,omitempty"`
+	// The Zone's State Hash at that tick. Its key resolves to an object whose
+	// envelope hash equals this (AC-7).
+	StateHash []byte `protobuf:"bytes,5,opt,name=state_hash,json=stateHash,proto3" json:"state_hash,omitempty"`
+	// Where the object is, in the store's key space:
+	// {zone_id}/{tick}/{state_version}/{offset}, tick and offset zero-padded so
+	// lexical order is tick order, and {zone_id}/{tick}/ is the prefix holding
+	// one Zone's part of a round. The tick keeps a round's objects immutable:
+	// an idle Zone holds its offset, so an offset-only key let a later round
+	// overwrite an earlier one and a partial failure then left no complete
+	// round at all (AC-5).
+	Key           string `protobuf:"bytes,6,opt,name=key,proto3" json:"key,omitempty"`
+	SizeBytes     uint64 `protobuf:"varint,7,opt,name=size_bytes,json=sizeBytes,proto3" json:"size_bytes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *SnapshotWritten) Reset() {
+	*x = SnapshotWritten{}
+	mi := &file_andara_log_v1_log_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SnapshotWritten) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SnapshotWritten) ProtoMessage() {}
+
+func (x *SnapshotWritten) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_log_v1_log_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SnapshotWritten.ProtoReflect.Descriptor instead.
+func (*SnapshotWritten) Descriptor() ([]byte, []int) {
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *SnapshotWritten) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *SnapshotWritten) GetStateVersion() uint32 {
+	if x != nil {
+		return x.StateVersion
+	}
+	return 0
+}
+
+func (x *SnapshotWritten) GetTick() uint64 {
+	if x != nil {
+		return x.Tick
+	}
+	return 0
+}
+
+func (x *SnapshotWritten) GetOffsets() []*PartitionOffset {
+	if x != nil {
+		return x.Offsets
+	}
+	return nil
+}
+
+func (x *SnapshotWritten) GetStateHash() []byte {
+	if x != nil {
+		return x.StateHash
+	}
+	return nil
+}
+
+func (x *SnapshotWritten) GetKey() string {
+	if x != nil {
+		return x.Key
+	}
+	return ""
+}
+
+func (x *SnapshotWritten) GetSizeBytes() uint64 {
+	if x != nil {
+		return x.SizeBytes
+	}
+	return 0
+}
+
 var File_andara_log_v1_log_proto protoreflect.FileDescriptor
 
 const file_andara_log_v1_log_proto_rawDesc = "" +
@@ -1076,7 +1188,17 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\x10commands_applied\x18\x06 \x01(\x04R\x0fcommandsApplied\"G\n" +
 	"\x0fPartitionOffset\x12\x1c\n" +
 	"\tpartition\x18\x01 \x01(\x05R\tpartition\x12\x16\n" +
-	"\x06offset\x18\x02 \x01(\x03R\x06offset*Q\n" +
+	"\x06offset\x18\x02 \x01(\x03R\x06offset\"\xed\x01\n" +
+	"\x0fSnapshotWritten\x12\x17\n" +
+	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12#\n" +
+	"\rstate_version\x18\x02 \x01(\rR\fstateVersion\x12\x12\n" +
+	"\x04tick\x18\x03 \x01(\x04R\x04tick\x128\n" +
+	"\aoffsets\x18\x04 \x03(\v2\x1e.andara.log.v1.PartitionOffsetR\aoffsets\x12\x1d\n" +
+	"\n" +
+	"state_hash\x18\x05 \x01(\fR\tstateHash\x12\x10\n" +
+	"\x03key\x18\x06 \x01(\tR\x03key\x12\x1d\n" +
+	"\n" +
+	"size_bytes\x18\a \x01(\x04R\tsizeBytes*Q\n" +
 	"\fUnbindReason\x12\x1d\n" +
 	"\x19UNBIND_REASON_UNSPECIFIED\x10\x00\x12\b\n" +
 	"\x04QUIT\x10\x01\x12\n" +
@@ -1098,7 +1220,7 @@ func file_andara_log_v1_log_proto_rawDescGZIP() []byte {
 }
 
 var file_andara_log_v1_log_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_andara_log_v1_log_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_andara_log_v1_log_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_andara_log_v1_log_proto_goTypes = []any{
 	(UnbindReason)(0),         // 0: andara.log.v1.UnbindReason
 	(*LoggedCommand)(nil),     // 1: andara.log.v1.LoggedCommand
@@ -1112,7 +1234,8 @@ var file_andara_log_v1_log_proto_goTypes = []any{
 	(*Scope)(nil),             // 9: andara.log.v1.Scope
 	(*TickCompleted)(nil),     // 10: andara.log.v1.TickCompleted
 	(*PartitionOffset)(nil),   // 11: andara.log.v1.PartitionOffset
-	(*v1.ComponentValue)(nil), // 12: andara.content.v1.ComponentValue
+	(*SnapshotWritten)(nil),   // 12: andara.log.v1.SnapshotWritten
+	(*v1.ComponentValue)(nil), // 13: andara.content.v1.ComponentValue
 }
 var file_andara_log_v1_log_proto_depIdxs = []int32{
 	2,  // 0: andara.log.v1.LoggedCommand.look:type_name -> andara.log.v1.Look
@@ -1122,14 +1245,15 @@ var file_andara_log_v1_log_proto_depIdxs = []int32{
 	6,  // 4: andara.log.v1.LoggedCommand.unbind_character:type_name -> andara.log.v1.UnbindCharacter
 	7,  // 5: andara.log.v1.Arrive.entity:type_name -> andara.log.v1.Entity
 	0,  // 6: andara.log.v1.UnbindCharacter.reason:type_name -> andara.log.v1.UnbindReason
-	12, // 7: andara.log.v1.Entity.components:type_name -> andara.content.v1.ComponentValue
+	13, // 7: andara.log.v1.Entity.components:type_name -> andara.content.v1.ComponentValue
 	9,  // 8: andara.log.v1.Event.scope:type_name -> andara.log.v1.Scope
 	11, // 9: andara.log.v1.TickCompleted.offsets:type_name -> andara.log.v1.PartitionOffset
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	11, // 10: andara.log.v1.SnapshotWritten.offsets:type_name -> andara.log.v1.PartitionOffset
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_andara_log_v1_log_proto_init() }
@@ -1150,7 +1274,7 @@ func file_andara_log_v1_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_log_v1_log_proto_rawDesc), len(file_andara_log_v1_log_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   11,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

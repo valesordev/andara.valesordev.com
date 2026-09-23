@@ -10,15 +10,18 @@ import (
 	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/sim"
+	"github.com/valesordev/andara/server/store"
 	"github.com/valesordev/andara/server/tickloop"
 )
 
 // StartTickLoop builds the engine over the loaded World and Templates and
 // the loop over the configured source, and returns the loop ready to Run.
-// Without a snapshot (AW-SRV-006) the engine starts at tick 0 and the
-// consumer at offset 0 on every assigned Partition: a restart replays the
-// log from its beginning, which is correct and slow.
+// The engine still starts at tick 0 and the consumer at offset 0 on every
+// assigned Partition: AW-SRV-006 writes snapshots, and AW-SRV-007 is what
+// recovers from one. Until then a restart replays the log from its
+// beginning, which is correct and slow.
 func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	cfg := rt.Cfg
 	if rt.World == nil {
@@ -123,10 +126,23 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		engine.Subscribe(rt.Bindings)
 	}
 
+	// Snapshots (AW-SRV-006). Built after the source and publisher so a
+	// failure here closes them, and given the publisher as its manifest
+	// writer when there is one — the memory source has none, and a round
+	// without a manifest is a round that wrote its objects and skipped an
+	// audit record.
+	snapshotter, err := newSnapshotter(cfg, rt, publisher)
+	if err != nil {
+		_ = source.Close()
+		_ = publisher.Close()
+		return nil, err
+	}
+
 	loop, err = tickloop.New(tickloop.Options{
 		Engine:          engine,
 		Source:          source,
 		Publisher:       publisher,
+		Snapshotter:     snapshotter,
 		TickRate:        cfg.SimTickRate,
 		TickBudget:      cfg.SimTickBudget,
 		MaxPerTick:      cfg.SimMaxPerTick,
@@ -156,7 +172,42 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		slog.Int("partitions", len(cfg.SimPartitions)),
 		slog.Uint64("seed", engine.State().Seed),
 	)
+	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "snapshots configured",
+		slog.Bool("enabled", snapshotter.Enabled()),
+		slog.String("store", cfg.SnapshotStore),
+		slog.String("interval", cfg.SnapshotInterval.String()),
+	)
 	return loop, nil
+}
+
+// newSnapshotter builds the round runner from the snapshot.* configuration. A
+// zero snapshot.interval yields a runner that never takes a round and needs no
+// store, which is what sim.source=memory and a development process want.
+func newSnapshotter(cfg config.Config, rt *Runtime, publisher tickloop.Publisher) (*tickloop.Snapshotter, error) {
+	o := tickloop.SnapshotOptions{
+		Interval:      cfg.SnapshotInterval,
+		MaxStall:      cfg.SnapshotMaxStall,
+		UploadTimeout: cfg.SnapshotUploadTimeout,
+		Log:           rt.Tel.Log,
+		Tracer:        rt.Tel.Tracer,
+		Registry:      rt.Tel.Reg,
+	}
+	if cfg.SnapshotInterval > 0 {
+		ws, err := store.Open(store.Options{
+			Kind:       cfg.SnapshotStore,
+			FSPath:     cfg.SnapshotFSPath,
+			S3Bucket:   cfg.SnapshotS3Bucket,
+			S3Endpoint: cfg.SnapshotS3Endpoint,
+		})
+		if err != nil {
+			return nil, err
+		}
+		o.Store = ws
+		if mp, ok := publisher.(tickloop.ManifestPublisher); ok {
+			o.Manifest = mp
+		}
+	}
+	return tickloop.NewSnapshotter(o)
 }
 
 // onTick is what the loop tells after every tick: the egress, so a

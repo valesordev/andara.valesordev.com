@@ -120,16 +120,52 @@ func (s *WorldState) CanonicalBytes() []byte {
 	}
 	sort.Strings(zids)
 	for _, zid := range zids {
-		z := s.Zones[ZoneID(zid)]
-		writeFields(&b, "zone_state", zid, strconv.FormatBool(z.Faulted), strconv.FormatUint(uint64(z.FaultedTick), 10))
-		eids := make([]string, 0, len(z.Entities))
-		for id := range z.Entities {
-			eids = append(eids, string(id))
-		}
-		sort.Strings(eids)
-		for _, eid := range eids {
-			b.Write(EntityCanonicalBytes(*z.Entities[EntityID(eid)]))
-		}
+		b.Write(ZoneCanonicalBytes(s.Zones[ZoneID(zid)]))
 	}
 	return []byte(b.String())
 }
+
+// ZoneCanonicalBytes is one Zone's section of the World's canonical
+// serialization: its faulted flag and its Entities, sorted by ID. The World's
+// bytes are the concatenation of these in Zone-ID order, after the state and
+// offset records — which is the point. AW-SRV-006 needs a per-Zone hash for a
+// snapshot envelope (AC-3), and deriving it from the same function that builds
+// the world bytes makes the two consistent by construction rather than by two
+// encoders agreeing. A second encoder written to match this one would be a
+// replay divergence waiting for the first edit that touched only one of them.
+func ZoneCanonicalBytes(z *ZoneState) []byte {
+	if z == nil {
+		return nil
+	}
+	var b strings.Builder
+	writeFields(&b, "zone_state", string(z.ID), strconv.FormatBool(z.Faulted), strconv.FormatUint(uint64(z.FaultedTick), 10))
+	eids := make([]string, 0, len(z.Entities))
+	for id := range z.Entities {
+		eids = append(eids, string(id))
+	}
+	sort.Strings(eids)
+	for _, eid := range eids {
+		b.Write(EntityCanonicalBytes(*z.Entities[EntityID(eid)]))
+	}
+	return []byte(b.String())
+}
+
+// ZoneHash is the State Hash of one Zone: SHA-256 over ZoneCanonicalBytes.
+//
+// It is what a snapshot envelope carries, and what AW-SRV-007 AC-4 checks when
+// it calls a Zone object hash-invalid. It is deliberately *not* comparable to
+// TickCompleted.state_hash, which covers the whole World including the PRNG and
+// the offsets; that comparison is AW-SRV-007 AC-5's, made after replay against
+// the recovered World. See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
+func (s *WorldState) ZoneHash(id ZoneID) ([32]byte, bool) {
+	z, ok := s.Zones[id]
+	if !ok {
+		return [32]byte{}, false
+	}
+	return HashZone(z), true
+}
+
+// HashZone is the State Hash of one Zone, given the Zone. The form recovery
+// needs: AW-SRV-007 holds a Zone decoded from a snapshot body, which belongs
+// to no WorldState yet, and must hash it to check the envelope's claim.
+func HashZone(z *ZoneState) [32]byte { return sha256.Sum256(ZoneCanonicalBytes(z)) }
