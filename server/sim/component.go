@@ -141,6 +141,39 @@ func KnownComponentType(t ComponentType) bool {
 	return ok
 }
 
+// ComponentFieldKind returns the kind the registry declares for a field on a
+// Component type, and false when the type does not declare that field.
+//
+// Exported for the same reason ComponentTypes is: AW-CLI-006 validates a
+// Builder's source against the vocabulary the loader enforces rather than
+// against a copy of it, which is what makes the three-way equivalence of
+// AW-CLI-002 AC-4 possible at all (ADR-0004: one validator, quoted rather than
+// copied).
+func ComponentFieldKind(t ComponentType, field string) (FieldKind, bool) {
+	spec, ok := componentRegistry[t]
+	if !ok {
+		return FieldUnset, false
+	}
+	k, ok := spec.fields[field]
+	return k, ok
+}
+
+// ComponentFieldNames returns the fields a Component type declares, sorted. A
+// marker Component declares none, which is why it appears in a Template's
+// components and in no provenance entry (semantics.md §5).
+func ComponentFieldNames(t ComponentType) []string {
+	spec, ok := componentRegistry[t]
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(spec.fields))
+	for name := range spec.fields {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // ComponentTypes returns the registered Component types in sorted order.
 // Exported so the CLI's content validation quotes the same vocabulary the
 // loader enforces rather than a copy of it (ADR-0004: one validator).
