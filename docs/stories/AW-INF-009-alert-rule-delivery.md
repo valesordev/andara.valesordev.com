@@ -118,6 +118,11 @@ the tenant at least once.
 
 ## Open questions
 
+- **Handed over by `AW-INF-008` (2026-09-23), for the routing this story owns.** Every rule now
+  carries `namespace`. Two consequences land here: `AndaraServerUnavailable`'s `absent()` lines page
+  for `andara-dev` and `andara-prod` until each is installed — loading the group before prod exists is
+  a page for prod — and `andara-local`, when installed on the box, is scraped like the others, so
+  `max by (namespace)` pages for it too unless routing drops it.
 - **Resolved 2026-09-17 (Brian): a GitHub repository secret.**
 - `[ASSUMPTION]` Pages go to the stack's default contact point (the account email) until Brian says
   otherwise. The routing is a Grafana Cloud setting and does not touch the interface contract; the

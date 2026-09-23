@@ -117,6 +117,15 @@ serviceAccount:
 alerts:
   enabled: true
 
+# Scrape annotations on the server and projector pod templates (AW-INF-008). The cluster's
+# Alloy scrapes by annotation (Grafana k8s-monitoring, annotation autodiscovery), so this is
+# what makes a pod's /metrics leave the pod; `k8s.grafana.com/job` sets the job the alert
+# selectors name. The scraper runs in networkPolicy.observabilityNamespace, which the
+# NetworkPolicy already admits to the http port. false renders none, for a cluster that
+# discovers targets some other way.
+observability:
+  annotations: true
+
 # Disabled everywhere until the binaries exist (AW-SRV-019, AW-SRV-017, AW-SRV-018).
 # Enabling one before then renders a Deployment that crash-loops on a missing subcommand.
 projectors:

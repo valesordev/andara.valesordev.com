@@ -2,7 +2,8 @@
 # Prometheus rules as a ConfigMap rather than a PrometheusRule: the CRD would need its
 # schema for kubeconform and an operator to be installed, and the same file is mounted by
 # the compose Prometheus (`make up`), which is where §8's "verified against a real backend"
-# happens. The observability stack mounts this map into its rules directory.
+# happens. Nothing on the cluster loads this map: the cluster has no Prometheus, and how the
+# rules reach Grafana Cloud's ruler is AW-INF-009.
 apiVersion: v1
 kind: ConfigMap
 metadata:

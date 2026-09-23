@@ -295,6 +295,50 @@ jobs:
       - name: the M1 gate against the stack — the Protocol whole, andara-cli play up to AW-CLI-007
         run: make stack-play
 
+      # AW-INF-008 AC-5, the compose half. The rule file the chart ships is the one this
+      # Prometheus mounts, and it was rewritten per namespace; here it must still load with
+      # every rule healthy, and AndaraServerUnavailable must still follow the server — the
+      # AW-INF-003 `docker stop` check, which until now was a line in a verification record.
+      # The rules have been evaluating since `make up`, so `health: ok` is a verdict, not a
+      # race. After the M1 gate because it stops the server; nothing after it reads a
+      # counter. Both transitions are polled to a deadline, never read once
+      # (docs/specs/testing/live-assertions.md).
+      - name: the alert rules load and AndaraServerUnavailable follows the server
+        run: |
+          set -euo pipefail
+          prom="http://localhost:${ANDARA_METRICS_PORT:-9090}"
+          compose="docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server"
+          curl -sf "$prom/api/v1/rules" | python3 -c "
+          import json, sys
+          groups = json.load(sys.stdin)['data']['groups']
+          rules = [r for g in groups for r in g['rules']]
+          bad = [(r['name'], r.get('health'), r.get('lastError')) for r in rules if r.get('health') != 'ok']
+          assert rules and not bad, bad
+          print(len(rules), 'rules loaded, all ok')
+          "
+          state() { curl -sf "$prom/api/v1/rules?type=alert" | python3 -c "
+          import json, sys
+          print(next(r['state'] for g in json.load(sys.stdin)['data']['groups'] for r in g['rules']
+                     if r['name'] == 'AndaraServerUnavailable'))
+          "; }
+          await() {
+            local want="$1" deadline="$2" s=""
+            for _ in $(seq "$deadline"); do
+              s=$(state || true)
+              [[ "$s" == "$want" ]] && { echo "AndaraServerUnavailable: $s"; return 0; }
+              sleep 1
+            done
+            echo "AndaraServerUnavailable is ${s:-unreadable}, not $want, after ${deadline}s" >&2
+            return 1
+          }
+          await inactive 30
+          $compose stop andara-server
+          # Pending, not firing: `for: 2m` has not elapsed, and one alert is what a stopped
+          # server is — the per-environment absent() lines stay silent without a namespace.
+          await pending 60
+          $compose start andara-server
+          await inactive 120
+
       - name: down leaves nothing behind
         run: |
           set -euo pipefail

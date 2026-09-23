@@ -226,7 +226,10 @@ Owed elsewhere, named so nothing is quietly skipped — and since 2026-09-17 car
 (AW-SRV-002), the `andara_probe_state` gauge (implementation lane, with whichever of those lands
 first). "Verified against a real backend" for the cluster's copy of the alert rules is `AW-INF-008`
 and `AW-INF-009`: there is no cluster Prometheus, and this story's README sentence saying there must
-be is corrected there. This story is `done` on what it built. Observed in passing: `ANDARA_LOG_FORMAT=text` is accepted by
+be is corrected there. *(2026-09-23, `AW-INF-008`: corrected. The pod is scraped by annotation under
+`job="andara-server"` into Grafana Cloud; `AndaraServerUnavailable` is per-namespace and its compose
+`docker stop` check is now a `stack` workflow step rather than this record's sentence. The box
+observation is `make observe-check ENV=<env>`; the rules' evaluation there is still `AW-INF-009`.)* This story is `done` on what it built. Observed in passing: `ANDARA_LOG_FORMAT=text` is accepted by
 config and ignored by `server/telemetry` — logs stay JSON; an AW-SRV-001 follow-up.
 
 ## Open questions

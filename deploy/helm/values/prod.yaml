@@ -8,6 +8,10 @@ server:
   telemetry:
     environment: prod
     log_level: info
+    # The cluster's Alloy OTLP receiver (Grafana k8s-monitoring, AW-INF-008), which forwards
+    # traces to Tempo and log records to Loki. Plaintext gRPC inside the cluster, as the
+    # server's exporter dials it.
+    otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
   character:
     # Where a new Character enters the World (AW-SRV-014). Required outside local: the
     # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content

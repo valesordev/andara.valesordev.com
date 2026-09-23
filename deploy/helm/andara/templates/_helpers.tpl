@@ -76,3 +76,20 @@ The Secret cert-manager writes the edge certificate into and the Ingresses read 
 (AW-INF-006). One helper so the Certificate and both Ingresses cannot disagree.
 */ -}}
 {{- define "andara.edgeSecretName" -}}{{ include "andara.name" . }}-edge-tls{{- end -}}
+
+{{- /*
+Scrape annotations for the cluster's annotation autodiscovery (AW-INF-008): Grafana
+k8s-monitoring's Alloy keeps a pod whose prometheus.io/scrape is "true", scrapes
+prometheus.io/port and prometheus.io/path, and takes `job` from k8s.grafana.com/job. Without
+that last one the job falls back to app.kubernetes.io/name — `andara` for every pod — and no
+alert selector matches. One helper, so every pod template carries the same four.
+Called with (dict "root" $ "job" "<job>").
+*/ -}}
+{{- define "andara.scrapeAnnotations" -}}
+{{- if .root.Values.observability.annotations -}}
+prometheus.io/scrape: "true"
+prometheus.io/port: {{ include "andara.httpPort" .root | quote }}
+prometheus.io/path: /metrics
+k8s.grafana.com/job: {{ .job }}
+{{- end -}}
+{{- end -}}

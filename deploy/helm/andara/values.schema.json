@@ -743,6 +743,16 @@
         }
       }
     },
+    "observability": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Scrape annotations on every pod template, for the cluster's annotation autodiscovery (AW-INF-008). The scrape source is admitted by networkPolicy.observabilityNamespace.",
+      "properties": {
+        "annotations": {
+          "type": "boolean"
+        }
+      }
+    },
     "projectors": {
       "type": "object",
       "additionalProperties": false,

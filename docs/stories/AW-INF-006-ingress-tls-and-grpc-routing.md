@@ -211,6 +211,12 @@ CLAUDE.md §8, plus: `make stream-soak` scheduled in CI; both runbooks exist; `d
 
 ## Open questions
 
+- **Verified against a real backend, on the cluster — `AW-INF-008` (2026-09-23).** Traefik and
+  cert-manager were already collected by the platform; what that story adds for this one is the two
+  edge alerts made per-environment — `IngressErrorRateHigh` takes the namespace from the router name
+  and `CertificateExpiringSoon` from `exported_namespace`, because the platform's scrapes label those
+  series with Traefik's and cert-manager's own — held by `promtool test rules` in `make helm-test`.
+  Evaluating them in Grafana Cloud is `AW-INF-009`.
 - **Found after `done` (2026-09-18):** `AW-SRV-008` had handed this story a note — forward the
   client address or the per-peer login limit becomes one bucket for the whole game — and it was not
   picked up. `AW-SRV-025` and `AW-INF-012` carry it now; this story's contract is unchanged.
