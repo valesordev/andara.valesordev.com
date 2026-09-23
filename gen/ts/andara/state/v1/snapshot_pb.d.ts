@@ -59,16 +59,37 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
   offsets: PartitionOffset[];
 
   /**
-   * Hash of the state in `body`, comparable to the TickCompleted record for the
-   * same tick. Recovery verifies rather than trusts.
+   * Hash of the state in `body`: the hash of THIS ZONE at this tick, not the
+   * World's. Recovery verifies rather than trusts, and AW-SRV-007 AC-4's
+   * "missing or hash-invalid Zone object" is a per-object check against this.
+   *
+   * It covers EVERY field the body carries. That is worth stating because the
+   * obvious construction does not: sim.WorldState.CanonicalBytes writes tick,
+   * the PRNG and next_event_id once in a global header, ahead of its per-Zone
+   * sections, while ZoneState repeats all three per Zone — they are
+   * process-wide values a Zone restored alone still needs. Hashing only the
+   * Zone's section would leave them unprotected, and a corrupted prng_state
+   * would stay hash-valid: AW-SRV-007 would not fall back to an older round,
+   * it would restore a World whose replay diverges and exit 2 at AC-5.
+   *
+   * So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
+   * carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is
+   * unchanged, so the World hash stays byte-for-byte what it was.
+   *
+   * Not the same number as TickCompleted.state_hash, which is global and which
+   * AW-SRV-007 AC-5 compares against the recovered World after replay. The two
+   * are different assertions at different points; an earlier version of this
+   * comment said "comparable to the TickCompleted record for the same tick",
+   * which read as though they were interchangeable.
    *
    * @generated from field: bytes state_hash = 4;
    */
   stateHash: Uint8Array;
 
   /**
-   * Which Zone this snapshot covers. Snapshots are per-Zone and keyed to
-   * offsets (ADR-0002), so a Zone can be restored without the whole World.
+   * Which Zone this snapshot covers. Snapshots are per-Zone, and the store key
+   * is {zone_id}/{tick}/{state_version}/{offset} (AW-SRV-006), so a Zone can be
+   * restored without the whole World and a round is a prefix group.
    *
    * @generated from field: string zone_id = 5;
    */
@@ -83,10 +104,9 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
   takenAtUnixNano: bigint;
 
   /**
-   * The serialized Zone state. Its shape is AW-SRV-006's to define, and that
-   * story is `draft`: assigning field numbers to a guess about mutable World
-   * state would be assigning them permanently. Bytes keeps the envelope stable
-   * while the body evolves independently, versioned by state_version above.
+   * The serialized Zone state: andara.state.v1.ZoneState, in zone_state.proto.
+   * Bytes rather than a nested message keeps the envelope stable while the body
+   * evolves independently, versioned by state_version above.
    *
    * @generated from field: bytes body = 7;
    */
