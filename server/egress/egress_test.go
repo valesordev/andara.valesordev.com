@@ -19,6 +19,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/sim"
@@ -627,9 +628,11 @@ func TestHeartbeat(t *testing.T) {
 		t.Fatalf("expected heartbeat at tick 1, got %v", got)
 	}
 	a.next()
-	if got := counter(t, f.e.Metrics().Sent.WithLabelValues(TypeHeartbeat)); got < 2 {
-		t.Errorf("sent{heartbeat} = %v", got)
-	}
+	// The frame is in hand before it is counted: stream.send increments
+	// Sent after out.Send returns. Wait on the counter itself (rule 2 of
+	// docs/specs/testing/live-assertions.md); a 20 ms sleep before the
+	// increment fails a single read on every run, reading 1.
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Sent.WithLabelValues(TypeHeartbeat)) >= 2 }, "two heartbeats counted")
 }
 
 // AC-9: World visibility is asked for per stream, refused without the
@@ -844,14 +847,8 @@ func (f *fixture) forgotten(sessions, subscribers int) {
 	}, fmt.Sprintf("teardown to settle at %d session(s) and %d subscription(s)", sessions, subscribers))
 }
 
+// waitFor is eventually.True with this package's in-process deadline.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 5*time.Second, what, cond)
 }

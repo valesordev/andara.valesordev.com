@@ -581,7 +581,9 @@ func TestConnectionDrop_TearsDownSessions(t *testing.T) {
 	// Warm up so the baseline includes whatever the first connection
 	// allocates once (TLS session caches, the h2 framer pools).
 	dropOne(t, h)
-	waitFor(t, 5*time.Second, func() bool { return h.srv.SessionCount() == 0 }, "warm-up teardown")
+	active := func() float64 { return testutil.ToFloat64(h.srv.metrics.SessionsActive) }
+	dropped := func() float64 { return testutil.ToFloat64(h.srv.metrics.SessionsTotal.WithLabelValues(OutcomeDropped)) }
+	waitFor(t, 5*time.Second, func() bool { return active() == 0 && dropped() == 1 }, "warm-up teardown counted")
 	runtime.GC()
 	baseGoroutines := runtime.NumGoroutine()
 	var base runtime.MemStats
@@ -601,13 +603,16 @@ func TestConnectionDrop_TearsDownSessions(t *testing.T) {
 		}()
 	}
 	wg.Wait()
-	waitFor(t, 30*time.Second, func() bool { return h.srv.SessionCount() == 0 }, "all sessions torn down")
-
-	if got := testutil.ToFloat64(h.srv.metrics.SessionsActive); got != 0 {
-		t.Errorf("sessions_active = %v after %d drops", got, n)
-	}
-	if got := testutil.ToFloat64(h.srv.metrics.SessionsTotal.WithLabelValues(OutcomeDropped)); got != n+1 {
-		t.Errorf("sessions_total{dropped} = %v, want %d", got, n+1)
+	// Wait on the gauge and the counter themselves, not on SessionCount():
+	// close deletes the map entry first and moves the metrics last, after
+	// the egress and the roster have been told, so the store reads empty
+	// while the last teardowns are still counting (rule 2 of
+	// docs/specs/testing/live-assertions.md). A 200 ms sleep between the
+	// two in sessionStore.close fails the SessionCount() wait on every run,
+	// with sessions_active still above a hundred.
+	waitFor(t, 30*time.Second, func() bool { return active() == 0 && dropped() == n+1 }, "sessions_active back to 0 and every drop counted")
+	if got := h.srv.SessionCount(); got != 0 {
+		t.Errorf("sessions = %d after %d drops", got, n)
 	}
 	h.srv.conns.Lock()
 	tracked := len(h.srv.conns.ids)

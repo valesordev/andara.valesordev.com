@@ -14,6 +14,7 @@ import (
 	"connectrpc.com/connect"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/internal/eventually"
 )
 
 // A signal while a Submit is being retried ends play at once, with the
@@ -33,10 +34,7 @@ func TestPlay_SignalWhileSubmitBlocked(t *testing.T) {
 	stdout, _, wait := playLive(t, env, sc)
 	stdout.await(t, "Here: Mara")
 	sc.line(t, "north")
-	deadline := time.Now().Add(5 * time.Second)
-	for len(w.submitted()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	eventually.True(t, 5*time.Second, "the retried Submit", func() bool { return len(w.submitted()) >= 2 })
 	start := time.Now()
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)

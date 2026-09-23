@@ -28,6 +28,7 @@ import (
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 )
 
 // httpClient trusts the local CA and nothing else.
@@ -131,13 +132,14 @@ func TestLive_AccountsAndAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cl.Close()
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) {
+	polled := 0
+	eventually.Observed(t, 20*time.Second, "the create_account audit record on andara.audit.v1", func() (bool, string) {
 		pctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		fetches := cl.PollFetches(pctx)
 		cancel()
 		found := false
 		fetches.EachRecord(func(r *kgo.Record) {
+			polled++
 			var rec auditv1.AuditRecord
 			if proto.Unmarshal(r.Value, &rec) == nil && rec.GetAction() == "create_account" && rec.GetTarget() == created.Msg.GetAccountId() {
 				found = true
@@ -147,9 +149,6 @@ func TestLive_AccountsAndAudit(t *testing.T) {
 				t.Logf("audit: actor=%s action=%s target=%s trace=%s", rec.GetActorAccountId(), rec.GetAction(), rec.GetTarget(), rec.GetTraceId())
 			}
 		})
-		if found {
-			return
-		}
-	}
-	t.Fatal("the create_account audit record never appeared on andara.audit.v1")
+		return found, fmt.Sprintf("%d records read, none for account %s", polled, created.Msg.GetAccountId())
+	})
 }

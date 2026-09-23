@@ -27,6 +27,7 @@ import (
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/gateway"
 )
 
@@ -546,14 +547,12 @@ func TestPlay_ReconnectAndResync(t *testing.T) {
 	startServerWith(t, s, func(o *gateway.Options) { o.Ingress, o.Egress = w2, w2 })
 
 	stdout.await(t, "You may have missed some events; the world continues from here.")
-	stdout.await(t, "Town Square") // the look after the Resync — it appears once before, so wait for the count
-	deadline := time.Now().Add(5 * time.Second)
-	for strings.Count(stdout.String(), "Town Square") < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
-	if strings.Count(stdout.String(), "Town Square") < 2 {
-		t.Fatalf("the Room was not rebuilt after the resync:\n%s", stdout.String())
-	}
+	// The look after the Resync: the Room appears once before, so wait for
+	// the count rather than the text.
+	eventually.Observed(t, 5*time.Second, "the Room rebuilt after the resync", func() (bool, string) {
+		out := stdout.String()
+		return strings.Count(out, "Town Square") >= 2, "transcript:\n" + out
+	})
 	sc.close()
 	if code := wait(); code != 0 {
 		t.Fatalf("exit=%d\n%s", code, stdout.String())
@@ -601,10 +600,7 @@ func TestPlay_BufferFullResubscribes(t *testing.T) {
 	stdout.await(t, "-- You fell behind the world's events; the stream is being reopened.")
 	// The fake answers a resume with a Resync; the client then looks.
 	stdout.await(t, "You may have missed some events")
-	deadline := time.Now().Add(5 * time.Second)
-	for len(w.subscribed()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(10 * time.Millisecond)
-	}
+	eventually.True(t, 5*time.Second, "a second subscription", func() bool { return len(w.subscribed()) >= 2 })
 	subs := w.subscribed()
 	if len(subs) < 2 || subs[1].GetLastEventId() != last {
 		t.Fatalf("resubscribe did not resume from %d: %v", last, subs)
@@ -762,10 +758,7 @@ func TestPlay_DeadlineRetryStaysInItsSession(t *testing.T) {
 	first := w.subscribed()[0].GetSessionId()
 
 	sc.line(t, "north")
-	deadline := time.Now().Add(5 * time.Second)
-	for norths.Load() == 0 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
+	eventually.True(t, 5*time.Second, "the north to reach the world", func() bool { return norths.Load() > 0 })
 	// The Session goes away under the hung Submit, and the client has
 	// reconnected — a second subscription exists — before it is answered.
 	game, _ := newTestGameClient(t, s)
@@ -774,12 +767,7 @@ func TestPlay_DeadlineRetryStaysInItsSession(t *testing.T) {
 	if _, err := game.CloseSession(ctx, connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: first})); err != nil {
 		t.Fatal(err)
 	}
-	for len(w.subscribed()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	if len(w.subscribed()) < 2 {
-		t.Fatal("no reconnect")
-	}
+	eventually.True(t, 5*time.Second, "the reconnect's subscription", func() bool { return len(w.subscribed()) >= 2 })
 	close(release)
 	stdout.await(t, outcomeUnknownMessage)
 	sc.close()

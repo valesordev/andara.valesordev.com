@@ -13,6 +13,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/recordlog"
 )
 
@@ -50,13 +51,9 @@ func TestAuditor_BoundedWait(t *testing.T) {
 	}
 	// The write eventually fails: counted and logged then.
 	log.release <- errors.New("broker gone")
-	deadline := time.Now().Add(2 * time.Second)
-	for testutil.ToFloat64(metrics.AuditWriteFailures) != 1 || !strings.Contains(logs.String(), "audit record not written") {
-		if time.Now().After(deadline) {
-			t.Fatalf("background failure never counted and logged:\n%s", logs.String())
-		}
-		time.Sleep(time.Millisecond)
-	}
+	eventually.Observed(t, 2*time.Second, "the background failure counted and logged", func() (bool, string) {
+		return testutil.ToFloat64(metrics.AuditWriteFailures) == 1 && strings.Contains(logs.String(), "audit record not written"), logs.String()
+	})
 
 	// A write that completes in time is silent.
 	logs.reset()
