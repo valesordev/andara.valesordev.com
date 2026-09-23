@@ -4,7 +4,7 @@ title: Content Language v1 — grammar, semantics, error contract, and conforman
 epic: EPIC-05
 component: cli
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-020, AW-SRV-021, AW-SRV-022]
 blocks: [AW-CLI-006]
@@ -84,7 +84,7 @@ on by line number, so that world-building is writing rather than data entry.
    reproduces it byte for byte. *(Made precise; comments survive publication, not compilation. See
    Corrections.)*
 10. **Given** the spec **when** Brian reads `corpus/valid/town/` **then** it is accepted as something a
-    Builder would write, recorded as a resolved question here. **Open.**
+    Builder would write, recorded as a resolved question here. **Resolved 2026-09-23.**
 11. **Given** `make content-grammar-check` **when** `make check` runs **then** it passes: every corpus
     file agrees with the grammar, every expected blob is canonical bytes, every
     `TemplateDefinition.source` names a line that opens that Template, and every code in `errors.md`
@@ -210,20 +210,22 @@ CLAUDE.md §8, plus: every error code in `errors.md` has at least one corpus fil
 `make content-grammar-check`, which also refuses a code the corpus uses and `errors.md` does not
 declare; AC-10 recorded.
 
-The four spec documents stay `status: draft` until AC-10 lands. **This story stays `in-progress`
-until then too, deliberately**: `review` counts as a dependency met, so flipping it would put
-`AW-CLI-006` in the implementation lane's `next` against a spec whose own frontmatter says `draft` —
-a compiler written before the syntax is pinned, which is the failure the `AW-CLI-003` split existed
-to prevent. Whether merging this branch moves the story to `review` — unblocking `AW-CLI-006` ahead
-of the syntax review — or holds it is Brian's call, attached to AC-10.
+The four spec documents stayed `status: draft` until AC-10 landed, and this story stayed `in-progress`
+past its merge (PR #44, 2026-09-22) for the same reason: `review` counts as a dependency met, and
+flipping it would have put `AW-CLI-006` in the implementation lane's `next` against a spec whose own
+frontmatter said `draft` — a compiler written before the syntax is pinned, which is the failure the
+`AW-CLI-003` split existed to prevent. AC-10 landed 2026-09-23 and the four documents are `ready`, so
+the story is `review`: merged, syntax pinned, the §8 checklist outstanding. No `[ASSUMPTION]` remains —
+the `src/<path>.aw` publication prefix was pinned on 2026-09-23 (below), because it is normative
+compiler output in `semantics.md` §6 and a dependency `AW-CLI-006` builds on cannot leave it movable.
+What §8 still needs is the record of `make content-grammar-check` green on `main`.
 
 ## Open questions
 
-- `[NEEDS BRIAN]` **Syntax review (AC-10)** — the one thing holding this story out of `done`. Read
-  `docs/specs/content-language/v1/corpus/valid/town/`. The three choices most worth disagreeing with:
-  `desc` as the keyword for a Room's prose, `->` as the exit arrow, and PascalCase Template names.
-  Only the last has a cost attached — changing it means renaming the shipped `andara.core` seed and
-  the fixtures `TestCoreSeedMatchesFixture` holds against it.
+- **Resolved 2026-09-23 (Brian): the syntax review (AC-10) — accepted as written.** `desc` as the keyword for a Room's prose, `->` as the exit arrow, and PascalCase Template
+  names all stand, so the shipped `andara.core` seed and the fixtures `TestCoreSeedMatchesFixture`
+  holds against it are not renamed. The four documents under `docs/specs/content-language/v1/` moved
+  from `draft` to `ready` in the same pass; `AW-CLI-006` has a pinned syntax to compile.
 
 - **Resolved 2026-09-22 (inherited from `AW-SRV-022`, 2026-09-18):** the identifier grammar admits
   the names on disk. Casing is split by what the identifier names, so `Merchant`, `Npc`, `Entity`,
@@ -272,7 +274,10 @@ of the syntax review — or holds it is Brian's call, attached to AC-10.
   `sim.MaxChainDepth`, exported by `AW-SRV-022` for exactly this, and the corpus pins both sides of
   the boundary.
 
-- `[ASSUMPTION]` Source blobs are published at `src/<path>.aw` with `media_type: text/x-andara`
-  (ADR-0009), so `content fetch` returns exactly what the Builder wrote, comments included. `src/`
-  keeps them clear of a loader that globs `*.json` at the pack root. `AW-CLI-003` owns `fetch` and
-  may move them; nothing in the language depends on the prefix.
+- **Resolved 2026-09-23 (architecture, at PR #55 review): `src/<path>.aw` with `media_type:
+  text/x-andara` is the contract, not an assumption.** Source blobs are published there (ADR-0009),
+  so `content fetch` returns exactly what the Builder wrote, comments included, and `src/` keeps them
+  clear of a loader that globs `*.json` at the pack root. It was written as `AW-CLI-003`'s to move,
+  but the path is normative `Compile` output in `semantics.md` §6 and `AW-CLI-006` AC-1 emits it, so
+  moving it later would rework the compiler, the corpus, and the fetch/decompile flow. `AW-CLI-003`'s
+  `fetch` reads the path the manifest names; it does not choose it.
