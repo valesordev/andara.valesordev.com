@@ -158,12 +158,40 @@ jobs:
             docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'redpanda-1 healthy' && break
             sleep 1
           done
-          sleep 8
-          starved_after=$(metric andara_tick_input_starved_total)
-          ticks_after=$(metric andara_ticks_total)
+          # Both counters from ONE scrape. Read separately, a tick starving between the
+          # two curls lands in one number and not the other, which quietly weakens the
+          # absence asserted below (docs/specs/testing/live-assertions.md rule 3).
+          pair() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" \
+            | awk '$1 == "andara_ticks_total" { t = $2 } $1 == "andara_tick_input_starved_total" { s = $2 } END { print t, s }'; }
+          # Rejoin is not a fixed duration, so do not spend a fixed sleep on it. The claim
+          # below is that starvation STOPS once the broker is back — absence, which cannot
+          # be waited for (rule 3). Anchor it: poll until starvation has held still across
+          # a full second, which is ten ticks at 10Hz, and only then open the window the
+          # assertion covers. A `sleep 8` here was a guess at rejoin latency; on a runner
+          # slow enough to still be starving at +8s it sampled mid-outage and the
+          # `ss == sa` assertion failed on a healthy stack.
+          #
+          # The poll also has to carry the `ta - td >= 60` assertion below, which the
+          # `sleep 8` used to satisfy by accident: waiting only for starvation to settle
+          # can return after one second, and sixty ticks have not happened by then. So
+          # both conditions gate the break, and the sample that satisfied them is the one
+          # kept — reading `t`/`s` and breaking without assigning them back leaves
+          # `ticks_after` a second stale, which is how this failed at 59 ticks.
+          gte() { awk -v a="$1" -v b="$2" -v n="$3" 'BEGIN { exit !(a - b >= n) }'; }
+          read -r prev_t prev_s <<<"$(pair)"
+          for _ in $(seq 40); do
+            sleep 1
+            read -r t s <<<"$(pair)"
+            [[ -n "$t" && -n "$s" ]] || continue   # a missed scrape is not a verdict
+            if [[ "$s" == "$prev_s" && "$t" != "$prev_t" ]] && gte "$t" "$ticks_during" 60; then
+              prev_t=$t prev_s=$s
+              break
+            fi
+            prev_t=$t prev_s=$s
+          done
+          ticks_after=$prev_t starved_after=$prev_s
           sleep 5
-          starved_settled=$(metric andara_tick_input_starved_total)
-          ticks_settled=$(metric andara_ticks_total)
+          read -r ticks_settled starved_settled <<<"$(pair)"
           echo "ticks $ticks_before -> $ticks_during -> $ticks_after -> $ticks_settled; starved $starved -> $starved_after -> $starved_settled"
           python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$ticks_settled" "$starved" "$starved_after" "$starved_settled" <<'PY'
           import sys
@@ -172,6 +200,9 @@ jobs:
           assert s >= 20, "no starvation counted during the outage"
           assert ta - td >= 60, "the loop stalled after the broker returned"
           assert ts - ta >= 25, "the loop stalled once the broker was back"
+          # Anchored absence: >= 25 ticks ran in this window and a starved tick would
+          # have incremented the counter, so "no new starvation" is a claim about ticks
+          # that happened rather than about a window nothing was observed in.
           assert ss == sa, "starvation kept rising after the broker returned"
           PY
       # AW-SRV-024 AC-4: the collector goes away for sixty seconds while lines are being
