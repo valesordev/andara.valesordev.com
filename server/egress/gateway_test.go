@@ -24,6 +24,7 @@ import (
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/internal/testpki"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/egress"
@@ -204,16 +205,10 @@ func gauge(t *testing.T, c prometheus.Collector) float64 {
 	return testutil.ToFloat64(c)
 }
 
+// waitFor is eventually.True with this package's in-process deadline.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 10*time.Second, what, cond)
 }
 
 // stallConn is a connection whose reads can be frozen: the client stops

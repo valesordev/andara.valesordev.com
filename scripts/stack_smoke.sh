@@ -46,20 +46,40 @@ query() {
     | "${PY:-python3}" -c 'import json,sys; print(len(json.load(sys.stdin)["data"]["result"]))'
 }
 
-# Wait on a series the Session above produced, not on one that exists at boot:
-# andara_sessions_total is pre-seeded with all four outcomes, so it is present in the
-# first scrape and waiting for it would prove only that Prometheus is running.
-# andara_grpc_requests_total has no series until an RPC completes.
-echo "stack-smoke: waiting for Prometheus to scrape the gateway ..."
+# value returns the sample value of a single-series query, or 0 when it has no
+# series yet. Distinct from `query`, which counts series: a pre-seeded counter
+# has a series from the first scrape and says nothing about what has happened
+# since.
+value() {
+  curl -sf --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
+    | "${PY:-python3}" -c 'import json,sys
+r = json.load(sys.stdin)["data"]["result"]
+print(r[0]["value"][1] if r else "0")'
+}
+
+# Wait for the LAST thing the smoke suite did to appear in a completed scrape,
+# not the first.
+#
+# This used to wait on andara_grpc_requests_total having any series, reasoning
+# that it has none until an RPC completes. True, and not enough: the first RPC
+# of the suite creates it, while the rejected Session asserted below is the
+# suite's last act. A scrape landing between the two satisfies the wait and
+# leaves rejected_version still reading its pre-seeded zero — and because the
+# loop returns immediately in that case, the failure is *more* likely the
+# faster the stack is. The wait only worked when it had to sleep first.
+#
+# Waiting on the asserted value is not circular: the assertion below is `>= 1`
+# and this loop fails loudly after 90s if it never gets there.
+echo "stack-smoke: waiting for Prometheus to scrape the rejected Session ..."
 scraped=0
 for _ in $(seq 1 30); do
-  if [[ "$(query 'andara_grpc_requests_total' 2>/dev/null || echo 0)" != "0" ]]; then
+  if [[ "$(value 'andara_sessions_total{outcome="rejected_version"}' 2>/dev/null || echo 0)" != "0" ]]; then
     scraped=1
     break
   fi
   sleep 3
 done
-[[ "$scraped" == "1" ]] || fail "Prometheus never scraped andara_grpc_requests_total (90s)"
+[[ "$scraped" == "1" ]] || fail "Prometheus never scraped the rejected Session (90s)"
 
 # The target must be up, not merely configured: a scrape config pointing at a dead
 # endpoint looks identical to a working one until you ask.
@@ -86,30 +106,8 @@ for outcome in closed dropped rejected_version rejected_auth; do
   [[ "$n" -gt 0 ]] || fail "andara_sessions_total{outcome=\"$outcome\"} is absent; the enum is not pre-seeded"
 done
 
-# Poll this one rather than asserting it once. The wait above proves a scrape has
-# happened, not that it happened *after* the rejection: the Go tests all complete
-# before polling starts, and andara_grpc_requests_total gains its series on the
-# first RPC of the run — which is several tests before the out-of-range Session.
-# A scrape landing mid-run therefore satisfies the wait while still carrying
-# rejected_version=0, and the assertion read a stale scrape. That is a race the
-# script loses roughly whenever a scrape falls inside the ~2s test window.
-value() {
-  curl -sf --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
-    | "${PY:-python3}" -c 'import json,sys
-r = json.load(sys.stdin)["data"]["result"]
-print(r[0]["value"][1] if r else "0")'
-}
-
-counted=0
-for _ in $(seq 1 30); do
-  rejected="$(value 'andara_sessions_total{outcome="rejected_version"}' 2>/dev/null || echo 0)"
-  if [[ "${rejected%.*}" -ge 1 ]]; then
-    counted=1
-    break
-  fi
-  sleep 3
-done
-[[ "$counted" == "1" ]] || fail "the out-of-range Session was not counted as rejected_version (90s)"
+rejected="$(value 'andara_sessions_total{outcome="rejected_version"}')"
+[[ "${rejected%.*}" -ge 1 ]] || fail "the out-of-range Session was not counted as rejected_version"
 
 echo "stack-smoke: a Session opened over TLS and Prometheus counted it"
 

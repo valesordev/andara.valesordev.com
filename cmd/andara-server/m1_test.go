@@ -23,6 +23,7 @@ import (
 	"github.com/valesordev/andara/gen/go/andara/auth/v1/authv1connect"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/internal/testpki"
 )
 
@@ -234,20 +235,24 @@ func TestRun_M1Gate(t *testing.T) {
 		t.Fatalf("look after waking: %v", r)
 	}
 
-	// The instruments, from the running server.
+	// The instruments, from the running server: one predicate, polled. The
+	// body gauges are written by the loop after a tick that moved a body,
+	// present then dormant, so a read of one after waiting on the other is
+	// a read of a separate write (docs/specs/testing/live-assertions.md,
+	// rule 2). Here the look after waking happens to order it — its
+	// room_described is causally after the bind tick's gauge writes, and a
+	// 500 ms gap between the two writes does not fail a single read for
+	// that reason; the fold removes the dependence on it.
 	waitUntil(t, func() bool {
 		m := metrics(t, httpAddr)
 		return strings.Contains(m, `andara_characters_total{state="present"} 2`) &&
+			strings.Contains(m, `andara_characters_total{state="dormant"} 0`) &&
 			strings.Contains(m, "andara_sessions_bound 2") &&
 			strings.Contains(m, `andara_character_unbinds_total{outcome="ok",reason="quit"} 1`) &&
 			strings.Contains(m, `andara_character_bindings_total{outcome="ok"} 3`) &&
 			strings.Contains(m, `andara_character_bindings_total{outcome="already_live"} 1`) &&
 			strings.Contains(m, `andara_character_creations_total{outcome="ok"} 2`)
 	}, "the roster metrics to settle")
-	m := metrics(t, httpAddr)
-	if !strings.Contains(m, `andara_characters_total{state="dormant"} 0`) {
-		t.Errorf("dormant gauge:\n%s", m)
-	}
 
 	// A drain unbinds both: the log lines say so and the exit is clean.
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
@@ -351,14 +356,8 @@ func metrics(t *testing.T, httpAddr string) string {
 	return string(b)
 }
 
+// waitUntil is eventually.True with the deadline a server under -race needs.
 func waitUntil(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 10*time.Second, what, cond)
 }

@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/config"
@@ -198,14 +199,8 @@ type sendFunc func(*gamev1.EventEnvelope) error
 
 func (f sendFunc) Send(env *gamev1.EventEnvelope) error { return f(env) }
 
+// waitFor is eventually.True with this package's in-process deadline.
 func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	eventually.True(t, 5*time.Second, what, cond)
 }

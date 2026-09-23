@@ -345,17 +345,26 @@ func TestLoop_ZoneFault(t *testing.T) {
 func TestLoop_DrainTimeout(t *testing.T) {
 	h := newHarness(t, func(o *Options) { o.DrainTimeout = 50 * time.Millisecond })
 	block := make(chan struct{})
+	wedged := make(chan struct{})
 	h.engine = nil
-	// A handler that never returns: the wedged tick.
+	// A handler that never returns: the wedged tick. It says so before it
+	// blocks, and the cancel waits for that rather than for a delay: a
+	// fixed delay is a bet that the loop has started its tick, and a 50 ms
+	// sleep at the top of Loop.run loses it on every run — the cancel lands
+	// first, nothing is in flight, and the drain returns nil.
 	w, _ := simtest.World()
 	reg, _ := simtest.Templates()
 	handlers := simtest.Handlers(reg)
-	handlers["look"] = func(*sim.ApplyContext, *logv1.LoggedCommand) error { <-block; return nil }
+	handlers["look"] = func(*sim.ApplyContext, *logv1.LoggedCommand) error { close(wedged); <-block; return nil }
 	h.loop.opts.Engine = sim.NewEngine(w, reg, sim.Config{Seed: 1, Partitions: simtest.AllPartitions(), Handlers: handlers})
 	h.source.Push(simtest.Look("town", "a"))
 	ctx, cancel := context.WithCancel(context.Background())
 	go func() {
-		time.Sleep(20 * time.Millisecond)
+		select {
+		case <-wedged:
+		case <-time.After(5 * time.Second):
+			// Never wedged: cancel anyway; the assertion below reports it.
+		}
 		cancel()
 	}()
 	err := h.loop.Run(ctx)

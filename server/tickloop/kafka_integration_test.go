@@ -24,6 +24,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kgo"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
@@ -119,20 +120,22 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 	return loop, e, nil
 }
 
+// waitForBoundaries reads the events topic until it holds at least n
+// boundaries, and returns them.
 func waitForBoundaries(t *testing.T, brokers []string, events string, n int, within time.Duration) []sim.TickCompleted {
 	t.Helper()
-	deadline := time.Now().Add(within)
-	for time.Now().Before(deadline) {
+	var bs []sim.TickCompleted
+	eventually.Observed(t, within, fmt.Sprintf("at least %d boundaries on %s", n, events), func() (bool, string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		bs, err := ReadBoundaries(ctx, brokers, events)
-		cancel()
-		if err == nil && len(bs) >= n {
-			return bs
+		defer cancel()
+		var err error
+		bs, err = ReadBoundaries(ctx, brokers, events)
+		if err != nil {
+			return false, err.Error()
 		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	t.Fatalf("fewer than %d boundaries within %s", n, within)
-	return nil
+		return len(bs) >= n, fmt.Sprintf("%d boundaries", len(bs))
+	})
+	return bs
 }
 
 // AC-2, AC-4, AC-5 on the broker: a loop applies the log under the broker's
@@ -160,10 +163,9 @@ func TestKafka_ApplyThenReplay(t *testing.T) {
 	go func() { done <- loop.Run(ctx) }()
 	// Wait until everything is applied, then a little longer so a
 	// checkpoint lands, then drain.
-	deadline := time.Now().Add(20 * time.Second)
-	for time.Now().Before(deadline) && applied.Load() < int64(total) {
-		time.Sleep(50 * time.Millisecond)
-	}
+	eventually.Observed(t, 20*time.Second, fmt.Sprintf("all %d records applied", total), func() (bool, string) {
+		return applied.Load() >= int64(total), fmt.Sprintf("%d applied", applied.Load())
+	})
 	time.Sleep(300 * time.Millisecond)
 	cancel()
 	if err := <-done; err != nil {

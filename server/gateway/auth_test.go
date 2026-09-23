@@ -27,6 +27,10 @@ type roleVerifier struct {
 	roles    []auth.Role
 	revoked  bool
 	actAsLog []string
+	// rechecks counts Recheck calls per Account. A global count would let
+	// two passes over one Session stand in for one pass over two (review
+	// of PR #51), so the anchor is which identities have been rechecked.
+	rechecks map[string]int
 }
 
 func (v *roleVerifier) Verify(_ context.Context, token string) (Principal, error) {
@@ -49,13 +53,30 @@ func (v *roleVerifier) ActAs(_ context.Context, p Principal, target string) (Pri
 	return p, nil
 }
 
-func (v *roleVerifier) Recheck(Principal) error {
+func (v *roleVerifier) Recheck(p Principal) error {
 	v.mu.Lock()
 	defer v.mu.Unlock()
+	if v.rechecks == nil {
+		v.rechecks = map[string]int{}
+	}
+	v.rechecks[p.AccountID]++
 	if v.revoked {
 		return errors.New("account revoked")
 	}
 	return nil
+}
+
+// rechecked reports whether every one of the Accounts has been rechecked
+// at least once.
+func (v *roleVerifier) rechecked(accounts ...string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	for _, a := range accounts {
+		if v.rechecks[a] == 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // AC-10 at the Gateway: an operator's act_as_account_id is honored and the
@@ -113,27 +134,47 @@ func TestRecheck_ClosesRevokedSessions(t *testing.T) {
 		o.RecheckInterval = 20 * time.Millisecond
 	})
 	client := h.game()
-	a := h.open(t, client)
-	b := h.open(t, client)
+	// Two Accounts, so the verifier can tell the Sessions' rechecks apart.
+	open := func(token string) *gamev1.OpenSessionResponse {
+		t.Helper()
+		resp, err := client.OpenSession(context.Background(), connect.NewRequest(&gamev1.OpenSessionRequest{
+			ProtocolVersion: 1, AuthToken: token, ClientName: "recheck-test/0",
+		}))
+		if err != nil {
+			t.Fatalf("OpenSession: %v", err)
+		}
+		return resp.Msg
+	}
+	a := open("a")
+	b := open("b")
 	if h.srv.SessionCount() != 2 {
 		t.Fatalf("sessions = %d", h.srv.SessionCount())
 	}
-	// A clean recheck closes nothing.
-	time.Sleep(60 * time.Millisecond)
+	// A clean recheck closes nothing. Absence is anchored, not slept for:
+	// once each Session's Account has been rechecked, each has survived a
+	// clean recheck, and with nothing revoked no later pass can close one
+	// either, so the read is stable (rule 3 of
+	// docs/specs/testing/live-assertions.md).
+	waitFor(t, 2*time.Second, func() bool { return v.rechecked("acct-a", "acct-b") }, "both Sessions rechecked")
 	if h.srv.SessionCount() != 2 {
 		t.Fatal("clean recheck closed a session")
 	}
 	v.mu.Lock()
 	v.revoked = true
 	v.mu.Unlock()
-	waitFor(t, 2*time.Second, func() bool { return h.srv.SessionCount() == 0 }, "revoked sessions to close")
+	// The counter is the assertion, so the counter is the wait: close
+	// deletes the map entry first and counts the outcome last, after the
+	// egress has ended the stream with up to a second of grace, so
+	// SessionCount() reads zero while a revocation is still uncounted
+	// (rule 2). A 20 ms sleep between the two in sessionStore.close fails
+	// the SessionCount() wait on every run with sessions_total{revoked} = 1.
+	waitFor(t, 2*time.Second, func() bool {
+		return testutil.ToFloat64(h.srv.metrics.SessionsTotal.WithLabelValues(OutcomeRevoked)) == 2
+	}, "both revocations counted")
 	for _, id := range []string{a.GetSessionId(), b.GetSessionId()} {
 		if _, err := client.Submit(context.Background(), connect.NewRequest(&gamev1.SubmitRequest{SessionId: id, Raw: "look"})); connect.CodeOf(err) != connect.CodeUnauthenticated {
 			t.Fatalf("closed session still resolves: %v", err)
 		}
-	}
-	if got := testutil.ToFloat64(h.srv.metrics.SessionsTotal.WithLabelValues(OutcomeRevoked)); got != 2 {
-		t.Fatalf("sessions_total{revoked} = %v", got)
 	}
 	line := findLog(t, h.logs, "session closed")
 	if line["outcome"] != OutcomeRevoked {
