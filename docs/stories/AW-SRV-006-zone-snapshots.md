@@ -4,7 +4,7 @@ title: Zone snapshots keyed to partition offsets
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-004]
 blocks: [AW-SRV-007, AW-SRV-019]
@@ -460,9 +460,23 @@ Measured at **10,000** Entities, AMD Ryzen 9 3900X, worst of 5 rounds:
 | Copy **and hash** each Zone | 24.7 ms | 5 ms |
 | Copy only; hash off-tick | **2.7 ms** uncontended, **4.8 ms** under load | 5 ms |
 
-At **25,000**, *extrapolated linearly and not yet measured*: ~6.8 ms uncontended, ~12 ms under load.
-**Measure it and replace this line with the real numbers.** The extrapolation is from a single point,
-and the copy is O(Entities × Component fields), so it holds only while the Component mix per Entity
+Measured at **25,000**, 2026-09-22, same machine, worst of 5 rounds:
+
+| Condition | Extrapolated | **Measured** |
+|---|---|---|
+| Uncontended (benchmark, 60 rounds over 3 runs) | ~6.8 ms | **7.4 – 8.7 ms** |
+| Worst-of-5, package running alongside (5 runs) | ~12 ms | **8.1 – 9.6 ms** |
+| Worst-of-5, under `-race` | — | 34.7 ms |
+
+The extrapolation held uncontended and was pessimistic under load. The uncontended figure is the one
+to reason from — both loaded numbers are noisy, and the earlier one was taken against a busier
+machine — and it tracks Entity count near-linearly: 2.7 ms at 10,000, ~8 ms at 25,000, so 2.9× for
+2.5× the Entities. That is 8 ms of the 15 ms stall budget, and 8 ms of ADR-0008's 50 ms tick budget,
+which is the constraint that actually binds; the budget needs no revision. The `-race` figure is why
+AC-1's assertion scales its threshold by build rather than skipping under `-race`. Working and
+analysis in `docs/feedback/AW-SRV-006-zone-snapshots.md` §7b.
+
+The copy is O(Entities × Component fields), so these hold only while the Component mix per Entity
 stays roughly what the fixture builds.
 
 **Why `max_stall_ms` is `15` and not `5`.** The load-bearing constraint is ADR-0008's: the copy runs

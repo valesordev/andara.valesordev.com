@@ -1,22 +1,28 @@
 # AW-INF-011 AC-10 — `measure-tick` against the sizing fixture: paused for architecture
 
-Raised by: implementation lane, 2026-09-22.
+Raised by: implementation lane, 2026-09-22. Updated 2026-09-23 after AW-SRV-006 merged.
 Subject: `deploy/helm/andara/measurements.yaml` is still `measured: false`, and `make helm-test`
-warns on every run. Implementation was asked to close that out. It is paused, for the three
-reasons below; the third is a design decision and is the one that needs an answer.
+warns on every run. Implementation was asked to close that out. It is paused, for the reasons
+below; §3 is a design decision and is the one that still needs an answer.
 
-## 1. The premise: the sizing fixture has not landed
+**Status on 2026-09-23:** §1 is resolved — the fixture landed. §2 and §3 stand unchanged.
 
-`server/simtest/sizing.go` — `SizingWorld()`, `SizingEngine()`, and the `Sizing*` constants — exists
-only on the unmerged local branch `aw-srv-006-zone-snapshots` (`c1b41f5`). It is not on `main`, and
-`git merge-base --is-ancestor` confirms the branch is not an ancestor of `main`. `BACKLOG.md:154`
-lists `AW-SRV-006` as `ready`, not `done`.
+## 1. ~~The premise: the sizing fixture has not landed~~ — resolved 2026-09-23
 
-So AW-SRV-006 has not landed the fixture yet. Generating a content-directory form from constants
-that are not on `main` would bind a `testdata/` fixture to a branch that can still change before
-merge — which is the drift the fixture's own doc comment exists to prevent.
+When this was written, `server/simtest/sizing.go` existed only on the unmerged branch
+`aw-srv-006-zone-snapshots`, so generating a `testdata/` fixture from its constants would have
+bound it to a branch that could still change.
 
-**Needed:** AW-SRV-006 merges first. Everything below assumes that has happened.
+**Resolved.** AW-SRV-006 merged as PR #46 (`a9428b5`). `server/simtest/sizing.go` is on `main`, and
+`server/simtest/sizing_test.go` asserts the fixture is the documented scale, so the constants are
+now a stable thing to generate from. §4's plan is unblocked on this axis.
+
+**The scale was amended in the same pass:** `SizingEntities` is **25,000**, up from 10,000 (Brian,
+2026-09-22), for headroom as the World grows. `SizingZones` (16), `SizingRooms` (2,000) and
+`SizingCharacters` (500) are unchanged — Rooms are topology the boundary copy never touches, and the
+Character count is a concurrency assumption rather than a statement about World size. AW-SRV-006's
+own feedback doc §7b measured the amended fixture at ~8 ms uncontended against a 15 ms stall budget.
+§4's generator reads these constants rather than copying them, so the amendment costs nothing here.
 
 ## 2. The lane: AC-10 is AW-INF-011's, and AW-INF-011 is architecture
 
@@ -32,7 +38,7 @@ measurement and AC-10's tick measurement are meant to be taken and recorded toge
 implementation to build the machinery and hand it over, that is fine and is scoped in §4 — but the
 `measurements.yaml` commit itself is AW-INF-011's deliverable, not ours to make unilaterally.
 
-## 3. The design question: how do 10,000 Entities reach a running server?
+## 3. The design question: how do 25,000 Entities reach a running server?
 
 This is the real blocker, and it is architecture's call.
 
@@ -66,8 +72,14 @@ its own sake; it should not be driven by a measurement fixture's needs.
 Verified there is **no generic spawn Command**. The only path that creates a body is
 `BindCharacter` (`server/sim/character.go:95`), which instantiates from `andara.core.Character` at a
 spawn Room and requires a Session and a roster binding per body. That reaches at most the 500
-Characters, not the 10,000 Entities, and each one costs a session bind. Closing the gap this way
+Characters, not the 25,000 Entities, and each one costs a session bind. Closing the gap this way
 means adding a spawn Command — a protocol change, also architecture's.
+
+Re-verified on `main` 2026-09-23: still no generic spawn Command. What did change is that
+`AW-SRV-010` (command ingress) is now `done`, so `helm-test`'s own caveat — "AW-SRV-003's handlers
+have no load path until AW-SRV-010, so the placeholder stays on purpose" — is satisfied. A load path
+exists now. That strengthens this option without unblocking it: ingress can carry Commands, but
+there is still no Command that makes an Entity.
 
 **(c) A debug-only seeding flag on the server.**
 Cheapest to build, but it means either importing `server/simtest` into the production binary or
@@ -106,7 +118,11 @@ No blocker here, and none of it is started — this is the scope we are ready to
 
 - Nothing in the measurement path was changed. `measurements.yaml`, `scripts/measure_tick.sh`, and `testdata/` are untouched;
   this file is the only thing this task added.
-- The `Sizing*` constants are an `[ASSUMPTION]` Brian may revise (AW-SRV-006, "Open questions"). Item 1 above
-  reads them rather than copying them, so a revision stays one edit.
-- Working clone is on `fix-flaky-egress-rebind`, not an `impl/` branch, and has not been rebased on
-  `main` this session.
+- The `Sizing*` constants are an `[ASSUMPTION]` Brian may revise — and did, on 2026-09-22 (§1). Item 1
+  of §4 reads them rather than copying them, so that revision stayed one edit, as intended.
+- Re-checked against `main` on 2026-09-23: `scripts/measure_tick.sh` and `measurements.yaml` are
+  unchanged, and the content-directory format still carries no Entity instances. §3 is open.
+  `measurements.yaml`'s `fixture:` string still reads 10,000 Entities; `measure_tick.sh` rewrites
+  that field when it runs, so it is left for the real measurement to correct rather than hand-edited.
+- This file first reached `main` inside `8f466e7`, an egress commit on `fix-flaky-egress-rebind`,
+  rather than through a PR of its own — it landed without the review this lane pauses for.
