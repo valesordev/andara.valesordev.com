@@ -96,7 +96,7 @@ func TestFSPutIsAtomicOverAnExistingKey(t *testing.T) {
 	if string(got) != "new" {
 		t.Fatalf("Get = %q, want %q", got, "new")
 	}
-	entries, err := os.ReadDir(filepath.Join(root, "village", "1"))
+	entries, err := os.ReadDir(filepath.Join(root, "village", "00000000000000000010", "1"))
 	if err != nil {
 		t.Fatalf("ReadDir: %v", err)
 	}
@@ -181,12 +181,13 @@ func TestFSRefusesAKeyThatEscapesTheRoot(t *testing.T) {
 }
 
 // The key's shape and zero-padding are permanent: changing either renames
-// every object in the store. Tick leads offset, so a listing is in recency
-// order, and both are padded to the same width.
+// every object in the store. The tick sits directly under the Zone — ahead of
+// state_version — so {zone}/{tick}/ is the prefix holding one Zone's part of a
+// round, which is what AW-SRV-007's ListRounds groups on.
 func TestSnapshotKeyShape(t *testing.T) {
 	t.Parallel()
 	got := sim.SnapshotKey("village", 1, 4200, 42)
-	want := "village/1/00000000000000004200/00000000000000000042"
+	want := "village/00000000000000004200/1/00000000000000000042"
 	if got != want {
 		t.Fatalf("SnapshotKey = %q, want %q", got, want)
 	}

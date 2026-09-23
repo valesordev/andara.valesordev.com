@@ -561,8 +561,9 @@ export declare type SnapshotWritten = Message<"andara.log.v1.SnapshotWritten"> &
 
   /**
    * Where the object is, in the store's key space:
-   * {zone_id}/{state_version}/{tick}/{offset}, both numbers zero-padded so
-   * lexical order is tick order. The tick keeps a round's objects immutable:
+   * {zone_id}/{tick}/{state_version}/{offset}, tick and offset zero-padded so
+   * lexical order is tick order, and {zone_id}/{tick}/ is the prefix holding
+   * one Zone's part of a round. The tick keeps a round's objects immutable:
    * an idle Zone holds its offset, so an offset-only key let a later round
    * overwrite an earlier one and a partial failure then left no complete
    * round at all (AC-5).

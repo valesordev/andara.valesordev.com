@@ -149,28 +149,46 @@ to a staging key, promote only when all succeed. It preserves the key format at 
 method on `sim.WorldStore` and a second write per object — a rename on `fs`, a server-side copy on
 `s3`. The key change is smaller and fixes the round-grouping problem as well.
 
-**On the ordering, since architecture asked.** Tick leading offset is right, and the two orders
-mostly agree anyway: a Zone's offset is monotonic in its tick, so sorting by offset and sorting by
-tick differ only where the offset ties — which is precisely the idle Zone, the case this section is
-about. Leading with the tick is what makes "newest" mean recency rather than progress, and it is
-what makes the round prefix groupable. Both stores now parse the key and order by tick descending
-rather than sorting the strings, because a lexical sort ranks `state_version` above everything
-after it.
+**On the ordering.** Tick leading offset is right — a Zone's offset is monotonic in its tick, so
+the two orders differ only where the offset ties, which is precisely the idle Zone this section is
+about, and leading with the tick makes "newest" mean recency rather than progress.
+
+**Corrected 2026-09-23.** The amendment puts the tick *second*, directly under the Zone:
+`{zone_id}/{tick}/{state_version}/{offset}`, not after `state_version` as the review body's prose
+suggested and as this branch first implemented. Every normative document agrees — the story, the
+glossary, ADR-0002, AW-SRV-007 and AW-INF-007 — and the reason is in the story: `{zone_id}/{tick}/`
+is the prefix holding one Zone's part of a round, so `ListRounds` groups a round *without knowing
+which `state_version` wrote it*. With the version ahead of the tick that grouping would need one
+listing per version. `sim.SnapshotRoundPrefix` is that prefix, exported rather than assembled at
+each call site, and `TestRoundPrefixGroupsAZoneAcrossStateVersions` pins the property.
+
+This was worth catching late: the branch's own tests passed either way, because they built the key
+and asserted against it through the same function. A self-consistent wrong key is invisible to a
+round trip; only the contract catches it.
+
+Both stores parse the key and order by tick descending rather than sorting strings, because a
+lexical sort would still be wrong for a tree holding two `state_version`s.
 
 **Related:** §4. Part of what makes an idle Zone's object non-reusable across rounds is that it
 carries process-wide `prng_state` and `next_event_id`, which change even when the Zone does not. If
 those moved out of the per-Zone body, an idle Zone's object would be genuinely identical between
 rounds and the overwrite would be a no-op.
 
-## 6. The Definition-of-done line on a "real" `state_version` bump is inherited
+## 6. The Definition-of-done line on a "real" `state_version` bump — retired, not inherited
 
 DoD requires "`state_version` migration is tested across at least one real bump." There is no
 real bump available: the fields AW-SRV-014 and AW-SRV-022 would have bumped are present in
 version 1, per §1. The migration machinery, the registry-completeness check that fails
 `make check` on a bump without a migration, and the synthetic 1→2→3-with-4-refused chain from
-the test plan are all implemented and tested. The line is carried forward to the first story
-that genuinely changes what state *means* — AW-SRV-015 is the likely candidate, since
-`linkdead_since_tick` is listed in the sketch and is not in version 1.
+the test plan are all implemented and tested.
+
+**Resolved 2026-09-22 (architecture): the line retires rather than moving.** This section proposed
+carrying it to AW-SRV-015. Architecture's review first accepted that and then corrected itself:
+under `sim.StateVersion`'s rule — which the same review settled — AW-SRV-015 adds
+`linkdead_since_tick` and populates `linkdead_deadline_tick`, both additive fields protobuf
+absorbs, so AW-SRV-015 does not bump either. There is no *scheduled* bump at all, which is a
+stronger reason than "not yet". The registry-completeness check is what the DoD line was reaching
+for: a real bump cannot ship untested, because `make check` fails on a bump without a migration.
 
 ## 7. AC-1 holds, but only because hashing moved off the tick — and the margin is thin
 

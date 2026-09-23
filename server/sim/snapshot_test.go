@@ -5,6 +5,7 @@ package sim
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -258,5 +259,36 @@ func TestErrRoundIncompleteNamesTheMissingZones(t *testing.T) {
 		if !bytes.Contains([]byte(msg), []byte(want)) {
 			t.Fatalf("ErrRoundIncomplete message %q does not name %q", msg, want)
 		}
+	}
+}
+
+// The reason the tick sits ahead of state_version: {zone_id}/{tick}/ is the
+// prefix holding one Zone's part of a round, and it groups a round without the
+// reader knowing which state_version wrote it. AW-SRV-007's ListRounds is
+// specified to group WorldStore keys by tick, so this is a contract property
+// rather than a formatting preference — a {zone}/{version}/{tick} ordering
+// would force a listing per version to find one round.
+func TestRoundPrefixGroupsAZoneAcrossStateVersions(t *testing.T) {
+	t.Parallel()
+	const tick = Tick(4200)
+	prefix := SnapshotRoundPrefix("village", tick)
+
+	// The same Zone at the same boundary, written by two binaries at
+	// different state_versions, still lands under one prefix.
+	for _, version := range []uint32{1, 2, 17} {
+		key := SnapshotKey("village", version, tick, 91)
+		if !strings.HasPrefix(key, prefix) {
+			t.Errorf("state_version %d: key %q is not under the round prefix %q", version, key, prefix)
+		}
+	}
+	// And a different boundary is a different prefix, so grouping by it
+	// separates rounds rather than merging them.
+	if other := SnapshotRoundPrefix("village", tick+1); strings.HasPrefix(SnapshotKey("village", 1, tick, 91), other) {
+		t.Error("two boundaries share a round prefix")
+	}
+	// A Zone whose ID is a prefix of another's must not be swept in with it:
+	// the trailing slash is what keeps them apart.
+	if strings.HasPrefix(SnapshotKey("villagegreen", 1, tick, 91), prefix) {
+		t.Error("a Zone whose ID extends another's fell under its round prefix")
 	}
 }

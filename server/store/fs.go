@@ -190,28 +190,30 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 		return nil, err
 	}
 	var found []snapshotEntry
-	// {zone}/{state_version}/{tick}/{offset}: walk the two levels beneath the
-	// Zone and keep whatever parses as a key.
-	versions, err := os.ReadDir(dir)
+	// {zone}/{tick}/{state_version}/{offset}: walk the two levels beneath the
+	// Zone and keep whatever parses as a key. Parsing rather than trusting the
+	// shape, so an unrelated file under the tree is skipped rather than
+	// returned as a key that no Get will resolve.
+	ticks, err := os.ReadDir(dir)
 	switch {
 	case errors.Is(err, os.ErrNotExist):
 		return nil, nil
 	case err != nil:
 		return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 	}
-	for _, v := range versions {
-		if !v.IsDir() {
+	for _, tk := range ticks {
+		if !tk.IsDir() {
 			continue
 		}
-		ticks, err := os.ReadDir(filepath.Join(dir, v.Name()))
+		versions, err := os.ReadDir(filepath.Join(dir, tk.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 		}
-		for _, tk := range ticks {
-			if !tk.IsDir() {
+		for _, v := range versions {
+			if !v.IsDir() {
 				continue
 			}
-			objects, err := os.ReadDir(filepath.Join(dir, v.Name(), tk.Name()))
+			objects, err := os.ReadDir(filepath.Join(dir, tk.Name(), v.Name()))
 			if err != nil {
 				return nil, fmt.Errorf("%w: list: %w", sim.ErrStoreUnavailable, err)
 			}
@@ -219,7 +221,7 @@ func (f *FS) List(ctx context.Context, zone sim.ZoneID) ([]string, error) {
 				if o.IsDir() || strings.HasSuffix(o.Name(), TempSuffix) {
 					continue
 				}
-				key := strings.Join([]string{string(zone), v.Name(), tk.Name(), o.Name()}, "/")
+				key := strings.Join([]string{string(zone), tk.Name(), v.Name(), o.Name()}, "/")
 				if e, ok := newSnapshotEntry(key); ok {
 					found = append(found, e)
 				}

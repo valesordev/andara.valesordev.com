@@ -106,8 +106,9 @@ func (s *Snapshot) PartitionOf() (PartitionOffset, bool) {
 	return PartitionOffset{Partition: want}, false
 }
 
-// Key is where the object goes: {zone_id}/{state_version}/{tick}/{offset},
-// tick and offset both zero-padded so lexical order is tick order.
+// Key is where the object goes: {zone_id}/{tick}/{state_version}/{offset},
+// tick and offset both zero-padded to SnapshotKeyDigits so a lexical listing
+// is a tick-ordered listing.
 //
 // The tick is what makes a round's objects immutable. Without it the key was
 // offset-only, and a Zone that received no Command since the last round keyed
@@ -119,16 +120,12 @@ func (s *Snapshot) PartitionOf() (PartitionOffset, bool) {
 // three that was cheapest to change (architecture review of PR #46, feedback
 // §5).
 //
-// It also gives AW-SRV-007 its round grouping for free: {zone}/{version}/{tick}
-// is a prefix, so ListRounds groups by a listing rather than by a Get on every
-// candidate to read the tick out of its envelope.
-//
-// The offset stays, after the tick rather than before it. Keeping it makes the
-// key self-describing for the seek, and it keeps this a pure function of
-// values the Snapshot already holds. Leading with the tick rather than the
-// offset is what puts a Zone's rounds in recency order — and the two orders
-// agree anyway except when they do not, because a Zone's offset is monotonic
-// in tick and only ties when the Zone is idle, which is the case that matters.
+// The tick sits immediately under the Zone, ahead of state_version, so that
+// {zone_id}/{tick}/ is the prefix holding one Zone's part of a round. That is
+// what AW-SRV-007's ListRounds groups on, and it groups without knowing which
+// state_version wrote it — which a {zone}/{version}/{tick} ordering would have
+// required. The offset stays last: it makes the key self-describing for the
+// seek and keeps this a pure function of what the Snapshot already holds.
 func (s *Snapshot) Key() string {
 	po, _ := s.PartitionOf()
 	return SnapshotKey(s.Zone, s.StateVersion, s.Tick, po.Offset)
@@ -138,7 +135,16 @@ func (s *Snapshot) Key() string {
 // AW-SRV-007 all produce the same string from the same values rather than each
 // formatting it by hand.
 func SnapshotKey(zone ZoneID, stateVersion uint32, tick Tick, offset int64) string {
-	return fmt.Sprintf("%s/%d/%0*d/%0*d", zone, stateVersion, SnapshotKeyDigits, uint64(tick), SnapshotKeyDigits, offset)
+	return fmt.Sprintf("%s/%0*d/%d/%0*d", zone, SnapshotKeyDigits, uint64(tick), stateVersion, SnapshotKeyDigits, offset)
+}
+
+// SnapshotRoundPrefix is where one Zone's part of the round at tick lives:
+// {zone_id}/{tick}/. Exported because AW-SRV-007 groups rounds by listing this
+// rather than by reading a tick out of every candidate's envelope, and because
+// a prefix assembled by hand at each call site is a prefix that eventually
+// loses its trailing slash and sweeps in a Zone whose ID extends this one's.
+func SnapshotRoundPrefix(zone ZoneID, tick Tick) string {
+	return fmt.Sprintf("%s/%0*d/", zone, SnapshotKeyDigits, uint64(tick))
 }
 
 // ParseSnapshotKey reads a key back into its parts. The stores use it to order
@@ -150,11 +156,11 @@ func ParseSnapshotKey(key string) (zone ZoneID, stateVersion uint32, tick Tick, 
 	if len(parts) != 4 || parts[0] == "" {
 		return "", 0, 0, 0, false
 	}
-	v, err := strconv.ParseUint(parts[1], 10, 32)
+	tk, err := strconv.ParseUint(parts[1], 10, 64)
 	if err != nil {
 		return "", 0, 0, 0, false
 	}
-	tk, err := strconv.ParseUint(parts[2], 10, 64)
+	v, err := strconv.ParseUint(parts[2], 10, 32)
 	if err != nil {
 		return "", 0, 0, 0, false
 	}
