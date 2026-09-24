@@ -4,7 +4,7 @@ title: State projector and the compacted current-state topic
 epic: EPIC-10
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-004, AW-SRV-006]
 blocks: [AW-SRV-017]
@@ -46,6 +46,12 @@ projection schema change is routine.
 - `andara-projector state --rebuild`: wipe the consumer group, restart from the newest round.
 - Write isolation: the projector's Kafka principal is the only one with write on `andara.state.v1`.
 - Depends on `AW-SRV-006` (new edge) because bootstrap reads snapshot rounds.
+- `store.ListRounds` and `store.Round`, exactly as `AW-SRV-007`'s interface contract states them, and
+  the load-Zones phase of its sequence (round → a `sim.Engine` at the round's tick, offsets, PRNG, and
+  next EventID). *(Added 2026-09-24, Brian's call.)* Bootstrap cannot select a round without them, and
+  `AW-SRV-007` is held behind `AW-SRV-026`/`AW-SRV-028`. This story implements a contract that is
+  already written rather than writing one from code; `AW-SRV-007` inherits both and keeps everything
+  else in its sequence — boot recovery, `recover --verify`, the Admin RPCs, and its exit codes.
 
 ### Out of scope
 - Redis and Postgres indexes — `AW-SRV-017`, `AW-SRV-018`.
@@ -56,7 +62,7 @@ projection schema change is routine.
 ## Acceptance criteria
 
 1. **Given** a tick whose Events include `CharacterArrived` **when** the projector replays it **then**
-   records for `character:<id>` and `room:<zone>/<id>` are produced with `tick` equal to that tick and
+   records for `character:<zone>/<id>` and `room:<zone>/<id>` are produced with `tick` equal to that tick and
    `body` equal to the replica's state for those aggregates.
 2. **Given** the projector has replayed through tick `T` **when** its `StateHash()` is compared with
    `TickCompleted{T}.state_hash` **then** they are equal, for every `T`.
@@ -66,18 +72,30 @@ projection schema change is routine.
 4. **Given** a Partition batch redelivered after a crash **when** it is replayed **then** every record
    produced is byte-identical to the first delivery. At-least-once is safe because the replica is
    deterministic and the record is canonical.
-5. **Given** a destroyed Entity (`CharacterPurged`, item destroyed) **when** its tick replays **then** a
-   tombstone (null value) is produced for its key, and after `topics.py` forces compaction the key is
-   absent.
+5. **Given** an Entity that leaves a Zone — a cross-Zone move, or destruction — **when** its tick
+   replays **then** a tombstone (null value) is produced for its key in that Zone, and after `topics.py`
+   forces compaction the key is absent. *(Amended 2026-09-24.)* The Zone exit is the case this story
+   can exercise: the sim has no destroy Event yet. `CharacterPurged` gets its `Touched` row and its
+   tombstone assertion in `AW-SRV-032`, as an inherited Definition-of-done line.
 6. **Given** an empty `andara.state.v1` **when** `--rebuild` runs against a World with 10,000 Entities and
    a 24 h history **then** it reaches a state whose records equal the incremental projector's, in under
    `snapshot load + tail replay` — never a from-zero replay when a complete round exists.
+   *(Clarified 2026-09-24, from implementation:)* "equal" is on `key`, `kind`, `body`, `digest`,
+   `content_version`, and `state_version`, not on `tick` or `source_offset`. A rebuild writes every
+   key at its bootstrap tick, and the incremental projector writes each at the tick that last
+   touched it, so those two fields can differ while the topics describe the same World. They say
+   when a record was written, not what it describes.
 7. **Given** any record **when** it is inspected **then** `content_version` names the `packID@version`
    active when the aggregate was last written, so a runtime object traces to authored source.
 8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
    server are unchanged and no player-visible behavior differs.
 9. **Given** any Kafka principal other than `andara-projector-state` **when** it produces to
    `andara.state.v1` **then** the broker rejects it with an authorization error (`AW-INF-004` ACLs).
+   *(Note 2026-09-24:)* `AW-INF-004` shipped no ACLs, and the local Redpanda runs without SASL, so
+   nothing enforces this yet. This story authenticates as the principal and declares the ACL
+   in `deploy/kafka/topics.yaml`. Enforcing it, and this criterion's assertion, belongs to the
+   first broker story that turns on authentication. That story inherits this as a
+   Definition-of-done line.
 10. **Given** a `state_version` newer than the projector binary **when** bootstrap reads the round
     **then** it exits `4` naming both, as `AW-SRV-007` does.
 
@@ -86,7 +104,7 @@ projection schema change is routine.
 ```protobuf
 // CONTRACT SKETCH — not an implementation; andara/state/v1/record.proto
 message StateRecord {
-  string key = 1;                 // "character:<id>" | "npc:<id>" | "item:<id>" | "room:<zone>/<id>" | "zone:<id>"
+  string key = 1;                 // "character:<zone>/<id>" | "npc:<zone>/<id>" | "item:<zone>/<id>" | "room:<zone>/<id>" | "zone:<id>"
   AggregateKind kind = 2;
   uint64 tick = 3;
   int64 source_offset = 4;        // commands.v1 offset of the last Command applied to this aggregate's Zone
@@ -101,6 +119,17 @@ Key = record key on the topic. Partitioner: `hash(zone_id) % 64`, the same funct
 `andara.commands.v1`, so a Zone's aggregates share a Partition and a future shard reads only its own.
 Tombstone = null value with the same key.
 
+**Every Entity key names its Zone. *(Amended 2026-09-24, Brian's call.)*** An Entity changes Zone: a
+cross-Zone move deletes it from the source Zone at tick `T` (`server/sim/verbs.go`) and the `Arrive`
+applies on the target's Partition at a later tick. With `character:<id>` and a Zone partitioner, one
+key would live on two Partitions. Compaction runs per Partition, so the stale record would never be
+collapsed, and Kafka has no cross-Partition order to say which record is current. So the key is
+`<kind>:<zone>/<id>`. A Zone exit is a tombstone on the source Partition, and the arrival writes a new
+key on the target Partition. Keys never migrate, compaction stays correct, and each shard reads only
+its own Zones. Answering "where is Character X now" is an index's job (`AW-SRV-017`'s `aw1:char:<id>`),
+not this topic's. While the Entity is in transit, a reader can see it in neither Zone, or briefly in
+both. Both records carry `tick`, which settles it.
+
 ```go
 // CONTRACT SKETCH — not an implementation
 package projector
@@ -114,7 +143,7 @@ func Touched(events []sim.Event) []Key
 
 | Property | Value |
 |----------|-------|
-| consumer group | `andara-projector-state-<env>` |
+| consumer group | `andara-projector-state-<env>` (the reserved name in `deploy/kafka/topics.yaml` is renamed to match in this story's PR) |
 | consumes | `andara.commands.v1` (all Partitions), `andara.events.v1` (control records only) |
 | produces | `andara.state.v1`, `acks=all`, idempotent, key-ordered |
 | offset commit | after the records for tick `T` are acked, never before |
@@ -148,6 +177,11 @@ full history. `andara_state_topic_bytes` makes that visible.
 
 ### Metrics
 - `andara_state_projector_lag_seconds` — gauge; `now − TickCompleted.accepted_at` of the last verified tick.
+  *(Implemented 2026-09-24 as the boundary record's Kafka timestamp. `TickCompleted` carries no
+  `accepted_at`, and the record timestamp is the moment the server produced it.)*
+- `andara_state_projector_lag_budget_seconds` — gauge; `projector.state.lag_budget`. *(Added
+  2026-09-24.)* `ProjectionStale` compares the lag with it, the way `SnapshotStale` reads
+  `andara_snapshot_interval_seconds`, rather than a number copied into the rule.
 - `andara_state_projector_tick` — gauge.
 - `andara_state_records_produced_total` — counter, label `kind` (bounded enum).
 - `andara_state_tombstones_total` — counter.
@@ -159,6 +193,9 @@ Aggregate ID is rejected as a label.
 ### Logs
 - `info` on start with the round used; per `batch_ticks` at `debug`; `error` on divergence per AC-3.
 - Required fields: `ts`, `level`, `msg`, `service=andara-projector-state`, `env`, `tick`, `partition`.
+  *(Implemented 2026-09-24:)* a batch spans every Partition, so the per-batch line carries `tick`
+  and `ticks`. Per-Partition detail lives where one Partition is the subject: the divergence
+  line's `last_good_offsets` and a log gap's error, which names the Partition.
 
 ### Traces
 - `state.replay` per batch with `ticks`, `records_in`, `records_out`; `state.verify` per boundary.
@@ -169,6 +206,12 @@ Aggregate ID is rejected as a label.
   `--rebuild`, and if it diverges again the *server* is non-deterministic — escalate as a sim bug.
 - `ProjectionStale{projection="state"}` on lag over `lag_budget` for 5 m, low severity, runbook
   `docs/runbooks/projection-stale.md` shared with `AW-SRV-017`/`018`.
+- *(Implemented 2026-09-24:)* both are tied to `docs/specs/slo/projection-freshness.md`, written
+  here because CLAUDE.md §7 puts an SLO before an alert. Its SLI follows from this story; its target
+  is proposed and `[NEEDS BRIAN]`. As specified, `StateProjectorDiverged` could not fire. The
+  counter reaches 1 and the process exits, and the restart starts it at 0 before any scrape. So
+  the binary holds `/metrics` up, unready, for 60 s before exiting `2`. Neither alert can see a
+  projector that is not running; the SLO names that gap.
 
 ## Test plan
 
@@ -183,6 +226,9 @@ Aggregate ID is rejected as a label.
   andara-cli projection status                 # expect: state: tick N, lag <1s, digest ok
   andara-projector state --rebuild             # expect: bootstrap from round, replay, "digest ok"
   ```
+  *(2026-09-24:)* `andara-cli projection status` does not exist. The projection query RPC is
+  `AW-SRV-017`'s (`QueryProjection`). Until then, the status is the projector's `/readyz` and its
+  `andara_state_projector_*` series.
 
 ## Definition of done
 
@@ -199,3 +245,37 @@ CI; a test asserts the projector binary imports `server/sim` and contains no `Ap
 - `[ASSUMPTION]` Replica rather than Event fold, for the reason in Context. If a later story makes the
   sim internally event-sourced, the projector can drop the commands consumer without changing its
   output.
+
+## Verification record — 2026-09-24 (implementation; story stays `in-progress` until merge)
+
+PR [valesordev/andara.valesordev.com#64](https://github.com/valesordev/andara.valesordev.com/pull/64),
+branch `claude/gallant-volta-q1hz5t`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `TestArrivalWritesTheCharacterAndTheRoom` (unit); `TestRun_FollowsTheLogAndDescribesTheWorld` (Redpanda) | pass |
+| 2 | Every boundary verified inside `Engine.ReplayEach`. `TestIncrementalRecordsEqualADumpAtEveryTick` holds the records to a full dump after every tick of every verb; the Redpanda suite holds the topic to it | pass |
+| 3 | `TestDivergenceHaltsBeforeTheTick` (unit); `TestRun_DivergenceExitsTwoAndCommitsNothingPastIt`: exit 2, committed tick T-1, counter 1 | pass |
+| 4 | `TestRedeliveryIsByteIdentical`; `TestRun_RestartReplaysSilentlyToTheCheckpoint` (a restart behind its checkpoint adds no record) | pass |
+| 5 | Zone-exit tombstone: `TestZoneExitTombstonesTheOldKey`, and on the topic in the Redpanda suite. *Not asserted:* absence after a forced compaction. Redpanda has no forced-compaction call the suite can make, so the suite reads the topic the way compaction converges (last value per key, tombstone deletes). `CharacterPurged` is `AW-SRV-032`'s inherited line | partial |
+| 6 | `TestRun_RebuildFromTheRoundEqualsIncremental`: the log before the round is deleted, a from-zero rebuild then exits 3, and a round rebuild equals incremental and a dump. *Not measured:* the 10,000-Entity, 24 h scale | pass at fixture scale |
+| 7 | Entity records carry the Entity's `content_version`. Room and Zone records carry `packID@version` from `content.Loader.ZoneVersions` (kafka source). *Gap:* a Character's is `""` because `server/sim/character.go`'s spawn instantiates with an empty version (`AW-SRV-014`'s code), and the dir source has no versions | partial |
+| 8 | Structural: the projector is a separate process that reads the log and writes only `andara.state.v1`. Not asserted by a test | not asserted |
+| 9 | Not enforceable: no SASL, no ACLs (see the AC's note). The write ACL is declared in `deploy/kafka/topics.yaml`. The client ID is `andara-projector-state`; a client ID is not a principal | carried |
+| 10 | `TestRun_NewerStateVersionExitsFour`; `Engine.Replay` now returns `*sim.ErrStateVersion` for a boundary too | pass |
+
+**Live, against the running server** (local Redpanda, `dir` content, the real `andara-server` and
+`andara-projector` binaries, Commands written to the log): it bootstrapped from the server's own
+round, verified every tick with lag ≈ 13 ms, and the topic held exactly the World across a bind,
+same-Zone moves, a cross-Zone move, an unbind to dormant, and a rebind. A restart behind a newer
+round took the dump-and-reconcile branch and tombstoned the stale `character:wilds/hero`. A restart
+behind its checkpoint replayed silently. `--rebuild` wiped the group and rebuilt from the round. Two
+bugs were found here and fixed with regression tests. Readiness required an empty read, which a
+World ticking at 10 Hz never gives (`TestRun_ReadyWhileTheWorldKeepsTicking`). Skipped history
+counted as caught up.
+
+**Outstanding before `done`:** the §8 "verified against a real backend" check for traces (spans are
+emitted but not yet checked in Tempo); `projectors.state.enabled` stays `false` until
+`min.compaction.lag.ms` is applied to `andara.state.v1` on dev and prod (`topics-diff` names the
+drift); the image with `andara-projector` in it is built by CI's `kind` workflow, and the sandbox this
+was written in could not reach the Alpine mirror to build it locally.

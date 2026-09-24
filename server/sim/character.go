@@ -193,3 +193,8 @@ func (e *Engine) isCharacter(ent *EntityState) bool {
 	}
 	return false
 }
+
+// IsCharacter reports whether ent is a Character: its Template chain reaches
+// andara.core.Character. Exported for the state projector, which keys a
+// Character's record differently from any other Entity's.
+func (e *Engine) IsCharacter(ent *EntityState) bool { return e.isCharacter(ent) }

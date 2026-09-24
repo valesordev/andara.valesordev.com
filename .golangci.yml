@@ -64,6 +64,30 @@ linters:
               desc: Postgres is a projection; the in-game read path is memory, not a datastore (ADR-0002)
             - pkg: github.com/lib/pq
               desc: Postgres is a projection (ADR-0002)
+        # AW-SRV-019's Definition of done: the state projector is a replica of
+        # the simulation, not a second implementation of it. It imports
+        # server/sim and runs sim.Handlers(); it reaches none of the paths that
+        # write the World — the Gateway, ingress, egress, the roster, accounts,
+        # or the command pipeline. A depguard rule cannot see "defines no
+        # Apply of its own"; server/projector's TestReplicaHasNoApplyOfItsOwn
+        # holds that half.
+        state-projector-is-a-replica:
+          files:
+            - '**/server/projector/**'
+            - '**/cmd/andara-projector/**'
+          deny:
+            - pkg: github.com/valesordev/andara/server/gateway
+              desc: the projector serves no Protocol; it reads the log (AW-SRV-019)
+            - pkg: github.com/valesordev/andara/server/ingress
+              desc: the projector writes no Command; it replays the ones the log holds (AW-SRV-019)
+            - pkg: github.com/valesordev/andara/server/egress
+              desc: the projector streams nothing to a Session (AW-SRV-019)
+            - pkg: github.com/valesordev/andara/server/roster
+              desc: the projector binds no Character (AW-SRV-019)
+            - pkg: github.com/valesordev/andara/server/auth
+              desc: the projector authenticates no one (AW-SRV-019)
+            - pkg: github.com/valesordev/andara/server/command
+              desc: the projector parses and authorizes nothing; the log carries only accepted Commands (AW-SRV-019)
         # AW-CLI-006 AC-8. content/lang is imported by admin/cli, by
         # server/content for AW-SRV-013's publish gate, and by the conformance
         # harness. It may quote server/sim — the Component registry, the

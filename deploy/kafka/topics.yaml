@@ -47,10 +47,19 @@ topics:
   - name: andara.state.v1
     partitions: 64
     cleanup.policy: compact
+    min.compaction.lag.ms: 60000
     why: |
       Current state per aggregate. Every index — Redis, Postgres, later ClickHouse — is
       built from this topic rather than from the Event history, so rebuilding an index
       costs live-state time instead of world-age time (ADR-0002 §5.5).
+      Written by the state projector (AW-SRV-019) alone, on the commands partitioner —
+      hash(zone_id) % 64 — so a Zone's aggregates share a Partition. Every Entity key
+      names its Zone, so a key never moves between Partitions and compaction stays correct.
+      min.compaction.lag.ms keeps a minute of history uncompacted, so an index reading the
+      head sees every write rather than only the survivors of the last cleaner pass.
+      Write ACL: the `andara-projector-state` principal only (AW-SRV-019 AC-9). Declared
+      here, not enforced: the broker does not authenticate yet, and the first story that
+      turns on SASL applies it and inherits AC-9's assertion.
 
   - name: andara.audit.v1
     partitions: 6
@@ -114,7 +123,7 @@ broker:
 # Consumer groups, reserved by convention. <env> is local, dev, or prod.
 consumer_groups:
   - andara-sim-<env>                 # simulation processes      <- andara.commands.v1
-  - andara-state-<env>               # state projector           <- andara.events.v1
+  - andara-projector-state-<env>     # state projector           <- andara.commands.v1 (checkpoints), andara.events.v1 (boundaries)
   - andara-projection-redis-<env>    # Redis index               <- andara.state.v1
   - andara-projection-pg-<env>       # Postgres index            <- andara.state.v1, accounts, audit
   - andara-content-<env>             # content resolver          <- content topics

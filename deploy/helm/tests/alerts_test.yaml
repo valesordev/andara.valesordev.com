@@ -157,3 +157,61 @@ tests:
             exp_annotations:
               summary: "Certificate andara-prod/andara-server expires in under 7 days and has not renewed"
               runbook: docs/runbooks/certificate-expiring.md
+
+  # AW-SRV-019. Compose shape: no namespace. A divergence fires at once; staleness only
+  # after the lag has been over the configured budget for five minutes, and a lag that
+  # dips back under it does not fire.
+  - name: compose — the state projector diverges, then is stale
+    interval: 1m
+    input_series:
+      - series: 'andara_state_digest_mismatches_total{job="andara-projector-state"}'
+        values: '0 0 1 1'
+      - series: 'andara_state_projector_lag_budget_seconds{job="andara-projector-state"}'
+        values: '5x10'
+      - series: 'andara_state_projector_lag_seconds{job="andara-projector-state"}'
+        values: '1 1 9 9 9 9 9 9 9 2 2'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: StateProjectorDiverged
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: StateProjectorDiverged
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, job: andara-projector-state}
+            exp_annotations:
+              summary: "The state projector's replica disagrees with the World's recorded State Hash — the indexes are frozen at the last good tick"
+              runbook: docs/runbooks/state-projector-diverged.md
+      - eval_time: 6m
+        alertname: ProjectionStale
+        exp_alerts: []
+      - eval_time: 7m
+        alertname: ProjectionStale
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, job: andara-projector-state}
+            exp_annotations:
+              summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
+              runbook: docs/runbooks/projection-stale.md
+      - eval_time: 10m
+        alertname: ProjectionStale
+        exp_alerts: []
+
+  # Cluster shape: a stale dev projector tickets as dev alone.
+  - name: cluster — a stale projector tickets for its own namespace only
+    interval: 1m
+    input_series:
+      - series: 'andara_state_projector_lag_budget_seconds{namespace="andara-dev", job="andara-projector-state"}'
+        values: '5x10'
+      - series: 'andara_state_projector_lag_seconds{namespace="andara-dev", job="andara-projector-state"}'
+        values: '30x10'
+      - series: 'andara_state_projector_lag_budget_seconds{namespace="andara-prod", job="andara-projector-state"}'
+        values: '5x10'
+      - series: 'andara_state_projector_lag_seconds{namespace="andara-prod", job="andara-projector-state"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: ProjectionStale
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, namespace: andara-dev, job: andara-projector-state}
+            exp_annotations:
+              summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
+              runbook: docs/runbooks/projection-stale.md

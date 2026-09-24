@@ -174,3 +174,13 @@ func typeOf(env *gamev1.EventEnvelope) EventType {
 	}
 	return ""
 }
+
+// TypeOf names an envelope's payload; "" for a payload that is not a
+// simulation Event (a transport's Heartbeat or Resync). Exported for the state
+// projector's Touched table, whose completeness test walks the oneof.
+func TypeOf(env *gamev1.EventEnvelope) EventType { return typeOf(env) }
+
+// EventTypes is every EventType the simulation emits.
+func EventTypes() []EventType {
+	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped}
+}

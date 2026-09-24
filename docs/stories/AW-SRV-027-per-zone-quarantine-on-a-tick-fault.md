@@ -111,6 +111,12 @@ exactly as they diverge in history, which is correct.
 
 CLAUDE.md §8, plus: `AW-SRV-002`'s Zone-fault question points here as resolved.
 
+- **Inherited from `AW-SRV-019` (2026-09-24):** the state projector replays through a faulted tick.
+  Today it cannot, any more than recovery can: the panicking record stays unapplied, the boundary's
+  offset excludes it, and a replay diverges at that tick. `server/projector`'s
+  `TestFaultRendersTheZoneWhole` renders the live engine's fault tick directly for that reason. When
+  this story lands, the same case also runs through `Projector.Replay` and verifies every boundary.
+
 ## Open questions
 
 - **Resolved 2026-09-18 (Brian): quarantine the Zone, not the Partition.**

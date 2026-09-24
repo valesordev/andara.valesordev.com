@@ -4,6 +4,8 @@
 package store
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -40,22 +42,77 @@ var migrations = map[uint32]func(*statev1.ZoneState) error{}
 // AW-INF-007 needs. Never a partial or silent read: an error here returns no
 // Zone at all.
 func Decode(envelope []byte) (*statev1.SnapshotEnvelope, *sim.ZoneState, error) {
+	env, body, err := decodeBody(envelope)
+	if err != nil {
+		return nil, nil, err
+	}
+	return env, sim.ZoneStateFromProto(body), nil
+}
+
+// decodeBody is Decode stopping at the migrated body proto, which also
+// carries the process-wide PRNG and next EventID a round load needs.
+func decodeBody(envelope []byte) (*statev1.SnapshotEnvelope, *statev1.ZoneState, error) {
+	env, body, err := readVerified(envelope, sim.StateVersion, false)
+	return env, body, err
+}
+
+// hashers computes the State Hash of a body written at an older
+// state_version, in that version's canonical form — the form the envelope's
+// state_hash was taken over. One per version below sim.StateVersion, alongside
+// its migration: a version bump that changes what the hash covers must say how
+// the old hash was computed, or no round written before the bump can be
+// verified. TestMigrationsCoverEveryVersion fails without one.
+//
+// Empty at version 1, like migrations.
+var hashers = map[uint32]func(*statev1.ZoneState) [32]byte{}
+
+// hashAt is the State Hash of body as written at version, where current is
+// the version this binary hashes natively.
+func hashAt(body *statev1.ZoneState, version, current uint32) ([32]byte, error) {
+	if version == current {
+		return sim.HashZone(sim.ZoneStateFromProto(body)), nil
+	}
+	h, ok := hashers[version]
+	if !ok {
+		return [32]byte{}, fmt.Errorf("store: no hasher for state_version %d; a body written at it cannot be verified", version)
+	}
+	return h(body), nil
+}
+
+// ErrHashInvalid: the body does not hash to what its envelope says.
+var ErrHashInvalid = errors.New("snapshot body does not match its envelope's state hash")
+
+// readVerified decodes an envelope and, when verify is set, checks the body
+// against the envelope's state_hash *before* migrating it — the hash was taken
+// over the body as written, so a migration that changes hash-covered state
+// would otherwise fail every valid older object. The migrated body is returned.
+// `to` is a parameter for the reason Migrate's is.
+func readVerified(envelope []byte, to uint32, verify bool) (*statev1.SnapshotEnvelope, *statev1.ZoneState, error) {
 	var env statev1.SnapshotEnvelope
 	if err := proto.Unmarshal(envelope, &env); err != nil {
 		return nil, nil, fmt.Errorf("store: decode envelope: %w", err)
 	}
 	have := env.GetStateVersion()
-	if have > sim.StateVersion {
-		return nil, nil, &sim.ErrStateVersion{Have: have, Want: sim.StateVersion}
+	if have > to {
+		return nil, nil, &sim.ErrStateVersion{Have: have, Want: to}
 	}
 	var body statev1.ZoneState
 	if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
 		return nil, nil, fmt.Errorf("store: decode body for zone %s: %w", env.GetZoneId(), err)
 	}
-	if err := Migrate(&body, have, sim.StateVersion); err != nil {
+	if verify {
+		got, err := hashAt(&body, have, to)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !bytes.Equal(got[:], env.GetStateHash()) {
+			return nil, nil, fmt.Errorf("%w: body hashes to %x, envelope says %x", ErrHashInvalid, got[:8], env.GetStateHash())
+		}
+	}
+	if err := Migrate(&body, have, to); err != nil {
 		return nil, nil, err
 	}
-	return &env, sim.ZoneStateFromProto(&body), nil
+	return &env, &body, nil
 }
 
 // Migrate carries body forward from version `from` to version `to`, applying

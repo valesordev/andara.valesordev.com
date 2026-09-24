@@ -167,6 +167,15 @@ func (c *Content) Versions() map[string]uint64 {
 	return c.loader.Versions()
 }
 
+// ZoneVersions names the packID@version each served Zone came from. Empty for
+// the dir source, for the reason Versions is.
+func (c *Content) ZoneVersions() map[sim.ZoneID]string {
+	if c == nil || c.loader == nil {
+		return nil
+	}
+	return c.loader.ZoneVersions()
+}
+
 // Follow watches the Active Pointer topic and applies moves until ctx ends.
 // A no-op for the dir source, which has nothing to watch: reloading a
 // directory under a running World is not a thing this story adds.

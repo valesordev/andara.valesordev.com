@@ -179,3 +179,8 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 	}
 	return z
 }
+
+// StateProto renders one Entity as the snapshot body carries it — the same
+// message the state projector's Entity records carry (AW-SRV-019), so an
+// index and a snapshot cannot disagree on an Entity's shape.
+func (e *EntityState) StateProto() *statev1.EntityState { return entityStateProto(e) }

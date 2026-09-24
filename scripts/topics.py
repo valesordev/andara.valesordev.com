@@ -30,7 +30,10 @@ COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
 
 # Properties compared against the live cluster. Anything not listed here is the broker's
 # business; anything listed here is ours and drift in it is an error.
-COMPARED = ["cleanup.policy", "retention.ms", "min.insync.replicas"]
+# min.compaction.lag.ms is andara.state.v1's (AW-SRV-019). Redpanda accepts it and does
+# not report it, so locally it is skipped like min.insync.replicas; on Kafka a topic created
+# before it was declared reports the broker default, and `topics-diff` names the drift.
+COMPARED = ["cleanup.policy", "retention.ms", "min.insync.replicas", "min.compaction.lag.ms"]
 
 
 def die(msg, code=1):

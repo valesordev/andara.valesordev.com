@@ -109,6 +109,34 @@ groups:
         annotations:
           summary: "No complete snapshot round in over three cadences — recovery would be slower than the RTO target"
           runbook: docs/runbooks/snapshot-stale.md
+  - name: andara-projections
+    # The state projector (AW-SRV-019) and the indexes after it, tied to
+    # docs/specs/slo/projection-freshness.md. Tickets, not pages: no player reads a
+    # projection. Both compare one projector's series with itself, so each fires per
+    # namespace without an aggregation. Neither can see a projector that is not running
+    # (the SLO's known gaps); the runbooks start from the pod's last exit code.
+    rules:
+      - alert: StateProjectorDiverged
+        # The projector holds /metrics up for a minute after a divergence before it exits
+        # 2, so this is scraped; a restart starts the counter at 0 and diverges again.
+        expr: andara_state_digest_mismatches_total > 0
+        labels:
+          severity: ticket
+          slo: projection-freshness
+          projection: state
+        annotations:
+          summary: "The state projector's replica disagrees with the World's recorded State Hash — the indexes are frozen at the last good tick"
+          runbook: docs/runbooks/state-projector-diverged.md
+      - alert: ProjectionStale
+        expr: andara_state_projector_lag_seconds > andara_state_projector_lag_budget_seconds
+        for: 5m
+        labels:
+          severity: ticket
+          slo: projection-freshness
+          projection: state
+        annotations:
+          summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
+          runbook: docs/runbooks/projection-stale.md
   - name: andara-sessions
     # The Event stream (AW-SRV-011). One alert, on the symptom: players' streams are being
     # ended by the server faster than the Session availability budget allows

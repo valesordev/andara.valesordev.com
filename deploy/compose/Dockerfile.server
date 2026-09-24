@@ -26,6 +26,13 @@ RUN CGO_ENABLED=0 go build \
       -trimpath \
       -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
       -o /out/andara-server ./cmd/andara-server
+# The state projector (AW-SRV-019) ships in the same image: it is a replica of the
+# simulation, and a replica built from a different commit than the server it replicates is
+# a divergence waiting for its first tick. The chart's projector Deployment runs it.
+RUN CGO_ENABLED=0 go build \
+      -trimpath \
+      -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT}" \
+      -o /out/andara-projector ./cmd/andara-projector
 
 FROM alpine:3.21
 # Build stages do not share ARGs; the labels need them again. `source` links the ghcr
@@ -39,6 +46,7 @@ LABEL org.opencontainers.image.source="https://github.com/valesordev/andara.vale
 RUN apk add --no-cache ca-certificates wget \
  && adduser -D -u 10001 andara
 COPY --from=build /out/andara-server /usr/local/bin/andara-server
+COPY --from=build /out/andara-projector /usr/local/bin/andara-projector
 USER andara
 EXPOSE 8443 8080
 ENTRYPOINT ["/usr/local/bin/andara-server"]

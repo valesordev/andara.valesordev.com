@@ -186,7 +186,7 @@ test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
 	  ANDARA_S3_TEST_ACCESS_KEY="$${ANDARA_S3_TEST_ACCESS_KEY:-andaratest}" \
 	  ANDARA_S3_TEST_SECRET_KEY="$${ANDARA_S3_TEST_SECRET_KEY:-andaratest123}" \
-	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/ ./server/content/
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/ ./server/content/ ./server/projector/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:
@@ -335,7 +335,8 @@ build:
 	@mkdir -p bin
 	@$(GO) build -ldflags "$(LDFLAGS_CLI)" -o bin/andara-cli ./cmd/andara-cli
 	@$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/andara-server ./cmd/andara-server
-	@echo "build: bin/andara-cli bin/andara-server"
+	@$(GO) build -ldflags "-X main.version=$(VERSION) -X main.commit=$(COMMIT)" -o bin/andara-projector ./cmd/andara-projector
+	@echo "build: bin/andara-cli bin/andara-server bin/andara-projector"
 
 ## goldens: regenerate CLI --help golden files and the play rendering transcript
 goldens:

@@ -348,3 +348,45 @@ func TestStateHash_Coverage(t *testing.T) {
 		t.Error("insertion order leaked into the hash")
 	}
 }
+
+// AW-SRV-019's seam: ReplayEach hands every verified tick to the hook, in
+// order, and never the tick whose hash diverged — so output derived from the
+// hook stops at T-1 (AC-3).
+func TestEngine_ReplayEachStopsBeforeTheDivergentTick(t *testing.T) {
+	log := simtest.Script(20)
+	src := simtest.MemorySource(log)
+	e := newEngine(t, 3)
+	remaining := map[int32][]sim.Record{}
+	for p, r := range log {
+		remaining[p] = r
+	}
+	var boundaries []sim.TickCompleted
+	for range 8 {
+		res, err := e.Step(simtest.Batch(remaining, 2))
+		if err != nil {
+			t.Fatal(err)
+		}
+		boundaries = append(boundaries, res.Completed)
+	}
+	boundaries[5].StateHash[0] ^= 0xff
+
+	var seen []sim.Tick
+	err := newEngine(t, 3).ReplayEach(boundaries, src, func(res sim.StepResult) error {
+		seen = append(seen, res.Tick)
+		return nil
+	})
+	var hm *sim.HashMismatchError
+	if !errors.As(err, &hm) || !errors.Is(err, sim.ErrHashMismatch) || hm.Tick != 6 {
+		t.Fatalf("want HashMismatchError at tick 6, got %v", err)
+	}
+	if hm.Recorded != boundaries[5].StateHash || hm.Replayed == hm.Recorded {
+		t.Fatal("the error does not carry both hashes whole")
+	}
+	if !slices.Equal(seen, []sim.Tick{1, 2, 3, 4, 5}) {
+		t.Fatalf("hook saw ticks %v, want 1..5", seen)
+	}
+	stop := errors.New("stop")
+	if err := newEngine(t, 3).ReplayEach(boundaries[:3], src, func(sim.StepResult) error { return stop }); !errors.Is(err, stop) {
+		t.Fatalf("a hook error must stop the replay and come back as is: %v", err)
+	}
+}

@@ -126,8 +126,12 @@ alerts:
 observability:
   annotations: true
 
-# Disabled everywhere until the binaries exist (AW-SRV-019, AW-SRV-017, AW-SRV-018).
-# Enabling one before then renders a Deployment that crash-loops on a missing subcommand.
+# `state` has a binary (AW-SRV-019: `andara-projector state`, in the server image) and is
+# still off: enabling it on dev or prod waits on andara.state.v1 carrying
+# min.compaction.lag.ms there (`make topics-diff ENV=<env>` names the drift; applying it on
+# the box is an operator step, not a make target). redis and postgres have no binary yet
+# (AW-SRV-017, AW-SRV-018); enabling one renders a Deployment that exits 1 on an unknown
+# projection.
 projectors:
   state:
     enabled: false

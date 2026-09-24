@@ -93,6 +93,21 @@ func TestLoader_BootResolvesEveryFollowedPointer(t *testing.T) {
 	}
 }
 
+// AW-SRV-019 AC-7: each Zone names the packID@version it was served from.
+func TestLoader_ZoneVersionsNameEachZonesPack(t *testing.T) {
+	s := newFakeStore()
+	s.publish("andara.core", 3, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	s.publish("town", 7, 3, map[string]string{"town.json": zoneJSON("town", "square")})
+	l, _ := testLoader(t, s, AllPacks)
+	if _, err := l.LoadAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	got := l.ZoneVersions()
+	if got["core"] != "andara.core@3" || got["town"] != "town@7" || len(got) != 2 {
+		t.Fatalf("zone versions = %v", got)
+	}
+}
+
 // AC-8 is a state machine, not a check. A pack compiled against a core that has
 // not shipped yet is held, and it loads when core catches up — without the
 // Builder having to publish a second time.

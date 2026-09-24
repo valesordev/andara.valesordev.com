@@ -150,7 +150,7 @@ These are asserted against the live cluster by `topics-diff`, not merely written
 | Group | Consumer | Topics |
 |-------|----------|--------|
 | `andara-sim-<env>` | simulation processes | `andara.commands.v1` |
-| `andara-state-<env>` | state projector (`AW-SRV-019`) | `andara.events.v1` → `andara.state.v1` |
+| `andara-projector-state-<env>` | state projector (`AW-SRV-019`; renamed from `andara-state-<env>` there, 2026-09-24) | `andara.commands.v1` + `andara.events.v1` → `andara.state.v1` |
 | `andara-projection-redis-<env>` | Redis index | `andara.state.v1` |
 | `andara-projection-pg-<env>` | Postgres index | `andara.state.v1`, `andara.accounts.v1`, `andara.audit.v1` |
 | `andara-content-<env>` | content resolver | content topics |

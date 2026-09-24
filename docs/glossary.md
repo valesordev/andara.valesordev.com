@@ -532,9 +532,11 @@ Versions, where compaction retains everything.
 Projector and audit. Retention must reach back at least as far as the oldest Snapshot.
 
 **State Topic** — `andara.state.v1`, compacted, holding the current state of each aggregate keyed
-`character:<id>`, `npc:<id>`, `item:<id>`, `room:<zone>/<id>`. What the indexes read, so a rebuild costs
-time proportional to live state rather than to the World's age. Each record carries `tick`,
-`source_offset`, `source_event_id`, `content_version_sha256`, and `state_digest` (ADR-0002 §5.5).
+`character:<zone>/<id>`, `npc:<zone>/<id>`, `item:<zone>/<id>`, `room:<zone>/<id>`, `zone:<id>`, on the
+commands partitioner. Every Entity key names its Zone, because an Entity changes Zone and a key must
+not move between Partitions. A Zone exit is a tombstone on the old key (`AW-SRV-019`, 2026-09-24).
+What the indexes read, so a rebuild costs time proportional to live state rather than to the World's
+age. Each record is a State Record (ADR-0002 §5.5).
 
 **State Projector** — The component that produces the State Topic. It is a **replica** of the
 simulation: it runs the Simulation Core over the same Commands and Tick Boundary Records the live server

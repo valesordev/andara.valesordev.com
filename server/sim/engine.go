@@ -244,6 +244,12 @@ func (e *Engine) SetObserver(o Observer) { e.cfg.Observer = o }
 // not mutate it outside a handler.
 func (e *Engine) State() *WorldState { return e.state }
 
+// World is the topology the Engine runs over.
+func (e *Engine) World() *World { return e.world }
+
+// Templates is the registry the Engine instantiates from; nil when it has none.
+func (e *Engine) Templates() *TemplateRegistry { return e.templates }
+
 // Tick is the current tick.
 func (e *Engine) Tick() Tick { return e.state.Tick }
 
@@ -506,6 +512,15 @@ type RecordSource interface {
 // resulting hash must equal the recorded one. A mismatch is ErrHashMismatch
 // naming the tick — the World is not the one that was running.
 func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
+	return e.ReplayEach(boundaries, src, nil)
+}
+
+// ReplayEach is Replay with a hook: after each boundary's tick is applied and
+// its hash verified, after is called with what the tick produced. A tick whose
+// hash does not match never reaches after, so a caller deriving output from
+// the hook — the state projector (AW-SRV-019) — produces nothing for the tick
+// that diverged. An error from after stops the replay and is returned as is.
+func (e *Engine) ReplayEach(boundaries []TickCompleted, src RecordSource, after func(StepResult) error) error {
 	for _, b := range boundaries {
 		if b.Tick != e.state.Tick+1 {
 			// A missing boundary is a tick whose batching decision was
@@ -519,7 +534,10 @@ func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 				ErrBoundaryGap, b.Tick, e.state.Tick, e.state.Tick+1, b.Tick-1)
 		}
 		if b.StateVersion != e.state.Version {
-			return fmt.Errorf("replay: boundary for tick %d has state_version %d, this binary reads %d", b.Tick, b.StateVersion, e.state.Version)
+			// Typed, so a caller can tell "written by a newer binary" (the
+			// state projector's exit 4, AW-SRV-019 AC-10) from a broken log.
+			return fmt.Errorf("replay: boundary for tick %d has state_version %d, this binary reads %d: %w",
+				b.Tick, b.StateVersion, e.state.Version, &ErrStateVersion{Have: b.StateVersion, Want: e.state.Version})
 		}
 		var in TickInput
 		parts := make([]int, 0, len(b.Offsets))
@@ -554,8 +572,29 @@ func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 			return fmt.Errorf("replay: tick %d: %w", b.Tick, err)
 		}
 		if res.Completed.StateHash != b.StateHash {
-			return fmt.Errorf("%w at tick %d: recorded %x, replayed %x", ErrHashMismatch, b.Tick, b.StateHash[:8], res.Completed.StateHash[:8])
+			return &HashMismatchError{Tick: b.Tick, Recorded: b.StateHash, Replayed: res.Completed.StateHash}
+		}
+		if after != nil {
+			if err := after(res); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
+
+// HashMismatchError is ErrHashMismatch with both hashes whole: a divergence
+// report names them (AW-SRV-019 AC-3), and errors.Is(err, ErrHashMismatch)
+// still matches it.
+type HashMismatchError struct {
+	Tick     Tick
+	Recorded [32]byte
+	Replayed [32]byte
+}
+
+func (e *HashMismatchError) Error() string {
+	return fmt.Sprintf("%v at tick %d: recorded %x, replayed %x", ErrHashMismatch, e.Tick, e.Recorded[:8], e.Replayed[:8])
+}
+
+// Unwrap makes errors.Is(err, ErrHashMismatch) hold.
+func (e *HashMismatchError) Unwrap() error { return ErrHashMismatch }
