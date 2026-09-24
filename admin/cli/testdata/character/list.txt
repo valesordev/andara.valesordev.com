@@ -1,0 +1,3 @@
+Aldric  live     town/square
+brin    dormant  town/hall
+Carys   dormant  wilds/ford

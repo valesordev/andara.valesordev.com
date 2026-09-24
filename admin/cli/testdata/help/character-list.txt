@@ -1,0 +1,20 @@
+List the logged-in Account's Characters, one per line and sorted by name:
+the name, whether it is live (bound to a Session now) or dormant, and the
+zone/room where the server last knew it to be. The server is asked every
+time; nothing is cached.
+
+Usage:
+  andara-cli character list [flags]
+
+Flags:
+  -h, --help   help for list
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

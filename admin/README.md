@@ -28,7 +28,8 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli account …` / `invite …` / `registration …` | account administration (operator) |
 | `andara-cli sim repl` | drive the Command Pipeline in-process against content on disk (developer) |
 | `andara-cli snapshot list` | list a Zone's snapshot objects in the configured store (`AW-SRV-006`, operator) |
-| `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`) |
+| `andara-cli character create <name>` / `list` | make a Character; list yours with where each is (`AW-CLI-007`) |
+| `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`, `--character` from `AW-CLI-007`) |
 
 ## Global flags
 
@@ -107,6 +108,11 @@ Codes `play` adds: `not_logged_in`, `protocol_version`, `disconnected`, and
 the connected commands' `connect_failed`, `unauthenticated`,
 `permission_denied`, `server_error`, `timeout`.
 
+Codes the roster adds (`AW-CLI-007`): `no_character` and `character_required`
+(exit 2), and the server's `ErrorInfo` reasons passed through as they are —
+`roster_full`, `name_taken`, `name_invalid`, `already_live`,
+`no_such_character` (exit 1).
+
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
 stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
 
@@ -137,12 +143,58 @@ over `Admin`, are `AW-SRV-007`'s. The two are not redundant: that one answers wh
 server sees, this one answers what is actually in the bucket, and a runbook wants the
 second when the first disagrees with it.
 
+## character — the roster
+
+```
+andara-cli character create <name>
+andara-cli character list
+```
+
+Creating and choosing a Character are roster RPCs on the Game service
+(`AW-SRV-014`), not world Commands: nothing typed into the world means create
+or select. Each command opens a Session of its own with the stored credential,
+calls the RPC, and closes it, so every roster action is a Session-correlated
+audit line on the server.
+
+`create` prints `Aldric (1 of 5)`: the name as the server stored it, and the
+roster's size against the server's cap. `--output json` is
+`{"character": <CharacterSummary>, "count": 1, "max_per_account": 5}`. The count
+is the roster listed just before the create plus one, because
+`CreateCharacterResponse` carries the cap but not the count. A refused name
+prints the server's message and exits 1 with its reason as `error.code`.
+
+`list` prints one line per Character, sorted by name: the name, `live` (bound
+to a Session now) or `dormant`, and `zone/room`, where the server last knew it to
+be. `--output json` is `{"characters": [<CharacterSummary>…], "max_per_account": 5}`.
+The server is asked every time; nothing is cached.
+
 ## play — the Text Interface
 
 ```
 andara-cli auth login --username <you>
-andara-cli play [--as <account-id>] [--world] [--show-protocol] [--no-history] [--reconnect=false] [--client-timeout 10s]
+andara-cli character create <name>
+andara-cli play [--character <name>] [--as <account-id>] [--world] [--show-protocol] [--no-history] [--reconnect=false] [--client-timeout 10s]
 ```
+
+Before it subscribes, `play` enters the World as a Character: the one
+`--character` names (case-insensitively, resolved through `ListCharacters`; a
+`character_id` is never typed), or with no flag the Account's only one. With no
+Characters it exits 2 `no_character`, and with several and no flag it exits 2
+`character_required` and lists them. Either way nothing is subscribed. The order
+is `OpenSession` → `SelectCharacter` → `Subscribe` → `look`. The selection's
+answer is an ack, like `Submit`'s: it appears only under protocol visibility
+(`» SelectCharacter session_id=… character_id=…`), and the arrival comes on the
+stream like any other Event. The connection notice names the Character:
+`-- Connected to <server> as <you>, playing Aldric (session …, protocol 1).`
+If the Character is live on another Session at launch, `play` prints the server's
+message and exits 1 `already_live`.
+
+A reconnect selects the same Character again before it resumes. The old
+Session's teardown is what frees the Character, and the new Session can get
+there first, so during a reconnect `already_live` is retried on the reconnect
+backoff and announced once (`-- Waiting for your previous session to end.`). It
+is never fatal there. Any other refusal of the selection ends `play` with that
+reason.
 
 `play` opens a Session with the stored credential, subscribes to its Events,
 asks the world for the Room, and then reads lines. What you type is sent as
