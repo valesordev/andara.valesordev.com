@@ -356,7 +356,8 @@ Against `origin/main` `033f2c6`.
 2. `GRAFANA_CLOUD_READ_TOKEN` and the six `GRAFANA_CLOUD_{PROM,LOKI,TEMPO}_{URL,USER}`, for ACs 1,
    3 and 4.
 3. AC-2 additionally needs `andara.state.v1`'s `min.compaction.lag.ms` (added by `AW-SRV-019`)
-   applied on the box, and `projectors.state.enabled=true` on `dev` (`values.yaml`'s note).
+   applied on the box, which no target does yet (#77, `§9 defect`). It then needs
+   `projectors.state.enabled=true` on `dev`.
 4. AC-6 as amended above.
 5. The record lines `AW-INF-013` and `AW-INF-014` owe this story: the first `sha-` tag the box
    pulled, and the first `dev` install Ready on Kafka.
