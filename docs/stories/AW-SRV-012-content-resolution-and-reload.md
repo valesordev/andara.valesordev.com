@@ -4,7 +4,7 @@ title: Content resolution from the store and reload at a tick boundary
 epic: EPIC-05
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-001, AW-SRV-021, AW-SRV-022]
 blocks: [AW-SRV-013]
@@ -185,6 +185,16 @@ never out of band.
 ## Definition of done
 
 CLAUDE.md §8, plus: the replay-across-swap test; `docs/specs/slo/content-freshness.md` and the runbook.
+
+## As built (2026-09-24)
+
+PR #63 (`7973192`, `60721ce`, `fae3dd2`) landed the half of this story that does not depend on the
+protocol: the Kafka resolver, the hash-keyed blob cache, and the retained-version rule. AC-1, AC-4–8
+and AC-11 are met at the `Loader`; AC-2, AC-3, AC-9 and AC-10 wait on `ContentSwap`, `EntityRelocated`
+and `ZoneDefinition.fallback_room`. `Follow`/`Watch` are not yet started from `server/boot`, so a
+running server does not react to a pointer move until AC-2 lands. The story stays `in-progress`
+until then. Per-AC state, deviations and the architecture-owned items are in
+`docs/feedback/AW-SRV-012-content-resolution-and-reload.md`.
 
 ## Open questions
 
