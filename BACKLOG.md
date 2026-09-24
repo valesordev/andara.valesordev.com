@@ -10,7 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 9 |
-| `ready` | 29 |
+| `in-progress` | 1 |
+| `ready` | 28 |
 | `draft` | 1 |
 | `done` | 17 |
 | **total** | **56** |
@@ -45,7 +46,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
-### `ready` (29)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
+
+### `ready` (28)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -67,7 +74,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `EPIC-09` | server | M | medium | implementation | Python behavior SDK and per-pack agent runtime | `AW-SRV-009` |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `EPIC-10` | server | M | medium | implementation | Redis hot projection from the state topic | `AW-SRV-019` |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `EPIC-10` | server | M | medium | implementation | Postgres tabular projection for accounts, rosters, and builder queries | `AW-SRV-017` |
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `EPIC-03` | server | S | low | implementation | Gateway TLS hot-reload — serve a renewed certificate without a restart | `AW-SRV-005` |
 | [`AW-SRV-025`](docs/stories/AW-SRV-025-client-address-behind-the-ingress.md) | `EPIC-08` | server | S | medium | implementation | Client address behind the ingress — trusted proxies and the forwarded peer | `AW-SRV-008` |
 | [`AW-SRV-026`](docs/stories/AW-SRV-026-exit-into-exact-recovery-when-a-tick-boundary-record-is-lost.md) | `EPIC-04` | server | S | medium | implementation | Exit into exact recovery when a Tick Boundary Record is lost | `AW-SRV-002` |
@@ -233,5 +239,5 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `draft` | A schema registry on the box for dev and prod |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `ready` | Redis hot projection from the state topic |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `ready` | Postgres tabular projection for accounts, rosters, and builder queries |
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `ready` | State projector and the compacted current-state topic |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `in-progress` | State projector and the compacted current-state topic |
 
