@@ -29,6 +29,7 @@ PY="${PY:-python3}"
 die() { echo "make: kafka-$1: $2" >&2; exit "${3:-1}"; }
 
 need() {
+  local tool
   for tool in "$@"; do
     command -v "$tool" >/dev/null 2>&1 || die "$CMD" "$tool not found" 3
   done
@@ -49,8 +50,10 @@ ensure_ns() {
 operator() {
   need helm kubectl
   # The chart binds the operator into each watched namespace, so they must exist first.
-  for ns in "${WATCHED[@]}"; do ensure_ns "$ns"; done
-  local have
+  # `wns`, local: bash scoping is dynamic, and a bare `ns` here overwrote install()'s, which
+  # on 2026-09-24 applied dev's install to andara-prod.
+  local wns have
+  for wns in "${WATCHED[@]}"; do ensure_ns "$wns"; done
   have="$(helm list -n strimzi -o json 2>/dev/null \
     | "$PY" -c 'import json,sys; r=[x for x in json.load(sys.stdin) if x["name"]=="strimzi"]; print(r[0]["chart"] if r else "")')"
   if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" ]]; then
@@ -73,6 +76,8 @@ install() {
   need helm kubectl "$PY"
   operator
   ensure_ns "$ns"
+  # Never apply to a namespace other than the one ENV names (see operator()).
+  [[ "$ns" == "andara-$env" ]] || die install "internal error: target namespace is $ns, not andara-$env"
   kubectl -n "$ns" apply -f deploy/k8s/kafka/ >/dev/null
   echo "kafka-install: applied deploy/k8s/kafka/ to $ns; waiting for kafka/$KAFKA (first boot pulls images and forms the KRaft quorum)"
   kubectl -n "$ns" wait "kafka/$KAFKA" --for=condition=Ready --timeout=15m >/dev/null \
