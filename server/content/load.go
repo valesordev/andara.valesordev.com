@@ -79,6 +79,7 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 		Cache:        BlobCache{Dir: o.CacheDir},
 		MaxBlobBytes: o.MaxBlobBytes,
 		Metrics:      m,
+		Log:          o.Log,
 	})
 	if err != nil {
 		return nil, []sim.ValidationError{{Code: sim.ErrMalformed, Detail: err.Error()}}

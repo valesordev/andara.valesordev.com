@@ -26,15 +26,26 @@ What the implementation gives it to measure, so the doc does not have to guess:
 |---|---|
 | `andara_content_active_version{pack}` | what is live now, per pack |
 | `andara_content_load_duration_seconds{phase}` | `resolve`, `validate`, `build`, `swap` |
-| `andara_content_load_failures_total{reason}` | `format_version`, `core_version`, `validation`, `blob_missing`, `fallback_missing`, `pack_mismatch` |
+| `andara_content_load_failures_total{reason}` | `format_version`, `core_version`, `validation`, `blob_missing`, `blob_corrupt`, `fallback_missing`, `pack_mismatch`, `manifest_missing`, `store_unavailable` |
 | `andara_content_cache_hits_total{outcome}` | `hit`, `miss` |
 
 Freshness is the gap between an Active Pointer moving and the World serving that version.
 The resolver debounces `content.reload_debounce` (2 s) before it starts, so any objective
 under about 5 s is measuring the debounce rather than the system.
 
-Note `pack_mismatch` is a **sixth** failure reason, not in the story's metric list; AC-11
-was added on 2026-09-18 after the Observability section was written.
+The story's metric list names five reasons. The implementation has **nine**, and the SLO
+should be written against the distinction they draw rather than against the list:
+
+- `pack_mismatch` — AC-11 was added on 2026-09-18, after the Observability section was written.
+- `manifest_missing` — an Active Pointer naming a version the versions topic does not carry.
+- `blob_corrupt` — a blob record whose body does not hash to the key it is stored under. The
+  store is content-addressed, so this is the one invariant a reader can check for itself.
+- `store_unavailable` — **the important one for the SLO.** A broker restart or a leader move is
+  not a Builder's mistake. Everything content can get wrong has its own type, so anything else
+  is the store failing to answer, and it is counted separately rather than as `validation`.
+  Without that split, `ContentLoadFailing` would page an operator about a Builder who did
+  nothing wrong, and a content-freshness objective would be measuring broker availability.
+  The two also get different log lines, for the same reason.
 
 ## 2. `docs/runbooks/content-load-failing.md` — architecture (blocks Definition of Done)
 
@@ -168,7 +179,7 @@ observed, because the swap is AC-2 and AC-2 is blocked (§3).
 | AC-5 validation failure | done — refused, previous retained, findings via `AW-SRV-001`'s taxonomy |
 | AC-6 missing blob | done — refused naming hash and path |
 | AC-7 cold and cached identical | done — verified against a real broker by deleting the blob topic between the two resolves |
-| AC-8 core skew held, then released | done — on the pointer-event path; the `content reload` RPC does not exist (§5) |
+| AC-8 core skew held, then released | done at the Loader — see the note below on process wiring; the `content reload` RPC does not exist (§5) |
 | AC-9 `andara_content_reload_stall_seconds` | **blocked** — it measures the swap (§3) |
 | AC-10 `fallback_missing` | **blocked** on `fallback_room` (§3) |
 | AC-11 `pack_mismatch` | done — refused naming the blob, the name's pack and the publishing pack |
@@ -176,3 +187,16 @@ observed, because the swap is AC-2 and AC-2 is blocked (§3).
 The `Loader` deliberately stops at "resolved, validated, and built": the swap itself is the seam the
 `ContentSwap` Command will fill. Nothing here mutates a running World, which is why none of it needed
 the tick loop.
+
+**One thing to be precise about, because "done" could be read too generously.** `Content.Follow` and
+`KafkaResolver.Watch` are implemented and tested — at the `Loader` level, and against a real broker —
+but **nothing in `server/boot` starts them**. In a running server, an Active Pointer move is
+therefore not yet observed. That is deliberate rather than an omission: `Loader.load` sets
+`andara_content_active_version{pack}` when it accepts a version, and with no `ContentSwap` an
+accepted version has nowhere to go, so a wired-up watch would report `town@8` while the World went
+on serving `town@7`. A gauge that lies is worse than a feature that is visibly absent. The wiring is
+one call in `Runtime`, and it belongs with AC-2 in the follow-up.
+
+So for AC-4 through AC-8, read "done" as: the mechanism is complete, and every rule — rejection,
+retention, holding, release, debounce, ordering — is exercised by a test. What is not yet true is
+that a *running process* reacts to a pointer move.

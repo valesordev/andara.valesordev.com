@@ -303,20 +303,30 @@ func TestKafkaResolver_WatchSeesAPointerMove(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Watch starts at the end, so history is not replayed; only the move made
-	// after it starts should arrive. Give the consumer a moment to take its
-	// position before producing.
-	time.Sleep(2 * time.Second)
+	// Watch starts at the end of the topic, so history is not replayed and a
+	// move produced before the consumer has taken its position is missed.
+	// Rather than sleep a guessed amount and hope — which is a race that only
+	// shows up on a loaded CI box — publish the pointer repeatedly until the
+	// watch reports it. Re-activating the same version is a legal, idempotent
+	// write, so the retry costs nothing but a record.
 	p.publish("town", 2, 0, map[string]string{"town.json": intZone("town", "square")})
-	p.activate("town", 2)
 
-	select {
-	case m := <-moves:
-		if m.Pack != "town" || m.Version != 2 {
-			t.Fatalf("move = %+v", m)
+	deadline := time.After(90 * time.Second)
+	retry := time.NewTicker(time.Second)
+	defer retry.Stop()
+	p.activate("town", 2)
+	for {
+		select {
+		case m := <-moves:
+			if m.Pack != "town" || m.Version != 2 {
+				t.Fatalf("move = %+v", m)
+			}
+			return
+		case <-retry.C:
+			p.activate("town", 2)
+		case <-deadline:
+			t.Fatal("no pointer move observed")
 		}
-	case <-time.After(60 * time.Second):
-		t.Fatal("no pointer move observed")
 	}
 }
 
@@ -328,4 +338,60 @@ func asErr(err error, target **ErrBlobMissing) bool {
 		*target = e
 	}
 	return ok
+}
+
+// The store is content-addressed, so the record key is a checksum the reader
+// can verify for itself. This is the "wrong hash" case the story's test plan
+// names. Without the check a damaged record is trusted once and built into a
+// World; the on-disk cache would only catch it on the *second* read, having
+// already served the bad body.
+func TestKafkaResolver_BlobThatDoesNotHashToItsKeyIsRefused(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	topics, cl := throwawayTopics(t)
+	p := &publisher{t: t, cl: cl, topics: topics}
+
+	good := []byte(intZone("town", "square"))
+	sum := sha256.Sum256(good)
+	// The manifest names the hash of the good body; the record stored under
+	// that key carries a different one.
+	damaged, err := proto.Marshal(&contentv1.Blob{Hash: sum[:], Body: []byte(intZone("town", "TAMPERED"))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res := cl.ProduceSync(ctx, &kgo.Record{Topic: topics.Blobs, Key: sum[:], Value: damaged})
+	if err := res.FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+	mf, err := proto.Marshal(&contentv1.ContentVersion{
+		PackId: "town", Version: 1,
+		Blobs: []*contentv1.BlobRef{{Path: "town.json", Hash: sum[:], SizeBytes: uint64(len(good))}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.produce(topics.Versions, ManifestKey("town", 1), mf)
+	p.activate("town", 1)
+
+	r, err := NewKafkaResolver(KafkaOptions{
+		Brokers: brokers(t), Cache: BlobCache{Dir: t.TempDir()}, Topics: topics,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	_, rerr := Resolve(ctx, r, "town", 1)
+	if rerr == nil {
+		t.Fatal("a blob that does not hash to its own key must be refused")
+	}
+	if got := Reason(rerr); got != ReasonBlobCorrupt {
+		t.Fatalf("reason = %q, want %q (err: %v)", got, ReasonBlobCorrupt, rerr)
+	}
+	// blob_corrupt is its own reason: not store_unavailable, and not one of
+	// the content faults either. A damaged record says something about the
+	// store, but it is not the store being unreachable.
+	if IsStoreFault(rerr) {
+		t.Errorf("a damaged blob record must not be reported as an unreachable store")
+	}
 }

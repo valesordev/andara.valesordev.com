@@ -126,6 +126,15 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 	}
 
 	for _, pack := range order {
+		if active[pack] == 0 {
+			// A configured pack with no Active Pointer is not an error — it
+			// may not have been published yet — but it is never what the
+			// operator meant, and silence here looks exactly like a pack that
+			// loaded fine.
+			l.log.Warn("configured content pack has no Active Pointer; nothing to load",
+				"pack", pack, "topic", TopicActive)
+			continue
+		}
 		if r := l.load(ctx, pack, active[pack]); r != nil {
 			rejects = append(rejects, *r)
 		}
@@ -341,7 +350,15 @@ func (l *Loader) hold(pack string, version uint64) {
 func (l *Loader) reject(pack string, version uint64, err error) *Rejection {
 	reason := Reason(err)
 	l.metrics.LoadFailures.WithLabelValues(reason).Inc()
-	l.log.Error("content version refused; the previous version keeps serving",
+	// A store fault and a refused version are both "this version is not
+	// serving", but they are not the same message. Telling a Builder their
+	// pack was refused when the broker was unreachable sends them looking for
+	// a mistake they did not make.
+	msg := "content version refused; the previous version keeps serving"
+	if IsStoreFault(err) {
+		msg = "content could not be read from the store; the previous version keeps serving"
+	}
+	l.log.Error(msg,
 		"pack", pack, "version", version, "reason", reason, "error", err.Error())
 	for _, f := range Findings(err) {
 		l.log.Error("content finding", "pack", pack, "version", version,

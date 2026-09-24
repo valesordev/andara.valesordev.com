@@ -5,10 +5,13 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
@@ -20,6 +23,10 @@ import (
 // The content store's three topics (ADR-0004). Declared in
 // deploy/kafka/topics.yaml and created by `make topics-apply`; this package
 // reads them and never creates them.
+// watchBackoff is how long the pointer watch pauses after a fetch error, so a
+// broker that is down does not turn the watch into a busy loop.
+const watchBackoff = 2 * time.Second
+
 const (
 	TopicBlobs    = "andara.content.blobs.v1"
 	TopicVersions = "andara.content.versions.v1"
@@ -48,6 +55,7 @@ type KafkaResolver struct {
 	maxBlob  int64
 	metrics  *Metrics
 	topics   Topics
+	log      *slog.Logger
 
 	mu     sync.Mutex
 	closed bool
@@ -63,6 +71,8 @@ type KafkaOptions struct {
 	MaxBlobBytes int64
 	// Metrics records cache outcomes. Nil gets an unregistered set.
 	Metrics *Metrics
+	// Log receives watch failures. Nil discards them.
+	Log *slog.Logger
 	// Topics overrides the three topic names. The zero value is the real
 	// ones; a test against a live broker sets throwaway topics so it never
 	// writes into the store the dev stack is serving from.
@@ -101,6 +111,10 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 	if m == nil {
 		m = NewMetrics(nil)
 	}
+	lg := o.Log
+	if lg == nil {
+		lg = slog.New(slog.DiscardHandler)
+	}
 	return &KafkaResolver{
 		brokers:  o.Brokers,
 		clientID: o.ClientID,
@@ -108,6 +122,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		maxBlob:  o.MaxBlobBytes,
 		metrics:  m,
 		topics:   o.Topics.orDefault(),
+		log:      lg,
 	}, nil
 }
 
@@ -157,7 +172,7 @@ func (r *KafkaResolver) Manifest(ctx context.Context, pack string, version uint6
 		return nil, err
 	}
 	if found == nil {
-		return nil, fmt.Errorf("content: no manifest for %s on %s", want, r.topics.Versions)
+		return nil, &ErrManifestMissing{Pack: pack, Version: version, Topic: r.topics.Versions}
 	}
 	return found, nil
 }
@@ -197,6 +212,14 @@ func (r *KafkaResolver) Blobs(ctx context.Context, refs []*contentv1.BlobRef) (m
 			return fmt.Errorf("content: decode blob %s: %w", h, err)
 		}
 		body := b.GetBody()
+		// The store is content-addressed, so the record key is a checksum the
+		// reader can verify for itself. The cache checks this on every read;
+		// not checking it here would mean a damaged record is trusted once,
+		// built into a World, and only caught the second time it is read.
+		sum := sha256.Sum256(body)
+		if !equalHash(sum[:], key) {
+			return &ErrBlobCorrupt{Path: refs[0].GetPath(), Want: key, Got: sum[:]}
+		}
 		for _, ref := range refs {
 			bodies[ref.GetPath()] = body
 		}
@@ -242,15 +265,33 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 			if fetches.IsClientClosed() {
 				return
 			}
-			// A fetch error on a watch is transient by nature — a broker
-			// restart, a leader move. Poll again; the retained version keeps
-			// serving in the meantime.
+			// A fetch error on a watch is usually transient — a broker
+			// restart, a leader move — and the retained version keeps serving
+			// while it lasts. But a persistent one would spin this loop hot
+			// on an empty fetch, so it is logged and backed off rather than
+			// ignored. The watch never gives up: giving up would mean the
+			// server stops noticing content changes with nothing saying so.
+			if errs := fetches.Errors(); len(errs) > 0 {
+				r.log.Warn("content pointer watch: fetch failed, retrying",
+					"topic", errs[0].Topic, "partition", errs[0].Partition,
+					"error", errs[0].Err.Error())
+				select {
+				case <-time.After(watchBackoff):
+				case <-ctx.Done():
+					return
+				}
+				continue
+			}
 			fetches.EachRecord(func(rec *kgo.Record) {
 				if len(rec.Value) == 0 {
 					return
 				}
 				var av contentv1.ActiveVersion
 				if err := proto.Unmarshal(rec.Value, &av); err != nil {
+					// Undecodable pointer: say so. Silence here would look
+					// exactly like a pack nobody is publishing to.
+					r.log.Error("content pointer watch: undecodable Active Pointer",
+						"key", string(rec.Key), "error", err.Error())
 					return
 				}
 				pack := av.GetPackId()
@@ -291,23 +332,23 @@ func ManifestKey(pack string, version uint64) string {
 func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, value []byte) error) error {
 	admClient, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...), kgo.ClientID(r.clientID+"-admin"))
 	if err != nil {
-		return fmt.Errorf("content: connect for %s: %w", topic, err)
+		return &ErrStoreUnavailable{Op: "connect " + topic, Err: err}
 	}
 	adm := kadm.NewClient(admClient)
 	starts, serr := adm.ListStartOffsets(ctx, topic)
 	ends, eerr := adm.ListEndOffsets(ctx, topic)
 	admClient.Close()
 	if serr != nil {
-		return fmt.Errorf("content: start offsets of %s: %w", topic, serr)
+		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: serr}
 	}
 	if eerr != nil {
-		return fmt.Errorf("content: end offsets of %s: %w", topic, eerr)
+		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: eerr}
 	}
 	if err := starts.Error(); err != nil {
-		return fmt.Errorf("content: start offsets of %s: %w", topic, err)
+		return &ErrStoreUnavailable{Op: "start offsets of " + topic, Err: err}
 	}
 	if err := ends.Error(); err != nil {
-		return fmt.Errorf("content: end offsets of %s: %w", topic, err)
+		return &ErrStoreUnavailable{Op: "end offsets of " + topic, Err: err}
 	}
 
 	end := map[int32]int64{}
@@ -328,14 +369,14 @@ func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, val
 		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
 	)
 	if err != nil {
-		return fmt.Errorf("content: scan consumer for %s: %w", topic, err)
+		return &ErrStoreUnavailable{Op: "scan consumer for " + topic, Err: err}
 	}
 	defer consumer.Close()
 
 	for len(end) > 0 {
 		fetches := consumer.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return fmt.Errorf("content: scan %s: %w", topic, err)
+			return &ErrStoreUnavailable{Op: "scan " + topic, Err: err}
 		}
 		var ferr error
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {

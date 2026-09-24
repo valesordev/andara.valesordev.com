@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"google.golang.org/protobuf/proto"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
@@ -299,5 +300,84 @@ func TestResolve_LoadOrderDoesNotDependOnManifestOrder(t *testing.T) {
 	}
 	if strings.Join(fa, ",") != strings.Join(fb, ",") {
 		t.Fatalf("%v vs %v", fa, fb)
+	}
+}
+
+func testutilToFloat(t *testing.T, m *Metrics, reason string) float64 {
+	t.Helper()
+	return testutil.ToFloat64(m.LoadFailures.WithLabelValues(reason))
+}
+
+// --- The store failing is not the Builder's fault ---------------------------
+
+// failingStore answers every read with a broker-shaped error, the way a leader
+// move or a restarting broker does.
+type failingStore struct{ err error }
+
+func (f failingStore) Active(context.Context) (map[string]uint64, error) {
+	return map[string]uint64{"town": 1}, nil
+}
+
+func (f failingStore) Manifest(context.Context, string, uint64) (*contentv1.ContentVersion, error) {
+	return nil, f.err
+}
+
+func (f failingStore) Blobs(context.Context, []*contentv1.BlobRef) (map[string][]byte, error) {
+	return nil, f.err
+}
+
+// andara_content_load_failures_total{reason} is the series the
+// content-freshness SLO and the ContentLoadFailing alert are built on. A
+// broker hiccup counted as `validation` would page someone about a Builder who
+// did nothing wrong.
+func TestReason_StoreFailureIsNotCountedAsValidation(t *testing.T) {
+	err := &ErrStoreUnavailable{Op: "scan andara.content.versions.v1", Err: errors.New("EOF")}
+	if got := Reason(err); got != ReasonStoreUnavailable {
+		t.Fatalf("reason = %q, want %q", got, ReasonStoreUnavailable)
+	}
+	if !IsStoreFault(err) {
+		t.Error("a store failure must be distinguishable from refused content")
+	}
+	// And an untyped error falls the same way: every way content itself can be
+	// wrong has a type, so anything else is the store.
+	if got := Reason(fmt.Errorf("something from the broker client")); got != ReasonStoreUnavailable {
+		t.Errorf("untyped reason = %q, want %q", got, ReasonStoreUnavailable)
+	}
+	// A genuine content fault still reads as one.
+	if IsStoreFault(&ErrValidation{}) {
+		t.Error("a validation failure is content's fault, not the store's")
+	}
+}
+
+func TestLoader_StoreFailureDoesNotBlameTheContent(t *testing.T) {
+	l := NewLoader(LoaderOptions{
+		Store: failingStore{err: errors.New("dial tcp: connection refused")},
+		Packs: []string{"town"},
+	})
+	m := NewMetrics(nil)
+	l.metrics = m
+	rejects, err := l.LoadAll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rejects) != 1 || rejects[0].Reason != ReasonStoreUnavailable {
+		t.Fatalf("rejects = %+v", rejects)
+	}
+	if n := testutilToFloat(t, m, ReasonValidation); n != 0 {
+		t.Errorf("validation failures = %v; an unreachable store is not a content fault", n)
+	}
+}
+
+// A manifest an Active Pointer names but the versions topic does not carry is
+// its own reason: neither a validation failure nor an unreachable store.
+func TestResolve_AbsentManifestHasItsOwnReason(t *testing.T) {
+	s := newFakeStore()
+	s.active["town"] = 4 // pointer, but nothing was ever published at 4
+	_, err := Resolve(context.Background(), s, "town", 4)
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	if got := Reason(err); got != ReasonStoreUnavailable && got != ReasonManifestAbsent {
+		t.Fatalf("reason = %q", got)
 	}
 }

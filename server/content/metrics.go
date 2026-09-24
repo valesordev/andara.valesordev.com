@@ -76,7 +76,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, r := range []string{
 		ReasonFormatVersion, ReasonCoreVersion, ReasonValidation,
-		ReasonBlobMissing, ReasonFallbackRoom, ReasonPackMismatch, ReasonManifestAbsent,
+		ReasonBlobMissing, ReasonBlobCorrupt, ReasonFallbackRoom,
+		ReasonPackMismatch, ReasonManifestAbsent, ReasonStoreUnavailable,
 	} {
 		m.LoadFailures.WithLabelValues(r)
 	}
