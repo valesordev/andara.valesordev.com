@@ -4,10 +4,10 @@ title: Content Language compiler, formatter, and decompiler
 epic: EPIC-05
 component: cli
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-CLI-001, AW-CLI-005, AW-SRV-021, AW-SRV-022]
-blocks: [AW-CLI-002, AW-CLI-003]
+blocks: [AW-CLI-002, AW-CLI-003, AW-SRV-034]
 lane: implementation
 risk: high
 ---

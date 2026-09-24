@@ -59,7 +59,10 @@ carrying the fields above, `severity` as `"error"` or `"warning"`.
 4. **Every finding is printed, not just the first.** A Builder fixing ten broken exits should need
    one compile, not ten — the rule `AW-SRV-001` already set for boot. Parsing is the exception: a
    syntax error stops the parse of that file, so a file produces at most one `syntax_error`. Other
-   files in the pack are still parsed and still report.
+   files in the pack are still parsed and still report. Encoding is the other exception, and a
+   stronger one: it is checked before any grammar is reached, file by file in sorted order, and the
+   **first** violation is the only finding — the compile stops there (`invalid/encoding/crlf/` has
+   CRs in two files and one finding).
 5. **Findings are sorted** by file, then line, then column, then code. Two compiles of the same
    source produce the same diagnostics in the same order, which is what makes the `.errors` sidecars
    a byte comparison and the three-way equivalence (`AW-CLI-002` AC-4) checkable.
@@ -69,16 +72,67 @@ carrying the fields above, `severity` as `"error"` or `"warning"`.
    is three clauses long: without them a Builder re-checks their spelling forever for a type that
    was never going to exist (ADR-0010 decision 7).
 7. **Warnings do not fail the compile.** Exit `0` with warnings on stderr; `--strict` is
-   `AW-CLI-006`'s to add if it is ever wanted.
+   `AW-CLI-006`'s to add if it is ever wanted. **A compile that reports an error reports only
+   errors.** A warning is advice about content the compiler accepted, and a failed compile accepted
+   nothing — an `orphan_room` that exists only because a broken Exit did not resolve describes the
+   compiler's half-finished analysis, not the source. No `invalid/` sidecar carries a warning.
+8. **A duplicate is reported at the one that lost.** `duplicate_zone`, `duplicate_room`,
+   `duplicate_template`, `duplicate_component_type`, `duplicate_declaration`, and
+   `duplicate_direction` land on the second occurrence in sorted order, the first being the one that
+   was kept. `duplicate_pack` is pack-level (its chain is empty), so it is reported once, at the
+   **first** `pack` declaration in sorted file order, with both files in the message.
+9. **A cycle is one finding**, positioned at its lowest-named member, whichever file that is in.
+
+### Where the position lands
+
+Rule 1, per code. The corpus fixes every row byte for byte; this table is the statement of it.
+
+| Code | Token |
+|------|-------|
+| `pack_missing` | `1:1` of the first file in the pack, sorted |
+| `pack_mismatch` | the declared pack name |
+| `core_version_mismatch` | the version integer after `@` |
+| `duplicate_pack` | the `pack` keyword (rule 8) |
+| `duplicate_zone`, `duplicate_room` | the `zone` / `room` keyword of the second |
+| `duplicate_template`, `extends_cycle`, `chain_too_deep` | the Template **name**, not the `template` keyword |
+| `template_head` | the second head keyword when both; the Template name when neither |
+| `unresolved_extends` | the reference after `extends` |
+| `duplicate_declaration` | the `desc` / `fallback` keyword of the second |
+| `duplicate_direction`, `missing_reverse_exit` | the `exit` keyword |
+| `orphan_room` | the `room` keyword |
+| `unknown_direction` | the direction identifier |
+| `unknown_room`, `unknown_zone` | the **whole** exit target reference, including any `<zone>.` half |
+| `unknown_component_type` | the component reference |
+| `duplicate_component_type` | the `component` keyword |
+| `invalid_component_field` | the field **name** when the field is unknown; the **value** when its kind is wrong |
+| `float_literal`, `unknown_behavior`, `unknown_sense`, `fallback_missing` | the offending literal or identifier |
+| `invalid_escape` | the backslash, not the string's opening quote |
+| `removed_by_subtype` | the `remove` keyword |
+| `encoding` | the offending byte — `1:1` for a BOM, the CR's own column for a CR |
 
 ### Chain
 
-`Chain` is the declaration path to the finding, outermost first:
+`Chain` is the declaration path to the finding, outermost first. It names where the finding is, and
+stops short of the offending value, because the position already points at that:
 
-- a Template finding — the inheritance chain, root first, ending at the Template that triggered it
-- a Room or Exit finding — `["<zone-id>", "<room-id>"]`, and the Exit's direction where the finding
-  is on an Exit
-- a pack-level finding — empty
+| Finding | Chain |
+|---------|-------|
+| `unknown_room`, `unknown_zone`, `duplicate_direction`, `missing_reverse_exit` | `<zone>`, `<room>`, `<direction>` — the Exit is the carrier, its direction is not in dispute |
+| `unknown_direction` | `<zone>`, `<room>` — the direction *is* the offending value |
+| `orphan_room`, `duplicate_room`, `duplicate_declaration` | `<zone>`, `<room>` |
+| `duplicate_zone` | `<zone>` |
+| `duplicate_component_type` | the carrier — `<zone>`, `<room>`, or `<pack>.<Template>` — without the type |
+| `invalid_component_field` | the carrier, then the Component type |
+| `removed_by_subtype`, `unknown_behavior` | the inheritance chain, root first, ending at the declaring Template |
+| `extends_cycle` | the cycle from its lowest-named member, that member repeated as the last entry |
+| `chain_too_deep` | every Template in the chain, including the one past the bound |
+| pack-level findings | empty |
+
+*Corrected 2026-09-24 (`AW-CLI-005` review):* this section said an Exit finding carries "the Exit's
+direction", which `unknown_direction`'s own sidecar contradicts, and rules 4, 7, 8, and 9 and the
+position table were stated only by the corpus. `AW-CLI-006` was written to the corpus
+(`docs/feedback/AW-CLI-006-content-language-compiler.md` §1–§4); the prose now says what the corpus
+already fixed.
 
 The chain is what makes a merge error fixable. A value that appears in none of the files a Builder
 wrote is exactly what `extends` plus field-level merge produces (ADR-0010 decision 9), so
@@ -158,8 +212,16 @@ is `AW-SRV-001`'s: legal, never silent.
 
 | Code | Owner | Emitted when |
 |------|-------|--------------|
-| `orphan_room` | `AW-SRV-001` | a Room no Exit in its Zone reaches. A Builder mid-work |
+| `orphan_room` | `AW-SRV-001` | a Room no Exit from another Room in its Zone reaches — inbound, as `AW-SRV-001` AC-6 has it; a Room's Exit to itself does not count, and a Zone of one Room never warns. A Builder mid-work |
 | `missing_reverse_exit` | `AW-SRV-021` | an Exit whose reverse is absent — names both Rooms. A chute is real; forgetting the way back is more common |
+
+**`orphan_room` was decided at the `AW-CLI-005` review (2026-09-24).** The corpus's
+`valid/warn-missing-reverse-exit/` holds no `orphan_room` for `loft`, a Room the chute leaves and
+nothing enters, and `AW-CLI-006` implemented a rule that doesn't warn when a Room has any Exit,
+in or out, to match. That sidecar contradicts this row and `AW-SRV-001` AC-6. A Room you can leave
+but never enter is unreachable, and unreachable is what the warning is for. `AW-SRV-034` corrects
+the sidecar and the compiler together, and gives the loader the one-Room exemption. Until it lands,
+the chute case is the one place where the corpus disagrees with this document.
 
 `AW-CLI-002` adds a third at validate time — the *inert Component* warning ADR-0010 asks for, on a
 Component no system and no bound Behavior reads. It is that story's because it needs the system

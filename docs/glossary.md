@@ -199,9 +199,10 @@ blobs so a Builder can fetch back what they wrote. Its specification is
 `docs/specs/content-language/v1/` (`AW-CLI-005`); its compiler,
 formatter, and decompiler are `AW-CLI-006`; the Builder commands are `AW-CLI-003`.
 
-**Content Pack** — A versioned bundle of Zone Definitions, Item Definitions, NPC Definitions, and
-dialogue that the server loads as a set. Authored outside the repository by Builders and published
-through `andara-cli` (ADR-0004).
+**Content Pack** — A versioned bundle of Zone Definitions and Templates (ADR-0010: Items and NPCs
+are Templates) that the server loads as a set, published with the Content Language sources it was
+compiled from. Authored outside the repository by Builders and published through `andara-cli`
+(ADR-0004). Every pack but `andara.core` requires a pinned `andara.core` version.
 
 **Content Version** — An immutable manifest on `andara.content.versions.v1`, keyed by `packID@version`,
 naming its Content Blobs, its parent version, its author, and its timestamp. The linked history a

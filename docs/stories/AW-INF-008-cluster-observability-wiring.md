@@ -268,6 +268,44 @@ Found, and owed elsewhere:
   (`server-unavailable.md`, `ingress-error-rate.md`, `slo/edge-availability.md`,
   `slo/session-availability.md`) now say what the rules evaluate.
 
+## Review — 2026-09-24 (§8, against `main` at `63727dd`): stays `review`
+
+PR #56 merged. Three of eight ACs pass, and five still need the box. The box can't produce them
+today, and not only because this session has no token.
+
+| AC | Result |
+|----|--------|
+| 5 | **pass, compose half observed.** The `stack` job on #56 (run 35931558406) loaded every rule `health: ok` and saw `AndaraServerUnavailable` go `inactive` (23:11:41Z) → `pending` on `stop andara-server` (23:11:45Z) → `inactive` on `start` (23:11:49Z). The unit half is `promtool` in `make helm-test`, green on `main` |
+| 7, 8 | pass — `make check` on `main` |
+| 1–4, 6 | **owed**, and blocked as below |
+
+`make check` is clean on `main`. `main`'s `stack` job has been red since 2026-09-24:
+`quay.io/minio/minio` now refuses anonymous pulls, so `make up` fails before any rule loads. That
+is unrelated to this story, it doesn't touch AC-5's evidence above, and it is filed separately.
+
+**Why the box ACs can't run today.** Found at review, and a defect in this story's own test plan:
+`make helm-install ENV=dev` cannot bring up a pod on the box.
+- No workflow publishes `ghcr.io/valesordev/andara-server`, and an anonymous pull of it is denied.
+  EPIC-01 names "image publishing and environment promotion" as in scope, and no story carries it.
+- `scripts/helm_install.sh` always sets `image.repository` to its `IMAGE` argument, which defaults to
+  the locally built `andara-server`. `values/dev.yaml` sets `pullPolicy: Always`, so the kubelet
+  would try Docker Hub for a kind-loaded image.
+- Nothing is installed in `andara-dev` or `andara-prod`, and the session holds no
+  `GRAFANA_CLOUD_*`.
+
+The §8 rule for instruments with no in-cluster caller does not cover this. That rule is for a
+caller that lands in a later story. The server here is ready, and what is missing is an image and a
+credential. Two ways out, both Brian's call:
+1. **An image-publishing story** (EPIC-01, architecture lane: CI builds and pushes `:dev` on merge to
+   `main`). Then the test plan runs as written, with a read token. It is also what `AW-INF-007`'s
+   `make deploy` assumes.
+2. **Hand ACs 1–4 and 6 to `AW-INF-009`** as an inherited Definition-of-done line. Proving the
+   rules evaluate in Grafana Cloud needs the same install and the same token, so the observation
+   happens once. This story would then close with the inheritance recorded.
+
+The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
+has no verification record, so its pointer is the first bullet of its Open questions.
+
 ## Open questions
 
 - **Resolved 2026-09-23 (read from the platform):** the autodiscovery scrape interval is 60 s — the

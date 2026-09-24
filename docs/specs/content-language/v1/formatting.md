@@ -169,7 +169,12 @@ Canonical order:
 | Files | `pack.aw`, then one file per Zone named `<zone-id>.aw`, then Templates grouped by `source.file`'s basename or `templates.aw` |
 | Within a Zone | `fallback`, then Components sorted by type, then Rooms sorted by id |
 | Within a Room | `desc`, then Exits sorted by direction string, then Components sorted by type |
+| Within a Template file | Templates in `source.line` order — the order the Builder wrote them, not by name |
 | Within a Template | Components sorted by type |
+
+*Added 2026-09-24 (`AW-CLI-005` review):* the Template-file row. `decompile` already ordered this way
+and the table never said so; `corpus/roundtrip/core-parent/` writes `Porter` above `Keeper` so that
+name order would fail it.
 
 Exits sort **lexicographically by direction string** — `east`, `north`, `south` — because that is
 the order they are already in on the way out (semantics.md §7) and the order the loader produces

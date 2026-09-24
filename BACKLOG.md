@@ -11,15 +11,15 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `review` | 7 |
 | `ready` | 28 |
-| `done` | 17 |
-| **total** | **52** |
+| `done` | 18 |
+| **total** | **53** |
 
 ## Attention first
 
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client | review by brian |
-| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus | review by brian |
+| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler | review by brian |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
@@ -33,7 +33,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | implementation | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011`, `AW-SRV-031` |
-| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
@@ -44,9 +44,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
-| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001` |
+| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001`, `AW-SRV-034` |
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, approve, activate, rollback, history, diff, and fetch | `AW-CLI-001`, `AW-CLI-002`, `AW-CLI-006`, `AW-SRV-013`, `AW-SRV-021` |
-| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030` |
@@ -72,12 +71,14 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
-### `done` (17)
+### `done` (18)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `EPIC-06` | cli | S | low | implementation | andara-cli skeleton — command tree, configuration precedence, and output contract | `AW-INF-001` |
+| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-INF-001`](docs/stories/AW-INF-001-repo-scaffold-and-automation-surface.md) | `EPIC-01` | infra | M | low | architecture | Repo scaffold, Makefile automation surface, story tooling, and CI skeleton | — |
 | [`AW-INF-002`](docs/stories/AW-INF-002-local-stack-one-command-up.md) | `EPIC-01` | infra | M | medium | architecture | Local stack — Redpanda, datastores, observability, and TLS with one command | `AW-INF-001`, `AW-INF-004` |
 | [`AW-INF-003`](docs/stories/AW-INF-003-kubernetes-workload-topology.md) | `EPIC-01` | infra | M | high | architecture | Kubernetes workload topology, volumes, and probes for andara-server | `AW-INF-001`, `AW-INF-002` |
@@ -126,6 +127,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `ready` | Loader and compiler agree on orphan_room and duplicate_direction |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
@@ -162,8 +164,8 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 |----|--------|-------|
 | [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `ready` | andara-cli content validate and inspect |
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
-| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
-| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `ready` | Content Language compiler, formatter, and decompiler |
+| [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `done` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
+| [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `ready` | Content resolution from the store and reload at a tick boundary |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
