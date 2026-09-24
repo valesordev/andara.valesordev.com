@@ -4,6 +4,7 @@
 package lang
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,7 +15,9 @@ import (
 
 // Conformance runs the AW-CLI-005 corpus against this compiler: every valid
 // pair byte for byte, every invalid pair against its .errors sidecar, and every
-// round-trip pair an identity (AC-1).
+// round-trip pair an identity (AC-1). Every valid case is also decompiled and
+// recompiled, and must come back identical but for TemplateDefinition.source
+// (AC-4, semantics.md §8).
 //
 // It is the corpus's half of ADR-0009's compatibility mechanism. Protobuf
 // compatibility is machine-checkable with `buf breaking` and language
@@ -162,6 +165,9 @@ func runCase(kind, dir string, core *Pack) CaseResult {
 
 	if kind == "roundtrip" && out != nil {
 		res.Reasons = append(res.Reasons, diffRoundTrip(dir, out, against)...)
+	}
+	if kind == "valid" && out != nil {
+		res.Reasons = append(res.Reasons, diffRecompile(dir, out, against, corpusPack(name))...)
 	}
 
 	res.OK = len(res.Reasons) == 0
@@ -380,6 +386,118 @@ func diffRoundTrip(dir string, out *Output, core *Pack) []string {
 		}
 	}
 	return reasons
+}
+
+// diffRecompile is semantics.md §8's first direction over a valid case:
+// compiled → source → compiled is identity in everything but
+// TemplateDefinition.source. roundtrip/ holds the stronger, byte-for-byte
+// claim for canonical source; this holds the weaker one for every valid
+// case, which is most of them not canonical — comments, other layouts —
+// and so is the claim a Builder recovering a lost working copy relies on.
+//
+// The decompiled files are recompiled from a directory named like the case,
+// as §8 says, so source.file keeps its prefix and only what decompile cannot
+// preserve — comments, hence line numbers, and the file a Template was
+// written in — is left for the mask.
+func diffRecompile(dir string, out *Output, core *Pack, pack string) []string {
+	files, err := DecompileWith(out, core)
+	if err != nil {
+		return []string{"decompile: " + err.Error()}
+	}
+	again, reasons := recompile(filepath.Base(dir), files, core, pack)
+	if again == nil {
+		return reasons
+	}
+	return diffCompiled(out, again, true)
+}
+
+// recompile compiles decompiled files from a temporary directory called name.
+// A recompile that fails, or that raises an error the first compile did not,
+// is the reason.
+func recompile(name string, files map[string][]byte, core *Pack, pack string) (*Output, []string) {
+	tmp, err := os.MkdirTemp("", "content-recompile-")
+	if err != nil {
+		return nil, []string{"recompile: " + err.Error()}
+	}
+	defer func() { _ = os.RemoveAll(tmp) }()
+	root := filepath.Join(tmp, name)
+	for _, f := range sortedKeys(files) {
+		p := filepath.Join(root, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return nil, []string{"recompile: " + err.Error()}
+		}
+		if err := os.WriteFile(p, files[f], 0o644); err != nil {
+			return nil, []string{"recompile: " + err.Error()}
+		}
+	}
+	again, ds := CompileOpts(root, core, nil, Options{Pack: pack})
+	var reasons []string
+	for _, d := range ds {
+		if d.Severity == SeverityError {
+			reasons = append(reasons, fmt.Sprintf("decompiled source does not recompile: %s at %s:%d:%d: %s", d.Code, d.File, d.Line, d.Col, d.Message))
+		}
+	}
+	if again == nil && len(reasons) == 0 {
+		reasons = append(reasons, "decompiled source does not recompile")
+	}
+	return again, reasons
+}
+
+// diffCompiled compares two compiles' compiled blobs, path by path. With
+// maskSource, a Template's source is removed from both sides first; every
+// other byte of every blob must match.
+func diffCompiled(want, got *Output, maskSource bool) []string {
+	blobs := func(o *Output) map[string][]byte {
+		m := map[string][]byte{}
+		for _, b := range o.Blobs {
+			if b.MediaType == BlobMediaType {
+				m[b.Path] = b.Bytes
+			}
+		}
+		return m
+	}
+	w, g := blobs(want), blobs(got)
+	var reasons []string
+	for _, p := range sortedKeys(w) {
+		gb, ok := g[p]
+		if !ok {
+			reasons = append(reasons, "recompile emitted no blob for "+p)
+			continue
+		}
+		wb := w[p]
+		if maskSource && strings.HasPrefix(p, "templates/") {
+			var err error
+			if wb, err = withoutSource(wb); err == nil {
+				gb, err = withoutSource(gb)
+			}
+			if err != nil {
+				reasons = append(reasons, "recompiled blob "+p+": "+err.Error())
+				continue
+			}
+		}
+		if string(wb) != string(gb) {
+			reasons = append(reasons, "recompiled blob differs: "+p+"\n"+unifiedish(wb, gb))
+		}
+	}
+	for _, p := range sortedKeys(g) {
+		if _, ok := w[p]; !ok {
+			reasons = append(reasons, "recompile emitted an unexpected blob "+p)
+		}
+	}
+	return reasons
+}
+
+// withoutSource is a Template blob with its top-level source removed,
+// re-encoded with Go's sorted keys so that both sides of a comparison are
+// in one form. Only the mask needs the re-encoding; unmasked blobs are
+// compared as emitted.
+func withoutSource(b []byte) ([]byte, error) {
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+	delete(m, "source")
+	return json.MarshalIndent(m, "", "  ")
 }
 
 func sortedKeys[V any](m map[string]V) []string {

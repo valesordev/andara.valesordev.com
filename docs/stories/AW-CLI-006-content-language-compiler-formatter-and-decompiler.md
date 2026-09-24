@@ -158,3 +158,17 @@ evidence.
   parser and a dynamic lexer, because the language has no reserved words — a hand-written parser is
   contextual by construction, so this is a property of the checking tool, not a constraint on the
   compiler.
+
+## Verification record — 2026-09-24, the inherited `valid/` recompile pass (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-cli-006-valid-recompile`. This record covers only the Definition-of-done line
+inherited from the `AW-CLI-005` review. The story's other evidence is in #57 and #58.
+
+| Line | How | Result |
+|------|-----|--------|
+| A pass over every `valid/` case: decompile with the core pack, recompile from a directory named like the case, compare the blobs with `TemplateDefinition.source` masked | `Conformance()` runs `diffRecompile` on every `valid/` case (`content/lang/conformance.go`). The decompiled files are written under a temp directory with the case's name and recompiled with the case's pack name, and the compiled blobs are compared path by path. In a `templates/*.json` blob the top-level `source` is removed from both sides first. Zone blobs are compared byte for byte, unmasked | 16 of 16 identical |
+| …in `make check` | `make content-conformance` (in `CHECK_TARGETS`) and `TestConformance` (in `make test`) both run it: `70 cases agree with the corpus` | pass |
+| Not vacuous | `TestRecompileIsNotVacuous`. Without the mask, **7 of 16** differ, every difference in `templates/`. That's the review's figure, so the pass reads the Template bytes and the mask is load-bearing. With the mask, an edited Room description in the decompiled source is reported as `town.json` and nothing else | pass |
+
+`make check`: clean. This closes the inherited line. Per the sprint, `AW-CLI-005` closes on the same
+evidence, and that flip is architecture's.
