@@ -190,11 +190,11 @@ services:
   # the stack workflow exports it from here. Credentials are the throwaway pair that
   # test's own comment documents — this service holds nothing worth protecting.
   #
-  # Not MinIO any more, though the service keeps the name: ANDARA_S3_PORT, the
-  # `minio-data` volume, and every doc that says "the stack's MinIO" point here, and the
-  # server and its tests only ever see an S3 endpoint. On 2026-09-24 quay.io/minio/minio
-  # began answering anonymous pulls with 401 and Docker Hub's minio/minio no longer
-  # exists, so the pin could not be pulled and no maintained mirror was left to move to.
+  # Not MinIO any more, though the service keeps the name: ANDARA_S3_PORT and every doc
+  # that says "the stack's MinIO" point here, and the server and its tests only ever see
+  # an S3 endpoint. On 2026-09-24 quay.io/minio/minio began answering anonymous pulls
+  # with 401 and Docker Hub's minio/minio no longer exists, so the pin could not be
+  # pulled and no maintained mirror was left to move to.
   # versitygw is Versity's S3 gateway over a plain directory: one Go binary, 101 MB, a
   # steady release cadence, Apache-2.0. It passes server/store's s3 suite with auth
   # enforced; RustFS 1.0.0 passed too, but at four times the size and eight days after
@@ -220,7 +220,12 @@ services:
     volumes:
       # The posix backend keeps object metadata in xattrs, which a local volume on ext4
       # carries. /data must exist; the image does not create it, and the volume does.
-      - minio-data:/data
+      # A new volume rather than `minio-data`: MinIO's on-disk layout is its own, and
+      # versitygw mounted over it would serve MinIO's internals as buckets while `make up`
+      # reported healthy. Nothing in it was worth migrating — the tests make and drop
+      # their own buckets, and this stack's server snapshots to `fs`. `make down
+      # VOLUMES=1` still removes the old volume by name (scripts/stack.sh).
+      - s3-data:/data
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000/health"]
       interval: 5s
@@ -335,4 +340,4 @@ volumes:
   tempo-data:
   loki-data:
   grafana-data:
-  minio-data:
+  s3-data:

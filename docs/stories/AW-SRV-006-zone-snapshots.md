@@ -592,9 +592,13 @@ snapshot age.
   **What stayed the same, and why nothing under `server/` changed.** The service is still named
   `minio`, it still publishes `${ANDARA_S3_PORT:-19000}:9000`, and the credentials are still
   `andaratest`/`andaratest123`. Only the server's own flags changed: `--access`/`--secret`
-  replace `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. The volume is still `minio-data`. The
-  healthcheck moved from `mc ready local` to `wget --spider` on versitygw's `--health`
-  endpoint.
+  replace `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. The healthcheck moved from `mc ready local`
+  to `wget --spider` on versitygw's `--health` endpoint. The volume did **not** stay the same:
+  versitygw gets a fresh `s3-data` volume. Reattaching an existing `minio-data` would have
+  served MinIO's internal on-disk layout as if it were buckets, while `make up` reported
+  healthy. Nothing in the old volume was worth migrating: the tests create and drop their own
+  buckets, and the compose server snapshots to `fs`. `make down VOLUMES=1` removes the old
+  volume by name, because `down --volumes` only reaps volumes a service still declares.
 
   **AC-5 still holds against the double.** `S3.Put` relies on PutObject being all-or-nothing.
   That was checked at the v1.8.0 source, not assumed: the posix backend writes each object to an

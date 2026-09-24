@@ -170,6 +170,10 @@ CLICONF
     # Stopping an already-stopped stack is not an error (AC-3).
     if [[ "${2:-0}" == "1" ]]; then
       dc --profile min --profile full --profile server down --volumes --remove-orphans
+      # MinIO's volume from before the S3 service moved to versitygw and a fresh
+      # `s3-data` (AW-SRV-006, 2026-09-24). No service declares it any more, so `down
+      # --volumes` leaves it, and the reset this branch promises would not be complete.
+      docker volume rm -f "${COMPOSE_PROJECT_NAME:-andara}_minio-data" >/dev/null
       rm -rf "$DATA_DIR"
       echo "down: stack stopped, volumes and $DATA_DIR removed; the next \`make up\` starts from an empty log"
     else
