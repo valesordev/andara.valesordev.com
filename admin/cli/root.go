@@ -46,6 +46,9 @@ type runtime struct {
 	// stdin is where a password is read from with --password-stdin; nil
 	// means os.Stdin.
 	stdin io.Reader
+	// tpOptions configures the tracer provider. Empty in a real process;
+	// a test passes a recorder so the spans a story promises are assertable.
+	tpOptions []sdktrace.TracerProviderOption
 }
 
 type globalFlags struct {
@@ -134,6 +137,7 @@ func newRoot(rt *runtime) *cobra.Command {
 	root.AddCommand(newPlayCmd(rt))
 	root.AddCommand(newSimCmd(rt))
 	root.AddCommand(newSnapshotCmd(rt))
+	root.AddCommand(newContentCmd(rt))
 	root.AddCommand(newCompletionCmd(rt))
 	return root
 }

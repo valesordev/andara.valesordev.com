@@ -1,0 +1,24 @@
+Rewrite every *.aw under --path to the canonical form, so that layout stops
+being a thing anyone argues about.
+
+fmt reorders nothing and never changes meaning: a Builder who lays out a Zone
+as the walk through it keeps that layout. --check rewrites nothing and exits 1
+listing the files that would change.
+
+Usage:
+  andara-cli content fmt [flags]
+
+Flags:
+      --check         rewrite nothing; exit 1 listing files that would change
+  -h, --help          help for fmt
+      --path string   directory to format (default ".")
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

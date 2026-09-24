@@ -1,0 +1,27 @@
+Reconstruct .aw source from compiled output, in the canonical layout.
+
+The source it produces recompiles to the same blobs byte for byte. It carries no
+comments: what preserves those is the source blob published beside the compiled
+output, which `content fetch` returns.
+
+--pack and --version are AW-CLI-003's, once Admin can serve a published version;
+today --path decompiles a pack that is already on disk.
+
+Usage:
+  andara-cli content decompile [flags]
+
+Flags:
+      --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
+  -h, --help           help for decompile
+      --out string     write the reconstructed sources under this directory
+      --path string    pack directory to decompile (default ".")
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

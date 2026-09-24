@@ -9,6 +9,7 @@ Available Commands:
   auth         Log in, log out, and inspect the stored credential
   completion   Generate shell completion scripts
   config       Show and inspect CLI configuration
+  content      Compile, format, and decompile Content Language packs (builder)
   help         Help about any command
   invite       Issue and revoke invite codes (operator)
   play         Enter the world: a text interface over the Protocol

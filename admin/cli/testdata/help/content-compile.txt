@@ -1,0 +1,23 @@
+Compile every *.aw under --path and write the canonical andara.content.v1 blobs.
+
+Resolves `extends` against the cached andara.core the pack pins; no network.
+Exits 1 with one finding per line when the source has errors, 0 with warnings.
+
+Usage:
+  andara-cli content compile [flags]
+
+Flags:
+      --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
+  -h, --help           help for compile
+      --out string     write the compiled blobs under this directory
+      --path string    pack directory to compile (default ".")
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

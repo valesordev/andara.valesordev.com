@@ -112,7 +112,7 @@ schemas-check:
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
                  backlog-check status-check values-schema-check k8s-dry helm-test \
-                 license-check content-grammar-check
+                 license-check content-grammar-check content-conformance
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -216,6 +216,10 @@ validate-stories:
 ## content-grammar-check: parse the Content Language corpus against grammar.ebnf (AW-CLI-005 AC-1)
 content-grammar-check:
 	@$(PY) $(SCRIPTS)/content_grammar_check.py
+
+## content-conformance: run the AW-CLI-005 corpus against the compiler (AW-CLI-006 AC-1)
+content-conformance:
+	@$(GO) run ./content/conformance
 
 ## graph: emit the story dependency DAG as mermaid
 graph:

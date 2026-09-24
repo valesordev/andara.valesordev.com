@@ -11,16 +11,38 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/trace"
+	"go.opentelemetry.io/otel/trace/noop"
 )
 
 func (rt *runtime) startSpan() {
-	rt.tp = sdktrace.NewTracerProvider()
+	// tpOptions is a test seam. A CLI process exports nowhere by default —
+	// AW-CLI-001 puts the trace id in the log line and leaves collection to the
+	// operator's environment — so without it a span assertion would have
+	// nothing to read and the observability requirement would be checked by
+	// looking at the source.
+	rt.tp = sdktrace.NewTracerProvider(rt.tpOptions...)
 	tracer := rt.tp.Tracer("andara-cli")
 	ctx, span := tracer.Start(context.Background(), "cli.command")
 	span.SetAttributes(attribute.String("command", rt.command))
 	rt.span = span
 	rt.ctx = ctx
 	rt.started = time.Now()
+}
+
+// childSpan opens a span under the command's root span. AW-CLI-001 gives every
+// command a `cli.command` root; a command whose work is worth timing on its own
+// — a compile over a pack of a few hundred files — hangs a named child off it
+// rather than flattening its attributes onto the root, so that a trace shows
+// where the wall clock went.
+//
+// It returns a no-op span when telemetry was never started, so a caller never
+// has to nil-check before setting an attribute.
+func (rt *runtime) childSpan(name string) (context.Context, trace.Span) {
+	if rt.tp == nil || rt.ctx == nil {
+		return context.Background(), noop.Span{}
+	}
+	return rt.tp.Tracer("andara-cli").Start(rt.ctx, name)
 }
 
 func (rt *runtime) traceID() string {

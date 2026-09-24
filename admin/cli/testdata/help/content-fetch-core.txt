@@ -1,0 +1,25 @@
+Populate the local andara.core cache so that `content compile` works offline.
+
+--from reads a pack directory that is already on disk — the shipped seed under
+content/core, or a checkout. Fetching over Admin needs an RPC that serves a
+published ContentVersion, which is AW-SRV-013's and AW-CLI-003's to define; see
+docs/feedback/AW-CLI-006-content-language-compiler.md §7.
+
+Usage:
+  andara-cli content fetch-core [flags]
+
+Flags:
+      --cache string     core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
+      --from string      populate the cache from a pack directory on disk
+  -h, --help             help for fetch-core
+      --version uint32   the andara.core version to cache (default 1)
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)
