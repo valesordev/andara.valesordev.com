@@ -72,9 +72,11 @@ Redpanda is only an approximation of them.
   3. applies both manifests;
   4. waits for `kafka/andara-log` `Ready` and the toolbox `Available`;
   5. runs `topics.py apply --env <env>`.
-- **`make kafka-broker-bounce ENV=<env>`.** It deletes one broker pod and polls until the broker
-  rejoins. Throughout, the server must stay `Ready` and `andara_ingress_degraded` must stay `0`
-  (AC-5). Polled, per the live-assertion rule.
+- **`make kafka-broker-bounce ENV=<env>`.** It deletes one broker pod, **polls only for recovery**,
+  and then asserts once that nothing degraded during the whole window (AC-5). "The server never went
+  degraded" is an absence, so `docs/specs/testing/live-assertions.md` §3 applies: the window is
+  closed by a recovery checkpoint and checked against records that don't miss transitions. A
+  sampled gauge would miss them.
 - **Values.**
   - `values/dev.yaml` and `values/prod.yaml` set `server.kafka.brokers:
     andara-log-kafka-bootstrap:9092`.
@@ -126,9 +128,22 @@ Redpanda is only an approximation of them.
    consume andara.accounts.v1 -n 1`). After `kubectl delete pod andara-0`, the soak's login succeeds
    again against the same record.
 5. **Given** AC-4 **when** `make kafka-broker-bounce ENV=dev` runs **then** one broker pod is deleted
-   and rejoins. Throughout, the server stays `Ready` and `andara_ingress_degraded` stays `0`, which
-   is what two in-sync replicas of three buy. The target exits `0` only after the broker's
-   partitions are back in sync.
+   at `T0`, and the target polls until **the checkpoint**: the pod is back `Ready`, and `rpk cluster
+   health` through the toolbox reports no under-replicated partitions. Only then does it assert, once,
+   over `[T0, checkpoint]`, that the server never left service. That is what two in-sync replicas of
+   three buy. Each record below is complete, not sampled, so a flip between two scrapes can't hide:
+   - `andara-0`'s `Ready` condition has a `lastTransitionTime` before `T0`, and its `restartCount`
+     is unchanged. The kubelet records every transition.
+   - `kubectl logs andara-0 --since-time=T0` has no `command log unreachable` line. The server logs
+     one on every entry into degraded mode, and its probe pings the broker every second whether or
+     not anyone is playing (`server/README.md`).
+   - `andara_ingress_submits_total{outcome="unavailable"}` read from the pod after the checkpoint
+     equals its value before `T0`. It is a counter, so a transient refusal would have left it
+     higher.
+
+   The target never waits on `andara_ingress_degraded` itself. A gauge read at intervals can't show
+   that something *didn't* happen between reads. *(Rewritten at PR #61's review: the first draft
+   polled the gauge "throughout".)*
 6. **Given** AC-2 **when** a pod without the `andara` labels in `andara-dev` connects to
    `andara-log-kafka-bootstrap:9092` **then** the connection is refused by the listener's
    NetworkPolicy, while `andara-0` and the toolbox connect. kind's kindnet enforces NetworkPolicy
@@ -187,7 +202,7 @@ are there so a broker's page cache cannot starve the server on the same node.
 |--------|------|------|
 | `make kafka-operator` | Strimzi 1.2.0 into `strimzi`, watching `andara-dev`, `andara-prod` | `0` · `1` helm failed |
 | `make kafka-install ENV=<dev\|prod>` | operator, namespace, manifests, wait `Ready`, `topics.py apply --env <env>` | `0` · `1` a step failed · `2` `ENV=local` or unknown |
-| `make kafka-broker-bounce ENV=<env>` | delete one broker, poll server readiness, `andara_ingress_degraded`, and under-replicated partitions until recovery (10 min cap) | `0` recovered with no degradation · `1` otherwise |
+| `make kafka-broker-bounce ENV=<env>` | record `T0` and the `unavailable` counter; delete one broker; poll to the checkpoint (broker `Ready`, no under-replicated partitions; 10 min cap); then assert once over `[T0, checkpoint]` from the `Ready` condition, the restart count, the server log, and the counter (AC-5) | `0` recovered and never degraded · `1` degraded in the window, or no checkpoint by the cap |
 | `make topics-apply` / `topics-diff ANDARA_ENV=<env>` | unchanged surface; the runner is chosen by env (Scope) | unchanged |
 
 Consumer groups keep their `-<env>` suffix (`topics.yaml`). With a broker per namespace the suffix is
