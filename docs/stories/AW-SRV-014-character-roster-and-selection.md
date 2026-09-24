@@ -585,7 +585,7 @@ also left to §8, is in place at `docs/glossary.md`.
 
 ### §8 pass (2026-09-24, architecture) — stays `review`
 
-Against `origin/main` `033f2c6` and the compose stack. `make check`, `make test-integration` and
+Against `origin/main` `033f2c6` and the compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed). `make check`, `make test-integration` and
 `make stack-play` pass (`TestLive_M1Gate`: bind, `north`, a second client seeing arrival and
 departure, and the produced-Submit dedup).
 

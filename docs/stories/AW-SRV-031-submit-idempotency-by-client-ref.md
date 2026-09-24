@@ -282,7 +282,7 @@ dedup and the AC-2/AC-3 fates observed on the running server.
 
 ### §8 pass (2026-09-24, architecture) — done
 
-Against `origin/main` `033f2c6` and the compose stack. Every AC has its test, and every test runs
+Against `origin/main` `033f2c6` and the compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed). Every AC has its test, and every test runs
 in CI:
 - The unit tests (`idempotency_test.go`, `producer_test.go`) run in `make test`.
 - AC-2 and AC-3a (`TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand`,

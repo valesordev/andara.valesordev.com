@@ -356,7 +356,7 @@ reconciled above.
 
 ### §8 pass (2026-09-24, architecture) — done
 
-Against `origin/main` `033f2c6`, compose stack from `make up` (image built from that commit).
+Against `origin/main` `033f2c6`, compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed).
 
 - **ACs.** Every criterion has a test that asserts it, and every one runs in CI. The egress and
   gateway tests carry no build tag, so they run in `make test` (`ci.yaml`, green on `033f2c6`).

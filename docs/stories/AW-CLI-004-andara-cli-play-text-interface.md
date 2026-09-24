@@ -256,7 +256,7 @@ and the wording list were both decided by Brian the same day; see Open questions
 
 ### §8 pass (2026-09-24, architecture) — stays `review`
 
-Against `origin/main` `033f2c6` and the compose stack.
+Against `origin/main` `033f2c6` and the compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed).
 - **ACs 1–12:** each has a test in `admin/cli` (untagged, run in `make test`), and the live half
   runs in `make stack-play`, which passed locally today.
 - **Static items:** the flags are documented in `admin/README.md`, the Text Interface and Protocol
