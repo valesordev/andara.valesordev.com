@@ -4,18 +4,13 @@ title: Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback
 epic: EPIC-01
 component: infra
 type: infra
-status: blocked
+status: ready
 size: M
 depends_on: [AW-INF-003, AW-SRV-007, AW-SRV-030, AW-INF-013, AW-INF-014]
 blocks: []
 lane: architecture
 risk: high
 ---
-
-## Blocked by
-
-`AW-INF-014` (`draft`): no Kafka broker on the box for `dev`/`prod`. `make deploy` runs against one,
-and its Open questions are Brian's. Since 2026-09-24.
 
 ## Context
 
@@ -57,9 +52,9 @@ not an event.
 ### Out of scope
 - The snapshot and recovery mechanisms — `AW-SRV-006`, `AW-SRV-007`.
 - Image build and publish — `AW-INF-013`. *(Corrected 2026-09-24: this said `AW-INF-001`'s CI,
-  which never published an image.)* The broker this story's deploy runs against — `AW-INF-014`,
-  which is `draft` on two questions for Brian. This story is `blocked` on it (2026-09-24). The contract
-  above is unchanged, and the story returns to `ready` when `AW-INF-014` does.
+  which never published an image.)* The broker this story's deploy runs against — `AW-INF-014`
+  (`ready` 2026-09-24: Apache Kafka via Strimzi, three brokers per namespace). This story was
+  `blocked` on it while it was `draft`; its contract is unchanged.
 - Zero-downtime deploys, which require sharding and partition draining. Not Phase 1.
 - The words players see. `ServerStopping` carries a `message` field; its content is Brian's.
 

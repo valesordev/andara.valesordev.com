@@ -320,6 +320,12 @@ GRAFANA_CLOUD_…=… make observe-check ENV=dev
 Until `AW-SRV-033` lands, `dev` writes each log line to Loki twice (the double write recorded
 above); AC-4 reads the container stream's copy, which is the one that stays.
 
+**Update, same day.** `publish` ran on `main` (run 36032514543). `:dev` resolves anonymously to
+`sha256:56d4ba0b…`, so the package is public, and the sequence above can run now. `AW-INF-014` is
+groomed `ready` (Apache Kafka via Strimzi, Brian). Once it lands, `make helm-install ENV=dev`
+requires `make kafka-install ENV=dev` first (its AC-7). Running this story's checks before then
+needs no broker.
+
 The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
 has no verification record, so its pointer is the first bullet of its Open questions.
 
