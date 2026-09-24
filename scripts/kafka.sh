@@ -56,12 +56,17 @@ operator() {
   for wns in "${WATCHED[@]}"; do ensure_ns "$wns"; done
   have="$(helm list -n strimzi -o json 2>/dev/null \
     | "$PY" -c 'import json,sys; r=[x for x in json.load(sys.stdin) if x["name"]=="strimzi"]; print(r[0]["chart"] if r else "")')"
-  if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" ]]; then
+  local csv watching
+  csv="$(IFS=,; echo "${WATCHED[*]}")"
+  # A no-op only when both the chart and what it watches match: a same-version release
+  # watching other namespaces would never reconcile this Kafka, and kafka-install would
+  # time out waiting for it.
+  watching="$(helm get values strimzi -n strimzi -o json 2>/dev/null \
+    | "$PY" -c 'import json,sys; v=json.load(sys.stdin) or {}; print(",".join(v.get("watchNamespaces") or []))' 2>/dev/null || true)"
+  if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" && "$watching" == "$csv" ]]; then
     echo "kafka-operator: strimzi $STRIMZI_VERSION already installed (watching ${WATCHED[*]})"
     return
   fi
-  local csv
-  csv="$(IFS=,; echo "${WATCHED[*]}")"
   helm upgrade --install strimzi strimzi-kafka-operator \
     --repo "$STRIMZI_REPO" --version "$STRIMZI_VERSION" \
     --namespace strimzi --create-namespace \
