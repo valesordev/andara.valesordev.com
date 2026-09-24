@@ -189,19 +189,40 @@ services:
   # server/store/s3_test.go skips unless ANDARA_S3_TEST_ENDPOINT names an endpoint, and
   # the stack workflow exports it from here. Credentials are the throwaway pair that
   # test's own comment documents — this service holds nothing worth protecting.
+  #
+  # Not MinIO any more, though the service keeps the name: ANDARA_S3_PORT, the
+  # `minio-data` volume, and every doc that says "the stack's MinIO" point here, and the
+  # server and its tests only ever see an S3 endpoint. On 2026-09-24 quay.io/minio/minio
+  # began answering anonymous pulls with 401 and Docker Hub's minio/minio no longer
+  # exists, so the pin could not be pulled and no maintained mirror was left to move to.
+  # versitygw is Versity's S3 gateway over a plain directory: one Go binary, 101 MB, a
+  # steady release cadence, Apache-2.0. It passes server/store's s3 suite with auth
+  # enforced; RustFS 1.0.0 passed too, but at four times the size and eight days after
+  # its first GA. Pinned by digest as well as tag, the first digest pin in this file,
+  # because a registry has already moved underneath this service once. AW-SRV-006's
+  # record has the rest.
   minio:
-    image: quay.io/minio/minio:RELEASE.2024-12-18T13-15-44Z
+    image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
     profiles: [full]
-    command: ["server", "/data", "--console-address", ":9001"]
-    environment:
-      MINIO_ROOT_USER: andaratest
-      MINIO_ROOT_PASSWORD: andaratest123
+    # Port 9000 explicitly: versitygw defaults to 7070, and the host mapping below is
+    # the contract. --quiet because it otherwise logs every request, including the
+    # healthcheck every five seconds, which buries the tail `make logs` shows on failure.
+    command:
+      - --access=andaratest
+      - --secret=andaratest123
+      - --port=:9000
+      - --health=/health
+      - --quiet
+      - posix
+      - /data
     ports:
       - "${ANDARA_S3_PORT:-19000}:9000"
     volumes:
+      # The posix backend keeps object metadata in xattrs, which a local volume on ext4
+      # carries. /data must exist; the image does not create it, and the volume does.
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9000/health"]
       interval: 5s
       timeout: 3s
       retries: 30
