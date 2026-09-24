@@ -4,7 +4,6 @@
 package store
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -148,16 +147,12 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		if err != nil {
 			return sim.RoundState{}, fmt.Errorf("store: read %s: %w", ref.Key, err)
 		}
-		env, body, err := decodeBody(raw)
+		env, body, err := readVerified(raw, sim.StateVersion, true)
 		if err != nil {
 			ref.Reason = err.Error()
 			continue
 		}
 		zone := sim.ZoneStateFromProto(body)
-		if got := sim.HashZone(zone); !bytes.Equal(got[:], env.GetStateHash()) {
-			ref.Reason = fmt.Sprintf("body hashes to %x, envelope says %x", got[:8], env.GetStateHash())
-			continue
-		}
 		if zone.ID != ref.Zone || sim.Tick(env.GetTick()) != r.Tick {
 			ref.Reason = fmt.Sprintf("envelope names zone %s tick %d", zone.ID, env.GetTick())
 			continue

@@ -18,6 +18,9 @@ type Aggregate struct {
 	Zone   sim.ZoneID
 	Room   sim.RoomID
 	Entity sim.EntityID
+	// All: the whole Zone — summary, every Room, every Entity, and the
+	// tombstone sweep. Room and Entity are empty.
+	All bool
 }
 
 // touches is what one Event type re-emits. The Zone and Room come from the
@@ -27,6 +30,9 @@ type Aggregate struct {
 // names an EntityID rather than a display name.
 type touches struct {
 	zone, room, entities bool
+	// whole re-renders everything in the Zone, for an Event after which any
+	// aggregate in it may have changed without being named.
+	whole bool
 }
 
 // table is Touched's whole policy: one row per EventType, and a unit test
@@ -43,8 +49,11 @@ var table = map[sim.EventType]touches{
 	sim.EvCharacterLeft: {zone: true, room: true, entities: true},
 	// A rejection changes nothing: validate and apply refuse before mutating.
 	sim.EvCommandRejected: {},
-	// A fault changes the Zone's faulted flag, which ZoneSummary carries.
-	sim.EvZoneFaulted: {zone: true},
+	// A fault sets the Zone's faulted flag, and the panicking handler may
+	// already have mutated any Entity in the Zone: applyOne keeps that partial
+	// state, and the State Hash covers it. The Event names none of it, so the
+	// Zone is rendered whole. (Codex review of PR #64.)
+	sim.EvZoneFaulted: {whole: true},
 	// Fan-out and lifecycle notices, not World state.
 	sim.EvSubscriberDropped: {},
 	sim.EvSimulationStopped: {},
@@ -66,6 +75,9 @@ func Touched(events []sim.Event) []Aggregate {
 		}
 		if zone == "" {
 			continue
+		}
+		if row.whole {
+			seen[Aggregate{Zone: zone, All: true}] = true
 		}
 		if row.zone {
 			seen[Aggregate{Zone: zone}] = true
@@ -106,6 +118,9 @@ func sortAggregates(a []Aggregate) {
 	sort.Slice(a, func(i, j int) bool {
 		if a[i].Zone != a[j].Zone {
 			return a[i].Zone < a[j].Zone
+		}
+		if a[i].All != a[j].All {
+			return a[i].All
 		}
 		if a[i].Room != a[j].Room {
 			return a[i].Room < a[j].Room

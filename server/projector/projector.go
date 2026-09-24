@@ -17,6 +17,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"sort"
+	"strings"
 
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/canonical"
@@ -62,8 +63,12 @@ type emittedKey struct {
 }
 
 // New wraps a replica Engine. The index of emitted keys is seeded from the
-// Engine's current state, which is correct when the topic already holds that
-// state — after Dump, or after a silent replay to the last committed tick.
+// Engine's current state, which is correct only when the topic holds exactly
+// that state — after a silent replay to the last committed tick. When the
+// bootstrap tick is anything else (a round newer than the topic, a rebuild),
+// the topic may hold keys for Entities that left while the projector was not
+// watching, and the index cannot know them: call Dump and then Reconcile with
+// the keys the topic actually holds.
 func New(e *sim.Engine, opts Options) *Projector {
 	p := &Projector{e: e, opts: opts, emitted: map[sim.ZoneID]map[sim.EntityID]emittedKey{}}
 	st := e.State()
@@ -82,32 +87,40 @@ func (p *Projector) Engine() *sim.Engine { return p.e }
 // Room, every Entity. A rebuild produces it once, at the bootstrap tick; after
 // that only Render runs.
 func (p *Projector) Dump() ([]Out, error) {
-	st := p.e.State()
-	w := p.e.World()
 	var out []Out
-	for _, zid := range st.SortedZoneIDs() {
-		zs := st.Zones[zid]
-		rec, err := p.zoneRecord(zid)
+	for _, zid := range p.e.State().SortedZoneIDs() {
+		recs, err := p.dumpZone(zid)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, rec)
-		if z, ok := w.Zones[zid]; ok {
-			for _, rid := range sortedRooms(z) {
-				rec, err := p.roomRecord(zid, rid)
-				if err != nil {
-					return nil, err
-				}
-				out = append(out, rec)
-			}
-		}
-		for _, id := range sortedEntities(zs) {
-			rec, err := p.entityRecord(zid, zs.Entities[id])
+		out = append(out, recs...)
+	}
+	return out, nil
+}
+
+// dumpZone renders one Zone whole: its summary, every Room, every Entity.
+func (p *Projector) dumpZone(zid sim.ZoneID) ([]Out, error) {
+	zs := p.e.State().Zones[zid]
+	rec, err := p.zoneRecord(zid)
+	if err != nil {
+		return nil, err
+	}
+	out := []Out{rec}
+	if z, ok := p.e.World().Zones[zid]; ok {
+		for _, rid := range sortedRooms(z) {
+			rec, err := p.roomRecord(zid, rid)
 			if err != nil {
 				return nil, err
 			}
 			out = append(out, rec)
 		}
+	}
+	for _, id := range sortedEntities(zs) {
+		rec, err := p.entityRecord(zid, zs.Entities[id])
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, rec)
 	}
 	return out, nil
 }
@@ -135,12 +148,28 @@ func (p *Projector) Render(res sim.StepResult) ([]Out, error) {
 		delete(p.emitted[zid], id)
 		out = append(out, Out{Key: k.key, Partition: sim.PartitionFor(zid), Kind: k.kind, Tick: st.Tick})
 	}
-	for _, a := range Touched(res.Events) {
+	touched := Touched(res.Events)
+	// A Zone touched whole is rendered whole, once; its other aggregates are
+	// already in that rendering.
+	whole := map[sim.ZoneID]bool{}
+	for _, a := range touched {
+		if a.All {
+			whole[a.Zone] = true
+		}
+	}
+	for _, a := range touched {
 		zs, ok := st.Zones[a.Zone]
-		if !ok {
+		if !ok || (whole[a.Zone] && !a.All) {
 			continue
 		}
 		switch {
+		case a.All:
+			recs, err := p.dumpZone(a.Zone)
+			if err != nil {
+				return nil, err
+			}
+			out = append(out, recs...)
+			p.sweep(a.Zone, zs, tomb)
 		case a.Entity != "":
 			ent, present := zs.Entities[a.Entity]
 			if !present {
@@ -164,22 +193,86 @@ func (p *Projector) Render(res sim.StepResult) ([]Out, error) {
 				return nil, err
 			}
 			out = append(out, rec)
-			// A touched Zone is swept: an Entity this projector wrote that
-			// the Zone no longer holds gets its tombstone even if no Event
-			// addressed it by ID.
-			gone := make([]string, 0)
-			for id := range p.emitted[a.Zone] {
-				if _, present := zs.Entities[id]; !present {
-					gone = append(gone, string(id))
-				}
-			}
-			sort.Strings(gone)
-			for _, id := range gone {
-				tomb(a.Zone, sim.EntityID(id))
-			}
+			p.sweep(a.Zone, zs, tomb)
 		}
 	}
 	return out, nil
+}
+
+// Reconcile returns a tombstone for every key the topic holds that the
+// replica's current state does not produce, on the Partition it was found on,
+// sorted by key. onTopic maps each live key on andara.state.v1 to its
+// Partition — read from the compacted topic, which costs live-state time.
+//
+// This is what makes a bootstrap from a round newer than the topic correct
+// (Codex review of PR #64): an Entity that left its Zone, or a Room or Zone
+// that content removed, while the projector was down has a key on the topic
+// and nothing in state, and no later tick will ever name it. Dump followed by
+// Reconcile is a rebuild: afterwards the topic holds exactly the replica's
+// state.
+func (p *Projector) Reconcile(onTopic map[string]int32) []Out {
+	st := p.e.State()
+	live := map[string]bool{}
+	for _, zid := range st.SortedZoneIDs() {
+		live[Key(statev1.AggregateKind_ZONE, zid, "")] = true
+		if z, ok := p.e.World().Zones[zid]; ok {
+			for rid := range z.Rooms {
+				live[Key(statev1.AggregateKind_ROOM, zid, string(rid))] = true
+			}
+		}
+		for _, ent := range st.Zones[zid].Entities {
+			live[Key(p.KindOf(ent), zid, string(ent.ID))] = true
+		}
+	}
+	stale := make([]string, 0)
+	for k := range onTopic {
+		if !live[k] {
+			stale = append(stale, k)
+		}
+	}
+	sort.Strings(stale)
+	out := make([]Out, 0, len(stale))
+	for _, k := range stale {
+		out = append(out, Out{Key: k, Partition: onTopic[k], Kind: KindOfKey(k), Tick: st.Tick})
+	}
+	return out
+}
+
+// KindOfKey reads the kind a record key's prefix names;
+// AGGREGATE_KIND_UNSPECIFIED for a key this projector does not write.
+func KindOfKey(key string) statev1.AggregateKind {
+	prefix, _, ok := strings.Cut(key, ":")
+	if !ok {
+		return statev1.AggregateKind_AGGREGATE_KIND_UNSPECIFIED
+	}
+	switch prefix {
+	case "character":
+		return statev1.AggregateKind_CHARACTER
+	case "npc":
+		return statev1.AggregateKind_NPC
+	case "item":
+		return statev1.AggregateKind_ITEM
+	case "room":
+		return statev1.AggregateKind_ROOM
+	case "zone":
+		return statev1.AggregateKind_ZONE
+	}
+	return statev1.AggregateKind_AGGREGATE_KIND_UNSPECIFIED
+}
+
+// sweep tombstones every Entity this projector wrote in zid that the Zone no
+// longer holds, whether or not an Event addressed it by ID.
+func (p *Projector) sweep(zid sim.ZoneID, zs *sim.ZoneState, tomb func(sim.ZoneID, sim.EntityID)) {
+	gone := make([]string, 0)
+	for id := range p.emitted[zid] {
+		if _, present := zs.Entities[id]; !present {
+			gone = append(gone, string(id))
+		}
+	}
+	sort.Strings(gone)
+	for _, id := range gone {
+		tomb(zid, sim.EntityID(id))
+	}
 }
 
 // Key is the record key for an Entity of kind in zone.

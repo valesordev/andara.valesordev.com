@@ -42,6 +42,10 @@ func newWorld(t *testing.T) *world {
 	if err != nil {
 		t.Fatal(err)
 	}
+	return newWorldOn(t, e)
+}
+
+func newWorldOn(t *testing.T, e *sim.Engine) *world {
 	return &world{t: t, live: e, log: map[int32][]sim.Record{}, events: map[sim.Tick][]sim.Event{}}
 }
 
@@ -280,6 +284,140 @@ func TestZoneExitTombstonesTheOldKey(t *testing.T) {
 	}
 	if arrival == nil || arrival.Tombstone() || arrival.Partition != sim.PartitionFor("wilds") {
 		t.Fatalf("tick %d: want a record for character:wilds/hero on wilds' partition, got %+v", arrived, byTick[arrived])
+	}
+}
+
+// faultEngine is the verb engine with one extra move: "boom" renames every
+// Entity in the Zone, deletes one, and panics — partial state applyOne keeps
+// and the State Hash covers.
+func faultEngine(t *testing.T) *sim.Engine {
+	t.Helper()
+	w, err := simtest.CrossingWorld()
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := simtest.Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	handlers := sim.Handlers()
+	move := handlers[sim.KindMove]
+	handlers[sim.KindMove] = func(a *sim.ApplyContext, cmd *logv1.LoggedCommand) error {
+		if cmd.GetMove().GetDirection() != "boom" {
+			return move(a, cmd)
+		}
+		for _, ent := range a.Zone.Entities {
+			ent.Name = "scorched"
+		}
+		delete(a.Zone.Entities, "ada")
+		panic("boom")
+	}
+	return sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: simtest.AllPartitions(), Handlers: handlers})
+}
+
+// Codex review of PR #64: a fault's partial mutations are in the State Hash,
+// and ZoneFaulted names none of them, so the Zone is rendered whole — the
+// renamed Entity rewritten, the deleted one tombstoned.
+//
+// Rendered from the live engine's own tick rather than through Replay: a
+// replay through a faulted tick does not reproduce it today, because the
+// panicking record stays unapplied and the boundary's offset excludes it.
+// Making that replay exact is AW-SRV-027 (its AC-3); the projector halts with
+// a Divergence there until it lands, exactly as recovery does. AW-SRV-027
+// inherits running this case through Replay.
+func TestFaultRendersTheZoneWhole(t *testing.T) {
+	t.Parallel()
+	w := newWorldOn(t, faultEngine(t))
+	w.submit(simtest.Bind("town", "hero", "Hero", "plaza"), simtest.Bind("town", "ada", "Ada", "plaza"))
+	w.tick()
+	p := projector.New(w.live, projector.Options{})
+	v := view{}
+	boot, err := p.Dump()
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.apply(boot)
+
+	w.submit(simtest.Move("town", "hero", "boom"))
+	res, err := w.live.Step(sim.TickInput{Records: w.log[sim.PartitionFor("town")][w.live.State().Offsets[sim.PartitionFor("town")]:]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.ContainsFunc(res.Events, func(e sim.Event) bool { return e.Type == sim.EvZoneFaulted }) {
+		t.Fatalf("fixture: tick %d did not fault", res.Tick)
+	}
+	recs, err := p.Render(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v.apply(recs)
+	dump, err := projector.New(w.live, projector.Options{}).Dump()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := view{}
+	want.apply(dump)
+	sameContent(t, v, want)
+	if !slices.ContainsFunc(recs, func(o projector.Out) bool { return o.Key == "character:town/ada" && o.Tombstone() }) {
+		t.Fatalf("tick %d did not tombstone the Entity the panicking handler deleted: %v", res.Tick, recs)
+	}
+}
+
+// Codex review of PR #64: a bootstrap from a state newer than the topic. The
+// topic was last written at tick 1; the hero left town while the projector
+// was down. Seeding from the newer state alone would never tombstone
+// character:town/hero — no later tick names it. Dump then Reconcile against
+// the topic's keys leaves the topic holding exactly the replica's state.
+func TestBootstrapPastTheTopicReconcilesStaleKeys(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.submit(simtest.Bind("town", "hero", "Hero", "plaza"))
+	w.tick()
+	w.submit(simtest.Move("town", "hero", "east"))
+	w.tick()
+	w.tick()
+
+	// The topic as the projector left it, at tick 1.
+	topic := view{}
+	partitions := map[string]int32{}
+	first := replica(t)
+	if err := first.Replay(w.boundaries[:1], simtest.MemorySource(w.log), func(_ sim.TickCompleted, recs []projector.Out) error {
+		topic.apply(recs)
+		for _, r := range recs {
+			partitions[r.Key] = r.Partition
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := topic["character:town/hero"]; !ok {
+		t.Fatal("fixture: the topic should hold the hero in town")
+	}
+
+	// A replica at tick 3 — as if restored from a round taken there.
+	later := replica(t)
+	if err := later.Engine().Replay(w.boundaries, simtest.MemorySource(w.log)); err != nil {
+		t.Fatal(err)
+	}
+	p := projector.New(later.Engine(), projector.Options{ContentVersion: func(sim.ZoneID) string { return "fixture@1" }})
+	dump, err := p.Dump()
+	if err != nil {
+		t.Fatal(err)
+	}
+	onTopic := map[string]int32{}
+	for k := range topic {
+		onTopic[k] = partitions[k]
+	}
+	topic.apply(dump)
+	tombs := p.Reconcile(onTopic)
+	topic.apply(tombs)
+
+	want := view{}
+	want.apply(dump)
+	sameContent(t, topic, want)
+	if len(tombs) != 1 || tombs[0].Key != "character:town/hero" || !tombs[0].Tombstone() ||
+		tombs[0].Partition != sim.PartitionFor("town") || tombs[0].Kind != statev1.AggregateKind_CHARACTER {
+		t.Fatalf("want exactly one tombstone, for character:town/hero on town's partition; got %+v", tombs)
 	}
 }
 

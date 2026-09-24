@@ -30,6 +30,13 @@ func TestMigrationsCoverEveryVersion(t *testing.T) {
 				"Add an entry to migrations in server/store/migrate.go.", v, v+1, sim.StateVersion, v)
 		}
 	}
+	for v := uint32(1); v < sim.StateVersion; v++ {
+		if _, ok := hashers[v]; !ok {
+			t.Errorf("no hasher for state_version %d.\n"+
+				"A round written at %d is verified against a hash taken in that version's canonical form "+
+				"before it is migrated; add an entry to hashers in server/store/migrate.go.", v, v)
+		}
+	}
 	for _, v := range MigrationVersions() {
 		if v >= sim.StateVersion {
 			t.Errorf("migrations has an entry from state_version %d, but sim.StateVersion is %d: "+
@@ -170,6 +177,70 @@ func contains(s, sub string) bool {
 		}
 	}
 	return false
+}
+
+// Codex review of PR #64: integrity is checked against the body as written,
+// before migration. A migration that changes hash-covered state — here, it
+// renames every Entity — must not make a valid older object hash-invalid; a
+// tampered one must still be caught. Run as a 1→2 bump against substituted
+// registries, since the real ones are empty at StateVersion 1.
+func TestReadVerifiedChecksTheHashBeforeMigrating(t *testing.T) {
+	e, err := newSnapshotFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := e.SnapshotAll(1)[0]
+	wire, err := snap.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer swapMigrations(map[uint32]func(*statev1.ZoneState) error{
+		1: func(z *statev1.ZoneState) error {
+			for _, ent := range z.Entities {
+				ent.Name = "renamed"
+			}
+			return nil
+		},
+	})()
+	defer swapHashers(map[uint32]func(*statev1.ZoneState) [32]byte{
+		1: func(z *statev1.ZoneState) [32]byte { return sim.HashZone(sim.ZoneStateFromProto(z)) },
+	})()
+
+	_, body, err := readVerified(wire, 2, true)
+	if err != nil {
+		t.Fatalf("a valid version-1 object failed verification on its way to version 2: %v", err)
+	}
+	for _, ent := range body.GetEntities() {
+		if ent.GetName() != "renamed" {
+			t.Fatalf("the migration did not run: %v", ent)
+		}
+	}
+
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	env.StateHash[0] ^= 0xff
+	tampered, err := proto.Marshal(&env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readVerified(tampered, 2, true); !errors.Is(err, ErrHashInvalid) {
+		t.Fatalf("a tampered version-1 object was accepted: %v", err)
+	}
+
+	swapHashers(map[uint32]func(*statev1.ZoneState) [32]byte{})
+	if _, _, err := readVerified(wire, 2, true); err == nil || !contains(err.Error(), "no hasher for state_version 1") {
+		t.Fatalf("an object with no hasher for its version must be refused, naming it: %v", err)
+	}
+}
+
+// swapHashers substitutes the hasher registry; the same caveat as
+// swapMigrations.
+func swapHashers(m map[uint32]func(*statev1.ZoneState) [32]byte) func() {
+	saved := hashers
+	hashers = m
+	return func() { hashers = saved }
 }
 
 // swapMigrations substitutes the registry for a test and returns the undo.
