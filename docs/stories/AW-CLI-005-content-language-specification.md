@@ -200,7 +200,8 @@ change that breaks a corpus pair fails the build naming the pair.
   covering every grammar production, and **82 invalid files** across 51
   cases (19 syntax, 30 semantic, 2 encoding) covering all 29 raisable error codes at least once.
 - `make content-grammar-check` — added by this story, in `make check` — runs AC-1 and AC-11 today.
-- `make content-conformance` (added by `AW-CLI-006`) runs AC-2, AC-3, and AC-9, and skips
+- `make content-conformance` (added by `AW-CLI-006`) runs AC-2, AC-3, and AC-9's `roundtrip/` half,
+  and skips
   `corpus/pending/` printing each case's gating story.
 - Two cases are anchored to compiled output already in the repository rather than invented:
   `corpus/valid/core/` reproduces `content/core/templates/*.json` and `corpus/valid/town/`
@@ -227,8 +228,8 @@ The §8 record is below; the story is `done`.
 
 | §8 item | Result |
 |---------|--------|
-| Every AC demonstrably passes | yes, after the AC-9 correction below. AC-1 and AC-11: `make content-grammar-check` on `main` — 117 files parse, 19 rejected at their sidecar's position, 57 expected blobs canonical, 29 codes each covered. AC-2, AC-3, AC-9: `make content-conformance` — 69 cases agree, 6 pending skipped, each naming its gating story. AC-4–AC-8 are corpus cases inside AC-3. AC-10: resolved 2026-09-23 |
-| Tests in CI | both targets are in `make check`; `check` is green on the `main` merge commit of #57 (run 36009708312) |
+| Every AC demonstrably passes | yes, after the AC-9 correction below. AC-1 and AC-11: `make content-grammar-check` on `main` — 117 files parse, 19 rejected at their sidecar's position, 57 expected blobs canonical, 29 codes each covered. AC-2, AC-3, AC-9's `roundtrip/` half: `make content-conformance` — 69 cases agree, 6 pending skipped, each naming its gating story. AC-9's other half, decompile and recompile over `valid/` identical but for `source`, was **verified by hand** at this review and has **no CI runner**. `AW-CLI-006` inherits adding it. AC-4–AC-8 are corpus cases inside AC-3. AC-10: resolved 2026-09-23 |
+| Tests in CI | both targets are in `make check`, except AC-9's `valid/` half — inherited by `AW-CLI-006`, above; `check` is green on the `main` merge commit of #57 (run 36009708312) |
 | `make check` clean | yes, locally on `main` and on this branch |
 | Instrumentation | none at runtime — a specification (Observability requirements) |
 | Config / Helm schema | none |

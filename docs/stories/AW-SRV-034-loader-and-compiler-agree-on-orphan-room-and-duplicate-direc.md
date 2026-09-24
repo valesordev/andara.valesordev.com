@@ -57,8 +57,9 @@ or boot.
   `docs/specs/content-language/v1/corpus/valid/warn-missing-reverse-exit/expected.errors` gains
   `z.aw:2:3: orphan_room` with chain `z`, `loft`, sorted ahead of the existing
   `missing_reverse_exit`.
-- `errors.md`: `duplicate_direction` moves from §3.1 ("raised only by the compiler") to §3.2 with
-  owner `AW-SRV-034`, and the note under §3.3 about the chute case is deleted.
+- Not in this PR: `errors.md` prose. Architecture moves `duplicate_direction` from §3.1 to §3.2 and
+  drops the §3.3 note about the chute case once this merges. The sidecar is different: it has to
+  change with the compiler, or `make check` goes red in between.
 
 ### Out of scope
 - Counting a cross-Zone Exit as inbound. That would stop the warning on a multi-Room Zone's entry
@@ -99,9 +100,9 @@ Zone has more than one Room and no Exit from another Room in that Zone targets i
 
 ## Data / state impact
 
-None. A pack with a duplicated Direction that boots today will be refused after this lands. No such
-pack exists in `content/`, `testdata/`, or the corpus. The unit suite proves that for the repo's
-fixtures.
+None. A pack with a duplicated Direction that boots today will be refused after this lands. None of
+the 17 Zone files under `content/` and `testdata/` has one (checked while writing this story). The
+corpus's `invalid/semantic/duplicate-direction/` is compiler input, not loader input.
 
 ## Observability requirements
 

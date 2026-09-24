@@ -125,6 +125,13 @@ Per `AW-CLI-001`: `cli.command` root span with `content.compile` child carrying 
 CLAUDE.md §8, plus: `make content-conformance` in `make check`; the package is imported by the server's
 publish gate in `AW-SRV-013`'s equivalence test.
 
+**Inherited from the `AW-CLI-005` review (2026-09-24):** `Conformance()` checks only `roundtrip/`
+for AC-4 (compiled → source → compiled). Add a pass over every `valid/` case: decompile with the core
+pack, recompile from a directory named like the case, and compare the blobs with
+`TemplateDefinition.source` masked. `semantics.md` §8 now states that exception. At review a
+throwaway program found 16 of 16 identical under that mask, and 7 of 16 differing without it. This
+story is `review` until the pass is in `make check`.
+
 ## Open questions
 
 - **Inherited from `AW-SRV-022` (2026-09-18):** the compiler emits one blob per declaration at
