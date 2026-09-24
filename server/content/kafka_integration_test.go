@@ -395,3 +395,54 @@ func TestKafkaResolver_BlobThatDoesNotHashToItsKeyIsRefused(t *testing.T) {
 		t.Errorf("a damaged blob record must not be reported as an unreachable store")
 	}
 }
+
+// The scan-to-watch gap, which is the one failure here that production would
+// hit and the test suite would not.
+//
+// A consumer configured AtEnd takes its position when it first polls, not when
+// it is constructed. So a pointer written between the initial Active() scan
+// and that first poll lands behind the consumer and is treated as history —
+// never delivered, old version serving, until some later write. A publisher
+// writes the pointer once.
+//
+// Pin captures the end offsets up front, so this test produces the move BEFORE
+// Watch is ever called and still expects it. Under the old AtEnd behaviour the
+// move is unreachable and this times out.
+func TestKafkaResolver_PinnedWatchSeesAMoveMadeBeforeItStarted(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	topics, cl := throwawayTopics(t)
+	p := &publisher{t: t, cl: cl, topics: topics}
+	p.publish("town", 1, 0, map[string]string{"town.json": intZone("town", "square")})
+	p.activate("town", 1)
+
+	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+
+	// Pin, then resolve, then publish — the exact ordering a boot has.
+	if err := r.Pin(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Active(ctx); err != nil {
+		t.Fatal(err)
+	}
+	p.publish("town", 2, 0, map[string]string{"town.json": intZone("town", "square")})
+	p.activate("town", 2)
+
+	// Only now does the watch start. The move is already in the past.
+	moves, err := r.Watch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case m := <-moves:
+		if m.Pack != "town" || m.Version != 2 {
+			t.Fatalf("move = %+v", m)
+		}
+	case <-time.After(45 * time.Second):
+		t.Fatal("a pointer move made after the pin was never delivered")
+	}
+}

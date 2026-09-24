@@ -209,6 +209,17 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 				Pack: pack, Compiled: res.CoreVersion, Active: core,
 			})
 		}
+	} else if stranded, pin := l.strandedBy(res.Version); stranded != "" {
+		// Core moving *backwards* is the same compatibility question asked
+		// from the other side. Accepting it would leave the World serving a
+		// combination the loader would refuse to assemble from scratch: a
+		// pack pinned to core@4 on top of core@3. The Loader has no way to
+		// unload a pack — every path it has either accepts a version or
+		// retains the previous one — so the consistent answer is to retain
+		// core and say which pack is holding it there.
+		return l.reject(pack, version, &ErrCoreRollback{
+			From: mustServing(l, CorePack), To: res.Version, Pack: stranded, Pin: pin,
+		})
 	}
 
 	// Validate the World this version would produce, together with every other
@@ -238,6 +249,21 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 func (l *Loader) validateWith(candidate *Resolved) []sim.ValidationError {
 	zones, templates := l.inputsWith(candidate)
 	var findings []sim.ValidationError
+
+	// A version that would leave the World with no Zones at all, when the
+	// World currently has some, is refused. Everyone standing in it would be
+	// standing nowhere, and the previous version is right there. This is a
+	// rule about the *transition*: a pack with no Zones is perfectly legal on
+	// its own — andara.core is exactly that, Templates and nothing else —
+	// which is why the test is against what is serving rather than against
+	// the candidate alone.
+	if len(zones) == 0 && l.servingZones() > 0 {
+		return []sim.ValidationError{{
+			Code: sim.ErrEmptyContent,
+			Detail: fmt.Sprintf("%s@%d would leave the World with no Zones; the previous version keeps serving",
+				candidate.Pack, candidate.Version),
+		}}
+	}
 
 	bstart := time.Now()
 	if len(templates) > 0 {
@@ -329,6 +355,42 @@ func (l *Loader) Held() map[string]uint64 {
 		out[p] = v
 	}
 	return out
+}
+
+// strandedBy reports the first retained pack, in name order, that pinned a
+// core version newer than the candidate core, and the version it pinned.
+func (l *Loader) strandedBy(core uint64) (string, uint64) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	packs := make([]string, 0, len(l.serving))
+	for p := range l.serving {
+		if p != CorePack {
+			packs = append(packs, p)
+		}
+	}
+	sort.Strings(packs)
+	for _, p := range packs {
+		if l.serving[p].CoreVersion > core {
+			return p, l.serving[p].CoreVersion
+		}
+	}
+	return "", 0
+}
+
+// servingZones counts the Zones the World currently has.
+func (l *Loader) servingZones() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	n := 0
+	for _, r := range l.serving {
+		n += len(r.Zones)
+	}
+	return n
+}
+
+func mustServing(l *Loader, pack string) uint64 {
+	v, _ := l.servingVersion(pack)
+	return v
 }
 
 func (l *Loader) servingVersion(pack string) (uint64, bool) {

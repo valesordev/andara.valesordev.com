@@ -78,6 +78,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		ReasonFormatVersion, ReasonCoreVersion, ReasonValidation,
 		ReasonBlobMissing, ReasonBlobCorrupt, ReasonFallbackRoom,
 		ReasonPackMismatch, ReasonManifestAbsent, ReasonStoreUnavailable,
+		ReasonBlobTooLarge,
 	} {
 		m.LoadFailures.WithLabelValues(r)
 	}

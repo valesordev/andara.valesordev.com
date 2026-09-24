@@ -31,6 +31,8 @@ const (
 	// mistake, and counting it as `validation` would put infrastructure noise
 	// into the number the content-freshness SLO is built on.
 	ReasonStoreUnavailable = "store_unavailable"
+	// A blob over content.max_blob_bytes.
+	ReasonBlobTooLarge = "blob_too_large"
 )
 
 // A load rejection. Every one of these leaves the previously loaded version
@@ -86,6 +88,21 @@ type (
 		Path      string
 		Want, Got []byte
 	}
+	// ErrBlobTooLarge: a blob over content.max_blob_bytes.
+	ErrBlobTooLarge struct {
+		Path  string
+		Bytes int64
+		Limit int64
+	}
+	// ErrCoreRollback: a core pointer moving backwards past a version some
+	// retained pack was compiled against. The refusal is of the *core* move,
+	// not of the pack — the pack is already serving and the Loader has no way
+	// to unload it.
+	ErrCoreRollback struct {
+		From, To uint64
+		Pack     string
+		Pin      uint64
+	}
 	// ErrStoreUnavailable: the content store could not be read. Wraps the
 	// underlying failure so a log line still names it.
 	ErrStoreUnavailable struct {
@@ -121,6 +138,15 @@ func (e *ErrBlobCorrupt) Error() string {
 		e.Path, hex.EncodeToString(e.Want), hex.EncodeToString(e.Got))
 }
 
+func (e *ErrBlobTooLarge) Error() string {
+	return fmt.Sprintf("blob %s is %d bytes, over content.max_blob_bytes %d", e.Path, e.Bytes, e.Limit)
+}
+
+func (e *ErrCoreRollback) Error() string {
+	return fmt.Sprintf("andara.core cannot roll back from %d to %d: %s@ is compiled against andara.core@%d and is serving",
+		e.From, e.To, e.Pack, e.Pin)
+}
+
 func (e *ErrStoreUnavailable) Error() string {
 	return fmt.Sprintf("content store unavailable during %s: %s", e.Op, e.Err.Error())
 }
@@ -146,8 +172,10 @@ func Reason(err error) string {
 	var (
 		fv *ErrFormatVersion
 		cv *ErrCoreVersion
+		cr *ErrCoreRollback
 		bm *ErrBlobMissing
 		bc *ErrBlobCorrupt
+		bl *ErrBlobTooLarge
 		pm *ErrPackMismatch
 		mm *ErrManifestMissing
 		vl *ErrValidation
@@ -155,12 +183,14 @@ func Reason(err error) string {
 	switch {
 	case errors.As(err, &fv):
 		return ReasonFormatVersion
-	case errors.As(err, &cv):
+	case errors.As(err, &cv), errors.As(err, &cr):
 		return ReasonCoreVersion
 	case errors.As(err, &bm):
 		return ReasonBlobMissing
 	case errors.As(err, &bc):
 		return ReasonBlobCorrupt
+	case errors.As(err, &bl):
+		return ReasonBlobTooLarge
 	case errors.As(err, &pm):
 		return ReasonPackMismatch
 	case errors.As(err, &mm):
@@ -193,7 +223,11 @@ func Findings(err error) []sim.ValidationError {
 		return []sim.ValidationError{{File: e.Path, Code: sim.ErrMalformed, Detail: e.Error()}}
 	case *ErrCoreVersion:
 		return []sim.ValidationError{{Code: sim.ErrMalformed, Detail: e.Error()}}
+	case *ErrCoreRollback:
+		return []sim.ValidationError{{Code: sim.ErrMalformed, Detail: e.Error()}}
 	case *ErrBlobCorrupt:
+		return []sim.ValidationError{{File: e.Path, Code: sim.ErrMalformed, Detail: e.Error()}}
+	case *ErrBlobTooLarge:
 		return []sim.ValidationError{{File: e.Path, Code: sim.ErrMalformed, Detail: e.Error()}}
 	case *ErrManifestMissing:
 		return []sim.ValidationError{{Code: sim.ErrEmptyContent, Detail: e.Error()}}

@@ -85,6 +85,17 @@ func Resolve(ctx context.Context, s Store, pack string, version uint64) (*Resolv
 			if verr != nil {
 				return nil, &ErrValidation{Findings: []sim.ValidationError{*verr}}
 			}
+			// Checked here, not left to BuildTemplates. The registry's finding
+			// would be wrapped as ErrValidation and counted as the Builder's
+			// content being invalid, when what actually happened is that this
+			// binary is too old to read it — which is a different thing to
+			// tell an operator and a different reason on the metric.
+			if v := def.GetFormatVersion(); v != sim.TemplateFormatVersion {
+				return nil, &ErrFormatVersion{
+					Path: p, Have: v,
+					Min: sim.TemplateFormatVersion, Max: sim.TemplateFormatVersion,
+				}
+			}
 			// AC-11. TemplateRef.Pack() is derived from the name, so a pack
 			// publishing a blob named for another pack is claiming that pack's
 			// namespace. Whether it would collide or merely stand in depends on

@@ -26,20 +26,22 @@ What the implementation gives it to measure, so the doc does not have to guess:
 |---|---|
 | `andara_content_active_version{pack}` | what is live now, per pack |
 | `andara_content_load_duration_seconds{phase}` | `resolve`, `validate`, `build`, `swap` |
-| `andara_content_load_failures_total{reason}` | `format_version`, `core_version`, `validation`, `blob_missing`, `blob_corrupt`, `fallback_missing`, `pack_mismatch`, `manifest_missing`, `store_unavailable` |
+| `andara_content_load_failures_total{reason}` | `format_version`, `core_version`, `validation`, `blob_missing`, `blob_corrupt`, `blob_too_large`, `fallback_missing`, `pack_mismatch`, `manifest_missing`, `store_unavailable` |
 | `andara_content_cache_hits_total{outcome}` | `hit`, `miss` |
 
 Freshness is the gap between an Active Pointer moving and the World serving that version.
 The resolver debounces `content.reload_debounce` (2 s) before it starts, so any objective
 under about 5 s is measuring the debounce rather than the system.
 
-The story's metric list names five reasons. The implementation has **nine**, and the SLO
+The story's metric list names five reasons. The implementation has **ten**, and the SLO
 should be written against the distinction they draw rather than against the list:
 
 - `pack_mismatch` — AC-11 was added on 2026-09-18, after the Observability section was written.
 - `manifest_missing` — an Active Pointer naming a version the versions topic does not carry.
 - `blob_corrupt` — a blob record whose body does not hash to the key it is stored under. The
   store is content-addressed, so this is the one invariant a reader can check for itself.
+- `blob_too_large` — over `content.max_blob_bytes`, measured against the bytes actually read
+  rather than against the `size_bytes` the publisher wrote into the manifest.
 - `store_unavailable` — **the important one for the SLO.** A broker restart or a leader move is
   not a Builder's mistake. Everything content can get wrong has its own type, so anything else
   is the store failing to answer, and it is counted separately rather than as `validation`.
@@ -167,6 +169,23 @@ name survives:
 
 Note the phase label is also incomplete until the protocol lands: `swap` is pre-seeded and never
 observed, because the swap is AC-2 and AC-2 is blocked (§3).
+
+## 9b. One rule the story does not state: a core rollback can strand a pack
+
+The story gives the skew rule in one direction — a pack compiled against a core newer than the
+one running is held (AC-8). The other direction is not in the story and arose in review.
+
+If `andara.core@4` and a pack pinned to `andara.core@4` are both serving, moving the core
+pointer back to 3 would leave the World serving a combination the loader would refuse to
+assemble from scratch. The implementation refuses the **core move** and retains `core@4`,
+naming the pack that holds it there, because the Loader has no way to unload a pack: every
+path it has either accepts a version or retains the previous one.
+
+That is a defensible reading of the retained-version rule, but it is a rule architecture did
+not write, and it has an operational consequence worth being explicit about: **a Builder pack
+can block a core rollback.** The alternative — accept the rollback and drop the incompatible
+packs out of the World — trades one surprise for a worse one, but the choice is architecture's.
+It may want an explicit override on the eventual `content reload` / activation path (§5).
 
 ## 10. What is in this branch, by acceptance criterion
 

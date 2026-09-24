@@ -59,6 +59,10 @@ type KafkaResolver struct {
 
 	mu     sync.Mutex
 	closed bool
+	// watchFrom is where Watch resumes from, captured by Pin. Nil means
+	// "wherever the topic ends when the consumer first polls", which is only
+	// safe when nothing has been read yet.
+	watchFrom map[int32]kgo.Offset
 }
 
 // KafkaOptions configures a KafkaResolver.
@@ -184,11 +188,17 @@ func (r *KafkaResolver) Blobs(ctx context.Context, refs []*contentv1.BlobRef) (m
 	bodies := make(map[string][]byte, len(refs))
 	missing := map[string][]*contentv1.BlobRef{} // hex hash -> refs wanting it
 	for _, ref := range refs {
-		if r.maxBlob > 0 && int64(ref.GetSizeBytes()) > r.maxBlob {
-			return nil, fmt.Errorf("content: blob %s is %d bytes, over content.max_blob_bytes %d",
-				ref.GetPath(), ref.GetSizeBytes(), r.maxBlob)
+		// size_bytes is the publisher's claim about the blob, so checking it
+		// first only saves a fetch. It is not the limit being enforced: a
+		// manifest that underreports would otherwise get the real body read,
+		// cached and parsed, which is precisely the case the limit exists for.
+		if err := r.checkBlobSize(ref.GetPath(), int(ref.GetSizeBytes())); err != nil {
+			return nil, err
 		}
 		if body, err := r.cache.Get(ref.GetHash()); err == nil {
+			if err := r.checkBlobSize(ref.GetPath(), len(body)); err != nil {
+				return nil, err
+			}
 			r.metrics.CacheHits.WithLabelValues(OutcomeHit).Inc()
 			bodies[ref.GetPath()] = body
 			continue
@@ -220,6 +230,9 @@ func (r *KafkaResolver) Blobs(ctx context.Context, refs []*contentv1.BlobRef) (m
 		if !equalHash(sum[:], key) {
 			return &ErrBlobCorrupt{Path: refs[0].GetPath(), Want: key, Got: sum[:]}
 		}
+		if err := r.checkBlobSize(refs[0].GetPath(), len(body)); err != nil {
+			return err
+		}
 		for _, ref := range refs {
 			bodies[ref.GetPath()] = body
 		}
@@ -240,16 +253,73 @@ func (r *KafkaResolver) Blobs(ctx context.Context, refs []*contentv1.BlobRef) (m
 	return bodies, nil
 }
 
-// Watch delivers every Active Pointer write from now on. It does not replay
-// history: the caller has already resolved the current pointers, and replaying
-// them would reload content that is already serving.
+// checkBlobSize enforces content.max_blob_bytes against a byte count.
+func (r *KafkaResolver) checkBlobSize(path string, n int) error {
+	if r.maxBlob > 0 && int64(n) > r.maxBlob {
+		return &ErrBlobTooLarge{Path: path, Bytes: int64(n), Limit: r.maxBlob}
+	}
+	return nil
+}
+
+// Pin records where the Active Pointer topic ends right now, so a later Watch
+// resumes from exactly here.
+//
+// Without it there is a window nothing covers. A consumer configured AtEnd
+// does not take a position when it is constructed — it takes one when it first
+// polls, inside the goroutine, after Watch has already returned. A pointer
+// written after the initial Active() scan but before that first poll is then
+// behind the consumer's start and is treated as history: the move is never
+// delivered, and the old version keeps serving until some later write or a
+// restart. A publisher writes the pointer once, so "some later write" may be
+// days away.
+//
+// Calling Pin before the initial scan closes the window from the other side:
+// anything written from that instant on is at or after the pinned offset.
+func (r *KafkaResolver) Pin(ctx context.Context) error {
+	client, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...), kgo.ClientID(r.clientID+"-pin"))
+	if err != nil {
+		return &ErrStoreUnavailable{Op: "connect " + r.topics.Active, Err: err}
+	}
+	defer client.Close()
+	ends, err := kadm.NewClient(client).ListEndOffsets(ctx, r.topics.Active)
+	if err != nil {
+		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: err}
+	}
+	if err := ends.Error(); err != nil {
+		return &ErrStoreUnavailable{Op: "end offsets of " + r.topics.Active, Err: err}
+	}
+	at := map[int32]kgo.Offset{}
+	for _, e := range ends[r.topics.Active] {
+		at[e.Partition] = kgo.NewOffset().At(e.Offset)
+	}
+	r.mu.Lock()
+	r.watchFrom = at
+	r.mu.Unlock()
+	return nil
+}
+
+// Watch delivers every Active Pointer write from the pinned position, or from
+// the end of the topic when nothing was pinned. It does not replay history:
+// the caller has already resolved the current pointers, and replaying them
+// would reload content that is already serving.
 func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
-	client, err := kgo.NewClient(
+	r.mu.Lock()
+	from := r.watchFrom
+	r.mu.Unlock()
+
+	opts := []kgo.Opt{
 		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID+"-watch"),
-		kgo.ConsumeTopics(r.topics.Active),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
-	)
+		kgo.ClientID(r.clientID + "-watch"),
+	}
+	if len(from) > 0 {
+		opts = append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topics.Active: from}))
+	} else {
+		opts = append(opts,
+			kgo.ConsumeTopics(r.topics.Active),
+			kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
+		)
+	}
+	client, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("content: watch %s: %w", r.topics.Active, err)
 	}

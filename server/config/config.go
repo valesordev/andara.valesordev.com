@@ -1273,6 +1273,20 @@ func applyEnv(c *Config, env EnvLookup) error {
 			}
 		}
 	}
+	for _, lv := range []struct {
+		name string
+		dst  *int64
+	}{
+		{"ANDARA_CONTENT_MAX_BLOB_BYTES", &c.ContentMaxBlobBytes},
+	} {
+		if v, ok := env(lv.name); ok {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return fmt.Errorf("%s must be an integer, got %q", lv.name, v)
+			}
+			*lv.dst = n
+		}
+	}
 	if v, ok := env("ANDARA_SIM_SOURCE"); ok {
 		c.SimSource = v
 	}

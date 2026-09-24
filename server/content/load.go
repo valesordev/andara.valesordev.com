@@ -93,6 +93,14 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 	})
 
 	c := &Content{opts: o, loader: loader, resolver: resolver}
+	// Pin the pointer topic before reading it. A pointer moved while the
+	// initial resolve is in flight has to be seen by the watch afterwards,
+	// and a watch that only takes its position when it first polls would
+	// treat that move as history.
+	if err := resolver.Pin(ctx); err != nil {
+		return c, []sim.ValidationError{{Code: sim.ErrMalformed,
+			Detail: "cannot read the content store: " + err.Error()}}
+	}
 	rejects, err := loader.LoadAll(ctx)
 	if err != nil {
 		// The store itself is unreachable. Distinct from a refused version:
@@ -102,20 +110,35 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 	}
 	c.zones, c.templates = loader.Inputs()
 
+	return c, loadFindings(rejects, len(c.zones))
+}
+
+// loadFindings decides which boot findings a set of per-pack rejections
+// produces.
+//
+// The answer is usually none. Runtime.LoadContent exits 1 on any fatal
+// finding, and every finding a rejection carries is fatal — so returning them
+// would mean one malformed Builder pack takes the whole server down, undoing
+// at the boot layer exactly what the Loader's retained-version rule
+// guarantees. The rejections are not lost: the Loader logs each one, with its
+// findings, at error.
+//
+// The one case that is fatal is a boot with no Zones at all. There is no
+// previous version to retain, and a World with nowhere to stand is not a World
+// (AW-SRV-001). Then the rejections are worth returning too, because they say
+// why there is nothing.
+func loadFindings(rejects []Rejection, zones int) []sim.ValidationError {
+	if zones > 0 {
+		return nil
+	}
 	var findings []sim.ValidationError
 	for _, r := range rejects {
 		findings = append(findings, Findings(r.Err)...)
 	}
-	if len(c.zones) == 0 {
-		// AC-1's failure case and the story's boot rule: a boot with nothing
-		// loadable exits 1 naming the reason, because there is no previous
-		// version to fall back to. Any rejection findings already say why.
-		findings = append(findings, sim.ValidationError{
-			Code:   sim.ErrEmptyContent,
-			Detail: "no Zones were found in kafka: no followed pack has a loadable Active Pointer",
-		})
-	}
-	return c, findings
+	return append(findings, sim.ValidationError{
+		Code:   sim.ErrEmptyContent,
+		Detail: "no Zones were found in kafka: no followed pack has a loadable Active Pointer",
+	})
 }
 
 // Zones returns the Zone Definitions to build the World from.
