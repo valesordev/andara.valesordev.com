@@ -55,9 +55,12 @@ export declare type StateRecord = Message<"andara.state.v1.StateRecord"> & {
   tick: bigint;
 
   /**
-   * The andara.commands.v1 offset of the last Command applied on the Zone's
-   * Partition at `tick`: the next-to-read offset the tick's boundary records,
-   * minus one. -1 when nothing has been applied on that Partition.
+   * The last andara.commands.v1 offset *consumed* on the Zone's Partition at
+   * `tick`: the next-to-read offset the tick's boundary records, minus one.
+   * -1 when nothing has been consumed on that Partition. It is shared by
+   * every Zone on the Partition, and it counts records deferred past
+   * sim.max_per_tick, so it is a position in the log, not a claim that this
+   * aggregate's Command was applied. (Worded at §8, 2026-09-24.)
    *
    * @generated from field: int64 source_offset = 4;
    */
@@ -67,6 +70,9 @@ export declare type StateRecord = Message<"andara.state.v1.StateRecord"> & {
    * packID@version active when the aggregate was last written, so a runtime
    * object traces to authored source. For an Entity, the version its
    * Template came from; for a Room or Zone, the version its Zone came from.
+   * Empty when the process has no version to give. Two such cases today:
+   * content loaded with content.source=dir, and a Character spawned at bind
+   * (#70, which fills it).
    *
    * @generated from field: string content_version = 5;
    */
@@ -200,8 +206,8 @@ export enum AggregateKind {
   CHARACTER = 1,
 
   /**
-   * "npc:<zone>/<id>": any other Entity of Template kind ENTITY. Body:
-   * EntityState.
+   * "npc:<zone>/<id>": any other Entity that is not an ITEM, whatever its
+   * Template kind. Body: EntityState.
    *
    * @generated from enum value: NPC = 2;
    */

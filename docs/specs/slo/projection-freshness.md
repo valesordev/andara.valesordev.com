@@ -29,7 +29,16 @@ projector *verified* was produced (the record's broker timestamp). It measures t
 verification, so a projector that is producing records but has stopped verifying cannot look fresh.
 
 **Good minute:** lag ≤ `projector.state.lag_budget` (default 5 s, exported as
-`andara_state_projector_lag_budget_seconds`).
+`andara_state_projector_lag_budget_seconds`), counted only in minutes the World ticked:
+
+```
+# SLI 1, per namespace, over the window; the denominator is ticking minutes only
+sum_over_time(((andara_state_projector_lag_seconds <= bool andara_state_projector_lag_budget_seconds)
+   and on(namespace) (sum by (namespace) (rate(andara_ticks_total[1m])) > 0))[28d:1m])
+/
+count_over_time((andara_state_projector_lag_seconds
+   and on(namespace) (sum by (namespace) (rate(andara_ticks_total[1m])) > 0))[28d:1m])
+```
 
 **Target (proposed):** 99 % of minutes good over 28 days, measured only while the World is ticking.
 A World that is not ticking produces no boundaries. Its projector's lag then grows without anything
@@ -46,13 +55,18 @@ Runbook: `docs/runbooks/projection-stale.md`.
 ## SLI 2 — integrity
 
 `andara_state_digest_mismatches_total`: ticks whose replayed State Hash differed from the one the
-live server recorded. **Must remain 0; there is no error budget.** A non-zero value means the
+live server recorded. **Must remain 0; there is no error budget.** The counter lives only for the
+minute a diverged projector lingers before exiting, so the SLI is its window maximum,
+`max_over_time(andara_state_digest_mismatches_total[28d]) == 0`, not its current value. A non-zero value means the
 indexes no longer describe the World. If a rebuild reproduces it, the *server* is
 non-deterministic, which is a simulation bug with a blast radius far past the projection.
 
-**Alert:** `StateProjectorDiverged`, any non-zero value, severity `ticket`. The projector stops
-producing at the tick before the divergence, so the indexes are frozen, not corrupted, and no player
-is affected. Runbook: `docs/runbooks/state-projector-diverged.md`.
+**Alert:** `StateProjectorDiverged`, any non-zero sample in the last 6 h, severity `ticket`. No
+player is affected. The indexes are **not** reliably frozen: a restart that finds a complete
+snapshot round newer than the divergent tick bootstraps from it and continues, so they resume
+describing the World the server holds. A divergence is evidence about the server's determinism,
+and the runbook treats the first one as the evidence. *(Corrected at §8, 2026-09-24. This said
+"frozen, not corrupted".)* Runbook: `docs/runbooks/state-projector-diverged.md`.
 
 ## Known gaps
 
@@ -62,10 +76,13 @@ is affected. Runbook: `docs/runbooks/state-projector-diverged.md`.
   absence-based rule has to be careful the way `AndaraServerUnavailable` is (one per environment,
   never `absent()` over every namespace). It is deferred until the chart enables the projector
   anywhere.
-- **Lag grows while the World is quiet.** No new boundary means the lag gauge climbs even though
-  there is nothing to project. The server ticks continuously today (an idle tick still writes a
-  boundary), so this does not happen in practice. If idle ticks ever stop writing boundaries, this
-  SLI needs a "no boundary to project" exclusion.
+- **Lag grows while the World is stopped.** No new boundary means the lag gauge climbs even though
+  there is nothing to project. The SLI and `ProjectionStale` count only minutes in which
+  `andara_ticks_total` advanced, so a server outage is the server's alert, not this one. An idle
+  tick still writes a boundary, so a quiet World is still a ticking one.
+- **The lag reads 0 before the first verified batch.** A projector stuck in bootstrap, or waiting
+  for the World's first boundary, looks fresh. The runbook's first check is readiness (`/readyz`)
+  and the start line, not the gauge.
 
 ## Revisit when
 

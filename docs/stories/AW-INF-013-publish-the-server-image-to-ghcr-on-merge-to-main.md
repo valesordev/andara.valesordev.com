@@ -120,7 +120,7 @@ short sha, exactly as `make image` does. `andara_build_info` therefore names the
 
 | Target | Does | Exit |
 |--------|------|------|
-| `make image-check ENV=<env> [TAG=dev]` | anonymous `docker manifest inspect` of `ghcr.io/valesordev/andara-server:$TAG`; compares the revision label against `sha-` tags; then `kubectl -n andara-$ENV run` a `/bin/true` pod with that image, waits for `Succeeded`, and deletes it | `0` pulled both ways · `1` a pull failed or the label disagrees · `3` no docker or no kubectl |
+| `make image-check ENV=<env> [TAG=dev]` | anonymous `docker pull` (under an empty `DOCKER_CONFIG`, so no stored credential helps; amended 2026-09-24 to what was built, which is stronger than a manifest fetch) of `ghcr.io/valesordev/andara-server:$TAG`; compares the revision label against `sha-` tags; then `kubectl -n andara-$ENV run` a `/bin/true` pod with that image, waits for `Succeeded`, and deletes it | `0` pulled both ways · `1` a pull failed or the label disagrees · `3` no docker or no kubectl |
 | `make helm-install ENV=<env> [TAG=]` | unchanged, except where the image comes from, and a moving tag pinned to its digest via `scripts/image_digest.sh` (anonymous ghcr token, manifest `HEAD`) | unchanged; `1` when a moving tag does not resolve |
 
 The workflow, sketched:
@@ -171,13 +171,45 @@ Makefile, and values — nothing under an implementation directory.
 | 2 | half | `make image-check REGISTRY_ONLY=1` exits `1` naming the registry's `denied` against today's unpublished package, and `0` against a public image; the real tag is owed with AC-1 — the workflow runs this same check right after the push |
 | 3 | half | the cluster half against the box with a public image: a throwaway `andara-imagecheck-probe` namespace, the `/bin/true` pod pulled, ran, `Succeeded`, and was deleted by the script's trap (namespace deleted after). `/bin/true` exits `0` in a local `make image` build under the image's `andara` user. The real `:dev` is owed with AC-1 |
 
-`make image` at `746bbb1` labels the image `revision` = the full commit, `version` = `746bbb1`,
-`source` = the repository URL, which is what AC-1 and AC-2 read.
 | 4 | pass | `test_image_source` in `make helm-test`, through `scripts/helm_image_args.sh`; restoring the old always-override rule fails it twice, and changing `dev`'s registry fails it twice |
 | 5 | pass by construction · CI | `on: push: branches: [main]` only; this PR's checks list no `publish` job |
 | 6 | by construction | the head check in `image_publish.sh`; runs in one group never overlap, so check-then-push is not raced by another run. Corrected at PR #60's review: the first draft claimed the group ordered runs, and GitHub documents that it does not |
 | 7 | half | `image_digest.sh` resolves `ghcr.io/containerd/busybox:1.36` to its digest anonymously, and exits `1` on today's unpublished package and `3` off ghcr; `dev` rendered with `image.tag: dev@sha256:…` passes kubeconform. The rerun on the box is owed with AC-1 |
 | 8 | pass | an untracked `.go` file alone makes `image_publish.sh` refuse; a build from `git archive HEAD` produces a running image |
+
+`make image` at `746bbb1` labels the image `revision` = the full commit, `version` = `746bbb1`,
+`source` = the repository URL, which is what AC-1 and AC-2 read.
+
+
+
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6`. The table above had a paragraph inside it, so rows 4–8 did not
+render. Repaired in this pass.
+
+- **AC-1: pass.** All eight `publish` runs are `push` on `main` and green, from `614e266`
+  (36032514543, #60's merge) to `033f2c6` (36069838001). On `033f2c6`, `sha-033f2c605308` and
+  `:dev` share `sha256:5e40cf4f…`, and the image's `org.opencontainers.image.revision` is
+  `033f2c60530897c86bd2942e67f91ca12d628606`.
+- **AC-2: pass.** The workflow's anonymous pull step passes on every run. An independent
+  anonymous registry read agrees: the package is public, and `:dev` has converged on `main`'s
+  head. Brian's one-time visibility step was not needed.
+- **AC-4 and AC-8:** pass as recorded. `helm-test` is green in `check` on `033f2c6`.
+- **AC-5: pass.** The run history has only `push`/`main` events.
+- **AC-6: accepted by construction.** The branch that leaves `:dev` alone
+  (`image_publish.sh:45-47`) is three lines and has not executed in any run, because no two merges
+  have overlapped. Convergence is shown. The branch that never ran is read, not run. That is
+  accepted because the only way to exercise it is to race two merges on `main`.
+- **Owed, on the box:**
+  - AC-3: `make image-check ENV=dev`, and again with `TAG=sha-033f2c605308` or the head of the day.
+  - AC-7: `helm-install ENV=dev` rerun after `:dev` moves. It needs `dev` installed, which is
+    `AW-INF-014` AC-4 and Brian's credential.
+  - The Definition-of-done line naming the first `sha-` tag the box pulled, in `AW-INF-008`'s
+    record.
+
+  The order is in `AW-INF-014`'s §8 record.
+- No instrumentation is required (§7: publishing emits nothing). The chart README documents the
+  targets and pinning. No open markers: package visibility is settled, since the package is public.
 
 ## Open questions
 

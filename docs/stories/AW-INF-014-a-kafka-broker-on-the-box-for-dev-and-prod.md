@@ -152,7 +152,9 @@ Redpanda is only an approximation of them.
    ENV=dev` runs **then** it exits `1` naming `make kafka-install ENV=dev`, before touching the
    release.
 8. **Given** `make check` **when** it runs **then** `make k8s-dry` validates both Kafka manifests
-   against the pinned Strimzi 1.2.0 schemas, and `make helm-test` renders `dev` and `prod` with
+   against the CRDs-catalog's `kafka.strimzi.io/v1` schemas (fetched as cert-manager's and
+   Traefik's are; amended 2026-09-24 to the as-built note below, which found "pinned" a
+   misdescription), and `make helm-test` renders `dev` and `prod` with
    `ANDARA_KAFKA_BROKERS=andara-log-kafka-bootstrap:9092` and `dev` without the memory switches.
 9. **Given** AC-2 **when** Alloy's annotation discovery runs **then** it lists three
    `job="andara-kafka"` targets in `andara-dev`, scraping the JMX exporter on `:9404`. What arrives in
@@ -308,6 +310,48 @@ kubectl -n andara-dev delete pod andara-0 && ANDARA_BOOTSTRAP_OPERATOR=<same> ma
 make kafka-broker-bounce ENV=dev                                           # AC-5
 GRAFANA_CLOUD_…=… make observe-check ENV=dev                               # AW-INF-008; AC-9's cloud half
 ```
+
+
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6`.
+
+**Holds:**
+- ACs 1, 2, 3 and 7 pass on the box, per the record above.
+- AC-8 passes in `make check` (`k8s-dry [kafka]` validates 3 of 3, and `test_kafka_on_the_box`
+  runs in `helm-test`). Its text is amended to how the schemas are actually fetched.
+- The `topics.py` runner test runs in CI through `make scripts-test`.
+- The runbook `world-read-only.md` names the Strimzi pods.
+- Config is in `values/dev.yaml`, `values/prod.yaml` and the schema. Its DoD lines on `AW-INF-007`
+  and `values/dev.yaml` hold.
+
+**Owed, on the box:**
+- AC-4 (Brian's `ANDARA_BOOTSTRAP_OPERATOR`)
+- AC-5 and AC-6's server half, which follow AC-4
+- AC-9's Grafana Cloud half (the read token)
+- The line in `AW-INF-008`'s record naming the first `dev` install that reached Ready on Kafka
+
+**Changed since AC-3 passed:** `AW-SRV-019` (#64) added `min.compaction.lag.ms: 60000` to
+`andara.state.v1` in `deploy/kafka/topics.yaml`. A `topics-diff` on the box will report that drift,
+and no target can apply it (#77, a §9 defect in architecture's `topics.py`). The drift is expected
+and not a regression in this story.
+
+**The box session: one run for `AW-INF-013`, `AW-INF-014` and `AW-INF-008`, with Brian.** Each
+step is a `make` target.
+1. `make image-check ENV=dev`, then `make image-check ENV=dev TAG=sha-<main's head>`: 013 AC-3.
+2. `make topics-diff ANDARA_ENV=dev`. It reports `andara.state.v1`'s `min.compaction.lag.ms`
+   drift, and **no target applies it** (`topics-apply` only creates missing topics). That is a
+   `§9 defect → #77`. Until #77 lands, record the drift as expected. 008 AC-2 (the state projector
+   on `dev`) waits on #77 and does not run in this session.
+3. `ANDARA_BOOTSTRAP_OPERATOR=… make helm-install ENV=dev`. That is AC-4. Record the `sha-` digest
+   the StatefulSet pinned (013's DoD line) and the first Ready on Kafka (this story's DoD line).
+4. `make stream-soak ENV=dev SOAK=1m`, then the AC-4 consume, then delete `andara-0` and soak again.
+5. `make kafka-broker-bounce ENV=dev`: AC-5. Then AC-6's probe from the server pod.
+6. With `GRAFANA_CLOUD_READ_TOKEN` and the six URL/USER variables, `make observe-check ENV=dev`.
+   That covers 008 ACs 1, 3 and 4, and this story's AC-9 Grafana Cloud half.
+7. Delete `andara-0` in `andara-dev`, then `make observe-check ENV=dev`: 008 AC-6 as amended. A new
+   `andara-dev` result appears, and the standing `andara-prod` absence stays.
+8. After the next merge moves `:dev`, rerun `make helm-install ENV=dev`: 013 AC-7.
 
 ## Open questions
 
