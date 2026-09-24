@@ -244,6 +244,12 @@ func (e *Engine) SetObserver(o Observer) { e.cfg.Observer = o }
 // not mutate it outside a handler.
 func (e *Engine) State() *WorldState { return e.state }
 
+// World is the topology the Engine runs over.
+func (e *Engine) World() *World { return e.world }
+
+// Templates is the registry the Engine instantiates from; nil when it has none.
+func (e *Engine) Templates() *TemplateRegistry { return e.templates }
+
 // Tick is the current tick.
 func (e *Engine) Tick() Tick { return e.state.Tick }
 
