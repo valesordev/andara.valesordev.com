@@ -339,7 +339,7 @@ a Room or Zone too, where they mean nothing until a system reads them:
 
 | Component | Means |
 |-----------|-------|
-| `andara.core.Behavior{name}` | Binds a Behavior to a Template: the one seam between the Template hierarchy and the Python class hierarchy in a Behavior Agent. The name is recorded, not validated — AW-CLI-006 checks it at compile, AW-SRV-009 at claim. |
+| `andara.core.Behavior{name}` | Binds a Behavior to a Template: the one seam between the Template hierarchy and the Python class hierarchy in a Behavior Agent. The name is recorded, not validated. `unknown_behavior` at compile waits on the Behavior registry (`AW-SRV-016`; corpus `pending/unknown-behavior`), and AW-SRV-009 checks it at claim. |
 | `andara.core.Memory` | The Entity remembers: NPC memory as World state (AW-SRV-009). The slots are runtime state set by Command, not Template data, so as a Template Component this is a marker. |
 
 Each is data today. The system that reads `Dark` and suppresses a Room description belongs to the
@@ -585,8 +585,9 @@ as one Snapshot per Zone. Recovery restores a **complete** round: one with every
 hash-valid. An incomplete round is never selectable. Rounds may carry tags (`deploy:<tag>`) that
 retention keeps longer (`AW-INF-007`).
 
-**Dormant** — A Character that exists in Zone state but is not present in any Room: despawned, or
-created and never bound. Keeps its last position so "where you were" survives restart and replay
+**Dormant** — A Character body that exists in Zone state but is not present in any Room, because its
+Session unbound it. A Character created and never bound has no body at all: it is a roster entry
+until its first bind spawns it at `character.spawn_room`. A dormant body keeps its last position so "where you were" survives restart and replay
 (`AW-SRV-014`). A dormant body is purged after the deletion retention window (`AW-SRV-032`).
 
 **Roster** — An Account's Characters, up to five, one live at a time (ADR-0006). Identity — name,

@@ -79,7 +79,11 @@ shows me a Room and my commands move me through it.
 5. **Given** a never-bound Character selected **when** the `BindCharacter` Command applies **then** the
    Character is instantiated from `andara.core.Character` at `character.spawn_room`, a
    `CharacterArrived{from_direction: ""}` is emitted with Room scope, and the Session's next `look`
-   is answered with that Room, `Here:` naming the Character.
+   is answered with that Room. A bystander's next `look` there lists the Character under `Here:`.
+   The Character's own `look` never lists itself, because the viewer is not an occupant of its own
+   description. *(Amended 2026-09-24 at §8: the text said the Session's own `look` names the
+   Character, which `describe` has never done. `TestBind_SpawnsANewBody` asserts the as-built
+   form.)*
 6. **Given** a dormant Character selected **when** `BindCharacter` applies **then** it is placed at its
    dormant position — the Room it was in when it went dormant — not at the spawn Room, and its arrival
    is emitted there.
@@ -100,8 +104,13 @@ shows me a Room and my commands move me through it.
     M1 gate, end to end, through Kafka.
 11. **Given** a `BindCharacter` for a body that is already present — a crash left it, or the Session's
     teardown produce failed, or a `SelectCharacter` was retried after `DEADLINE_EXCEEDED` **when** it
-    applies **then** the Session takes the body where it stands, no arrival is emitted (the Room never
-    saw it leave), and the State Hash is unchanged by the apply.
+    applies **then** the Session takes the body where it stands, no Room-scoped arrival is emitted
+    (the Room never saw it leave), the Character alone gets an Entity-scoped `CharacterArrived` where
+    the body stands, and the Zone's Entities are unchanged by the apply. *(Amended 2026-09-24 at §8,
+    as the PR #43 review agreed. The Entity-scoped arrival consumes an `event_id`, and every apply
+    moves the tick and the offsets, so "the State Hash is unchanged" could not hold. What this
+    criterion protects is that no body moves. `TestBind_PresentBodyIsIdempotent` asserts it byte for
+    byte.)*
 
 ## Interface contract
 
@@ -229,6 +238,14 @@ there is no snapshot yet to version.
 Rollout: the RPCs and Command arms are additive (ADR-0007). A live Session on an older server has no
 Character and loses nothing.
 
+Rollback is forward-only *(stated 2026-09-24 at §8)*. A binary older than this story that replays a
+log holding `BindCharacter`/`UnbindCharacter` (arms 15/16) cannot apply them, so it computes Zones
+without the bodies, so the boundary hash check halts recovery (`sim.ErrHashMismatch`). It would also
+meet `name/*` keys on `andara.accounts.v1` that it cannot read. Recovery is to roll forward to a
+binary that has this story. No production World exists before M2, so on a developer stack the
+alternative is a fresh log (`make down VOLUMES=1`). `AW-INF-007`'s rollout policy owns the general
+rule for a log a previous binary cannot replay.
+
 ## Observability requirements
 
 ### Metrics
@@ -250,7 +267,10 @@ Character name and Account ID are rejected as labels.
   `trace_id`. Names are player-supplied and are logged escaped, never as a key.
 
 ### Traces
-- `character.create` and `character.select` children of `session.lifetime`; `select` has a
+- `character.create` and `character.select` are children of the RPC span and are linked to
+  `session.lifetime`, not its children (amended 2026-09-24 to match what was built: a Session's
+  lifetime span outlives every request, and a child would hold each trace open for the Session's
+  life). `select` has a
   `log.produce` child like `Submit`; the `BindCharacter` and `UnbindCharacter` applies join via the
   record's `trace_id` like any Command.
 
@@ -563,25 +583,59 @@ struck; AC-11's "the State Hash is unchanged by the apply" has not been reworded
 Entities are unchanged" as that review agreed; and the glossary's Dormant entry, which the review
 also left to §8, is in place at `docs/glossary.md`.
 
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6` and the compose stack. `make check`, `make test-integration` and
+`make stack-play` pass (`TestLive_M1Gate`: bind, `north`, a second client seeing arrival and
+departure, and the produced-Submit dedup).
+
+**Holds:**
+- ACs 1–4 and 6–10 have tests that run in CI. AC-5 and AC-11 are reworded above to what was agreed
+  and what is tested.
+- Config is in `server/README.md`, `keys.yaml` and the values schema, and `spawn_room` is required
+  outside `local`.
+- Glossary: Dormant is corrected in this pass. It said "or created and never bound", but a
+  never-bound Character has no body until its first bind.
+- The four `[ASSUMPTION]`s are struck as the PR #43 review ruled.
+- Rollback is stated under Data / state impact.
+
+**Owed:**
+1. **Implementation: the bind-applied `info` line.** The Observability section asks for `info` on
+   create, select, **bind-applied** and unbind. There is none for bind-applied; the only line is
+   the tickloop's `command applied` at `debug`, with no `account_id`. It is required, not waived. A
+   `selected` line proves only that the Command was produced, and the question an operator asks
+   ("did this Character actually enter, and where?") is answered at apply time. See the woken Room
+   and the cross-Zone re-route. Written up in `docs/feedback/AW-SRV-014-character-roster.md`.
+2. **`AW-CLI-007`: the live lines that need `play`**, now enumerated in its Definition of done
+   (PR #68): play's transcript, `buffer_full` from a stalled `play`, the retained resume, 031's
+   ambiguous fates, the first Session-availability SLO measurement, and the kind-cluster M1 gate
+   observed by a human. This story moves to `done` at `AW-CLI-007`'s §8, together with
+   `AW-CLI-004`.
+3. **Issue #70:** spawned Characters carry an empty `content_version`. The PR #43 review assigned it
+   to `AW-SRV-012`, which never recorded it. It does not hold this story, but it fails
+   `AW-SRV-019` AC-7.
+
+The `[NEEDS BRIAN]` above does not affect the contract and stays Brian's.
+
 ## Open questions
 
 - **Resolved 2026-09-21 (Brian): `character.spawn_room` is `town/plaza`** for the dev content — a
   values-file line; real content sets its own.
 - `[NEEDS BRIAN]` What a Character *is* beyond a name and a position. Components on
   `andara.core.Character` are additive; nothing here changes when they arrive.
-- `[ASSUMPTION]` **A body in another Zone than the roster names is re-routed by the sim** (see As
+- **Resolved 2026-09-22 (review of PR #43):** **A body in another Zone than the roster names is re-routed by the sim** (see As
   built): the `BindCharacter` handler looks the Character up across this process's Zones and
   produces the same Command to the one that holds it. Reading another Zone's state from a handler
   is inside ADR-0001's single process and deterministic on replay; the alternative — a second body
   at the spawn Room — is a duplicate the World could never reconcile. The sharding story owns the
   cross-process form, with the live flag.
-- `[ASSUMPTION]` **A present body found in another Zone is announced to the Character alone**
+- **Resolved 2026-09-22 (review of PR #43):** **A present body found in another Zone is announced to the Character alone**
   (`CharacterArrived` scoped to the Entity, not the Room), so the routing table and the stream
   learn where it stands; AC-11's "nothing emitted" holds for the same-Zone case it describes.
-- `[ASSUMPTION]` **`CharacterStatus` lives in `andara.accounts.v1` with prefixed values**, and
+- **Resolved 2026-09-22 (review of PR #43):** **`CharacterStatus` lives in `andara.accounts.v1` with prefixed values**, and
   `SelectCharacter` has its own response message — both forced by the toolchain (package-scoped
   enum values; buf's unique-response lint), neither changing what a client reads.
-- `[ASSUMPTION]` **The unbind in transit keeps the roster's last Room.** Between a cross-Zone
+- **Resolved 2026-09-22 (review of PR #43):** **The unbind in transit keeps the roster's last Room.** Between a cross-Zone
   departure and its arrival the routing table has a Zone and no Room; the teardown produces the
   `UnbindCharacter` to that Zone (a no-op there — the body is in flight) and leaves the roster
   position as it was. The body then arrives present with no Session, and the next
