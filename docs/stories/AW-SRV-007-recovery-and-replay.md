@@ -264,6 +264,13 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
+- **`ListRounds` and the load-Zones phase land in `AW-SRV-019` (2026-09-24, Brian's call).** The state
+  projector bootstraps from the newest complete round and cannot wait for this story's dependencies. It
+  implements `store.ListRounds` and `store.Round` exactly as this contract states them, plus loading a
+  round into a `sim.Engine`. This story reuses both unchanged and keeps the rest of its sequence. If
+  implementing either turns up a defect in the sketch above, the fix is an amendment here, not a
+  divergence there.
+
 - **Inherited from the review of PR #32 (2026-09-19), measured by implementation:** `tickloop.Recover`
   reads every `TickCompleted` on the topic into memory before replaying — on a local log of ~180k
   ticks, RSS sat at ~4 GB for the first 40 s after boot before settling at 270 MB. Recovery memory is

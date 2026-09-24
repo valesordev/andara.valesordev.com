@@ -46,6 +46,12 @@ projection schema change is routine.
 - `andara-projector state --rebuild`: wipe the consumer group, restart from the newest round.
 - Write isolation: the projector's Kafka principal is the only one with write on `andara.state.v1`.
 - Depends on `AW-SRV-006` (new edge) because bootstrap reads snapshot rounds.
+- `store.ListRounds` and `store.Round`, exactly as `AW-SRV-007`'s interface contract states them, and
+  the load-Zones phase of its sequence (round → a `sim.Engine` at the round's tick, offsets, PRNG, and
+  next EventID). *(Added 2026-09-24, Brian's call.)* Bootstrap cannot select a round without them, and
+  `AW-SRV-007` is held behind `AW-SRV-026`/`AW-SRV-028`. This story implements a contract that is
+  already written rather than writing one from code; `AW-SRV-007` inherits both and keeps everything
+  else in its sequence — boot recovery, `recover --verify`, the Admin RPCs, and its exit codes.
 
 ### Out of scope
 - Redis and Postgres indexes — `AW-SRV-017`, `AW-SRV-018`.
@@ -56,7 +62,7 @@ projection schema change is routine.
 ## Acceptance criteria
 
 1. **Given** a tick whose Events include `CharacterArrived` **when** the projector replays it **then**
-   records for `character:<id>` and `room:<zone>/<id>` are produced with `tick` equal to that tick and
+   records for `character:<zone>/<id>` and `room:<zone>/<id>` are produced with `tick` equal to that tick and
    `body` equal to the replica's state for those aggregates.
 2. **Given** the projector has replayed through tick `T` **when** its `StateHash()` is compared with
    `TickCompleted{T}.state_hash` **then** they are equal, for every `T`.
@@ -66,9 +72,11 @@ projection schema change is routine.
 4. **Given** a Partition batch redelivered after a crash **when** it is replayed **then** every record
    produced is byte-identical to the first delivery. At-least-once is safe because the replica is
    deterministic and the record is canonical.
-5. **Given** a destroyed Entity (`CharacterPurged`, item destroyed) **when** its tick replays **then** a
-   tombstone (null value) is produced for its key, and after `topics.py` forces compaction the key is
-   absent.
+5. **Given** an Entity that leaves a Zone — a cross-Zone move, or destruction — **when** its tick
+   replays **then** a tombstone (null value) is produced for its key in that Zone, and after `topics.py`
+   forces compaction the key is absent. *(Amended 2026-09-24.)* The Zone exit is the case this story
+   can exercise: the sim has no destroy Event yet. `CharacterPurged` gets its `Touched` row and its
+   tombstone assertion in `AW-SRV-032`, as an inherited Definition-of-done line.
 6. **Given** an empty `andara.state.v1` **when** `--rebuild` runs against a World with 10,000 Entities and
    a 24 h history **then** it reaches a state whose records equal the incremental projector's, in under
    `snapshot load + tail replay` — never a from-zero replay when a complete round exists.
@@ -78,6 +86,11 @@ projection schema change is routine.
    server are unchanged and no player-visible behavior differs.
 9. **Given** any Kafka principal other than `andara-projector-state` **when** it produces to
    `andara.state.v1` **then** the broker rejects it with an authorization error (`AW-INF-004` ACLs).
+   *(Note 2026-09-24:)* `AW-INF-004` shipped no ACLs, and the local Redpanda runs without SASL, so
+   nothing enforces this yet. This story authenticates as the principal and declares the ACL
+   in `deploy/kafka/topics.yaml`. Enforcing it, and this criterion's assertion, belongs to the
+   first broker story that turns on authentication. That story inherits this as a
+   Definition-of-done line.
 10. **Given** a `state_version` newer than the projector binary **when** bootstrap reads the round
     **then** it exits `4` naming both, as `AW-SRV-007` does.
 
@@ -86,7 +99,7 @@ projection schema change is routine.
 ```protobuf
 // CONTRACT SKETCH — not an implementation; andara/state/v1/record.proto
 message StateRecord {
-  string key = 1;                 // "character:<id>" | "npc:<id>" | "item:<id>" | "room:<zone>/<id>" | "zone:<id>"
+  string key = 1;                 // "character:<zone>/<id>" | "npc:<zone>/<id>" | "item:<zone>/<id>" | "room:<zone>/<id>" | "zone:<id>"
   AggregateKind kind = 2;
   uint64 tick = 3;
   int64 source_offset = 4;        // commands.v1 offset of the last Command applied to this aggregate's Zone
@@ -101,6 +114,17 @@ Key = record key on the topic. Partitioner: `hash(zone_id) % 64`, the same funct
 `andara.commands.v1`, so a Zone's aggregates share a Partition and a future shard reads only its own.
 Tombstone = null value with the same key.
 
+**Every Entity key names its Zone. *(Amended 2026-09-24, Brian's call.)*** An Entity changes Zone: a
+cross-Zone move deletes it from the source Zone at tick `T` (`server/sim/verbs.go`) and the `Arrive`
+applies on the target's Partition at a later tick. With `character:<id>` and a Zone partitioner, one
+key would live on two Partitions. Compaction runs per Partition, so the stale record would never be
+collapsed, and Kafka has no cross-Partition order to say which record is current. So the key is
+`<kind>:<zone>/<id>`. A Zone exit is a tombstone on the source Partition, and the arrival writes a new
+key on the target Partition. Keys never migrate, compaction stays correct, and each shard reads only
+its own Zones. Answering "where is Character X now" is an index's job (`AW-SRV-017`'s `aw1:char:<id>`),
+not this topic's. While the Entity is in transit, a reader can see it in neither Zone, or briefly in
+both. Both records carry `tick`, which settles it.
+
 ```go
 // CONTRACT SKETCH — not an implementation
 package projector
@@ -114,7 +138,7 @@ func Touched(events []sim.Event) []Key
 
 | Property | Value |
 |----------|-------|
-| consumer group | `andara-projector-state-<env>` |
+| consumer group | `andara-projector-state-<env>` (the reserved name in `deploy/kafka/topics.yaml` is renamed to match in this story's PR) |
 | consumes | `andara.commands.v1` (all Partitions), `andara.events.v1` (control records only) |
 | produces | `andara.state.v1`, `acks=all`, idempotent, key-ordered |
 | offset commit | after the records for tick `T` are acked, never before |

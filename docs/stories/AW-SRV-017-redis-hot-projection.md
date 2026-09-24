@@ -48,7 +48,7 @@ the world costs the world nothing.
 
 ## Acceptance criteria
 
-1. **Given** a `character:<id>` record at tick `T` **when** the projector applies it **then**
+1. **Given** a `character:<zone>/<id>` record at tick `T` **when** the projector applies it **then**
    `andara-cli where <id>` answers with the Room and `tick=T` within `projector.redis.lag_budget`.
 2. **Given** the same record delivered twice, or an older tick delivered after a newer one **when**
    applied **then** the resulting keys equal the newer state; the older write is counted on
@@ -81,7 +81,7 @@ Each record applies as one `MULTI` block guarded by a Lua compare-and-set on `ti
 ```protobuf
 // CONTRACT SKETCH — addition to andara/admin/v1/admin.proto
 rpc QueryProjection(QueryProjectionRequest) returns (QueryProjectionResponse);
-message QueryProjectionRequest { string projection = 1; string key = 2; }        // "redis", "character:<id>"
+message QueryProjectionRequest { string projection = 1; string key = 2; }        // "redis", "character:<zone>/<id>"
 message QueryProjectionResponse { bytes body = 1; uint64 projection_tick = 2; int64 projection_age_ms = 3;
                                   string projection_status = 4; string content_version = 5; }
 ```
@@ -141,6 +141,14 @@ cutover, never an in-place migration of derived data.
 CLAUDE.md §8, plus: `--rebuild` exercised in CI; `andara-cli where` and `room` land with the projector.
 
 ## Open questions
+
+- **Inherited from `AW-SRV-019` (2026-09-24):** `andara.state.v1` Entity keys name their Zone
+  (`character:<zone>/<id>`), because an Entity changes Zone and a key must not move between Partitions.
+  A cross-Zone move is a tombstone on the old key and a new key on the new Zone. `aw1:char:<id>` is
+  therefore where this index joins the two: a tombstone for `character:<z>/<id>` clears
+  `aw1:char:<id>` only when its `zone` is still `z`. A tombstone carries no `tick`, so the Zone
+  comparison is what keeps a late tombstone from the old Partition from erasing the arrival on the
+  new one.
 
 - `[ASSUMPTION]` Lag budget 5 s: tooling that is five seconds behind a 10 Hz world is current for every
   operator question; the alert fires at sustained breach.
