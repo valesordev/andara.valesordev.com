@@ -21,14 +21,21 @@ import (
 type Config struct {
 	ContentSource string
 	ContentPath   string
-	StrictOrphans bool
-	ValidateOnly  bool
-	HTTPPort      string
-	ServiceName   string
-	Environment   string
-	LogFormat     string
-	LogLevel      string
-	OTLPEndpoint  string
+	// AW-SRV-012, kafka source only. Packs to follow on the Active Pointer
+	// topic; a single "*" follows every pointer. The blob cache is keyed by
+	// hash and so is safe to keep across restarts.
+	ContentPacks          []string
+	ContentCacheDir       string
+	ContentMaxBlobBytes   int64
+	ContentReloadDebounce time.Duration
+	StrictOrphans         bool
+	ValidateOnly          bool
+	HTTPPort              string
+	ServiceName           string
+	Environment           string
+	LogFormat             string
+	LogLevel              string
+	OTLPEndpoint          string
 
 	// Gateway (AW-SRV-005). TLS material is required to serve: there is no
 	// plaintext mode and no flag to create one (ADR-0003).
@@ -151,12 +158,18 @@ type Config struct {
 const (
 	DefaultContentSource = "kafka"
 	DefaultContentPath   = "./content"
-	DefaultHTTPPort      = "8080"
-	DefaultServiceName   = "andara-server"
-	DefaultEnvironment   = "local"
-	DefaultLogFormat     = "json"
-	DefaultLogLevel      = "info"
-	DefaultOTLPEndpoint  = "localhost:4317"
+	// AW-SRV-012. andara.core alone, because a server that followed every
+	// pointer by default would load a Builder's pack the moment it was
+	// published without anyone choosing to run it.
+	DefaultContentCacheDir       = "/var/cache/andara/blobs"
+	DefaultContentMaxBlobBytes   = int64(8 << 20) // 8 MiB
+	DefaultContentReloadDebounce = 2 * time.Second
+	DefaultHTTPPort              = "8080"
+	DefaultServiceName           = "andara-server"
+	DefaultEnvironment           = "local"
+	DefaultLogFormat             = "json"
+	DefaultLogLevel              = "info"
+	DefaultOTLPEndpoint          = "localhost:4317"
 
 	DefaultGRPCListen            = ":8443"
 	DefaultGRPCMaxRecvBytes      = 65536
@@ -236,14 +249,18 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		env = func(string) (string, bool) { return "", false }
 	}
 	c := Config{
-		ContentSource: DefaultContentSource,
-		ContentPath:   DefaultContentPath,
-		HTTPPort:      DefaultHTTPPort,
-		ServiceName:   DefaultServiceName,
-		Environment:   DefaultEnvironment,
-		LogFormat:     DefaultLogFormat,
-		LogLevel:      DefaultLogLevel,
-		OTLPEndpoint:  DefaultOTLPEndpoint,
+		ContentSource:         DefaultContentSource,
+		ContentPath:           DefaultContentPath,
+		ContentPacks:          []string{"andara.core"},
+		ContentCacheDir:       DefaultContentCacheDir,
+		ContentMaxBlobBytes:   DefaultContentMaxBlobBytes,
+		ContentReloadDebounce: DefaultContentReloadDebounce,
+		HTTPPort:              DefaultHTTPPort,
+		ServiceName:           DefaultServiceName,
+		Environment:           DefaultEnvironment,
+		LogFormat:             DefaultLogFormat,
+		LogLevel:              DefaultLogLevel,
+		OTLPEndpoint:          DefaultOTLPEndpoint,
 
 		GRPCListen:            DefaultGRPCListen,
 		GRPCMaxRecvBytes:      DefaultGRPCMaxRecvBytes,
@@ -309,6 +326,13 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	_ = fs.String("config", configPath, "YAML config file (ANDARA_CONFIG)")
 	fs.StringVar(&c.ContentSource, "content-source", c.ContentSource, "content source: kafka or dir")
 	fs.StringVar(&c.ContentPath, "content-path", c.ContentPath, "directory of Zone Definition JSON files (dir source)")
+	fs.Func("content-packs", "packs to follow on the Active Pointer topic; \"*\" for all (ANDARA_CONTENT_PACKS)", func(v string) error {
+		c.ContentPacks = splitList(v)
+		return nil
+	})
+	fs.StringVar(&c.ContentCacheDir, "content-cache-dir", c.ContentCacheDir, "hash-keyed blob cache directory (ANDARA_CONTENT_CACHE_DIR)")
+	fs.Int64Var(&c.ContentMaxBlobBytes, "content-max-blob-bytes", c.ContentMaxBlobBytes, "largest content blob accepted (ANDARA_CONTENT_MAX_BLOB_BYTES)")
+	fs.DurationVar(&c.ContentReloadDebounce, "content-reload-debounce", c.ContentReloadDebounce, "coalesce a burst of Active Pointer moves (ANDARA_CONTENT_RELOAD_DEBOUNCE)")
 	fs.BoolVar(&c.StrictOrphans, "strict-orphans", c.StrictOrphans, "treat orphan Rooms as errors")
 	fs.BoolVar(&c.ValidateOnly, "validate-only", c.ValidateOnly, "load and validate, then exit")
 	fs.StringVar(&c.HTTPPort, "http-port", c.HTTPPort, "plain-text health and metrics port")
@@ -397,6 +421,17 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.CharacterNamePattern, "character-name-pattern", c.CharacterNamePattern, "RE2 pattern a Character name must match (ANDARA_CHARACTER_NAME_PATTERN)")
 	if err := fs.Parse(args); err != nil {
 		return Config{}, err
+	}
+	if c.ContentMaxBlobBytes < 1 {
+		// keys.yaml declares min: 1. Zero would mean "refuse every blob",
+		// which reads as a disabled limit and behaves as a broken server.
+		return Config{}, fmt.Errorf("content.max_blob_bytes must be at least 1, got %d", c.ContentMaxBlobBytes)
+	}
+	if c.ContentReloadDebounce < 0 {
+		return Config{}, fmt.Errorf("content.reload_debounce must not be negative, got %s", c.ContentReloadDebounce)
+	}
+	if len(c.ContentPacks) == 0 {
+		return Config{}, fmt.Errorf("content.packs must name at least one pack, or %q for all", "*")
 	}
 	if c.ContentSource != "kafka" && c.ContentSource != "dir" {
 		return Config{}, fmt.Errorf("content.source must be kafka or dir, got %q", c.ContentSource)
@@ -690,9 +725,13 @@ func parseVersion(v string, dst *uint32) error {
 
 type fileConfig struct {
 	Content *struct {
-		Source        *string `yaml:"source"`
-		Path          *string `yaml:"path"`
-		StrictOrphans *bool   `yaml:"strict_orphans"`
+		Source         *string  `yaml:"source"`
+		Path           *string  `yaml:"path"`
+		StrictOrphans  *bool    `yaml:"strict_orphans"`
+		Packs          []string `yaml:"packs"`
+		CacheDir       *string  `yaml:"cache_dir"`
+		MaxBlobBytes   *int64   `yaml:"max_blob_bytes"`
+		ReloadDebounce *string  `yaml:"reload_debounce"`
 	} `yaml:"content"`
 	HTTP *struct {
 		Port *string `yaml:"port"`
@@ -822,6 +861,20 @@ func applyFile(c *Config, path string) error {
 		}
 		if fc.Content.StrictOrphans != nil {
 			c.StrictOrphans = *fc.Content.StrictOrphans
+		}
+		if fc.Content.Packs != nil {
+			c.ContentPacks = fc.Content.Packs
+		}
+		if fc.Content.CacheDir != nil {
+			c.ContentCacheDir = *fc.Content.CacheDir
+		}
+		if fc.Content.MaxBlobBytes != nil {
+			c.ContentMaxBlobBytes = *fc.Content.MaxBlobBytes
+		}
+		if fc.Content.ReloadDebounce != nil {
+			if err := parseDuration("content.reload_debounce", *fc.Content.ReloadDebounce, &c.ContentReloadDebounce); err != nil {
+				return err
+			}
 		}
 	}
 	if fc.HTTP != nil && fc.HTTP.Port != nil {
@@ -1090,6 +1143,9 @@ func applyEnv(c *Config, env EnvLookup) error {
 	if v, ok := env("ANDARA_STRICT_ORPHANS"); ok {
 		c.StrictOrphans = parseBool(v)
 	}
+	if v, ok := env("ANDARA_CONTENT_PACKS"); ok {
+		c.ContentPacks = splitList(v)
+	}
 	if v, ok := env("ANDARA_HTTP_PORT"); ok {
 		c.HTTPPort = v
 	}
@@ -1192,6 +1248,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_SNAPSHOT_FS_PATH", &c.SnapshotFSPath},
 		{"ANDARA_SNAPSHOT_S3_BUCKET", &c.SnapshotS3Bucket},
 		{"ANDARA_SNAPSHOT_S3_ENDPOINT", &c.SnapshotS3Endpoint},
+		{"ANDARA_CONTENT_CACHE_DIR", &c.ContentCacheDir},
 	} {
 		if v, ok := env(sv.name); ok {
 			*sv.dst = v
@@ -1208,11 +1265,26 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
 		{"ANDARA_SNAPSHOT_INTERVAL", &c.SnapshotInterval},
 		{"ANDARA_SNAPSHOT_UPLOAD_TIMEOUT", &c.SnapshotUploadTimeout},
+		{"ANDARA_CONTENT_RELOAD_DEBOUNCE", &c.ContentReloadDebounce},
 	} {
 		if v, ok := env(dv.name); ok {
 			if err := parseDuration(dv.name, v, dv.dst); err != nil {
 				return err
 			}
+		}
+	}
+	for _, lv := range []struct {
+		name string
+		dst  *int64
+	}{
+		{"ANDARA_CONTENT_MAX_BLOB_BYTES", &c.ContentMaxBlobBytes},
+	} {
+		if v, ok := env(lv.name); ok {
+			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			if err != nil {
+				return fmt.Errorf("%s must be an integer, got %q", lv.name, v)
+			}
+			*lv.dst = n
 		}
 	}
 	if v, ok := env("ANDARA_SIM_SOURCE"); ok {

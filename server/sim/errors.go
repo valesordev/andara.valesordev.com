@@ -33,6 +33,13 @@ const (
 	ErrChainMismatch       ErrCode = "chain_mismatch"
 	ErrChainTooDeep        ErrCode = "chain_too_deep"
 	ErrInvalidProvenance   ErrCode = "invalid_provenance"
+
+	// AW-SRV-012. A Template blob published under a pack whose name says it
+	// belongs to another one. TemplateRef.Pack() is derived from the name, so
+	// without this check a Builder pack publishing templates/andara.core.Npc.json
+	// could stand in for core depending on load order (AW-SRV-012 AC-11). The
+	// code is the one docs/specs/content-language/v1/errors.md already assigns.
+	ErrPackMismatch ErrCode = "pack_mismatch"
 )
 
 // warningCodes are findings that do not refuse a load. They are advisory

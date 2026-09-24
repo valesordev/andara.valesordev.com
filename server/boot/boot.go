@@ -39,6 +39,12 @@ type Runtime struct {
 	Tel *telemetry.Telemetry
 	// World is the loaded topology; nil until LoadContent succeeds.
 	World *sim.World
+	// Content is the open content source (AW-SRV-012): a directory, or the
+	// content store on the broker with its resolver, blob cache and Active
+	// Pointer watch. Nil until LoadContent runs.
+	Content *content.Content
+	// ContentMetrics is the content pipeline's instrumentation.
+	ContentMetrics *content.Metrics
 	// Templates is the loaded Template registry (AW-SRV-022); nil until
 	// LoadContent succeeds.
 	Templates *sim.TemplateRegistry
@@ -121,7 +127,17 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		span.End()
 	}()
 
-	inputs, loadErrs := content.Load(rt.Cfg.ContentSource, rt.Cfg.ContentPath)
+	if rt.ContentMetrics == nil {
+		rt.ContentMetrics = content.NewMetrics(rt.Tel.Reg)
+	}
+	src, loadErrs := content.Open(ctx, rt.contentOptions())
+	rt.Content = src
+	var inputs []sim.Input
+	if src != nil {
+		zones, zerrs := src.Zones()
+		inputs = zones
+		loadErrs = append(loadErrs, zerrs...)
+	}
 	loadFatal := false
 	errorCount := 0
 	warnCount := 0
@@ -171,7 +187,13 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	// Templates (AW-SRV-022): loaded and validated under the same span, after
 	// the Zones, with the same finding discipline. A refused Template refuses
 	// the boot the way a dangling Exit does.
-	tinputs, terrs := content.LoadTemplates(rt.Cfg.ContentSource, rt.Cfg.ContentPath)
+	var (
+		tinputs []sim.TemplateInput
+		terrs   []sim.ValidationError
+	)
+	if src != nil {
+		tinputs, terrs = src.Templates()
+	}
 	templateFatal := false
 	for _, e := range terrs {
 		if rt.recordFinding(ctx, e) {
@@ -290,4 +312,21 @@ func (rt *Runtime) Ready() bool {
 // (AW-SRV-005 AC-8).
 func (rt *Runtime) Drain() {
 	rt.ready.Store(false)
+}
+
+// contentOptions flattens the content.* configuration for the adapter, the
+// way store.Options is flattened out of snapshot.*.
+func (rt *Runtime) contentOptions() content.Options {
+	return content.Options{
+		Source:        rt.Cfg.ContentSource,
+		Path:          rt.Cfg.ContentPath,
+		Brokers:       rt.Cfg.KafkaBrokers,
+		Packs:         rt.Cfg.ContentPacks,
+		CacheDir:      rt.Cfg.ContentCacheDir,
+		MaxBlobBytes:  rt.Cfg.ContentMaxBlobBytes,
+		Debounce:      rt.Cfg.ContentReloadDebounce,
+		StrictOrphans: rt.Cfg.StrictOrphans,
+		Metrics:       rt.ContentMetrics,
+		Log:           rt.Tel.Log,
+	}
 }

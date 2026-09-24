@@ -262,4 +262,20 @@ ANDARA_CHARACTER_NAME_PATTERN: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_LINKDEAD_MAX: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "content" "packs" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_PACKS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "content" "cache_dir" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_CACHE_DIR: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "content" "max_blob_bytes" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_MAX_BLOB_BYTES: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "content" "reload_debounce" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_RELOAD_DEBOUNCE: {{ $v | toString | quote }}
+{{- end }}
 {{- end -}}

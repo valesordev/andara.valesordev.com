@@ -459,3 +459,38 @@ func TestParse_SimKeys(t *testing.T) {
 		t.Errorf("ParsePartitions = %v, %v", ps, err)
 	}
 }
+
+// The Helm chart emits ANDARA_CONTENT_MAX_BLOB_BYTES, so the server has to
+// read it. It did not: the variable was generated into _env.tpl from
+// keys.yaml but never parsed, so every Helm-configured value was silently
+// ignored and the server kept the 8 MiB default — raising the limit would
+// still reject a large blob, and lowering it would still admit one.
+func TestContentMaxBlobBytesIsReadFromTheEnvironment(t *testing.T) {
+	c, err := Parse(nil, withTLS(func(k string) (string, bool) {
+		if k == "ANDARA_CONTENT_MAX_BLOB_BYTES" {
+			return "16777216", true
+		}
+		return "", false
+	}), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.ContentMaxBlobBytes != 16<<20 {
+		t.Fatalf("content.max_blob_bytes = %d, want the configured 16 MiB", c.ContentMaxBlobBytes)
+	}
+}
+
+func TestContentMaxBlobBytesRejectsNonsense(t *testing.T) {
+	_, err := Parse(nil, withTLS(func(k string) (string, bool) {
+		if k == "ANDARA_CONTENT_MAX_BLOB_BYTES" {
+			return "eight megabytes", true
+		}
+		return "", false
+	}), nil)
+	if err == nil {
+		t.Fatal("want an error naming the variable")
+	}
+	if !strings.Contains(err.Error(), "ANDARA_CONTENT_MAX_BLOB_BYTES") {
+		t.Errorf("error %q should name the variable", err)
+	}
+}

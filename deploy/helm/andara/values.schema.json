@@ -70,6 +70,24 @@
             "strict_orphans": {
               "type": "boolean",
               "description": "ANDARA_STRICT_ORPHANS (AW-SRV-001). Default when unset: False."
+            },
+            "packs": {
+              "type": "string",
+              "description": "ANDARA_CONTENT_PACKS (AW-SRV-012). Default when unset: 'andara.core'."
+            },
+            "cache_dir": {
+              "type": "string",
+              "description": "ANDARA_CONTENT_CACHE_DIR (AW-SRV-012). Default when unset: '/var/cache/andara/blobs'."
+            },
+            "max_blob_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_CONTENT_MAX_BLOB_BYTES (AW-SRV-012). Default when unset: 8388608."
+            },
+            "reload_debounce": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_CONTENT_RELOAD_DEBOUNCE (AW-SRV-012). Default when unset: '2s'."
             }
           }
         },
