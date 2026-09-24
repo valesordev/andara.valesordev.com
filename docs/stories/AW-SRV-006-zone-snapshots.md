@@ -572,3 +572,43 @@ snapshot age.
   `deploy/compose/docker-compose.yaml` carries it under the `full` profile, and the `stack` workflow
   exports the three `ANDARA_S3_TEST_*` variables, so `server/store/s3_test.go` runs instead of
   skipping.
+  **Amended 2026-09-24: the service is no longer MinIO.** The `stack` workflow failed on `main`
+  (run 36009708388) at `make up`, on the MinIO pull: `quay.io/minio/minio` now answers anonymous
+  pulls with 401, reproduced locally, and Docker Hub's `minio/minio` repository no longer exists,
+  so no tag of it can be pulled either. No MinIO mirror is maintained by anyone with a claim to
+  it, so the choice was between S3 servers rather than between registries. The service is now
+  `versity/versitygw:v1.8.0`, pinned by tag **and** digest
+  (`sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499`), because a
+  registry has now moved out from under this service once. The compose comment carries the same
+  reasoning.
+
+  | Candidate | Outcome |
+  |---|---|
+  | **versitygw v1.8.0**, Versity's S3 gateway over a POSIX directory | **Chosen.** Passes `server/store`'s s3 suite (10/10), both from a scratch container and from `make up` via `make test-integration`, and rejects a wrong secret with `SignatureDoesNotMatch`. 101 MB, one Go binary, one port, steady releases (v1.4.1 → v1.8.0 across five months), Apache-2.0. |
+  | RustFS 1.0.0 | Passes the same suite and also enforces auth. Rejected on weight and age: 401 MB, about 25× slower on the suite, and its first GA was eight days old. The runner-up if versitygw stops being maintained. |
+  | Garage | Not run. It generates its own `GK…` key IDs and cannot take the static `andaratest` pair that the Makefile and the workflow pass, so adopting it would change the contract rather than the image. |
+  | SeaweedFS | Not run. It is several components behind one command, with credentials in a config file, which is more moving parts than a test double needs. |
+
+  **What stayed the same, and why nothing under `server/` changed.** The service is still named
+  `minio`, it still publishes `${ANDARA_S3_PORT:-19000}:9000`, and the credentials are still
+  `andaratest`/`andaratest123`. Only the server's own flags changed: `--access`/`--secret`
+  replace `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. The healthcheck moved from `mc ready local`
+  to `wget --spider` on versitygw's `--health` endpoint. The volume did **not** stay the same:
+  versitygw gets a fresh `s3-data` volume. Reattaching an existing `minio-data` would have
+  served MinIO's internal on-disk layout as if it were buckets, while `make up` reported
+  healthy. Nothing in the old volume was worth migrating: the tests create and drop their own
+  buckets, and the compose server snapshots to `fs`. `make down VOLUMES=1` removes the old
+  volume by name, because `down --volumes` only reaps volumes a service still declares.
+
+  **AC-5 still holds against the double.** `S3.Put` relies on PutObject being all-or-nothing.
+  That was checked at the v1.8.0 source, not assumed: the posix backend writes each object to an
+  unnamed `O_TMPFILE` (or, where that is not supported, a named temp file) and publishes it with
+  `linkat`/`rename` (`backend/posix/with_otmpfile.go`). In production the guarantee is AWS S3's.
+  Locally it is this backend's.
+
+  **Left for the implementation lane, not fixed here.** The prose under `server/` still says
+  MinIO: `server/store/s3.go`'s comments ("atomic on S3 and on MinIO", "MinIO locally"),
+  `server/README.md`'s `snapshot.*` rows, and the `s3_test.go` header, whose one-line
+  `docker run … minio/minio` recipe no longer pulls. None of this affects behavior. The recipe
+  is the one that matters: it is the documented way to run the suite without `make up`, and it
+  now fails at the pull.

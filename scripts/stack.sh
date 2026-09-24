@@ -53,7 +53,7 @@ declare -a PORTS_FULL=(
   "${ANDARA_METRICS_PORT:-9090}|ANDARA_METRICS_PORT|Prometheus"
   "${ANDARA_DASHBOARD_PORT:-3000}|ANDARA_DASHBOARD_PORT|Grafana"
   "${ANDARA_LOKI_PORT:-3100}|ANDARA_LOKI_PORT|Loki"
-  "${ANDARA_S3_PORT:-19000}|ANDARA_S3_PORT|MinIO S3 API (the s3 snapshot store)"
+  "${ANDARA_S3_PORT:-19000}|ANDARA_S3_PORT|S3 API, versitygw (the s3 snapshot store)"
 )
 declare -a PORTS_SERVER=(
   "${ANDARA_GRPC_PORT:-8443}|ANDARA_GRPC_PORT|andara-server gRPC (TLS)"
@@ -170,6 +170,10 @@ CLICONF
     # Stopping an already-stopped stack is not an error (AC-3).
     if [[ "${2:-0}" == "1" ]]; then
       dc --profile min --profile full --profile server down --volumes --remove-orphans
+      # MinIO's volume from before the S3 service moved to versitygw and a fresh
+      # `s3-data` (AW-SRV-006, 2026-09-24). No service declares it any more, so `down
+      # --volumes` leaves it, and the reset this branch promises would not be complete.
+      docker volume rm -f "${COMPOSE_PROJECT_NAME:-andara}_minio-data" >/dev/null
       rm -rf "$DATA_DIR"
       echo "down: stack stopped, volumes and $DATA_DIR removed; the next \`make up\` starts from an empty log"
     else
