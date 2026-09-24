@@ -1,0 +1,105 @@
+# The command log for one Andara environment: Apache Kafka via Strimzi (AW-INF-014).
+#
+# ADR-0002 §7 puts Kafka in production and Redpanda only on a laptop; dev and prod on the
+# box are the production path, so this is Kafka (decided 2026-09-24, Brian). One cluster
+# per `andara-<env>` namespace: `make kafka-install ENV=<env>` applies this file unchanged
+# with `kubectl -n andara-<env> apply`, so nothing here names a namespace.
+#
+# Three combined controller+broker nodes, because deploy/kafka/topics.yaml declares
+# replication factor 3 and min.insync.replicas 2 for dev and prod: one broker can be lost
+# with writes still acknowledged by two (`make kafka-broker-bounce`, AC-5). They spread over
+# the three kind workers; the box is one host, so this buys process and node failure, not
+# host failure.
+#
+# Topics are not declared here. deploy/kafka/topics.yaml is the one declaration
+# (AW-INF-004), applied by `scripts/topics.py` through the rpk toolbox in tools.yaml, so
+# there is no Topic Operator and no KafkaTopic to disagree with it.
+---
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: broker
+  labels:
+    strimzi.io/cluster: andara-log
+spec:
+  replicas: 3
+  roles: [controller, broker]
+  storage:
+    type: persistent-claim
+    size: 20Gi
+    class: standard
+    # The environment's Command history. Deleting the Kafka must not delete it; losing it
+    # is not recoverable from snapshot rounds (ADR-0002).
+    deleteClaim: false
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      # So a broker's page cache cannot starve the server scheduled beside it.
+      memory: 2Gi
+  jvmOptions:
+    "-Xms": 1g
+    "-Xmx": 1g
+  template:
+    pod:
+      metadata:
+        annotations:
+          # Scraped by the platform's Alloy like the server (AW-INF-008): the Strimzi
+          # Metrics Reporter serves Prometheus text on 9404.
+          prometheus.io/scrape: "true"
+          prometheus.io/port: "9404"
+          prometheus.io/path: /metrics
+          k8s.grafana.com/job: andara-kafka
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  strimzi.io/cluster: andara-log
+                  strimzi.io/pool-name: broker
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: andara-log
+spec:
+  kafka:
+    version: 4.3.1
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+        # Strimzi renders this into the listener's NetworkPolicy: the server and projector
+        # pods (the chart's app.kubernetes.io/name) and the rpk toolbox, nothing else. No
+        # TLS or SASL: traffic never leaves the namespace (AC-6).
+        networkPolicyPeers:
+          - podSelector:
+              matchExpressions:
+                - key: app.kubernetes.io/name
+                  operator: In
+                  values: [andara, andara-kafka-tools]
+    config:
+      default.replication.factor: 3
+      min.insync.replicas: 2
+      offsets.topic.replication.factor: 3
+      transaction.state.log.replication.factor: 3
+      transaction.state.log.min.isr: 2
+      # topics.yaml's broker.assert: an out-of-sync replica must never become leader, or
+      # acks=all stops meaning durable (docs/specs/slo/recovery.md).
+      unclean.leader.election.enable: false
+      # Every topic comes from topics.yaml; a typo in a client must not create one.
+      auto.create.topics.enable: false
+    metricsConfig:
+      type: strimziMetricsReporter
+      values:
+        # Broker health without per-partition series: replication, controller, request
+        # and per-topic rates. AW-INF-005's alerts read these.
+        allowList:
+          - "kafka_server_replicamanager_.*"
+          - "kafka_controller_.*"
+          - "kafka_server_brokertopicmetrics_.*"
+          - "kafka_server_kafkaserver_.*"
+          - "kafka_network_requestmetrics_requests_total.*"

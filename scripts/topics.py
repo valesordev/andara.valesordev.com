@@ -20,6 +20,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -148,19 +149,52 @@ def declared_config(defaults, topic, env):
     return cfg
 
 
-def rpk_runner():
-    """Return a function that runs an rpk command, in the container if one is running."""
-    if os.path.isfile(COMPOSE):
-        probe = subprocess.run(
-            ["docker", "compose", "-f", COMPOSE, "ps", "-q", "redpanda"],
-            capture_output=True, text=True,
-        )
-        if probe.returncode == 0 and probe.stdout.strip():
-            prefix = ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redpanda", "rpk"]
-            return lambda args: subprocess.run(prefix + args, capture_output=True, text=True)
-    if subprocess.run(["which", "rpk"], capture_output=True).returncode == 0:
-        return lambda args: subprocess.run(["rpk"] + args, capture_output=True, text=True)
-    die("no running Redpanda container and no local rpk; run `make up` first")
+# The broker on the box (AW-INF-014): Strimzi's bootstrap Service for Kafka `andara-log`,
+# reached through the rpk toolbox in deploy/k8s/kafka/tools.yaml, because a broker's
+# advertised address only resolves inside the cluster.
+CLUSTER_BOOTSTRAP = "andara-log-kafka-bootstrap:9092"
+CLUSTER_TOOLBOX = "deploy/andara-kafka-tools"
+
+
+def rpk_prefix(env, compose_redpanda_running, host_rpk):
+    """The command that runs rpk against `env`'s broker, or None when there is none.
+
+    local is the compose Redpanda, else an rpk on the host. Every other environment is
+    its namespace on the cluster, and never compose: until AW-INF-014 this function
+    ignored the environment, so `topics-apply ANDARA_ENV=dev` with `make up` running
+    applied dev's declaration to the laptop's broker.
+    """
+    if env != "local":
+        return ["kubectl", "-n", "andara-" + env, "exec", "-i", CLUSTER_TOOLBOX, "--",
+                "rpk", "-X", "brokers=" + CLUSTER_BOOTSTRAP]
+    if compose_redpanda_running:
+        return ["docker", "compose", "-f", COMPOSE, "exec", "-T", "redpanda", "rpk"]
+    if host_rpk:
+        return ["rpk"]
+    return None
+
+
+def compose_redpanda_running():
+    if not os.path.isfile(COMPOSE):
+        return False
+    probe = subprocess.run(
+        ["docker", "compose", "-f", COMPOSE, "ps", "-q", "redpanda"],
+        capture_output=True, text=True,
+    )
+    return probe.returncode == 0 and bool(probe.stdout.strip())
+
+
+def rpk_runner(env):
+    """Return a function that runs an rpk command against `env`'s broker."""
+    if env == "local":
+        prefix = rpk_prefix(env, compose_redpanda_running(), shutil.which("rpk") is not None)
+        if prefix is None:
+            die("no running Redpanda container and no local rpk; run `make up` first")
+    else:
+        if shutil.which("kubectl") is None:
+            die("env '%s' is on the cluster and kubectl is not installed" % env)
+        prefix = rpk_prefix(env, False, False)
+    return lambda args: subprocess.run(prefix + args, capture_output=True, text=True)
 
 
 def existing_topics(run):
@@ -210,7 +244,7 @@ def main():
 
     defaults, topics, broker = parse_declaration(DECL)
     rf = replication_factor(defaults, args.env)
-    run = rpk_runner()
+    run = rpk_runner(args.env)
     live = existing_topics(run)
 
     created, drift = [], []

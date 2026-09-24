@@ -74,15 +74,18 @@ func TestRun_EmptyContentExitsOne(t *testing.T) {
 	}
 }
 
-// The default source is kafka and kafka is AW-SRV-012. It must refuse by name
-// rather than boot an empty World.
+// The default source is kafka, which AW-SRV-012 implemented. With no brokers
+// configured there is nothing to resolve from, and the rule that survives the
+// implementation is the one that mattered all along: refuse by name rather than
+// boot an empty World. An operator can act on "no brokers configured"; they
+// cannot act on a server that came up serving nothing.
 func TestRun_DefaultSourceRefusesByName(t *testing.T) {
 	var stdout, stderr bytes.Buffer
 	code := run([]string{"--validate-only"}, emptyEnv, &stdout, &stderr)
 	if code != 1 {
 		t.Fatalf("exit %d, want 1", code)
 	}
-	for _, want := range []string{"no_zones_found", "kafka", "AW-SRV-012"} {
+	for _, want := range []string{"malformed_file", "brokers"} {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr does not name %q:\n%s", want, stderr.String())
 		}

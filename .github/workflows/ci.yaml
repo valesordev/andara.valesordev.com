@@ -89,6 +89,8 @@ jobs:
         run: make content-grammar-check
       - name: content-language conformance
         run: make content-conformance
+      - name: scripts unit tests
+        run: make scripts-test
       - uses: actions/upload-artifact@v4
         if: always()
         with:

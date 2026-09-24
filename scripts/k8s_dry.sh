@@ -50,4 +50,10 @@ done
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/cert-manager/andara-ca.yaml | sed "s/^/k8s-dry [cert-manager]: /"
+
+# The broker `make kafka-install` applies per namespace (AW-INF-014): Strimzi's
+# kafka.strimzi.io/v1 schemas from the same catalog.
+kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  -schema-location default -schema-location "$CRD_SCHEMAS" \
+  deploy/k8s/kafka/*.yaml | sed "s/^/k8s-dry [kafka]: /"
 echo "k8s-dry: ${envs[*]} render and validate against Kubernetes $KUBE_VERSION"

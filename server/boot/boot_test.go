@@ -152,7 +152,13 @@ func TestLoadContent_EmptyDir(t *testing.T) {
 	}
 }
 
-func TestLoadContent_KafkaNotImplemented(t *testing.T) {
+// AW-SRV-012 implemented the kafka source, so the finding that used to say
+// "not implemented" is gone. What replaces it is the boot rule the story
+// states: a boot with nothing loadable exits 1 naming the reason. Here the
+// reason is that content.source=kafka was configured with no brokers, which
+// the operator can act on; a boot that failed silently, or that came up
+// serving an empty World, could not be acted on at all.
+func TestLoadContent_KafkaWithoutBrokersFailsNamingTheReason(t *testing.T) {
 	cfg := config.Config{
 		ContentSource: config.DefaultContentSource,
 		ServiceName:   "andara-server",
@@ -166,7 +172,10 @@ func TestLoadContent_KafkaNotImplemented(t *testing.T) {
 	if code := rt.LoadContent(context.Background()); code != ExitFail {
 		t.Fatalf("exit %d", code)
 	}
-	_ = findLog(t, &logs, "no_zones_found")
+	line := findLog(t, &logs, "malformed_file")
+	if !strings.Contains(fmtString(line["detail"]), "brokers") {
+		t.Errorf("detail = %v, should name what is missing", line["detail"])
+	}
 }
 
 func TestLoadContent_OrphanWarnNotFatal(t *testing.T) {

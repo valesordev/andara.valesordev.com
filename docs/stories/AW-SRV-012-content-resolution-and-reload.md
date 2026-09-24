@@ -211,3 +211,34 @@ CLAUDE.md §8, plus: the replay-across-swap test; `docs/specs/slo/content-freshn
 - `[ASSUMPTION]` One fallback Room per Zone, declared in the Zone Definition, required. A World-level
   fallback would teleport players across the map.
 - `[ASSUMPTION]` Whole-pack reload, debounced 2 s.
+
+- **Handoff to architecture (raised 2026-09-24, implementation lane):** six items inside this story's
+  scope are architecture-owned under CLAUDE.md §2 and implementation cannot land them. Written up in
+  `docs/feedback/AW-SRV-012-content-resolution-and-reload.md`:
+  1. **`docs/specs/slo/content-freshness.md`** — required by this story's Definition of Done, and
+     `docs/specs/` is architecture's. The `ContentLoadFailing` alert in Observability is tied to it,
+     and CLAUDE.md §7 requires the SLO doc *before* the alert.
+  2. **`docs/runbooks/content-load-failing.md`** — also required by the Definition of Done. Runbooks
+     are architecture's under the lane table.
+  3. **Three protocol additions**, all under `docs/specs/protocol/`. `ZoneDefinition.fallback_room`
+     at **6**, which is free. `LoggedCommand.content_swap` — the Interface Contract sketch says
+     **16, but 16 is already `unbind_character`** and 13/14 are held for `AW-SRV-028`, so the next
+     free number is **17**. `EntityRelocated` in `event.proto`'s payload oneof at **19**; the sketch
+     gives no number and 18 is `Resync`. Until these land, **AC-2, AC-3, AC-9 and AC-10 cannot be
+     implemented**: there is no Command to record the swap in the log, no Event to carry the
+     relocation, and no field for `fallback_missing` to find missing.
+  4. **The corpus move** this story's own first Open question assigns it —
+     `docs/specs/content-language/v1/corpus/pending/fallback/` and `.../fallback-missing/` into
+     `corpus/valid/` and `corpus/invalid/semantic/` — is under `docs/specs/content-language/`, which
+     is architecture's as of 2026-09-24.
+  5. **`content reload`.** AC-8 ends "…or a `content reload` Admin call". No such RPC exists in
+     `andara/admin/v1/admin.proto` (it has `GetServerInfo` and the account, invite and agent RPCs).
+     Either it is a new RPC for architecture to add, or AC-8 should rest on the pointer event alone.
+  6. **The relocation wording** is still open — the decision bullet above, unchanged. It does not
+     block this contract, but it blocks the client text once `EntityRelocated` exists. (Stated
+     without the marker on purpose: `make status` scrapes the marker, and repeating it here would
+     list one decision twice.)
+
+  Implementation is landing the half that depends on none of them — the resolver, the blob cache and
+  the retained-version rule, so AC-1 and AC-4 through AC-8 and AC-11 — on
+  `impl/aw-srv-012-content-resolution`. The swap-and-relocate half follows once the protocol lands.

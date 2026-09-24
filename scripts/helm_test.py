@@ -441,6 +441,30 @@ def test_image_source():
             fail("image args %s: server image %s, want %s" % (args, got, want))
 
 
+def test_kafka_on_the_box():
+    """AW-INF-014 AC-8: dev and prod point at their namespace's Kafka `andara-log`, and
+    dev runs the sim and the Account store on it (the chart renders only what is set, so
+    the memory switches must be absent, leaving the `kafka` defaults). local stays
+    broker-free."""
+    want = "andara-log-kafka-bootstrap:9092"
+    for env in ("dev", "prod"):
+        rc, out, err = render(env)
+        if rc:
+            fail("%s: render failed: %s" % (env, err.strip()))
+            continue
+        data = find(docs(out), "ConfigMap", "andara-config")["data"]
+        if data.get("ANDARA_KAFKA_BROKERS") != want:
+            fail("%s: ANDARA_KAFKA_BROKERS is %r, want %r" % (env, data.get("ANDARA_KAFKA_BROKERS"), want))
+        for key in ("ANDARA_SIM_SOURCE", "ANDARA_AUTH_STORE"):
+            if data.get(key, "kafka") != "kafka":
+                fail("%s: %s is %r; the sim and Account store run on the broker" % (env, key, data[key]))
+    rc, out, err = render("local")
+    data = find(docs(out), "ConfigMap", "andara-config")["data"]
+    if data.get("ANDARA_SIM_SOURCE") != "memory" or data.get("ANDARA_AUTH_STORE") != "memory":
+        fail("local: expected the broker-free switches, got sim=%r auth=%r"
+             % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -457,6 +481,7 @@ def main():
     test_projectors_render_when_enabled()
     test_spawn_room_required_outside_local()
     test_image_source()
+    test_kafka_on_the_box()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

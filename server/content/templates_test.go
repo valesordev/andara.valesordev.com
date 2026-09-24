@@ -5,6 +5,7 @@ package content
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"slices"
@@ -101,14 +102,12 @@ func TestLoadTemplatesDir_Findings(t *testing.T) {
 	}
 }
 
-func TestLoadTemplates_Sources(t *testing.T) {
-	if _, errs := LoadTemplates(SourceKafka, ""); len(errs) != 1 || errs[0].Code != sim.ErrEmptyContent {
-		t.Errorf("kafka: %v", errs)
+func TestOpen_TemplatesFromDir(t *testing.T) {
+	src, verrs := Open(context.Background(), Options{Source: SourceDir, Path: tfixture(t, "templates")})
+	if len(verrs) != 0 {
+		t.Fatalf("open: %v", verrs)
 	}
-	if _, errs := LoadTemplates("s3", ""); len(errs) != 1 || errs[0].Code != sim.ErrMalformed {
-		t.Errorf("s3: %v", errs)
-	}
-	if inputs, errs := LoadTemplates(SourceDir, tfixture(t, "templates")); len(errs) != 0 || len(inputs) != 7 {
+	if inputs, errs := src.Templates(); len(errs) != 0 || len(inputs) != 7 {
 		t.Errorf("dir: %d inputs, %v", len(inputs), errs)
 	}
 }

@@ -8,10 +8,13 @@
 # prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
 # the command line pins one, and scripts/helm_image_args.sh is the rule.
 #
-# Content, accounts, and the sim's input: local, and dev until AW-INF-014 puts a broker on
-# the box (decided 2026-09-24, Brian), run broker-free: Zone Definitions from a ConfigMap
-# built out of testdata/content/valid, accounts and commands in memory. prod reads the
-# broker, and has none yet.
+# The broker: local runs without one (accounts and commands in memory). dev and prod use
+# their namespace's Kafka `andara-log` (AW-INF-014), which `make kafka-install` creates;
+# this script refuses to touch their release until it is Ready.
+#
+# Content: local and dev read Zone Definitions from a ConfigMap built out of
+# testdata/content/valid, as compose reads a directory, until AW-SRV-012 serves content from
+# the store. prod has neither yet; its deploy path is AW-INF-007.
 #
 # Every environment (AW-INF-006): the private CA is bootstrapped ahead of the chart and
 # its certificate exported for `andara-cli`, because a chart that renders a Certificate
@@ -39,6 +42,17 @@ done
 kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
 
+# dev and prod run the sim and the Account store on their namespace's Kafka (AW-INF-014
+# AC-7). Without it the pod would crash-loop on an unreachable broker for the full --wait,
+# so the release is not touched until the broker is Ready.
+if [[ "$ENVNAME" != "local" ]]; then
+  kready="$(kubectl -n "$NS" get kafka andara-log \
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status}' 2>/dev/null || true)"
+  [[ "$kready" == "True" ]] \
+    || { echo "make: helm-install: no Ready kafka/andara-log in $NS; run \`make kafka-install ENV=$ENVNAME\` first" >&2; exit 1; }
+  echo "helm-install: kafka/andara-log in $NS is Ready"
+fi
+
 # The platform the chart is written for: the cluster's Traefik owns :443 (AC-8) and
 # cert-manager issues every certificate. Neither is installed here — `make kind-platform`
 # does that for a fresh kind cluster — but both are checked, because the failure mode
@@ -56,11 +70,12 @@ kubectl -n cert-manager wait --for=condition=Ready certificate/andara-ca --timeo
 kubectl wait --for=condition=Ready clusterissuer/andara-ca --timeout=60s >/dev/null
 echo "helm-install: clusterissuer andara-ca is ready"
 
-# Environments whose values run the server broker-free (server.content.source: dir,
-# auth.store and sim.source: memory). dev leaves this list when AW-INF-014 lands.
-BROKER_FREE="local dev"
+# Environments whose content comes from ConfigMaps (server.content.source: dir) and whose
+# token key and first operator this script provisions. dev leaves this list when
+# AW-SRV-012 serves content from the store.
+CONTENT_FROM_CONFIGMAP="local dev"
 
-if [[ " $BROKER_FREE " == *" $ENVNAME "* ]]; then
+if [[ " $CONTENT_FROM_CONFIGMAP " == *" $ENVNAME "* ]]; then
   # The first operator's credential. local's is the published default `make up` uses;
   # anywhere else the edge is a public hostname, so a known password is refused and the
   # caller supplies one (the same variable `make stream-soak` reads).
