@@ -54,7 +54,12 @@ world is one command.
    `live`/`dormant`, `zone/room` — sorted by name; `--output json` carries the summaries.
 4. **Given** `play --character Aldric` **when** the Session opens **then** `SelectCharacter` is called
    before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the first
-   thing the player reads is the Room with `Here: Aldric`.
+   thing the player reads is the Room Aldric stands in (its title, then its description). `Here:`
+   lists the *other* Characters present and never Aldric: the viewer is not an occupant of its own
+   description (`server/sim/verbs.go` `describe`), so in a Room Aldric has to themself there is no
+   `Here:` line at all. A second client in that Room reads `Here: Aldric` on its next `look`.
+   *(Amended 2026-09-24 at architecture's contract review, before implementation started: the text
+   said "the Room with `Here: Aldric`", which the sim has never produced for the viewer.)*
 5. **Given** `play` with no `--character` and exactly one Character **then** it is selected, and the
    connection notice names it.
 6. **Given** `play` with no `--character` and no Characters **then** exit 2 with `error.code`
@@ -111,6 +116,31 @@ Per `AW-CLI-001`: output and exit code. `cli.command` root span parents the RPCs
 CLAUDE.md §8, plus: `scripts/stack_play.sh` runs the full M1 gate in the `stack` workflow — the
 Room, the move, and a second client seeing the arrival and departure — which closes the inherited
 lines `AW-CLI-004` and `AW-SRV-011` left on `AW-SRV-014`.
+
+**Inherited lines, enumerated (2026-09-24, architecture).** `AW-SRV-014`'s record passes these to
+this story because each needs `play` driving a bound Character. The scripted gate above closes the
+first; architecture observes the rest at this story's §8 on the compose stack with the `play` this
+story ships. They add no scripted test here. Each is a live observation that the scripted gate
+cannot make, and the §8 record lists every one of them with what it showed:
+
+1. `play`'s own transcript for `AW-CLI-004` AC-1 (Room after the first `look`), AC-2 (Events after
+   `north`), AC-3 (a second `play` sees the departure unprompted), AC-4 (a post-log
+   `CommandRejected`, e.g. `west` from a Room with no west Exit), and AC-6 (read-only under
+   `docker compose stop redpanda`: one message, the prompt kept, recovery on start).
+2. `AW-SRV-011`: a stream ended `buffer_full` from a deliberately stalled `play` (SIGSTOP), with its
+   `warn` line in Loki (`session_id`, `buffered`, `last_sent`),
+   `andara_session_egress_drops_total{reason="buffer_full"}` and `andara_sessions_in_drop_state`
+   moving; a resume that replays retained Events (`stream.resumed` on the `Game/Subscribe` span);
+   `play`'s AC-8 with `resume_window_exceeded`.
+3. `AW-SRV-031`: the ambiguous fates on the running server. `play --client-timeout 50ms` against
+   `docker compose pause redpanda`, then `north`, then unpause, gives exactly one
+   `CharacterArrived`.
+4. `AW-SRV-014`: the first measurement of the Session availability SLO
+   (`docs/specs/slo/session-availability.md`), meaning the SLI's two integrals read back from the
+   stack's Prometheus over the session above.
+
+A line that cannot be observed on the compose stack is recorded as such, and it names the story
+that carries it next. It does not hold this story in `review`.
 
 ## Open questions
 
