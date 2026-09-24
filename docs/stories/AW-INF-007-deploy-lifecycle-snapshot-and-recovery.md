@@ -12,6 +12,11 @@ lane: architecture
 risk: high
 ---
 
+## Blocked by
+
+`AW-INF-014` (`draft`): no Kafka broker on the box for `dev`/`prod`. `make deploy` runs against one,
+and its Open questions are Brian's. Since 2026-09-24.
+
 ## Context
 
 ADR-0001 accepts that a deploy interrupts the World until sharding is active: a rolling update of a
