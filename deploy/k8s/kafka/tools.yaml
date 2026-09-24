@@ -1,0 +1,46 @@
+# rpk in the namespace, for scripts/topics.py (AW-INF-014).
+#
+# AW-INF-004's topic tooling speaks rpk, which is a Kafka-API client and works against
+# Kafka as well as Redpanda. The Kafka image has no rpk, and a broker's advertised address
+# only resolves in-cluster, so topics.py runs rpk here with
+# `kubectl -n andara-<env> exec deploy/andara-kafka-tools -- rpk -X brokers=…`.
+# The image is the one compose pins, so the rpk that checks the laptop checks the box.
+# The label is what the Kafka listener's NetworkPolicy admits (kafka.yaml).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andara-kafka-tools
+  labels:
+    app.kubernetes.io/name: andara-kafka-tools
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: andara-kafka-tools
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: andara-kafka-tools
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 101
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: rpk
+          image: docker.redpanda.com/redpandadata/redpanda:v25.1.10
+          command: ["sleep", "infinity"]
+          env:
+            - name: RPK_BROKERS
+              value: andara-log-kafka-bootstrap:9092
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 256Mi

@@ -4,7 +4,7 @@ title: A Kafka broker on the box for dev and prod
 epic: EPIC-10
 component: infra
 type: infra
-status: ready
+status: review
 size: M
 depends_on: [AW-INF-004, AW-INF-013]
 blocks: [AW-INF-007, AW-INF-015]
@@ -248,6 +248,66 @@ CLAUDE.md §8, plus:
 - `AW-INF-007` returns from `blocked` to `ready`;
 - `values/dev.yaml`'s interim comment is gone;
 - `AW-INF-008`'s record names the first `dev` install that reached Ready on Kafka.
+
+## Implementation record — 2026-09-24
+
+Implemented in the session that groomed it, at Brian's request. CLAUDE.md §2 prefers separate
+sessions; the contract was merged first (PR #61). Architecture lane only: manifests, scripts, the
+Makefile, CI, values, and docs, with nothing under an implementation directory.
+
+**Amendments to the contract, each forced by what the implementation found:**
+- **Metrics:** `metricsConfig.type: strimziMetricsReporter` with a `values.allowList`, not the JMX
+  exporter's ConfigMap. Strimzi 1.2's `v1` API offers it, and it serves Prometheus text on `:9404`
+  directly. The allow-list keeps per-partition series out of Grafana Cloud: replica manager,
+  controller, broker-topic and request counters only.
+- **Recovery checkpoint:** `kafka-broker-bounce` counts under-replicated partitions with Kafka's own
+  `kafka-topics.sh --describe --under-replicated-partitions`, run in a surviving broker. The contract
+  said `rpk cluster health`, which calls Redpanda's admin API and doesn't exist on Kafka. A count
+  that can't be taken reads `?`, never `0`, and so do the unreadable `/metrics` and log reads in the
+  assertion step.
+- **Schema validation:** `make k8s-dry` validates the manifests against the CRDs-catalog's
+  `kafka.strimzi.io/v1` schemas, fetched the same way cert-manager's and Traefik's already are. They
+  are not "pinned in the repo". That was a misdescription of how `k8s-dry` works.
+- **CI:** the `topics.py` runner test lives in `scripts/tests/`, run by a new `make scripts-test`,
+  added to `make check` and to CI's per-target steps (the parity guard holds).
+
+## Verification record — 2026-09-24 (the box)
+
+| AC | Result | How |
+|----|--------|-----|
+| 1 | **pass** | `make kafka-operator`: release `strimzi`, chart `strimzi-kafka-operator-1.2.0`, revision 1; `STRIMZI_NAMESPACE=andara-dev,andara-prod,strimzi`. The second run printed "already installed" and made no new revision |
+| 2 | **pass** | `make kafka-install ENV=dev` exited `0`: Kafka `4.3.1`, metadata `4.3-IV0` (KRaft), cluster `Yw46hiqBTYO5derzeseorA`; `andara-log-broker-{0,1,2}` on `solo7-worker2`, `solo7-worker`, `solo7-worker3`; `deleteClaim=false`. A rerun replaced no broker pod |
+| 3 | **pass** | `make topics-diff ANDARA_ENV=dev`: no drift across 8 topics. `andara.commands.v1`: 64 partitions, 3 replicas, `min.insync.replicas` 2. Broker 1's `kafka-configs --describe --all`: `unclean.leader.election.enable=false`, `auto.create.topics.enable=false`, `default.replication.factor=3`. This is the first time `topics.yaml`'s `broker.assert` has run against Kafka. The runner test is in `make scripts-test`, and fails when the environment is ignored |
+| 4 | **owed** | needs `ANDARA_BOOTSTRAP_OPERATOR`, which is Brian's to set for `dev` |
+| 5 | **owed** | needs AC-4's server |
+| 6 | **pass** (server half owed with AC-4) | an unlabelled `alpine` pod: `nc -z andara-log-kafka-bootstrap 9092` → refused; the same pod labelled `andara-kafka-tools` → connected; the toolbox applied the topics. `andara-0` connecting is shown by AC-4 |
+| 7 | **pass** | `make helm-install ENV=dev` with no Kafka: "no Ready kafka/andara-log in andara-dev; run `make kafka-install ENV=dev` first", `Error 1`; `helm list -n andara-dev` empty |
+| 8 | **pass** | `make check`: `k8s-dry [kafka]` 3 resources valid; `helm-test` `test_kafka_on_the_box`, which fails three ways against `main`'s `dev` values |
+| 9 | **pass** (discovery) · Grafana Cloud owed | Alloy's `annotation_autodiscovery_http` lists three `job=andara-kafka` targets in `andara-dev` on `:9404`, all `up`, split across two `alloy-metrics` replicas. Each broker serves 187 series, including `underreplicatedpartitions`, `underminisrpartitioncount`, `offlinepartitionscount` and `activecontrollercount`. Arrival in Grafana Cloud is checked with `AW-INF-008`'s token |
+
+**A slip during verification, recorded.** The first `make kafka-install ENV=dev` applied the
+manifests to `andara-prod`. `operator()` looped over the watched namespaces with a bare `ns`, and
+bash's dynamic scoping overwrote `install()`'s. It was caught from the install's own output about 20
+seconds in, and the run was stopped. Everything it had created in `andara-prod` was removed: the
+`Kafka`, the node pool, the toolbox, and the three empty broker PVCs. The PVCs had to go because
+they carried the aborted cluster's KRaft identity, which a real `prod` install would reject. The
+namespace had held nothing before, since the operator step created it minutes earlier. Fixed with
+`local` loop variables and an assertion in `install()` that the target namespace is `andara-$ENV`
+before any apply.
+
+**What is running on the box now:** the Strimzi operator in `strimzi`; Kafka `andara-log` (three
+brokers, about 6 GiB requested) and the toolbox in `andara-dev`; an empty `andara-prod` namespace,
+which the operator watches.
+
+**For Brian's session, together with `AW-INF-008`:**
+```
+ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev      # AC-4, AC-6 server half
+ANDARA_BOOTSTRAP_OPERATOR=<same> make stream-soak ENV=dev SOAK=1m          # AC-4
+kubectl -n andara-dev exec deploy/andara-kafka-tools -- rpk topic consume andara.accounts.v1 -n 1
+kubectl -n andara-dev delete pod andara-0 && ANDARA_BOOTSTRAP_OPERATOR=<same> make stream-soak ENV=dev SOAK=1m
+make kafka-broker-bounce ENV=dev                                           # AC-5
+GRAFANA_CLOUD_…=… make observe-check ENV=dev                               # AW-INF-008; AC-9's cloud half
+```
 
 ## Open questions
 
