@@ -10,8 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 9 |
-| `in-progress` | 1 |
-| `ready` | 26 |
+| `in-progress` | 2 |
+| `ready` | 25 |
 | `draft` | 1 |
 | `done` | 19 |
 | **total** | **56** |
@@ -46,19 +46,19 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `in-progress` (1)
+### `in-progress` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
+| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 
-### `ready` (26)
+### `ready` (25)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001`, `AW-SRV-034` |
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, approve, activate, rollback, history, diff, and fetch | `AW-CLI-001`, `AW-CLI-002`, `AW-CLI-006`, `AW-SRV-013`, `AW-SRV-021` |
-| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030`, `AW-INF-013`, `AW-INF-014` |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `EPIC-07` | infra | S | medium | architecture | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud | `AW-INF-008` |
@@ -154,7 +154,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client |
-| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `ready` | andara-cli character create and list, and play --character |
+| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `in-progress` | andara-cli character create and list, and play --character |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `done` | Command pipeline stages split across the log boundary, with look and move |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `done` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `done` | Command ingress — parse, authorize, and produce to the command log |

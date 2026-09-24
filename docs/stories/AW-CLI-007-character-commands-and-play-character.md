@@ -4,7 +4,7 @@ title: andara-cli character create and list, and play --character
 epic: EPIC-03
 component: cli
 type: feature
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-CLI-004, AW-SRV-014]
 blocks: []
