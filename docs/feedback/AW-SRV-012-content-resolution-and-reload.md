@@ -256,9 +256,68 @@ against the cases locally before then. Say in the PR that they pass, and the mov
 rename. `testdata/content/` and `content/core` Zones need a `fallback` line before the loader
 requires one. That is yours, and it rides with the same PR.
 
-### §1, §2, §5, §7, §9, §9b
+### §1 — `docs/specs/slo/content-freshness.md` written
 
-These are answered in the next architecture PR: the `content-freshness` SLO, the
-`content-load-failing` runbook, and the rulings on the reload RPC, the `content.source` default,
-the doubly claimed metric and the core-rollback rule. None of them blocks AC-2, AC-3, AC-9 or
-AC-10.
+It is written against your split, as you asked.
+
+**What counts.** Builder reasons are excluded: `validation`, `fallback_missing`, `pack_mismatch`
+and `blob_too_large`. Everything else counts, because it is the platform failing to serve
+published content: `store_unavailable`, `manifest_missing`, `blob_missing`, `blob_corrupt`,
+`format_version` and `core_version`.
+
+**The SLI** is a gauge you now owe: `andara_content_pending_seconds{pack}`. It holds the seconds
+since a pointer move that is neither serving nor refused for a Builder reason. A newer move while
+one is pending keeps the older start. A good minute is ≤ 30 s. The target of 99.5 % over 28 d is
+proposed and `[NEEDS BRIAN]`.
+
+**The alert** changes from the story's `increase(failures[15m]) > 0` to
+`max by (namespace, pack) (pending_seconds) > 300` for 5 m, as a ticket. The rule and its promtool
+tests are in `alerts.yaml` now. They are inert until the gauge exists, and they need nothing else
+from you.
+
+### §2 — `docs/runbooks/content-load-failing.md` written
+
+One diagnostic row per counted reason. Its Loki query matches both of your messages on their
+shared suffix, "the previous version keeps serving". Keep that suffix if you reword either.
+
+### §5 — no `content reload` RPC; AC-8 rests on the pointer event
+
+Your reading is accepted and written into AC-8: a held pack is re-evaluated on every pointer move,
+including core's. A reload RPC would be a privileged mutating call with no job to do, once one
+rule is added: **`store_unavailable` is retried**, with capped exponential backoff from 1 s to 30 s,
+until it succeeds or the pointer moves again. Without that rule, a broker blip during a load
+leaves the World stale until someone publishes again, and there is nothing an operator could run
+to recover it. That rule is now in the story's Error taxonomy, and it is owed with the second half.
+
+### §7 — `content.source` default stays `kafka`
+
+It is intended. The server cannot run without Kafka anyway, because the log is there. `dir` is a
+developer and fixture convenience, and compose sets it explicitly. The story's table is
+corrected. Every environment sets the key explicitly in its values file, so the default is what a
+bare binary does, and a bare binary pointed at no broker should fail loudly, which it does.
+
+### §9 — keep both metrics
+
+Option 1, as you built it: `andara_content_load_duration_seconds` (AW-SRV-001, unlabelled, the
+whole load) stays, and `andara_content_load_phase_duration_seconds{phase}` sits beside it. One says
+how long a load took, and the other says where the time went. Relabelling a published series is a
+breaking change for any query written against it, and it buys nothing here. The story's metric list is
+amended. `swap` gets observed when AC-2 lands.
+
+### §9b — accepted: a core rollback that strands a pack is refused
+
+Your rule stands, with no override. The loader cannot unload a pack, and dropping packs out of the
+World silently is the worse surprise. Count it as `reason="core_version"`, and have the `error`
+line name every pack that holds core. The runbook tells the operator to roll those back first.
+
+**For PM:** `AW-SRV-013`'s `ActivateVersion` should refuse the same move at activation time, so the
+operator learns before the pointer moves rather than from a ticket. That is a line in `AW-SRV-013`'s
+contract, groomed when it enters a sprint.
+
+### What is owed by implementation from this file, all with the second half
+
+1. `andara_content_pending_seconds{pack}`, as specified in the story's Observability section.
+2. The `store_unavailable` retry with backoff.
+3. `world_digest` defined in `server/sim` and documented in `server/README.md`.
+4. The field-6 compiler change, with the `fallback` line in `testdata/content/` and `content/core`,
+   after which architecture moves the two corpus cases.

@@ -137,6 +137,22 @@ groups:
         annotations:
           summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
           runbook: docs/runbooks/projection-stale.md
+  - name: andara-content
+    # AW-SRV-012, tied to docs/specs/slo/content-freshness.md. A pointer move the World has
+    # not served for five minutes, for a system reason; a version refused for a Builder's
+    # mistake returns the gauge to 0 and never fires this. Ticket: players keep the previous
+    # version, whole. Per pack and, on the cluster, per namespace, with no aggregation across
+    # either.
+    rules:
+      - alert: ContentLoadFailing
+        expr: max by (namespace, pack) (andara_content_pending_seconds) > 300
+        for: 5m
+        labels:
+          severity: ticket
+          slo: content-freshness
+        annotations:
+          summary: "Published content has not gone live for over five minutes — the previous version is still serving"
+          runbook: docs/runbooks/content-load-failing.md
   - name: andara-sessions
     # The Event stream (AW-SRV-011). One alert, on the symptom: players' streams are being
     # ended by the server faster than the Session availability budget allows
