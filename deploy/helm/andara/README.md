@@ -28,8 +28,10 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `make values-schema` / `values-schema-check` | regenerate / verify the generated files and hold `keys.yaml` against `server/**/*.go`; check is in `make check` |
 | `make helm-test` | render-level assertions (PVC retention, no secret material, schema rejections, probes, ordinal→Partitions); in `make check` |
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
+| `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>` then `:dev`; what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
+| `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load [KIND_CLUSTER=]` | load the image into kind |
-| `make helm-install ENV=<env>` | idempotent `helm upgrade --install` into namespace `andara-<env>`; applies and waits on the private CA first; `local` also builds the content ConfigMap from `testdata/content/valid`; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
+| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; applies and waits on the private CA first; `local` also builds the content ConfigMap from `testdata/content/valid`; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
 | `make kind-platform [KIND_CLUSTER=]` | install Traefik and cert-manager into a fresh kind cluster (skips releases that already exist — the box's are Brian's) |
 | `make stream-soak ENV=<env> [SOAK=5m]` | hold a Subscribe through the edge for `SOAK`, renew the edge certificate mid-stream, assert Traefik counted gRPC; nightly at 60 m in CI |
 | `make measure-tick [DURATION=300]` | record p99 CPU and RSS into `measurements.yaml`; refuses until the server exposes `andara_tick_duration_seconds` (AW-SRV-002) |
@@ -100,5 +102,10 @@ a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && m
 1 Gi claim, OTLP export off (the CI kind cluster has no collector), `host: andara.local` (an `/etc/hosts` line; `make helm-install` prints
 it), and `172.16.0.0/12` in the Admin allowlist because a connection from the box reaches Traefik
 from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
-cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`;
-`prod`'s tag is always overridden by `make deploy TAG=` (AW-INF-007).
+cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`,
+which CI publishes on every merge to `main` (AW-INF-013): `dev` follows the moving `:dev` tag (`pullPolicy: Always`),
+and `make helm-install ENV=dev TAG=sha-<12 hex>` pins a build. `prod`'s tag is always overridden by `make deploy TAG=`
+(AW-INF-007). **`dev` runs broker-free** until AW-INF-014 puts a Kafka broker in its namespace (decided 2026-09-24):
+content from the same ConfigMaps as `local`, Accounts and Commands in memory, and `make helm-install ENV=dev` refuses
+to run without `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password>`, because `local`'s default credential is public and
+this edge is not.

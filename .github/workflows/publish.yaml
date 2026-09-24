@@ -1,0 +1,46 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
+# Publish the server image on every merge to main (AW-INF-013): ghcr.io/valesordev/andara-server
+# as :sha-<12 hex>, immutable, and :dev, which values/dev.yaml pulls. The build is
+# `make image-publish` and the proof is `make image-check`, so this file only logs in.
+
+name: publish
+
+# main only, never a pull request: a PR from a fork cannot write packages, and one from a
+# branch must not publish what has not merged (AC-5).
+on:
+  push:
+    branches: [main]
+
+# One run at a time. GitHub serializes a group but does not order it, so what keeps :dev
+# on the newest commit is image_publish.sh moving :dev only when its commit is still main's
+# head (AC-6). GitHub keeps one pending run per group, so a commit whose run is replaced
+# while queued gets no sha- tag; dev still converges.
+concurrency:
+  group: publish-main
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # VERSION is `git describe --tags`, which needs the tags.
+          fetch-depth: 0
+
+      - name: log in to ghcr
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: build and push
+        run: make image-publish
+
+      # AC-2 from the outside, immediately: a package GitHub created private fails here,
+      # naming the fix, rather than at the box's next pull.
+      - name: anonymous pull
+        run: make image-check REGISTRY_ONLY=1 TAG="sha-$(git rev-parse --short=12 HEAD)"

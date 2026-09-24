@@ -306,6 +306,20 @@ Brian) also lands. One of those questions is whether `dev` should run broker-fre
 the meantime, which would unblock this story as soon as the image publishes. The read token is
 still Brian's to provide either way.
 
+**Decided the same day (Brian): `AW-INF-014` is one broker per namespace, and `dev` runs broker-free
+until it lands** — applied in `AW-INF-013`'s PR, so once that merges and `publish` has run, the box
+sequence for ACs 1–4 and 6 is:
+
+```
+make image-check ENV=dev
+ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev
+ANDARA_BOOTSTRAP_OPERATOR=<same> make stream-soak ENV=dev SOAK=1m
+GRAFANA_CLOUD_…=… make observe-check ENV=dev
+```
+
+Until `AW-SRV-033` lands, `dev` writes each log line to Loki twice (the double write recorded
+above); AC-4 reads the container stream's copy, which is the one that stays.
+
 The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
 has no verification record, so its pointer is the first bullet of its Open questions.
 

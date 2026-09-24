@@ -4,7 +4,7 @@ title: Publish the server image to ghcr on merge to main
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-003]
 blocks: [AW-INF-007]
@@ -37,7 +37,8 @@ As an operator, I want every merge to `main` to publish a server image the box c
 
 ### In scope
 - `.github/workflows/publish.yaml`: on push to `main`, build `deploy/compose/Dockerfile.server` for
-  `linux/amd64` (the box's nodes) and push it with two tags. `permissions: contents: read,
+  `linux/amd64` (the box's nodes) from `git archive HEAD` (so an untracked file can't change what a
+  `sha-` tag holds), and push it with two tags. `permissions: contents: read,
   packages: write`. Authenticate with `GITHUB_TOKEN`; no stored secret.
 - `Dockerfile.server`:
   - the header comment stops saying no publish story exists;
@@ -47,17 +48,22 @@ As an operator, I want every merge to `main` to publish a server image the box c
 - `scripts/helm_install.sh` and the `helm-install` target:
   - for `local`, the kind-loaded `IMAGE:TAG` overrides the values file, as today;
   - for any other environment, the values file names the image, and only a `TAG=` given on the
-    command line overrides its tag.
+    command line overrides its tag;
+  - outside `local`, a moving tag is pinned to the digest it names at install time
+    (`image.tag: dev@sha256:…`). `pullPolicy: Always` re-resolves a tag only when a container
+    starts, so without the pin a rerun after `:dev` moved would render an identical pod and leave
+    the old build running.
 - `make image-check ENV=<env> [TAG=]`: proves a tag is pullable anonymously and pullable from the
   cluster (AC-2, AC-3).
 - `deploy/helm/andara/README.md`: the Environments paragraph says where `dev`'s image comes from and
   how to pin one.
 
 ### Out of scope
-- **Running `dev` to Ready.** `dev` inherits `content.source`, `sim.source` and `auth.store` of
-  `kafka`, and `kafka.brokers` is empty. No broker runs on the box, and none is planned outside
-  `AW-INF-014` (draft). This story ends at a pulled image and a started container. `AW-INF-008`'s
-  backend checks need both stories.
+- **A broker for `dev`.** `dev` inherited `content.source`, `sim.source` and `auth.store` of `kafka`,
+  with `kafka.brokers` empty and no broker on the box: that is `AW-INF-014`. Its interim, decided
+  2026-09-24 (Brian), rides in this story's PR because it is what lets `dev` reach Ready on the
+  published image: `values/dev.yaml` runs broker-free like `local`, and `make helm-install ENV=dev`
+  builds `local`'s ConfigMaps and Secrets and requires `ANDARA_BOOTSTRAP_OPERATOR`.
 - Release tags (`v*` → `:<semver>`) and promotion to `prod`. `AW-INF-007`'s `make deploy TAG=` can
   name a `sha-` tag, which is immutable, and that is enough for its rollback. A release scheme is
   its own decision when `prod` has users.
@@ -85,11 +91,18 @@ As an operator, I want every merge to `main` to publish a server image the box c
    through the same argument handling the script uses.
 5. **Given** a pull request **when** CI runs **then** `publish` does not run and nothing is pushed:
    a PR from a fork cannot write packages, and one from a branch must not.
-6. **Given** two merges in quick succession **when** both `publish` runs finish **then** `:dev` names
-   the later commit. The workflow's concurrency group is `publish-main` with
-   `cancel-in-progress: false`, so runs finish in order rather than race. GitHub keeps only one
-   pending run per group, so a commit whose run is replaced while queued gets no `sha-` tag. That
-   is accepted: `dev` still converges, and a deploy names a commit that has a tag.
+6. **Given** two merges in quick succession **when** both `publish` runs finish, in either order,
+   **then** `:dev` names the later commit. The concurrency group `publish-main` serializes runs but
+   GitHub does not order them, so a run moves `:dev` only if its commit is still `origin/main`'s
+   head when it pushes; an older run pushes its `sha-` tag and leaves `:dev` alone. GitHub keeps
+   one pending run per group, so a commit whose run is replaced while queued gets no `sha-` tag.
+   That is accepted: `dev` still converges, and a deploy names a commit that has a tag.
+7. **Given** `dev` installed on `:dev` **when** `publish` moves `:dev` and `make helm-install ENV=dev`
+   reruns **then** the StatefulSet's image becomes `…:dev@<the new digest>` and the pod rolls; when
+   `:dev` has not moved, the rerun changes nothing. `make helm-install` refuses, naming
+   `make image-check`, when the tag cannot be resolved.
+8. **Given** an untracked or modified file in the tree **when** `make image-publish` runs **then** it
+   refuses before building, and the build context is `git archive HEAD` regardless.
 
 ## Interface contract
 
@@ -98,7 +111,7 @@ As an operator, I want every merge to `main` to publish a server image the box c
 | Tag | Mutable | Pushed | Used by |
 |-----|---------|--------|---------|
 | `sha-<first 12 hex of the commit>` | no | every push to `main` whose run is not replaced while queued (AC-6) | `make deploy TAG=` (`AW-INF-007`), rollback, `make helm-install ENV=dev TAG=` |
-| `dev` | yes, moves to the latest `main` | every push to `main` | `values/dev.yaml` with `pullPolicy: Always` |
+| `dev` | yes, moves to the latest `main` | a run whose commit is still `origin/main`'s head (AC-6) | `values/dev.yaml`; `make helm-install` pins it to its digest (AC-7) |
 
 `VERSION` is built in as `git describe --tags --always` of the pushed commit, and `COMMIT` as the
 short sha, exactly as `make image` does. `andara_build_info` therefore names the running build.
@@ -108,7 +121,7 @@ short sha, exactly as `make image` does. `andara_build_info` therefore names the
 | Target | Does | Exit |
 |--------|------|------|
 | `make image-check ENV=<env> [TAG=dev]` | anonymous `docker manifest inspect` of `ghcr.io/valesordev/andara-server:$TAG`; compares the revision label against `sha-` tags; then `kubectl -n andara-$ENV run` a `/bin/true` pod with that image, waits for `Succeeded`, and deletes it | `0` pulled both ways · `1` a pull failed or the label disagrees · `3` no docker or no kubectl |
-| `make helm-install ENV=<env> [TAG=]` | unchanged, except where the image comes from (Scope) | unchanged |
+| `make helm-install ENV=<env> [TAG=]` | unchanged, except where the image comes from, and a moving tag pinned to its digest via `scripts/image_digest.sh` (anonymous ghcr token, manifest `HEAD`) | unchanged; `1` when a moving tag does not resolve |
 
 The workflow, sketched:
 
@@ -144,6 +157,27 @@ None. The registry holds images only.
 
 CLAUDE.md §8, plus: `AW-INF-008`'s record names the first `sha-` tag the box pulled.
 `AW-INF-007`'s Out of scope stops attributing publishing to `AW-INF-001`.
+
+## Verification record — 2026-09-24
+
+Implemented in the session that groomed it, at Brian's request, against CLAUDE.md §2's habit of
+separate sessions; the contract above was committed first (PR #58) and is unchanged except the
+Out-of-scope bullet on `dev`'s broker. Architecture lane: a workflow, the Dockerfile, scripts, the
+Makefile, and values — nothing under an implementation directory.
+
+| AC | Result | How |
+|----|--------|-----|
+| 1 | **owed (first run on `main`)** | `publish` runs only on push to `main`; the merge of this PR is its first run |
+| 2 | half | `make image-check REGISTRY_ONLY=1` exits `1` naming the registry's `denied` against today's unpublished package, and `0` against a public image; the real tag is owed with AC-1 — the workflow runs this same check right after the push |
+| 3 | half | the cluster half against the box with a public image: a throwaway `andara-imagecheck-probe` namespace, the `/bin/true` pod pulled, ran, `Succeeded`, and was deleted by the script's trap (namespace deleted after). `/bin/true` exits `0` in a local `make image` build under the image's `andara` user. The real `:dev` is owed with AC-1 |
+
+`make image` at `746bbb1` labels the image `revision` = the full commit, `version` = `746bbb1`,
+`source` = the repository URL, which is what AC-1 and AC-2 read.
+| 4 | pass | `test_image_source` in `make helm-test`, through `scripts/helm_image_args.sh`; restoring the old always-override rule fails it twice, and changing `dev`'s registry fails it twice |
+| 5 | pass by construction · CI | `on: push: branches: [main]` only; this PR's checks list no `publish` job |
+| 6 | by construction | the head check in `image_publish.sh`; runs in one group never overlap, so check-then-push is not raced by another run. Corrected at PR #60's review: the first draft claimed the group ordered runs, and GitHub documents that it does not |
+| 7 | half | `image_digest.sh` resolves `ghcr.io/containerd/busybox:1.36` to its digest anonymously, and exits `1` on today's unpublished package and `3` off ghcr; `dev` rendered with `image.tag: dev@sha256:…` passes kubeconform. The rerun on the box is owed with AC-1 |
+| 8 | pass | an untracked `.go` file alone makes `image_publish.sh` refuse; a build from `git archive HEAD` produces a running image |
 
 ## Open questions
 
