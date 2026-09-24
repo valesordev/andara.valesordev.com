@@ -2,9 +2,10 @@
 
 Operating charter for Claude Code on this repository.
 
-Claude Code works this repo end to end: specifications, user stories, ADRs, infrastructure,
-and the application code itself. Read the "Lane discipline" section before touching any file —
-the two lanes are no longer two tools, but they are still two different jobs.
+Three Claude Code agents work this repo, each in its own clone: **project management** grooms
+stories and plans sprints, **architecture** owns contracts and everything around the game, and
+**implementation** builds the game. Each clone's parent directory holds a lane `CLAUDE.md` that
+narrows this file to one agent's job. Read §2 before touching any file.
 
 ---
 
@@ -40,11 +41,13 @@ burns that cost twice. When drafting roadmap items, defend this ordering.
 ## 2. Lane discipline
 
 Work in this repo belongs to one of two lanes. Every story declares which in its `lane`
-frontmatter field, and `docs/status.md` reports the two separately.
+frontmatter field, and `docs/status.md` reports the two separately. Project management is an
+agent, not a lane: it decides what gets built and in what order, and it builds nothing, so no
+story ever has `lane: pm`.
 
 | Lane | Produces | Examples |
 |------|----------|----------|
-| `architecture` | The contract, and everything that builds, ships, operates, or observes what runs to it | Epics, stories, ADRs, protocol and schema definitions, test plans, Helm charts, CI, Makefiles, dashboards, SLOs, runbooks |
+| `architecture` | The contract's technical truth, and everything that builds, ships, operates, or observes what runs to it | ADRs, protocol and schema definitions, contract review, Helm charts, CI, Makefiles, dashboards, SLOs, runbooks |
 | `implementation` | The thing built to the contract | Go and TypeScript application source, unit and integration tests |
 
 One rule resolves every ambiguity: if the artifact runs **in** the game it is
@@ -56,9 +59,8 @@ Under that rule, `content/` is implementation, like `server/`, `admin/`, and `cl
 The language's specification and conformance corpus, `docs/specs/content-language/`, are
 architecture's. *(Stated 2026-09-24; `AW-CLI-006` found no directory list naming `content/`.)*
 
-**Why the lanes survive one agent doing both.** The split was never really about who held the
-keyboard; it was about not letting the contract be written by the code. The rule that carries
-that forward is short:
+**Why the lanes exist.** The split was never really about who held the keyboard; it was about
+not letting the contract be written by the code. The rule that carries that forward is short:
 
 > A story reaches `status: ready` — its interface contract written — *before* its
 > implementation starts. Writing both in one pass means the contract is whatever the code
@@ -66,13 +68,49 @@ that forward is short:
 
 Two habits enforce it in practice:
 
-1. Groom and implement in **separate sessions**. Grooming a story and then immediately
-   implementing it in the same context means the story is a memory of intent rather than a
-   specification anything can be verified against.
+1. Groom and implement in **separate sessions**. The three agents make this structural: PM
+   writes the story, architecture reviews its contract and moves it to `ready`, and only then
+   does the lane named in `lane:` build it. Grooming a story and then implementing it in the
+   same context would make the story a memory of intent rather than a specification anything
+   can be verified against.
 2. A story still contains **contracts, not code drops**. Illustrative snippets inside a story
    (an interface sketch, a proto or JSON schema, a struct shape) stay under ~30 lines and are
    marked `// CONTRACT SKETCH — not an implementation`. If a snippet grows past that, it wants
    to be the implementation, and the implementation belongs on a branch.
+
+### Agents and ownership
+
+| Agent | Branch prefix | Owns | Status moves |
+|-------|---------------|------|--------------|
+| PM | `pm/` | `docs/sprints/`, `docs/roadmap.md`, `docs/epics/`, new stories in full (contract included), GitHub milestones and triage | creates stories at `draft` |
+| Architecture | `arch/` | Contract review; `docs/adr/`, `docs/specs/`, `docs/runbooks/`; `deploy/`, `Makefile`, `scripts/`, `.github/`, `buf.gen.yaml`; `lane: architecture` stories; the §8 review for both lanes | `draft` → `ready` / `blocked`; `review` → `done` |
+| Implementation | `impl/` | `server/`, `internal/`, `cmd/`, `admin/`, `content/`, `agents/`, `client/`, `testdata/`; `lane: implementation` stories | its own stories: `ready` → `in-progress` → `review` |
+
+Architecture moves its own `lane: architecture` stories through `in-progress` and `review` the
+same way implementation does. A question for another agent goes in
+`docs/feedback/<story-id>-<slug>.md`, under a heading naming the agent that should answer.
+
+### The sprint cycle
+
+Work runs in sprints. `docs/sprints/SPRINT-NN.md` is the plan, and exactly one sprint file
+carries `Status: active`.
+
+1. **PM, at the boundary** (one session, one `pm/sprint-NN-<slug>` PR): closes out the active
+   sprint, writes `docs/sprints/SPRINT-NN-demo.md` for what it delivered, grooms, and plans the
+   next sprint. Each sprint has at least one demo goal an operator can run, tied to a milestone
+   gate in `docs/roadmap.md` or a slice of one.
+2. **Architecture** reviews the contracts of the sprint's drafts first, since implementation
+   waits on them. Next comes the §8 review of anything at `review`, then its own backlog.
+3. **Implementation** takes the first story in its sprint list that is `ready` with every
+   `depends_on` at `review` or later.
+4. Architecture and implementation work only on stories in the active sprint. A lane with
+   nothing pickable stops and reports; it doesn't pull work from outside the sprint. No active
+   sprint means PM hasn't planned one yet, so stop. The sprint ends when every story is `done`
+   or PM carries it over.
+
+Demo instructions obey §9: every step is a `make` target or a product command. A step that
+needs a hand-written shell sequence is marked `§9 defect → AW-INF-NNN`, and that story goes
+into the next sprint.
 
 ---
 
@@ -80,7 +118,7 @@ Two habits enforce it in practice:
 
 ```
 docs/
-  status.md               # GENERATED — two-lane state, one screen; read this first
+  status.md               # GENERATED — two-lane state, one screen
   roadmap.md              # phase → epic → milestone map; the planning source of truth
   glossary.md             # domain vocabulary; every term used in a story must exist here
   adr/
@@ -95,6 +133,11 @@ docs/
     schema/               # persistence schemas, migrations plan
     slo/                  # service level objectives
   runbooks/
+  sprints/
+    SPRINT-01.md          # plan and close-out; exactly one is `Status: active`
+    SPRINT-01-demo.md     # operator demo instructions, written at close-out
+  feedback/
+    AW-SRV-012-<slug>.md  # cross-agent questions and deviations for one story
 BACKLOG.md                # GENERATED — do not hand-edit
 Makefile
 ```
@@ -109,8 +152,11 @@ backlog view is generated.
 - Story ID: `AW-<COMP>-<NNN>` — `AW-SRV-014`, `AW-INF-003`. Zero-padded to 3. Never reused, never renumbered.
 - Epic ID: `EPIC-<NN>`.
 - ADR ID: `ADR-<NNNN>`, monotonic, never deleted — superseded ADRs get `status: superseded by ADR-XXXX`.
-- Branch name: `<story-id-lower>-<slug>` → `aw-srv-014-room-graph-loader`. Both lanes use it.
-- Commit trailer: `Story: AW-SRV-014`.
+- Branch name: `<prefix>/<story-id-lower>-<slug>` → `impl/aw-srv-014-room-graph-loader`, with
+  the owning agent's prefix from §2. PM branches are `pm/sprint-NN-<slug>`, and §8 reviews go
+  on `arch/…-review`. Never commit to another agent's branch or directly to `main`.
+- Commit trailer: `Story: AW-SRV-014`, or `Sprint: SPRINT-NN` for PM commits.
+- Sprint ID: `SPRINT-<NN>`, monotonic.
 - **Commits are signed.** `main` is branch-protected to require signatures (2026-09-22), so an
   unsigned commit cannot merge. `make bootstrap` configures per-repo SSH signing from the key
   that already pushes to origin, and `.github/allowed_signers` is the tracked list of trusted
@@ -198,18 +244,26 @@ with open questions only if none of them affect the interface contract.
 
 ## 6. Grooming protocol
 
-When Brian describes a feature, Claude Code:
+PM grooms, from Brian's feature descriptions and from the roadmap. Stories are written in full,
+Interface contract included, and left at `draft`. Architecture's contract review moves them to
+`ready`. When Brian describes a feature, PM:
 
 1. **Checks the glossary.** Any new domain noun gets a glossary entry in the same pass. Do not
    silently invent lore, mechanics, or names — game design decisions are Brian's.
 2. **Asks up to 3 clarifying questions**, batched, before writing — only for things that
    change the interface contract. Everything else becomes an `[ASSUMPTION]` line and proceeds.
-3. **Writes the story.** Directly. Do not narrate a plan to write a story, or ask whether to
+3. **Writes the story** from decided ADRs and specs. If the contract needs a decision no ADR
+   covers, the story stays `draft`, its question goes to architecture in `docs/feedback/`, and
+   it stays out of the sprint. Otherwise write it directly. Do not narrate a plan to write a story, or ask whether to
    proceed with a story that has already been requested.
 4. **Splits aggressively.** Anything sized `L` gets decomposed before it reaches `ready`.
    Target: a story one focused session can complete against a clean context window.
 5. **Declares dependencies** in `depends_on` and back-fills `blocks` on the referenced stories.
-6. **Regenerates the backlog** (`make backlog`).
+6. **Regenerates the backlog and status** (`make backlog status`).
+
+Architecture's contract review checks the same list, amends what's wrong, and moves the story to
+`ready`, or to `blocked` naming what it waits on. A contract change after `ready` is recorded in
+the story's body, and in its feedback file if implementation has started.
 
 Anti-patterns to reject during grooming, in this repo specifically:
 
@@ -251,7 +305,8 @@ and the policy when the budget is exhausted.
 
 ## 8. Definition of done
 
-A story is done when all of the following hold. Claude Code checks this list at review.
+A story is done when all of the following hold. Architecture runs this checklist at review for
+both lanes' stories, on an `arch/…-review` branch, and moves the story from `review` to `done`.
 
 - [ ] Every acceptance criterion demonstrably passes.
 - [ ] Tests from the test plan exist and run in CI.
@@ -280,7 +335,7 @@ Every workflow in this repo is a make target. If Claude Code writes a procedure 
 it writes the target in the same pass. A documented sequence of shell commands that isn't a
 target is a defect.
 
-Baseline targets Claude Code owns and keeps working:
+Baseline targets the architecture agent owns and keeps working:
 
 ```
 make help              # self-documenting target list; default goal
@@ -328,7 +383,7 @@ is the entire onboarding path for a new machine.
    logic. Affects the builder role, the admin CLI surface, and the deploy story.
 6. **Identity and accounts.** Auth model, character-to-account relationship, session lifecycle.
 
-Claude Code should propose ADRs for these proactively when a story starts to depend on one.
+Architecture proposes ADRs for these proactively when a story starts to depend on one.
 An ADR states: context, options considered with honest trade-offs, decision, consequences
 (including the ones we won't like), and what would cause us to revisit it.
 
@@ -343,30 +398,20 @@ An ADR states: context, options considered with honest trade-offs, decision, con
   optimization, and stories that quietly reintroduce coupling the architecture rules out.
 - Assume deep systems and infrastructure background. Explain the domain decision, not the
   technology.
-- Game design, world lore, and mechanics are Brian's call. Engineering sequencing, decomposition,
-  operability, and reliability are Claude Code's to drive.
+- Game design, world lore, and mechanics are Brian's call. Sequencing and decomposition are PM's to
+  drive; operability, reliability, and contracts are architecture's.
 
 ### Session start
 
-Read `docs/status.md` first — it names the story in flight and the next one in each lane, and
-lists the decisions the lanes are waiting on. Then `docs/roadmap.md`, `docs/glossary.md`, and any
+`git fetch origin` and start from `origin/main`. Read the `Status: active` sprint in
+`docs/sprints/` first: it is the work, in order. Then `docs/status.md`, which names the story in
+flight in each lane and the decisions the lanes are waiting on. Then `docs/roadmap.md`, `docs/glossary.md`, and any
 ADR with `status: proposed`. `BACKLOG.md` is the full view when `status.md` is not enough.
 
-`status.md` is only as honest as story frontmatter. When a branch merges, move the story to
-`review`; when the §8 checklist passes, move it to `done`. Run `make status` in the same pass —
-`make check` fails if it is stale.
+`status.md` is only as honest as story frontmatter, so status travels with the work: `ready` →
+`in-progress` in the branch's first commit, and `in-progress` → `review` in the PR that delivers
+it. A story that merges still at `ready` makes `status.md` offer finished work as next. Any commit
+that changes frontmatter runs `make backlog status` in the same commit, and `make check` fails if
+either is stale. On a rebase conflict in `BACKLOG.md` or `docs/status.md`, never merge by hand:
+take either side and re-run the targets.
 
----
-
-## 12. Immediate next actions
-
-Claude Code should drive these to completion in order:
-
-1. Seed `docs/glossary.md` with the domain vocabulary; ask Brian to fill lore-bearing gaps.
-2. Draft `docs/roadmap.md`: Phase 1 epics for `SRV`, `CLI`, `INF`.
-3. Write ADR-0001 (sharding model) and ADR-0002 (world state persistence) as `proposed`,
-   with real options and real trade-offs. These two unblock the most stories.
-4. Write `AW-INF-001` — repo scaffold, Makefile, `make bootstrap`, CI skeleton.
-5. Write `AW-INF-002` — local stack: server + datastores + observability, one command up.
-6. Write the first `SRV` epic's stories only as far as the open ADRs allow, and mark the rest
-   `blocked` with the ADR named.
