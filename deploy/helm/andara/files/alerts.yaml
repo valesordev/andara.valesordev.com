@@ -4,16 +4,42 @@
 # runbook; a rule without one is an incomplete story (CLAUDE.md §7). Mounted by the
 # compose Prometheus and shipped as a ConfigMap by the chart, so one file is evaluated in
 # both places.
+#
+# One tenant, several environments (AW-INF-008). On the cluster `dev` and `prod` are two
+# namespaces whose series land in the same Grafana Cloud tenant, so every alert has to
+# carry the namespace it is about — a `dev` outage pages as `dev`, and never needs `prod`
+# to be down too before it fires. Rules that compare one series with itself already do;
+# every aggregation is `by (namespace)`; and a series whose own `namespace` is not the
+# Andara one (Traefik's, cert-manager's) has it rewritten to the one it describes. The
+# compose stack has no `namespace` label at all: `by (namespace)` over it is one group with
+# no namespace, which is the behavior these rules had before. deploy/helm/tests/
+# alerts_test.yaml proves both shapes under `promtool test rules` in `make helm-test`.
 groups:
   - name: andara-server
     rules:
       - alert: AndaraServerUnavailable
         # The server's own scrape, not kube_state: it is the same signal in the compose stack
         # and the cluster, and a StatefulSet that has been deleted outright has no kube_*
-        # series to be zero. absent() covers that case. The cluster Prometheus must scrape
-        # the pod under job="andara-server", which the observability stack (EPIC-07) owns.
+        # series to be zero. On the cluster the pod is scraped by annotation under
+        # job="andara-server" (the chart's `observability.annotations`, AW-INF-008).
+        #
+        # On the cluster, down is usually *absence*: the annotation scrape keeps only Ready
+        # pods, so a pod failing readiness — or deleted with its StatefulSet — drops out of
+        # the target list and its `up` goes stale. `up == 0` there is the rarer case, a
+        # Ready pod whose /metrics the scraper cannot reach. absent() of the whole job
+        # would need every environment gone before it fired; so one absent() per
+        # environment that must exist, each carrying its namespace. `andara-local` is not
+        # in the list on purpose: it is a developer install, not an environment that must
+        # be up. The absent() lines are guarded by the presence of any namespaced series:
+        # compose has none, and there `absent(...andara-prod...)` would be true forever.
+        # Compose is the reverse of the cluster — its scrape target is static, so a
+        # stopped server is `up == 0`, never no `up`, and it needs no absent() of its own.
         expr: |
-          max(up{job="andara-server"}) == 0 or absent(up{job="andara-server"})
+          max by (namespace) (up{job="andara-server"}) == 0
+            or (
+                 absent(up{job="andara-server", namespace="andara-dev"})
+              or absent(up{job="andara-server", namespace="andara-prod"})
+            ) and on() count(up{namespace!=""}) > 0
         for: 2m
         labels:
           severity: page
@@ -22,6 +48,8 @@ groups:
           summary: "No ready andara-server pod for 2 minutes — players cannot connect"
           runbook: docs/runbooks/server-unavailable.md
       - alert: AndaraServerCrashLooping
+        # kube-state-metrics labels each series with the pod's own namespace (its scrape
+        # sets none of its own to collide with), so this is per-environment as written.
         expr: |
           increase(kube_pod_container_status_restarts_total{container="server", pod=~"andara-[0-9]+"}[10m]) > 3
         for: 0m
@@ -37,6 +65,7 @@ groups:
     # panels and the runbook's diagnostic path, never pages (docs/specs/slo/tick-health.md).
     rules:
       - alert: SimulationLagging
+        # Per-series: the scrape's `namespace` rides through the comparison.
         expr: |
           andara_simulation_lag_seconds > 0.5
         for: 2m
@@ -87,9 +116,11 @@ groups:
     # not a drop. The target is 99.5 % over 28 days (Brian, 2026-09-20).
     rules:
       - alert: SessionsDroppingAtRate
+        # A ratio across Sessions, so both sides are summed — by namespace, or one
+        # environment's streams would be diluted by the other's.
         expr: |
-          sum(rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
-            > 0.01 * sum(avg_over_time(andara_stream_subscribers[5m]))
+          sum by (namespace) (rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
+            > 0.01 * sum by (namespace) (avg_over_time(andara_stream_subscribers[5m]))
         for: 5m
         labels:
           severity: page
@@ -107,8 +138,18 @@ groups:
         # cert-manager's own view of every Certificate this chart issues. Below 7 d is a
         # renewal that did not happen: renewBefore is 10 d, so a healthy issuer has
         # already replaced it by now.
+        #
+        # The Certificate's namespace is a label on cert-manager's own series. The cluster
+        # scrapes cert-manager with its pod's namespace as the target's `namespace` and
+        # without honor_labels, so the Certificate's arrives as `exported_namespace`; it is
+        # put back where the summary and routing read it. Where there is no
+        # exported_namespace the regex does not match and `namespace` is left as it is.
         expr: |
-          (certmanager_certificate_expiration_timestamp_seconds{name=~"andara-.*"} - time()) < 7 * 24 * 3600
+          (
+            label_replace(certmanager_certificate_expiration_timestamp_seconds{name=~"andara-.*"},
+                          "namespace", "$1", "exported_namespace", "(.+)")
+            - time()
+          ) < 7 * 24 * 3600
         for: 15m
         labels:
           severity: page
@@ -122,11 +163,24 @@ groups:
         # reaches a service counter. gRPC-protocol responses carry code="2" in Traefik
         # 3.7 whatever happened, so this ratio sees Connect and gRPC-Web clients; the
         # gRPC leg is covered from the server side by AndaraServerUnavailable.
+        #
+        # Traefik's series carry Traefik's namespace. The environment is in the router
+        # name instead — Traefik names an Ingress router `<namespace>-<ingress>-<host>…`,
+        # and both Andara Ingresses are named `andara…` — so it is lifted out of there
+        # before the ratio is taken per environment. `make stream-soak` asserts a non-zero
+        # count on `router="<namespace>-andara-…"` on every kind run, which is what keeps
+        # that naming observed rather than assumed. (An Ingress that names no entrypoint
+        # gets one router per entrypoint, prefixed `websecure-…`; the chart always names
+        # one.)
         expr: |
           (
-            sum(rate(traefik_router_requests_total{router=~"andara-.*", code=~"5.."}[10m]))
+            sum by (namespace) (label_replace(
+              rate(traefik_router_requests_total{router=~"andara-.*", code=~"5.."}[10m]),
+              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"))
             /
-            sum(rate(traefik_router_requests_total{router=~"andara-.*"}[10m]))
+            sum by (namespace) (label_replace(
+              rate(traefik_router_requests_total{router=~"andara-.*"}[10m]),
+              "namespace", "$1", "router", "(andara-[a-z0-9]+)-andara.*"))
           ) > 0.01
         for: 10m
         labels:

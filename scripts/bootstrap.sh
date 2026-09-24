@@ -20,6 +20,9 @@ BUF_VERSION="v1.72.0"
 GRPCURL_VERSION="v1.9.4"
 HELM_VERSION="v3.22.0"
 KUBECONFORM_VERSION="v0.8.0"
+# The compose Prometheus's version (deploy/compose/docker-compose.yaml), so the rules are
+# checked by the parser that loads them. A release tarball, not a Go module — see below.
+PROMETHEUS_VERSION="3.1.0"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -139,6 +142,49 @@ fi
 # pin the same way buf does. The system helm may be a different major; ./bin wins on PATH.
 install_pinned helm helm.sh/helm/v3/cmd/helm "$HELM_VERSION"
 install_pinned kubeconform github.com/yannh/kubeconform/cmd/kubeconform "$KUBECONFORM_VERSION"
+
+# promtool backs `make helm-test`'s rule checks (AW-INF-008): `check rules` over the chart's
+# alerts.yaml and `test rules` over deploy/helm/tests/alerts_test.yaml. Not `go install`:
+# prometheus/prometheus's go.mod carries replace directives, which `go install pkg@version`
+# refuses outright. So the upstream release tarball, verified against a checksum pinned here
+# from the release's sha256sums.txt, and only promtool extracted from it.
+install_promtool() {
+  local want="$PROMETHEUS_VERSION" have="" os arch sum
+  [[ -x "$BIN/promtool" ]] && have="$("$BIN/promtool" --version 2>/dev/null | awk 'NR==1{print $3}')"
+  if [[ "$have" == "$want" ]]; then
+    ok promtool "$have (pinned)"
+    return 0
+  fi
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "no pinned promtool for $(uname -m)" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  sum=9a9d1e115d1745826b13aec3f1409780b9fcf1d4206746cb4faee46ca5add70c ;;
+    linux-arm64)  sum=c12b9e368006873df0c8865771af0434a3edfc8c8eaeea62b73d3974bff7f2a1 ;;
+    darwin-amd64) sum=de958826f9ca20003b30c48fa3f2fcfa67b2a3aebcabd6230e90bb94f92d86e8 ;;
+    darwin-arm64) sum=8ebe1d60d8864ae3e10a359c3b543563e972505e5ef6fe1d00586d86a7e813fc ;;
+    *) fail "no pinned promtool for $os-$arch" ;;
+  esac
+  local name="prometheus-$want.$os-$arch" tmp
+  tmp="$(mktemp -d)"
+  echo "  installing promtool $want ..."
+  curl -fsSL -o "$tmp/$name.tar.gz" \
+    "https://github.com/prometheus/prometheus/releases/download/v$want/$name.tar.gz" \
+    || { rm -rf "$tmp"; fail "could not download prometheus $want; check network access to github.com"; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "$sum  $tmp/$name.tar.gz" | sha256sum -c --quiet - >/dev/null
+  else
+    echo "$sum  $tmp/$name.tar.gz" | shasum -a 256 -c --quiet - >/dev/null
+  fi || { rm -rf "$tmp"; fail "prometheus $want tarball does not match its pinned checksum"; }
+  tar -xzf "$tmp/$name.tar.gz" -C "$tmp" "$name/promtool"
+  install -m 0755 "$tmp/$name/promtool" "$BIN/promtool"
+  rm -rf "$tmp"
+  ok promtool "$want (installed)"
+}
+install_promtool
 
 # kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
 command -v kind >/dev/null 2>&1 \

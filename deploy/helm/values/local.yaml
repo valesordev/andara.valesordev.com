@@ -10,7 +10,9 @@ server:
     environment: local
     log_format: text
     log_level: debug
-    otlp_endpoint: ""   # no collector in the local cluster; empty disables export
+    # Empty disables export: the CI kind cluster installs these values and has no collector.
+    # On the box the pod is still scraped by annotation (AW-INF-008); only OTLP is off.
+    otlp_endpoint: ""
   content:
     source: dir
     path: /content

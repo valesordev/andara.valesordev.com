@@ -14,6 +14,7 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `templates/_env.tpl` | **generated**: ConfigMap lines for every in-code key | no |
 | `measurements.yaml` | p99 tick CPU and RSS from `make measure-tick`; requests derive from it | only via `make measure-tick` |
 | `files/alerts.yaml` | Prometheus rules, shipped as a ConfigMap and mounted by the compose stack | yes, with a runbook |
+| `../tests/alerts_test.yaml` | `promtool test rules` over `files/alerts.yaml`: the compose shape and the per-namespace cluster shape | yes, with every rule change |
 | `../values/{local,dev,prod}.yaml` | per-environment values | yes |
 | `../../k8s/cert-manager/andara-ca.yaml` | the private CA chain (cluster-scoped; applied by `make helm-install`, not by the chart) | yes |
 | `../../k8s/traefik/values.yaml` | Traefik as the box has it, for `make kind-platform` on a fresh cluster | yes |
@@ -75,15 +76,28 @@ a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && m
 - **Alerts.** `AndaraServerUnavailable` (scrape down or absent for 2 m) and
   `AndaraServerCrashLooping` (> 3 restarts in 10 m); `CertificateExpiringSoon` (< 7 d) and
   `IngressErrorRateHigh` (5xx > 1% on the Andara routers for 10 m — Connect and gRPC-Web only;
-  Traefik 3.7 labels every gRPC response `code="2"`); runbooks in `docs/runbooks/`. The cluster
-  Prometheus must scrape the pod under `job="andara-server"`, Traefik's `:9100`, cert-manager's
-  `:9402`, and mount ConfigMaps labelled `andara.valesordev.com/prometheus-rules=true` as rules
-  (EPIC-07).
+  Traefik 3.7 labels every gRPC response `code="2"`); runbooks in `docs/runbooks/`. Every alert
+  carries the `namespace` it is about, so `dev` and `prod` page separately from one tenant;
+  `deploy/helm/tests/alerts_test.yaml` proves that and the compose shape under `promtool test
+  rules` in `make helm-test`. Where the rules are *evaluated* on the cluster is `AW-INF-009`;
+  the ConfigMap is the file, shipped, not a rule anything loads yet.
+- **Observability (AW-INF-008).** There is no cluster Prometheus. The cluster runs Grafana's
+  `k8s-monitoring` (Brian's release, not this chart's): Alloy scrapes pods by annotation and
+  remote-writes to Grafana Cloud with `cluster="solo7-local"`, ships every container's stdout to
+  Loki, and receives OTLP at `k8s-monitoring-alloy-receiver.observability.svc:4317`. The chart's
+  side is `observability.annotations` — `prometheus.io/scrape`, `/port` (the http port), `/path`
+  and `k8s.grafana.com/job` on every pod template: `andara-server` for the StatefulSet,
+  `andara-projector-<name>` for each projector — and, on `dev`/`prod`,
+  `server.telemetry.otlp_endpoint` pointing at that receiver. The scraper runs in
+  `networkPolicy.observabilityNamespace`, which the NetworkPolicy admits to the http port.
+  Traefik and cert-manager are scraped by the platform already. `make observe-check ENV=<env>`
+  asks Grafana Cloud whether it all arrived (credentials from `GRAFANA_CLOUD_*`; it exits 3
+  without them rather than pass).
 
 ## Environments
 
 `local` is kind on the developer's box (v1.36.1): `pullPolicy: Never`, content from a ConfigMap,
-1 Gi claim, OTLP export off, `host: andara.local` (an `/etc/hosts` line; `make helm-install` prints
+1 Gi claim, OTLP export off (the CI kind cluster has no collector), `host: andara.local` (an `/etc/hosts` line; `make helm-install` prints
 it), and `172.16.0.0/12` in the Admin allowlist because a connection from the box reaches Traefik
 from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.solo7.valesordev.com` and `andara.solo7.valesordev.com` on the
 cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`;

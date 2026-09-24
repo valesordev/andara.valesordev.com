@@ -73,9 +73,13 @@ would be a target on a number that is about to change meaning.
 open streams per minute**, sustained for 5 minutes:
 
 ```promql
-sum(rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
-  > 0.01 * sum(avg_over_time(andara_stream_subscribers[5m]))
+sum by (namespace) (rate(andara_session_egress_drops_total{reason=~"buffer_full|draining"}[5m])) * 60
+  > 0.01 * sum by (namespace) (avg_over_time(andara_stream_subscribers[5m]))
 ```
+
+`by (namespace)` since `AW-INF-008`: `dev` and `prod` share one Grafana Cloud tenant, and a ratio
+summed across both would let one environment's streams dilute the other's. In compose there is no
+`namespace` and it is the plain sum.
 
 A burn at that rate for 5 minutes is 5% of the fleet's Session-seconds — a quarter of the
 28-day budget in an afternoon if it continued. `draining` fires only during a deploy that is not

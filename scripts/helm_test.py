@@ -2,13 +2,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""Render-level tests for deploy/helm/andara (AW-INF-003 and AW-INF-006 test plans, unit half).
+"""Render-level tests for deploy/helm/andara (AW-INF-003, AW-INF-006, AW-INF-008 test plans, unit half).
 
 `helm unittest` is a plugin that cannot be pinned the way ./bin tools are, so these are the
 same assertions over `helm template` output, in the language the rest of the repo's checks
 are written in. Each test names the acceptance criterion it holds.
 """
 import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -20,6 +21,10 @@ CHART = os.path.join(REPO, "deploy", "helm", "andara")
 VALUES = os.path.join(REPO, "deploy", "helm", "values")
 KUBE_VERSION = "1.36.1"
 ENVS = ("local", "dev", "prod")
+PROMTOOL = os.path.join(REPO, "bin", "promtool")
+ALERTS = os.path.join(CHART, "files", "alerts.yaml")
+ALERTS_TEST = os.path.join(REPO, "deploy", "helm", "tests", "alerts_test.yaml")
+SCRAPE_KEYS = ("prometheus.io/scrape", "prometheus.io/port", "prometheus.io/path", "k8s.grafana.com/job")
 
 failures = []
 
@@ -341,6 +346,75 @@ def test_projectors_render_when_enabled():
         fail("projector Deployment must use Recreate (one consumer group holder)")
 
 
+def pod_templates(ds):
+    return [(d["metadata"]["name"], d["spec"]["template"]) for d in ds
+            if d.get("kind") in ("StatefulSet", "Deployment", "DaemonSet", "Job")]
+
+
+def test_scrape_annotations(env):
+    """AW-INF-008 AC-8: every pod template the chart renders — the server and all three
+    projectors enabled — carries the four scrape annotations, the port is the http port, the
+    server's job is exactly `andara-server` and each projector's is its own; every `job=`
+    selector in files/alerts.yaml names a job some template emits. (Not the converse: the
+    projectors have no rules of their own yet.)"""
+    code, out, err = render(env, *[a for n in ("state", "redis", "postgres")
+                                   for a in ("--set", "projectors.%s.enabled=true" % n)])
+    if code:
+        return fail("%s: render failed: %s" % (env, err.strip()))
+    ds = docs(out)
+    templates = pod_templates(ds)
+    if len(templates) != 4:
+        fail("%s: expected 4 pod templates (server + 3 projectors), rendered %s"
+             % (env, [n for n, _ in templates]))
+    jobs = {}
+    port = str(yaml.safe_load(open(os.path.join(VALUES, env + ".yaml"))).get("server", {})
+               .get("http", {}).get("port", 8080))
+    for name, tpl in templates:
+        ann = tpl["metadata"].get("annotations") or {}
+        missing = [k for k in SCRAPE_KEYS if k not in ann]
+        if missing:
+            fail("%s: %s pod template lacks %s" % (env, name, ", ".join(missing)))
+            continue
+        if ann["prometheus.io/scrape"] != "true" or ann["prometheus.io/path"] != "/metrics":
+            fail("%s: %s scrape/path annotations are %r/%r"
+                 % (env, name, ann["prometheus.io/scrape"], ann["prometheus.io/path"]))
+        if ann["prometheus.io/port"] != port:
+            fail("%s: %s prometheus.io/port is %r, want the http port %s"
+                 % (env, name, ann["prometheus.io/port"], port))
+        jobs[name] = ann["k8s.grafana.com/job"]
+    want = {"andara": "andara-server"}
+    want.update({"andara-projector-" + n: "andara-projector-" + n for n in ("state", "redis", "postgres")})
+    if jobs and jobs != want:
+        fail("%s: scrape jobs are %r, want %r" % (env, jobs, want))
+    selected = set(re.findall(r'job="([^"]+)"', open(ALERTS).read()))
+    unscraped = selected - set(jobs.values())
+    if unscraped:
+        fail("%s: files/alerts.yaml selects job(s) %s that no pod template is scraped as"
+             % (env, sorted(unscraped)))
+
+    code, out, err = render(env, "--set", "observability.annotations=false",
+                            "--set", "projectors.state.enabled=true")
+    if code:
+        return fail("%s: observability.annotations=false failed to render: %s" % (env, err.strip()))
+    for name, tpl in pod_templates(docs(out)):
+        stray = [k for k in (tpl["metadata"].get("annotations") or {}) if k in SCRAPE_KEYS]
+        if stray:
+            fail("%s: observability.annotations=false still renders %s on %s" % (env, stray, name))
+
+
+def test_alert_rules():
+    """AW-INF-008 AC-5, unit half: the rule file parses (`promtool check rules`) and the
+    per-namespace shapes hold in both label worlds (`promtool test rules`,
+    deploy/helm/tests/alerts_test.yaml) — compose without a namespace, the cluster with two."""
+    if not os.access(PROMTOOL, os.X_OK):
+        return fail("no %s; run `make bootstrap`" % os.path.relpath(PROMTOOL, REPO))
+    for args in (["check", "rules", ALERTS], ["test", "rules", ALERTS_TEST]):
+        p = subprocess.run([PROMTOOL, *args], capture_output=True, text=True)
+        if p.returncode:
+            fail("promtool %s %s:\n%s" % (" ".join(args[:2]), os.path.relpath(args[2], REPO),
+                                           (p.stdout + p.stderr).strip()))
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -349,7 +423,9 @@ def main():
         test_snapshot_keys_render(env)
         test_probes(env)
         test_edge(env)
+        test_scrape_annotations(env)
     test_edge_off()
+    test_alert_rules()
     test_ordinal_partitions()
     test_measurements()
     test_projectors_render_when_enabled()

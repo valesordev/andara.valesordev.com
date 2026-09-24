@@ -4,7 +4,7 @@ title: Cluster observability wiring — the chart's metrics, logs, and traces re
 epic: EPIC-07
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-003, AW-INF-006]
 blocks: [AW-INF-009]
@@ -24,7 +24,7 @@ is on as an integration. The Andara pod is not annotated, so nothing the two cha
 leaves the pod, and on `dev`/`prod` the server's OTLP exporter points at the chart default
 `localhost:4317` — a sidecar that does not exist.
 
-This story is the wiring, and only the wiring: three annotations, one endpoint, and the rules made
+This story is the wiring, and only the wiring: four annotations, one endpoint, and the rules made
 correct for a backend where `dev` and `prod` are two namespaces in one tenant. It states what the
 platform provides (Brian's `k8s-monitoring` release, not touched) against what the chart provides.
 Evaluating the rules there is `AW-INF-009`, because that needs a token only Brian can issue.
@@ -62,7 +62,7 @@ that "is the World healthy" is answerable without `kubectl exec`.
 2. **Given** `projectors.state.enabled=true` **when** its pod is `Ready` **then**
    `up{job="andara-projector-state", namespace="andara-<env>"}` is `1`; the three projector jobs are
    distinct.
-3. **Given** the server on `dev` or `prod` **when** it boots **then** no `otlp export failed` line is
+3. **Given** the server on `dev` or `prod` **when** it boots **then** no `otlp log export failed` line is
    logged in the first five minutes, and an `andara.game.v1.Game/OpenSession` span (the RPC span `AW-SRV-005` emits) from `make stream-soak` is retrievable
    from Tempo by trace ID.
 4. **Given** the server's JSON log **when** Loki is queried for `{namespace="andara-<env>",
@@ -74,10 +74,13 @@ that "is the World healthy" is answerable without `kubectl exec`.
 6. **Given** two namespaces with the chart installed **when** one pod is deleted **then** the rule
    expressions, evaluated against the Grafana Cloud series with `promtool query instant`-equivalent
    calls, return a result carrying that namespace only. (Evaluation *as an alert* is `AW-INF-009`.)
-7. **Given** `make observe-check ENV=local` with no token **when** it runs **then** it exits `3` with
-   `observe-check: no GRAFANA_CLOUD_READ_TOKEN; cannot verify` — not `0`.
+7. **Given** `make observe-check ENV=local` with no token **when** it runs **then**
+   `scripts/observe_check.py` exits `3` with `observe-check: no GRAFANA_CLOUD_READ_TOKEN; cannot verify`
+   — not `0` — and `make` reports `Error 3` (its own status is `2`, as for any failed recipe).
 8. **Given** `make helm-test` **when** it runs **then** the four annotations are on every pod template
-   the chart renders and the job names match the `job=` selectors in `files/alerts.yaml` exactly.
+   the chart renders, the StatefulSet's job is exactly `andara-server` and each projector's is its own
+   `andara-projector-<name>`, and every `job=` selector in `files/alerts.yaml` names a job some pod
+   template is scraped as. (Not the converse: the projectors have no rules yet.)
 
 ## Interface contract
 
@@ -90,7 +93,16 @@ that "is the World healthy" is answerable without `kubectl exec`.
 | `prometheus.io/path` | `/metrics` | |
 | `k8s.grafana.com/job` | `andara-server` / `andara-projector-<name>` | sets `job` exactly; the fallback would be `app.kubernetes.io/name` = `andara` and break every selector |
 
-`k8s.grafana.com/instance` is not set: the default (`<namespace>/<pod>`) is bounded and useful.
+`k8s.grafana.com/instance` is not set, so `instance` is Prometheus's default, the target address
+(`<pod IP>:8080`): one value per pod *incarnation*, bounded by restarts. `pod` is the stable identity
+and what a query should group by. A static annotation cannot do better — at `replicaCount: 2` both
+pods would carry it.
+
+A pod with two declared ports (`grpc`, `http`) yields two discovered targets; `prometheus.io/port`
+rewrites both to `:8080` and the scrape pool keeps one, because their labels are identical after
+relabelling. Observed 2026-09-23: Traefik, which the platform already collects, declares four ports
+and no port-name annotation, and the live `annotation_autodiscovery_http` component lists it as one
+target (`10.244.0.2:9100/metrics`).
 
 ### Values
 
@@ -98,30 +110,65 @@ that "is the World healthy" is answerable without `kubectl exec`.
 |-------|---------|----------------|
 | `server.telemetry.otlp_endpoint` | `""` (unchanged; no collector in the CI cluster) | `k8s-monitoring-alloy-receiver.observability.svc:4317` |
 | `observability.annotations` | `true` | `true` — `false` renders none, for a cluster without autodiscovery |
-| `observability.collectorNamespace` | `observability` | `observability` — what `networkPolicy.observabilityNamespace` already is; this story renames nothing, only documents that the scrape source is the `alloy-metrics` DaemonSet in that namespace |
+
+The scrape source is the `alloy-metrics` DaemonSet in `observability`, which
+`networkPolicy.observabilityNamespace` already admits to the http port. That value is the one
+statement of it; a second key saying the same thing would render nothing.
 
 ### Alert rules — the shape every rule takes from here
 
 ```promql
 # CONTRACT SKETCH — AndaraServerUnavailable, after
 max by (namespace) (up{job="andara-server"}) == 0
-  or absent(up{job="andara-server", namespace="andara-prod"})
-  or absent(up{job="andara-server", namespace="andara-dev"})
+  or (
+       absent(up{job="andara-server", namespace="andara-dev"})
+    or absent(up{job="andara-server", namespace="andara-prod"})
+  ) and on() count(up{namespace!=""}) > 0
 ```
 
-Compose has no `namespace` label; `max by (namespace)` over an unlabelled series yields one result
-with no `namespace`, which is the existing behavior. The `absent()` list is the environments that
-exist — three lines, not a template.
+On the cluster, down is usually *absence*: the platform's annotation scrape keeps only `Running`,
+`Ready` pods, so a pod failing readiness drops out of the target list exactly as a deleted
+StatefulSet does, and its `up` goes stale. `== 0` there is a Ready pod whose `/metrics` cannot be
+reached. The `absent()` lines are the environments that must exist — `andara-local` is deliberately
+not one — and they are guarded: in compose no series has a namespace, so the guard is empty and
+`absent(...andara-prod...)` — true there forever — cannot fire. Compose is the reverse of the
+cluster: its scrape target is static, so a stopped server is `up == 0`, never no `up`, and `max by
+(namespace)` over its unlabelled series is one result with no `namespace` — the existing behavior.
+
+The other rules, by what their series carry:
+
+| Rule | Per environment because |
+|------|-------------------------|
+| `AndaraServerCrashLooping` | kube-state-metrics labels each series with the pod's namespace |
+| `SimulationLagging`, `SnapshotStale` | per-series comparisons; the scrape's `namespace` rides through |
+| `SessionsDroppingAtRate` | both sides `sum by (namespace)` |
+| `CertificateExpiringSoon` | the platform scrapes cert-manager without `honor_labels`, so the Certificate's namespace arrives as `exported_namespace`; `label_replace` puts it back in `namespace` |
+| `IngressErrorRateHigh` | Traefik's series carry `namespace="traefik"`; the environment is the router name's prefix (`<namespace>-<ingress>-…`, the naming `make stream-soak` asserts on every kind run), lifted out by `label_replace` before the per-namespace ratio |
+
+`deploy/helm/tests/alerts_test.yaml` holds each row under `promtool test rules`.
 
 ### Make targets
 
 | Target | Does | Exit |
 |--------|------|-----:|
-| `make observe-check ENV=<env>` | queries `$GRAFANA_CLOUD_PROM_URL` with `$GRAFANA_CLOUD_READ_TOKEN` for AC-1/2/4 series and a recent trace; prints each series with its labels | `0` all present · `1` a series absent · `3` no token |
+| `make observe-check ENV=<env>` | with `$GRAFANA_CLOUD_READ_TOKEN`, asks Prometheus for AC-1/2's series, Loki for AC-4's `session opened` line (`SESSION_ID=` pins one), and Tempo for AC-3's `OpenSession` span by that line's `trace_id` (`TRACE_ID=` overrides); prints each with its labels; then evaluates every rule in `files/alerts.yaml` as an instant query and prints what each would fire for (AC-6's instrument, outside the exit status) | `0` all present · `1` a signal absent · `2` a backend refused the query · `3` a credential or URL unset |
+
+Grafana Cloud's three backends are three hosts with three user IDs, so the environment is
+`GRAFANA_CLOUD_{PROM,LOKI,TEMPO}_URL` and `_USER`, plus the one token (an access policy with
+`metrics:read`, `logs:read`, `traces:read`). The URLs and IDs are on the stack's details page and are
+not secrets; the token is, and the script neither takes it as an argument nor prints it. AC-2's
+expected projector jobs come from `PROJECTORS` (comma-separated, `none` for none) or else from the
+namespace's Deployments via `kubectl`; when neither can answer, the script exits `3` — an unknown
+projector set is not an empty one.
+
+`make bootstrap` pins `promtool` 3.1.0 — the compose Prometheus's version — from the upstream release
+tarball against a checksum in `scripts/bootstrap.sh`. Not `go install`: the Prometheus module carries
+`replace` directives, which `go install pkg@version` refuses.
 
 ### Platform, stated not assumed
 
-What the `k8s-monitoring` release provides and this story relies on, verified 2026-09-17:
+What the `k8s-monitoring` release provides and this story relies on, verified 2026-09-17 and again
+on 2026-09-23 against the rendered `alloy-metrics` and `alloy-receiver` configuration (read-only):
 annotation autodiscovery on pods (collector `alloy-metrics`, clustered DaemonSet); `podLogsViaLoki`
 for every container's stdout; an OTLP receiver at `k8s-monitoring-alloy-receiver:4317`/`4318`;
 `cluster="solo7-local"` on every series; the cert-manager integration; Traefik's own
@@ -135,13 +182,17 @@ None.
 ## Observability requirements
 
 This story *is* the observability requirement. Cardinality it introduces: `job` (4 values),
-`namespace` (3), `instance` (one per pod). No unbounded label.
+`namespace` (3), `instance` (one per pod incarnation; see the contract). No unbounded label.
 
 ## Test plan
 
-- **Unit (`make helm-test`):** AC-8 — annotations present on every pod template, job names equal the
-  set of `job=` selectors parsed out of `files/alerts.yaml`; `observability.annotations=false` renders
-  none; `promtool check rules` over the file.
+- **Unit (`make helm-test`):** AC-8 — annotations present on every pod template with all three
+  projectors enabled, jobs as in the AC, every `job=` selector parsed out of `files/alerts.yaml`
+  scraped; `observability.annotations=false` renders none; `promtool check rules` over the file and
+  `promtool test rules` over `deploy/helm/tests/alerts_test.yaml` — the compose shape (server down
+  pages once, without a namespace; a healthy server never pages on absence) and the cluster shape
+  (prod down, prod deleted, dev's Sessions dropping, dev's edge 5xx, a Certificate in each
+  environment: each pages for its own namespace only).
 - **Integration (compose, `stack` workflow):** AC-5 — rules load and the existing `docker stop` check
   still goes `pending`.
 - **Integration (box, manual, recorded in the verification record):** AC-1–4, 6 with a read token;
@@ -149,8 +200,13 @@ This story *is* the observability requirement. Cardinality it introduces: `job` 
 - **Manual/operator:**
   ```
   make helm-install ENV=dev
-  GRAFANA_CLOUD_PROM_URL=... GRAFANA_CLOUD_READ_TOKEN=... make observe-check ENV=dev
-  # expect: up{job="andara-server",namespace="andara-dev",cluster="solo7-local"} 1, four andara_* series listed
+  export GRAFANA_CLOUD_READ_TOKEN=... GRAFANA_CLOUD_{PROM,LOKI,TEMPO}_{URL,USER}=...
+  make stream-soak ENV=dev SOAK=1m        # opens a Session: the log line and the span AC-3/4 read
+  make observe-check ENV=dev
+  # expect: ok up{…namespace="andara-dev"…} 1, ok andara_sessions_active, ok loki … trace_id=<id>,
+  #         ok tempo trace <id> carries andara.game.v1.Game/OpenSession; exit 0
+  kubectl -n andara-dev delete pod andara-0 && make observe-check ENV=dev   # AC-6, within the restart
+  # expect: AndaraServerUnavailable  {namespace="andara-dev"} — and no andara-prod
   ```
 
 ## Definition of done
@@ -158,12 +214,70 @@ This story *is* the observability requirement. Cardinality it introduces: `job` 
 CLAUDE.md §8, plus: the README paragraph is corrected; `AW-INF-003` and `AW-INF-006` verification
 records gain a line pointing here for "verified against a real backend" on the cluster.
 
+## Verification record — 2026-09-23
+
+Groomed 2026-09-17, implemented 2026-09-23 in a separate session. What ran here: `make check`,
+`promtool` 3.1.0 against the rule file and its tests, `helm template` for all three environments, and
+read-only `kubectl` against the box's `observability` namespace. What did not: nothing is installed
+in `andara-dev` or `andara-prod` on the box today, and this session holds no Grafana Cloud read token.
+The box ACs are therefore owed, with the exact command — not claimed.
+
+| AC | Result | How |
+|----|--------|-----|
+| 1 | **owed (box)** | `make helm-install ENV=dev`, then `make observe-check ENV=dev` with a read token |
+| 2 | **owed (box)** | as AC-1, once a projector binary exists (`AW-SRV-019` first); until then `helm-test` renders all three with distinct jobs |
+| 3 | **owed (box)** | as AC-1, after `make stream-soak ENV=dev`: observe-check fetches the `OpenSession` span by the logged `trace_id`; the five-minute log check is `kubectl -n andara-dev logs andara-0 --since=5m \| grep -c 'otlp log export failed'` → `0` |
+| 4 | **owed (box)** | as AC-3 — the same `session opened` line is what observe-check reads |
+| 5 | pass (unit) · CI (compose) | `promtool check rules`: 7 rules; `promtool test rules`: 7 groups pass, in `make helm-test`. The tests bite: the story's own sketch (no guard) fails both compose groups, and `main`'s rules fail all five cluster groups while passing both compose ones. The compose half — every rule `health: ok`, `AndaraServerUnavailable` `inactive` → `pending` on `stop andara-server` → `inactive` on `start` — is a new `stack` workflow step, polled to deadlines, run on this PR |
+| 6 | half | the expressions return only the affected namespace against synthetic series in both label shapes (`promtool test rules`); against Grafana Cloud's series it is the last two lines of the operator test plan, owed with AC-1 |
+| 7 | pass | `observe_check.py` exits `3` with the exact message, naming whichever of token, URL, or user is unset first; `make` reports `Error 3`. Against a fake backend: `0` all present, `1` on an absent `up`, `2` on a 401 |
+| 8 | pass | `helm-test` for `local`, `dev`, `prod`; the StatefulSet's job mutated to `andara` fails naming both the job map and the unscraped `andara-server` selector |
+
+Contract amendments made while implementing, dated so a reviewer can see where the implementation
+pushed back on the spec — all in place above:
+- the `absent()` lines are guarded by the presence of namespaced series — as sketched they fire
+  forever in compose, which AC-5 would have caught;
+- `CertificateExpiringSoon` and `IngressErrorRateHigh` take their namespace from `exported_namespace`
+  and the router name, because the platform's scrapes give those series cert-manager's and Traefik's
+  — on the cluster the certificate summary would have read `cert-manager/andara-edge`;
+- AC-8 asserts the direction that can hold (alert selectors ⊆ scraped jobs), AC-7 says what `make`
+  does with an exit code, AC-3 names the line the server actually logs;
+- `observability.collectorNamespace` dropped — it would have rendered nothing;
+- `instance` is the pod address, not `<namespace>/<pod>`;
+- `observe-check` takes three URLs and three user IDs, not one, and exits `2` when a backend refuses;
+- `promtool` from the release tarball, checksum-pinned, not `go install`.
+
+Found, and owed elsewhere:
+- **Trace export failures log no JSON line.** `server/telemetry` builds the trace exporter but sets
+  no `otel.SetErrorHandler`, so a failed span export goes to OpenTelemetry's default handler — the
+  standard library logger, plain text on stderr — and nothing counts it. AC-3 can only assert the log
+  exporter's line. An `AW-SRV-024` follow-up for the implementation lane.
+- **Every server log line would reach Loki twice on `dev`/`prod`.** `telemetry.otlp_endpoint` turns on
+  both exporters (`server/README.md`), and the platform already ships the container stream: one copy
+  from the node agent (`container="server"`, what AC-4 queries), one through the receiver
+  (`job`/`pod`, no `container`). **Decided 2026-09-23 (Brian): one log path per environment, and on
+  Kubernetes it is stdout via the node agent — the server does not send logs to the receiver there.**
+  `AW-SRV-033` (implementation lane, `ready`) adds `telemetry.otlp_logs` and sets it `false` in the
+  chart's defaults; the key is registered in `keys.yaml` now, pending. Until it lands, a `dev`/`prod`
+  install double-writes — neither is installed today, so nothing is paying for it yet.
+- **For `AW-INF-009`:** a rule group loaded before an environment is installed pages for it —
+  `absent(...andara-prod...)` is true until prod exists. `andara-local` on the box is the other way
+  round: not in the `absent()` list, so a local pod that is not Ready is silent; it pages only when a
+  Ready local pod's scrape fails. Both are routing decisions, which is that story's.
+- The runbook and SLO expressions that quoted the old aggregate shapes
+  (`server-unavailable.md`, `ingress-error-rate.md`, `slo/edge-availability.md`,
+  `slo/session-availability.md`) now say what the rules evaluate.
+
 ## Open questions
 
-- `[ASSUMPTION]` Alloy's autodiscovery scrape interval is the release default (60 s). AC-1's "two
-  intervals" is 2 minutes; nothing here depends on it being faster.
-- `[ASSUMPTION]` `dev` and `prod` share the `solo7-local` tenant and are told apart by `namespace`. When
-  prod moves to its own cluster, `cluster` does the job and the `absent()` lines change with it.
+- **Resolved 2026-09-23 (read from the platform):** the autodiscovery scrape interval is 60 s — the
+  rendered `alloy-metrics` relabelling defaults `__scrape_interval__` to `60s` absent a
+  `k8s.grafana.com/metrics.scrapeInterval` annotation, which the chart does not set. AC-1's "two
+  intervals" is 2 minutes.
+- **Resolved 2026-09-23 (read from the platform):** `dev` and `prod` share one tenant and are told apart
+  by `namespace` — the box has one `remote_write` with `external_labels` `cluster="solo7-local"`, so
+  every namespace on it lands in the same series space. When prod moves to its own cluster, `cluster`
+  does the job and the `absent()` lines change with it; that is a new story, not a drift of this one.
 - **Amends EPIC-07:** "This epic owns no stories of its own, by design" was true while the observed
   things were being built. The wiring to a backend nobody's story owned is exactly the gap that
   sentence said the epic would name; `AW-INF-008` and `AW-INF-009` are its first stories.

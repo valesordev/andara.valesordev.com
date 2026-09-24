@@ -118,6 +118,12 @@ the tenant at least once.
 
 ## Open questions
 
+- **Handed over by `AW-INF-008` (2026-09-23), for the routing this story owns.** Every rule now
+  carries `namespace`. Two consequences land here: `AndaraServerUnavailable`'s `absent()` lines page
+  for `andara-dev` and `andara-prod` until each is installed — loading the group before prod exists is
+  a page for prod. `andara-local` on the box is the other way round: it is not in the `absent()` list,
+  so a local pod that is not Ready is silent (the platform scrapes only Ready pods), and it pages only
+  when a Ready local pod's scrape fails — route or drop that as this story decides.
 - **Resolved 2026-09-17 (Brian): a GitHub repository secret.**
 - `[ASSUMPTION]` Pages go to the stack's default contact point (the account email) until Brian says
   otherwise. The routing is a Grafana Cloud setting and does not touch the interface contract; the

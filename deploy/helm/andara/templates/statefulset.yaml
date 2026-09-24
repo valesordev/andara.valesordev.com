@@ -33,6 +33,9 @@ spec:
       annotations:
         # A values change re-renders the ConfigMap; this rolls the pod so it is applied.
         checksum/config: {{ include "andara.serverEnv" . | sha256sum }}
+        {{- with include "andara.scrapeAnnotations" (dict "root" . "job" "andara-server") }}
+        {{- . | nindent 8 }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

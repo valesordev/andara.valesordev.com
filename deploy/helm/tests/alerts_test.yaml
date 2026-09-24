@@ -1,0 +1,159 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+#
+# `promtool test rules` over deploy/helm/andara/files/alerts.yaml (AW-INF-008), run by
+# `make helm-test`. Outside the chart on purpose: everything under deploy/helm/andara is
+# packaged with it, and this is a test of the chart, not part of it.
+#
+# The rules are evaluated in two places with two label shapes — the compose stack, which has
+# no `namespace` label, and the cluster, where `dev` and `prod` are namespaces in one Grafana
+# Cloud tenant. Each shape gets its own test group, so "still works in compose" and "pages for
+# one environment only" are both claims a run checks rather than a comment asserts.
+rule_files:
+  - ../andara/files/alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # Compose: a statically configured target that goes down. No namespace anywhere, so the
+  # per-environment absent() lines must stay silent and the alert carries no namespace —
+  # the behavior AW-INF-003 verified with `docker stop`.
+  - name: compose — server down pages once, with no namespace
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", instance="andara-server:8080"}'
+        values: '1 1 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts:
+          - exp_labels: {severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+
+  - name: compose — a healthy server does not page on absence
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", instance="andara-server:8080"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+
+  # Cluster: both environments scraped by annotation, plus an unrelated namespaced series
+  # (Traefik's) as every real tenant has. prod's pod goes to up == 0.
+  - name: cluster — prod down pages as prod only
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", namespace="andara-dev", pod="andara-0", cluster="solo7-local"}'
+        values: '1x10'
+      - series: 'up{job="andara-server", namespace="andara-prod", pod="andara-0", cluster="solo7-local"}'
+        values: '1 1 0 0 0 0 0 0 0 0 0'
+      - series: 'up{job="traefik", namespace="traefik", cluster="solo7-local"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts:
+          - exp_labels: {namespace: andara-prod, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+
+  # prod's `up` goes stale and there is nothing to be zero. Not the rare case on the cluster
+  # but the usual one: the annotation scrape keeps only Ready pods, so a pod failing
+  # readiness drops out exactly as a deleted StatefulSet does.
+  - name: cluster — prod deleted pages as prod only
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", namespace="andara-dev", pod="andara-0", cluster="solo7-local"}'
+        values: '1x10'
+      - series: 'up{job="andara-server", namespace="andara-prod", pod="andara-0", cluster="solo7-local"}'
+        values: '1 1 stale'
+      - series: 'up{job="traefik", namespace="traefik", cluster="solo7-local"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: AndaraServerUnavailable
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: AndaraServerUnavailable
+        exp_alerts:
+          - exp_labels: {job: andara-server, namespace: andara-prod, severity: page, slo: world-write-availability}
+            exp_annotations:
+              summary: "No ready andara-server pod for 2 minutes — players cannot connect"
+              runbook: docs/runbooks/server-unavailable.md
+
+  # dev drops 10 streams a minute out of 100 (10 % > 1 %); prod drops none. Summed without
+  # `by (namespace)` this would be 10 of 200 and still page — for both, as one alert.
+  - name: cluster — Sessions dropping in dev pages as dev only
+    interval: 1m
+    input_series:
+      - series: 'andara_session_egress_drops_total{reason="buffer_full", namespace="andara-dev"}'
+        values: '0+10x20'
+      - series: 'andara_stream_subscribers{namespace="andara-dev"}'
+        values: '100x20'
+      - series: 'andara_session_egress_drops_total{reason="buffer_full", namespace="andara-prod"}'
+        values: '0x20'
+      - series: 'andara_stream_subscribers{namespace="andara-prod"}'
+        values: '100x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SessionsDroppingAtRate
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: session-availability}
+            exp_annotations:
+              summary: "Server-ended Event streams above 1% of open streams per minute for 5 minutes — players are losing the World"
+              runbook: docs/runbooks/sessions-dropping.md
+
+  # Traefik's series carry namespace="traefik"; the environment is the router name's prefix.
+  - name: cluster — edge 5xx in dev pages as dev, not as traefik
+    interval: 1m
+    input_series:
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="500", namespace="traefik"}'
+        values: '0+10x30'
+      - series: 'traefik_router_requests_total{router="andara-dev-andara-andara-dev-solo7-valesordev-com@kubernetes", code="200", namespace="traefik"}'
+        values: '0+100x30'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="500", namespace="traefik"}'
+        values: '0x30'
+      - series: 'traefik_router_requests_total{router="andara-prod-andara-admin-andara-solo7-valesordev-com@kubernetes", code="200", namespace="traefik"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: IngressErrorRateHigh
+        exp_alerts:
+          - exp_labels: {namespace: andara-dev, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "More than 1% of requests through the Andara edge are 5xx for 10 minutes"
+              runbook: docs/runbooks/ingress-error-rate.md
+
+  # One Certificate as the cluster delivers it (the Certificate's namespace demoted to
+  # exported_namespace by the scrape), one as a Prometheus that honors labels would. Both
+  # expire in a day; both must name their own environment.
+  - name: cluster — an expiring Certificate names its environment
+    interval: 1m
+    input_series:
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-edge", exported_namespace="andara-dev", namespace="cert-manager"}'
+        values: '86400x30'
+      - series: 'certmanager_certificate_expiration_timestamp_seconds{name="andara-server", namespace="andara-prod"}'
+        values: '86400x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: CertificateExpiringSoon
+        exp_alerts:
+          - exp_labels: {name: andara-edge, namespace: andara-dev, exported_namespace: andara-dev, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-dev/andara-edge expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md
+          - exp_labels: {name: andara-server, namespace: andara-prod, severity: page, slo: edge-availability}
+            exp_annotations:
+              summary: "Certificate andara-prod/andara-server expires in under 7 days and has not renewed"
+              runbook: docs/runbooks/certificate-expiring.md

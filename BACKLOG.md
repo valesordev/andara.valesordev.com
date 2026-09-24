@@ -9,10 +9,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 6 |
+| `review` | 7 |
 | `ready` | 28 |
 | `done` | 17 |
-| **total** | **51** |
+| **total** | **52** |
 
 ## Attention first
 
@@ -20,6 +20,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|--------|-------|------------------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client | review by brian |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus | review by brian |
+| [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
@@ -27,12 +28,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 ## By status
 
-### `review` (6)
+### `review` (7)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | implementation | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011`, `AW-SRV-031` |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
@@ -48,7 +50,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030` |
-| [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `EPIC-07` | infra | S | medium | architecture | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud | `AW-INF-008` |
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | architecture | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
@@ -70,6 +71,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `EPIC-02` | server | M | medium | implementation | Perception through Exits — Builder-declared senses on a room connection | `AW-SRV-004`, `AW-SRV-021` |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
+| [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 
 ### `done` (17)
 
@@ -179,9 +181,10 @@ Milestone `M1-M4` · status `ready` · ADR gates: none · constrained by: —
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `ready` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud |
+| [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `ready` | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud |
 | [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `done` | Export logs over OTLP so the log sink carries what stderr carries |
+| [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `ready` | Turn off OTLP log export independently of traces |
 
 ### `EPIC-08` — Identity, accounts, and sessions
 

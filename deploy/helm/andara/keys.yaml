@@ -31,6 +31,7 @@ keys:
   - {key: telemetry.log_format,    env: ANDARA_LOG_FORMAT,       type: enum, values: [json, text], default: json, story: AW-SRV-001}
   - {key: telemetry.log_level,     env: ANDARA_LOG_LEVEL,        type: enum, values: [debug, info, warn, error], default: info, story: AW-SRV-001}
   - {key: telemetry.otlp_endpoint, env: ANDARA_OTLP_ENDPOINT,    type: string, default: localhost:4317, story: AW-SRV-001}
+  - {key: telemetry.otlp_logs,     env: ANDARA_OTLP_LOGS,        type: bool,   default: true, story: AW-SRV-033}
   - {key: telemetry.trace_sample_ratio, env: ANDARA_TRACE_SAMPLE_RATIO, type: number, default: 0.01, min: 0, max: 1, story: AW-SRV-010}
   - {key: telemetry.trust_inbound_traceparent, env: ANDARA_TRUST_INBOUND_TRACEPARENT, type: bool, default: false, story: AW-SRV-010}
 

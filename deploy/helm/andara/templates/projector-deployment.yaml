@@ -29,6 +29,9 @@ spec:
         app.kubernetes.io/component: projector-{{ $name }}
       annotations:
         checksum/config: {{ include "andara.serverEnv" $ | sha256sum }}
+        {{- with include "andara.scrapeAnnotations" (dict "root" $ "job" (printf "andara-projector-%s" $name)) }}
+        {{- . | nindent 8 }}
+        {{- end }}
     spec:
       serviceAccountName: {{ include "andara.serviceAccountName" $ }}
       automountServiceAccountToken: false

@@ -48,7 +48,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
         values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke stack-play \
-        kind-platform stream-soak content-grammar-check
+        kind-platform stream-soak content-grammar-check observe-check
 
 ## help: print this target list
 help:
@@ -283,6 +283,10 @@ stack-play: build
 ## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
 kind-platform:
 	@$(SCRIPTS)/kind_platform.sh "$(KIND_CLUSTER)"
+
+## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
+observe-check:
+	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)"
 
 ## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>
 stream-soak:
