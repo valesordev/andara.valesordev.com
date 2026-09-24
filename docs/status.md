@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-56 stories — 2 in-progress · 10 review · 26 ready · 1 draft · 17 done
+56 stories — 1 in-progress · 11 review · 26 ready · 1 draft · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -17,10 +17,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   now    AW-SRV-012  Content resolution from the store and reload at a tick boundary
          branch aw-srv-012-content-resolution-and-reload
+  next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
   next   AW-SRV-025  ready  Client address behind the ingress — trusted proxies and…  (unblocks 1)
-  next   AW-SRV-026  ready  Exit into exact recovery when a Tick Boundary Record is…  (unblocks 1)
-  review AW-CLI-006, AW-SRV-014, AW-SRV-006, AW-SRV-011, AW-CLI-004, AW-SRV-031 — run the §8…
-  held   9 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-013, AW-SRV-009, AW-SRV-017, AW-CLI-003,…
+  review AW-CLI-006, AW-SRV-014, AW-SRV-006, AW-SRV-011, AW-CLI-004, AW-SRV-019, AW-SRV-031…
+  held   8 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-013, AW-SRV-009, AW-CLI-003, AW-SRV-016,…
 
 ## Decisions the lanes are waiting on
 
