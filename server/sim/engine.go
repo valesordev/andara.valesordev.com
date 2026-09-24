@@ -506,6 +506,15 @@ type RecordSource interface {
 // resulting hash must equal the recorded one. A mismatch is ErrHashMismatch
 // naming the tick — the World is not the one that was running.
 func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
+	return e.ReplayEach(boundaries, src, nil)
+}
+
+// ReplayEach is Replay with a hook: after each boundary's tick is applied and
+// its hash verified, after is called with what the tick produced. A tick whose
+// hash does not match never reaches after, so a caller deriving output from
+// the hook — the state projector (AW-SRV-019) — produces nothing for the tick
+// that diverged. An error from after stops the replay and is returned as is.
+func (e *Engine) ReplayEach(boundaries []TickCompleted, src RecordSource, after func(StepResult) error) error {
 	for _, b := range boundaries {
 		if b.Tick != e.state.Tick+1 {
 			// A missing boundary is a tick whose batching decision was
@@ -554,8 +563,29 @@ func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 			return fmt.Errorf("replay: tick %d: %w", b.Tick, err)
 		}
 		if res.Completed.StateHash != b.StateHash {
-			return fmt.Errorf("%w at tick %d: recorded %x, replayed %x", ErrHashMismatch, b.Tick, b.StateHash[:8], res.Completed.StateHash[:8])
+			return &HashMismatchError{Tick: b.Tick, Recorded: b.StateHash, Replayed: res.Completed.StateHash}
+		}
+		if after != nil {
+			if err := after(res); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
+
+// HashMismatchError is ErrHashMismatch with both hashes whole: a divergence
+// report names them (AW-SRV-019 AC-3), and errors.Is(err, ErrHashMismatch)
+// still matches it.
+type HashMismatchError struct {
+	Tick     Tick
+	Recorded [32]byte
+	Replayed [32]byte
+}
+
+func (e *HashMismatchError) Error() string {
+	return fmt.Sprintf("%v at tick %d: recorded %x, replayed %x", ErrHashMismatch, e.Tick, e.Recorded[:8], e.Replayed[:8])
+}
+
+// Unwrap makes errors.Is(err, ErrHashMismatch) hold.
+func (e *HashMismatchError) Unwrap() error { return ErrHashMismatch }

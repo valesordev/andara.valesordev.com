@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
+// The andara.state.v1 topic record (AW-SRV-019): the current state of one
+// aggregate, produced by the state projector after it replays the tick that
+// last touched it, and read by every index (ADR-0002 §5.5).
+//
+// Derived and disposable. Nothing may read this topic to make a game
+// decision, and it is never a recovery source: its tick edge is ragged across
+// Partitions, and compaction has discarded earlier versions.
+//
+// The determinism rules of andara.log.v1 apply, for AW-SRV-019 AC-4's reason:
+// a Partition batch redelivered after a crash must produce byte-identical
+// records. No map, no float or double, no Any, no Timestamp.
+
+syntax = "proto3";
+
+package andara.state.v1;
+
+// What a record's key names. The key's prefix and this enum agree; a record
+// whose two disagree is a projector bug.
+enum AggregateKind {
+  AGGREGATE_KIND_UNSPECIFIED = 0;
+  // "character:<zone>/<id>": an Entity whose Template chain reaches
+  // andara.core.Character. Body: EntityState.
+  CHARACTER = 1;
+  // "npc:<zone>/<id>": any other Entity of Template kind ENTITY. Body:
+  // EntityState.
+  NPC = 2;
+  // "item:<zone>/<id>": an Entity of Template kind ITEM. Body: EntityState.
+  ITEM = 3;
+  // "room:<zone>/<id>". Body: RoomState.
+  ROOM = 4;
+  // "zone:<id>". Body: ZoneSummary.
+  ZONE = 5;
+}
+
+// The value of one andara.state.v1 record. The record key is `key`; a
+// tombstone is a null value under the same key.
+//
+// Every Entity key names its Zone. An Entity changes Zone, and a key must not
+// move between Partitions: compaction is per Partition, and Kafka orders
+// nothing across them. A Zone exit is a tombstone on the old key; the arrival
+// writes a new key on the target's Partition.
+message StateRecord {
+  string key = 1;
+  AggregateKind kind = 2;
+
+  // The tick after which this is the aggregate's state.
+  uint64 tick = 3;
+
+  // The andara.commands.v1 offset of the last Command applied on the Zone's
+  // Partition at `tick`: the next-to-read offset the tick's boundary records,
+  // minus one. -1 when nothing has been applied on that Partition.
+  int64 source_offset = 4;
+
+  // packID@version active when the aggregate was last written, so a runtime
+  // object traces to authored source. For an Entity, the version its
+  // Template came from; for a Room or Zone, the version its Zone came from.
+  string content_version = 5;
+
+  // The sim's state_version at `tick` — how `body` is interpreted.
+  uint32 state_version = 6;
+
+  // sha256 of `body`. Per-record integrity, not the World's State Hash.
+  bytes digest = 7;
+
+  // Canonical encoding of the kind's body message: EntityState (the same
+  // message a snapshot carries, so an index and a snapshot cannot disagree on
+  // an Entity's shape), RoomState, or ZoneSummary.
+  bytes body = 8;
+}
+
+// A Room's occupancy at a tick.
+message RoomState {
+  string zone_id = 1;
+  string room_id = 2;
+  // Entities present in the Room — placed, and not dormant — sorted.
+  repeated string occupants = 3;
+}
+
+// A Zone's aggregate counts at a tick.
+message ZoneSummary {
+  string zone_id = 1;
+  uint32 rooms = 2;
+  // Entities in the Zone's state, dormant included.
+  uint32 entities = 3;
+  // Characters among them, dormant included.
+  uint32 characters = 4;
+  bool faulted = 5;
+  uint64 faulted_tick = 6;
+}

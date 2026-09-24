@@ -40,6 +40,16 @@ var migrations = map[uint32]func(*statev1.ZoneState) error{}
 // AW-INF-007 needs. Never a partial or silent read: an error here returns no
 // Zone at all.
 func Decode(envelope []byte) (*statev1.SnapshotEnvelope, *sim.ZoneState, error) {
+	env, body, err := decodeBody(envelope)
+	if err != nil {
+		return nil, nil, err
+	}
+	return env, sim.ZoneStateFromProto(body), nil
+}
+
+// decodeBody is Decode stopping at the migrated body proto, which also
+// carries the process-wide PRNG and next EventID a round load needs.
+func decodeBody(envelope []byte) (*statev1.SnapshotEnvelope, *statev1.ZoneState, error) {
 	var env statev1.SnapshotEnvelope
 	if err := proto.Unmarshal(envelope, &env); err != nil {
 		return nil, nil, fmt.Errorf("store: decode envelope: %w", err)
@@ -55,7 +65,7 @@ func Decode(envelope []byte) (*statev1.SnapshotEnvelope, *sim.ZoneState, error) 
 	if err := Migrate(&body, have, sim.StateVersion); err != nil {
 		return nil, nil, err
 	}
-	return &env, sim.ZoneStateFromProto(&body), nil
+	return &env, &body, nil
 }
 
 // Migrate carries body forward from version `from` to version `to`, applying
