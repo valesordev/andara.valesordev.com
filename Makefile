@@ -186,7 +186,7 @@ test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
 	  ANDARA_S3_TEST_ACCESS_KEY="$${ANDARA_S3_TEST_ACCESS_KEY:-andaratest}" \
 	  ANDARA_S3_TEST_SECRET_KEY="$${ANDARA_S3_TEST_SECRET_KEY:-andaratest123}" \
-	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/ ./server/content/
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:

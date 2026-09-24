@@ -4,6 +4,7 @@
 package content
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -157,20 +158,30 @@ func TestLoadDir_IgnoresNonJSON(t *testing.T) {
 	requireCode(t, verrs, sim.ErrEmptyContent)
 }
 
-func TestLoad_KafkaNotImplemented(t *testing.T) {
-	_, verrs := Load(SourceKafka, "")
-	e := requireCode(t, verrs, sim.ErrEmptyContent)
-	if !strings.Contains(e.Detail, "kafka") {
-		t.Errorf("Detail %q should name kafka", e.Detail)
-	}
-	if !strings.Contains(e.Detail, "AW-SRV-012") {
-		t.Errorf("Detail %q should name AW-SRV-012", e.Detail)
+// AW-SRV-012 replaced the kafka stub with a resolver, so the finding that used
+// to say "not implemented" is gone. What must stay true is that a source name
+// the server does not have an adapter for is refused by name rather than
+// silently treated as an empty World.
+func TestOpen_UnknownSource(t *testing.T) {
+	_, verrs := Open(context.Background(), Options{Source: "s3", Path: "/x"})
+	e := requireCode(t, verrs, sim.ErrMalformed)
+	if !strings.Contains(e.Detail, "s3") {
+		t.Errorf("Detail %q should name the source it refused", e.Detail)
 	}
 }
 
-func TestLoad_UnknownSource(t *testing.T) {
-	_, verrs := Load("s3", "/x")
-	requireCode(t, verrs, sim.ErrMalformed)
+func TestOpen_DirReadsTheDirectory(t *testing.T) {
+	src, verrs := Open(context.Background(), Options{Source: SourceDir, Path: fixture(t, "valid")})
+	if len(verrs) != 0 {
+		t.Fatalf("open: %v", verrs)
+	}
+	inputs, errs := src.Zones()
+	if len(errs) != 0 || len(inputs) == 0 {
+		t.Fatalf("%d inputs, %v", len(inputs), errs)
+	}
+	if v := src.Versions(); len(v) != 0 {
+		t.Errorf("a directory has no content versions, got %v", v)
+	}
 }
 
 func TestLoadDir_DeterministicFileOrder(t *testing.T) {
