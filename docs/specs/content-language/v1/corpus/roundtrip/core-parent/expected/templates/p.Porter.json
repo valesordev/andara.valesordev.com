@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "name": "p.Porter",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc",
+    "p.Porter"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core-parent/npcs.aw",
+    "line": 1
+  }
+}

@@ -79,10 +79,12 @@ on by line number, so that world-building is writing rather than data entry.
    (ADR-0010 §7).
 8. **Given** an Exit with a Direction outside the closed set **when** compiled **then**
    `unknown_direction` lists the permitted twelve.
-9. **Given** every expected blob **when** decompiled and recompiled **then** the bytes are identical;
-   **given** every `.aw` under `corpus/roundtrip/` — canonical source — **then** compile → decompile
-   reproduces it byte for byte. *(Made precise; comments survive publication, not compilation. See
-   Corrections.)*
+9. **Given** every expected blob **when** decompiled and recompiled **then** the output is identical in
+   everything but `TemplateDefinition.source`; **given** every `.aw` under `corpus/roundtrip/` —
+   canonical source — **then** compile → decompile reproduces it byte for byte, and so does the
+   recompile. *(Made precise twice: comments survive publication, not compilation; and `source` records
+   where the Builder wrote a declaration, which decompiled source is not. See Corrections and the
+   Review.)*
 10. **Given** the spec **when** Brian reads `corpus/valid/town/` **then** it is accepted as something a
     Builder would write, recorded as a resolved question here. **Resolved 2026-09-23.**
 11. **Given** `make content-grammar-check` **when** `make check` runs **then** it passes: every corpus
@@ -194,10 +196,12 @@ change that breaks a corpus pair fails the build naming the pair.
 ## Test plan
 
 - The corpus *is* the test plan. Delivered: **57 valid `.aw` files** across 24 cases (16 `valid/`,
-  6 `pending/`, 2 `roundtrip/`) covering every grammar production, and **82 invalid files** across 51
+  6 `pending/`, 2 `roundtrip/`) — 59 across 25 since the review added `roundtrip/core-parent/` —
+  covering every grammar production, and **82 invalid files** across 51
   cases (19 syntax, 30 semantic, 2 encoding) covering all 29 raisable error codes at least once.
 - `make content-grammar-check` — added by this story, in `make check` — runs AC-1 and AC-11 today.
-- `make content-conformance` (added by `AW-CLI-006`) runs AC-2, AC-3, and AC-9, and skips
+- `make content-conformance` (added by `AW-CLI-006`) runs AC-2, AC-3, and AC-9's `roundtrip/` half,
+  and skips
   `corpus/pending/` printing each case's gating story.
 - Two cases are anchored to compiled output already in the repository rather than invented:
   `corpus/valid/core/` reproduces `content/core/templates/*.json` and `corpus/valid/town/`
@@ -218,7 +222,68 @@ frontmatter said `draft` — a compiler written before the syntax is pinned, whi
 the story is `review`: merged, syntax pinned, the §8 checklist outstanding. No `[ASSUMPTION]` remains —
 the `src/<path>.aw` publication prefix was pinned on 2026-09-23 (below), because it is normative
 compiler output in `semantics.md` §6 and a dependency `AW-CLI-006` builds on cannot leave it movable.
-What §8 still needs is the record of `make content-grammar-check` green on `main`.
+The §8 record is below. The story stays `review` until AC-9's `valid/` half runs in CI.
+
+## Review — 2026-09-24 (§8, against `main` at `63727dd`, after `AW-CLI-006` merged in PR #57)
+
+**Outcome: stays `review`.** Every item below passes except one. AC-9's `valid/` half was verified
+by hand and has no CI runner. §8 requires the test plan's coverage to run in CI, and its exception
+for deferred observations covers a runtime caller that lands in a later story, not a missing test.
+Without the runner, `make check` could pass after a regression there. The runner is `AW-CLI-006`'s
+inherited Definition-of-done line. When it is in `make check`, this story flips to `done` with no
+further review. *(Corrected at PR #58's review. The first draft of this record flipped the story to
+`done` over the gap.)*
+
+| §8 item | Result |
+|---------|--------|
+| Every AC demonstrably passes | yes, after the AC-9 correction below. AC-1 and AC-11: `make content-grammar-check` on `main` — 117 files parse, 19 rejected at their sidecar's position, 57 expected blobs canonical, 29 codes each covered. AC-2, AC-3, AC-9's `roundtrip/` half: `make content-conformance` — 69 cases agree, 6 pending skipped, each naming its gating story. AC-9's other half, decompile and recompile over `valid/` identical but for `source`, was **verified by hand** at this review and has **no CI runner**. `AW-CLI-006` inherits adding it. AC-4–AC-8 are corpus cases inside AC-3. AC-10: resolved 2026-09-23 |
+| Tests in CI | both targets are in `make check`, except AC-9's `valid/` half — inherited by `AW-CLI-006`, above; `check` is green on the `main` merge commit of #57 (run 36009708312) |
+| `make check` clean | yes, locally on `main` and on this branch |
+| Instrumentation | none at runtime — a specification (Observability requirements) |
+| Config / Helm schema | none |
+| Migrations | none |
+| Glossary | **Content Language**, **Template**, **Component**, **Builder** present; **Content Pack** updated in passing to say a pack carries Templates and its `.aw` sources |
+| `[ASSUMPTION]` | none |
+
+**AC-9 was false as written, and is corrected.** Decompiling and then recompiling every `valid/`
+case changes the bytes of 7 of the 16, and only in `TemplateDefinition.source`. Masking that one
+field leaves 16 of 16 identical. `source` records where a declaration was written. Decompiled source
+drops comments, so lines move, and it lives wherever it was decompiled to, so the path moves too.
+`semantics.md` §8 now states the exception and why padding with blank lines is the wrong fix. The
+conformance harness only ever checked the `roundtrip/` half, which holds byte for byte. This was
+reproduced with a throwaway program against `content/lang`, not committed. Its first run failed all
+16 cases because the program's own core pack had no `Version: 1` and its temp directory's name
+leaked into `source.file`. Those were bugs in the program, and neither is a finding.
+
+**`AW-CLI-006`'s feedback file** (`docs/feedback/AW-CLI-006-content-language-compiler.md`) raised 13
+items against this spec. Answered:
+
+| § | Answer |
+|---|--------|
+| 1 `duplicate_pack` at the first | **accepted, now normative** — errors.md rule 8: every other duplicate lands on the one that lost; `duplicate_pack` is pack-level and lands once, on the first |
+| 2 `encoding` stops at the first | **accepted** — errors.md rule 4 |
+| 3 chain per code | **accepted, and §1 was wrong, not narrow** — it said Exit findings carry the direction; `unknown_direction`'s sidecar does not. Replaced by a per-code table |
+| 3b warnings dropped on a failed compile | **accepted** — errors.md rule 7 |
+| 3c one cycle finding, lowest-named | **accepted** — errors.md rule 9, semantics.md §4 |
+| 4 position per code | **accepted** — errors.md §1 "Where the position lands"; 36 sidecar positions checked against the source token |
+| 5 `pack_mismatch` needs a caller's name | **decided: the caller supplies it** (semantics.md §2); the corpus README states the `p` / two-anchor convention; no marker file, because a violation already fails loudly |
+| 6 `orphan_room` | **decided the other way from the recommendation.** Its premise was that incident Exits satisfy `AW-SRV-001` AC-6 "more literally". AC-6 says "reachable by no Exit from any other Room", which counts only Exits into the Room. The corpus's chute case broke from AC-6 without checking it. A Room you can leave but never enter is unreachable, so it is an orphan. The one-Room-Zone exemption is sound. `AW-SRV-034` (implementation lane, `ready`) corrects the sidecar and the compiler together, gives the loader the exemption, and blocks `AW-CLI-002` |
+| 7 no RPC for `fetch-core` / `decompile --pack` | **accepted** — `AW-SRV-013` / `AW-CLI-003` own the transport |
+| 8 `deps` unused | **accepted** — v1 has nothing for a dependency to resolve (semantics.md §3, §4) |
+| 9 two `server/sim` accessors | **accepted** — the registry is read, not copied (ADR-0004) |
+| 10 `content/` not in the ownership list | **fixed** — `CLAUDE.md` §2 names it |
+| 11 measurements | noted; AC-7's budget is `AW-CLI-006`'s |
+| 12 compiled → source → compiled | **accepted, widened** from `source.line` to all of `source` — above |
+| 13 `Decompile` needs the core pack | **accepted**, and the corpus now catches it: `roundtrip/core-parent/` (hand-authored) fails a decompile that ignores the core pack. With it on this branch: 119 files, 59 blobs, 70 cases agree |
+
+Also fixed: `formatting.md` §6 never said what order Templates take inside a file. `decompile` uses
+`source.line` order, and the table now says so.
+
+Found at PR #58's review, and left open: the grammar makes `requires` optional
+(`pack_decl: "pack" pack_ref requires_clause?`), and `AW-CLI-006` accepts a non-core pack without
+one. A pack published that way would carry no `ContentVersion.core_version`. Whether the publish
+gate refuses it, and whether the compiler should, is `AW-SRV-013`'s to decide. The glossary no longer
+calls the pin mandatory.
 
 ## Open questions
 
@@ -258,7 +323,8 @@ What §8 still needs is the record of `make content-grammar-check` green on `mai
 - **For `AW-SRV-021` (small):** the loader has no `duplicate_direction`. Two Exits with the same
   Direction in one Room is a compile error here and silently accepted by `sim.BuildWorld`, which
   sorts and keeps both. Hand-written JSON reaching the store is not refused for it. Not this story's
-  to fix — filing it here rather than editing the loader, per the lane rule.
+  to fix — filing it here rather than editing the loader, per the lane rule. **Taken by `AW-SRV-034`
+  (2026-09-24)**, with `orphan_room`, because both break `AW-CLI-002` AC-4.
 
 - **For `AW-SRV-016`:** its `E_UNRESOLVED` is `unknown_behavior`, renamed in this pass. The resolution
   rule — what a Behavior name resolves *against* — is that story's, because the Python pack layout

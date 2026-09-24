@@ -268,6 +268,47 @@ Found, and owed elsewhere:
   (`server-unavailable.md`, `ingress-error-rate.md`, `slo/edge-availability.md`,
   `slo/session-availability.md`) now say what the rules evaluate.
 
+## Review — 2026-09-24 (§8, against `main` at `63727dd`): stays `review`
+
+PR #56 merged. Three of eight ACs pass, and five still need the box. The box can't produce them
+today, and not only because this session has no token.
+
+| AC | Result |
+|----|--------|
+| 5 | **pass, compose half observed.** The `stack` job on #56 (run 35931558406) loaded every rule `health: ok` and saw `AndaraServerUnavailable` go `inactive` (23:11:41Z) → `pending` on `stop andara-server` (23:11:45Z) → `inactive` on `start` (23:11:49Z). The unit half is `promtool` in `make helm-test`, green on `main` |
+| 7, 8 | pass — `make check` on `main` |
+| 1–4, 6 | **owed**, and blocked as below |
+
+`make check` is clean on `main`. `main`'s `stack` job has been red since 2026-09-24:
+`quay.io/minio/minio` now refuses anonymous pulls, so `make up` fails before any rule loads. That
+is unrelated to this story, it doesn't touch AC-5's evidence above, and it is filed separately.
+
+**Why the box ACs can't run today.** Found at review, and a defect in this story's own test plan:
+`make helm-install ENV=dev` cannot bring up a pod on the box.
+- No workflow publishes `ghcr.io/valesordev/andara-server`, and an anonymous pull of it is denied.
+  EPIC-01 names "image publishing and environment promotion" as in scope, and no story carries it.
+- `scripts/helm_install.sh` always sets `image.repository` to its `IMAGE` argument, which defaults to
+  the locally built `andara-server`. `values/dev.yaml` sets `pullPolicy: Always`, so the kubelet
+  would try Docker Hub for a kind-loaded image.
+- Nothing is installed in `andara-dev` or `andara-prod`, and the session holds no
+  `GRAFANA_CLOUD_*`.
+
+The §8 rule for instruments with no in-cluster caller does not cover this. That rule is for a
+caller that lands in a later story. The server here is ready, and what is missing is an image, a
+broker, and a credential.
+
+**Decided 2026-09-24 (Brian): publish the image.** `AW-INF-013` (`ready`) makes CI push
+`:dev` and `:sha-<12-hex>` on every merge and fixes `helm_install.sh`. It gets `dev` as far as
+a started container. Scoping it found a third blocker: `dev` inherits `content.source`,
+`sim.source` and `auth.store` of `kafka`, with no broker on the box and no story installing one. So
+`dev` can't reach Ready, and these ACs can't run, until `AW-INF-014` (`draft`, two questions for
+Brian) also lands. One of those questions is whether `dev` should run broker-free like `local` in
+the meantime, which would unblock this story as soon as the image publishes. The read token is
+still Brian's to provide either way.
+
+The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
+has no verification record, so its pointer is the first bullet of its Open questions.
+
 ## Open questions
 
 - **Resolved 2026-09-23 (read from the platform):** the autodiscovery scrape interval is 60 s — the

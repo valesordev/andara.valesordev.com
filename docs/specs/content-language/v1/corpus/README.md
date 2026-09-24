@@ -26,7 +26,7 @@ valid/<case>/                           sources + expected/ — compiles clean
   <case>/expected.errors                only on a warning case: it compiles and warns
 pending/<case>/                         specified, waiting on a protobuf field
   <case>/PENDING                        the gating story id, first thing on the first line
-roundtrip/<case>/                       canonical source; compile → decompile is identity
+roundtrip/<case>/                       canonical source; compile → decompile is byte identity
 invalid/syntax/<case>.aw + .errors      a flat file that never becomes a pack
 invalid/semantic/<case>/                sources + expected.errors
 invalid/encoding/<case>/                wrong before a grammar is reached
@@ -42,6 +42,17 @@ records as its first path segment (`merge-three-deep/t.aw`). `make content-gramm
 and asserts that the line named really does open that Template.
 
 Every case but `core` resolves against `valid/core/` as **`andara.core@1`**.
+
+Every case is compiled **as pack `p`** and declares `pack p`, except the two anchors, which are
+compiled as the packs they reproduce: `valid/core/` as `andara.core` and `valid/town/` as `town`.
+That name is the "pack being compiled" of semantics.md §2, which is what makes
+`invalid/semantic/pack-mismatch/` (declares `elsewhere`) a finding rather than a skip. A new case
+that declares anything else fails `make content-conformance` with an unexpected `pack_mismatch`. It
+fails loudly, so there is no marker file; add one if a third exception ever appears.
+
+`roundtrip/core-parent/` extends `andara.core.Npc`, a core Template that carries a Component, so a
+`decompile` that restated what the Template inherited, rather than what it wrote, fails the byte
+comparison.
 
 ## The two anchors
 

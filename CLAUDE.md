@@ -51,6 +51,11 @@ One rule resolves every ambiguity: if the artifact runs **in** the game it is
 `implementation`; if it runs **around** the game — build, ship, operate, observe, specify —
 it is `architecture`.
 
+Under that rule, `content/` is implementation, like `server/`, `admin/`, and `client/`.
+`content/lang` compiles what the game loads, and `content/core` is the `andara.core` seed it loads.
+The language's specification and conformance corpus, `docs/specs/content-language/`, are
+architecture's. *(Stated 2026-09-24; `AW-CLI-006` found no directory list naming `content/`.)*
+
 **Why the lanes survive one agent doing both.** The split was never really about who held the
 keyboard; it was about not letting the contract be written by the code. The rule that carries
 that forward is short:

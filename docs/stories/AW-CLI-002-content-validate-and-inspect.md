@@ -6,7 +6,7 @@ component: cli
 type: feature
 status: ready
 size: S
-depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001]
+depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001, AW-SRV-034]
 blocks: [AW-CLI-003, AW-INF-010]
 lane: implementation
 risk: low
@@ -115,3 +115,9 @@ and `AW-CLI-005`'s corpus use.
 
 - **Resolved 2026-09-07 (Brian):** no Builder has repository access; `--path` is a Builder's own working
   directory of `.aw` source, `--pack/--version` is what is already published.
+
+- **Blocked on `AW-SRV-034` (found at the `AW-CLI-005` review, 2026-09-24):** AC-4 cannot hold yet.
+  The loader and the compiler disagree on `orphan_room`: the loader warns on a Room nothing enters,
+  while the compiler warns only on a Room with no Exit either way and skips one-Room Zones. The
+  loader also has no `duplicate_direction`. `AW-SRV-034` makes them agree, on the rule now in
+  `errors.md` §3.3. Pick this story up after that one lands.

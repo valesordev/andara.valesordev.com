@@ -4,10 +4,10 @@ title: Content Language compiler, formatter, and decompiler
 epic: EPIC-05
 component: cli
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-CLI-001, AW-CLI-005, AW-SRV-021, AW-SRV-022]
-blocks: [AW-CLI-002, AW-CLI-003]
+blocks: [AW-CLI-002, AW-CLI-003, AW-SRV-034]
 lane: implementation
 risk: high
 ---
@@ -124,6 +124,14 @@ Per `AW-CLI-001`: `cli.command` root span with `content.compile` child carrying 
 
 CLAUDE.md §8, plus: `make content-conformance` in `make check`; the package is imported by the server's
 publish gate in `AW-SRV-013`'s equivalence test.
+
+**Inherited from the `AW-CLI-005` review (2026-09-24):** `Conformance()` checks only `roundtrip/`
+for AC-4 (compiled → source → compiled). Add a pass over every `valid/` case: decompile with the core
+pack, recompile from a directory named like the case, and compare the blobs with
+`TemplateDefinition.source` masked. `semantics.md` §8 now states that exception. At review a
+throwaway program found 16 of 16 identical under that mask, and 7 of 16 differing without it. This
+story is `review` until the pass is in `make check`, and so is `AW-CLI-005`, which closes on the same
+evidence.
 
 ## Open questions
 

@@ -103,6 +103,12 @@ Exactly one `pack` declaration exists across the whole pack, in whichever file t
 in. None is `pack_missing`; two are `duplicate_pack`; one naming something other than the pack being
 compiled is `pack_mismatch`.
 
+"The pack being compiled" is a name the **caller** supplies, because a directory cannot: `core/` holds
+`andara.core` and every corpus case holds `p`. A Builder compiling their own working copy supplies
+none, and the check is skipped. The publish gate supplies the pack id it is publishing, and the
+conformance harness supplies the corpus convention (`corpus/README.md`). *Settled 2026-09-24 at the
+`AW-CLI-005` review, from `AW-CLI-006`'s `CompileOpts(…, Options{Pack})`.*
+
 ```
 pack town requires andara.core@1
 pack andara.core                   // the core pack requires nothing; it is the root
@@ -238,7 +244,9 @@ inheritance would be there for (ADR-0010 decision 2).
 **`MAX_DEPTH` = 16, self included** — `sim.MaxChainDepth`, exported so both sides reject at the same
 depth — is `chain_too_deep`, and the finding names every Template in the chain in order. A cycle is
 `extends_cycle`, likewise naming every Template in the cycle: "A extends B extends C extends A" is
-the only message that makes a cycle fixable.
+the only message that makes a cycle fixable. A cycle is **one** finding, not one per member,
+positioned at its lowest-named member (errors.md rule 9). That position depends on the names, not on
+which file the Builder put a declaration in.
 
 `resolved` is always `true` in emitted output. The server rejects `resolved: false` rather than
 resolving late, because the sim carries no resolver (ADR-0010 decision 9) — so a compiler that
@@ -404,10 +412,25 @@ encoder — not trusting `protojson.MarshalOptions{Indent: "  "}`.
 
 Two directions, and they are not the same statement.
 
-**Compiled → source → compiled is identity.** `decompile` of a published version produces `.aw`
-source that recompiles to the same blobs, byte for byte. This is the one that matters
-operationally: it is how a Builder who has lost their working copy gets it back (`AW-CLI-003`'s
-`content fetch` and `AW-CLI-006`'s `content decompile`).
+**Compiled → source → compiled is identity in everything but `TemplateDefinition.source`.**
+`decompile` of a published version produces `.aw` source that recompiles to the same Zones and the
+same Templates. This is the one that matters operationally: it is how a Builder who has lost their
+working copy gets it back (`AW-CLI-003`'s `content fetch` and `AW-CLI-006`'s `content decompile`).
+It is **byte** identity only when the pack was authored as canonical source in the canonical layout
+(below), recompiled from a directory of the same name.
+
+`SourceRef` is the exception because it records where the Builder *wrote* a declaration (§6), and
+decompiled source is not where they wrote it. Decompile drops comments, so every later line moves up
+and `source.line` changes. Decompile into `recovered/` instead of `town/`, and `source.file` becomes
+`recovered/npcs.aw`. Making `decompile` pad with blank lines to keep line numbers would produce
+source no Builder wants, for a field that is provenance a finding quotes and not a path the loader
+opens. A Builder who needs what they actually wrote has `content fetch`, which returns the `src/`
+blobs verbatim.
+
+*Corrected 2026-09-24 (`AW-CLI-005` review).* This bullet said "byte for byte" without the
+qualification the next bullet has. `AW-CLI-006` found the gap (`docs/feedback/…` §12). The review
+reproduced it across the corpus: decompiling and recompiling each of the 16 `valid/` cases changes
+the bytes of 7, and only in `source`. Mask that field and all 16 are identical.
 
 **Source → compiled → source is identity for canonical source only.** `decompile` output is
 canonical (formatting.md) and carries no comments, so the round trip reproduces a `.aw` that is

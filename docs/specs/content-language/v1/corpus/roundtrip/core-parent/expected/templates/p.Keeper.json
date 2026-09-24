@@ -1,0 +1,36 @@
+{
+  "formatVersion": 1,
+  "name": "p.Keeper",
+  "kind": "ENTITY",
+  "chain": [
+    "andara.core.Entity",
+    "andara.core.Npc",
+    "p.Keeper"
+  ],
+  "components": [
+    {
+      "type": "andara.core.Behavior",
+      "fields": [
+        {
+          "name": "name",
+          "stringValue": "p.keeper"
+        }
+      ]
+    },
+    {
+      "type": "andara.core.Memory"
+    }
+  ],
+  "provenance": [
+    {
+      "component": "andara.core.Behavior",
+      "field": "name",
+      "from": "p.Keeper"
+    }
+  ],
+  "resolved": true,
+  "source": {
+    "file": "core-parent/npcs.aw",
+    "line": 3
+  }
+}
