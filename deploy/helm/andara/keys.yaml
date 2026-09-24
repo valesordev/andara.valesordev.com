@@ -137,3 +137,8 @@ keys:
   - {key: content.reload_debounce,   env: ANDARA_CONTENT_RELOAD_DEBOUNCE, type: duration, default: 2s, story: AW-SRV-012}
   - {key: content.max_pack_bytes,    env: ANDARA_CONTENT_MAX_PACK_BYTES,  type: int, default: 268435456, min: 1, story: AW-SRV-013}
   - {key: content.core_pack,         env: ANDARA_CONTENT_CORE_PACK,       type: string, default: andara.core, story: AW-SRV-013}
+
+  # --- AW-SRV-019: the state projector. Read by andara-projector, which shares the
+  # server's ConfigMap; the server ignores them. ---
+  - {key: projector.state.batch_ticks, env: ANDARA_PROJECTOR_BATCH_TICKS, type: int, default: 10, min: 1, story: AW-SRV-019}
+  - {key: projector.state.lag_budget,  env: ANDARA_PROJECTOR_LAG_BUDGET,  type: duration, default: 5s, story: AW-SRV-019}

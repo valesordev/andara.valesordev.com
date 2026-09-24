@@ -489,6 +489,28 @@
               "description": "ANDARA_LINKDEAD_MAX (AW-SRV-008). Default when unset: '300s'."
             }
           }
+        },
+        "projector": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "state": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "batch_ticks": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "ANDARA_PROJECTOR_BATCH_TICKS (AW-SRV-019). Default when unset: 10."
+                },
+                "lag_budget": {
+                  "type": "string",
+                  "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+                  "description": "ANDARA_PROJECTOR_LAG_BUDGET (AW-SRV-019). Default when unset: '5s'."
+                }
+              }
+            }
+          }
         }
       }
     },

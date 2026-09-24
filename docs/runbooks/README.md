@@ -26,14 +26,14 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `world-read-only.md` | `AW-SRV-010`, completed by `AW-INF-005` | `WorldReadOnly` |
 | `sessions-dropping.md` | `AW-SRV-011` | `SessionsDroppingAtRate` |
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
+| `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
+| `projection-stale.md` | `AW-SRV-019`, shared with `AW-SRV-017`/`018` | `ProjectionStale` |
 
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
-| `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
-| `projection-stale.md` | `AW-SRV-019` (shared with `AW-SRV-017`, `AW-SRV-018`) | `ProjectionStale` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
 | `content-load-failing.md` | `AW-SRV-012` | `ContentLoadFailing` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
