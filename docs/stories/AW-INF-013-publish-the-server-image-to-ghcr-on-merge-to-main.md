@@ -157,7 +157,10 @@ Makefile, and values — nothing under an implementation directory.
 |----|--------|-----|
 | 1 | **owed (first run on `main`)** | `publish` runs only on push to `main`; the merge of this PR is its first run |
 | 2 | half | `make image-check REGISTRY_ONLY=1` exits `1` naming the registry's `denied` against today's unpublished package, and `0` against a public image; the real tag is owed with AC-1 — the workflow runs this same check right after the push |
-| 3 | half | see below; the real `:dev` is owed with AC-1 |
+| 3 | half | the cluster half against the box with a public image: a throwaway `andara-imagecheck-probe` namespace, the `/bin/true` pod pulled, ran, `Succeeded`, and was deleted by the script's trap (namespace deleted after). `/bin/true` exits `0` in a local `make image` build under the image's `andara` user. The real `:dev` is owed with AC-1 |
+
+`make image` at `746bbb1` labels the image `revision` = the full commit, `version` = `746bbb1`,
+`source` = the repository URL, which is what AC-1 and AC-2 read.
 | 4 | pass | `test_image_source` in `make helm-test`, through `scripts/helm_image_args.sh`; restoring the old always-override rule fails it twice, and changing `dev`'s registry fails it twice |
 | 5 | pass by construction · CI | `on: push: branches: [main]` only; this PR's checks list no `publish` job |
 | 6 | by construction | `concurrency: publish-main`, `cancel-in-progress: false` |
