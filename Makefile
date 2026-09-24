@@ -51,7 +51,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
         values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play \
-        kind-platform stream-soak content-grammar-check observe-check
+        kind-platform stream-soak content-grammar-check observe-check scripts-test kafka-operator kafka-install kafka-broker-bounce
 
 ## help: print this target list
 help:
@@ -115,7 +115,7 @@ schemas-check:
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
                  backlog-check status-check values-schema-check k8s-dry helm-test \
-                 license-check content-grammar-check content-conformance
+                 license-check content-grammar-check content-conformance scripts-test
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -216,6 +216,10 @@ status-check:
 validate-stories:
 	@$(PY) $(SCRIPTS)/validate_stories.py
 
+## scripts-test: unit tests for the Python tooling under scripts/ (scripts/tests)
+scripts-test:
+	@$(PY) -m unittest discover -s $(SCRIPTS)/tests
+
 ## content-grammar-check: parse the Content Language corpus against grammar.ebnf (AW-CLI-005 AC-1)
 content-grammar-check:
 	@$(PY) $(SCRIPTS)/content_grammar_check.py
@@ -301,6 +305,18 @@ stack-play: build
 ## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
 kind-platform:
 	@$(SCRIPTS)/kind_platform.sh "$(KIND_CLUSTER)"
+
+## kafka-operator: install the Strimzi operator (1.2.0) into namespace strimzi, watching andara-dev and andara-prod — once per cluster (AW-INF-014)
+kafka-operator:
+	@PY=$(PY) $(SCRIPTS)/kafka.sh operator
+
+## kafka-install: Apache Kafka `andara-log` (3 brokers, KRaft) in andara-<env>, then the topics from deploy/kafka/topics.yaml — ENV=<dev|prod> (AW-INF-014)
+kafka-install:
+	@PY=$(PY) $(SCRIPTS)/kafka.sh install "$(ENV)"
+
+## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=<dev|prod> (AW-INF-014 AC-5)
+kafka-broker-bounce:
+	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
 
 ## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
 observe-check:

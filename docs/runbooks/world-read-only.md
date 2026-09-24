@@ -28,13 +28,22 @@ later. Detection takes at most the probe interval (one second), so that is the w
 ```
 curl -s http://<server>:8080/metrics | grep andara_ingress_degraded        # 1 while read-only
 kubectl -n andara-<env> logs statefulset/andara | grep 'command log'          # "unreachable" with the broker error; "reachable" on exit
-kubectl -n andara-<env> get pods -l app.kubernetes.io/name=redpanda            # or the Redpanda operator's status
-rpk cluster health                                                            # from a broker pod
+kubectl -n andara-<env> get kafka andara-log                                   # Strimzi's Ready condition for the cluster
+kubectl -n andara-<env> get pods -l strimzi.io/cluster=andara-log              # andara-log-broker-{0,1,2}
+kubectl -n andara-<env> exec andara-log-broker-1 -c kafka -- \
+  /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --describe --under-replicated-partitions
+kubectl -n andara-<env> exec deploy/andara-kafka-tools -- rpk topic list      # rpk, through the toolbox
 ```
 
 Locally: `make up`, `docker compose -f deploy/compose/docker-compose.yaml stop redpanda`, and the
 gauge flips within a second; `start redpanda` and it clears within a second of the first
 successful ping.
+
+On the box (`dev`, `prod`), one broker down is **not** this condition. Each namespace runs three
+brokers with `min.insync.replicas` 2 (AW-INF-014), so writes are still acknowledged, and `make
+kafka-broker-bounce ENV=<env>` proves the server never degrades while one is gone. Read-only on
+the box means two brokers are down, or the server cannot reach the bootstrap Service at all. Start
+from the Strimzi `Ready` condition and the under-replicated count above.
 
 The probe pings a broker once a second whether or not anyone is playing, so the gauge moves
 without traffic; a produce failing and a ping then failing flips it sooner.

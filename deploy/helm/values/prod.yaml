@@ -12,6 +12,9 @@ server:
     # traces to Tempo and log records to Loki. Plaintext gRPC inside the cluster, as the
     # server's exporter dials it.
     otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
+  # The namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install ENV=prod`).
+  kafka:
+    brokers: andara-log-kafka-bootstrap:9092
   character:
     # Where a new Character enters the World (AW-SRV-014). Required outside local: the
     # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content

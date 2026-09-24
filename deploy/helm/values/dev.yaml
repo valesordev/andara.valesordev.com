@@ -18,18 +18,17 @@ server:
     # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content
     # from the store this environment runs that fixture too.
     spawn_room: town/plaza
-  # Broker-free until AW-INF-014 installs a Kafka broker in this namespace (decided
-  # 2026-09-24, Brian): the same three switches as local. Zone Definitions and the core
-  # Templates come from ConfigMaps `make helm-install` builds; Accounts and Commands live in
-  # memory and are lost on restart. AW-INF-014 deletes this block and the two below.
+  # The namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install ENV=dev`): the sim's
+  # command log and the Account store live there, as sim.source and auth.store default to.
+  kafka:
+    brokers: andara-log-kafka-bootstrap:9092
+  # Content is still a directory, as in compose: Zone Definitions and the core Templates from
+  # the ConfigMaps `make helm-install` builds, until AW-SRV-012 serves content from the store.
   content:
     source: dir
     path: /content
   auth:
-    store: memory
     token_key_file: /etc/andara/secrets/token-key/token.keys
-  sim:
-    source: memory
 
 snapshots:
   size: 5Gi
@@ -42,8 +41,8 @@ host: andara-dev.solo7.valesordev.com
 tls:
   issuer: letsencrypt
 
-# Broker-free (above): what `make helm-install ENV=dev` creates in the namespace. The
-# bootstrap operator's credential comes from ANDARA_BOOTSTRAP_OPERATOR, which the install
+# What `make helm-install ENV=dev` creates in the namespace for the content and auth above.
+# The bootstrap operator's credential comes from ANDARA_BOOTSTRAP_OPERATOR, which the install
 # requires here: this edge is a public hostname.
 secrets:
   tokenKey:

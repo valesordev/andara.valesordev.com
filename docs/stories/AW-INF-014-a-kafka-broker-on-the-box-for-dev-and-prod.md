@@ -4,7 +4,7 @@ title: A Kafka broker on the box for dev and prod
 epic: EPIC-10
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-004, AW-INF-013]
 blocks: [AW-INF-007, AW-INF-015]
@@ -248,6 +248,28 @@ CLAUDE.md §8, plus:
 - `AW-INF-007` returns from `blocked` to `ready`;
 - `values/dev.yaml`'s interim comment is gone;
 - `AW-INF-008`'s record names the first `dev` install that reached Ready on Kafka.
+
+## Implementation record — 2026-09-24
+
+Implemented in the session that groomed it, at Brian's request. CLAUDE.md §2 prefers separate
+sessions; the contract was merged first (PR #61). Architecture lane only: manifests, scripts, the
+Makefile, CI, values, and docs, with nothing under an implementation directory.
+
+**Amendments to the contract, each forced by what the implementation found:**
+- **Metrics:** `metricsConfig.type: strimziMetricsReporter` with a `values.allowList`, not the JMX
+  exporter's ConfigMap. Strimzi 1.2's `v1` API offers it, and it serves Prometheus text on `:9404`
+  directly. The allow-list keeps per-partition series out of Grafana Cloud: replica manager,
+  controller, broker-topic and request counters only.
+- **Recovery checkpoint:** `kafka-broker-bounce` counts under-replicated partitions with Kafka's own
+  `kafka-topics.sh --describe --under-replicated-partitions`, run in a surviving broker. The contract
+  said `rpk cluster health`, which calls Redpanda's admin API and doesn't exist on Kafka. A count
+  that can't be taken reads `?`, never `0`, and so do the unreadable `/metrics` and log reads in the
+  assertion step.
+- **Schema validation:** `make k8s-dry` validates the manifests against the CRDs-catalog's
+  `kafka.strimzi.io/v1` schemas, fetched the same way cert-manager's and Traefik's already are. They
+  are not "pinned in the repo". That was a misdescription of how `k8s-dry` works.
+- **CI:** the `topics.py` runner test lives in `scripts/tests/`, run by a new `make scripts-test`,
+  added to `make check` and to CI's per-target steps (the parity guard holds).
 
 ## Open questions
 

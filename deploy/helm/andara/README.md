@@ -29,6 +29,9 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `make helm-test` | render-level assertions (PVC retention, no secret material, schema rejections, probes, ordinal→Partitions); in `make check` |
 | `make image [TAG=]` | build `andara-server:<tag>` from `deploy/compose/Dockerfile.server` |
 | `make image-publish` | build for linux/amd64 and push `ghcr.io/valesordev/andara-server:sha-<12 hex>` then `:dev`; what `.github/workflows/publish.yaml` runs on every merge to `main` (AW-INF-013) |
+| `make kafka-operator` | the Strimzi operator (1.2.0) into namespace `strimzi`, watching `andara-dev` and `andara-prod`; once per cluster, idempotent |
+| `make kafka-install ENV=<dev\|prod>` | Kafka `andara-log` (`deploy/k8s/kafka/`) in `andara-<env>`, waits for Ready, applies `deploy/kafka/topics.yaml` through the `rpk` toolbox |
+| `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load [KIND_CLUSTER=]` | load the image into kind |
 | `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; applies and waits on the private CA first; `local` also builds the content ConfigMap from `testdata/content/valid`; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
@@ -105,7 +108,12 @@ from the docker bridge, not from 127.0.0.1. `dev` and `prod` are `andara-dev.sol
 cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `ghcr.io/valesordev/andara-server`,
 which CI publishes on every merge to `main` (AW-INF-013): `dev` follows the moving `:dev` tag (`pullPolicy: Always`),
 and `make helm-install ENV=dev TAG=sha-<12 hex>` pins a build. `prod`'s tag is always overridden by `make deploy TAG=`
-(AW-INF-007). **`dev` runs broker-free** until AW-INF-014 puts a Kafka broker in its namespace (decided 2026-09-24):
-content from the same ConfigMaps as `local`, Accounts and Commands in memory, and `make helm-install ENV=dev` refuses
-to run without `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password>`, because `local`'s default credential is public and
-this edge is not.
+(AW-INF-007).
+
+**The broker (AW-INF-014).** `dev` and `prod` each run Apache Kafka `andara-log` in their namespace, three brokers
+under the Strimzi operator (ADR-0002 §7: Kafka in production); `local` stays broker-free. So a `dev` install is
+`make kafka-install ENV=dev` first, then `ANDARA_BOOTSTRAP_OPERATOR=<user>:<password> make helm-install ENV=dev`.
+`helm-install` refuses while `kafka/andara-log` is not Ready. It also refuses without the operator credential,
+because `local`'s default is public and this edge is not. `dev`'s sim and Accounts live on the broker. Its content
+still comes from the same ConfigMaps as `local`, as compose reads a directory, until AW-SRV-012.
+`make kafka-broker-bounce ENV=dev` shows losing one broker costs the World nothing.
