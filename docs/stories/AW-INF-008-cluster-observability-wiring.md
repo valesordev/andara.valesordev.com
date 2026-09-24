@@ -294,14 +294,17 @@ is unrelated to this story, it doesn't touch AC-5's evidence above, and it is fi
   `GRAFANA_CLOUD_*`.
 
 The §8 rule for instruments with no in-cluster caller does not cover this. That rule is for a
-caller that lands in a later story. The server here is ready, and what is missing is an image and a
-credential. Two ways out, both Brian's call:
-1. **An image-publishing story** (EPIC-01, architecture lane: CI builds and pushes `:dev` on merge to
-   `main`). Then the test plan runs as written, with a read token. It is also what `AW-INF-007`'s
-   `make deploy` assumes.
-2. **Hand ACs 1–4 and 6 to `AW-INF-009`** as an inherited Definition-of-done line. Proving the
-   rules evaluate in Grafana Cloud needs the same install and the same token, so the observation
-   happens once. This story would then close with the inheritance recorded.
+caller that lands in a later story. The server here is ready, and what is missing is an image, a
+broker, and a credential.
+
+**Decided 2026-09-24 (Brian): publish the image.** `AW-INF-013` (`ready`) makes CI push
+`:dev` and `:sha-<12-hex>` on every merge and fixes `helm_install.sh`. It gets `dev` as far as
+a started container. Scoping it found a third blocker: `dev` inherits `content.source`,
+`sim.source` and `auth.store` of `kafka`, with no broker on the box and no story installing one. So
+`dev` can't reach Ready, and these ACs can't run, until `AW-INF-014` (`draft`, two questions for
+Brian) also lands. One of those questions is whether `dev` should run broker-free like `local` in
+the meantime, which would unblock this story as soon as the image publishes. The read token is
+still Brian's to provide either way.
 
 The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
 has no verification record, so its pointer is the first bullet of its Open questions.

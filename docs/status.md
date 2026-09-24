@@ -2,16 +2,17 @@
 
 # Status — Andara's World
 
-53 stories — 8 review · 28 ready · 17 done
+55 stories — 8 review · 28 ready · 1 draft · 1 blocked · 17 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
   now    — nothing in flight
+  next   AW-INF-013  ready  Publish the server image to ghcr on merge to main  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
-  next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
   review AW-CLI-005, AW-INF-008 — run the §8 checklist, then flip to done
-  held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
+  held   3 ready, blocked: AW-INF-010, AW-INF-011, AW-INF-012
+  BLOCKED AW-INF-007 — see each story's 'Blocked by'
 
 ## Implementation lane — server and cli source, tests
 
@@ -25,7 +26,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
-              8 more, attached to stories neither lane has reached
+              10 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

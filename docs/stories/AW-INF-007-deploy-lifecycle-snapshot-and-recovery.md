@@ -4,9 +4,9 @@ title: Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: blocked
 size: M
-depends_on: [AW-INF-003, AW-SRV-007, AW-SRV-030]
+depends_on: [AW-INF-003, AW-SRV-007, AW-SRV-030, AW-INF-013, AW-INF-014]
 blocks: []
 lane: architecture
 risk: high
@@ -51,7 +51,10 @@ not an event.
 
 ### Out of scope
 - The snapshot and recovery mechanisms — `AW-SRV-006`, `AW-SRV-007`.
-- Image build and publish — `AW-INF-001`'s CI.
+- Image build and publish — `AW-INF-013`. *(Corrected 2026-09-24: this said `AW-INF-001`'s CI,
+  which never published an image.)* The broker this story's deploy runs against — `AW-INF-014`,
+  which is `draft` on two questions for Brian. This story is `blocked` on it (2026-09-24). The contract
+  above is unchanged, and the story returns to `ready` when `AW-INF-014` does.
 - Zero-downtime deploys, which require sharding and partition draining. Not Phase 1.
 - The words players see. `ServerStopping` carries a `message` field; its content is Brian's.
 
