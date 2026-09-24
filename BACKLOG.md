@@ -9,9 +9,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 10 |
+| `review` | 11 |
 | `in-progress` | 1 |
-| `ready` | 27 |
+| `ready` | 26 |
 | `draft` | 1 |
 | `done` | 17 |
 | **total** | **56** |
@@ -29,11 +29,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command | review by brian |
 
 ## By status
 
-### `review` (10)
+### `review` (11)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -46,15 +47,16 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
 ### `in-progress` (1)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 
-### `ready` (27)
+### `ready` (26)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -69,7 +71,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | architecture | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `EPIC-08` | server | M | high | implementation | Session lifecycle and linkdead grace period | `AW-SRV-014` |
 | [`AW-SRV-016`](docs/stories/AW-SRV-016-python-behavior-sdk.md) | `EPIC-09` | server | M | medium | implementation | Python behavior SDK and per-pack agent runtime | `AW-SRV-009` |
@@ -185,7 +186,7 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler |
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `ready` | Content resolution from the store and reload at a tick boundary |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `in-progress` | Content resolution from the store and reload at a tick boundary |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
 ### `EPIC-06` — Operator and builder CLI
@@ -240,5 +241,5 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `draft` | A schema registry on the box for dev and prod |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `ready` | Redis hot projection from the state topic |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `ready` | Postgres tabular projection for accounts, rosters, and builder queries |
-| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `in-progress` | State projector and the compacted current-state topic |
+| [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic |
 

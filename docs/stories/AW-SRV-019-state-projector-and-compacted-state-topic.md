@@ -4,7 +4,7 @@ title: State projector and the compacted current-state topic
 epic: EPIC-10
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-004, AW-SRV-006]
 blocks: [AW-SRV-017]
@@ -246,7 +246,7 @@ CI; a test asserts the projector binary imports `server/sim` and contains no `Ap
   sim internally event-sourced, the projector can drop the commands consumer without changing its
   output.
 
-## Verification record — 2026-09-24 (implementation; story stays `in-progress` until merge)
+## Verification record — 2026-09-24 (implementation; merged in #64 on 2026-09-24, `review` until the §8 checklist passes)
 
 PR [valesordev/andara.valesordev.com#64](https://github.com/valesordev/andara.valesordev.com/pull/64),
 branch `claude/gallant-volta-q1hz5t`.
