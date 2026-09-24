@@ -4,7 +4,7 @@ title: Publish the server image to ghcr on merge to main
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-003]
 blocks: [AW-INF-007]
@@ -54,10 +54,11 @@ As an operator, I want every merge to `main` to publish a server image the box c
   how to pin one.
 
 ### Out of scope
-- **Running `dev` to Ready.** `dev` inherits `content.source`, `sim.source` and `auth.store` of
-  `kafka`, and `kafka.brokers` is empty. No broker runs on the box, and none is planned outside
-  `AW-INF-014` (draft). This story ends at a pulled image and a started container. `AW-INF-008`'s
-  backend checks need both stories.
+- **A broker for `dev`.** `dev` inherited `content.source`, `sim.source` and `auth.store` of `kafka`,
+  with `kafka.brokers` empty and no broker on the box: that is `AW-INF-014`. Its interim, decided
+  2026-09-24 (Brian), rides in this story's PR because it is what lets `dev` reach Ready on the
+  published image: `values/dev.yaml` runs broker-free like `local`, and `make helm-install ENV=dev`
+  builds `local`'s ConfigMaps and Secrets and requires `ANDARA_BOOTSTRAP_OPERATOR`.
 - Release tags (`v*` → `:<semver>`) and promotion to `prod`. `AW-INF-007`'s `make deploy TAG=` can
   name a `sha-` tag, which is immutable, and that is enough for its rollback. A release scheme is
   its own decision when `prod` has users.
@@ -144,6 +145,22 @@ None. The registry holds images only.
 
 CLAUDE.md §8, plus: `AW-INF-008`'s record names the first `sha-` tag the box pulled.
 `AW-INF-007`'s Out of scope stops attributing publishing to `AW-INF-001`.
+
+## Verification record — 2026-09-24
+
+Implemented in the session that groomed it, at Brian's request, against CLAUDE.md §2's habit of
+separate sessions; the contract above was committed first (PR #58) and is unchanged except the
+Out-of-scope bullet on `dev`'s broker. Architecture lane: a workflow, the Dockerfile, scripts, the
+Makefile, and values — nothing under an implementation directory.
+
+| AC | Result | How |
+|----|--------|-----|
+| 1 | **owed (first run on `main`)** | `publish` runs only on push to `main`; the merge of this PR is its first run |
+| 2 | half | `make image-check REGISTRY_ONLY=1` exits `1` naming the registry's `denied` against today's unpublished package, and `0` against a public image; the real tag is owed with AC-1 — the workflow runs this same check right after the push |
+| 3 | half | see below; the real `:dev` is owed with AC-1 |
+| 4 | pass | `test_image_source` in `make helm-test`, through `scripts/helm_image_args.sh`; restoring the old always-override rule fails it twice, and changing `dev`'s registry fails it twice |
+| 5 | pass by construction · CI | `on: push: branches: [main]` only; this PR's checks list no `publish` job |
+| 6 | by construction | `concurrency: publish-main`, `cancel-in-progress: false` |
 
 ## Open questions
 

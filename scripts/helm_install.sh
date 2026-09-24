@@ -4,10 +4,14 @@
 
 # `helm upgrade --install` for one environment, idempotent (AW-INF-003).
 #
-# local: the image comes from `make image && make kind-load` (pullPolicy Never) and
-# content from a ConfigMap built out of testdata/content/valid, because the local cluster
-# has no content store yet (AW-SRV-012). dev and prod pull from the registry and read
-# content from the store.
+# local: the image comes from `make image && make kind-load` (pullPolicy Never). dev and
+# prod pull the image .github/workflows/publish.yaml pushes to ghcr (AW-INF-013); a TAG= on
+# the command line pins one, and scripts/helm_image_args.sh is the rule.
+#
+# Content, accounts, and the sim's input: local, and dev until AW-INF-014 puts a broker on
+# the box (decided 2026-09-24, Brian), run broker-free: Zone Definitions from a ConfigMap
+# built out of testdata/content/valid, accounts and commands in memory. prod reads the
+# broker, and has none yet.
 #
 # Every environment (AW-INF-006): the private CA is bootstrapped ahead of the chart and
 # its certificate exported for `andara-cli`, because a chart that renders a Certificate
@@ -15,9 +19,11 @@
 # cannot mount its Secret.
 set -euo pipefail
 
-ENVNAME="${1:?usage: helm_install.sh <env> <image> <tag>}"
+ENVNAME="${1:?usage: helm_install.sh <env> <image> <tag> [image_set] [tag_set]}"
 IMAGE="${2:-andara-server}"
 TAG="${3:-dev}"
+IMAGE_SET="${4:-}"
+TAG_SET="${5:-}"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO"
 
@@ -50,8 +56,20 @@ kubectl -n cert-manager wait --for=condition=Ready certificate/andara-ca --timeo
 kubectl wait --for=condition=Ready clusterissuer/andara-ca --timeout=60s >/dev/null
 echo "helm-install: clusterissuer andara-ca is ready"
 
-if [[ "$ENVNAME" == "local" ]]; then
-  # Zone Definition JSON as a ConfigMap, mounted at /content (values/local.yaml sets
+# Environments whose values run the server broker-free (server.content.source: dir,
+# auth.store and sim.source: memory). dev leaves this list when AW-INF-014 lands.
+BROKER_FREE="local dev"
+
+if [[ " $BROKER_FREE " == *" $ENVNAME "* ]]; then
+  # The first operator's credential. local's is the published default `make up` uses;
+  # anywhere else the edge is a public hostname, so a known password is refused and the
+  # caller supplies one (the same variable `make stream-soak` reads).
+  if [[ "$ENVNAME" != "local" && -z "${ANDARA_BOOTSTRAP_OPERATOR:-}" ]]; then
+    echo "make: helm-install: ENV=$ENVNAME needs ANDARA_BOOTSTRAP_OPERATOR=<user>:<password>; the local default is public" >&2
+    exit 1
+  fi
+
+  # Zone Definition JSON as a ConfigMap, mounted at /content (values/<env>.yaml sets
   # server.content.source: dir). Recreated every run so a fixture edit is applied.
   kubectl -n "$NS" create configmap andara-content \
     --from-file=testdata/content/valid \
@@ -66,7 +84,7 @@ if [[ "$ENVNAME" == "local" ]]; then
   echo "helm-install: configmap andara-content-templates from content/core/templates"
 
   # The session-token keyring (AW-SRV-008), same per-machine key `make up` uses, under the
-  # name values/local.yaml gives secrets.tokenKey. A real deployment provisions this
+  # name values/<env>.yaml gives secrets.tokenKey. A real deployment provisions this
   # Secret from its secret store; the rotation procedure is in server/README.md.
   "$REPO/scripts/auth_keys.sh" >/dev/null
   AUTH_DIR="${ANDARA_AUTH_DIR:-$REPO/.local/auth}"
@@ -75,21 +93,22 @@ if [[ "$ENVNAME" == "local" ]]; then
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: secret andara-server-token-key from $AUTH_DIR"
 
-  # The first operator, local only; the value is the same one `make up` uses.
+  # The first operator: local's is the value `make up` uses; others were required above.
   kubectl -n "$NS" create secret generic andara-server-bootstrap \
     --from-literal=bootstrap-operator="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}" \
     --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
   echo "helm-install: secret andara-server-bootstrap (operator:andara-local unless ANDARA_BOOTSTRAP_OPERATOR is set)"
 fi
 
+mapfile -t IMAGE_ARGS < <("$REPO/scripts/helm_image_args.sh" "$ENVNAME" "$IMAGE" "$TAG" "$IMAGE_SET" "$TAG_SET")
+
 helm upgrade --install andara "$CHART" \
   --namespace "$NS" \
   --values "$VALUES" \
-  --set "image.repository=${IMAGE}" \
-  --set "image.tag=${TAG}" \
+  "${IMAGE_ARGS[@]}" \
   --wait --timeout 10m
 
-echo "helm-install: andara in $NS is serving ($IMAGE:$TAG)"
+echo "helm-install: andara in $NS is serving ($(kubectl -n "$NS" get statefulset andara -o jsonpath='{.spec.template.spec.containers[?(@.name=="server")].image}'))"
 kubectl -n "$NS" get statefulset andara
 kubectl -n "$NS" get pvc -l app=andara
 

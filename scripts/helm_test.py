@@ -415,6 +415,32 @@ def test_alert_rules():
                                            (p.stdout + p.stderr).strip()))
 
 
+def test_image_source():
+    """AW-INF-013 AC-4: where the StatefulSet's image comes from, rendered through
+    scripts/helm_image_args.sh — the same arguments helm_install.sh passes — so a change to
+    the rule is tested as it ships. local takes the kind-loaded build; dev takes its values
+    file's registry image unless a tag is given explicitly."""
+    cases = [
+        (("local", "andara-server", "dev", "", ""), "andara-server:dev"),
+        (("dev", "andara-server", "dev", "", ""), "ghcr.io/valesordev/andara-server:dev"),
+        (("dev", "andara-server", "sha-0123456789ab", "", "1"), "ghcr.io/valesordev/andara-server:sha-0123456789ab"),
+    ]
+    for args, want in cases:
+        p = subprocess.run([os.path.join(REPO, "scripts", "helm_image_args.sh"), *args],
+                           capture_output=True, text=True)
+        if p.returncode:
+            fail("helm_image_args.sh %s: %s" % (" ".join(args), p.stderr.strip()))
+            continue
+        rc, out, err = render(args[0], *p.stdout.split())
+        if rc:
+            fail("image args %s: render failed: %s" % (args, err.strip()))
+            continue
+        sts = find(docs(out), "StatefulSet")
+        got = [c["image"] for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "server"]
+        if got != [want]:
+            fail("image args %s: server image %s, want %s" % (args, got, want))
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -430,6 +456,7 @@ def main():
     test_measurements()
     test_projectors_render_when_enabled()
     test_spawn_room_required_outside_local()
+    test_image_source()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

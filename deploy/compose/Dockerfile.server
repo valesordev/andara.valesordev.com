@@ -1,8 +1,7 @@
-# Local-stack image for andara-server.
-#
-# Deliberately not a production image: there is no registry and no publish story yet, so
-# this exists to make `make up` run the same binary a developer just built. When image
-# build and publish gets a story, this file is the starting point, not the answer.
+# The andara-server image: what `make up` runs locally, what `make image && make kind-load`
+# puts in a kind cluster, and what CI publishes to ghcr.io/valesordev/andara-server on every
+# merge to main (`make image-publish`, AW-INF-013) for dev and prod to pull. One file, so the
+# binary a developer tested is the binary that ships.
 #
 # CLAUDE.md §2: the Dockerfile runs *around* the game, so it is architecture lane; everything
 # it compiles is implementation lane.
@@ -29,6 +28,14 @@ RUN CGO_ENABLED=0 go build \
       -o /out/andara-server ./cmd/andara-server
 
 FROM alpine:3.21
+# Build stages do not share ARGs; the labels need them again. `source` links the ghcr
+# package to the repository; `revision` is what `make image-check` holds a sha- tag to.
+ARG VERSION=dev
+ARG REVISION=unknown
+LABEL org.opencontainers.image.source="https://github.com/valesordev/andara.valesordev.com" \
+      org.opencontainers.image.revision="${REVISION}" \
+      org.opencontainers.image.version="${VERSION}" \
+      org.opencontainers.image.licenses="Apache-2.0"
 RUN apk add --no-cache ca-certificates wget \
  && adduser -D -u 10001 andara
 COPY --from=build /out/andara-server /usr/local/bin/andara-server

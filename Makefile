@@ -29,12 +29,15 @@ VOLUMES     ?= 0
 PKG         ?= ./...
 COMPOSE     := deploy/compose/docker-compose.yaml
 IMAGE       ?= andara-server
+# Where CI publishes the server image and dev/prod pull it from (AW-INF-013).
+REGISTRY_IMAGE := ghcr.io/valesordev/andara-server
 TAG         ?= dev
 KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
 DURATION    ?= 300
 SOAK        ?= 5m
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
+REVISION    ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
 BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CLI_PKG     := github.com/valesordev/andara/admin/cli
 LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -X $(CLI_PKG).builtAt=$(BUILT_AT)
@@ -47,7 +50,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build goldens \
-        values-schema values-schema-check helm-test image kind-load helm-install measure-tick stack-smoke stack-play \
+        values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play \
         kind-platform stream-soak content-grammar-check observe-check
 
 ## help: print this target list
@@ -262,9 +265,17 @@ license-check:
 ## image: build the andara-server image from deploy/compose/Dockerfile.server — TAG=<tag>, default dev
 image:
 	@docker build -f deploy/compose/Dockerfile.server \
-	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) \
+	  --build-arg VERSION=$(VERSION) --build-arg COMMIT=$(COMMIT) --build-arg REVISION=$(REVISION) \
 	  -t $(IMAGE):$(TAG) .
 	@echo "image: $(IMAGE):$(TAG)"
+
+## image-publish: build the server image for linux/amd64 and push :sha-<12 hex> then :dev to ghcr — what CI runs on merge to main; needs `docker login ghcr.io` (AW-INF-013)
+image-publish:
+	@$(SCRIPTS)/image_publish.sh "$(REGISTRY_IMAGE)" "$(VERSION)" "$(COMMIT)" "$(REVISION)"
+
+## image-check: prove a published tag pulls anonymously and from the cluster — ENV=<env> TAG=<tag>, default dev; REGISTRY_ONLY=1 skips the cluster (AW-INF-013)
+image-check:
+	@$(SCRIPTS)/image_check.sh "$(ENV)" "$(REGISTRY_IMAGE)" "$(TAG)" "$(REGISTRY_ONLY)"
 
 ## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>
 kind-load:
@@ -272,9 +283,12 @@ kind-load:
 	@kind load docker-image $(IMAGE):$(TAG) --name $(KIND_CLUSTER)
 	@echo "kind-load: $(IMAGE):$(TAG) -> kind/$(KIND_CLUSTER)"
 
-## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env>
+## helm-install: idempotent `helm upgrade --install` of the chart into namespace andara-<env> — ENV=<env> [TAG=<tag>]
+# IMAGE/TAG override a registry environment's values only when given explicitly: their
+# defaults name the local build (scripts/helm_image_args.sh).
 helm-install:
-	@$(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)"
+	@$(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)" \
+	  "$(if $(filter file,$(origin IMAGE)),,1)" "$(if $(filter file,$(origin TAG)),,1)"
 
 ## stack-smoke: open a Session on the running stack and verify Prometheus counted it — needs `make up`
 stack-smoke:

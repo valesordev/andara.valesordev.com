@@ -33,15 +33,18 @@ so that they run the same ordering, durability, and read-only behavior the compo
 
 ## Scope
 
-### In scope *(provisional until the Open questions are answered)*
-- A broker on the box, installed by a make target and not by hand, pinned to the Redpanda version
+### In scope *(decided 2026-09-24; interfaces to pin before `ready`)*
+- A single-node Redpanda **in each `andara-<env>` namespace**, installed by a make target through
+  the Redpanda Helm chart with `helm.sh/resource-policy: keep` on its volume, pinned to the version
   compose runs (`v25.1.10`).
 - Topics and schemas applied to it by `AW-INF-004`'s `make topics-apply` / `make schemas-apply`,
   per environment.
 - `kafka.brokers` (and the schema registry URL) set in `values/dev.yaml` and `values/prod.yaml`, with
   the NetworkPolicy admitting the server to it.
-- A `make` target that proves `dev` reaches Ready against it. That target is what `AW-INF-008` runs
-  first.
+- A `make` target that proves `dev` reaches Ready against it.
+- Deleting `dev`'s broker-free block in `values/dev.yaml` (the `server.content`, `auth` and `sim`
+  switches, `secrets` and `contentVolume`, added by `AW-INF-013`'s PR), and `dev` from
+  `BROKER_FREE` in `scripts/helm_install.sh`.
 
 ### Out of scope
 - The operational contract, SLO, and rehearsal — `AW-INF-005`.
@@ -50,7 +53,7 @@ so that they run the same ordering, durability, and read-only behavior the compo
 
 ## Acceptance criteria
 
-To be written once the Open questions are answered. It must at least show:
+To be written when the story is groomed; both questions are answered. It must at least show:
 - `make helm-install ENV=dev` reaching Ready on the box;
 - `make stack-smoke`'s equivalent (a Session opened, a Command logged) against `andara-dev`;
 - a broker restart observed as `andara_ingress_degraded` 1 → 0, as `AW-SRV-010` proves in compose.
@@ -80,7 +83,15 @@ CLAUDE.md §8, plus: `AW-INF-008`'s record names the first `dev` install that re
 
 ## Open questions
 
-- **[NEEDS BRIAN] One broker per environment, or one shared by both?** Options:
+- **Resolved 2026-09-24 (Brian): one broker per namespace**, as recommended below.
+- **Resolved 2026-09-24 (Brian): `dev` runs broker-free until this lands**, as recommended below.
+  Applied in `AW-INF-013`'s PR: `values/dev.yaml` takes `local`'s three switches, `make helm-install
+  ENV=dev` builds the same ConfigMaps and Secrets, and requires `ANDARA_BOOTSTRAP_OPERATOR` because
+  `dev`'s edge is public. This story removes all of it.
+
+The questions as they were put:
+
+- **One broker per environment, or one shared by both?** Options:
   - A single-node Redpanda in each `andara-<env>` namespace keeps the environments isolated and
     matches the runbook's `kubectl -n andara-<env>`.
   - One broker shared by both halves the footprint, and separates `dev` from `prod` by topic prefix.
@@ -88,7 +99,7 @@ CLAUDE.md §8, plus: `AW-INF-008`'s record names the first `dev` install that re
   - Recommendation: per namespace, installed through the Redpanda Helm chart with
     `helm.sh/resource-policy: keep` on its volume. `prod` moving to its own cluster (`AW-INF-008`'s
     note) then changes nothing.
-- **[NEEDS BRIAN] Should `dev` run like `local` until this lands?** `dev` could set `content.source:
+- **Should `dev` run like `local` until this lands?** `dev` could set `content.source:
   dir`, `sim.source: memory`, `auth.store: memory`. It would reach Ready as soon as `AW-INF-013`
   publishes, and `AW-INF-008`'s checks could run this week. The cost: `dev` would stop exercising
   Kafka, which is most of what makes it different from `local`, and it would need `local`'s content

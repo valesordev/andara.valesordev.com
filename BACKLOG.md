@@ -10,8 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `blocked` | 1 |
-| `review` | 8 |
-| `ready` | 28 |
+| `review` | 9 |
+| `ready` | 27 |
 | `draft` | 1 |
 | `done` | 17 |
 | **total** | **55** |
@@ -25,6 +25,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus | review by brian |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler | review by brian |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
+| [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
@@ -38,7 +39,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030`, `AW-INF-013`, `AW-INF-014` |
 
-### `review` (8)
+### `review` (9)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -46,12 +47,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
+| [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
-### `ready` (28)
+### `ready` (27)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -63,7 +65,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | architecture | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | architecture | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
-| [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
@@ -128,7 +129,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `ready` | Local stack — the criteria that needed a server |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `ready` | Workload topology — probes and sizing against the real tick loop and recovery |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `ready` | Ingress forwards the client address to the Gateway |
-| [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `ready` | Publish the server image to ghcr on merge to main |
+| [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main |
 
 ### `EPIC-02` — World model and simulation core
 
