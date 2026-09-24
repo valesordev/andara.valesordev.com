@@ -13,9 +13,10 @@ on:
   push:
     branches: [main]
 
-# Runs finish in merge order rather than race, so :dev ends on the later commit (AC-6).
-# GitHub keeps one pending run per group, so a commit whose run is replaced while queued
-# gets no sha- tag; dev still converges.
+# One run at a time. GitHub serializes a group but does not order it, so what keeps :dev
+# on the newest commit is image_publish.sh moving :dev only when its commit is still main's
+# head (AC-6). GitHub keeps one pending run per group, so a commit whose run is replaced
+# while queued gets no sha- tag; dev still converges.
 concurrency:
   group: publish-main
   cancel-in-progress: false

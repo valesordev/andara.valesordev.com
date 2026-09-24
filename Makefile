@@ -287,7 +287,7 @@ kind-load:
 # IMAGE/TAG override a registry environment's values only when given explicitly: their
 # defaults name the local build (scripts/helm_image_args.sh).
 helm-install:
-	@$(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)" \
+	@PY=$(PY) $(SCRIPTS)/helm_install.sh "$(ENV)" "$(IMAGE)" "$(TAG)" \
 	  "$(if $(filter file,$(origin IMAGE)),,1)" "$(if $(filter file,$(origin TAG)),,1)"
 
 ## stack-smoke: open a Session on the running stack and verify Prometheus counted it — needs `make up`

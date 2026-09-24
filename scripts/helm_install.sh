@@ -102,6 +102,27 @@ fi
 
 mapfile -t IMAGE_ARGS < <("$REPO/scripts/helm_image_args.sh" "$ENVNAME" "$IMAGE" "$TAG" "$IMAGE_SET" "$TAG_SET")
 
+# A moving tag (`:dev`) is pinned to the digest it names now. `pullPolicy: Always` only
+# re-resolves a tag when a container starts, so without this a rerun after `publish` moved
+# the tag renders an identical pod and leaves the old build running. With it, the pod rolls
+# exactly when the tag has moved, and the pod spec records which build it runs. `sha-` tags
+# are immutable and pass through; local's image is kind-loaded and never resolved.
+if [[ "$ENVNAME" != "local" ]]; then
+  read -r eff_repo eff_tag < <("${PY:-python3}" - "$VALUES" "$IMAGE" "$TAG" "$IMAGE_SET" "$TAG_SET" <<'PYEOF'
+import sys, yaml
+values, image, tag, image_set, tag_set = sys.argv[1:6]
+v = (yaml.safe_load(open(values)) or {}).get("image", {})
+print(image if image_set else v.get("repository", ""), tag if tag_set else v.get("tag", ""))
+PYEOF
+)
+  if [[ "$eff_tag" != sha-* && "$eff_tag" != *@* ]]; then
+    digest="$("$REPO/scripts/image_digest.sh" "$eff_repo" "$eff_tag")" \
+      || { echo "make: helm-install: cannot resolve $eff_repo:$eff_tag to a digest; is it published? (make image-check ENV=$ENVNAME)" >&2; exit 1; }
+    IMAGE_ARGS+=(--set "image.tag=${eff_tag}@${digest}")
+    echo "helm-install: $eff_repo:$eff_tag is $digest"
+  fi
+fi
+
 helm upgrade --install andara "$CHART" \
   --namespace "$NS" \
   --values "$VALUES" \
