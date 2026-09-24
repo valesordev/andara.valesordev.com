@@ -161,7 +161,8 @@ evidence.
 
 ## Verification record — 2026-09-24, the inherited `valid/` recompile pass (implementation; `review` until the §8 checklist passes)
 
-Branch `impl/aw-cli-006-valid-recompile`. This record covers only the Definition-of-done line
+PR [valesordev/andara.valesordev.com#75](https://github.com/valesordev/andara.valesordev.com/pull/75), branch
+`impl/aw-cli-006-valid-recompile`. This record covers only the Definition-of-done line
 inherited from the `AW-CLI-005` review. The story's other evidence is in #57 and #58.
 
 | Line | How | Result |
