@@ -52,7 +52,14 @@ type ZoneDefinition struct {
 	// (AW-SRV-021 AC-4). Merging across a containment boundary is a different
 	// rule from ADR-0010 decision 4's inheritance merge and wants its own
 	// decision.
-	Components    []*ComponentValue `protobuf:"bytes,5,rep,name=components,proto3" json:"components,omitempty"`
+	Components []*ComponentValue `protobuf:"bytes,5,rep,name=components,proto3" json:"components,omitempty"`
+	// The Room an Entity is moved to when a new content version removes the Room
+	// it stands in (ADR-0004, AW-SRV-012). A Room ID in this Zone. Required:
+	// empty, or naming a Room this definition does not contain, is the load
+	// finding `fallback_missing`, and the version is refused. It is the one Room
+	// a Zone may not delete. In the Content Language it is `fallback <room>`
+	// (semantics.md §9).
+	FallbackRoom  string `protobuf:"bytes,6,opt,name=fallback_room,json=fallbackRoom,proto3" json:"fallback_room,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -120,6 +127,13 @@ func (x *ZoneDefinition) GetComponents() []*ComponentValue {
 		return x.Components
 	}
 	return nil
+}
+
+func (x *ZoneDefinition) GetFallbackRoom() string {
+	if x != nil {
+		return x.FallbackRoom
+	}
+	return ""
 }
 
 type RoomDefinition struct {
@@ -464,7 +478,7 @@ var File_andara_content_v1_zone_proto protoreflect.FileDescriptor
 
 const file_andara_content_v1_zone_proto_rawDesc = "" +
 	"\n" +
-	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\xd7\x01\n" +
+	"\x1candara/content/v1/zone.proto\x12\x11andara.content.v1\"\xfc\x01\n" +
 	"\x0eZoneDefinition\x12%\n" +
 	"\x0eformat_version\x18\x01 \x01(\rR\rformatVersion\x12\x0e\n" +
 	"\x02id\x18\x02 \x01(\tR\x02id\x12\x12\n" +
@@ -472,7 +486,8 @@ const file_andara_content_v1_zone_proto_rawDesc = "" +
 	"\x05rooms\x18\x04 \x03(\v2!.andara.content.v1.RoomDefinitionR\x05rooms\x12A\n" +
 	"\n" +
 	"components\x18\x05 \x03(\v2!.andara.content.v1.ComponentValueR\n" +
-	"components\"\xd4\x01\n" +
+	"components\x12#\n" +
+	"\rfallback_room\x18\x06 \x01(\tR\ffallbackRoom\"\xd4\x01\n" +
 	"\x0eRoomDefinition\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x14\n" +
 	"\x05title\x18\x02 \x01(\tR\x05title\x12 \n" +

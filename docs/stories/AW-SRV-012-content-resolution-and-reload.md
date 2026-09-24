@@ -58,8 +58,10 @@ on an engineering release.
 2. **Given** a running World **when** `pack.town` moves to `8` **then** a `ContentSwap{pack, version}`
    Command is produced, the swap applies inside one tick, and no tick observes a mix of `7` and `8`.
 3. **Given** a Character in a Room that `8` removes **when** the swap applies **then** in the same tick
-   the Character is moved to `fallback_room`, `EntityRelocated{entity, from, to, reason=ROOM_REMOVED}`
-   is emitted with both Rooms' scope, and `andara_content_relocations_total{zone}` increments.
+   the Character is moved to `fallback_room`, `EntityRelocated{zone_id, entity_name, from_room_id,
+   to_room_id, reason="room_removed"}` is emitted scoped to the fallback Room and the moved Entity
+   *(amended 2026-09-24: a `Scope` holds one Room, and the removed Room's only audience is the
+   Entities being relocated out of it)*, and `andara_content_relocations_total{zone}` increments.
 4. **Given** `format_version` newer than the binary supports **when** the pointer moves **then** the
    load is rejected, `7` continues to be served, an `error` line names both versions, and
    `andara_content_load_failures_total{reason="format_version"}` increments. The World stays up.
@@ -106,14 +108,30 @@ func (l *Loader) Apply(r Resolved) error   // validates, builds, produces Conten
 ```
 
 ```protobuf
-// CONTRACT SKETCH — additions
-// zone.proto ZoneDefinition: next free number
-string fallback_room = 6;         // RoomID in this Zone; required; validated present
-// log.proto LoggedCommand oneof
-ContentSwap content_swap = 16;    // pack_id, version, world_digest (sha256 of the built topology)
-// event.proto payload oneof
-EntityRelocated { string entity_id = 1; RoomRef from = 2; RoomRef to = 3; RelocateReason reason = 4; }
+// CONTRACT SKETCH — as landed 2026-09-24 in docs/specs/protocol (the protos are normative)
+// zone.proto ZoneDefinition
+string fallback_room = 6;         // RoomID in this Zone; empty or absent is `fallback_missing`
+// log.proto LoggedCommand oneof — 16 is unbind_character; 13/14 are AW-SRV-028's
+ContentSwap content_swap = 17;    // pack_id = 1, version = 2, world_digest = 3
+// event.proto EventEnvelope.payload oneof — 18 is Resync
+EntityRelocated entity_relocated = 19;  // zone_id, entity_name, from_room_id, to_room_id, reason
 ```
+
+**Amended 2026-09-24 (architecture, with implementation under way; also in the feedback file §3):**
+- **Numbers.** The sketch's `content_swap = 16` collided with `unbind_character`, so it is 17.
+  `EntityRelocated` is 19.
+- **A swap is World-scoped.** A pack's Zones can sit on many Partitions, and a per-Zone swap would
+  let one tick see two versions, which AC-2 forbids. The `LoggedCommand` carries an empty
+  `zone_id` and is produced to Partition 0. Its Apply runs **after every other record of its
+  tick**, so every Command of tick *T* sees the old version and every Command of *T+1* the new
+  one. Two swaps in one tick apply in offset order. Relocation in every affected Zone happens in
+  that one Apply, which ADR-0001's single process permits. The sharding story owns the
+  cross-process form.
+- **`EntityRelocated` follows the Event house style.** Flat `zone_id` and Room IDs (there is no
+  `RoomRef`), a display name rather than an Entity ID (IDs do not reach clients), and a string
+  `reason` (`room_removed`), as `Resync` and `SubscriberDropped` carry theirs.
+- **`world_digest`** is SHA-256 over the built topology, as `server/sim` defines it. Document the
+  function in `server/README.md`. A replay mismatch halts recovery, as a State Hash mismatch does.
 
 `ContentSwap.world_digest` lets replay assert it rebuilt the same topology from the same version.
 

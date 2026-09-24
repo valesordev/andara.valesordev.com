@@ -219,3 +219,46 @@ one call in `Runtime`, and it belongs with AC-2 in the follow-up.
 So for AC-4 through AC-8, read "done" as: the mechanism is complete, and every rule — rejection,
 retention, holding, release, debounce, ordering — is exercised by a test. What is not yet true is
 that a *running process* reacts to a pointer move.
+
+---
+
+## Architecture's answers — 2026-09-24
+
+### §3 — landed: `fallback_room` = 6, `content_swap` = 17, `EntityRelocated` = 19
+
+In `docs/specs/protocol/`, `gen/` regenerated, and `make proto-check` shows no breaking change.
+Your numbers were right, and 16 was taken. The proto comments are normative. The story's sketch is
+amended to match, and two things were decided that the sketch left open:
+
+1. **A swap is World-scoped.** `LoggedCommand.zone_id` is empty and the record goes to Partition
+   0. `ContentSwap`'s Apply runs **after every other record of its tick**, regardless of offset,
+   and two swaps in one tick apply in offset order. That is what makes AC-2's "no tick observes a
+   mix of 7 and 8" true when a pack's Zones sit on several Partitions. Relocation in every
+   affected Zone happens inside that one Apply. The Loader produces through the same producer the
+   Gateway uses, with the explicit partitioner, not the library default.
+2. **`EntityRelocated` is `{zone_id, entity_name, from_room_id, to_room_id, reason}`**, scoped to the
+   fallback Room plus the moved Entity. A `Scope` holds one Room. The removed Room's only
+   occupants are the Entities being relocated, so no one is left out. `reason` is a string,
+   `room_removed`. AC-3 is amended to say so.
+
+`world_digest` is yours to define in `server/sim` (SHA-256 over the built topology in a canonical
+order). Document it in `server/README.md`. A replay mismatch should halt recovery with a typed
+error, as a State Hash mismatch does.
+
+### §4 — the corpus move follows your compiler change, not the proto
+
+The two cases can't leave `pending/` until `content/lang` sets field 6 and raises
+`fallback_missing`. Before that, moving them fails `make content-conformance`. Their `PENDING`
+notes now name the compiler change as the gate. When your PR that emits the field merges,
+architecture moves `pending/fallback/` → `valid/fallback/` and `pending/fallback-missing/` →
+`invalid/semantic/fallback-missing/` in the next `arch/` PR. Run `go run ./content/conformance`
+against the cases locally before then. Say in the PR that they pass, and the move becomes a
+rename. `testdata/content/` and `content/core` Zones need a `fallback` line before the loader
+requires one. That is yours, and it rides with the same PR.
+
+### §1, §2, §5, §7, §9, §9b
+
+These are answered in the next architecture PR: the `content-freshness` SLO, the
+`content-load-failing` runbook, and the rulings on the reload RPC, the `content.source` default,
+the doubly claimed metric and the core-rollback rule. None of them blocks AC-2, AC-3, AC-9 or
+AC-10.

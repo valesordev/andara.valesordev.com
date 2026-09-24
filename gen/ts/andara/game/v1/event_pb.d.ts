@@ -107,6 +107,12 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: Resync;
     case: "resync";
+  } | {
+    /**
+     * @generated from field: andara.game.v1.EntityRelocated entity_relocated = 19;
+     */
+    value: EntityRelocated;
+    case: "entityRelocated";
   } | { case: undefined; value?: undefined };
 };
 
@@ -308,6 +314,56 @@ export declare type SimulationStopped = Message<"andara.game.v1.SimulationStoppe
  * Use `create(SimulationStoppedSchema)` to create a new message.
  */
 export declare const SimulationStoppedSchema: GenMessage<SimulationStopped>;
+
+/**
+ * An Entity was moved out of a Room that a new content version removed, to
+ * its Zone's fallback_room (AW-SRV-012, ADR-0004), inside the ContentSwap's
+ * Apply. Scoped to the fallback Room and the moved Entity. The removed Room
+ * has no other audience, because everything standing in it is relocated in
+ * the same Apply. entity_name is the display name, as RoomDescribed.occupants
+ * carries it. Entity IDs do not reach clients.
+ *
+ * @generated from message andara.game.v1.EntityRelocated
+ */
+export declare type EntityRelocated = Message<"andara.game.v1.EntityRelocated"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string entity_name = 2;
+   */
+  entityName: string;
+
+  /**
+   * the removed Room
+   *
+   * @generated from field: string from_room_id = 3;
+   */
+  fromRoomId: string;
+
+  /**
+   * ZoneDefinition.fallback_room
+   *
+   * @generated from field: string to_room_id = 4;
+   */
+  toRoomId: string;
+
+  /**
+   * room_removed: the only reason in v1. A string, as SubscriberDropped's
+   * and Resync's are, so a new reason needs no schema change.
+   *
+   * @generated from field: string reason = 5;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message andara.game.v1.EntityRelocated.
+ * Use `create(EntityRelocatedSchema)` to create a new message.
+ */
+export declare const EntityRelocatedSchema: GenMessage<EntityRelocated>;
 
 /**
  * Sent when heartbeat_interval passes with nothing else to send, so a client
