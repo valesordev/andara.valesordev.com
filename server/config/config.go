@@ -243,12 +243,11 @@ const (
 // EnvLookup looks up an environment variable.
 type EnvLookup func(string) (string, bool)
 
-// Parse resolves flag > env > file > default. args must not include argv0.
-func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
-	if env == nil {
-		env = func(string) (string, bool) { return "", false }
-	}
-	c := Config{
+// defaults is every key at its documented default, before file, env, and
+// flags. Shared by Parse and ParseProjector, so the two binaries cannot
+// disagree about what an unset key means.
+func defaults() Config {
+	return Config{
 		ContentSource:         DefaultContentSource,
 		ContentPath:           DefaultContentPath,
 		ContentPacks:          []string{"andara.core"},
@@ -311,6 +310,14 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		SnapshotUploadTimeout:    DefaultSnapshotUploadTimeout,
 		TraceSampleRatio:         DefaultTraceSampleRatio,
 	}
+}
+
+// Parse resolves flag > env > file > default. args must not include argv0.
+func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
+	if env == nil {
+		env = func(string) (string, bool) { return "", false }
+	}
+	c := defaults()
 	configPath := peekConfigPath(args, env)
 	if configPath != "" {
 		if err := applyFile(&c, configPath); err != nil {

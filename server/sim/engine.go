@@ -534,7 +534,10 @@ func (e *Engine) ReplayEach(boundaries []TickCompleted, src RecordSource, after 
 				ErrBoundaryGap, b.Tick, e.state.Tick, e.state.Tick+1, b.Tick-1)
 		}
 		if b.StateVersion != e.state.Version {
-			return fmt.Errorf("replay: boundary for tick %d has state_version %d, this binary reads %d", b.Tick, b.StateVersion, e.state.Version)
+			// Typed, so a caller can tell "written by a newer binary" (the
+			// state projector's exit 4, AW-SRV-019 AC-10) from a broken log.
+			return fmt.Errorf("replay: boundary for tick %d has state_version %d, this binary reads %d: %w",
+				b.Tick, b.StateVersion, e.state.Version, &ErrStateVersion{Have: b.StateVersion, Want: e.state.Version})
 		}
 		var in TickInput
 		parts := make([]int, 0, len(b.Offsets))

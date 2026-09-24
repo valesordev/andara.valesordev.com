@@ -29,6 +29,11 @@ type Divergence struct {
 }
 
 func (d *Divergence) Error() string {
+	return fmt.Sprintf("state projector diverged at tick %d: recorded %x, replayed %x; last good offsets %s", d.Tick, d.Recorded, d.Replayed, d.lastGood())
+}
+
+// lastGood renders LastGood as partition:offset pairs, sorted.
+func (d *Divergence) lastGood() string {
 	parts := make([]int, 0, len(d.LastGood))
 	for p := range d.LastGood {
 		parts = append(parts, int(p))
@@ -41,7 +46,7 @@ func (d *Divergence) Error() string {
 		}
 		fmt.Fprintf(&b, "%d:%d", p, d.LastGood[int32(p)])
 	}
-	return fmt.Sprintf("state projector diverged at tick %d: recorded %x, replayed %x; last good offsets %s", d.Tick, d.Recorded, d.Replayed, b.String())
+	return b.String()
 }
 
 // Unwrap makes errors.Is(err, sim.ErrHashMismatch) hold.

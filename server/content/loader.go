@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -342,6 +343,22 @@ func (l *Loader) Versions() map[string]uint64 {
 	out := make(map[string]uint64, len(l.serving))
 	for p, r := range l.serving {
 		out[p] = r.Version
+	}
+	return out
+}
+
+// ZoneVersions names, for each Zone being served, the packID@version it came
+// from. The state projector stamps it on Room and Zone records so a runtime
+// object traces to authored source (AW-SRV-019 AC-7).
+func (l *Loader) ZoneVersions() map[sim.ZoneID]string {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out := map[sim.ZoneID]string{}
+	for pack, r := range l.serving {
+		v := pack + "@" + strconv.FormatUint(r.Version, 10)
+		for _, z := range r.Zones {
+			out[sim.ZoneID(z.Def.GetId())] = v
+		}
 	}
 	return out
 }
