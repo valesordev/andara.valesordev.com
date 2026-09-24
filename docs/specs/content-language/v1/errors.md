@@ -112,25 +112,39 @@ Rule 1, per code. The corpus fixes every row byte for byte; this table is the st
 
 ### Chain
 
-`Chain` is the declaration path to the finding, outermost first. It names where the finding is, and
-stops short of the offending value, because the position already points at that:
+`Chain` is the declaration path to the finding, outermost first. It names the **carrier** — the
+declaration the offending token sits in — and stops short of the offending value, because the
+position already points at that. There are four carriers:
 
-| Finding | Chain |
+| Carrier | Chain |
 |---------|-------|
-| `unknown_room`, `unknown_zone`, `duplicate_direction`, `missing_reverse_exit` | `<zone>`, `<room>`, `<direction>` — the Exit is the carrier, its direction is not in dispute |
-| `unknown_direction` | `<zone>`, `<room>` — the direction *is* the offending value |
-| `orphan_room`, `duplicate_room`, `duplicate_declaration` | `<zone>`, `<room>` |
-| `duplicate_zone` | `<zone>` |
-| `duplicate_component_type` | the carrier — `<zone>`, `<room>`, or `<pack>.<Template>` — without the type |
-| `invalid_component_field` | the carrier, then the Component type |
+| Zone | `<zone>` |
+| Room | `<zone>`, `<room>` |
+| Exit | `<zone>`, `<room>`, `<direction>` |
+| Template | `<pack>.<Name>` — the Template alone, not its ancestry |
+
+Every raisable code, with the chain it carries. There is no fallback rule, and a code missing from
+this table is a defect in this document:
+
+| Code | Chain |
+|------|-------|
+| `syntax_error`, `encoding`, `pack_missing`, `duplicate_pack`, `pack_mismatch`, `core_version_mismatch` | empty — pack-level, or found before any declaration is |
+| `duplicate_zone`, `fallback_missing` | Zone |
+| `duplicate_room`, `orphan_room` | Room |
+| `duplicate_declaration` | Room for a second `desc`; Zone for a second `fallback` |
+| `unknown_direction` | Room — the direction *is* the offending value, so the Exit carrier would restate it |
+| `unknown_room`, `unknown_zone`, `unknown_sense`, `duplicate_direction`, `missing_reverse_exit` | Exit — its direction is not in dispute |
+| `duplicate_template`, `template_head`, `unresolved_extends` | Template |
+| `invalid_escape`, `float_literal`, `unknown_component_type`, `duplicate_component_type` | whichever carrier holds the literal or the Component: Zone, Room, or Template. Never the Component type |
+| `invalid_component_field` | the Component's carrier, then the Component type |
 | `removed_by_subtype`, `unknown_behavior` | the inheritance chain, root first, ending at the declaring Template |
 | `extends_cycle` | the cycle from its lowest-named member, that member repeated as the last entry |
 | `chain_too_deep` | every Template in the chain, including the one past the bound |
-| pack-level findings | empty |
 
 *Corrected 2026-09-24 (`AW-CLI-005` review):* this section said an Exit finding carries "the Exit's
-direction", which `unknown_direction`'s own sidecar contradicts, and rules 4, 7, 8, and 9 and the
-position table were stated only by the corpus. `AW-CLI-006` was written to the corpus
+direction", which `unknown_direction`'s own sidecar contradicts, and rules 4, 7, 8, and 9, the
+position table, and the chain table were stated only by the corpus. At PR #58's review the chain
+table gained a row for every raisable code, each checked against its sidecar. `AW-CLI-006` was written to the corpus
 (`docs/feedback/AW-CLI-006-content-language-compiler.md` §1–§4); the prose now says what the corpus
 already fixed.
 

@@ -4,7 +4,7 @@ title: Content Language v1 — grammar, semantics, error contract, and conforman
 epic: EPIC-05
 component: cli
 type: feature
-status: done
+status: review
 size: M
 depends_on: [AW-SRV-020, AW-SRV-021, AW-SRV-022]
 blocks: [AW-CLI-006]
@@ -222,9 +222,17 @@ frontmatter said `draft` — a compiler written before the syntax is pinned, whi
 the story is `review`: merged, syntax pinned, the §8 checklist outstanding. No `[ASSUMPTION]` remains —
 the `src/<path>.aw` publication prefix was pinned on 2026-09-23 (below), because it is normative
 compiler output in `semantics.md` §6 and a dependency `AW-CLI-006` builds on cannot leave it movable.
-The §8 record is below; the story is `done`.
+The §8 record is below. The story stays `review` until AC-9's `valid/` half runs in CI.
 
 ## Review — 2026-09-24 (§8, against `main` at `63727dd`, after `AW-CLI-006` merged in PR #57)
+
+**Outcome: stays `review`.** Every item below passes except one. AC-9's `valid/` half was verified
+by hand and has no CI runner. §8 requires the test plan's coverage to run in CI, and its exception
+for deferred observations covers a runtime caller that lands in a later story, not a missing test.
+Without the runner, `make check` could pass after a regression there. The runner is `AW-CLI-006`'s
+inherited Definition-of-done line. When it is in `make check`, this story flips to `done` with no
+further review. *(Corrected at PR #58's review. The first draft of this record flipped the story to
+`done` over the gap.)*
 
 | §8 item | Result |
 |---------|--------|
@@ -270,6 +278,12 @@ items against this spec. Answered:
 
 Also fixed: `formatting.md` §6 never said what order Templates take inside a file. `decompile` uses
 `source.line` order, and the table now says so.
+
+Found at PR #58's review, and left open: the grammar makes `requires` optional
+(`pack_decl: "pack" pack_ref requires_clause?`), and `AW-CLI-006` accepts a non-core pack without
+one. A pack published that way would carry no `ContentVersion.core_version`. Whether the publish
+gate refuses it, and whether the compiler should, is `AW-SRV-013`'s to decide. The glossary no longer
+calls the pin mandatory.
 
 ## Open questions
 

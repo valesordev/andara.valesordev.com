@@ -130,7 +130,8 @@ for AC-4 (compiled → source → compiled). Add a pass over every `valid/` case
 pack, recompile from a directory named like the case, and compare the blobs with
 `TemplateDefinition.source` masked. `semantics.md` §8 now states that exception. At review a
 throwaway program found 16 of 16 identical under that mask, and 7 of 16 differing without it. This
-story is `review` until the pass is in `make check`.
+story is `review` until the pass is in `make check`, and so is `AW-CLI-005`, which closes on the same
+evidence.
 
 ## Open questions
 

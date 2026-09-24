@@ -202,7 +202,8 @@ formatter, and decompiler are `AW-CLI-006`; the Builder commands are `AW-CLI-003
 **Content Pack** — A versioned bundle of Zone Definitions and Templates (ADR-0010: Items and NPCs
 are Templates) that the server loads as a set, published with the Content Language sources it was
 compiled from. Authored outside the repository by Builders and published through `andara-cli`
-(ADR-0004). Every pack but `andara.core` requires a pinned `andara.core` version.
+(ADR-0004). A pack names the `andara.core` version it was written against with `requires`
+(`ContentVersion.core_version`, ADR-0010 decision 8).
 
 **Content Version** — An immutable manifest on `andara.content.versions.v1`, keyed by `packID@version`,
 naming its Content Blobs, its parent version, its author, and its timestamp. The linked history a
