@@ -182,6 +182,10 @@ the expected interruption as a number from the last CI run, and every step is a 
   lands — the Gateway's routing table and Hub read the local engine, so a Character crossing to a
   Zone another pod consumes leaves its Session `in_transit` and unperceiving. The chart pins one
   replica; this story's rebalance procedure assumes `AW-SRV-030`.
+- **Inherited from `AW-INF-008`'s §8 pass (2026-09-24):** the two-namespace form of 008's AC-6.
+  With `andara-dev` and `andara-prod` both installed and Ready, deleting `andara-0` in one
+  namespace makes the rule expressions return a result for that namespace alone. This story is
+  the first to make `prod` Ready. Until it does, `absent(…andara-prod…)` is a standing result.
 
 ## Open questions
 

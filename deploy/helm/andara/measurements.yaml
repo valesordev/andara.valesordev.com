@@ -13,7 +13,7 @@
 # measurement against it when it exists and flip this then.
 measured: false
 measured_at: ""
-fixture: "sizing fixture, AW-SRV-006 test plan: 2,000 Rooms / 10,000 Entities / 500 Characters"
+fixture: "sizing fixture, AW-SRV-006 test plan: 2,000 Rooms / 25,000 Entities (Brian, 2026-09-22) / 500 Characters"
 server:
   cpu_millicores_p99: 500
   memory_mib_p99: 512

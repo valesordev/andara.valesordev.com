@@ -347,3 +347,28 @@ side of the trade.
 - **`TestRebind` in `server/egress` is flaky** — about one run in five, on `main`, independent
   of this branch. Unrelated to snapshots, but it is in `make check`, so it is an intermittent
   red build.
+
+---
+
+## 13. §8 review (2026-09-24, architecture) — for implementation
+
+The story stays `review`. The full record is in the story under "§8 pass (2026-09-24)". What
+implementation owes, in the order it matters:
+
+1. **AC-3: the superset hash.** `StateHash()` must be SHA-256 over `ZoneCanonicalBytes(body)`
+   followed by a snapshot record of `tick`, `prng_state` and `next_event_id`, exactly as the
+   amended criterion and `snapshot.proto`'s comment say. `store/migrate.go`'s verification must use
+   the same function. Add a test that corrupts each of the three in an encoded object and asserts
+   the read fails its hash. Replace the Go-struct field counts with a tripwire over the
+   `ZoneState`/`EntityState` **proto** descriptors: every field is covered by
+   `ZoneCanonicalBytes` or the snapshot record, or the build fails.
+2. **AC-8: acknowledgement, not enqueue.** Encode and `Put` wait for the boundary's
+   `TickCompleted` to be acknowledged (`OnBoundaryAcked`/`OnBoundaryLost` already exist in
+   `server/boot/tick.go`; route them to the round). Lost → abandon, `reason=boundary`. Neither
+   before `snapshot.upload_timeout` → abandon, `reason=timeout`. Pre-create `boundary`. The test
+   plan's two asynchronous cases get tests.
+3. **`server/README.md`:** `max_stall_ms` default `15` (drop "measured 2.7 ms"), the key order
+   `{zone_id}/{tick}/{state_version}/{offset}`, and `s3` described as the cluster's store and
+   versitygw locally.
+
+Delivered on an `impl/aw-srv-006-…` branch; the story returns to §8 when it merges.

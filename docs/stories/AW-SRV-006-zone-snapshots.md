@@ -470,6 +470,57 @@ CLAUDE.md §8, plus:
   that the boundary was lost, which is a different statement from a round having been abandoned.
   DoD line 1 does not pass while this is open, which is why the story is `review` and not `done`.
 
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6`, compose stack with the server image rebuilt from that commit (#73:
+`make up` had been running an image from 2026-09-22).
+
+**Two acceptance criteria fail in the code:**
+- **AC-3.** `Snapshot.StateHash()` is `HashZone(body)`, meaning `sha256(ZoneCanonicalBytes)`
+  (`server/sim/snapshot.go`, `state.go`). The amended criterion requires a documented superset:
+  `ZoneCanonicalBytes`, then a record of `tick`, `prng_state` and `next_event_id`. As built,
+  corrupting any of those three in a stored object leaves it hash-valid, which is the failure the
+  amendment was written to close. `TestDisagreeingPRNGMakesTheRoundIncomplete` (#64) catches Zones
+  that disagree, not a consistent corruption or a one-Zone World. The "tripwire over every
+  `ZoneState` proto field" counts Go struct fields (`snapshot_codec_test.go`), not proto fields.
+- **AC-8.** The round is gated on `Publish`'s synchronous return (`tickloop/loop.go`). The second
+  amendment rejected exactly that. There is no wait for the boundary's acknowledgement, no
+  `reason=boundary`, and no `reason=timeout` for an ack that never comes. The test plan's two async
+  cases (a delivery failure on the callback after `Publish` returned nil; no ack before
+  `upload_timeout`) have no tests. The DoD note above names only the missing counter; the missing
+  ack gate is the larger gap.
+
+**Also owed by implementation:** `server/README.md`'s snapshot rows are stale. `max_stall_ms`
+says `5` and "measured 2.7 ms", where the code and this story say `15`. The key reads
+`{zone_id}/{state_version}/{tick}/{offset}`, where the contract is
+`{zone_id}/{tick}/{state_version}/{offset}`. `s3` still says MinIO.
+
+**Verified live in this pass** (the record's gap, now closed):
+- **Tempo:** `persistence.snapshot{tick}` → `snapshot.copy{zones, stall_ms}`, then
+  `snapshot.encode{zone, bytes}` and `snapshot.put{zone, key, bytes}` per Zone. That is one trace
+  per round, joined to the `warn` lines by `trace_id`.
+- **From the server's own registry:** `andara_snapshot_failures_total{reason="store"}` 3 and
+  `andara_snapshot_rounds_total{outcome="incomplete"}` 1.
+
+These were observed on a real failure: the compose stack has no writable `snapshot.fs_path`, and
+every round there fails `store` (#74, architecture's). `encode`, `timeout` and `stall` remain
+unobserved from a server, so `AW-SRV-007`'s Definition of done now carries them as an inherited
+line (added in this pass: the record above said 007 inherits them, but 007 did not say so).
+
+**Architecture's, done in this pass:**
+- A promtool test for `SnapshotStale`: fires after three cadences, stays silent on cadence, and
+  never fires at `interval=0`. Mutation-checked: removing the `> 0` guard fails the disabled case.
+- `measurements.yaml` names the 25,000-Entity fixture.
+- The §12 follow-ups are routed. `measure-tick` is `AW-INF-011` AC-10, already paused in
+  `docs/feedback/AW-INF-011.md`. `TestRebind` passes 15/15 under `-race` at `033f2c6` and now waits
+  on `Streams`, so it is treated as fixed by `e1622aa`.
+
+Everything else holds: ACs 2, 4, 5, 6 and 7, config in `keys.yaml` and the schema, the glossary,
+`state_version` and the migration registry, the runbook, and the SLO. AC-1's CI bound runs under
+the race detector's ×8 factor. That is accepted: the 15 ms figure is the recorded measurement, and
+CI guards against an order-of-magnitude regression, not the budget itself. Written up for
+implementation in `docs/feedback/AW-SRV-006-zone-snapshots.md` §13.
+
 ### Sizing fixture, measured
 
 **Fixture scale decided 2026-09-22 (Brian): 25,000 Entities**, up from 10,000, for headroom as the

@@ -133,6 +133,39 @@ throwaway program found 16 of 16 identical under that mask, and 7 of 16 differin
 story is `review` until the pass is in `make check`, and so is `AW-CLI-005`, which closes on the same
 evidence.
 
+
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+This story had no §8 record. The only review so far was the one inside `AW-CLI-005`. Run against
+`origin/main` `033f2c6`.
+
+**Holds:**
+- ACs 1, 2, 3, 6, 7 and 8 have tests in `content/lang` and `admin/cli`, untagged and run in
+  `make test`. `make content-conformance` and `make content-grammar-check` are in `make check`.
+- The `cli.command` → `content.compile{files, zones, templates, diagnostics}` span is asserted by
+  `TestContentCompileEmitsTheSpan` with an in-process recorder. That satisfies §8's
+  real-backend item for a CLI: `AW-CLI-001` decided the CLI exports nowhere, so there is no backend
+  for its spans to reach, and the recorder is the most real observation available.
+- Glossary: no new terms beyond `AW-CLI-005`'s. No migrations and no Helm keys.
+- The parser `[ASSUMPTION]` is struck above as settled by the build.
+
+**Owed by implementation:**
+1. **The `valid/` decompile-and-recompile pass in `make check`.** This is the inherited line above,
+   `SPRINT-01` implementation item 2. On `033f2c6`, `conformance.go` calls `diffRoundTrip` only for
+   `roundtrip/`.
+2. **`admin/README.md`.** It still says "`content` arrives with `AW-CLI-002`", and its Commands
+   table lacks `content compile|fmt|decompile|fetch-core`. The flags that exist only in
+   `admin/cli/testdata/help/content-*.txt` need rows: `--cache` and `ANDARA_CONTENT_CACHE`,
+   `fetch-core --from`, and `decompile --path`.
+
+**Passes to other stories (the no-caller rule):**
+- "The package is imported by the server's publish gate": `AW-SRV-013` is the gate, and its
+  Definition of done now names the import (added in this pass).
+- AC-4 on a *published* version (`decompile --pack/--version`) and AC-5's cache filled over Admin
+  (`fetch-core`) have no RPC to call. No story defines one (feedback §7). They are tested today
+  against `--path` and `--from`. The RPC is sent to PM in the feedback file (§14). Whichever story
+  gets it inherits these two ACs' published-version halves.
+
 ## Open questions
 
 - **Inherited from `AW-SRV-022` (2026-09-18):** the compiler emits one blob per declaration at
@@ -153,7 +186,7 @@ evidence.
   `corpus/invalid/encoding/` is checked before the grammar is reached. `make content-grammar-check`
   already exists and is in `make check`.
 
-- `[ASSUMPTION]` Hand-written recursive-descent parser rather than a generated one; the grammar is
+- **Resolved 2026-09-24 (§8, as built in `content/lang/parser.go`):** Hand-written recursive-descent parser rather than a generated one; the grammar is
   small and the error messages are the product. The spec's grammar is checked with lark's Earley
   parser and a dynamic lexer, because the language has no reserved words — a hand-written parser is
   contextual by construction, so this is a property of the checking tool, not a constraint on the
