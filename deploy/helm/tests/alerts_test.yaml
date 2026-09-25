@@ -205,6 +205,8 @@ tests:
         values: '5x10'
       - series: 'andara_state_projector_lag_seconds{job="andara-projector-state"}'
         values: '1 1 9 9 9 9 9 9 9 2 2'
+      - series: 'andara_ticks_total{job="andara-server"}'
+        values: '0+600x12'
     alert_rule_test:
       - eval_time: 1m
         alertname: StateProjectorDiverged
@@ -214,7 +216,7 @@ tests:
         exp_alerts:
           - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, job: andara-projector-state}
             exp_annotations:
-              summary: "The state projector's replica disagrees with the World's recorded State Hash — the indexes are frozen at the last good tick"
+              summary: "The state projector's replica disagreed with the World's recorded State Hash — a possible determinism failure; the evidence is the projector's error line"
               runbook: docs/runbooks/state-projector-diverged.md
       - eval_time: 6m
         alertname: ProjectionStale
@@ -242,6 +244,10 @@ tests:
         values: '5x10'
       - series: 'andara_state_projector_lag_seconds{namespace="andara-prod", job="andara-projector-state"}'
         values: '1x10'
+      - series: 'andara_ticks_total{namespace="andara-dev", job="andara-server"}'
+        values: '0+600x12'
+      - series: 'andara_ticks_total{namespace="andara-prod", job="andara-server"}'
+        values: '0+600x12'
     alert_rule_test:
       - eval_time: 6m
         alertname: ProjectionStale
@@ -250,3 +256,85 @@ tests:
             exp_annotations:
               summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
               runbook: docs/runbooks/projection-stale.md
+
+  # Corrected at AW-SRV-019's §8 (2026-09-24). The mismatch counter lives one minute, and the
+  # restart usually skips the divergent tick, so the ticket must outlive the process.
+  - name: the divergence ticket outlives the process that saw it
+    interval: 1m
+    input_series:
+      - series: 'andara_state_digest_mismatches_total{job="andara-projector-state"}'
+        values: '0 1'
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: StateProjectorDiverged
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, job: andara-projector-state}
+            exp_annotations:
+              summary: "The state projector's replica disagreed with the World's recorded State Hash — a possible determinism failure; the evidence is the projector's error line"
+              runbook: docs/runbooks/state-projector-diverged.md
+      - eval_time: 7h
+        alertname: StateProjectorDiverged
+        exp_alerts: []
+
+  # A World that is not ticking makes no boundaries: the projector's lag grows, and nothing
+  # is stale. That is the server's alert to raise, not this one.
+  - name: a stopped World does not ticket the projection as stale
+    interval: 1m
+    input_series:
+      - series: 'andara_state_projector_lag_budget_seconds{job="andara-projector-state"}'
+        values: '5x15'
+      - series: 'andara_state_projector_lag_seconds{job="andara-projector-state"}'
+        values: '60+60x15'
+      - series: 'andara_ticks_total{job="andara-server"}'
+        values: '5000x15'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ProjectionStale
+
+  # SnapshotStale (AW-SRV-006). The threshold is derived from the configured cadence, not
+  # fixed, and `snapshot.interval=0` (snapshots disabled) must never fire. The age gauge
+  # climbs forever when snapshots are off, so without the guard the alert would never clear.
+  # The last case is the amendment that had no test before the 2026-09-24 §8 review.
+  - name: snapshots — no complete round in three cadences tickets
+    interval: 1m
+    input_series:
+      - series: 'andara_snapshot_interval_seconds'
+        values: '60x15'
+      - series: 'andara_snapshot_age_seconds'
+        values: '0+60x15'
+    alert_rule_test:
+      # Age 180 at 3m is not over 3×60, 240 at 4m is: pending from 4m, firing 5m later.
+      - eval_time: 8m
+        alertname: SnapshotStale
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: SnapshotStale
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: recovery}
+            exp_annotations:
+              summary: "No complete snapshot round in over three cadences — recovery would be slower than the RTO target"
+              runbook: docs/runbooks/snapshot-stale.md
+
+  - name: snapshots — rounds completing on cadence stay silent
+    interval: 1m
+    input_series:
+      - series: 'andara_snapshot_interval_seconds'
+        values: '60x15'
+      - series: 'andara_snapshot_age_seconds'
+        values: '0 60 120 0 60 120 0 60 120 0 60 120 0 60 120 0'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: SnapshotStale
+        exp_alerts: []
+
+  - name: snapshots — interval 0 (disabled) never fires, however old the age
+    interval: 1m
+    input_series:
+      - series: 'andara_snapshot_interval_seconds'
+        values: '0x30'
+      - series: 'andara_snapshot_age_seconds'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: SnapshotStale
+        exp_alerts: []

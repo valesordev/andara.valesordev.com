@@ -1,0 +1,24 @@
+Create and list your Characters
+
+Usage:
+  andara-cli character [flags]
+  andara-cli character [command]
+
+Available Commands:
+  create      Create a Character on your Account
+  list        List your Characters: name, live or dormant, and where
+
+Flags:
+  -h, --help   help for character
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)
+
+Use "andara-cli character [command] --help" for more information about a command.

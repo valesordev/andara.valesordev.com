@@ -327,3 +327,31 @@ pack and present without it, so the reason the parameter exists is visible from 
 
 **Worth a corpus case.** A `roundtrip/` case whose Template extends `andara.core.Npc` would have
 caught this from the corpus rather than from a reviewer.
+
+---
+
+## 14. §8 review (2026-09-24, architecture)
+
+The story stays `review`. The record is in the story under "§8 pass (2026-09-24)".
+
+### For implementation
+1. The `valid/` decompile → recompile → compare pass (`source` masked) in `content/lang/conformance.go`,
+   run by `make check`. This is `SPRINT-01` implementation item 2, and it closes this story and
+   `AW-CLI-005` together.
+2. `admin/README.md`: drop "`content` arrives with `AW-CLI-002`". Add `content compile`, `fmt`,
+   `decompile` and `fetch-core` to the Commands table, and document `--cache`/`ANDARA_CONTENT_CACHE`,
+   `fetch-core --from`, and `decompile --path`.
+
+### For PM
+3. **No story defines the RPC that §7 above needs.** The review of `AW-CLI-005` accepted "`AW-SRV-013` /
+   `AW-CLI-003` own the transport". But `AW-SRV-013`'s Admin sketch has `HasBlobs`, `PublishBlob`,
+   `PublishVersion`, `ApproveVersion`, `ActivateVersion` and `ListVersions`, and nothing that returns
+   a published version's blobs. Without one, three things have no server to talk to:
+   - `content decompile --pack/--version` (this story's AC-4)
+   - `content fetch-core` over Admin (AC-5)
+   - `AW-CLI-002`'s `fetch-core` hint
+
+   Recommendation: `AW-SRV-013` gains a read RPC (a `GetVersion` → manifest, plus a streamed
+   `GetBlob` by hash; the blobs are immutable and hash-keyed, so the read side is cacheable
+   forever). Architecture writes that contract at `AW-SRV-013`'s contract review once it is in a
+   sprint. That story then inherits AC-4's and AC-5's published-version halves from here.

@@ -45,6 +45,15 @@ subjects:
     file: andara/log/v1/log.proto
     message: andara.log.v1.LoggedCommand
 
+  # The compacted current-state record per aggregate (AW-SRV-019), one type per topic; a
+  # tombstone is a null value and needs no schema. Moved from `pending` at the story's §8
+  # (2026-09-24): the type had shipped in record.proto without being registered (ADR-0007).
+  - subject: andara.state.v1-value
+    topic: andara.state.v1
+    strategy: TopicNameStrategy
+    file: andara/state/v1/record.proto
+    message: andara.state.v1.StateRecord
+
   # andara.events.v1 carries two record types — derived Events and the Tick Boundary Records
   # replay reads (ADR-0002 §4) — with no envelope wrapping them. TopicRecordNameStrategy is
   # what that situation is for. The alternative is adding an envelope message, which is a
@@ -111,10 +120,6 @@ subjects:
 # omitted topic is indistinguishable from a forgotten one — and the story that adds the type
 # has to come back here, which is the point. `schemas-check` fails if the named story does
 # not exist, so a pending entry cannot outlive its story.
-pending:
-  - topic: andara.state.v1
-    story: AW-SRV-019
-    why: |
-      The compacted current-state record per aggregate. Its shape is the state projector's
-      to define. andara.state.v1.SnapshotEnvelope is NOT this type — that is a Zone snapshot
-      (AW-SRV-006), a different record with a different lifecycle.
+#
+# None today: andara.state.v1, the last, is mapped above (AW-SRV-019). Add a `pending:` list
+# here when a topic is declared before its type.

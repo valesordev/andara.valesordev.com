@@ -13,13 +13,18 @@ announced too — the transcript never silently skips. --output json writes
 the raw Event stream to stdout, one envelope per line, and everything else
 to stderr.
 
+You enter the World as one of your Characters: the one --character names,
+or, with no flag, your only one. Make one first with
+`andara-cli character create <name>`. A reconnect selects the same Character
+again, waiting for the previous session to let it go if it must.
+
 A stored credential is required: run `andara-cli auth login` first.
 
 Usage:
   andara-cli play [flags]
 
 Examples:
-  andara-cli play
+  andara-cli play --character Aldric
   > look
   > north
   > /protocol on
@@ -30,6 +35,7 @@ Examples:
 
 Flags:
       --as string                 open the Session acting as this account ID (operator or game master; audited)
+      --character string          enter the World as this Character (by name, any case); optional when the Account has exactly one
       --client-timeout duration   how long one Submit may wait for its answer (0 means --timeout)
   -h, --help                      help for play
       --no-history                do not read or write $XDG_STATE_HOME/andara/history

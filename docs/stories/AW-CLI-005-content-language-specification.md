@@ -234,6 +234,12 @@ inherited Definition-of-done line. When it is in `make check`, this story flips 
 further review. *(Corrected at PR #58's review. The first draft of this record flipped the story to
 `done` over the gap.)*
 
+*Re-checked 2026-09-24 at `033f2c6`, in architecture's sprint §8 pass, with the outcome unchanged.
+`content/lang/conformance.go` still runs `diffRoundTrip` only for `roundtrip/` cases, and nothing
+recompiles `valid/` with `source` masked. The runner is `SPRINT-01`'s implementation item 2. The
+glossary's Behavior row claimed `AW-CLI-006` checks the name at compile, but `unknown_behavior` is
+pending on `AW-SRV-016`. That row is corrected in this pass.*
+
 | §8 item | Result |
 |---------|--------|
 | Every AC demonstrably passes | yes, after the AC-9 correction below. AC-1 and AC-11: `make content-grammar-check` on `main` — 117 files parse, 19 rejected at their sidecar's position, 57 expected blobs canonical, 29 codes each covered. AC-2, AC-3, AC-9's `roundtrip/` half: `make content-conformance` — 69 cases agree, 6 pending skipped, each naming its gating story. AC-9's other half, decompile and recompile over `valid/` identical but for `source`, was **verified by hand** at this review and has **no CI runner**. `AW-CLI-006` inherits adding it. AC-4–AC-8 are corpus cases inside AC-3. AC-10: resolved 2026-09-23 |

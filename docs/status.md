@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-56 stories — 1 in-progress · 11 review · 26 ready · 1 draft · 17 done
+56 stories — 1 in-progress · 10 review · 25 ready · 1 draft · 19 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -19,13 +19,14 @@ Regenerate with `make status`; `make check` fails if this file is stale.
          branch aw-srv-012-content-resolution-and-reload
   next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
   next   AW-SRV-025  ready  Client address behind the ingress — trusted proxies and…  (unblocks 1)
-  review AW-CLI-006, AW-SRV-014, AW-SRV-006, AW-SRV-011, AW-CLI-004, AW-SRV-019, AW-SRV-031…
+  review AW-CLI-006, AW-SRV-014, AW-SRV-006, AW-CLI-004, AW-SRV-019, AW-CLI-007 — run the §8…
   held   8 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-013, AW-SRV-009, AW-CLI-003, AW-SRV-016,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
+  AW-SRV-019  .
               8 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·

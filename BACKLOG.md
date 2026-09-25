@@ -9,11 +9,11 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 11 |
+| `review` | 10 |
 | `in-progress` | 1 |
-| `ready` | 26 |
+| `ready` | 25 |
 | `draft` | 1 |
-| `done` | 17 |
+| `done` | 19 |
 | **total** | **56** |
 
 ## Attention first
@@ -23,32 +23,30 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client | review by brian |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus | review by brian |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler | review by brian |
+| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `review` | andara-cli character create and list, and play --character | review by brian |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
-| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command | review by brian |
 
 ## By status
 
-### `review` (11)
+### `review` (10)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `EPIC-03` | cli | M | medium | implementation | andara-cli play — the text interface as a first-class protocol client | `AW-CLI-001`, `AW-SRV-005`, `AW-SRV-011`, `AW-SRV-031` |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `EPIC-05` | cli | M | high | architecture | Content Language v1 — grammar, semantics, error contract, and conformance corpus | `AW-SRV-020`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
-| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
 ### `in-progress` (1)
 
@@ -56,13 +54,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 
-### `ready` (26)
+### `ready` (25)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001`, `AW-SRV-034` |
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, approve, activate, rollback, history, diff, and fetch | `AW-CLI-001`, `AW-CLI-002`, `AW-CLI-006`, `AW-SRV-013`, `AW-SRV-021` |
-| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `EPIC-03` | cli | S | low | implementation | andara-cli character create and list, and play --character | `AW-CLI-004`, `AW-SRV-014` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030`, `AW-INF-013`, `AW-INF-014` |
 | [`AW-INF-009`](docs/stories/AW-INF-009-alert-rule-delivery.md) | `EPIC-07` | infra | S | medium | architecture | Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud | `AW-INF-008` |
@@ -93,7 +90,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | architecture | A schema registry on the box for dev and prod | `AW-INF-014` |
 
-### `done` (17)
+### `done` (19)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -110,10 +107,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `EPIC-03` | server | M | high | implementation | gRPC gateway — TLS, session lifecycle, and protocol version negotiation | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `EPIC-08` | server | M | high | implementation | Account store, registration modes, and authentication | `AW-SRV-005` |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `EPIC-03` | server | M | high | implementation | Command ingress — parse, authorize, and produce to the command log | `AW-SRV-003`, `AW-SRV-005`, `AW-INF-004` |
+| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `EPIC-03` | server | M | high | implementation | Event egress — server-streaming subscription with per-session backpressure | `AW-SRV-004`, `AW-SRV-005` |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `EPIC-03` | server | M | high | architecture | Protobuf schema as the wire, log, snapshot, and content contract | `AW-INF-001` |
 | [`AW-SRV-021`](docs/stories/AW-SRV-021-components-on-rooms-and-zones-and-the-closed-direction-set.md) | `EPIC-02` | server | M | medium | implementation | Components on Rooms and Zones, and the closed Direction set | `AW-SRV-001` |
 | [`AW-SRV-022`](docs/stories/AW-SRV-022-template-definitions-flattened-loading-and-entity-instantiation.md) | `EPIC-02` | server | M | medium | implementation | Template definitions — schema, flattened loading, and Entity instantiation | `AW-SRV-020`, `AW-SRV-021` |
 | [`AW-SRV-024`](docs/stories/AW-SRV-024-otlp-log-export.md) | `EPIC-07` | server | S | low | implementation | Export logs over OTLP so the log sink carries what stderr carries | `AW-SRV-001` |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `EPIC-03` | server | S | medium | implementation | Submit idempotency — a client retry after an ambiguous outcome is the same Command | `AW-SRV-010` |
 
 ## By epic
 
@@ -156,15 +155,15 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-004`](docs/stories/AW-CLI-004-andara-cli-play-text-interface.md) | `review` | andara-cli play — the text interface as a first-class protocol client |
-| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `ready` | andara-cli character create and list, and play --character |
+| [`AW-CLI-007`](docs/stories/AW-CLI-007-character-commands-and-play-character.md) | `review` | andara-cli character create and list, and play --character |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `done` | Command pipeline stages split across the log boundary, with look and move |
 | [`AW-SRV-005`](docs/stories/AW-SRV-005-protobuf-schema-and-grpc-gateway-lifecycle.md) | `done` | gRPC gateway — TLS, session lifecycle, and protocol version negotiation |
 | [`AW-SRV-010`](docs/stories/AW-SRV-010-command-ingress-and-log-produce.md) | `done` | Command ingress — parse, authorize, and produce to the command log |
-| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `review` | Event egress — server-streaming subscription with per-session backpressure |
+| [`AW-SRV-011`](docs/stories/AW-SRV-011-event-egress-streaming-and-backpressure.md) | `done` | Event egress — server-streaming subscription with per-session backpressure |
 | [`AW-SRV-020`](docs/stories/AW-SRV-020-protobuf-schema-as-the-wire-log-snapshot-and-content-contrac.md) | `done` | Protobuf schema as the wire, log, snapshot, and content contract |
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `ready` | Gateway read path from the Event topic — routing and perception for Zones another process owns |
-| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `review` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
+| [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `done` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
 
 ### `EPIC-04` — Snapshots and recovery
 

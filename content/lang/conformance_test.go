@@ -63,6 +63,79 @@ func TestConformanceIsNotVacuous(t *testing.T) {
 	}
 }
 
+// TestRecompileIsNotVacuous holds the valid/ recompile pass (AC-4,
+// semantics.md §8) to what it claims. The mask on TemplateDefinition.source
+// must be load-bearing: without it, the cases whose Templates were written
+// anywhere but the canonical layout differ, and only in templates/. With it,
+// a change to anything else in the decompiled source is still caught.
+func TestRecompileIsNotVacuous(t *testing.T) {
+	core := corpusCore(t)
+	cases, err := caseDirs(filepath.Join(corpusDir, "valid"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	unmasked := 0
+	for _, dir := range cases {
+		name := caseName(dir)
+		against := core
+		if name == "valid/core" {
+			against = nil
+		}
+		out, ds := CompileOpts(dir, against, nil, Options{Pack: corpusPack(name)})
+		if out == nil {
+			t.Fatalf("%s: %v", name, ds)
+		}
+		files, err := DecompileWith(out, against)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		again, reasons := recompile(filepath.Base(dir), files, against, corpusPack(name))
+		if again == nil {
+			t.Fatalf("%s: %v", name, reasons)
+		}
+		if r := diffCompiled(out, again, true); len(r) > 0 {
+			t.Errorf("%s differs under the mask: %v", name, r)
+		}
+		r := diffCompiled(out, again, false)
+		for _, reason := range r {
+			if !strings.HasPrefix(reason, "recompiled blob differs: templates/") {
+				t.Errorf("%s: an unmasked difference outside templates/: %s", name, reason)
+			}
+		}
+		if len(r) > 0 {
+			unmasked++
+		}
+	}
+	if unmasked == 0 {
+		t.Error("no valid case differs without the mask; the pass is not reading source, or the mask is unnecessary")
+	}
+	t.Logf("%d of %d valid cases differ only in source", unmasked, len(cases))
+
+	// A change decompile could not have made is caught.
+	dir := filepath.Join(corpusDir, "valid", "town")
+	out, _ := CompileOpts(dir, core, nil, Options{Pack: "town"})
+	files, err := DecompileWith(out, core)
+	if err != nil {
+		t.Fatal(err)
+	}
+	edited := false
+	for name, b := range files {
+		if after := strings.Replace(string(b), "A dusty square of packed earth.", "A dusty square.", 1); after != string(b) {
+			files[name], edited = []byte(after), true
+		}
+	}
+	if !edited {
+		t.Fatal("the town plaza's description is not in the decompiled source")
+	}
+	again, reasons := recompile("town", files, core, "town")
+	if again == nil {
+		t.Fatal(reasons)
+	}
+	if r := diffCompiled(out, again, true); len(r) != 1 || !strings.HasPrefix(r[0], "recompiled blob differs: town.json") {
+		t.Errorf("an edited Room description was not caught as town.json alone: %v", r)
+	}
+}
+
 // TestCoreSeedIsReproducible is the first of the corpus's two anchors: the
 // compiler's output for corpus/valid/core/ is byte-identical to the shipped
 // andara.core seed, which TestCoreSeedMatchesFixture holds from the other side.

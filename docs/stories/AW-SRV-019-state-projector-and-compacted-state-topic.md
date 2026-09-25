@@ -73,8 +73,13 @@ projection schema change is routine.
    produced is byte-identical to the first delivery. At-least-once is safe because the replica is
    deterministic and the record is canonical.
 5. **Given** an Entity that leaves a Zone — a cross-Zone move, or destruction — **when** its tick
-   replays **then** a tombstone (null value) is produced for its key in that Zone, and after `topics.py`
-   forces compaction the key is absent. *(Amended 2026-09-24.)* The Zone exit is the case this story
+   replays **then** a tombstone (null value) is produced for its key in that Zone, and after compaction
+   the key is absent. *(Amended 2026-09-24.)* *(Amended again 2026-09-24 at §8: `topics.py` never
+   could force compaction, since it creates topics and compares their config. The test forces it
+   the way a broker allows. It produces to a throwaway compacted topic declared with
+   `segment.ms`, `min.cleanable.dirty.ratio` and `delete.retention.ms` lowered to seconds, then
+   polls a full read of that topic to a deadline until the key is gone (live-assertions.md).
+   `andara.state.v1`'s own settings stay as `topics.yaml` declares them.)* The Zone exit is the case this story
    can exercise: the sim has no destroy Event yet. `CharacterPurged` gets its `Touched` row and its
    tombstone assertion in `AW-SRV-032`, as an inherited Definition-of-done line.
 6. **Given** an empty `andara.state.v1` **when** `--rebuild` runs against a World with 10,000 Entities and
@@ -238,11 +243,11 @@ CI; a test asserts the projector binary imports `server/sim` and contains no `Ap
 
 ## Open questions
 
-- `[ASSUMPTION]` Partitioned by Zone with the commands partitioner. Permanent, and the same reason
+- **Resolved 2026-09-24 (§8, architecture): accepted.** Partitioned by Zone with the commands partitioner. Permanent, and the same reason
   everything else is Zone-partitioned.
-- `[ASSUMPTION]` One projector process for all aggregate kinds, because the single-hash assertion needs
+- **Resolved 2026-09-24 (§8, architecture): accepted.** One projector process for all aggregate kinds, because the single-hash assertion needs
   one replica.
-- `[ASSUMPTION]` Replica rather than Event fold, for the reason in Context. If a later story makes the
+- **Resolved 2026-09-24 (§8, architecture): accepted.** Replica rather than Event fold, for the reason in Context. If a later story makes the
   sim internally event-sourced, the projector can drop the commands consumer without changing its
   output.
 
@@ -279,3 +284,73 @@ emitted but not yet checked in Tempo); `projectors.state.enabled` stays `false` 
 `min.compaction.lag.ms` is applied to `andara.state.v1` on dev and prod (`topics-diff` names the
 drift); the image with `andara-projector` in it is built by CI's `kind` workflow, and the sandbox this
 was written in could not reach the Alpine mirror to build it locally.
+
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6` and the compose stack, with the server image rebuilt from that
+commit (#73).
+
+**Verified live in this pass.** The record above had not checked traces, and had not named its
+series. `andara-projector state` ran against the stack's Redpanda: no complete round (#74), so it
+bootstrapped from offset zero, then replayed 18,760 ticks in 1.29 s and caught up at ≈ 12 ms lag.
+- **Tempo:** `state.replay` roots and `state.verify` under service `andara-projector-state`.
+- **Its registry:**
+  - `andara_state_projector_tick` advancing
+  - `andara_state_projector_lag_seconds` 0.012, against a budget of 5
+  - `andara_state_records_produced_total{kind}`: character 21, room 30, zone 22
+  - `andara_state_rebuild_duration_seconds{phase="bootstrap"|"replay"}`
+  - `andara_state_digest_mismatches_total` 0
+  - `andara_state_tombstones_total` 0
+- **`andara_state_topic_bytes` reads 0** while the broker's log dirs report bytes on every
+  Partition. It is a defect (feedback §1).
+- **`andara.state.v1-value`** is now registered, `StateRecord` from `record.proto` (ADR-0007). It
+  had stayed `pending`.
+
+**Holds:**
+- ACs 1–4 and 10, tested in `make test` and `make test-integration`.
+- AC-8, accepted by construction: the server imports nothing of the projector, and the projector
+  writes only `andara.state.v1`.
+- Config in `keys.yaml`, the schema and the projector README.
+- The glossary.
+- The persisted format is derived and disposable.
+- The depguard and no-own-`Apply` DoD lines, and `--rebuild` in CI.
+- The three `[ASSUMPTION]`s are accepted and struck.
+
+**Fails or is owed:**
+1. **AC-7: Characters carry an empty `content_version`** (#70).
+2. **AC-5 as amended above:** the forced-compaction assertion on a throwaway topic. `topics.py`
+   never could force compaction.
+3. **AC-6 at the stated scale:** 10,000 Entities and 24 h, timed against snapshot load plus tail
+   replay. It holds at fixture scale only.
+4. **The divergence must be sticky** (feedback §2, architecture's ruling). A restart that finds a
+   round newer than an unresolved divergent tick bootstraps past it. The one piece of evidence the
+   projector exists to produce is then gone within a snapshot interval.
+5. **DoD, "the digest assertion runs continuously in production":** blocked on #77 (no target
+   applies `min.compaction.lag.ms`) and #80 (the Deployment mounts no snapshot store, and there
+   are no stop/rebuild targets).
+6. **AC-9 has no carrier.** No story turns on SASL. This goes to PM.
+7. The projection-freshness target stays `[NEEDS BRIAN]`.
+
+**Architecture's review of the architecture-owned paths #64 wrote** (it merged from
+`claude/gallant-volta-q1hz5t`, with no lane prefix, and none of it had been reviewed). Amended in
+this pass:
+- **`state-projector-diverged.md`: rejected and rewritten.** Its escalation test ("if it diverges
+  again, the server is non-deterministic") cannot trigger once rounds are readable, because the
+  restart skips the tick.
+- **`StateProjectorDiverged`** resolved after the counter's one-minute life. It now holds for 6 h,
+  with a test.
+- **`ProjectionStale`** now counts only while the World ticks, as its SLO says, with a test. Both
+  tests are mutation-checked.
+- **`projection-freshness.md`** gained PromQL for both SLIs and lost the false "frozen" claim. It
+  moved to Current in the SLO index.
+- **`projection-stale.md`:** the exit-3 row names the right topic, and the unreachable "records
+  flat" row became the bootstrap blind spot.
+- **`record.proto` comments:** `source_offset` is a consumed position, `content_version` may be
+  empty, and NPC is any non-ITEM Entity.
+- **The protocol README layout.** The `topics.yaml` compaction-lag rationale. The `values.yaml`
+  enablement blockers.
+
+Everything else is accepted as written: `keys.yaml`, the schema, `_env.tpl`, the Makefile, the
+Dockerfile, the glossary and the depguard rule. The committed 35 MB `andara-projector` binary is
+#78.
+

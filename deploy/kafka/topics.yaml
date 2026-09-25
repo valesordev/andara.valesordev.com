@@ -55,8 +55,10 @@ topics:
       Written by the state projector (AW-SRV-019) alone, on the commands partitioner —
       hash(zone_id) % 64 — so a Zone's aggregates share a Partition. Every Entity key
       names its Zone, so a key never moves between Partitions and compaction stays correct.
-      min.compaction.lag.ms keeps a minute of history uncompacted, so an index reading the
-      head sees every write rather than only the survivors of the last cleaner pass.
+      min.compaction.lag.ms keeps a minute of history uncompacted. The cleaner never touches
+      the active segment, so a reader at the head sees every write regardless. The lag is for
+      an index reading up to a minute behind, so it still sees intermediate writes rather than
+      only the survivors of the last cleaner pass.
       Write ACL: the `andara-projector-state` principal only (AW-SRV-019 AC-9). Declared
       here, not enforced: the broker does not authenticate yet, and the first story that
       turns on SASL applies it and inherits AC-9's assertion.

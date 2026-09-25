@@ -4,7 +4,7 @@ title: andara-cli character create and list, and play --character
 epic: EPIC-03
 component: cli
 type: feature
-status: ready
+status: review
 size: S
 depends_on: [AW-CLI-004, AW-SRV-014]
 blocks: []
@@ -53,8 +53,18 @@ world is one command.
 3. **Given** two Characters **when** `andara-cli character list` runs **then** one line each — name,
    `live`/`dormant`, `zone/room` — sorted by name; `--output json` carries the summaries.
 4. **Given** `play --character Aldric` **when** the Session opens **then** `SelectCharacter` is called
-   before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the first
-   thing the player reads is the Room with `Here: Aldric`.
+   before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the
+   automatic `look`'s answer is the Room Aldric stands in (its title, then its description).
+   Aldric's own arrival may be read just before it. The `BindCharacter` and the `look` apply in the
+   same tick, and the arrival is Room-scoped (`AW-SRV-014` AC-5), so it reaches the Session. The
+   client renders it like any other Event and does not suppress it. What a player perceives is the
+   server's to decide (CLAUDE.md §1). *(Amended again 2026-09-25 at PR #72, with the live transcript
+   in hand: "the first thing the player reads is the Room" did not hold.)* `Here:`
+   lists the *other* Characters present and never Aldric: the viewer is not an occupant of its own
+   description (`server/sim/verbs.go` `describe`), so in a Room Aldric has to themself there is no
+   `Here:` line at all. A second client in that Room reads `Here: Aldric` on its next `look`.
+   *(Amended 2026-09-24 at architecture's contract review, before implementation started: the text
+   said "the Room with `Here: Aldric`", which the sim has never produced for the viewer.)*
 5. **Given** `play` with no `--character` and exactly one Character **then** it is selected, and the
    connection notice names it.
 6. **Given** `play` with no `--character` and no Characters **then** exit 2 with `error.code`
@@ -112,7 +122,68 @@ CLAUDE.md §8, plus: `scripts/stack_play.sh` runs the full M1 gate in the `stack
 Room, the move, and a second client seeing the arrival and departure — which closes the inherited
 lines `AW-CLI-004` and `AW-SRV-011` left on `AW-SRV-014`.
 
+**Inherited lines, enumerated (2026-09-24, architecture).** `AW-SRV-014`'s record passes these to
+this story because each needs `play` driving a bound Character. The scripted gate above closes the
+first; architecture observes the rest at this story's §8 on the compose stack with the `play` this
+story ships. They add no scripted test here. Each is a live observation that the scripted gate
+cannot make, and the §8 record lists every one of them with what it showed:
+
+1. `play`'s own transcript for `AW-CLI-004` AC-1 (Room after the first `look`), AC-2 (Events after
+   `north`), AC-3 (a second `play` sees the departure unprompted), AC-4 (a post-log
+   `CommandRejected`, e.g. `west` from a Room with no west Exit), and AC-6 (read-only under
+   `docker compose stop redpanda`: one message, the prompt kept, recovery on start).
+2. `AW-SRV-011`: a stream ended `buffer_full` from a deliberately stalled `play` (SIGSTOP), with its
+   `warn` line in Loki (`session_id`, `buffered`, `last_sent`),
+   `andara_session_egress_drops_total{reason="buffer_full"}` and `andara_sessions_in_drop_state`
+   moving; a resume that replays retained Events (`stream.resumed` on the `Game/Subscribe` span);
+   `play`'s AC-8 with `resume_window_exceeded`.
+3. `AW-SRV-031`: the ambiguous fates on the running server. `play --client-timeout 50ms` against
+   `docker compose pause redpanda`, then `north`, then unpause, gives exactly one
+   `CharacterArrived`.
+4. `AW-SRV-014`: the first measurement of the Session availability SLO
+   (`docs/specs/slo/session-availability.md`), meaning the SLI's two integrals read back from the
+   stack's Prometheus over the session above.
+
+A line that cannot be observed on the compose stack is recorded as such, and it names the story
+that carries it next. It does not hold this story in `review`.
+
 ## Open questions
 
 - `[ASSUMPTION]` `--character` takes the display name, case-insensitively, resolved through
   `ListCharacters` on the client; `character_id` is never typed by a human.
+
+## Verification record — 2026-09-24 (implementation; `review` until the §8 checklist passes)
+
+PR [valesordev/andara.valesordev.com#72](https://github.com/valesordev/andara.valesordev.com/pull/72),
+branch `impl/aw-cli-007-character-commands`, commit `f85513e`. Handoff and deviations:
+`docs/feedback/AW-CLI-007-character-commands.md`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `TestCharacter_Create`: `Aldric (1 of 5)`, exit 0; JSON carries the `CharacterSummary`, `count`, `max_per_account`; the Session is closed (`andara_sessions_total{outcome="closed"}` +1). Live: `Implaevludn (1 of 5)` | pass |
+| 2 | `TestCharacter_CreateRefused` for `roster_full`, `name_taken`, `name_invalid`: the server's message, exit 1, `error.code` = reason, no call after the refused `CreateCharacter`. Live: `name_taken` for another Account's name in upper case, `name_invalid` for a name with digits | pass |
+| 3 | `TestCharacter_List`: aligned lines sorted by name, JSON summaries, asked every time; `TestFormatRosterGolden` (`testdata/character/list.txt`). Live: `dormant town/plaza`, then `town/hall` after the walk | pass |
+| 4 | `TestPlay_SelectsBeforeSubscribe`: `ListCharacters` < `SelectCharacter` < `Subscribe` < `Submit look`; the ack only under `--show-protocol`; with no arrival ahead of it, the Room is the first game output. Live: the same order, the plaza read with `Here:` naming only the other Character, as AC-4 amended in #68 says. **One part still doesn't hold on the live stack**: the Character's own bind arrival shares the `look`'s tick and can print before the Room (feedback §2) | pass as amended, except arrival order (to architecture) |
+| 5 | `TestPlay_OnlyCharacter`: selected, and the notice reads `…as oper, playing Aldric (session …` | pass |
+| 6 | `TestPlay_NoOrSeveralCharacters`: exit 2 `no_character` naming `andara-cli character create`; exit 2 `character_required` listing `Aldric, Brin`; no `SelectCharacter`, `Subscribe` or `Submit`; the Session closed. Live: `no_character` | pass |
+| 7 | `TestPlay_AlreadyLiveAtLaunch`: the server's message, exit 1 `already_live`, nothing subscribed. Live: `a character is already live on this account: Implbevludn`, exit 1 | pass |
+| 8 | `TestPlay_ReconnectWaitsOutAlreadyLive`: Session closed behind the client's back, `already_live` twice then ok: the wait notice once, no exit, `ch-aldric` selected four times, the resume subscribed only after the successful select. `TestPlay_ReconnectRefusedIsFatal`: `no_such_character` on re-selection exits 1. Not run live: it needs a server restart on a stack this lane doesn't own | pass (integration) |
+
+**Observability.** `TestCharacter_SpanParentsTheRPCs`: with `trust_inbound_traceparent`, the
+server-side `ListCharacters` runs in the `cli.command` span's trace. No metrics or alerts (per the
+story).
+
+**Live, against the compose stack** (`make up` on `033f2c6`, this branch's `bin/andara-cli`, two
+fresh Accounts): A created, listed, and ran `play --character` in lower case. It selected, subscribed,
+read `Market Plaza` with `Here: <B>`, and walked `north`. B's transcript showed A arrive and leave.
+A second `play` as B exited 1 with `already_live`.
+
+**`make check`**: clean. `go test -race -count=5 ./admin/cli/`: clean.
+
+**Outstanding before `done`:**
+- The Definition-of-done line: `scripts/stack_play.sh` running the full M1 gate in the `stack`
+  workflow. `scripts/` is architecture's, so the change is handed over in feedback §1. Until it
+  lands, the `stack` job's `make stack-play` fails on this branch and on `main`: its play half runs
+  with no Character, which AC-6 makes exit 2. That same change closes the inherited lines
+  `AW-CLI-004` and `AW-SRV-011` left on `AW-SRV-014`.
+- AC-4's wording (feedback §2) and the demo's `north` → `look` (feedback §3, PM).

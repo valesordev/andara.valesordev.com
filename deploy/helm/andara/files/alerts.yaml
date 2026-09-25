@@ -117,18 +117,28 @@ groups:
     # (the SLO's known gaps); the runbooks start from the pod's last exit code.
     rules:
       - alert: StateProjectorDiverged
-        # The projector holds /metrics up for a minute after a divergence before it exits
-        # 2, so this is scraped; a restart starts the counter at 0 and diverges again.
-        expr: andara_state_digest_mismatches_total > 0
+        # The projector holds /metrics up for a minute after a divergence, then exits 2.
+        # The counter lives only that minute. A restart that bootstraps from a newer round
+        # skips the divergent tick and never diverges again (runbook), so the ticket must
+        # outlive the process: any non-zero sample in the last 6 h keeps it firing.
+        # (Corrected at §8, 2026-09-24. It resolved after about a minute before.)
+        expr: max_over_time(andara_state_digest_mismatches_total[6h]) > 0
         labels:
           severity: ticket
           slo: projection-freshness
           projection: state
         annotations:
-          summary: "The state projector's replica disagrees with the World's recorded State Hash — the indexes are frozen at the last good tick"
+          summary: "The state projector's replica disagreed with the World's recorded State Hash — a possible determinism failure; the evidence is the projector's error line"
           runbook: docs/runbooks/state-projector-diverged.md
       - alert: ProjectionStale
-        expr: andara_state_projector_lag_seconds > andara_state_projector_lag_budget_seconds
+        # Only while the World is ticking (the SLO's measurement condition). A server that
+        # has stopped produces no boundaries, and the projector's lag grows without anything
+        # being stale; that is AndaraServerUnavailable's or SimulationLagging's to report.
+        # `on(namespace)` matches the cluster's per-environment series, and matches the
+        # label-less compose ones to each other.
+        expr: |
+          (andara_state_projector_lag_seconds > andara_state_projector_lag_budget_seconds)
+            and on(namespace) (sum by (namespace) (rate(andara_ticks_total[5m])) > 0)
         for: 5m
         labels:
           severity: ticket
