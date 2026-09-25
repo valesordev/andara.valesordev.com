@@ -177,5 +177,6 @@
         }
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "hub"
 }

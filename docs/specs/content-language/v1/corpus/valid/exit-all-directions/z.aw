@@ -1,4 +1,6 @@
 zone z "Zone" {
+  fallback hub
+
   room hub "The Hub" {
     exit north -> north_room
     exit northeast -> northeast_room

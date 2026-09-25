@@ -1,4 +1,6 @@
 zone z "Zone" {
+  fallback hall
+
   room hall "The Hall" {
     exit north -> yard perceives [sound, sight]
   }

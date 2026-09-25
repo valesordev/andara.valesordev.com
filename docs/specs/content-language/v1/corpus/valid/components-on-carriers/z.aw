@@ -1,4 +1,6 @@
 zone cellars "The Cellars" {
+  fallback vault
+
   component andara.core.Indoors {}
   component andara.core.NoRecall {}
 

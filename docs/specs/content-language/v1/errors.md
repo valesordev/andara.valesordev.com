@@ -218,6 +218,7 @@ gate the server trusts, and hand-written content reaching the store still has to
 | `unresolved_extends` | `AW-SRV-022` | `extends` names a Template absent from the pack and from `andara.core` |
 | `duplicate_template` | `AW-SRV-022` | two Templates in one pack share a name |
 | `chain_too_deep` | `AW-SRV-022` | a chain over `sim.MaxChainDepth` (16) — the message names every Template in it |
+| `fallback_missing` | `AW-SRV-012` | `fallback` names a Room the Zone does not declare, or a Zone declares none. *(Moved from §3.4 on 2026-09-25, when field 6 landed.)* |
 
 ### 3.3 Warnings
 
@@ -248,7 +249,6 @@ Specified, in the grammar, and not yet reachable because the protobuf field does
 
 | Code | Gated on | Raised when |
 |------|----------|-------------|
-| `fallback_missing` | `AW-SRV-012` | `fallback` names a Room the Zone does not declare, or a Zone declares none |
 | `unknown_sense` | `AW-SRV-029` | a sense outside the server registry — the message lists the permitted ones and says senses are server-defined |
 | `unknown_behavior` | `AW-SRV-016` | `andara.core.Behavior{ name }` names no Behavior the pack declares |
 
