@@ -1,6 +1,8 @@
 // Rooms are in walk order, not alphabetical order, and stay that way: fmt does
 // not reorder (formatting.md section 1). The compiled output is sorted anyway.
 zone z "Zone" {
+  fallback west_gate
+
   room west_gate "West Gate" {
     exit east -> middle
   }
