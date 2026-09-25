@@ -321,3 +321,161 @@ contract, groomed when it enters a sprint.
 3. `world_digest` defined in `server/sim` and documented in `server/README.md`.
 4. The field-6 compiler change, with the `fallback` line in `testdata/content/` and `content/core`,
    after which architecture moves the two corpus cases.
+
+---
+
+## Implementation, 2026-09-25: two blockers before the second half can start
+
+Picked up after #79 and #82 merged. Two things stop the second half as written. Each needs an
+architecture decision, and neither is one the implementation lane should make.
+
+### A. Architecture: which content does a replay start from? (blocks AC-2, AC-3, the DoD's replay-across-swap test)
+
+**What happens today.** `boot.LoadContent` builds the World from the **current** Active Pointers.
+`StartTickLoop` then replays the log from offset 0 over that World (`tickloop.Recover`). Nothing in
+the log, the Tick Boundary Record, or the snapshot says which content version any tick ran at.
+
+**Why that breaks once `ContentSwap` exists.** Take a live swap `town@7 → @8` at tick T that
+relocates Aldric out of a removed Room. On the next restart:
+
+1. Boot loads `town@8`, because that's where the pointer is.
+2. Ticks 1..T-1 replay over `@8` topology, although they ran over `@7`. Any Command that touched
+   the removed Room now behaves differently.
+3. At T, `ContentSwap(town@8)` finds the engine already at `@8`. No Room is removed relative to
+   itself, so Aldric isn't relocated, but the recorded State Hash at T has him relocated.
+4. `ErrHashMismatch` halts recovery, and the server doesn't start.
+
+So a correct live swap would turn the next restart into an outage. The same inexactness exists
+today whenever a pointer moves while the server is down, but today it's rare. This story makes
+pointer moves routine. "The swap Tick is in the log and replay is exact" (Scope, Data impact) holds
+only if replay starts at the content the log's first tick ran at, and that isn't recorded
+anywhere.
+
+**Options.**
+
+1. **The log is the source of content in effect** *(recommended)*. Every version a World serves
+   enters through a `ContentSwap`, including the first. On an empty log, boot produces a genesis
+   swap per followed pack before it serves anything. Recovery starts from an empty topology and
+   builds content only from the swaps it replays. After recovery, any pointer that differs from
+   the last recorded version is a move like any other, applied through the log. No proto change:
+   `pack_id`, `version` and `world_digest` suffice. Consequences:
+   - the Engine must start with no Zones and gain `ZoneState`s on a swap;
+   - replay must resolve every historical version, so every manifest and blob must be retained
+     for as long as the log is. ADR-0004's immutable, hash-keyed topics give that today, but it
+     would become a stated retention contract;
+   - `AW-SRV-007`'s restore from a snapshot at tick T needs the versions in effect at T. It can
+     scan swaps up to T, or the snapshot manifest can carry them (your call, and a proto change if
+     the latter).
+2. **Boundaries carry versions.** `TickCompleted` (or the snapshot manifest) gains the per-pack
+   versions in effect, and recovery resolves those before replaying. It's explicit and cheap to
+   read, but it's a `log.proto` change, and every boundary record grows by the pack map.
+3. **`ContentSwap` gains `from_version`,** and recovery derives the starting versions from the
+   first swap per pack. It's the smallest proto change, but a pack never swapped still starts from
+   the boot pointer. That leaves the "pointer moved while down" hole open unless boot also routes
+   those moves through the log, and at that point it's option 1 plus a field.
+
+**Also needed, whichever option is chosen: the scope of `world_digest`.** `log.proto` says "SHA-256
+over the built topology the Loader produced for (pack_id, version)". That can be read as that
+pack's Zones or as the whole World after the swap. Replay has to match the whole World: a
+per-pack digest wouldn't catch a divergence in another pack's Zones. The implementation would
+define it over the whole post-swap World (every Zone and Template, canonical order). Then the
+second of two swaps in one tick digests a World that includes the first. That's consistent,
+because one producer writes both to Partition 0 in Loader order. It also requires that the Loader
+not mark a version serving until its `ContentSwap` is acknowledged, or a failed produce leaves the
+Loader and the Engine disagreeing. Please confirm the whole-World reading.
+
+### B. Architecture: `fallback_missing` at compile time turns 26 corpus cases red (blocks AC-10 and the §4 move)
+
+`errors.md` §6 defines `fallback_missing` as "`fallback` names a Room the Zone does not declare,
+**or a Zone declares none**". No case outside `pending/` has a `fallback` line. A compiler that
+raises the code as specified fails every corpus case that declares a Zone:
+
+| Corpus dir | Cases with a Zone | Without `fallback` |
+|---|---|---|
+| `valid/` | 9 | 9 (expected JSON also gains `fallbackRoom`) |
+| `invalid/semantic/` | 15 | 15 (each sidecar gains a finding) |
+| `roundtrip/` | 1 | 1 |
+| `invalid/encoding/` | 1 | 1 |
+
+The corpus is architecture's, so the compiler change can't land green from this lane alone.
+Options:
+
+1. **A stacked pair** *(recommended)*. Implementation's PR emits field 6, raises both forms, and
+   makes `decompile` write the `fallback` line so `roundtrip/` stays an identity. Architecture's PR,
+   based on it, adds `fallback` to every corpus Zone, updates the expected JSON, and moves the two
+   `pending/` cases. They merge together. Implementation also updates `testdata/content/`: 17 Zone
+   fixtures, which are this lane's.
+2. **Split the rule.** The compiler raises `fallback_missing` only for a `fallback` naming an
+   undeclared Room, and "declares none" is enforced at load (AC-10's server-side check). The corpus
+   stays green, except that the two `pending/` cases move. It needs `errors.md` §6 amended, and a
+   Builder then learns about a missing fallback at publish rather than at compile.
+
+### What implementation can build without these, and is holding
+
+The `store_unavailable` retry (§5's rule) is independent of both, and so is the compiler's field-6
+change under option B1. The swap, relocation, `andara_content_pending_seconds` and the boot wiring
+all depend on A. Building the swap before A would ship the restart outage described above.
+`world_digest` waits on A's scope question. The story stays `in-progress`, and nothing is merged
+under it until A is answered.
+
+---
+
+## Architecture's answers — 2026-09-25
+
+### A. Option 1: the log is the source of the content in effect
+
+Accepted as you proposed it, with the diagnosis exactly right. A correct live swap would have made
+the next restart an outage. This isn't a new principle, which is why it needs no ADR: ADR-0002 §4
+records tick boundaries rather than re-deriving them, and content in effect is the same kind of
+decision. Written into the story's Data / state impact and `log.proto`'s `ContentSwap` comment.
+The points you left open:
+
+1. **Genesis order:** `andara.core` first, then the other followed packs by `pack_id`. A pack is
+   compiled against a core (AC-8), so core must be in effect first.
+2. **`AW-SRV-007`'s restore from a snapshot:** the snapshot carries it. `SnapshotEnvelope` gains
+   `repeated PackVersion content = 8` and `bytes content_digest = 9`, landed in this PR, additive,
+   with `gen/` regenerated. Scanning swaps up to *T* is the unbounded read a snapshot exists to
+   avoid. This story's round writes the two fields, since it is where content in effect becomes
+   known, and `AW-SRV-007` inherits reading and checking them.
+3. **Retention** becomes a stated contract: everything a logged swap names is kept for the life of
+   the log. ADR-0004's topics already do this, so it is a constraint on any future GC, not work now.
+4. **An existing log:** forward-only. Refuse a non-empty log with no swap before its first
+   boundary, exit `1`, naming this story. Don't build a legacy replay path. No World before M2
+   needs to survive, and the path would outlive its use.
+5. **`content.source=dir`:** genesis swaps carry version 0 and the digest. A directory changed
+   while the server was down then halts recovery on the digest, rather than replaying silently
+   over different content. That is the honest behaviour for a developer source.
+6. **"Serving" means applied:** `andara_content_active_version` and the Loader's retained version
+   move when the swap applies. Neither the Loader's acceptance nor the produce ack counts. This
+   also answers your worry about a failed produce leaving the Loader and the Engine disagreeing:
+   the Engine is the only authority, and the Loader follows it.
+
+Options 2 and 3 are rejected. Option 2 puts a pack map in every boundary record, 10 times a second,
+to answer a question that changes a few times a day. Option 3 leaves the "moved while down" hole,
+as you said.
+
+### `world_digest`: the whole World, confirmed
+
+It covers the whole World's content topology after the swap: every pack's Zones and Templates, in
+canonical order. It covers topology only, not Entity state (the State Hash has that). Your reading
+of two swaps in one tick is right. `log.proto`'s comment now says so.
+
+### B. Option 1: the stacked pair
+
+Accepted. A missing `fallback` is a Builder's mistake, and a Builder should learn it at compile,
+which is what `errors.md` §6 says. Splitting the rule to keep the corpus green would move a Builder
+error from compile to publish for the corpus's convenience.
+
+- **Your PR:** emits field 6, raises both forms of `fallback_missing`, makes `decompile` write the
+  `fallback` line (so `roundtrip/` stays an identity), and updates `testdata/content/` and
+  `content/core`.
+- **Position.** `errors.md` had none for the "declares none" form, because there's no literal to
+  point at. It is now the Zone's `zone` keyword, landed in this PR.
+- **Architecture's PR:** based on your branch, it adds a `fallback` line to every corpus Zone,
+  updates the expected JSON and sidecars, and moves the two `pending/` cases. Open yours, and
+  architecture opens its PR against `main` from a branch based on yours. Merging it merges both, so
+  neither lane commits to the other's branch, and `main` is never red between them.
+
+**Order of work:** land the `store_unavailable` retry and the B1 compiler change whenever they're
+ready. The swap, relocation, the pending gauge and boot wiring can start now, against the rules
+above.

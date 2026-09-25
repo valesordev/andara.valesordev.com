@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from andara.log.v1 import log_pb2 as andara_dot_log_dot_v1_dot_log__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1e\x61ndara/state/v1/snapshot.proto\x12\x0f\x61ndara.state.v1\x1a\x17\x61ndara/log/v1/log.proto\"\xfe\x01\n\x10SnapshotEnvelope\x12#\n\rstate_version\x18\x01 \x01(\rR\x0cstateVersion\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x03 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x04 \x01(\x0cR\tstateHash\x12\x17\n\x07zone_id\x18\x05 \x01(\tR\x06zoneId\x12+\n\x12taken_at_unix_nano\x18\x06 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n\x04\x62ody\x18\x07 \x01(\x0cR\x04\x62odyB\xbf\x01\n\x13\x63om.andara.state.v1B\rSnapshotProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03\x41SX\xaa\x02\x0f\x41ndara.State.V1\xca\x02\x0f\x41ndara\\State\\V1\xe2\x02\x1b\x41ndara\\State\\V1\\GPBMetadata\xea\x02\x11\x41ndara::State::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1e\x61ndara/state/v1/snapshot.proto\x12\x0f\x61ndara.state.v1\x1a\x17\x61ndara/log/v1/log.proto\"\xdd\x02\n\x10SnapshotEnvelope\x12#\n\rstate_version\x18\x01 \x01(\rR\x0cstateVersion\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x03 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x04 \x01(\x0cR\tstateHash\x12\x17\n\x07zone_id\x18\x05 \x01(\tR\x06zoneId\x12+\n\x12taken_at_unix_nano\x18\x06 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n\x04\x62ody\x18\x07 \x01(\x0cR\x04\x62ody\x12\x36\n\x07\x63ontent\x18\x08 \x03(\x0b\x32\x1c.andara.state.v1.PackVersionR\x07\x63ontent\x12%\n\x0e\x63ontent_digest\x18\t \x01(\x0cR\rcontentDigest\"@\n\x0bPackVersion\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07versionB\xbf\x01\n\x13\x63om.andara.state.v1B\rSnapshotProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03\x41SX\xaa\x02\x0f\x41ndara.State.V1\xca\x02\x0f\x41ndara\\State\\V1\xe2\x02\x1b\x41ndara\\State\\V1\\GPBMetadata\xea\x02\x11\x41ndara::State::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -34,5 +34,7 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\023com.andara.state.v1B\rSnapshotProtoP\001Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\242\002\003ASX\252\002\017Andara.State.V1\312\002\017Andara\\State\\V1\342\002\033Andara\\State\\V1\\GPBMetadata\352\002\021Andara::State::V1'
   _globals['_SNAPSHOTENVELOPE']._serialized_start=77
-  _globals['_SNAPSHOTENVELOPE']._serialized_end=331
+  _globals['_SNAPSHOTENVELOPE']._serialized_end=426
+  _globals['_PACKVERSION']._serialized_start=428
+  _globals['_PACKVERSION']._serialized_end=492
 # @@protoc_insertion_point(module_scope)

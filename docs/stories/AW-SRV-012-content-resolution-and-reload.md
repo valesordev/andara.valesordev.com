@@ -169,6 +169,31 @@ rejections; none are boot failures once one version has loaded.
 
 ## Data / state impact
 
+**The log is the source of the content in effect (decided 2026-09-25, architecture; feedback
+"Architecture's answers — 2026-09-25").** Replay reads which content each tick ran on, and does
+not re-derive it from the Active Pointers, for the same reason it reads tick boundaries
+(ADR-0002 §4):
+- **Genesis.** On an empty log, boot produces a `ContentSwap` per followed pack, `andara.core`
+  first and then the rest by `pack_id`, before serving.
+- **Recovery** starts from an empty topology and builds content only from replayed swaps. After
+  recovery, a pointer that differs from the last swapped version is an ordinary move, through
+  the log.
+- **Serving** means applied. `andara_content_active_version{pack}` moves when the swap *applies*,
+  not when the Loader accepts the version or the produce is acknowledged.
+- **Retention.** Every manifest and blob a logged swap names is retained for the life of the log.
+  ADR-0004's unique-key compacted topics already give this. Any future content retention or GC
+  must keep what a log still references.
+- **Snapshots.** A snapshot carries the content in effect at its tick
+  (`SnapshotEnvelope.content`/`content_digest`, fields 8–9), so recovery from it never scans
+  swaps. This story's round writes them, and `AW-SRV-007` reads them.
+- **`content.source=dir`.** Genesis swaps carry `version` 0 and the digest. Recovery rebuilds from
+  the directory and compares, so a directory that changed while the server was down halts
+  recovery with a digest mismatch naming the pack, not a silent replay over different content.
+- **Forward-only.** A non-empty log with no swap before its first tick boundary predates this
+  rule. Boot refuses it (exit `1`, naming this story) rather than guessing its content. No
+  production World exists before M2, so recovery is a fresh log: `make down VOLUMES=1` locally,
+  and fresh topics for `dev`.
+
 Content version is part of what identifies a running World: `andara_build_info` and
 `Admin.GetServerInfo` carry it per pack. `ContentSwap` in the log means the World's history records
 which content it was running at every tick, which is what makes a replay across a content change exact.

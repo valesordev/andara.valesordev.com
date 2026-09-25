@@ -85,7 +85,16 @@ type SnapshotEnvelope struct {
 	// The serialized Zone state: andara.state.v1.ZoneState, in zone_state.proto.
 	// Bytes rather than a nested message keeps the envelope stable while the body
 	// evolves independently, versioned by state_version above.
-	Body          []byte `protobuf:"bytes,7,opt,name=body,proto3" json:"body,omitempty"`
+	Body []byte `protobuf:"bytes,7,opt,name=body,proto3" json:"body,omitempty"`
+	// The content in effect at `tick` (AW-SRV-012, 2026-09-25): every pack's
+	// version, sorted by pack_id, and the world_digest of the last ContentSwap
+	// applied at or before `tick`. Recovery from this snapshot (AW-SRV-007)
+	// resolves these versions, rebuilds the topology, checks the digest, and then
+	// loads `body` onto it. Without this, it would have to scan every swap from
+	// the log's beginning, which is the unbounded read a snapshot exists to avoid.
+	// Every Zone's envelope in a round carries the same values.
+	Content       []*PackVersion `protobuf:"bytes,8,rep,name=content,proto3" json:"content,omitempty"`
+	ContentDigest []byte         `protobuf:"bytes,9,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -169,11 +178,77 @@ func (x *SnapshotEnvelope) GetBody() []byte {
 	return nil
 }
 
+func (x *SnapshotEnvelope) GetContent() []*PackVersion {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *SnapshotEnvelope) GetContentDigest() []byte {
+	if x != nil {
+		return x.ContentDigest
+	}
+	return nil
+}
+
+type PackVersion struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	PackId        string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	Version       uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PackVersion) Reset() {
+	*x = PackVersion{}
+	mi := &file_andara_state_v1_snapshot_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PackVersion) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PackVersion) ProtoMessage() {}
+
+func (x *PackVersion) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_snapshot_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PackVersion.ProtoReflect.Descriptor instead.
+func (*PackVersion) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_snapshot_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *PackVersion) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+func (x *PackVersion) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
 var File_andara_state_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\xfe\x01\n" +
+	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\xdd\x02\n" +
 	"\x10SnapshotEnvelope\x12#\n" +
 	"\rstate_version\x18\x01 \x01(\rR\fstateVersion\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x128\n" +
@@ -182,7 +257,12 @@ const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"state_hash\x18\x04 \x01(\fR\tstateHash\x12\x17\n" +
 	"\azone_id\x18\x05 \x01(\tR\x06zoneId\x12+\n" +
 	"\x12taken_at_unix_nano\x18\x06 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n" +
-	"\x04body\x18\a \x01(\fR\x04bodyB\xbf\x01\n" +
+	"\x04body\x18\a \x01(\fR\x04body\x126\n" +
+	"\acontent\x18\b \x03(\v2\x1c.andara.state.v1.PackVersionR\acontent\x12%\n" +
+	"\x0econtent_digest\x18\t \x01(\fR\rcontentDigest\"@\n" +
+	"\vPackVersion\x12\x17\n" +
+	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
+	"\aversion\x18\x02 \x01(\x04R\aversionB\xbf\x01\n" +
 	"\x13com.andara.state.v1B\rSnapshotProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03ASX\xaa\x02\x0fAndara.State.V1\xca\x02\x0fAndara\\State\\V1\xe2\x02\x1bAndara\\State\\V1\\GPBMetadata\xea\x02\x11Andara::State::V1b\x06proto3"
 
 var (
@@ -197,18 +277,20 @@ func file_andara_state_v1_snapshot_proto_rawDescGZIP() []byte {
 	return file_andara_state_v1_snapshot_proto_rawDescData
 }
 
-var file_andara_state_v1_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_andara_state_v1_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_andara_state_v1_snapshot_proto_goTypes = []any{
 	(*SnapshotEnvelope)(nil),   // 0: andara.state.v1.SnapshotEnvelope
-	(*v1.PartitionOffset)(nil), // 1: andara.log.v1.PartitionOffset
+	(*PackVersion)(nil),        // 1: andara.state.v1.PackVersion
+	(*v1.PartitionOffset)(nil), // 2: andara.log.v1.PartitionOffset
 }
 var file_andara_state_v1_snapshot_proto_depIdxs = []int32{
-	1, // 0: andara.state.v1.SnapshotEnvelope.offsets:type_name -> andara.log.v1.PartitionOffset
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	2, // 0: andara.state.v1.SnapshotEnvelope.offsets:type_name -> andara.log.v1.PartitionOffset
+	1, // 1: andara.state.v1.SnapshotEnvelope.content:type_name -> andara.state.v1.PackVersion
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_andara_state_v1_snapshot_proto_init() }
@@ -222,7 +304,7 @@ func file_andara_state_v1_snapshot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_state_v1_snapshot_proto_rawDesc), len(file_andara_state_v1_snapshot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

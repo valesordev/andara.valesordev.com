@@ -111,6 +111,24 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
    * @generated from field: bytes body = 7;
    */
   body: Uint8Array;
+
+  /**
+   * The content in effect at `tick` (AW-SRV-012, 2026-09-25): every pack's
+   * version, sorted by pack_id, and the world_digest of the last ContentSwap
+   * applied at or before `tick`. Recovery from this snapshot (AW-SRV-007)
+   * resolves these versions, rebuilds the topology, checks the digest, and then
+   * loads `body` onto it. Without this, it would have to scan every swap from
+   * the log's beginning, which is the unbounded read a snapshot exists to avoid.
+   * Every Zone's envelope in a round carries the same values.
+   *
+   * @generated from field: repeated andara.state.v1.PackVersion content = 8;
+   */
+  content: PackVersion[];
+
+  /**
+   * @generated from field: bytes content_digest = 9;
+   */
+  contentDigest: Uint8Array;
 };
 
 /**
@@ -118,4 +136,25 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
  * Use `create(SnapshotEnvelopeSchema)` to create a new message.
  */
 export declare const SnapshotEnvelopeSchema: GenMessage<SnapshotEnvelope>;
+
+/**
+ * @generated from message andara.state.v1.PackVersion
+ */
+export declare type PackVersion = Message<"andara.state.v1.PackVersion"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+};
+
+/**
+ * Describes the message andara.state.v1.PackVersion.
+ * Use `create(PackVersionSchema)` to create a new message.
+ */
+export declare const PackVersionSchema: GenMessage<PackVersion>;
 
