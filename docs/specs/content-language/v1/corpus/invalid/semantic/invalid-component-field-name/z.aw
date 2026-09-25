@@ -2,6 +2,8 @@
 // marker: it declares no fields, so there is no `enabled` to set, and the
 // off switch ADR-0010 decision 5 assumes does not exist yet.
 zone z "Z" {
+  fallback r
+
   room r "R" {
     component andara.core.Dark { enabled: false }
   }

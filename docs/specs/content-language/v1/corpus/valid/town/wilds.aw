@@ -1,4 +1,6 @@
 zone wilds "Wilds" {
+  fallback trail
+
   room trail "Forest Trail" {
     desc "A narrow path under pines."
     exit west -> town.plaza

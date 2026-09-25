@@ -1,4 +1,6 @@
 zone town "Town" {
+  fallback plaza
+
   room plaza "Market Plaza" {
     desc "A dusty square of packed earth."
     exit north -> hall

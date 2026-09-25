@@ -1,4 +1,5 @@
 zone docks "Docks" {
+  fallback pier
   component andara.core.Indoors {}
 
   room pier "The Pier" {

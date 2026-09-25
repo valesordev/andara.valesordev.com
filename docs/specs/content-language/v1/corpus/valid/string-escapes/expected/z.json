@@ -8,5 +8,6 @@
       "title": "Backslash \\ Alley",
       "description": "First line.\nSecond line, after an explicit break."
     }
-  ]
+  ],
+  "fallbackRoom": "r"
 }

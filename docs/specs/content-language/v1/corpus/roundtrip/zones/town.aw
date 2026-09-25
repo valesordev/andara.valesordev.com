@@ -1,4 +1,6 @@
 zone town "Town" {
+  fallback hall
+
   room hall "Town Hall" {
     desc "Stone walls and faded banners."
     exit south -> plaza

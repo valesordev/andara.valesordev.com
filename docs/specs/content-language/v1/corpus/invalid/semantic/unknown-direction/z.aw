@@ -6,4 +6,6 @@ zone z "Z" {
   room h "H" {
     exit south -> r
   }
+
+  fallback r
 }
