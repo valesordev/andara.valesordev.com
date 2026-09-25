@@ -53,8 +53,13 @@ world is one command.
 3. **Given** two Characters **when** `andara-cli character list` runs **then** one line each — name,
    `live`/`dormant`, `zone/room` — sorted by name; `--output json` carries the summaries.
 4. **Given** `play --character Aldric` **when** the Session opens **then** `SelectCharacter` is called
-   before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the first
-   thing the player reads is the Room Aldric stands in (its title, then its description). `Here:`
+   before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the
+   automatic `look`'s answer is the Room Aldric stands in (its title, then its description).
+   Aldric's own arrival may be read just before it. The `BindCharacter` and the `look` apply in the
+   same tick, and the arrival is Room-scoped (`AW-SRV-014` AC-5), so it reaches the Session. The
+   client renders it like any other Event and does not suppress it. What a player perceives is the
+   server's to decide (CLAUDE.md §1). *(Amended again 2026-09-25 at PR #72, with the live transcript
+   in hand: "the first thing the player reads is the Room" did not hold.)* `Here:`
    lists the *other* Characters present and never Aldric: the viewer is not an occupant of its own
    description (`server/sim/verbs.go` `describe`), so in a Room Aldric has to themself there is no
    `Here:` line at all. A second client in that Room reads `Here: Aldric` on its next `look`.
