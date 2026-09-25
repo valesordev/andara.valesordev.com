@@ -23,6 +23,7 @@ in `docs/runbooks/` is incomplete.
 | `world-write-availability.md` | proposed targets | `AW-INF-005` | the World accepting Commands |
 | `edge-availability.md` | proposed targets | `AW-INF-006` | the edge letting players through: 5xx ratio, certificate validity |
 | `session-availability.md` | target decided 2026-09-20 | `AW-SRV-011` | the Event stream staying open: server-ended streams per stream-second |
+| `projection-freshness.md` | proposed target | `AW-SRV-019`, shared with `AW-SRV-017`/`018` | index lag while the World ticks; replica integrity (no budget) |
 
 "Proposed targets" means the number was reasoned from the architecture but not yet checked against a
 running system. The owning story validates it against first measurement and either confirms it or comes
@@ -33,7 +34,6 @@ back with why not.
 | File | Owning story | Covers |
 |------|--------------|--------|
 | `kafka-availability.md` | `AW-INF-005` | broker availability underneath write availability |
-| `projection-freshness.md` | `AW-SRV-017` | how stale an index may be |
 
 ## The numbers that constrain each other
 

@@ -45,8 +45,8 @@ const (
 	// "character:<zone>/<id>": an Entity whose Template chain reaches
 	// andara.core.Character. Body: EntityState.
 	AggregateKind_CHARACTER AggregateKind = 1
-	// "npc:<zone>/<id>": any other Entity of Template kind ENTITY. Body:
-	// EntityState.
+	// "npc:<zone>/<id>": any other Entity that is not an ITEM, whatever its
+	// Template kind. Body: EntityState.
 	AggregateKind_NPC AggregateKind = 2
 	// "item:<zone>/<id>": an Entity of Template kind ITEM. Body: EntityState.
 	AggregateKind_ITEM AggregateKind = 3
@@ -116,13 +116,19 @@ type StateRecord struct {
 	Kind  AggregateKind          `protobuf:"varint,2,opt,name=kind,proto3,enum=andara.state.v1.AggregateKind" json:"kind,omitempty"`
 	// The tick after which this is the aggregate's state.
 	Tick uint64 `protobuf:"varint,3,opt,name=tick,proto3" json:"tick,omitempty"`
-	// The andara.commands.v1 offset of the last Command applied on the Zone's
-	// Partition at `tick`: the next-to-read offset the tick's boundary records,
-	// minus one. -1 when nothing has been applied on that Partition.
+	// The last andara.commands.v1 offset *consumed* on the Zone's Partition at
+	// `tick`: the next-to-read offset the tick's boundary records, minus one.
+	// -1 when nothing has been consumed on that Partition. It is shared by
+	// every Zone on the Partition, and it counts records deferred past
+	// sim.max_per_tick, so it is a position in the log, not a claim that this
+	// aggregate's Command was applied. (Worded at §8, 2026-09-24.)
 	SourceOffset int64 `protobuf:"varint,4,opt,name=source_offset,json=sourceOffset,proto3" json:"source_offset,omitempty"`
 	// packID@version active when the aggregate was last written, so a runtime
 	// object traces to authored source. For an Entity, the version its
 	// Template came from; for a Room or Zone, the version its Zone came from.
+	// Empty when the process has no version to give. Two such cases today:
+	// content loaded with content.source=dir, and a Character spawned at bind
+	// (#70, which fills it).
 	ContentVersion string `protobuf:"bytes,5,opt,name=content_version,json=contentVersion,proto3" json:"content_version,omitempty"`
 	// The sim's state_version at `tick` — how `body` is interpreted.
 	StateVersion uint32 `protobuf:"varint,6,opt,name=state_version,json=stateVersion,proto3" json:"state_version,omitempty"`

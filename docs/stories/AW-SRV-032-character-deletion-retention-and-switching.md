@@ -165,7 +165,7 @@ CLAUDE.md §8, plus: the replay-purge test and the rollback-reservation test.
 
 - **Inherited from `AW-SRV-019` (2026-09-24):** `CharacterPurged` gets a row in `server/projector`'s
   `Touched` table that tombstones `character:<zone>/<id>`, and that story's AC-5 assertion runs for it:
-  after a purge replays and `topics.py` forces compaction, the key is absent from `andara.state.v1`.
+  after a purge replays and compaction runs, the key is absent. Force compaction as `AW-SRV-019` AC-5 (amended 2026-09-24) does, on a throwaway topic with its cleaner settings lowered; `topics.py` cannot force it.
   `AW-SRV-019` could exercise the tombstone path only through a Zone exit, because no destroy Event
   existed yet.
 

@@ -34,14 +34,15 @@ has nothing to project.
 
 | Step | Look at | Means |
 |------|---------|-------|
-| 1 | Pod restarts and the last exit code | `2`: see `state-projector-diverged.md`. This alert is its echo. `3`: the log no longer holds history the projector needs. Retention on `andara.commands.v1` is shorter than the age of the snapshot round it started from; rebuild from a newer round (`--rebuild`). `4`: the snapshot round was written by a newer binary; roll the projector forward to the server's version. `1`: configuration or the broker; the last `error` line names it. |
+| 1 | Pod restarts and the last exit code | `2`: see `state-projector-diverged.md`. This alert is its echo. `3`: a log gap, and the `error` line names the topic and Partition. `andara.commands.v1` keeps everything, so in practice it is `andara.events.v1` (30-day retention) with no complete snapshot round newer than the gap. Fix the server's snapshots first (`SnapshotStale`, #74 locally). A plain restart then bootstraps from the newest round, with no rebuild needed. `4`: the snapshot round was written by a newer binary; roll the projector forward to the server's version. `1`: configuration or the broker; the last `error` line names it. That includes a produce to `andara.state.v1` the broker refused: it fails after the one-minute delivery timeout and the process exits `1`, so a refused write shows up as a crash loop, not as a stall. |
 | 2 | `andara_state_rebuild_duration_seconds{phase="replay"}` has no sample yet | The projector is still catching up after a start or rebuild, which is expected after one. The time is snapshot load plus tail replay; a long tail means the newest round is old (`SnapshotStale` on the server). |
-| 3 | `andara_state_records_produced_total` flat while the tick advances | The produce path is stalled: the broker is refusing `andara.state.v1` writes. Check ACLs (only the `andara-projector-state` principal may write) and broker health. |
-| 4 | `andara_state_topic_bytes` climbing steadily | Churn is outpacing the compactor, and the topic is becoming a second history. Check the topic's `min.compaction.lag.ms` and the broker's cleaner. This is a capacity problem, not a projector bug. |
+| 3 | `/readyz` failing, lag gauge at 0 | The projector has not verified its first batch: still in bootstrap, or waiting for the World's first boundary. The lag gauge reads 0 until then, so this state looks fresh on the dashboard. The `state projector started` line (or its absence) says which. |
+| 4 | `andara_state_topic_bytes` climbing steadily (it reads 0 against the local Redpanda today; `docs/feedback/AW-SRV-019-state-projector.md`) | Churn is outpacing the compactor, and the topic is becoming a second history. Check the topic's `min.compaction.lag.ms` and the broker's cleaner. This is a capacity problem, not a projector bug. |
 | 5 | CPU on the projector pod at its limit | The replica runs the whole simulation. It needs what the server needs (`AW-INF-003`'s measurements); a projector sized smaller than the server falls behind under load. |
 
 ## Recover
 
 A lagging projector recovers on its own once the cause is gone: it catches up from its checkpoint.
-`andara-projector state --rebuild` is for when the checkpoint itself is unusable (exit `3`), not a
-way to catch up faster.
+A rebuild is for when the checkpoint itself is unusable, not a way to catch up faster, and there is
+no target for it yet (`§9 defect → #80`). Never run `--rebuild` beside a live Deployment: two
+writers on one consumer group corrupt its checkpoint.
