@@ -130,7 +130,12 @@ if [[ "$HAS_CHARACTER" == 1 ]]; then
   for _ in $(seq 1 40); do grep -q '^-- Connected to ' "$BOUT" && break; kill -0 "$BPID" 2>/dev/null || break; sleep 0.5; done
   grep -q "^-- Connected to [^ ]\+ as play-b-$hex, playing $CHAR_B (session [0-9a-f]\{32\}, protocol 1)\.$" "$BOUT" \
     || { cat "$BOUT" "$BERR" >&2; fail "B never connected playing $CHAR_B"; }
-  sleep 1   # B's automatic look answered, so A's arrival is news to B
+  # B's automatic look answered, so B is subscribed and in the plaza before A
+  # arrives: the Room reaches B only over its stream. Polled to a deadline, not
+  # slept (docs/specs/testing/live-assertions.md): on a loaded stack a fixed
+  # delay can pass before the look is answered, and A's arrival then goes unseen.
+  for _ in $(seq 1 40); do grep -q '^Market Plaza$' "$BOUT" && break; kill -0 "$BPID" 2>/dev/null || break; sleep 0.5; done
+  grep -q '^Market Plaza$' "$BOUT" || { cat "$BOUT" "$BERR" >&2; fail "B never read the plaza from its automatic look"; }
 fi
 
 parse_before="$(metric 'andara_ingress_submits_total{outcome="rejected_parse"}')"
@@ -225,12 +230,18 @@ if [[ "$HAS_CHARACTER" == 1 ]]; then
 
   # AW-CLI-007 AC-7: a second launch while B is live is refused, and nothing is subscribed.
   set +e
-  bin/andara-cli "${B[@]}" play --character "$CHAR_B" </dev/null >"$WORK/live-out.txt" 2>"$WORK/live-err.txt"
+  bin/andara-cli "${B[@]}" play --character "$CHAR_B" --show-protocol </dev/null >"$WORK/live-out.txt" 2>"$WORK/live-err.txt"
   lcode=$?
   set -e
   [[ "$lcode" == "1" ]] || { cat "$WORK/live-out.txt" "$WORK/live-err.txt" >&2; fail "a second launch of $CHAR_B exited $lcode, want 1"; }
   grep -q "a character is already live on this account: $CHAR_B" "$WORK/live-err.txt" \
     || { cat "$WORK/live-err.txt" >&2; fail "the already_live refusal is not the server's message"; }
+  # Nothing subscribed. The selection is in the protocol record, which shows the
+  # record is live, and no Subscribe or Submit follows it.
+  grep -q '» SelectCharacter session_id=' "$WORK/live-out.txt" \
+    || { cat "$WORK/live-out.txt" >&2; fail "the refused launch shows no SelectCharacter under --show-protocol"; }
+  ! grep -q '» \(Subscribe\|Submit\) ' "$WORK/live-out.txt" \
+    || { cat "$WORK/live-out.txt" >&2; fail "the refused launch subscribed or submitted"; }
 
   exec 4>&-
   set +e; wait "$BPID"; bcode=$?; set -e
