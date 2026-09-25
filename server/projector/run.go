@@ -252,8 +252,14 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 // boundary names — the server's own set, which the State Hash covers.
 func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryReader) (*sim.Engine, sim.Tick, error) {
 	cfg := sim.Config{Seed: o.Seed, Handlers: sim.Handlers(), Content: o.Content}
-	owned := make([]sim.ZoneID, 0, len(o.World.Zones))
-	for id := range o.World.Zones {
+	var zones map[sim.ZoneID]*sim.Zone
+	if o.World != nil {
+		// Nil when the content the pointers name did not load: the replica
+		// still replays what the log recorded, with no round to scope.
+		zones = o.World.Zones
+	}
+	owned := make([]sim.ZoneID, 0, len(zones))
+	for id := range zones {
 		owned = append(owned, id)
 	}
 	sort.Slice(owned, func(i, j int) bool { return owned[i] < owned[j] })

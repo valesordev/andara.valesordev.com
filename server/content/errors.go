@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/valesordev/andara/server/sim"
 )
@@ -121,6 +122,40 @@ type (
 		Version uint64
 		Err     error
 	}
+	// ErrSwapRefused: the Engine consumed the version's ContentSwap and
+	// refused it, a deterministic no-op (sim.SwapRefused). A stale base the
+	// Loader could not get past, or a misrouted swap, is store_unavailable
+	// and retried; a removed Zone is validation; a fallback-less Zone is
+	// fallback_missing.
+	ErrSwapRefused struct {
+		Pack    string
+		Version uint64
+		Reason  string
+		Detail  string
+	}
+	// ErrApplyTimeout: the swap was produced and did not apply within the
+	// bounded wait (content.reload_debounce × 15) — Partition 0 is faulted or
+	// far behind. store_unavailable, so the retry applies and other moves
+	// keep draining.
+	ErrApplyTimeout struct {
+		Pack    string
+		Version uint64
+		Wait    time.Duration
+	}
+	// ErrBarrierTimeout: the World Partition was not consumed to its end
+	// within the bounded wait — frozen by a Zone fault, or far behind.
+	// store_unavailable, so the retry applies; nothing blocks on it.
+	ErrBarrierTimeout struct {
+		Wait time.Duration
+	}
+	// SwapPending is what a SwapProducer returns when the produce's wait
+	// ended with the record possibly still live (ingress.Unsettled): the
+	// Loader waits on Settled, then reads Outcome — nil when the swap was
+	// written, ErrSwapNotWritten, or ErrSwapOutcomeUnknown.
+	SwapPending struct {
+		Settled <-chan struct{}
+		Outcome func() error
+	}
 	// ErrStoreUnavailable: the content store could not be read. Wraps the
 	// underlying failure so a log line still names it.
 	ErrStoreUnavailable struct {
@@ -175,6 +210,26 @@ func (e *ErrCoreRollback) Error() string {
 		e.From, e.To, strings.Join(held, ", "))
 }
 
+// The fates of a SwapPending produce.
+var (
+	ErrSwapNotWritten     = errors.New("the swap was not written to the command log")
+	ErrSwapOutcomeUnknown = errors.New("the swap may be in the command log; its fate will not be known")
+)
+
+func (e *ErrSwapRefused) Error() string {
+	return fmt.Sprintf("the engine refused the content swap for %s: %s (%s)", ManifestKey(e.Pack, e.Version), e.Reason, e.Detail)
+}
+
+func (e *ErrApplyTimeout) Error() string {
+	return fmt.Sprintf("the content swap for %s did not apply within %s; the world partition may be faulted or behind", ManifestKey(e.Pack, e.Version), e.Wait)
+}
+
+func (e *ErrBarrierTimeout) Error() string {
+	return fmt.Sprintf("the world partition was not consumed to its end within %s; it may be faulted or behind", e.Wait)
+}
+
+func (e *SwapPending) Error() string { return "the swap's produce has not settled" }
+
 func (e *ErrFallbackMissing) Error() string {
 	if e.Room == "" {
 		return fmt.Sprintf("Zone %s declares no fallback_room (%d finding(s))", e.Zone, len(e.Findings))
@@ -222,6 +277,7 @@ func Reason(err error) string {
 		mm *ErrManifestMissing
 		vl *ErrValidation
 		fm *ErrFallbackMissing
+		sr *ErrSwapRefused
 	)
 	switch {
 	case errors.As(err, &fv):
@@ -239,6 +295,10 @@ func Reason(err error) string {
 	case errors.As(err, &mm):
 		return ReasonManifestAbsent
 	case errors.As(err, &fm):
+		return ReasonFallbackRoom
+	case errors.As(err, &sr) && sr.Reason == sim.SwapZoneRemoved:
+		return ReasonValidation
+	case errors.As(err, &sr) && sr.Reason == sim.SwapFallbackMissing:
 		return ReasonFallbackRoom
 	case errors.As(err, &vl):
 		return ReasonValidation

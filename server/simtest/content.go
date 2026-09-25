@@ -74,8 +74,11 @@ func (c *VersionedContent) Prepare(inEffect map[string]uint64, swap *logv1.Conte
 // Swap is the ContentSwap for pack@version on top of what e has in effect,
 // carrying the digest that version builds.
 func (c *VersionedContent) Swap(e *sim.Engine, pack string, version uint64) (*logv1.LoggedCommand, error) {
-	inEffect, _ := e.Content()
+	inEffect, base := e.Content()
 	cs := &logv1.ContentSwap{PackId: pack, Version: version}
+	if len(inEffect) > 0 {
+		cs.BaseDigest = base[:]
+	}
 	topo, err := c.Prepare(inEffect, cs)
 	if err != nil {
 		return nil, err

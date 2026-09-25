@@ -211,9 +211,10 @@ func validateArrive(a *ApplyContext, cmd *logv1.LoggedCommand) (*Room, error) {
 }
 
 // applyArrive places the Entity and emits CharacterArrived. A target Room
-// that no longer exists sends the Entity back where it came from, once:
-// the bounce is produced with no origin, so a second failure rejects and
-// the Entity is gone — reported, not silently lost.
+// the content in effect no longer has — a swap removed it while the Entity
+// was in transit — lands it in this Zone's fallback Room instead, with
+// EntityRelocated{room_removed} (AW-SRV-012): every Zone has a fallback, so
+// an arrival is never bounced and never lost.
 func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !a.Consumed() {
 		return ErrNotConsumed
@@ -221,17 +222,17 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	arr := cmd.GetArrive()
 	room, err := validateArrive(a, cmd)
 	if err != nil {
-		if arr.GetOriginZoneId() != "" && arr.GetEntity() != nil {
-			back, _ := Direction(arr.GetFromDirection()).Reverse()
-			a.Produce(&logv1.LoggedCommand{
-				ZoneId: arr.GetOriginZoneId(), ActorId: cmd.GetActorId(), SessionId: cmd.GetSessionId(),
-				ClientRef: cmd.GetClientRef(), TraceId: cmd.GetTraceId(),
-				Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
-					RoomId: arr.GetOriginRoomId(), FromDirection: string(back), Entity: arr.GetEntity(),
-				}},
-			})
+		zone := a.World.Zones[a.Zone.ID]
+		if arr.GetEntity() == nil || zone == nil {
+			return err
 		}
-		return err
+		fallback := zone.Rooms[zone.Fallback]
+		ent := EntityFromProto(arr.GetEntity(), fallback.ID)
+		a.Zone.Entities[ent.ID] = &ent
+		a.Emit(ScopeRoom(a.Zone.ID, fallback.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
+			ZoneId: string(a.Zone.ID), EntityName: ent.DisplayName(), FromRoomId: arr.GetRoomId(), ToRoomId: string(fallback.ID), Reason: ReasonRoomRemoved,
+		}}})
+		return nil
 	}
 	ent := EntityFromProto(arr.GetEntity(), room.ID)
 	a.Zone.Entities[ent.ID] = &ent

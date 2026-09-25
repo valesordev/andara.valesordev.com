@@ -579,3 +579,73 @@ The review ran against #88 with architecture's corpus PR (#89) merged in.
   `server info` depends on it.
 - **A swap removing the spawn Room:** refused, `spawn_room_removed` (a Builder reason). For PM:
   AW-SRV-013's activation check should refuse the same.
+
+---
+
+## Implementation, 2026-09-25: the review of #86–#88, addressed
+
+#86's items are fixed on its own branch (12e0b17). #87's and #88's are in one PR stacked on #90,
+because they need `ContentSwap.base_digest`. Every blocking item and every "required with this
+story" item is done, along with most of the non-blocking ones. The full list, with the tests that
+hold each, is in that PR and in the story's verification record. Two rules I had to make concrete,
+so architecture can check them:
+
+1. **A Character is an Entity whose Template is `andara.core.Character`, read from the Entity.**
+   "A swap changes future spawns only" rules out the registry lookup. `BindCharacter` is the only
+   spawn path, and it always instantiates that exact Template. A later story that spawns a subtype
+   of Character should record the kind on the body at spawn.
+2. **A new body's `content_version`** is its Template's pack as it is in effect (`andara.core@4`).
+   When a single pack supplies everything, as `content.source=dir` does, it is that pack (`dir@0`).
+   `Engine.ContentVersionOf` defines it.
+
+**One thing the review's stale-swap scenario taught the tests.** `world_digest` is over content,
+not version numbers. A swap built on `core@3` still applies on top of `core@4` when the two have
+identical content, because the World it describes is the World in effect. That's correct, and the
+stale-swap test now uses a core@4 whose content really differs.
+
+**Not done, and why:**
+- `andara_content_reload_stall_seconds` still times the apply only. Preparing a swap in-tick
+  (about 1 ms at the sizing fixture), and store I/O on a stage miss (replay, or a swap this process
+  did not produce), are documented against the metric in `server/README.md` rather than folded in.
+  The Observer seam brackets one record's apply, and folding prepare in would mean timing across
+  the rest of the tick.
+- Codex's P1 on the projector's round discovery after a Zone removal is moot now that removal is
+  refused. `owned` still comes from the candidate content, which can name a Zone the round's content
+  lacks. That's AW-SRV-007's round-completeness question, and I haven't changed it.
+
+---
+
+## Implementation, 2026-09-25: the review of #91, addressed
+
+**Blocking:**
+1. **`worldBarrier` is bounded** by the same wait as apply (`content.reload_debounce` × 15, and
+   Codex's point is taken: a debounce under 2 s now counts). At reconcile a barrier that runs out
+   makes every pending pack `store_unavailable`, seeds `Follow`'s retries, and lets the boot carry
+   on. At runtime, an unknown-outcome produce is `store_unavailable`. The `dir` source's genesis
+   barrier carries on to its own bounded wait.
+2. **`RecoveryError`** calls a log pre-rule only when the World Partition carries no
+   `ContentSwap` at all. That is scanned on the failure path only, through a `replayLog` seam that
+   is Kafka in a process and a recorded log in tests.
+3. **The gauges move before any waiter is released,** in `Loader.Applied` and, which was the
+   flaky test's actual path, in the `dir` source's `Applied`. `TestLoadContent_ValidThreeZones`
+   is stable over 40 runs under `-race`.
+
+**The missing tests.** Each fails with its fix removed, all mutation-checked:
+- `TestStartTickLoop_RefusesAPreRuleLogByName` and
+  `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` (a different seed, mismatching at
+  tick 1), both through `StartTickLoop`;
+- `TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+  `TestWorldBarrier_FollowsTheLoop`;
+- `TestBind_RecordsTheContentVersionInEffect` (closes #70's gap),
+  `TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+  `TestBindings_ARelocationEndsACrossZoneTransit`.
+
+**Non-blocking, all done:**
+- The projector keeps a candidate that can't load fatal (`ExitConfig`).
+- The phase labels now mean what they say: `build` is the build, and `validate` is the build plus
+  the checks against what is in effect.
+- The old-swap refusal is commented.
+- `recovered()` no longer reports historical refusals.
+
+**Codex, both done:** the swap carries the W3C traceparent (`TestTheSwapCarriesTheLoadsTraceparent`),
+and the debounce is honoured (`TestApplyWaitFollowsTheDebounce`).

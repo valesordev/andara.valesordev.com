@@ -82,6 +82,13 @@ func (m *MemorySource) Push(cmd *logv1.LoggedCommand) sim.Record {
 	return r
 }
 
+// End is the offset one past the last record pushed to partition p.
+func (m *MemorySource) End(p int32) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.end[p]
+}
+
 // SetUnavailable simulates the broker going away (AC-9).
 func (m *MemorySource) SetUnavailable(v bool) {
 	m.mu.Lock()

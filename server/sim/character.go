@@ -101,10 +101,9 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !ok {
 		return &RejectError{Code: CodeTemplateMissing, Stage: StageValidate, Message: "this world cannot hold a character yet"}
 	}
-	// The content version is AW-SRV-012's: until content is versioned in
-	// the log, a body records none — any value chosen here would be one
-	// a replay could not reproduce after the content changed.
-	ent := Instantiate(tmpl, id, "")
+	// The content version is the Template's pack as the log has it in
+	// effect (AW-SRV-012), so a replay reproduces it.
+	ent := Instantiate(tmpl, id, a.ContentVersion(tmpl))
 	ent.Room = room.ID
 	ent.Name = bind.GetName()
 	a.Zone.Entities[ent.ID] = &ent
@@ -175,23 +174,15 @@ func (e *Engine) Characters() CharacterCounts {
 	return c
 }
 
+// Read from the Entity alone, never from the Template registry: a content
+// swap changes what future spawns are, not what an existing body is, and a
+// registry lookup would let a swap that re-parents a pack's Template flip
+// bodies already in the World (review of #87). Every Character body is
+// instantiated from andara.core.Character itself — BindCharacter is the one
+// spawn path — so the Template names it. A later story that spawns a subtype
+// of Character records the kind on the body at spawn.
 func (e *Engine) isCharacter(ent *EntityState) bool {
-	if ent.Template == CharacterTemplate {
-		return true
-	}
-	if e.templates == nil {
-		return false
-	}
-	t, ok := e.templates.Get(ent.Template)
-	if !ok {
-		return false
-	}
-	for _, ref := range t.Chain {
-		if ref == CharacterTemplate {
-			return true
-		}
-	}
-	return false
+	return ent != nil && ent.Template == CharacterTemplate
 }
 
 // IsCharacter reports whether ent is a Character: its Template chain reaches

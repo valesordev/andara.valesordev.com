@@ -84,6 +84,17 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	if code := rt.LoadContent(ctx); code != boot.ExitOK {
 		return projector.ExitConfig
 	}
+	if rt.World == nil {
+		// The server tolerates this before recovery, because its reconcile
+		// still exits with nothing in effect. The projector would instead
+		// scope no snapshot round and replay from zero, so it stays fatal
+		// here (review of #91).
+		tel.Log.Error("content: what the Active Pointers name does not load; the projector cannot scope a snapshot round")
+		return projector.ExitConfig
+	}
+	if rt.ContentMetrics != nil {
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+	}
 
 	ws, err := store.Open(store.Options{
 		Kind:       cfg.SnapshotStore,

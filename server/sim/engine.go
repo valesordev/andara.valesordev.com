@@ -96,8 +96,11 @@ type StepResult struct {
 	Faults []Fault
 	// Swaps is every ContentSwap this tick applied, in the order it applied
 	// them (AW-SRV-012): after every other record of the tick.
-	Swaps     []SwapApplied
-	Completed TickCompleted
+	Swaps []SwapApplied
+	// SwapsRefused is every ContentSwap this tick consumed and refused, a
+	// deterministic no-op each: the content source is told, and re-evaluates.
+	SwapsRefused []SwapRefused
+	Completed    TickCompleted
 }
 
 // CommandKind names the arm of LoggedCommand.command a handler serves.
@@ -153,6 +156,7 @@ type ApplyContext struct {
 	Record    Record
 	emit      func(ZoneID, string, string, Scope, *gamev1.EventEnvelope)
 	outbound  *[]*logv1.LoggedCommand
+	engine    *Engine
 	// consumed is set only by Step, for a Record it took from the log.
 	// Handlers refuse a context without it (AW-SRV-003 AC-11): the log
 	// boundary is a guard, not a convention.
@@ -172,6 +176,15 @@ func (a *ApplyContext) Consumed() bool { return a != nil && a.consumed }
 // what it did; nothing downstream widens it.
 func (a *ApplyContext) Emit(scope Scope, env *gamev1.EventEnvelope) {
 	a.emit(a.Zone.ID, a.Record.Command.GetSessionId(), a.Record.Command.GetClientRef(), scope, env)
+}
+
+// ContentVersion is the pack@version an Entity instantiated from t records,
+// from the content in effect (Engine.ContentVersionOf).
+func (a *ApplyContext) ContentVersion(t *Template) string {
+	if a.engine == nil {
+		return ""
+	}
+	return a.engine.ContentVersionOf(t)
 }
 
 // Actor is the Command's actor, for scoping an Event to it.
@@ -389,12 +402,6 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 				continue
 			}
 			zone := s.Zones[ZoneID(r.Command.GetZoneId())]
-			if zone != nil && e.world.Zones[zone.ID] == nil {
-				// State for a Zone the content in effect no longer has: a
-				// swap removed it while Entities stood in it. The state is
-				// kept and its Commands refused, as for a Zone never loaded.
-				zone = nil
-			}
 			if zone == nil {
 				// A Zone the World does not have. Content moved under the
 				// log (AW-SRV-012 owns that transition); the record is
@@ -427,6 +434,11 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 	for _, ps := range prepared {
 		if !consumed[ps.rec] {
 			// Behind a faulted record on its Partition: requeued with it.
+			continue
+		}
+		if ps.refused != nil {
+			res.SwapsRefused = append(res.SwapsRefused, *ps.refused)
+			e.observe("", ps.rec, Outcome{Kind: KindContentSwap, Code: ps.refused.Reason, Stage: StageValidate})
 			continue
 		}
 		end := func(Outcome) {}
@@ -483,7 +495,7 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 	}()
 	actx := &ApplyContext{
 		Tick: tick, World: e.world, Templates: e.templates, Zone: zone, State: e.state, RNG: e.state.RNG, Record: r,
-		emit: emit, outbound: &res.Outbound, consumed: true,
+		emit: emit, outbound: &res.Outbound, consumed: true, engine: e,
 	}
 	out := Outcome{Kind: kind}
 	if err := handler(actx, r.Command); err != nil {

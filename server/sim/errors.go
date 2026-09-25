@@ -45,6 +45,14 @@ const (
 	// the Zone does not contain. The code errors.md assigns the compiler's
 	// finding, so a Builder reads the same word at compile and at load.
 	ErrFallbackMissing ErrCode = "fallback_missing"
+
+	// Transition findings (AW-SRV-012, review of #86–#88): a version the
+	// content loader refuses because of what is already in effect, not
+	// because of the version alone. A version that removes a Zone the World
+	// has, and one whose World lacks character.spawn_room when the World in
+	// effect has it. Both are the Builder's, under reason validation.
+	ErrZoneRemoved      ErrCode = "zone_removed"
+	ErrSpawnRoomRemoved ErrCode = "spawn_room_removed"
 )
 
 // warningCodes are findings that do not refuse a load. They are advisory

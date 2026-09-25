@@ -5,6 +5,7 @@ package content
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -43,9 +44,12 @@ type Options struct {
 	Debounce     time.Duration // content.reload_debounce
 
 	StrictOrphans bool
-	Metrics       *Metrics
-	Log           *slog.Logger
-	Tracer        trace.Tracer
+	// SpawnRoom is character.spawn_room: a version whose World lacks it,
+	// when the World in effect has it, is refused (spawn_room_removed).
+	SpawnRoom sim.RoomRef
+	Metrics   *Metrics
+	Log       *slog.Logger
+	Tracer    trace.Tracer
 }
 
 // Content is the content source, whichever it is: what the World would run on
@@ -73,7 +77,7 @@ func Open(ctx context.Context, o Options) (*Content, []sim.ValidationError) {
 	}
 	switch o.Source {
 	case SourceDir:
-		return &Content{opts: o, dir: &dirContent{opts: o, applied: make(chan struct{})}}, nil
+		return &Content{opts: o, dir: &dirContent{opts: o, applied: make(chan struct{}), refused: make(chan sim.SwapRefused, 1)}}, nil
 	case SourceKafka:
 		return openKafka(ctx, o)
 	default:
@@ -102,6 +106,9 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 		Log:           o.Log,
 		Tracer:        o.Tracer,
 		StrictOrphans: o.StrictOrphans,
+		SpawnRoom:     o.SpawnRoom,
+		// The bounded wait for a swap to apply (review of #88).
+		ApplyWait: applyWait(o.Debounce),
 	})
 	c := &Content{opts: o, loader: loader, resolver: resolver}
 	// Pin the pointer topic before reading it. A pointer moved while the
@@ -172,6 +179,31 @@ func (c *Content) SetProducer(p SwapProducer) {
 	c.loader.SetProducer(p)
 }
 
+// SetBarrier sets how a load waits for the World Partition to be consumed
+// past its current end: before reconcile decides anything, and after a swap
+// whose produce had an unknown outcome.
+func (c *Content) SetBarrier(b func(context.Context) error) {
+	if c.dir != nil {
+		c.dir.mu.Lock()
+		c.dir.barrier = b
+		c.dir.mu.Unlock()
+		return
+	}
+	c.loader.SetBarrier(b)
+}
+
+// Refused is the Engine reporting swaps it consumed and refused.
+func (c *Content) Refused(refusals []sim.SwapRefused) {
+	if len(refusals) == 0 {
+		return
+	}
+	if c.dir != nil {
+		c.dir.Refused(refusals)
+		return
+	}
+	c.loader.Refused(refusals)
+}
+
 // Prepare implements sim.ContentSource.
 func (c *Content) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap) (sim.Topology, error) {
 	if c.dir != nil {
@@ -203,12 +235,29 @@ func (c *Content) Reconcile(ctx context.Context) ([]Rejection, error) {
 	return c.loader.LoadAll(ctx)
 }
 
+// InEffect is the content in effect as the source last learned it from the
+// Engine: the pack versions and their world_digest.
+func (c *Content) InEffect() (map[string]uint64, [32]byte) {
+	if c.dir != nil {
+		c.dir.mu.Lock()
+		defer c.dir.mu.Unlock()
+		if !c.dir.inEffect {
+			return nil, [32]byte{}
+		}
+		return map[string]uint64{DirPack: 0}, c.dir.digest
+	}
+	return c.loader.InEffect()
+}
+
 // Versions reports the content version each pack has in effect, for
 // andara_build_info and Admin.GetServerInfo. Empty for the dir source, which
 // has no versions: a directory is whatever is in it.
 func (c *Content) Versions() map[string]uint64 {
-	if c == nil || c.loader == nil {
+	if c == nil {
 		return nil
+	}
+	if c.dir != nil {
+		return c.dir.versions()
 	}
 	return c.loader.Versions()
 }
@@ -216,8 +265,11 @@ func (c *Content) Versions() map[string]uint64 {
 // ZoneVersions names the packID@version each Zone in effect came from. Empty
 // for the dir source, for the reason Versions is.
 func (c *Content) ZoneVersions() map[sim.ZoneID]string {
-	if c == nil || c.loader == nil {
+	if c == nil {
 		return nil
+	}
+	if c.dir != nil {
+		return c.dir.zoneVersions()
 	}
 	return c.loader.ZoneVersions()
 }
@@ -248,8 +300,47 @@ type dirContent struct {
 
 	mu       sync.Mutex
 	producer SwapProducer
+	barrier  func(context.Context) error
 	inEffect bool
+	digest   [32]byte
+	zones    []sim.ZoneID
 	applied  chan struct{}
+	refused  chan sim.SwapRefused
+}
+
+// versions is dir@0 once the directory is in effect, as andara_build_info
+// reports it.
+func (d *dirContent) versions() map[string]uint64 {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.inEffect {
+		return nil
+	}
+	return map[string]uint64{DirPack: 0}
+}
+
+// zoneVersions names dir@0 for every Zone of the directory in effect.
+func (d *dirContent) zoneVersions() map[sim.ZoneID]string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if !d.inEffect {
+		return nil
+	}
+	out := make(map[sim.ZoneID]string, len(d.zones))
+	for _, z := range d.zones {
+		out[z] = ManifestKey(DirPack, 0)
+	}
+	return out
+}
+
+// Refused hands a refusal of the genesis swap to Reconcile.
+func (d *dirContent) Refused(refusals []sim.SwapRefused) {
+	for _, r := range refusals {
+		select {
+		case d.refused <- r:
+		default:
+		}
+	}
 }
 
 func (d *dirContent) setProducer(p SwapProducer) {
@@ -286,6 +377,13 @@ func (d *dirContent) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap
 			topo.World = w
 		}
 	}
+	ids := make([]sim.ZoneID, 0, len(topo.World.Zones))
+	for id := range topo.World.Zones {
+		ids = append(ids, id)
+	}
+	d.mu.Lock()
+	d.zones = ids
+	d.mu.Unlock()
 	if len(findings) > 0 {
 		return sim.Topology{}, &ErrValidation{Findings: findings}
 	}
@@ -295,17 +393,19 @@ func (d *dirContent) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap
 // Applied records the directory in effect.
 func (d *dirContent) Applied(swaps []sim.SwapApplied) {
 	for _, s := range swaps {
-		d.mu.Lock()
-		first := !d.inEffect
-		d.inEffect = true
-		d.mu.Unlock()
-		if first {
-			close(d.applied)
-		}
+		// The gauges move before Reconcile is released: serving means
+		// applied, for /metrics too (review of #91).
 		d.opts.Metrics.ActiveVersion.WithLabelValues(s.Pack).Set(float64(s.Version))
 		d.opts.Metrics.buildInfo(map[string]uint64{s.Pack: s.Version})
 		for _, r := range s.Relocations {
 			d.opts.Metrics.Relocations.WithLabelValues(string(r.Zone)).Inc()
+		}
+		d.mu.Lock()
+		first := !d.inEffect
+		d.inEffect, d.digest = true, s.Digest
+		d.mu.Unlock()
+		if first {
+			close(d.applied)
 		}
 		d.opts.Log.Info("content in effect", "pack", s.Pack, "version", s.Version,
 			"path", d.opts.Path, "world_digest", fmt.Sprintf("%x", s.Digest[:8]))
@@ -316,8 +416,23 @@ func (d *dirContent) Applied(swaps []sim.SwapApplied) {
 // recovery already rebuilt the directory and checked its digest.
 func (d *dirContent) Reconcile(ctx context.Context) error {
 	d.mu.Lock()
-	done, producer := d.inEffect, d.producer
+	done, producer, barrier := d.inEffect, d.producer, d.barrier
 	d.mu.Unlock()
+	if !done && barrier != nil {
+		// A genesis swap a previous process produced may be past the last
+		// boundary: let it apply rather than produce a second. Bounded: a
+		// frozen World Partition carries on to genesis, whose own bounded
+		// wait ends the boot if nothing ever applies.
+		bctx, cancel := context.WithTimeout(ctx, applyWait(d.opts.Debounce))
+		err := barrier(bctx)
+		cancel()
+		if err != nil && ctx.Err() != nil {
+			return err
+		}
+		d.mu.Lock()
+		done = d.inEffect
+		d.mu.Unlock()
+	}
 	if done {
 		return nil
 	}
@@ -332,14 +447,44 @@ func (d *dirContent) Reconcile(ctx context.Context) error {
 		return fmt.Errorf("content: no producer for the genesis swap")
 	}
 	if err := producer.ProduceSwap(ctx, &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: swap}}); err != nil {
-		return &ErrProduce{Pack: DirPack, Err: err}
+		var pending *SwapPending
+		if !errors.As(err, &pending) {
+			return &ErrProduce{Pack: DirPack, Err: err}
+		}
+		select {
+		case <-pending.Settled:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		if out := pending.Outcome(); out != nil && !errors.Is(out, ErrSwapOutcomeUnknown) {
+			return &ErrProduce{Pack: DirPack, Err: out}
+		}
+		// Written, or perhaps written: wait for it to apply. A genesis swap
+		// that never landed leaves nothing in effect, and the bounded wait
+		// below ends the boot rather than hanging it.
 	}
+	wait := time.NewTimer(applyWait(d.opts.Debounce))
+	defer wait.Stop()
 	select {
+	case <-wait.C:
+		return &ErrApplyTimeout{Pack: DirPack, Wait: applyWait(d.opts.Debounce)}
 	case <-d.applied:
 		return nil
+	case r := <-d.refused:
+		return &ErrSwapRefused{Pack: r.Pack, Version: r.Version, Reason: r.Reason, Detail: r.Detail}
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// applyWait is content.reload_debounce × 15, the bounded wait for a swap to
+// apply and for the World Partition to catch up; 30s when the debounce is
+// unset.
+func applyWait(debounce time.Duration) time.Duration {
+	if debounce <= 0 {
+		return 30 * time.Second
+	}
+	return 15 * debounce
 }
 
 func fatal(errs []sim.ValidationError, strict bool) []sim.ValidationError {

@@ -4,6 +4,7 @@
 package gateway
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -664,4 +665,35 @@ func gamev1connectClient(c *http.Client, h *harness) gamev1connect.GameClient {
 
 func propagationCarrier(hdr http.Header) propagation.TextMapCarrier {
 	return propagation.HeaderCarrier(hdr)
+}
+
+// AW-SRV-012 (§8, review of #88): GetServerInfo carries the content in
+// effect, one entry per pack sorted by pack_id with its digest, and the
+// deprecated single-pack fields name andara.core.
+func TestAdmin_ServerInfoCarriesTheContentInEffect(t *testing.T) {
+	digest := [32]byte{1, 2, 3}
+	h := start(t, func(o *Options) {
+		o.Content = func() (map[string]uint64, [32]byte) {
+			return map[string]uint64{"town": 8, "andara.core": 4}, digest
+		}
+	})
+	c, _ := h.httpClient()
+	admin := adminv1connect.NewAdminClient(c, h.baseURL())
+	req := connect.NewRequest(&adminv1.GetServerInfoRequest{})
+	req.Header().Set("Authorization", "Bearer operator-token")
+	resp, err := admin.GetServerInfo(context.Background(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := resp.Msg.GetContent()
+	if len(got) != 2 || got[0].GetPackId() != "andara.core" || got[0].GetVersion() != 4 || got[1].GetPackId() != "town" || got[1].GetVersion() != 8 {
+		t.Fatalf("content = %v", got)
+	}
+	if !bytes.Equal(resp.Msg.GetContentDigest(), digest[:]) {
+		t.Errorf("content_digest = %x", resp.Msg.GetContentDigest())
+	}
+	//nolint:staticcheck // the deprecated fields are asserted on purpose
+	if resp.Msg.GetContentPackId() != "andara.core" || resp.Msg.GetContentVersion() != 4 {
+		t.Errorf("deprecated fields = %q@%d", resp.Msg.GetContentPackId(), resp.Msg.GetContentVersion())
+	}
 }

@@ -384,9 +384,30 @@ snapshots, the projector and the metrics. Decisions and findings are in the feed
   architecture's corpus PR stacked on #86. `-race` is clean across the touched packages. The six
   `make test-integration` packages pass against a Redpanda broker.
 
-**Outstanding before `done`:**
-- Architecture's corpus PR, which turns #86's corpus-driven tests green and moves the two
-  `pending/` cases, is not yet open.
+**Review of #86–#88 (2026-09-25), addressed.** #86: 12e0b17 (`TestFallbackRoom`,
+`TestFallbackRoom_TheFirstWins`). #87 and #88: the PR stacked on #90. New tests:
+- **Sim:** `TestContentSwap_AStaleSwapIsANoOp`, `_ARemovedZoneIsRefused`, `_AMisroutedSwapIsRefused`,
+  `_AFallbacklessZoneIsRefused`, `_AnArrivalIntoARemovedRoomLandsAtTheFallback`,
+  `_RelocationAcrossTwoSwaps`, `_BehindAFaultIsRequeued`, `TestArrive_IntoAGoneRoomLandsAtTheFallback`.
+- **Loader:** `TestLoader_AStaleSwapIsEvaluatedAgain`, `_AnAmbiguousProduceWaitsForItsFate`,
+  `_TheWaitForApplyIsBounded`, `_TransitionsTheVersionAloneCannotShow`, `_PendingStartsWhenTheMoveIsRead`,
+  `_FollowRetriesWhatReconcileCouldNotLoad`, `_ASupersededHeldVersionIsNeverApplied`.
+- **Boot and Gateway:** `TestRecovery_APreRuleLogIsRefusedByName`, `TestAdmin_ServerInfoCarriesTheContentInEffect`.
+
+Verified on the combined state (this branch with #86's fix and #89 merged): `make check` is clean,
+`-race` is clean, and the six `make test-integration` packages pass against Redpanda.
+
+**Review of #91 (2026-09-25), addressed.** The bounded barrier, the pre-rule discriminator (no
+`ContentSwap` on the World Partition), and gauges that move before waiters are released. New tests,
+each mutation-checked: `TestStartTickLoop_RefusesAPreRuleLogByName`,
+`TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule`,
+`TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+`TestWorldBarrier_FollowsTheLoop`, `TestBind_RecordsTheContentVersionInEffect`,
+`TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+`TestBindings_ARelocationEndsACrossZoneTransit`, `TestTheSwapCarriesTheLoadsTraceparent`,
+`TestApplyWaitFollowsTheDebounce`.
+
+**Outstanding before `done`:** the §8 review.
 - The live observation of the new series on the compose stack: `content.source=dir` there
   exercises genesis and the stall metric, and a pointer move needs the Kafka source.
 - The three findings in the feedback file for architecture.

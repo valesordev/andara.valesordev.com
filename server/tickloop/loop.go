@@ -435,20 +435,35 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 		// A swap is World-scoped and applied by the tick itself, after every
 		// other record (AW-SRV-012): a child of sim.tick, kept whenever it
 		// happens, and timed as the reload stall rather than as a Zone's.
+		// Parented by the Loader's content.load through the record's
+		// trace_id, so one trace shows the version from resolution to the
+		// tick that applied it, and linked to sim.tick.
 		cs := r.Command.GetContentSwap()
-		_, span := l.tracer.Start(ctx, "content.swap", trace.WithAttributes(
-			attribute.String("pack", cs.GetPackId()), attribute.Int64("version", int64(cs.GetVersion())),
-			attribute.Int64("tick", int64(l.tickNo)), attribute.Bool("andara.keep", true)))
-		return func(sim.Outcome) {
+		parent := command.ParentFrom(ctx, r.Command.GetTraceId())
+		sctx, span := l.tracer.Start(parent, "content.swap",
+			trace.WithLinks(trace.Link{SpanContext: tickSpan.SpanContext()}),
+			trace.WithAttributes(
+				attribute.String("pack", cs.GetPackId()), attribute.Int64("version", int64(cs.GetVersion())),
+				attribute.Int64("tick", int64(l.tickNo)), attribute.Bool("andara.keep", true)))
+		return func(out sim.Outcome) {
 			d := l.clock.Now().Sub(start)
+			if out.Code != "" {
+				span.SetAttributes(attribute.String("refused", out.Code))
+				span.End()
+				l.log.LogAttrs(sctx, slog.LevelWarn, "content swap refused: nothing changed",
+					slog.String("pack", cs.GetPackId()), slog.Uint64("version", cs.GetVersion()),
+					slog.Uint64("tick", uint64(l.tickNo)), slog.String("reason", out.Code),
+					slog.String("trace_id", traceID(sctx)))
+				return
+			}
 			span.End()
 			if l.opts.OnSwap != nil {
 				l.opts.OnSwap(d)
 			}
-			l.log.LogAttrs(ctx, slog.LevelInfo, "content swap applied",
+			l.log.LogAttrs(sctx, slog.LevelInfo, "content swap applied",
 				slog.String("pack", cs.GetPackId()), slog.Uint64("version", cs.GetVersion()),
 				slog.Uint64("tick", uint64(l.tickNo)), slog.Float64("stall_ms", float64(d.Microseconds())/1000),
-				slog.String("trace_id", traceID(ctx)))
+				slog.String("trace_id", traceID(sctx)))
 		}
 	}
 	parent := command.ParentFrom(ctx, r.Command.GetTraceId())
