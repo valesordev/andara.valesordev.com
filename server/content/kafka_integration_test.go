@@ -134,7 +134,7 @@ func (p *publisher) activate(pack string, version uint64) {
 }
 
 func intZone(id, room string) string {
-	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone","rooms":[{"id":%q,"title":"T","description":"d"}]}`, id, room)
+	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone","fallbackRoom":%q,"rooms":[{"id":%q,"title":"T","description":"d"}]}`, id, room, room)
 }
 
 // AC-1: boot from the Active Pointers over a real broker.

@@ -95,8 +95,8 @@ func (f *fakeStore) publish(pack string, version, coreVersion uint64, files map[
 }
 
 func zoneJSON(id, room string) string {
-	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone %s",
-		"rooms":[{"id":%q,"title":"A Room","description":"Somewhere."}]}`, id, id, room)
+	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone %s","fallbackRoom":%q,
+		"rooms":[{"id":%q,"title":"A Room","description":"Somewhere."}]}`, id, id, room, room)
 }
 
 // --- AC-11: a Template published under the wrong pack -----------------------

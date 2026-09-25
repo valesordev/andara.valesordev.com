@@ -206,7 +206,7 @@ func TestLoader_ValidationFailureIsRefusedAndRetained(t *testing.T) {
 	}
 
 	// A dangling Exit: the target Room does not exist.
-	s.publish("andara.core", 2, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 2, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"void","title":"Void","description":"d",
 			"exits":[{"direction":"north","toRoom":"nowhere"}]}]}`})
 	rejects := l.Apply(context.Background(), PointerMove{Pack: "andara.core", Version: 2})
@@ -229,7 +229,7 @@ func TestLoader_ValidationFailureIsRefusedAndRetained(t *testing.T) {
 func TestLoader_WarningsDoNotRefuseAVersion(t *testing.T) {
 	s := newFakeStore()
 	// Two Rooms, no Exits between them: orphan_room, a warning.
-	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"a","title":"A","description":"d"},{"id":"b","title":"B","description":"d"}]}`})
 	l, _ := testLoader(t, s, "andara.core")
 	rejects, err := l.LoadAll(context.Background())
@@ -244,7 +244,7 @@ func TestLoader_WarningsDoNotRefuseAVersion(t *testing.T) {
 // ...unless the operator asked for them to be fatal.
 func TestLoader_StrictOrphansRefusesTheSameVersion(t *testing.T) {
 	s := newFakeStore()
-	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"a","title":"A","description":"d"},{"id":"b","title":"B","description":"d"}]}`})
 	l := NewLoader(LoaderOptions{Store: s, Packs: []string{"andara.core"}, StrictOrphans: true})
 	rejects, err := l.LoadAll(context.Background())

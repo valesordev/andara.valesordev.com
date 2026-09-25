@@ -180,6 +180,7 @@ func TestCanonicalBytes_ComponentlessContentIsUnchanged(t *testing.T) {
 	}
 	got := string(CanonicalBytes(world))
 	want := "zone\ttown\tTown\t" + strconv.Itoa(int(PartitionFor("town"))) + "\n" +
+		"zone_fallback\ttown\tplaza\n" +
 		"room\ttown\thall\tHall\td\n" +
 		"exit\ttown\thall\tsouth\ttown\tplaza\tlocal\n" +
 		"room\ttown\tplaza\tPlaza\td\n" +

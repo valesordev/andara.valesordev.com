@@ -47,6 +47,10 @@ var table = map[sim.EventType]touches{
 	// record when it is still in the Zone (a same-Zone move, or dormant after
 	// an unbind), a tombstone when it left the Zone.
 	sim.EvCharacterLeft: {zone: true, room: true, entities: true},
+	// A content swap moved the Entity out of a Room the new version removed
+	// (AW-SRV-012): the Entity, the fallback Room it is now in, and the
+	// Zone's counts. The removed Room is not an aggregate any more.
+	sim.EvEntityRelocated: {zone: true, room: true, entities: true},
 	// A rejection changes nothing: validate and apply refuse before mutating.
 	sim.EvCommandRejected: {},
 	// A fault sets the Zone's faulted flag, and the panicking handler may
@@ -110,6 +114,8 @@ func payloadPlace(env *gamev1.EventEnvelope) (sim.ZoneID, sim.RoomID) {
 		return sim.ZoneID(p.RoomDescribed.GetZoneId()), sim.RoomID(p.RoomDescribed.GetRoomId())
 	case *gamev1.EventEnvelope_ZoneFaulted:
 		return sim.ZoneID(p.ZoneFaulted.GetZoneId()), ""
+	case *gamev1.EventEnvelope_EntityRelocated:
+		return sim.ZoneID(p.EntityRelocated.GetZoneId()), sim.RoomID(p.EntityRelocated.GetToRoomId())
 	}
 	return "", ""
 }

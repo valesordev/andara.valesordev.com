@@ -549,3 +549,19 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	eventually.True(t, 5*time.Second, what, cond)
 }
+
+// AW-SRV-012: a relocation moves the binding's Room to the fallback without a
+// transit: the Zone, and so the Partition, is unchanged, and the next Command
+// is routed from where the body now stands.
+func TestBindings_FollowARelocation(t *testing.T) {
+	held := prometheus.NewGauge(prometheus.GaugeOpts{Name: "held"})
+	b := NewBindings(time.Second, nil, held)
+	b.Bind("s1", command.Binding{Actor: "alice", Zone: "town", Room: "hall"})
+	b.Publish(sim.Event{Type: sim.EvEntityRelocated, Scope: sim.ScopeRoom("town", "plaza").With("alice"),
+		Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
+			ZoneId: "town", EntityName: "alice", FromRoomId: "hall", ToRoomId: "plaza", Reason: sim.ReasonRoomRemoved}}}})
+	got, bound, inTransit := b.Lookup("s1")
+	if !bound || inTransit || got.Zone != "town" || got.Room != "plaza" {
+		t.Fatalf("binding %+v bound=%v transit=%v", got, bound, inTransit)
+	}
+}

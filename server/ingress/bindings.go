@@ -201,7 +201,7 @@ func (t *Bindings) expire(sessionID string, tr *transit) {
 // reading the events.Hub gives an Observer. HandoffRejected (AW-SRV-028)
 // will end one on the origin.
 func (t *Bindings) Publish(ev sim.Event) {
-	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived {
+	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated {
 		return
 	}
 	var moved []struct {
@@ -235,6 +235,10 @@ func (t *Bindings) Publish(ev sim.Event) {
 				close(e.transit.settled)
 				e.transit = nil
 			}
+		case *gamev1.EventEnvelope_EntityRelocated:
+			// Same Zone, another Room: a content swap moved the body to its
+			// Zone's fallback (AW-SRV-012). No Partition changes.
+			e.cmd.Room = sim.RoomID(p.EntityRelocated.GetToRoomId())
 		}
 	}
 	t.mu.Unlock()

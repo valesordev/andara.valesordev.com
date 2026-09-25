@@ -181,7 +181,7 @@ func TestLoadContent_KafkaWithoutBrokersFailsNamingTheReason(t *testing.T) {
 func TestLoadContent_OrphanWarnNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "town.json", `{
-		"formatVersion":1,"id":"town","name":"Town",
+		"formatVersion":1,"id":"town","name":"Town","fallbackRoom":"plaza",
 		"rooms":[{"id":"plaza","title":"Plaza","description":"d"}]
 	}`)
 	rt, logs := runtime(t, dir, false)

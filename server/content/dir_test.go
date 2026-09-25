@@ -118,7 +118,7 @@ func TestLoadDir_MissingPath(t *testing.T) {
 func TestLoadDir_FortyRooms(t *testing.T) {
 	dir := t.TempDir()
 	var b strings.Builder
-	b.WriteString(`{"formatVersion":1,"id":"town","name":"Town","rooms":[`)
+	b.WriteString(`{"formatVersion":1,"id":"town","name":"Town","fallbackRoom":"r00","rooms":[`)
 	for i := 0; i < 40; i++ {
 		if i > 0 {
 			b.WriteByte(',')

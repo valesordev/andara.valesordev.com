@@ -780,7 +780,8 @@ broken Exits needs one boot rather than ten.
 **Findings that refuse the load** (the process exits 1 and `/readyz` stays 503):
 `unknown_room`, `unknown_zone`, `duplicate_room`, `duplicate_zone`, `unsupported_format_version`,
 `malformed_file`, `no_zones_found`, `unknown_direction`, `unknown_component_type`,
-`duplicate_component_type`, `invalid_component_field`; and for Templates `unresolved_extends`,
+`duplicate_component_type`, `invalid_component_field`, `fallback_missing` (a Zone with no
+`fallback_room`, or one naming a Room it does not contain, AW-SRV-012 AC-10); and for Templates `unresolved_extends`,
 `unflattened_template`, `duplicate_template`, `chain_mismatch`, `chain_too_deep`,
 `invalid_provenance`.
 
@@ -819,6 +820,44 @@ sorted by type, deterministically.
 `Npc` (carrying `andara.core.Memory`), and `Item`, which is its own root because a chain has one
 kind. `testdata/templates/` carries a byte-identical copy, plus a `town` pack, and
 `TestCoreSeedMatchesFixture` holds the two together.
+
+### Content in effect and the swap (AW-SRV-012)
+
+The log is the source of the content a World runs on. Every version enters through a
+`ContentSwap` Command (`log.proto`), the first included, and replay reads which content each tick
+ran on the way it reads tick boundaries. The Engine holds the versions in effect and their digest
+(`Engine.Content`), and starts with none: `sim.EmptyWorld`, no Zones, until the first swap applies.
+
+**`world_digest`** is `sim.ContentDigest`: SHA-256 over `CanonicalBytes(world)` followed by
+`TemplatesCanonicalBytes(templates)`. It covers the whole World after the swap, every pack's Zones
+and Templates, not only the swapped pack's. So the second of two swaps in one tick digests a World
+that includes the first, and a divergence in any pack is caught. `CanonicalBytes` records each
+Zone's `fallback_room`. `TemplatesCanonicalBytes` orders Templates by reference and records kind,
+chain, Components and provenance. A Template's blob path and `source` are left out, because they are
+provenance and not content, and the same content mounted at another path must digest the same. The
+digest covers topology only. Entity state is the State Hash's.
+
+**Applying a swap.** `Engine.Step` holds a tick's `ContentSwap` records out of the per-Partition
+loop and applies them after every other record of the tick, in (Partition, offset) order. Every
+Command of tick *T* sees the old content, and every Command of *T+1* the new. Before the tick
+mutates anything, each swap is prepared through the `sim.ContentSource` seam against the versions
+the one before it leaves, and its digest is compared with the recorded one. A mismatch is
+`sim.ErrContentDigest` (a `*ContentDigestError` naming the pack and both digests), and it refuses
+the whole Step, leaving the state untouched, as a State Hash mismatch halts recovery. Applying the
+swap:
+
+- Zones the new content adds get empty state.
+- An Entity in a Room the new content removed moves to its Zone's `fallback_room`. A present one
+  emits `EntityRelocated{zone_id, entity_name, from_room_id, to_room_id, reason: "room_removed"}`,
+  scoped to the fallback Room and the moved Entity. A dormant body moves silently, so "where you
+  were" stays a Room that exists.
+- A Zone the new content drops while Entities stand in it is **stranded**, not deleted. Its state
+  is kept and hashed, and its Commands are refused `unknown_zone` until content brings the Zone back
+  (`SwapApplied.Stranded`).
+
+`StepResult.Swaps` reports each applied swap with its relocations. The events hub, the ingress
+bindings and the state projector's `Touched` table follow `EntityRelocated` as they follow an
+arrival, so a relocated Character perceives and is routed from the fallback Room.
 
 ### Content-load metrics
 

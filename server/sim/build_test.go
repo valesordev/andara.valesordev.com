@@ -399,16 +399,19 @@ func TestPartitionFor_StableAndInRange(t *testing.T) {
 	}
 }
 
+// zone builds a Zone whose fallback_room is its first Room, so a test about
+// anything else is not refused for fallback_missing (AW-SRV-012 AC-10).
 func zone(file, id, name string, rooms ...*contentv1.RoomDefinition) Input {
-	return Input{
-		File: file,
-		Def: &contentv1.ZoneDefinition{
-			FormatVersion: 1,
-			Id:            id,
-			Name:          name,
-			Rooms:         rooms,
-		},
+	def := &contentv1.ZoneDefinition{
+		FormatVersion: 1,
+		Id:            id,
+		Name:          name,
+		Rooms:         rooms,
 	}
+	if len(rooms) > 0 && rooms[0] != nil {
+		def.FallbackRoom = rooms[0].GetId()
+	}
+	return Input{File: file, Def: def}
 }
 
 func room(id, title string, exits ...*contentv1.ExitDefinition) *contentv1.RoomDefinition {
@@ -466,4 +469,33 @@ func fatal(errs []ValidationError) bool {
 		}
 	}
 	return false
+}
+
+// AW-SRV-012 AC-10: a Zone with no fallback_room, or one naming a Room it does
+// not contain, is refused with fallback_missing naming the Zone.
+func TestBuildWorld_FallbackIsRequiredAndLocal(t *testing.T) {
+	none := zone("town.json", "town", "Town", room("plaza", "Plaza"))
+	none.Def.FallbackRoom = ""
+	world, errs := BuildWorld([]Input{none}, Options{})
+	if world != nil {
+		t.Fatal("a Zone with no fallback built")
+	}
+	if e := requireCode(t, errs, ErrFallbackMissing); e.Zone != "town" || e.Room != "" {
+		t.Errorf("finding %+v", e)
+	}
+
+	elsewhere := zone("town.json", "town", "Town", room("plaza", "Plaza"))
+	elsewhere.Def.FallbackRoom = "hall"
+	world, errs = BuildWorld([]Input{elsewhere}, Options{})
+	if world != nil {
+		t.Fatal("a Zone falling back to a Room it lacks built")
+	}
+	if e := requireCode(t, errs, ErrFallbackMissing); e.Zone != "town" || e.Room != "hall" {
+		t.Errorf("finding %+v", e)
+	}
+
+	ok, errs := BuildWorld([]Input{zone("town.json", "town", "Town", room("plaza", "Plaza"))}, Options{})
+	if ok == nil || ok.Zones["town"].Fallback != "plaza" {
+		t.Fatalf("world %v errs %v", ok, errs)
+	}
 }

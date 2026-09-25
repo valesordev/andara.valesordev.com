@@ -39,6 +39,11 @@ func CanonicalBytes(w *World) []byte {
 	for _, zid := range zids {
 		z := w.Zones[ZoneID(zid)]
 		writeFields(&b, "zone", zid, z.Name, strconv.FormatInt(int64(z.Partition), 10))
+		if z.Fallback != "" {
+			// Its own record, omitted when unset, as Components are: a World
+			// built before fallback_room existed encodes as it did.
+			writeFields(&b, "zone_fallback", zid, string(z.Fallback))
+		}
 		writeComponents(&b, "zone_component", "zone_field", []string{zid}, z.Components)
 
 		rids := make([]string, 0, len(z.Rooms))

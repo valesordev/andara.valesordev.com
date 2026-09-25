@@ -40,6 +40,11 @@ const (
 	// could stand in for core depending on load order (AW-SRV-012 AC-11). The
 	// code is the one docs/specs/content-language/v1/errors.md already assigns.
 	ErrPackMismatch ErrCode = "pack_mismatch"
+
+	// AW-SRV-012 AC-10. A Zone with no fallback_room, or one naming a Room
+	// the Zone does not contain. The code errors.md assigns the compiler's
+	// finding, so a Builder reads the same word at compile and at load.
+	ErrFallbackMissing ErrCode = "fallback_missing"
 )
 
 // warningCodes are findings that do not refuse a load. They are advisory

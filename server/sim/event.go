@@ -23,6 +23,7 @@ const (
 	EvZoneFaulted       EventType = "zone_faulted"
 	EvSubscriberDropped EventType = "subscriber_dropped"
 	EvSimulationStopped EventType = "simulation_stopped"
+	EvEntityRelocated   EventType = "entity_relocated"
 )
 
 // Scope answers "who may perceive this" (AW-SRV-004). It is computed inside
@@ -171,6 +172,8 @@ func typeOf(env *gamev1.EventEnvelope) EventType {
 		return EvSubscriberDropped
 	case *gamev1.EventEnvelope_SimulationStopped:
 		return EvSimulationStopped
+	case *gamev1.EventEnvelope_EntityRelocated:
+		return EvEntityRelocated
 	}
 	return ""
 }
@@ -182,5 +185,5 @@ func TypeOf(env *gamev1.EventEnvelope) EventType { return typeOf(env) }
 
 // EventTypes is every EventType the simulation emits.
 func EventTypes() []EventType {
-	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped}
+	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped, EvEntityRelocated}
 }
