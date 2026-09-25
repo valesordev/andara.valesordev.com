@@ -127,6 +127,12 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: UnbindCharacter;
     case: "unbindCharacter";
+  } | {
+    /**
+     * @generated from field: andara.log.v1.ContentSwap content_swap = 17;
+     */
+    value: ContentSwap;
+    case: "contentSwap";
   } | { case: undefined; value?: undefined };
 };
 
@@ -299,6 +305,57 @@ export declare type UnbindCharacter = Message<"andara.log.v1.UnbindCharacter"> &
  * Use `create(UnbindCharacterSchema)` to create a new message.
  */
 export declare const UnbindCharacterSchema: GenMessage<UnbindCharacter>;
+
+/**
+ * The World moves one pack to a new content version (AW-SRV-012). The Loader
+ * resolves, validates and builds the new topology off-tick, then produces this
+ * Command. It is in the log so that the tick a World changed content is part
+ * of its history, and replay across the change is exact.
+ *
+ * A swap is World-scoped, not Zone-scoped: one pack's Zones can sit on many
+ * Partitions, and a swap applied per Partition would let a tick see Zone A at
+ * the new version and Zone B at the old one. So:
+ *   - zone_id on the LoggedCommand is empty, and the record is produced to
+ *     Partition 0. Any fixed Partition would do, because of the next rule.
+ *   - Its Apply runs after every other record of its tick, whatever its
+ *     offset: every Command of tick T sees the old version, and every Command
+ *     of T+1 sees the new one. Two swaps in one tick apply in offset order.
+ *   - Inside that Apply, every Entity standing in a Room the new version
+ *     removed moves to its Zone's fallback_room, emitting EntityRelocated
+ *     (andara.game.v1). ADR-0001's single process holds every Zone, so this
+ *     is one deterministic step. The sharding story owns its cross-process
+ *     form.
+ *
+ * @generated from message andara.log.v1.ContentSwap
+ */
+export declare type ContentSwap = Message<"andara.log.v1.ContentSwap"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+
+  /**
+   * SHA-256 over the built topology the Loader produced for (pack_id,
+   * version), as server/sim defines and documents it. Replay rebuilds from
+   * the same version and compares. A mismatch halts recovery rather than
+   * serving a World built from different content, the way a State Hash
+   * mismatch does.
+   *
+   * @generated from field: bytes world_digest = 3;
+   */
+  worldDigest: Uint8Array;
+};
+
+/**
+ * Describes the message andara.log.v1.ContentSwap.
+ * Use `create(ContentSwapSchema)` to create a new message.
+ */
+export declare const ContentSwapSchema: GenMessage<ContentSwap>;
 
 /**
  * An Entity in transit between Zones: the same shape server/sim holds, so the

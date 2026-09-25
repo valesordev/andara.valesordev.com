@@ -37,6 +37,8 @@ message EventEnvelope {
     // they carry event_id 0, so they do not move a client's resume point.
     Heartbeat heartbeat = 17;
     Resync resync = 18;
+
+    EntityRelocated entity_relocated = 19;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -98,6 +100,22 @@ message SubscriberDropped {
 
 message SimulationStopped {
   string reason = 1;
+}
+
+// An Entity was moved out of a Room that a new content version removed, to
+// its Zone's fallback_room (AW-SRV-012, ADR-0004), inside the ContentSwap's
+// Apply. Scoped to the fallback Room and the moved Entity. The removed Room
+// has no other audience, because everything standing in it is relocated in
+// the same Apply. entity_name is the display name, as RoomDescribed.occupants
+// carries it. Entity IDs do not reach clients.
+message EntityRelocated {
+  string zone_id = 1;
+  string entity_name = 2;
+  string from_room_id = 3;            // the removed Room
+  string to_room_id = 4;              // ZoneDefinition.fallback_room
+  // room_removed: the only reason in v1. A string, as SubscriberDropped's
+  // and Resync's are, so a new reason needs no schema change.
+  string reason = 5;
 }
 
 // Sent when heartbeat_interval passes with nothing else to send, so a client
