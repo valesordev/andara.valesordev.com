@@ -4,7 +4,7 @@ title: Content resolution from the store and reload at a tick boundary
 epic: EPIC-05
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-021, AW-SRV-022]
 blocks: [AW-SRV-013]
@@ -319,3 +319,46 @@ until then. Per-AC state, deviations and the architecture-owned items are in
   Implementation is landing the half that depends on none of them — the resolver, the blob cache and
   the retained-version rule, so AC-1 and AC-4 through AC-8 and AC-11 — on
   `impl/aw-srv-012-content-resolution`. The swap-and-relocate half follows once the protocol lands.
+
+## Verification record — 2026-09-25 (implementation; `review` until the §8 checklist passes)
+
+The first half is #63 (`As built` above). The second half is three stacked PRs, built to the
+2026-09-25 rulings (#85):
+[#86](https://github.com/valesordev/andara.valesordev.com/pull/86), the compiler's `fallback_room`
+and `fallback_missing`, one half of the pair with architecture's corpus PR;
+[#87](https://github.com/valesordev/andara.valesordev.com/pull/87), the swap in the sim; and
+[#88](https://github.com/valesordev/andara.valesordev.com/pull/88), the Loader, boot, recovery,
+snapshots, the projector and the metrics. Decisions and findings are in the feedback file,
+"Implementation, 2026-09-25".
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | Genesis: `LoadAll` produces one swap per followed pack, core first, and `Versions()` and `andara_content_active_version` report them once applied. Covered by `TestLoader_BootResolvesEveryFollowedPointer` (unit, real Engine harness), `TestKafkaResolver_ResolvesFromActivePointers` (Redpanda), and at boot by `TestLoadContent_ValidThreeZones` (`/readyz` 503, then 200 once in effect, with the series on `/metrics`) | pass |
+| 2 | `TestContentSwap_RelocatesInTheSwapTick`: a Command in the swap's tick sees the old version and the next tick the new. `TestContentSwap_TwoInOneTickApplyInOffsetOrder`. `TestKafka_APointerMoveSwapsTheWorldThroughTheLog` (Redpanda): pointer → `Follow` → the Gateway's producer → the tick loop → applied | pass |
+| 3 | `TestContentSwap_RelocatesInTheSwapTick`: `EntityRelocated` in the swap's tick, scoped to the fallback Room and the Entity, and a dormant body moved silently. The Redpanda chain test asserts the relocation's tick equals the swap's and `andara_content_relocations_total{zone}` = 1. The followers are covered by `TestObserverFollowsARelocation`, `TestBindings_FollowARelocation` and `TestASwapRendersTheNewTopology` | pass |
+| 4–8, 11 | #63's tests, unchanged in intent, now through the harness: a refusal changes nothing that is serving. AC-8 as amended (pointer event only). §9b: `TestLoader_CoreRollbackNamesEveryPackHoldingIt` | pass |
+| 9 | `TestContentSwapStaysInsideHalfTheTickBudget`: at the sizing fixture (25,000 Entities, 2,600 relocated) the worst of three swaps stalled 5.4 ms against the 25 ms budget. Observed live as `andara_content_reload_stall_seconds` via `content.swap`'s Observer timing (`TestLoadContent_ValidThreeZones` reads `_count 1` from `/metrics`) | pass |
+| 10 | Compiler: `TestFallbackRoom` (both forms, their positions and chains). Server: `TestBuildWorld_FallbackIsRequiredAndLocal`, and `TestLoader_FallbackMissingHasItsOwnReason` (`reason="fallback_missing"`, previous version kept) | pass |
+
+**Definition of done.**
+- The **replay-across-swap test** is `TestContentSwap_ReplayAcrossASwapIsExact` (unit) and
+  `TestKafka_RecoveryAcrossAContentSwap` (Redpanda). Recovery from no content reaches the recorded
+  State Hash and content in effect, and it halts with `ErrContentDigest` over changed content.
+- **The SLO and the runbook** are architecture's, landed in #82.
+- **The owed items** from #85 are all delivered: `andara_content_pending_seconds`
+  (`TestLoader_PendingSeconds`), the `store_unavailable` retry (`TestLoader_FollowRetriesAStoreFault`,
+  `TestLoader_AProduceFailureIsAStoreFault`), `world_digest` (documented in `server/README.md`,
+  `TestContentDigest_CoversTopologyNotProvenance`), and the field-6 compiler change. Snapshot
+  fields 8/9 are written (`TestSnapshot_CarriesAndRestoresTheContentInEffect`,
+  `TestRoundCarriesTheContentInEffect`). Pre-rule logs are refused
+  (`TestRecovered_RefusesALogThatPredatesTheContentRule`).
+- **Checks:** `make check` targets are clean except the corpus-driven tests, which wait on
+  architecture's corpus PR stacked on #86. `-race` is clean across the touched packages. The six
+  `make test-integration` packages pass against a Redpanda broker.
+
+**Outstanding before `done`:**
+- Architecture's corpus PR, which turns #86's corpus-driven tests green and moves the two
+  `pending/` cases, is not yet open.
+- The live observation of the new series on the compose stack: `content.source=dir` there
+  exercises genesis and the stall metric, and a pointer move needs the Kafka source.
+- The three findings in the feedback file for architecture.
