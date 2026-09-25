@@ -417,3 +417,65 @@ change under option B1. The swap, relocation, `andara_content_pending_seconds` a
 all depend on A. Building the swap before A would ship the restart outage described above.
 `world_digest` waits on A's scope question. The story stays `in-progress`, and nothing is merged
 under it until A is answered.
+
+---
+
+## Architecture's answers — 2026-09-25
+
+### A. Option 1: the log is the source of the content in effect
+
+Accepted as you proposed it, with the diagnosis exactly right. A correct live swap would have made
+the next restart an outage. This isn't a new principle, which is why it needs no ADR: ADR-0002 §4
+records tick boundaries rather than re-deriving them, and content in effect is the same kind of
+decision. Written into the story's Data / state impact and `log.proto`'s `ContentSwap` comment.
+The points you left open:
+
+1. **Genesis order:** `andara.core` first, then the other followed packs by `pack_id`. A pack is
+   compiled against a core (AC-8), so core must be in effect first.
+2. **`AW-SRV-007`'s restore from a snapshot:** the snapshot carries it. `SnapshotEnvelope` gains
+   `repeated PackVersion content = 8` and `bytes content_digest = 9`, landed in this PR, additive,
+   with `gen/` regenerated. Scanning swaps up to *T* is the unbounded read a snapshot exists to
+   avoid. This story's round writes the two fields, since it is where content in effect becomes
+   known, and `AW-SRV-007` inherits reading and checking them.
+3. **Retention** becomes a stated contract: everything a logged swap names is kept for the life of
+   the log. ADR-0004's topics already do this, so it is a constraint on any future GC, not work now.
+4. **An existing log:** forward-only. Refuse a non-empty log with no swap before its first
+   boundary, exit `1`, naming this story. Don't build a legacy replay path. No World before M2
+   needs to survive, and the path would outlive its use.
+5. **`content.source=dir`:** genesis swaps carry version 0 and the digest. A directory changed
+   while the server was down then halts recovery on the digest, rather than replaying silently
+   over different content. That is the honest behaviour for a developer source.
+6. **"Serving" means applied:** `andara_content_active_version` and the Loader's retained version
+   move when the swap applies. Neither the Loader's acceptance nor the produce ack counts. This
+   also answers your worry about a failed produce leaving the Loader and the Engine disagreeing:
+   the Engine is the only authority, and the Loader follows it.
+
+Options 2 and 3 are rejected. Option 2 puts a pack map in every boundary record, 10 times a second,
+to answer a question that changes a few times a day. Option 3 leaves the "moved while down" hole,
+as you said.
+
+### `world_digest`: the whole World, confirmed
+
+It covers the whole World's content topology after the swap: every pack's Zones and Templates, in
+canonical order. It covers topology only, not Entity state (the State Hash has that). Your reading
+of two swaps in one tick is right. `log.proto`'s comment now says so.
+
+### B. Option 1: the stacked pair
+
+Accepted. A missing `fallback` is a Builder's mistake, and a Builder should learn it at compile,
+which is what `errors.md` §6 says. Splitting the rule to keep the corpus green would move a Builder
+error from compile to publish for the corpus's convenience.
+
+- **Your PR:** emits field 6, raises both forms of `fallback_missing`, makes `decompile` write the
+  `fallback` line (so `roundtrip/` stays an identity), and updates `testdata/content/` and
+  `content/core`.
+- **Position.** `errors.md` had none for the "declares none" form, because there's no literal to
+  point at. It is now the Zone's `zone` keyword, landed in this PR.
+- **Architecture's PR:** based on your branch, it adds a `fallback` line to every corpus Zone,
+  updates the expected JSON and sidecars, and moves the two `pending/` cases. Open yours, and
+  architecture opens its PR against `main` from a branch based on yours. Merging it merges both, so
+  neither lane commits to the other's branch, and `main` is never red between them.
+
+**Order of work:** land the `store_unavailable` retry and the B1 compiler change whenever they're
+ready. The swap, relocation, the pending gauge and boot wiring can start now, against the rules
+above.

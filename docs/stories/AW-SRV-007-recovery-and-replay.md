@@ -266,6 +266,10 @@ CLAUDE.md §8, plus:
   `andara_snapshot_failures_total{reason="encode"|"timeout"|"stall"}` moving, and
   `{reason="boundary"}` once `AW-SRV-006` AC-8 lands. `store` and `rounds_total{incomplete}` were
   observed at 006's pass.
+- **Inherited from `AW-SRV-012` (2026-09-25, architecture):** restore from a snapshot resolves
+  `SnapshotEnvelope.content` (the per-pack versions in effect at its tick), rebuilds the topology,
+  and checks `content_digest` *before* loading any Zone body. A mismatch halts recovery like a
+  State Hash mismatch. Recovery never re-derives content from the Active Pointers.
 
 ## Open questions
 

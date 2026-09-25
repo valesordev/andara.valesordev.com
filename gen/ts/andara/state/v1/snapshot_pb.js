@@ -23,7 +23,7 @@ import { file_andara_log_v1_log } from "../../log/v1/log_pb";
  * Describes the file andara/state/v1/snapshot.proto.
  */
 export const file_andara_state_v1_snapshot = /*@__PURE__*/
-  fileDesc("Ch5hbmRhcmEvc3RhdGUvdjEvc25hcHNob3QucHJvdG8SD2FuZGFyYS5zdGF0ZS52MSK3AQoQU25hcHNob3RFbnZlbG9wZRIVCg1zdGF0ZV92ZXJzaW9uGAEgASgNEgwKBHRpY2sYAiABKAQSLwoHb2Zmc2V0cxgDIAMoCzIeLmFuZGFyYS5sb2cudjEuUGFydGl0aW9uT2Zmc2V0EhIKCnN0YXRlX2hhc2gYBCABKAwSDwoHem9uZV9pZBgFIAEoCRIaChJ0YWtlbl9hdF91bml4X25hbm8YBiABKAMSDAoEYm9keRgHIAEoDEK/AQoTY29tLmFuZGFyYS5zdGF0ZS52MUINU25hcHNob3RQcm90b1ABWjtnaXRodWIuY29tL3ZhbGVzb3JkZXYvYW5kYXJhL2dlbi9nby9hbmRhcmEvc3RhdGUvdjE7c3RhdGV2MaICA0FTWKoCD0FuZGFyYS5TdGF0ZS5WMcoCD0FuZGFyYVxTdGF0ZVxWMeICG0FuZGFyYVxTdGF0ZVxWMVxHUEJNZXRhZGF0YeoCEUFuZGFyYTo6U3RhdGU6OlYxYgZwcm90bzM", [file_andara_log_v1_log]);
+  fileDesc("Ch5hbmRhcmEvc3RhdGUvdjEvc25hcHNob3QucHJvdG8SD2FuZGFyYS5zdGF0ZS52MSL+AQoQU25hcHNob3RFbnZlbG9wZRIVCg1zdGF0ZV92ZXJzaW9uGAEgASgNEgwKBHRpY2sYAiABKAQSLwoHb2Zmc2V0cxgDIAMoCzIeLmFuZGFyYS5sb2cudjEuUGFydGl0aW9uT2Zmc2V0EhIKCnN0YXRlX2hhc2gYBCABKAwSDwoHem9uZV9pZBgFIAEoCRIaChJ0YWtlbl9hdF91bml4X25hbm8YBiABKAMSDAoEYm9keRgHIAEoDBItCgdjb250ZW50GAggAygLMhwuYW5kYXJhLnN0YXRlLnYxLlBhY2tWZXJzaW9uEhYKDmNvbnRlbnRfZGlnZXN0GAkgASgMIi8KC1BhY2tWZXJzaW9uEg8KB3BhY2tfaWQYASABKAkSDwoHdmVyc2lvbhgCIAEoBEK/AQoTY29tLmFuZGFyYS5zdGF0ZS52MUINU25hcHNob3RQcm90b1ABWjtnaXRodWIuY29tL3ZhbGVzb3JkZXYvYW5kYXJhL2dlbi9nby9hbmRhcmEvc3RhdGUvdjE7c3RhdGV2MaICA0FTWKoCD0FuZGFyYS5TdGF0ZS5WMcoCD0FuZGFyYVxTdGF0ZVxWMeICG0FuZGFyYVxTdGF0ZVxWMVxHUEJNZXRhZGF0YeoCEUFuZGFyYTo6U3RhdGU6OlYxYgZwcm90bzM", [file_andara_log_v1_log]);
 
 /**
  * Describes the message andara.state.v1.SnapshotEnvelope.
@@ -31,4 +31,11 @@ export const file_andara_state_v1_snapshot = /*@__PURE__*/
  */
 export const SnapshotEnvelopeSchema = /*@__PURE__*/
   messageDesc(file_andara_state_v1_snapshot, 0);
+
+/**
+ * Describes the message andara.state.v1.PackVersion.
+ * Use `create(PackVersionSchema)` to create a new message.
+ */
+export const PackVersionSchema = /*@__PURE__*/
+  messageDesc(file_andara_state_v1_snapshot, 1);
 

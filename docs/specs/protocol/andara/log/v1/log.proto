@@ -169,15 +169,33 @@ enum UnbindReason {
 //     (andara.game.v1). ADR-0001's single process holds every Zone, so this
 //     is one deterministic step. The sharding story owns its cross-process
 //     form.
+//
+// The log is the source of the content in effect (decided 2026-09-25, AW-SRV-012
+// feedback, "Architecture's answers"). Replay reads which content each tick ran
+// on, the way it reads tick boundaries (ADR-0002 §4), and does not re-derive it
+// from the Active Pointers:
+//   - Every version a World serves enters through a ContentSwap, the first
+//     included. On an empty log, boot produces a genesis swap per followed pack,
+//     andara.core first and then the rest by pack_id, before the World serves
+//     anything.
+//   - Recovery starts from an empty topology and builds content only from the
+//     swaps it replays. A non-empty log with no swap before its first tick
+//     boundary predates this rule, and boot refuses it rather than guess.
+//   - After recovery, a pointer that differs from the last swapped version is a
+//     move like any other, applied through the log.
 message ContentSwap {
   string pack_id = 1;
   uint64 version = 2;
 
-  // SHA-256 over the built topology the Loader produced for (pack_id,
-  // version), as server/sim defines and documents it. Replay rebuilds from
-  // the same version and compares. A mismatch halts recovery rather than
-  // serving a World built from different content, the way a State Hash
-  // mismatch does.
+  // SHA-256 over the whole World's content topology *after* this swap: every
+  // pack's Zones and Templates in canonical order, as server/sim defines and
+  // documents it. It covers topology only, not Entity state, which the State
+  // Hash covers. A per-pack digest would miss a divergence in another pack's
+  // Zones. The second of two swaps in one tick therefore digests a World that
+  // includes the first, which holds because one producer writes both to
+  // Partition 0 in Loader order. Replay rebuilds and compares, and a mismatch
+  // halts recovery the way a State Hash mismatch does. (Scope confirmed
+  // 2026-09-25.)
   bytes world_digest = 3;
 }
 

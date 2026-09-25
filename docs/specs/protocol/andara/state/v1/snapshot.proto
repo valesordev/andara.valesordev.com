@@ -74,8 +74,23 @@ message SnapshotEnvelope {
   // evolves independently, versioned by state_version above.
   bytes body = 7;
 
+  // The content in effect at `tick` (AW-SRV-012, 2026-09-25): every pack's
+  // version, sorted by pack_id, and the world_digest of the last ContentSwap
+  // applied at or before `tick`. Recovery from this snapshot (AW-SRV-007)
+  // resolves these versions, rebuilds the topology, checks the digest, and then
+  // loads `body` onto it. Without this, it would have to scan every swap from
+  // the log's beginning, which is the unbounded read a snapshot exists to avoid.
+  // Every Zone's envelope in a round carries the same values.
+  repeated PackVersion content = 8;
+  bytes content_digest = 9;
+
   // Compression, chunking, and content addressing of the body are all plausible
   // additions for AW-SRV-006 and AW-SRV-007, and none are decided. They take
-  // numbers from 8 upward when they arrive; nothing is reserved, because a
+  // numbers from 10 upward when they arrive; nothing is reserved, because a
   // reserved range has to shrink to be used and buf counts that as breaking.
+}
+
+message PackVersion {
+  string pack_id = 1;
+  uint64 version = 2;
 }

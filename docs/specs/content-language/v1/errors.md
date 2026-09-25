@@ -105,7 +105,7 @@ Rule 1, per code. The corpus fixes every row byte for byte; this table is the st
 | `unknown_component_type` | the component reference |
 | `duplicate_component_type` | the `component` keyword |
 | `invalid_component_field` | the field **name** when the field is unknown; the **value** when its kind is wrong |
-| `float_literal`, `unknown_behavior`, `unknown_sense`, `fallback_missing` | the offending literal or identifier |
+| `float_literal`, `unknown_behavior`, `unknown_sense`, `fallback_missing` | the offending literal or identifier. For `fallback_missing` on a Zone that declares no `fallback`, there is none, so it is the Zone's `zone` keyword (decided 2026-09-25) |
 | `invalid_escape` | the backslash, not the string's opening quote |
 | `removed_by_subtype` | the `remove` keyword |
 | `encoding` | the offending byte — `1:1` for a BOM, the CR's own column for a CR |
