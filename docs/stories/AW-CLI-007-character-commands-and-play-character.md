@@ -150,7 +150,7 @@ that carries it next. It does not hold this story in `review`.
 ## Verification record — 2026-09-24 (implementation; `review` until the §8 checklist passes)
 
 PR [valesordev/andara.valesordev.com#72](https://github.com/valesordev/andara.valesordev.com/pull/72),
-branch `impl/aw-cli-007-character-commands`, commit `14057c4`. Handoff and deviations:
+branch `impl/aw-cli-007-character-commands`, commit `f85513e`. Handoff and deviations:
 `docs/feedback/AW-CLI-007-character-commands.md`.
 
 | AC | How | Result |
@@ -158,7 +158,7 @@ branch `impl/aw-cli-007-character-commands`, commit `14057c4`. Handoff and devia
 | 1 | `TestCharacter_Create`: `Aldric (1 of 5)`, exit 0; JSON carries the `CharacterSummary`, `count`, `max_per_account`; the Session is closed (`andara_sessions_total{outcome="closed"}` +1). Live: `Implaevludn (1 of 5)` | pass |
 | 2 | `TestCharacter_CreateRefused` for `roster_full`, `name_taken`, `name_invalid`: the server's message, exit 1, `error.code` = reason, no call after the refused `CreateCharacter`. Live: `name_taken` for another Account's name in upper case, `name_invalid` for a name with digits | pass |
 | 3 | `TestCharacter_List`: aligned lines sorted by name, JSON summaries, asked every time; `TestFormatRosterGolden` (`testdata/character/list.txt`). Live: `dormant town/plaza`, then `town/hall` after the walk | pass |
-| 4 | `TestPlay_SelectsBeforeSubscribe`: `ListCharacters` < `SelectCharacter` < `Subscribe` < `Submit look`; the ack only under `--show-protocol`; with no arrival ahead of it, the Room is the first game output. Live: the same order. **As worded, the AC does not hold against the real server**: the viewer is never in its own `Here:`, and the own-bind arrival shares the `look`'s tick (feedback §2) | pass as scoped; wording to architecture |
+| 4 | `TestPlay_SelectsBeforeSubscribe`: `ListCharacters` < `SelectCharacter` < `Subscribe` < `Submit look`; the ack only under `--show-protocol`; with no arrival ahead of it, the Room is the first game output. Live: the same order, the plaza read with `Here:` naming only the other Character, as AC-4 amended in #68 says. **One part still doesn't hold on the live stack**: the Character's own bind arrival shares the `look`'s tick and can print before the Room (feedback §2) | pass as amended, except arrival order (to architecture) |
 | 5 | `TestPlay_OnlyCharacter`: selected, and the notice reads `…as oper, playing Aldric (session …` | pass |
 | 6 | `TestPlay_NoOrSeveralCharacters`: exit 2 `no_character` naming `andara-cli character create`; exit 2 `character_required` listing `Aldric, Brin`; no `SelectCharacter`, `Subscribe` or `Submit`; the Session closed. Live: `no_character` | pass |
 | 7 | `TestPlay_AlreadyLiveAtLaunch`: the server's message, exit 1 `already_live`, nothing subscribed. Live: `a character is already live on this account: Implbevludn`, exit 1 | pass |

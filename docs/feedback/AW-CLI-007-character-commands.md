@@ -55,8 +55,8 @@ A scratch copy of that sequence can be handed over on request. It isn't committe
 
 ## 2. Architecture: AC-4 can't hold as worded against the real server (contract correction)
 
-*Update:* open PR #68 (`arch/aw-cli-007-contract-amendment`) amends the `Here:` half the same way,
-and the implementation already matches it. What #68 doesn't cover is the second bullet below: the
+*Update:* #68 (merged) amended the `Here:` half the same way, and the implementation already
+matches it. What #68 doesn't cover is the second bullet below: the
 Character's own arrival can precede the Room, so "the first thing the player reads is the Room"
 still doesn't hold on the live stack.
 
