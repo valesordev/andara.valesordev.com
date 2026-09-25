@@ -10,8 +10,12 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -270,5 +274,124 @@ func TestLoader_ASupersededHeldVersionIsNeverApplied(t *testing.T) {
 		if v == 2 {
 			t.Fatalf("abbey@2 was swapped in on the way to abbey@3: %v", applied)
 		}
+	}
+}
+
+// Reconcile waits for the World Partition first: a swap a previous process
+// produced for the pointer's version applies, and nothing is produced twice.
+func TestLoader_ReconcileWaitsForTheWorldPartitionFirst(t *testing.T) {
+	s := newFakeStore()
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	l, _, h := harnessLoader(t, s, nil, "andara.core")
+	// What a previous process left on the log, past the last boundary.
+	other := NewLoader(LoaderOptions{Store: s, Packs: []string{"andara.core"}})
+	topo, err := other.Prepare(nil, &logv1.ContentSwap{PackId: "andara.core", Version: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sim.ContentDigest(topo)
+	h.held = &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{PackId: "andara.core", Version: 1, WorldDigest: d[:]}}}
+	l.SetBarrier(h.landHeld)
+
+	if rejects, err := l.LoadAll(context.Background()); err != nil || len(rejects) != 0 {
+		t.Fatalf("reconcile: %v %v", rejects, err)
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if serving(t, l, "andara.core") != 1 || h.produced != 0 {
+		t.Fatalf("serving %d, produced %d; want the leftover swap applied and nothing produced", serving(t, l, "andara.core"), h.produced)
+	}
+}
+
+// The barrier is bounded (review of #91): a World Partition that never
+// catches up — frozen by a Zone fault — neither hangs reconcile nor Follow.
+// Reconcile defers every pending pack to the retry and carries on; an
+// unknown-outcome produce is store_unavailable.
+func TestLoader_TheBarrierIsBounded(t *testing.T) {
+	frozen := func(ctx context.Context) error { <-ctx.Done(); return ctx.Err() }
+
+	s := newFakeStore()
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	m := NewMetrics(nil)
+	l := NewLoader(LoaderOptions{Store: s, Packs: []string{"andara.core"}, Metrics: m, ApplyWait: 50 * time.Millisecond})
+	h := attachEngine(l)
+	l.SetBarrier(frozen)
+	start := time.Now()
+	rejects, err := l.LoadAll(context.Background())
+	var bt *ErrBarrierTimeout
+	if err != nil || len(rejects) != 1 || rejects[0].Reason != ReasonStoreUnavailable || !errors.As(rejects[0].Err, &bt) {
+		t.Fatalf("reconcile on a frozen partition: %v %v", rejects, err)
+	}
+	if time.Since(start) > 2*time.Second || h.produced != 0 {
+		t.Fatalf("took %s, produced %d", time.Since(start), h.produced)
+	}
+	l.mu.Lock()
+	seeded := l.startRetries["andara.core"]
+	l.mu.Unlock()
+	if seeded != 1 {
+		t.Fatalf("reconcile did not seed the retry: %v", seeded)
+	}
+
+	// At runtime: an unknown-outcome produce on a frozen partition.
+	l.SetBarrier(nil)
+	if _, err := l.LoadAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	s.publish("andara.core", 2, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	settle := make(chan func() error, 1)
+	settle <- func() error { return ErrSwapOutcomeUnknown }
+	h.mu.Lock()
+	h.pending = settle
+	h.mu.Unlock()
+	l.SetBarrier(frozen)
+	start = time.Now()
+	r := l.Apply(context.Background(), PointerMove{Pack: "andara.core", Version: 2})
+	if len(r) != 1 || r[0].Reason != ReasonStoreUnavailable || time.Since(start) > 2*time.Second {
+		t.Fatalf("unknown outcome on a frozen partition: %v after %s", r, time.Since(start))
+	}
+}
+
+// The bounded wait is content.reload_debounce × 15 for any configured
+// debounce, and 30s only when none is set (Codex, review of #91).
+func TestApplyWaitFollowsTheDebounce(t *testing.T) {
+	for d, want := range map[time.Duration]time.Duration{0: 30 * time.Second, 500 * time.Millisecond: 7500 * time.Millisecond, 4 * time.Second: time.Minute} {
+		if got := applyWait(d); got != want {
+			t.Errorf("applyWait(%s) = %s, want %s", d, got, want)
+		}
+	}
+}
+
+// The swap record carries the load's W3C traceparent, which is what the tick
+// parses to parent content.swap under content.load (Codex, review of #91).
+func TestTheSwapCarriesTheLoadsTraceparent(t *testing.T) {
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	s := newFakeStore()
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	l := NewLoader(LoaderOptions{Store: s, Packs: []string{"andara.core"}, Tracer: tp.Tracer("test")})
+	h := attachEngine(l)
+	var got string
+	h.mu.Lock()
+	h.onApply = func([]sim.SwapApplied) {}
+	h.mu.Unlock()
+	l.SetProducer(producerFunc(func(cmd *logv1.LoggedCommand) error {
+		got = cmd.GetTraceId()
+		return h.ProduceSwap(context.Background(), cmd)
+	}))
+	if _, err := l.LoadAll(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var load sdktrace.ReadOnlySpan
+	for _, sp := range rec.Ended() {
+		if sp.Name() == "content.load" {
+			load = sp
+		}
+	}
+	if load == nil {
+		t.Fatal("no content.load span")
+	}
+	parent := trace.SpanContextFromContext(command.ParentFrom(context.Background(), got))
+	if !parent.IsValid() || parent.TraceID() != load.SpanContext().TraceID() || parent.SpanID() != load.SpanContext().SpanID() {
+		t.Fatalf("trace_id %q does not parent under content.load %s", got, load.SpanContext().TraceID())
 	}
 }

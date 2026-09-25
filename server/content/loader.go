@@ -19,6 +19,7 @@ import (
 	"go.opentelemetry.io/otel/trace/noop"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -215,13 +216,35 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 	// A swap produced by a previous process, or one left ambiguous, may be
 	// on the World Partition past the last boundary. Let it apply before
 	// deciding anything, so nothing is built on a World about to change.
-	if err := l.waitBarrier(ctx); err != nil {
-		return nil, err
+	barrier := l.waitBarrier(ctx)
+	var bt *ErrBarrierTimeout
+	if barrier != nil && !errors.As(barrier, &bt) {
+		return nil, barrier
 	}
 	start := time.Now()
 	active, err := l.store.Active(ctx)
 	if err != nil {
 		return nil, err
+	}
+	if bt != nil {
+		// The World Partition is frozen or far behind: nothing produced now
+		// would apply. Every pointer not in effect is store_unavailable,
+		// retried by Follow, and the boot carries on with what the log
+		// recorded rather than hang (review of #91).
+		l.log.Warn("the world partition did not catch up; reconcile defers every pending pack to the retry",
+			"wait", bt.Wait.String())
+		var rejects []Rejection
+		for _, pack := range l.order(active) {
+			if v, ok := l.servingVersion(pack); active[pack] == 0 || (ok && v == active[pack]) {
+				continue
+			}
+			l.moved(pack, active[pack])
+			rejects = append(rejects, *l.reject(Rejection{Pack: pack, Version: active[pack], Err: bt}))
+			l.mu.Lock()
+			l.startRetries[pack] = active[pack]
+			l.mu.Unlock()
+		}
+		return rejects, nil
 	}
 	l.metrics.LoadDuration.WithLabelValues(PhaseResolve).Observe(time.Since(start).Seconds())
 
@@ -255,6 +278,9 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 	return rejects, nil
 }
 
+// waitBarrier runs the barrier, bounded by applyWait: a frozen World
+// Partition never catches up, and nothing may wait on it forever. Past the
+// bound it is ErrBarrierTimeout.
 func (l *Loader) waitBarrier(ctx context.Context) error {
 	l.mu.Lock()
 	b := l.barrier
@@ -262,7 +288,13 @@ func (l *Loader) waitBarrier(ctx context.Context) error {
 	if b == nil {
 		return nil
 	}
-	return b(ctx)
+	bctx, cancel := context.WithTimeout(ctx, l.applyWait)
+	defer cancel()
+	err := b(bctx)
+	if err != nil && ctx.Err() == nil && bctx.Err() != nil {
+		return &ErrBarrierTimeout{Wait: l.applyWait}
+	}
+	return err
 }
 
 // Candidates resolves and validates every followed pack at its Active Pointer
@@ -393,6 +425,9 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 	if sc := span.SpanContext(); sc.HasTraceID() {
 		traceID = sc.TraceID().String()
 	}
+	// The record carries the W3C traceparent, which is what the tick parses
+	// to parent content.swap under this span; logs carry the bare trace ID.
+	traceParent := command.TraceParent(ctx)
 
 	start := time.Now()
 	res, topo, rej := l.evaluate(ctx, pack, version, l.servingSnapshot())
@@ -404,9 +439,7 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 		}
 		return nil, l.reject(*rej)
 	}
-	bstart := time.Now()
 	digest := sim.ContentDigest(topo)
-	l.metrics.LoadDuration.WithLabelValues(PhaseBuild).Observe(time.Since(bstart).Seconds())
 
 	// Stage the topology under exactly the versions it assumes, so the Engine
 	// preparing the swap picks up this build and not one for some other
@@ -434,7 +467,7 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 		l.mu.Unlock()
 	}
 
-	cmd := &logv1.LoggedCommand{TraceId: traceID, Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{
+	cmd := &logv1.LoggedCommand{TraceId: traceParent, Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{
 		PackId: pack, Version: version, WorldDigest: digest[:], BaseDigest: base,
 	}}}
 	var perr error
@@ -544,7 +577,9 @@ func (l *Loader) evaluate(ctx context.Context, pack string, version uint64, base
 	}
 
 	vctx, vspan := l.tracer.Start(ctx, "content.validate")
+	vstart := time.Now()
 	topo, findings := l.build(vctx, base, res)
+	l.metrics.LoadDuration.WithLabelValues(PhaseValidate).Observe(time.Since(vstart).Seconds())
 	vspan.SetAttributes(attribute.Int("error_count", len(findings)))
 	vspan.End()
 	if len(findings) > 0 {
@@ -594,8 +629,11 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 
 	_, span := l.tracer.Start(ctx, "content.build")
 	defer span.End()
-	vstart := time.Now()
-	defer func() { l.metrics.LoadDuration.WithLabelValues(PhaseValidate).Observe(time.Since(vstart).Seconds()) }()
+	// phase="build" is building the World and the Template registry, which
+	// is also where their findings come from; phase="validate" is the
+	// checks against what is in effect, around it (evaluate).
+	bstart := time.Now()
+	defer func() { l.metrics.LoadDuration.WithLabelValues(PhaseBuild).Observe(time.Since(bstart).Seconds()) }()
 
 	topo := sim.Topology{World: sim.EmptyWorld()}
 	var findings []sim.ValidationError
@@ -728,18 +766,22 @@ func (l *Loader) Applied(swaps []sim.SwapApplied) {
 			delete(l.pendingSince, s.Pack)
 		}
 		pv := ManifestKey(s.Pack, s.Version)
-		for _, ch := range l.waiting[pv] {
-			ch <- swapResult{}
-		}
+		waiters := l.waiting[pv]
 		delete(l.waiting, pv)
 		l.prune()
 		versions := servingVersions(l.serving)
 		l.mu.Unlock()
 
+		// The gauges move before any waiter is released: serving means
+		// applied, for what /metrics says too, so a caller that waited on
+		// the swap reads the new version (review of #91).
 		l.metrics.ActiveVersion.WithLabelValues(s.Pack).Set(float64(s.Version))
 		l.metrics.buildInfo(versions)
 		for _, r := range s.Relocations {
 			l.metrics.Relocations.WithLabelValues(string(r.Zone)).Inc()
+		}
+		for _, ch := range waiters {
+			ch <- swapResult{}
 		}
 		if err != nil {
 			// Unreachable in practice: the Engine prepared this version
@@ -763,6 +805,11 @@ func (l *Loader) Applied(swaps []sim.SwapApplied) {
 // Refused is the Engine reporting the swaps a tick consumed and refused:
 // deterministic no-ops. A load waiting on one learns why, and re-evaluates
 // when it was stale.
+//
+// Waiters are matched by pack@version only, so a refusal of an older swap for
+// the same version — one a previous attempt or process produced — reaches the
+// load waiting now. That is benign: it costs at most one more evaluation, and
+// the swap this load produced still applies or is refused on its own.
 func (l *Loader) Refused(refusals []sim.SwapRefused) {
 	for _, r := range refusals {
 		l.log.Warn("content swap refused by the engine; nothing changed",

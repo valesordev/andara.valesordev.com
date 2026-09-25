@@ -87,6 +87,9 @@ type Runtime struct {
 	// worldNext is the tick loop's next-to-read offset on the World
 	// Partition, for worldBarrier; written on the loop's goroutine.
 	worldNext atomic.Int64
+	// replay, when set, is the log recovery reads instead of Kafka's: a test
+	// drives StartTickLoop's recovery with it.
+	replay replayLog
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table

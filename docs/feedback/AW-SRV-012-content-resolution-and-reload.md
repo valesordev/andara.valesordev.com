@@ -612,3 +612,40 @@ stale-swap test now uses a core@4 whose content really differs.
 - Codex's P1 on the projector's round discovery after a Zone removal is moot now that removal is
   refused. `owned` still comes from the candidate content, which can name a Zone the round's content
   lacks. That's AW-SRV-007's round-completeness question, and I haven't changed it.
+
+---
+
+## Implementation, 2026-09-25: the review of #91, addressed
+
+**Blocking:**
+1. **`worldBarrier` is bounded** by the same wait as apply (`content.reload_debounce` × 15, and
+   Codex's point is taken: a debounce under 2 s now counts). At reconcile a barrier that runs out
+   makes every pending pack `store_unavailable`, seeds `Follow`'s retries, and lets the boot carry
+   on. At runtime, an unknown-outcome produce is `store_unavailable`. The `dir` source's genesis
+   barrier carries on to its own bounded wait.
+2. **`RecoveryError`** calls a log pre-rule only when the World Partition carries no
+   `ContentSwap` at all. That is scanned on the failure path only, through a `replayLog` seam that
+   is Kafka in a process and a recorded log in tests.
+3. **The gauges move before any waiter is released,** in `Loader.Applied` and, which was the
+   flaky test's actual path, in the `dir` source's `Applied`. `TestLoadContent_ValidThreeZones`
+   is stable over 40 runs under `-race`.
+
+**The missing tests.** Each fails with its fix removed, all mutation-checked:
+- `TestStartTickLoop_RefusesAPreRuleLogByName` and
+  `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` (a different seed, mismatching at
+  tick 1), both through `StartTickLoop`;
+- `TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+  `TestWorldBarrier_FollowsTheLoop`;
+- `TestBind_RecordsTheContentVersionInEffect` (closes #70's gap),
+  `TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+  `TestBindings_ARelocationEndsACrossZoneTransit`.
+
+**Non-blocking, all done:**
+- The projector keeps a candidate that can't load fatal (`ExitConfig`).
+- The phase labels now mean what they say: `build` is the build, and `validate` is the build plus
+  the checks against what is in effect.
+- The old-swap refusal is commented.
+- `recovered()` no longer reports historical refusals.
+
+**Codex, both done:** the swap carries the W3C traceparent (`TestTheSwapCarriesTheLoadsTraceparent`),
+and the debounce is honoured (`TestApplyWaitFollowsTheDebounce`).

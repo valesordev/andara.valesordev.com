@@ -81,10 +81,16 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		// going live, so the World that starts ticking is the one that was
 		// running, verified tick by tick against its own hashes.
 		rctx, rspan := rt.Tel.Tracer.Start(ctx, "sim.recover")
-		replayed, err := tickloop.Recover(rctx, cfg.KafkaBrokers, tickloop.CommandsTopic, tickloop.EventsTopic, engine, rt.recovered())
+		log := rt.recoveryLog()
+		boundaries, err := log.Boundaries(rctx)
+		if err != nil {
+			rspan.End()
+			return nil, fmt.Errorf("recovery: read boundaries: %w", err)
+		}
+		replayed, err := tickloop.RecoverFrom(boundaries, log, engine, rt.recovered())
 		rspan.End()
 		if err != nil {
-			return nil, fmt.Errorf("recovery: %w", RecoveryError(err, engine))
+			return nil, fmt.Errorf("recovery: %w", RecoveryError(ctx, err, engine, log))
 		}
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
 			slog.Int("ticks_replayed", replayed),
@@ -271,25 +277,90 @@ func (rt *Runtime) recovered() func(sim.StepResult) error {
 			inEffect = true
 			rt.contentApplied(res.Swaps)
 		}
-		if len(res.SwapsRefused) > 0 && rt.Content != nil {
-			rt.Content.Refused(res.SwapsRefused)
-		}
+		// Refusals are not replayed to the content source: they are history,
+		// already reported by the process that saw them, and no load is
+		// waiting on them now.
 		return nil
 	}
+}
+
+// replayLog is the log recovery reads: its Tick Boundary Records, its
+// Commands, and the end of a Partition. Kafka's in a running process; a test
+// hands its own.
+type replayLog interface {
+	Boundaries(ctx context.Context) ([]sim.TickCompleted, error)
+	sim.RecordSource
+	End(ctx context.Context, partition int32) (int64, error)
+}
+
+// kafkaLog is replayLog over the broker.
+type kafkaLog struct{ brokers []string }
+
+func (k kafkaLog) Boundaries(ctx context.Context) ([]sim.TickCompleted, error) {
+	return tickloop.ReadBoundaries(ctx, k.brokers, tickloop.EventsTopic)
+}
+
+func (k kafkaLog) Fetch(p int32, from, to int64) ([]sim.Record, error) {
+	return tickloop.KafkaRecords{Brokers: k.brokers, Topic: tickloop.CommandsTopic}.Fetch(p, from, to)
+}
+
+func (k kafkaLog) End(ctx context.Context, p int32) (int64, error) {
+	return tickloop.EndOffset(ctx, k.brokers, tickloop.CommandsTopic, p)
+}
+
+func (rt *Runtime) recoveryLog() replayLog {
+	if rt.replay != nil {
+		return rt.replay
+	}
+	return kafkaLog{brokers: rt.Cfg.KafkaBrokers}
 }
 
 // RecoveryError reports a pre-rule log as ErrPreRuleLog whichever way it
 // shows itself. A log written before content was recorded in it usually fails
 // its State Hash at tick 1, because replay runs on an empty topology, before
-// any Command could be seen applying with no content in effect: a hash
-// mismatch while no content is in effect is that log, not corruption (review
-// of #88, reproduced live).
-func RecoveryError(err error, e *sim.Engine) error {
+// any Command could be seen applying with no content in effect (review of #88,
+// reproduced live).
+//
+// A post-rule log can fail before its genesis too — idle ticks run first, and
+// the State Hash covers the seed, so a changed sim.seed is enough — and that
+// must not be told to wipe the log. So the test is the log itself: pre-rule
+// only if the World Partition carries no ContentSwap at all (review of #91).
+// The scan runs only on this failure path; a post-rule log finds its genesis
+// among its first records.
+func RecoveryError(ctx context.Context, err error, e *sim.Engine, log replayLog) error {
 	var hm *sim.HashMismatchError
-	if versions, _ := e.Content(); errors.As(err, &hm) && len(versions) == 0 {
-		return fmt.Errorf("tick %d, before any content was in effect: %w (%v)", hm.Tick, ErrPreRuleLog, err)
+	if versions, _ := e.Content(); !errors.As(err, &hm) || len(versions) > 0 {
+		return err
 	}
-	return err
+	has, serr := hasContentSwap(ctx, log)
+	if serr != nil {
+		return fmt.Errorf("%w (and the log could not be read to tell whether it predates AW-SRV-012: %v)", err, serr)
+	}
+	if has {
+		return err
+	}
+	return fmt.Errorf("tick %d, and the log records no content at all: %w (%v)", hm.Tick, ErrPreRuleLog, err)
+}
+
+// hasContentSwap reports whether the World Partition carries a ContentSwap.
+func hasContentSwap(ctx context.Context, log replayLog) (bool, error) {
+	end, err := log.End(ctx, sim.WorldPartition)
+	if err != nil {
+		return false, err
+	}
+	const chunk = 1000
+	for from := int64(0); from < end; from += chunk {
+		recs, err := log.Fetch(sim.WorldPartition, from, min(from+chunk, end))
+		if err != nil {
+			return false, err
+		}
+		for _, r := range recs {
+			if sim.KindOf(r.Command) == sim.KindContentSwap {
+				return true, nil
+			}
+		}
+	}
+	return false, nil
 }
 
 // contentApplied tells the content source what a tick applied, and keeps the

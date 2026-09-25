@@ -48,6 +48,8 @@ type engineHarness struct {
 	// swap it refuses.
 	onApply  func([]sim.SwapApplied)
 	refusals []sim.SwapRefused
+	// produced counts swaps the Loader handed to the producer.
+	produced int
 }
 
 func attachEngine(l *Loader) *engineHarness {
@@ -60,6 +62,7 @@ func attachEngine(l *Loader) *engineHarness {
 func (h *engineHarness) ProduceSwap(_ context.Context, cmd *logv1.LoggedCommand) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.produced++
 	if h.fail != nil {
 		return h.fail
 	}

@@ -907,7 +907,10 @@ Loader follows each one. A log that applied a Command while no content was in ef
 rule and is refused (`boot.ErrPreRuleLog`, exit 1): recover onto a fresh log (`make down VOLUMES=1`
 locally, fresh topics for `dev`). With the loop running, `ReconcileContent` brings the World to the
 source through the log. It first waits until the World Partition is consumed to its end, because a
-swap a previous process produced may lie past the last boundary. On an empty log that's
+swap a previous process produced may lie past the last boundary. That wait is bounded like the wait
+for apply. If it runs out, as with a Partition 0 frozen by a Zone fault, every pending pack is
+`store_unavailable` and deferred to `Follow`'s retry, and the boot carries on with what the log
+recorded. On an empty log that's
 **genesis**: one swap per followed pack, `andara.core` first, then by `pack_id`. After a restart
 it's whatever moved while the process was down. A boot that ends with no Zones in effect exits 1.
 The roster's spawn Room is checked against that content, the Gateway starts, and only then is the
@@ -916,8 +919,11 @@ process runs, starting with a retry of anything reconcile could not load for the
 pack in effect that `content.packs` no longer names is logged at `warn`.
 
 A pre-rule log is refused as `boot.ErrPreRuleLog` either way it shows itself: as a Command applying
-with no content in effect, or, more often, as a State Hash mismatch at tick 1 while no content is
-in effect (`boot.RecoveryError`).
+with no content in effect, or, more often, as a State Hash mismatch before any content is in
+effect (`boot.RecoveryError`). The mismatch alone isn't enough, because a post-rule log also runs
+idle ticks before genesis, and a changed `sim.seed` mismatches there too. So it counts as pre-rule
+only when the World Partition carries no `ContentSwap` at all. Swaps refused in the log's history
+are not reported again on replay.
 
 **`content.source=dir`** is one pack, `dir`, at version 0. Its genesis swap carries the directory's
 digest, and recovery rebuilds the directory and compares it. So a directory changed while the
@@ -949,7 +955,7 @@ reports the same: `content` (one entry per pack, sorted) and `content_digest`. T
 | `andara_content_active_version` | gauge | `pack` | the packs followed; moves when a swap applies |
 | `andara_content_pending_seconds` | gauge (computed at scrape) | `pack` | the packs followed; seconds since the pointer moved to a version neither in effect nor refused for a Builder's reason (`validation`, `fallback_missing`, `pack_mismatch`, `blob_too_large`), else 0. The SLI of `docs/specs/slo/content-freshness.md` |
 | `andara_content_load_failures_total` | counter | `reason` | the ten reasons in `server/content/errors.go` |
-| `andara_content_load_phase_duration_seconds` | histogram | `phase` | `resolve`, `validate`, `build`, `swap` |
+| `andara_content_load_phase_duration_seconds` | histogram | `phase` | `resolve` (reading the version), `build` (building the World and Templates, which is where their findings come from), `validate` (that build plus the checks against the content in effect), `swap` (the in-tick apply) |
 | `andara_content_reload_stall_seconds` | histogram | — | 1; the in-tick cost of applying one swap (AC-9: under `sim.tick_budget_ms / 2`). Preparing it is in-tick too and not in this metric: checking the base, the Zones and the fallbacks, and the whole-World digest, about 1 ms at the sizing fixture. So is a stage miss, where `Prepare` resolves from the store on the tick goroutine; that happens only on replay or for a swap this process did not produce |
 | `andara_content_relocations_total` | counter | `zone` | Zones in the content set |
 | `andara_content_cache_hits_total` | counter | `outcome` | `hit`, `miss` |

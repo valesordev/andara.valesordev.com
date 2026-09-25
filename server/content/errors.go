@@ -142,6 +142,12 @@ type (
 		Version uint64
 		Wait    time.Duration
 	}
+	// ErrBarrierTimeout: the World Partition was not consumed to its end
+	// within the bounded wait — frozen by a Zone fault, or far behind.
+	// store_unavailable, so the retry applies; nothing blocks on it.
+	ErrBarrierTimeout struct {
+		Wait time.Duration
+	}
 	// SwapPending is what a SwapProducer returns when the produce's wait
 	// ended with the record possibly still live (ingress.Unsettled): the
 	// Loader waits on Settled, then reads Outcome — nil when the swap was
@@ -216,6 +222,10 @@ func (e *ErrSwapRefused) Error() string {
 
 func (e *ErrApplyTimeout) Error() string {
 	return fmt.Sprintf("the content swap for %s did not apply within %s; the world partition may be faulted or behind", ManifestKey(e.Pack, e.Version), e.Wait)
+}
+
+func (e *ErrBarrierTimeout) Error() string {
+	return fmt.Sprintf("the world partition was not consumed to its end within %s; it may be faulted or behind", e.Wait)
 }
 
 func (e *SwapPending) Error() string { return "the swap's produce has not settled" }

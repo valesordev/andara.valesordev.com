@@ -662,6 +662,11 @@ func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic s
 	if err != nil {
 		return 0, fmt.Errorf("tickloop: read boundaries: %w", err)
 	}
+	return RecoverFrom(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}, e, after)
+}
+
+// RecoverFrom is Recover over boundaries already read and a record source.
+func RecoverFrom(boundaries []sim.TickCompleted, src sim.RecordSource, e *sim.Engine, after func(sim.StepResult) error) (int, error) {
 	// Boundaries from before the engine's tick — a restart that already
 	// replayed part of the log from a snapshot — are skipped; the rest must
 	// be contiguous from it.
@@ -673,7 +678,7 @@ func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic s
 	if len(boundaries) == 0 {
 		return 0, nil
 	}
-	if err := e.ReplayEach(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}, after); err != nil {
+	if err := e.ReplayEach(boundaries, src, after); err != nil {
 		return 0, err
 	}
 	return len(boundaries), nil

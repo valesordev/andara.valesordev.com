@@ -635,3 +635,96 @@ func TestSnapshot_CarriesAndRestoresTheContentInEffect(t *testing.T) {
 		t.Fatalf("restore onto other content: err = %v", err)
 	}
 }
+
+// A bound Character records the pack@version its Template came from, as the
+// log has it in effect: andara.core's when that pack is in effect, and the
+// one pack in effect when a single pack supplies everything (review of #91;
+// closes #70's gap).
+func TestBind_RecordsTheContentVersionInEffect(t *testing.T) {
+	c := newContent(t)
+	c.zones["andara.core"] = map[uint64][]*contentv1.ZoneDefinition{4: {}}
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "andara.core", 4))
+	mustStep(t, e, c.swap(t, e, nil, "town", 1))
+	mustStep(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	if got := e.State().Zones["town"].Entities["ch-1"].ContentVersion; got != "andara.core@4" {
+		t.Fatalf("content_version = %q, want andara.core@4", got)
+	}
+
+	single := contentEngine(t, c)
+	mustStep(t, single, c.swap(t, single, nil, "town", 1))
+	mustStep(t, single, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	if got := single.State().Zones["town"].Entities["ch-1"].ContentVersion; got != "town@1" {
+		t.Fatalf("single pack: content_version = %q, want town@1", got)
+	}
+}
+
+// A swap changes future spawns, not existing bodies: a Template re-parented
+// under andara.core.Character does not make a body already made from it a
+// Character (review of #91).
+func TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies(t *testing.T) {
+	entity := contentv1.TemplateKind_ENTITY
+	def := func(name string, chain ...string) sim.TemplateInput {
+		return sim.TemplateInput{File: name + ".json", Def: &contentv1.TemplateDefinition{
+			FormatVersion: sim.TemplateFormatVersion, Name: name, Kind: entity, Chain: chain, Resolved: true}}
+	}
+	registry := func(guardChain ...string) *sim.TemplateRegistry {
+		reg, errs := sim.BuildTemplates([]sim.TemplateInput{
+			def("andara.core.Entity", "andara.core.Entity"),
+			def("andara.core.Character", "andara.core.Entity", "andara.core.Character"),
+			def("andara.core.Npc", "andara.core.Entity", "andara.core.Npc"),
+			def("town.Guard", guardChain...),
+		}, sim.TemplateOptions{})
+		if len(errs) > 0 {
+			t.Fatal(errs)
+		}
+		return reg
+	}
+	v1 := registry("andara.core.Entity", "andara.core.Npc", "town.Guard")
+	v2 := registry("andara.core.Entity", "andara.core.Character", "town.Guard")
+	c := newContent(t)
+	src := &perVersionTemplates{c: c, templates: map[uint64]*sim.TemplateRegistry{1: v1, 4: v2}}
+	e := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 7, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: src})
+	mustStep(t, e, swapFor(t, src, e, "town", 1))
+	guard, _ := v1.Get("town.Guard")
+	body := sim.Instantiate(guard, "g-1", "town@1")
+	body.Room = "plaza"
+	e.State().Zones["town"].Entities["g-1"] = &body
+	before := e.Characters()
+
+	mustStep(t, e, swapFor(t, src, e, "town", 4))
+	if after := e.Characters(); after != before || e.IsCharacter(&body) {
+		t.Fatalf("characters %+v -> %+v; the guard became a Character", before, after)
+	}
+}
+
+// perVersionTemplates is fakeContent with a Template registry per town version.
+type perVersionTemplates struct {
+	c         *fakeContent
+	templates map[uint64]*sim.TemplateRegistry
+}
+
+func (p *perVersionTemplates) Prepare(in map[string]uint64, s *logv1.ContentSwap) (sim.Topology, error) {
+	topo, err := p.c.Prepare(in, s)
+	if err != nil {
+		return topo, err
+	}
+	topo.Templates = p.templates[in["town"]]
+	return topo, nil
+}
+
+func swapFor(t *testing.T, src sim.ContentSource, e *sim.Engine, pack string, version uint64) *logv1.LoggedCommand {
+	t.Helper()
+	inEffect, base := e.Content()
+	cs := &logv1.ContentSwap{PackId: pack, Version: version}
+	if len(inEffect) > 0 {
+		cs.BaseDigest = base[:]
+	}
+	topo, err := src.Prepare(copyMap(inEffect), cs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sim.ContentDigest(topo)
+	cs.WorldDigest = d[:]
+	return &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: cs}}
+}

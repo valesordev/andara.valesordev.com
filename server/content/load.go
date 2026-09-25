@@ -108,7 +108,7 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 		StrictOrphans: o.StrictOrphans,
 		SpawnRoom:     o.SpawnRoom,
 		// The bounded wait for a swap to apply (review of #88).
-		ApplyWait: 15 * max(o.Debounce, 2*time.Second),
+		ApplyWait: applyWait(o.Debounce),
 	})
 	c := &Content{opts: o, loader: loader, resolver: resolver}
 	// Pin the pointer topic before reading it. A pointer moved while the
@@ -393,17 +393,19 @@ func (d *dirContent) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap
 // Applied records the directory in effect.
 func (d *dirContent) Applied(swaps []sim.SwapApplied) {
 	for _, s := range swaps {
+		// The gauges move before Reconcile is released: serving means
+		// applied, for /metrics too (review of #91).
+		d.opts.Metrics.ActiveVersion.WithLabelValues(s.Pack).Set(float64(s.Version))
+		d.opts.Metrics.buildInfo(map[string]uint64{s.Pack: s.Version})
+		for _, r := range s.Relocations {
+			d.opts.Metrics.Relocations.WithLabelValues(string(r.Zone)).Inc()
+		}
 		d.mu.Lock()
 		first := !d.inEffect
 		d.inEffect, d.digest = true, s.Digest
 		d.mu.Unlock()
 		if first {
 			close(d.applied)
-		}
-		d.opts.Metrics.ActiveVersion.WithLabelValues(s.Pack).Set(float64(s.Version))
-		d.opts.Metrics.buildInfo(map[string]uint64{s.Pack: s.Version})
-		for _, r := range s.Relocations {
-			d.opts.Metrics.Relocations.WithLabelValues(string(r.Zone)).Inc()
 		}
 		d.opts.Log.Info("content in effect", "pack", s.Pack, "version", s.Version,
 			"path", d.opts.Path, "world_digest", fmt.Sprintf("%x", s.Digest[:8]))
@@ -418,8 +420,13 @@ func (d *dirContent) Reconcile(ctx context.Context) error {
 	d.mu.Unlock()
 	if !done && barrier != nil {
 		// A genesis swap a previous process produced may be past the last
-		// boundary: let it apply rather than produce a second.
-		if err := barrier(ctx); err != nil {
+		// boundary: let it apply rather than produce a second. Bounded: a
+		// frozen World Partition carries on to genesis, whose own bounded
+		// wait ends the boot if nothing ever applies.
+		bctx, cancel := context.WithTimeout(ctx, applyWait(d.opts.Debounce))
+		err := barrier(bctx)
+		cancel()
+		if err != nil && ctx.Err() != nil {
 			return err
 		}
 		d.mu.Lock()
@@ -456,11 +463,11 @@ func (d *dirContent) Reconcile(ctx context.Context) error {
 		// that never landed leaves nothing in effect, and the bounded wait
 		// below ends the boot rather than hanging it.
 	}
-	wait := time.NewTimer(15 * max(d.opts.Debounce, 2*time.Second))
+	wait := time.NewTimer(applyWait(d.opts.Debounce))
 	defer wait.Stop()
 	select {
 	case <-wait.C:
-		return &ErrApplyTimeout{Pack: DirPack, Wait: 15 * max(d.opts.Debounce, 2*time.Second)}
+		return &ErrApplyTimeout{Pack: DirPack, Wait: applyWait(d.opts.Debounce)}
 	case <-d.applied:
 		return nil
 	case r := <-d.refused:
@@ -468,6 +475,16 @@ func (d *dirContent) Reconcile(ctx context.Context) error {
 	case <-ctx.Done():
 		return ctx.Err()
 	}
+}
+
+// applyWait is content.reload_debounce × 15, the bounded wait for a swap to
+// apply and for the World Partition to catch up; 30s when the debounce is
+// unset.
+func applyWait(debounce time.Duration) time.Duration {
+	if debounce <= 0 {
+		return 30 * time.Second
+	}
+	return 15 * debounce
 }
 
 func fatal(errs []sim.ValidationError, strict bool) []sim.ValidationError {

@@ -397,8 +397,17 @@ snapshots, the projector and the metrics. Decisions and findings are in the feed
 Verified on the combined state (this branch with #86's fix and #89 merged): `make check` is clean,
 `-race` is clean, and the six `make test-integration` packages pass against Redpanda.
 
-**Outstanding before `done`:**
-- #89, architecture's corpus PR, merges with #86.
+**Review of #91 (2026-09-25), addressed.** The bounded barrier, the pre-rule discriminator (no
+`ContentSwap` on the World Partition), and gauges that move before waiters are released. New tests,
+each mutation-checked: `TestStartTickLoop_RefusesAPreRuleLogByName`,
+`TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule`,
+`TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+`TestWorldBarrier_FollowsTheLoop`, `TestBind_RecordsTheContentVersionInEffect`,
+`TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+`TestBindings_ARelocationEndsACrossZoneTransit`, `TestTheSwapCarriesTheLoadsTraceparent`,
+`TestApplyWaitFollowsTheDebounce`.
+
+**Outstanding before `done`:** the §8 review.
 - The live observation of the new series on the compose stack: `content.source=dir` there
   exercises genesis and the stall metric, and a pointer move needs the Kafka source.
 - The three findings in the feedback file for architecture.
