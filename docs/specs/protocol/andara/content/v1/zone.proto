@@ -37,6 +37,14 @@ message ZoneDefinition {
   // decision.
   repeated ComponentValue components = 5;
 
+  // The Room an Entity is moved to when a new content version removes the Room
+  // it stands in (ADR-0004, AW-SRV-012). A Room ID in this Zone. Required:
+  // empty, or naming a Room this definition does not contain, is the load
+  // finding `fallback_missing`, and the version is refused. It is the one Room
+  // a Zone may not delete. In the Content Language it is `fallback <room>`
+  // (semantics.md §9).
+  string fallback_room = 6;
+
   // The Zone→Partition mapping is hash(id) % 64, computed at load rather than
   // carried here (AW-SRV-001). Content does not get to choose its partition:
   // the mapping is permanent because repartitioning a keyed topic reorders

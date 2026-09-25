@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1a\x61ndara/game/v1/event.proto\x12\x0e\x61ndara.game.v1\"\xee\x05\n\rEventEnvelope\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\x04R\x07\x65ventId\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\x12\x46\n\x0eroom_described\x18\n \x01(\x0b\x32\x1d.andara.game.v1.RoomDescribedH\x00R\rroomDescribed\x12O\n\x11\x63haracter_arrived\x18\x0b \x01(\x0b\x32 .andara.game.v1.CharacterArrivedH\x00R\x10\x63haracterArrived\x12\x46\n\x0e\x63haracter_left\x18\x0c \x01(\x0b\x32\x1d.andara.game.v1.CharacterLeftH\x00R\rcharacterLeft\x12L\n\x10\x63ommand_rejected\x18\r \x01(\x0b\x32\x1f.andara.game.v1.CommandRejectedH\x00R\x0f\x63ommandRejected\x12@\n\x0czone_faulted\x18\x0e \x01(\x0b\x32\x1b.andara.game.v1.ZoneFaultedH\x00R\x0bzoneFaulted\x12R\n\x12subscriber_dropped\x18\x0f \x01(\x0b\x32!.andara.game.v1.SubscriberDroppedH\x00R\x11subscriberDropped\x12R\n\x12simulation_stopped\x18\x10 \x01(\x0b\x32!.andara.game.v1.SimulationStoppedH\x00R\x11simulationStopped\x12\x39\n\theartbeat\x18\x11 \x01(\x0b\x32\x19.andara.game.v1.HeartbeatH\x00R\theartbeat\x12\x30\n\x06resync\x18\x12 \x01(\x0b\x32\x16.andara.game.v1.ResyncH\x00R\x06resyncB\t\n\x07payload\"\xad\x01\n\rRoomDescribed\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12\x14\n\x05title\x18\x03 \x01(\tR\x05title\x12 \n\x0b\x64\x65scription\x18\x04 \x01(\tR\x0b\x64\x65scription\x12\x14\n\x05\x65xits\x18\x05 \x03(\tR\x05\x65xits\x12\x1c\n\toccupants\x18\x06 \x03(\tR\toccupants\"\x92\x01\n\x10\x43haracterArrived\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12%\n\x0e\x63haracter_name\x18\x03 \x01(\tR\rcharacterName\x12%\n\x0e\x66rom_direction\x18\x04 \x01(\tR\rfromDirection\"\x8b\x01\n\rCharacterLeft\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12%\n\x0e\x63haracter_name\x18\x03 \x01(\tR\rcharacterName\x12!\n\x0cto_direction\x18\x04 \x01(\tR\x0btoDirection\"?\n\x0f\x43ommandRejected\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x02 \x01(\tR\x07message\"&\n\x0bZoneFaulted\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\"+\n\x11SubscriberDropped\x12\x16\n\x06reason\x18\x01 \x01(\tR\x06reason\"+\n\x11SimulationStopped\x12\x16\n\x06reason\x18\x01 \x01(\tR\x06reason\"\x0b\n\tHeartbeat\"D\n\x06Resync\x12\"\n\rlast_event_id\x18\x01 \x01(\x04R\x0blastEventId\x12\x16\n\x06reason\x18\x02 \x01(\tR\x06reasonB\xb5\x01\n\x12\x63om.andara.game.v1B\nEventProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1a\x61ndara/game/v1/event.proto\x12\x0e\x61ndara.game.v1\"\xbc\x06\n\rEventEnvelope\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\x04R\x07\x65ventId\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n\nclient_ref\x18\x03 \x01(\tR\tclientRef\x12\x46\n\x0eroom_described\x18\n \x01(\x0b\x32\x1d.andara.game.v1.RoomDescribedH\x00R\rroomDescribed\x12O\n\x11\x63haracter_arrived\x18\x0b \x01(\x0b\x32 .andara.game.v1.CharacterArrivedH\x00R\x10\x63haracterArrived\x12\x46\n\x0e\x63haracter_left\x18\x0c \x01(\x0b\x32\x1d.andara.game.v1.CharacterLeftH\x00R\rcharacterLeft\x12L\n\x10\x63ommand_rejected\x18\r \x01(\x0b\x32\x1f.andara.game.v1.CommandRejectedH\x00R\x0f\x63ommandRejected\x12@\n\x0czone_faulted\x18\x0e \x01(\x0b\x32\x1b.andara.game.v1.ZoneFaultedH\x00R\x0bzoneFaulted\x12R\n\x12subscriber_dropped\x18\x0f \x01(\x0b\x32!.andara.game.v1.SubscriberDroppedH\x00R\x11subscriberDropped\x12R\n\x12simulation_stopped\x18\x10 \x01(\x0b\x32!.andara.game.v1.SimulationStoppedH\x00R\x11simulationStopped\x12\x39\n\theartbeat\x18\x11 \x01(\x0b\x32\x19.andara.game.v1.HeartbeatH\x00R\theartbeat\x12\x30\n\x06resync\x18\x12 \x01(\x0b\x32\x16.andara.game.v1.ResyncH\x00R\x06resync\x12L\n\x10\x65ntity_relocated\x18\x13 \x01(\x0b\x32\x1f.andara.game.v1.EntityRelocatedH\x00R\x0f\x65ntityRelocatedB\t\n\x07payload\"\xad\x01\n\rRoomDescribed\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12\x14\n\x05title\x18\x03 \x01(\tR\x05title\x12 \n\x0b\x64\x65scription\x18\x04 \x01(\tR\x0b\x64\x65scription\x12\x14\n\x05\x65xits\x18\x05 \x03(\tR\x05\x65xits\x12\x1c\n\toccupants\x18\x06 \x03(\tR\toccupants\"\x92\x01\n\x10\x43haracterArrived\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12%\n\x0e\x63haracter_name\x18\x03 \x01(\tR\rcharacterName\x12%\n\x0e\x66rom_direction\x18\x04 \x01(\tR\rfromDirection\"\x8b\x01\n\rCharacterLeft\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12%\n\x0e\x63haracter_name\x18\x03 \x01(\tR\rcharacterName\x12!\n\x0cto_direction\x18\x04 \x01(\tR\x0btoDirection\"?\n\x0f\x43ommandRejected\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x02 \x01(\tR\x07message\"&\n\x0bZoneFaulted\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\"+\n\x11SubscriberDropped\x12\x16\n\x06reason\x18\x01 \x01(\tR\x06reason\"+\n\x11SimulationStopped\x12\x16\n\x06reason\x18\x01 \x01(\tR\x06reason\"\xa3\x01\n\x0f\x45ntityRelocated\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x1f\n\x0b\x65ntity_name\x18\x02 \x01(\tR\nentityName\x12 \n\x0c\x66rom_room_id\x18\x03 \x01(\tR\nfromRoomId\x12\x1c\n\nto_room_id\x18\x04 \x01(\tR\x08toRoomId\x12\x16\n\x06reason\x18\x05 \x01(\tR\x06reason\"\x0b\n\tHeartbeat\"D\n\x06Resync\x12\"\n\rlast_event_id\x18\x01 \x01(\x04R\x0blastEventId\x12\x16\n\x06reason\x18\x02 \x01(\tR\x06reasonB\xb5\x01\n\x12\x63om.andara.game.v1B\nEventProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03\x41GX\xaa\x02\x0e\x41ndara.Game.V1\xca\x02\x0e\x41ndara\\Game\\V1\xe2\x02\x1a\x41ndara\\Game\\V1\\GPBMetadata\xea\x02\x10\x41ndara::Game::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,23 +33,25 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\022com.andara.game.v1B\nEventProtoP\001Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\242\002\003AGX\252\002\016Andara.Game.V1\312\002\016Andara\\Game\\V1\342\002\032Andara\\Game\\V1\\GPBMetadata\352\002\020Andara::Game::V1'
   _globals['_EVENTENVELOPE']._serialized_start=47
-  _globals['_EVENTENVELOPE']._serialized_end=797
-  _globals['_ROOMDESCRIBED']._serialized_start=800
-  _globals['_ROOMDESCRIBED']._serialized_end=973
-  _globals['_CHARACTERARRIVED']._serialized_start=976
-  _globals['_CHARACTERARRIVED']._serialized_end=1122
-  _globals['_CHARACTERLEFT']._serialized_start=1125
-  _globals['_CHARACTERLEFT']._serialized_end=1264
-  _globals['_COMMANDREJECTED']._serialized_start=1266
-  _globals['_COMMANDREJECTED']._serialized_end=1329
-  _globals['_ZONEFAULTED']._serialized_start=1331
-  _globals['_ZONEFAULTED']._serialized_end=1369
-  _globals['_SUBSCRIBERDROPPED']._serialized_start=1371
-  _globals['_SUBSCRIBERDROPPED']._serialized_end=1414
-  _globals['_SIMULATIONSTOPPED']._serialized_start=1416
-  _globals['_SIMULATIONSTOPPED']._serialized_end=1459
-  _globals['_HEARTBEAT']._serialized_start=1461
-  _globals['_HEARTBEAT']._serialized_end=1472
-  _globals['_RESYNC']._serialized_start=1474
-  _globals['_RESYNC']._serialized_end=1542
+  _globals['_EVENTENVELOPE']._serialized_end=875
+  _globals['_ROOMDESCRIBED']._serialized_start=878
+  _globals['_ROOMDESCRIBED']._serialized_end=1051
+  _globals['_CHARACTERARRIVED']._serialized_start=1054
+  _globals['_CHARACTERARRIVED']._serialized_end=1200
+  _globals['_CHARACTERLEFT']._serialized_start=1203
+  _globals['_CHARACTERLEFT']._serialized_end=1342
+  _globals['_COMMANDREJECTED']._serialized_start=1344
+  _globals['_COMMANDREJECTED']._serialized_end=1407
+  _globals['_ZONEFAULTED']._serialized_start=1409
+  _globals['_ZONEFAULTED']._serialized_end=1447
+  _globals['_SUBSCRIBERDROPPED']._serialized_start=1449
+  _globals['_SUBSCRIBERDROPPED']._serialized_end=1492
+  _globals['_SIMULATIONSTOPPED']._serialized_start=1494
+  _globals['_SIMULATIONSTOPPED']._serialized_end=1537
+  _globals['_ENTITYRELOCATED']._serialized_start=1540
+  _globals['_ENTITYRELOCATED']._serialized_end=1703
+  _globals['_HEARTBEAT']._serialized_start=1705
+  _globals['_HEARTBEAT']._serialized_end=1716
+  _globals['_RESYNC']._serialized_start=1718
+  _globals['_RESYNC']._serialized_end=1786
 # @@protoc_insertion_point(module_scope)

@@ -4,7 +4,7 @@ title: Submit idempotency — a client retry after an ambiguous outcome is the s
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-010]
 blocks: [AW-CLI-004]
@@ -279,3 +279,22 @@ dedup and the AC-2/AC-3 fates observed on the running server.
   offset answer) and the outcome-unknown fates (AC-2, AC-3) on the running server — shown by the
   integration suite against the stack's broker with end-offset assertions. `AW-SRV-014` inherits
   the live observation with the rest of its Event-delivery record.
+
+### §8 pass (2026-09-24, architecture) — done
+
+Against `origin/main` `033f2c6` and the compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed). Every AC has its test, and every test runs
+in CI:
+- The unit tests (`idempotency_test.go`, `producer_test.go`) run in `make test`.
+- AC-2 and AC-3a (`TestKafka_RetryAfterAmbiguousTimeoutIsTheSameCommand`,
+  `…DroppedRecordIsANewCommand`) run in `make test-integration`. That passed locally today, and the
+  dropped-record test did not skip.
+- AC-3b's "no `RetryInfo`" holds by construction: `errors.go` attaches `RetryInfo` to
+  `UNAVAILABLE` only.
+
+The rest of §8:
+- `ingress.idempotency_window` is documented in every required place.
+- The metrics, logs and span were seen live in the record above. The produced-Submit dedup was
+  closed live on `AW-SRV-014`'s record, and the ambiguous fates are enumerated in `AW-CLI-007`'s
+  Definition of done (PR #68, item 3).
+- Idempotency Key is in the glossary. No migration, no open `[ASSUMPTION]`.
+- All four story DoD lines hold. The `PLACEHOLDER` marker is gone from `server/`.

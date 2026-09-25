@@ -261,6 +261,11 @@ CLAUDE.md §8, plus:
   only.
 - `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
   run in the job summary.
+- **Inherited from `AW-SRV-006`'s §8 pass (2026-09-24):** this story is the first to drive a real
+  snapshot failure through the server. Its §8 shows, from the running server's own registry,
+  `andara_snapshot_failures_total{reason="encode"|"timeout"|"stall"}` moving, and
+  `{reason="boundary"}` once `AW-SRV-006` AC-8 lands. `store` and `rounds_total{incomplete}` were
+  observed at 006's pass.
 
 ## Open questions
 

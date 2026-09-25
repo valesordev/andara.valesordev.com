@@ -4,7 +4,7 @@ title: Event egress — server-streaming subscription with per-session backpress
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-004, AW-SRV-005]
 blocks: [AW-SRV-009, AW-CLI-004]
@@ -353,6 +353,42 @@ reconciled above.
   `server/README.md` under Event egress. Not a defect in the egress — the from-now contract is
   what the story asks for — but the two gauges do not mean the same moment, and a test that needs
   the later one must read the later one.
+
+### §8 pass (2026-09-24, architecture) — done
+
+Against `origin/main` `033f2c6`, compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed).
+
+- **ACs.** Every criterion has a test that asserts it, and every one runs in CI. The egress and
+  gateway tests carry no build tag, so they run in `make test` (`ci.yaml`, green on `033f2c6`).
+  `TestLive_M1Gate` runs in `make stack-play` (`stack.yaml`), and it passed again locally today.
+  Two criteria are met through a stand-in, and both stand-ins are accepted:
+  - AC-1's arrival is proved by a Room-scoped `RoomDescribed` in `TestScope_RoomDelivery`, and a
+    real `CharacterArrived` on a stream is asserted by `TestLive_M1Gate`.
+  - AC-3 is asserted as `Publish` wall time with 500 real streams (`TestFanout_500Streams`) and
+    `Step` wall time (`TestFanoutOutsideTick`), not as a read of `andara_tick_duration_seconds`.
+    `Publish` is the only fan-out cost the tick pays, and the tick-duration histogram is `Step`
+    plus `Publish`, so bounding the two terms bounds the attributable increase. A 500-stream
+    histogram read would measure the host's scheduler, not the fan-out.
+- **`make check`** is clean on `033f2c6`, and `server/egress`, `server/ingress` and `server/boot`
+  pass under `-race`.
+- **Instrumentation.** The live half is in the verification record above. The Event-delivery half
+  was closed on `AW-SRV-014`'s record, and the stalled-`play` lines (`buffer_full` and its `warn`,
+  drop state, `stream.resumed`, `play` AC-8) are enumerated in `AW-CLI-007`'s Definition of done
+  (PR #68).
+  `andara_session_egress_drops_total{reason="draining"}` and `{reason="revoked"}` are asserted
+  through the gateway by `TestDrain_EndsStreamTyped` and `TestRevoked_StreamEndsWithFrame`. No
+  scrape can observe them: a drain ends the process within three seconds of the increment, and
+  revoking needs a second operator under an open stream. That is accepted and not carried; a
+  scrape could not see either one on any stack.
+- **Config** (`egress.buffer`, `egress.resume_window`, `egress.heartbeat_interval`) is in
+  `server/README.md`, `keys.yaml`, `values.schema.json` and `_env.tpl`. **Glossary:** Egress,
+  Resume Window, Resync and Heartbeat. **Migrations:** none, since the ring is process-local. No
+  `[ASSUMPTION]` remains.
+- **Story DoD:** the memory bound is asserted, the SLO and runbook exist, 015 is reconciled
+  (its AC-7), and the inherited 004 line holds as restated.
+- **Filed, not holding the story:** issue #69. Six test waits in `server/egress/gateway_test.go`
+  and `server/boot/ingress_test.go` still read the Hub's `Subscribers` before an emit, which is the
+  shape `server/README.md` forbids and the one that hung CI in PR #39.
 
 ## Open questions
 

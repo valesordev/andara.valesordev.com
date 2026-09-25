@@ -64,6 +64,7 @@ message LoggedCommand {
     // 13 and 14 are AW-SRV-028's (HandoffAck, HandoffRejected).
     BindCharacter bind_character = 15;
     UnbindCharacter unbind_character = 16;
+    ContentSwap content_swap = 17;
   }
 
   // Verbs beyond these arrive with their own stories, taking numbers from 17
@@ -148,6 +149,36 @@ enum UnbindReason {
   // never changes shape.
   SWITCH = 2;
   LINKDEAD = 3;
+}
+
+// The World moves one pack to a new content version (AW-SRV-012). The Loader
+// resolves, validates and builds the new topology off-tick, then produces this
+// Command. It is in the log so that the tick a World changed content is part
+// of its history, and replay across the change is exact.
+//
+// A swap is World-scoped, not Zone-scoped: one pack's Zones can sit on many
+// Partitions, and a swap applied per Partition would let a tick see Zone A at
+// the new version and Zone B at the old one. So:
+//   - zone_id on the LoggedCommand is empty, and the record is produced to
+//     Partition 0. Any fixed Partition would do, because of the next rule.
+//   - Its Apply runs after every other record of its tick, whatever its
+//     offset: every Command of tick T sees the old version, and every Command
+//     of T+1 sees the new one. Two swaps in one tick apply in offset order.
+//   - Inside that Apply, every Entity standing in a Room the new version
+//     removed moves to its Zone's fallback_room, emitting EntityRelocated
+//     (andara.game.v1). ADR-0001's single process holds every Zone, so this
+//     is one deterministic step. The sharding story owns its cross-process
+//     form.
+message ContentSwap {
+  string pack_id = 1;
+  uint64 version = 2;
+
+  // SHA-256 over the built topology the Loader produced for (pack_id,
+  // version), as server/sim defines and documents it. Replay rebuilds from
+  // the same version and compares. A mismatch halts recovery rather than
+  // serving a World built from different content, the way a State Hash
+  // mismatch does.
+  bytes world_digest = 3;
 }
 
 // An Entity in transit between Zones: the same shape server/sim holds, so the

@@ -180,6 +180,10 @@ None directly. A failing publish is visible to the Builder; a bad activation ale
 CLAUDE.md §8, plus: the compaction test (AC-10) against a broker with compaction forced, and the
 three-way equivalence fixture wired in.
 
+**Inherited from `AW-CLI-006`'s §8 pass (2026-09-24):** the publish gate imports `content/lang`
+itself, so the three-way equivalence test compiles with the same package the CLI ships, not a copy.
+`server/content/lang_test.go` already shows the import compiles.
+
 ## Open questions
 
 - **Resolved 2026-09-07 (Brian): a second approver is required to activate.** AC-3–5.

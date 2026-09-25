@@ -66,6 +66,18 @@ export declare type ZoneDefinition = Message<"andara.content.v1.ZoneDefinition">
    * @generated from field: repeated andara.content.v1.ComponentValue components = 5;
    */
   components: ComponentValue[];
+
+  /**
+   * The Room an Entity is moved to when a new content version removes the Room
+   * it stands in (ADR-0004, AW-SRV-012). A Room ID in this Zone. Required:
+   * empty, or naming a Room this definition does not contain, is the load
+   * finding `fallback_missing`, and the version is refused. It is the one Room
+   * a Zone may not delete. In the Content Language it is `fallback <room>`
+   * (semantics.md §9).
+   *
+   * @generated from field: string fallback_room = 6;
+   */
+  fallbackRoom: string;
 };
 
 /**

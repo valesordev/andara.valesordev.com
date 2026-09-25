@@ -70,6 +70,7 @@ const (
 	notAnsweredMessage    = "The world has not answered that yet; it may still take it. Use `look` to see where things stand."
 	notSentMessage        = "That was not sent: "
 	lostMessage           = "Connection lost; reconnecting."
+	waitingMessage        = "Waiting for your previous session to end."
 	behindMessage         = "You fell behind the world's events; the stream is being reopened."
 )
 
@@ -100,6 +101,14 @@ type player struct {
 
 	mu        sync.Mutex
 	sessionID string
+	// negotiated is the Protocol version the current Session speaks.
+	negotiated uint32
+	// character is the body play drives: resolved once at launch, and
+	// selected again by ID on every Session a reconnect opens (AC-8).
+	// entered is whether the launch selection succeeded; after it, an
+	// already_live is a previous Session not yet torn down, not a refusal.
+	character *gamev1.CharacterSummary
+	entered   bool
 	// streamCancel ends the current Subscribe stream, so a Submit that
 	// learns the Session is gone can hand the reconnect to the stream
 	// loop rather than reconnecting itself.
@@ -158,6 +167,9 @@ func (rt *runtime) play(o playOptions) error {
 	p.con = con
 
 	if err := p.connect(ctx); err != nil {
+		// Nothing was subscribed (AC-6, AC-7); a Session opened for the
+		// roster is not left behind.
+		p.closeSession()
 		return err
 	}
 	p.wg.Add(1)
@@ -187,7 +199,107 @@ func (p *player) wait(d time.Duration) {
 	}
 }
 
-// connect opens a Session (AC-1, AC-12) bounded by --timeout, and remembers
+// connect is everything before Subscribe (AW-CLI-007): open a Session,
+// enter the World as the Character, and say so. The stream loop subscribes
+// once it returns.
+func (p *player) connect(ctx context.Context) error {
+	if err := p.open(ctx); err != nil {
+		return err
+	}
+	if err := p.enter(ctx); err != nil {
+		return err
+	}
+	who := p.cred.Username
+	if p.o.as != "" {
+		who += " acting as " + p.o.as
+	}
+	p.mu.Lock()
+	id, negotiated := p.sessionID, p.negotiated
+	p.mu.Unlock()
+	p.con.notice("info", fmt.Sprintf("Connected to %s as %s, playing %s (session %s, protocol %d).", p.rt.settings.ServerAddress, who, p.character.GetName(), id, negotiated))
+	return nil
+}
+
+// enter selects the Character on the current Session. At launch it is
+// resolved first from the Account's roster (AC-5, AC-6), and any refusal
+// ends play with the server's reason (AC-7). On a reconnect the same
+// Character is selected again (AC-8): the old Session's teardown is what
+// frees it and the new Session can arrive first, so already_live is waited
+// out on the reconnect backoff, announced once, and never fatal.
+func (p *player) enter(ctx context.Context) error {
+	if p.character == nil {
+		c, err := p.resolve(ctx)
+		if err != nil {
+			return err
+		}
+		p.character = c
+	}
+	backoff := backoffInitial
+	announced := false
+	for {
+		err := p.selectCharacter(ctx)
+		if err == nil {
+			p.entered = true
+			return nil
+		}
+		reason, _ := errorInfo(err)
+		if !p.entered {
+			return rosterError(err)
+		}
+		switch {
+		case reason == CodeAlreadyLive:
+		case connect.CodeOf(err) == connect.CodeUnauthenticated:
+			// The new Session went too — the server restarting again. A
+			// connection problem, so the stream loop opens another.
+			return &AppError{Exit: ExitConnect, Code: CodeDisconnected, Message: connectMessage(err), Detail: map[string]any{}}
+		default:
+			return rosterError(err)
+		}
+		if !announced {
+			announced = true
+			p.con.notice("info", waitingMessage)
+		}
+		if !p.sleep(jitter(backoff)) {
+			return ctx.Err()
+		}
+		backoff = min(backoff*2, backoffMax)
+	}
+}
+
+// resolve reads the roster and picks the Character: the one --character
+// names, or the Account's only one.
+func (p *player) resolve(ctx context.Context) (*gamev1.CharacterSummary, error) {
+	id := p.session()
+	cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
+	defer cancel()
+	p.protof("» ListCharacters session_id=%s", id)
+	resp, err := p.game.ListCharacters(cctx, connect.NewRequest(&gamev1.ListCharactersRequest{SessionId: id}))
+	if err != nil {
+		p.protof("« error session_id=%s %s", id, describeError(err))
+		return nil, rosterError(err)
+	}
+	p.protof("« ListCharactersResponse session_id=%s characters=%d max_per_account=%d", id, len(resp.Msg.GetCharacters()), resp.Msg.GetMaxPerAccount())
+	return resolveCharacter(resp.Msg.GetCharacters(), p.o.character)
+}
+
+// selectCharacter is one SelectCharacter. Its answer has Submit's meaning —
+// the BindCharacter is in the log — so it is an ack, shown only under
+// protocol visibility; the arrival comes on the stream.
+func (p *player) selectCharacter(ctx context.Context) error {
+	id, cid := p.session(), p.character.GetCharacterId()
+	cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
+	defer cancel()
+	p.protof("» SelectCharacter session_id=%s character_id=%s", id, cid)
+	resp, err := p.game.SelectCharacter(cctx, connect.NewRequest(&gamev1.SelectCharacterRequest{SessionId: id, CharacterId: cid}))
+	if err != nil {
+		p.protof("« error session_id=%s %s", id, describeError(err))
+		return err
+	}
+	p.protof("« SelectCharacterResponse session_id=%s partition=%d accepted_offset=%d", id, resp.Msg.GetPartition(), resp.Msg.GetAcceptedOffset())
+	return nil
+}
+
+// open opens a Session (AC-1, AC-12) bounded by --timeout, and remembers
 // it. A version outside the server's range names both and is exit 3.
 //
 // A session token expires an hour after login, not after play started, so
@@ -195,7 +307,7 @@ func (p *player) wait(d time.Duration) {
 // nothing wrong but the clock. The stored refresh token is exchanged once
 // and the credential file updated — what `auth refresh` does — before that
 // is taken as an answer.
-func (p *player) connect(ctx context.Context) error {
+func (p *player) open(ctx context.Context) error {
 	refreshed := false
 	for {
 		cctx, cancel := context.WithTimeout(ctx, p.rt.settings.Timeout)
@@ -257,15 +369,11 @@ func (p *player) opened(msg *gamev1.OpenSessionResponse) error {
 		msg.GetSessionId(), msg.GetNegotiatedVersion(), msg.GetServerMinVersion(), msg.GetServerMaxVersion())
 	p.mu.Lock()
 	p.sessionID = msg.GetSessionId()
+	p.negotiated = msg.GetNegotiatedVersion()
 	// What the old Session accepted, no Event on this one will answer.
 	clear(p.pending)
 	p.mu.Unlock()
 	p.looked.Store(false)
-	who := p.cred.Username
-	if p.o.as != "" {
-		who += " acting as " + p.o.as
-	}
-	p.con.notice("info", fmt.Sprintf("Connected to %s as %s (session %s, protocol %d).", p.rt.settings.ServerAddress, who, msg.GetSessionId(), msg.GetNegotiatedVersion()))
 	return nil
 }
 
@@ -582,7 +690,6 @@ func (p *player) endStream() {
 func (p *player) streamLoop() {
 	defer p.wg.Done()
 	backoff := backoffInitial
-	lost := false
 	for {
 		err := p.stream()
 		if p.ctx.Err() != nil {
@@ -613,15 +720,21 @@ func (p *player) streamLoop() {
 				p.fatal <- &AppError{Exit: ExitConnect, Code: CodeDisconnected, Message: "connection lost: " + connectMessage(err), Detail: map[string]any{}}
 				return
 			}
-			if !lost {
-				lost = true
-				p.con.notice("warn", lostMessage)
-			}
-			if !p.sleep(jitter(backoff)) {
-				return
-			}
-			backoff = min(backoff*2, backoffMax)
-			if err := p.connect(p.ctx); err != nil {
+			p.con.notice("warn", lostMessage)
+			// Reconnect until a Session is open with the Character in it:
+			// a Session opened but not entered is never subscribed.
+			for {
+				if !p.sleep(jitter(backoff)) {
+					return
+				}
+				backoff = min(backoff*2, backoffMax)
+				err := p.connect(p.ctx)
+				if err == nil {
+					break
+				}
+				if p.ctx.Err() != nil {
+					return
+				}
 				var ae *AppError
 				if errors.As(err, &ae) && ae.Exit != ExitConnect && ae.Exit != ExitTimeout {
 					p.fatal <- err
@@ -632,9 +745,7 @@ func (p *player) streamLoop() {
 					return
 				}
 				p.rt.log("debug", "reconnect: "+err.Error())
-				continue
 			}
-			lost = false
 			backoff = backoffInitial
 		default:
 			// A typed refusal this client has no answer for; try again

@@ -71,9 +71,19 @@ that "is the World healthy" is answerable without `kubectl exec`.
 5. **Given** `files/alerts.yaml` **when** `promtool check rules` and the compose Prometheus load it
    **then** both pass, and `AndaraServerUnavailable` still goes `pending` on `docker stop` of the compose
    server (the `AW-INF-003` verification, repeated).
-6. **Given** two namespaces with the chart installed **when** one pod is deleted **then** the rule
-   expressions, evaluated against the Grafana Cloud series with `promtool query instant`-equivalent
-   calls, return a result carrying that namespace only. (Evaluation *as an alert* is `AW-INF-009`.)
+6. **Given** the chart installed and Ready in `andara-dev` **when** `andara-0` there is deleted **then**
+   the rule expressions, evaluated against the Grafana Cloud series with `promtool query
+   instant`-equivalent calls, return a new result carrying `namespace="andara-dev"`, and no result
+   for any namespace other than `andara-dev` and `andara-prod` appears or disappears across the
+   deletion. While `andara-prod` has no Ready install, `AndaraServerUnavailable`'s
+   `absent(…andara-prod…)` line returns `namespace="andara-prod"` before and after the deletion.
+   That standing result is expected, and it is recorded as seen. (Evaluation *as an alert* is
+   `AW-INF-009`.) *(Amended 2026-09-24 at §8. The criterion said "two namespaces with the chart
+   installed … that namespace only". Prod cannot be installed and Ready before `AW-INF-007`, and
+   the per-environment `absent()` makes `andara-prod` a standing result until it is, so the box
+   session would have recorded a failure that was the rule working. The two-namespace form, where a
+   pod deleted in one Ready namespace yields that namespace alone, is carried to `AW-INF-007` as an
+   inherited Definition-of-done line.)*
 7. **Given** `make observe-check ENV=local` with no token **when** it runs **then**
    `scripts/observe_check.py` exits `3` with `observe-check: no GRAFANA_CLOUD_READ_TOKEN; cannot verify`
    — not `0` — and `make` reports `Error 3` (its own status is `2`, as for any failed recipe).
@@ -206,7 +216,8 @@ This story *is* the observability requirement. Cardinality it introduces: `job` 
   # expect: ok up{…namespace="andara-dev"…} 1, ok andara_sessions_active, ok loki … trace_id=<id>,
   #         ok tempo trace <id> carries andara.game.v1.Game/OpenSession; exit 0
   kubectl -n andara-dev delete pod andara-0 && make observe-check ENV=dev   # AC-6, within the restart
-  # expect: AndaraServerUnavailable  {namespace="andara-dev"} — and no andara-prod
+  # expect: AndaraServerUnavailable  {namespace="andara-dev"} new, plus the standing
+  #         {namespace="andara-prod"} from its absent() line until AW-INF-007 makes prod Ready (AC-6)
   ```
 
 ## Definition of done
@@ -328,6 +339,30 @@ needs no broker.
 
 The DoD's pointer lines are in place: `AW-INF-003`'s verification record has one, and `AW-INF-006`
 has no verification record, so its pointer is the first bullet of its Open questions.
+
+
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6`.
+
+**Holds:**
+- AC-5: `promtool` in `helm-test` runs in `ci.yaml`, and the `stack` run on `main` (36055080434)
+  shows "9 rules loaded, all ok" and `AndaraServerUnavailable` going `pending`.
+- AC-7 and AC-8 pass in `make check`.
+- The README and the pointer DoD lines hold. No open markers.
+
+**Owed, all on the box, in one session with Brian:**
+1. `dev` Ready on Kafka. That is `AW-INF-014` AC-4 and needs Brian's `ANDARA_BOOTSTRAP_OPERATOR`.
+2. `GRAFANA_CLOUD_READ_TOKEN` and the six `GRAFANA_CLOUD_{PROM,LOKI,TEMPO}_{URL,USER}`, for ACs 1,
+   3 and 4.
+3. AC-2 additionally needs `andara.state.v1`'s `min.compaction.lag.ms` (added by `AW-SRV-019`)
+   applied on the box, which no target does yet (#77, `§9 defect`). It then needs
+   `projectors.state.enabled=true` on `dev`.
+4. AC-6 as amended above.
+5. The record lines `AW-INF-013` and `AW-INF-014` owe this story: the first `sha-` tag the box
+   pulled, and the first `dev` install Ready on Kafka.
+
+The run order for that session is in `AW-INF-014`'s §8 record, so the three stories share one list.
 
 ## Open questions
 
