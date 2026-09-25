@@ -74,12 +74,19 @@ func NewMemorySource() *MemorySource {
 func (m *MemorySource) Push(cmd *logv1.LoggedCommand) sim.Record {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p := sim.PartitionFor(sim.ZoneID(cmd.GetZoneId()))
+	p := sim.CommandPartition(cmd)
 	r := sim.Record{Partition: p, Offset: m.next[p], Command: cmd}
 	m.next[p]++
 	m.end[p] = m.next[p]
 	m.buffers[p] = append(m.buffers[p], r)
 	return r
+}
+
+// End is the offset one past the last record pushed to partition p.
+func (m *MemorySource) End(p int32) int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.end[p]
 }
 
 // SetUnavailable simulates the broker going away (AC-9).

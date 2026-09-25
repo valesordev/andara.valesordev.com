@@ -20,6 +20,7 @@
 import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { AccountStatus, CredentialKind, RegistrationMode, Role } from "../../accounts/v1/account_pb";
+import type { PackVersion } from "../../state/v1/snapshot_pb";
 
 /**
  * Describes the file andara/admin/v1/admin.proto.
@@ -385,14 +386,19 @@ export declare type GetServerInfoResponse = Message<"andara.admin.v1.GetServerIn
   environment: string;
 
   /**
-   * Which content is live, per ADR-0004's Active Pointer.
+   * Which content is live, per ADR-0004's Active Pointer. Deprecated
+   * 2026-09-25: a World serves one version per pack, and these hold one.
+   * Read `content` instead. They are kept and filled with andara.core's
+   * version, so older clients keep working.
    *
-   * @generated from field: string content_pack_id = 4;
+   * @generated from field: string content_pack_id = 4 [deprecated = true];
+   * @deprecated
    */
   contentPackId: string;
 
   /**
-   * @generated from field: uint64 content_version = 5;
+   * @generated from field: uint64 content_version = 5 [deprecated = true];
+   * @deprecated
    */
   contentVersion: bigint;
 
@@ -408,6 +414,20 @@ export declare type GetServerInfoResponse = Message<"andara.admin.v1.GetServerIn
    * @generated from field: uint32 protocol_max_version = 7;
    */
   protocolMaxVersion: number;
+
+  /**
+   * The content in effect, one entry per pack, sorted by pack_id: what the
+   * log says the World runs on (AW-SRV-012), with the digest of the whole
+   * content topology. The same values a snapshot records.
+   *
+   * @generated from field: repeated andara.state.v1.PackVersion content = 8;
+   */
+  content: PackVersion[];
+
+  /**
+   * @generated from field: bytes content_digest = 9;
+   */
+  contentDigest: Uint8Array;
 };
 
 /**

@@ -549,3 +549,54 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	eventually.True(t, 5*time.Second, what, cond)
 }
+
+// AW-SRV-012: a relocation moves the binding's Room to the fallback without a
+// transit: the Zone, and so the Partition, is unchanged, and the next Command
+// is routed from where the body now stands.
+func TestBindings_FollowARelocation(t *testing.T) {
+	held := prometheus.NewGauge(prometheus.GaugeOpts{Name: "held"})
+	b := NewBindings(time.Second, nil, held)
+	b.Bind("s1", command.Binding{Actor: "alice", Zone: "town", Room: "hall"})
+	b.Publish(sim.Event{Type: sim.EvEntityRelocated, Scope: sim.ScopeRoom("town", "plaza").With("alice"),
+		Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
+			ZoneId: "town", EntityName: "alice", FromRoomId: "hall", ToRoomId: "plaza", Reason: sim.ReasonRoomRemoved}}}})
+	got, bound, inTransit := b.Lookup("s1")
+	if !bound || inTransit || got.Zone != "town" || got.Room != "plaza" {
+		t.Fatalf("binding %+v bound=%v transit=%v", got, bound, inTransit)
+	}
+}
+
+// An arrival relocated to the target Zone's fallback (a swap removed the Room
+// the body was walking into) ends the transit the way an arrival does: the
+// binding settles in the new Zone, a waiter is released, and the Zone change
+// is reported (review of #91).
+func TestBindings_ARelocationEndsACrossZoneTransit(t *testing.T) {
+	held := prometheus.NewGauge(prometheus.GaugeOpts{Name: "held"})
+	b := NewBindings(time.Second, nil, held)
+	var changed []command.Binding
+	b.OnZoneChange = func(_ string, nb command.Binding) { changed = append(changed, nb) }
+	b.Bind("s1", command.Binding{Actor: "alice", Zone: "town", Room: "hall"})
+	b.Publish(sim.Event{Type: sim.EvCharacterLeft, Scope: sim.ScopeEntities("alice"),
+		Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{CharacterName: "alice"}}}})
+	if _, _, inTransit := b.Lookup("s1"); !inTransit {
+		t.Fatal("fixture: not in transit")
+	}
+	done := make(chan command.Binding, 1)
+	go func() { got, _ := b.Binding(context.Background(), "s1"); done <- got }()
+	waitFor(t, func() bool { return testutil.ToFloat64(held) == 1 }, "the waiter in the hold")
+
+	b.Publish(sim.Event{Type: sim.EvEntityRelocated, Scope: sim.ScopeRoom("docks", "quay").With("alice"),
+		Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
+			ZoneId: "docks", EntityName: "alice", FromRoomId: "pier", ToRoomId: "quay", Reason: sim.ReasonRoomRemoved}}}})
+	select {
+	case got := <-done:
+		if got.Zone != "docks" || got.Room != "quay" {
+			t.Fatalf("waiter released with %+v", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("the relocation did not end the transit")
+	}
+	if len(changed) != 1 || changed[0].Zone != "docks" {
+		t.Fatalf("zone changes %+v", changed)
+	}
+}

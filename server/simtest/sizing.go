@@ -64,6 +64,34 @@ func SizingWorld() (*sim.World, error) {
 	return w, nil
 }
 
+// SizingWorldTrimmed is SizingWorld with each Zone keeping only the first
+// keep of its Rooms, by ID: the next version a content swap moves the sizing
+// fixture to, with Entities standing in every Room it removed.
+func SizingWorldTrimmed(keep float64) (*sim.World, error) {
+	inputs := make([]sim.Input, 0, SizingZones)
+	per := SizingRooms / SizingZones
+	for z := 0; z < SizingZones; z++ {
+		id := fmt.Sprintf("z%02d", z)
+		n := per
+		if z == SizingZones-1 {
+			n = SizingRooms - per*(SizingZones-1)
+		}
+		n = max(1, int(float64(n)*keep))
+		rooms := make([]string, n)
+		for r := range rooms {
+			rooms[r] = fmt.Sprintf("r%04d", r)
+		}
+		inputs = append(inputs, zoneDef(id, "Zone "+id, rooms...))
+	}
+	w, errs := sim.BuildWorld(inputs, sim.Options{})
+	for _, e := range errs {
+		if !sim.IsWarning(e, false) {
+			return nil, e
+		}
+	}
+	return w, nil
+}
+
 // SizingEngine is SizingWorld populated to the fixture's Entity counts: the
 // Entities spread evenly over the Rooms, the first SizingCharacters of them
 // Characters with a Name, the rest Merchants carrying the Components
@@ -73,7 +101,10 @@ func SizingWorld() (*sim.World, error) {
 // Entities *and* in the Component fields hanging off them, and an Entity with
 // no Components would make the copy look cheaper than the World it is standing
 // in for.
-func SizingEngine(seed uint64) (*sim.Engine, error) {
+func SizingEngine(seed uint64) (*sim.Engine, error) { return SizingEngineWith(seed, nil) }
+
+// SizingEngineWith is SizingEngine preparing ContentSwaps through content.
+func SizingEngineWith(seed uint64, content sim.ContentSource) (*sim.Engine, error) {
 	w, err := SizingWorld()
 	if err != nil {
 		return nil, err
@@ -82,7 +113,7 @@ func SizingEngine(seed uint64) (*sim.Engine, error) {
 	if err != nil {
 		return nil, err
 	}
-	e := sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: AllPartitions(), Handlers: sim.Handlers()})
+	e := sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: AllPartitions(), Handlers: sim.Handlers(), Content: content})
 
 	merchant, ok := reg.Get("town.Merchant")
 	if !ok {

@@ -185,7 +185,7 @@ func (k *KafkaProducer) Degraded() bool { return k.degraded.Load() }
 // Partition, acknowledged by the ISR before it returns.
 func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
 	zone := sim.ZoneID(cmd.GetZoneId())
-	partition := sim.PartitionFor(zone)
+	partition := sim.CommandPartition(cmd)
 	ctx, span := k.tracer.Start(ctx, "log.produce", trace.WithAttributes(attribute.Int64("partition", int64(partition))))
 	defer span.End()
 

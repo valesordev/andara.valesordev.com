@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 10 |
-| `in-progress` | 1 |
+| `review` | 11 |
 | `ready` | 25 |
 | `draft` | 1 |
 | `done` | 19 |
@@ -28,12 +27,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `review` | Zone snapshots keyed to partition offsets | review by brian |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `review` | Content resolution from the store and reload at a tick boundary | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
 
-### `review` (10)
+### `review` (11)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -45,14 +45,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `EPIC-05` | server | M | high | implementation | Content resolution from the store and reload at a tick boundary | `AW-SRV-001`, `AW-SRV-021`, `AW-SRV-022` |
 
 ### `ready` (25)
 
@@ -185,7 +180,7 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `review` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler |
-| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `in-progress` | Content resolution from the store and reload at a tick boundary |
+| [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `review` | Content resolution from the store and reload at a tick boundary |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
 ### `EPIC-06` — Operator and builder CLI

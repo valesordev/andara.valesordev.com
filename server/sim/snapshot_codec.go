@@ -47,6 +47,15 @@ func (s *Snapshot) Encode() ([]byte, error) {
 		env.Offsets = append(env.Offsets, &logv1.PartitionOffset{Partition: po.Partition, Offset: po.Offset})
 	}
 	sort.Slice(env.Offsets, func(i, j int) bool { return env.Offsets[i].GetPartition() < env.Offsets[j].GetPartition() })
+	// The content in effect at Tick (AW-SRV-012), sorted by pack_id, and the
+	// digest it builds. Empty for a World before its first ContentSwap.
+	if len(s.content) > 0 {
+		for p, v := range s.content {
+			env.Content = append(env.Content, &statev1.PackVersion{PackId: p, Version: v})
+		}
+		sort.Slice(env.Content, func(i, j int) bool { return env.Content[i].GetPackId() < env.Content[j].GetPackId() })
+		env.ContentDigest = s.contentDigest[:]
+	}
 	out, err := canonical.Marshal(env)
 	if err != nil {
 		return nil, fmt.Errorf("snapshot: encode envelope for zone %s: %w", s.Zone, err)

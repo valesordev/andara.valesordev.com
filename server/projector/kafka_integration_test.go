@@ -130,7 +130,7 @@ func (b *broker) options(w *world) projector.RunOptions {
 	return projector.RunOptions{
 		Brokers: b.brokers, Group: b.group,
 		CommandsTopic: b.commands, EventsTopic: b.events, StateTopic: b.state,
-		World: w.live.World(), Templates: w.live.Templates(), Seed: seed,
+		World: w.live.World(), Content: crossing(b.t), Seed: seed,
 		BatchTicks:     3,
 		Poll:           100 * time.Millisecond,
 		ContentVersion: func(sim.ZoneID) string { return "fixture@1" },

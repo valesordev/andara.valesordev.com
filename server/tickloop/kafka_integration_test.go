@@ -96,7 +96,7 @@ func startLoop(ctx context.Context, brokers []string, commands, events, group st
 	if err != nil {
 		return nil, nil, err
 	}
-	if _, err := Recover(ctx, brokers, commands, events, e); err != nil {
+	if _, err := Recover(ctx, brokers, commands, events, e, nil); err != nil {
 		return nil, nil, err
 	}
 	src, err := NewKafkaSource(ctx, KafkaSourceOptions{Brokers: brokers, Group: group, Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
@@ -303,7 +303,7 @@ func TestKafka_CrashAndRecover(t *testing.T) {
 	// A recovery whose hashes disagree halts: a different seed is a
 	// different World.
 	wrong, _ := simtest.NewEngine(10)
-	if _, err := Recover(context.Background(), bk, commands, events, wrong); !errors.Is(err, sim.ErrHashMismatch) {
+	if _, err := Recover(context.Background(), bk, commands, events, wrong, nil); !errors.Is(err, sim.ErrHashMismatch) {
 		t.Fatalf("recovery with the wrong seed: %v", err)
 	}
 }

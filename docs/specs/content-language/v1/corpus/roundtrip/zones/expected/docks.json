@@ -43,5 +43,6 @@
     {
       "type": "andara.core.Indoors"
     }
-  ]
+  ],
+  "fallbackRoom": "pier"
 }

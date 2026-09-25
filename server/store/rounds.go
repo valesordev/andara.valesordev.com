@@ -163,6 +163,10 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 			continue
 		}
 		next := body.GetNextEventId()
+		content := map[string]uint64{}
+		for _, pv := range env.GetContent() {
+			content[pv.GetPackId()] = pv.GetVersion()
+		}
 		offsets := make([]sim.PartitionOffset, 0, len(env.GetOffsets()))
 		for _, po := range env.GetOffsets() {
 			offsets = append(offsets, sim.PartitionOffset{Partition: po.GetPartition(), Offset: po.GetOffset()})
@@ -171,6 +175,13 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		switch {
 		case first:
 			state.PRNG, state.NextEventID, state.Offsets, first = prng, next, offsets, false
+			if len(content) > 0 {
+				state.Content, state.ContentDigest = content, env.GetContentDigest()
+			}
+		case !sameContent(content, env.GetContentDigest(), state.Content, state.ContentDigest):
+			// One cut at one tick has one content in effect (AW-SRV-012).
+			ref.Reason = "content in effect disagrees with the rest of the round"
+			continue
 		case prng != state.PRNG || next != state.NextEventID:
 			// AW-SRV-007 AC-11: a round is one cut at one tick, so these agree
 			// by construction; disagreement means two cuts assembled as one.
@@ -210,6 +221,18 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		return sim.RoundState{}, nil
 	}
 	return state, nil
+}
+
+func sameContent(a map[string]uint64, ad []byte, b map[string]uint64, bd []byte) bool {
+	if len(a) != len(b) || string(ad) != string(bd) {
+		return false
+	}
+	for p, v := range a {
+		if b[p] != v {
+			return false
+		}
+	}
+	return true
 }
 
 func equalOffsets(a, b []sim.PartitionOffset) bool {

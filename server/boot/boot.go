@@ -84,6 +84,12 @@ type Runtime struct {
 	// roster produces its BindCharacter and UnbindCharacter through it.
 	commandLog command.Producer
 	ready      atomic.Bool
+	// worldNext is the tick loop's next-to-read offset on the World
+	// Partition, for worldBarrier; written on the loop's goroutine.
+	worldNext atomic.Int64
+	// replay, when set, is the log recovery reads instead of Kafka's: a test
+	// drives StartTickLoop's recovery with it.
+	replay replayLog
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table
@@ -130,13 +136,20 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	if rt.ContentMetrics == nil {
 		rt.ContentMetrics = content.NewMetrics(rt.Tel.Reg)
 	}
+	// The candidate content: what the source names now, validated. It is
+	// not yet in effect — the log is the source of that (AW-SRV-012), and
+	// ReconcileContent brings it in through a ContentSwap — but a boot whose
+	// content cannot load at all still fails here, before anything starts.
 	src, loadErrs := content.Open(ctx, rt.contentOptions())
 	rt.Content = src
-	var inputs []sim.Input
+	var (
+		inputs     []sim.Input
+		candidates []sim.TemplateInput
+	)
 	if src != nil {
-		zones, zerrs := src.Zones()
-		inputs = zones
-		loadErrs = append(loadErrs, zerrs...)
+		zones, templates, cerrs := src.Candidates(ctx)
+		inputs, candidates = zones, templates
+		loadErrs = append(loadErrs, cerrs...)
 	}
 	loadFatal := false
 	errorCount := 0
@@ -192,7 +205,7 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		terrs   []sim.ValidationError
 	)
 	if src != nil {
-		tinputs, terrs = src.Templates()
+		tinputs = candidates
 	}
 	templateFatal := false
 	for _, e := range terrs {
@@ -246,7 +259,6 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		}
 		rt.World = world
 		rt.Templates = templates
-		rt.ready.Store(true)
 	}
 	span.SetAttributes(
 		attribute.Int("zone_count", zoneCount),
@@ -255,10 +267,24 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		attribute.Int("template_count", templateCount),
 	)
 	if !ok {
+		if rt.Cfg.ContentSource == content.SourceKafka && !rt.Cfg.ValidateOnly && src != nil {
+			// The candidate is what the pointers name now; the log may
+			// already hold content that loads. A bad activation must not
+			// survive a restart as an outage: recovery brings back what the
+			// log recorded, reconcile refuses the candidate, and only a boot
+			// that ends with nothing in effect exits (ReconcileContent).
+			rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "the content the Active Pointers name does not load; recovering what the log recorded",
+				slog.Int("error_count", errorCount), slog.String("trace_id", telemetry.TraceID(ctx)))
+			return ExitOK
+		}
 		return ExitFail
 	}
 	return ExitOK
 }
+
+// MarkReady sets /readyz to 200: called once the Gateway serves with content
+// in effect (AW-SRV-012, review of #88).
+func (rt *Runtime) MarkReady() { rt.ready.Store(true) }
 
 // recordFinding logs one finding and counts it, and reports whether it was
 // advisory. Both loops share it so a warning can never be logged at warn and
@@ -326,7 +352,9 @@ func (rt *Runtime) contentOptions() content.Options {
 		MaxBlobBytes:  rt.Cfg.ContentMaxBlobBytes,
 		Debounce:      rt.Cfg.ContentReloadDebounce,
 		StrictOrphans: rt.Cfg.StrictOrphans,
+		SpawnRoom:     rt.spawnRoom(),
 		Metrics:       rt.ContentMetrics,
 		Log:           rt.Tel.Log,
+		Tracer:        rt.Tel.Tracer,
 	}
 }

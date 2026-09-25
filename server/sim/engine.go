@@ -93,8 +93,14 @@ type StepResult struct {
 	Unapplied []Record
 	// Faults is every Zone that panicked this tick, for the loop's error
 	// line and counter.
-	Faults    []Fault
-	Completed TickCompleted
+	Faults []Fault
+	// Swaps is every ContentSwap this tick applied, in the order it applied
+	// them (AW-SRV-012): after every other record of the tick.
+	Swaps []SwapApplied
+	// SwapsRefused is every ContentSwap this tick consumed and refused, a
+	// deterministic no-op each: the content source is told, and re-evaluates.
+	SwapsRefused []SwapRefused
+	Completed    TickCompleted
 }
 
 // CommandKind names the arm of LoggedCommand.command a handler serves.
@@ -113,6 +119,8 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "bind_character"
 	case *logv1.LoggedCommand_UnbindCharacter:
 		return "unbind_character"
+	case *logv1.LoggedCommand_ContentSwap:
+		return "content_swap"
 	}
 	return ""
 }
@@ -127,6 +135,9 @@ const (
 	KindArrive          CommandKind = "arrive"
 	KindBindCharacter   CommandKind = "bind_character"
 	KindUnbindCharacter CommandKind = "unbind_character"
+	// KindContentSwap is World-scoped and has no handler: Step applies it
+	// itself, after every other record of its tick (AW-SRV-012).
+	KindContentSwap CommandKind = "content_swap"
 )
 
 // Apply is the handler seam: AW-SRV-003 registers one per verb. It runs
@@ -145,6 +156,7 @@ type ApplyContext struct {
 	Record    Record
 	emit      func(ZoneID, string, string, Scope, *gamev1.EventEnvelope)
 	outbound  *[]*logv1.LoggedCommand
+	engine    *Engine
 	// consumed is set only by Step, for a Record it took from the log.
 	// Handlers refuse a context without it (AW-SRV-003 AC-11): the log
 	// boundary is a guard, not a convention.
@@ -164,6 +176,15 @@ func (a *ApplyContext) Consumed() bool { return a != nil && a.consumed }
 // what it did; nothing downstream widens it.
 func (a *ApplyContext) Emit(scope Scope, env *gamev1.EventEnvelope) {
 	a.emit(a.Zone.ID, a.Record.Command.GetSessionId(), a.Record.Command.GetClientRef(), scope, env)
+}
+
+// ContentVersion is the pack@version an Entity instantiated from t records,
+// from the content in effect (Engine.ContentVersionOf).
+func (a *ApplyContext) ContentVersion(t *Template) string {
+	if a.engine == nil {
+		return ""
+	}
+	return a.engine.ContentVersionOf(t)
 }
 
 // Actor is the Command's actor, for scoping an Event to it.
@@ -212,6 +233,9 @@ type Config struct {
 	// only ever carries parsed, authorized Commands (AW-SRV-010), so this is
 	// a binary behind its content, not a Builder's mistake.
 	Handlers map[CommandKind]Apply
+	// Content prepares the topology a ContentSwap moves the World to
+	// (AW-SRV-012). Nil refuses any tick that carries a swap.
+	Content ContentSource
 }
 
 // Engine holds one World's mutable state and advances it one tick at a
@@ -223,6 +247,11 @@ type Engine struct {
 	cfg       Config
 	state     *WorldState
 	sinks     []EventSink
+	// versions and digest are the content in effect: the pack versions the
+	// applied ContentSwaps name and the digest of the topology they build
+	// (AW-SRV-012). Empty until the first swap.
+	versions map[string]uint64
+	digest   [32]byte
 }
 
 // NewEngine builds an Engine at tick 0 with every Zone empty.
@@ -233,7 +262,7 @@ func NewEngine(w *World, templates *TemplateRegistry, cfg Config) *Engine {
 	parts := append([]int32(nil), cfg.Partitions...)
 	sort.Slice(parts, func(i, j int) bool { return parts[i] < parts[j] })
 	cfg.Partitions = parts
-	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts)}
+	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts), versions: map[string]uint64{}}
 }
 
 // SetObserver attaches the Observer after construction; the loop that
@@ -335,6 +364,24 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 		}
 	}
 
+	// ContentSwaps are World-scoped and applied after every other record of
+	// the tick (AW-SRV-012). They are prepared here, in (Partition, offset)
+	// order, before anything mutates, so a swap that cannot be built or whose
+	// digest disagrees refuses the whole Step.
+	var swapRecs []Record
+	for _, p := range parts {
+		for _, r := range byPart[p] {
+			if KindOf(r.Command) == KindContentSwap {
+				swapRecs = append(swapRecs, r)
+			}
+		}
+	}
+	prepared, err := e.prepareSwaps(tick, swapRecs)
+	if err != nil {
+		return StepResult{}, err
+	}
+	consumed := map[Record]bool{}
+
 	res := StepResult{Tick: tick}
 	emit := func(zone ZoneID, session, clientRef string, scope Scope, env *gamev1.EventEnvelope) {
 		env.EventId = s.NextEventID
@@ -347,6 +394,13 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 	for _, p := range parts {
 		records := byPart[p]
 		for i, r := range records {
+			if KindOf(r.Command) == KindContentSwap {
+				// Consumed in its place; applied at the end of the tick.
+				consumed[r] = true
+				res.Completed.CommandsApplied++
+				s.Offsets[p] = r.Offset + 1
+				continue
+			}
 			zone := s.Zones[ZoneID(r.Command.GetZoneId())]
 			if zone == nil {
 				// A Zone the World does not have. Content moved under the
@@ -375,6 +429,24 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 			res.Completed.CommandsApplied++
 			s.Offsets[p] = r.Offset + 1
 		}
+	}
+
+	for _, ps := range prepared {
+		if !consumed[ps.rec] {
+			// Behind a faulted record on its Partition: requeued with it.
+			continue
+		}
+		if ps.refused != nil {
+			res.SwapsRefused = append(res.SwapsRefused, *ps.refused)
+			e.observe("", ps.rec, Outcome{Kind: KindContentSwap, Code: ps.refused.Reason, Stage: StageValidate})
+			continue
+		}
+		end := func(Outcome) {}
+		if e.cfg.Observer != nil {
+			end = e.cfg.Observer.Begin("", ps.rec)
+		}
+		res.Swaps = append(res.Swaps, e.applySwap(ps, emit))
+		end(Outcome{Kind: KindContentSwap})
 	}
 
 	s.Tick = tick
@@ -423,7 +495,7 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 	}()
 	actx := &ApplyContext{
 		Tick: tick, World: e.world, Templates: e.templates, Zone: zone, State: e.state, RNG: e.state.RNG, Record: r,
-		emit: emit, outbound: &res.Outbound, consumed: true,
+		emit: emit, outbound: &res.Outbound, consumed: true, engine: e,
 	}
 	out := Outcome{Kind: kind}
 	if err := handler(actx, r.Command); err != nil {

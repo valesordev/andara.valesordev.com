@@ -107,7 +107,7 @@ func TestOpen_TemplatesFromDir(t *testing.T) {
 	if len(verrs) != 0 {
 		t.Fatalf("open: %v", verrs)
 	}
-	if inputs, errs := src.Templates(); len(errs) != 0 || len(inputs) != 7 {
+	if _, inputs, errs := src.Candidates(context.Background()); len(errs) != 0 || len(inputs) != 7 {
 		t.Errorf("dir: %d inputs, %v", len(inputs), errs)
 	}
 }

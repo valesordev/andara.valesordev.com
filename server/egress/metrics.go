@@ -93,7 +93,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Sessions whose last Subscribe stream the server ended (buffer_full, draining) and that have neither reopened one nor ended.",
 		}),
 	}
-	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped} {
+	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated} {
 		m.Sent.WithLabelValues(string(t))
 	}
 	m.Sent.WithLabelValues(TypeHeartbeat)

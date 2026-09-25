@@ -16,7 +16,7 @@ import (
 // stageWorld is one Zone, two Rooms, one Exit north.
 func stageWorld(t *testing.T) *World {
 	t.Helper()
-	w, errs := BuildWorld([]Input{{File: "z.json", Def: &contentv1.ZoneDefinition{FormatVersion: 1, Id: "z", Name: "Z", Rooms: []*contentv1.RoomDefinition{
+	w, errs := BuildWorld([]Input{{File: "z.json", Def: &contentv1.ZoneDefinition{FormatVersion: 1, Id: "z", Name: "Z", FallbackRoom: "a", Rooms: []*contentv1.RoomDefinition{
 		{Id: "a", Title: "A", Exits: []*contentv1.ExitDefinition{{Direction: "north", ToRoom: "b"}}},
 		{Id: "b", Title: "B", Exits: []*contentv1.ExitDefinition{{Direction: "south", ToRoom: "a"}}},
 	}}}}, Options{})

@@ -135,7 +135,7 @@ func (s *Subscription) observer() Observer {
 // too, so a subscription registered mid-move is not left in the Room its
 // Character had already left.
 func (s *Subscription) follow(ev sim.Event) {
-	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived {
+	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated {
 		return
 	}
 	s.mu.Lock()
@@ -148,6 +148,9 @@ func (s *Subscription) follow(ev sim.Event) {
 		s.obs.Room = sim.RoomRef{}
 	case *gamev1.EventEnvelope_CharacterArrived:
 		s.obs.Room = sim.RoomRef{Zone: sim.ZoneID(p.CharacterArrived.GetZoneId()), Room: sim.RoomID(p.CharacterArrived.GetRoomId())}
+	case *gamev1.EventEnvelope_EntityRelocated:
+		// A content swap moved the body to its Zone's fallback (AW-SRV-012).
+		s.obs.Room = sim.RoomRef{Zone: sim.ZoneID(p.EntityRelocated.GetZoneId()), Room: sim.RoomID(p.EntityRelocated.GetToRoomId())}
 	}
 }
 

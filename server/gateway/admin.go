@@ -6,16 +6,17 @@ package gateway
 import (
 	"context"
 	"errors"
+	"sort"
 
 	"connectrpc.com/connect"
 
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
 	"github.com/valesordev/andara/gen/go/andara/admin/v1/adminv1connect"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 )
 
 // BuildInfo is what the binary knows about itself, stamped at link time
-// (Makefile, Dockerfile.server). Content identity is empty until AW-SRV-012
-// resolves the Active Pointer.
+// (Makefile, Dockerfile.server). Content identity is Options.Content's.
 type BuildInfo struct {
 	Version string
 	Commit  string
@@ -43,15 +44,40 @@ type adminService struct {
 
 // GetServerInfo is reachable only through the auth interceptor; by the time
 // it runs, the caller has a Principal.
+//
+// The content in effect (AW-SRV-012) is one entry per pack, sorted, with its
+// digest. The deprecated single-pack fields carry andara.core's version, so
+// older clients keep working.
 func (a *adminService) GetServerInfo(_ context.Context, _ *connect.Request[adminv1.GetServerInfoRequest]) (*connect.Response[adminv1.GetServerInfoResponse], error) {
-	return connect.NewResponse(&adminv1.GetServerInfoResponse{
+	resp := &adminv1.GetServerInfoResponse{
 		Version:            a.s.opts.Build.Version,
 		Commit:             a.s.opts.Build.Commit,
 		Environment:        a.s.opts.Environment,
 		ProtocolMinVersion: a.s.opts.ProtocolMin,
 		ProtocolMaxVersion: a.s.opts.ProtocolMax,
-	}), nil
+	}
+	if a.s.opts.Content != nil {
+		versions, digest := a.s.opts.Content()
+		packs := make([]string, 0, len(versions))
+		for p := range versions {
+			packs = append(packs, p)
+		}
+		sort.Strings(packs)
+		for _, p := range packs {
+			resp.Content = append(resp.Content, &statev1.PackVersion{PackId: p, Version: versions[p]})
+		}
+		if len(versions) > 0 {
+			resp.ContentDigest = digest[:]
+		}
+		if v, ok := versions[coreContentPack]; ok {
+			resp.ContentPackId, resp.ContentVersion = coreContentPack, v //nolint:staticcheck // deprecated fields kept filled for older clients
+		}
+	}
+	return connect.NewResponse(resp), nil
 }
+
+// coreContentPack is andara.core, which the deprecated single-pack fields name.
+const coreContentPack = "andara.core"
 
 var errNoAccountAdmin = errors.New("account administration is not configured on this server")
 

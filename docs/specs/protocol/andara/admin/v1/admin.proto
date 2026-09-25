@@ -18,6 +18,7 @@ syntax = "proto3";
 package andara.admin.v1;
 
 import "andara/accounts/v1/account.proto";
+import "andara/state/v1/snapshot.proto";
 
 service Admin {
   // Build and content identity of the running server. ADR-0004 decoupled
@@ -146,12 +147,21 @@ message GetServerInfoResponse {
   string commit = 2;
   string environment = 3;
 
-  // Which content is live, per ADR-0004's Active Pointer.
-  string content_pack_id = 4;
-  uint64 content_version = 5;
+  // Which content is live, per ADR-0004's Active Pointer. Deprecated
+  // 2026-09-25: a World serves one version per pack, and these hold one.
+  // Read `content` instead. They are kept and filled with andara.core's
+  // version, so older clients keep working.
+  string content_pack_id = 4 [deprecated = true];
+  uint64 content_version = 5 [deprecated = true];
 
   // Supported protocol version range, so an operator can diagnose a rejected
   // client without reading logs (AW-SRV-005).
   uint32 protocol_min_version = 6;
   uint32 protocol_max_version = 7;
+
+  // The content in effect, one entry per pack, sorted by pack_id: what the
+  // log says the World runs on (AW-SRV-012), with the digest of the whole
+  // content topology. The same values a snapshot records.
+  repeated andara.state.v1.PackVersion content = 8;
+  bytes content_digest = 9;
 }

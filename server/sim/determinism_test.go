@@ -105,8 +105,11 @@ func shuffledWorld(t *testing.T, rnd *shuffler) *World {
 	}
 	rnd.shuffle(len(townComps), func(a, b int) { townComps[a], townComps[b] = townComps[b], townComps[a] })
 
+	town := zoneWith("town.json", "town", "Town", townComps, rooms...)
+	// Fixed, not "the first Room": the Rooms were just shuffled.
+	town.Def.FallbackRoom = "r00"
 	inputs := []Input{
-		zoneWith("town.json", "town", "Town", townComps, rooms...),
+		town,
 		zone("wilds.json", "wilds", "Wilds", room("trail", "Trail", exit("down", "town", "r00"))),
 	}
 	rnd.shuffle(len(inputs), func(a, b int) { inputs[a], inputs[b] = inputs[b], inputs[a] })
@@ -193,8 +196,8 @@ func TestCanonicalBytes_SeparatorsInContentCannotForgeRecords(t *testing.T) {
 	}
 	// A Description cannot introduce a record of its own.
 	forged := build("X", "d\nroom\ttown\tghost\tGhost\td")
-	if n := strings.Count(forged, "\n"); n != 2 {
-		t.Errorf("serialization has %d records, want 2 (zone + room):\n%q", n, forged)
+	if n := strings.Count(forged, "\n"); n != 3 {
+		t.Errorf("serialization has %d records, want 3 (zone, its fallback, room):\n%q", n, forged)
 	}
 	if strings.Contains(forged, "\nroom\ttown\tghost") {
 		t.Errorf("a Description forged a room record:\n%q", forged)

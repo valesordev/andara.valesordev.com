@@ -51,6 +51,9 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	code := rt.LoadContent(ctx)
+	if rt.ContentMetrics != nil {
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+	}
 	if cfg.ValidateOnly || code != boot.ExitOK {
 		return code
 	}
@@ -84,9 +87,78 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	defer func() { _ = rt.CloseIngress() }()
 	rt.StartEgress(ctx)
 	// The roster (AW-SRV-014): Characters, and the binding of one to a
-	// Session. A spawn Room the content lacks fails the boot.
+	// Session. Built before the loop runs, which reads it every tick; its
+	// spawn Room is checked again below, against the content in effect.
 	if err := rt.StartRoster(ctx); err != nil {
 		tel.Log.Error("roster", "detail", err.Error())
+		return boot.ExitFail
+	}
+
+	// The tick loop (AW-SRV-002), recovered from the log and running before
+	// anything is served: the content in effect is whatever the log recorded
+	// (AW-SRV-012), and ReconcileContent below brings the World to what the
+	// content source names through the loop. A bad broker fails the boot
+	// here, before anything is served.
+	loop, err := rt.StartTickLoop(ctx)
+	if err != nil {
+		tel.Log.Error("tick loop", "detail", err.Error())
+		return boot.ExitFail
+	}
+	loopCtx, stopLoop := context.WithCancel(context.Background())
+	defer stopLoop()
+	loopErr := make(chan error, 1)
+	loopDone := make(chan struct{})
+	go func() { loopErr <- loop.Run(loopCtx); close(loopDone) }()
+	// halt stops the loop and waits for it, for every return below that is
+	// not the drain.
+	halt := func() { stopLoop(); <-loopDone }
+
+	// The operator surface, so /readyz answers 503 while content comes into
+	// effect and until the Gateway serves.
+	srv := &http.Server{
+		Addr:              cfg.HTTPListen(),
+		Handler:           rt.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	errCh := make(chan error, 1)
+	go func() {
+		tel.Log.Info("http listen", "addr", srv.Addr)
+		errCh <- srv.ListenAndServe()
+	}()
+
+	// Genesis on an empty log, or whatever moved while the process was down.
+	// It waits for its swaps to apply, so a loop that stops meanwhile ends it.
+	rctx, stopReconcile := context.WithCancel(ctx)
+	reconciled := make(chan int, 1)
+	go func() { reconciled <- rt.ReconcileContent(rctx) }()
+	select {
+	case code := <-reconciled:
+		stopReconcile()
+		if code != boot.ExitOK {
+			halt()
+			_ = srv.Shutdown(context.Background())
+			return code
+		}
+	case err := <-loopErr:
+		stopReconcile()
+		if err == nil {
+			err = errors.New("tick loop exited")
+		}
+		tel.Log.Error("tick loop", "detail", err.Error())
+		_ = srv.Shutdown(context.Background())
+		return boot.ExitFail
+	case <-ctx.Done():
+		stopReconcile()
+		halt()
+		_ = srv.Shutdown(context.Background())
+		return boot.ExitOK
+	}
+
+	// A spawn Room the content in effect lacks fails the boot.
+	if err := rt.CheckSpawnInEffect(); err != nil {
+		tel.Log.Error("roster", "detail", err.Error())
+		halt()
+		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
 
@@ -112,6 +184,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Ingress:                 rt.Ingress,
 		Egress:                  rt.Egress,
 		Roster:                  rt.Roster,
+		Content:                 rt.Content.InEffect,
 		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
 		OnDrain:                 func() { rt.Egress.Drain(); rt.Drain() },
 		Log:                     tel.Log,
@@ -120,36 +193,29 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	})
 	if err != nil {
 		tel.Log.Error("gateway", "detail", err.Error())
+		halt()
+		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
 	if err := gw.Start(); err != nil {
 		tel.Log.Error("gateway", "detail", err.Error())
+		halt()
+		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
+	// Ready once the Gateway serves with content in effect (AW-SRV-012).
+	rt.MarkReady()
 
-	// The tick loop (AW-SRV-002): built after the gateway so a bad broker
-	// fails the boot before anything is served, run until the drain.
-	loop, err := rt.StartTickLoop(ctx)
-	if err != nil {
-		tel.Log.Error("tick loop", "detail", err.Error())
-		_ = gw.Shutdown(context.Background())
-		return boot.ExitFail
-	}
-	loopCtx, stopLoop := context.WithCancel(context.Background())
-	defer stopLoop()
-	loopErr := make(chan error, 1)
-	go func() { loopErr <- loop.Run(loopCtx) }()
-
-	srv := &http.Server{
-		Addr:              cfg.HTTPListen(),
-		Handler:           rt.Handler(),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-	errCh := make(chan error, 1)
+	// Active Pointer moves, applied through the log for as long as the
+	// process runs (AW-SRV-012). A no-op for the dir source.
+	followCtx, stopFollow := context.WithCancel(ctx)
+	defer stopFollow()
 	go func() {
-		tel.Log.Info("http listen", "addr", srv.Addr)
-		errCh <- srv.ListenAndServe()
+		if err := rt.FollowContent(followCtx); err != nil && followCtx.Err() == nil {
+			tel.Log.Error("content follow stopped; pointer moves are no longer applied", "detail", err.Error())
+		}
 	}()
+
 	gwErr := make(chan error, 1)
 	go func() { gwErr <- gw.Wait() }()
 
@@ -188,6 +254,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		_ = gw.Shutdown(context.Background())
 		return boot.ExitFail
 	case err := <-gwErr:
+		halt()
 		if err != nil {
 			tel.Log.Error("gateway", "detail", err.Error())
 			return boot.ExitFail
@@ -197,8 +264,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		if err != nil && err != http.ErrServerClosed {
 			tel.Log.Error("http server", "detail", err.Error())
 			_ = gw.Shutdown(context.Background())
+			halt()
 			return boot.ExitFail
 		}
+		halt()
 		return boot.ExitOK
 	}
 }

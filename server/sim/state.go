@@ -73,9 +73,12 @@ func NewWorldState(w *World, seed uint64, partitions []int32) *WorldState {
 	return s
 }
 
-// DeriveSeed is the default sim.seed: a function of the World's topology,
-// so two processes loading the same content start from the same seed
-// without anyone choosing one. Overriding it is a debugging affordance.
+// DeriveSeed is the default sim.seed: a function of the topology an Engine
+// starts with, so two processes start from the same seed without anyone
+// choosing one. Every Engine now starts with no content (AW-SRV-012: the log
+// is the source of the content in effect), so the derived seed is the same
+// for every World; sim.seed tells Worlds apart. Overriding it is a debugging
+// affordance.
 func DeriveSeed(w *World) uint64 {
 	sum := sha256.Sum256(CanonicalBytes(w))
 	return binary.BigEndian.Uint64(sum[:8])

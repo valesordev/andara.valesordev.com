@@ -134,7 +134,7 @@ func (p *publisher) activate(pack string, version uint64) {
 }
 
 func intZone(id, room string) string {
-	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone","rooms":[{"id":%q,"title":"T","description":"d"}]}`, id, room)
+	return fmt.Sprintf(`{"formatVersion":1,"id":%q,"name":"Zone","fallbackRoom":%q,"rooms":[{"id":%q,"title":"T","description":"d"}]}`, id, room, room)
 }
 
 // AC-1: boot from the Active Pointers over a real broker.
@@ -169,6 +169,7 @@ func TestKafkaResolver_ResolvesFromActivePointers(t *testing.T) {
 	}
 
 	l := NewLoader(LoaderOptions{Store: r, Packs: []string{AllPacks}})
+	attachEngine(l)
 	rejects, err := l.LoadAll(ctx)
 	if err != nil || len(rejects) != 0 {
 		t.Fatalf("rejects = %+v err = %v", rejects, err)

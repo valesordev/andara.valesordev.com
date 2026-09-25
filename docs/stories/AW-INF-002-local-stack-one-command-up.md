@@ -179,8 +179,9 @@ This story delivers the backend other stories' instrumentation is verified again
 
 ### Metrics
 - Every service exposes a scrape endpoint and appears as `up == 1`.
-- `andara_build_info{version, commit, env, content_version}` — gauge, always 1. Cardinality: one
-  series per deployed build. `content_version` is here because ADR-0004 decoupled content from code,
+- `andara_build_info{version, commit, env, pack, content_version}` — gauge, always 1. Cardinality: one
+  series per content pack in effect, per deployed build *(amended 2026-09-25 by `AW-SRV-012`: a World
+  serves one version per pack, so a single `content_version` could not name them).* `content_version` is here because ADR-0004 decoupled content from code,
   so reproducing a bug now requires naming both.
 - Redpanda broker and consumer-group lag metrics are scraped, not just exposed.
 
