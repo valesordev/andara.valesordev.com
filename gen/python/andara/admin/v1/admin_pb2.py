@@ -23,9 +23,10 @@ _sym_db = _symbol_database.Default()
 
 
 from andara.accounts.v1 import account_pb2 as andara_dot_accounts_dot_v1_dot_account__pb2
+from andara.state.v1 import snapshot_pb2 as andara_dot_state_dot_v1_dot_snapshot__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1b\x61ndara/admin/v1/admin.proto\x12\x0f\x61ndara.admin.v1\x1a andara/accounts/v1/account.proto\"~\n\x14\x43reateAccountRequest\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\x12\x1a\n\x08password\x18\x02 \x01(\tR\x08password\x12.\n\x05roles\x18\x03 \x03(\x0e\x32\x18.andara.accounts.v1.RoleR\x05roles\"6\n\x15\x43reateAccountResponse\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\"\x90\x01\n\x14ResetPasswordRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12!\n\x0cnew_password\x18\x02 \x01(\tR\x0bnewPassword\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\">\n\x15ResetPasswordResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\x98\x01\n\x0fSetRolesRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12.\n\x05roles\x18\x02 \x03(\x0e\x32\x18.andara.accounts.v1.RoleR\x05roles\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\"9\n\x10SetRolesResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\xab\x01\n\x17SetAccountStatusRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12\x39\n\x06status\x18\x02 \x01(\x0e\x32!.andara.accounts.v1.AccountStatusR\x06status\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\"A\n\x18SetAccountStatusResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"*\n\x12IssueInviteRequest\x12\x14\n\x05\x63ount\x18\x01 \x01(\rR\x05\x63ount\"N\n\x13IssueInviteResponse\x12\x14\n\x05\x63odes\x18\x01 \x03(\tR\x05\x63odes\x12!\n\x0c\x65xpires_unix\x18\x02 \x01(\x03R\x0b\x65xpiresUnix\")\n\x13RevokeInviteRequest\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\"\x16\n\x14RevokeInviteResponse\"V\n\x1aSetRegistrationModeRequest\x12\x38\n\x04mode\x18\x01 \x01(\x0e\x32$.andara.accounts.v1.RegistrationModeR\x04mode\"_\n\x1bSetRegistrationModeResponse\x12@\n\x08previous\x18\x01 \x01(\x0e\x32$.andara.accounts.v1.RegistrationModeR\x08previous\"\xc8\x01\n\x19\x43reateAgentAccountRequest\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\x12\x17\n\x07pack_id\x18\x02 \x01(\tR\x06packId\x12K\n\x0f\x63redential_kind\x18\x03 \x01(\x0e\x32\".andara.accounts.v1.CredentialKindR\x0e\x63redentialKind\x12)\n\x10workload_subject\x18\x04 \x01(\tR\x0fworkloadSubject\"T\n\x1a\x43reateAgentAccountResponse\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12\x17\n\x07\x61pi_key\x18\x02 \x01(\tR\x06\x61piKey\"\x16\n\x14GetServerInfoRequest\"\xa0\x02\n\x15GetServerInfoResponse\x12\x18\n\x07version\x18\x01 \x01(\tR\x07version\x12\x16\n\x06\x63ommit\x18\x02 \x01(\tR\x06\x63ommit\x12 \n\x0b\x65nvironment\x18\x03 \x01(\tR\x0b\x65nvironment\x12&\n\x0f\x63ontent_pack_id\x18\x04 \x01(\tR\rcontentPackId\x12\'\n\x0f\x63ontent_version\x18\x05 \x01(\x04R\x0e\x63ontentVersion\x12\x30\n\x14protocol_min_version\x18\x06 \x01(\rR\x12protocolMinVersion\x12\x30\n\x14protocol_max_version\x18\x07 \x01(\rR\x12protocolMaxVersion2\xf9\x06\n\x05\x41\x64min\x12^\n\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n\rResetPassword\x12%.andara.admin.v1.ResetPasswordRequest\x1a&.andara.admin.v1.ResetPasswordResponse\x12O\n\x08SetRoles\x12 .andara.admin.v1.SetRolesRequest\x1a!.andara.admin.v1.SetRolesResponse\x12g\n\x10SetAccountStatus\x12(.andara.admin.v1.SetAccountStatusRequest\x1a).andara.admin.v1.SetAccountStatusResponse\x12X\n\x0bIssueInvite\x12#.andara.admin.v1.IssueInviteRequest\x1a$.andara.admin.v1.IssueInviteResponse\x12[\n\x0cRevokeInvite\x12$.andara.admin.v1.RevokeInviteRequest\x1a%.andara.admin.v1.RevokeInviteResponse\x12p\n\x13SetRegistrationMode\x12+.andara.admin.v1.SetRegistrationModeRequest\x1a,.andara.admin.v1.SetRegistrationModeResponse\x12m\n\x12\x43reateAgentAccount\x12*.andara.admin.v1.CreateAgentAccountRequest\x1a+.andara.admin.v1.CreateAgentAccountResponseB\xbc\x01\n\x13\x63om.andara.admin.v1B\nAdminProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/admin/v1;adminv1\xa2\x02\x03\x41\x41X\xaa\x02\x0f\x41ndara.Admin.V1\xca\x02\x0f\x41ndara\\Admin\\V1\xe2\x02\x1b\x41ndara\\Admin\\V1\\GPBMetadata\xea\x02\x11\x41ndara::Admin::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1b\x61ndara/admin/v1/admin.proto\x12\x0f\x61ndara.admin.v1\x1a andara/accounts/v1/account.proto\x1a\x1e\x61ndara/state/v1/snapshot.proto\"~\n\x14\x43reateAccountRequest\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\x12\x1a\n\x08password\x18\x02 \x01(\tR\x08password\x12.\n\x05roles\x18\x03 \x03(\x0e\x32\x18.andara.accounts.v1.RoleR\x05roles\"6\n\x15\x43reateAccountResponse\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\"\x90\x01\n\x14ResetPasswordRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12!\n\x0cnew_password\x18\x02 \x01(\tR\x0bnewPassword\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\">\n\x15ResetPasswordResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\x98\x01\n\x0fSetRolesRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12.\n\x05roles\x18\x02 \x03(\x0e\x32\x18.andara.accounts.v1.RoleR\x05roles\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\"9\n\x10SetRolesResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"\xab\x01\n\x17SetAccountStatusRequest\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12\x39\n\x06status\x18\x02 \x01(\x0e\x32!.andara.accounts.v1.AccountStatusR\x06status\x12\x36\n\x17\x65xpected_record_version\x18\x03 \x01(\x04R\x15\x65xpectedRecordVersion\"A\n\x18SetAccountStatusResponse\x12%\n\x0erecord_version\x18\x01 \x01(\x04R\rrecordVersion\"*\n\x12IssueInviteRequest\x12\x14\n\x05\x63ount\x18\x01 \x01(\rR\x05\x63ount\"N\n\x13IssueInviteResponse\x12\x14\n\x05\x63odes\x18\x01 \x03(\tR\x05\x63odes\x12!\n\x0c\x65xpires_unix\x18\x02 \x01(\x03R\x0b\x65xpiresUnix\")\n\x13RevokeInviteRequest\x12\x12\n\x04\x63ode\x18\x01 \x01(\tR\x04\x63ode\"\x16\n\x14RevokeInviteResponse\"V\n\x1aSetRegistrationModeRequest\x12\x38\n\x04mode\x18\x01 \x01(\x0e\x32$.andara.accounts.v1.RegistrationModeR\x04mode\"_\n\x1bSetRegistrationModeResponse\x12@\n\x08previous\x18\x01 \x01(\x0e\x32$.andara.accounts.v1.RegistrationModeR\x08previous\"\xc8\x01\n\x19\x43reateAgentAccountRequest\x12\x1a\n\x08username\x18\x01 \x01(\tR\x08username\x12\x17\n\x07pack_id\x18\x02 \x01(\tR\x06packId\x12K\n\x0f\x63redential_kind\x18\x03 \x01(\x0e\x32\".andara.accounts.v1.CredentialKindR\x0e\x63redentialKind\x12)\n\x10workload_subject\x18\x04 \x01(\tR\x0fworkloadSubject\"T\n\x1a\x43reateAgentAccountResponse\x12\x1d\n\naccount_id\x18\x01 \x01(\tR\taccountId\x12\x17\n\x07\x61pi_key\x18\x02 \x01(\tR\x06\x61piKey\"\x16\n\x14GetServerInfoRequest\"\x87\x03\n\x15GetServerInfoResponse\x12\x18\n\x07version\x18\x01 \x01(\tR\x07version\x12\x16\n\x06\x63ommit\x18\x02 \x01(\tR\x06\x63ommit\x12 \n\x0b\x65nvironment\x18\x03 \x01(\tR\x0b\x65nvironment\x12*\n\x0f\x63ontent_pack_id\x18\x04 \x01(\tB\x02\x18\x01R\rcontentPackId\x12+\n\x0f\x63ontent_version\x18\x05 \x01(\x04\x42\x02\x18\x01R\x0e\x63ontentVersion\x12\x30\n\x14protocol_min_version\x18\x06 \x01(\rR\x12protocolMinVersion\x12\x30\n\x14protocol_max_version\x18\x07 \x01(\rR\x12protocolMaxVersion\x12\x36\n\x07\x63ontent\x18\x08 \x03(\x0b\x32\x1c.andara.state.v1.PackVersionR\x07\x63ontent\x12%\n\x0e\x63ontent_digest\x18\t \x01(\x0cR\rcontentDigest2\xf9\x06\n\x05\x41\x64min\x12^\n\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n\rResetPassword\x12%.andara.admin.v1.ResetPasswordRequest\x1a&.andara.admin.v1.ResetPasswordResponse\x12O\n\x08SetRoles\x12 .andara.admin.v1.SetRolesRequest\x1a!.andara.admin.v1.SetRolesResponse\x12g\n\x10SetAccountStatus\x12(.andara.admin.v1.SetAccountStatusRequest\x1a).andara.admin.v1.SetAccountStatusResponse\x12X\n\x0bIssueInvite\x12#.andara.admin.v1.IssueInviteRequest\x1a$.andara.admin.v1.IssueInviteResponse\x12[\n\x0cRevokeInvite\x12$.andara.admin.v1.RevokeInviteRequest\x1a%.andara.admin.v1.RevokeInviteResponse\x12p\n\x13SetRegistrationMode\x12+.andara.admin.v1.SetRegistrationModeRequest\x1a,.andara.admin.v1.SetRegistrationModeResponse\x12m\n\x12\x43reateAgentAccount\x12*.andara.admin.v1.CreateAgentAccountRequest\x1a+.andara.admin.v1.CreateAgentAccountResponseB\xbc\x01\n\x13\x63om.andara.admin.v1B\nAdminProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/admin/v1;adminv1\xa2\x02\x03\x41\x41X\xaa\x02\x0f\x41ndara.Admin.V1\xca\x02\x0f\x41ndara\\Admin\\V1\xe2\x02\x1b\x41ndara\\Admin\\V1\\GPBMetadata\xea\x02\x11\x41ndara::Admin::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,42 +34,46 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'andara.admin.v1.admin_pb2',
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\023com.andara.admin.v1B\nAdminProtoP\001Z;github.com/valesordev/andara/gen/go/andara/admin/v1;adminv1\242\002\003AAX\252\002\017Andara.Admin.V1\312\002\017Andara\\Admin\\V1\342\002\033Andara\\Admin\\V1\\GPBMetadata\352\002\021Andara::Admin::V1'
-  _globals['_CREATEACCOUNTREQUEST']._serialized_start=82
-  _globals['_CREATEACCOUNTREQUEST']._serialized_end=208
-  _globals['_CREATEACCOUNTRESPONSE']._serialized_start=210
-  _globals['_CREATEACCOUNTRESPONSE']._serialized_end=264
-  _globals['_RESETPASSWORDREQUEST']._serialized_start=267
-  _globals['_RESETPASSWORDREQUEST']._serialized_end=411
-  _globals['_RESETPASSWORDRESPONSE']._serialized_start=413
-  _globals['_RESETPASSWORDRESPONSE']._serialized_end=475
-  _globals['_SETROLESREQUEST']._serialized_start=478
-  _globals['_SETROLESREQUEST']._serialized_end=630
-  _globals['_SETROLESRESPONSE']._serialized_start=632
-  _globals['_SETROLESRESPONSE']._serialized_end=689
-  _globals['_SETACCOUNTSTATUSREQUEST']._serialized_start=692
-  _globals['_SETACCOUNTSTATUSREQUEST']._serialized_end=863
-  _globals['_SETACCOUNTSTATUSRESPONSE']._serialized_start=865
-  _globals['_SETACCOUNTSTATUSRESPONSE']._serialized_end=930
-  _globals['_ISSUEINVITEREQUEST']._serialized_start=932
-  _globals['_ISSUEINVITEREQUEST']._serialized_end=974
-  _globals['_ISSUEINVITERESPONSE']._serialized_start=976
-  _globals['_ISSUEINVITERESPONSE']._serialized_end=1054
-  _globals['_REVOKEINVITEREQUEST']._serialized_start=1056
-  _globals['_REVOKEINVITEREQUEST']._serialized_end=1097
-  _globals['_REVOKEINVITERESPONSE']._serialized_start=1099
-  _globals['_REVOKEINVITERESPONSE']._serialized_end=1121
-  _globals['_SETREGISTRATIONMODEREQUEST']._serialized_start=1123
-  _globals['_SETREGISTRATIONMODEREQUEST']._serialized_end=1209
-  _globals['_SETREGISTRATIONMODERESPONSE']._serialized_start=1211
-  _globals['_SETREGISTRATIONMODERESPONSE']._serialized_end=1306
-  _globals['_CREATEAGENTACCOUNTREQUEST']._serialized_start=1309
-  _globals['_CREATEAGENTACCOUNTREQUEST']._serialized_end=1509
-  _globals['_CREATEAGENTACCOUNTRESPONSE']._serialized_start=1511
-  _globals['_CREATEAGENTACCOUNTRESPONSE']._serialized_end=1595
-  _globals['_GETSERVERINFOREQUEST']._serialized_start=1597
-  _globals['_GETSERVERINFOREQUEST']._serialized_end=1619
-  _globals['_GETSERVERINFORESPONSE']._serialized_start=1622
-  _globals['_GETSERVERINFORESPONSE']._serialized_end=1910
-  _globals['_ADMIN']._serialized_start=1913
-  _globals['_ADMIN']._serialized_end=2802
+  _globals['_GETSERVERINFORESPONSE'].fields_by_name['content_pack_id']._loaded_options = None
+  _globals['_GETSERVERINFORESPONSE'].fields_by_name['content_pack_id']._serialized_options = b'\030\001'
+  _globals['_GETSERVERINFORESPONSE'].fields_by_name['content_version']._loaded_options = None
+  _globals['_GETSERVERINFORESPONSE'].fields_by_name['content_version']._serialized_options = b'\030\001'
+  _globals['_CREATEACCOUNTREQUEST']._serialized_start=114
+  _globals['_CREATEACCOUNTREQUEST']._serialized_end=240
+  _globals['_CREATEACCOUNTRESPONSE']._serialized_start=242
+  _globals['_CREATEACCOUNTRESPONSE']._serialized_end=296
+  _globals['_RESETPASSWORDREQUEST']._serialized_start=299
+  _globals['_RESETPASSWORDREQUEST']._serialized_end=443
+  _globals['_RESETPASSWORDRESPONSE']._serialized_start=445
+  _globals['_RESETPASSWORDRESPONSE']._serialized_end=507
+  _globals['_SETROLESREQUEST']._serialized_start=510
+  _globals['_SETROLESREQUEST']._serialized_end=662
+  _globals['_SETROLESRESPONSE']._serialized_start=664
+  _globals['_SETROLESRESPONSE']._serialized_end=721
+  _globals['_SETACCOUNTSTATUSREQUEST']._serialized_start=724
+  _globals['_SETACCOUNTSTATUSREQUEST']._serialized_end=895
+  _globals['_SETACCOUNTSTATUSRESPONSE']._serialized_start=897
+  _globals['_SETACCOUNTSTATUSRESPONSE']._serialized_end=962
+  _globals['_ISSUEINVITEREQUEST']._serialized_start=964
+  _globals['_ISSUEINVITEREQUEST']._serialized_end=1006
+  _globals['_ISSUEINVITERESPONSE']._serialized_start=1008
+  _globals['_ISSUEINVITERESPONSE']._serialized_end=1086
+  _globals['_REVOKEINVITEREQUEST']._serialized_start=1088
+  _globals['_REVOKEINVITEREQUEST']._serialized_end=1129
+  _globals['_REVOKEINVITERESPONSE']._serialized_start=1131
+  _globals['_REVOKEINVITERESPONSE']._serialized_end=1153
+  _globals['_SETREGISTRATIONMODEREQUEST']._serialized_start=1155
+  _globals['_SETREGISTRATIONMODEREQUEST']._serialized_end=1241
+  _globals['_SETREGISTRATIONMODERESPONSE']._serialized_start=1243
+  _globals['_SETREGISTRATIONMODERESPONSE']._serialized_end=1338
+  _globals['_CREATEAGENTACCOUNTREQUEST']._serialized_start=1341
+  _globals['_CREATEAGENTACCOUNTREQUEST']._serialized_end=1541
+  _globals['_CREATEAGENTACCOUNTRESPONSE']._serialized_start=1543
+  _globals['_CREATEAGENTACCOUNTRESPONSE']._serialized_end=1627
+  _globals['_GETSERVERINFOREQUEST']._serialized_start=1629
+  _globals['_GETSERVERINFOREQUEST']._serialized_end=1651
+  _globals['_GETSERVERINFORESPONSE']._serialized_start=1654
+  _globals['_GETSERVERINFORESPONSE']._serialized_end=2045
+  _globals['_ADMIN']._serialized_start=2048
+  _globals['_ADMIN']._serialized_end=2937
 # @@protoc_insertion_point(module_scope)

@@ -189,8 +189,12 @@ not re-derive it from the Active Pointers, for the same reason it reads tick bou
 - **`content.source=dir`.** Genesis swaps carry `version` 0 and the digest. Recovery rebuilds from
   the directory and compares, so a directory that changed while the server was down halts
   recovery with a digest mismatch naming the pack, not a silent replay over different content.
-- **Forward-only.** A non-empty log with no swap before its first tick boundary predates this
-  rule. Boot refuses it (exit `1`, naming this story) rather than guessing its content. No
+- **Forward-only.** A log in which a Command applied while no content was in effect predates this
+  rule. *(Wording amended 2026-09-25, review of #88: the first wording, "no swap before its first
+  tick boundary", would refuse every post-rule log, because idle ticks run before genesis.)* Boot
+  refuses it with exit `1` naming this story, **including when the first sign is a State Hash
+  mismatch before any content is in effect**. A pre-rule log fails its hash at tick 1 on an empty
+  topology, and that failure must be reported as the pre-rule refusal, not as corruption. No
   production World exists before M2, so recovery is a fresh log: `make down VOLUMES=1` locally,
   and fresh topics for `dev`.
 
@@ -200,6 +204,30 @@ which content it was running at every tick, which is what makes a replay across 
 
 Relocation is a World mutation caused by a Builder — it happens inside `Apply(ContentSwap)`, in the log,
 never out of band.
+
+**Rulings of 2026-09-25 (review of #86–#88; feedback "Architecture's answers — review of #86–#88"):**
+- **A version that removes a Zone is refused** at the Loader. It is a Builder reason: finding
+  `zone_removed` under `validation`, excluded from the freshness SLI. The Engine refuses the same
+  swap as a deterministic no-op (`ContentSwap.base_digest` comment). Deleting a Zone needs an
+  evacuation policy and is a later story. There is no "stranded Zone" state.
+- **A version whose World lacks `character.spawn_room` is refused**, finding `spawn_room_removed`
+  under `validation`.
+- **A stale swap is a no-op, not a halt.** `ContentSwap.base_digest = 4` carries the digest the
+  swap was built on. A mismatch means the swap is refused deterministically and the Loader
+  re-evaluates. Only a matching base with a different `world_digest` halts. The Loader honours an
+  ambiguous produce (`ingress.Unsettled`): it waits for `Settled()`, and evaluates nothing else
+  until Partition 0 is consumed past the outcome. Reconcile at boot waits for the same.
+- **An Entity arriving in a Room its target Zone no longer has** lands in that Zone's
+  `fallback_room`, with `EntityRelocated{reason: "room_removed"}`. It is never bounced and lost:
+  every Zone has a fallback now.
+- **Faulted Partition 0:** the Loader's wait for a swap to apply is bounded
+  (`content.reload_debounce` × 15, 30 s by default), then logs `warn`, rejects the move as
+  `store_unavailable` so the retry applies, and keeps draining other moves. World-scoped Commands
+  stay on Partition 0, and the sharding story owns moving them.
+- **`andara_build_info{version, commit, env, pack, content_version}`**, one series per pack in
+  effect. It is bounded by the pack set (AW-INF-002's line is amended to match).
+- **`Admin.GetServerInfo`** gains `repeated PackVersion content = 8` and `content_digest = 9`. Fields
+  4 and 5 are deprecated and hold `andara.core`'s version.
 
 ## Observability requirements
 

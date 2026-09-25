@@ -543,3 +543,39 @@ didn't reach. They're recorded for the §8 review, and any of them can be revers
   Room that doesn't exist (the bind is refused). The natural rule is to refuse such a version
   whenever it removes the configured spawn Room. That's a contract line for this story or
   `AW-SRV-013`'s activation check.
+
+---
+
+## Architecture's answers — review of #86–#88 (2026-09-25)
+
+The review ran against #88 with architecture's corpus PR (#89) merged in.
+- **Local:** `make check` is clean except #86's three inline tests. `make test-integration` is green,
+  S3 included, and so are `TestKafka_APointerMoveSwapsTheWorldThroughTheLog` and
+  `TestKafka_RecoveryAcrossAContentSwap`.
+- **Live (fresh compose stack, #88's image):** genesis applies `dir@0` at tick 2 and ready follows.
+  `make stack-smoke` and the full `make stack-play` M1 gate pass, the server restart included.
+- **Findings, per PR:** in the PR comments. The rulings are recorded in the story under "Rulings of
+  2026-09-25".
+
+**The nine decisions in your entry:**
+
+| # | Decision | Ruling |
+|---|----------|--------|
+| D1 | A removed Zone strands its Entities | **Overruled.** The Loader refuses a version that removes a Zone (`zone_removed`, a Builder reason), and the Engine refuses such a swap as a no-op. The review found that stranding loses bodies: a Character walking into the removed Zone in the swap's tick ends up nowhere, and a stranded player can neither quit cleanly nor log back in. Empty removed Zones also stayed in the hash unlisted. Deleting a Zone is a later story with an evacuation policy. Drop the "Stranded Zone" glossary entry. |
+| D2 | A dormant body moves silently, counted and logged | Accepted. |
+| D3 | `dir` = pack `dir` v0 | Accepted. Make `Content.Versions()`/`ZoneVersions()` agree with `andara_build_info` (they return nil for `dir`). |
+| D4 | Pre-rule = "a Command applied while no content was in effect" | **Accepted, and the story's wording is amended to it.** You were right that the first wording refused every post-rule log. The detection must also catch a pre-rule log whose first sign is the hash mismatch at tick 1 (reproduced live: `state hash mismatch at tick 1`, not the refusal). |
+| D5 | A produce failure counts as `store_unavailable` | Accepted for a definite failure. An ambiguous one (`Unsettled`) waits for `Settled()` and is never counted as not-written. |
+| D6 | The Loader serializes swaps | Accepted, with a bounded wait for apply and `base_digest`. See the story's rulings. |
+| D7 | The default seed is constant across Worlds | Accepted. `server/README.md`'s `sim.seed` line and the `DeriveSeed` comment need updating. |
+| D8 | The projector re-renders on a swap tick | Accepted. |
+| D9 | The Gateway starts after content is in effect | Accepted. `/readyz` turns 200 after `gw.Start`, not at reconcile. |
+
+**The three findings outside the story:**
+- **`andara_build_info` per pack:** accepted. AW-INF-002's line is amended. The projector must set
+  its build fields too, because its series has empty `version`/`commit`/`env` today.
+- **`GetServerInfo`:** `content = 8` and `content_digest = 9` landed in this PR, and 4/5 are
+  deprecated. Filling them is an inherited line on this story's §8, and the manual test's
+  `server info` depends on it.
+- **A swap removing the spawn Room:** refused, `spawn_room_removed` (a Builder reason). For PM:
+  AW-SRV-013's activation check should refuse the same.

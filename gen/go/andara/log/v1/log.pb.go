@@ -671,7 +671,24 @@ type ContentSwap struct {
 	// Partition 0 in Loader order. Replay rebuilds and compares, and a mismatch
 	// halts recovery the way a State Hash mismatch does. (Scope confirmed
 	// 2026-09-25.)
-	WorldDigest   []byte `protobuf:"bytes,3,opt,name=world_digest,json=worldDigest,proto3" json:"world_digest,omitempty"`
+	WorldDigest []byte `protobuf:"bytes,3,opt,name=world_digest,json=worldDigest,proto3" json:"world_digest,omitempty"`
+	// The world_digest of the content in effect that this swap was built on:
+	// the digest of the last swap applied before it, or empty for genesis
+	// (decided 2026-09-25, review of #88). The Engine checks it first:
+	//   - base_digest differs from the content in effect: the swap is stale.
+	//     The Loader built it against a World the log has since moved past (an
+	//     ambiguous produce that landed late, or a swap left from a previous
+	//     process). It is a deterministic no-op. Nothing changes, and the Engine
+	//     reports it refused, so the Loader re-evaluates. Live and replay agree,
+	//     so a stale swap never poisons the log.
+	//   - base_digest matches but world_digest does not: the content itself
+	//     differs from what was built (a `dir` source edited while the server was
+	//     down, a blob that resolves differently). Recovery halts, as before.
+	//
+	// Also a deterministic no-op, reported refused: a swap whose World lacks a
+	// Zone the content in effect has. Removing a Zone is refused at the Loader
+	// (finding `zone_removed`), and this is the Engine's backstop.
+	BaseDigest    []byte `protobuf:"bytes,4,opt,name=base_digest,json=baseDigest,proto3" json:"base_digest,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -723,6 +740,13 @@ func (x *ContentSwap) GetVersion() uint64 {
 func (x *ContentSwap) GetWorldDigest() []byte {
 	if x != nil {
 		return x.WorldDigest
+	}
+	return nil
+}
+
+func (x *ContentSwap) GetBaseDigest() []byte {
+	if x != nil {
+		return x.BaseDigest
 	}
 	return nil
 }
@@ -1273,11 +1297,13 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\rspawn_room_id\x18\x04 \x01(\tR\vspawnRoomId\"i\n" +
 	"\x0fUnbindCharacter\x12!\n" +
 	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x123\n" +
-	"\x06reason\x18\x02 \x01(\x0e2\x1b.andara.log.v1.UnbindReasonR\x06reason\"c\n" +
+	"\x06reason\x18\x02 \x01(\x0e2\x1b.andara.log.v1.UnbindReasonR\x06reason\"\x84\x01\n" +
 	"\vContentSwap\x12\x17\n" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12!\n" +
-	"\fworld_digest\x18\x03 \x01(\fR\vworldDigest\"\xb4\x01\n" +
+	"\fworld_digest\x18\x03 \x01(\fR\vworldDigest\x12\x1f\n" +
+	"\vbase_digest\x18\x04 \x01(\fR\n" +
+	"baseDigest\"\xb4\x01\n" +
 	"\x06Entity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\btemplate\x18\x02 \x01(\tR\btemplate\x12'\n" +

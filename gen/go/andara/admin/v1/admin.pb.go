@@ -23,6 +23,7 @@ package adminv1
 
 import (
 	v1 "github.com/valesordev/andara/gen/go/andara/accounts/v1"
+	v11 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	protoreflect "google.golang.org/protobuf/reflect/protoreflect"
 	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 	reflect "reflect"
@@ -883,15 +884,26 @@ type GetServerInfoResponse struct {
 	Version     string                 `protobuf:"bytes,1,opt,name=version,proto3" json:"version,omitempty"`
 	Commit      string                 `protobuf:"bytes,2,opt,name=commit,proto3" json:"commit,omitempty"`
 	Environment string                 `protobuf:"bytes,3,opt,name=environment,proto3" json:"environment,omitempty"`
-	// Which content is live, per ADR-0004's Active Pointer.
-	ContentPackId  string `protobuf:"bytes,4,opt,name=content_pack_id,json=contentPackId,proto3" json:"content_pack_id,omitempty"`
+	// Which content is live, per ADR-0004's Active Pointer. Deprecated
+	// 2026-09-25: a World serves one version per pack, and these hold one.
+	// Read `content` instead. They are kept and filled with andara.core's
+	// version, so older clients keep working.
+	//
+	// Deprecated: Marked as deprecated in andara/admin/v1/admin.proto.
+	ContentPackId string `protobuf:"bytes,4,opt,name=content_pack_id,json=contentPackId,proto3" json:"content_pack_id,omitempty"`
+	// Deprecated: Marked as deprecated in andara/admin/v1/admin.proto.
 	ContentVersion uint64 `protobuf:"varint,5,opt,name=content_version,json=contentVersion,proto3" json:"content_version,omitempty"`
 	// Supported protocol version range, so an operator can diagnose a rejected
 	// client without reading logs (AW-SRV-005).
 	ProtocolMinVersion uint32 `protobuf:"varint,6,opt,name=protocol_min_version,json=protocolMinVersion,proto3" json:"protocol_min_version,omitempty"`
 	ProtocolMaxVersion uint32 `protobuf:"varint,7,opt,name=protocol_max_version,json=protocolMaxVersion,proto3" json:"protocol_max_version,omitempty"`
-	unknownFields      protoimpl.UnknownFields
-	sizeCache          protoimpl.SizeCache
+	// The content in effect, one entry per pack, sorted by pack_id: what the
+	// log says the World runs on (AW-SRV-012), with the digest of the whole
+	// content topology. The same values a snapshot records.
+	Content       []*v11.PackVersion `protobuf:"bytes,8,rep,name=content,proto3" json:"content,omitempty"`
+	ContentDigest []byte             `protobuf:"bytes,9,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetServerInfoResponse) Reset() {
@@ -945,6 +957,7 @@ func (x *GetServerInfoResponse) GetEnvironment() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in andara/admin/v1/admin.proto.
 func (x *GetServerInfoResponse) GetContentPackId() string {
 	if x != nil {
 		return x.ContentPackId
@@ -952,6 +965,7 @@ func (x *GetServerInfoResponse) GetContentPackId() string {
 	return ""
 }
 
+// Deprecated: Marked as deprecated in andara/admin/v1/admin.proto.
 func (x *GetServerInfoResponse) GetContentVersion() uint64 {
 	if x != nil {
 		return x.ContentVersion
@@ -973,11 +987,25 @@ func (x *GetServerInfoResponse) GetProtocolMaxVersion() uint32 {
 	return 0
 }
 
+func (x *GetServerInfoResponse) GetContent() []*v11.PackVersion {
+	if x != nil {
+		return x.Content
+	}
+	return nil
+}
+
+func (x *GetServerInfoResponse) GetContentDigest() []byte {
+	if x != nil {
+		return x.ContentDigest
+	}
+	return nil
+}
+
 var File_andara_admin_v1_admin_proto protoreflect.FileDescriptor
 
 const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
-	"\x1bandara/admin/v1/admin.proto\x12\x0fandara.admin.v1\x1a andara/accounts/v1/account.proto\"~\n" +
+	"\x1bandara/admin/v1/admin.proto\x12\x0fandara.admin.v1\x1a andara/accounts/v1/account.proto\x1a\x1eandara/state/v1/snapshot.proto\"~\n" +
 	"\x14CreateAccountRequest\x12\x1a\n" +
 	"\busername\x18\x01 \x01(\tR\busername\x12\x1a\n" +
 	"\bpassword\x18\x02 \x01(\tR\bpassword\x12.\n" +
@@ -1027,15 +1055,17 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x17\n" +
 	"\aapi_key\x18\x02 \x01(\tR\x06apiKey\"\x16\n" +
-	"\x14GetServerInfoRequest\"\xa0\x02\n" +
+	"\x14GetServerInfoRequest\"\x87\x03\n" +
 	"\x15GetServerInfoResponse\x12\x18\n" +
 	"\aversion\x18\x01 \x01(\tR\aversion\x12\x16\n" +
 	"\x06commit\x18\x02 \x01(\tR\x06commit\x12 \n" +
-	"\venvironment\x18\x03 \x01(\tR\venvironment\x12&\n" +
-	"\x0fcontent_pack_id\x18\x04 \x01(\tR\rcontentPackId\x12'\n" +
-	"\x0fcontent_version\x18\x05 \x01(\x04R\x0econtentVersion\x120\n" +
+	"\venvironment\x18\x03 \x01(\tR\venvironment\x12*\n" +
+	"\x0fcontent_pack_id\x18\x04 \x01(\tB\x02\x18\x01R\rcontentPackId\x12+\n" +
+	"\x0fcontent_version\x18\x05 \x01(\x04B\x02\x18\x01R\x0econtentVersion\x120\n" +
 	"\x14protocol_min_version\x18\x06 \x01(\rR\x12protocolMinVersion\x120\n" +
-	"\x14protocol_max_version\x18\a \x01(\rR\x12protocolMaxVersion2\xf9\x06\n" +
+	"\x14protocol_max_version\x18\a \x01(\rR\x12protocolMaxVersion\x126\n" +
+	"\acontent\x18\b \x03(\v2\x1c.andara.state.v1.PackVersionR\acontent\x12%\n" +
+	"\x0econtent_digest\x18\t \x01(\fR\rcontentDigest2\xf9\x06\n" +
 	"\x05Admin\x12^\n" +
 	"\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n" +
 	"\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n" +
@@ -1085,6 +1115,7 @@ var file_andara_admin_v1_admin_proto_goTypes = []any{
 	(v1.AccountStatus)(0),               // 19: andara.accounts.v1.AccountStatus
 	(v1.RegistrationMode)(0),            // 20: andara.accounts.v1.RegistrationMode
 	(v1.CredentialKind)(0),              // 21: andara.accounts.v1.CredentialKind
+	(*v11.PackVersion)(nil),             // 22: andara.state.v1.PackVersion
 }
 var file_andara_admin_v1_admin_proto_depIdxs = []int32{
 	18, // 0: andara.admin.v1.CreateAccountRequest.roles:type_name -> andara.accounts.v1.Role
@@ -1093,29 +1124,30 @@ var file_andara_admin_v1_admin_proto_depIdxs = []int32{
 	20, // 3: andara.admin.v1.SetRegistrationModeRequest.mode:type_name -> andara.accounts.v1.RegistrationMode
 	20, // 4: andara.admin.v1.SetRegistrationModeResponse.previous:type_name -> andara.accounts.v1.RegistrationMode
 	21, // 5: andara.admin.v1.CreateAgentAccountRequest.credential_kind:type_name -> andara.accounts.v1.CredentialKind
-	16, // 6: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
-	0,  // 7: andara.admin.v1.Admin.CreateAccount:input_type -> andara.admin.v1.CreateAccountRequest
-	2,  // 8: andara.admin.v1.Admin.ResetPassword:input_type -> andara.admin.v1.ResetPasswordRequest
-	4,  // 9: andara.admin.v1.Admin.SetRoles:input_type -> andara.admin.v1.SetRolesRequest
-	6,  // 10: andara.admin.v1.Admin.SetAccountStatus:input_type -> andara.admin.v1.SetAccountStatusRequest
-	8,  // 11: andara.admin.v1.Admin.IssueInvite:input_type -> andara.admin.v1.IssueInviteRequest
-	10, // 12: andara.admin.v1.Admin.RevokeInvite:input_type -> andara.admin.v1.RevokeInviteRequest
-	12, // 13: andara.admin.v1.Admin.SetRegistrationMode:input_type -> andara.admin.v1.SetRegistrationModeRequest
-	14, // 14: andara.admin.v1.Admin.CreateAgentAccount:input_type -> andara.admin.v1.CreateAgentAccountRequest
-	17, // 15: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
-	1,  // 16: andara.admin.v1.Admin.CreateAccount:output_type -> andara.admin.v1.CreateAccountResponse
-	3,  // 17: andara.admin.v1.Admin.ResetPassword:output_type -> andara.admin.v1.ResetPasswordResponse
-	5,  // 18: andara.admin.v1.Admin.SetRoles:output_type -> andara.admin.v1.SetRolesResponse
-	7,  // 19: andara.admin.v1.Admin.SetAccountStatus:output_type -> andara.admin.v1.SetAccountStatusResponse
-	9,  // 20: andara.admin.v1.Admin.IssueInvite:output_type -> andara.admin.v1.IssueInviteResponse
-	11, // 21: andara.admin.v1.Admin.RevokeInvite:output_type -> andara.admin.v1.RevokeInviteResponse
-	13, // 22: andara.admin.v1.Admin.SetRegistrationMode:output_type -> andara.admin.v1.SetRegistrationModeResponse
-	15, // 23: andara.admin.v1.Admin.CreateAgentAccount:output_type -> andara.admin.v1.CreateAgentAccountResponse
-	15, // [15:24] is the sub-list for method output_type
-	6,  // [6:15] is the sub-list for method input_type
-	6,  // [6:6] is the sub-list for extension type_name
-	6,  // [6:6] is the sub-list for extension extendee
-	0,  // [0:6] is the sub-list for field type_name
+	22, // 6: andara.admin.v1.GetServerInfoResponse.content:type_name -> andara.state.v1.PackVersion
+	16, // 7: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
+	0,  // 8: andara.admin.v1.Admin.CreateAccount:input_type -> andara.admin.v1.CreateAccountRequest
+	2,  // 9: andara.admin.v1.Admin.ResetPassword:input_type -> andara.admin.v1.ResetPasswordRequest
+	4,  // 10: andara.admin.v1.Admin.SetRoles:input_type -> andara.admin.v1.SetRolesRequest
+	6,  // 11: andara.admin.v1.Admin.SetAccountStatus:input_type -> andara.admin.v1.SetAccountStatusRequest
+	8,  // 12: andara.admin.v1.Admin.IssueInvite:input_type -> andara.admin.v1.IssueInviteRequest
+	10, // 13: andara.admin.v1.Admin.RevokeInvite:input_type -> andara.admin.v1.RevokeInviteRequest
+	12, // 14: andara.admin.v1.Admin.SetRegistrationMode:input_type -> andara.admin.v1.SetRegistrationModeRequest
+	14, // 15: andara.admin.v1.Admin.CreateAgentAccount:input_type -> andara.admin.v1.CreateAgentAccountRequest
+	17, // 16: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
+	1,  // 17: andara.admin.v1.Admin.CreateAccount:output_type -> andara.admin.v1.CreateAccountResponse
+	3,  // 18: andara.admin.v1.Admin.ResetPassword:output_type -> andara.admin.v1.ResetPasswordResponse
+	5,  // 19: andara.admin.v1.Admin.SetRoles:output_type -> andara.admin.v1.SetRolesResponse
+	7,  // 20: andara.admin.v1.Admin.SetAccountStatus:output_type -> andara.admin.v1.SetAccountStatusResponse
+	9,  // 21: andara.admin.v1.Admin.IssueInvite:output_type -> andara.admin.v1.IssueInviteResponse
+	11, // 22: andara.admin.v1.Admin.RevokeInvite:output_type -> andara.admin.v1.RevokeInviteResponse
+	13, // 23: andara.admin.v1.Admin.SetRegistrationMode:output_type -> andara.admin.v1.SetRegistrationModeResponse
+	15, // 24: andara.admin.v1.Admin.CreateAgentAccount:output_type -> andara.admin.v1.CreateAgentAccountResponse
+	16, // [16:25] is the sub-list for method output_type
+	7,  // [7:16] is the sub-list for method input_type
+	7,  // [7:7] is the sub-list for extension type_name
+	7,  // [7:7] is the sub-list for extension extendee
+	0,  // [0:7] is the sub-list for field type_name
 }
 
 func init() { file_andara_admin_v1_admin_proto_init() }
