@@ -34,8 +34,13 @@ announced too — the transcript never silently skips. --output json writes
 the raw Event stream to stdout, one envelope per line, and everything else
 to stderr.
 
+You enter the World as one of your Characters: the one --character names,
+or, with no flag, your only one. Make one first with
+` + "`andara-cli character create <name>`" + `. A reconnect selects the same Character
+again, waiting for the previous session to let it go if it must.
+
 A stored credential is required: run ` + "`andara-cli auth login`" + ` first.`,
-		Example: `  andara-cli play
+		Example: `  andara-cli play --character Aldric
   > look
   > north
   > /protocol on
@@ -54,6 +59,7 @@ A stored credential is required: run ` + "`andara-cli auth login`" + ` first.`,
 		},
 	}
 	fs := cmd.Flags()
+	fs.StringVar(&o.character, "character", "", "enter the World as this Character (by name, any case); optional when the Account has exactly one")
 	fs.StringVar(&o.as, "as", "", "open the Session acting as this account ID (operator or game master; audited)")
 	fs.BoolVar(&o.reconnect, "reconnect", true, "retry a dropped connection with backoff and resume the stream")
 	fs.BoolVar(&o.world, "world", false, "ask for World visibility: every Event, wherever it happens (game master or operator)")
@@ -65,6 +71,7 @@ A stored credential is required: run ` + "`andara-cli auth login`" + ` first.`,
 
 // playOptions is what the flags resolve to.
 type playOptions struct {
+	character     string
 	as            string
 	reconnect     bool
 	world         bool

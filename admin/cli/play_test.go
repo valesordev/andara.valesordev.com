@@ -14,6 +14,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -23,8 +24,10 @@ import (
 	"connectrpc.com/connect"
 	"golang.org/x/net/http2"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 
+	accountsv1 "github.com/valesordev/andara/gen/go/andara/accounts/v1"
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"github.com/valesordev/andara/internal/eventually"
@@ -41,11 +44,20 @@ type world struct {
 	mu      sync.Mutex
 	submits []*gamev1.SubmitRequest
 	subs    []*gamev1.SubscribeRequest
-	answer  func(w *world, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error)
-	frames  chan frame
-	nextID  atomic.Uint64
-	offset  atomic.Int64
-	streams atomic.Int32
+	// The roster seam (AW-SRV-014): the Account's Characters, what was
+	// selected, and — in calls — every Game call in the order it arrived,
+	// so a test can assert SelectCharacter before Subscribe before look.
+	chars   []*gamev1.CharacterSummary
+	selects []string
+	calls   []string
+	// selectAnswer and createAnswer, when set, may refuse the RPC.
+	selectAnswer func(w *world, characterID string) error
+	createAnswer func(name string) error
+	answer       func(w *world, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error)
+	frames       chan frame
+	nextID       atomic.Uint64
+	offset       atomic.Int64
+	streams      atomic.Int32
 }
 
 type frame struct {
@@ -53,15 +65,69 @@ type frame struct {
 	err error
 }
 
+// aldric is the one Character a new world's Account holds.
+func aldric() *gamev1.CharacterSummary {
+	return &gamev1.CharacterSummary{CharacterId: "ch-aldric", Name: "Aldric", Status: accountsv1.CharacterStatus_CHARACTER_STATUS_ACTIVE, ZoneId: "town", RoomId: "square"}
+}
+
 func newWorld() *world {
-	w := &world{frames: make(chan frame, 64)}
+	w := &world{frames: make(chan frame, 64), chars: []*gamev1.CharacterSummary{aldric()}}
 	w.answer = defaultAnswer
 	return w
+}
+
+func (w *world) ListCharacters(context.Context, *gateway.Session) (*gamev1.ListCharactersResponse, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls = append(w.calls, "ListCharacters")
+	out := make([]*gamev1.CharacterSummary, 0, len(w.chars))
+	for _, c := range w.chars {
+		out = append(out, proto.Clone(c).(*gamev1.CharacterSummary))
+	}
+	return &gamev1.ListCharactersResponse{Characters: out, MaxPerAccount: 5}, nil
+}
+
+func (w *world) CreateCharacter(_ context.Context, _ *gateway.Session, name string) (*gamev1.CreateCharacterResponse, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls = append(w.calls, "CreateCharacter:"+name)
+	if w.createAnswer != nil {
+		if err := w.createAnswer(name); err != nil {
+			return nil, err
+		}
+	}
+	c := &gamev1.CharacterSummary{CharacterId: "ch-" + strings.ToLower(name), Name: name, Status: accountsv1.CharacterStatus_CHARACTER_STATUS_ACTIVE, ZoneId: "town", RoomId: "square"}
+	w.chars = append(w.chars, c)
+	return &gamev1.CreateCharacterResponse{Character: c, MaxPerAccount: 5}, nil
+}
+
+func (w *world) SelectCharacter(_ context.Context, _ *gateway.Session, characterID string) (*gamev1.SelectCharacterResponse, error) {
+	w.mu.Lock()
+	w.calls = append(w.calls, "SelectCharacter:"+characterID)
+	w.selects = append(w.selects, characterID)
+	answer := w.selectAnswer
+	w.mu.Unlock()
+	if answer != nil {
+		if err := answer(w, characterID); err != nil {
+			return nil, err
+		}
+	}
+	return &gamev1.SelectCharacterResponse{Partition: 3, AcceptedOffset: w.offset.Add(1)}, nil
+}
+
+func (w *world) ReleaseSession(*gateway.Session) {}
+
+// called is the Game calls the world has seen, in order.
+func (w *world) called() []string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return slices.Clone(w.calls)
 }
 
 func (w *world) Submit(_ context.Context, _ *gateway.Session, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error) {
 	w.mu.Lock()
 	w.submits = append(w.submits, req)
+	w.calls = append(w.calls, "Submit:"+req.GetRaw())
 	answer := w.answer
 	w.mu.Unlock()
 	return answer(w, req)
@@ -70,6 +136,7 @@ func (w *world) Submit(_ context.Context, _ *gateway.Session, req *gamev1.Submit
 func (w *world) Subscribe(ctx context.Context, _ *gateway.Session, req *gamev1.SubscribeRequest, stream *connect.ServerStream[gamev1.EventEnvelope]) error {
 	w.mu.Lock()
 	w.subs = append(w.subs, req)
+	w.calls = append(w.calls, "Subscribe")
 	w.mu.Unlock()
 	w.streams.Add(1)
 	defer w.streams.Add(-1)
@@ -200,7 +267,7 @@ func newTestGameClient(t *testing.T, s *liveServer) (gamev1connect.GameClient, e
 func playServer(t *testing.T, w *world, adjust func(*gateway.Options)) (*liveServer, map[string]string) {
 	t.Helper()
 	s := startServerWith(t, nil, func(o *gateway.Options) {
-		o.Ingress, o.Egress = w, w
+		o.Ingress, o.Egress, o.Roster = w, w, w
 		if adjust != nil {
 			adjust(o)
 		}
@@ -338,7 +405,7 @@ func TestPlay_Transcript(t *testing.T) {
 		t.Fatalf("exit=%d\nstdout:\n%s\nstderr:\n%s", res.exit, res.stdout, res.stderr)
 	}
 	want := []string{
-		"-- Connected to " + s.addr + " as oper (session ",
+		"-- Connected to " + s.addr + " as oper, playing Aldric (session ",
 		"Town Square\nA wide square of worn flagstones.\nExits: north, west\nHere: Mara\n",
 		"you leaves north.\nOld Hall\nDust and long tables.\nExits: south\n",
 		"There is no exit west.\n",
@@ -544,7 +611,7 @@ func TestPlay_ReconnectAndResync(t *testing.T) {
 	// A pause with nothing to connect to, then the server is back.
 	time.Sleep(100 * time.Millisecond)
 	w2 := newWorld()
-	startServerWith(t, s, func(o *gateway.Options) { o.Ingress, o.Egress = w2, w2 })
+	startServerWith(t, s, func(o *gateway.Options) { o.Ingress, o.Egress, o.Roster = w2, w2, w2 })
 
 	stdout.await(t, "You may have missed some events; the world continues from here.")
 	// The look after the Resync: the Room appears once before, so wait for
