@@ -11,5 +11,6 @@
         {"direction": "east", "toZone": "wilds", "toRoom": "trail"}
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

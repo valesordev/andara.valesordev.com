@@ -8,5 +8,6 @@
       "title": "Plaza",
       "description": "Too new."
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

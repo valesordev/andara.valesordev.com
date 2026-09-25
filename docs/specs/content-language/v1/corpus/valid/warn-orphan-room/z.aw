@@ -1,4 +1,6 @@
 zone z "Zone" {
+  fallback shore
+
   room shore "The Shore" {
     exit north -> dunes
   }

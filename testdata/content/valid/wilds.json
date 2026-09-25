@@ -20,5 +20,6 @@
         {"direction": "south", "toRoom": "trail"}
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "trail"
 }

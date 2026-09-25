@@ -35,5 +35,6 @@
         }
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

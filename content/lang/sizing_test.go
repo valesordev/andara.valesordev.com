@@ -76,6 +76,7 @@ func writeSizingPack(t *testing.T, dir string) {
 	for z := 0; z < sizingZones; z++ {
 		var sb strings.Builder
 		fmt.Fprintf(&sb, "zone z%02d \"Zone %d\" {\n", z, z)
+		sb.WriteString("  fallback r0000\n\n")
 		for r := 0; r < per; r++ {
 			fmt.Fprintf(&sb, "  room r%04d \"Room %d\" {\n", r, r)
 			fmt.Fprintf(&sb, "    desc \"A room in zone %d.\"\n", z)

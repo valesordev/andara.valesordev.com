@@ -462,13 +462,16 @@ the canonical layout, which is what makes AC-9 a byte comparison rather than a s
 ## 9. Constructs the schema cannot yet hold
 
 The language's own rule is that a construct with no protobuf field is a schema change first
-(`AW-CLI-005` scope, `AW-SRV-020`). Three constructs are **decided, with their field numbers pinned
-by a `ready` story, and not yet in `andara/content/v1`**. They are in the grammar, specified here,
+(`AW-CLI-005` scope, `AW-SRV-020`). Three constructs were **decided, with their field numbers pinned
+by a `ready` story, before they were in `andara/content/v1`**. `fallback` has since landed
+(2026-09-25, `AW-SRV-012`): its field is in the schema, and its two cases moved to `corpus/valid/fallback/`
+and `corpus/invalid/semantic/fallback-missing/`. The table keeps its row as the record of how a
+pending construct lands. They are in the grammar, specified here,
 and their corpus cases live under `corpus/pending/` with the story that unblocks each one named.
 
 | Construct | Produces | Gated on | Code |
 |-----------|----------|----------|------|
-| `fallback <room>` | `ZoneDefinition.fallback_room` (field 6) | `AW-SRV-012` | `fallback_missing` |
+| `fallback <room>` | `ZoneDefinition.fallback_room` (field 6) | `AW-SRV-012`, **landed 2026-09-25** | `fallback_missing` |
 | `perceives [<sense>, …]` | `ExitDefinition.perceives` (field 4) | `AW-SRV-029` | `unknown_sense` |
 | `andara.core.Behavior{ name }` resolution | — (validation only) | `AW-SRV-016` | `unknown_behavior` |
 

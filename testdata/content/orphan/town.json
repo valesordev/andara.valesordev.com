@@ -25,5 +25,6 @@
       "description": "Reachable by no Exit. A Builder is mid-work.",
       "exits": []
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

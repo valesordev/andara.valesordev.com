@@ -248,6 +248,8 @@ func TestFormatDoesNotReorder(t *testing.T) {
   room alley "Alley" {
     exit west -> plaza
   }
+
+  fallback plaza
 }
 `)
 	got, ds := Format(src)
@@ -534,7 +536,7 @@ func TestFormatPreservesComments(t *testing.T) {
 	// (semantics.md §1). The source blob is what carries them to publication.
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "pack.aw"), "pack p requires andara.core@1\n")
-	write(t, filepath.Join(dir, "z.aw"), "// a comment\nzone z \"Z\" {\n  room r \"R\" {}\n}\n")
+	write(t, filepath.Join(dir, "z.aw"), "// a comment\nzone z \"Z\" {\n  room r \"R\" {}\n  fallback r\n}\n")
 	out, ds := Compile(dir, corpusCore(t), nil)
 	if out == nil {
 		t.Fatalf("compile: %v", ds)

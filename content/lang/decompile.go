@@ -130,6 +130,9 @@ func sourceLine(t *contentv1.TemplateDefinition) uint32 { return t.GetSource().G
 
 func zoneToAST(z *contentv1.ZoneDefinition) (*ZoneDecl, error) {
 	d := &ZoneDecl{ID: z.GetId(), Name: lit(z.GetName())}
+	if fr := z.GetFallbackRoom(); fr != "" {
+		d.Fallbacks = append(d.Fallbacks, &FallbackDecl{Room: fr})
+	}
 	for _, c := range z.GetComponents() {
 		d.Components = append(d.Components, componentToAST(c))
 	}
