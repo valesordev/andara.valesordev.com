@@ -649,3 +649,51 @@ stale-swap test now uses a core@4 whose content really differs.
 
 **Codex, both done:** the swap carries the W3C traceparent (`TestTheSwapCarriesTheLoadsTraceparent`),
 and the debounce is honoured (`TestApplyWaitFollowsTheDebounce`).
+
+---
+
+## §8 review (2026-09-25, architecture)
+
+The story stays `review`. The record is in the story ("§8 pass (2026-09-25)"). Live on the compose
+stack everything holds, and what the `dir` source can't show is carried to `AW-SRV-013`.
+
+### For implementation: what closes it
+
+1. **Tests for the instruments nothing asserts** (§8: instrumentation verified):
+   - `andara_content_cache_hits_total{outcome}` increments: a cold resolve counts `miss`, and a
+     second resolve counts `hit`;
+   - `andara_content_load_phase_duration_seconds{phase}` observed for `resolve`, `validate` and
+     `build` on a load;
+   - the `content.resolve` / `content.build` spans, and `content.swap`'s parent (`content.load`)
+     and its link to `sim.tick`, with an in-process span recorder (as `TestContentCompileEmitsTheSpan`
+     does);
+   - `andara_content_active_version` / `andara_build_info` on a pointer move, asserting the gauge
+     rather than `loader.Versions()`.
+
+   The Redpanda swap test is the natural home for the last two.
+2. **`server/README.md`** contradicts itself on `content.swap`'s parent (`:975` "child of
+   `sim.tick`", `:980` "child of `content.load`"). The ruling is `content.load`, with a link to
+   `sim.tick`.
+3. **Stale comments:**
+   - `server/content/metrics.go:26-34` says the metric name is architecture's to decide. It was decided.
+   - `server/content/load.go:253,266` says `Versions`/`ZoneVersions` are empty for `dir`. They aren't.
+4. **The story's verification record** cites `TestRecovery_APreRuleLogIsRefusedByName`, which
+   doesn't exist. The tests are `TestStartTickLoop_*`.
+
+Deliver them on one `impl/` branch. The story flips to `done` at the next §8 with no further
+review of the rest.
+
+### For PM: work this story found that no story carries
+
+- **`AW-SRV-013` activation refusals.** Activation should refuse a core rollback that strands a
+  pack (§9b), a version that removes a Zone (`zone_removed`), and one that drops the spawn Room
+  (`spawn_room_removed`). All three depend on what is in effect, so publish can't catch them. The
+  Loader refuses them later, as a ticket.
+- **Deleting a Zone.** It is refused today. Allowing it needs an evacuation policy (where do
+  Characters in it go?) and a cross-Zone relocation, which `EntityRelocated`'s single `zone_id`
+  can't express. A later story, and Brian's design call on the policy.
+- **The manual test's commands:** `andara-cli content activate` and `andara-cli server info` don't
+  exist. `AW-CLI-003` should carry `server info` over the new `GetServerInfo.content`.
+- **Observing the swap's prepare cost.** `andara_content_reload_stall_seconds` times the apply only.
+  Prepare (about 1 ms, and store I/O on a stage miss) is in-tick and unobserved, as documented.
+  It's a small follow-up: a `phase="prepare"` observation.
