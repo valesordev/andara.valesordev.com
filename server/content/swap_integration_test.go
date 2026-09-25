@@ -19,6 +19,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/internal/eventually"
@@ -77,7 +79,11 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 		t.Fatal(err)
 	}
 	m := NewMetrics(nil)
-	loader := NewLoader(LoaderOptions{Store: resolver, Packs: []string{CorePack}, Metrics: m})
+	m.SetBuild("test", "abc123", "test")
+	spans := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	loader := NewLoader(LoaderOptions{Store: resolver, Packs: []string{CorePack}, Metrics: m, Tracer: tp.Tracer("test")})
 	prod, err := ingress.NewKafkaProducer(ingress.ProducerOptions{Brokers: bk, Topic: commands, Deadline: 10 * time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -109,7 +115,8 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 	loop, err := tickloop.New(tickloop.Options{
 		Engine: e, Source: src, Publisher: pub,
 		TickRate: 50, TickBudget: 10 * time.Millisecond, MaxPerTick: 8, DrainTimeout: 5 * time.Second, CheckpointEvery: 5,
-		Log: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Log:    slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+		Tracer: tp.Tracer("test"),
 		OnTick: func(res sim.StepResult, _ time.Duration) {
 			applied.Add(int64(res.Completed.CommandsApplied))
 			loader.Applied(res.Swaps)
@@ -185,6 +192,44 @@ func TestKafka_APointerMoveSwapsTheWorldThroughTheLog(t *testing.T) {
 	}
 	if pend := loader.Pending()[CorePack]; pend != 0 {
 		t.Fatalf("pending %v with the pointer in effect", pend)
+	}
+	// §8 (2026-09-25): the gauges, not the Loader's view of itself.
+	if v := testutil.ToFloat64(m.ActiveVersion.WithLabelValues(CorePack)); v != 2 {
+		t.Fatalf("andara_content_active_version{pack=andara.core} = %v, want 2", v)
+	}
+	if v := testutil.ToFloat64(m.BuildInfo.WithLabelValues("test", "abc123", "test", CorePack, "2")); v != 1 {
+		t.Fatalf("andara_build_info{content_version=2} = %v, want 1", v)
+	}
+
+	// The move's content.swap is a child of the content.load that produced
+	// it, and links the sim.tick that applied it.
+	var loads, swaps []sdktrace.ReadOnlySpan
+	ticks := map[string]bool{}
+	for _, sp := range spans.Ended() {
+		switch sp.Name() {
+		case "content.load":
+			loads = append(loads, sp)
+		case "content.swap":
+			swaps = append(swaps, sp)
+		case "sim.tick":
+			ticks[sp.SpanContext().SpanID().String()] = true
+		}
+	}
+	joined := 0
+	for _, sw := range swaps {
+		for _, ld := range loads {
+			if sw.Parent().SpanID() != ld.SpanContext().SpanID() {
+				continue
+			}
+			for _, lk := range sw.Links() {
+				if ticks[lk.SpanContext.SpanID().String()] {
+					joined++
+				}
+			}
+		}
+	}
+	if len(swaps) != 2 || joined != 2 {
+		t.Fatalf("%d content.swap spans, %d under a content.load and linked to a sim.tick; want 2 and 2 (genesis and the move)", len(swaps), joined)
 	}
 }
 

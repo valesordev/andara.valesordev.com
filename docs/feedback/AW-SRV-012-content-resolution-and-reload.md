@@ -697,3 +697,31 @@ review of the rest.
 - **Observing the swap's prepare cost.** `andara_content_reload_stall_seconds` times the apply only.
   Prepare (about 1 ms, and store I/O on a stage miss) is in-tick and unobserved, as documented.
   It's a small follow-up: a `phase="prepare"` observation.
+
+---
+
+## Implementation, 2026-09-25: the §8 review's owed items, delivered
+
+On one `impl/` branch, `impl/aw-srv-012-s8-owed`, stacked on #94.
+
+1. **The instruments are now asserted.** Each test below was mutation-checked: it fails when the
+   instrument is removed.
+   - `andara_content_cache_hits_total{outcome}`: `TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic`
+     (Redpanda). The cold resolve counts one `miss` per blob and no `hit`; the warm one counts as
+     many `hit`s and no new `miss`.
+   - `andara_content_load_phase_duration_seconds{phase}` for `resolve`, `validate` and `build`, and
+     the `content.load` → `content.resolve`/`content.validate` → `content.build` spans:
+     `TestLoader_InstrumentsALoadAndAPointerMove`.
+   - `content.swap` is a child of `content.load` and links to `sim.tick`: unit-level,
+     `TestContentSwap_SpanIsAChildOfTheLoadAndLinksTheTick` (`tickloop`); on the broker,
+     `TestKafka_APointerMoveSwapsTheWorldThroughTheLog`, for both genesis and the move.
+   - `andara_content_active_version` and `andara_build_info` on a pointer move, read from the
+     gauges: `TestLoader_InstrumentsALoadAndAPointerMove`, and on the broker in the swap test.
+2. **`server/README.md`** now says `content.swap` is a child of `content.load`, with a link to the
+   `sim.tick` that applied it, and nothing else.
+3. **Stale comments:** the `metrics.go` naming comment records the 2026-09-24 decision, and
+   `load.go`'s `Versions`/`ZoneVersions` comments say `dir@0`.
+4. **The story's record** cites `TestStartTickLoop_*`. Every test name the story cites was
+   checked to exist.
+
+`make check` is clean, and the six `make test-integration` packages pass against Redpanda.

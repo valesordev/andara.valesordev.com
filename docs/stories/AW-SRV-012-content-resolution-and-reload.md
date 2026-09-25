@@ -291,6 +291,13 @@ running server does not react to a pointer move until AC-2 lands. The story stay
 until then. Per-AC state, deviations and the architecture-owned items are in
 `docs/feedback/AW-SRV-012-content-resolution-and-reload.md`.
 
+**§8 owed items (2026-09-25), delivered** on `impl/aw-srv-012-s8-owed`:
+`TestLoader_InstrumentsALoadAndAPointerMove` (the phases, the load spans, and the gauges on a pointer
+move), `TestContentSwap_SpanIsAChildOfTheLoadAndLinksTheTick`, cache hits in
+`TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic`, and gauges and spans in
+`TestKafka_APointerMoveSwapsTheWorldThroughTheLog`. Also the README's `content.swap` parent and two
+stale comments.
+
 ## Open questions
 
 - **Inherited from `AW-CLI-005` (2026-09-22):** the Content Language keyword for `fallback_room` is
@@ -394,7 +401,7 @@ snapshots, the projector and the metrics. Decisions and findings are in the feed
 - **Loader:** `TestLoader_AStaleSwapIsEvaluatedAgain`, `_AnAmbiguousProduceWaitsForItsFate`,
   `_TheWaitForApplyIsBounded`, `_TransitionsTheVersionAloneCannotShow`, `_PendingStartsWhenTheMoveIsRead`,
   `_FollowRetriesWhatReconcileCouldNotLoad`, `_ASupersededHeldVersionIsNeverApplied`.
-- **Boot and Gateway:** `TestRecovery_APreRuleLogIsRefusedByName`, `TestAdmin_ServerInfoCarriesTheContentInEffect`.
+- **Boot and Gateway:** `TestStartTickLoop_RefusesAPreRuleLogByName` and `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` (the recorded pre-rule test was later driven through `StartTickLoop`, review of #91), `TestAdmin_ServerInfoCarriesTheContentInEffect`.
 
 Verified on the combined state (this branch with #86's fix and #89 merged): `make check` is clean,
 `-race` is clean, and the six `make test-integration` packages pass against Redpanda.
