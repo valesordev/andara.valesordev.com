@@ -68,9 +68,8 @@ func (r *resolver) buildZone(zd zoneDecl, byID map[string]zoneDecl, rooms map[st
 	chain := []string{z.ID}
 
 	// At most one fallback per Zone; a second is duplicate_declaration at the
-	// second keyword. fallback itself is PENDING AW-SRV-012 — the field does
-	// not exist in zone.proto, so the value is validated and dropped
-	// (semantics.md §9).
+	// second keyword. The first is ZoneDefinition.fallback_room (AW-SRV-012),
+	// checked against the Room set below.
 	for _, f := range z.Fallbacks[min(1, len(z.Fallbacks)):] {
 		r.report(zd.file, f.Pos, CodeDuplicateDecl,
 			fmt.Sprintf("Zone %q declares `fallback` more than once; the first is at %s", z.ID, z.Fallbacks[0].Pos), chain...)
@@ -102,6 +101,7 @@ func (r *resolver) buildZone(zd zoneDecl, byID map[string]zoneDecl, rooms map[st
 	for _, rd := range kept {
 		def.Rooms = append(def.Rooms, r.buildRoom(zd, rd, byID))
 	}
+	r.checkFallback(zd, def, local)
 
 	// Sorted by id, like every repeated field, so that two compiles of the same
 	// source produce identical bytes and the loader never has to re-sort
@@ -110,6 +110,29 @@ func (r *resolver) buildZone(zd zoneDecl, byID map[string]zoneDecl, rooms map[st
 
 	r.warnOrphans(zd, kept)
 	return def
+}
+
+// checkFallback sets the Zone's fallback_room and raises fallback_missing in
+// both of its forms (errors.md §6): a `fallback` naming a Room the Zone does
+// not declare, at the Room id; and a Zone that declares none, at the `zone`
+// keyword, since there is no literal to point at. The fallback is the one Room
+// a Zone may not be without: a content swap relocates everyone standing in a
+// removed Room to it (AW-SRV-012).
+func (r *resolver) checkFallback(zd zoneDecl, def *contentv1.ZoneDefinition, rooms map[string]*RoomDecl) {
+	z := zd.d
+	if len(z.Fallbacks) == 0 {
+		r.report(zd.file, z.Pos, CodeFallbackMissing,
+			fmt.Sprintf("Zone %q declares no `fallback`; every Zone names the Room its Entities are moved to when content removes the one they stand in", z.ID),
+			z.ID)
+		return
+	}
+	f := z.Fallbacks[0]
+	if _, ok := rooms[f.Room]; !ok {
+		r.report(zd.file, f.RefPos, CodeFallbackMissing,
+			fmt.Sprintf("Zone %q has no Room %q to fall back to", z.ID, f.Room), z.ID)
+		return
+	}
+	def.FallbackRoom = f.Room
 }
 
 func (r *resolver) buildRoom(zd zoneDecl, rd *RoomDecl, byID map[string]zoneDecl) *contentv1.RoomDefinition {

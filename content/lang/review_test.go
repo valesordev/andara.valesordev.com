@@ -37,7 +37,7 @@ func pack(t *testing.T, files map[string]string) (*Output, []Diagnostic) {
 func TestDuplicateFieldInOneComponent(t *testing.T) {
 	for _, tc := range []struct{ name, file, body string }{
 		{"on a Template", "t.aw", "template T kind entity {\n  component andara.core.Behavior { name: \"a\" name: \"b\" }\n}\n"},
-		{"on a Room", "z.aw", "zone z \"Z\" {\n  room r \"R\" {\n    component andara.core.Behavior { name: \"a\" name: \"b\" }\n  }\n}\n"},
+		{"on a Room", "z.aw", "zone z \"Z\" {\n  room r \"R\" {\n    component andara.core.Behavior { name: \"a\" name: \"b\" }\n  }\n  fallback r\n}\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, ds := pack(t, map[string]string{
@@ -109,9 +109,9 @@ func TestInvalidEscapeInEveryLiteral(t *testing.T) {
 		name, body string
 		line, col  int
 	}{
-		{"Zone name", "zone z \"bad\\t\" {\n  room r \"R\" {}\n}\n", 1, 12},
-		{"Room title", "zone z \"Z\" {\n  room r \"bad\\q\" {}\n}\n", 2, 14},
-		{"desc", "zone z \"Z\" {\n  room r \"R\" {\n    desc \"a\\tb\"\n  }\n}\n", 3, 12},
+		{"Zone name", "zone z \"bad\\t\" {\n  room r \"R\" {}\n  fallback r\n}\n", 1, 12},
+		{"Room title", "zone z \"Z\" {\n  room r \"bad\\q\" {}\n  fallback r\n}\n", 2, 14},
+		{"desc", "zone z \"Z\" {\n  room r \"R\" {\n    desc \"a\\tb\"\n  }\n  fallback r\n}\n", 3, 12},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			out, ds := pack(t, map[string]string{
@@ -257,5 +257,48 @@ func TestCompileIgnoresTheOutputTree(t *testing.T) {
 	out, ds := CompileOpts(dir, corpusCore(t), nil, Options{Ignore: []string{"build"}})
 	if out == nil {
 		t.Fatalf("with the output tree ignored the pack should compile: %v", ds)
+	}
+}
+
+// fallback_room (AW-SRV-012, errors.md §6): the first `fallback` is the
+// field; a Zone that declares none is fallback_missing at its `zone` keyword,
+// and one naming a Room the Zone lacks is fallback_missing at the Room id.
+// Decompile writes the line back, so the field survives a round trip.
+func TestFallbackRoom(t *testing.T) {
+	out, ds := pack(t, map[string]string{
+		"pack.aw": "pack p requires andara.core@1\n",
+		"z.aw":    "zone z \"Z\" {\n  fallback b\n\n  room a \"A\" {}\n\n  room b \"B\" {}\n}\n",
+	})
+	if out == nil {
+		t.Fatalf("compile: %v", ds)
+	}
+	if got := out.Zones[0].GetFallbackRoom(); got != "b" {
+		t.Errorf("fallback_room = %q, want b", got)
+	}
+	files, err := DecompileWith(out, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(files["z.aw"]), "\n  fallback b\n") {
+		t.Errorf("decompile dropped the fallback:\n%s", files["z.aw"])
+	}
+
+	for _, tc := range []struct {
+		name, body string
+		line, col  int
+	}{
+		{"declares none", "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 1, 1},
+		{"names no Room", "zone z \"Z\" {\n  fallback nowhere\n\n  room r \"R\" {}\n}\n", 2, 12},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			out, ds := pack(t, map[string]string{"pack.aw": "pack p requires andara.core@1\n", "z.aw": tc.body})
+			if out != nil {
+				t.Fatalf("compiled clean: %v", ds)
+			}
+			if len(ds) != 1 || ds[0].Code != CodeFallbackMissing || ds[0].Line != tc.line || ds[0].Col != tc.col ||
+				len(ds[0].Chain) != 1 || ds[0].Chain[0] != "z" {
+				t.Fatalf("want one fallback_missing at %d:%d chained to z, got %v", tc.line, tc.col, ds)
+			}
+		})
 	}
 }

@@ -374,7 +374,7 @@ func TestContentCompileOutPrunesStaleBlobs(t *testing.T) {
 	writeFile(t, filepath.Join(src, "pack.aw"), "pack p requires andara.core@1\n", 0o644)
 	writeFile(t, filepath.Join(src, "keep.aw"), "template Keep kind entity {}\n", 0o644)
 	writeFile(t, filepath.Join(src, "gone.aw"), "template Gone kind entity {}\n", 0o644)
-	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 0o644)
+	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n  fallback r\n}\n", 0o644)
 
 	if res := runCLI(t, []string{"content", "compile", "--path", src, "--out", out}, env); res.exit != ExitOK {
 		t.Fatalf("exit=%d stderr=%q", res.exit, res.stderr)
@@ -417,7 +417,7 @@ func TestContentCompileOutInsidePath(t *testing.T) {
 	env := contentEnv(t)
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "pack.aw"), "pack p requires andara.core@1\n", 0o644)
-	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 0o644)
+	writeFile(t, filepath.Join(src, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n  fallback r\n}\n", 0o644)
 
 	out := filepath.Join(src, "build")
 	for i := 1; i <= 2; i++ {

@@ -248,6 +248,8 @@ func TestFormatDoesNotReorder(t *testing.T) {
   room alley "Alley" {
     exit west -> plaza
   }
+
+  fallback plaza
 }
 `)
 	got, ds := Format(src)

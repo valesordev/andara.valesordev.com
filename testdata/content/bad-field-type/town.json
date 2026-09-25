@@ -8,5 +8,6 @@
       "title": "Market Plaza",
       "description": 42
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

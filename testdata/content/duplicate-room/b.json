@@ -8,5 +8,6 @@
       "title": "Market again",
       "description": "Also crowded."
     }
-  ]
+  ],
+  "fallbackRoom": "market-square"
 }

@@ -20,5 +20,6 @@
         {"direction": "north", "toRoom": "pier"}
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "pier"
 }

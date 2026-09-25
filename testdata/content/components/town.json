@@ -27,5 +27,6 @@
         {"direction": "south", "toRoom": "plaza"}
       ]
     }
-  ]
+  ],
+  "fallbackRoom": "plaza"
 }

@@ -65,7 +65,7 @@ func (d *ZoneDecl) declPos() Pos { return d.Pos }
 // reorder).
 type ZoneItem interface{ itemPos() Pos }
 
-// FallbackDecl is `fallback <room>`. PENDING AW-SRV-012 (semantics.md §9).
+// FallbackDecl is `fallback <room>`: ZoneDefinition.fallback_room (AW-SRV-012).
 type FallbackDecl struct {
 	Pos    Pos // the `fallback` keyword
 	Room   string
