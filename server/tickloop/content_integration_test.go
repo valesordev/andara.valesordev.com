@@ -86,6 +86,15 @@ func TestKafka_RecoveryAcrossAContentSwap(t *testing.T) {
 	swap := func(v uint64, inEffect map[string]uint64) *logv1.LoggedCommand {
 		t.Helper()
 		cs := &logv1.ContentSwap{PackId: "town", Version: v}
+		if len(inEffect) > 0 {
+			// Built on what is in effect: its base is that World's digest.
+			prev, err := sim.PrepareContent(content, inEffect)
+			if err != nil {
+				t.Fatal(err)
+			}
+			base := sim.ContentDigest(prev)
+			cs.BaseDigest = base[:]
+		}
 		topo, err := content.Prepare(inEffect, cs)
 		if err != nil {
 			t.Fatal(err)
