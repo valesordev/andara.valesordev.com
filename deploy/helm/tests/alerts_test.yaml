@@ -115,6 +115,41 @@ tests:
               runbook: docs/runbooks/sessions-dropping.md
 
   # Traefik's series carry namespace="traefik"; the environment is the router name's prefix.
+  # ContentLoadFailing (AW-SRV-012). A pointer move stuck for a system reason tickets for
+  # its pack and environment; a slow swap that completes, or a Builder refusal (the gauge
+  # returns to 0), does not.
+  - name: cluster — content stuck in dev tickets for that pack in dev only
+    interval: 1m
+    input_series:
+      - series: 'andara_content_pending_seconds{namespace="andara-dev", pack="town", job="andara-server"}'
+        values: '0+60x15'
+      - series: 'andara_content_pending_seconds{namespace="andara-dev", pack="andara.core", job="andara-server"}'
+        values: '0x15'
+      - series: 'andara_content_pending_seconds{namespace="andara-prod", pack="town", job="andara-server"}'
+        values: '0 20 40 0 0 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      # 360 s at 6m is the first sample over 300: pending from 6m, firing 5m later.
+      - eval_time: 10m
+        alertname: ContentLoadFailing
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: ContentLoadFailing
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: content-freshness, namespace: andara-dev, pack: town}
+            exp_annotations:
+              summary: "Published content has not gone live for over five minutes — the previous version is still serving"
+              runbook: docs/runbooks/content-load-failing.md
+
+  - name: compose — a refused version returns the gauge to 0 and never fires
+    interval: 1m
+    input_series:
+      - series: 'andara_content_pending_seconds{pack="town", job="andara-server"}'
+        values: '0 60 120 180 240 0 0 0 0 0 0 0 0 0 0 0'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: ContentLoadFailing
+        exp_alerts: []
+
   - name: cluster — edge 5xx in dev pages as dev, not as traefik
     interval: 1m
     input_series:

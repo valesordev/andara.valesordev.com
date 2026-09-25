@@ -28,6 +28,7 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `snapshot-stale.md` | `AW-SRV-006` | `SnapshotStale` |
 | `state-projector-diverged.md` | `AW-SRV-019` | `StateProjectorDiverged` |
 | `projection-stale.md` | `AW-SRV-019`, shared with `AW-SRV-017`/`018` | `ProjectionStale` |
+| `content-load-failing.md` | `AW-SRV-012` (written by architecture) | `ContentLoadFailing` |
 
 ## Planned
 
@@ -35,6 +36,5 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 |------|-------|-------|
 | `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
-| `content-load-failing.md` | `AW-SRV-012` | `ContentLoadFailing` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
 | `npcs-unattended.md` | `AW-SRV-009` | `NPCsUnattended` |

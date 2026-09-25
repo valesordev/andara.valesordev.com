@@ -73,8 +73,9 @@ on an engineering release.
    **then** they are byte-identical (`AW-SRV-001` AC-10).
 8. **Given** `pack.town@8` compiled against `andara.core@4` while `andara.core@3` is active **when** the
    pointer moves **then** it is rejected with `reason="core_version"` naming both, and stays rejected
-   until `andara.core@4` is active — at which point it loads on the next pointer event or a `content
-   reload` Admin call.
+   until `andara.core@4` is active — at which point it loads on the next pointer event, including
+   core's own. *(Amended 2026-09-24, architecture: "or a `content reload` Admin call" is withdrawn.
+   No such RPC exists, and none is needed; feedback §5.)*
 9. **Given** a swap **when** its tick runs **then** `andara_content_reload_stall_seconds` records the
    in-tick cost and it stays under `sim.tick_budget_ms / 2`.
 10. **Given** a fallback Room that the new version also removed **when** validation runs **then** it is a
@@ -139,7 +140,7 @@ EntityRelocated entity_relocated = 19;  // zone_id, entity_name, from_room_id, t
 
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
-| `content.source` | `ANDARA_CONTENT_SOURCE` | `dir` | `dir` \| `kafka` (exists) |
+| `content.source` | `ANDARA_CONTENT_SOURCE` | `kafka` | `dir` \| `kafka` (exists). *Corrected 2026-09-24: `kafka` is the default in `keys.yaml` and `server/config`, and stays so; each environment sets it explicitly (feedback §7).* |
 | `content.packs` | `ANDARA_CONTENT_PACKS` | `andara.core` | packs to follow; `*` for all pointers |
 | `content.cache_dir` | `ANDARA_CONTENT_CACHE_DIR` | `/var/cache/andara/blobs` | hash-keyed, immutable |
 | `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` | 8 MiB; larger is rejected at publish too |
@@ -150,7 +151,20 @@ EntityRelocated entity_relocated = 19;  // zone_id, entity_name, from_room_id, t
 `ErrFormatVersion{Have, Want}`, `ErrCoreVersion{Compiled, Active}`, `ErrBlobMissing{Hash, Path}`,
 `ErrValidation{Findings}` (from `AW-SRV-001`), `ErrFallbackMissing{Zone, Room}`,
 `ErrPackMismatch{Blob, NamePack, PublishedPack}` (AC-11; finding code `pack_mismatch`). All are load
-rejections; none are boot failures once one version has loaded. A boot with no loadable version exits
+rejections; none are boot failures once one version has loaded.
+
+**Two rules, stated 2026-09-24 by architecture (feedback §5, §9b):**
+- **A store fault is retried; a refusal is held.** A load that fails `store_unavailable` is
+  retried with capped exponential backoff (1 s to 30 s) until it succeeds or the pointer moves
+  again. Every other reason holds the version until the next pointer move. Without the retry, a
+  broker blip during a load would leave the World stale until someone published again, and there
+  is no reload command to recover it by hand.
+- **A core rollback that would strand an active pack is refused.** `andara.core` stays at its
+  current version, counted `reason="core_version"`, and the `error` line names every pack that
+  holds it. The operator rolls those packs back first. There is no override: the loader has no
+  way to unload a pack, and dropping packs out of the World silently is the worse surprise.
+  `AW-SRV-013`'s activation path should refuse the same move at activation time, so an operator
+  learns it before the pointer moves (feedback §9b, for PM). A boot with no loadable version exits
 `1` naming the reason — there is nothing to retain.
 
 ## Data / state impact
@@ -166,9 +180,17 @@ never out of band.
 
 ### Metrics
 - `andara_content_active_version{pack}` — gauge; pack count is bounded by content.
-- `andara_content_load_duration_seconds{phase}` — histogram (`resolve`, `validate`, `build`, `swap`).
-- `andara_content_load_failures_total{reason}` — counter (`format_version`, `core_version`, `validation`,
-  `blob_missing`, `fallback_missing`).
+- `andara_content_load_phase_duration_seconds{phase}` — histogram (`resolve`, `validate`, `build`,
+  `swap`). *(Renamed 2026-09-24, architecture: `AW-SRV-001` already publishes
+  `andara_content_load_duration_seconds` with no labels, and both are kept; feedback §9.)*
+- `andara_content_load_failures_total{reason}` — counter over the ten reasons the implementation
+  draws: `format_version`, `core_version`, `validation`, `blob_missing`, `blob_corrupt`,
+  `blob_too_large`, `fallback_missing`, `pack_mismatch`, `manifest_missing`, `store_unavailable`.
+- `andara_content_pending_seconds{pack}` — gauge. Seconds since the pack's Active Pointer moved to
+  a version that is neither serving nor refused for a Builder reason (`validation`,
+  `fallback_missing`, `pack_mismatch`, `blob_too_large`); 0 otherwise. A newer move while one is
+  pending keeps the older start. *(Added 2026-09-24, architecture: the SLI and alert of
+  `docs/specs/slo/content-freshness.md`.)*
 - `andara_content_reload_stall_seconds` — histogram, the in-tick swap cost.
 - `andara_content_relocations_total{zone}` — counter.
 - `andara_content_cache_hits_total{outcome}` — counter.
@@ -181,10 +203,12 @@ never out of band.
 - `content.resolve` → `content.validate` → `content.build`; `content.swap` inside `sim.tick`.
 
 ### Alerts
-- `ContentLoadFailing` on `increase(andara_content_load_failures_total[15m]) > 0` for 15 m: the World is
-  not showing what Builders published. Tied to an EPIC-05 content-freshness SLO defined in
-  `docs/specs/slo/content-freshness.md`, written in this story; runbook
-  `docs/runbooks/content-load-failing.md` ships here.
+- `ContentLoadFailing` on `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m,
+  severity ticket. *(Amended 2026-09-24, architecture.)* The first sketch,
+  `increase(andara_content_load_failures_total[15m]) > 0`, would ticket an operator for a Builder's
+  typo. SLO `docs/specs/slo/content-freshness.md`, runbook `docs/runbooks/content-load-failing.md`,
+  and the rule in `alerts.yaml` with promtool tests are all written by architecture and landed.
+  They wait only on the gauge.
 
 ## Test plan
 
