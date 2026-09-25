@@ -511,7 +511,7 @@ func (k *KafkaPublisher) Produce(ctx context.Context, cmds []*logv1.LoggedComman
 			return err
 		}
 		zone := sim.ZoneID(cmd.GetZoneId())
-		recs = append(recs, &kgo.Record{Topic: k.Commands, Partition: sim.PartitionFor(zone), Key: []byte(zone), Value: body})
+		recs = append(recs, &kgo.Record{Topic: k.Commands, Partition: sim.CommandPartition(cmd), Key: []byte(zone), Value: body})
 	}
 	return k.send(ctx, recs)
 }
@@ -652,11 +652,21 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 // AW-SRV-006 gives it a snapshot to start from: correct and slow, and
 // exact — a hash that does not match a recorded boundary is
 // sim.ErrHashMismatch, and the process must not serve that World.
-func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic string, e *sim.Engine) (int, error) {
+//
+// after, if set, is called with each replayed tick's result once its hash is
+// verified, as sim.Engine.ReplayEach calls it: how the content source learns
+// the swaps recovery applied (AW-SRV-012), and where a log that predates the
+// content-in-effect rule is refused.
+func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic string, e *sim.Engine, after func(sim.StepResult) error) (int, error) {
 	boundaries, err := ReadBoundaries(ctx, brokers, eventsTopic)
 	if err != nil {
 		return 0, fmt.Errorf("tickloop: read boundaries: %w", err)
 	}
+	return RecoverFrom(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}, e, after)
+}
+
+// RecoverFrom is Recover over boundaries already read and a record source.
+func RecoverFrom(boundaries []sim.TickCompleted, src sim.RecordSource, e *sim.Engine, after func(sim.StepResult) error) (int, error) {
 	// Boundaries from before the engine's tick — a restart that already
 	// replayed part of the log from a snapshot — are skipped; the rest must
 	// be contiguous from it.
@@ -668,8 +678,30 @@ func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic s
 	if len(boundaries) == 0 {
 		return 0, nil
 	}
-	if err := e.Replay(boundaries, KafkaRecords{Brokers: brokers, Topic: commandsTopic}); err != nil {
+	if err := e.ReplayEach(boundaries, src, after); err != nil {
 		return 0, err
 	}
 	return len(boundaries), nil
+}
+
+// EndOffset is one past the last record on topic's partition: where a
+// consumer that has read everything written so far stands.
+func EndOffset(ctx context.Context, brokers []string, topic string, partition int32) (int64, error) {
+	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	if err != nil {
+		return 0, err
+	}
+	defer cl.Close()
+	ends, err := kadm.NewClient(cl).ListEndOffsets(ctx, topic)
+	if err != nil {
+		return 0, fmt.Errorf("tickloop: end offset of %s: %w", topic, err)
+	}
+	o, ok := ends.Lookup(topic, partition)
+	if !ok {
+		return 0, fmt.Errorf("tickloop: no partition %d on %s", partition, topic)
+	}
+	if o.Err != nil {
+		return 0, o.Err
+	}
+	return o.Offset, nil
 }

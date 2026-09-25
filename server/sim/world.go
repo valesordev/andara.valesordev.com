@@ -66,6 +66,10 @@ type Zone struct {
 	Rooms      map[RoomID]*Room
 	Partition  int32       // hash(ID) % 64
 	Components []Component // stable, sorted by Type; at most one of each
+	// Fallback is where a content swap moves an Entity whose Room the new
+	// version removed (AW-SRV-012). Always one of Rooms: BuildWorld refuses a
+	// Zone without one.
+	Fallback RoomID
 }
 
 // Component returns the Zone's Component of type t, if it carries one.

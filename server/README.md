@@ -24,8 +24,12 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
-| `content.source` | `ANDARA_CONTENT_SOURCE` | `kafka` | `kafka` or `dir`. Kafka is AW-SRV-012; until then the process exits 1 naming the source. Local compose uses `dir`. |
+| `content.source` | `ANDARA_CONTENT_SOURCE` | `kafka` | `kafka` (the Active Pointers, AW-SRV-012) or `dir`. Every environment sets it explicitly; local compose uses `dir`. Either way the content in effect comes through the log (see "Content in effect and the swap"). |
 | `content.path` | `ANDARA_CONTENT_PATH` | `./content` | Directory of Zone Definition JSON files. Used only when `content.source=dir`. |
+| `content.packs` | `ANDARA_CONTENT_PACKS` | `andara.core` | Packs to follow, comma-separated; `*` follows every Active Pointer. Kafka only. |
+| `content.cache_dir` | `ANDARA_CONTENT_CACHE_DIR` | `/var/cache/andara/blobs` | On-disk blob cache, keyed by hash; blobs are immutable. Kafka only. |
+| `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` | Largest blob read; a larger one refuses its version `blob_too_large`. Kafka only. |
+| `content.reload_debounce` | `ANDARA_CONTENT_RELOAD_DEBOUNCE` | `2s` | How long a burst of pointer moves is coalesced before it is applied. Kafka only. |
 | `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. |
 | `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/readyz`, `/metrics`. Plaintext, operator surface. |
 | `telemetry.otlp_endpoint` | `ANDARA_OTLP_ENDPOINT` | `localhost:4317` | Traces and logs go to this collector over OTLP/gRPC (AW-SRV-024). Empty disables both exporters; an endpoint the exporter cannot be built for is fatal. |
@@ -61,7 +65,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `sim.tick_budget_ms` | `ANDARA_TICK_BUDGET_MS` | `50` | Overrun threshold — half the interval, so overruns warn before lag accrues. Must not exceed the interval. |
 | `sim.max_per_tick` | `ANDARA_MAX_PER_TICK` | `1024` | Records applied per tick, taken round-robin across Partitions; the rest wait. |
 | `sim.drain_timeout_ms` | `ANDARA_DRAIN_TIMEOUT_MS` | `5000` | Shutdown budget for the in-flight tick, the checkpoint, and `SimulationStopped`; past it, exit 1 naming the tick. |
-| `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the World's topology. Overriding is a debugging affordance. |
+| `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the topology the Engine starts with. Every Engine starts with no content (AW-SRV-012), so the derived seed is the same for every World; set it to tell Worlds apart. Overriding is a debugging affordance. |
 | `sim.partitions` | `ANDARA_SIM_PARTITIONS` | `0-63` | Assigned Partitions: a range, or the comma list the chart's init container writes from the pod ordinal. |
 | `sim.checkpoint_every_ticks` | `ANDARA_CHECKPOINT_EVERY_TICKS` | `100` | Offset commit cadence — a startup-cost knob, not a correctness one. |
 | `events.subscriber_buffer` | `ANDARA_SUBSCRIBER_BUFFER` | `1024` | Events a subscriber may leave unread before it is dropped with `SubscriberDropped`. |
@@ -780,7 +784,8 @@ broken Exits needs one boot rather than ten.
 **Findings that refuse the load** (the process exits 1 and `/readyz` stays 503):
 `unknown_room`, `unknown_zone`, `duplicate_room`, `duplicate_zone`, `unsupported_format_version`,
 `malformed_file`, `no_zones_found`, `unknown_direction`, `unknown_component_type`,
-`duplicate_component_type`, `invalid_component_field`; and for Templates `unresolved_extends`,
+`duplicate_component_type`, `invalid_component_field`, `fallback_missing` (a Zone with no
+`fallback_room`, or one naming a Room it does not contain, AW-SRV-012 AC-10); and for Templates `unresolved_extends`,
 `unflattened_template`, `duplicate_template`, `chain_mismatch`, `chain_too_deep`,
 `invalid_provenance`.
 
@@ -820,6 +825,122 @@ sorted by type, deterministically.
 kind. `testdata/templates/` carries a byte-identical copy, plus a `town` pack, and
 `TestCoreSeedMatchesFixture` holds the two together.
 
+### Content in effect and the swap (AW-SRV-012)
+
+The log is the source of the content a World runs on. Every version enters through a
+`ContentSwap` Command (`log.proto`), the first included, and replay reads which content each tick
+ran on the way it reads tick boundaries. The Engine holds the versions in effect and their digest
+(`Engine.Content`), and starts with none: `sim.EmptyWorld`, no Zones, until the first swap applies.
+
+**`world_digest`** is `sim.ContentDigest`: SHA-256 over `CanonicalBytes(world)` followed by
+`TemplatesCanonicalBytes(templates)`. It covers the whole World after the swap, every pack's Zones
+and Templates, not only the swapped pack's. So the second of two swaps in one tick digests a World
+that includes the first, and a divergence in any pack is caught. `CanonicalBytes` records each
+Zone's `fallback_room`. `TemplatesCanonicalBytes` orders Templates by reference and records kind,
+chain, Components and provenance. A Template's blob path and `source` are left out, because they are
+provenance and not content, and the same content mounted at another path must digest the same. The
+digest covers topology only. Entity state is the State Hash's.
+
+**Applying a swap.** `Engine.Step` holds a tick's `ContentSwap` records out of the per-Partition
+loop and applies them after every other record of the tick, in (Partition, offset) order. Every
+Command of tick *T* sees the old content, and every Command of *T+1* the new. Before the tick
+mutates anything, each swap is decided against the content the one before it leaves:
+
+- **Refused — a deterministic no-op**, the same live and on replay (`StepResult.SwapsRefused`,
+  `sim.SwapRefused`). The record is consumed and nothing else changes. Four cases:
+  - a swap not on `sim.WorldPartition`, or with a `zone_id` (`misrouted`);
+  - one whose `base_digest` is not the content in effect (`stale_base`), meaning it was built on a
+    World the log has since moved past;
+  - one whose World removes a Zone the content in effect has (`zone_removed`);
+  - one with a Zone whose `fallback_room` is not its own (`fallback_missing`).
+  The content source is told and re-evaluates. Removing a Zone is refused at the Loader too, since
+  deleting one needs an evacuation policy, which is a later story.
+- **Halted.** A swap on the right base whose `world_digest` its version no longer builds is
+  `sim.ErrContentDigest`: the content itself differs, so the whole Step is refused with the state
+  untouched, as a State Hash mismatch halts recovery.
+
+Applying a swap:
+- Zones the new content adds get empty state.
+- An Entity in a Room the new content removed moves to its Zone's `fallback_room`. A present one
+  emits `EntityRelocated{zone_id, entity_name, from_room_id, to_room_id, reason: "room_removed"}`,
+  scoped to the fallback Room and the moved Entity. A dormant body moves silently, so "where you
+  were" stays a Room that exists.
+- An Entity in transit whose target Room a swap removed lands in the target Zone's
+  `fallback_room` on arrival, with the same `EntityRelocated`. It is never bounced or lost.
+- Two swaps in one tick apply one after the other, so an Entity can be relocated twice in that
+  tick, with an Event for each.
+
+A swap changes what future spawns are, never what an existing body is. A Character is an Entity
+instantiated from `andara.core.Character`, read from the Entity and not from the registry, and a
+new body records the `pack@version` of its Template's pack in effect.
+
+`StepResult.Swaps` reports each applied swap with its relocations. The events hub, the ingress
+bindings and the state projector's `Touched` table follow `EntityRelocated` as they follow an
+arrival, so a relocated Character perceives and is routed from the fallback Room.
+
+**Where swaps come from.** The `content.Loader` (Kafka) and the dir source are the Engine's
+`sim.ContentSource`, and **serving means applied**: a version is serving, and
+`andara_content_active_version{pack}` moves, only when the Engine applies its swap, never when the
+Loader accepts it or the produce is acknowledged. The Loader resolves, validates against the
+content in effect, builds and digests a version off the tick, and stages the build under exactly
+the versions it assumes. It then produces the `ContentSwap` through the Gateway's producer, with
+an empty `zone_id` and the digest it was built on as `base_digest`, to `sim.WorldPartition` (0).
+It waits for the swap to apply or be refused before it handles the next move:
+- A swap refused as stale is evaluated again against what is now in effect, up to three times.
+- An ambiguous produce (`ingress.Unsettled`) is never counted as not written until it settles.
+  One whose outcome stays unknown waits until the World Partition is consumed past it, then knows.
+- The wait for apply is bounded at `content.reload_debounce` × 15 (30 s by default). A faulted
+  Partition 0 then costs one move `store_unavailable`, which is retried, and the rest keep
+  draining.
+
+Two more versions are refused, both under `validation` and so the Builder's: one that removes a
+Zone in effect (`zone_removed`), and one whose World loses `character.spawn_room`
+(`spawn_room_removed`). On replay, or for a swap this process did not produce, `Prepare` resolves
+every version named from the store and builds it. A version that no longer builds halts the tick.
+
+**Boot.** `LoadContent` validates the *candidate* content (what the source names now) but brings
+nothing into effect. For `kafka` a candidate that cannot load is logged and not fatal: the log may
+hold content that does, and a bad activation must not survive a restart as an outage. For `dir` it
+is fatal. `StartTickLoop` builds the Engine
+from `sim.EmptyWorld` and recovers: content is built only from the swaps the log replays, and the
+Loader follows each one. A log that applied a Command while no content was in effect predates this
+rule and is refused (`boot.ErrPreRuleLog`, exit 1): recover onto a fresh log (`make down VOLUMES=1`
+locally, fresh topics for `dev`). With the loop running, `ReconcileContent` brings the World to the
+source through the log. It first waits until the World Partition is consumed to its end, because a
+swap a previous process produced may lie past the last boundary. That wait is bounded like the wait
+for apply. If it runs out, as with a Partition 0 frozen by a Zone fault, every pending pack is
+`store_unavailable` and deferred to `Follow`'s retry, and the boot carries on with what the log
+recorded. On an empty log that's
+**genesis**: one swap per followed pack, `andara.core` first, then by `pack_id`. After a restart
+it's whatever moved while the process was down. A boot that ends with no Zones in effect exits 1.
+The roster's spawn Room is checked against that content, the Gateway starts, and only then is the
+process ready (`/readyz` 200). `FollowContent` then applies Active Pointer moves for as long as the
+process runs, starting with a retry of anything reconcile could not load for the store's sake. A
+pack in effect that `content.packs` no longer names is logged at `warn`.
+
+A pre-rule log is refused as `boot.ErrPreRuleLog` either way it shows itself: as a Command applying
+with no content in effect, or, more often, as a State Hash mismatch before any content is in
+effect (`boot.RecoveryError`). The mismatch alone isn't enough, because a post-rule log also runs
+idle ticks before genesis, and a changed `sim.seed` mismatches there too. So it counts as pre-rule
+only when the World Partition carries no `ContentSwap` at all. Swaps refused in the log's history
+are not reported again on replay.
+
+**`content.source=dir`** is one pack, `dir`, at version 0. Its genesis swap carries the directory's
+digest, and recovery rebuilds the directory and compares it. So a directory changed while the
+server was down halts recovery with a digest mismatch. It never replays silently over different
+content. Reset the log to start over.
+
+**A load the store could not serve** (`store_unavailable`, which includes a swap the command log
+would not take) is retried from 1 s, doubling to 30 s, until it loads or the pointer moves again.
+Every other refusal holds the version until the next move.
+
+**Snapshots** carry the content in effect at their tick (`SnapshotEnvelope.content`,
+`content_digest`, `sim.Snapshot.Content`). `sim.RestoreEngine` checks the digest of the topology
+it's given before loading any body, and `sim.PrepareContent` rebuilds a round's content through a
+`ContentSource`. The state projector restores and replays through both. `Admin.GetServerInfo`
+reports the same: `content` (one entry per pack, sorted) and `content_digest`. The deprecated
+`content_pack_id`/`content_version` fields hold `andara.core`'s version.
+
 ### Content-load metrics
 
 | Metric | Type | Labels | Cardinality bound |
@@ -831,6 +952,14 @@ kind. `testdata/templates/` carries a byte-identical copy, plus a `town` pack, a
 | `andara_content_components_total` | counter | `component_type` | the Component registry, closed by construction |
 | `andara_content_load_warnings_total` | counter | `kind` | `orphan_room`, `missing_reverse_exit` |
 | `andara_content_templates_loaded` | gauge | `pack` | the Content Packs the server follows |
+| `andara_content_active_version` | gauge | `pack` | the packs followed; moves when a swap applies |
+| `andara_content_pending_seconds` | gauge (computed at scrape) | `pack` | the packs followed; seconds since the pointer moved to a version neither in effect nor refused for a Builder's reason (`validation`, `fallback_missing`, `pack_mismatch`, `blob_too_large`), else 0. The SLI of `docs/specs/slo/content-freshness.md` |
+| `andara_content_load_failures_total` | counter | `reason` | the ten reasons in `server/content/errors.go` |
+| `andara_content_load_phase_duration_seconds` | histogram | `phase` | `resolve` (reading the version), `build` (building the World and Templates, which is where their findings come from), `validate` (that build plus the checks against the content in effect), `swap` (the in-tick apply) |
+| `andara_content_reload_stall_seconds` | histogram | — | 1; the in-tick cost of applying one swap (AC-9: under `sim.tick_budget_ms / 2`). Preparing it is in-tick too and not in this metric: checking the base, the Zones and the fallbacks, and the whole-World digest, about 1 ms at the sizing fixture. So is a stage miss, where `Prepare` resolves from the store on the tick goroutine; that happens only on replay or for a swap this process did not produce |
+| `andara_content_relocations_total` | counter | `zone` | Zones in the content set |
+| `andara_content_cache_hits_total` | counter | `outcome` | `hit`, `miss` |
+| `andara_build_info` | gauge, always 1 | `version`, `commit`, `env`, `pack`, `content_version` | one series per pack in effect; before any content, one with `pack` and `content_version` empty |
 
 Warnings appear in both counters: `validation_errors_total` counts every finding by code,
 `load_warnings_total` counts only the advisory ones, so an operator can ask whether a content pack is
@@ -841,3 +970,14 @@ Every rejection and every warning logs one structured line carrying `code`, `fil
 `zone`, `room`, `template`, `detail`, and `trace_id`; each pack's Template count logs at `info`. Component and Direction validation are attributes on the
 existing `content.load` and `content.validate` spans (`component_count`, `error_count`,
 `warning_count`), not spans of their own: a span per Room would be one span per Room.
+
+A swap (AW-SRV-012) is traced as `content.load` → `content.resolve`, `content.validate`,
+`content.build` in the Loader, and `content.swap` as a child of `sim.tick`, always kept. Boot's
+reconcile is `content.reconcile`. It logs `content version accepted; swap produced` (pack,
+version, core_version, zones, templates, world_digest, duration_ms), `content swap applied`
+(stall_ms, trace_id), and `content in effect` when the swap applies. A relocation is a `warn` line
+with `zone`, `entity_id`, `from`, `to` and `dormant`, and a refused swap is a `warn` naming its
+reason. The swap `LoggedCommand` carries the load's `trace_id`, so `content.swap` is a child of
+`content.load` and links to `sim.tick`.
+A refusal is logged at `error`, ending "the previous version keeps serving". The runbook's query
+matches that suffix, so a rewording keeps it.

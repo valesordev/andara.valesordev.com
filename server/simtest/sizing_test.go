@@ -145,3 +145,58 @@ func BenchmarkSnapshotAllAtSizingScale(b *testing.B) {
 		_ = e.SnapshotAll(0)
 	}
 }
+
+// swapTimer is an Observer that times the ContentSwap a tick applies, the way
+// the loop does for andara_content_reload_stall_seconds.
+type swapTimer struct{ stall time.Duration }
+
+func (s *swapTimer) Begin(_ sim.ZoneID, r sim.Record) func(sim.Outcome) {
+	if sim.KindOf(r.Command) != sim.KindContentSwap {
+		return func(sim.Outcome) {}
+	}
+	start := time.Now()
+	return func(sim.Outcome) { s.stall = time.Since(start) }
+}
+
+// AW-SRV-012 AC-9: applying a content swap in the tick stays under half of
+// sim.tick_budget_ms at the sizing fixture's scale, including relocating every
+// Entity in the Rooms the new version removed. The topology is built off the
+// tick; what the tick pays for is the relocation walk and the pointer swap.
+func TestContentSwapStaysInsideHalfTheTickBudget(t *testing.T) {
+	trimmed, err := simtest.SizingWorldTrimmed(0.9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reg, err := simtest.Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := &simtest.FixedContent{Topology: sim.Topology{World: trimmed, Templates: reg}}
+	const budget = 50 * time.Millisecond / 2 // sim.tick_budget_ms / 2
+	limit := stallFactor * budget
+
+	var worst time.Duration
+	relocated := 0
+	for i := 0; i < 3; i++ {
+		e, err := simtest.SizingEngineWith(1, src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		timer := &swapTimer{}
+		e.SetObserver(timer)
+		res, err := e.Step(sim.TickInput{Records: []sim.Record{{Partition: sim.WorldPartition, Offset: 0, Command: src.Genesis()}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		relocated = len(res.Swaps[0].Relocations)
+		worst = max(worst, timer.stall)
+	}
+	if relocated < simtest.SizingEntities/20 {
+		t.Fatalf("the swap relocated %d Entities; the fixture should put thousands in the removed Rooms", relocated)
+	}
+	t.Logf("content swap at the sizing fixture (%d zones, %d entities, %d relocated): worst of 3 = %s, budget %s, limit %s",
+		simtest.SizingZones, simtest.SizingEntities, relocated, worst.Round(time.Microsecond), budget, limit)
+	if worst > limit {
+		t.Fatalf("in-tick swap took %s, past the %s limit (%dx half the tick budget)", worst, limit, stallFactor)
+	}
+}

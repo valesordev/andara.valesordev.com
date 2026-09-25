@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -197,5 +198,72 @@ func TestDisagreeingPRNGMakesTheRoundIncomplete(t *testing.T) {
 	}
 	if rounds[0].Complete {
 		t.Fatalf("a round mixing two engines' cuts was complete: %+v", rounds[0])
+	}
+}
+
+// fixedContent is a ContentSource whose every version is the simtest World.
+type fixedContent struct{}
+
+func (fixedContent) Prepare(map[string]uint64, *logv1.ContentSwap) (sim.Topology, error) {
+	w, err := simtest.World()
+	if err != nil {
+		return sim.Topology{}, err
+	}
+	reg, err := simtest.Templates()
+	if err != nil {
+		return sim.Topology{}, err
+	}
+	return sim.Topology{World: w, Templates: reg}, nil
+}
+
+// contentRound runs an Engine whose content came in through a swap of
+// pack@version and writes one round.
+func contentRound(t *testing.T, fs *store.FS, version uint64) *sim.Engine {
+	t.Helper()
+	topo, _ := fixedContent{}.Prepare(nil, nil)
+	d := sim.ContentDigest(topo)
+	e := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 11, Partitions: simtest.AllPartitions(), Content: fixedContent{}})
+	swap := &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{PackId: "town", Version: version, WorldDigest: d[:]}}}
+	if _, err := e.Step(sim.TickInput{Records: []sim.Record{{Partition: sim.WorldPartition, Offset: 0, Command: swap}}}); err != nil {
+		t.Fatal(err)
+	}
+	writeRound(t, fs, e.SnapshotAll(1))
+	return e
+}
+
+// AW-SRV-012: a round decodes the content in effect its objects carry, and a
+// round whose objects disagree on it is two cuts, not a round.
+func TestRoundCarriesTheContentInEffect(t *testing.T) {
+	t.Parallel()
+	fs := store.NewFS(t.TempDir())
+	e := contentRound(t, fs, 3)
+	owned := e.State().SortedZoneIDs()
+	_, state, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	if err != nil || !ok {
+		t.Fatalf("ok=%v err=%v", ok, err)
+	}
+	_, digest := e.Content()
+	if state.Content["town"] != 3 || len(state.Content) != 1 || string(state.ContentDigest) != string(digest[:]) {
+		t.Fatalf("round content %v digest %x", state.Content, state.ContentDigest)
+	}
+
+	// One object rewritten by an engine that swapped in town@4 at the same
+	// tick: the round no longer agrees with itself.
+	other := store.NewFS(t.TempDir())
+	e4 := contentRound(t, other, 4)
+	snaps := e4.SnapshotAll(1)
+	body, err := snaps[0].Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Put(context.Background(), snaps[0].Key(), body); err != nil {
+		t.Fatal(err)
+	}
+	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rounds[0].Complete || !strings.Contains(rounds[0].Reason, "content in effect disagrees") {
+		t.Fatalf("round %+v", rounds[0])
 	}
 }

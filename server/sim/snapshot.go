@@ -61,6 +61,17 @@ type Snapshot struct {
 	// body must carry them and the body is per-Zone.
 	prng        [4]uint64
 	nextEventID uint64
+	// content and contentDigest are the content in effect at Tick
+	// (AW-SRV-012), the same for every Snapshot in a round: what a restore
+	// rebuilds the topology from, and checks, before loading any body.
+	content       map[string]uint64
+	contentDigest [32]byte
+}
+
+// Content is the content in effect at the Snapshot's tick: the pack versions
+// and their world_digest.
+func (s *Snapshot) Content() (map[string]uint64, [32]byte) {
+	return copyVersions(s.content), s.contentDigest
 }
 
 // Body exposes the copied Zone state. It is the encoder's input and a test's
@@ -196,6 +207,7 @@ func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot {
 	}
 	sort.Strings(ids)
 
+	content := copyVersions(e.versions)
 	out := make([]Snapshot, 0, len(ids))
 	for _, id := range ids {
 		z := s.Zones[ZoneID(id)]
@@ -210,6 +222,8 @@ func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot {
 			body:            z.Clone(),
 			prng:            s.RNG.State(),
 			nextEventID:     s.NextEventID,
+			content:         content,
+			contentDigest:   e.digest,
 		})
 	}
 	return out

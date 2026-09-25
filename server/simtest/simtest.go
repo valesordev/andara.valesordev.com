@@ -24,6 +24,9 @@ var Zones = []string{"town", "docks", "wilds"}
 
 func zoneDef(id, name string, rooms ...string) sim.Input {
 	def := &contentv1.ZoneDefinition{FormatVersion: 1, Id: id, Name: name}
+	if len(rooms) > 0 {
+		def.FallbackRoom = rooms[0]
+	}
 	for i, r := range rooms {
 		rd := &contentv1.RoomDefinition{Id: r, Title: r, Description: "A " + r + "."}
 		if i > 0 {
@@ -58,19 +61,19 @@ func CrossingWorld() (*sim.World, error) {
 	exit := func(dir, zone, room string) *contentv1.ExitDefinition {
 		return &contentv1.ExitDefinition{Direction: dir, ToZone: zone, ToRoom: room}
 	}
-	town := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "town", Name: "Town", Rooms: []*contentv1.RoomDefinition{
+	town := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "town", Name: "Town", FallbackRoom: "plaza", Rooms: []*contentv1.RoomDefinition{
 		{Id: "plaza", Title: "Market Plaza", Description: "A dusty square of packed earth.",
 			Exits: []*contentv1.ExitDefinition{exit("north", "", "hall"), exit("east", "wilds", "trail"), exit("south", "docks", "pier")}},
 		{Id: "hall", Title: "Town Hall", Description: "Stone walls and faded banners.",
 			Exits: []*contentv1.ExitDefinition{exit("south", "", "plaza")}},
 	}}
-	docks := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "docks", Name: "Docks", Rooms: []*contentv1.RoomDefinition{
+	docks := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "docks", Name: "Docks", FallbackRoom: "pier", Rooms: []*contentv1.RoomDefinition{
 		{Id: "pier", Title: "The Pier", Description: "Salt air and creaking boards.",
 			Exits: []*contentv1.ExitDefinition{exit("north", "town", "plaza"), exit("south", "", "warehouse")}},
 		{Id: "warehouse", Title: "Warehouse", Description: "Barrels and rope.",
 			Exits: []*contentv1.ExitDefinition{exit("north", "", "pier")}},
 	}}
-	wilds := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "wilds", Name: "Wilds", Rooms: []*contentv1.RoomDefinition{
+	wilds := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "wilds", Name: "Wilds", FallbackRoom: "trail", Rooms: []*contentv1.RoomDefinition{
 		{Id: "trail", Title: "Forest Trail", Description: "A narrow path under pines.",
 			Exits: []*contentv1.ExitDefinition{exit("west", "town", "plaza"), exit("east", "", "clearing")}},
 		{Id: "clearing", Title: "Clearing", Description: "Sunlight on moss.",

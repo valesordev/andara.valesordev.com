@@ -621,3 +621,29 @@ func TestUnsubscribeDuringDelivery(t *testing.T) {
 		t.Fatalf("subscribers = %v", got)
 	}
 }
+
+// AW-SRV-012: an EntityRelocated addressed to the Observer's Entity moves it
+// to the fallback Room, as an arrival does, so what it perceives next is the
+// Room it now stands in and not the one content removed.
+func TestObserverFollowsARelocation(t *testing.T) {
+	f := newFixture(t, 32)
+	carol := f.sub(events.Observer{Entity: "carol", Room: room("town", "hall")}, player)
+	// The swap's tick is the next one: a subscription delivers what follows
+	// its start.
+	next := f.e.Tick() + 1
+	env := &gamev1.EventEnvelope{EventId: 1000, Tick: uint64(next), Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
+		ZoneId: "town", EntityName: "carol", FromRoomId: "hall", ToRoomId: "plaza", Reason: sim.ReasonRoomRemoved,
+	}}}
+	f.hub.Publish(sim.Event{ID: 1000, Tick: next, Zone: "town", Type: sim.EvEntityRelocated, Scope: sim.ScopeRoom("town", "plaza").With("carol"), Envelope: env})
+	f.hub.Flush()
+	if got := types(drain(carol)); len(got) != 1 || got[0] != sim.EvEntityRelocated {
+		t.Fatalf("carol saw %v, want her own relocation", got)
+	}
+	// bob walks plaza → hall: carol, now in the plaza, hears him leave and
+	// not arrive.
+	f.step(simtest.Move("town", "bob", "north"))
+	got := drain(carol)
+	if len(got) != 1 || got[0].Type != sim.EvCharacterLeft || got[0].Envelope.GetCharacterLeft().GetRoomId() != "plaza" {
+		t.Fatalf("carol perceived %v, want bob leaving the plaza", types(got))
+	}
+}

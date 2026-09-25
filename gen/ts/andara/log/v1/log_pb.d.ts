@@ -367,6 +367,27 @@ export declare type ContentSwap = Message<"andara.log.v1.ContentSwap"> & {
    * @generated from field: bytes world_digest = 3;
    */
   worldDigest: Uint8Array;
+
+  /**
+   * The world_digest of the content in effect that this swap was built on:
+   * the digest of the last swap applied before it, or empty for genesis
+   * (decided 2026-09-25, review of #88). The Engine checks it first:
+   *   - base_digest differs from the content in effect: the swap is stale.
+   *     The Loader built it against a World the log has since moved past (an
+   *     ambiguous produce that landed late, or a swap left from a previous
+   *     process). It is a deterministic no-op. Nothing changes, and the Engine
+   *     reports it refused, so the Loader re-evaluates. Live and replay agree,
+   *     so a stale swap never poisons the log.
+   *   - base_digest matches but world_digest does not: the content itself
+   *     differs from what was built (a `dir` source edited while the server was
+   *     down, a blob that resolves differently). Recovery halts, as before.
+   * Also a deterministic no-op, reported refused: a swap whose World lacks a
+   * Zone the content in effect has. Removing a Zone is refused at the Loader
+   * (finding `zone_removed`), and this is the Engine's backstop.
+   *
+   * @generated from field: bytes base_digest = 4;
+   */
+  baseDigest: Uint8Array;
 };
 
 /**

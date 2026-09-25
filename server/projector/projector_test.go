@@ -6,6 +6,7 @@ package projector_test
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"testing"
@@ -36,13 +37,31 @@ type world struct {
 
 const seed = 5
 
+// newWorld is the crossing World brought into effect the way a live log
+// does it: an Engine with no content, and a genesis ContentSwap as its first
+// tick (AW-SRV-012).
 func newWorld(t *testing.T) *world {
 	t.Helper()
-	e, err := simtest.NewVerbEngine(seed)
+	w := newWorldOn(t, contentEngine(t))
+	w.submit(crossing(t).Genesis())
+	w.tick()
+	return w
+}
+
+func crossing(t *testing.T) *simtest.FixedContent {
+	t.Helper()
+	c, err := simtest.CrossingContent()
 	if err != nil {
 		t.Fatal(err)
 	}
-	return newWorldOn(t, e)
+	return c
+}
+
+// contentEngine is an Engine with no content yet, preparing swaps from the
+// crossing fixture.
+func contentEngine(t *testing.T) *sim.Engine {
+	t.Helper()
+	return sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: seed, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: crossing(t)})
 }
 
 func newWorldOn(t *testing.T, e *sim.Engine) *world {
@@ -51,7 +70,7 @@ func newWorldOn(t *testing.T, e *sim.Engine) *world {
 
 func (w *world) submit(cmds ...*logv1.LoggedCommand) {
 	for _, c := range cmds {
-		p := sim.PartitionFor(sim.ZoneID(c.GetZoneId()))
+		p := sim.CommandPartition(c)
 		w.log[p] = append(w.log[p], sim.Record{Partition: p, Offset: int64(len(w.log[p])), Command: c})
 	}
 }
@@ -103,11 +122,7 @@ func script(t *testing.T) *world {
 
 func replica(t *testing.T) *projector.Projector {
 	t.Helper()
-	e, err := simtest.NewVerbEngine(seed)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return projector.New(e, projector.Options{ContentVersion: func(z sim.ZoneID) string { return "fixture@1" }})
+	return projector.New(contentEngine(t), projector.Options{ContentVersion: func(z sim.ZoneID) string { return "fixture@1" }})
 }
 
 // view is a compacted topic in miniature: last value per key, tombstones
@@ -364,7 +379,8 @@ func TestFaultRendersTheZoneWhole(t *testing.T) {
 }
 
 // Codex review of PR #64: a bootstrap from a state newer than the topic. The
-// topic was last written at tick 1; the hero left town while the projector
+// topic was last written at tick 2, the bind (tick 1 is the genesis swap);
+// the hero left town while the projector
 // was down. Seeding from the newer state alone would never tombstone
 // character:town/hero — no later tick names it. Dump then Reconcile against
 // the topic's keys leaves the topic holding exactly the replica's state.
@@ -377,11 +393,11 @@ func TestBootstrapPastTheTopicReconcilesStaleKeys(t *testing.T) {
 	w.tick()
 	w.tick()
 
-	// The topic as the projector left it, at tick 1.
+	// The topic as the projector left it, at the bind's tick.
 	topic := view{}
 	partitions := map[string]int32{}
 	first := replica(t)
-	if err := first.Replay(w.boundaries[:1], simtest.MemorySource(w.log), func(_ sim.TickCompleted, recs []projector.Out) error {
+	if err := first.Replay(w.boundaries[:2], simtest.MemorySource(w.log), func(_ sim.TickCompleted, recs []projector.Out) error {
 		topic.apply(recs)
 		for _, r := range recs {
 			partitions[r.Key] = r.Partition
@@ -394,7 +410,7 @@ func TestBootstrapPastTheTopicReconcilesStaleKeys(t *testing.T) {
 		t.Fatal("fixture: the topic should hold the hero in town")
 	}
 
-	// A replica at tick 3 — as if restored from a round taken there.
+	// A replica at the last tick — as if restored from a round taken there.
 	later := replica(t)
 	if err := later.Engine().Replay(w.boundaries, simtest.MemorySource(w.log)); err != nil {
 		t.Fatal(err)
@@ -521,4 +537,76 @@ func keysOf(m map[string]projector.Out) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// AW-SRV-012: a ContentSwap changes topology without an Event per Room. The
+// tick it applies on tombstones every Room the new content removed and
+// re-renders every Zone, with the content version now in effect, so the
+// incremental records still equal a dump at every tick — including the swap
+// that relocates a Character, and the ticks after it.
+func TestASwapRendersTheNewTopology(t *testing.T) {
+	t.Parallel()
+	c, err := simtest.TownVersions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newEngine := func() *sim.Engine {
+		return sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: seed, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: c})
+	}
+	w := newWorldOn(t, newEngine())
+	swap := func(v uint64) {
+		t.Helper()
+		cmd, err := c.Swap(w.live, "town", v)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w.submit(cmd)
+	}
+	swap(1)
+	w.tick()
+	w.submit(simtest.Bind("town", "hero", "Hero", "plaza"))
+	w.tick()
+	w.submit(simtest.Move("town", "hero", "north"))
+	w.tick()
+	swap(2)
+	swapTick := w.tick()
+	w.submit(simtest.Bind("town", "ada", "Ada", "plaza"))
+	w.tick()
+
+	inEffect := map[string]uint64{}
+	versionOf := func(sim.ZoneID) string { return fmt.Sprintf("town@%d", inEffect["town"]) }
+	p := projector.New(newEngine(), projector.Options{ContentVersion: versionOf, OnSwaps: func(swaps []sim.SwapApplied) {
+		for _, s := range swaps {
+			inEffect[s.Pack] = s.Version
+		}
+	}})
+	v := view{}
+	var tombstonedHall bool
+	if err := p.Replay(w.boundaries, simtest.MemorySource(w.log), func(b sim.TickCompleted, recs []projector.Out) error {
+		v.apply(recs)
+		for _, r := range recs {
+			if r.Key == "room:town/hall" && r.Tombstone() {
+				tombstonedHall = b.Tick == swapTick
+			}
+		}
+		dump, err := projector.New(p.Engine(), projector.Options{ContentVersion: versionOf}).Dump()
+		if err != nil {
+			return err
+		}
+		want := view{}
+		want.apply(dump)
+		sameContent(t, v, want)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !tombstonedHall {
+		t.Fatal("the removed hall was not tombstoned on the swap's tick")
+	}
+	if rec := decode(t, v["zone:town"]); rec.GetContentVersion() != "town@2" {
+		t.Fatalf("zone record names %q, want town@2", rec.GetContentVersion())
+	}
+	if rec := decode(t, v["character:town/hero"]); rec.GetTick() != uint64(swapTick) {
+		t.Fatalf("hero's record is from tick %d, want the swap's %d", rec.GetTick(), swapTick)
+	}
 }

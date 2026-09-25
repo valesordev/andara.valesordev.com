@@ -4,7 +4,7 @@ title: Content resolution from the store and reload at a tick boundary
 epic: EPIC-05
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-001, AW-SRV-021, AW-SRV-022]
 blocks: [AW-SRV-013]
@@ -189,8 +189,12 @@ not re-derive it from the Active Pointers, for the same reason it reads tick bou
 - **`content.source=dir`.** Genesis swaps carry `version` 0 and the digest. Recovery rebuilds from
   the directory and compares, so a directory that changed while the server was down halts
   recovery with a digest mismatch naming the pack, not a silent replay over different content.
-- **Forward-only.** A non-empty log with no swap before its first tick boundary predates this
-  rule. Boot refuses it (exit `1`, naming this story) rather than guessing its content. No
+- **Forward-only.** A log in which a Command applied while no content was in effect predates this
+  rule. *(Wording amended 2026-09-25, review of #88: the first wording, "no swap before its first
+  tick boundary", would refuse every post-rule log, because idle ticks run before genesis.)* Boot
+  refuses it with exit `1` naming this story, **including when the first sign is a State Hash
+  mismatch before any content is in effect**. A pre-rule log fails its hash at tick 1 on an empty
+  topology, and that failure must be reported as the pre-rule refusal, not as corruption. No
   production World exists before M2, so recovery is a fresh log: `make down VOLUMES=1` locally,
   and fresh topics for `dev`.
 
@@ -200,6 +204,30 @@ which content it was running at every tick, which is what makes a replay across 
 
 Relocation is a World mutation caused by a Builder — it happens inside `Apply(ContentSwap)`, in the log,
 never out of band.
+
+**Rulings of 2026-09-25 (review of #86–#88; feedback "Architecture's answers — review of #86–#88"):**
+- **A version that removes a Zone is refused** at the Loader. It is a Builder reason: finding
+  `zone_removed` under `validation`, excluded from the freshness SLI. The Engine refuses the same
+  swap as a deterministic no-op (`ContentSwap.base_digest` comment). Deleting a Zone needs an
+  evacuation policy and is a later story. There is no "stranded Zone" state.
+- **A version whose World lacks `character.spawn_room` is refused**, finding `spawn_room_removed`
+  under `validation`.
+- **A stale swap is a no-op, not a halt.** `ContentSwap.base_digest = 4` carries the digest the
+  swap was built on. A mismatch means the swap is refused deterministically and the Loader
+  re-evaluates. Only a matching base with a different `world_digest` halts. The Loader honours an
+  ambiguous produce (`ingress.Unsettled`): it waits for `Settled()`, and evaluates nothing else
+  until Partition 0 is consumed past the outcome. Reconcile at boot waits for the same.
+- **An Entity arriving in a Room its target Zone no longer has** lands in that Zone's
+  `fallback_room`, with `EntityRelocated{reason: "room_removed"}`. It is never bounced and lost:
+  every Zone has a fallback now.
+- **Faulted Partition 0:** the Loader's wait for a swap to apply is bounded
+  (`content.reload_debounce` × 15, 30 s by default), then logs `warn`, rejects the move as
+  `store_unavailable` so the retry applies, and keeps draining other moves. World-scoped Commands
+  stay on Partition 0, and the sharding story owns moving them.
+- **`andara_build_info{version, commit, env, pack, content_version}`**, one series per pack in
+  effect. It is bounded by the pack set (AW-INF-002's line is amended to match).
+- **`Admin.GetServerInfo`** gains `repeated PackVersion content = 8` and `content_digest = 9`. Fields
+  4 and 5 are deprecated and hold `andara.core`'s version.
 
 ## Observability requirements
 
@@ -319,3 +347,67 @@ until then. Per-AC state, deviations and the architecture-owned items are in
   Implementation is landing the half that depends on none of them — the resolver, the blob cache and
   the retained-version rule, so AC-1 and AC-4 through AC-8 and AC-11 — on
   `impl/aw-srv-012-content-resolution`. The swap-and-relocate half follows once the protocol lands.
+
+## Verification record — 2026-09-25 (implementation; `review` until the §8 checklist passes)
+
+The first half is #63 (`As built` above). The second half is three stacked PRs, built to the
+2026-09-25 rulings (#85):
+[#86](https://github.com/valesordev/andara.valesordev.com/pull/86), the compiler's `fallback_room`
+and `fallback_missing`, one half of the pair with architecture's corpus PR;
+[#87](https://github.com/valesordev/andara.valesordev.com/pull/87), the swap in the sim; and
+[#88](https://github.com/valesordev/andara.valesordev.com/pull/88), the Loader, boot, recovery,
+snapshots, the projector and the metrics. Decisions and findings are in the feedback file,
+"Implementation, 2026-09-25".
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | Genesis: `LoadAll` produces one swap per followed pack, core first, and `Versions()` and `andara_content_active_version` report them once applied. Covered by `TestLoader_BootResolvesEveryFollowedPointer` (unit, real Engine harness), `TestKafkaResolver_ResolvesFromActivePointers` (Redpanda), and at boot by `TestLoadContent_ValidThreeZones` (`/readyz` 503, then 200 once in effect, with the series on `/metrics`) | pass |
+| 2 | `TestContentSwap_RelocatesInTheSwapTick`: a Command in the swap's tick sees the old version and the next tick the new. `TestContentSwap_TwoInOneTickApplyInOffsetOrder`. `TestKafka_APointerMoveSwapsTheWorldThroughTheLog` (Redpanda): pointer → `Follow` → the Gateway's producer → the tick loop → applied | pass |
+| 3 | `TestContentSwap_RelocatesInTheSwapTick`: `EntityRelocated` in the swap's tick, scoped to the fallback Room and the Entity, and a dormant body moved silently. The Redpanda chain test asserts the relocation's tick equals the swap's and `andara_content_relocations_total{zone}` = 1. The followers are covered by `TestObserverFollowsARelocation`, `TestBindings_FollowARelocation` and `TestASwapRendersTheNewTopology` | pass |
+| 4–8, 11 | #63's tests, unchanged in intent, now through the harness: a refusal changes nothing that is serving. AC-8 as amended (pointer event only). §9b: `TestLoader_CoreRollbackNamesEveryPackHoldingIt` | pass |
+| 9 | `TestContentSwapStaysInsideHalfTheTickBudget`: at the sizing fixture (25,000 Entities, 2,600 relocated) the worst of three swaps stalled 5.4 ms against the 25 ms budget. Observed live as `andara_content_reload_stall_seconds` via `content.swap`'s Observer timing (`TestLoadContent_ValidThreeZones` reads `_count 1` from `/metrics`) | pass |
+| 10 | Compiler: `TestFallbackRoom` (both forms, their positions and chains). Server: `TestBuildWorld_FallbackIsRequiredAndLocal`, and `TestLoader_FallbackMissingHasItsOwnReason` (`reason="fallback_missing"`, previous version kept) | pass |
+
+**Definition of done.**
+- The **replay-across-swap test** is `TestContentSwap_ReplayAcrossASwapIsExact` (unit) and
+  `TestKafka_RecoveryAcrossAContentSwap` (Redpanda). Recovery from no content reaches the recorded
+  State Hash and content in effect, and it halts with `ErrContentDigest` over changed content.
+- **The SLO and the runbook** are architecture's, landed in #82.
+- **The owed items** from #85 are all delivered: `andara_content_pending_seconds`
+  (`TestLoader_PendingSeconds`), the `store_unavailable` retry (`TestLoader_FollowRetriesAStoreFault`,
+  `TestLoader_AProduceFailureIsAStoreFault`), `world_digest` (documented in `server/README.md`,
+  `TestContentDigest_CoversTopologyNotProvenance`), and the field-6 compiler change. Snapshot
+  fields 8/9 are written (`TestSnapshot_CarriesAndRestoresTheContentInEffect`,
+  `TestRoundCarriesTheContentInEffect`). Pre-rule logs are refused
+  (`TestRecovered_RefusesALogThatPredatesTheContentRule`).
+- **Checks:** `make check` targets are clean except the corpus-driven tests, which wait on
+  architecture's corpus PR stacked on #86. `-race` is clean across the touched packages. The six
+  `make test-integration` packages pass against a Redpanda broker.
+
+**Review of #86–#88 (2026-09-25), addressed.** #86: 12e0b17 (`TestFallbackRoom`,
+`TestFallbackRoom_TheFirstWins`). #87 and #88: the PR stacked on #90. New tests:
+- **Sim:** `TestContentSwap_AStaleSwapIsANoOp`, `_ARemovedZoneIsRefused`, `_AMisroutedSwapIsRefused`,
+  `_AFallbacklessZoneIsRefused`, `_AnArrivalIntoARemovedRoomLandsAtTheFallback`,
+  `_RelocationAcrossTwoSwaps`, `_BehindAFaultIsRequeued`, `TestArrive_IntoAGoneRoomLandsAtTheFallback`.
+- **Loader:** `TestLoader_AStaleSwapIsEvaluatedAgain`, `_AnAmbiguousProduceWaitsForItsFate`,
+  `_TheWaitForApplyIsBounded`, `_TransitionsTheVersionAloneCannotShow`, `_PendingStartsWhenTheMoveIsRead`,
+  `_FollowRetriesWhatReconcileCouldNotLoad`, `_ASupersededHeldVersionIsNeverApplied`.
+- **Boot and Gateway:** `TestRecovery_APreRuleLogIsRefusedByName`, `TestAdmin_ServerInfoCarriesTheContentInEffect`.
+
+Verified on the combined state (this branch with #86's fix and #89 merged): `make check` is clean,
+`-race` is clean, and the six `make test-integration` packages pass against Redpanda.
+
+**Review of #91 (2026-09-25), addressed.** The bounded barrier, the pre-rule discriminator (no
+`ContentSwap` on the World Partition), and gauges that move before waiters are released. New tests,
+each mutation-checked: `TestStartTickLoop_RefusesAPreRuleLogByName`,
+`TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule`,
+`TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+`TestWorldBarrier_FollowsTheLoop`, `TestBind_RecordsTheContentVersionInEffect`,
+`TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+`TestBindings_ARelocationEndsACrossZoneTransit`, `TestTheSwapCarriesTheLoadsTraceparent`,
+`TestApplyWaitFollowsTheDebounce`.
+
+**Outstanding before `done`:** the §8 review.
+- The live observation of the new series on the compose stack: `content.source=dir` there
+  exercises genesis and the stall metric, and a pointer move needs the Kafka source.
+- The three findings in the feedback file for architecture.

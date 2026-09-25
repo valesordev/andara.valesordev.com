@@ -130,5 +130,5 @@ func (m *memoryProducer) Produce(_ context.Context, cmd *logv1.LoggedCommand) (c
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	r := m.source.Push(cmd)
-	return command.Accepted{Partition: sim.PartitionFor(sim.ZoneID(cmd.GetZoneId())), Offset: r.Offset}, nil
+	return command.Accepted{Partition: sim.CommandPartition(cmd), Offset: r.Offset}, nil
 }

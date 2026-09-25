@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -28,8 +29,13 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	if code != ExitOK {
 		t.Fatalf("exit %d; logs=%s", code, logs.String())
 	}
-	if !rt.Ready() {
-		t.Fatal("not ready")
+	if rt.World == nil {
+		t.Fatal("no World built")
+	}
+	// Validated is not in effect: the log is the source of that, and only
+	// ReconcileContent makes the process ready (AW-SRV-012).
+	if rt.Ready() {
+		t.Fatal("ready before any content is in effect")
 	}
 	if got := testutil.ToFloat64(rt.Tel.Metrics.ZonesLoaded); got != 3 {
 		t.Errorf("zones_loaded = %v, want 3", got)
@@ -47,12 +53,30 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	h := rt.Handler()
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Errorf("readyz before content is in effect = %d, want 503", rr.Code)
+	}
+	serveMemory(t, rt)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rr.Code != http.StatusOK {
-		t.Errorf("readyz = %d", rr.Code)
+		t.Errorf("readyz with content in effect = %d", rr.Code)
+	}
+	if v, _ := rt.Engine.Content(); len(v) != 1 || len(rt.World.Zones) != 3 {
+		t.Errorf("in effect: %v, %d Zones; want the directory's genesis swap and its three Zones", v, len(rt.World.Zones))
 	}
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	body := rr.Body.String()
+	for _, want := range []string{
+		`andara_content_active_version{pack="dir"} 0`,
+		`andara_build_info{commit="",content_version="0",env="",pack="dir",version=""} 1`,
+		"andara_content_reload_stall_seconds_count 1",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("metrics missing %s", want)
+		}
+	}
 	if !strings.Contains(body, "andara_content_zones_loaded") {
 		t.Errorf("metrics missing zones_loaded:\n%s", body)
 	}
@@ -73,6 +97,12 @@ func TestDrain_ReadyzGoes503(t *testing.T) {
 	}
 	h := rt.Handler()
 	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("readyz before content is in effect = %d, want 503", rr.Code)
+	}
+	serveMemory(t, rt)
+	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("readyz before drain = %d", rr.Code)
@@ -181,7 +211,7 @@ func TestLoadContent_KafkaWithoutBrokersFailsNamingTheReason(t *testing.T) {
 func TestLoadContent_OrphanWarnNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "town.json", `{
-		"formatVersion":1,"id":"town","name":"Town",
+		"formatVersion":1,"id":"town","name":"Town","fallbackRoom":"plaza",
 		"rooms":[{"id":"plaza","title":"Plaza","description":"d"}]
 	}`)
 	rt, logs := runtime(t, dir, false)
@@ -267,4 +297,48 @@ func findLog(t *testing.T, logs *bytes.Buffer, code string) map[string]any {
 func fmtString(v any) string {
 	s, _ := v.(string)
 	return s
+}
+
+// serveMemory brings rt's loaded content into effect the way main does, over
+// sim.source=memory: the ingress, the tick loop running, and ReconcileContent,
+// which produces the genesis swap and waits for it to apply (AW-SRV-012). The
+// loop is stopped at cleanup.
+func serveMemory(t *testing.T, rt *Runtime) {
+	t.Helper()
+	rt.Cfg.SimSource = "memory"
+	rt.Cfg.SimTickRate = 50
+	rt.Cfg.SimTickBudget = 10 * time.Millisecond
+	rt.Cfg.SimMaxPerTick = config.DefaultSimMaxPerTick
+	rt.Cfg.SimDrainTimeout = time.Second
+	rt.Cfg.SimPartitions = allPartitionsForTest()
+	rt.Cfg.SimCheckpointEveryTicks = 10
+	rt.Cfg.SubscriberBuffer = 64
+	rt.Cfg.MaxSubscribers = 10
+	rt.Cfg.MaxIntentBytes = 4096
+	rt.Cfg.IngressRateLimit = config.DefaultIngressRateLimit
+	rt.Cfg.IngressAgentRateLimit = config.DefaultIngressAgentRateLimit
+	rt.Cfg.IngressBurst = config.DefaultIngressBurst
+	rt.Cfg.IngressMaxPending = config.DefaultIngressMaxPending
+	rt.Cfg.IngressProduceDeadline = config.DefaultIngressProduceDeadline
+	rt.Cfg.IngressTransitHold = config.DefaultIngressTransitHold
+	ctx := context.Background()
+	if err := rt.LoadVerbs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.StartIngress(ctx); err != nil {
+		t.Fatal(err)
+	}
+	loop, err := rt.StartTickLoop(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loopCtx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(loopCtx) }()
+	t.Cleanup(func() { stop(); <-done })
+	if code := rt.ReconcileContent(ctx); code != ExitOK {
+		t.Fatalf("reconcile: exit %d", code)
+	}
+	// main marks ready once the Gateway serves; there is none here.
+	rt.MarkReady()
 }

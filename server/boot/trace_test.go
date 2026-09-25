@@ -165,8 +165,8 @@ func TestLoadContent_OrphanFixtureServesByDefault(t *testing.T) {
 	if line["room"] != "attic" {
 		t.Errorf("room = %v, want attic", line["room"])
 	}
-	if !rt.Ready() {
-		t.Error("an orphan must not keep the World from serving")
+	if rt.World == nil {
+		t.Error("an orphan must not keep the World from loading")
 	}
 	if got := testutil.ToFloat64(rt.Tel.Metrics.ZonesLoaded); got != 1 {
 		t.Errorf("zones_loaded = %v, want 1", got)

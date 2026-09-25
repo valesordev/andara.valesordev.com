@@ -479,3 +479,173 @@ error from compile to publish for the corpus's convenience.
 **Order of work:** land the `store_unavailable` retry and the B1 compiler change whenever they're
 ready. The swap, relocation, the pending gauge and boot wiring can start now, against the rules
 above.
+
+---
+
+## Implementation, 2026-09-25: the second half, built to #85's rulings
+
+Three PRs, stacked: #86, the compiler half of the fallback pair (architecture's corpus PR stacks
+on it), then #87, the swap in the sim, then the wiring. Every acceptance criterion now has a test,
+and the record is in the story. The decisions below were made inside the rulings, where the rulings
+didn't reach. They're recorded for the §8 review, and any of them can be reversed.
+
+### Decisions for architecture's review
+
+1. **A version that drops a whole Zone strands it.** If Entities stand in a Zone the new content
+   no longer has, there is no fallback Room to move them to, because the fallback is the Zone's
+   own. The Zone's state is kept and hashed, its Commands are refused `unknown_zone` (as for a
+   Zone never loaded), and the Loader logs `zone stranded` at `warn`. When content brings the Zone
+   back, the Entities are where they were. A swap deletes nothing. The alternative, refusing such
+   a version at validation, would mean reading live Entity state from the Loader, off the tick,
+   and that's a race.
+2. **A dormant body moves silently.** An Entity whose Room was removed moves to the fallback
+   whether or not it is present, so "where you were" stays a Room that exists. Only a present one
+   gets `EntityRelocated`: a dormant body is addressed by no Event (AW-SRV-014), and announcing it
+   to the fallback Room would name a Character who isn't there. Both are counted in
+   `andara_content_relocations_total` and logged.
+3. **`content.source=dir` is one pack, `dir`, at version 0.** A directory's Zones carry no pack,
+   so the directory is recorded as a unit. The pack ID and the version appear in the log and in
+   `andara_build_info`.
+4. **Pre-rule logs:** "no swap before its first tick boundary" is implemented as *a Command
+   applied while no content was in effect* (`boot.ErrPreRuleLog`). A log whose leading ticks are
+   empty and whose first swap comes after them is a normal post-rule log. It happens whenever the
+   first ticks run before the genesis swap is consumed. The literal reading would refuse it.
+5. **A swap the command log won't take is `store_unavailable`,** and is retried like a content
+   store fault. It's the platform failing, not the Builder (`ErrProduce`).
+6. **The Loader serializes swaps.** It produces one and waits for it to apply before it evaluates
+   the next, so it always validates against what the World is running. Two swaps in one tick still
+   apply correctly (the sim tests cover it); the live path just never produces them.
+7. **`sim.seed` derivation moved.** The default seed was derived from the topology the Engine
+   started with, and every Engine now starts empty. So the default seed is the same for every
+   World unless `sim.seed` is set. Nothing depends on two Worlds' seeds differing, but this is a
+   change in what "derived from the World" means.
+8. **The projector re-renders every Zone on a swap's tick** and tombstones every Room the swap
+   removed. A swap that relocates nobody emits no Event, so the `Touched` table alone would leave
+   removed Rooms on `andara.state.v1` forever.
+9. **The Gateway starts after content is in effect.** `main` now recovers, runs the loop, and
+   reconciles before it builds the Gateway, so no Session can bind into a World with no Zones.
+   `/readyz` is served from the start and answers 503 until content is in effect. The roster is
+   built before the loop starts (the loop reads it every tick), and its spawn Room is checked
+   again against the content in effect.
+
+### Things found that are not this story's
+
+- **`andara_build_info` was never emitted.** `AW-INF-002` (`done`) specifies
+  `andara_build_info{version, commit, env, content_version}`, and the tick-health dashboard queries
+  it, but no code registered it. It's emitted now, as this story's Scope says, with one series per
+  pack in effect (`pack`, `content_version`). The single-`content_version` shape in `AW-INF-002`
+  couldn't name more than one pack. Architecture may want the dashboard panel to follow.
+- **`Admin.GetServerInfo` can't carry per-pack versions.** Its response has one
+  `content_pack_id` and one `content_version`. The Data / state impact section says it carries
+  content "per pack". That's a proto change, so it's architecture's; nothing here sets the fields.
+- **A swap can remove `character.spawn_room`.** The spawn Room is checked at boot against the
+  content in effect, but a later swap can remove it, and every create after that spawns into a
+  Room that doesn't exist (the bind is refused). The natural rule is to refuse such a version
+  whenever it removes the configured spawn Room. That's a contract line for this story or
+  `AW-SRV-013`'s activation check.
+
+---
+
+## Architecture's answers — review of #86–#88 (2026-09-25)
+
+The review ran against #88 with architecture's corpus PR (#89) merged in.
+- **Local:** `make check` is clean except #86's three inline tests. `make test-integration` is green,
+  S3 included, and so are `TestKafka_APointerMoveSwapsTheWorldThroughTheLog` and
+  `TestKafka_RecoveryAcrossAContentSwap`.
+- **Live (fresh compose stack, #88's image):** genesis applies `dir@0` at tick 2 and ready follows.
+  `make stack-smoke` and the full `make stack-play` M1 gate pass, the server restart included.
+- **Findings, per PR:** in the PR comments. The rulings are recorded in the story under "Rulings of
+  2026-09-25".
+
+**The nine decisions in your entry:**
+
+| # | Decision | Ruling |
+|---|----------|--------|
+| D1 | A removed Zone strands its Entities | **Overruled.** The Loader refuses a version that removes a Zone (`zone_removed`, a Builder reason), and the Engine refuses such a swap as a no-op. The review found that stranding loses bodies: a Character walking into the removed Zone in the swap's tick ends up nowhere, and a stranded player can neither quit cleanly nor log back in. Empty removed Zones also stayed in the hash unlisted. Deleting a Zone is a later story with an evacuation policy. Drop the "Stranded Zone" glossary entry. |
+| D2 | A dormant body moves silently, counted and logged | Accepted. |
+| D3 | `dir` = pack `dir` v0 | Accepted. Make `Content.Versions()`/`ZoneVersions()` agree with `andara_build_info` (they return nil for `dir`). |
+| D4 | Pre-rule = "a Command applied while no content was in effect" | **Accepted, and the story's wording is amended to it.** You were right that the first wording refused every post-rule log. The detection must also catch a pre-rule log whose first sign is the hash mismatch at tick 1 (reproduced live: `state hash mismatch at tick 1`, not the refusal). |
+| D5 | A produce failure counts as `store_unavailable` | Accepted for a definite failure. An ambiguous one (`Unsettled`) waits for `Settled()` and is never counted as not-written. |
+| D6 | The Loader serializes swaps | Accepted, with a bounded wait for apply and `base_digest`. See the story's rulings. |
+| D7 | The default seed is constant across Worlds | Accepted. `server/README.md`'s `sim.seed` line and the `DeriveSeed` comment need updating. |
+| D8 | The projector re-renders on a swap tick | Accepted. |
+| D9 | The Gateway starts after content is in effect | Accepted. `/readyz` turns 200 after `gw.Start`, not at reconcile. |
+
+**The three findings outside the story:**
+- **`andara_build_info` per pack:** accepted. AW-INF-002's line is amended. The projector must set
+  its build fields too, because its series has empty `version`/`commit`/`env` today.
+- **`GetServerInfo`:** `content = 8` and `content_digest = 9` landed in this PR, and 4/5 are
+  deprecated. Filling them is an inherited line on this story's §8, and the manual test's
+  `server info` depends on it.
+- **A swap removing the spawn Room:** refused, `spawn_room_removed` (a Builder reason). For PM:
+  AW-SRV-013's activation check should refuse the same.
+
+---
+
+## Implementation, 2026-09-25: the review of #86–#88, addressed
+
+#86's items are fixed on its own branch (12e0b17). #87's and #88's are in one PR stacked on #90,
+because they need `ContentSwap.base_digest`. Every blocking item and every "required with this
+story" item is done, along with most of the non-blocking ones. The full list, with the tests that
+hold each, is in that PR and in the story's verification record. Two rules I had to make concrete,
+so architecture can check them:
+
+1. **A Character is an Entity whose Template is `andara.core.Character`, read from the Entity.**
+   "A swap changes future spawns only" rules out the registry lookup. `BindCharacter` is the only
+   spawn path, and it always instantiates that exact Template. A later story that spawns a subtype
+   of Character should record the kind on the body at spawn.
+2. **A new body's `content_version`** is its Template's pack as it is in effect (`andara.core@4`).
+   When a single pack supplies everything, as `content.source=dir` does, it is that pack (`dir@0`).
+   `Engine.ContentVersionOf` defines it.
+
+**One thing the review's stale-swap scenario taught the tests.** `world_digest` is over content,
+not version numbers. A swap built on `core@3` still applies on top of `core@4` when the two have
+identical content, because the World it describes is the World in effect. That's correct, and the
+stale-swap test now uses a core@4 whose content really differs.
+
+**Not done, and why:**
+- `andara_content_reload_stall_seconds` still times the apply only. Preparing a swap in-tick
+  (about 1 ms at the sizing fixture), and store I/O on a stage miss (replay, or a swap this process
+  did not produce), are documented against the metric in `server/README.md` rather than folded in.
+  The Observer seam brackets one record's apply, and folding prepare in would mean timing across
+  the rest of the tick.
+- Codex's P1 on the projector's round discovery after a Zone removal is moot now that removal is
+  refused. `owned` still comes from the candidate content, which can name a Zone the round's content
+  lacks. That's AW-SRV-007's round-completeness question, and I haven't changed it.
+
+---
+
+## Implementation, 2026-09-25: the review of #91, addressed
+
+**Blocking:**
+1. **`worldBarrier` is bounded** by the same wait as apply (`content.reload_debounce` × 15, and
+   Codex's point is taken: a debounce under 2 s now counts). At reconcile a barrier that runs out
+   makes every pending pack `store_unavailable`, seeds `Follow`'s retries, and lets the boot carry
+   on. At runtime, an unknown-outcome produce is `store_unavailable`. The `dir` source's genesis
+   barrier carries on to its own bounded wait.
+2. **`RecoveryError`** calls a log pre-rule only when the World Partition carries no
+   `ContentSwap` at all. That is scanned on the failure path only, through a `replayLog` seam that
+   is Kafka in a process and a recorded log in tests.
+3. **The gauges move before any waiter is released,** in `Loader.Applied` and, which was the
+   flaky test's actual path, in the `dir` source's `Applied`. `TestLoadContent_ValidThreeZones`
+   is stable over 40 runs under `-race`.
+
+**The missing tests.** Each fails with its fix removed, all mutation-checked:
+- `TestStartTickLoop_RefusesAPreRuleLogByName` and
+  `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` (a different seed, mismatching at
+  tick 1), both through `StartTickLoop`;
+- `TestLoader_ReconcileWaitsForTheWorldPartitionFirst`, `TestLoader_TheBarrierIsBounded`,
+  `TestWorldBarrier_FollowsTheLoop`;
+- `TestBind_RecordsTheContentVersionInEffect` (closes #70's gap),
+  `TestContentSwap_ReparentingATemplateDoesNotReclassifyBodies`,
+  `TestBindings_ARelocationEndsACrossZoneTransit`.
+
+**Non-blocking, all done:**
+- The projector keeps a candidate that can't load fatal (`ExitConfig`).
+- The phase labels now mean what they say: `build` is the build, and `validate` is the build plus
+  the checks against what is in effect.
+- The old-swap refusal is commented.
+- `recovered()` no longer reports historical refusals.
+
+**Codex, both done:** the swap carries the W3C traceparent (`TestTheSwapCarriesTheLoadsTraceparent`),
+and the debounce is honoured (`TestApplyWaitFollowsTheDebounce`).

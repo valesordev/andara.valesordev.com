@@ -54,8 +54,8 @@ func TestLoadContent_MissingReverseExitWarnsAndServes(t *testing.T) {
 	if code := rt.LoadContent(context.Background()); code != ExitOK {
 		t.Fatalf("a one-way Exit must not refuse the boot: exit %d; logs=%s", code, logs.String())
 	}
-	if !rt.Ready() {
-		t.Error("Ready() is false after a load that only warned")
+	if rt.World == nil {
+		t.Error("no World after a load that only warned")
 	}
 	line := findLog(t, logs, string(sim.ErrMissingReverseExit))
 	if line["level"] != "WARN" && line["level"] != "warn" {

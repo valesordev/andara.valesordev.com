@@ -120,6 +120,7 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 	type zoneAcc struct {
 		file       string
 		name       string
+		fallback   RoomID
 		rooms      map[RoomID]*roomAcc
 		components []Component
 	}
@@ -192,6 +193,7 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 		acc := &zoneAcc{
 			file:       in.File,
 			name:       in.Def.Name,
+			fallback:   RoomID(in.Def.GetFallbackRoom()),
 			rooms:      make(map[RoomID]*roomAcc, len(in.Def.Rooms)),
 			components: zoneComps,
 		}
@@ -325,6 +327,30 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 
 	sort.Slice(order, func(i, j int) bool { return order[i] < order[j] })
 
+	// The fallback Room (AW-SRV-012 AC-10): required, and one of the Zone's
+	// own. A content swap moves everyone standing in a removed Room to it, so
+	// it is the one Room a Zone may not be without.
+	for _, zid := range order {
+		z := byID[zid]
+		switch _, ok := z.rooms[z.fallback]; {
+		case z.fallback == "":
+			errs = append(errs, ValidationError{
+				File:   z.file,
+				Zone:   zid,
+				Code:   ErrFallbackMissing,
+				Detail: fmt.Sprintf("Zone %s declares no fallback_room", zid),
+			})
+		case !ok:
+			errs = append(errs, ValidationError{
+				File:   z.file,
+				Zone:   zid,
+				Room:   z.fallback,
+				Code:   ErrFallbackMissing,
+				Detail: fmt.Sprintf("Zone %s names fallback_room %s, which is not one of its Rooms", zid, z.fallback),
+			})
+		}
+	}
+
 	// Referential checks against the collected set.
 	for _, zid := range order {
 		z := byID[zid]
@@ -455,6 +481,7 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 		zone := &Zone{
 			ID:         zid,
 			Name:       z.name,
+			Fallback:   z.fallback,
 			Rooms:      make(map[RoomID]*Room, len(z.rooms)),
 			Partition:  PartitionFor(zid),
 			Components: z.components,

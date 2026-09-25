@@ -6,19 +6,115 @@ package content
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 )
 
 func testLoader(t *testing.T, s Store, packs ...string) (*Loader, *Metrics) {
 	t.Helper()
 	m := NewMetrics(nil)
-	return NewLoader(LoaderOptions{Store: s, Packs: packs, Metrics: m}), m
+	l := NewLoader(LoaderOptions{Store: s, Packs: packs, Metrics: m})
+	attachEngine(l)
+	return l, m
+}
+
+// engineHarness is the tick loop in miniature: a produced ContentSwap is
+// applied by a real sim.Engine that prepares it through the Loader, and the
+// applied swaps are reported back, so "serving" in these tests means what it
+// means in the server — applied, with its digest checked (AW-SRV-012).
+type engineHarness struct {
+	mu sync.Mutex
+	e  *sim.Engine
+	l  *Loader
+	// fail, when set, refuses the produce.
+	fail error
+	// first, when set, is written to the log ahead of the next swap: a swap
+	// another process produced, landing between evaluation and apply.
+	first *logv1.LoggedCommand
+	// swallow drops produced swaps without applying them: Partition 0 stuck.
+	swallow bool
+	// pending, when set, makes the next produce ambiguous: it returns a
+	// SwapPending the test settles with settle.
+	pending chan func() error
+	held    *logv1.LoggedCommand
+	// onApply sees every swap the Engine applies; refusals collects every
+	// swap it refuses.
+	onApply  func([]sim.SwapApplied)
+	refusals []sim.SwapRefused
+	// produced counts swaps the Loader handed to the producer.
+	produced int
+}
+
+func attachEngine(l *Loader) *engineHarness {
+	h := &engineHarness{l: l}
+	h.e = sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 1, Partitions: []int32{sim.WorldPartition}, Content: l})
+	l.SetProducer(h)
+	return h
+}
+
+func (h *engineHarness) ProduceSwap(_ context.Context, cmd *logv1.LoggedCommand) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.produced++
+	if h.fail != nil {
+		return h.fail
+	}
+	if h.swallow {
+		return nil
+	}
+	if h.pending != nil {
+		// Ambiguous: the record is held until the test says what became of
+		// it; the barrier applies it if it landed.
+		settled := make(chan struct{})
+		var outcome func() error
+		ch := h.pending
+		h.pending = nil
+		h.held = cmd
+		go func() { outcome = <-ch; close(settled) }()
+		return &SwapPending{Settled: settled, Outcome: func() error { return outcome() }}
+	}
+	if h.first != nil {
+		if err := h.stepLocked(h.first); err != nil {
+			return err
+		}
+		h.first = nil
+	}
+	return h.stepLocked(cmd)
+}
+
+func (h *engineHarness) stepLocked(cmd *logv1.LoggedCommand) error {
+	p := sim.CommandPartition(cmd)
+	res, err := h.e.Step(sim.TickInput{Records: []sim.Record{{Partition: p, Offset: h.e.State().Offsets[p], Command: cmd}}})
+	if err != nil {
+		return err
+	}
+	if h.onApply != nil {
+		h.onApply(res.Swaps)
+	}
+	h.refusals = append(h.refusals, res.SwapsRefused...)
+	h.l.Applied(res.Swaps)
+	h.l.Refused(res.SwapsRefused)
+	return nil
+}
+
+// landHeld is the barrier when the ambiguous produce did land: the held
+// record reaches the Engine.
+func (h *engineHarness) landHeld(context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held == nil {
+		return nil
+	}
+	cmd := h.held
+	h.held = nil
+	return h.stepLocked(cmd)
 }
 
 func serving(t *testing.T, l *Loader, pack string) uint64 {
@@ -206,7 +302,7 @@ func TestLoader_ValidationFailureIsRefusedAndRetained(t *testing.T) {
 	}
 
 	// A dangling Exit: the target Room does not exist.
-	s.publish("andara.core", 2, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 2, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"void","title":"Void","description":"d",
 			"exits":[{"direction":"north","toRoom":"nowhere"}]}]}`})
 	rejects := l.Apply(context.Background(), PointerMove{Pack: "andara.core", Version: 2})
@@ -229,7 +325,7 @@ func TestLoader_ValidationFailureIsRefusedAndRetained(t *testing.T) {
 func TestLoader_WarningsDoNotRefuseAVersion(t *testing.T) {
 	s := newFakeStore()
 	// Two Rooms, no Exits between them: orphan_room, a warning.
-	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"a","title":"A","description":"d"},{"id":"b","title":"B","description":"d"}]}`})
 	l, _ := testLoader(t, s, "andara.core")
 	rejects, err := l.LoadAll(context.Background())
@@ -244,7 +340,7 @@ func TestLoader_WarningsDoNotRefuseAVersion(t *testing.T) {
 // ...unless the operator asked for them to be fatal.
 func TestLoader_StrictOrphansRefusesTheSameVersion(t *testing.T) {
 	s := newFakeStore()
-	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core",
+	s.publish("andara.core", 1, 0, map[string]string{"core.json": `{"formatVersion":1,"id":"core","name":"Core","fallbackRoom":"a",
 		"rooms":[{"id":"a","title":"A","description":"d"},{"id":"b","title":"B","description":"d"}]}`})
 	l := NewLoader(LoaderOptions{Store: s, Packs: []string{"andara.core"}, StrictOrphans: true})
 	rejects, err := l.LoadAll(context.Background())

@@ -29,13 +29,10 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Checked against the content in effect, after reconcile
+	// (CheckSpawnInEffect): the roster is built before the loop runs, when
+	// no content is in effect yet.
 	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
-	if _, ok := rt.World.Resolve(spawn); !ok {
-		return fmt.Errorf("character.spawn_room %q does not resolve against the loaded content", cfg.CharacterSpawnRoom)
-	}
-	if _, ok := rt.Templates.Get(sim.CharacterTemplate); !ok {
-		return fmt.Errorf("the loaded content has no %s template; a Character cannot be made from it", sim.CharacterTemplate)
-	}
 	r, err := roster.New(roster.Options{
 		Accounts:        rt.Accounts,
 		Bindings:        rt.Bindings,
@@ -61,6 +58,37 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	)
 	return nil
 }
+
+// spawnRoom is character.spawn_room as a RoomRef; zero when unset or malformed.
+func (rt *Runtime) spawnRoom() sim.RoomRef {
+	zone, room, err := rt.Cfg.SpawnRoom()
+	if err != nil {
+		return sim.RoomRef{}
+	}
+	return sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
+}
+
+// checkSpawn refuses content a Character cannot be made in: no
+// character.spawn_room, or no andara.core.Character — against the content in
+// effect, which is what the roster spawns into.
+func (rt *Runtime) checkSpawn() error {
+	zone, room, err := rt.Cfg.SpawnRoom()
+	if err != nil {
+		return err
+	}
+	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
+	if _, ok := rt.World.Resolve(spawn); !ok {
+		return fmt.Errorf("character.spawn_room %q does not resolve against the loaded content", rt.Cfg.CharacterSpawnRoom)
+	}
+	if _, ok := rt.Templates.Get(sim.CharacterTemplate); !ok {
+		return fmt.Errorf("the loaded content has no %s template; a Character cannot be made from it", sim.CharacterTemplate)
+	}
+	return nil
+}
+
+// CheckSpawnInEffect is checkSpawn against the content in effect, after
+// ReconcileContent (AW-SRV-012).
+func (rt *Runtime) CheckSpawnInEffect() error { return rt.checkSpawn() }
 
 // observeCharacters sets andara_characters_total from the sim's Zone
 // state: the bodies, present and dormant. Called on the loop goroutine.
