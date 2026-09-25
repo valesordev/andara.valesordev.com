@@ -254,6 +254,22 @@ what was built and ruled; the rendering table gains the three system rows. Carri
 `CommandRejected`, read-only under a broker stop, a retained-history resume. The `/` reservation
 and the wording list were both decided by Brian the same day; see Open questions.
 
+### §8 pass (2026-09-24, architecture) — stays `review`
+
+Against `origin/main` `033f2c6` and the compose stack with the server image rebuilt from that commit (`make up` had kept a 2026-09-22 image, #73; `make stack-play` was re-run on the rebuilt one and passed).
+- **ACs 1–12:** each has a test in `admin/cli` (untagged, run in `make test`), and the live half
+  runs in `make stack-play`, which passed locally today.
+- **Static items:** the flags are documented in `admin/README.md`, the Text Interface and Protocol
+  Visibility are in the glossary, and nothing needs migrating. No `[ASSUMPTION]` remains, and
+  `cli.command` → `Subscribe` propagation was seen in Tempo (record above).
+
+**One item fails: this story's own Definition-of-done line, "the scripted M1 gate runs in CI".**
+`stack_play.sh`'s play half ends at the refusal "you are not in the world" because `play` cannot
+select a body. `AW-CLI-007` closes it. Its Definition of done names that line and every live `play`
+observation this story handed to `AW-SRV-014` (AC-1/2/3/4/6 and AC-8's `resume_window_exceeded`),
+enumerated in PR #68. The story moves to `done` at `AW-CLI-007`'s §8 with no further review of its
+own. Written up in `docs/feedback/AW-CLI-004-play.md`, with one ownership gap for PM.
+
 ## As built (2026-09-21)
 
 `admin/cli/play.go`, `playcmd.go`, `render.go`, `history.go`; the Game client in `client.go`;
