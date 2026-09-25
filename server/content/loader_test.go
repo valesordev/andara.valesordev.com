@@ -35,6 +35,19 @@ type engineHarness struct {
 	l  *Loader
 	// fail, when set, refuses the produce.
 	fail error
+	// first, when set, is written to the log ahead of the next swap: a swap
+	// another process produced, landing between evaluation and apply.
+	first *logv1.LoggedCommand
+	// swallow drops produced swaps without applying them: Partition 0 stuck.
+	swallow bool
+	// pending, when set, makes the next produce ambiguous: it returns a
+	// SwapPending the test settles with settle.
+	pending chan func() error
+	held    *logv1.LoggedCommand
+	// onApply sees every swap the Engine applies; refusals collects every
+	// swap it refuses.
+	onApply  func([]sim.SwapApplied)
+	refusals []sim.SwapRefused
 }
 
 func attachEngine(l *Loader) *engineHarness {
@@ -50,13 +63,55 @@ func (h *engineHarness) ProduceSwap(_ context.Context, cmd *logv1.LoggedCommand)
 	if h.fail != nil {
 		return h.fail
 	}
+	if h.swallow {
+		return nil
+	}
+	if h.pending != nil {
+		// Ambiguous: the record is held until the test says what became of
+		// it; the barrier applies it if it landed.
+		settled := make(chan struct{})
+		var outcome func() error
+		ch := h.pending
+		h.pending = nil
+		h.held = cmd
+		go func() { outcome = <-ch; close(settled) }()
+		return &SwapPending{Settled: settled, Outcome: func() error { return outcome() }}
+	}
+	if h.first != nil {
+		if err := h.stepLocked(h.first); err != nil {
+			return err
+		}
+		h.first = nil
+	}
+	return h.stepLocked(cmd)
+}
+
+func (h *engineHarness) stepLocked(cmd *logv1.LoggedCommand) error {
 	p := sim.CommandPartition(cmd)
 	res, err := h.e.Step(sim.TickInput{Records: []sim.Record{{Partition: p, Offset: h.e.State().Offsets[p], Command: cmd}}})
 	if err != nil {
 		return err
 	}
+	if h.onApply != nil {
+		h.onApply(res.Swaps)
+	}
+	h.refusals = append(h.refusals, res.SwapsRefused...)
 	h.l.Applied(res.Swaps)
+	h.l.Refused(res.SwapsRefused)
 	return nil
+}
+
+// landHeld is the barrier when the ambiguous produce did land: the held
+// record reaches the Engine.
+func (h *engineHarness) landHeld(context.Context) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.held == nil {
+		return nil
+	}
+	cmd := h.held
+	h.held = nil
+	return h.stepLocked(cmd)
 }
 
 func serving(t *testing.T, l *Loader, pack string) uint64 {

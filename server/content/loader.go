@@ -5,6 +5,7 @@ package content
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
@@ -77,8 +78,25 @@ type Loader struct {
 	// staged is a topology built off-tick, keyed by the versions in effect it
 	// assumes, waiting for the Engine to prepare the swap that produces it.
 	staged map[string]sim.Topology
-	// waiting is a load waiting for its swap to apply, by pack@version.
-	waiting map[string][]chan struct{}
+	// waiting is a load waiting for its swap to apply or be refused, by
+	// pack@version.
+	waiting map[string][]chan swapResult
+	// digest is the world_digest of the content in effect: a swap is built
+	// on it (ContentSwap.base_digest), so one built on a World the log has
+	// since moved past is refused rather than applied.
+	digest [32]byte
+	// barrier waits until the World Partition is consumed past its current
+	// end: what reconcile runs first, and what an ambiguous produce waits for.
+	barrier func(context.Context) error
+	// applyWait bounds a load's wait for its swap to apply.
+	applyWait time.Duration
+	// spawn is character.spawn_room; a version whose World lacks it, when
+	// the World in effect has it, is refused.
+	spawn sim.RoomRef
+	// startRetries is every pack reconcile could not load for the store's
+	// sake: Follow starts by retrying them, since the watch starts past the
+	// pointer that named them.
+	startRetries map[string]uint64
 	// pointer is the newest version each pack's Active Pointer named, and
 	// pendingSince when it moved to one that is neither serving nor refused
 	// for a Builder's reason (andara_content_pending_seconds).
@@ -101,7 +119,15 @@ type LoaderOptions struct {
 	Producer SwapProducer
 	// Now is the clock for the pending gauge; time.Now when nil.
 	Now func() time.Time
+	// ApplyWait bounds the wait for a produced swap to apply
+	// (content.reload_debounce × 15); 30s when zero.
+	ApplyWait time.Duration
+	// SpawnRoom is character.spawn_room. Zero skips the check.
+	SpawnRoom sim.RoomRef
 }
+
+// swapResult is how a waiting load learns its swap's fate.
+type swapResult struct{ refused *sim.SwapRefused }
 
 // NewLoader builds a Loader over a store.
 func NewLoader(o LoaderOptions) *Loader {
@@ -125,6 +151,10 @@ func NewLoader(o LoaderOptions) *Loader {
 	if now == nil {
 		now = time.Now
 	}
+	wait := o.ApplyWait
+	if wait <= 0 {
+		wait = 30 * time.Second
+	}
 	ld := &Loader{
 		store:         o.Store,
 		packs:         packs,
@@ -138,12 +168,23 @@ func NewLoader(o LoaderOptions) *Loader {
 		held:          map[string]uint64{},
 		resolved:      map[string]*Resolved{},
 		staged:        map[string]sim.Topology{},
-		waiting:       map[string][]chan struct{}{},
+		waiting:       map[string][]chan swapResult{},
+		applyWait:     wait,
+		spawn:         o.SpawnRoom,
+		startRetries:  map[string]uint64{},
 		pointer:       map[string]uint64{},
 		pendingSince:  map[string]time.Time{},
 	}
 	m.pending(ld.Pending)
 	return ld
+}
+
+// SetBarrier sets how the Loader waits for the World Partition to be
+// consumed past its current end.
+func (l *Loader) SetBarrier(b func(context.Context) error) {
+	l.mu.Lock()
+	l.barrier = b
+	l.mu.Unlock()
 }
 
 // SetProducer sets where swaps are written.
@@ -171,6 +212,12 @@ type Rejection struct {
 // skipped; the rest still load, since one Builder's bad pack must not keep
 // every other Builder's good one off the World.
 func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
+	// A swap produced by a previous process, or one left ambiguous, may be
+	// on the World Partition past the last boundary. Let it apply before
+	// deciding anything, so nothing is built on a World about to change.
+	if err := l.waitBarrier(ctx); err != nil {
+		return nil, err
+	}
 	start := time.Now()
 	active, err := l.store.Active(ctx)
 	if err != nil {
@@ -192,9 +239,30 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 		l.moved(pack, active[pack])
 		if r := l.load(ctx, pack, active[pack]); r != nil {
 			rejects = append(rejects, *r)
+			if r.Reason == ReasonStoreUnavailable {
+				l.mu.Lock()
+				l.startRetries[pack] = active[pack]
+				l.mu.Unlock()
+			}
+		}
+	}
+	for p, v := range l.Versions() {
+		if !l.follows(p) {
+			l.log.Warn("a pack in effect is no longer followed; it stays as it is and its pointer is not watched",
+				"pack", p, "version", v, "content.packs", strings.Join(l.packs, ","))
 		}
 	}
 	return rejects, nil
+}
+
+func (l *Loader) waitBarrier(ctx context.Context) error {
+	l.mu.Lock()
+	b := l.barrier
+	l.mu.Unlock()
+	if b == nil {
+		return nil
+	}
+	return b(ctx)
 }
 
 // Candidates resolves and validates every followed pack at its Active Pointer
@@ -284,19 +352,47 @@ func (l *Loader) releaseHeld(ctx context.Context) []Rejection {
 	return out
 }
 
+// staleRetries bounds how often a load re-evaluates after its swap was
+// refused as stale; past it the load is store_unavailable, and retried.
+const staleRetries = 3
+
 // load accepts or refuses pack@version and, accepted, brings it into effect:
-// build off-tick, stage, produce the swap, and wait for the Engine to apply it.
+// build off-tick, stage, produce the swap, and wait for the Engine to apply or
+// refuse it. A swap refused as stale — built on a World the log had moved
+// past — is evaluated again against what is in effect now.
 func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejection {
 	if version == 0 {
 		return nil // no Active Pointer for this pack; nothing to load
 	}
-	if v, ok := l.servingVersion(pack); ok && v == version {
-		l.settled(pack, version)
-		return nil
+	for attempt := 0; ; attempt++ {
+		if v, ok := l.servingVersion(pack); ok && v == version {
+			l.settled(pack, version)
+			return nil
+		}
+		refused, rej := l.loadOnce(ctx, pack, version)
+		if rej != nil || refused == nil {
+			return rej
+		}
+		if refused.Reason != sim.SwapStaleBase || attempt+1 >= staleRetries {
+			return l.reject(Rejection{Pack: pack, Version: version, Err: &ErrSwapRefused{
+				Pack: pack, Version: version, Reason: refused.Reason, Detail: refused.Detail}})
+		}
+		l.log.Info("content swap was stale; evaluating again against the content in effect",
+			"pack", pack, "version", version, "detail", refused.Detail)
 	}
+}
+
+// loadOnce is one evaluate-stage-produce-wait. It returns the Engine's refusal
+// when there was one, a rejection when the version did not come into effect
+// for any other reason, and neither when it applied.
+func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*sim.SwapRefused, *Rejection) {
 	ctx, span := l.tracer.Start(ctx, "content.load", trace.WithAttributes(
 		attribute.String("pack", pack), attribute.Int64("version", int64(version))))
 	defer span.End()
+	traceID := ""
+	if sc := span.SpanContext(); sc.HasTraceID() {
+		traceID = sc.TraceID().String()
+	}
 
 	start := time.Now()
 	res, topo, rej := l.evaluate(ctx, pack, version, l.servingSnapshot())
@@ -306,26 +402,40 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 				l.hold(pack, version)
 			}
 		}
-		return l.reject(*rej)
+		return nil, l.reject(*rej)
 	}
+	bstart := time.Now()
+	digest := sim.ContentDigest(topo)
+	l.metrics.LoadDuration.WithLabelValues(PhaseBuild).Observe(time.Since(bstart).Seconds())
 
 	// Stage the topology under exactly the versions it assumes, so the Engine
 	// preparing the swap picks up this build and not one for some other
 	// combination that happens to digest alike.
 	l.mu.Lock()
 	after := servingVersions(l.serving)
+	var base []byte
+	if len(after) > 0 {
+		base = append([]byte(nil), l.digest[:]...)
+	}
 	after[pack] = version
 	key := stageKey(after)
 	l.staged[key] = topo
-	done := make(chan struct{})
+	done := make(chan swapResult, 1)
 	pv := ManifestKey(pack, version)
 	l.waiting[pv] = append(l.waiting[pv], done)
 	producer := l.producer
 	l.mu.Unlock()
+	drop := func(unstage bool) {
+		l.mu.Lock()
+		if unstage {
+			delete(l.staged, key)
+		}
+		l.unwait(pv, done)
+		l.mu.Unlock()
+	}
 
-	digest := sim.ContentDigest(topo)
-	cmd := &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{
-		PackId: pack, Version: version, WorldDigest: digest[:],
+	cmd := &logv1.LoggedCommand{TraceId: traceID, Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{
+		PackId: pack, Version: version, WorldDigest: digest[:], BaseDigest: base,
 	}}}
 	var perr error
 	if producer == nil {
@@ -333,27 +443,64 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 	} else {
 		perr = producer.ProduceSwap(ctx, cmd)
 	}
+	var pending *SwapPending
+	if errors.As(perr, &pending) {
+		// The produce's wait ended with the record possibly live. It is never
+		// treated as not written until it settles that way.
+		select {
+		case <-pending.Settled:
+		case <-ctx.Done():
+			drop(false)
+			return nil, nil
+		}
+		switch err := pending.Outcome(); {
+		case err == nil:
+			perr = nil // written: wait for it to apply
+		case errors.Is(err, ErrSwapOutcomeUnknown):
+			// It may be in the log. Evaluate nothing else until the World
+			// Partition is consumed past it: then it has applied, been
+			// refused, or was never there.
+			if berr := l.waitBarrier(ctx); berr != nil {
+				drop(false)
+				return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrProduce{Pack: pack, Version: version, Err: berr}})
+			}
+			select {
+			case r := <-done:
+				return r.refused, nil
+			default:
+				drop(true)
+				return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrProduce{Pack: pack, Version: version, Err: err}})
+			}
+		default:
+			perr = err
+		}
+	}
 	if perr != nil {
-		l.mu.Lock()
-		delete(l.staged, key)
-		l.unwait(pv, done)
-		l.mu.Unlock()
-		return l.reject(Rejection{Pack: pack, Version: version, Err: &ErrProduce{Pack: pack, Version: version, Err: perr}})
+		drop(true)
+		return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrProduce{Pack: pack, Version: version, Err: perr}})
 	}
 	l.log.Info("content version accepted; swap produced",
 		"pack", pack, "version", version, "core_version", res.CoreVersion,
 		"zones", len(res.Zones), "templates", len(res.Templates),
 		"world_digest", fmt.Sprintf("%x", digest[:8]),
-		"duration_ms", time.Since(start).Milliseconds())
+		"duration_ms", time.Since(start).Milliseconds(), "trace_id", traceID)
 
+	timer := time.NewTimer(l.applyWait)
+	defer timer.Stop()
 	select {
-	case <-done:
-		return nil
+	case r := <-done:
+		return r.refused, nil
+	case <-timer.C:
+		// Partition 0 faulted, or far behind. The swap is in the log and may
+		// still apply — Applied needs no waiter — but this move stops
+		// blocking every other.
+		drop(false)
+		l.log.Warn("content swap produced but not applied within the bounded wait; retrying later",
+			"pack", pack, "version", version, "wait", l.applyWait.String(), "trace_id", traceID)
+		return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrApplyTimeout{Pack: pack, Version: version, Wait: l.applyWait}})
 	case <-ctx.Done():
-		l.mu.Lock()
-		l.unwait(pv, done)
-		l.mu.Unlock()
-		return nil
+		drop(false)
+		return nil, nil
 	}
 }
 
@@ -447,11 +594,27 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 
 	_, span := l.tracer.Start(ctx, "content.build")
 	defer span.End()
-	bstart := time.Now()
-	defer func() { l.metrics.LoadDuration.WithLabelValues(PhaseBuild).Observe(time.Since(bstart).Seconds()) }()
+	vstart := time.Now()
+	defer func() { l.metrics.LoadDuration.WithLabelValues(PhaseValidate).Observe(time.Since(vstart).Seconds()) }()
 
 	topo := sim.Topology{World: sim.EmptyWorld()}
 	var findings []sim.ValidationError
+	if candidate != nil {
+		// Transitions the version alone cannot be judged on (review of
+		// #86–#88): removing a Zone the World has — an evacuation policy is
+		// a later story — and losing character.spawn_room.
+		now := map[string]bool{}
+		for _, z := range zones {
+			now[z.Def.GetId()] = true
+		}
+		baseZones, _ := inputsOf(base)
+		for _, z := range baseZones {
+			if id := z.Def.GetId(); !now[id] {
+				findings = append(findings, sim.ValidationError{Zone: sim.ZoneID(id), Code: sim.ErrZoneRemoved,
+					Detail: fmt.Sprintf("%s@%d removes Zone %s, which is in effect; removing a Zone is not supported", candidate.Pack, candidate.Version, id)})
+			}
+		}
+	}
 	if len(templates) > 0 {
 		reg, errs := sim.BuildTemplates(templates, sim.TemplateOptions{})
 		findings = append(findings, l.fatalOnly(errs)...)
@@ -465,7 +628,32 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 			topo.World = w
 		}
 	}
+	if candidate != nil && l.spawn.Zone != "" && len(findings) == 0 {
+		if _, had := spawnIn(base, l.spawn); had {
+			if _, ok := topo.World.Resolve(l.spawn); !ok {
+				findings = append(findings, sim.ValidationError{Zone: l.spawn.Zone, Room: l.spawn.Room, Code: sim.ErrSpawnRoomRemoved,
+					Detail: fmt.Sprintf("%s@%d has no Room %s/%s, which character.spawn_room names", candidate.Pack, candidate.Version, l.spawn.Zone, l.spawn.Room)})
+			}
+		}
+	}
 	return topo, findings
+}
+
+// spawnIn reports whether the content base names the spawn Room.
+func spawnIn(base map[string]*Resolved, spawn sim.RoomRef) (string, bool) {
+	for p, r := range base {
+		for _, z := range r.Zones {
+			if z.Def.GetId() != string(spawn.Zone) {
+				continue
+			}
+			for _, room := range z.Def.GetRooms() {
+				if room.GetId() == string(spawn.Room) {
+					return p, true
+				}
+			}
+		}
+	}
+	return "", false
 }
 
 // fatalOnly drops warnings. A warning is advisory by construction — an
@@ -532,13 +720,16 @@ func (l *Loader) Applied(swaps []sim.SwapApplied) {
 		if err == nil {
 			l.serving[s.Pack] = res
 		}
+		if s.Digest != ([32]byte{}) {
+			l.digest = s.Digest
+		}
 		delete(l.held, s.Pack)
 		if l.pointer[s.Pack] == s.Version {
 			delete(l.pendingSince, s.Pack)
 		}
 		pv := ManifestKey(s.Pack, s.Version)
 		for _, ch := range l.waiting[pv] {
-			close(ch)
+			ch <- swapResult{}
 		}
 		delete(l.waiting, pv)
 		l.prune()
@@ -566,10 +757,24 @@ func (l *Loader) Applied(swaps []sim.SwapApplied) {
 				"pack", s.Pack, "version", s.Version, "zone", string(r.Zone),
 				"entity_id", string(r.Entity), "from", string(r.From), "to", string(r.To), "dormant", r.Dormant)
 		}
-		for _, z := range s.Stranded {
-			l.log.Warn("zone stranded: a content swap removed it while Entities stand in it; its state is kept and its Commands refused until content brings it back",
-				"pack", s.Pack, "version", s.Version, "zone", string(z))
+	}
+}
+
+// Refused is the Engine reporting the swaps a tick consumed and refused:
+// deterministic no-ops. A load waiting on one learns why, and re-evaluates
+// when it was stale.
+func (l *Loader) Refused(refusals []sim.SwapRefused) {
+	for _, r := range refusals {
+		l.log.Warn("content swap refused by the engine; nothing changed",
+			"pack", r.Pack, "version", r.Version, "reason", r.Reason, "detail", r.Detail)
+		pv := ManifestKey(r.Pack, r.Version)
+		l.mu.Lock()
+		for _, ch := range l.waiting[pv] {
+			r := r
+			ch <- swapResult{refused: &r}
 		}
+		delete(l.waiting, pv)
+		l.mu.Unlock()
 	}
 }
 
@@ -596,7 +801,7 @@ func (l *Loader) prune() {
 	}
 }
 
-func (l *Loader) unwait(pv string, done chan struct{}) {
+func (l *Loader) unwait(pv string, done chan swapResult) {
 	ws := l.waiting[pv]
 	for i, ch := range ws {
 		if ch == done {
@@ -677,6 +882,13 @@ func (l *Loader) Inputs() ([]sim.Input, []sim.TemplateInput) {
 	return inputsOf(l.servingSnapshot())
 }
 
+// InEffect is the versions in effect and their world_digest.
+func (l *Loader) InEffect() (map[string]uint64, [32]byte) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return servingVersions(l.serving), l.digest
+}
+
 // Versions reports the version each pack has in effect.
 func (l *Loader) Versions() map[string]uint64 {
 	l.mu.Lock()
@@ -729,6 +941,15 @@ func (l *Loader) servingVersion(pack string) (uint64, bool) {
 		return 0, false
 	}
 	return r.Version, true
+}
+
+// supersedeHeld drops a held version of pack other than version.
+func (l *Loader) supersedeHeld(pack string, version uint64) {
+	l.mu.Lock()
+	if v, ok := l.held[pack]; ok && v != version {
+		delete(l.held, pack)
+	}
+	l.mu.Unlock()
 }
 
 func (l *Loader) hold(pack string, version uint64) {
@@ -893,6 +1114,7 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 		at      time.Time
 	}
 	retries := map[string]retry{}
+
 	var timer *time.Timer
 	var fire <-chan time.Time
 	var retryTimer *time.Timer
@@ -914,6 +1136,15 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 			retryFire = retryTimer.C
 		}
 	}
+	// What reconcile could not load for the store's sake: the watch starts
+	// past the pointers that named them, so nothing else would retry them.
+	l.mu.Lock()
+	for p, v := range l.startRetries {
+		retries[p] = retry{version: v, backoff: retryInitial, at: time.Now().Add(retryInitial)}
+	}
+	l.startRetries = map[string]uint64{}
+	l.mu.Unlock()
+	rearm()
 	report := func(rejects []Rejection, backoff map[string]time.Duration) {
 		for _, r := range rejects {
 			if onReject != nil {
@@ -932,6 +1163,14 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 		rearm()
 	}
 	apply := func(batch map[string]uint64, backoff map[string]time.Duration) {
+		// A held version the batch supersedes is dropped first: core in the
+		// same batch would otherwise release it, and swap an obsolete
+		// intermediate version into the World before the newer one.
+		for p, v := range batch {
+			if p != CorePack {
+				l.supersedeHeld(p, v)
+			}
+		}
 		packs := make([]string, 0, len(batch))
 		for p := range batch {
 			packs = append(packs, p)
@@ -954,6 +1193,11 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 		case m, ok := <-moves:
 			if !ok {
 				return nil
+			}
+			if l.follows(m.Pack) {
+				// The freshness SLI counts from the move being read, not from
+				// the end of the debounce or of a load in flight.
+				l.moved(m.Pack, m.Version)
 			}
 			pending[m.Pack] = m.Version
 			// A newer move supersedes a retry of the version it replaces.

@@ -84,6 +84,9 @@ type Runtime struct {
 	// roster produces its BindCharacter and UnbindCharacter through it.
 	commandLog command.Producer
 	ready      atomic.Bool
+	// worldNext is the tick loop's next-to-read offset on the World
+	// Partition, for worldBarrier; written on the loop's goroutine.
+	worldNext atomic.Int64
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table
@@ -261,10 +264,24 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		attribute.Int("template_count", templateCount),
 	)
 	if !ok {
+		if rt.Cfg.ContentSource == content.SourceKafka && !rt.Cfg.ValidateOnly && src != nil {
+			// The candidate is what the pointers name now; the log may
+			// already hold content that loads. A bad activation must not
+			// survive a restart as an outage: recovery brings back what the
+			// log recorded, reconcile refuses the candidate, and only a boot
+			// that ends with nothing in effect exits (ReconcileContent).
+			rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "the content the Active Pointers name does not load; recovering what the log recorded",
+				slog.Int("error_count", errorCount), slog.String("trace_id", telemetry.TraceID(ctx)))
+			return ExitOK
+		}
 		return ExitFail
 	}
 	return ExitOK
 }
+
+// MarkReady sets /readyz to 200: called once the Gateway serves with content
+// in effect (AW-SRV-012, review of #88).
+func (rt *Runtime) MarkReady() { rt.ready.Store(true) }
 
 // recordFinding logs one finding and counts it, and reports whether it was
 // advisory. Both loops share it so a warning can never be logged at warn and
@@ -332,6 +349,7 @@ func (rt *Runtime) contentOptions() content.Options {
 		MaxBlobBytes:  rt.Cfg.ContentMaxBlobBytes,
 		Debounce:      rt.Cfg.ContentReloadDebounce,
 		StrictOrphans: rt.Cfg.StrictOrphans,
+		SpawnRoom:     rt.spawnRoom(),
 		Metrics:       rt.ContentMetrics,
 		Log:           rt.Tel.Log,
 		Tracer:        rt.Tel.Tracer,

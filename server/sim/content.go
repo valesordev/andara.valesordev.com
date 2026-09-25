@@ -144,38 +144,81 @@ type SwapApplied struct {
 	Version     uint64
 	Digest      [32]byte
 	Relocations []Relocation
-	// Stranded are Zones the new content no longer has while Entities stand in
-	// them. Their state is kept as it is and their Commands are refused
-	// unknown_zone until content brings the Zone back; nothing is deleted by a
-	// swap.
-	Stranded []ZoneID
+}
+
+// Why a ContentSwap was refused: a deterministic no-op that consumes its
+// record and changes nothing, live and on replay alike (log.proto, review of
+// #88). The Loader is told, and re-evaluates.
+const (
+	// SwapStaleBase: base_digest is not the content in effect. The swap was
+	// built on a World the log has since moved past.
+	SwapStaleBase = "stale_base"
+	// SwapZoneRemoved: the swap's World lacks a Zone the content in effect
+	// has. The Loader refuses such a version; this is the Engine's backstop.
+	SwapZoneRemoved = "zone_removed"
+	// SwapFallbackMissing: a Zone of the swap's World names no fallback Room
+	// of its own. BuildWorld refuses such content; the Engine does not trust
+	// a source to have used it.
+	SwapFallbackMissing = "fallback_missing"
+	// SwapMisrouted: a ContentSwap not on WorldPartition, or with a zone_id.
+	SwapMisrouted = "misrouted"
+)
+
+// SwapRefused is one ContentSwap its tick refused.
+type SwapRefused struct {
+	Pack    string
+	Version uint64
+	Reason  string
+	// Detail names what disagreed, for the log.
+	Detail string
 }
 
 // preparedSwap is a swap whose topology is built and whose digest is checked,
-// waiting for the end of its tick.
+// waiting for the end of its tick — or, with refused set, a swap its tick
+// consumes and refuses.
 type preparedSwap struct {
 	rec      Record
 	swap     *logv1.ContentSwap
 	topo     Topology
 	digest   [32]byte
 	versions map[string]uint64
+	refused  *SwapRefused
 }
 
-// prepareSwaps builds every swap of a tick in offset order, each against the
-// versions the one before it leaves, and checks each digest, before the tick
-// mutates anything: a swap that cannot be applied refuses the whole Step and
-// leaves the state untouched.
+// prepareSwaps decides every swap of a tick in (Partition, offset) order, each
+// against the content the one before it leaves, before the tick mutates
+// anything.
+//
+// A swap is refused — a deterministic no-op, the same live and on replay —
+// when it is misrouted, when its base_digest is not the content in effect
+// (stale: built on a World the log has moved past), when its World removes a
+// Zone the content in effect has, or when a Zone of it has no fallback of its
+// own. Only a swap on the right base whose world_digest its version no longer
+// builds is an error, and that refuses the whole Step, as a State Hash
+// mismatch does: the content itself is not the content that was running.
 func (e *Engine) prepareSwaps(tick Tick, swaps []Record) ([]preparedSwap, error) {
 	if len(swaps) == 0 {
 		return nil, nil
 	}
-	if e.cfg.Content == nil {
-		return nil, fmt.Errorf("tick %d: %w", tick, ErrNoContentSource)
-	}
-	versions := copyVersions(e.versions)
+	versions, digest, world := copyVersions(e.versions), e.digest, e.world
 	out := make([]preparedSwap, 0, len(swaps))
 	for _, r := range swaps {
 		cs := r.Command.GetContentSwap()
+		refuse := func(reason, detail string) {
+			out = append(out, preparedSwap{rec: r, swap: cs, refused: &SwapRefused{Pack: cs.GetPackId(), Version: cs.GetVersion(), Reason: reason, Detail: detail}})
+		}
+		if r.Partition != WorldPartition || r.Command.GetZoneId() != "" {
+			refuse(SwapMisrouted, fmt.Sprintf("on partition %d with zone_id %q", r.Partition, r.Command.GetZoneId()))
+			continue
+		}
+		base := cs.GetBaseDigest()
+		if (len(versions) == 0 && len(base) != 0) || (len(versions) > 0 && string(base) != string(digest[:])) {
+			refuse(SwapStaleBase, fmt.Sprintf("built on %x, in effect %x", head(base), digest[:8]))
+			continue
+		}
+		if e.cfg.Content == nil {
+			return nil, fmt.Errorf("tick %d: %w", tick, ErrNoContentSource)
+		}
 		topo, err := e.cfg.Content.Prepare(copyVersions(versions), cs)
 		if err != nil {
 			return nil, fmt.Errorf("tick %d: prepare %s@%d: %w", tick, cs.GetPackId(), cs.GetVersion(), err)
@@ -183,20 +226,68 @@ func (e *Engine) prepareSwaps(tick Tick, swaps []Record) ([]preparedSwap, error)
 		if topo.World == nil {
 			topo.World = EmptyWorld()
 		}
-		digest := ContentDigest(topo)
-		if string(digest[:]) != string(cs.GetWorldDigest()) {
-			return nil, &ContentDigestError{Tick: tick, Pack: cs.GetPackId(), Version: cs.GetVersion(), Recorded: cs.GetWorldDigest(), Built: digest}
+		built := ContentDigest(topo)
+		if string(built[:]) != string(cs.GetWorldDigest()) {
+			return nil, &ContentDigestError{Tick: tick, Pack: cs.GetPackId(), Version: cs.GetVersion(), Recorded: cs.GetWorldDigest(), Built: built}
+		}
+		if z := removedZone(world, topo.World); z != "" {
+			refuse(SwapZoneRemoved, fmt.Sprintf("zone %s is in effect and not in %s@%d", z, cs.GetPackId(), cs.GetVersion()))
+			continue
+		}
+		if z := fallbackless(topo.World); z != "" {
+			refuse(SwapFallbackMissing, fmt.Sprintf("zone %s has no fallback Room of its own", z))
+			continue
 		}
 		versions[cs.GetPackId()] = cs.GetVersion()
-		out = append(out, preparedSwap{rec: r, swap: cs, topo: topo, digest: digest, versions: copyVersions(versions)})
+		digest, world = built, topo.World
+		out = append(out, preparedSwap{rec: r, swap: cs, topo: topo, digest: built, versions: copyVersions(versions)})
 	}
 	return out, nil
+}
+
+// removedZone is the first Zone, by ID, that from has and to does not.
+func removedZone(from, to *World) ZoneID {
+	if from == nil {
+		return ""
+	}
+	ids := make([]string, 0, len(from.Zones))
+	for id := range from.Zones {
+		ids = append(ids, string(id))
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		if _, ok := to.Zones[ZoneID(id)]; !ok {
+			return ZoneID(id)
+		}
+	}
+	return ""
+}
+
+// fallbackless is the first Zone, by ID, whose fallback is not one of its Rooms.
+func fallbackless(w *World) ZoneID {
+	ids := make([]string, 0, len(w.Zones))
+	for id := range w.Zones {
+		ids = append(ids, string(id))
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		z := w.Zones[ZoneID(id)]
+		if _, ok := z.Rooms[z.Fallback]; !ok {
+			return z.ID
+		}
+	}
+	return ""
 }
 
 // applySwap moves the World onto a prepared topology: Zones the content adds
 // get empty state, Entities in a Room it removed move to their Zone's fallback
 // with an EntityRelocated, and the versions in effect and the digest advance.
-// Deterministic: Zones and Entities are visited in ID order.
+// Deterministic: Zones and Entities are visited in ID order. No Zone is
+// removed: prepareSwaps refused any swap that would.
+//
+// Two swaps in one tick apply one after the other, so an Entity can be
+// relocated twice in a tick — to the first swap's fallback, and on again if
+// the second removes that Room too — and emits an EntityRelocated for each.
 func (e *Engine) applySwap(p preparedSwap, emit func(ZoneID, string, string, Scope, *gamev1.EventEnvelope)) SwapApplied {
 	s := e.state
 	out := SwapApplied{Pack: p.swap.GetPackId(), Version: p.swap.GetVersion(), Digest: p.digest}
@@ -211,10 +302,7 @@ func (e *Engine) applySwap(p preparedSwap, emit func(ZoneID, string, string, Sco
 		zs := s.Zones[ZoneID(zid)]
 		nz, kept := w.Zones[zs.ID]
 		if !kept {
-			if len(zs.Entities) > 0 {
-				out.Stranded = append(out.Stranded, zs.ID)
-			}
-			continue
+			continue // unreachable: a swap that removes a Zone is refused
 		}
 		eids := make([]string, 0, len(zs.Entities))
 		for id := range zs.Entities {
@@ -279,6 +367,25 @@ func PrepareContent(src ContentSource, versions map[string]uint64) (Topology, er
 		topo.World = EmptyWorld()
 	}
 	return topo, nil
+}
+
+// ContentVersionOf is the pack@version an Entity instantiated from t records:
+// t's pack as it is in effect, or — when a single-pack source such as
+// content.source=dir supplies every Template — that one pack. Empty when
+// neither holds, which is before any content is in effect.
+func (e *Engine) ContentVersionOf(t *Template) string {
+	if t == nil {
+		return ""
+	}
+	if v, ok := e.versions[t.Pack()]; ok {
+		return fmt.Sprintf("%s@%d", t.Pack(), v)
+	}
+	if len(e.versions) == 1 {
+		for p, v := range e.versions {
+			return fmt.Sprintf("%s@%d", p, v)
+		}
+	}
+	return ""
 }
 
 // Content reports the pack versions in effect and their digest; an empty map

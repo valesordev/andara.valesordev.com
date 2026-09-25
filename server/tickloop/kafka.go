@@ -678,3 +678,25 @@ func Recover(ctx context.Context, brokers []string, commandsTopic, eventsTopic s
 	}
 	return len(boundaries), nil
 }
+
+// EndOffset is one past the last record on topic's partition: where a
+// consumer that has read everything written so far stands.
+func EndOffset(ctx context.Context, brokers []string, topic string, partition int32) (int64, error) {
+	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	if err != nil {
+		return 0, err
+	}
+	defer cl.Close()
+	ends, err := kadm.NewClient(cl).ListEndOffsets(ctx, topic)
+	if err != nil {
+		return 0, fmt.Errorf("tickloop: end offset of %s: %w", topic, err)
+	}
+	o, ok := ends.Lookup(topic, partition)
+	if !ok {
+		return 0, fmt.Errorf("tickloop: no partition %d on %s", partition, topic)
+	}
+	if o.Err != nil {
+		return 0, o.Err
+	}
+	return o.Offset, nil
+}

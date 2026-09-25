@@ -215,7 +215,9 @@ Content Swap, the first included, so replay knows which content each tick ran on
 
 **Content Swap** — The `ContentSwap` Command that moves one pack of the World to a new Content Version
 (`AW-SRV-012`). World-scoped, and applied after every other record of its tick, so no tick sees two
-versions. It carries the World Digest the new content builds.
+versions. It carries the World Digest the new content builds, and the one it was built on
+(`base_digest`): a swap built on a World the log has since moved past is **stale**, and the Engine
+refuses it as a no-op rather than applying it.
 
 **Fallback Room** — The Room of a Zone that an Entity is moved to when a Content Swap removes the Room
 it stands in (`ZoneDefinition.fallback_room`, `fallback <room>` in the Content Language). Every Zone
@@ -223,9 +225,6 @@ names one of its own Rooms. The one Room a Zone may not delete (`AW-SRV-012`).
 
 **Relocation** — An Entity moved to its Zone's Fallback Room by a Content Swap, announced by
 `EntityRelocated` to the Fallback Room and to the Entity. A dormant body moves too, silently.
-
-**Stranded Zone** — A Zone a Content Swap removed while Entities stood in it. Its state is kept and
-its Commands refused until content brings the Zone back. A swap deletes nothing (`AW-SRV-012`).
 
 **World Digest** — `ContentSwap.world_digest`: SHA-256 over the whole World's content topology after
 a swap, every pack's Zones and Templates in canonical order. Replay rebuilds and compares, and a

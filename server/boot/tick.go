@@ -14,6 +14,7 @@ import (
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/content"
+	"github.com/valesordev/andara/server/ingress"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
 	"github.com/valesordev/andara/server/telemetry"
@@ -83,7 +84,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		replayed, err := tickloop.Recover(rctx, cfg.KafkaBrokers, tickloop.CommandsTopic, tickloop.EventsTopic, engine, rt.recovered())
 		rspan.End()
 		if err != nil {
-			return nil, fmt.Errorf("recovery: %w", err)
+			return nil, fmt.Errorf("recovery: %w", RecoveryError(err, engine))
 		}
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
 			slog.Int("ticks_replayed", replayed),
@@ -129,6 +130,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	default:
 		return nil, fmt.Errorf("sim.source %q is not kafka or memory", cfg.SimSource)
 	}
+
+	// Where the loop starts on the World Partition, for worldBarrier.
+	rt.worldNext.Store(engine.State().Offsets[sim.WorldPartition])
 
 	// Subscribed after recovery, so replayed Events — history, already
 	// delivered by the process that first emitted them — are not fanned
@@ -234,6 +238,10 @@ func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 		if len(res.Swaps) > 0 {
 			rt.contentApplied(res.Swaps)
 		}
+		if len(res.SwapsRefused) > 0 && rt.Content != nil {
+			rt.Content.Refused(res.SwapsRefused)
+		}
+		rt.worldNext.Store(res.Completed.Offsets[sim.WorldPartition])
 		if eg != nil {
 			eg.ObserveTick(uint64(res.Tick))
 		}
@@ -250,20 +258,38 @@ func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 var ErrPreRuleLog = errors.New("the command log predates AW-SRV-012: it applied Commands before any ContentSwap recorded the content in effect; recover onto a fresh log (make down VOLUMES=1 locally, fresh topics for dev)")
 
 // recovered is Recover's per-tick hook: the content source learns each
-// replayed swap, and a log that applied Commands while no content was in
-// effect is refused.
+// replayed swap and refusal, and a log that applied Commands while no content
+// was in effect is refused.
 func (rt *Runtime) recovered() func(sim.StepResult) error {
 	inEffect := false
 	return func(res sim.StepResult) error {
-		if !inEffect && res.Completed.CommandsApplied > uint64(len(res.Swaps)) {
+		swaps := uint64(len(res.Swaps) + len(res.SwapsRefused))
+		if !inEffect && res.Completed.CommandsApplied > swaps {
 			return fmt.Errorf("tick %d: %w", res.Tick, ErrPreRuleLog)
 		}
 		if len(res.Swaps) > 0 {
 			inEffect = true
 			rt.contentApplied(res.Swaps)
 		}
+		if len(res.SwapsRefused) > 0 && rt.Content != nil {
+			rt.Content.Refused(res.SwapsRefused)
+		}
 		return nil
 	}
+}
+
+// RecoveryError reports a pre-rule log as ErrPreRuleLog whichever way it
+// shows itself. A log written before content was recorded in it usually fails
+// its State Hash at tick 1, because replay runs on an empty topology, before
+// any Command could be seen applying with no content in effect: a hash
+// mismatch while no content is in effect is that log, not corruption (review
+// of #88, reproduced live).
+func RecoveryError(err error, e *sim.Engine) error {
+	var hm *sim.HashMismatchError
+	if versions, _ := e.Content(); errors.As(err, &hm) && len(versions) == 0 {
+		return fmt.Errorf("tick %d, before any content was in effect: %w (%v)", hm.Tick, ErrPreRuleLog, err)
+	}
+	return err
 }
 
 // contentApplied tells the content source what a tick applied, and keeps the
@@ -278,6 +304,9 @@ func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
 	}
 	w := rt.Engine.World()
 	rt.Tel.Metrics.ZonesLoaded.Set(float64(len(w.Zones)))
+	// Only the Zones in effect: a label from content no longer in effect
+	// would report Rooms nobody can stand in.
+	rt.Tel.Metrics.RoomsLoaded.Reset()
 	for id, z := range w.Zones {
 		rt.Tel.Metrics.RoomsLoaded.WithLabelValues(string(id)).Set(float64(len(z.Rooms)))
 	}
@@ -309,6 +338,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	ctx, span := rt.Tel.Tracer.Start(ctx, "content.reconcile")
 	defer span.End()
 	rt.Content.SetProducer(swapProducer{rt.commandLog})
+	rt.Content.SetBarrier(rt.worldBarrier)
 	rejects, err := rt.Content.Reconcile(ctx)
 	if err != nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content could not be brought into effect",
@@ -325,11 +355,41 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		return ExitFail
 	}
 	rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
-	versions, digest := rt.Engine.Content()
-	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect; ready",
+	versions, digest := rt.Content.InEffect()
+	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect",
 		slog.Any("versions", versions), slog.String("world_digest", fmt.Sprintf("%x", digest[:8])))
-	rt.ready.Store(true)
 	return ExitOK
+}
+
+// worldBarrier waits until the tick loop has consumed the World Partition
+// past its end as of now: every ContentSwap already in the log has applied or
+// been refused. What reconcile runs first — a swap a previous process
+// produced may lie past the last boundary — and what a swap whose produce had
+// an unknown outcome waits for.
+func (rt *Runtime) worldBarrier(ctx context.Context) error {
+	end, err := rt.worldEnd(ctx)
+	if err != nil {
+		return err
+	}
+	t := time.NewTicker(10 * time.Millisecond)
+	defer t.Stop()
+	for rt.worldNext.Load() < end {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-t.C:
+		}
+	}
+	return nil
+}
+
+// worldEnd is the World Partition's end offset: the broker's, or the memory
+// source's.
+func (rt *Runtime) worldEnd(ctx context.Context) (int64, error) {
+	if rt.memSource != nil {
+		return rt.memSource.End(sim.WorldPartition), nil
+	}
+	return tickloop.EndOffset(ctx, rt.Cfg.KafkaBrokers, tickloop.CommandsTopic, sim.WorldPartition)
 }
 
 // FollowContent applies Active Pointer moves until ctx ends. The Loader logs
@@ -350,5 +410,21 @@ func (s swapProducer) ProduceSwap(ctx context.Context, cmd *logv1.LoggedCommand)
 		return errors.New("no command producer: StartIngress must run first")
 	}
 	_, err := s.p.Produce(ctx, cmd)
+	var u *ingress.Unsettled
+	if errors.As(err, &u) {
+		// The produce's wait ended with the record possibly live: the Loader
+		// waits for it to settle, and never counts it as not written first.
+		return &content.SwapPending{Settled: u.Settled(), Outcome: func() error {
+			_, oerr := u.Outcome()
+			switch {
+			case oerr == nil:
+				return nil
+			case errors.Is(oerr, ingress.ErrOutcomeUnknown):
+				return content.ErrSwapOutcomeUnknown
+			default:
+				return fmt.Errorf("%w: %w", content.ErrSwapNotWritten, oerr)
+			}
+		}}
+	}
 	return err
 }

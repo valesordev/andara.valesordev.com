@@ -236,9 +236,23 @@ func (t *Bindings) Publish(ev sim.Event) {
 				e.transit = nil
 			}
 		case *gamev1.EventEnvelope_EntityRelocated:
-			// Same Zone, another Room: a content swap moved the body to its
-			// Zone's fallback (AW-SRV-012). No Partition changes.
+			// A content swap moved the body to a Zone's fallback (AW-SRV-012):
+			// in place, or at the end of a transit whose target Room it
+			// removed. Either way it settles the body where it now is, as an
+			// arrival does.
+			was := e.cmd.Zone
+			e.cmd.Zone = sim.ZoneID(p.EntityRelocated.GetZoneId())
 			e.cmd.Room = sim.RoomID(p.EntityRelocated.GetToRoomId())
+			if was != e.cmd.Zone {
+				moved = append(moved, struct {
+					session string
+					binding command.Binding
+				}{sessionID, e.cmd})
+			}
+			if e.transit != nil {
+				close(e.transit.settled)
+				e.transit = nil
+			}
 		}
 	}
 	t.mu.Unlock()

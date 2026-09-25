@@ -56,11 +56,23 @@ func (f *fakeContent) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwa
 // what e has in effect: the digest is the one that version builds.
 func (f *fakeContent) swap(t *testing.T, e *sim.Engine, extra map[string]uint64, pack string, version uint64) *logv1.LoggedCommand {
 	t.Helper()
-	inEffect, _ := e.Content()
+	inEffect, base := e.Content()
 	for p, v := range extra {
 		inEffect[p] = v
 	}
+	if len(extra) > 0 {
+		// Built on top of a swap not yet applied: its base is that swap's
+		// World, as the Loader would record it.
+		prev, err := sim.PrepareContent(f, copyMap(inEffect))
+		if err != nil {
+			t.Fatal(err)
+		}
+		base = sim.ContentDigest(prev)
+	}
 	cs := &logv1.ContentSwap{PackId: pack, Version: version}
+	if len(inEffect) > 0 {
+		cs.BaseDigest = base[:]
+	}
 	topo, err := f.Prepare(inEffect, cs)
 	if err != nil {
 		t.Fatal(err)
@@ -68,6 +80,14 @@ func (f *fakeContent) swap(t *testing.T, e *sim.Engine, extra map[string]uint64,
 	d := sim.ContentDigest(topo)
 	cs.WorldDigest = d[:]
 	return &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: cs}}
+}
+
+func copyMap(m map[string]uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
 }
 
 func zdef(id, fallback string, rooms ...*contentv1.RoomDefinition) *contentv1.ZoneDefinition {
@@ -241,37 +261,226 @@ func TestContentSwap_TwoInOneTickApplyInOffsetOrder(t *testing.T) {
 		t.Fatalf("versions %v", v)
 	}
 
-	// The same two, the other way round, are not the same digests: each is a
-	// claim about the whole World at its point in the order.
+	// The same two the other way round: the second was built on the first's
+	// World, which is not in effect when it comes up, so it is stale — a
+	// no-op, refused — and the first applies after it.
 	e2 := contentEngine(t, c)
 	mustStep(t, e2, c.swap(t, e2, nil, "town", 1))
-	if _, err := stepAll(t, e2, second, first); !errors.Is(err, sim.ErrContentDigest) {
-		t.Fatalf("swaps out of order: err = %v", err)
+	res, err := stepAll(t, e2, second, first)
+	if err != nil || len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Pack != "docks" || res.SwapsRefused[0].Reason != sim.SwapStaleBase ||
+		len(res.Swaps) != 1 || res.Swaps[0].Pack != "town" {
+		t.Fatalf("swaps out of order: err %v applied %v refused %v", err, res.Swaps, res.SwapsRefused)
 	}
 }
 
-// A version that drops a whole Zone while Entities stand in it strands them:
-// their state is kept and their Commands refused unknown_zone, until content
-// brings the Zone back.
-func TestContentSwap_ARemovedZoneStrandsItsState(t *testing.T) {
+// A swap whose World removes a Zone the content in effect has is refused, a
+// deterministic no-op, whether or not anyone stands in it (review of #87): a
+// body in the Zone, or walking into it in the swap's tick, stays where the
+// content still has it.
+func TestContentSwap_ARemovedZoneIsRefused(t *testing.T) {
+	for _, occupied := range []bool{true, false} {
+		c := newContent(t)
+		e := contentEngine(t, c)
+		mustStep(t, e, c.swap(t, e, nil, "town", 3))
+		if occupied {
+			mustStep(t, e, simtest.Bind("docks", "ch-1", "Aldric", "pier"))
+		}
+		versions, digest := e.Content()
+		hash := e.StateHash()
+		res := mustStep(t, e, c.swap(t, e, nil, "town", 4))
+		if len(res.Swaps) != 0 || len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Reason != sim.SwapZoneRemoved {
+			t.Fatalf("occupied=%v: applied %v refused %v", occupied, res.Swaps, res.SwapsRefused)
+		}
+		if v, d := e.Content(); v["town"] != versions["town"] || d != digest || e.World().Zones["docks"] == nil {
+			t.Fatalf("occupied=%v: a refused swap changed the content in effect: %v", occupied, v)
+		}
+		if e.StateHash() == hash {
+			t.Fatal("the refused swap's record was not consumed: the offset did not move")
+		}
+		if occupied {
+			if d := mustStep(t, e, simtest.Look("docks", "ch-1")).Events[0].Envelope.GetRoomDescribed(); d.GetRoomId() != "pier" {
+				t.Fatalf("after the refusal: %v", d)
+			}
+		}
+	}
+}
+
+// A swap built on a World the log has moved past is stale: consumed and
+// refused, a no-op, never a halt — the same on replay.
+func TestContentSwap_AStaleSwapIsANoOp(t *testing.T) {
 	c := newContent(t)
 	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "town", 1))
+	stale := c.swap(t, e, nil, "town", 2) // built on town@1
 	mustStep(t, e, c.swap(t, e, nil, "town", 3))
-	mustStep(t, e, simtest.Bind("docks", "ch-1", "Aldric", "pier"))
-	res := mustStep(t, e, c.swap(t, e, nil, "town", 4))
-	if s := res.Swaps[0].Stranded; len(s) != 1 || s[0] != "docks" {
-		t.Fatalf("stranded %v", s)
+	_, digest := e.Content()
+	res := mustStep(t, e, stale)
+	if len(res.Swaps) != 0 || len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Reason != sim.SwapStaleBase {
+		t.Fatalf("applied %v refused %v", res.Swaps, res.SwapsRefused)
 	}
-	if ent := e.State().Zones["docks"].Entities["ch-1"]; ent == nil || ent.Room != "pier" {
-		t.Fatalf("stranded body %+v", ent)
+	if v, d := e.Content(); v["town"] != 3 || d != digest {
+		t.Fatalf("in effect %v after a stale swap", v)
 	}
-	if r := rejection(t, mustStep(t, e, simtest.Look("docks", "ch-1")).Events); r.GetCode() != sim.CodeUnknownZone {
-		t.Fatalf("code %q", r.GetCode())
+
+	// A genesis swap on a World that already has content is stale too.
+	genesis := c.swap(t, contentEngine(t, c), nil, "town", 1)
+	if res := mustStep(t, e, genesis); len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Reason != sim.SwapStaleBase {
+		t.Fatalf("a second genesis: %v", res.SwapsRefused)
 	}
-	mustStep(t, e, c.swap(t, e, nil, "town", 3))
-	if d := mustStep(t, e, simtest.Look("docks", "ch-1")).Events[0].Envelope.GetRoomDescribed(); d.GetRoomId() != "pier" {
-		t.Fatalf("back in docks: %v", d)
+}
+
+// A ContentSwap not on the World Partition, or carrying a zone_id, is refused.
+func TestContentSwap_AMisroutedSwapIsRefused(t *testing.T) {
+	c := newContent(t)
+	e := contentEngine(t, c)
+	swap := c.swap(t, e, nil, "town", 1)
+	swap.ZoneId = "town"
+	p := sim.PartitionFor("town")
+	res, err := e.Step(sim.TickInput{Records: []sim.Record{{Partition: p, Offset: 0, Command: swap}}})
+	if err != nil || len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Reason != sim.SwapMisrouted {
+		t.Fatalf("err %v refused %v", err, res.SwapsRefused)
 	}
+	if v, _ := e.Content(); len(v) != 0 {
+		t.Fatalf("a misrouted swap applied: %v", v)
+	}
+}
+
+// A source that hands back a Zone with no fallback of its own is not trusted:
+// the swap is refused rather than relocating anyone to nowhere.
+func TestContentSwap_AFallbacklessZoneIsRefused(t *testing.T) {
+	c := newContent(t)
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "town", 1))
+	bad := &badFallback{c}
+	e2 := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 7, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: bad})
+	swap := c.swap(t, e2, nil, "town", 1)
+	topo, _ := bad.Prepare(map[string]uint64{}, swap.GetContentSwap())
+	d := sim.ContentDigest(topo)
+	swap.GetContentSwap().WorldDigest = d[:]
+	res := mustStep(t, e2, swap)
+	if len(res.SwapsRefused) != 1 || res.SwapsRefused[0].Reason != sim.SwapFallbackMissing {
+		t.Fatalf("refused %v", res.SwapsRefused)
+	}
+}
+
+// badFallback builds c's World and then empties every Zone's fallback.
+type badFallback struct{ c *fakeContent }
+
+func (b *badFallback) Prepare(in map[string]uint64, s *logv1.ContentSwap) (sim.Topology, error) {
+	topo, err := b.c.Prepare(in, s)
+	if err != nil {
+		return topo, err
+	}
+	for _, z := range topo.World.Zones {
+		z.Fallback = ""
+	}
+	return topo, nil
+}
+
+// A Character in transit when a swap removes the Room it is walking into lands
+// in that Zone's fallback with EntityRelocated, and is never bounced or lost.
+func TestContentSwap_AnArrivalIntoARemovedRoomLandsAtTheFallback(t *testing.T) {
+	reg, err := simtest.Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	crossing := func(pierToo bool) []*contentv1.ZoneDefinition {
+		town := zdef("town", "plaza", rdef("plaza", xdef("north", "hall")),
+			rdef("hall", xdef("south", "plaza"), &contentv1.ExitDefinition{Direction: "east", ToZone: "docks", ToRoom: "pier"}))
+		docks := zdef("docks", "quay", rdef("quay"), rdef("pier", &contentv1.ExitDefinition{Direction: "west", ToZone: "town", ToRoom: "hall"}))
+		if !pierToo {
+			town = zdef("town", "plaza", rdef("plaza", xdef("north", "hall")), rdef("hall", xdef("south", "plaza")))
+			docks = zdef("docks", "quay", rdef("quay"))
+		}
+		return []*contentv1.ZoneDefinition{town, docks}
+	}
+	c := &fakeContent{templates: reg, zones: map[string]map[uint64][]*contentv1.ZoneDefinition{"world": {1: crossing(true), 2: crossing(false)}}}
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "world", 1))
+	mustStep(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	mustStep(t, e, simtest.Move("town", "ch-1", "north"))
+	// east from the hall leaves town this tick; the swap removes the pier.
+	res := mustStep(t, e, simtest.Move("town", "ch-1", "east"), c.swap(t, e, nil, "world", 2))
+	if len(res.Outbound) != 1 || len(res.Swaps) != 1 {
+		t.Fatalf("outbound %v swaps %v", res.Outbound, res.Swaps)
+	}
+	arrived := mustStep(t, e, res.Outbound[0])
+	rel := ofType(arrived.Events, sim.EvEntityRelocated)
+	if len(rel) != 1 || rel[0].Envelope.GetEntityRelocated().GetToRoomId() != "quay" || rel[0].Envelope.GetEntityRelocated().GetFromRoomId() != "pier" {
+		t.Fatalf("arrival events %v", arrived.Events)
+	}
+	if ent := e.State().Zones["docks"].Entities["ch-1"]; ent == nil || ent.Room != "quay" {
+		t.Fatalf("body %+v", ent)
+	}
+}
+
+// Relocation across two swaps: an Entity moved to a fallback by one swap is
+// moved on by a later one that removes that Room too.
+func TestContentSwap_RelocationAcrossTwoSwaps(t *testing.T) {
+	reg, _ := simtest.Templates()
+	c := &fakeContent{templates: reg, zones: map[string]map[uint64][]*contentv1.ZoneDefinition{"town": {
+		1: {zdef("town", "hall", rdef("plaza", xdef("north", "hall")), rdef("hall", xdef("south", "plaza"), xdef("north", "attic")), rdef("attic", xdef("south", "hall")))},
+		2: {zdef("town", "hall", rdef("plaza", xdef("north", "hall")), rdef("hall", xdef("south", "plaza")))},
+		3: {zdef("town", "plaza", rdef("plaza"))},
+	}}}
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "town", 1))
+	mustStep(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	mustStep(t, e, simtest.Move("town", "ch-1", "north"), simtest.Move("town", "ch-1", "north"))
+	if r := e.State().Zones["town"].Entities["ch-1"].Room; r != "attic" {
+		t.Fatalf("fixture: in %s", r)
+	}
+	mustStep(t, e, c.swap(t, e, nil, "town", 2))
+	if r := e.State().Zones["town"].Entities["ch-1"].Room; r != "hall" {
+		t.Fatalf("after town@2: in %s", r)
+	}
+	res := mustStep(t, e, c.swap(t, e, nil, "town", 3))
+	if r := e.State().Zones["town"].Entities["ch-1"].Room; r != "plaza" || len(res.Swaps[0].Relocations) != 1 {
+		t.Fatalf("after town@3: in %s, %v", r, res.Swaps)
+	}
+}
+
+// A swap behind a record whose Zone faulted on its Partition is requeued with
+// it, not applied: the tick applies nothing past the fault there.
+func TestContentSwap_BehindAFaultIsRequeued(t *testing.T) {
+	// A fault precedes a swap on its Partition only when a Zone lives on the
+	// World Partition, so the fixture stands one up there, and a Look into it
+	// panics.
+	c := newContent(t)
+	zone := zoneOnWorldPartition(t)
+	panicky := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 7, Partitions: simtest.AllPartitions(), Content: c,
+		Handlers: map[sim.CommandKind]sim.Apply{sim.KindLook: func(*sim.ApplyContext, *logv1.LoggedCommand) error { panic("boom") }}})
+	mustStep(t, panicky, c.swap(t, panicky, nil, "town", 1))
+	panicky.State().Zones[zone] = &sim.ZoneState{ID: zone, Entities: map[sim.EntityID]*sim.EntityState{}}
+	panicky.World().Zones[zone] = &sim.Zone{ID: zone, Rooms: map[sim.RoomID]*sim.Room{"r": {ID: "r"}}, Fallback: "r", Partition: sim.WorldPartition}
+	next := c.swap(t, panicky, nil, "town", 2)
+	off := panicky.State().Offsets[sim.WorldPartition]
+	res, err := panicky.Step(sim.TickInput{Records: []sim.Record{
+		{Partition: sim.WorldPartition, Offset: off, Command: simtest.Look(string(zone), "x")},
+		{Partition: sim.WorldPartition, Offset: off + 1, Command: next},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Faults) != 1 || len(res.Swaps) != 0 || len(res.Unapplied) != 2 {
+		t.Fatalf("faults %v swaps %v unapplied %d", res.Faults, res.Swaps, len(res.Unapplied))
+	}
+	if v, _ := panicky.Content(); v["town"] != 1 {
+		t.Fatalf("a swap behind a fault applied: %v", v)
+	}
+}
+
+// zoneOnWorldPartition is a Zone ID that sim.PartitionFor maps to Partition 0.
+func zoneOnWorldPartition(t *testing.T) sim.ZoneID {
+	t.Helper()
+	for i := 0; i < 10000; i++ {
+		z := sim.ZoneID(fmt.Sprintf("z%d", i))
+		if sim.PartitionFor(z) == sim.WorldPartition {
+			return z
+		}
+	}
+	t.Fatal("no zone on partition 0")
+	return ""
 }
 
 // An Engine with no ContentSource cannot apply a swap, and says so.

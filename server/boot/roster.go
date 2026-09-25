@@ -29,10 +29,10 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// Checked against the content in effect, after reconcile
+	// (CheckSpawnInEffect): the roster is built before the loop runs, when
+	// no content is in effect yet.
 	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
-	if err := rt.checkSpawn(); err != nil {
-		return err
-	}
 	r, err := roster.New(roster.Options{
 		Accounts:        rt.Accounts,
 		Bindings:        rt.Bindings,
@@ -59,10 +59,18 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	return nil
 }
 
+// spawnRoom is character.spawn_room as a RoomRef; zero when unset or malformed.
+func (rt *Runtime) spawnRoom() sim.RoomRef {
+	zone, room, err := rt.Cfg.SpawnRoom()
+	if err != nil {
+		return sim.RoomRef{}
+	}
+	return sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
+}
+
 // checkSpawn refuses content a Character cannot be made in: no
-// character.spawn_room, or no andara.core.Character. StartRoster checks the
-// candidate content LoadContent validated; CheckSpawnInEffect checks it again
-// once content is in effect, which is what the roster actually spawns into.
+// character.spawn_room, or no andara.core.Character — against the content in
+// effect, which is what the roster spawns into.
 func (rt *Runtime) checkSpawn() error {
 	zone, room, err := rt.Cfg.SpawnRoom()
 	if err != nil {

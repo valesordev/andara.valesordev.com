@@ -114,7 +114,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	halt := func() { stopLoop(); <-loopDone }
 
 	// The operator surface, so /readyz answers 503 while content comes into
-	// effect.
+	// effect and until the Gateway serves.
 	srv := &http.Server{
 		Addr:              cfg.HTTPListen(),
 		Handler:           rt.Handler(),
@@ -184,6 +184,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Ingress:                 rt.Ingress,
 		Egress:                  rt.Egress,
 		Roster:                  rt.Roster,
+		Content:                 rt.Content.InEffect,
 		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
 		OnDrain:                 func() { rt.Egress.Drain(); rt.Drain() },
 		Log:                     tel.Log,
@@ -202,6 +203,8 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
+	// Ready once the Gateway serves with content in effect (AW-SRV-012).
+	rt.MarkReady()
 
 	// Active Pointer moves, applied through the log for as long as the
 	// process runs (AW-SRV-012). A no-op for the dir source.

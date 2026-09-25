@@ -84,6 +84,9 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	if code := rt.LoadContent(ctx); code != boot.ExitOK {
 		return projector.ExitConfig
 	}
+	if rt.ContentMetrics != nil {
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+	}
 
 	ws, err := store.Open(store.Options{
 		Kind:       cfg.SnapshotStore,

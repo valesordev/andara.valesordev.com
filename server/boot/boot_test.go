@@ -339,4 +339,6 @@ func serveMemory(t *testing.T, rt *Runtime) {
 	if code := rt.ReconcileContent(ctx); code != ExitOK {
 		t.Fatalf("reconcile: exit %d", code)
 	}
+	// main marks ready once the Gateway serves; there is none here.
+	rt.MarkReady()
 }

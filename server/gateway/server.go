@@ -67,6 +67,10 @@ type Options struct {
 	Rechecker       Rechecker
 	RecheckInterval time.Duration
 
+	// Content reports the content in effect for GetServerInfo (AW-SRV-012):
+	// pack versions and their world_digest. Nil leaves the fields empty.
+	Content func() (map[string]uint64, [32]byte)
+
 	// Seams. Nil selects the stub for each.
 	Ingress Ingress
 	Egress  Egress

@@ -286,41 +286,26 @@ func TestArrive_RebuildsEntityExactly(t *testing.T) {
 	}
 }
 
-// An Arrive whose Room is gone sends the Entity back where it came from,
-// once; the bounce carries no origin, so a second failure rejects.
-func TestArrive_BouncesOnceThenRejects(t *testing.T) {
+// An Arrive whose Room is gone lands the Entity in the target Zone's
+// fallback Room with EntityRelocated{room_removed}: every Zone has one, so an
+// arrival is never bounced and never lost (AW-SRV-012, review of #87 — this
+// replaces AW-SRV-003's bounce-once-then-reject).
+func TestArrive_IntoAGoneRoomLandsAtTheFallback(t *testing.T) {
 	e := verbEngine(t)
 	out := step(t, e, simtest.Move("town", "alice", "east")).Outbound[0]
 	out.GetArrive().RoomId = "vanished"
 	res := step(t, e, out)
-	if rej := rejection(t, res.Events); rej.GetCode() != sim.CodeUnknownRoom {
-		t.Fatalf("rejection = %v", rej)
+	if len(ofType(res.Events, sim.EvCommandRejected)) != 0 || len(res.Outbound) != 0 {
+		t.Fatalf("rejected or bounced: %v outbound=%v", res.Events, res.Outbound)
 	}
-	if len(res.Outbound) != 1 || res.Outbound[0].GetZoneId() != "town" || res.Outbound[0].GetArrive().GetRoomId() != "plaza" {
-		t.Fatalf("no bounce: %v", res.Outbound)
+	rel := ofType(res.Events, sim.EvEntityRelocated)
+	fallback := e.World().Zones["wilds"].Fallback
+	if len(rel) != 1 || rel[0].Envelope.GetEntityRelocated().GetFromRoomId() != "vanished" || rel[0].Envelope.GetEntityRelocated().GetToRoomId() != string(fallback) ||
+		rel[0].Envelope.GetEntityRelocated().GetReason() != sim.ReasonRoomRemoved {
+		t.Fatalf("relocation = %v", res.Events)
 	}
-	back := res.Outbound[0]
-	if back.GetArrive().GetOriginZoneId() != "" {
-		t.Fatal("a bounce must not carry an origin, or two gone Rooms would ping-pong forever")
-	}
-	if e.State().Zones["wilds"].Entities["alice"] != nil {
-		t.Fatal("placed in a Room that does not exist")
-	}
-	res = step(t, e, back)
-	if got := e.State().Zones["town"].Entities["alice"]; got == nil || got.Room != "plaza" {
-		t.Fatalf("not returned: %+v", got)
-	}
-	if a := ofType(res.Events, sim.EvCharacterArrived); len(a) != 1 || a[0].Envelope.GetCharacterArrived().GetFromDirection() != "east" {
-		t.Fatalf("return arrival = %v", res.Events)
-	}
-
-	// A bounce whose own Room is gone is the end of the line: rejected,
-	// reported, no further outbound.
-	back.GetArrive().RoomId = "also-vanished"
-	e2 := verbEngine(t)
-	res = step(t, e2, back)
-	if rej := rejection(t, res.Events); rej.GetCode() != sim.CodeUnknownRoom || len(res.Outbound) != 0 {
-		t.Fatalf("second failure: %v outbound=%v", rej, res.Outbound)
+	if got := e.State().Zones["wilds"].Entities["alice"]; got == nil || got.Room != fallback {
+		t.Fatalf("alice = %+v, want her in %s", got, fallback)
 	}
 }
 
