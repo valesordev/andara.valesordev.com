@@ -169,6 +169,7 @@ func TestKafkaResolver_ResolvesFromActivePointers(t *testing.T) {
 	}
 
 	l := NewLoader(LoaderOptions{Store: r, Packs: []string{AllPacks}})
+	attachEngine(l)
 	rejects, err := l.LoadAll(ctx)
 	if err != nil || len(rejects) != 0 {
 		t.Fatalf("rejects = %+v err = %v", rejects, err)

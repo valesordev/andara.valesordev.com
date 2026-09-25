@@ -53,14 +53,22 @@ type RunOptions struct {
 	// Topics; empty means the production names. Tests use throwaway ones.
 	CommandsTopic, EventsTopic, StateTopic string
 
-	// The replica is built exactly as the server builds its Engine: the
-	// same World, Templates, and seed (0 derives it from the World). The
+	// The replica is built exactly as the server builds its Engine: from no
+	// content, with the content in effect built only from the ContentSwaps
+	// it replays through Content (AW-SRV-012), and the same seed. The
 	// handler table is not an option: it is always sim.Handlers(), the
 	// server's own, so no caller can make the replica a second
 	// implementation (TestReplicaHasNoApplyOfItsOwn).
-	World     *sim.World
-	Templates *sim.TemplateRegistry
-	Seed      uint64
+	//
+	// World is the candidate topology — what the content source names now —
+	// and only scopes which Zones a complete snapshot round must carry.
+	World   *sim.World
+	Content sim.ContentSource
+	// OnSwaps is told every swap the replica applies, and the content a
+	// round was restored with, so ContentVersion follows the content in
+	// effect.
+	OnSwaps func([]sim.SwapApplied)
+	Seed    uint64
 
 	// Store is where snapshot rounds are read, read-only; nil means there
 	// are none and bootstrap is from offset zero.
@@ -120,7 +128,7 @@ func Run(ctx context.Context, o RunOptions) error {
 	if eng == nil {
 		return nil // ctx ended before the World produced a first boundary
 	}
-	p := New(eng, Options{ContentVersion: o.ContentVersion})
+	p := New(eng, Options{ContentVersion: o.ContentVersion, OnSwaps: o.OnSwaps})
 
 	prod, err := NewProducer(ctx, o.Brokers, o.StateTopic)
 	if err != nil {
@@ -243,7 +251,7 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 // --from-zero or there is none, else at tick 0 over the Partitions the first
 // boundary names — the server's own set, which the State Hash covers.
 func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryReader) (*sim.Engine, sim.Tick, error) {
-	cfg := sim.Config{Seed: o.Seed, Handlers: sim.Handlers()}
+	cfg := sim.Config{Seed: o.Seed, Handlers: sim.Handlers(), Content: o.Content}
 	owned := make([]sim.ZoneID, 0, len(o.World.Zones))
 	for id := range o.World.Zones {
 		owned = append(owned, id)
@@ -264,9 +272,24 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 			return nil, 0, fmt.Errorf("snapshot store: %w", err)
 		}
 		if ok {
-			eng, err := sim.RestoreEngine(o.World, o.Templates, cfg, state)
+			if len(state.Content) == 0 {
+				return nil, 0, fmt.Errorf("snapshot round at tick %d records no content in effect: it predates AW-SRV-012; bootstrap with --from-zero", round.Tick)
+			}
+			topo, err := sim.PrepareContent(o.Content, state.Content)
+			if err != nil {
+				return nil, 0, fmt.Errorf("snapshot round at tick %d: rebuild its content: %w", round.Tick, err)
+			}
+			eng, err := sim.RestoreEngine(topo.World, topo.Templates, cfg, state)
 			if err != nil {
 				return nil, 0, err
+			}
+			if o.OnSwaps != nil {
+				restored := make([]sim.SwapApplied, 0, len(state.Content))
+				for p, v := range state.Content {
+					restored = append(restored, sim.SwapApplied{Pack: p, Version: v})
+				}
+				sort.Slice(restored, func(i, j int) bool { return restored[i].Pack < restored[j].Pack })
+				o.OnSwaps(restored)
 			}
 			o.Log.Info("bootstrap from snapshot round", "tick", uint64(round.Tick), "zones", len(round.Zones))
 			return eng, round.Tick, nil
@@ -296,7 +319,7 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 		}
 		cfg.Partitions = parts
 		boundaries.buf = append(first, boundaries.buf...)
-		return sim.NewEngine(o.World, o.Templates, cfg), 0, nil
+		return sim.NewEngine(sim.EmptyWorld(), nil, cfg), 0, nil
 	}
 }
 

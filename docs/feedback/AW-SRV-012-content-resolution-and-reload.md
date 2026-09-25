@@ -479,3 +479,67 @@ error from compile to publish for the corpus's convenience.
 **Order of work:** land the `store_unavailable` retry and the B1 compiler change whenever they're
 ready. The swap, relocation, the pending gauge and boot wiring can start now, against the rules
 above.
+
+---
+
+## Implementation, 2026-09-25: the second half, built to #85's rulings
+
+Three PRs, stacked: #86, the compiler half of the fallback pair (architecture's corpus PR stacks
+on it), then #87, the swap in the sim, then the wiring. Every acceptance criterion now has a test,
+and the record is in the story. The decisions below were made inside the rulings, where the rulings
+didn't reach. They're recorded for the §8 review, and any of them can be reversed.
+
+### Decisions for architecture's review
+
+1. **A version that drops a whole Zone strands it.** If Entities stand in a Zone the new content
+   no longer has, there is no fallback Room to move them to, because the fallback is the Zone's
+   own. The Zone's state is kept and hashed, its Commands are refused `unknown_zone` (as for a
+   Zone never loaded), and the Loader logs `zone stranded` at `warn`. When content brings the Zone
+   back, the Entities are where they were. A swap deletes nothing. The alternative, refusing such
+   a version at validation, would mean reading live Entity state from the Loader, off the tick,
+   and that's a race.
+2. **A dormant body moves silently.** An Entity whose Room was removed moves to the fallback
+   whether or not it is present, so "where you were" stays a Room that exists. Only a present one
+   gets `EntityRelocated`: a dormant body is addressed by no Event (AW-SRV-014), and announcing it
+   to the fallback Room would name a Character who isn't there. Both are counted in
+   `andara_content_relocations_total` and logged.
+3. **`content.source=dir` is one pack, `dir`, at version 0.** A directory's Zones carry no pack,
+   so the directory is recorded as a unit. The pack ID and the version appear in the log and in
+   `andara_build_info`.
+4. **Pre-rule logs:** "no swap before its first tick boundary" is implemented as *a Command
+   applied while no content was in effect* (`boot.ErrPreRuleLog`). A log whose leading ticks are
+   empty and whose first swap comes after them is a normal post-rule log. It happens whenever the
+   first ticks run before the genesis swap is consumed. The literal reading would refuse it.
+5. **A swap the command log won't take is `store_unavailable`,** and is retried like a content
+   store fault. It's the platform failing, not the Builder (`ErrProduce`).
+6. **The Loader serializes swaps.** It produces one and waits for it to apply before it evaluates
+   the next, so it always validates against what the World is running. Two swaps in one tick still
+   apply correctly (the sim tests cover it); the live path just never produces them.
+7. **`sim.seed` derivation moved.** The default seed was derived from the topology the Engine
+   started with, and every Engine now starts empty. So the default seed is the same for every
+   World unless `sim.seed` is set. Nothing depends on two Worlds' seeds differing, but this is a
+   change in what "derived from the World" means.
+8. **The projector re-renders every Zone on a swap's tick** and tombstones every Room the swap
+   removed. A swap that relocates nobody emits no Event, so the `Touched` table alone would leave
+   removed Rooms on `andara.state.v1` forever.
+9. **The Gateway starts after content is in effect.** `main` now recovers, runs the loop, and
+   reconciles before it builds the Gateway, so no Session can bind into a World with no Zones.
+   `/readyz` is served from the start and answers 503 until content is in effect. The roster is
+   built before the loop starts (the loop reads it every tick), and its spawn Room is checked
+   again against the content in effect.
+
+### Things found that are not this story's
+
+- **`andara_build_info` was never emitted.** `AW-INF-002` (`done`) specifies
+  `andara_build_info{version, commit, env, content_version}`, and the tick-health dashboard queries
+  it, but no code registered it. It's emitted now, as this story's Scope says, with one series per
+  pack in effect (`pack`, `content_version`). The single-`content_version` shape in `AW-INF-002`
+  couldn't name more than one pack. Architecture may want the dashboard panel to follow.
+- **`Admin.GetServerInfo` can't carry per-pack versions.** Its response has one
+  `content_pack_id` and one `content_version`. The Data / state impact section says it carries
+  content "per pack". That's a proto change, so it's architecture's; nothing here sets the fields.
+- **A swap can remove `character.spawn_room`.** The spawn Room is checked at boot against the
+  content in effect, but a later swap can remove it, and every create after that spawns into a
+  Room that doesn't exist (the bind is refused). The natural rule is to refuse such a version
+  whenever it removes the configured spawn Room. That's a contract line for this story or
+  `AW-SRV-013`'s activation check.

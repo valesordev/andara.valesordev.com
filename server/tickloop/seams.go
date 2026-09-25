@@ -74,7 +74,7 @@ func NewMemorySource() *MemorySource {
 func (m *MemorySource) Push(cmd *logv1.LoggedCommand) sim.Record {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	p := sim.PartitionFor(sim.ZoneID(cmd.GetZoneId()))
+	p := sim.CommandPartition(cmd)
 	r := sim.Record{Partition: p, Offset: m.next[p], Command: cmd}
 	m.next[p]++
 	m.end[p] = m.next[p]

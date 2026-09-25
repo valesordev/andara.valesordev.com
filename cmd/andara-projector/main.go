@@ -75,17 +75,14 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	tel.Log.Info("andara-projector state starting", "version", version, "commit", commit,
 		"group", config.ProjectorGroup(cfg.Environment), "batch_ticks", cfg.BatchTicks)
 
-	// Content is loaded exactly as the server loads it — the same adapter,
-	// validator, and Template registry — because the seed is derived from
-	// the World, and a replica with another World hashes differently at
-	// tick 1.
+	// Content is opened exactly as the server opens it — the same adapter,
+	// validator, and Template registry. The replica's content in effect is
+	// what the log's ContentSwaps name (AW-SRV-012), prepared through this
+	// source, so a replica can never run on other content than the World
+	// it replicates without the digest saying so.
 	rt := boot.New(cfg.Config, tel)
 	if code := rt.LoadContent(ctx); code != boot.ExitOK {
 		return projector.ExitConfig
-	}
-	zoneVersions := map[sim.ZoneID]string{}
-	if rt.Content != nil {
-		zoneVersions = rt.Content.ZoneVersions()
 	}
 
 	ws, err := store.Open(store.Options{
@@ -121,13 +118,14 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		Brokers:        cfg.KafkaBrokers,
 		Group:          config.ProjectorGroup(cfg.Environment),
 		World:          rt.World,
-		Templates:      rt.Templates,
+		Content:        rt.Content,
+		OnSwaps:        rt.Content.Applied,
 		Seed:           cfg.SimSeed,
 		Store:          ws,
 		Rebuild:        cfg.Rebuild,
 		FromZero:       cfg.FromZero,
 		BatchTicks:     cfg.BatchTicks,
-		ContentVersion: func(z sim.ZoneID) string { return zoneVersions[z] },
+		ContentVersion: func(z sim.ZoneID) string { return rt.Content.ZoneVersions()[z] },
 		Metrics:        metrics,
 		Log:            tel.Log,
 		Tracer:         tel.Tracer,

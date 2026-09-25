@@ -253,6 +253,34 @@ func (e *Engine) applySwap(p preparedSwap, emit func(ZoneID, string, string, Sco
 	return out
 }
 
+// PrepareContent builds the topology a set of versions in effect produces,
+// through src: the last pack by name prepared as a swap on top of the rest.
+// How a snapshot round's recorded content is rebuilt (RestoreEngine).
+func PrepareContent(src ContentSource, versions map[string]uint64) (Topology, error) {
+	if len(versions) == 0 {
+		return Topology{World: EmptyWorld()}, nil
+	}
+	if src == nil {
+		return Topology{}, ErrNoContentSource
+	}
+	packs := make([]string, 0, len(versions))
+	for p := range versions {
+		packs = append(packs, p)
+	}
+	sort.Strings(packs)
+	last := packs[len(packs)-1]
+	rest := copyVersions(versions)
+	delete(rest, last)
+	topo, err := src.Prepare(rest, &logv1.ContentSwap{PackId: last, Version: versions[last]})
+	if err != nil {
+		return Topology{}, err
+	}
+	if topo.World == nil {
+		topo.World = EmptyWorld()
+	}
+	return topo, nil
+}
+
 // Content reports the pack versions in effect and their digest; an empty map
 // and a zero digest before the first swap.
 func (e *Engine) Content() (map[string]uint64, [32]byte) {

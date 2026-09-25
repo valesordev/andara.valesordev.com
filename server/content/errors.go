@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/valesordev/andara/server/sim"
 )
@@ -66,6 +67,14 @@ type (
 	ErrValidation struct {
 		Findings []sim.ValidationError
 	}
+	// ErrFallbackMissing: every finding that refused the version is a Zone
+	// with no fallback_room, or one naming a Room it does not contain (AC-10).
+	// Its own type so the metric says fallback_missing, not validation; Zone
+	// and Room name the first, Findings carries them all.
+	ErrFallbackMissing struct {
+		Zone, Room string
+		Findings   []sim.ValidationError
+	}
 	// ErrPackMismatch: a Template blob whose name-pack is not the pack that
 	// published it (AC-11).
 	ErrPackMismatch struct {
@@ -100,8 +109,17 @@ type (
 	// to unload it.
 	ErrCoreRollback struct {
 		From, To uint64
-		Pack     string
-		Pin      uint64
+		// Holding is every serving pack compiled against a core newer than
+		// To, by name, each with the core version it pins.
+		Holding []PackPin
+	}
+	// ErrProduce: the ContentSwap for an accepted version could not be
+	// written to the command log. Nothing about the content is wrong, so it
+	// counts as store_unavailable and is retried (AW-SRV-012 §5).
+	ErrProduce struct {
+		Pack    string
+		Version uint64
+		Err     error
 	}
 	// ErrStoreUnavailable: the content store could not be read. Wraps the
 	// underlying failure so a log line still names it.
@@ -142,10 +160,34 @@ func (e *ErrBlobTooLarge) Error() string {
 	return fmt.Sprintf("blob %s is %d bytes, over content.max_blob_bytes %d", e.Path, e.Bytes, e.Limit)
 }
 
-func (e *ErrCoreRollback) Error() string {
-	return fmt.Sprintf("andara.core cannot roll back from %d to %d: %s@ is compiled against andara.core@%d and is serving",
-		e.From, e.To, e.Pack, e.Pin)
+// PackPin is a serving pack and the core version it was compiled against.
+type PackPin struct {
+	Pack string
+	Core uint64
 }
+
+func (e *ErrCoreRollback) Error() string {
+	held := make([]string, len(e.Holding))
+	for i, h := range e.Holding {
+		held[i] = fmt.Sprintf("%s (andara.core@%d)", h.Pack, h.Core)
+	}
+	return fmt.Sprintf("andara.core cannot roll back from %d to %d: serving packs are compiled against a newer core: %s; roll them back first",
+		e.From, e.To, strings.Join(held, ", "))
+}
+
+func (e *ErrFallbackMissing) Error() string {
+	if e.Room == "" {
+		return fmt.Sprintf("Zone %s declares no fallback_room (%d finding(s))", e.Zone, len(e.Findings))
+	}
+	return fmt.Sprintf("Zone %s names fallback_room %s, which it does not contain (%d finding(s))", e.Zone, e.Room, len(e.Findings))
+}
+
+func (e *ErrProduce) Error() string {
+	return fmt.Sprintf("the content swap for %s could not be written to the command log: %s", ManifestKey(e.Pack, e.Version), e.Err.Error())
+}
+
+// Unwrap exposes the producer's error.
+func (e *ErrProduce) Unwrap() error { return e.Err }
 
 func (e *ErrStoreUnavailable) Error() string {
 	return fmt.Sprintf("content store unavailable during %s: %s", e.Op, e.Err.Error())
@@ -179,6 +221,7 @@ func Reason(err error) string {
 		pm *ErrPackMismatch
 		mm *ErrManifestMissing
 		vl *ErrValidation
+		fm *ErrFallbackMissing
 	)
 	switch {
 	case errors.As(err, &fv):
@@ -195,6 +238,8 @@ func Reason(err error) string {
 		return ReasonPackMismatch
 	case errors.As(err, &mm):
 		return ReasonManifestAbsent
+	case errors.As(err, &fm):
+		return ReasonFallbackRoom
 	case errors.As(err, &vl):
 		return ReasonValidation
 	default:
@@ -209,11 +254,25 @@ func IsStoreFault(err error) bool {
 	return Reason(err) == ReasonStoreUnavailable
 }
 
+// IsBuilderFault reports whether a rejection was a Builder's content being
+// wrong: the reasons docs/specs/slo/content-freshness.md excludes, because
+// the platform is not failing to serve anything. Every other reason is the
+// platform's, and a version refused for one stays pending.
+func IsBuilderFault(err error) bool {
+	switch Reason(err) {
+	case ReasonValidation, ReasonFallbackRoom, ReasonPackMismatch, ReasonBlobTooLarge:
+		return true
+	}
+	return false
+}
+
 // Findings renders a rejection as validation findings, so a refused load logs
 // through the same taxonomy a refused boot does (AW-SRV-001).
 func Findings(err error) []sim.ValidationError {
 	switch e := err.(type) {
 	case *ErrValidation:
+		return e.Findings
+	case *ErrFallbackMissing:
 		return e.Findings
 	case *ErrFormatVersion:
 		return []sim.ValidationError{{File: e.Path, Code: sim.ErrUnsupportedVersion, Detail: e.Error()}}

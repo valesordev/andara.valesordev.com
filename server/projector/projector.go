@@ -44,6 +44,10 @@ type Options struct {
 	// for Room and Zone records (AC-7). Nil, or "", leaves the field empty;
 	// an Entity's comes from the Entity itself.
 	ContentVersion func(sim.ZoneID) string
+	// OnSwaps is told the ContentSwaps each replayed tick applied, before the
+	// tick is rendered, so ContentVersion names the new versions in the
+	// records the swap's tick produces (AW-SRV-012).
+	OnSwaps func([]sim.SwapApplied)
 }
 
 // Projector renders a replica Engine's state as records. It is not safe for
@@ -55,6 +59,9 @@ type Projector struct {
 	// tombstone deletes once the Entity is gone and its kind can no longer
 	// be read from state.
 	emitted map[sim.ZoneID]map[sim.EntityID]emittedKey
+	// world is the topology last rendered: what a ContentSwap moved the
+	// replica away from, so the Rooms it removed can be tombstoned.
+	world *sim.World
 }
 
 type emittedKey struct {
@@ -70,7 +77,7 @@ type emittedKey struct {
 // watching, and the index cannot know them: call Dump and then Reconcile with
 // the keys the topic actually holds.
 func New(e *sim.Engine, opts Options) *Projector {
-	p := &Projector{e: e, opts: opts, emitted: map[sim.ZoneID]map[sim.EntityID]emittedKey{}}
+	p := &Projector{e: e, opts: opts, emitted: map[sim.ZoneID]map[sim.EntityID]emittedKey{}, world: e.World()}
 	st := e.State()
 	for _, zid := range st.SortedZoneIDs() {
 		for _, ent := range st.Zones[zid].Entities {
@@ -149,6 +156,18 @@ func (p *Projector) Render(res sim.StepResult) ([]Out, error) {
 		out = append(out, Out{Key: k.key, Partition: sim.PartitionFor(zid), Kind: k.kind, Tick: st.Tick})
 	}
 	touched := Touched(res.Events)
+	if len(res.Swaps) > 0 {
+		// A ContentSwap changes topology without an Event per Room (AW-SRV-012):
+		// every Room the new content removed is tombstoned, and every Zone is
+		// rendered whole, so the topic holds the new topology and each record
+		// names the content version now in effect.
+		out = append(out, p.removedRooms(st.Tick)...)
+		for _, zid := range st.SortedZoneIDs() {
+			touched = append(touched, Aggregate{Zone: zid, All: true})
+		}
+		sortAggregates(touched)
+	}
+	p.world = p.e.World()
 	// A Zone touched whole is rendered whole, once; its other aggregates are
 	// already in that rendering.
 	whole := map[sim.ZoneID]bool{}
@@ -350,6 +369,34 @@ func (p *Projector) zoneRecord(zid sim.ZoneID) (Out, error) {
 		}
 	}
 	return p.record(zid, Key(statev1.AggregateKind_ZONE, zid, ""), statev1.AggregateKind_ZONE, p.contentVersion(zid), body)
+}
+
+// removedRooms is a tombstone for every Room the last rendered topology had
+// and the replica's current one does not, sorted by key.
+func (p *Projector) removedRooms(tick sim.Tick) []Out {
+	var out []Out
+	if p.world == nil {
+		return nil
+	}
+	now := p.e.World()
+	zids := make([]string, 0, len(p.world.Zones))
+	for id := range p.world.Zones {
+		zids = append(zids, string(id))
+	}
+	sort.Strings(zids)
+	for _, zs := range zids {
+		zid := sim.ZoneID(zs)
+		nz := now.Zones[zid]
+		for _, rid := range sortedRooms(p.world.Zones[zid]) {
+			if nz != nil {
+				if _, ok := nz.Rooms[rid]; ok {
+					continue
+				}
+			}
+			out = append(out, Out{Key: Key(statev1.AggregateKind_ROOM, zid, string(rid)), Partition: sim.PartitionFor(zid), Kind: statev1.AggregateKind_ROOM, Tick: tick})
+		}
+	}
+	return out
 }
 
 func (p *Projector) contentVersion(zid sim.ZoneID) string {

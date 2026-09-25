@@ -175,7 +175,7 @@ func TestOpen_DirReadsTheDirectory(t *testing.T) {
 	if len(verrs) != 0 {
 		t.Fatalf("open: %v", verrs)
 	}
-	inputs, errs := src.Zones()
+	inputs, _, errs := src.Candidates(context.Background())
 	if len(errs) != 0 || len(inputs) == 0 {
 		t.Fatalf("%d inputs, %v", len(inputs), errs)
 	}

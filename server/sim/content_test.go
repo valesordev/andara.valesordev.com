@@ -9,8 +9,11 @@ import (
 	"sort"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 )
@@ -363,5 +366,63 @@ func TestContentDigest_CoversTopologyNotProvenance(t *testing.T) {
 	}, sim.TemplateOptions{})
 	if len(errs) > 0 || sim.TemplatesCanonicalBytes(elsewhere) == nil || string(sim.TemplatesCanonicalBytes(elsewhere)) != string(sim.TemplatesCanonicalBytes(here)) {
 		t.Errorf("the digest reads a Template's file or source: %v", errs)
+	}
+}
+
+// A snapshot round carries the content in effect at its tick (envelope fields
+// 8 and 9), and a restore rebuilds that topology through the content source
+// and checks its digest before loading any body (AW-SRV-012, for AW-SRV-007).
+func TestSnapshot_CarriesAndRestoresTheContentInEffect(t *testing.T) {
+	c := newContent(t)
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "town", 3))
+	mustStep(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	versions, digest := e.Content()
+
+	snaps := e.SnapshotAll(1)
+	if len(snaps) == 0 {
+		t.Fatal("no snapshots")
+	}
+	for _, s := range snaps {
+		v, d := s.Content()
+		if v["town"] != 3 || d != digest {
+			t.Fatalf("snapshot of %s carries %v", s.Zone, v)
+		}
+	}
+	raw, err := snaps[0].Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	if len(env.GetContent()) != 1 || env.GetContent()[0].GetPackId() != "town" || env.GetContent()[0].GetVersion() != 3 || string(env.GetContentDigest()) != string(digest[:]) {
+		t.Fatalf("envelope content %v digest %x", env.GetContent(), env.GetContentDigest())
+	}
+
+	round := sim.RoundState{Tick: e.Tick(), StateVersion: sim.StateVersion, PRNG: e.State().RNG.State(), NextEventID: e.State().NextEventID,
+		Content: versions, ContentDigest: digest[:]}
+	for p, o := range e.State().Offsets {
+		round.Offsets = append(round.Offsets, sim.PartitionOffset{Partition: p, Offset: o})
+	}
+	for _, s := range snaps {
+		round.Zones = append(round.Zones, s.Body())
+	}
+	topo, err := sim.PrepareContent(c, versions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sim.RestoreEngine(topo.World, topo.Templates, sim.Config{Seed: 7, Handlers: sim.Handlers(), Content: c}, round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rv, rd := restored.Content(); rv["town"] != 3 || rd != digest || restored.StateHash() != e.StateHash() {
+		t.Fatalf("restored content %v, hash equal %v", rv, restored.StateHash() == e.StateHash())
+	}
+
+	other, _ := sim.PrepareContent(c, map[string]uint64{"town": 1})
+	if _, err := sim.RestoreEngine(other.World, other.Templates, sim.Config{Seed: 7}, round); !errors.Is(err, sim.ErrContentDigest) {
+		t.Fatalf("restore onto other content: err = %v", err)
 	}
 }

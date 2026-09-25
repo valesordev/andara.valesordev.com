@@ -61,6 +61,9 @@ func (p *Projector) Replay(boundaries []sim.TickCompleted, src sim.RecordSource,
 	err := p.e.ReplayEach(boundaries, src, func(res sim.StepResult) error {
 		b := boundaries[i]
 		i++
+		if len(res.Swaps) > 0 && p.opts.OnSwaps != nil {
+			p.opts.OnSwaps(res.Swaps)
+		}
 		recs, err := p.Render(res)
 		if err != nil {
 			return err

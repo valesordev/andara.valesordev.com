@@ -6,19 +6,57 @@ package content
 import (
 	"context"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 )
 
 func testLoader(t *testing.T, s Store, packs ...string) (*Loader, *Metrics) {
 	t.Helper()
 	m := NewMetrics(nil)
-	return NewLoader(LoaderOptions{Store: s, Packs: packs, Metrics: m}), m
+	l := NewLoader(LoaderOptions{Store: s, Packs: packs, Metrics: m})
+	attachEngine(l)
+	return l, m
+}
+
+// engineHarness is the tick loop in miniature: a produced ContentSwap is
+// applied by a real sim.Engine that prepares it through the Loader, and the
+// applied swaps are reported back, so "serving" in these tests means what it
+// means in the server — applied, with its digest checked (AW-SRV-012).
+type engineHarness struct {
+	mu sync.Mutex
+	e  *sim.Engine
+	l  *Loader
+	// fail, when set, refuses the produce.
+	fail error
+}
+
+func attachEngine(l *Loader) *engineHarness {
+	h := &engineHarness{l: l}
+	h.e = sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 1, Partitions: []int32{sim.WorldPartition}, Content: l})
+	l.SetProducer(h)
+	return h
+}
+
+func (h *engineHarness) ProduceSwap(_ context.Context, cmd *logv1.LoggedCommand) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.fail != nil {
+		return h.fail
+	}
+	p := sim.CommandPartition(cmd)
+	res, err := h.e.Step(sim.TickInput{Records: []sim.Record{{Partition: p, Offset: h.e.State().Offsets[p], Command: cmd}}})
+	if err != nil {
+		return err
+	}
+	h.l.Applied(res.Swaps)
+	return nil
 }
 
 func serving(t *testing.T, l *Loader, pack string) uint64 {

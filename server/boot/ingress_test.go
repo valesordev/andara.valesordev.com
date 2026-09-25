@@ -62,6 +62,9 @@ func TestStartIngress_MemoryLoopback(t *testing.T) {
 	loopCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(loopCtx) }()
+	if code := rt.ReconcileContent(ctx); code != ExitOK {
+		t.Fatalf("reconcile: exit %d", code)
+	}
 
 	// A Session bound to a Character the World does not hold: the
 	// Command is accepted and ordered, and the sim's answer is the Event.
@@ -156,6 +159,9 @@ func TestStartEgress_MemoryLoopback(t *testing.T) {
 	loopCtx, stop := context.WithCancel(ctx)
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(loopCtx) }()
+	if code := rt.ReconcileContent(ctx); code != ExitOK {
+		t.Fatalf("reconcile: exit %d", code)
+	}
 
 	principal := auth.Principal{AccountID: "acct", Roles: []auth.Role{auth.RolePlayer}}
 	sess := sessionFor("s-1", principal)

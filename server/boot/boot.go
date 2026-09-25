@@ -130,13 +130,20 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	if rt.ContentMetrics == nil {
 		rt.ContentMetrics = content.NewMetrics(rt.Tel.Reg)
 	}
+	// The candidate content: what the source names now, validated. It is
+	// not yet in effect — the log is the source of that (AW-SRV-012), and
+	// ReconcileContent brings it in through a ContentSwap — but a boot whose
+	// content cannot load at all still fails here, before anything starts.
 	src, loadErrs := content.Open(ctx, rt.contentOptions())
 	rt.Content = src
-	var inputs []sim.Input
+	var (
+		inputs     []sim.Input
+		candidates []sim.TemplateInput
+	)
 	if src != nil {
-		zones, zerrs := src.Zones()
-		inputs = zones
-		loadErrs = append(loadErrs, zerrs...)
+		zones, templates, cerrs := src.Candidates(ctx)
+		inputs, candidates = zones, templates
+		loadErrs = append(loadErrs, cerrs...)
 	}
 	loadFatal := false
 	errorCount := 0
@@ -192,7 +199,7 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		terrs   []sim.ValidationError
 	)
 	if src != nil {
-		tinputs, terrs = src.Templates()
+		tinputs = candidates
 	}
 	templateFatal := false
 	for _, e := range terrs {
@@ -246,7 +253,6 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		}
 		rt.World = world
 		rt.Templates = templates
-		rt.ready.Store(true)
 	}
 	span.SetAttributes(
 		attribute.Int("zone_count", zoneCount),
@@ -328,5 +334,6 @@ func (rt *Runtime) contentOptions() content.Options {
 		StrictOrphans: rt.Cfg.StrictOrphans,
 		Metrics:       rt.ContentMetrics,
 		Log:           rt.Tel.Log,
+		Tracer:        rt.Tel.Tracer,
 	}
 }
