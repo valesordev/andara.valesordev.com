@@ -24,5 +24,6 @@
     {
       "type": "andara.core.NoRecall"
     }
-  ]
+  ],
+  "fallbackRoom": "vault"
 }

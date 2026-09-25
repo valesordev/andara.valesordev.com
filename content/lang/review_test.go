@@ -68,7 +68,7 @@ func TestDuplicateFieldInOneComponent(t *testing.T) {
 func TestDecompileShareAFileRatherThanOverwrite(t *testing.T) {
 	out, ds := pack(t, map[string]string{
 		"pack.aw": "pack p requires andara.core@1\n",
-		"z.aw":    "zone pack \"Pack\" {\n  room r \"R\" {}\n}\n",
+		"z.aw":    "zone pack \"Pack\" {\n  room r \"R\" {}\n  fallback r\n}\n",
 	})
 	if out == nil {
 		t.Fatalf("compile: %v", ds)
@@ -243,7 +243,7 @@ func TestBareFallbackIsASyntaxError(t *testing.T) {
 func TestCompileIgnoresTheOutputTree(t *testing.T) {
 	dir := t.TempDir()
 	write(t, filepath.Join(dir, "pack.aw"), "pack p requires andara.core@1\n")
-	write(t, filepath.Join(dir, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n}\n")
+	write(t, filepath.Join(dir, "z.aw"), "zone z \"Z\" {\n  room r \"R\" {}\n  fallback r\n}\n")
 
 	// Simulate a previous run's output sitting inside the pack.
 	if err := os.MkdirAll(filepath.Join(dir, "build", "src"), 0o755); err != nil {
@@ -251,8 +251,8 @@ func TestCompileIgnoresTheOutputTree(t *testing.T) {
 	}
 	write(t, filepath.Join(dir, "build", "src", "pack.aw"), "pack p requires andara.core@1\n")
 
-	if _, ds := Compile(dir, corpusCore(t), nil); len(ds) == 0 {
-		t.Fatal("without Ignore the republished source should collide")
+	if _, ds := Compile(dir, corpusCore(t), nil); len(ds) != 1 || ds[0].Code != CodeDuplicatePack {
+		t.Fatalf("without Ignore the republished source should collide, and only that: %v", ds)
 	}
 	out, ds := CompileOpts(dir, corpusCore(t), nil, Options{Ignore: []string{"build"}})
 	if out == nil {
@@ -287,7 +287,9 @@ func TestFallbackRoom(t *testing.T) {
 		name, body string
 		line, col  int
 	}{
-		{"declares none", "zone z \"Z\" {\n  room r \"R\" {}\n}\n", 1, 1},
+		// Indented after a comment, so the position is the `zone` keyword's and
+		// not the zero value a missing Pos would give.
+		{"declares none", "// the market\n\n   zone z \"Z\" {\n  room r \"R\" {}\n}\n", 3, 4},
 		{"names no Room", "zone z \"Z\" {\n  fallback nowhere\n\n  room r \"R\" {}\n}\n", 2, 12},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -300,5 +302,29 @@ func TestFallbackRoom(t *testing.T) {
 				t.Fatalf("want one fallback_missing at %d:%d chained to z, got %v", tc.line, tc.col, ds)
 			}
 		})
+	}
+}
+
+// Two `fallback`s: the first is field 6, the second is duplicate_declaration at
+// its keyword, and the second is never itself checked for fallback_missing —
+// even when it names a Room the Zone lacks.
+func TestFallbackRoom_TheFirstWins(t *testing.T) {
+	out, ds := pack(t, map[string]string{
+		"pack.aw": "pack p requires andara.core@1\n",
+		"z.aw":    "zone z \"Z\" {\n  fallback a\n  fallback nowhere\n\n  room a \"A\" {}\n}\n",
+	})
+	if out != nil {
+		t.Fatal("a Zone declaring fallback twice compiled")
+	}
+	if len(ds) != 1 || ds[0].Code != CodeDuplicateDecl || ds[0].Line != 3 || ds[0].Col != 3 {
+		t.Fatalf("want one duplicate_declaration at 3:3, got %v", ds)
+	}
+
+	out, ds = pack(t, map[string]string{
+		"pack.aw": "pack p requires andara.core@1\n",
+		"z.aw":    "zone z \"Z\" {\n  fallback b\n\n  room a \"A\" {}\n\n  room b \"B\" {}\n}\n",
+	})
+	if out == nil || out.Zones[0].GetFallbackRoom() != "b" {
+		t.Fatalf("fallback_room: %v %v", out, ds)
 	}
 }

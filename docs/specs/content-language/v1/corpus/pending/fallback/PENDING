@@ -1,2 +1,0 @@
-AW-SRV-012 — the compiler emitting ZoneDefinition.fallback_room (field 6, landed 2026-09-24)
-Every Zone must name one once AW-SRV-012 lands; it is the one Room a Zone may not delete.
