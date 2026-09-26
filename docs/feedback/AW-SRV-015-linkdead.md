@@ -162,3 +162,11 @@ body takes damage and does nothing. A "yes, inert" resolves the story's last `[A
 no code change. Anything else is a Behavior story that rebalances `linkdead_grace`, the combat
 extension and `linkdead_max`, and ADR-0006 is amended either way. Please batch it with SPRINT-02's
 game-design questions.
+
+### Brian's answer (2026-09-26): inert
+
+**A linkdead Character is wholly inert.** It neither defends itself nor flees: it takes damage and
+does nothing, which is what `AW-SRV-015` built. This resolves the story's last `[ASSUMPTION]`, with
+no code change and no Behavior story. For architecture, at the next §8 pass:
+- record the answer in the story's Open questions;
+- add a dated note to ADR-0006 closing its `[NEEDS BRIAN]`.

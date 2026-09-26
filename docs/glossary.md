@@ -294,6 +294,8 @@ marked linkdead and held for `session.linkdead_grace` (180 s); reconnecting with
 expiry the Character is Despawned. The grace period must exceed the RTO, or a routine restart despawns
 every player.
 
+**A linkdead Character is inert** (Brian, 2026-09-26): it neither defends itself nor flees.
+
 **In combat, the timer extends but does not stop.** A linkdead Character stays attackable and takes
 damage; each combat interaction refreshes its remaining grace to at least
 `session.linkdead_combat_extension` (60 s), and `session.linkdead_max` (300 s) caps total linkdead
