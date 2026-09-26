@@ -159,13 +159,14 @@ func TestLive_M1Gate(t *testing.T) {
 	streamA.next(t, "character_arrived")
 	streamB.next(t, "character_arrived")
 
-	// AC-8: quit. B sees the departure with no direction; the roster
-	// frees the Character in the plaza.
+	// AC-8: quit. B sees the body leave the World
+	// (CharacterDespawned{quit}, AW-SRV-015 AC-5); the roster frees the
+	// Character in the plaza.
 	if _, err := game.CloseSession(ctx, connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: sA})); err != nil {
 		t.Fatal(err)
 	}
-	if l := streamB.next(t, "character_left").GetCharacterLeft(); l.GetCharacterName() != nameA || l.GetToDirection() != "" {
-		t.Fatalf("the quit as B sees it: %v", l)
+	if d := streamB.next(t, "character_despawned").GetCharacterDespawned(); d.GetCharacterName() != nameA || d.GetReason() != "quit" {
+		t.Fatalf("the quit as B sees it: %v", d)
 	}
 	submit(sB, "look", "look-b-"+run)
 	if r := streamB.next(t, "room_described").GetRoomDescribed(); hasName(r.GetOccupants(), nameA) {
@@ -284,6 +285,12 @@ func eventType(env *gamev1.EventEnvelope) string {
 		return "character_arrived"
 	case *gamev1.EventEnvelope_CharacterLeft:
 		return "character_left"
+	case *gamev1.EventEnvelope_CharacterLinkdead:
+		return "character_linkdead"
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		return "character_reconnected"
+	case *gamev1.EventEnvelope_CharacterDespawned:
+		return "character_despawned"
 	case *gamev1.EventEnvelope_CommandRejected:
 		return "command_rejected"
 	}
