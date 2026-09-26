@@ -90,8 +90,8 @@ any of them, and refuses two kinds of change:
   reorders history.
 - **A change that lets the broker delete data**, unless you name the topic. That means a lower
   `retention.ms` (`-1`, unlimited, is above every finite value), a lower
-  `min.compaction.lag.ms`, or a `cleanup.policy` that gains a policy. `make topics-apply ALLOW_DATA_LOSS=<topic>[,<topic>…]` accepts it for exactly those
-  topics. Once the broker's next cleanup runs, reverting the declaration restores nothing.
+  `min.compaction.lag.ms`, or a `cleanup.policy` that gains a policy.
+  `make topics-apply ALLOW_DATA_LOSS=<topic>[,<topic>…]` accepts it for exactly those topics. Once the broker's next cleanup runs, reverting the declaration restores nothing.
 
 ## Two things that will bite you
 
