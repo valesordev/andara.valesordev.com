@@ -147,6 +147,13 @@ Not blocking: `Entity.Linkdead()` keys on `LinkdeadSince != 0`, while the hash k
 deadline. They agree only because no Command applies at Tick 0. Keying both on the deadline
 removes that reasoning.
 
+### Also holding the story: #121
+
+`TestRun_Linkdead` failed once in CI (on #119, which touches no Go) with the reconnect's resume
+answered `Resync{no_history}`. It passes 20 of 20 locally. The issue has the log order and the
+ask: widen the window until it fails every run, then fix the ordering between the park, the
+adoption and the new Session's `Subscribe`.
+
 ## For PM: a game-design question for Brian (§8, 2026-09-26)
 
 **Is a linkdead Character wholly inert, or does it defend itself or flee?** ADR-0006 marks it

@@ -360,9 +360,12 @@ handover), `1f01f09` (end to end).
 
 ## §8 review (architecture, 2026-09-26)
 
-On `arch/sprint-02-review-3`, against `main` at `5c5d83c`. The live run is `make stack-linkdead` (#119). **Stays `review`** on two items:
+On `arch/sprint-02-review-3`, against `main` at `5c5d83c`. The live run is `make stack-linkdead` (#119). **Stays `review`** on three items:
 - implementation's: the despawn log line at the deadline (below, and
   `docs/feedback/AW-SRV-015-linkdead.md` "§8, 2026-09-26");
+- implementation's: #121, `TestRun_Linkdead` intermittently gets `Resync{no_history}` on the
+  reconnect's resume (seen in CI on #119). That's AC-2 failing, so it's a product race until
+  shown otherwise;
 - Brian's: whether a linkdead Character is inert (ADR-0006's `[NEEDS BRIAN]`).
 
 | §8 item | Holds? | Evidence |
