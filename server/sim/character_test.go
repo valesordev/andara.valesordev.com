@@ -352,7 +352,7 @@ func TestBind_OutcomeReportsWhatTheBindDid(t *testing.T) {
 	want := func(zone sim.ZoneID, room sim.RoomID, body sim.BindBody) {
 		t.Helper()
 		got := obs.last(t).Bind
-		if got == nil || *got != (sim.BindResult{Account: "acct-ch-1", Zone: zone, Room: room, Body: body}) {
+		if got == nil || *got != (sim.BindResult{Account: "acct-ch-1", Character: "ch-1", Zone: zone, Room: room, Body: body}) {
 			t.Fatalf("bind result %+v, want %s/%s %s", got, zone, room, body)
 		}
 	}

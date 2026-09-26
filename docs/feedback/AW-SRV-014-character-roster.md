@@ -71,3 +71,8 @@ nothing. The bind handler reports a `sim.BindResult` (account, Zone, Room, and w
 
 A rejected bind logs no such line; `command applied` at `debug` carries its code. Tests:
 `TestLoop_LogsTheAppliedBind` and `TestBind_OutcomeReportsWhatTheBindDid`.
+
+Review of #98: `character_id` is the body the bind resolved (`BindResult.Character`), not the
+record's `actor_id`. A `BindCharacter` with no `actor_id` applies to the payload's `character_id`,
+and the line now names that one instead of an empty string. `TestLoop_LogsTheAppliedBind` covers it.
+

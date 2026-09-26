@@ -497,7 +497,7 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 			// where, is known only here. character selected says the
 			// Command was produced; this says what the apply did with it.
 			l.log.LogAttrs(ctx, slog.LevelInfo, "character bind applied",
-				slog.String("account_id", b.Account), slog.String("character_id", r.Command.GetActorId()),
+				slog.String("account_id", b.Account), slog.String("character_id", string(b.Character)),
 				slog.String("session_id", r.Command.GetSessionId()),
 				slog.String("zone", string(b.Zone)), slog.String("room", string(b.Room)), slog.String("body", string(b.Body)),
 				slog.Uint64("tick", uint64(l.tickNo)),

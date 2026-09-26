@@ -223,9 +223,12 @@ type Outcome struct {
 // BindResult is where an applied BindCharacter left the body, and how.
 type BindResult struct {
 	Account string
-	Zone    ZoneID
-	Room    RoomID
-	Body    BindBody
+	// Character is the body the bind resolved: the record's actor_id, or the
+	// payload's character_id when the envelope carries none.
+	Character EntityID
+	Zone      ZoneID
+	Room      RoomID
+	Body      BindBody
 }
 
 // BindBody is what a BindCharacter found: the body it spawned, woke, took

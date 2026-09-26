@@ -21,13 +21,21 @@ func TestLoop_LogsTheAppliedBind(t *testing.T) {
 	h.source.Push(simtest.Bind("town", "ch-1", "Aldric", "plaza"))
 	h.source.Push(simtest.Bind("town", "ch-1", "Aldric", "plaza"))
 	h.source.Push(simtest.Bind("town", "ch-2", "Brenna", "nowhere"))
+	// No actor_id on the envelope: the sim applies it to the payload's
+	// character_id, and the line names that (review of #98).
+	noActor := simtest.Bind("town", "ch-3", "Corin", "plaza")
+	noActor.ActorId = ""
+	h.source.Push(noActor)
 	if err := h.runFor(time.Second); err != nil {
 		t.Fatal(err)
 	}
 	lines := findLogs(t, h.logs, "character bind applied")
 	want := []struct{ room, body string }{{"lane", "spawned"}, {"lane", "woken"}, {"lane", "present"}}
-	if len(lines) != len(want) {
-		t.Fatalf("got %d bind-applied lines, want %d (the rejected bind logs none):\n%s", len(lines), len(want), h.logs.String())
+	if len(lines) != len(want)+1 {
+		t.Fatalf("got %d bind-applied lines, want %d (the rejected bind logs none):\n%s", len(lines), len(want)+1, h.logs.String())
+	}
+	if l := lines[len(want)]; l["character_id"] != "ch-3" || l["account_id"] != "acct-ch-3" || l["body"] != "spawned" {
+		t.Errorf("the bind with no actor_id: %v, want character_id ch-3", l)
 	}
 	for i, w := range want {
 		l := lines[i]
