@@ -54,6 +54,35 @@ The world has stopped: operator stop
 # SimulationStopped event_id=12 tick=19 client_ref=""
 The world has stopped.
 
+# RoomDescribed event_id=13 tick=20 client_ref=""
+Market Plaza
+Exits: north
+Here: Aldric (linkdead), Brin
+
+# CharacterLinkdead event_id=14 tick=20 client_ref=""
+Aldric goes linkdead.
+
+# CharacterReconnected event_id=15 tick=21 client_ref=""
+Aldric reconnects.
+
+# CharacterDespawned event_id=16 tick=22 client_ref=""
+Aldric leaves the world.
+
+# CharacterDespawned event_id=17 tick=22 client_ref=""
+Brin leaves the world.
+
+# CharacterDespawned event_id=18 tick=23 client_ref=""
+Cato fades from the world.
+
+# CharacterDespawned event_id=19 tick=23 client_ref=""
+Dara fades from the world.
+
+# CharacterDespawned event_id=20 tick=24 client_ref=""
+Edda leaves the world.
+
+# CharacterDespawned event_id=21 tick=24 client_ref=""
+Finn leaves the world.
+
 # unknown event_id=99 tick=500 client_ref=""
 Something happened here that this client cannot describe (event 99).
 

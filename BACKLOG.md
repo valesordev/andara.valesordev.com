@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 7 |
-| `in-progress` | 1 |
+| `review` | 8 |
 | `ready` | 28 |
 | `draft` | 2 |
 | `done` | 23 |
@@ -21,6 +20,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler | review by brian |
+| [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `review` | andara-cli play renders linkdead, reconnect, and despawn | review by brian |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
@@ -30,23 +30,18 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 ## By status
 
-### `review` (7)
+### `review` (8)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `EPIC-05` | cli | M | high | implementation | Content Language compiler, formatter, and decompiler | `AW-CLI-001`, `AW-CLI-005`, `AW-SRV-021`, `AW-SRV-022` |
+| [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `EPIC-08` | cli | S | low | implementation | andara-cli play renders linkdead, reconnect, and despawn | `AW-CLI-004`, `AW-SRV-015` |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
 | [`AW-SRV-006`](docs/stories/AW-SRV-006-zone-snapshots.md) | `EPIC-04` | server | M | high | implementation | Zone snapshots keyed to partition offsets | `AW-SRV-001`, `AW-SRV-004` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `EPIC-08` | cli | S | low | implementation | andara-cli play renders linkdead, reconnect, and despawn | `AW-CLI-004`, `AW-SRV-015` |
 
 ### `ready` (28)
 
@@ -217,7 +212,7 @@ Milestone `M1–M2` · status `ready` · ADR gates: none · constrained by: `ADR
 
 | ID | Status | Title |
 |----|--------|-------|
-| [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `in-progress` | andara-cli play renders linkdead, reconnect, and despawn |
+| [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `review` | andara-cli play renders linkdead, reconnect, and despawn |
 | [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `ready` | make stack-linkdead — the linkdead gate scripted against the running stack |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `done` | Account store, registration modes, and authentication |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World |

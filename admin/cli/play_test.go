@@ -174,6 +174,12 @@ func (w *world) push(ref string, tick uint64, payload any) {
 		env.Payload = &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: p}
 	case *gamev1.CommandRejected:
 		env.Payload = &gamev1.EventEnvelope_CommandRejected{CommandRejected: p}
+	case *gamev1.CharacterLinkdead:
+		env.Payload = &gamev1.EventEnvelope_CharacterLinkdead{CharacterLinkdead: p}
+	case *gamev1.CharacterReconnected:
+		env.Payload = &gamev1.EventEnvelope_CharacterReconnected{CharacterReconnected: p}
+	case *gamev1.CharacterDespawned:
+		env.Payload = &gamev1.EventEnvelope_CharacterDespawned{CharacterDespawned: p}
 	case *gamev1.Heartbeat:
 		env.EventId, env.Payload = 0, &gamev1.EventEnvelope_Heartbeat{Heartbeat: p}
 	default:
@@ -490,6 +496,41 @@ func TestPlay_JSONOutput(t *testing.T) {
 	}
 	if strings.Contains(res.stdout, "Connected") || strings.Contains(res.stdout, "frobnicate") {
 		t.Errorf("prose on stdout:\n%s", res.stdout)
+	}
+}
+
+// AW-CLI-008 AC-5: under --output json the three linkdead Events are
+// envelopes on stdout like every other, and none of their prose is.
+func TestPlay_JSONOutputCarriesTheLinkdeadEvents(t *testing.T) {
+	w := newWorld()
+	_, env := playServer(t, w, nil)
+	w.push("", 9, &gamev1.CharacterLinkdead{ZoneId: "town", RoomId: "square", CharacterName: "Mara"})
+	w.push("", 10, &gamev1.CharacterReconnected{ZoneId: "town", RoomId: "square", CharacterName: "Mara"})
+	w.push("", 11, &gamev1.CharacterDespawned{ZoneId: "town", RoomId: "square", CharacterName: "Mara", Reason: "linkdead"})
+
+	res := play(t, env, strings.NewReader("west\n"), "--output", "json", "--log-level", "info")
+	if res.exit != 0 {
+		t.Fatalf("exit=%d\nstdout:\n%s\nstderr:\n%s", res.exit, res.stdout, res.stderr)
+	}
+	var types []string
+	for _, line := range strings.Split(strings.TrimSpace(res.stdout), "\n") {
+		var env map[string]any
+		if err := json.Unmarshal([]byte(line), &env); err != nil {
+			t.Fatalf("stdout line is not JSON: %q\nstdout:\n%s", line, res.stdout)
+		}
+		for _, k := range []string{"character_linkdead", "character_reconnected", "character_despawned"} {
+			if _, ok := env[k]; ok {
+				types = append(types, k)
+			}
+		}
+	}
+	if got := strings.Join(types, ","); got != "character_linkdead,character_reconnected,character_despawned" {
+		t.Errorf("stdout carried %s\n%s", got, res.stdout)
+	}
+	for _, prose := range []string{"goes linkdead", "reconnects.", "fades from the world"} {
+		if strings.Contains(res.stdout, prose) {
+			t.Errorf("prose %q on stdout", prose)
+		}
 	}
 }
 
