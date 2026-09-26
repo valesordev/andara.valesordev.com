@@ -7,7 +7,7 @@ type: infra
 status: review
 size: S
 depends_on: [AW-INF-003]
-blocks: [AW-INF-007, AW-INF-014, AW-INF-019]
+blocks: [AW-INF-007, AW-INF-014, AW-INF-019, AW-INF-020]
 lane: architecture
 risk: low
 ---

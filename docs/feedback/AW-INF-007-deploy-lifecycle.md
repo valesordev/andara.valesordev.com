@@ -23,3 +23,15 @@ lifecycle's parts `dev` still gets:
 - **`andara_deploy_interruption_seconds`** is emitted from `ServerStopping` to first `serving`, so it
   would be measured on `dev` rolls too. Say whether they count toward the SLO comparison or are
   labeled `env=dev` and excluded.
+
+## Architecture's answer (2026-09-26, `AW-INF-019`'s contract review)
+
+Taken as recommended, and recorded in `AW-INF-007`'s scope:
+- `make deploy` / `make rollback` are the only deploy path for `prod`, and for `local`, where the
+  rolling-update test runs. `make deploy ENV=dev` refuses while the `andara-dev` Application
+  exists.
+- The pre-stop snapshot and post-start recovery apply to `dev` unchanged.
+- The core-pack step has nothing to act on in `dev` while `dev` reads content from ConfigMaps. The
+  story that moves `dev` to the store carries it, as a chart hook Job Argo CD runs as `PreSync`.
+- `dev` rolls record `andara_deploy_interruption_seconds`, but the RTO comparison reads `prod`
+  and CI's `local` run only.

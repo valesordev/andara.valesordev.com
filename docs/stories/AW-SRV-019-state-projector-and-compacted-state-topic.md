@@ -368,5 +368,17 @@ On `impl/aw-srv-019-s8-owed`. The detail is in `docs/feedback/AW-SRV-019-state-p
 | AC-5, forced compaction | **Not delivered: needs architecture.** This Redpanda (v25.1) could not be made to compact a throwaway topic from topic config. See feedback |
 | AC-6 at 10,000 Entities and 24 h | **Not delivered this session.** Still owed by implementation |
 
+### AC-6 at scale (2026-09-26, implementation)
+
+On `impl/aw-srv-019-ac6-scale`. The detail is in the feedback file, under "AC-6 at scale, measured".
+Measured with 25,000 Entities and 864,000 ticks (24 h at 10 Hz) of history, on a throwaway Redpanda.
+`--rebuild` read the whole boundary Partition before the round, and that cost 6.7 s at 24 h.
+`BoundaryReader.SeekAfter` now binary-searches to the round, so 24 h of history adds 0.13 s. At a
+600-tick tail, `--rebuild` takes 42.7 s against an in-process snapshot load plus tail replay of
+39.5 s. The difference is the dump and the broker. Tests: `TestRun_RebuildAtScaleIsBoundedByTheRoundAndTheTail` (opt-in,
+`ANDARA_AC6_HISTORY_TICKS`), `TestBoundaryReader_SeekAfterStartsAtTheNextTick`,
+`TestBoundaryReader_SeekAfterFallsBackToTheStart`. Both are mutation-checked. The story stays
+`review`, for AC-5 (architecture) and the production line (#80).
+
 `make check` is clean, and so is `make test-integration`.
 
