@@ -135,3 +135,9 @@ the race. That's a protocol change, so it's architecture's to decide, and nothin
   was nothing to select and would now subscribe an unbound Session. An `UNAUTHENTICATED` on the
   re-selection (the new Session gone too) is a connection loss and retried, not the
   expired-credential exit.
+
+## PM, 2026-09-25 (SPRINT-01 close-out)
+
+On §3: `docs/sprints/SPRINT-01-demo.md` uses `north` then `look`, which is what the server does.
+Whether a move should describe the destination is batched to Brian as a SPRINT-02 game-design
+question. The second-person rendering is parked behind that, in `AW-CLI-008`'s out-of-scope list.
