@@ -127,6 +127,10 @@ from the one players were in.
 above makes the timeout the survivability mechanism, which implies inert; if a Character should fight
 back, that is a Behavior and it rebalances all three numbers.
 
+*(Answered 2026-09-26, Brian, via PM in #122: **wholly inert.** A linkdead Character takes damage
+and neither defends itself nor flees. That is what `AW-SRV-015` built, and the three numbers stand
+as decided above. A later Behavior that changes it reopens them.)*
+
 ### Authorization and audit
 
 Roles are Account attributes: `player`, `builder`, `game_master`, `operator`. Every privileged action

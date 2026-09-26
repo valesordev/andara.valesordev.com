@@ -4,7 +4,7 @@ title: make stack-linkdead — the linkdead gate scripted against the running st
 epic: EPIC-08
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-015, AW-CLI-007, AW-CLI-008]
 blocks: []
@@ -157,3 +157,21 @@ so it would never return on a failing run.
 **For `AW-SRV-015`'s §8:** this run is the live observation of
 `andara_linkdead_outcomes_total{outcome="reconnected"}` and `andara_sessions_linkdead` from the
 running server that its Definition of done names.
+
+## §8 review (architecture, 2026-09-26)
+
+On `arch/sprint-02-review-4`. **`done`.**
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | The verification record above, and the `stack` workflow's "the linkdead gate against the stack" step, green on `main` at `8ab863a` (the merge of #119) and after. Passed again locally against a stack built from `6561cde` |
+| Tests run in CI | yes | The `stack` workflow step, on every PR and merge that touches the stack or the Go tree |
+| `make check` | yes | clean |
+| Instrumentation | yes | none added; AC-5 reads `AW-SRV-015`'s series from the running server |
+| Config documented | yes | no new config; the target is in `make help` |
+| Migrations | n/a | none |
+| Glossary | yes | no new domain term |
+| No `[ASSUMPTION]` | yes | none |
+
+Review of #119 fixed `ANDARA_LINKDEAD_DETECT` parsing: it now takes any Go duration (`2754a3c`).
+The story-specific line holds: `AW-SRV-015`'s live observation is recorded against this target.

@@ -170,3 +170,9 @@ does nothing, which is what `AW-SRV-015` built. This resolves the story's last `
 no code change and no Behavior story. For architecture, at the next §8 pass:
 - record the answer in the story's Open questions;
 - add a dated note to ADR-0006 closing its `[NEEDS BRIAN]`.
+
+## Architecture, §8 second pass (2026-09-26): closed
+
+All three holds are closed: #123 fixed the expiry line, #124 fixed the reconnect race (#121), and
+Brian answered inert (#122). The story is `done`, and ADR-0006 carries the answer. The record is
+in the story.

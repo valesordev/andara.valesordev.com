@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-014]
 blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
@@ -253,12 +253,10 @@ CLAUDE.md §8, plus: the restart-mid-grace test and the startup invariant test. 
 - **Resolved 2026-09-11 (Brian): linkdead is visible.** AC-1's marker and Event are that decision.
 - **Combat extends the timer, bounded by a ceiling** (ADR-0006): 60 s / 300 s, retuned once combat
   pacing exists. `andara_linkdead_ceiling_despawns_total` says when the ceiling is too short.
-- `[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.
-  **Open, and Brian's** (§8, 2026-09-26): ADR-0006 marks it `[NEEDS BRIAN]` and says only that the
-  timeout decision *implies* inert. Sent to PM for the game-design batch
-  (`docs/feedback/AW-SRV-015-linkdead.md`). Inert is what's built, and it doesn't touch the
-  contract: a Character that fights back or flees is a Behavior story that rebalances the three
-  numbers.
+- ~~`[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.~~
+  **Resolved 2026-09-26 (Brian, via PM in #122): wholly inert.** It takes damage and neither
+  defends itself nor flees. That is what this story built. ADR-0006's `[NEEDS BRIAN]` is closed
+  with a dated note.
 - ~~`[ASSUMPTION]` `session.linkdead_detect` 5 s. The gRPC keepalive from `AW-SRV-005` is the detector.~~
   **Resolved at §8, 2026-09-26:** built and tested (`TestKeepalive_APartitionedClientIsLinkdead`).
 - **Inherited from `AW-SRV-010` (2026-09-19):** the ingress forgets a Session when its context
@@ -407,3 +405,26 @@ match.
 A nit, not blocking: `Entity.Linkdead()` keys on `LinkdeadSince != 0` while the hash keys on the
 deadline. They agree because no Command applies at Tick 0. Keying both on the deadline would drop
 that reasoning.
+
+## §8 review, second pass (architecture, 2026-09-26)
+
+On `arch/sprint-02-review-4`, against `main` at `6561cde`. **`done`.** The three items the first
+pass held it on are closed:
+
+| Item | Closed by | Checked |
+|------|-----------|---------|
+| The despawn line at the deadline or ceiling | #123 (`389a717`) | The roster fills `session_id` from the linkdead hold, or from a reconnect that took it over. A body recovery left carries `recovered=true` and no `session_id`. The tick loop stamps each linkdead step that has no Command with the `sim.tick` span's traceparent. `TestRoster_ExpiryLine` asserts both cases, and `TestRun_Linkdead` asserts the held line end to end. `Entity.Linkdead()` now keys on the deadline, as the hash does, which closes the nit |
+| #121, the reconnect's `Resync{no_history}` | #124 (`393c654`, `ef86c73`) | The park now happens in `ParkSession`, which the gateway calls before it cancels the Session. It no longer happens in `forget`, whose goroutine nothing ordered against the reconnect's `Subscribe`. The race was proven by widening the window (live-assertions rule 4): a 3 s delay before `forget` failed every run on the old code and passes on the new. `TestLinkdead_ReconnectBeforeTheOldSessionEnds` holds the window open deterministically. A stale `Rebind` of the lost Session leaves parked or adopted state alone (`TestLinkdead_StaleRebindLeavesTheParkedRing`). Lock order: `ParkSession` takes `e.mu` then `s.rebind`, the order `adopt` already used, and nothing takes `e.mu` under `s.rebind`. `server/egress` and `server/roster` pass `-race -count=10`, and `TestRun_Linkdead` passes `-race -count=5` |
+| Inertness | #122, Brian: wholly inert | Open questions above; ADR-0006 note |
+
+The rest of the first pass's table stands. `make stack-linkdead` runs in the `stack` workflow and
+passed on `main` at `8ab863a`. It passed again locally on a stack that `make up` built from `6561cde`,
+with #123 and #124 in it. The server logged `character linkdead` and `character reconnected`
+with their Sessions and non-empty `trace_id`s. The run doesn't wait out a grace, so it doesn't
+show the expiry line live; the tests above assert it.
+
+Two lines are carried, not deferred:
+- **AC-13 (death while linkdead)** goes to the first story with lethal damage, as an inherited
+  line: `andara_linkdead_outcomes_total{outcome="died"}` is declared and pre-seeded.
+- **AC-9 and the broker-level kill mid-grace** are `AW-SRV-007`'s (its inherited line), with
+  snapshot recovery. AC-6 is proven here by full-log replay at the sim level.
