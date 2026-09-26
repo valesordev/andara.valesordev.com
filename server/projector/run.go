@@ -105,7 +105,14 @@ func Run(ctx context.Context, o RunOptions) error {
 	defer cm.Close()
 	cp, committed, err := cm.Last(ctx)
 	if err != nil {
-		return err
+		if !o.Rebuild {
+			return err
+		}
+		// --rebuild is the recovery for exactly this: a checkpoint that does
+		// not parse (a partial commit left partitions disagreeing, say) is
+		// deleted with the group, not required to parse first (review of #103).
+		log.Warn("--rebuild discards a checkpoint it cannot read", "group", o.Group, "detail", err.Error())
+		cp, committed = Checkpoint{}, false
 	}
 	if d := cp.Diverged; committed && d != nil {
 		// An unresolved divergence halts every start, whatever rounds exist

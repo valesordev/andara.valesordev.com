@@ -491,6 +491,38 @@ func TestRun_ADivergenceSurvivesARestartPastANewerRound(t *testing.T) {
 	}
 }
 
+// --rebuild recovers from a checkpoint that does not parse — here, a partial
+// commit that left two Partitions disagreeing on the tick. A plain start
+// refuses it; --rebuild deletes the group without reading it first, and runs
+// (review of #103).
+func TestRun_RebuildClearsAnUnreadableCheckpoint(t *testing.T) {
+	b := newBroker(t)
+	w := script(t)
+	b.mirror(w, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var bad kadm.Offsets
+	bad.Add(kadm.Offset{Topic: b.commands, Partition: 0, At: 0, LeaderEpoch: -1, Metadata: "tick=3"})
+	bad.Add(kadm.Offset{Topic: b.commands, Partition: 1, At: 0, LeaderEpoch: -1, Metadata: "tick=4"})
+	resp, err := b.adm.CommitOffsets(ctx, b.group, bad)
+	if err == nil {
+		err = resp.Error()
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := projector.Run(ctx, b.options(w)); projector.ExitCode(err) != projector.ExitConfig {
+		t.Fatalf("a plain start over an unreadable checkpoint: %v (exit %d), want exit 1", err, projector.ExitCode(err))
+	}
+	o := b.options(w)
+	o.Rebuild = true
+	r := start(o)
+	defer r.stop(t)
+	b.waitCommitted(t, w.live.Tick())
+	sameContent(t, b.topic(t), dumpOf(t, w))
+}
+
 // syncBuffer is a bytes.Buffer safe for a logger and a reader at once.
 type syncBuffer struct {
 	mu sync.Mutex
