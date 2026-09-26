@@ -77,3 +77,35 @@ makes that deletion a make target, `make argocd-recover ENV=dev` (AC-8), so it's
 command rather than a hand-typed `kubectl`. If architecture wants it automated instead (an Argo CD
 `SyncFail` or `PostSync` hook, or a small controller), the contract should say which, and AC-8
 becomes "no hand step" again.
+
+## Architecture's answers (2026-09-26, contract review)
+
+Recorded in the story body under "Contract review". The story is `ready`.
+
+1. **(a), tracking `:dev` by digest.** Image Updater with `argocd` write-back, but with the `digest`
+   strategy on `:dev` rather than `newest-build` over `sha-` tags. `newest-build` sorts by image
+   creation time, and `publish` doesn't build in commit order. `:dev` is the one tag
+   `image_publish.sh` keeps in commit order.
+2. **`AW-INF-007` governs `prod` and `local`.** The line is scoped in its body. `dev` needs no
+   core-pack step while it reads content from ConfigMaps. See the answer in
+   `AW-INF-007-deploy-lifecycle.md`.
+3. **The chart renders both ConfigMaps**, from relative symlinks under
+   `deploy/helm/andara/files/`, with a `checksum/content` roll. `helm_install.sh` stops creating
+   them. The fallback, if Argo CD refuses the links, is a generated copy that `make check` keeps
+   identical.
+4. **No `paths-ignore`.** A skipped docs merge right after a code merge leaves `:dev` a build behind.
+   The code merge's run sees it isn't `main`'s head and defers to a run that never happens. AC-5
+   stands.
+5. **Manual.** `make argocd-recover` stays an operator command.
+
+### Found while checking item 1: a defect in `AW-INF-013`
+
+The chart writes `image.tag` into the `app.kubernetes.io/version` label verbatim. `helm_install.sh`
+pins `:dev` to `dev@sha256:<digest>`, which the API server rejects on every object carrying the
+label:
+- `@` and `:` aren't valid label characters;
+- the value is over 63 bytes.
+
+Checked with a server-side dry run on the box's cluster. So `make helm-install ENV=dev` fails at
+apply as `AW-INF-013` left it. Filed as #106. It blocks the box session's `dev` install, so
+architecture fixes it before that session runs.

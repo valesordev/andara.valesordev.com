@@ -4,7 +4,7 @@ title: Argo CD deploys dev from main on the box's kind cluster
 epic: EPIC-01
 component: infra
 type: infra
-status: draft
+status: ready
 size: M
 depends_on: [AW-INF-013, AW-INF-014]
 blocks: []
@@ -40,21 +40,30 @@ running a deploy, so that I can play the current World while the sprint is still
   version pinned in the script, as `scripts/kafka.sh` pins Strimzi. It's idempotent, and a no-op
   when the pinned version is already installed.
 - One Argo CD `Application`, `andara-dev`, declared in `deploy/argocd/`. It renders
-  `deploy/helm/andara` with `values/dev.yaml` from `main` of the public repo, into namespace
-  `andara-dev`, with automated sync, `prune` and `selfHeal`.
-- **A new build reaches `dev` without a commit by hand.** When `publish` pushes a new build, `dev`
-  moves to it, and the Application records which `sha-` tag it runs. The mechanism is the open
-  question under "For architecture" in `docs/feedback/AW-INF-019-argocd.md`.
+  `deploy/helm/andara` with `deploy/helm/values/dev.yaml` from `main` of the public repo, into
+  namespace `andara-dev`, with automated sync, `prune` and `selfHeal`.
+- **A new build reaches `dev` without a commit by hand.** When `publish` moves `:dev`, `dev` moves
+  to it, and the Application records which build it runs. The mechanism is Argo CD Image Updater,
+  tracking `:dev` by digest, with `argocd` write-back (contract review, item 1). Nothing writes to
+  `main`.
 - **What `helm_install.sh` builds outside the chart comes from git under Argo CD.** That means the
   `andara-content` and `andara-content-templates` ConfigMaps, from `testdata/content/valid` and
   `content/core/templates`. A fixture change on `main` has to reach `dev` the same way a code
-  change does.
+  change does. The chart renders both, through symlinks under `deploy/helm/andara/files/`, for
+  `helm-install` and Argo CD alike (contract review, item 3).
 - **The Secrets stay out of git.** `andara-server-token-key` and `andara-server-bootstrap` are
   created by `make argocd-install ENV=dev`, under the same rules `helm_install.sh` applies today:
   `ANDARA_BOOTSTRAP_OPERATOR` is required, and a Secret that already exists isn't overwritten. The
   Application doesn't manage them, so a sync never prunes them.
 - **One owner for `andara-dev`.** Once the Application exists, `make helm-install ENV=dev` refuses,
   pointing at `make argocd-status`.
+- **The `app.kubernetes.io/version` label is label-safe.** Today the chart writes `image.tag`
+  into it verbatim. That includes a digest-pinned `dev@sha256:…`, which the API server rejects
+  (not a valid label value, and over 63 bytes), so `make helm-install ENV=dev` can't apply as
+  `AW-INF-013` left it. The label takes the tag with any `@digest` removed, truncated to 63 bytes
+  and trimmed to end on an alphanumeric. This is `AW-INF-013`'s defect, #106. It's
+  listed here because this story's image references are digests too, and whichever story lands
+  first fixes it.
 - **The move from the Helm release to Argo CD keeps the data.** The existing `andara` release in
   `andara-dev` is adopted, and its snapshot PVC and namespace Kafka survive (see "Data / state
   impact").
@@ -106,9 +115,8 @@ running a deploy, so that I can play the current World while the sprint is still
    for it: one new pod, one World restart. **Given** no new build and no change to what the
    Application renders **when** Argo CD polls **then** no pod in `andara-dev` restarts. `publish`
    has no path filter today, so a merge that touches only a story file still builds a new
-   `sha-` image, and `dev` still rolls for it. Whether `publish` should skip merges that can't
-   change the image is `AW-INF-013`'s contract (feedback item 4). If it starts skipping them,
-   this AC tightens to "a merge `publish` skips restarts nothing".
+   `sha-` image, and `dev` still rolls for it. `publish` keeps building every merge (contract
+   review, item 4), so this AC stands as written.
 6. **Given** the Application **when** someone runs `kubectl edit` on a resource it manages, or
    deletes one **then** `selfHeal` puts it back to `main` within the deadline. When the change is
    deleting the Kafka CR, its topics, or either Secret, Argo CD leaves it alone, because it doesn't
@@ -123,15 +131,20 @@ running a deploy, so that I can play the current World while the sprint is still
    (Kubernetes' *Forced rollback*). **When** a good build has since synced, **then**
    `make argocd-recover ENV=dev` deletes the pod created from the bad revision, and `andara-dev`
    comes back on the good build. It refuses, and changes nothing, when the StatefulSet's
-   `updateRevision` is still the failing one. Automating this step instead is open to
-   architecture (feedback item 5).
+   `updateRevision` is still the failing one. The step stays an operator command (contract
+   review, item 5), and `make argocd-status` names it when it reports the stall.
 9. **Given** `make argocd-install ENV=dev` **when** `ANDARA_BOOTSTRAP_OPERATOR` is unset and
    `andara-server-bootstrap` doesn't exist **then** it exits 1 with the same message
    `helm-install` gives today. When the Secret already exists, it's left as it is, and the run
    succeeds without the variable.
 10. **Given** the Application **when** `make argocd-uninstall ENV=dev` runs **then** the Application
     is removed without cascading. Every resource in `andara-dev` keeps running, and
-    `make helm-install ENV=dev` works again. This is the rollback path.
+    `make helm-install ENV=dev` works again. This is the rollback path. It holds for a resource
+    the chart gained after the move, which Helm never created: `argocd-uninstall` gives every
+    resource carrying the Application's tracking annotation Helm's ownership metadata
+    (`meta.helm.sh/release-name: andara`, `meta.helm.sh/release-namespace: andara-dev`,
+    `app.kubernetes.io/managed-by: Helm`) before it returns, so `helm upgrade --install` adopts
+    them instead of refusing them.
 
 ## Interface contract
 
@@ -152,13 +165,42 @@ Make targets:
   - `kafka/andara-log` in `andara-dev` is Ready (`make kafka-install ENV=dev`).
 - **The Application:**
   - `deploy/argocd/andara-dev.yaml` (or its generator), source `repoURL`
-    `https://github.com/valesordev/andara.valesordev.com`, `targetRevision: main`;
+    `https://github.com/valesordev/andara.valesordev.com`, `targetRevision: main`,
+    `path: deploy/helm/andara`, `helm.valueFiles: [../values/dev.yaml]`;
+  - `helm.releaseName: andara`, so `.Release.Name`, and every label and name derived from it,
+    render as they do under `helm-install`. Without it the release is named after the
+    Application, and the adopted resources' `app.kubernetes.io/instance` changes on the first
+    sync;
+  - no `helm.parameters` in the file. Image Updater owns `image.tag` on the live Application, and
+    a re-run of `make argocd-install` applies the file without clearing it;
   - `syncPolicy.automated: {prune: true, selfHeal: true}`;
   - Argo CD's resource tracking is by annotation, so resources `make kafka-install` labels
     `app.kubernetes.io/*` are never taken as the Application's.
 - **Image:** the StatefulSet always names an immutable reference, a `sha-` tag or a digest, never
   the moving `:dev`. This is the same rule `AW-INF-013` gave `helm-install`. The Application's
   status shows which one.
+  - **Argo CD Image Updater**, pinned and installed by `make argocd-install` in `argocd`, watches
+    `ghcr.io/valesordev/andara-server:dev` with the `digest` update strategy and sets
+    `image.tag` to `dev@sha256:<digest>` on the Application (`argocd` write-back). Anonymous
+    pulls suffice, since `AW-INF-013` AC-2 makes the package public.
+  - It tracks `:dev`, not the newest `sha-` tag, because `:dev` already carries `AW-INF-013`'s
+    ordering guarantee: `image_publish.sh` moves it only when its commit is still `main`'s head.
+    A `newest-build` sort orders by image creation time, and `publish` doesn't build in commit
+    order, so it could deploy an older commit built late.
+  - `make argocd-status` resolves the digest to the commit it was built from, via the image's
+    `org.opencontainers.image.revision`, and prints both.
+- **Content:** `deploy/helm/andara/files/content` and `files/content-templates` are relative
+  symlinks to `testdata/content/valid` and `content/core/templates`. Helm follows a symlink in a
+  chart directory, and Argo CD's repo server allows one that stays inside the repository.
+  - With `contentVolume.render: true` (`values/local.yaml` and `values/dev.yaml`), the chart
+    renders `andara-content` from `files/content/*.json`, and `andara-content-templates` from
+    `files/content-templates/*.json`. The keys and bytes are the ones
+    `kubectl create configmap --from-file` produces today.
+  - The pod template carries `checksum/content` over both, so a fixture change rolls the pod
+    (AC-4).
+  - `helm_install.sh` stops creating the two ConfigMaps. One writer, whichever deploy path runs.
+  - If the box's pinned Argo CD refuses the symlinks, the fallback is a generated copy under
+    `files/`, which `make check` keeps byte-identical. Record it in the §8 record if used.
 - **Environment:** `ANDARA_BOOTSTRAP_OPERATOR` (existing). No new variables beyond
   `ARGOCD_UI_PORT`.
 - Exit codes: 0 success; 1 a precondition missing, a refusal, or not `Synced`/`Healthy`.
@@ -169,10 +211,14 @@ Make targets:
   (`andara-log`, the command log and the Account store) and its topics. The Application adopts the
   chart's resources by name. Neither the PVC (a `volumeClaimTemplate`) nor the Kafka CR is in the
   chart's render, so `prune` can't delete them. AC-2 proves it by UID.
-- **The stale Helm release:** once Argo CD owns the resources, the old release's `sh.helm.release`
-  Secret in `andara-dev` is removed by `make argocd-install ENV=dev`, with `helm uninstall` never
-  run, because that would delete the resources Argo CD just adopted. Architecture states the exact
-  step.
+- **The stale Helm release:** once Argo CD owns the resources, `make argocd-install ENV=dev`
+  removes the old release's history, never through `helm uninstall`, because that would delete
+  the resources Argo CD just adopted. The exact step:
+  - wait for the Application to report `Synced` and `Healthy`;
+  - then `kubectl -n andara-dev delete secret -l owner=helm,name=andara`.
+  If the Application never gets there, the release history stays, and `argocd-uninstall`
+  followed by `helm-install` is a plain upgrade. On a namespace with no release, the step finds
+  nothing to delete.
 - **Rollback:** `make argocd-uninstall ENV=dev` (AC-10), then `make helm-install ENV=dev`, which
   takes the resources back as a fresh release. No data moves either way.
 - **Live Sessions:** each sync that changes the pod template restarts the World (ADR-0001, until
@@ -196,8 +242,13 @@ Make targets:
   - the `ENV` guard (`local` and `prod` refused);
   - the Secret rule (AC-9).
 - **Render:** `make k8s-dry` validates `deploy/argocd/` against the cluster API version and Argo CD's
-  CRDs. `make helm-test` asserts the Application's render names `values/dev.yaml`, `main`, and
-  annotation tracking.
+  CRDs. `make helm-test` asserts:
+  - the Application names `../values/dev.yaml`, `main`, `releaseName: andara`, and annotation
+    tracking, and carries no `helm.parameters`;
+  - the chart's `andara-content` and `andara-content-templates` equal
+    `kubectl create configmap --from-file` over the same directories, key for key and byte for byte;
+  - `checksum/content` changes when a fixture byte changes;
+  - `app.kubernetes.io/version` is a valid label value for `image.tag=dev@sha256:<64 hex>`.
 - **Integration (CI's kind job):**
   - `make argocd-install` twice (AC-1);
   - an Application pointed at the PR's own commit syncs `Healthy` against `local`-shaped values (no
@@ -206,7 +257,8 @@ Make targets:
   `publish`.
 - **Integration (box, recorded):**
   - AC-2 on the real `andara-dev`;
-  - AC-3 and AC-4 on the first two merges after the move, with the times;
+  - AC-3 and AC-4 on the first two merges after the move, with the times, including how long Image
+    Updater takes to see `:dev` move;
   - AC-6, AC-8 and AC-10.
   These go in the §8 verification record.
 - **Manual/operator:**
@@ -232,9 +284,41 @@ CLAUDE.md §8, plus:
   `main`". That covers Argo CD's default 3-minute poll, a registry check, and the World's restart
   and recovery. Architecture sets the real number after measuring it on the box.
 - `[ASSUMPTION]` The Argo CD UI on a port-forward is enough for one operator on the box.
-- For architecture, in `docs/feedback/AW-INF-019-argocd.md`:
-  1. how a new build reaches the Application;
-  2. `AW-INF-007`'s "only deploy path";
-  3. rendering the content ConfigMaps from git;
-  4. whether `publish` skips merges that can't change the image;
-  5. automating the forced-rollback step.
+- ~~For architecture, in `docs/feedback/AW-INF-019-argocd.md`~~: answered in "Contract review"
+  below.
+
+## Contract review (architecture, 2026-09-26)
+
+The answers to the five items in `docs/feedback/AW-INF-019-argocd.md`. Each is recorded in the body
+above, and the story is `ready`.
+
+1. **Image Updater, `argocd` write-back, tracking `:dev` by digest.** This is PM's (a), with one
+   change: `digest` on `:dev`, not `newest-build` over `sha-` tags. `:dev` is the tag
+   `AW-INF-013` keeps in commit order, and a creation-time sort isn't. Nothing writes to `main`,
+   so there's no publish loop to guard. The record of what `dev` runs is `make argocd-status`,
+   which resolves the digest to its commit.
+2. **`AW-INF-007` governs `prod` and `local`, and `dev` is deployed by Argo CD.** The line is
+   amended in `AW-INF-007`'s body, which also records what `dev` keeps and what it skips. The
+   core-pack step has nothing to act on in `dev` while `dev` reads content from ConfigMaps
+   (`content.source: dir`). The story that moves `dev` to the store carries it, as a chart hook
+   Argo CD runs as `PreSync`.
+3. **The chart renders the ConfigMaps, through in-repo symlinks,** for `helm-install` and Argo CD
+   alike, with a `checksum/content` roll. A multi-source Application or a kustomize overlay would
+   leave `helm-install` and Argo CD building the same objects two ways. A kustomize overlay would
+   also need `LoadRestrictionsNone`, cluster-wide.
+4. **`publish` keeps building every merge.** A `paths-ignore` breaks `AW-INF-013`'s `:dev`
+   guard. Suppose a code merge A is followed at once by a docs merge B. A's run sees `main`'s head
+   is B, and leaves `:dev` to B's run. B's run never happens, so `:dev`, and `dev`, stay one build
+   behind until the next code merge. A World restart for a docs merge is the price on `dev`
+   (AC-5).
+5. **`make argocd-recover` stays an operator step.** An automated deleter on the StatefulSet would
+   act on the one pod that holds the World, during the recovery it's meant to protect. It's a
+   judgment call for one operator on one environment, and `argocd-status` names the command when
+   it applies.
+
+Also changed:
+- `helm.releaseName: andara`.
+- No `helm.parameters` in git.
+- Helm ownership metadata is given at `argocd-uninstall` (AC-10).
+- The exact release-history step.
+- The version-label defect, found while checking item 1. It's #106, against `AW-INF-013`.
