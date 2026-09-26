@@ -241,13 +241,17 @@ func newSnapshotter(cfg config.Config, rt *Runtime, publisher tickloop.Publisher
 func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 	eg := rt.Egress
 	return func(res sim.StepResult, _ time.Duration) {
+		// The World Partition position first: reporting an applied or
+		// refused swap releases whoever waited on it, and what they see
+		// must already count this tick's records as consumed, or a barrier
+		// they run next waits on a position that has in fact moved.
+		rt.worldNext.Store(res.Completed.Offsets[sim.WorldPartition])
 		if len(res.Swaps) > 0 {
 			rt.contentApplied(res.Swaps)
 		}
 		if len(res.SwapsRefused) > 0 && rt.Content != nil {
 			rt.Content.Refused(res.SwapsRefused)
 		}
-		rt.worldNext.Store(res.Completed.Offsets[sim.WorldPartition])
 		if eg != nil {
 			eg.ObserveTick(uint64(res.Tick))
 		}

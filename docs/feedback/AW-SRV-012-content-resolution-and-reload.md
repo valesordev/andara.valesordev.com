@@ -725,3 +725,19 @@ On one `impl/` branch, `impl/aw-srv-012-s8-owed`, stacked on #94.
    checked to exist.
 
 `make check` is clean, and the six `make test-integration` packages pass against Redpanda.
+
+### #95's CI, 2026-09-25
+
+- **`check`: `TestWorldBarrier_FollowsTheLoop` failed on CI.** A real ordering bug from #91, not
+  the test. `onTick` reported applied swaps, which releases whoever waited on them, before it
+  recorded the World Partition position. Fixed: the position is stored first, for the same reason
+  the gauges move before waiters are released. Locally the old order failed 1 run in 300 under
+  `-race`, and the fixed order failed 0 in 300.
+- **For architecture: `stack`'s broker-outage step is timing-sensitive.** On #95's first run it
+  read `starved 0 -> 23 -> 23`: `docker compose stop redpanda` took 2 s, and the tick loop only
+  counts starvation once the Kafka client notices the broker is gone. The `sleep 8` sample then
+  landed before any starvation was counted, although 23 ticks starved by the next sample. The
+  same branch passed `stack` earlier, and #95 changes no server code. Polling for
+  `andara_tick_input_starved_total` to rise, with a deadline, would remove the race
+  (`docs/specs/testing/live-assertions.md` rule 3). `.github/` is architecture's, so this only
+  records it.
