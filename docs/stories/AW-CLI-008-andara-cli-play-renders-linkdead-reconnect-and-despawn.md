@@ -4,7 +4,7 @@ title: andara-cli play renders linkdead, reconnect, and despawn
 epic: EPIC-08
 component: cli
 type: feature
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-CLI-004, AW-SRV-015]
 blocks: [AW-INF-017]
