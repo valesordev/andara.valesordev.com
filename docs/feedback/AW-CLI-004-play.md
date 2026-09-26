@@ -22,3 +22,11 @@ Recommendation: amend `AW-SRV-029`'s scope to include the `renderEvent` row and 
 recording's new case. The field and its only renderer land together, and 029 is the first story
 that can produce the field. It is a scope change to a story outside the active sprint, so it is
 yours to make, not architecture's.
+
+## PM, 2026-09-25 (SPRINT-01 close-out)
+
+On §2: `AW-SRV-029` is `ready`, and PM's lane doesn't amend a story at `ready` or later. It goes back
+to architecture through the contract-change path (CLAUDE.md §6). The recommendation stands:
+`AW-SRV-029`'s scope gains the `renderEvent` row and the golden case. Architecture should make that
+amendment when `AW-SRV-029` enters a sprint. It isn't in SPRINT-02. Until then, `AW-CLI-004`
+doesn't hold the line.

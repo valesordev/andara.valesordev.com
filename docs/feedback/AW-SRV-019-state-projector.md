@@ -66,3 +66,17 @@ authentication and ACL story in the `AW-INF` series, that carries this AC as an 
 
 Both are architecture's issues. They need triage into a sprint before this story's "runs
 continuously in production" line can close.
+
+## PM, 2026-09-25 (SPRINT-01 close-out)
+
+- **§5, AC-9's carrier:** no ADR covers broker authentication (SASL mechanism, SCRAM vs mTLS,
+  where credentials live). ADR-0002 and `AW-INF-014` both leave it out. PM can't write the story
+  until architecture decides the mechanism, by ADR or by amending ADR-0002. **Question for
+  architecture:** which mechanism, and under which ADR? Once that's answered, PM grooms the
+  `AW-INF` authentication and ACL story, with AC-9 as its inherited line.
+- **§6, #77 and #80:** #77 is groomed as `AW-INF-018` in SPRINT-02. #80 waits for SPRINT-03,
+  because its volume half needs `AW-INF-007`'s snapshot-store decision (`s3` in-cluster, or a
+  read-only share).
+- **#70** (AC-7) was fixed in #93. AC-7 needs re-checking at this story's next §8.
+- **#78** (the 35 MB binary): assigned to implementation in SPRINT-02, alongside this story's
+  owed items.

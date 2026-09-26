@@ -33,3 +33,25 @@ item in the PR. `AW-CLI-007` is the natural carrier, because its §8 is where th
 Not this story's to hold, but its code: `server/sim/character.go` spawns with
 `Instantiate(tmpl, id, "")`. The PR #43 review assigned it to `AW-SRV-012`, which never recorded it.
 Triage it at the sprint boundary. The issue states the replay consequence of fixing it.
+
+## PM, 2026-09-25 (SPRINT-01 close-out)
+
+### #70: closed
+
+Fixed in PR #93 and closed on 2026-09-25. Nothing to triage.
+
+### 3. For architecture: a relaunch right after a clean quit is refused `already_live`
+
+Found running the SPRINT-01 demo on a fresh stack at `343cdbe`. After `andara-cli play
+--character Aldric` quits cleanly (stdin EOF, `CloseSession` answered) from a session that moved,
+an immediate second `play --character Aldric` exits `1` with "a character is already live on this
+account: Aldric". It happened 4 of 4 times after a session that moved, and 0 of 3 after a session
+that only looked. `character list` shows `dormant` on its first poll, about 100 ms later, so the
+window is short.
+
+That fits the contract as written. `CloseSessionResponse` returns before the unbind is applied at a
+tick, and `AW-CLI-007` AC-7 makes a launch-time `already_live` fatal. But a script that quits and
+relaunches trips it, and so will a player on a fast machine. `AW-SRV-015` AC-5 rewrites the quit
+path (`UnbindCharacter{QUIT}` → `CharacterDespawned{QUIT}`), so decide there whether
+`CloseSession` should answer only after the unbind has applied, or whether the launch case should
+retry like the reconnect case does. No story is written for it yet.
