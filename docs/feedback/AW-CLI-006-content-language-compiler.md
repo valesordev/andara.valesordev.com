@@ -367,3 +367,8 @@ On `impl/aw-cli-006-admin-readme`, `admin/README.md` now has the following:
 It points at §7 and §14 item 3 for the missing read RPC, and the stale "`content` arrives with
 `AW-CLI-002`" is gone. Item 1 was delivered in #75. Item 3 stays PM's.
 
+Review of #99: the README said a `core_version_mismatch` finding names the cached version. From
+the CLI it can't, because `loadCore` looks up only the pinned version and a miss reports "no cached
+copy". The "cache holds" message is reachable only from `lang.Compile` given a different core. The
+README now says only the required version is reported.
+

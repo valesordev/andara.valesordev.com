@@ -180,8 +180,9 @@ offline and the server's publish gate can call the same function.
 **The core pack cache.** `--cache`, then `ANDARA_CONTENT_CACHE`, then
 `~/.cache/andara/packs`. `fetch-core` writes it; `compile` and `decompile` read it.
 A pack whose pinned core is not in the cache fails to compile with
-`core_version_mismatch`. The finding names the version the pack requires, the cached
-version if there is one, and the `fetch-core` command to run.
+`core_version_mismatch`. The finding names the version the pack requires and the
+`fetch-core --version` command to run. The CLI looks up only that version, so it does
+not say which other versions the cache holds.
 
 **What is not here yet.** `fetch-core` without `--from` exits 3 with
 `core_fetch_unavailable`, and `decompile` has no `--pack`/`--version`. Both need an
