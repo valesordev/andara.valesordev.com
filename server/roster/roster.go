@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -67,11 +68,25 @@ type Options struct {
 	// ObserveMove. Zero means 32; a move observed with none free is
 	// dropped, which costs a re-route at worst (see ObserveMove).
 	PositionWrites int
+	// Linkdead is what a linkdead teardown marks the body with, in Ticks
+	// (config.LinkdeadTicks), and how long the roster holds a linkdead flag
+	// at most whatever the sim says (session.linkdead_max). Zero Ticks make
+	// every lost stream a quit, as AW-SRV-014 had it.
+	Linkdead LinkdeadTicks
+
+	// TickRate is sim.tick_rate, for linkdead durations in seconds. Zero
+	// means 10.
+	TickRate int
 
 	Metrics *Metrics
 	Logger  *slog.Logger
 	Tracer  trace.Tracer
 	Now     func() time.Time
+}
+
+// LinkdeadTicks is session.linkdead_* as MarkLinkdead carries it.
+type LinkdeadTicks struct {
+	Grace, Extension, Max uint64
 }
 
 // Roster implements gateway.Roster.
@@ -90,6 +105,10 @@ type Roster struct {
 	// wait for it. writes bounds the position writes in flight.
 	releases sync.WaitGroup
 	writes   chan struct{}
+	// linkdeadBodies is every body the sim has marked linkdead and not yet
+	// reconnected or despawned, with whether combat extended it: the
+	// andara_sessions_linkdead gauge's source. Loop goroutine only.
+	linkdeadBodies map[sim.EntityID]bool
 }
 
 // live is one Account's live flag: which Session drives which Character.
@@ -106,6 +125,21 @@ type live struct {
 	confirmed bool // the BindCharacter is in the log
 	bound     bool // counted on andara_sessions_bound
 	releasing bool // the teardown has begun; the flag frees when it ends
+	// released is closed when the teardown has finished: the produce done,
+	// and the flag freed (quit) or handed to the linkdead body (linkdead).
+	released chan struct{}
+	// linkdead: the Session is gone and the body is waiting out its grace
+	// (AW-SRV-015). The flag stays held — another Character of the Account
+	// is already_live (AC-16) — until a SelectCharacter of this one
+	// reconnects it, or the body's despawn frees it (ObserveLinkdead).
+	linkdead bool
+	end      gateway.SessionEnd
+	// reconnectOf is the linkdead hold a reconnect took over, kept until its
+	// BindCharacter is in the log: a produce that fails puts it back, since
+	// the body is still linkdead (review of #114). ended records that the
+	// body's grace ended meanwhile, and there is nothing to put back.
+	reconnectOf *live
+	ended       bool
 }
 
 // New builds a Roster.
@@ -122,6 +156,9 @@ func New(o Options) (*Roster, error) {
 	if o.PositionWrites <= 0 {
 		o.PositionWrites = 32
 	}
+	if o.TickRate <= 0 {
+		o.TickRate = 10
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -137,7 +174,8 @@ func New(o Options) (*Roster, error) {
 	return &Roster{
 		opts: o, metrics: o.Metrics, log: o.Logger, tracer: o.Tracer, now: o.Now,
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
-		writes: make(chan struct{}, o.PositionWrites),
+		writes:         make(chan struct{}, o.PositionWrites),
+		linkdeadBodies: map[sim.EntityID]bool{},
 	}, nil
 }
 
@@ -269,7 +307,34 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 	}
 
 	r.mu.Lock()
-	if cur, ok := r.byAccount[acct]; ok {
+	reconnect := false
+	var prev *live
+	for {
+		cur, ok := r.byAccount[acct]
+		if !ok {
+			break
+		}
+		if cur.character == characterID && cur.releasing && !cur.linkdead && cur.end == gateway.EndLinkdead {
+			// The linkdead teardown of the Session this one replaces is
+			// still producing its MarkLinkdead: wait for it rather than
+			// answer already_live to the reconnect it is making room for.
+			r.mu.Unlock()
+			select {
+			case <-cur.released:
+			case <-ctx.Done():
+				return fail(OutcomeAlreadyLive, alreadyLive(cur.name))
+			}
+			r.mu.Lock()
+			continue
+		}
+		if cur.linkdead && cur.character == characterID {
+			// The reconnect (AC-2): this Session takes the flag over, and
+			// the BindCharacter below takes the body back.
+			r.drop(cur)
+			reconnect = true
+			prev = cur
+			break
+		}
 		outcome, name := OutcomeAlreadyLive, cur.name
 		if !cur.confirmed && !cur.releasing {
 			outcome = OutcomeRaceLost
@@ -292,7 +357,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		span.SetStatus(codes.Error, errSessionClosing.Error())
 		return nil, connect.NewError(connect.CodeCanceled, errSessionClosing)
 	}
-	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId())}
+	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), reconnectOf: prev}
 	r.byAccount[acct] = l
 	r.bySession[s.ID] = l
 	r.mu.Unlock()
@@ -323,6 +388,11 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		r.opts.Bindings.Unbind(s.ID)
 		r.mu.Lock()
 		r.drop(l)
+		if p := l.reconnectOf; p != nil && !p.ended && r.byAccount[acct] == nil {
+			// The reconnect did not reach the log: the body is still
+			// linkdead, and the Account still holds it.
+			r.byAccount[acct] = p
+		}
 		r.mu.Unlock()
 		r.log.LogAttrs(ctx, slog.LevelWarn, "character not bound: produce failed",
 			slog.String("account_id", acct), slog.String("character_id", characterID),
@@ -330,54 +400,103 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		return fail(OutcomeProduceFailed, ingress.WireError(err))
 	}
 	r.mu.Lock()
-	l.confirmed = true
+	l.confirmed, l.reconnectOf = true, nil
 	if !l.releasing {
 		l.bound = true
 		r.metrics.SessionsBound.Inc()
 	}
 	r.mu.Unlock()
 	r.metrics.Bindings.WithLabelValues(OutcomeOK).Inc()
-	span.SetAttributes(attribute.String("outcome", OutcomeOK), attribute.Int64("partition", int64(acc.Partition)), attribute.Int64("offset", acc.Offset))
+	span.SetAttributes(attribute.String("outcome", OutcomeOK), attribute.Int64("partition", int64(acc.Partition)), attribute.Int64("offset", acc.Offset), attribute.Bool("reconnect", reconnect))
+	if reconnect {
+		s.AddEvent("linkdead.reconnect", attribute.String("character.id", characterID))
+	}
 	r.log.LogAttrs(ctx, slog.LevelInfo, "character selected",
 		slog.String("account_id", acct), slog.String("character_id", characterID),
-		slog.String("session_id", s.ID), slog.String("zone", ref.GetZoneId()),
+		slog.String("session_id", s.ID), slog.String("zone", ref.GetZoneId()), slog.Bool("reconnect", reconnect),
 		slog.Int64("partition", int64(acc.Partition)), slog.Int64("offset", acc.Offset), slog.String("trace_id", traceID(ctx)))
 	return &gamev1.SelectCharacterResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}, nil
 }
 
 // ReleaseSession implements gateway.Roster: the Session is ending. If it
 // drives a Character, the teardown begins now — the routing table is read
-// while it still says where the body is — and runs on its own context: an
-// UnbindCharacter{QUIT} produced to the body's Zone, bounded by
-// ingress.produce_deadline; the roster's position written from the
-// table's entry; the binding and the live flag cleared. Until it has run,
-// the Character is live: a SelectCharacter from the same Account,
-// including a reconnecting client's, is already_live.
+// while it still says where the body is — and runs on its own context,
+// bounded by ingress.produce_deadline. What it produces is end's
+// (AW-SRV-015's teardown table):
 //
-// A produce that fails is logged, counted, and not retried: the body
-// stays present with no Session, and the next BindCharacter takes it
-// where it stands (AC-11).
-func (r *Roster) ReleaseSession(s *gateway.Session) {
+//   - EndQuit: UnbindCharacter{QUIT}; the roster's position written from the
+//     table's entry; the binding and the live flag cleared.
+//   - EndLinkdead: MarkLinkdead with the configured durations in Ticks; the
+//     binding cleared; the flag kept, marked linkdead, so the Account's next
+//     SelectCharacter of this Character reconnects it and any other is
+//     already_live. Only the body's despawn frees it (ObserveLinkdead).
+//
+// A Character mid-crossing is waited for, so the record goes to the Zone
+// the body arrives in rather than the one it left.
+//
+// Until the teardown has run, the Character is live: a SelectCharacter from
+// the same Account is already_live, except a reconnect, which waits for it.
+// The returned channel is closed when it has run.
+//
+// A produce that fails is logged, counted, and not retried, and the flag is
+// freed: the body stays present with no Session, and the next BindCharacter
+// takes it where it stands (AC-11).
+func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-chan struct{} {
 	r.mu.Lock()
 	l, ok := r.bySession[s.ID]
 	if !ok || l.releasing {
 		r.mu.Unlock()
-		return
+		if ok {
+			return l.released
+		}
+		return closedChan
 	}
-	l.releasing = true
+	if end == gateway.EndLinkdead && r.opts.Linkdead.Grace == 0 {
+		end = gateway.EndQuit
+	}
+	l.releasing, l.end = true, end
 	r.mu.Unlock()
 
 	zone, room := l.zone, sim.RoomID("")
-	if b, bound, _ := r.opts.Bindings.Lookup(s.ID); bound {
+	b, bound, inTransit := r.opts.Bindings.Lookup(s.ID)
+	if bound {
 		zone, room = b.Zone, b.Room
+	}
+	if inTransit {
+		// Mid-crossing the body is in neither Zone: the source has let it
+		// go and the Arrive has not applied. A record produced to the
+		// source now would apply to nothing, and the body would arrive
+		// with no Session and no deadline (review of #114). Wait for the
+		// crossing to settle — bounded by ingress.transit_hold inside
+		// Binding, and by the produce deadline — while the routing entry
+		// still exists: the ingress drops it when the Session's context
+		// ends, which is after this returns.
+		wctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+		settled, err := r.opts.Bindings.Binding(wctx, s.ID)
+		cancel()
+		if err == nil {
+			zone, room = settled.Zone, settled.Room
+		} else {
+			r.log.LogAttrs(context.Background(), slog.LevelWarn, "character released mid-crossing: the crossing did not settle; producing to the Zone it left",
+				slog.String("account_id", l.account), slog.String("character_id", l.character),
+				slog.String("session_id", s.ID), slog.String("zone", string(zone)), slog.String("detail", err.Error()))
+		}
+	}
+	if end == gateway.EndLinkdead {
+		s.AddEvent("linkdead.enter", attribute.String("character.id", l.character))
 	}
 	sessionSpan := s.SpanContext()
 	r.releases.Add(1)
 	go func() {
 		defer r.releases.Done()
+		defer close(l.released)
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
 		defer cancel()
-		ctx, span := r.tracer.Start(ctx, "character.unbind",
+		name, reason := "character.unbind", ReasonQuit
+		if end == gateway.EndLinkdead {
+			name, reason = "character.linkdead", ReasonLinkdead
+		}
+		ctx, span := r.tracer.Start(ctx, name,
 			trace.WithLinks(trace.Link{SpanContext: sessionSpan}),
 			trace.WithAttributes(attribute.String("session.id", s.ID), attribute.String("character.id", l.character)))
 		defer span.End()
@@ -392,15 +511,23 @@ func (r *Roster) ReleaseSession(s *gateway.Session) {
 				CharacterId: l.character, Reason: logv1.UnbindReason_QUIT,
 			}},
 		}
+		if end == gateway.EndLinkdead {
+			ld := r.opts.Linkdead
+			cmd.Command = &logv1.LoggedCommand_MarkLinkdead{MarkLinkdead: &logv1.MarkLinkdead{
+				CharacterId: l.character, GraceTicks: ld.Grace, ExtensionTicks: ld.Extension, MaxTicks: ld.Max,
+			}}
+		}
 		outcome := UnbindOK
-		if _, err := r.opts.Log.Produce(ctx, cmd); err != nil {
+		_, err := r.opts.Log.Produce(ctx, cmd)
+		if err != nil {
 			outcome = UnbindProduceFailed
 			span.SetStatus(codes.Error, err.Error())
-			r.log.LogAttrs(ctx, slog.LevelWarn, "character not unbound: produce failed; the body stays present until the next select",
+			r.log.LogAttrs(ctx, slog.LevelWarn, "character not released: produce failed; the body stays present until the next select",
 				slog.String("account_id", l.account), slog.String("character_id", l.character),
-				slog.String("session_id", s.ID), slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+				slog.String("session_id", s.ID), slog.String("end", end.String()),
+				slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
 		}
-		r.metrics.Unbinds.WithLabelValues(ReasonQuit, outcome).Inc()
+		r.metrics.Unbinds.WithLabelValues(reason, outcome).Inc()
 		// The binding goes with the Session; the ingress clears it on
 		// the same signal, and a Session that never submitted has no
 		// ingress state to clear it from.
@@ -416,14 +543,128 @@ func (r *Roster) ReleaseSession(s *gateway.Session) {
 			}
 		}
 		r.mu.Lock()
-		r.drop(l)
+		if end == gateway.EndLinkdead && err == nil && r.byAccount[l.account] == l {
+			r.holdLinkdead(l)
+		} else {
+			r.drop(l)
+		}
 		r.mu.Unlock()
-		r.log.LogAttrs(ctx, slog.LevelInfo, "character unbound",
+		msg := "character unbound"
+		if end == gateway.EndLinkdead {
+			msg = "character marked linkdead"
+		}
+		r.log.LogAttrs(ctx, slog.LevelInfo, msg,
 			slog.String("account_id", l.account), slog.String("character_id", l.character),
-			slog.String("session_id", s.ID), slog.String("reason", ReasonQuit), slog.String("outcome", outcome),
+			slog.String("session_id", s.ID), slog.String("reason", reason), slog.String("outcome", outcome),
 			slog.String("zone", string(zone)), slog.String("room", string(room)), slog.String("trace_id", traceID(ctx)))
 	}()
+	return l.released
 }
+
+// holdLinkdead keeps l's flag for the linkdead body, off the Session that
+// left and off andara_sessions_bound, until the sim says the grace ended
+// (ObserveLinkdead) or a reconnect takes it. No wall-clock bound: the sim's
+// deadline starts when the mark applies and runs in Ticks, and a timer here
+// could free the Account while the body is still in the World (review of
+// #114). A mark that applied as a no-op leaves the body present with no
+// Session; holding the flag is then right too, and the reconnect takes it.
+// Caller holds mu.
+func (r *Roster) holdLinkdead(l *live) {
+	l.linkdead = true
+	if r.bySession[l.session] == l {
+		delete(r.bySession, l.session)
+	}
+	if l.bound {
+		l.bound = false
+		r.metrics.SessionsBound.Dec()
+	}
+}
+
+// SeedLinkdead is the bodies recovery left linkdead, for the gauge: called
+// once, before the loop runs.
+func (r *Roster) SeedLinkdead(ids []sim.EntityID) {
+	for _, id := range ids {
+		r.linkdeadBodies[id] = false
+	}
+	r.setLinkdeadGauge()
+}
+
+// ObserveLinkdead is the tick's linkdead lifecycle (AW-SRV-015), on the
+// loop goroutine: the metrics and the info lines, and the flag of every
+// linkdead Character whose grace ended freed. A flag a reconnect already
+// took over is not linkdead any more, and is left alone: the reconnect's
+// BindCharacter wakes the body the despawn left.
+func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
+	for _, c := range changes {
+		inCombat := r.linkdeadBodies[c.Character]
+		outcome := ""
+		switch c.Kind {
+		case sim.LinkdeadEntered:
+			r.linkdeadBodies[c.Character] = false
+			outcome = "entered"
+		case sim.LinkdeadExtended:
+			r.linkdeadBodies[c.Character] = true
+			r.metrics.CombatExtensions.Inc()
+			continue
+		case sim.LinkdeadReconnected:
+			delete(r.linkdeadBodies, c.Character)
+			outcome = LinkdeadReconnected
+		case sim.LinkdeadEnded:
+			delete(r.linkdeadBodies, c.Character)
+			switch c.Reason {
+			case sim.DespawnLinkdead:
+				outcome = LinkdeadDespawned
+			case sim.DespawnLinkdeadCeiling:
+				outcome = LinkdeadCeiling
+				r.metrics.CeilingDespawns.Inc()
+			default:
+				outcome = LinkdeadQuit
+			}
+			r.mu.Lock()
+			for _, l := range r.byAccount {
+				if l.linkdead && l.character == string(c.Character) {
+					r.drop(l)
+					break
+				}
+				if p := l.reconnectOf; p != nil && p.character == string(c.Character) {
+					p.ended = true
+				}
+			}
+			r.mu.Unlock()
+		}
+		if c.Kind != sim.LinkdeadEntered {
+			r.metrics.LinkdeadOutcomes.WithLabelValues(outcome).Inc()
+			secs := float64(tick-c.Since) / float64(r.opts.TickRate)
+			r.metrics.LinkdeadDuration.WithLabelValues(strconv.FormatBool(inCombat)).Observe(secs)
+		}
+		ctx := command.ParentFrom(context.Background(), c.TraceID)
+		msg := map[sim.LinkdeadKind]string{
+			sim.LinkdeadEntered: "character linkdead", sim.LinkdeadReconnected: "character reconnected", sim.LinkdeadEnded: "character despawned",
+		}[c.Kind]
+		r.log.LogAttrs(ctx, slog.LevelInfo, msg,
+			slog.String("session_id", c.Session), slog.String("character_id", string(c.Character)),
+			slog.String("outcome", outcome), slog.Uint64("deadline_tick", uint64(c.Deadline)),
+			slog.Uint64("tick", uint64(tick)), slog.String("zone", string(c.Zone)),
+			slog.String("trace_id", traceID(ctx)))
+	}
+	r.setLinkdeadGauge()
+}
+
+func (r *Roster) setLinkdeadGauge() {
+	var combat, calm int
+	for _, in := range r.linkdeadBodies {
+		if in {
+			combat++
+		} else {
+			calm++
+		}
+	}
+	r.metrics.Linkdead.WithLabelValues("true").Set(float64(combat))
+	r.metrics.Linkdead.WithLabelValues("false").Set(float64(calm))
+}
+
+// closedChan is a teardown with nothing to wait for.
+var closedChan = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
 
 // drop clears l's flag if it is still the one held. Caller holds mu.
 func (r *Roster) drop(l *live) {

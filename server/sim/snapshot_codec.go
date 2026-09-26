@@ -103,6 +103,11 @@ func entityStateProto(e *EntityState) *statev1.EntityState {
 		Name:             e.Name,
 		Dormant:          e.Dormant,
 		DormantSinceTick: uint64(e.DormantSince),
+
+		LinkdeadSinceTick:      uint64(e.LinkdeadSince),
+		LinkdeadDeadlineTick:   uint64(e.LinkdeadDeadline),
+		LinkdeadCeilingTick:    uint64(e.LinkdeadCeiling),
+		LinkdeadExtensionTicks: uint64(e.LinkdeadExtension),
 	}
 	// Sorted here rather than trusted: an EntityState assembled by hand in a
 	// test never went through the loader, and an encoder that silently
@@ -174,6 +179,11 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 			Name:           ep.GetName(),
 			Dormant:        ep.GetDormant(),
 			DormantSince:   Tick(ep.GetDormantSinceTick()),
+
+			LinkdeadSince:     Tick(ep.GetLinkdeadSinceTick()),
+			LinkdeadDeadline:  Tick(ep.GetLinkdeadDeadlineTick()),
+			LinkdeadCeiling:   Tick(ep.GetLinkdeadCeilingTick()),
+			LinkdeadExtension: Tick(ep.GetLinkdeadExtensionTicks()),
 		}
 		for _, cv := range ep.GetComponents() {
 			c := Component{Type: ComponentType(cv.GetType())}
@@ -197,9 +207,9 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 // A body that carries a value the hash does not cover is refused rather than
 // hashed, so no single-field corruption of a stored object leaves it valid:
 //   - deferred, which is never written (zone_state.proto; feedback §3)
-//   - the linkdead fields (linkdead_deadline_tick, linkdead_since_tick,
-//     linkdead_ceiling_tick, linkdead_extension_ticks), which nothing writes
-//     until AW-SRV-015 gives them a place in the State Hash
+//   - linkdead_since_tick, linkdead_ceiling_tick or linkdead_extension_ticks
+//     with no linkdead_deadline_tick: the linkdead record is written only for
+//     a body with a deadline, and the sim never sets one without the others
 //   - dormant_since_tick on a body that is not dormant: EntityCanonicalBytes
 //     covers it only for a dormant body, and the sim clears it on waking
 //
@@ -211,15 +221,8 @@ func BodyStateHash(p *statev1.ZoneState) ([32]byte, error) {
 		return [32]byte{}, fmt.Errorf("snapshot: zone %s carries %d deferred commands, a field no snapshot writes", p.GetZoneId(), n)
 	}
 	for _, e := range p.GetEntities() {
-		for name, v := range map[string]uint64{
-			"linkdead_deadline_tick":   e.GetLinkdeadDeadlineTick(),
-			"linkdead_since_tick":      e.GetLinkdeadSinceTick(),
-			"linkdead_ceiling_tick":    e.GetLinkdeadCeilingTick(),
-			"linkdead_extension_ticks": e.GetLinkdeadExtensionTicks(),
-		} {
-			if v != 0 {
-				return [32]byte{}, fmt.Errorf("snapshot: entity %s carries %s, which this binary does not hash", e.GetEntityId(), name)
-			}
+		if e.GetLinkdeadDeadlineTick() == 0 && e.GetLinkdeadSinceTick()|e.GetLinkdeadCeilingTick()|e.GetLinkdeadExtensionTicks() != 0 {
+			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries linkdead fields and no linkdead_deadline_tick", e.GetEntityId())
 		}
 		if !e.GetDormant() && e.GetDormantSinceTick() != 0 {
 			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries dormant_since_tick and is not dormant", e.GetEntityId())

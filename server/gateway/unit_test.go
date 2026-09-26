@@ -292,7 +292,7 @@ func TestUnimplementedRoster(t *testing.T) {
 			t.Errorf("roster rpc %d: %v, want UNIMPLEMENTED", i, err)
 		}
 	}
-	r.ReleaseSession(&Session{})
+	<-r.ReleaseSession(&Session{}, EndQuit)
 }
 
 func TestUnimplementedIngress(t *testing.T) {

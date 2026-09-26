@@ -41,6 +41,26 @@ type EntityState struct {
 	// Tick it went dormant, for AW-SRV-032's retention.
 	Dormant      bool
 	DormantSince Tick
+	// The linkdead state (AW-SRV-015, ADR-0006), all zero when the body is
+	// not linkdead: the Tick it went linkdead, the Tick it despawns at unless
+	// a reconnect comes first, the Tick it despawns at however long combat
+	// goes on, and how far one combat interaction pushes the deadline. The
+	// durations come from the MarkLinkdead that set them, never from config,
+	// so a replay under a retuned session.linkdead_* despawns on the same
+	// Tick.
+	LinkdeadSince     Tick
+	LinkdeadDeadline  Tick
+	LinkdeadCeiling   Tick
+	LinkdeadExtension Tick
+}
+
+// Linkdead reports whether the body's Session lost its stream and the body
+// is waiting out its grace (AW-SRV-015).
+func (e *EntityState) Linkdead() bool { return e != nil && e.LinkdeadSince != 0 }
+
+// clearLinkdead zeroes the four linkdead fields: a reconnect or a despawn.
+func (e *EntityState) clearLinkdead() {
+	e.LinkdeadSince, e.LinkdeadDeadline, e.LinkdeadCeiling, e.LinkdeadExtension = 0, 0, 0, 0
 }
 
 // DisplayName is how a Room lists the Entity and how CharacterArrived and

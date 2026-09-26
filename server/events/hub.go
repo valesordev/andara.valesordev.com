@@ -129,13 +129,16 @@ func (s *Subscription) observer() Observer {
 	return s.obs
 }
 
-// follow moves the Observer with its Entity: a CharacterLeft addressed to
-// it clears the Room, a CharacterArrived sets it. Position tracking is
+// follow moves the Observer with its Entity: a CharacterLeft or
+// CharacterDespawned addressed to it clears the Room, a CharacterArrived or
+// CharacterReconnected sets it. Position tracking is
 // independent of delivery — it applies to Events before the start tick
 // too, so a subscription registered mid-move is not left in the Room its
 // Character had already left.
 func (s *Subscription) follow(ev sim.Event) {
-	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated {
+	switch ev.Type {
+	case sim.EvCharacterLeft, sim.EvCharacterArrived, sim.EvEntityRelocated, sim.EvCharacterReconnected, sim.EvCharacterDespawned:
+	default:
 		return
 	}
 	s.mu.Lock()
@@ -144,8 +147,10 @@ func (s *Subscription) follow(ev sim.Event) {
 		return
 	}
 	switch p := ev.Envelope.GetPayload().(type) {
-	case *gamev1.EventEnvelope_CharacterLeft:
+	case *gamev1.EventEnvelope_CharacterLeft, *gamev1.EventEnvelope_CharacterDespawned:
 		s.obs.Room = sim.RoomRef{}
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		s.obs.Room = sim.RoomRef{Zone: sim.ZoneID(p.CharacterReconnected.GetZoneId()), Room: sim.RoomID(p.CharacterReconnected.GetRoomId())}
 	case *gamev1.EventEnvelope_CharacterArrived:
 		s.obs.Room = sim.RoomRef{Zone: sim.ZoneID(p.CharacterArrived.GetZoneId()), Room: sim.RoomID(p.CharacterArrived.GetRoomId())}
 	case *gamev1.EventEnvelope_EntityRelocated:

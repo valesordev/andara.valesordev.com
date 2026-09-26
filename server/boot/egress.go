@@ -65,6 +65,7 @@ func (rt *Runtime) StartEgress(ctx context.Context) {
 		Buffer:            cfg.EgressBuffer,
 		ResumeWindow:      cfg.EgressResumeWindow,
 		HeartbeatInterval: cfg.HeartbeatInterval,
+		ParkFor:           cfg.SessionLinkdeadMax,
 		Log:               rt.Tel.Log,
 		Tracer:            rt.Tel.Tracer,
 		Registry:          rt.Tel.Reg,

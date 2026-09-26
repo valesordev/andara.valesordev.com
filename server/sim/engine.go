@@ -100,7 +100,11 @@ type StepResult struct {
 	// SwapsRefused is every ContentSwap this tick consumed and refused, a
 	// deterministic no-op each: the content source is told, and re-evaluates.
 	SwapsRefused []SwapRefused
-	Completed    TickCompleted
+	// Linkdead is every step of a body's linkdead lifecycle this tick took
+	// (AW-SRV-015), in the order it took them, for the loop's metrics and
+	// log lines.
+	Linkdead  []LinkdeadChange
+	Completed TickCompleted
 }
 
 // CommandKind names the arm of LoggedCommand.command a handler serves.
@@ -121,6 +125,8 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "unbind_character"
 	case *logv1.LoggedCommand_ContentSwap:
 		return "content_swap"
+	case *logv1.LoggedCommand_MarkLinkdead:
+		return KindMarkLinkdead
 	}
 	return ""
 }
@@ -241,6 +247,9 @@ const (
 	BindWoken    BindBody = "woken"
 	BindPresent  BindBody = "present"
 	BindRerouted BindBody = "rerouted"
+	// BindReconnected: a linkdead body taken back within its grace
+	// (AW-SRV-015).
+	BindReconnected BindBody = "reconnected"
 )
 
 // The post-log stages an Outcome names.
@@ -280,6 +289,9 @@ type Engine struct {
 	// (AW-SRV-012). Empty until the first swap.
 	versions map[string]uint64
 	digest   [32]byte
+	// step is the tick in progress, set for the length of Step: what
+	// OnCombatInteraction and a handler's lifecycle report write to.
+	step *StepResult
 }
 
 // NewEngine builds an Engine at tick 0 with every Zone empty.
@@ -411,6 +423,8 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 	consumed := map[Record]bool{}
 
 	res := StepResult{Tick: tick}
+	e.step = &res
+	defer func() { e.step = nil }()
 	emit := func(zone ZoneID, session, clientRef string, scope Scope, env *gamev1.EventEnvelope) {
 		env.EventId = s.NextEventID
 		env.Tick = uint64(tick)
@@ -458,6 +472,10 @@ func (e *Engine) Step(in TickInput) (StepResult, error) {
 			s.Offsets[p] = r.Offset + 1
 		}
 	}
+
+	// Grace expiry, after every Command of the tick: a reconnect or a combat
+	// refresh applied this tick is seen before the deadline is (AW-SRV-015).
+	e.expireLinkdead(tick, emit, &res)
 
 	for _, ps := range prepared {
 		if !consumed[ps.rec] {

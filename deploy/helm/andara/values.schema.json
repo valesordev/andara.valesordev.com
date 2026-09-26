@@ -296,6 +296,11 @@
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_HEARTBEAT_INTERVAL (AW-SRV-011). Default when unset: '20s'."
+            },
+            "assumed_event_rate": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_EGRESS_ASSUMED_EVENT_RATE (AW-SRV-015). Default when unset: 5."
             }
           }
         },
@@ -376,6 +381,17 @@
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_SNAPSHOT_UPLOAD_TIMEOUT (AW-SRV-006). Default when unset: '30s'."
+            }
+          }
+        },
+        "recovery": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "rto_target": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_RECOVERY_RTO_TARGET (AW-SRV-015). Default when unset: '60s'."
             }
           }
         },
@@ -483,10 +499,25 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "linkdead_grace": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_LINKDEAD_GRACE (AW-SRV-015). Default when unset: '180s'."
+            },
+            "linkdead_combat_extension": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_LINKDEAD_COMBAT_EXTENSION (AW-SRV-015). Default when unset: '60s'."
+            },
             "linkdead_max": {
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_LINKDEAD_MAX (AW-SRV-008). Default when unset: '300s'."
+            },
+            "linkdead_detect": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_LINKDEAD_DETECT (AW-SRV-015). Default when unset: '5s'."
             }
           }
         },

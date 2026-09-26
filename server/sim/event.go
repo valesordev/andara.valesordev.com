@@ -24,6 +24,11 @@ const (
 	EvSubscriberDropped EventType = "subscriber_dropped"
 	EvSimulationStopped EventType = "simulation_stopped"
 	EvEntityRelocated   EventType = "entity_relocated"
+	// AW-SRV-015: a body's Session lost its stream, a new Session took the
+	// linkdead body back, and a body left the World.
+	EvCharacterLinkdead    EventType = "character_linkdead"
+	EvCharacterReconnected EventType = "character_reconnected"
+	EvCharacterDespawned   EventType = "character_despawned"
 )
 
 // Scope answers "who may perceive this" (AW-SRV-004). It is computed inside
@@ -174,6 +179,12 @@ func typeOf(env *gamev1.EventEnvelope) EventType {
 		return EvSimulationStopped
 	case *gamev1.EventEnvelope_EntityRelocated:
 		return EvEntityRelocated
+	case *gamev1.EventEnvelope_CharacterLinkdead:
+		return EvCharacterLinkdead
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		return EvCharacterReconnected
+	case *gamev1.EventEnvelope_CharacterDespawned:
+		return EvCharacterDespawned
 	}
 	return ""
 }
@@ -185,5 +196,6 @@ func TypeOf(env *gamev1.EventEnvelope) EventType { return typeOf(env) }
 
 // EventTypes is every EventType the simulation emits.
 func EventTypes() []EventType {
-	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped, EvEntityRelocated}
+	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped, EvEntityRelocated,
+		EvCharacterLinkdead, EvCharacterReconnected, EvCharacterDespawned}
 }

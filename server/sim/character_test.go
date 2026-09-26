@@ -63,9 +63,9 @@ func TestBind_SpawnsANewBody(t *testing.T) {
 }
 
 // AC-8: an UnbindCharacter makes the body dormant where it stands, emits
-// CharacterLeft with an empty to_direction to the Room, and the Room's
-// occupants no longer name it. A dormant body is invisible to look and
-// acts for nobody.
+// CharacterDespawned{quit} to the Room (AW-SRV-015 AC-5, in place of
+// CharacterLeft with an empty to_direction), and the Room's occupants no
+// longer name it. A dormant body is invisible to look and acts for nobody.
 func TestUnbind_MakesTheBodyDormant(t *testing.T) {
 	e := emptyEngine(t)
 	simtest.Place(e, "bob", "town", "plaza")
@@ -73,12 +73,12 @@ func TestUnbind_MakesTheBodyDormant(t *testing.T) {
 	step(t, e, simtest.Move("town", "ch-1", "north"))
 
 	res := step(t, e, simtest.Unbind("town", "ch-1"))
-	left := ofType(res.Events, sim.EvCharacterLeft)
+	left := ofType(res.Events, sim.EvCharacterDespawned)
 	if len(left) != 1 || len(res.Events) != 1 {
-		t.Fatalf("want exactly one CharacterLeft, got %v", res.Events)
+		t.Fatalf("want exactly one CharacterDespawned, got %v", res.Events)
 	}
-	p := left[0].Envelope.GetCharacterLeft()
-	if p.GetCharacterName() != "Aldric" || p.GetToDirection() != "" || p.GetRoomId() != "hall" {
+	p := left[0].Envelope.GetCharacterDespawned()
+	if p.GetCharacterName() != "Aldric" || p.GetReason() != sim.DespawnQuit || p.GetRoomId() != "hall" {
 		t.Fatalf("departure %v", p)
 	}
 	if left[0].Scope.Room != (sim.RoomRef{Zone: "town", Room: "hall"}) {

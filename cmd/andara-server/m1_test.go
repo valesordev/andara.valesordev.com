@@ -204,12 +204,13 @@ func TestRun_M1Gate(t *testing.T) {
 	streamB.next(t, "character_arrived")
 
 	// AC-8: a CloseSession produces the UnbindCharacter; the Room sees
-	// the departure with no direction; the occupants no longer name it.
+	// the body leave the World (CharacterDespawned{quit}, AW-SRV-015 AC-5);
+	// the occupants no longer name it.
 	if _, err := game.CloseSession(ctx, connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: sA})); err != nil {
 		t.Fatal(err)
 	}
-	if l := streamB.next(t, "character_left").GetCharacterLeft(); l.GetCharacterName() != "Aldric" || l.GetToDirection() != "" {
-		t.Fatalf("the quit as Brin sees it: %v", l)
+	if d := streamB.next(t, "character_despawned").GetCharacterDespawned(); d.GetCharacterName() != "Aldric" || d.GetReason() != "quit" {
+		t.Fatalf("the quit as Brin sees it: %v", d)
 	}
 	submit(sB, "look", "b-look")
 	if r := streamB.next(t, "room_described").GetRoomDescribed(); len(r.GetOccupants()) != 0 {
@@ -254,7 +255,9 @@ func TestRun_M1Gate(t *testing.T) {
 			strings.Contains(m, `andara_character_creations_total{outcome="ok"} 2`)
 	}, "the roster metrics to settle")
 
-	// A drain unbinds both: the log lines say so and the exit is clean.
+	// A drain marks both linkdead rather than unbinding them (AW-SRV-015
+	// AC-15: a deploy must not despawn the map): the log lines say so and
+	// the exit is clean.
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -273,8 +276,11 @@ func TestRun_M1Gate(t *testing.T) {
 			t.Errorf("stderr lacks %q", want)
 		}
 	}
-	if n := strings.Count(out, `"msg":"character unbound"`); n != 3 {
-		t.Errorf("%d unbind lines, want 3 (the quit and the two drained)", n)
+	if n := strings.Count(out, `"msg":"character unbound"`); n != 1 {
+		t.Errorf("%d unbind lines, want 1 (the quit)", n)
+	}
+	if n := strings.Count(out, `"msg":"character marked linkdead"`); n != 2 {
+		t.Errorf("%d linkdead lines, want 2 (the two drained)", n)
 	}
 	if strings.Contains(out, `"name":"Aldric"`) {
 		t.Error("a Character name is a log key")
@@ -330,6 +336,12 @@ func eventType(env *gamev1.EventEnvelope) string {
 		return "character_arrived"
 	case *gamev1.EventEnvelope_CharacterLeft:
 		return "character_left"
+	case *gamev1.EventEnvelope_CharacterLinkdead:
+		return "character_linkdead"
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		return "character_reconnected"
+	case *gamev1.EventEnvelope_CharacterDespawned:
+		return "character_despawned"
 	case *gamev1.EventEnvelope_CommandRejected:
 		return "command_rejected"
 	}

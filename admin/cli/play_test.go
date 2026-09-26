@@ -115,7 +115,11 @@ func (w *world) SelectCharacter(_ context.Context, _ *gateway.Session, character
 	return &gamev1.SelectCharacterResponse{Partition: 3, AcceptedOffset: w.offset.Add(1)}, nil
 }
 
-func (w *world) ReleaseSession(*gateway.Session) {}
+func (w *world) ReleaseSession(*gateway.Session, gateway.SessionEnd) <-chan struct{} {
+	done := make(chan struct{})
+	close(done)
+	return done
+}
 
 // called is the Game calls the world has seen, in order.
 func (w *world) called() []string {

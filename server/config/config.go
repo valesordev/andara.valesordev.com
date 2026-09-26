@@ -71,9 +71,16 @@ type Config struct {
 	// operator is created by one through Admin.CreateAccount.
 	AuthBootstrapOperator string
 
-	// Session lifecycle (ADR-0006). Only the ceiling is read today, because
-	// auth.session_ttl must exceed it; AW-SRV-015 reads the rest.
-	SessionLinkdeadMax time.Duration
+	// Session lifecycle (ADR-0006, AW-SRV-015). The Gateway converts grace,
+	// combat extension and max to Ticks at sim.tick_rate into each
+	// MarkLinkdead; detect is how long a stream may miss its keepalive before
+	// the Session is marked linkdead. RecoveryRTOTarget is read only for the
+	// startup invariant linkdead_grace > rto_target.
+	SessionLinkdeadGrace           time.Duration
+	SessionLinkdeadCombatExtension time.Duration
+	SessionLinkdeadMax             time.Duration
+	SessionLinkdeadDetect          time.Duration
+	RecoveryRTOTarget              time.Duration
 
 	// The roster (AW-SRV-014, ADR-0006): how many Characters an Account
 	// holds, where a new one spawns as zone_id/room_id — the boot refuses
@@ -127,6 +134,9 @@ type Config struct {
 	EgressBuffer       int
 	EgressResumeWindow int
 	HeartbeatInterval  time.Duration
+	// EgressAssumedEventRate is Events/s per Session, for the startup check
+	// that the resume window outlasts linkdead_max (AW-SRV-015 AC-7).
+	EgressAssumedEventRate int
 
 	// Zone snapshots (AW-SRV-006). SnapshotInterval is the cadence of a
 	// round — one consistent cut of every owned Zone at a tick boundary —
@@ -188,6 +198,12 @@ const (
 	DefaultAuthInviteTTL       = 168 * time.Hour
 	DefaultAuthRecheckInterval = 30 * time.Second
 	DefaultSessionLinkdeadMax  = 300 * time.Second
+
+	DefaultSessionLinkdeadGrace           = 180 * time.Second
+	DefaultSessionLinkdeadCombatExtension = 60 * time.Second
+	DefaultSessionLinkdeadDetect          = 5 * time.Second
+	DefaultRecoveryRTOTarget              = 60 * time.Second
+	DefaultEgressAssumedEventRate         = 5
 
 	DefaultCharacterMaxPerAccount = 5
 	// DefaultCharacterSpawnRoom is the dev fixture's Room (Brian,
@@ -278,6 +294,12 @@ func defaults() Config {
 		AuthInviteTTL:       DefaultAuthInviteTTL,
 		AuthRecheckInterval: DefaultAuthRecheckInterval,
 		SessionLinkdeadMax:  DefaultSessionLinkdeadMax,
+
+		SessionLinkdeadGrace:           DefaultSessionLinkdeadGrace,
+		SessionLinkdeadCombatExtension: DefaultSessionLinkdeadCombatExtension,
+		SessionLinkdeadDetect:          DefaultSessionLinkdeadDetect,
+		RecoveryRTOTarget:              DefaultRecoveryRTOTarget,
+		EgressAssumedEventRate:         DefaultEgressAssumedEventRate,
 
 		CharacterMaxPerAccount: DefaultCharacterMaxPerAccount,
 		CharacterSpawnRoom:     DefaultCharacterSpawnRoom,
@@ -423,6 +445,11 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
+	fs.DurationVar(&c.SessionLinkdeadGrace, "session-linkdead-grace", c.SessionLinkdeadGrace, "how long a linkdead Character waits for a reconnect; must exceed recovery.rto_target (ANDARA_LINKDEAD_GRACE)")
+	fs.DurationVar(&c.SessionLinkdeadCombatExtension, "session-linkdead-combat-extension", c.SessionLinkdeadCombatExtension, "how far one combat interaction pushes a linkdead deadline (ANDARA_LINKDEAD_COMBAT_EXTENSION)")
+	fs.DurationVar(&c.SessionLinkdeadDetect, "session-linkdead-detect", c.SessionLinkdeadDetect, "keepalive miss before a silent stream is marked linkdead (ANDARA_LINKDEAD_DETECT)")
+	fs.DurationVar(&c.RecoveryRTOTarget, "recovery-rto-target", c.RecoveryRTOTarget, "the recovery time objective, for the linkdead_grace invariant only (ANDARA_RECOVERY_RTO_TARGET)")
+	fs.IntVar(&c.EgressAssumedEventRate, "egress-assumed-event-rate", c.EgressAssumedEventRate, "Events/s per Session the resume window is sized for (ANDARA_EGRESS_ASSUMED_EVENT_RATE)")
 	fs.IntVar(&c.CharacterMaxPerAccount, "character-max-per-account", c.CharacterMaxPerAccount, "Characters an Account may hold (ANDARA_CHARACTER_MAX_PER_ACCOUNT)")
 	fs.StringVar(&c.CharacterSpawnRoom, "character-spawn-room", c.CharacterSpawnRoom, "zone_id/room_id a new Character spawns in; must resolve against the loaded content (ANDARA_CHARACTER_SPAWN_ROOM)")
 	fs.StringVar(&c.CharacterNamePattern, "character-name-pattern", c.CharacterNamePattern, "RE2 pattern a Character name must match (ANDARA_CHARACTER_NAME_PATTERN)")
@@ -450,6 +477,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		return Config{}, err
 	}
 	if err := c.validateSim(); err != nil {
+		return Config{}, err
+	}
+	if err := c.validateLinkdead(); err != nil {
 		return Config{}, err
 	}
 	if err := c.validateSnapshot(); err != nil {
@@ -495,6 +525,89 @@ func (c Config) validateSnapshot() error {
 		return fmt.Errorf("snapshot.upload_timeout (%s) must not exceed snapshot.interval (%s)", c.SnapshotUploadTimeout, c.SnapshotInterval)
 	}
 	return nil
+}
+
+// ErrInvariant is a startup assertion on the ADR-0006 relationship between
+// configuration values that the server refuses to start without (AW-SRV-015
+// AC-7, AC-8): the relation, and every value in it, in the relation's order.
+type ErrInvariant struct {
+	Relation string
+	Values   []InvariantValue
+}
+
+// InvariantValue is one named value in an ErrInvariant.
+type InvariantValue struct{ Key, Value string }
+
+func (e *ErrInvariant) Error() string {
+	vals := make([]string, len(e.Values))
+	for i, v := range e.Values {
+		vals[i] = v.Key + "=" + v.Value
+	}
+	return "configuration violates " + e.Relation + ": " + strings.Join(vals, ", ")
+}
+
+// validateLinkdead asserts, in this order, and fails on the first:
+//
+//	session.linkdead_max >= session.linkdead_grace
+//	session.linkdead_grace > recovery.rto_target
+//	egress.resume_window >= session.linkdead_max × egress.assumed_event_rate
+//	auth.session_ttl > session.linkdead_max
+//
+// The second is the one that matters most: every restart drops every
+// Session, so a grace shorter than recovery empties the map on a routine
+// deploy. The third is a count against a rate: the resume window is Events,
+// and a linkdead Session lingers up to linkdead_max, so a window that holds
+// fewer than linkdead_max of assumed traffic turns a reconnect into a
+// Resync. The fourth is ADR-0006's: a token that expires inside the grace
+// turns every reconnect into an authentication failure.
+func (c Config) validateLinkdead() error {
+	for _, d := range []struct {
+		key string
+		v   time.Duration
+	}{
+		{"session.linkdead_grace", c.SessionLinkdeadGrace},
+		{"session.linkdead_max", c.SessionLinkdeadMax},
+		{"session.linkdead_detect", c.SessionLinkdeadDetect},
+		{"recovery.rto_target", c.RecoveryRTOTarget},
+	} {
+		if d.v <= 0 {
+			return fmt.Errorf("%s must be positive, got %s", d.key, d.v)
+		}
+	}
+	if c.SessionLinkdeadCombatExtension < 0 {
+		return fmt.Errorf("session.linkdead_combat_extension must not be negative, got %s", c.SessionLinkdeadCombatExtension)
+	}
+	if c.EgressAssumedEventRate < 1 {
+		return fmt.Errorf("egress.assumed_event_rate must be positive, got %d", c.EgressAssumedEventRate)
+	}
+	dur := func(k string, v time.Duration) InvariantValue { return InvariantValue{k, v.String()} }
+	switch {
+	case c.SessionLinkdeadMax < c.SessionLinkdeadGrace:
+		return &ErrInvariant{Relation: "session.linkdead_max >= session.linkdead_grace", Values: []InvariantValue{
+			dur("session.linkdead_max", c.SessionLinkdeadMax), dur("session.linkdead_grace", c.SessionLinkdeadGrace)}}
+	case c.SessionLinkdeadGrace <= c.RecoveryRTOTarget:
+		return &ErrInvariant{Relation: "session.linkdead_grace > recovery.rto_target", Values: []InvariantValue{
+			dur("session.linkdead_grace", c.SessionLinkdeadGrace), dur("recovery.rto_target", c.RecoveryRTOTarget)}}
+	case float64(c.EgressResumeWindow) < c.SessionLinkdeadMax.Seconds()*float64(c.EgressAssumedEventRate):
+		return &ErrInvariant{Relation: "egress.resume_window >= session.linkdead_max × egress.assumed_event_rate", Values: []InvariantValue{
+			{"egress.resume_window", strconv.Itoa(c.EgressResumeWindow)}, dur("session.linkdead_max", c.SessionLinkdeadMax),
+			{"egress.assumed_event_rate", strconv.Itoa(c.EgressAssumedEventRate)}}}
+	case c.AuthSessionTTL <= c.SessionLinkdeadMax:
+		return &ErrInvariant{Relation: "auth.session_ttl > session.linkdead_max", Values: []InvariantValue{
+			dur("auth.session_ttl", c.AuthSessionTTL), dur("session.linkdead_max", c.SessionLinkdeadMax)}}
+	}
+	return nil
+}
+
+// LinkdeadTicks converts the three linkdead durations to Ticks at
+// sim.tick_rate, as MarkLinkdead carries them. Rounded up: a grace is never
+// shorter than configured.
+func (c Config) LinkdeadTicks() (grace, extension, max uint64) {
+	ticks := func(d time.Duration) uint64 {
+		per := time.Second / time.Duration(c.SimTickRate)
+		return uint64((d + per - 1) / per)
+	}
+	return ticks(c.SessionLinkdeadGrace), ticks(c.SessionLinkdeadCombatExtension), ticks(c.SessionLinkdeadMax)
 }
 
 // validateSim rejects a tick configuration the loop cannot run. The budget
@@ -644,9 +757,6 @@ func (c Config) validateAuth() error {
 	if c.SessionLinkdeadMax <= 0 {
 		return fmt.Errorf("session.linkdead_max must be positive, got %s", c.SessionLinkdeadMax)
 	}
-	if c.AuthSessionTTL <= c.SessionLinkdeadMax {
-		return fmt.Errorf("auth.session_ttl (%s) must exceed session.linkdead_max (%s), or a linkdead reconnect fails on authentication", c.AuthSessionTTL, c.SessionLinkdeadMax)
-	}
 	if c.CharacterMaxPerAccount < 1 {
 		return fmt.Errorf("character.max_per_account must be positive, got %d", c.CharacterMaxPerAccount)
 	}
@@ -785,8 +895,14 @@ type fileConfig struct {
 		BootstrapOperator *string `yaml:"bootstrap_operator"`
 	} `yaml:"auth"`
 	Session *struct {
-		LinkdeadMax *string `yaml:"linkdead_max"`
+		LinkdeadGrace           *string `yaml:"linkdead_grace"`
+		LinkdeadCombatExtension *string `yaml:"linkdead_combat_extension"`
+		LinkdeadMax             *string `yaml:"linkdead_max"`
+		LinkdeadDetect          *string `yaml:"linkdead_detect"`
 	} `yaml:"session"`
+	Recovery *struct {
+		RTOTarget *string `yaml:"rto_target"`
+	} `yaml:"recovery"`
 	Character *struct {
 		MaxPerAccount *int    `yaml:"max_per_account"`
 		SpawnRoom     *string `yaml:"spawn_room"`
@@ -823,6 +939,7 @@ type fileConfig struct {
 		Buffer            *int    `yaml:"buffer"`
 		ResumeWindow      *int    `yaml:"resume_window"`
 		HeartbeatInterval *string `yaml:"heartbeat_interval"`
+		AssumedEventRate  *int    `yaml:"assumed_event_rate"`
 	} `yaml:"egress"`
 	Snapshot *struct {
 		Interval      *string `yaml:"interval"`
@@ -992,8 +1109,27 @@ func applyFile(c *Config, path string) error {
 			}
 		}
 	}
-	if fc.Session != nil && fc.Session.LinkdeadMax != nil {
-		if err := parseDuration("session.linkdead_max", *fc.Session.LinkdeadMax, &c.SessionLinkdeadMax); err != nil {
+	if se := fc.Session; se != nil {
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"session.linkdead_grace", se.LinkdeadGrace, &c.SessionLinkdeadGrace},
+			{"session.linkdead_combat_extension", se.LinkdeadCombatExtension, &c.SessionLinkdeadCombatExtension},
+			{"session.linkdead_max", se.LinkdeadMax, &c.SessionLinkdeadMax},
+			{"session.linkdead_detect", se.LinkdeadDetect, &c.SessionLinkdeadDetect},
+		} {
+			if d.v == nil {
+				continue
+			}
+			if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
+		}
+	}
+	if fc.Recovery != nil && fc.Recovery.RTOTarget != nil {
+		if err := parseDuration("recovery.rto_target", *fc.Recovery.RTOTarget, &c.RecoveryRTOTarget); err != nil {
 			return fmt.Errorf("config file %s: %w", path, err)
 		}
 	}
@@ -1089,6 +1225,9 @@ func applyFile(c *Config, path string) error {
 		}
 		if eg.ResumeWindow != nil {
 			c.EgressResumeWindow = *eg.ResumeWindow
+		}
+		if eg.AssumedEventRate != nil {
+			c.EgressAssumedEventRate = *eg.AssumedEventRate
 		}
 		if eg.HeartbeatInterval != nil {
 			if err := parseDuration("egress.heartbeat_interval", *eg.HeartbeatInterval, &c.HeartbeatInterval); err != nil {
@@ -1270,6 +1409,10 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_INVITE_TTL", &c.AuthInviteTTL},
 		{"ANDARA_AUTH_RECHECK_INTERVAL", &c.AuthRecheckInterval},
 		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
+		{"ANDARA_LINKDEAD_GRACE", &c.SessionLinkdeadGrace},
+		{"ANDARA_LINKDEAD_COMBAT_EXTENSION", &c.SessionLinkdeadCombatExtension},
+		{"ANDARA_LINKDEAD_DETECT", &c.SessionLinkdeadDetect},
+		{"ANDARA_RECOVERY_RTO_TARGET", &c.RecoveryRTOTarget},
 		{"ANDARA_SNAPSHOT_INTERVAL", &c.SnapshotInterval},
 		{"ANDARA_SNAPSHOT_UPLOAD_TIMEOUT", &c.SnapshotUploadTimeout},
 		{"ANDARA_CONTENT_RELOAD_DEBOUNCE", &c.ContentReloadDebounce},
@@ -1312,6 +1455,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_CHARACTER_MAX_PER_ACCOUNT", &c.CharacterMaxPerAccount},
 		{"ANDARA_EGRESS_BUFFER", &c.EgressBuffer},
 		{"ANDARA_EGRESS_RESUME_WINDOW", &c.EgressResumeWindow},
+		{"ANDARA_EGRESS_ASSUMED_EVENT_RATE", &c.EgressAssumedEventRate},
 	} {
 		if v, ok := env(iv.name); ok {
 			n, err := strconv.Atoi(strings.TrimSpace(v))

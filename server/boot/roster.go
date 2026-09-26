@@ -33,7 +33,10 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	// (CheckSpawnInEffect): the roster is built before the loop runs, when
 	// no content is in effect yet.
 	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
+	grace, extension, max := cfg.LinkdeadTicks()
 	r, err := roster.New(roster.Options{
+		Linkdead:        roster.LinkdeadTicks{Grace: grace, Extension: extension, Max: max},
+		TickRate:        cfg.SimTickRate,
 		Accounts:        rt.Accounts,
 		Bindings:        rt.Bindings,
 		Log:             rt.commandLog,
@@ -55,6 +58,9 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 		slog.String("spawn_room", cfg.CharacterSpawnRoom),
 		slog.Int("max_per_account", cfg.CharacterMaxPerAccount),
 		slog.String("name_pattern", cfg.CharacterNamePattern),
+		slog.String("linkdead_grace", cfg.SessionLinkdeadGrace.String()),
+		slog.Uint64("linkdead_grace_ticks", grace),
+		slog.String("linkdead_max", cfg.SessionLinkdeadMax.String()),
 	)
 	return nil
 }

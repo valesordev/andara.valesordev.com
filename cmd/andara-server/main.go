@@ -181,6 +181,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Accounts:                auth.NewAdmin(accounts),
 		Rechecker:               accounts,
 		RecheckInterval:         cfg.AuthRecheckInterval,
+		KeepaliveTimeout:        cfg.SessionLinkdeadDetect,
 		Ingress:                 rt.Ingress,
 		Egress:                  rt.Egress,
 		Roster:                  rt.Roster,

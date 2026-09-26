@@ -56,6 +56,10 @@ type Metrics struct {
 	// Resyncs counts resumes the server could not honor, by reason. A
 	// rising rate means egress.resume_window is too small.
 	Resyncs *prometheus.CounterVec
+	// ReconnectResyncs is the Resyncs a reconnect's first stream got
+	// (AW-SRV-015 AC-7): rising, it says egress.assumed_event_rate is too
+	// low for the resume window to outlast the grace.
+	ReconnectResyncs prometheus.Counter
 	// InDropState is Sessions whose last stream the server ended
 	// (buffer_full, draining) and that have neither reopened one nor
 	// ended: the unavailable Session-seconds of the Session availability
@@ -84,6 +88,9 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:    "Events a stream had unsent when another was appended for it, sampled across Sessions.",
 			Buckets: []float64{0, 1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048},
 		}),
+		ReconnectResyncs: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "andara_reconnect_resyncs_total", Help: "Linkdead reconnects whose first stream could not resume from last_event_id.",
+		}),
 		Resyncs: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "andara_stream_resyncs_total",
 			Help: "Resumes the server could not honor, by reason. Rising means egress.resume_window is too small.",
@@ -93,7 +100,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "Sessions whose last Subscribe stream the server ended (buffer_full, draining) and that have neither reopened one nor ended.",
 		}),
 	}
-	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated} {
+	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated,
+		sim.EvCharacterLinkdead, sim.EvCharacterReconnected, sim.EvCharacterDespawned} {
 		m.Sent.WithLabelValues(string(t))
 	}
 	m.Sent.WithLabelValues(TypeHeartbeat)
@@ -105,7 +113,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.Resyncs.WithLabelValues(r)
 	}
 	if reg != nil {
-		reg.MustRegister(m.Streams, m.Sent, m.Drops, m.BufferDepth, m.Resyncs, m.InDropState)
+		reg.MustRegister(m.Streams, m.Sent, m.Drops, m.BufferDepth, m.Resyncs, m.InDropState, m.ReconnectResyncs)
 	}
 	return m
 }

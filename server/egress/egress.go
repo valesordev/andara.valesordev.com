@@ -69,6 +69,10 @@ type Options struct {
 	// Hub's last published Tick and what ObserveTick was told — the Hub
 	// sees only ticks that emitted something.
 	LastTick func() uint64
+	// ParkFor is how long a linkdead Session's retained state waits for a
+	// reconnect to adopt it (AW-SRV-015): session.linkdead_max. Zero never
+	// parks, so every linkdead resume is a Resync{no_history}.
+	ParkFor time.Duration
 
 	Log      *slog.Logger
 	Tracer   trace.Tracer
@@ -89,6 +93,11 @@ type Egress struct {
 
 	mu       sync.Mutex
 	sessions map[string]*session
+	// parked is the retained state of Sessions that ended linkdead, keyed
+	// by the Character they drove, waiting for a new Session selecting it
+	// to adopt it — the ring and the pump that fills it, so the reconnect's
+	// stream resumes from last_event_id with no gap (AW-SRV-015 AC-2).
+	parked map[sim.EntityID]*session
 }
 
 // New builds an Egress. Subscribe streams from opts.Hub from now on.
@@ -111,7 +120,7 @@ func New(opts Options) *Egress {
 	if opts.Disconnect == nil {
 		opts.Disconnect = gateway.DropConnection
 	}
-	e := &Egress{sessions: map[string]*session{}}
+	e := &Egress{sessions: map[string]*session{}, parked: map[sim.EntityID]*session{}}
 	if opts.LastTick == nil {
 		hub := opts.Hub
 		opts.LastTick = func() uint64 { return max(uint64(hub.LastTick()), e.tick.Load()) }
@@ -274,6 +283,16 @@ const endGrace = time.Second
 // the log — under the Session's own rebind lock.
 func (e *Egress) session(ctx context.Context, id string, principal auth.Principal, ended <-chan struct{}, world bool) (*session, error) {
 	e.mu.Lock()
+	_, known := e.sessions[id]
+	e.mu.Unlock()
+	if !known && !world {
+		// A reconnect (AW-SRV-015): the state a linkdead Session left for
+		// this Session's Character, adopted whole.
+		if s, ok := e.adopt(id, principal, ended, e.observer(id, false)); ok {
+			return s, nil
+		}
+	}
+	e.mu.Lock()
 	s, ok := e.sessions[id]
 	if !ok {
 		s = &session{e: e, id: id, principal: principal, ended: ended, hist: newHistory(e.opts.ResumeWindow), notify: make(chan struct{})}
@@ -381,10 +400,88 @@ func (e *Egress) forget(id string) {
 	e.mu.Lock()
 	s, ok := e.sessions[id]
 	delete(e.sessions, id)
+	if ok && e.opts.ParkFor > 0 {
+		s.mu.Lock()
+		park, who := s.parking && !s.closing, s.obs.Entity
+		s.mu.Unlock()
+		if park && who != "" {
+			// Kept for the reconnect: the pump goes on filling the ring
+			// while the body stands linkdead.
+			if old := e.parked[who]; old != nil {
+				old.parkTimer.Stop()
+				defer old.close()
+			}
+			e.parked[who] = s
+			s.parkTimer = time.AfterFunc(e.opts.ParkFor, func() { e.unpark(who, s) })
+			e.mu.Unlock()
+			return
+		}
+	}
 	e.mu.Unlock()
 	if ok {
 		s.close()
 	}
+}
+
+// ParkSession implements gateway.SessionParker: sessionID is ending
+// linkdead, so its retained state is kept, under the Character it drives,
+// for a reconnect to adopt (AW-SRV-015). The gateway calls it before it
+// cancels the Session; a Session with no stream state, or no Character,
+// is forgotten as ever.
+func (e *Egress) ParkSession(sessionID string) {
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	e.mu.Unlock()
+	if !ok {
+		return
+	}
+	s.mu.Lock()
+	s.parking = true
+	s.mu.Unlock()
+}
+
+// unpark closes parked state nobody adopted in time.
+func (e *Egress) unpark(who sim.EntityID, s *session) {
+	e.mu.Lock()
+	if e.parked[who] != s {
+		e.mu.Unlock()
+		return
+	}
+	delete(e.parked, who)
+	e.mu.Unlock()
+	s.close()
+}
+
+// adopt hands the state parked for obs's Character to the Session id, if
+// there is any and it perceives the same way. Called when id's first
+// Subscribe finds no state of its own.
+func (e *Egress) adopt(id string, principal auth.Principal, ended <-chan struct{}, obs events.Observer) (*session, bool) {
+	if obs.Entity == "" {
+		return nil, false
+	}
+	e.mu.Lock()
+	s, ok := e.parked[obs.Entity]
+	if !ok || e.sessions[id] != nil {
+		e.mu.Unlock()
+		return nil, false
+	}
+	delete(e.parked, obs.Entity)
+	s.parkTimer.Stop()
+	s.rebind.Lock()
+	s.mu.Lock()
+	s.id, s.principal, s.ended = id, principal, ended
+	s.parking, s.adopted = false, true
+	s.mu.Unlock()
+	s.rebind.Unlock()
+	e.sessions[id] = s
+	e.mu.Unlock()
+	if ended != nil {
+		go func() {
+			<-ended
+			e.forget(id)
+		}()
+	}
+	return s, true
 }
 
 // session is one Session's retained history and the pump that fills it
@@ -422,6 +519,12 @@ type session struct {
 	closing  bool
 	inDrop   bool
 	stream   *stream
+	// parking: the Session is ending linkdead, and forget keeps this state
+	// for a reconnect instead of closing it. adopted: a reconnecting
+	// Session took it over, and its first stream has not attached yet.
+	parking   bool
+	adopted   bool
+	parkTimer *time.Timer
 }
 
 // over reports whether the Session's lifetime has ended, whether or not
@@ -471,6 +574,7 @@ func (s *session) pump(sub *events.Subscription) {
 			s.mu.Unlock()
 			return
 		}
+		id := s.id
 		s.hist.append(frame{id: d.ID, typ: string(d.Type), env: d.Envelope})
 		var (
 			drop     *stream
@@ -504,7 +608,7 @@ func (s *session) pump(sub *events.Subscription) {
 		s.mu.Unlock()
 		if drop != nil {
 			e.log.LogAttrs(drop.ctx, slog.LevelWarn, "stream ended: client not reading, buffer full",
-				slog.String("session_id", s.id), slog.Uint64("buffered", uint64(e.opts.Buffer)),
+				slog.String("session_id", id), slog.Uint64("buffered", uint64(e.opts.Buffer)),
 				slog.Uint64("last_sent", lastSent), slog.Uint64("tick", uint64(d.Tick)), slog.String("trace_id", traceID(drop.ctx)))
 			if abort {
 				// A reset cannot get past a socket the client has stopped
@@ -520,7 +624,7 @@ func (s *session) pump(sub *events.Subscription) {
 					s.mu.Unlock()
 					if stuck {
 						e.log.LogAttrs(drop.ctx, slog.LevelWarn, "stream reset did not return: client not reading its socket; closing the connection",
-							slog.String("session_id", s.id), slog.String("trace_id", traceID(drop.ctx)))
+							slog.String("session_id", id), slog.String("trace_id", traceID(drop.ctx)))
 						e.opts.Disconnect(drop.ctx)
 					}
 				})
@@ -549,6 +653,15 @@ func (s *session) attach(ctx context.Context, last uint64) (*stream, string, err
 		return nil, "", hubEnded(s.reason)
 	}
 	seq, resync := s.hist.resume(last)
+	if s.adopted {
+		// A reconnect's first stream: a resume the linkdead Session's ring
+		// could not honor says the window is too small for the grace
+		// (AW-SRV-015 AC-7).
+		s.adopted = false
+		if resync != "" {
+			s.e.metrics.ReconnectResyncs.Inc()
+		}
+	}
 	st := &stream{ctx: ctx, s: s, cursor: seq, done: make(chan struct{})}
 	if resync == "" && last != 0 {
 		st.lastSent = last

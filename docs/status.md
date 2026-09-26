@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-69 stories — 7 review · 28 ready · 9 draft · 25 done
+69 stories — 9 review · 26 ready · 9 draft · 25 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -11,14 +11,14 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   next   AW-INF-019  ready  Argo CD deploys dev from main on the box's kind cluster  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   review AW-INF-013, AW-INF-014, AW-INF-008, AW-INF-016, AW-INF-018 — run the §8 checklist,…
-  held   5 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012, AW-INF-017
+  held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
-  next   AW-SRV-015  ready  Session lifecycle and linkdead grace period  (unblocks 3)
-  review AW-SRV-014, AW-CLI-008, AW-SRV-019 — run the §8 checklist, then flip to done
+  next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
+  review AW-SRV-014, AW-SRV-015, AW-CLI-008, AW-SRV-019 — run the §8 checklist, then flip to…
   held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on

@@ -15,7 +15,27 @@ type Metrics struct {
 	Characters    *prometheus.GaugeVec   // andara_characters_total{state}, set from the sim by the loop
 	Bindings      *prometheus.CounterVec // andara_character_bindings_total{outcome}
 	Unbinds       *prometheus.CounterVec // andara_character_unbinds_total{reason, outcome}
+
+	// The linkdead lifecycle (AW-SRV-015), from the sim's
+	// StepResult.Linkdead. in_combat is whether a combat interaction
+	// extended the body's deadline; it is this process's knowledge, so a
+	// body recovered linkdead counts as not in combat.
+	Linkdead         *prometheus.GaugeVec     // andara_sessions_linkdead{in_combat}
+	LinkdeadOutcomes *prometheus.CounterVec   // andara_linkdead_outcomes_total{outcome}
+	LinkdeadDuration *prometheus.HistogramVec // andara_linkdead_duration_seconds{in_combat}
+	CombatExtensions prometheus.Counter       // andara_linkdead_combat_extensions_total
+	CeilingDespawns  prometheus.Counter       // andara_linkdead_ceiling_despawns_total
 }
+
+// Linkdead outcomes: how a body's grace ended. died is declared for the
+// combat that will produce it; nothing does yet.
+const (
+	LinkdeadReconnected = "reconnected"
+	LinkdeadDespawned   = "despawned"
+	LinkdeadCeiling     = "ceiling"
+	LinkdeadDied        = "died"
+	LinkdeadQuit        = "quit"
+)
 
 // Binding outcomes.
 const (
@@ -29,6 +49,7 @@ const (
 // Unbind reasons and outcomes.
 const (
 	ReasonQuit          = "quit"
+	ReasonLinkdead      = "linkdead"
 	UnbindOK            = "ok"
 	UnbindProduceFailed = "produce_failed"
 )
@@ -53,8 +74,31 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_character_bindings_total", Help: "SelectCharacter calls by outcome.",
 		}, []string{"outcome"}),
 		Unbinds: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "andara_character_unbinds_total", Help: "UnbindCharacter produces at Session end by reason and outcome.",
+			Name: "andara_character_unbinds_total", Help: "Session-end teardown produces by reason and outcome: UnbindCharacter for quit, MarkLinkdead for linkdead.",
 		}, []string{"reason", "outcome"}),
+		Linkdead: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "andara_sessions_linkdead", Help: "Characters waiting out their linkdead grace, by whether combat has extended it.",
+		}, []string{"in_combat"}),
+		LinkdeadOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "andara_linkdead_outcomes_total", Help: "How linkdead graces ended: reconnected, despawned at the deadline, at the ceiling, died, or quit.",
+		}, []string{"outcome"}),
+		LinkdeadDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name: "andara_linkdead_duration_seconds", Help: "How long a Character was linkdead, from MarkLinkdead to the end of its grace, in Ticks at sim.tick_rate.",
+			Buckets: []float64{1, 5, 15, 30, 60, 90, 120, 180, 240, 300},
+		}, []string{"in_combat"}),
+		CombatExtensions: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "andara_linkdead_combat_extensions_total", Help: "Combat interactions against a linkdead Character.",
+		}),
+		CeilingDespawns: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "andara_linkdead_ceiling_despawns_total", Help: "Linkdead Characters despawned at session.linkdead_max rather than their deadline.",
+		}),
+	}
+	for _, c := range []string{"true", "false"} {
+		m.Linkdead.WithLabelValues(c)
+		m.LinkdeadDuration.WithLabelValues(c)
+	}
+	for _, o := range []string{LinkdeadReconnected, LinkdeadDespawned, LinkdeadCeiling, LinkdeadDied, LinkdeadQuit} {
+		m.LinkdeadOutcomes.WithLabelValues(o)
 	}
 	for _, s := range []string{StatePresent, StateDormant} {
 		m.Characters.WithLabelValues(s)
@@ -64,9 +108,11 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, o := range []string{UnbindOK, UnbindProduceFailed} {
 		m.Unbinds.WithLabelValues(ReasonQuit, o)
+		m.Unbinds.WithLabelValues(ReasonLinkdead, o)
 	}
 	if reg != nil {
-		reg.MustRegister(m.SessionsBound, m.Characters, m.Bindings, m.Unbinds)
+		reg.MustRegister(m.SessionsBound, m.Characters, m.Bindings, m.Unbinds,
+			m.Linkdead, m.LinkdeadOutcomes, m.LinkdeadDuration, m.CombatExtensions, m.CeilingDespawns)
 	}
 	return m
 }

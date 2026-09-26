@@ -201,7 +201,7 @@ func (t *Bindings) expire(sessionID string, tr *transit) {
 // reading the events.Hub gives an Observer. HandoffRejected (AW-SRV-028)
 // will end one on the origin.
 func (t *Bindings) Publish(ev sim.Event) {
-	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated {
+	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated && ev.Type != sim.EvCharacterReconnected {
 		return
 	}
 	var moved []struct {
@@ -220,6 +220,15 @@ func (t *Bindings) Publish(ev sim.Event) {
 			e.cmd.Room = ""
 			if e.transit == nil {
 				e.transit = &transit{since: t.now(), settled: make(chan struct{})}
+			}
+		case *gamev1.EventEnvelope_CharacterReconnected:
+			// A reconnect is the arrival of a body that never left
+			// (AW-SRV-015): it settles the new Session where the body is.
+			e.cmd.Zone = sim.ZoneID(p.CharacterReconnected.GetZoneId())
+			e.cmd.Room = sim.RoomID(p.CharacterReconnected.GetRoomId())
+			if e.transit != nil {
+				close(e.transit.settled)
+				e.transit = nil
 			}
 		case *gamev1.EventEnvelope_CharacterArrived:
 			was := e.cmd.Zone

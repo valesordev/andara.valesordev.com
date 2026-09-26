@@ -60,6 +60,11 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		if ent.Name == "" && bind.GetName() != "" {
 			ent.Name = bind.GetName()
 		}
+		if ent.Linkdead() {
+			reconnect(a, ent)
+			a.bound(bind, id, a.Zone.ID, ent.Room, BindReconnected)
+			return nil
+		}
 		if !ent.Dormant {
 			a.Emit(ScopeEntities(ent.ID), arrived(a.Zone.ID, ent.Room, ent.DisplayName()))
 			a.bound(bind, id, a.Zone.ID, ent.Room, BindPresent)
@@ -79,9 +84,11 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		if !ok {
 			continue
 		}
-		if !ent.Dormant {
+		if !ent.Dormant && !ent.Linkdead() {
 			// Present with no Session, in a Zone the roster did not
-			// name: the Character alone hears where it is.
+			// name: the Character alone hears where it is. A linkdead or
+			// dormant body is re-routed below: only its own Zone may
+			// change it.
 			a.Emit(ScopeEntities(ent.ID), arrived(z.ID, ent.Room, ent.DisplayName()))
 			a.bound(bind, id, z.ID, ent.Room, BindPresent)
 			return nil
@@ -124,8 +131,10 @@ func (a *ApplyContext) bound(bind *logv1.BindCharacter, id EntityID, zone ZoneID
 // --- unbind_character --------------------------------------------------
 
 // applyUnbindCharacter makes the body dormant where it stands and emits
-// CharacterLeft with an empty to_direction to its Room (AC-8): the Room
-// sees it go; the body keeps its Room for the next BindCharacter. A body
+// CharacterDespawned{reason} to its Room (AW-SRV-015 AC-5, in place of
+// AW-SRV-014's CharacterLeft with an empty to_direction): the Room sees it
+// go; the body keeps its Room for the next BindCharacter. A linkdead body
+// goes the same way, its grace ended. A body
 // this Zone does not hold, or one already dormant, is nothing to do —
 // not a rejection: the Session that produced this is gone, and a second
 // teardown for the same Session must apply the same as none.
@@ -141,10 +150,7 @@ func applyUnbindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !ok || !ent.Present() {
 		return nil
 	}
-	ent.Dormant, ent.DormantSince = true, a.Tick
-	a.Emit(ScopeRoom(a.Zone.ID, ent.Room).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{
-		ZoneId: string(a.Zone.ID), RoomId: string(ent.Room), CharacterName: ent.DisplayName(),
-	}}})
+	despawn(a.Zone, ent, a.Tick, despawnReason(cmd.GetUnbindCharacter().GetReason()), a.Emit, a.linkdead)
 	return nil
 }
 
