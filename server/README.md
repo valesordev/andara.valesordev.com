@@ -729,24 +729,68 @@ so the roster can end up naming an older Zone. That is exactly the stale roster 
 re-route exists for, and `spawn_room_id` is ignored for a body that exists; nothing may be built
 on the roster's position being current.
 
-A Session's end, however it ends, produces `UnbindCharacter{QUIT}` on its own context bounded by
-`ingress.produce_deadline`, records the roster's position from the routing table, and frees the
-flag; the tick makes the body **dormant** — in no Room's occupants, invisible to `look`, acting
-for nobody — and emits `CharacterLeft` with an empty `to_direction`. Until the teardown has
-produced, the Character is `already_live` to the same Account, a reconnecting client included.
-Nothing at boot invents an unbind: a body left present by a crash is taken where it stands by the
-next select. A `BindCharacter` the roster routed to the wrong Zone is re-produced by the sim to
-the Zone that holds the body.
+A Session's end decides what its Character does (AW-SRV-015):
 
-**A drain, and what it leaves.** Every bound Session is closed, so every teardown runs; the
-produces go concurrently, one per Session, so a drain costs about one `ingress.produce_deadline`
-in wall clock however many Sessions are bound, and `CloseIngress` waits for them before the
-producer closes. A clean drain therefore leaves its bodies **dormant**. With the broker
-unreachable every one of those produces fails instead — counted on
-`andara_character_unbinds_total{reason="quit",outcome="produce_failed"}`, each with a `warn` line
-naming the Session and the Character — and the restarted World holds those bodies **present with
+| End | Produced | Body |
+|-----|----------|------|
+| `CloseSession`, or a revoked credential | `UnbindCharacter{QUIT}` | dormant; `CharacterDespawned{quit}` to its Room |
+| a lost connection: a transport close, or a keepalive miss past `session.linkdead_detect` | `MarkLinkdead` | linkdead where it stands; `CharacterLinkdead` |
+| a drain (SIGTERM) | `MarkLinkdead` | linkdead; no Character despawns because of a deploy |
+| its deadline or ceiling Tick | nothing: the sim despawns it | dormant; `CharacterDespawned{linkdead\|linkdead_ceiling}` |
+
+The produce runs on its own context bounded by `ingress.produce_deadline`, and records the
+roster's position from the routing table. A quit frees the flag. `CloseSession` answers only once
+the `UnbindCharacter` is durable and the flag is free, so a `SelectCharacter` sent after the
+response is never `already_live`. Until a teardown has produced, the Character is `already_live`
+to the same Account. The exception is a reconnect of that Character after a lost connection,
+which waits for the `MarkLinkdead` instead. Nothing at boot invents an unbind: a body left present
+by a crash is taken where it stands by the next select. A `BindCharacter` the roster routed to the
+wrong Zone is re-produced by the sim to the Zone that holds the body.
+
+**A drain, and what it leaves.** Every bound Session is closed as linkdead, so every teardown
+produces a `MarkLinkdead`. The produces run concurrently, one per Session, so a drain costs about
+one `ingress.produce_deadline` of wall clock however many Sessions are bound. `CloseIngress`
+waits for them before the producer closes. A clean drain therefore leaves its bodies **linkdead**,
+each with its grace from the Tick the mark applied. `linkdead_grace > recovery.rto_target` is
+what lets the players reconnect before any of them despawns. If the broker is unreachable, every
+one of those produces fails instead. Each is counted on
+`andara_character_unbinds_total{reason="linkdead",outcome="produce_failed"}` with a `warn` line
+naming the Session and the Character. The restarted World then holds those bodies **present with
 no Session**: the next `SelectCharacter` takes each where it stands, and until then they stand in
 their Rooms and are listed by `look`.
+
+### Linkdead (AW-SRV-015)
+
+A `MarkLinkdead` carries `session.linkdead_grace`, `_combat_extension` and `_max`, converted to
+Ticks at `sim.tick_rate` and rounded up. The tick that applies it sets the body's four linkdead
+fields from its own Tick and those durations, so a replay under retuned configuration despawns on
+the same Tick. `look` lists a linkdead body in `occupants` and in `linkdead`.
+
+- **The Account's flag.** The roster keeps it on the linkdead Character. Selecting that Character
+  again is the reconnect: a `BindCharacter` that clears the four fields and emits
+  `CharacterReconnected` to the Room in place of `CharacterArrived`. Selecting any other Character
+  is `already_live`, naming the linkdead one.
+- **Freeing the flag.** The body's despawn frees it; the loop hands the tick's
+  `StepResult.Linkdead` to the roster. So does `linkdead_max` passing in wall clock, in case the
+  mark applied as a no-op (the body was absent or dormant).
+- **Combat.** `sim.Engine.OnCombatInteraction(target)` is the one hook. It moves a linkdead
+  target's deadline to `max(deadline, now + extension)`, capped at the ceiling. Nothing calls it
+  until combat exists; the tests use a fixture verb.
+- **The Event stream across a reconnect.** When a Session ends linkdead, the egress keeps its
+  retained ring and the pump that fills it, parked under the Character, for up to
+  `session.linkdead_max`. The reconnecting Session's first `Subscribe` adopts it, so a stream
+  carrying `last_event_id` resumes with no gap, including what the Room did meanwhile. A reconnect
+  whose first stream is a `Resync` counts on `andara_reconnect_resyncs_total`. The consequence to
+  own: `events.max_subscribers` counts parked subscriptions too.
+- **Keepalive.** The gateway's HTTP/2 server pings a connection that has sent nothing for half of
+  `session.linkdead_detect`, and closes it if the ping goes unanswered for the other half. A
+  partitioned client is therefore linkdead within `linkdead_detect`, and a healthy idle one, which
+  answers its pings, is untouched.
+- **Startup.** The server refuses to start (exit 1, `config.ErrInvariant` naming the relation and
+  every value in it) unless, in this order: `linkdead_max >= linkdead_grace`,
+  `linkdead_grace > recovery.rto_target`,
+  `egress.resume_window >= linkdead_max × egress.assumed_event_rate`, and
+  `auth.session_ttl > linkdead_max`.
 
 The boot requires `character.spawn_room` to resolve and `andara.core.Character` to be loaded. The
 dev World (`testdata/content/valid`) carries the core pack under `templates/`; the kind chart
@@ -760,22 +804,32 @@ mounts it from `contentVolume.templatesConfigMapName`.
 | `andara_sessions_bound` | gauge | — | Sessions whose `BindCharacter` is in the log and whose teardown has not run; `present − bound` is the bodies no Session drives |
 | `andara_character_creations_total` | counter | `outcome` | `ok`, `roster_full`, `name_taken`, `name_invalid` |
 | `andara_character_bindings_total` | counter | `outcome` | `ok`, `already_live`, `race_lost` (lost to a select whose produce was still in flight), `not_found`, `produce_failed` |
-| `andara_character_unbinds_total` | counter | `reason`, `outcome` | `quit` × `ok`, `produce_failed` |
+| `andara_character_unbinds_total` | counter | `reason`, `outcome` | `quit` (an `UnbindCharacter`), `linkdead` (a `MarkLinkdead`) × `ok`, `produce_failed` |
+| `andara_sessions_linkdead` | gauge | `in_combat` | `true`, `false`: bodies waiting out their grace, seeded from recovery and kept by the loop. `in_combat` is whether combat extended the body's deadline on this process |
+| `andara_linkdead_outcomes_total` | counter | `outcome` | `reconnected`, `despawned`, `ceiling`, `died` (declared; nothing produces it until combat exists), `quit` |
+| `andara_linkdead_duration_seconds` | histogram | `in_combat` | `true`, `false`; from the mark to the end of the grace, in Ticks at `sim.tick_rate` |
+| `andara_linkdead_combat_extensions_total` | counter | — | combat interactions against a linkdead body |
+| `andara_linkdead_ceiling_despawns_total` | counter | — | despawns at `session.linkdead_max` |
+| `andara_reconnect_resyncs_total` | counter | — | reconnects whose first stream was a `Resync`; the AC-7 signal that `egress.assumed_event_rate` is too low |
 
 Character name and Account ID are never labels. Logs at `info`: `character created`,
-`character selected` (with `zone`, `partition`, `offset`), `character unbound` (with `reason`,
-`outcome`, `zone`, `room`), each with `account_id`, `character_id`, `session_id`, `trace_id`; the
+`character selected` (with `zone`, `partition`, `offset`, `reconnect`), `character unbound` and
+`character marked linkdead` (with `reason`, `outcome`, `zone`, `room`), each with `account_id`,
+`character_id`, `session_id`, `trace_id`. From the loop, `character linkdead`,
+`character reconnected` and `character despawned` carry `session_id`, `character_id`, `outcome`,
+`deadline_tick`, `tick`, `zone` and `trace_id`; the
 name appears quoted as a value on `created`, never as a key. The tick loop logs `character bind
 applied` at `info` when a `BindCharacter` applies, with the same four fields plus `tick`, the
 `zone` and `room` the body is in, and `body`: `spawned` (a never-bound Character made at the spawn
 Room), `woken` (a dormant body, where it went dormant), `present` (a body with no Session, taken
 where it stands), or `rerouted` (a dormant body in another Zone; the Command is produced there, and
-that Zone's apply logs `woken`). A rejected bind logs no such line; `command applied` has its
+that Zone's apply logs `woken`), or `reconnected` (a linkdead body taken back by a new Session, AW-SRV-015). A rejected bind logs no such line; `command applied` has its
 code. A failed teardown produce is `warn`
 with the same fields. Spans: `character.create` and `character.select` under the RPC span, linked
 to `session.lifetime`; `log.produce` under `select`; the tick's `command.apply` for the
-`BindCharacter` joins through the record's `trace_id`; `character.unbind` is a root linked to the
-Session.
+`BindCharacter` joins through the record's `trace_id`; `character.unbind` and
+`character.linkdead` are roots linked to the Session. `linkdead.enter` and `linkdead.reconnect` are
+span events on `session.lifetime`.
 
 `canonical.Marshal` (`server/canonical`) is the encoder for anything that feeds the State Hash
 (ADR-0007 rule 3): deterministic protobuf, and it refuses a message whose descriptor contains a
