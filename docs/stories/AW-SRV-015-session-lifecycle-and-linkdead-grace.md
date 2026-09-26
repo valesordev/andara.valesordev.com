@@ -7,7 +7,7 @@ type: feature
 status: ready
 size: M
 depends_on: [AW-SRV-014]
-blocks: [AW-CLI-008, AW-INF-017]
+blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
 lane: implementation
 risk: high
 ---
@@ -63,7 +63,7 @@ not cost me my place in the world.
    `CharacterReconnected` Event is emitted in place of `CharacterArrived`; the Character was never
    removed. `SelectCharacter` is not `already_live` for the Character the linkdead Session left.
 3. **Given** a linkdead Character **when** its deadline Tick is reached **then** the sim despawns it in
-   that tick, marks it dormant with its position, emits `CharacterDespawned{reason=LINKDEAD}`, and it is
+   that tick, marks it dormant with its position, emits `CharacterDespawned{reason="linkdead"}`, and it is
    no longer targetable.
 4. **Given** a despawned Character **when** the player logs back in and selects it **then** it spawns at
    the position it held at despawn (`AW-SRV-014` AC-6).
@@ -91,7 +91,7 @@ not cost me my place in the world.
     becomes `max(deadline, now + extension_ticks)`, capped at `linkdead_since + max_ticks`; a refresh,
     not an accumulation.
 11. **Given** sustained attack **when** `linkdead_since + max_ticks` is reached **then** it despawns with
-    `reason=LINKDEAD_CEILING` and `andara_linkdead_ceiling_despawns_total` increments.
+    `reason="linkdead_ceiling"` and `andara_linkdead_ceiling_despawns_total` increments.
 12. **Given** one attack then silence **when** `extension_ticks` elapse **then** it despawns — 60 s
     after the last blow, not at the original 180 s deadline.
 13. **Given** lethal damage before either deadline **when** it dies **then** normal death rules apply;
@@ -267,6 +267,7 @@ Stays `ready`. The answers to `docs/feedback/AW-SRV-015-linkdead.md` and to §3 
    nothing else can take them.
 2. **AC-9 moved to `AW-SRV-007`**, as an inherited Definition-of-done line. AC-6 is stated against
    full-log replay. `depends_on` stays `[AW-SRV-014]`, and the story can close in SPRINT-02.
+   `AW-SRV-007` takes this story in its `depends_on`, and this story's `blocks` names it.
 3. **The Events carry `zone_id`, `room_id`, `character_name`**, no `character_id` and no deadline.
    `reason` is a string, as every client-facing reason is. `(linkdead)` in `look` is a field,
    `RoomDescribed.linkdead`, not a suffix on a name in `occupants`.
