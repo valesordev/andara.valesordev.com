@@ -19,6 +19,9 @@ on:
     paths:
       - "deploy/**"
       - "scripts/stack.sh"
+      # `make up` takes its stamps from the Makefile and passes them to stack.sh (AW-INF-016),
+      # so a Makefile change can break what "the server runs this commit" asserts.
+      - "Makefile"
       - "scripts/stack_smoke.sh"
       - "scripts/stack_play.sh"
       - "scripts/tls.sh"
@@ -42,6 +45,7 @@ on:
     paths:
       - "deploy/**"
       - "scripts/stack.sh"
+      - "Makefile"
       - "scripts/stack_smoke.sh"
       - "scripts/stack_play.sh"
       - "scripts/tls.sh"
