@@ -103,15 +103,31 @@ func Run(ctx context.Context, o RunOptions) error {
 		return err
 	}
 	defer cm.Close()
+	cp, committed, err := cm.Last(ctx)
+	if err != nil {
+		return err
+	}
+	if d := cp.Diverged; committed && d != nil {
+		// An unresolved divergence halts every start, whatever rounds exist
+		// (feedback §2): bootstrapping from a round newer than it would
+		// replay past the tick and lose it. --rebuild is the operator saying
+		// the divergence has been dealt with.
+		if !o.Rebuild {
+			o.Metrics.DigestMismatches.Inc()
+			log.Error("state projector diverged earlier and it is unresolved; run with --rebuild once it has been dealt with",
+				"tick", uint64(d.Tick), "recorded_hash", fmt.Sprintf("%x", d.Recorded), "replayed_hash", fmt.Sprintf("%x", d.Replayed),
+				"last_good_offsets", offsetsString(d.LastGood))
+			return d
+		}
+		log.Info("--rebuild discards an unresolved divergence", "tick", uint64(d.Tick),
+			"recorded_hash", fmt.Sprintf("%x", d.Recorded), "replayed_hash", fmt.Sprintf("%x", d.Replayed))
+	}
 	if o.Rebuild {
 		if err := cm.Wipe(ctx); err != nil {
 			return fmt.Errorf("--rebuild: %w", err)
 		}
 		log.Info("consumer group wiped for a rebuild", "group", o.Group)
-	}
-	cp, committed, err := cm.Last(ctx)
-	if err != nil {
-		return err
+		cp, committed = Checkpoint{}, false
 	}
 
 	boundaries, err := NewBoundaryReader(ctx, o.Brokers, o.EventsTopic)
@@ -179,6 +195,14 @@ func Run(ctx context.Context, o RunOptions) error {
 					log.Error("state projector diverged", "tick", uint64(d.Tick),
 						"recorded_hash", fmt.Sprintf("%x", d.Recorded), "replayed_hash", fmt.Sprintf("%x", d.Replayed),
 						"last_good_offsets", offsetsString(d.LastGood), "detail", err.Error())
+					// The halt is recorded in the checkpoint, at T-1, so it
+					// survives the restart. The halt stands if the commit
+					// fails; the next start then finds no record of it,
+					// which the log line above is the fallback for.
+					halt := Checkpoint{Tick: d.Tick - 1, Offsets: d.LastGood, Diverged: d}
+					if cerr := cm.Commit(context.WithoutCancel(ctx), halt); cerr != nil {
+						log.Error("the divergence was not recorded in the checkpoint; a restart will not see it", "tick", uint64(d.Tick), "detail", cerr.Error())
+					}
 				}
 				return err
 			}

@@ -6,11 +6,14 @@
 package projector_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -422,6 +425,90 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 	}
 }
 
+// Feedback §2, architecture's ruling: a divergence survives the restart. After
+// a halt at T, a newer complete round appears; the restart still exits 2 naming
+// T and both hashes, rather than bootstrapping past it. Only --rebuild clears
+// it, and says so.
+func TestRun_ADivergenceSurvivesARestartPastANewerRound(t *testing.T) {
+	b := newBroker(t)
+	w := script(t)
+	const bad = 5
+	b.mirror(w, bad)
+	first := projector.Run(context.Background(), b.options(w))
+	var d1 *projector.Divergence
+	if !errors.As(first, &d1) || d1.Tick != bad {
+		t.Fatalf("the first run: %v, want a divergence at %d", first, bad)
+	}
+
+	// A complete round newer than the divergent tick.
+	for w.live.Tick() <= bad+2 {
+		w.tick()
+	}
+	ws := store.NewFS(t.TempDir())
+	for _, s := range w.live.SnapshotAll(1) {
+		body, err := s.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ws.Put(context.Background(), s.Key(), body); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b.mirror(w, 0)
+
+	o := b.options(w)
+	o.Store = ws
+	m := projector.NewMetrics(nil)
+	o.Metrics = m
+	// Bounded: a projector that bootstraps past the divergence runs on.
+	rctx, rcancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer rcancel()
+	again := projector.Run(rctx, o)
+	var d2 *projector.Divergence
+	if !errors.As(again, &d2) || projector.ExitCode(again) != projector.ExitDivergence {
+		t.Fatalf("the restart past a newer round: %v (exit %d), want exit 2", again, projector.ExitCode(again))
+	}
+	if d2.Tick != d1.Tick || d2.Recorded != d1.Recorded || d2.Replayed != d1.Replayed {
+		t.Fatalf("the restart named %d %x %x, the halt %d %x %x", d2.Tick, d2.Recorded, d2.Replayed, d1.Tick, d1.Recorded, d1.Replayed)
+	}
+	if got := b.committedTick(); got != bad-1 {
+		t.Fatalf("committed tick %d after the restart, want %d", got, bad-1)
+	}
+	if testutil.ToFloat64(m.DigestMismatches) != 1 {
+		t.Fatalf("andara_state_digest_mismatches_total = %v on the refused start, want 1", testutil.ToFloat64(m.DigestMismatches))
+	}
+
+	// --rebuild clears it, bootstraps from the round past the bad
+	// boundary, and runs.
+	var logs syncBuffer
+	o.Rebuild = true
+	o.Log = slog.New(slog.NewJSONHandler(&logs, nil))
+	r := start(o)
+	defer r.stop(t)
+	eventually.True(t, 30*time.Second, "the rebuilt projector catches up", r.ready.Load)
+	if !strings.Contains(logs.String(), `"msg":"--rebuild discards an unresolved divergence","tick":5`) {
+		t.Fatalf("no info line naming the discarded divergence:\n%s", logs.String())
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe for a logger and a reader at once.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
 // AC-10: a round written by a newer binary is refused with exit 4.
 func TestRun_NewerStateVersionExitsFour(t *testing.T) {
 	b := newBroker(t)
@@ -495,4 +582,27 @@ func TestRun_ReadyWhileTheWorldKeepsTicking(t *testing.T) {
 	<-ticking
 	b.waitCommitted(t, w.live.Tick())
 	sameContent(t, b.topic(t), dumpOf(t, w))
+}
+
+// andara_state_topic_bytes' query (feedback §1): against a topic holding
+// records it reports their size, summed over every Partition, rather than 0.
+// A topic the broker does not have is an error, not 0.
+func TestTopicBytesReportsWhatTheTopicHolds(t *testing.T) {
+	b := newBroker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var recs []*kgo.Record
+	for p := int32(0); p < 4; p++ {
+		recs = append(recs, &kgo.Record{Topic: b.state, Partition: p, Key: []byte("zone:z"), Value: bytes.Repeat([]byte("x"), 512)})
+	}
+	if err := b.cl.ProduceSync(ctx, recs...).FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+	eventually.Observed(t, 30*time.Second, "TopicBytes reports the records on four Partitions", func() (bool, string) {
+		n, err := projector.TopicBytes(ctx, b.adm, b.state)
+		return err == nil && n >= 4*512, fmt.Sprintf("%d bytes, err %v", n, err)
+	})
+	if n, err := projector.TopicBytes(ctx, b.adm, b.state+".absent"); err == nil {
+		t.Fatalf("a missing topic reported %d bytes and no error", n)
+	}
 }

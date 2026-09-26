@@ -1,5 +1,7 @@
 # Build artifacts
 /bin/
+# A `go build ./cmd/andara-…` at the root lands here; builds go to bin/ (#78).
+/andara-*
 *.test
 coverage.out
 coverage.html
