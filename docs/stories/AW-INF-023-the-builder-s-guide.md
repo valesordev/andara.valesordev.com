@@ -6,7 +6,7 @@ component: infra
 type: infra
 status: draft
 size: M
-depends_on: [AW-CLI-003, AW-SRV-035, AW-INF-020, AW-INF-021, AW-INF-022]
+depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
 lane: architecture
 risk: low
@@ -58,8 +58,10 @@ The guide, at `docs/builders/` (`[ASSUMPTION]`, item 5 in `docs/feedback/AW-INF-
 7. **Reference**, generated from the code and the spec by `make builder-reference`: the Direction
    set with reverses, the Component types with their fields, the `andara.core` Templates with their
    chains, and every diagnostic code with its severity, what triggers it, and the usual fix.
-8. **Building on `dev`.** The fixture pack `town` and the Zone IDs it reserves, the spawn Room, and
-   how a new Zone becomes reachable (open question 1).
+8. **Building on `dev`.** Covers:
+   - the fixture pack `town` and the Zone IDs it reserves;
+   - Purgatory, the spawn Zone, with its Exit to the town (`AW-SRV-037`, `AW-INF-024`);
+   - `goto <zone>/<room>` to reach a Zone nothing links to yet (`AW-SRV-036`).
 9. **When something fails.** `andara-cli`'s exit codes 1–4 for the content commands, each with its
    usual cause, and how to ask for a server change (a GitHub issue on this public repository).
 
@@ -97,8 +99,9 @@ Also in scope:
 5. **Given** the guide **when** it names a rule the spec defines (a naming rule, a warning's
    trigger) **then** it links to the spec section rather than restating the rule. `guide-check`
    can't assert this; the §8 review does.
-6. **Given** a Builder working alone on `dev` **when** they read section 4 **then** it tells them how
-   activation's second approval happens with one person, per open question 2's answer.
+6. **Given** a Builder working alone on `dev` **when** they read section 4 **then** it shows the
+   Operator approving their own build (`docs/feedback/AW-SRV-013-operator-self-approval.md`),
+   labeled as how `dev` works while one person builds, not as the process for a team.
 
 ## Interface contract
 
@@ -134,21 +137,13 @@ CLAUDE.md §8, plus AC-3's transcript in the verification record.
 
 ## Open questions
 
-1. **[NEEDS BRIAN] How does a Builder get into a Zone nothing links to yet?** A new pack's Zone isn't
-   reachable from `town/plaza` unless something adds an Exit, and a Builder can only publish packs
-   they hold. The options:
-   - **(a)** the Builder also holds `town` and links their Zone in from the fixture;
-   - **(b)** a `goto <zone>/<room>` command for `builder` and `game_master`, which is a new command,
-     game design, and a new story;
-   - **(c)** move `character.spawn_room` to the new Zone, which is an Operator's values change on
-     `dev`.
-   (a) works with nothing new and is what the guide says until Brian decides.
-2. **[NEEDS BRIAN] One Builder and the two-person rule on `dev`.** `AW-SRV-013` needs a second
-   identity to approve. On `dev`, Brian alone can:
-   - **(a)** hold a second Builder Account and approve as it, which keeps the flow real; or
-   - **(b)** activate as the Operator with `--override --reason`, which is audited and skips the
-     approval.
-   The guide documents whichever Brian picks, and (b) is not what it teaches other Builders.
+1. **Resolved 2026-09-26 (Brian): how a Builder reaches a new Zone.** A `goto` command for Builders
+   (`AW-SRV-036`). Until the base content exists, new Characters spawn in Purgatory, which has an
+   Exit into the test town (`AW-SRV-037`, `AW-INF-024`).
+2. **Resolved 2026-09-26 (Brian): one Builder and the two-person rule.** An Operator may approve a
+   build they published as a Builder, audited as a self-approval. It's temporary, until others
+   build. The contract change to `AW-SRV-013` and `AW-CLI-003` is in
+   `docs/feedback/AW-SRV-013-operator-self-approval.md`.
 3. `[ASSUMPTION]` The guide lives in this public repository, where architecture reviews it with the
    specs it links to. Item 5 in `docs/feedback/AW-INF-021-dev-content-store.md` asks architecture to confirm that and to name `docs/builders/`
    in CLAUDE.md §2's ownership table.

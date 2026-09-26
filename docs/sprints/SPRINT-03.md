@@ -16,8 +16,9 @@ repository, only the Content Repository and the Builder's Guide. From there, he:
 1. writes a Zone in his own pack;
 2. has `check` pass on its pull request;
 3. publishes it to `dev` with `andara-cli`;
-4. has it approved by a second identity, and activates it;
-5. walks into it with `andara-cli play`;
+4. approves it with his Operator identity (self-approval, while he's the only Builder), and
+   activates it;
+5. spawns in Purgatory, and uses `goto` to reach the Zone with `andara-cli play`;
 6. changes it and publishes again;
 7. rolls it back.
 
@@ -35,35 +36,47 @@ The server-kill demo goal (M2) is added by the boundary session.
 - AW-INF-021 — `dev` serves its content from the content store (new, architecture)
 - AW-INF-022 — the Content Repository (new, architecture)
 - AW-INF-023 — the Builder's Guide (new, architecture)
-- For all five: answer items 1–5 in `docs/feedback/AW-INF-021-dev-content-store.md` first.
+- AW-SRV-036 — `goto`: a Builder jumps to any Room (new, implementation; Brian 2026-09-26)
+- AW-SRV-037 — Purgatory, the spawn Zone, in the test content (new, implementation; Brian
+  2026-09-26)
+- AW-INF-024 — every environment spawns new Characters in Purgatory (new, architecture)
+- AW-SRV-013 and AW-CLI-003 (`ready`): Brian's Operator self-approval, in
+  `docs/feedback/AW-SRV-013-operator-self-approval.md`. Record it in both story bodies, plus a dated
+  note in ADR-0004.
+- For AW-INF-020 to AW-INF-023: answer items 1–5 in `docs/feedback/AW-INF-021-dev-content-store.md` first.
   1. How core reaches `dev`'s store on every roll.
   2. Moving `dev`'s log off `dir`.
   3. Where the fixture's source lives.
   4. Where the Content Repository's CI gets core.
   5. Where the guide lives.
-  - The two `[NEEDS BRIAN]` items in AW-INF-023 go to Brian with the boundary session's questions.
+  - AW-INF-023's two `[NEEDS BRIAN]` items were answered on 2026-09-26: `goto` and Purgatory, and
+    Operator self-approval.
 
 ## Architecture backlog (pickup order)
 The Builder content track:
 
 1. AW-INF-020 — `andara-cli` release binaries — depends on AW-INF-013 (SPRINT-02, box session)
-2. AW-INF-021 — `dev` serves content from the store — depends on AW-SRV-013, AW-SRV-035,
-   AW-CLI-003 (implementation items 2, 4 and 5) and AW-INF-019 (SPRINT-02)
-3. AW-INF-022 — the Content Repository — depends on AW-CLI-002, AW-INF-020, AW-INF-021
-4. AW-INF-023 — the Builder's Guide — depends on all of the above. It's last so it describes what
-   was built. Its AC-3 walk-through is the demo.
+2. AW-INF-024 — spawn in Purgatory everywhere — depends on AW-SRV-037 (implementation item 1)
+3. AW-INF-021 — `dev` serves content from the store — depends on AW-SRV-013, AW-SRV-035,
+   AW-CLI-003 (implementation items 3, 5 and 6) and AW-INF-019 (SPRINT-02)
+4. AW-INF-022 — the Content Repository — depends on AW-CLI-002, AW-INF-020, AW-INF-021
+5. AW-INF-023 — the Builder's Guide — depends on all of the above, and AW-SRV-036. It's last so it
+   describes what was built. Its AC-3 walk-through is the demo.
 
 ## Implementation backlog (pickup order)
-The Builder content track, all `ready` except AW-SRV-035:
+The Builder content track. AW-SRV-035, AW-SRV-036 and AW-SRV-037 are new; the rest are `ready`.
 
-1. AW-SRV-034 — the loader and compiler agree on `orphan_room` and `duplicate_direction` — depends
+1. AW-SRV-037 — Purgatory in the test content — depends on AW-SRV-014 (SPRINT-02 §8). It's first
+   because it's small and AW-INF-024 waits on it.
+2. AW-SRV-034 — the loader and compiler agree on `orphan_room` and `duplicate_direction` — depends
    on AW-CLI-006 (SPRINT-02 §8)
-2. AW-SRV-013 — the content publish path: server-side validation, versioning, approval, and
+3. AW-SRV-013 — the content publish path: server-side validation, versioning, approval, and
    audit — depends on AW-SRV-008, AW-SRV-012 (both `done`)
-3. AW-CLI-002 — `andara-cli content validate` and `inspect` — depends on AW-SRV-034
-4. AW-SRV-035 — `account set-packs` — depends on AW-SRV-013
-5. AW-CLI-003 — `andara-cli content publish`, `approve`, `activate`, `rollback`, `history`, `diff`,
+4. AW-CLI-002 — `andara-cli content validate` and `inspect` — depends on AW-SRV-034
+5. AW-SRV-035 — `account set-packs` — depends on AW-SRV-013
+6. AW-CLI-003 — `andara-cli content publish`, `approve`, `activate`, `rollback`, `history`, `diff`,
    and `fetch` — depends on AW-CLI-002, AW-SRV-013
+7. AW-SRV-036 — `goto` — depends on AW-SRV-003 (`done`) and AW-SRV-014
 
 ## Carryover from SPRINT-02
 (filled in by the boundary session)

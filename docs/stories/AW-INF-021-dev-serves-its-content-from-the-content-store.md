@@ -24,7 +24,8 @@ publishes to `dev` today is written and never served.
 
 This story switches `dev` to the store. Brian decided the dev fixture stays (2026-09-26): the town,
 docks, and wilds Zones that `town/plaza` spawns into are published into `dev`'s store as a pack, so
-`dev` stays playable before any Builder content exists. A Builder's packs load beside it. It also
+`dev` stays playable before any Builder content exists. The fixture includes Purgatory, the spawn
+Zone every new Character enters (Brian, 2026-09-26; `AW-SRV-037`, `AW-INF-024`). A Builder's packs load beside it. It also
 gives `AW-INF-007`'s `andara.core` activation step a carrier on `dev`. Architecture's review of
 `AW-INF-019` (#107) found "nothing to act on while `dev` reads its content from ConfigMaps", and
 after this story there is. The open mechanism questions are in
@@ -63,7 +64,8 @@ running server minutes after I write it, without a deploy.
 1. **Given** `dev` after this story's roll **when** `andara-cli server info` runs against it
    **then** the content in effect lists `andara.core@<n>` and `town@<m>`, and none is `dir`.
 2. **Given** a new Character on `dev` **when** `andara-cli play --character <name>` enters **then**
-   the first Room is `Market Plaza` (`town/plaza`). The spawn is unchanged from the fixture era.
+   the first Room is `dev`'s configured spawn Room: `Purgatory` (`purgatory/start`) once
+   `AW-INF-024` has landed, and `Market Plaza` (`town/plaza`) before that.
 3. **Given** `town` with any active version **when** `make content-seed ENV=dev` runs **then** it
    prints `content-seed: town@<m> is already active; nothing published`, exits 0, and
    `content history town` shows no new version. That holds for a second seed run and for a `town`
@@ -151,11 +153,12 @@ against `dev`.
 
 ## Open questions
 
-- `[ASSUMPTION]` The fixture's Content Language source is the spec corpus's
-  `docs/specs/content-language/v1/corpus/valid/town/`, pack `town`, whose `expected/` is the dev
-  fixture. Architecture picks whether the seed reads it there or from a copy.
-- `[ASSUMPTION]` The fixture keeps pack ID `town` and Zone IDs `town`, `docks`, `wilds`, so the
-  spawn Room is unchanged. A Builder's packs can't reuse those Zone IDs while the fixture is
+- `[ASSUMPTION]` The fixture's Content Language source starts from the spec corpus's
+  `docs/specs/content-language/v1/corpus/valid/town/`, pack `town`, plus a `purgatory` Zone to match
+  `AW-SRV-037`. The corpus case lacks Purgatory, so the seed probably needs its own copy (item 3 in
+  the feedback file).
+- `[ASSUMPTION]` The fixture keeps pack ID `town` and Zone IDs `town`, `docks`, `wilds`, and adds
+  `purgatory`. A Builder's packs can't reuse those Zone IDs while the fixture is
   active. The guide says so (`AW-INF-023`).
 - Items 1–3 in `docs/feedback/AW-INF-021-dev-content-store.md` affect the interface contract.
   Architecture answers them at contract review.

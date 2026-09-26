@@ -61,7 +61,8 @@ replayed swaps, so a store-backed server replaying that log would need the `dir`
 ### 3. Where the fixture's source lives
 
 `AW-INF-021` assumes the seed publishes the spec corpus's `valid/town/`, pack `town`, whose
-`expected/` is the dev fixture. The spec corpus is architecture's, and a conformance case changing
+`expected/` is the dev fixture. Since Brian's Purgatory decision (below), the fixture also needs a
+`purgatory` Zone that the corpus case doesn't have. The spec corpus is architecture's, and a conformance case changing
 would then change `dev`'s content. Is that acceptable, or should the seed have its own copy that
 `make check` holds equal to `testdata/content/valid`?
 
@@ -94,16 +95,13 @@ alternative is the Content Repository, but then this repository's `make check` c
 guide in step with `andara-cli`. Please confirm the location and add the path to §2's
 architecture row.
 
-## For Brian
+## Brian's answers (2026-09-26)
 
-These are the two `[NEEDS BRIAN]` items in `AW-INF-023`. The guide documents whatever is decided.
-
-1. **Reaching a new Zone.** A new pack's Zone isn't reachable until something links to it. The
-   options:
-   - **(a)** also hold `town` and add an Exit from the fixture (works today);
-   - **(b)** a `goto` command for Builders and Game Masters (game design, and a new story);
-   - **(c)** point the spawn Room at your Zone.
-2. **Approving your own work alone on `dev`.** The options:
-   - **(a)** a second Builder Account you approve as;
-   - **(b)** Operator override with a reason, which is audited, skips approval, and isn't what the
-     guide would teach other Builders.
+1. **Reaching a new Zone: a `goto` command for Builders**, now `AW-SRV-036`. Until the base content
+   exists, every new Character spawns in **Purgatory**, a Zone with an Exit into the test town. It's
+   the waiting place before a Character moves to its start location. Purgatory is added to the test
+   content in `AW-SRV-037`, and becomes every environment's spawn Room in `AW-INF-024`. The fixture
+   pack this story seeds includes it.
+2. **Approving your own work: an Operator may approve a build they published as a Builder.** It's
+   temporary, until others build. That changes `AW-SRV-013` and `AW-CLI-003`, which are `ready`, so
+   it's written up for architecture in `docs/feedback/AW-SRV-013-operator-self-approval.md`.
