@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strings"
 	"testing"
 
 	"google.golang.org/protobuf/proto"
@@ -608,5 +609,32 @@ func TestASwapRendersTheNewTopology(t *testing.T) {
 	}
 	if rec := decode(t, v["character:town/hero"]); rec.GetTick() != uint64(swapTick) {
 		t.Fatalf("hero's record is from tick %d, want the swap's %d", rec.GetTick(), swapTick)
+	}
+}
+
+// AC-7, re-checked after #93: a Character's record names the packID@version
+// its body was spawned from, the Template's pack as the log has it in effect,
+// not "". Every Character in the script, including one rebound after going
+// dormant and one that crossed a Zone.
+func TestCharacterRecordsNameTheirContentVersion(t *testing.T) {
+	w := script(t)
+	recs, err := projector.New(w.live, projector.Options{ContentVersion: func(sim.ZoneID) string { return "fixture@1" }}).Dump()
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, r := range recs {
+		if r.Kind != statev1.AggregateKind_CHARACTER || r.Tombstone() {
+			continue
+		}
+		n++
+		cv := decode(t, r.Value).GetContentVersion()
+		pack, version, ok := strings.Cut(cv, "@")
+		if !ok || pack == "" || version == "" {
+			t.Errorf("%s: content_version %q, want packID@version", r.Key, cv)
+		}
+	}
+	if n != 2 {
+		t.Fatalf("%d Character records, want the hero's and Ada's", n)
 	}
 }

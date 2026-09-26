@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -123,7 +124,7 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		defer shcancel()
 		_ = srv.Shutdown(shctx)
 	}()
-	go topicBytes(ctx, cfg.KafkaBrokers, metrics)
+	go topicBytes(ctx, cfg.KafkaBrokers, metrics, tel.Log)
 
 	err = projector.Run(ctx, projector.RunOptions{
 		Brokers:        cfg.KafkaBrokers,
@@ -185,26 +186,53 @@ func handler(tel *telemetry.Telemetry, ready *atomic.Bool) http.Handler {
 }
 
 // topicBytes refreshes andara_state_topic_bytes every 30s: whether churn is
-// outpacing the compactor is a trend, not a per-tick number.
-func topicBytes(ctx context.Context, brokers []string, m *projector.Metrics) {
+// outpacing the compactor is a trend, not a per-tick number. A query that fails
+// is logged at warn when it starts failing and at info when it recovers, not
+// every 30s, and the gauge keeps its last good value in between: the runbook
+// reads this gauge, and a silent 0 is what it read before (AW-SRV-019 feedback
+// §1).
+func topicBytes(ctx context.Context, brokers []string, m *projector.Metrics, log *slog.Logger) {
 	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ClientID(projector.ClientID+"-meta"))
 	if err != nil {
+		log.Warn("andara_state_topic_bytes will not be reported", "topic", projector.StateTopic, "detail", err.Error())
 		return
 	}
 	defer cl.Close()
 	adm := kadm.NewClient(cl)
 	t := time.NewTicker(30 * time.Second)
 	defer t.Stop()
+	var r topicBytesReport
 	for {
 		qctx, qcancel := context.WithTimeout(ctx, 10*time.Second)
-		if n, err := projector.TopicBytes(qctx, adm, projector.StateTopic); err == nil {
-			m.TopicBytes.Set(float64(n))
-		}
+		n, err := projector.TopicBytes(qctx, adm, projector.StateTopic)
 		qcancel()
+		if ctx.Err() != nil {
+			return
+		}
+		r.observe(n, err, m, log)
 		select {
 		case <-ctx.Done():
 			return
 		case <-t.C:
 		}
 	}
+}
+
+// topicBytesReport sets the gauge from one query and logs a change of state.
+type topicBytesReport struct{ failing bool }
+
+func (r *topicBytesReport) observe(n int64, err error, m *projector.Metrics, log *slog.Logger) {
+	if err != nil {
+		if !r.failing {
+			log.Warn("andara_state_topic_bytes not refreshed: the broker query failed; the gauge keeps its last value",
+				"topic", projector.StateTopic, "detail", err.Error())
+		}
+		r.failing = true
+		return
+	}
+	if r.failing {
+		log.Info("andara_state_topic_bytes refreshed again", "topic", projector.StateTopic, "bytes", n)
+	}
+	r.failing = false
+	m.TopicBytes.Set(float64(n))
 }
