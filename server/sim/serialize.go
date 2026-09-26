@@ -92,11 +92,13 @@ func EntityCanonicalBytes(e EntityState) []byte {
 	if e.Dormant {
 		writeFields(&b, "entity_dormant", string(e.ID), strconv.FormatUint(uint64(e.DormantSince), 10))
 	}
-	// Written only when a field is set, as entity_dormant is, so every hash
-	// taken before AW-SRV-015 is what it was (docs/feedback/AW-SRV-015-linkdead.md).
-	// Any one field non-zero writes all four, so a corruption of any of them
-	// changes the hash.
-	if e.LinkdeadSince|e.LinkdeadDeadline|e.LinkdeadCeiling|e.LinkdeadExtension != 0 {
+	// Written only for a body with a deadline, as entity_dormant is only for
+	// a dormant one, so a World with no linkdead body hashes as it did before
+	// AW-SRV-015 (the story's Interface contract, amended at AW-SRV-006's
+	// second §8 pass). The record holds all four, so a corruption of any of
+	// them on a linkdead body changes the hash; the other three set with no
+	// deadline is refused by BodyStateHash.
+	if e.LinkdeadDeadline != 0 {
 		writeFields(&b, "entity_linkdead", string(e.ID),
 			strconv.FormatUint(uint64(e.LinkdeadSince), 10), strconv.FormatUint(uint64(e.LinkdeadDeadline), 10),
 			strconv.FormatUint(uint64(e.LinkdeadCeiling), 10), strconv.FormatUint(uint64(e.LinkdeadExtension), 10))

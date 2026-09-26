@@ -325,6 +325,10 @@ handover), `1f01f09` (end to end).
 | 17 | `TestMarkLinkdead_IsANoOpOnABodyItCannotMark`: already linkdead, dormant, absent |
 
 **Deviations and open items:**
+- **Hashing follows the amended contract** (architecture's note from `AW-SRV-006`'s second §8
+  pass). The linkdead record is written only for a body with a non-zero `linkdead_deadline_tick`.
+  `BodyStateHash` refuses a body with the other three fields and no deadline. The tripwire passes,
+  and the refusal is mutation-checked.
 - **`state_version` is not bumped.** The four fields are hashed only when set, so every existing
   hash and log stays valid. The reason, and the one-line change if you want the bump anyway, are in
   `docs/feedback/AW-SRV-015-linkdead.md` under "Implementation, 2026-09-26". Architecture decides.

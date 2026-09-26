@@ -149,8 +149,11 @@ func TestBodyHashCoversTickPRNGAndNextEventID(t *testing.T) {
 func TestBodyHashRefusesWhatItDoesNotCover(t *testing.T) {
 	t.Parallel()
 	for name, edit := range map[string]func(*statev1.ZoneState){
-		"deferred":                   func(b *statev1.ZoneState) { b.Deferred = append(b.Deferred, &logv1.LoggedCommand{ZoneId: "village"}) },
-		"dormant_since, not dormant": func(b *statev1.ZoneState) { b.Entities[1].DormantSinceTick = 9 },
+		"deferred":                        func(b *statev1.ZoneState) { b.Deferred = append(b.Deferred, &logv1.LoggedCommand{ZoneId: "village"}) },
+		"dormant_since, not dormant":      func(b *statev1.ZoneState) { b.Entities[1].DormantSinceTick = 9 },
+		"linkdead_since, no deadline":     func(b *statev1.ZoneState) { b.Entities[1].LinkdeadSinceTick = 9 },
+		"linkdead_ceiling, no deadline":   func(b *statev1.ZoneState) { b.Entities[1].LinkdeadCeilingTick = 9 },
+		"linkdead_extension, no deadline": func(b *statev1.ZoneState) { b.Entities[1].LinkdeadExtensionTicks = 9 },
 	} {
 		body := fullSnapshot().BodyProto()
 		edit(body)
