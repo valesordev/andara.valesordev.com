@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-60 stories — 11 review · 25 ready · 5 draft · 19 done
+60 stories — 11 review · 29 ready · 1 draft · 19 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -11,7 +11,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
   review AW-INF-013, AW-INF-014, AW-CLI-005, AW-INF-008 — run the §8 checklist, then flip to…
-  held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
+  held   5 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012, AW-INF-017
 
 ## Implementation lane — server and cli source, tests
 
@@ -19,7 +19,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 2)
   next   AW-SRV-015  ready  Session lifecycle and linkdead grace period  (unblocks 2)
   review AW-CLI-006, AW-SRV-014, AW-CLI-004, AW-SRV-006, AW-CLI-007, AW-SRV-012, AW-SRV-019…
-  held   7 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-009, AW-CLI-003, AW-SRV-016, AW-SRV-018,…
+  held   8 ready, blocked: AW-SRV-007, AW-CLI-002, AW-CLI-008, AW-SRV-009, AW-CLI-003, AW-SRV-016,…
 
 ## Decisions the lanes are waiting on
 
