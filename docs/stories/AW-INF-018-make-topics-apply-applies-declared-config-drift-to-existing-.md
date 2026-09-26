@@ -49,6 +49,9 @@ topic does.
   *(Amended at architecture's contract review, 2026-09-26: the draft counted only a change that
   drops `compact`. That missed `delete` → `compact` on the log topics, the most destructive change
   this tool could make.)*
+  *(Amended at review of #112, 2026-09-26: a lower `min.compaction.lag.ms` counts too. It lets the
+  cleaner remove superseded records sooner. On `andara.state.v1`, that's the minute of intermediate
+  writes an index reading behind depends on, and compacted records don't come back.)*
   `ALLOW_DATA_LOSS=<topic>[,<topic>…]` names the topics the operator accepts that for.
 - A key that the broker accepts but doesn't report (Redpanda: `min.insync.replicas`,
   `min.compaction.lag.ms`) is skipped locally, as `topics-diff` skips it now, and says so once per
@@ -74,7 +77,7 @@ topic does.
    runs **then** it exits 1 with
    `topics: <topic> has <live> partitions, declared <declared>; repartitioning is refused`, and it
    alters nothing on any topic (the check runs before any alter).
-4. **Given** a declaration that lowers `retention.ms` on a topic, or adds a policy to its
+4. **Given** a declaration that lowers `retention.ms` or `min.compaction.lag.ms` on a topic, or adds a policy to its
    `cleanup.policy` that the live topic doesn't have (`delete` → `compact`, `compact` → `delete`,
    `compact` → `compact,delete`), **when** `topics-apply` runs without that topic in `ALLOW_DATA_LOSS` **then**
    it exits 1 with
@@ -116,9 +119,9 @@ topic does.
 Alter-configs is online and needs no restart.
 
 **Not every change is reversible.**
-- **Reversible:** raising `retention.ms`, dropping a cleanup policy, `min.insync.replicas`, and
-  `min.compaction.lag.ms`. Revert the line in `topics.yaml` and re-run `topics-apply`.
-- **Irreversible:** lowering `retention.ms`, or adding a cleanup policy, once the broker's next
+- **Reversible:** raising `retention.ms`, raising `min.compaction.lag.ms`, dropping a cleanup
+  policy, and `min.insync.replicas`. Revert the line in `topics.yaml` and re-run `topics-apply`.
+- **Irreversible:** lowering `retention.ms` or `min.compaction.lag.ms`, or adding a cleanup policy, once the broker's next
   cleanup has run. Segments older than the new window, or superseded keys, are deleted. Reverting the
   declaration only widens the window from then on; it restores nothing. Kafka is the ordering
   authority and the WAL (ADR-0002), so on `andara.commands.v1` or `andara.events.v1` this deletes
@@ -140,7 +143,7 @@ immediately. After cleanup, there is none.
 - **Unit:** `test_topics.py` with the rpk runner faked:
   - an alter for each `COMPARED` key, and no call on a clean state;
   - partition drift refused before any alter;
-  - a retention decrease and each policy addition (`delete`→`compact`, `compact`→`delete`,
+  - a retention decrease, a compaction-lag decrease, and each policy addition (`delete`→`compact`, `compact`→`delete`,
     `compact`→`compact,delete`), each refused without `ALLOW_DATA_LOSS`, applied with it, and never
     inferred from a different topic's entry; `compact,delete`→`compact` applied without it;
   - policy sets compared as sets, so `delete,compact` and `compact,delete` are no drift;
@@ -187,8 +190,9 @@ this story guards, so it's done only on CI's fresh runner. AC-8 is on the box.
 | 7 | unit: a broker refusal mid-run | exit 1, `the broker refused state min.compaction.lag.ms=60000: …`, `already applied: events retention.ms` |
 | 8 | **on the box, in the session with `AW-INF-014`** | pending: `make topics-diff` / `topics-apply` / `topics-diff ANDARA_ENV=dev` |
 
-- **Unit:** `scripts/tests/test_topics.py`, 15 new cases on a faked rpk, following the test plan
-  item by item. That includes the refusal never being inferred from another topic's allowance,
+- **Unit:** `scripts/tests/test_topics.py`, 16 new cases on a faked rpk, following the test plan
+  item by item. The compaction-lag decrease was added at review of #112, and removing its rule
+  fails 3 cases. That includes the refusal never being inferred from another topic's allowance,
   and policy sets comparing as sets. Mutation-checked: dropping the policy-addition rule fails 5
   cases, ordering `-1` as a number fails 1, and comparing policies as strings fails 1.
 - **Integration:** the `stack` workflow's new step, "topics-apply aligns drift and refuses data

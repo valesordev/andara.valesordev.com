@@ -202,6 +202,7 @@ class Apply(unittest.TestCase):
             ("events", {"retention.ms": "5000"}, "retention.ms 5000 -> 1000"),
             ("log", {"cleanup.policy": "compact"}, "cleanup.policy compact -> delete"),
             ("state", {"cleanup.policy": "delete"}, "cleanup.policy delete -> compact"),
+            ("state", {"min.compaction.lag.ms": "120000"}, "min.compaction.lag.ms 120000 -> 60000"),
         ]
 
     def test_a_destructive_change_is_refused_without_its_topic(self):
@@ -222,6 +223,10 @@ class Apply(unittest.TestCase):
                 code, out, err = self.apply(b, allow=[name])
                 self.assertEqual(code, 0, err)
                 self.assertIn("topics: altered %s %s (data loss accepted)\n" % (name, text), out)
+
+    def test_a_longer_compaction_lag_needs_no_confirmation(self):
+        self.assertFalse(topics.destructive("min.compaction.lag.ms", "0", "60000"))
+        self.assertTrue(topics.destructive("min.compaction.lag.ms", "60000", "0"))
 
     def test_compact_to_compact_delete_is_destructive(self):
         self.assertTrue(topics.destructive("cleanup.policy", "compact", "compact,delete"))

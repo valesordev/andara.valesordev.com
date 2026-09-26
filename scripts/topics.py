@@ -264,16 +264,20 @@ def retention(value):
 def destructive(key, have, want):
     """Whether setting `key` from `have` to `want` lets the broker delete data.
 
-    A lower retention.ms expires segments sooner. A cleanup.policy gaining a policy the topic
+    A lower retention.ms expires segments sooner. A lower min.compaction.lag.ms lets the cleaner
+    remove superseded records sooner: on andara.state.v1 that's the minute of intermediate
+    writes an index reading behind depends on. A cleanup.policy gaining a policy the topic
     didn't have deletes too: `delete` added to a compacted topic expires old keys by time, and
     `compact` added to a delete topic keeps only each key's last record. Dropping a policy only
     deletes less. An unknown old value (the broker doesn't report the key) counts as
     destructive, because nothing shows it isn't.
     """
     if have is None:
-        return key in ("retention.ms", "cleanup.policy")
+        return key in ("retention.ms", "min.compaction.lag.ms", "cleanup.policy")
     if key == "retention.ms":
         return retention(want) < retention(have)
+    if key == "min.compaction.lag.ms":
+        return int(want) < int(have)
     if key == "cleanup.policy":
         return bool(policies(want) - policies(have))
     return False
