@@ -9,10 +9,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 8 |
+| `review` | 7 |
 | `ready` | 25 |
 | `draft` | 9 |
-| `done` | 27 |
+| `done` | 28 |
 | **total** | **69** |
 
 ## Attention first
@@ -22,7 +22,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
-| [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `review` | make stack-linkdead — the linkdead gate scripted against the running stack | review by brian |
 | [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `review` | make topics-apply applies declared config drift to existing topics | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `review` | Session lifecycle and linkdead grace period | review by brian |
@@ -30,14 +29,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 ## By status
 
-### `review` (8)
+### `review` (7)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
-| [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `EPIC-08` | infra | S | low | architecture | make stack-linkdead — the linkdead gate scripted against the running stack | `AW-SRV-015`, `AW-CLI-007`, `AW-CLI-008` |
 | [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `EPIC-10` | infra | S | medium | architecture | make topics-apply applies declared config drift to existing topics | `AW-INF-004` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `EPIC-08` | server | M | high | implementation | Session lifecycle and linkdead grace period | `AW-SRV-014` |
@@ -87,7 +85,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
 | [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
 
-### `done` (27)
+### `done` (28)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -103,6 +101,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-004`](docs/stories/AW-INF-004-kafka-topics-and-schema-registry-as-code.md) | `EPIC-10` | infra | M | high | architecture | Kafka topic and schema registry provisioning as code | `AW-INF-001` |
 | [`AW-INF-006`](docs/stories/AW-INF-006-ingress-tls-and-grpc-routing.md) | `EPIC-01` | infra | M | medium | architecture | Ingress, certificate management, and gRPC/Connect routing | `AW-INF-003`, `AW-SRV-005` |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `EPIC-01` | infra | S | low | architecture | make up builds the server image from the tree it runs in | `AW-INF-002` |
+| [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `EPIC-08` | infra | S | low | architecture | make stack-linkdead — the linkdead gate scripted against the running stack | `AW-SRV-015`, `AW-CLI-007`, `AW-CLI-008` |
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | implementation | World model types and zone definition loading with referential validation at boot | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
@@ -229,7 +228,7 @@ Milestone `M1–M2` · status `ready` · ADR gates: none · constrained by: `ADR
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-008`](docs/stories/AW-CLI-008-andara-cli-play-renders-linkdead-reconnect-and-despawn.md) | `done` | andara-cli play renders linkdead, reconnect, and despawn |
-| [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `review` | make stack-linkdead — the linkdead gate scripted against the running stack |
+| [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `done` | make stack-linkdead — the linkdead gate scripted against the running stack |
 | [`AW-SRV-008`](docs/stories/AW-SRV-008-account-store-and-authentication.md) | `done` | Account store, registration modes, and authentication |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `review` | Session lifecycle and linkdead grace period |
