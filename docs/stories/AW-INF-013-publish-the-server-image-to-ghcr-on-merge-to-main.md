@@ -211,6 +211,25 @@ render. Repaired in this pass.
 - No instrumentation is required (§7: publishing emits nothing). The chart README documents the
   targets and pinning. No open markers: package visibility is settled, since the package is public.
 
+### Defect found after the §8 pass: #106 (2026-09-26, architecture), fixed
+
+Found during `AW-INF-019`'s contract review. The chart wrote `image.tag` into
+`app.kubernetes.io/version` verbatim. That included the `dev@sha256:<digest>` this story's
+`helm-install` pins a moving tag to, which the API server rejects (`@` and `:` aren't label
+characters, and the value is over 63 bytes). So `make helm-install ENV=dev` couldn't have applied.
+
+**The fix:** `andara.versionLabel` names the tag without its digest, truncated to 63 bytes and
+trimmed to alphanumerics at both ends. The image reference keeps the digest.
+
+**Tests:**
+- `make helm-test`'s `test_label_values` renders five tags (a digest pin, a `sha-` tag, a `sha-`
+  tag with a digest, a trailing `_`, 80 bytes), and checks every label value on every object and
+  pod template.
+- A server-side dry run of the digest-pinned `dev` render against the box's cluster: all 13
+  objects that failed on `main` are accepted.
+
+This goes in before the box session's `dev` install.
+
 ## Open questions
 
 - **Resolved 2026-09-24 (Brian):** publish the image, instead of handing `AW-INF-008`'s box checks
