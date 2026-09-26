@@ -55,7 +55,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
-        values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play \
+        values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check scripts-test kafka-operator kafka-install kafka-broker-bounce
 
 ## help: print this target list
@@ -310,6 +310,10 @@ stack-smoke:
 ## stack-play: the M1 gate scripted — `andara-cli play` against the running stack — needs `make up` and `make build`
 stack-play: build
 	@$(SCRIPTS)/stack_play.sh
+
+## stack-linkdead: the linkdead gate scripted — drop a player's stream, reconnect, and a bystander sees both — needs `make up` and `make build`
+stack-linkdead: build
+	@$(SCRIPTS)/stack_linkdead.sh
 
 ## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
 kind-platform:
