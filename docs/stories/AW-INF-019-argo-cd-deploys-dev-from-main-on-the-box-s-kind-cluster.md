@@ -102,8 +102,13 @@ running a deploy, so that I can play the current World while the sprint is still
 4. **Given** the Application `Synced` **when** a PR that changes only `testdata/content/valid/`
    merges **then** the `andara-content` ConfigMap in `andara-dev` matches `main` within the same
    deadline, and the StatefulSet rolls.
-5. **Given** a merge that changes nothing the Application renders (a story file, say) **when** Argo
-   CD polls **then** no pod in `andara-dev` restarts.
+5. **Given** a merge to `main` **when** `publish` pushes its build **then** `andara-dev` rolls once
+   for it: one new pod, one World restart. **Given** no new build and no change to what the
+   Application renders **when** Argo CD polls **then** no pod in `andara-dev` restarts. `publish`
+   has no path filter today, so a merge that touches only a story file still builds a new
+   `sha-` image, and `dev` still rolls for it. Whether `publish` should skip merges that can't
+   change the image is `AW-INF-013`'s contract (feedback item 4). If it starts skipping them,
+   this AC tightens to "a merge `publish` skips restarts nothing".
 6. **Given** the Application **when** someone runs `kubectl edit` on a resource it manages, or
    deletes one **then** `selfHeal` puts it back to `main` within the deadline. When the change is
    deleting the Kafka CR, its topics, or either Secret, Argo CD leaves it alone, because it doesn't
@@ -112,8 +117,14 @@ running a deploy, so that I can play the current World while the sprint is still
    with `make: helm-install: andara-dev is deployed by Argo CD (application andara-dev); see make
    argocd-status`, and changes nothing.
 8. **Given** a published build that fails its readiness probe **when** the Application syncs it
-   **then** `make argocd-status` reports `Degraded` with the pod's reason and exits 1. The
-   previous pod's PVC is untouched. The next good merge recovers `dev` with no hand step.
+   **then** `make argocd-status` reports `Degraded` with the pod's reason and exits 1, and the
+   previous pod's PVC is untouched. The StatefulSet is `OrderedReady`, so its rolling update stalls
+   on the pod that never becomes Ready. A later good template doesn't replace that pod
+   (Kubernetes' *Forced rollback*). **When** a good build has since synced, **then**
+   `make argocd-recover ENV=dev` deletes the pod created from the bad revision, and `andara-dev`
+   comes back on the good build. It refuses, and changes nothing, when the StatefulSet's
+   `updateRevision` is still the failing one. Automating this step instead is open to
+   architecture (feedback item 5).
 9. **Given** `make argocd-install ENV=dev` **when** `ANDARA_BOOTSTRAP_OPERATOR` is unset and
    `andara-server-bootstrap` doesn't exist **then** it exits 1 with the same message
    `helm-install` gives today. When the Secret already exists, it's left as it is, and the run
@@ -132,6 +143,7 @@ Make targets:
 | `make argocd-install ENV=dev` | the above, then `dev`'s Secrets (if absent) and the `andara-dev` Application; refuses `ENV=local` and `ENV=prod` |
 | `make argocd-status [ENV=dev]` | sync status, health, synced `main` revision, running image; exit 0 when `Synced`/`Healthy`, 1 otherwise |
 | `make argocd-ui` | port-forward to `localhost:8090` (`ARGOCD_UI_PORT=` overrides); prints the admin-password command |
+| `make argocd-recover ENV=dev` | the forced-rollback step (AC-8): deletes the `andara` pod still on a revision older than the StatefulSet's `updateRevision`, once that revision's image is the Application's current one; exit 1, changing nothing, otherwise |
 | `make argocd-uninstall ENV=dev` | removes the Application without cascading; Argo CD itself stays |
 
 - Preconditions `make argocd-install ENV=dev` checks, with the same messages `helm_install.sh` uses:
@@ -164,7 +176,8 @@ Make targets:
 - **Rollback:** `make argocd-uninstall ENV=dev` (AC-10), then `make helm-install ENV=dev`, which
   takes the resources back as a fresh release. No data moves either way.
 - **Live Sessions:** each sync that changes the pod template restarts the World (ADR-0001, until
-  sharding). With merges landing several times a day, `dev` restarts that often. That's expected on
+  sharding). Every merge publishes a new image (AC-5), so with merges landing several times a day,
+  `dev` restarts that often, docs-only merges included, until `publish` skips them. That's expected on
   `dev`, and it's the reason `prod` isn't in scope.
 
 ## Observability requirements
@@ -222,4 +235,6 @@ CLAUDE.md §8, plus:
 - For architecture, in `docs/feedback/AW-INF-019-argocd.md`:
   1. how a new build reaches the Application;
   2. `AW-INF-007`'s "only deploy path";
-  3. rendering the content ConfigMaps from git.
+  3. rendering the content ConfigMaps from git;
+  4. whether `publish` skips merges that can't change the image;
+  5. automating the forced-rollback step.

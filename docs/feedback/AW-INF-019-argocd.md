@@ -2,7 +2,7 @@
 
 Spec: `docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md` (`draft`)
 Raised: 2026-09-26, PM, from Brian's request that `dev` follow `main` on the box. **Argo CD itself
-is decided (Brian, 2026-09-26).** These three items are how, and no ADR or spec covers them, so the
+is decided (Brian, 2026-09-26).** These items are how, and no ADR or spec covers them, so the
 story stays `draft` and out of SPRINT-02 until they're answered here and in the story body.
 
 ## For architecture
@@ -20,14 +20,22 @@ digest, for the same reason: a pod spec that doesn't change doesn't roll. The op
 - **(b) Image Updater, `git` write-back.** The same, but it commits the tag to a file on `main`
   (for example, `deploy/argocd/.argocd-source-andara-dev.yaml`). Git records what `dev` runs, and a
   revert rolls it back. The cost: a bot with push rights to `main`, whose commits land between lane
-  PRs, pass through branch protection and signed-commit rules, and show up in `git log`.
+  PRs, pass through branch protection and signed-commit rules, and show up in `git log`. **It
+  also loops:** `publish` runs on every push to `main` with no path filter, so the write-back
+  commit builds a new `sha-` image, Image Updater writes that tag back, and that commit publishes
+  again, without end. Choosing (b) needs `publish` to ignore the write-back file (a `paths-ignore`
+  entry), plus a check that it never deploys an image built from its own commit.
 - **(c) `publish` commits the tag.** `publish.yaml` writes `sha-<12-hex>` into the values the
   Application reads, after pushing the image. This has (b)'s git record and (b)'s bot commit on
-  `main`, with no extra controller. It couples CI to the deploy config.
+  `main`, with no extra controller. It couples CI to the deploy config, and it has (b)'s loop:
+  the tag commit is a push to `main` that `publish` builds and tags again. It needs the same
+  `paths-ignore`, or the tag written somewhere that isn't `main`, such as a deploy branch the
+  Application tracks.
 
 PM recommends **(a)**. `dev` is a play environment that follows `main` by definition, so the
 record of what it runs is `main` itself plus `make argocd-status`. Of the three, it's the only one
-that puts no automated writer on `main`. The story's contract is written to hold under any of them.
+that puts no automated writer on `main`, and so the only one with no publish loop to guard
+against. The story's contract is written to hold under any of them.
 
 ### 2. `AW-INF-007`'s "only deploy path"
 
@@ -49,3 +57,23 @@ multi-source Application, a kustomize overlay with that build option in `argocd-
 copy under the chart that `make check` keeps in step. Pick one and state it in the story's
 contract. `AW-SRV-012` serving content from the store would retire this for `dev`. It's recorded
 here in case that lands first.
+
+### 4. Does `publish` build merges that can't change the image? (`AW-INF-013`)
+
+`publish.yaml` runs on every push to `main`. A merge that touches only `docs/` still builds and
+tags a new `sha-` image, and it moves `:dev`, because the commit is stamped into the binary. Under
+this story, `dev` then rolls. That means a World restart for a story file. `AW-INF-019` AC-5
+accepts that as written. A `paths-ignore` (for `docs/**`, `*.md` and `BACKLOG.md`, say) would stop
+it, but it's a change to `AW-INF-013`'s contract, which is at `review`, so it's architecture's
+call. The cost: a skipped merge gets no `sha-` tag, so `make deploy TAG=` can't name it. That
+matters little for a commit that changed nothing the image holds.
+
+### 5. Recovery from a build that never becomes Ready
+
+The chart's StatefulSet is `OrderedReady`. When a published build never becomes Ready, the rolling
+update stalls on that pod, and a later good template doesn't replace it. Kubernetes documents this
+as *Forced rollback*: the pod already attempted on the bad revision has to be deleted. The story now
+makes that deletion a make target, `make argocd-recover ENV=dev` (AC-8), so it's one operator
+command rather than a hand-typed `kubectl`. If architecture wants it automated instead (an Argo CD
+`SyncFail` or `PostSync` hook, or a small controller), the contract should say which, and AC-8
+becomes "no hand step" again.

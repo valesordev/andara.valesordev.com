@@ -39,7 +39,7 @@ What it is not:
   architecture; #77)
 - AW-INF-017 — `make stack-linkdead` (new, architecture)
 - AW-INF-019 — Argo CD deploys `dev` from `main` on the box's kind cluster (new, architecture;
-  added 2026-09-26 at Brian's request). Answer the three items in `docs/feedback/AW-INF-019-argocd.md`
+  added 2026-09-26 at Brian's request). Answer the five items in `docs/feedback/AW-INF-019-argocd.md`
   and `AW-INF-007`'s scope question in `docs/feedback/AW-INF-007-deploy-lifecycle.md` first.
 
 ## Architecture backlog (pickup order)
