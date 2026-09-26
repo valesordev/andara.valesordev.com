@@ -10,8 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `review` | 7 |
-| `ready` | 29 |
-| `draft` | 2 |
+| `ready` | 30 |
+| `draft` | 1 |
 | `done` | 23 |
 | **total** | **61** |
 
@@ -41,7 +41,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (29)
+### `ready` (30)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -57,6 +57,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `EPIC-01` | infra | S | low | architecture | make up builds the server image from the tree it runs in | `AW-INF-002` |
 | [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `EPIC-08` | infra | S | low | architecture | make stack-linkdead — the linkdead gate scripted against the running stack | `AW-SRV-015`, `AW-CLI-007`, `AW-CLI-008` |
 | [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `EPIC-10` | infra | S | medium | architecture | make topics-apply applies declared config drift to existing topics | `AW-INF-004` |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028`, `AW-SRV-015` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
@@ -75,12 +76,11 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
-### `draft` (2)
+### `draft` (1)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | architecture | A schema registry on the box for dev and prod | `AW-INF-014` |
-| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 
 ### `done` (23)
 
@@ -128,7 +128,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `ready` | Ingress forwards the client address to the Gateway |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `ready` | make up builds the server image from the tree it runs in |
-| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `draft` | Argo CD deploys dev from main on the box's kind cluster |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `ready` | Argo CD deploys dev from main on the box's kind cluster |
 
 ### `EPIC-02` — World model and simulation core
 

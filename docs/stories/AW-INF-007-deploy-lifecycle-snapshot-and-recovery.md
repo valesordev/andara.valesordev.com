@@ -36,7 +36,10 @@ not an event.
   `terminationGracePeriodSeconds`, which this story derives.
 - Post-start: `AW-SRV-007` recovery, readiness only after verify (already the contract; this story tests
   it under a rolling update).
-- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [--round T]` as the only deploy path.
+- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [--round T]` as the only deploy path
+  for `prod`, and for `local`, where the rolling-update test runs. `dev` is deployed by Argo CD from
+  `main` (`AW-INF-019`), and `make deploy ENV=dev` refuses while that Application exists, as
+  `helm-install` does. *(Scoped 2026-09-26, `AW-INF-019`'s contract review.)*
 - The `andara.core` step (ADR-0010 §8): `make deploy` publishes and activates the core pack built
   with the image (`content/core/` in the repo, compiled by `AW-CLI-006`) before the new pod reports
   ready, as `operator`, no second approver (`AW-SRV-013` AC-11). Rollback activates the previous
@@ -46,6 +49,16 @@ not an event.
   Commands, not state (ADR-0005: replay never re-runs anything but `Apply`).
 - Interruption measurement: `andara_deploy_interruption_seconds` from `ServerStopping` to first
   `serving`, compared to the RTO SLO in the CI job summary.
+- **What `dev` gets under Argo CD** (`AW-INF-019`):
+  - The pre-stop snapshot and post-start recovery live in the pod, so `dev` gets them whoever
+    triggers the roll.
+  - The `andara.core` publish-and-activate step doesn't run on `dev`, and needn't yet. `dev`
+    reads its Templates from a ConfigMap (`content.source: dir`) until `AW-SRV-012` serves
+    content from the store, so there's no active pack to change. The story that moves `dev` to
+    the store carries the step, as a chart hook Job Argo CD runs as `PreSync`, the same step
+    `make deploy` runs.
+  - `andara_deploy_interruption_seconds` is recorded on `dev` rolls too. The RTO comparison
+    reads `prod`'s series (`namespace="andara-prod"`) and CI's `local` run, never `dev`'s.
 - Retention of snapshot rounds: keep `snapshot.keep_rounds` (default 120 = 2 h) plus every round tagged
   by a deploy for `snapshot.keep_deploy_rounds` (default 30).
 
