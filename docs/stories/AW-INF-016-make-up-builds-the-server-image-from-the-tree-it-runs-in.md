@@ -4,7 +4,7 @@ title: make up builds the server image from the tree it runs in
 epic: EPIC-01
 component: infra
 type: bug
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-002]
 blocks: []
@@ -125,9 +125,36 @@ CLAUDE.md §8, plus: #73 is closed by the merging PR.
 
 ## Open questions
 
-- `[ASSUMPTION]` Building every time is acceptable, because the layer cache keeps a no-change
-  build short. Architecture records the measured no-change `make up` time in the verification
-  record. If it's over 10 s, the record names what busts the cache.
+- ~~`[ASSUMPTION]` Building every time is acceptable~~ **Resolved 2026-09-26, measured:** a
+  no-change `make up` takes 5.1 s, with the build itself at 0.8 s and every layer cached. See the
+  verification record.
 - The build context is the repo root minus `.dockerignore`. Until #78 removes it, that context
   includes the 35 MB `andara-projector` at the root. It doesn't bust the cache, but it's sent to the
-  daemon on every `make up`. That's noted here, not fixed here.
+  daemon on every `make up`. That's noted here, not fixed here. *(#103 closed #78 on 2026-09-26: the binary is untracked, and
+  `/andara-*` is ignored.)*
+
+## Verification record (2026-09-26, architecture)
+
+Branch `arch/aw-inf-016-make-up-builds`, on the compose stack. The first run was on a dirty tree
+(this story's uncommitted edits). The rest ran on the clean commit `01ff83e`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `make up` on clean `HEAD`, over an image built from `3e0adf6-dirty` | label and summary `01ff83e63acad02c5c114241958fc36209d25992` = `git rev-parse HEAD` |
+| 2 | `make up` with tracked files modified | label and summary `3e0adf66…-dirty`; `andara_build_info{commit="3e0adf6-dirty"}` |
+| 3 | `make up` again with no change | every container's `Created` is unchanged, the image ID is unchanged, every build step is `CACHED`, exit 0. **5.1 s** end to end, 0.8 s of it the build |
+| 4 | `make up` after the commit, over the dirty-built stack | `Created` changed for `andara-andara-server-1` alone, and it was ready before `make up` returned |
+| 5 | `/metrics` after the clean and the dirty runs | `commit="01ff83e"`, then `"3e0adf6-dirty"`. Never `unknown`, a prefix of the label, and `-dirty` exactly when the tree was |
+| 6 | `make up VERSION='x -badflag'`, which makes the image's `go build` fail | exit non-zero, `make: up: andara-server image build failed; see the output above`. The running server's container ID and `StartedAt` are unchanged, and `/readyz` is ok |
+
+- **Unit:** `scripts/tests/test_build_info.py`, in `make scripts-test`, which `make check` runs.
+  - The stamps are checked on a scratch repo: clean, a modified tracked file, a staged change,
+    an untracked file (not dirty), and a command-line override.
+  - `stack.sh revision` is checked against a fake `docker`.
+  - Mutation-checked: blanking the Makefile's `DIRTY` fails both dirty cases.
+- **Integration:** the `stack` workflow's new step, "the server runs this commit", requires the
+  summary line, `stack.sh revision` and `andara_build_info{commit}` (polled) to all name
+  `github.sha`, clean. Run locally against the dirty stack, it failed on the `-dirty`, as it
+  should.
+- **§7:** no new metrics. `andara_build_info{commit}` is what AC-5 reads.
+

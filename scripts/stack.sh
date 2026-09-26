@@ -24,6 +24,15 @@ TLS_DIR="${ANDARA_TLS_DIR:-$REPO/.local/tls}"
 
 fail() { echo "make: ${ACTION:-up}: $*" >&2; exit 1; }
 
+# The running server's org.opencontainers.image.revision, read from the container rather than
+# from the build args, so the summary reports what is running and not what was asked for.
+server_revision() {
+  local id
+  id="$(docker compose -f "$COMPOSE_FILE" --profile min --profile full --profile server ps -q andara-server 2>/dev/null | head -1)"
+  [[ -n "$id" ]] || return 1
+  docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$id"
+}
+
 ACTION="${1:-up}"
 
 command -v docker >/dev/null 2>&1 || fail "docker not found (run \`make bootstrap\`)"
@@ -110,6 +119,21 @@ case "$ACTION" in
     "$REPO/scripts/tls.sh"
     "$REPO/scripts/auth_keys.sh"
 
+    # The server image is built from this tree on every up (AW-INF-016, #73). Compose builds
+    # only when no image exists, so without this an old image kept running whatever the
+    # tree held. The layer cache makes a no-change build a no-op, and the image ID doesn't
+    # move, so `up` below recreates nothing. The stamps come from the Makefile, which is what
+    # `make image` and `make build` use, so the three can't disagree. The build runs before
+    # anything starts: a tree that doesn't compile leaves a running stack as it was.
+    if [[ -n "$(server_profile_args)" ]]; then
+      VERSION="${3:-dev}" COMMIT="${4:-unknown}" REVISION="${5:-unknown}"
+      echo "up: building andara-server from the tree ($REVISION)"
+      dc --profile "$PROFILE" --profile server build \
+        --build-arg VERSION="$VERSION" --build-arg COMMIT="$COMMIT" --build-arg REVISION="$REVISION" \
+        andara-server \
+        || fail "andara-server image build failed; see the output above"
+    fi
+
     echo "up: starting the $PROFILE stack (this blocks until every service is healthy)"
     dc --profile "$PROFILE" up -d --wait --remove-orphans \
       || fail "one or more services did not become healthy; \`make logs\` shows why"
@@ -167,6 +191,7 @@ CLICONF
     fi
     if [[ -n "$(server_profile_args)" ]]; then
       printf '  %-24s %s\n' "andara-server"  "localhost:${ANDARA_GRPC_PORT:-8443} (gRPC, TLS)"
+      printf '  %-24s %s\n' "andara-server revision" "$(server_revision || echo '?')"
       printf '  %-24s %s\n' "server health"  "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/readyz"
       printf '  %-24s %s\n' "bootstrap operator" "${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local} (local only; ANDARA_BOOTSTRAP_OPERATOR overrides)"
     fi
@@ -197,6 +222,10 @@ CLICONF
 
   ps)
     dc --profile min --profile full --profile server ps
+    ;;
+
+  revision)
+    server_revision || fail "andara-server is not running"
     ;;
 
   *)
