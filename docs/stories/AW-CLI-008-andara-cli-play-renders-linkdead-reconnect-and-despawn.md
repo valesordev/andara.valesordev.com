@@ -4,7 +4,7 @@ title: andara-cli play renders linkdead, reconnect, and despawn
 epic: EPIC-08
 component: cli
 type: feature
-status: ready
+status: review
 size: S
 depends_on: [AW-CLI-004, AW-SRV-015]
 blocks: [AW-INF-017]
@@ -111,3 +111,18 @@ CLAUDE.md §8.
   changes the golden file, not the contract.
 - **Resolved 2026-09-26 (architecture's contract review of `AW-SRV-015`):** all three Events carry
   `character_name`, and the linkdead marker is `RoomDescribed.linkdead`.
+
+## Verification (implementation, 2026-09-26)
+
+On `impl/aw-cli-008-linkdead-render`.
+
+| AC | Evidence |
+|----|----------|
+| 1, 2, 3, 4 | `TestRender_LinkdeadRows`: a table over the three payloads and every `reason`, including an unknown one (`banished`) and an empty one. Each is one line, and the test asserts it carries no event ID, tick, zone, room or reason code |
+| 5 | `TestPlay_JSONOutputCarriesTheLinkdeadEvents`: the three envelopes are on stdout as JSON lines, with none of their prose |
+| 6 | `testdata/play/events.jsonl` gains a line per row and per reason, and `transcript.txt` is regenerated. `TestRender_RecordingCoversTheTable` now requires all three types. Removing the `CharacterReconnected` row fails `TestRender_Golden` (mutation-checked) |
+| 7 | `TestRender_HereMarksTheLinkdead`: `Here: Aldric (linkdead), Brin`. A `linkdead` name that isn't an occupant is ignored, and so is its order. The golden recording has that case too |
+
+`admin/README.md`'s rendering table gains the three rows and the marker. The live bystander's
+transcript is `make stack-linkdead` (`AW-INF-017`). It needs `AW-SRV-015` (#114), which emits these
+Events and fills `RoomDescribed.linkdead`.

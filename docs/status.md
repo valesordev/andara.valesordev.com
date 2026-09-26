@@ -18,8 +18,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
   next   AW-SRV-015  ready  Session lifecycle and linkdead grace period  (unblocks 3)
-  review AW-SRV-014, AW-SRV-019 — run the §8 checklist, then flip to done
-  held   8 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-CLI-008, AW-SRV-009, AW-SRV-016,…
+  review AW-SRV-014, AW-CLI-008, AW-SRV-019 — run the §8 checklist, then flip to done
+  held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on
 

@@ -39,6 +39,21 @@ func renderEvent(env *gamev1.EventEnvelope) []string {
 			return []string{l.GetCharacterName() + " leaves."}
 		}
 		return []string{fmt.Sprintf("%s leaves %s.", l.GetCharacterName(), l.GetToDirection())}
+	case *gamev1.EventEnvelope_CharacterLinkdead:
+		// AW-CLI-008. Placeholder wording in the renderer's voice, Brian's
+		// to change (SPRINT-02 game-design question 2); the golden file
+		// moves with it, not the contract.
+		return []string{p.CharacterLinkdead.GetCharacterName() + " goes linkdead."}
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		return []string{p.CharacterReconnected.GetCharacterName() + " reconnects."}
+	case *gamev1.EventEnvelope_CharacterDespawned:
+		d := p.CharacterDespawned
+		switch d.GetReason() {
+		case "linkdead", "linkdead_ceiling":
+			return []string{d.GetCharacterName() + " fades from the world."}
+		}
+		// quit, switch, and any reason this client does not know.
+		return []string{d.GetCharacterName() + " leaves the world."}
 	case *gamev1.EventEnvelope_CommandRejected:
 		// The message, verbatim: it is player-facing by contract
 		// (AW-SRV-003), and the code is for scripts, not people.
@@ -84,7 +99,20 @@ func renderRoom(r *gamev1.RoomDescribed) []string {
 		lines = append(lines, "Exits: none")
 	}
 	if who := r.GetOccupants(); len(who) > 0 {
-		lines = append(lines, "Here: "+strings.Join(who, ", "))
+		// The linkdead subset is marked (AW-CLI-008); a name in linkdead
+		// that is not an occupant is ignored.
+		linkdead := map[string]bool{}
+		for _, n := range r.GetLinkdead() {
+			linkdead[n] = true
+		}
+		names := make([]string, len(who))
+		for i, n := range who {
+			names[i] = n
+			if linkdead[n] {
+				names[i] += " (linkdead)"
+			}
+		}
+		lines = append(lines, "Here: "+strings.Join(names, ", "))
 	}
 	return lines
 }

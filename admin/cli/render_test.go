@@ -63,7 +63,8 @@ func TestRender_RecordingCoversTheTable(t *testing.T) {
 	for _, env := range recordedEvents(t, filepath.Join("testdata", "play", "events.jsonl")) {
 		seen[eventName(env)] = true
 	}
-	for _, want := range []string{"RoomDescribed", "CharacterArrived", "CharacterLeft", "CommandRejected", "Heartbeat", "Resync", "ZoneFaulted", "SubscriberDropped", "SimulationStopped"} {
+	for _, want := range []string{"RoomDescribed", "CharacterArrived", "CharacterLeft", "CommandRejected", "Heartbeat", "Resync", "ZoneFaulted", "SubscriberDropped", "SimulationStopped",
+		"CharacterLinkdead", "CharacterReconnected", "CharacterDespawned"} {
 		if !seen[want] {
 			t.Errorf("the recording has no %s", want)
 		}
@@ -128,4 +129,58 @@ func futureEvent(t *testing.T) *gamev1.EventEnvelope {
 		t.Fatal(err)
 	}
 	return env
+}
+
+// AW-CLI-008 AC-1 to AC-4: one line per linkdead Event, every reason
+// covered, and none of them carries an ID, a tick, a deadline, or a reason
+// code.
+func TestRender_LinkdeadRows(t *testing.T) {
+	name := func(n string) (string, string, string) { return "town", "plaza", n }
+	z, r, n := name("Aldric")
+	despawned := func(reason string) *gamev1.EventEnvelope {
+		return &gamev1.EventEnvelope{EventId: 77, Tick: 900, Payload: &gamev1.EventEnvelope_CharacterDespawned{CharacterDespawned: &gamev1.CharacterDespawned{ZoneId: z, RoomId: r, CharacterName: n, Reason: reason}}}
+	}
+	for _, c := range []struct {
+		env  *gamev1.EventEnvelope
+		want string
+	}{
+		{&gamev1.EventEnvelope{EventId: 77, Tick: 900, Payload: &gamev1.EventEnvelope_CharacterLinkdead{CharacterLinkdead: &gamev1.CharacterLinkdead{ZoneId: z, RoomId: r, CharacterName: n}}}, "Aldric goes linkdead."},
+		{&gamev1.EventEnvelope{EventId: 77, Tick: 900, Payload: &gamev1.EventEnvelope_CharacterReconnected{CharacterReconnected: &gamev1.CharacterReconnected{ZoneId: z, RoomId: r, CharacterName: n}}}, "Aldric reconnects."},
+		{despawned("quit"), "Aldric leaves the world."},
+		{despawned("switch"), "Aldric leaves the world."},
+		{despawned("linkdead"), "Aldric fades from the world."},
+		{despawned("linkdead_ceiling"), "Aldric fades from the world."},
+		{despawned("banished"), "Aldric leaves the world."},
+		{despawned(""), "Aldric leaves the world."},
+	} {
+		lines := renderEvent(c.env)
+		if len(lines) != 1 || lines[0] != c.want {
+			t.Errorf("%s: rendered %q, want %q", eventName(c.env), lines, c.want)
+			continue
+		}
+		for _, leak := range []string{"77", "900", "town", "plaza", "linkdead_ceiling", "quit", "switch", "banished"} {
+			if strings.Contains(lines[0], leak) {
+				t.Errorf("%q carries %q", lines[0], leak)
+			}
+		}
+	}
+}
+
+// AW-CLI-008 AC-7: Here: marks the occupants the server says are linkdead,
+// and ignores a linkdead name that is not an occupant.
+func TestRender_HereMarksTheLinkdead(t *testing.T) {
+	for _, c := range []struct {
+		occupants, linkdead []string
+		want                string
+	}{
+		{[]string{"Aldric", "Brin"}, []string{"Aldric"}, "Here: Aldric (linkdead), Brin"},
+		{[]string{"Aldric", "Brin"}, nil, "Here: Aldric, Brin"},
+		{[]string{"Brin"}, []string{"Aldric"}, "Here: Brin"},
+		{[]string{"Aldric", "Brin"}, []string{"Brin", "Aldric"}, "Here: Aldric (linkdead), Brin (linkdead)"},
+	} {
+		lines := renderRoom(&gamev1.RoomDescribed{Title: "Plaza", Occupants: c.occupants, Linkdead: c.linkdead})
+		if got := lines[len(lines)-1]; got != c.want {
+			t.Errorf("occupants %v, linkdead %v: %q, want %q", c.occupants, c.linkdead, got, c.want)
+		}
+	}
 }
