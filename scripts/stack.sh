@@ -14,6 +14,12 @@ cd "$REPO"
 
 COMPOSE_FILE="deploy/compose/docker-compose.yaml"
 DATA_DIR="${ANDARA_DATA_DIR:-$REPO/.local/data}"
+# Absolute, and exported, because compose resolves a relative bind source from the compose
+# file's directory, not from here. A relative ANDARA_DATA_DIR would otherwise have this script
+# create $REPO/<dir>/snapshots while compose mounted deploy/compose/<dir>/snapshots, a
+# directory Docker creates as root, which the host-uid server can't write.
+[[ "$DATA_DIR" == /* ]] || DATA_DIR="$REPO/$DATA_DIR"
+export ANDARA_DATA_DIR="$DATA_DIR"
 TLS_DIR="${ANDARA_TLS_DIR:-$REPO/.local/tls}"
 
 fail() { echo "make: ${ACTION:-up}: $*" >&2; exit 1; }
@@ -89,7 +95,10 @@ case "$ACTION" in
     [[ "$PROFILE" == "min" || "$PROFILE" == "full" ]] \
       || fail "PROFILE must be 'min' or 'full', got '$PROFILE'"
 
-    mkdir -p "$DATA_DIR"
+    # snapshots/ is the server's `fs` snapshot store, bind-mounted by compose. It's created
+    # here, owned by the developer, because the server runs as the host uid, and a directory
+    # Docker creates for a missing bind source is root's.
+    mkdir -p "$DATA_DIR/snapshots"
 
     # A stack that is already up is not restarted, and its ports are not re-checked —
     # they are held by the stack itself (AC-2).
