@@ -197,8 +197,9 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 // A body that carries a value the hash does not cover is refused rather than
 // hashed, so no single-field corruption of a stored object leaves it valid:
 //   - deferred, which is never written (zone_state.proto; feedback §3)
-//   - linkdead_deadline_tick, which nothing writes until AW-SRV-015 gives it a
-//     place in the State Hash
+//   - the linkdead fields (linkdead_deadline_tick, linkdead_since_tick,
+//     linkdead_ceiling_tick, linkdead_extension_ticks), which nothing writes
+//     until AW-SRV-015 gives them a place in the State Hash
 //   - dormant_since_tick on a body that is not dormant: EntityCanonicalBytes
 //     covers it only for a dormant body, and the sim clears it on waking
 //
@@ -210,8 +211,15 @@ func BodyStateHash(p *statev1.ZoneState) ([32]byte, error) {
 		return [32]byte{}, fmt.Errorf("snapshot: zone %s carries %d deferred commands, a field no snapshot writes", p.GetZoneId(), n)
 	}
 	for _, e := range p.GetEntities() {
-		if e.GetLinkdeadDeadlineTick() != 0 {
-			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries linkdead_deadline_tick, which this binary does not hash", e.GetEntityId())
+		for name, v := range map[string]uint64{
+			"linkdead_deadline_tick":   e.GetLinkdeadDeadlineTick(),
+			"linkdead_since_tick":      e.GetLinkdeadSinceTick(),
+			"linkdead_ceiling_tick":    e.GetLinkdeadCeilingTick(),
+			"linkdead_extension_ticks": e.GetLinkdeadExtensionTicks(),
+		} {
+			if v != 0 {
+				return [32]byte{}, fmt.Errorf("snapshot: entity %s carries %s, which this binary does not hash", e.GetEntityId(), name)
+			}
 		}
 		if !e.GetDormant() && e.GetDormantSinceTick() != 0 {
 			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries dormant_since_tick and is not dormant", e.GetEntityId())

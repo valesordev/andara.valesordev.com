@@ -151,6 +151,9 @@ func TestBodyHashRefusesWhatItDoesNotCover(t *testing.T) {
 	for name, edit := range map[string]func(*statev1.ZoneState){
 		"deferred":                   func(b *statev1.ZoneState) { b.Deferred = append(b.Deferred, &logv1.LoggedCommand{ZoneId: "village"}) },
 		"linkdead_deadline_tick":     func(b *statev1.ZoneState) { b.Entities[0].LinkdeadDeadlineTick = 9 },
+		"linkdead_since_tick":        func(b *statev1.ZoneState) { b.Entities[0].LinkdeadSinceTick = 9 },
+		"linkdead_ceiling_tick":      func(b *statev1.ZoneState) { b.Entities[0].LinkdeadCeilingTick = 9 },
+		"linkdead_extension_ticks":   func(b *statev1.ZoneState) { b.Entities[0].LinkdeadExtensionTicks = 9 },
 		"dormant_since, not dormant": func(b *statev1.ZoneState) { b.Entities[1].DormantSinceTick = 9 },
 	} {
 		body := fullSnapshot().BodyProto()

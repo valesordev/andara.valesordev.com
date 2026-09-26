@@ -396,7 +396,10 @@ you would rather have the snapshot record carry them, that's a change to one fun
 tripwire holds either way.
 
 **Consequence for `AW-SRV-015`:** when it starts writing `linkdead_deadline_tick`, it has to hash it
-and drop the refusal. The tripwire fails until it does. Hashing it only when it's non-zero, as
+and drop the refusal. The tripwire fails until it does. The same goes for the three fields #100 added
+to `EntityState`: `linkdead_since_tick`, `linkdead_ceiling_tick` and `linkdead_extension_ticks`.
+The tripwire flagged them the moment this branch merged `origin/main`, and `BodyStateHash` now
+refuses a non-zero value in any of the four. Hashing it only when it's non-zero, as
 `entity_dormant` does, keeps every existing hash.
 
 ### For architecture: the abandoned round is not a `rounds_total` outcome
@@ -406,4 +409,33 @@ An abandoned round writes nothing, so it isn't `incomplete` in `AW-SRV-007`'s li
 is recorded only on `failures_total{reason}`. `boundary`, and `timeout` while waiting for the
 acknowledgement, each count once per round. That differs from `timeout` on a `Put`, which counts
 per Zone, and the metric's help text says so.
+
+### For architecture: objects written before this change fail verification (review of #102)
+
+This change is not backward-compatible with snapshots already written. Every object written before
+it carries `HashZone(body)` and `state_version` 1. After it, a version-1 object is verified with
+`BodyStateHash`, so every existing round reads as hash-invalid.
+
+What that costs today:
+- `store.verify` marks each such object with a reason and the round incomplete. It doesn't error.
+- Server recovery doesn't read snapshots yet (`AW-SRV-007`). The only reader is the projector's
+  bootstrap, which falls back to a from-zero replay until the first round written after the upgrade.
+  At the default cadence that's 60 s away.
+- Neither the compose stack (#74) nor a cluster has produced rounds anyone relies on.
+
+There are two ways to keep old objects verifiable. Both are architecture's call:
+- **(a) Bump `state_version` to 2.** Add an identity migration from 1, and set `hashers[1]` to the
+  old Zone-only `HashZone`. This is what the registry exists for. It contradicts this story's
+  "`state_version` stays 1" and the rule that it moves only when the *meaning* of state changes. It
+  would be the first bump for a change in what the hash covers rather than in what state means.
+- **(b) Accept the old hash as a fallback.** Rejected here: any object that passes `HashZone` would
+  be accepted, which reopens exactly the corruption gap AC-3 closes.
+
+Implementation's recommendation is to accept the one-interval cost and write the rule down:
+- The story records that pre-AC-3 objects are unverifiable by design.
+- `AW-INF-007`'s rollback notes say a binary on either side of this change can't verify the other
+  side's rounds.
+
+If you choose (a) instead, it's a small change on an `impl/` branch. Nothing is changed on #102 until
+you decide.
 
