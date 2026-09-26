@@ -94,6 +94,9 @@ type sessionStore struct {
 	// ender, if set, hears about a revoked Session before its context is
 	// canceled, so the stream's last frame says why (AW-SRV-011).
 	ender SessionEnder
+	// parker, if set, keeps a linkdead Session's stream state for the
+	// reconnect (AW-SRV-015).
+	parker SessionParker
 	// roster hears about every Session's end before its context is
 	// canceled, so the Character it drives is unbound while the routing
 	// table still says where it is (AW-SRV-014).
@@ -240,6 +243,9 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			// frame is SubscriberDropped{reason=revoked} (AW-SRV-008
 			// AC-12), then PERMISSION_DENIED.
 			st.ender.EndSession(s.ID, "revoked")
+		}
+		if end == EndLinkdead && st.parker != nil {
+			st.parker.ParkSession(s.ID)
 		}
 		if st.roster != nil {
 			s.released = st.roster.ReleaseSession(s, end)

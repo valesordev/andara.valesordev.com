@@ -169,6 +169,9 @@ func New(opts Options) (*Server, error) {
 	if ender, ok := opts.Egress.(SessionEnder); ok {
 		s.sessions.ender = ender
 	}
+	if parker, ok := opts.Egress.(SessionParker); ok {
+		s.sessions.parker = parker
+	}
 	s.sessions.roster = opts.Roster
 	s.drainCtx, s.drainStop = context.WithCancel(context.Background())
 

@@ -39,6 +39,14 @@ type SessionEnder interface {
 	EndSession(sessionID, reason string)
 }
 
+// SessionParker is what an Egress may also implement (AW-SRV-015): told,
+// before the Session's context is canceled, that the Session is ending
+// linkdead, so the stream state it retained is kept for the reconnect
+// rather than discarded.
+type SessionParker interface {
+	ParkSession(sessionID string)
+}
+
 // Roster is what the Character RPCs plug into (AW-SRV-014): the Account's
 // Characters, and the binding of one to the Session. The gateway has
 // resolved the Session by the time any of these is called; the one-live
