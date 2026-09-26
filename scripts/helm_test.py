@@ -441,6 +441,52 @@ def test_image_source():
             fail("image args %s: server image %s, want %s" % (args, got, want))
 
 
+LABEL_VALUE = re.compile(r"^(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])?$")
+DIGEST = "sha256:" + "0123456789abcdef" * 4
+
+
+def labels_in(d):
+    """Every label map in an object: its own, and its pod template's."""
+    maps = [d.get("metadata", {}).get("labels") or {}]
+    tmpl = (d.get("spec") or {}).get("template") or {}
+    maps.append((tmpl.get("metadata") or {}).get("labels") or {})
+    return maps
+
+
+def test_label_values():
+    """#106 (AW-INF-013): every label value the chart renders is one the API server accepts,
+    for every image reference helm_install.sh can pass. A digest-pinned tag
+    (`dev@sha256:<64 hex>`) went into app.kubernetes.io/version verbatim, and the API server
+    refused every object carrying it: `@` and `:` aren't label characters, and the value is
+    over 63 bytes. The version label names the tag, with any digest removed."""
+    cases = [
+        ("dev", "dev@" + DIGEST, "dev"),
+        ("dev", "sha-0123456789ab", "sha-0123456789ab"),
+        ("dev", "sha-0123456789ab@" + DIGEST, "sha-0123456789ab"),
+        ("prod", "v1.2.3-rc.1_", "v1.2.3-rc.1"),
+        ("local", "x" * 80, "x" * 63),
+    ]
+    for env, tag, want_version in cases:
+        rc, out, err = render(env, "--set", "image.tag=" + tag)
+        if rc:
+            fail("%s image.tag=%s: render failed: %s" % (env, tag, err.strip()))
+            continue
+        for d in docs(out):
+            for labels in labels_in(d):
+                for k, v in labels.items():
+                    v = str(v)
+                    if len(v) > 63 or not LABEL_VALUE.match(v):
+                        fail("%s image.tag=%s: %s/%s label %s=%r is not a valid label value"
+                             % (env, tag, d["kind"], d["metadata"]["name"], k, v))
+        sts = find(docs(out), "StatefulSet")
+        got = sts["metadata"]["labels"].get("app.kubernetes.io/version")
+        if got != want_version:
+            fail("%s image.tag=%s: app.kubernetes.io/version %r, want %r" % (env, tag, got, want_version))
+        image = [c["image"] for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "server"][0]
+        if not image.endswith(":" + tag):
+            fail("%s image.tag=%s: the image reference must keep the digest, got %s" % (env, tag, image))
+
+
 def test_kafka_on_the_box():
     """AW-INF-014 AC-8: dev and prod point at their namespace's Kafka `andara-log`, and
     dev runs the sim and the Account store on it (the chart renders only what is set, so
@@ -481,6 +527,7 @@ def main():
     test_projectors_render_when_enabled()
     test_spawn_room_required_outside_local()
     test_image_source()
+    test_label_values()
     test_kafka_on_the_box()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
