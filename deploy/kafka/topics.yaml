@@ -121,6 +121,13 @@ broker:
     # Off by default because computing it costs the broker something. Per-partition
     # consumer lag is a dashboard panel and a runbook diagnostic (AW-SRV-002), and a metric
     # the broker never computes is a metric nobody has when the World is behind.
+    log_segment_ms_min: "1000"
+    # Redpanda floors every topic's segment.ms here (10 min by default) and never compacts
+    # the active segment, so without this no test can watch compaction happen. At 1 s, a
+    # throwaway topic declared with segment.ms=1000, min.cleanable.dirty.ratio=0.01 and
+    # delete.retention.ms=1000 rolls, compacts, and drops the tombstone in about 20 s
+    # (AW-SRV-019 AC-5, measured 2026-09-26). The floor only permits small segments; every
+    # topic above keeps its declared segment.ms.
 
 # Consumer groups, reserved by convention. <env> is local, dev, or prod.
 consumer_groups:

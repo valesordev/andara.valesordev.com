@@ -84,10 +84,13 @@ constraints` after the broker is already healthy. The compose file raises `nofil
 
 ## Where the local broker and the production broker differ
 
-Redpanda locally, real Kafka in production (ADR-0002 §7). Two differences matter:
+Redpanda locally, real Kafka in production (ADR-0002 §7). Three differences matter:
 
 - `unclean.leader.election.enable` has no Redpanda equivalent — Raft replication cannot
   elect a leader missing committed records. The declaration asserts it against real Kafka
   and does not try to set it locally.
+- `log_segment_ms_min` is 1 s locally (`broker.local` in the declaration), not Redpanda's
+  10 min. The lower floor exists so a test can watch compaction on a throwaway topic
+  (`AW-SRV-019` AC-5). No declared topic changes: each keeps its own `segment.ms`.
 - Rebalance and tiered-storage behavior are where the two can genuinely diverge. M1
   exercises neither; `AW-INF-005` must test against real Kafka before production.

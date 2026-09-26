@@ -7,8 +7,8 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 **Alert:** `max_over_time(andara_state_digest_mismatches_total[6h]) > 0`. **Severity:** ticket.
 **SLO:** `docs/specs/slo/projection-freshness.md` (integrity, no budget). **Ships with:** `AW-SRV-019`.
-*(Rewritten 2026-09-24 at architecture's §8 review. The first version assumed a restarted projector
-diverges again at the same tick. It usually does not; see below.)*
+*(Rewritten 2026-09-24 at architecture's §8 review. Rewritten again 2026-09-26, when #103 made a
+divergence survive the restart: every start now halts on it until an operator clears it.)*
 
 ## What fired, and what the player is experiencing
 
@@ -24,23 +24,20 @@ the server recorded. At one tick, they differed. The projector then:
 that as a determinism failure until a row in the table below explains it.** It is the same failure
 that would make recovery (`AW-SRV-007`) refuse to reproduce the World the server is running.
 
-**What happens next depends on whether a complete snapshot round is readable.**
-- **If none is** (today: compose never completes a round, #74, and the in-cluster Deployment
-  does not mount the store, #80), the restart replays from zero and diverges again at the same
-  tick, in a crash loop.
-- **If one is** (once #74 and #80 land), it is **not a repeat**. The restart bootstraps from the
-  newest complete round. Rounds are written every `snapshot.interval` (60 s), so that round is
-  usually newer than the divergent tick. The projector dumps the state it loaded, tombstones stale
-  keys, continues, and **skips the divergent tick without diverging again**. The indexes then
-  describe the World the server has, whether or not that World is the one the log implies.
+**The divergence is recorded and sticky.** The projector's last commit carries it as offset
+metadata (`tick=<T−1>;diverged=<T>:<recorded>:<replayed>`). Every later start reads that record
+first, and exits `2` again before bootstrapping, **whatever snapshot rounds exist**. It logs
+`state projector diverged earlier and it is unresolved; run with --rebuild once it has been dealt
+with`, with the same tick and both hashes, and counts the mismatch again. A newer round can't carry
+it past the evidence.
 
 So:
-- **The evidence is the first divergence.** A clean run afterwards proves nothing either way.
-- **The alert holds for 6 hours** (`max_over_time`), not for the one minute the counter lived.
-  The process that saw the divergence is gone, and the ticket must not resolve with it.
-
-Whether a projector should refuse to bootstrap past an unresolved divergence is an open design
-question on `AW-SRV-019` (`docs/feedback/AW-SRV-019-state-projector.md`).
+- **A crash loop on the same tick is the expected state**, not a second failure. Each restart
+  re-counts the mismatch, so the alert stays firing for as long as the divergence is unresolved.
+- **The alert holds for 6 hours** (`max_over_time`) past the last restart. A projector left
+  crash-looping keeps it firing, so it can't resolve on its own.
+- **Freshness is lost until you act.** The state indexes stop at T−1. That's the price of keeping
+  the evidence, and the reason this is a ticket and not something to leave.
 
 ## How to confirm
 
@@ -57,21 +54,25 @@ It carries:
 - `last_good_offsets`, the next-to-read offset per `andara.commands.v1` Partition after the last
   verified tick.
 
-The next `state projector started` line shows where the restart resumed: `round_tick`, `tick`.
+Every restart after it logs `state projector diverged earlier and it is unresolved`, with the same
+`tick` and hashes. That's the recorded divergence, not a new one. If a restart names a *different*
+tick, the checkpoint was cleared, or a newer divergence was recorded after a `--rebuild`.
 
 ## Respond, in this order
 
-1. **Capture the evidence** from the lines above: the divergent tick, both hashes, the offsets,
-   and the `round_tick` the restart resumed from. Also capture the server's and the projector's
-   boot lines (content versions, seed).
+1. **Capture the evidence** from the lines above: the divergent tick, both hashes, and the
+   offsets. Also capture the server's and the projector's boot lines (content versions, seed).
+   The checkpoint keeps the tick and hashes, but the offsets and the boot lines are only in Loki.
 2. **Rule out the known causes** in the table below. If one explains it, follow that row.
-3. **Otherwise, escalate as a simulation bug** with that evidence. Do not wait for it to recur:
-   it will not, because the restart moved past it.
-4. **Freshness usually needs nothing where rounds are readable.** The restarted projector is already producing from the
-   newer round. Only if it crash-loops on the same tick (no newer round exists yet) does it need
-   a rebuild. There is no target for that yet: `§9 defect → #80`. Until #80 lands, a rebuild must
-   not be run beside a live Deployment, because two writers on one consumer group corrupt its
-   checkpoint. Leave it crash-looping. Once rounds are readable (#74, #80), the next round moves it on.
+3. **Otherwise, escalate as a simulation bug** with that evidence. The projector keeps halting
+   on the same tick meanwhile, and nothing is lost by leaving it there.
+4. **Clear it with `--rebuild` once the cause is understood**, or once it's escalated with the
+   evidence captured. `--rebuild` wipes the group, logs `--rebuild discards an unresolved
+   divergence` with the tick, and bootstraps from the newest complete round. There's no make
+   target for a rebuild beside a live Deployment yet (`§9 defect → #80`), and two writers on one
+   consumer group corrupt its checkpoint. So in a cluster, scale the projector's Deployment to 0
+   before running it, and back to 1 after. If the rebuilt projector diverges again at a later
+   tick, that's a new divergence. Start again at step 1.
 
 ## Known causes worth ruling out before escalating
 ## Known causes worth ruling out before escalating

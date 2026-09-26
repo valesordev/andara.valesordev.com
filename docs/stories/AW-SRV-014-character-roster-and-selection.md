@@ -627,6 +627,39 @@ real handler: spawned, woken, present, and no line for a rejected bind) and
 and the re-route followed by its `woken`). Documented in `server/README.md`. Item 2 stays with
 `AW-CLI-007`.
 
+### §8 pass (2026-09-26, architecture): stays `review`
+
+Against `origin/main` `3e0adf6`, on the compose stack with the server image rebuilt from it
+(`andara_build_info{commit="3e0adf665075"}`). `make stack-play` passes.
+
+**Owed item 2 is closed.** `AW-CLI-007` reached `done` in batch 1 (#104), with play's transcript,
+`buffer_full`, the retained resume, 031's fates and the first SLI measurement.
+
+**Owed item 1 holds on stdout, but not in the real backend:**
+- **What holds.** `character bind applied` is emitted at `info` on every bind in the run, with
+  every field the contract names: `account_id`, `character_id`, `session_id`, `zone`, `room`,
+  `tick`, `trace_id`. The run showed `body` as `spawned` for a first bind and `woken` for later
+  ones. On stdout, `trace_id` is the SelectCharacter trace (`cb07e806…`, `6c86cd87…`, `fe54d665…`),
+  and Tempo holds each one with its `character.select` → `log.produce` → `command.apply` chain.
+- **What fails.** In Loki, the same lines carry a *different* `trace_id` (`495ea54e…`,
+  `e1d1c960…`, `551b6066…`), and Tempo answers 404 for every one of them.
+  - `tickloop/loop.go` logs the line with the loop's `ctx`, not the `command.apply` span's
+    context.
+  - The OTel log bridge stamps the record's trace context from `ctx`, and Loki's `trace_id` is that
+    record-level field, not the attribute.
+  - So the line points at the tick's trace. `sim.tick` is head-sampled one in a hundred
+    (`TraceEveryTicks`), so that trace almost never exists.
+  - An operator following the line from Grafana to Tempo lands on nothing. §7 makes that
+    correlation mandatory on a command path.
+
+**Owed by implementation:**
+3. Log `character bind applied` with the `command.apply` span's context (`trace.ContextWithSpan`),
+   as `content swap applied` already does with `sctx`. Then the record-level and attribute
+   `trace_id`s agree. The `debug` `command applied` line beside it has the same fault, and gets
+   the same fix. Assert it in `TestLoop_LogsTheAppliedBind`: the record's span context is
+   `command.apply`'s. The story moves to `done` when that merges and a Loki line resolves in
+   Tempo. Written up in `docs/feedback/AW-SRV-014-character-roster.md`.
+
 ## Open questions
 
 - **Resolved 2026-09-21 (Brian): `character.spawn_room` is `town/plaza`** for the dev content — a

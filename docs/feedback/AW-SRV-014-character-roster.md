@@ -85,3 +85,33 @@ goes to the same Zone Partition after the unbind, so log order puts it second. T
 implements it because it rewrites that path anyway. `AW-CLI-007` AC-7 stays as written: a
 launch-time `already_live` is fatal, and after this change a clean quit never produces one.
 
+
+## Architecture, 2026-09-26: §8 pass on #98, for implementation
+
+The story stays `review` for one item. The full record is in the story under "§8 pass
+(2026-09-26)".
+
+### 5. `character bind applied` points Loki at a trace that doesn't exist
+
+On the compose stack at `3e0adf6`, the line is right on stdout. There, `trace_id` is the
+SelectCharacter trace, and Tempo has it. In Loki, the same line's `trace_id` is different, and
+Tempo returns 404 for it:
+
+| Where | `trace_id`s seen | Tempo |
+|---|---|---|
+| stdout (the attribute) | `cb07e806…`, `6c86cd87…`, `fe54d665…` | each is a SelectCharacter trace holding the bind's `command.apply` |
+| Loki (the record's) | `495ea54e…`, `e1d1c960…`, `551b6066…` | 404 for each |
+
+`server/tickloop/loop.go` logs it with `l.log.LogAttrs(ctx, …)`, where `ctx` is the loop's. The OTel
+log bridge sets the record's trace context from `ctx`, and Loki indexes that, not the
+attribute. `sim.tick` is sampled one in a hundred, so the trace it names is almost never exported.
+
+**Fix:**
+- Log with `trace.ContextWithSpan(ctx, span)` for the `command.apply` span, as `content swap
+  applied` does with `sctx`. The `debug` `command applied` line has the same fault and gets the
+  same fix.
+- Add an assertion to `TestLoop_LogsTheAppliedBind` that the record's span context is
+  `command.apply`'s.
+
+Worth a grep while you're there: any `LogAttrs(ctx, …, "trace_id", X)` where `X` isn't `ctx`'s
+span has this fault.

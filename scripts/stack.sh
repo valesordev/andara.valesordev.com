@@ -89,7 +89,10 @@ case "$ACTION" in
     [[ "$PROFILE" == "min" || "$PROFILE" == "full" ]] \
       || fail "PROFILE must be 'min' or 'full', got '$PROFILE'"
 
-    mkdir -p "$DATA_DIR"
+    # snapshots/ is the server's `fs` snapshot store, bind-mounted by compose. It's created
+    # here, owned by the developer, because the server runs as the host uid, and a directory
+    # Docker creates for a missing bind source is root's.
+    mkdir -p "$DATA_DIR/snapshots"
 
     # A stack that is already up is not restarted, and its ports are not re-checked —
     # they are held by the stack itself (AC-2).

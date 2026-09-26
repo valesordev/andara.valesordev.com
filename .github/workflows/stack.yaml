@@ -141,6 +141,27 @@ jobs:
           ANDARA_S3_TEST_ACCESS_KEY: andaratest
           ANDARA_S3_TEST_SECRET_KEY: andaratest123
 
+      # #74: the compose server's `fs` snapshot store had no writable path, so every round
+      # failed `store` and nothing noticed. One complete round, polled to a deadline: the
+      # first falls due one snapshot.interval (60 s) after boot, and the server has been up
+      # for less than that here, so 150 s is margin, not the expectation.
+      - name: a snapshot round completes on the stack
+        run: |
+          set -euo pipefail
+          m() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" \
+            | awk -v k="$1" '$1 == k { print $2 }'; }
+          complete=0
+          for _ in $(seq 150); do
+            complete="$(m 'andara_snapshot_rounds_total{outcome="complete"}' || true)"
+            awk -v c="${complete:-0}" 'BEGIN { exit !(c >= 1) }' && break
+            sleep 1
+          done
+          store="$(m 'andara_snapshot_failures_total{reason="store"}')"
+          echo "rounds complete=${complete:-0} store_failures=${store:-?}"
+          awk -v c="${complete:-0}" 'BEGIN { exit !(c >= 1) }'
+          [[ "$store" == "0" ]]
+          ls -R .local/data/snapshots | head -20
+
       # AW-SRV-002 AC-9: the broker goes away and the tick loop keeps its schedule applying
       # nothing — starvation counted, the container still healthy — and when the broker
       # returns the counter stops moving. The loop is read through /metrics because that is

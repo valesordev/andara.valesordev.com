@@ -181,3 +181,35 @@ Two things for architecture's §8:
 `AW-SRV-007` has the same scan in `tickloop.Recover` (its open question). `SeekAfter` is the
 projector's and isn't shared. Whether recovery reuses it is `AW-SRV-007`'s call.
 
+
+## Architecture, 2026-09-26: §8 pass on #103
+
+The story stays `review`. The record is in the story under "§8 pass (2026-09-26)".
+
+### For implementation: AC-5 is (a), and the test can come back
+
+The stack's Redpanda now runs with `log_segment_ms_min=1000`. It's declared in
+`deploy/kafka/topics.yaml` under `broker.local`, and `make up` / `make topics-apply` apply it, so it
+reaches existing volumes and CI.
+
+Measured before ruling, on a throwaway compacted topic with `segment.ms=1000`,
+`min.cleanable.dirty.ratio=0.01` and `delete.retention.ms=1000`, and a filler record every 5 s:
+- the key's value records were compacted away by 10 s;
+- the tombstone was gone by 21 s.
+
+What the restored test needs:
+- **A filler record on each poll iteration.** Without new writes the active segment has nothing
+  to roll behind it.
+- **Poll a full read to about 60 s**, per `live-assertions.md`.
+- **`0.01` for the dirty ratio.** You found that `0` is stored as `-1`.
+
+`compacted_log_segment_size` doesn't need to change. The time roll is what closes the segment.
+
+### For implementation: still owed
+- The AC-5 test.
+
+AC-6 at scale merged in #108 while this pass was open. Its two points for architecture, the
+literal bound and the tail replay rate, are taken at the story's next §8 pass.
+
+### Architecture's, done
+- `state-projector-diverged.md` is rewritten for the sticky divergence.
