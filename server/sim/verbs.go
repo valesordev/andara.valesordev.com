@@ -70,6 +70,7 @@ func Handlers() map[CommandKind]Apply {
 		KindArrive:          applyArrive,
 		KindBindCharacter:   applyBindCharacter,
 		KindUnbindCharacter: applyUnbindCharacter,
+		KindMarkLinkdead:    applyMarkLinkdead,
 	}
 }
 
@@ -104,9 +105,9 @@ func applyLook(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	return nil
 }
 
-// describe renders a Room as seen by viewer: Exits in Direction order and
-// occupants by display name, both sorted; the viewer is not an occupant of
-// its own description.
+// describe renders a Room as seen by viewer: Exits in Direction order,
+// occupants by display name, and the linkdead among them, all sorted; the
+// viewer is not an occupant of its own description.
 func describe(z *ZoneState, room *Room, viewer EntityID) *gamev1.RoomDescribed {
 	out := &gamev1.RoomDescribed{ZoneId: string(z.ID), RoomId: string(room.ID), Title: room.Title, Description: room.Description}
 	for _, e := range room.Exits {
@@ -116,9 +117,14 @@ func describe(z *ZoneState, room *Room, viewer EntityID) *gamev1.RoomDescribed {
 	for id, ent := range z.Entities {
 		if id != viewer && ent.Room == room.ID && !ent.Dormant {
 			out.Occupants = append(out.Occupants, ent.DisplayName())
+			if ent.Linkdead() {
+				// The linkdead subset of occupants (AW-SRV-015 AC-1).
+				out.Linkdead = append(out.Linkdead, ent.DisplayName())
+			}
 		}
 	}
 	sort.Strings(out.Occupants)
+	sort.Strings(out.Linkdead)
 	return out
 }
 

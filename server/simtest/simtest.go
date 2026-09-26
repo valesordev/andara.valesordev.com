@@ -228,6 +228,47 @@ func Unbind(zone, actor string) *logv1.LoggedCommand {
 	}}}
 }
 
+// MarkLinkdead is a MarkLinkdead for actor in zone, with the three durations
+// in Ticks (AW-SRV-015).
+func MarkLinkdead(zone, actor string, grace, extension, max uint64) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, SessionId: "s-" + actor, Command: &logv1.LoggedCommand_MarkLinkdead{MarkLinkdead: &logv1.MarkLinkdead{
+		CharacterId: actor, GraceTicks: grace, ExtensionTicks: extension, MaxTicks: max,
+	}}}
+}
+
+// Strike is the fixture combat verb (AW-SRV-015's test plan): actor strikes
+// target in zone. There is no combat Command yet, so it rides a Move whose
+// Direction is the target's EntityID, and only an engine built with
+// CombatHandlers reads it that way.
+func Strike(zone, actor, target string) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, SessionId: "s-" + actor, Command: &logv1.LoggedCommand_Move{Move: &logv1.Move{Direction: target}}}
+}
+
+// CombatHandlers is sim.Handlers with move replaced by the fixture combat
+// verb: a Strike calls OnCombatInteraction on its target and nothing else,
+// which is all AW-SRV-015 asks of combat.
+func CombatHandlers() map[sim.CommandKind]sim.Apply {
+	h := sim.Handlers()
+	h[sim.KindMove] = func(a *sim.ApplyContext, cmd *logv1.LoggedCommand) error {
+		a.OnCombatInteraction(sim.EntityID(cmd.GetMove().GetDirection()))
+		return nil
+	}
+	return h
+}
+
+// NewCombatEngine is NewVerbEngine with CombatHandlers.
+func NewCombatEngine(seed uint64) (*sim.Engine, error) {
+	w, err := CrossingWorld()
+	if err != nil {
+		return nil, err
+	}
+	reg, err := Templates()
+	if err != nil {
+		return nil, err
+	}
+	return sim.NewEngine(w, reg, sim.Config{Seed: seed, Partitions: AllPartitions(), Handlers: CombatHandlers()}), nil
+}
+
 // Script is a deterministic log: n records on each Zone's Partition,
 // offsets ascending from 0, cycling look, look, move, move-nowhere.
 func Script(n int) map[int32][]sim.Record {

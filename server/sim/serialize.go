@@ -92,6 +92,15 @@ func EntityCanonicalBytes(e EntityState) []byte {
 	if e.Dormant {
 		writeFields(&b, "entity_dormant", string(e.ID), strconv.FormatUint(uint64(e.DormantSince), 10))
 	}
+	// Written only when a field is set, as entity_dormant is, so every hash
+	// taken before AW-SRV-015 is what it was (docs/feedback/AW-SRV-015-linkdead.md).
+	// Any one field non-zero writes all four, so a corruption of any of them
+	// changes the hash.
+	if e.LinkdeadSince|e.LinkdeadDeadline|e.LinkdeadCeiling|e.LinkdeadExtension != 0 {
+		writeFields(&b, "entity_linkdead", string(e.ID),
+			strconv.FormatUint(uint64(e.LinkdeadSince), 10), strconv.FormatUint(uint64(e.LinkdeadDeadline), 10),
+			strconv.FormatUint(uint64(e.LinkdeadCeiling), 10), strconv.FormatUint(uint64(e.LinkdeadExtension), 10))
+	}
 	writeComponents(&b, "entity_component", "entity_field", []string{string(e.ID)}, e.Components)
 	return []byte(b.String())
 }

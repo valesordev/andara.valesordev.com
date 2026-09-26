@@ -150,10 +150,6 @@ func TestBodyHashRefusesWhatItDoesNotCover(t *testing.T) {
 	t.Parallel()
 	for name, edit := range map[string]func(*statev1.ZoneState){
 		"deferred":                   func(b *statev1.ZoneState) { b.Deferred = append(b.Deferred, &logv1.LoggedCommand{ZoneId: "village"}) },
-		"linkdead_deadline_tick":     func(b *statev1.ZoneState) { b.Entities[0].LinkdeadDeadlineTick = 9 },
-		"linkdead_since_tick":        func(b *statev1.ZoneState) { b.Entities[0].LinkdeadSinceTick = 9 },
-		"linkdead_ceiling_tick":      func(b *statev1.ZoneState) { b.Entities[0].LinkdeadCeilingTick = 9 },
-		"linkdead_extension_ticks":   func(b *statev1.ZoneState) { b.Entities[0].LinkdeadExtensionTicks = 9 },
 		"dormant_since, not dormant": func(b *statev1.ZoneState) { b.Entities[1].DormantSinceTick = 9 },
 	} {
 		body := fullSnapshot().BodyProto()
@@ -182,6 +178,12 @@ func fullZone() *ZoneState {
 				Name:           "Hero of the Vale",
 				Dormant:        true,
 				DormantSince:   4100,
+				// Not a state the sim reaches with Dormant; a codec fixture
+				// wants every field non-zero at once.
+				LinkdeadSince:     4150,
+				LinkdeadDeadline:  5950,
+				LinkdeadCeiling:   7150,
+				LinkdeadExtension: 600,
 				Components: []Component{
 					{Type: "andara.core.Behavior", Fields: []ComponentField{
 						{Name: "flag", Kind: FieldBool, Bool: true},

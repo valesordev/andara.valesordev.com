@@ -66,7 +66,8 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help: "How far the Event producer trails the tick: time from publishing a Tick Boundary Record to its acknowledgement, as last observed.",
 		}),
 	}
-	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated} {
+	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated,
+		sim.EvCharacterLinkdead, sim.EvCharacterReconnected, sim.EvCharacterDespawned} {
 		m.Emitted.WithLabelValues(string(t))
 		m.Redactions.WithLabelValues(string(t))
 	}

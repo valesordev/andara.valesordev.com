@@ -51,6 +51,11 @@ var table = map[sim.EventType]touches{
 	// (AW-SRV-012): the Entity, the fallback Room it is now in, and the
 	// Zone's counts. The removed Room is not an aggregate any more.
 	sim.EvEntityRelocated: {zone: true, room: true, entities: true},
+	// The linkdead Events (AW-SRV-015): the body's linkdead fields were set or
+	// cleared, or it went dormant, in the Room it stands in.
+	sim.EvCharacterLinkdead:    {zone: true, room: true, entities: true},
+	sim.EvCharacterReconnected: {zone: true, room: true, entities: true},
+	sim.EvCharacterDespawned:   {zone: true, room: true, entities: true},
 	// A rejection changes nothing: validate and apply refuse before mutating.
 	sim.EvCommandRejected: {},
 	// A fault sets the Zone's faulted flag, and the panicking handler may
@@ -116,6 +121,12 @@ func payloadPlace(env *gamev1.EventEnvelope) (sim.ZoneID, sim.RoomID) {
 		return sim.ZoneID(p.ZoneFaulted.GetZoneId()), ""
 	case *gamev1.EventEnvelope_EntityRelocated:
 		return sim.ZoneID(p.EntityRelocated.GetZoneId()), sim.RoomID(p.EntityRelocated.GetToRoomId())
+	case *gamev1.EventEnvelope_CharacterLinkdead:
+		return sim.ZoneID(p.CharacterLinkdead.GetZoneId()), sim.RoomID(p.CharacterLinkdead.GetRoomId())
+	case *gamev1.EventEnvelope_CharacterReconnected:
+		return sim.ZoneID(p.CharacterReconnected.GetZoneId()), sim.RoomID(p.CharacterReconnected.GetRoomId())
+	case *gamev1.EventEnvelope_CharacterDespawned:
+		return sim.ZoneID(p.CharacterDespawned.GetZoneId()), sim.RoomID(p.CharacterDespawned.GetRoomId())
 	}
 	return "", ""
 }
