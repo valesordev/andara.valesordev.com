@@ -36,8 +36,13 @@ KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
 DURATION    ?= 300
 SOAK        ?= 5m
 VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
-REVISION    ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)
+# `-dirty` exactly when a tracked file differs from HEAD, which is what VERSION's
+# `git describe --dirty` means; an untracked file doesn't count. It's in COMMIT and REVISION
+# themselves, so `make up`, `make image` and `make build` can't stamp one tree two ways, and
+# andara_build_info{commit} and the image's revision label agree about what ran (AW-INF-016).
+DIRTY       := $(shell git rev-parse --verify -q HEAD >/dev/null 2>&1 && { git diff --quiet HEAD -- 2>/dev/null || echo -dirty; })
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)$(DIRTY)
+REVISION    ?= $(shell git rev-parse HEAD 2>/dev/null || echo unknown)$(DIRTY)
 BUILT_AT    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 CLI_PKG     := github.com/valesordev/andara/admin/cli
 LDFLAGS_CLI := -X $(CLI_PKG).version=$(VERSION) -X $(CLI_PKG).commit=$(COMMIT) -X $(CLI_PKG).builtAt=$(BUILT_AT)
@@ -49,7 +54,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 .PHONY: help bootstrap up down logs ps tls auth-keys topics-apply topics-diff \
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
-        graph k8s-dry check-targets clean build goldens \
+        graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play \
         kind-platform stream-soak content-grammar-check observe-check scripts-test kafka-operator kafka-install kafka-broker-bounce
 
@@ -68,7 +73,11 @@ bootstrap:
 
 ## up: start the local stack (server + datastores + observability)
 up:
-	@$(SCRIPTS)/stack.sh up "$(PROFILE)"
+	@$(SCRIPTS)/stack.sh up "$(PROFILE)" "$(VERSION)" "$(COMMIT)" "$(REVISION)"
+
+## build-info: print VERSION, COMMIT and REVISION as `make up`, `make image` and `make build` stamp them
+build-info:
+	@printf 'VERSION=%s\nCOMMIT=%s\nREVISION=%s\n' "$(VERSION)" "$(COMMIT)" "$(REVISION)"
 
 ## down: stop the local stack; VOLUMES=1 also removes volumes
 down:

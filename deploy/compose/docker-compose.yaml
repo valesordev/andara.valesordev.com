@@ -262,8 +262,10 @@ services:
     logging: *default-logging
 
   andara-server:
-    # Built from source rather than pulled: there is no image registry yet, and no story
-    # that publishes one. See deploy/compose/Dockerfile.server.
+    # Built from the working tree rather than pulled: the local stack runs the code under
+    # review, not the last published build. `make up` builds it on every run with the
+    # Makefile's stamps (AW-INF-016). A bare `docker compose build` stamps `unknown`.
+    # See deploy/compose/Dockerfile.server.
     build:
       context: ../..
       dockerfile: deploy/compose/Dockerfile.server
