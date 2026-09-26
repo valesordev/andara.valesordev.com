@@ -4,7 +4,7 @@ title: make stack-linkdead — the linkdead gate scripted against the running st
 epic: EPIC-08
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-015, AW-CLI-007, AW-CLI-008]
 blocks: []
@@ -122,3 +122,38 @@ target's run.
   path is covered by `AW-SRV-015`'s integration test through a proxy that stops forwarding. The
   AC-2 deadline of `linkdead_detect` + 10 s covers either path, so the target stays correct if a
   later change moves detection. A demo citing this target claims the transport-close path only.
+
+## Verification (architecture, 2026-09-26)
+
+On `arch/aw-inf-017-stack-linkdead`: `scripts/stack_linkdead.sh`, `make stack-linkdead`, and a
+`stack` workflow step after `make stack-play` (and before the alert step, which stops the server).
+Run on a local stack freshly built by `make up` from `main` at `5c5d83c` (#114 and #115 merged):
+
+```
+  B| Droppedrlnwobrm arrives.
+  B| Droppedrlnwobrm goes linkdead.
+  B| Market Plaza
+  B| A dusty square of packed earth.
+  B| Exits: east, north, south
+  B| Here: Droppedrlnwobrm (linkdead)
+  B| Droppedrlnwobrm reconnects.
+  B| Droppedrlnwobrm leaves the world.
+stack-linkdead: linkdead gate — dropped, marked, reconnected, quit — passes
+```
+
+| AC | Evidence |
+|----|----------|
+| 1 | B is subscribed and has read the plaza before A launches; B's transcript shows `<A> arrives.` |
+| 2 | `SIGKILL` to A's `play`; `<A> goes linkdead.` polled to `linkdead_detect` + 10 s (15 s by default, from `ANDARA_LINKDEAD_DETECT` if set). B's `look` is sent after that line, so the `Here: <A> (linkdead)` it waits for can only be its answer. `andara_sessions_linkdead` is read up by one at that point |
+| 3 | A's second `play` connects playing A, reads the plaza, and its stderr has no `already live`. B reads `<A> reconnects.`. Absence is anchored (`live-assertions.md` rule 3): B's stream is ordered, so once the reconnect line is in B's transcript, no `leaves/fades from the world` line between the kill and it means none was sent |
+| 4 | EOF on A's stdin is `play`'s quit: exit 0, B reads `<A> leaves the world.`, and `character list` shows `<A>  dormant  town/plaza` |
+| 5 | Polled to 15 s from the server's `/metrics`: `andara_linkdead_outcomes_total{outcome="reconnected"}` +1, `andara_character_unbinds_total{reason="quit",outcome="ok"}` +1, `andara_sessions_linkdead` summed over `in_combat` back to its value before the run. Samples match by label set, not label order |
+| 6 | Run with `ANDARA_HTTP_PORT=1` (no metrics reachable): exit 1, `stack-linkdead: andara_sessions_linkdead did not count <A>`, both transcripts and the server's last 50 lines printed, and no `andara-cli` process left (`pgrep`). The `EXIT` trap `SIGKILL`s any child still running |
+
+**Deviation:** the server's last 50 lines come from `docker compose logs --tail 50 andara-server`,
+not `make logs SVC=andara-server` as the Observability section says. `make logs` follows (`-f`),
+so it would never return on a failing run.
+
+**For `AW-SRV-015`'s §8:** this run is the live observation of
+`andara_linkdead_outcomes_total{outcome="reconnected"}` and `andara_sessions_linkdead` from the
+running server that its Definition of done names.

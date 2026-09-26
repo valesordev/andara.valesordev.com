@@ -24,6 +24,7 @@ on:
       - "Makefile"
       - "scripts/stack_smoke.sh"
       - "scripts/stack_play.sh"
+      - "scripts/stack_linkdead.sh"
       - "scripts/tls.sh"
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
@@ -48,6 +49,7 @@ on:
       - "Makefile"
       - "scripts/stack_smoke.sh"
       - "scripts/stack_play.sh"
+      - "scripts/stack_linkdead.sh"
       - "scripts/tls.sh"
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
@@ -378,6 +380,15 @@ jobs:
       # counted.
       - name: the M1 gate against the stack — the Protocol whole, andara-cli play up to AW-CLI-007
         run: make stack-play
+
+      # The linkdead gate, scripted (scripts/stack_linkdead.sh, AW-INF-017): the linkdead
+      # slice of M2. A bystander watches a player's `play` get SIGKILLed, reads it go
+      # linkdead and sees the marker in look, then reads the same Character reconnect
+      # with its body never gone, and a clean quit after. The server's linkdead gauge and
+      # outcome counters are read before and after, so it follows the M1 gate's restart;
+      # before the alert step, which stops the server.
+      - name: the linkdead gate against the stack — drop, linkdead, reconnect, quit
+        run: make stack-linkdead
 
       # AW-INF-008 AC-5, the compose half. The rule file the chart ships is the one this
       # Prometheus mounts, and it was rewritten per namespace; here it must still load with
