@@ -4,7 +4,7 @@ title: andara-cli play renders linkdead, reconnect, and despawn
 epic: EPIC-08
 component: cli
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-004, AW-SRV-015]
 blocks: [AW-INF-017]
@@ -106,9 +106,12 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` The four player-facing lines above are placeholders in the renderer's voice, like
+- ~~`[ASSUMPTION]` The four player-facing lines above are placeholders in the renderer's voice, like
   `arrives`/`leaves`. Their wording is Brian's (SPRINT-02 game-design question 2), and changing it
-  changes the golden file, not the contract.
+  changes the golden file, not the contract.~~
+  **Resolved at §8, 2026-09-26:** the lines ship as the renderer's wording. Brian's answer to
+  SPRINT-02 game-design question 2 changes the golden file, not the contract, and doesn't reopen
+  this story.
 - **Resolved 2026-09-26 (architecture's contract review of `AW-SRV-015`):** all three Events carry
   `character_name`, and the linkdead marker is `RoomDescribed.linkdead`.
 
@@ -126,3 +129,18 @@ On `impl/aw-cli-008-linkdead-render`.
 `admin/README.md`'s rendering table gains the three rows and the marker. The live bystander's
 transcript is `make stack-linkdead` (`AW-INF-017`). It needs `AW-SRV-015` (#114), which emits these
 Events and fills `RoomDescribed.linkdead`.
+
+## §8 review (architecture, 2026-09-26)
+
+On `arch/sprint-02-review-3`, against `main` at `5c5d83c`. **`done`.**
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | The verification table's tests pass. Live: `make stack-linkdead` (`AW-INF-017`, #119) against a stack built from `5c5d83c`, where the bystander read `<A> goes linkdead.`, `Here: <A> (linkdead)`, `<A> reconnects.` and `<A> leaves the world.` from the real server |
+| Tests run in CI | yes | `admin/cli` is in `make test`; the bystander transcript is the `stack` workflow's `make stack-linkdead` step |
+| `make check` | yes | clean |
+| Instrumentation | n/a | output only, per `AW-CLI-001` |
+| Config documented | yes | no new config; `admin/README.md`'s rendering table has the three rows and the marker |
+| Migrations | n/a | none |
+| Glossary | yes | Linkdead, Despawn, Dormant exist |
+| No `[ASSUMPTION]` | yes | resolved above |

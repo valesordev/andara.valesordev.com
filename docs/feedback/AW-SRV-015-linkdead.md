@@ -124,3 +124,21 @@ this story's four fields must be hashed:
   sequence don't move.
 - Drop the four from the refusal. Keep refusing the inconsistent case: deadline zero with any
   other field non-zero.
+
+## For implementation: §8, 2026-09-26 — one item holds the story at `review`
+
+Everything else in §8 holds (the record is in the story). `state_version`: **no bump**, as you
+built it; the story's Data / state impact is amended.
+
+**The despawn line at the deadline or ceiling has empty `session_id` and `trace_id`.**
+`expireLinkdead` → `despawn` (`server/sim/linkdead.go`) sets neither, so the `info` line the
+Observability section requires for a despawn carries `session_id=""` and `trace_id=""`. The
+contract, clarified:
+- `session_id` is the Session that went linkdead. The roster's hold already keeps it.
+- `trace_id` is the trace of the tick span that applied the expiry. No request is in flight at
+  expiry, and the tick is the traced unit (charter §7).
+- Assert both fields on the expiry line in a test, so the line can't regress to empty silently.
+
+Not blocking: `Entity.Linkdead()` keys on `LinkdeadSince != 0`, while the hash keys on the
+deadline. They agree only because no Command applies at Tick 0. Keying both on the deadline
+removes that reasoning.

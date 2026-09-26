@@ -196,8 +196,9 @@ idempotent retry after `DEADLINE_EXCEEDED`. The Gateway's live flag is the one-l
 
 ## Data / state impact
 
-The four linkdead fields are Zone state, hashed and snapshotted; `state_version` bumps by one with a
-zero-fill migration. Deadlines are Ticks so replay is exact; a
+The four linkdead fields are Zone state, hashed and snapshotted. *(Amended at architecture's §8
+review, 2026-09-26: `state_version` does **not** bump. The fields are additive, and zero means
+"not linkdead" before and after, so ADR-0007 rule 2 doesn't apply; the ruling is in the §8 record.)* Deadlines are Ticks so replay is exact; a
 wall-clock deadline would make a recovered World differ from the one players were in.
 
 `session.linkdead_detect` is the one wall-clock number, and it is on the Gateway side of the log: it
@@ -252,8 +253,10 @@ CLAUDE.md §8, plus: the restart-mid-grace test and the startup invariant test. 
 - **Resolved 2026-09-11 (Brian): linkdead is visible.** AC-1's marker and Event are that decision.
 - **Combat extends the timer, bounded by a ceiling** (ADR-0006): 60 s / 300 s, retuned once combat
   pacing exists. `andara_linkdead_ceiling_despawns_total` says when the ceiling is too short.
-- `[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.
-- `[ASSUMPTION]` `session.linkdead_detect` 5 s. The gRPC keepalive from `AW-SRV-005` is the detector.
+- ~~`[ASSUMPTION]` A linkdead Character is inert: it takes damage, it does nothing. ADR-0006's reading.~~
+  **Resolved at §8, 2026-09-26:** it is ADR-0006's text, not a reading of it.
+- ~~`[ASSUMPTION]` `session.linkdead_detect` 5 s. The gRPC keepalive from `AW-SRV-005` is the detector.~~
+  **Resolved at §8, 2026-09-26:** built and tested (`TestKeepalive_APartitionedClientIsLinkdead`).
 - **Inherited from `AW-SRV-010` (2026-09-19):** the ingress forgets a Session when its context
   ends — `Ingress.forget` drops its queue, its rate-limit bucket, and its `Bindings` entry. A resumed
   Session (linkdead grace) is therefore unbound on the Gateway and must be re-bound from the
@@ -350,3 +353,44 @@ handover), `1f01f09` (end to end).
 - **DoD's live observation** of `andara_linkdead_outcomes_total{outcome="reconnected"}` and
   `andara_sessions_linkdead` from the running server is `make stack-linkdead` (`AW-INF-017`).
   `TestRun_Linkdead` scrapes both from the server's own `/metrics`.
+
+## §8 review (architecture, 2026-09-26)
+
+On `arch/sprint-02-review-3`, against `main` at `5c5d83c`. The live run is `make stack-linkdead` (#119). **Stays `review`** on one item,
+implementation's: the despawn log line at the deadline (item 4 below,
+`docs/feedback/AW-SRV-015-linkdead.md` "§8, 2026-09-26").
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes, AC-13 excepted | The verification table's tests, all present and passing. AC-6 is proven at the sim level (`Engine.Replay`, which `tickloop.Recover` drives); the broker-level kill is `AW-SRV-007`'s, with AC-9. AC-13 has no death rules to exercise: the first story with lethal damage carries `andara_linkdead_outcomes_total{outcome="died"}` as an inherited line |
+| Tests run in CI | yes | All in `make test` (`go test -race ./...`); `TestRun_Linkdead` needs no stack. `make stack-linkdead` (`AW-INF-017`) runs in the `stack` workflow |
+| `make check` | yes | clean on `main` at `5c5d83c` |
+| Instrumentation, live | **no, one line** | Metrics: `make stack-linkdead` against a stack built from `5c5d83c` read `andara_linkdead_outcomes_total{outcome="reconnected"}` +1 and `andara_sessions_linkdead` up by one, then back, from the server's `/metrics`. Traces: Tempo holds `session.lifetime` spans carrying `linkdead.enter` and `linkdead.reconnect` from that run. Logs: entry, reconnect and quit take the LoggedCommand's traceparent, not the tick loop's, so they don't repeat `AW-SRV-014`'s defect. **The despawn at the deadline or ceiling logs `session_id=""` and `trace_id=""`** (`sim/linkdead.go` `expireLinkdead` → `despawn`) |
+| Config documented | yes | Six keys in `server/README.md` and `keys.yaml`, env names and defaults matching; `values-schema-check` current |
+| Migrations | yes, no bump | Ruling below |
+| Glossary | yes, amended here | Resume Window and Egress rewritten for parking; Parked Subscription and Linkdead Hold added |
+| No `[ASSUMPTION]` | yes, resolved here | Both below |
+
+**`state_version` does not bump** (implementation's question in the feedback file). ADR-0007 rule 2
+moves `state_version` for a change protobuf can't absorb, a change in what existing state means.
+The four fields are additive, a zero in each means "not linkdead" before and after this story, and
+the linkdead record is only written when the deadline is set, so every existing hash, boundary and
+snapshot keeps its value. A bump would buy nothing and would make every existing log
+unreplayable, since nothing replays across a version change. Data / state impact is amended to
+match.
+
+**The two `[ASSUMPTION]`s are resolved:**
+- *A linkdead Character is inert.* That's ADR-0006's text, not an assumption about it. A Behavior
+  that changes it is a new story and rebalances the three numbers.
+- *`linkdead_detect` 5 s, with the gRPC keepalive as the detector.* Built and tested:
+  `TestKeepalive_APartitionedClientIsLinkdead` marks a partitioned client within it.
+
+**Item 4, the despawn line at the deadline**, is a contract clarification plus a small fix:
+- `session_id` is the Session that went linkdead. The roster's hold already keeps it.
+- `trace_id` is the trace of the tick span that applied the expiry. No request is in flight
+  at expiry, and the tick is the traced unit (§7). An empty field is what the contract rules out.
+- A unit or integration assertion on both fields, so the line can't regress silently.
+
+A nit, not blocking: `Entity.Linkdead()` keys on `LinkdeadSince != 0` while the hash keys on the
+deadline. They agree because no Command applies at Tick 0. Keying both on the deadline would drop
+that reasoning.

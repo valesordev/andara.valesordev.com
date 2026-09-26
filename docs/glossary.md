@@ -503,15 +503,26 @@ and Offset a Command landed on, meaning *accepted and ordered*, never *succeeded
 Edge, which is the cluster's ingress in front of the Gateway.
 
 **Egress** — The Gateway's Subscribe path (AW-SRV-011): one fan-out subscription per Session for
-as long as it lives, the Session's retained history (the Resume Window), and the stream as a cursor
-over it. A stream that trails by more than `egress.buffer` is ended with a typed reason rather than
+as long as it lives, or parked past it while its Character is linkdead (Parked Subscription), the
+Session's retained history (the Resume Window), and the stream as a cursor over it. A stream that trails by more than `egress.buffer` is ended with a typed reason rather than
 an Event being skipped; the Session survives and the client reopens the stream.
 
 **Resume Window** — The last `egress.resume_window` Events a Session was sent, retained by the
 Egress after they were sent and while no stream is open, so a stream reopened with
 `last_event_id` continues from the next Event with no gap and no duplicate. Process-local: a
-restart, a rebind, or a fan-out drop discards it. Sized with `session.linkdead_grace`
-(AW-SRV-015): a linkdead Character's reconnect must be able to resume.
+restart or a fan-out drop discards it. A linkdead reconnect adopts it with the Parked
+Subscription (AW-SRV-015). Sized so a reconnect can resume: the server refuses to start unless
+`egress.resume_window >= session.linkdead_max × egress.assumed_event_rate`.
+
+**Parked Subscription** — A linkdead Session's Egress subscription, kept after its stream drops:
+its pump and its Resume Window stay alive for up to `session.linkdead_max`, and the Session that
+reconnects the same Character adopts them, so the stream resumes with no gap (AW-SRV-015).
+`events.max_subscribers` counts parked subscriptions as well as live ones.
+
+**Linkdead Hold** — The Gateway roster's claim on a linkdead Character's Account after its
+Session ends. It keeps the Account live, so another Character can't be selected
+(`already_live`), while letting a Session reconnect that Character. The end of the grace
+or a reconnect frees it (AW-SRV-015).
 
 **Resync** — The stream frame sent instead of a resume the server cannot honor: the resume point is
 older than the Resume Window (`resume_window_exceeded`) or was never sent to this Session by this
