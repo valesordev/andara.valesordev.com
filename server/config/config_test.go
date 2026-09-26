@@ -5,7 +5,9 @@ package config
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -358,6 +360,7 @@ auth:
   k8s_issuer: https://kubernetes.default.svc
   k8s_jwks_url: https://kubernetes.default.svc/openid/v1/jwks
 session:
+  linkdead_grace: 75s
   linkdead_max: 90s
 `)
 	if err := os.WriteFile(path, body, 0o600); err != nil {
@@ -492,5 +495,55 @@ func TestContentMaxBlobBytesRejectsNonsense(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "ANDARA_CONTENT_MAX_BLOB_BYTES") {
 		t.Errorf("error %q should name the variable", err)
+	}
+}
+
+// AW-SRV-015 AC-7 and AC-8: the startup invariants, asserted in the story's
+// order, each failure naming its relation and every value in it. A
+// configuration violating several fails on the first.
+func TestParse_LinkdeadInvariants(t *testing.T) {
+	for _, c := range []struct {
+		name     string
+		args     []string
+		relation string
+		values   []string
+	}{
+		{"max below grace", []string{"--session-linkdead-max=2m"},
+			"session.linkdead_max >= session.linkdead_grace", []string{"session.linkdead_max=2m0s", "session.linkdead_grace=3m0s"}},
+		{"grace not past the RTO", []string{"--session-linkdead-grace=60s"},
+			"session.linkdead_grace > recovery.rto_target", []string{"session.linkdead_grace=1m0s", "recovery.rto_target=1m0s"}},
+		{"resume window too small", []string{"--egress-buffer=64", "--egress-resume-window=1000"},
+			"egress.resume_window >= session.linkdead_max × egress.assumed_event_rate", []string{"egress.resume_window=1000", "session.linkdead_max=5m0s", "egress.assumed_event_rate=5"}},
+		{"rate raised past the window", []string{"--egress-assumed-event-rate=7"},
+			"egress.resume_window >= session.linkdead_max × egress.assumed_event_rate", []string{"egress.resume_window=2048", "egress.assumed_event_rate=7"}},
+		{"token inside the ceiling", []string{"--auth-session-ttl=5m"},
+			"auth.session_ttl > session.linkdead_max", []string{"auth.session_ttl=5m0s", "session.linkdead_max=5m0s"}},
+		{"several at once: the first wins", []string{"--session-linkdead-max=2m", "--session-linkdead-grace=3m", "--recovery-rto-target=5m"},
+			"session.linkdead_max >= session.linkdead_grace", nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse(append(c.args, "--validate-only"), nil, io.Discard)
+			var inv *ErrInvariant
+			if !errors.As(err, &inv) {
+				t.Fatalf("got %v, want an ErrInvariant", err)
+			}
+			if inv.Relation != c.relation {
+				t.Fatalf("relation %q, want %q", inv.Relation, c.relation)
+			}
+			for _, v := range c.values {
+				if !strings.Contains(err.Error(), v) {
+					t.Errorf("%q does not name %s", err.Error(), v)
+				}
+			}
+		})
+	}
+	// The defaults hold every relation: 300 >= 180 > 60, 2048 >= 300 × 5,
+	// and the token outlives the ceiling.
+	cfg, err := Parse([]string{"--validate-only"}, nil, io.Discard)
+	if err != nil {
+		t.Fatalf("defaults: %v", err)
+	}
+	if g, e, m := cfg.LinkdeadTicks(); g != 1800 || e != 600 || m != 3000 {
+		t.Fatalf("ticks at 10 Hz: grace %d, extension %d, max %d", g, e, m)
 	}
 }

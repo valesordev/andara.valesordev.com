@@ -138,6 +138,10 @@ ANDARA_EGRESS_RESUME_WINDOW: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_HEARTBEAT_INTERVAL: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "egress" "assumed_event_rate" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_EGRESS_ASSUMED_EVENT_RATE: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "ingress" "rate_limit" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_INGRESS_RATE_LIMIT: {{ $v | toString | quote }}
@@ -193,6 +197,10 @@ ANDARA_SNAPSHOT_S3_ENDPOINT: {{ $v | toString | quote }}
 {{- $v := dig "snapshot" "upload_timeout" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_SNAPSHOT_UPLOAD_TIMEOUT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "recovery" "rto_target" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_RTO_TARGET: {{ $v | toString | quote }}
 {{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
@@ -258,9 +266,21 @@ ANDARA_CHARACTER_SPAWN_ROOM: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CHARACTER_NAME_PATTERN: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "session" "linkdead_grace" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_LINKDEAD_GRACE: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "session" "linkdead_combat_extension" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_LINKDEAD_COMBAT_EXTENSION: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "session" "linkdead_max" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_LINKDEAD_MAX: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "session" "linkdead_detect" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_LINKDEAD_DETECT: {{ $v | toString | quote }}
 {{- end }}
 {{- $v := dig "content" "packs" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
