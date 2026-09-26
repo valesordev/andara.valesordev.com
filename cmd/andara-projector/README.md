@@ -34,6 +34,7 @@ World, as the server does). In the chart it reads the server's ConfigMap for exa
 |-----------|--------------|
 | A committed checkpoint at tick C, and the newest complete round is at or before C | Restores the round and replays to C silently: the topic already holds it. Then produces from C+1. |
 | No checkpoint (first start, or `--rebuild`), or the round is newer than C | Restores the newest round (tick 0 with no round), writes every aggregate, tombstones every key the topic holds that the state does not, commits, and follows. |
+| A checkpoint that records an unresolved divergence at T | Exits `2` at once, naming T and both hashes, **whatever rounds exist**. Bootstrapping from a newer round would replay past T and erase the evidence. `--rebuild` clears it, and its `info` line says it discarded the divergence at T. |
 
 ### Configuration
 
@@ -47,7 +48,9 @@ which is always `andara-projector-state`):
 | `projector.state.lag_budget` | `ANDARA_PROJECTOR_LAG_BUDGET` | `--lag-budget` | `5s` | exported as `andara_state_projector_lag_budget_seconds`; `ProjectionStale` fires above it |
 
 Consumer group: `andara-projector-state-<env>`. It is never joined: offsets are committed by
-admin call with the tick in each offset's metadata, the way the tick loop checkpoints.
+admin call with the tick in each offset's metadata, the way the tick loop checkpoints. A halt on a
+divergence commits T−1 with the divergence in the same metadata
+(`tick=<T−1>;diverged=<T>:<recorded>:<replayed>`), and that record is what the next start reads.
 
 ### Exit codes
 
@@ -55,6 +58,6 @@ admin call with the tick in each offset's metadata, the way the tick loop checkp
 |-----:|-----------|
 | `0` | clean stop on `SIGTERM`/`SIGINT` |
 | `1` | configuration, content, snapshot store, or broker |
-| `2` | digest divergence. The replica's State Hash differs from the recorded one. `/metrics` stays up for 60 s first, so `StateProjectorDiverged` is scraped. Runbook: `docs/runbooks/state-projector-diverged.md` |
+| `2` | digest divergence. The replica's State Hash differs from the recorded one, now or at a tick an earlier run halted on and nobody has cleared with `--rebuild`. `/metrics` stays up for 60 s first, so `StateProjectorDiverged` is scraped. Runbook: `docs/runbooks/state-projector-diverged.md` |
 | `3` | log gap: the log no longer holds history the replica needs |
 | `4` | a snapshot round or boundary written by a newer `state_version` |

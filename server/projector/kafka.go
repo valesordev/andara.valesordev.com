@@ -5,6 +5,7 @@ package projector
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
@@ -262,9 +263,17 @@ func (p *Producer) Close() { p.client.Close() }
 
 // Checkpoint is where the projector has produced through: a tick and the
 // next-to-read offset per commands Partition after it.
+//
+// Diverged, when set, is an unresolved divergence: the projector halted at
+// Diverged.Tick, and Tick is the one before it. It survives a restart
+// (AW-SRV-019 feedback §2, architecture's ruling), because a restart that
+// bootstrapped from a newer round would replay past the divergent tick and
+// erase the only evidence the projector exists to produce. Only --rebuild,
+// which deletes the group, clears it.
 type Checkpoint struct {
-	Tick    sim.Tick
-	Offsets map[int32]int64
+	Tick     sim.Tick
+	Offsets  map[int32]int64
+	Diverged *Divergence
 }
 
 // Committer commits Checkpoints under the projector's consumer group on
@@ -290,12 +299,60 @@ func NewCommitter(brokers []string, group, commandsTopic string) (*Committer, er
 	return &Committer{adm: kadm.NewClient(cl), cl: cl, group: group, topic: commandsTopic}, nil
 }
 
-const tickMeta = "tick="
+// The offset metadata: "tick=<T>", and for a halted projector
+// "tick=<T>;diverged=<tick>:<recorded hex>:<replayed hex>". Well inside the
+// broker's default offset.metadata.max.bytes (4096).
+const (
+	tickMeta     = "tick="
+	divergedMeta = ";diverged="
+)
+
+func checkpointMeta(cp Checkpoint) string {
+	meta := tickMeta + strconv.FormatUint(uint64(cp.Tick), 10)
+	if d := cp.Diverged; d != nil {
+		meta += fmt.Sprintf("%s%d:%x:%x", divergedMeta, d.Tick, d.Recorded, d.Replayed)
+	}
+	return meta
+}
+
+// parseCheckpointMeta is checkpointMeta's inverse. Diverged comes back
+// without LastGood; the caller fills it from the committed offsets.
+func parseCheckpointMeta(meta string) (sim.Tick, *Divergence, error) {
+	t, ok := strings.CutPrefix(meta, tickMeta)
+	if !ok {
+		return 0, nil, fmt.Errorf("metadata %q is not a tick", meta)
+	}
+	t, div, hasDiv := strings.Cut(t, divergedMeta)
+	n, err := strconv.ParseUint(t, 10, 64)
+	if err != nil {
+		return 0, nil, fmt.Errorf("bad tick in metadata %q", meta)
+	}
+	if !hasDiv {
+		return sim.Tick(n), nil, nil
+	}
+	parts := strings.Split(div, ":")
+	if len(parts) != 3 {
+		return 0, nil, fmt.Errorf("bad divergence in metadata %q", meta)
+	}
+	dt, err := strconv.ParseUint(parts[0], 10, 64)
+	if err != nil {
+		return 0, nil, fmt.Errorf("bad divergent tick in metadata %q", meta)
+	}
+	d := &Divergence{Tick: sim.Tick(dt)}
+	for i, dst := range []*[32]byte{&d.Recorded, &d.Replayed} {
+		b, err := hex.DecodeString(parts[i+1])
+		if err != nil || len(b) != len(dst) {
+			return 0, nil, fmt.Errorf("bad hash in metadata %q", meta)
+		}
+		copy(dst[:], b)
+	}
+	return sim.Tick(n), d, nil
+}
 
 // Commit records cp.
 func (c *Committer) Commit(ctx context.Context, cp Checkpoint) error {
 	var o kadm.Offsets
-	meta := tickMeta + strconv.FormatUint(uint64(cp.Tick), 10)
+	meta := checkpointMeta(cp)
 	for p, off := range cp.Offsets {
 		o.Add(kadm.Offset{Topic: c.topic, Partition: p, At: off, LeaderEpoch: -1, Metadata: meta})
 	}
@@ -317,26 +374,25 @@ func (c *Committer) Last(ctx context.Context) (Checkpoint, bool, error) {
 	}
 	cp := Checkpoint{Offsets: map[int32]int64{}}
 	found := false
-	var tick uint64
+	var meta string
 	for _, r := range resp.Offsets()[c.topic] {
 		if r.At < 0 {
 			continue
 		}
-		t, ok := strings.CutPrefix(r.Metadata, tickMeta)
-		if !ok {
-			return Checkpoint{}, false, fmt.Errorf("group %s partition %d carries metadata %q, not a tick; was it committed by something else?", c.group, r.Partition, r.Metadata)
-		}
-		n, err := strconv.ParseUint(t, 10, 64)
+		n, d, err := parseCheckpointMeta(r.Metadata)
 		if err != nil {
-			return Checkpoint{}, false, fmt.Errorf("group %s partition %d: bad tick metadata %q", c.group, r.Partition, r.Metadata)
+			return Checkpoint{}, false, fmt.Errorf("group %s partition %d: %w; was it committed by something else?", c.group, r.Partition, err)
 		}
-		if found && n != tick {
-			return Checkpoint{}, false, fmt.Errorf("group %s: partitions disagree on the committed tick (%d and %d)", c.group, tick, n)
+		if found && r.Metadata != meta {
+			return Checkpoint{}, false, fmt.Errorf("group %s: partitions disagree on the checkpoint (%q and %q)", c.group, meta, r.Metadata)
 		}
-		tick, found = n, true
+		meta, found = r.Metadata, true
+		cp.Tick, cp.Diverged = n, d
 		cp.Offsets[r.Partition] = r.At
 	}
-	cp.Tick = sim.Tick(tick)
+	if cp.Diverged != nil {
+		cp.Diverged.LastGood = cp.Offsets
+	}
 	return cp, found, nil
 }
 
