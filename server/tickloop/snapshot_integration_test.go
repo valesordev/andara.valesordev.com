@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -92,7 +93,7 @@ func TestSnapshotWrittenRoundTripsThroughTheBroker(t *testing.T) {
 		if err != nil {
 			t.Fatalf("zone %s: key %q does not resolve: %v", r.GetZoneId(), r.GetKey(), err)
 		}
-		env, zone, err := store.Decode(b)
+		env, _, err := store.Decode(b)
 		if err != nil {
 			t.Fatalf("zone %s: Decode: %v", r.GetZoneId(), err)
 		}
@@ -100,7 +101,11 @@ func TestSnapshotWrittenRoundTripsThroughTheBroker(t *testing.T) {
 		if !bytes.Equal(env.GetStateHash(), r.GetStateHash()) {
 			t.Errorf("zone %s: record hash %x, envelope hash %x", r.GetZoneId(), r.GetStateHash(), env.GetStateHash())
 		}
-		if got := sim.HashZone(zone); !bytes.Equal(got[:], r.GetStateHash()) {
+		var body statev1.ZoneState
+		if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
+			t.Fatalf("zone %s: body: %v", r.GetZoneId(), err)
+		}
+		if got, err := sim.BodyStateHash(&body); err != nil || !bytes.Equal(got[:], r.GetStateHash()) {
 			t.Errorf("zone %s: the object's Zone does not hash to what the record claims", r.GetZoneId())
 		}
 		if r.GetTick() != 42 {
@@ -196,4 +201,79 @@ func readSnapshotWritten(t *testing.T, bs []string, topic string, want int) []*l
 		})
 	}
 	return out
+}
+
+// AC-8 against a real broker: the round waits for the TickCompleted it copied
+// at to be acknowledged, through the same callback the boot wires, and then
+// completes.
+func TestSnapshotRoundWaitsForTheBrokersBoundaryAck(t *testing.T) {
+	bs := brokers(t)
+	_, events := topics(t, bs)
+
+	pub, err := NewKafkaPublisher(context.Background(), bs, "snapshot-ack-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pub.Close()
+	pub.Events = events
+
+	done := make(chan error, 1)
+	now := time.Unix(1758500000, 0)
+	snapshotter, err := NewSnapshotter(SnapshotOptions{
+		Store:            store.NewFS(t.TempDir()),
+		Interval:         time.Second,
+		MaxStall:         5 * time.Millisecond,
+		UploadTimeout:    30 * time.Second,
+		AwaitBoundaryAck: true,
+		Now:              func() time.Time { return now },
+		OnRound:          func(_ sim.Tick, err error) { done <- err },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acked := make(chan sim.Tick, 64)
+	pub.OnBoundaryAcked = func(tick sim.Tick, _ time.Duration) {
+		snapshotter.OnBoundaryAcked(tick)
+		acked <- tick
+	}
+	pub.OnBoundaryLost = snapshotter.OnBoundaryLost
+
+	e, err := simtest.NewEngine(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last sim.TickCompleted
+	for e.Tick() < 42 {
+		res, err := e.Step(sim.TickInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		last = res.Completed
+	}
+	// The round starts first, so it has to wait for the acknowledgement
+	// rather than find it already recorded.
+	now = now.Add(time.Second)
+	snapshotter.Maybe(context.Background(), e)
+	if err := pub.Publish(context.Background(), nil, last); err != nil {
+		t.Fatalf("publish the boundary: %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("round: %v", err)
+		}
+	case <-time.After(60 * time.Second):
+		t.Fatal("the snapshot round did not finish after its boundary was published")
+	}
+	select {
+	case tick := <-acked:
+		if tick != 42 {
+			t.Fatalf("acknowledged tick %d, want 42", tick)
+		}
+	default:
+		t.Fatal("the round completed without the broker acknowledging its boundary")
+	}
+	if got := counter(snapshotter.Metrics().Rounds.WithLabelValues("complete")); got != 1 {
+		t.Fatalf("rounds_total{complete} = %v, want 1", got)
+	}
 }

@@ -137,9 +137,13 @@ func TestDecodeRoundTripsAnEncodedSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Encode %s: %v", s.Zone, err)
 		}
-		env, zone, err := Decode(wire)
+		env, _, err := Decode(wire)
 		if err != nil {
 			t.Fatalf("Decode %s: %v", s.Zone, err)
+		}
+		_, body, err := decodeBody(wire)
+		if err != nil {
+			t.Fatalf("decodeBody %s: %v", s.Zone, err)
 		}
 		if env.GetZoneId() != string(s.Zone) {
 			t.Errorf("zone_id = %q, want %q", env.GetZoneId(), s.Zone)
@@ -147,10 +151,10 @@ func TestDecodeRoundTripsAnEncodedSnapshot(t *testing.T) {
 		if env.GetTick() != uint64(s.Tick) {
 			t.Errorf("tick = %d, want %d", env.GetTick(), s.Tick)
 		}
-		// AC-3, end to end: the envelope's hash is the hash of the Zone the
+		// AC-3, end to end: the envelope's hash is the hash of the body the
 		// envelope carries.
 		want := s.StateHash()
-		if got := sim.HashZone(zone); got != want {
+		if got, err := sim.BodyStateHash(body); err != nil || got != want {
 			t.Errorf("zone %s: decoded Zone hashes %x, envelope says %x", s.Zone, got, want)
 		}
 	}
@@ -203,7 +207,7 @@ func TestReadVerifiedChecksTheHashBeforeMigrating(t *testing.T) {
 		},
 	})()
 	defer swapHashers(map[uint32]func(*statev1.ZoneState) [32]byte{
-		1: func(z *statev1.ZoneState) [32]byte { return sim.HashZone(sim.ZoneStateFromProto(z)) },
+		1: func(z *statev1.ZoneState) [32]byte { h, _ := sim.BodyStateHash(z); return h },
 	})()
 
 	_, body, err := readVerified(wire, 2, true)
@@ -272,4 +276,48 @@ func newSnapshotFixture() (*sim.Engine, error) {
 	ent.Name = "Wandering Merchant"
 	e.State().Zones["town"].Entities[ent.ID] = &ent
 	return e, nil
+}
+
+// AC-3, on a stored object: corrupting the body's tick, prng_state or
+// next_event_id, and nothing else, makes the verified read fail its hash.
+// Before the amendment the envelope hashed the Zone section alone, and all
+// three read back as valid.
+func TestReadVerifiedRefusesACorruptedProcessWideValue(t *testing.T) {
+	t.Parallel()
+	e, err := newSnapshotFixture()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wire, err := e.SnapshotAll(1)[0].Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := readVerified(wire, sim.StateVersion, true); err != nil {
+		t.Fatalf("the uncorrupted object: %v", err)
+	}
+	for name, edit := range map[string]func(*statev1.ZoneState){
+		"tick":          func(b *statev1.ZoneState) { b.Tick++ },
+		"prng_state":    func(b *statev1.ZoneState) { b.PrngState[31] ^= 1 },
+		"next_event_id": func(b *statev1.ZoneState) { b.NextEventId++ },
+	} {
+		var env statev1.SnapshotEnvelope
+		if err := proto.Unmarshal(wire, &env); err != nil {
+			t.Fatal(err)
+		}
+		var body statev1.ZoneState
+		if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
+			t.Fatal(err)
+		}
+		edit(&body)
+		if env.Body, err = proto.Marshal(&body); err != nil {
+			t.Fatal(err)
+		}
+		corrupted, err := proto.Marshal(&env)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := readVerified(corrupted, sim.StateVersion, true); !errors.Is(err, ErrHashInvalid) {
+			t.Errorf("%s corrupted: read %v, want ErrHashInvalid", name, err)
+		}
+	}
 }

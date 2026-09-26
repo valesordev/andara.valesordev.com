@@ -153,22 +153,52 @@ func ZoneCanonicalBytes(z *ZoneState) []byte {
 	return []byte(b.String())
 }
 
-// ZoneHash is the State Hash of one Zone: SHA-256 over ZoneCanonicalBytes.
+// ZoneHash is the State Hash of one Zone at the World's current tick, in the
+// form a snapshot envelope carries it: SnapshotHash over the Zone and the
+// process-wide values its body carries.
 //
-// It is what a snapshot envelope carries, and what AW-SRV-007 AC-4 checks when
-// it calls a Zone object hash-invalid. It is deliberately *not* comparable to
-// TickCompleted.state_hash, which covers the whole World including the PRNG and
-// the offsets; that comparison is AW-SRV-007 AC-5's, made after replay against
-// the recovered World. See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
+// It is what AW-SRV-007 AC-4 checks when it calls a Zone object hash-invalid.
+// It is deliberately *not* comparable to TickCompleted.state_hash, which covers
+// the whole World including the offsets; that comparison is AW-SRV-007 AC-5's,
+// made after replay against the recovered World. See
+// docs/feedback/AW-SRV-006-zone-snapshots.md §2.
 func (s *WorldState) ZoneHash(id ZoneID) ([32]byte, bool) {
 	z, ok := s.Zones[id]
 	if !ok {
 		return [32]byte{}, false
 	}
-	return HashZone(z), true
+	return SnapshotHash(z, s.Tick, s.RNG.State(), s.NextEventID), true
 }
 
-// HashZone is the State Hash of one Zone, given the Zone. The form recovery
-// needs: AW-SRV-007 holds a Zone decoded from a snapshot body, which belongs
-// to no WorldState yet, and must hash it to check the envelope's claim.
+// HashZone is SHA-256 over ZoneCanonicalBytes alone: the Zone's section of the
+// World's bytes. It is not a snapshot's state_hash, which also covers the
+// body's tick, PRNG state and next EventID; that is SnapshotHash.
 func HashZone(z *ZoneState) [32]byte { return sha256.Sum256(ZoneCanonicalBytes(z)) }
+
+// SnapshotCanonicalBytes is what a snapshot's state_hash covers (AW-SRV-006
+// AC-3, as amended 2026-09-22): ZoneCanonicalBytes unchanged, followed by a
+// snapshot record of tick, prng_state and next_event_id.
+//
+// The body carries those three per Zone, but the World's bytes write them once
+// in a global header ahead of the Zone sections, so ZoneCanonicalBytes alone
+// covers a strict subset of the body. A stored object with a corrupted
+// prng_state would then stay hash-valid and restore a World whose replay
+// diverges. The record closes that without touching ZoneCanonicalBytes, so the
+// World's State Hash, and every TickCompleted already on the log, is what it
+// was.
+func SnapshotCanonicalBytes(z *ZoneState, tick Tick, prng [4]uint64, nextEventID uint64) []byte {
+	var b strings.Builder
+	b.Write(ZoneCanonicalBytes(z))
+	writeFields(&b, "snapshot",
+		strconv.FormatUint(uint64(tick), 10),
+		strconv.FormatUint(prng[0], 10), strconv.FormatUint(prng[1], 10),
+		strconv.FormatUint(prng[2], 10), strconv.FormatUint(prng[3], 10),
+		strconv.FormatUint(nextEventID, 10),
+	)
+	return []byte(b.String())
+}
+
+// SnapshotHash is a snapshot's state_hash: SHA-256 over SnapshotCanonicalBytes.
+func SnapshotHash(z *ZoneState, tick Tick, prng [4]uint64, nextEventID uint64) [32]byte {
+	return sha256.Sum256(SnapshotCanonicalBytes(z, tick, prng, nextEventID))
+}

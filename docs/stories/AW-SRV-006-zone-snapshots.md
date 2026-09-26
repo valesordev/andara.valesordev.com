@@ -521,6 +521,49 @@ the race detector's ×8 factor. That is accepted: the 15 ms figure is the record
 CI guards against an order-of-magnitude regression, not the budget itself. Written up for
 implementation in `docs/feedback/AW-SRV-006-zone-snapshots.md` §13.
 
+### §8 owed items (2026-09-26, implementation), delivered
+
+On `impl/aw-srv-006-s8-owed`. The story returns to §8 when it merges. Detail, and one reading
+architecture should confirm, are in `docs/feedback/AW-SRV-006-zone-snapshots.md` §14.
+
+- **AC-3.** `Snapshot.StateHash()` is `sim.SnapshotHash`: SHA-256 over
+  `SnapshotCanonicalBytes`, which is `ZoneCanonicalBytes` unchanged, followed by a `snapshot`
+  record of `tick`, the four PRNG words and `next_event_id`. `WorldState.ZoneHash` returns the
+  same. `store/migrate.go` verifies through `sim.BodyStateHash`, the same function over a decoded
+  body. The World's State Hash is untouched: the golden hash sequence and every determinism test
+  pass unchanged. Tests:
+  - `TestBodyHashCoversEveryProtoField` replaces the Go-struct counts. It walks the
+    `ZoneState`, `EntityState`, `ComponentValue` and `ComponentField` descriptors, corrupts each
+    field in turn, and fails for any field the hash neither covers nor refuses.
+  - `TestBodyHashCoversTickPRNGAndNextEventID` and `TestBodyHashRefusesWhatItDoesNotCover`.
+  - `TestReadVerifiedRefusesACorruptedProcessWideValue` corrupts each of the three in an encoded
+    object and gets `ErrHashInvalid`.
+  - Mutation-checked: dropping the snapshot record fails all three fields, and dropping a refusal
+    fails its field.
+- **AC-8.** `tickloop.Snapshotter` implements `sim.BoundaryAcks`, and the boot routes
+  `KafkaPublisher.OnBoundaryAcked`/`OnBoundaryLost` to it. With `AwaitBoundaryAck` set (the boot
+  sets it for the Kafka publisher), a round copies at the boundary and then waits, inside
+  `snapshot.upload_timeout`, before it encodes or writes anything:
+  - acknowledged: the round proceeds
+  - lost at or before its tick: abandoned, `reason=boundary`
+  - neither: abandoned, `reason=timeout`
+
+  Each is counted once per round. A boundary whose `Publish` failed outright takes no round, and a
+  round that was due counts `reason=boundary` (`Snapshotter.Skip`). `boundary` is pre-created.
+  Tests:
+  - `TestARoundWritesNothingBeforeItsBoundaryIsAcknowledged`,
+    `TestAnAcknowledgementBeforeTheRoundStartsReleasesIt`, `TestALostBoundaryAbandonsTheRound` (the
+    callback after `Publish` returned nil) and `TestAnUnacknowledgedBoundaryTimesTheRoundOut`
+  - `TestLoop_NoSnapshotWhenTheBoundaryWasNotPublished`, now also asserting the count
+  - on Redpanda, `TestSnapshotRoundWaitsForTheBrokersBoundaryAck`
+  - Mutation-checked: without the wait, the three async tests fail.
+- **`server/README.md`:** `max_stall_ms` `15`, with the measurement pointer at this story, and the
+  key `{zone_id}/{tick}/{state_version}/{offset}`. `s3` is the cluster's store, and versitygw
+  locally. `upload_timeout` documents the acknowledgement wait.
+
+`make check` is clean. `make test-integration` passes, and so do the S3 tests against the stack's
+versitygw.
+
 ### Sizing fixture, measured
 
 **Fixture scale decided 2026-09-22 (Brian): 25,000 Entities**, up from 10,000, for headroom as the

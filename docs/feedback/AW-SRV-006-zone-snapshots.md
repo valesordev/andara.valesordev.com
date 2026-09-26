@@ -372,3 +372,70 @@ implementation owes, in the order it matters:
    versitygw locally.
 
 Delivered on an `impl/aw-srv-006-…` branch; the story returns to §8 when it merges.
+
+## 14. Implementation, 2026-09-26: §13's three items, delivered
+
+On `impl/aw-srv-006-s8-owed`. The per-item record is in the story under "§8 owed items
+(2026-09-26)". Two things for architecture's §8.
+
+### For architecture: three body fields are refused, not hashed
+
+The tripwire corrupts every proto field. Three fields turned out to be covered by neither
+`ZoneCanonicalBytes` nor the snapshot record:
+- `ZoneState.deferred`: never written (§3), and the reader ignores it.
+- `EntityState.linkdead_deadline_tick`: nothing writes it until `AW-SRV-015`, and `sim.EntityState`
+  has no field for it.
+- `EntityState.dormant_since_tick` on a body that is not dormant: `EntityCanonicalBytes` writes it
+  only inside the dormant record.
+
+Hashing them would mean changing `ZoneCanonicalBytes`, which AC-3 keeps unchanged, and the World's
+State Hash with it. So `sim.BodyStateHash` **refuses** a body that carries any of the three with a
+non-zero value, and the verified read reports it as `ErrHashInvalid`. A single-field corruption of
+any of them therefore fails the read, as AC-3 asks, and every body this binary writes passes. If
+you would rather have the snapshot record carry them, that's a change to one function, and the
+tripwire holds either way.
+
+**Consequence for `AW-SRV-015`:** when it starts writing `linkdead_deadline_tick`, it has to hash it
+and drop the refusal. The tripwire fails until it does. The same goes for the three fields #100 added
+to `EntityState`: `linkdead_since_tick`, `linkdead_ceiling_tick` and `linkdead_extension_ticks`.
+The tripwire flagged them the moment this branch merged `origin/main`, and `BodyStateHash` now
+refuses a non-zero value in any of the four. Hashing it only when it's non-zero, as
+`entity_dormant` does, keeps every existing hash.
+
+### For architecture: the abandoned round is not a `rounds_total` outcome
+
+An abandoned round writes nothing, so it isn't `incomplete` in `AW-SRV-007`'s listing sense.
+`rounds_total{outcome}` stays `complete`/`incomplete` as the contract names it, and the abandonment
+is recorded only on `failures_total{reason}`. `boundary`, and `timeout` while waiting for the
+acknowledgement, each count once per round. That differs from `timeout` on a `Put`, which counts
+per Zone, and the metric's help text says so.
+
+### For architecture: objects written before this change fail verification (review of #102)
+
+This change is not backward-compatible with snapshots already written. Every object written before
+it carries `HashZone(body)` and `state_version` 1. After it, a version-1 object is verified with
+`BodyStateHash`, so every existing round reads as hash-invalid.
+
+What that costs today:
+- `store.verify` marks each such object with a reason and the round incomplete. It doesn't error.
+- Server recovery doesn't read snapshots yet (`AW-SRV-007`). The only reader is the projector's
+  bootstrap, which falls back to a from-zero replay until the first round written after the upgrade.
+  At the default cadence that's 60 s away.
+- Neither the compose stack (#74) nor a cluster has produced rounds anyone relies on.
+
+There are two ways to keep old objects verifiable. Both are architecture's call:
+- **(a) Bump `state_version` to 2.** Add an identity migration from 1, and set `hashers[1]` to the
+  old Zone-only `HashZone`. This is what the registry exists for. It contradicts this story's
+  "`state_version` stays 1" and the rule that it moves only when the *meaning* of state changes. It
+  would be the first bump for a change in what the hash covers rather than in what state means.
+- **(b) Accept the old hash as a fallback.** Rejected here: any object that passes `HashZone` would
+  be accepted, which reopens exactly the corruption gap AC-3 closes.
+
+Implementation's recommendation is to accept the one-interval cost and write the rule down:
+- The story records that pre-AC-3 objects are unverifiable by design.
+- `AW-INF-007`'s rollback notes say a binary on either side of this change can't verify the other
+  side's rounds.
+
+If you choose (a) instead, it's a small change on an `impl/` branch. Nothing is changed on #102 until
+you decide.
+

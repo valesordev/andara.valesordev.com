@@ -70,7 +70,13 @@ var hashers = map[uint32]func(*statev1.ZoneState) [32]byte{}
 // the version this binary hashes natively.
 func hashAt(body *statev1.ZoneState, version, current uint32) ([32]byte, error) {
 	if version == current {
-		return sim.HashZone(sim.ZoneStateFromProto(body)), nil
+		h, err := sim.BodyStateHash(body)
+		if err != nil {
+			// A body carrying what the hash does not cover is as invalid as
+			// one that hashes wrong: either way it is not what was written.
+			return h, fmt.Errorf("%w: %w", ErrHashInvalid, err)
+		}
+		return h, nil
 	}
 	h, ok := hashers[version]
 	if !ok {

@@ -40,7 +40,7 @@ type SnapshotMetrics struct {
 	Bytes       *prometheus.GaugeVec   // {zone}
 	LastTick    prometheus.Gauge       //
 	Age         prometheus.GaugeFunc   // derived, so it rises without a round running
-	Failures    *prometheus.CounterVec // {reason}: store, encode, timeout, stall
+	Failures    *prometheus.CounterVec // {reason}: store, encode, timeout, stall, boundary
 	Rounds      *prometheus.CounterVec // {outcome}: complete, incomplete
 	IntervalSec prometheus.Gauge       // andara_snapshot_interval_seconds; 0 when disabled
 	lastRoundAt atomic.Int64           // unix nanos of the last complete round; 0 = none yet
@@ -91,14 +91,14 @@ func NewSnapshotMetrics(reg prometheus.Registerer) *SnapshotMetrics {
 		Name: "andara_snapshot_interval_seconds", Help: "Configured snapshot.interval in seconds; 0 when snapshots are disabled.",
 	})
 	m.Failures = prometheus.NewCounterVec(prometheus.CounterOpts{
-		Name: "andara_snapshot_failures_total", Help: "Snapshot failures by reason. store, encode, and timeout count once per Zone that failed; stall counts once per round.",
+		Name: "andara_snapshot_failures_total", Help: "Snapshot failures by reason. store, encode, and timeout count once per Zone that failed; stall counts once per round; boundary, and timeout waiting for the boundary's acknowledgement, count once per abandoned round.",
 	}, []string{"reason"})
 	m.Rounds = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "andara_snapshot_rounds_total", Help: "Snapshot rounds by outcome.",
 	}, []string{"outcome"})
 	// Pre-create every label value, so a dashboard and an alert see a zero
 	// rather than a missing series before the first failure (CLAUDE.md §7).
-	for _, r := range []string{"store", "encode", "timeout", "stall"} {
+	for _, r := range []string{"store", "encode", "timeout", "stall", "boundary"} {
 		m.Failures.WithLabelValues(r)
 	}
 	for _, o := range []string{"complete", "incomplete"} {
@@ -122,6 +122,14 @@ type SnapshotOptions struct {
 	UploadTimeout time.Duration
 	// Manifest is optional; nil writes no SnapshotWritten records.
 	Manifest ManifestPublisher
+	// AwaitBoundaryAck makes a round wait, before it encodes or writes
+	// anything, for the broker to acknowledge the TickCompleted of the tick
+	// it copied (AC-8, as amended). Set it when the Publisher enqueues
+	// boundaries and reports their fate later, as KafkaPublisher does, and
+	// route that fate here through OnBoundaryAcked and OnBoundaryLost.
+	// Unset, a boundary Publish returned nil for counts as acknowledged:
+	// right for MemoryPublisher, whose Publish is the delivery.
+	AwaitBoundaryAck bool
 
 	Log      *slog.Logger
 	Tracer   trace.Tracer
@@ -154,7 +162,20 @@ type Snapshotter struct {
 	mu        sync.Mutex
 	lastRound time.Time
 	wg        sync.WaitGroup
+
+	// The boundaries' fate, as the Publisher reported it (BoundaryAcks).
+	// ackedThrough is the highest tick acknowledged; lostAt the first tick
+	// lost, 0 for none. A lost boundary is sticky, because the Publisher
+	// publishes none after it. changed is closed and replaced on every
+	// report, so a waiting round wakes and reads again.
+	acks         sync.Mutex
+	ackedThrough sim.Tick
+	lostAt       sim.Tick
+	lostErr      error
+	changed      chan struct{}
 }
+
+var _ sim.BoundaryAcks = (*Snapshotter)(nil)
 
 // NewSnapshotter builds a round runner. A zero Interval returns a runner that
 // never takes a round, so the loop needs no nil check.
@@ -174,7 +195,7 @@ func NewSnapshotter(o SnapshotOptions) (*Snapshotter, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	s := &Snapshotter{opts: o, log: o.Log, tracer: o.Tracer, metrics: NewSnapshotMetrics(o.Registry), now: o.Now}
+	s := &Snapshotter{opts: o, log: o.Log, tracer: o.Tracer, metrics: NewSnapshotMetrics(o.Registry), now: o.Now, changed: make(chan struct{})}
 	s.metrics.IntervalSec.Set(o.Interval.Seconds())
 	s.lastRound = o.Now()
 	return s, nil
@@ -185,6 +206,97 @@ func (s *Snapshotter) Metrics() *SnapshotMetrics { return s.metrics }
 
 // Enabled reports whether snapshots are configured.
 func (s *Snapshotter) Enabled() bool { return s != nil && s.opts.Interval > 0 }
+
+// OnBoundaryAcked implements sim.BoundaryAcks: the broker acknowledged the
+// TickCompleted for tick. Acknowledgements on the boundary Partition arrive in
+// tick order, so every tick up to it is durable too.
+func (s *Snapshotter) OnBoundaryAcked(tick sim.Tick) {
+	if s == nil {
+		return
+	}
+	s.acks.Lock()
+	if tick > s.ackedThrough {
+		s.ackedThrough = tick
+	}
+	s.broadcast()
+	s.acks.Unlock()
+}
+
+// OnBoundaryLost implements sim.BoundaryAcks: the TickCompleted for tick
+// will never be delivered, and neither will any after it.
+func (s *Snapshotter) OnBoundaryLost(tick sim.Tick, err error) {
+	if s == nil {
+		return
+	}
+	s.acks.Lock()
+	if s.lostAt == 0 || tick < s.lostAt {
+		s.lostAt, s.lostErr = tick, err
+	}
+	s.broadcast()
+	s.acks.Unlock()
+}
+
+// broadcast wakes every waiting round. Caller holds acks.
+func (s *Snapshotter) broadcast() {
+	close(s.changed)
+	s.changed = make(chan struct{})
+}
+
+// errBoundaryNotAcked: no acknowledgement for the round's boundary arrived
+// inside snapshot.upload_timeout.
+var errBoundaryNotAcked = errors.New("the tick boundary was not acknowledged inside snapshot.upload_timeout")
+
+// awaitBoundary blocks until tick's boundary is acknowledged, reported lost,
+// or ctx ends, and says which as the reason label a failure counts under.
+func (s *Snapshotter) awaitBoundary(ctx context.Context, tick sim.Tick) (reason string, err error) {
+	if !s.opts.AwaitBoundaryAck {
+		return "", nil
+	}
+	for {
+		s.acks.Lock()
+		lostAt, lostErr, acked, changed := s.lostAt, s.lostErr, s.ackedThrough, s.changed
+		s.acks.Unlock()
+		// Lost first: a boundary after the lost one is never published,
+		// and a round past a gap in the boundaries is not one AW-SRV-007
+		// may recover to.
+		if lostAt != 0 && lostAt <= tick {
+			return "boundary", fmt.Errorf("%w at tick %d: %w", ErrBoundaryLost, lostAt, lostErr)
+		}
+		if acked >= tick {
+			return "", nil
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return "timeout", fmt.Errorf("%w: %w", errBoundaryNotAcked, ctx.Err())
+		}
+	}
+}
+
+// Skip is Maybe for a boundary whose Publish failed outright: no round is
+// taken, because there is no TickCompleted to verify one against (AC-8). A
+// round that was due is counted abandoned under reason=boundary and logged, on
+// the cadence a round would have run, so a boundary outage shows on
+// andara_snapshot_failures_total rather than only as a stale age.
+func (s *Snapshotter) Skip(ctx context.Context, tick sim.Tick, cause error) {
+	if !s.Enabled() {
+		return
+	}
+	now := s.now()
+	s.mu.Lock()
+	due := now.Sub(s.lastRound) >= s.opts.Interval
+	if due {
+		s.lastRound = now
+	}
+	s.mu.Unlock()
+	if !due {
+		return
+	}
+	s.metrics.Failures.WithLabelValues("boundary").Inc()
+	s.log.LogAttrs(ctx, slog.LevelWarn, "snapshot round abandoned: its tick boundary was not published",
+		slog.Uint64("tick", uint64(tick)), slog.String("reason", "boundary"),
+		slog.String("detail", cause.Error()), slog.String("trace_id", traceID(ctx)))
+}
 
 // Maybe takes a round if the interval has elapsed, and returns immediately
 // otherwise. Called by the loop at a tick boundary and nowhere else (AC-8):
@@ -288,6 +400,17 @@ func (s *Snapshotter) run(ctx context.Context, tick sim.Tick, snaps []sim.Snapsh
 	// next one, so the cadence holds even when the store does not.
 	ctx, cancel := context.WithTimeout(ctx, s.opts.UploadTimeout)
 	defer cancel()
+
+	// Nothing becomes durable before the boundary does (AC-8): the copy was
+	// taken at the boundary, but encode and Put wait for the broker to
+	// acknowledge its TickCompleted, inside the same deadline.
+	if reason, err := s.awaitBoundary(ctx, tick); err != nil {
+		s.metrics.Failures.WithLabelValues(reason).Inc()
+		s.log.LogAttrs(ctx, slog.LevelWarn, "snapshot round abandoned: its tick boundary was not acknowledged",
+			slog.Uint64("tick", uint64(tick)), slog.String("reason", reason),
+			slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+		return err
+	}
 
 	var (
 		missing   []sim.ZoneID
