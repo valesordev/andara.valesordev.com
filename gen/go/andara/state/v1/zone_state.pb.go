@@ -183,9 +183,13 @@ type EntityState struct {
 	// name. Both orders are invariants of a Component set, and both are
 	// re-established on encode rather than trusted (AC-2).
 	Components []*v11.ComponentValue `protobuf:"bytes,3,rep,name=components,proto3" json:"components,omitempty"`
-	// Deadline after which a linkdead Session's body is unbound; 0 when not
-	// linkdead. AW-SRV-015 has not landed, so nothing writes this yet. Defined
-	// now because the story's contract assigned it the number.
+	// The linkdead state (AW-SRV-015, ADR-0006), all 0 when not linkdead. Set by
+	// andara.log.v1.MarkLinkdead's apply; cleared by the BindCharacter that
+	// reconnects the body or by the despawn. The deadline is the Tick the body
+	// despawns at unless a reconnect comes first; OnCombatInteraction moves it
+	// to max(deadline, now + linkdead_extension_ticks), never past
+	// linkdead_ceiling_tick. Every field is hashed: a recovered World that
+	// disagreed about any of them would despawn on a different Tick.
 	LinkdeadDeadlineTick uint64 `protobuf:"varint,4,opt,name=linkdead_deadline_tick,json=linkdeadDeadlineTick,proto3" json:"linkdead_deadline_tick,omitempty"`
 	// A Character whose Session left the World (AW-SRV-014): the body keeps its
 	// Room, so "where you were" survives a restart, but it is in no Room's
@@ -194,6 +198,11 @@ type EntityState struct {
 	// for AW-SRV-032's retention.
 	Dormant          bool   `protobuf:"varint,5,opt,name=dormant,proto3" json:"dormant,omitempty"`
 	DormantSinceTick uint64 `protobuf:"varint,6,opt,name=dormant_since_tick,json=dormantSinceTick,proto3" json:"dormant_since_tick,omitempty"`
+	// With linkdead_deadline_tick (4): when the body went linkdead, the Tick it
+	// despawns at however long combat goes on, and how far one combat
+	// interaction refreshes the deadline. Carried from the MarkLinkdead that
+	// set them, so a retuned config never reaches a body already linkdead.
+	LinkdeadSinceTick uint64 `protobuf:"varint,7,opt,name=linkdead_since_tick,json=linkdeadSinceTick,proto3" json:"linkdead_since_tick,omitempty"`
 	// The Template the Entity was made from and the content version that
 	// Template came from. The Template reference is what lets an Entity always
 	// name its pack (AW-SRV-009); the content version is provenance for
@@ -205,9 +214,12 @@ type EntityState struct {
 	// Empty for anything named by its ID. Absent from AW-SRV-006's contract
 	// sketch, which predates AW-SRV-014; the State Hash covers it, so the body
 	// must too. See docs/feedback/AW-SRV-006-zone-snapshots.md §1.
-	Name          string `protobuf:"bytes,10,opt,name=name,proto3" json:"name,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Name string `protobuf:"bytes,10,opt,name=name,proto3" json:"name,omitempty"`
+	// AW-SRV-015; see linkdead_since_tick (7).
+	LinkdeadCeilingTick    uint64 `protobuf:"varint,11,opt,name=linkdead_ceiling_tick,json=linkdeadCeilingTick,proto3" json:"linkdead_ceiling_tick,omitempty"`
+	LinkdeadExtensionTicks uint64 `protobuf:"varint,12,opt,name=linkdead_extension_ticks,json=linkdeadExtensionTicks,proto3" json:"linkdead_extension_ticks,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *EntityState) Reset() {
@@ -282,6 +294,13 @@ func (x *EntityState) GetDormantSinceTick() uint64 {
 	return 0
 }
 
+func (x *EntityState) GetLinkdeadSinceTick() uint64 {
+	if x != nil {
+		return x.LinkdeadSinceTick
+	}
+	return 0
+}
+
 func (x *EntityState) GetTemplate() string {
 	if x != nil {
 		return x.Template
@@ -303,6 +322,20 @@ func (x *EntityState) GetName() string {
 	return ""
 }
 
+func (x *EntityState) GetLinkdeadCeilingTick() uint64 {
+	if x != nil {
+		return x.LinkdeadCeilingTick
+	}
+	return 0
+}
+
+func (x *EntityState) GetLinkdeadExtensionTicks() uint64 {
+	if x != nil {
+		return x.LinkdeadExtensionTicks
+	}
+	return 0
+}
+
 var File_andara_state_v1_zone_state_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_zone_state_proto_rawDesc = "" +
@@ -317,7 +350,7 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\bdeferred\x18\x05 \x03(\v2\x1c.andara.log.v1.LoggedCommandR\bdeferred\x12\"\n" +
 	"\rnext_event_id\x18\x06 \x01(\x04R\vnextEventId\x12\x18\n" +
 	"\afaulted\x18\a \x01(\bR\afaulted\x12!\n" +
-	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\"\xdd\x02\n" +
+	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\"\xfb\x03\n" +
 	"\vEntityState\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12A\n" +
@@ -326,11 +359,14 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"components\x124\n" +
 	"\x16linkdead_deadline_tick\x18\x04 \x01(\x04R\x14linkdeadDeadlineTick\x12\x18\n" +
 	"\adormant\x18\x05 \x01(\bR\adormant\x12,\n" +
-	"\x12dormant_since_tick\x18\x06 \x01(\x04R\x10dormantSinceTick\x12\x1a\n" +
+	"\x12dormant_since_tick\x18\x06 \x01(\x04R\x10dormantSinceTick\x12.\n" +
+	"\x13linkdead_since_tick\x18\a \x01(\x04R\x11linkdeadSinceTick\x12\x1a\n" +
 	"\btemplate\x18\b \x01(\tR\btemplate\x12'\n" +
 	"\x0fcontent_version\x18\t \x01(\tR\x0econtentVersion\x12\x12\n" +
 	"\x04name\x18\n" +
-	" \x01(\tR\x04nameB\xc0\x01\n" +
+	" \x01(\tR\x04name\x122\n" +
+	"\x15linkdead_ceiling_tick\x18\v \x01(\x04R\x13linkdeadCeilingTick\x128\n" +
+	"\x18linkdead_extension_ticks\x18\f \x01(\x04R\x16linkdeadExtensionTicksB\xc0\x01\n" +
 	"\x13com.andara.state.v1B\x0eZoneStateProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03ASX\xaa\x02\x0fAndara.State.V1\xca\x02\x0fAndara\\State\\V1\xe2\x02\x1bAndara\\State\\V1\\GPBMetadata\xea\x02\x11Andara::State::V1b\x06proto3"
 
 var (

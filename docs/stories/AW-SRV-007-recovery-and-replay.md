@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028]
+depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015]
 blocks: [AW-INF-007, AW-SRV-032, AW-INF-011]
 lane: implementation
 risk: high
@@ -270,6 +270,14 @@ CLAUDE.md §8, plus:
   `SnapshotEnvelope.content` (the per-pack versions in effect at its tick), rebuilds the topology,
   and checks `content_digest` *before* loading any Zone body. A mismatch halts recovery like a
   State Hash mismatch. Recovery never re-derives content from the Active Pointers.
+- **Inherited from `AW-SRV-015` (2026-09-26, architecture's contract review; was its AC-9):**
+  **given** a full restart completing within RTO **when** clients reconnect **then** every
+  Character that was playing rebinds and none despawns, exercised in CI on top of this story's
+  kill-and-recover test with 50 Sessions. Also: a Character linkdead at the kill recovers from a
+  *snapshot* with its four linkdead fields as they were (015 AC-6 proves full-log replay only), and
+  a body the crash left present with no Session is marked linkdead at recovery rather than left
+  present forever. `AW-SRV-015` joined `depends_on` with this line: the linkdead state and the
+  reconnect it exercises are 015's.
 
 ## Open questions
 
