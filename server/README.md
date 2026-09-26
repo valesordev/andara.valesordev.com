@@ -760,7 +760,13 @@ mounts it from `contentVolume.templatesConfigMapName`.
 Character name and Account ID are never labels. Logs at `info`: `character created`,
 `character selected` (with `zone`, `partition`, `offset`), `character unbound` (with `reason`,
 `outcome`, `zone`, `room`), each with `account_id`, `character_id`, `session_id`, `trace_id`; the
-name appears quoted as a value on `created`, never as a key. A failed teardown produce is `warn`
+name appears quoted as a value on `created`, never as a key. The tick loop logs `character bind
+applied` at `info` when a `BindCharacter` applies, with the same four fields plus `tick`, the
+`zone` and `room` the body is in, and `body`: `spawned` (a never-bound Character made at the spawn
+Room), `woken` (a dormant body, where it went dormant), `present` (a body with no Session, taken
+where it stands), or `rerouted` (a dormant body in another Zone; the Command is produced there, and
+that Zone's apply logs `woken`). A rejected bind logs no such line; `command applied` has its
+code. A failed teardown produce is `warn`
 with the same fields. Spans: `character.create` and `character.select` under the RPC span, linked
 to `session.lifetime`; `log.produce` under `select`; the tick's `command.apply` for the
 `BindCharacter` joins through the record's `trace_id`; `character.unbind` is a root linked to the

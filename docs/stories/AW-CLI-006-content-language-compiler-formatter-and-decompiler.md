@@ -206,3 +206,17 @@ inherited from the `AW-CLI-005` review. The story's other evidence is in #57 and
 
 `make check`: clean. This closes the inherited line. Per the sprint, `AW-CLI-005` closes on the same
 evidence, and that flip is architecture's.
+
+## Verification record — 2026-09-26, the §8 pass's owed item 2 (implementation)
+
+Branch `impl/aw-cli-006-admin-readme`. It covers **Owed by implementation 2** only. Item 1 is the
+record above.
+
+| Line | Where | Result |
+|------|-------|--------|
+| Drop "`content` arrives with `AW-CLI-002`" | `admin/README.md` intro | now names `content` as `AW-CLI-006`'s |
+| `content compile\|fmt\|decompile\|fetch-core` in the Commands table | `admin/README.md` § Commands | four rows |
+| `--cache` / `ANDARA_CONTENT_CACHE`, `fetch-core --from`, `decompile --path` | `admin/README.md` § content, flag table and "The core pack cache" | every flag of the four commands, checked against `admin/cli/contentcmd.go` and `testdata/help/content-*.txt`, with the cache precedence (`--cache`, `ANDARA_CONTENT_CACHE`, `~/.cache/andara/packs`) |
+| The codes the commands add | `admin/README.md` § Output and exit codes | `compile_failed`, `would_reformat` (1), `core_fetch_unavailable` (3) |
+
+Nothing else changed. `make check`: clean.

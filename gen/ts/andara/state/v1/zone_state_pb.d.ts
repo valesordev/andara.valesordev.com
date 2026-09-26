@@ -148,9 +148,13 @@ export declare type EntityState = Message<"andara.state.v1.EntityState"> & {
   components: ComponentValue[];
 
   /**
-   * Deadline after which a linkdead Session's body is unbound; 0 when not
-   * linkdead. AW-SRV-015 has not landed, so nothing writes this yet. Defined
-   * now because the story's contract assigned it the number.
+   * The linkdead state (AW-SRV-015, ADR-0006), all 0 when not linkdead. Set by
+   * andara.log.v1.MarkLinkdead's apply; cleared by the BindCharacter that
+   * reconnects the body or by the despawn. The deadline is the Tick the body
+   * despawns at unless a reconnect comes first; OnCombatInteraction moves it
+   * to max(deadline, now + linkdead_extension_ticks), never past
+   * linkdead_ceiling_tick. Every field is hashed: a recovered World that
+   * disagreed about any of them would despawn on a different Tick.
    *
    * @generated from field: uint64 linkdead_deadline_tick = 4;
    */
@@ -171,6 +175,16 @@ export declare type EntityState = Message<"andara.state.v1.EntityState"> & {
    * @generated from field: uint64 dormant_since_tick = 6;
    */
   dormantSinceTick: bigint;
+
+  /**
+   * With linkdead_deadline_tick (4): when the body went linkdead, the Tick it
+   * despawns at however long combat goes on, and how far one combat
+   * interaction refreshes the deadline. Carried from the MarkLinkdead that
+   * set them, so a retuned config never reaches a body already linkdead.
+   *
+   * @generated from field: uint64 linkdead_since_tick = 7;
+   */
+  linkdeadSinceTick: bigint;
 
   /**
    * The Template the Entity was made from and the content version that
@@ -197,6 +211,18 @@ export declare type EntityState = Message<"andara.state.v1.EntityState"> & {
    * @generated from field: string name = 10;
    */
   name: string;
+
+  /**
+   * AW-SRV-015; see linkdead_since_tick (7).
+   *
+   * @generated from field: uint64 linkdead_ceiling_tick = 11;
+   */
+  linkdeadCeilingTick: bigint;
+
+  /**
+   * @generated from field: uint64 linkdead_extension_ticks = 12;
+   */
+  linkdeadExtensionTicks: bigint;
 };
 
 /**

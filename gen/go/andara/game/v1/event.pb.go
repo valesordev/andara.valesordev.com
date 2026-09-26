@@ -53,6 +53,9 @@ type EventEnvelope struct {
 	//	*EventEnvelope_Heartbeat
 	//	*EventEnvelope_Resync
 	//	*EventEnvelope_EntityRelocated
+	//	*EventEnvelope_CharacterLinkdead
+	//	*EventEnvelope_CharacterReconnected
+	//	*EventEnvelope_CharacterDespawned
 	Payload       isEventEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -206,6 +209,33 @@ func (x *EventEnvelope) GetEntityRelocated() *EntityRelocated {
 	return nil
 }
 
+func (x *EventEnvelope) GetCharacterLinkdead() *CharacterLinkdead {
+	if x != nil {
+		if x, ok := x.Payload.(*EventEnvelope_CharacterLinkdead); ok {
+			return x.CharacterLinkdead
+		}
+	}
+	return nil
+}
+
+func (x *EventEnvelope) GetCharacterReconnected() *CharacterReconnected {
+	if x != nil {
+		if x, ok := x.Payload.(*EventEnvelope_CharacterReconnected); ok {
+			return x.CharacterReconnected
+		}
+	}
+	return nil
+}
+
+func (x *EventEnvelope) GetCharacterDespawned() *CharacterDespawned {
+	if x != nil {
+		if x, ok := x.Payload.(*EventEnvelope_CharacterDespawned); ok {
+			return x.CharacterDespawned
+		}
+	}
+	return nil
+}
+
 type isEventEnvelope_Payload interface {
 	isEventEnvelope_Payload()
 }
@@ -252,6 +282,18 @@ type EventEnvelope_EntityRelocated struct {
 	EntityRelocated *EntityRelocated `protobuf:"bytes,19,opt,name=entity_relocated,json=entityRelocated,proto3,oneof"`
 }
 
+type EventEnvelope_CharacterLinkdead struct {
+	CharacterLinkdead *CharacterLinkdead `protobuf:"bytes,20,opt,name=character_linkdead,json=characterLinkdead,proto3,oneof"`
+}
+
+type EventEnvelope_CharacterReconnected struct {
+	CharacterReconnected *CharacterReconnected `protobuf:"bytes,21,opt,name=character_reconnected,json=characterReconnected,proto3,oneof"`
+}
+
+type EventEnvelope_CharacterDespawned struct {
+	CharacterDespawned *CharacterDespawned `protobuf:"bytes,22,opt,name=character_despawned,json=characterDespawned,proto3,oneof"`
+}
+
 func (*EventEnvelope_RoomDescribed) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_CharacterArrived) isEventEnvelope_Payload() {}
@@ -272,14 +314,24 @@ func (*EventEnvelope_Resync) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_EntityRelocated) isEventEnvelope_Payload() {}
 
+func (*EventEnvelope_CharacterLinkdead) isEventEnvelope_Payload() {}
+
+func (*EventEnvelope_CharacterReconnected) isEventEnvelope_Payload() {}
+
+func (*EventEnvelope_CharacterDespawned) isEventEnvelope_Payload() {}
+
 type RoomDescribed struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
-	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
-	Title         string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
-	Description   string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
-	Exits         []string               `protobuf:"bytes,5,rep,name=exits,proto3" json:"exits,omitempty"`         // Direction labels, sorted
-	Occupants     []string               `protobuf:"bytes,6,rep,name=occupants,proto3" json:"occupants,omitempty"` // display names, sorted
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId      string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId      string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	Title       string                 `protobuf:"bytes,3,opt,name=title,proto3" json:"title,omitempty"`
+	Description string                 `protobuf:"bytes,4,opt,name=description,proto3" json:"description,omitempty"`
+	Exits       []string               `protobuf:"bytes,5,rep,name=exits,proto3" json:"exits,omitempty"`         // Direction labels, sorted
+	Occupants   []string               `protobuf:"bytes,6,rep,name=occupants,proto3" json:"occupants,omitempty"` // display names, sorted
+	// The subset of occupants that is linkdead (AW-SRV-015), display names,
+	// sorted. A marker a client renders, kept out of occupants so a name there
+	// is always only a name.
+	Linkdead      []string `protobuf:"bytes,7,rep,name=linkdead,proto3" json:"linkdead,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -352,6 +404,13 @@ func (x *RoomDescribed) GetExits() []string {
 func (x *RoomDescribed) GetOccupants() []string {
 	if x != nil {
 		return x.Occupants
+	}
+	return nil
+}
+
+func (x *RoomDescribed) GetLinkdead() []string {
+	if x != nil {
+		return x.Linkdead
 	}
 	return nil
 }
@@ -871,11 +930,211 @@ func (x *Resync) GetReason() string {
 	return ""
 }
 
+// A body's Session lost its stream; the body stays where it stands. No
+// deadline is carried: combat moves it with no Event of its own, so a
+// deadline here would go stale in the first fight.
+type CharacterLinkdead struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterLinkdead) Reset() {
+	*x = CharacterLinkdead{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterLinkdead) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterLinkdead) ProtoMessage() {}
+
+func (x *CharacterLinkdead) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterLinkdead.ProtoReflect.Descriptor instead.
+func (*CharacterLinkdead) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *CharacterLinkdead) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterLinkdead) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterLinkdead) GetCharacterName() string {
+	if x != nil {
+		return x.CharacterName
+	}
+	return ""
+}
+
+// A new Session selected a linkdead body within its grace. The body never
+// left, so this replaces CharacterArrived for a reconnect.
+type CharacterReconnected struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterReconnected) Reset() {
+	*x = CharacterReconnected{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterReconnected) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterReconnected) ProtoMessage() {}
+
+func (x *CharacterReconnected) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterReconnected.ProtoReflect.Descriptor instead.
+func (*CharacterReconnected) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *CharacterReconnected) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterReconnected) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterReconnected) GetCharacterName() string {
+	if x != nil {
+		return x.CharacterName
+	}
+	return ""
+}
+
+// A body left the World: it went dormant where it stood. Emitted in place of
+// CharacterLeft{to_direction: ""}, which AW-SRV-014's UnbindCharacter emitted
+// before this Event existed; a departure through an Exit is still
+// CharacterLeft.
+type CharacterDespawned struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
+	// quit, switch, linkdead, linkdead_ceiling. A string, as EntityRelocated's
+	// and Resync's are, so a new reason needs no schema change; a client
+	// renders an unknown one as it renders quit.
+	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterDespawned) Reset() {
+	*x = CharacterDespawned{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterDespawned) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterDespawned) ProtoMessage() {}
+
+func (x *CharacterDespawned) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterDespawned.ProtoReflect.Descriptor instead.
+func (*CharacterDespawned) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *CharacterDespawned) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterDespawned) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterDespawned) GetCharacterName() string {
+	if x != nil {
+		return x.CharacterName
+	}
+	return ""
+}
+
+func (x *CharacterDespawned) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
 var File_andara_game_v1_event_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\xbc\x06\n" +
+	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\xc4\b\n" +
 	"\rEventEnvelope\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\x04R\aeventId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -891,15 +1150,19 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\x12simulation_stopped\x18\x10 \x01(\v2!.andara.game.v1.SimulationStoppedH\x00R\x11simulationStopped\x129\n" +
 	"\theartbeat\x18\x11 \x01(\v2\x19.andara.game.v1.HeartbeatH\x00R\theartbeat\x120\n" +
 	"\x06resync\x18\x12 \x01(\v2\x16.andara.game.v1.ResyncH\x00R\x06resync\x12L\n" +
-	"\x10entity_relocated\x18\x13 \x01(\v2\x1f.andara.game.v1.EntityRelocatedH\x00R\x0fentityRelocatedB\t\n" +
-	"\apayload\"\xad\x01\n" +
+	"\x10entity_relocated\x18\x13 \x01(\v2\x1f.andara.game.v1.EntityRelocatedH\x00R\x0fentityRelocated\x12R\n" +
+	"\x12character_linkdead\x18\x14 \x01(\v2!.andara.game.v1.CharacterLinkdeadH\x00R\x11characterLinkdead\x12[\n" +
+	"\x15character_reconnected\x18\x15 \x01(\v2$.andara.game.v1.CharacterReconnectedH\x00R\x14characterReconnected\x12U\n" +
+	"\x13character_despawned\x18\x16 \x01(\v2\".andara.game.v1.CharacterDespawnedH\x00R\x12characterDespawnedB\t\n" +
+	"\apayload\"\xc9\x01\n" +
 	"\rRoomDescribed\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12\x14\n" +
 	"\x05title\x18\x03 \x01(\tR\x05title\x12 \n" +
 	"\vdescription\x18\x04 \x01(\tR\vdescription\x12\x14\n" +
 	"\x05exits\x18\x05 \x03(\tR\x05exits\x12\x1c\n" +
-	"\toccupants\x18\x06 \x03(\tR\toccupants\"\x92\x01\n" +
+	"\toccupants\x18\x06 \x03(\tR\toccupants\x12\x1a\n" +
+	"\blinkdead\x18\a \x03(\tR\blinkdead\"\x92\x01\n" +
 	"\x10CharacterArrived\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
@@ -931,7 +1194,20 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\tHeartbeat\"D\n" +
 	"\x06Resync\x12\"\n" +
 	"\rlast_event_id\x18\x01 \x01(\x04R\vlastEventId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reasonB\xb5\x01\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"l\n" +
+	"\x11CharacterLinkdead\x12\x17\n" +
+	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
+	"\x0echaracter_name\x18\x03 \x01(\tR\rcharacterName\"o\n" +
+	"\x14CharacterReconnected\x12\x17\n" +
+	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
+	"\x0echaracter_name\x18\x03 \x01(\tR\rcharacterName\"\x85\x01\n" +
+	"\x12CharacterDespawned\x12\x17\n" +
+	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
+	"\x0echaracter_name\x18\x03 \x01(\tR\rcharacterName\x12\x16\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reasonB\xb5\x01\n" +
 	"\x12com.andara.game.v1B\n" +
 	"EventProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03AGX\xaa\x02\x0eAndara.Game.V1\xca\x02\x0eAndara\\Game\\V1\xe2\x02\x1aAndara\\Game\\V1\\GPBMetadata\xea\x02\x10Andara::Game::V1b\x06proto3"
 
@@ -947,19 +1223,22 @@ func file_andara_game_v1_event_proto_rawDescGZIP() []byte {
 	return file_andara_game_v1_event_proto_rawDescData
 }
 
-var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
+var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
 var file_andara_game_v1_event_proto_goTypes = []any{
-	(*EventEnvelope)(nil),     // 0: andara.game.v1.EventEnvelope
-	(*RoomDescribed)(nil),     // 1: andara.game.v1.RoomDescribed
-	(*CharacterArrived)(nil),  // 2: andara.game.v1.CharacterArrived
-	(*CharacterLeft)(nil),     // 3: andara.game.v1.CharacterLeft
-	(*CommandRejected)(nil),   // 4: andara.game.v1.CommandRejected
-	(*ZoneFaulted)(nil),       // 5: andara.game.v1.ZoneFaulted
-	(*SubscriberDropped)(nil), // 6: andara.game.v1.SubscriberDropped
-	(*SimulationStopped)(nil), // 7: andara.game.v1.SimulationStopped
-	(*EntityRelocated)(nil),   // 8: andara.game.v1.EntityRelocated
-	(*Heartbeat)(nil),         // 9: andara.game.v1.Heartbeat
-	(*Resync)(nil),            // 10: andara.game.v1.Resync
+	(*EventEnvelope)(nil),        // 0: andara.game.v1.EventEnvelope
+	(*RoomDescribed)(nil),        // 1: andara.game.v1.RoomDescribed
+	(*CharacterArrived)(nil),     // 2: andara.game.v1.CharacterArrived
+	(*CharacterLeft)(nil),        // 3: andara.game.v1.CharacterLeft
+	(*CommandRejected)(nil),      // 4: andara.game.v1.CommandRejected
+	(*ZoneFaulted)(nil),          // 5: andara.game.v1.ZoneFaulted
+	(*SubscriberDropped)(nil),    // 6: andara.game.v1.SubscriberDropped
+	(*SimulationStopped)(nil),    // 7: andara.game.v1.SimulationStopped
+	(*EntityRelocated)(nil),      // 8: andara.game.v1.EntityRelocated
+	(*Heartbeat)(nil),            // 9: andara.game.v1.Heartbeat
+	(*Resync)(nil),               // 10: andara.game.v1.Resync
+	(*CharacterLinkdead)(nil),    // 11: andara.game.v1.CharacterLinkdead
+	(*CharacterReconnected)(nil), // 12: andara.game.v1.CharacterReconnected
+	(*CharacterDespawned)(nil),   // 13: andara.game.v1.CharacterDespawned
 }
 var file_andara_game_v1_event_proto_depIdxs = []int32{
 	1,  // 0: andara.game.v1.EventEnvelope.room_described:type_name -> andara.game.v1.RoomDescribed
@@ -972,11 +1251,14 @@ var file_andara_game_v1_event_proto_depIdxs = []int32{
 	9,  // 7: andara.game.v1.EventEnvelope.heartbeat:type_name -> andara.game.v1.Heartbeat
 	10, // 8: andara.game.v1.EventEnvelope.resync:type_name -> andara.game.v1.Resync
 	8,  // 9: andara.game.v1.EventEnvelope.entity_relocated:type_name -> andara.game.v1.EntityRelocated
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	11, // 10: andara.game.v1.EventEnvelope.character_linkdead:type_name -> andara.game.v1.CharacterLinkdead
+	12, // 11: andara.game.v1.EventEnvelope.character_reconnected:type_name -> andara.game.v1.CharacterReconnected
+	13, // 12: andara.game.v1.EventEnvelope.character_despawned:type_name -> andara.game.v1.CharacterDespawned
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_andara_game_v1_event_proto_init() }
@@ -995,6 +1277,9 @@ func file_andara_game_v1_event_proto_init() {
 		(*EventEnvelope_Heartbeat)(nil),
 		(*EventEnvelope_Resync)(nil),
 		(*EventEnvelope_EntityRelocated)(nil),
+		(*EventEnvelope_CharacterLinkdead)(nil),
+		(*EventEnvelope_CharacterReconnected)(nil),
+		(*EventEnvelope_CharacterDespawned)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1002,7 +1287,7 @@ func file_andara_game_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_game_v1_event_proto_rawDesc), len(file_andara_game_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   11,
+			NumMessages:   14,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

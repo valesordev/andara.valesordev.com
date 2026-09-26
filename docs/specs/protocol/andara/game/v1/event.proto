@@ -39,6 +39,10 @@ message EventEnvelope {
     Resync resync = 18;
 
     EntityRelocated entity_relocated = 19;
+
+    CharacterLinkdead character_linkdead = 20;
+    CharacterReconnected character_reconnected = 21;
+    CharacterDespawned character_despawned = 22;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -57,6 +61,10 @@ message RoomDescribed {
   string description = 4;
   repeated string exits = 5;          // Direction labels, sorted
   repeated string occupants = 6;      // display names, sorted
+  // The subset of occupants that is linkdead (AW-SRV-015), display names,
+  // sorted. A marker a client renders, kept out of occupants so a name there
+  // is always only a name.
+  repeated string linkdead = 7;
 }
 
 message CharacterArrived {
@@ -135,4 +143,41 @@ message Resync {
   // far. no_history: this server retained nothing for the Session — a fresh
   // process, or a Session whose retained history was discarded.
   string reason = 2;
+}
+
+// The linkdead Events (AW-SRV-015, ADR-0006). Room-scoped, like
+// CharacterArrived and CharacterLeft, and shaped like them: the Room and the
+// display name, and no character_id, because Entity IDs do not reach
+// clients. Linkdead is visible to other players by decision (Brian,
+// 2026-09-11).
+
+// A body's Session lost its stream; the body stays where it stands. No
+// deadline is carried: combat moves it with no Event of its own, so a
+// deadline here would go stale in the first fight.
+message CharacterLinkdead {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
+}
+
+// A new Session selected a linkdead body within its grace. The body never
+// left, so this replaces CharacterArrived for a reconnect.
+message CharacterReconnected {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
+}
+
+// A body left the World: it went dormant where it stood. Emitted in place of
+// CharacterLeft{to_direction: ""}, which AW-SRV-014's UnbindCharacter emitted
+// before this Event existed; a departure through an Exit is still
+// CharacterLeft.
+message CharacterDespawned {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
+  // quit, switch, linkdead, linkdead_ceiling. A string, as EntityRelocated's
+  // and Resync's are, so a new reason needs no schema change; a client
+  // renders an unknown one as it renders quit.
+  string reason = 4;
 }

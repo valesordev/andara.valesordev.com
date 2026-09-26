@@ -161,6 +161,8 @@ type ApplyContext struct {
 	// Handlers refuse a context without it (AW-SRV-003 AC-11): the log
 	// boundary is a guard, not a convention.
 	consumed bool
+	// bind is the bind_character handler's report, copied to the Outcome.
+	bind *BindResult
 }
 
 // ErrNotConsumed is what a handler returns for an ApplyContext that Step
@@ -213,7 +215,33 @@ type Outcome struct {
 	Kind  CommandKind
 	Code  string
 	Stage string
+	// Bind is what an accepted bind_character did to the body, for the
+	// loop's bind-applied line (AW-SRV-014); nil for every other verb.
+	Bind *BindResult
 }
+
+// BindResult is where an applied BindCharacter left the body, and how.
+type BindResult struct {
+	Account string
+	// Character is the body the bind resolved: the record's actor_id, or the
+	// payload's character_id when the envelope carries none.
+	Character EntityID
+	Zone      ZoneID
+	Room      RoomID
+	Body      BindBody
+}
+
+// BindBody is what a BindCharacter found: the body it spawned, woke, took
+// where it stood, or re-routed to the Zone that holds it.
+type BindBody string
+
+// The bodies a BindResult names.
+const (
+	BindSpawned  BindBody = "spawned"
+	BindWoken    BindBody = "woken"
+	BindPresent  BindBody = "present"
+	BindRerouted BindBody = "rerouted"
+)
 
 // The post-log stages an Outcome names.
 const (
@@ -512,6 +540,8 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 			}
 		}
 		emit(zone.ID, r.Command.GetSessionId(), r.Command.GetClientRef(), actor, rejected(out.Code, msg))
+	} else {
+		out.Bind = actx.bind
 	}
 	end(out)
 	return true

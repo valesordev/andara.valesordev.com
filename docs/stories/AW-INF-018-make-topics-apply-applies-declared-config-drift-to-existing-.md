@@ -4,7 +4,7 @@ title: make topics-apply applies declared config drift to existing topics
 epic: EPIC-10
 component: infra
 type: bug
-status: draft
+status: ready
 size: S
 depends_on: [AW-INF-004]
 blocks: []
@@ -41,8 +41,14 @@ topic does.
 - Partition-count drift stays refused, as it is today, and names the topic and both counts.
 - **A change that can delete data is refused unless the operator names it.** Two changes count:
   lowering `retention.ms` (where `-1`, unlimited, is higher than any finite value), and a
-  `cleanup.policy` change that drops `compact`, after which old keys expire by time. Both let the
-  broker delete segments on its next cleanup, and no later change brings them back.
+  `cleanup.policy` change whose new set of policies contains one the old set didn't. Adding
+  `delete` to a compacted topic lets old keys expire by time. Adding `compact` to a delete topic,
+  such as `andara.commands.v1`, keeps only the last record per key, and there the key is the Zone.
+  Dropping a policy only deletes less: `compact,delete` → `compact` is safe. Every destructive change
+  lets the broker delete segments on its next cleanup, and no later change brings them back.
+  *(Amended at architecture's contract review, 2026-09-26: the draft counted only a change that
+  drops `compact`. That missed `delete` → `compact` on the log topics, the most destructive change
+  this tool could make.)*
   `ALLOW_DATA_LOSS=<topic>[,<topic>…]` names the topics the operator accepts that for.
 - A key that the broker accepts but doesn't report (Redpanda: `min.insync.replicas`,
   `min.compaction.lag.ms`) is skipped locally, as `topics-diff` skips it now, and says so once per
@@ -68,8 +74,9 @@ topic does.
    runs **then** it exits 1 with
    `topics: <topic> has <live> partitions, declared <declared>; repartitioning is refused`, and it
    alters nothing on any topic (the check runs before any alter).
-4. **Given** a declaration that lowers `retention.ms` on a topic, or drops `compact` from its
-   `cleanup.policy`, **when** `topics-apply` runs without that topic in `ALLOW_DATA_LOSS` **then**
+4. **Given** a declaration that lowers `retention.ms` on a topic, or adds a policy to its
+   `cleanup.policy` that the live topic doesn't have (`delete` → `compact`, `compact` → `delete`,
+   `compact` → `compact,delete`), **when** `topics-apply` runs without that topic in `ALLOW_DATA_LOSS` **then**
    it exits 1 with
    `topics: <topic> <key> <old> -> <new> can delete data the broker cannot restore; re-run with ALLOW_DATA_LOSS=<topic> to apply it`,
    and it alters nothing on any topic.
@@ -109,10 +116,10 @@ topic does.
 Alter-configs is online and needs no restart.
 
 **Not every change is reversible.**
-- **Reversible:** raising `retention.ms`, adding `compact`, `min.insync.replicas`, and
+- **Reversible:** raising `retention.ms`, dropping a cleanup policy, `min.insync.replicas`, and
   `min.compaction.lag.ms`. Revert the line in `topics.yaml` and re-run `topics-apply`.
-- **Irreversible:** lowering `retention.ms`, or dropping `compact`, once the broker's next cleanup
-  has run. Segments older than the new window, or superseded keys, are deleted. Reverting the
+- **Irreversible:** lowering `retention.ms`, or adding a cleanup policy, once the broker's next
+  cleanup has run. Segments older than the new window, or superseded keys, are deleted. Reverting the
   declaration only widens the window from then on; it restores nothing. Kafka is the ordering
   authority and the WAL (ADR-0002), so on `andara.commands.v1` or `andara.events.v1` this deletes
   history nothing else holds. What survives is only what a snapshot round or a downstream
@@ -133,8 +140,10 @@ immediately. After cleanup, there is none.
 - **Unit:** `test_topics.py` with the rpk runner faked:
   - an alter for each `COMPARED` key, and no call on a clean state;
   - partition drift refused before any alter;
-  - a retention decrease and a `compact` drop, each refused without `ALLOW_DATA_LOSS`, applied
-    with it, and never inferred from a different topic's entry;
+  - a retention decrease and each policy addition (`delete`→`compact`, `compact`→`delete`,
+    `compact`→`compact,delete`), each refused without `ALLOW_DATA_LOSS`, applied with it, and never
+    inferred from a different topic's entry; `compact,delete`→`compact` applied without it;
+  - policy sets compared as sets, so `delete,compact` and `compact,delete` are no drift;
   - `-1` ordered above every finite retention;
   - the unreported-key skip;
   - a broker refusal mid-run naming the alters already applied.
