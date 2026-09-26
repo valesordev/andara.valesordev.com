@@ -150,17 +150,31 @@ jobs:
       # must be still between the two. How much it rose between `start redpanda` and the
       # first sample is the broker's boot time plus where the fetch cycle stood when the
       # outage began, which is not the loop's to answer — the same run has landed at 9 and
-      # at 31 with nothing changed (the 30-tick bound tripped on 2026-09-21 at 31). The
-      # first sample waits for the broker to report healthy, then eight seconds more.
+      # at 31 with nothing changed (the 30-tick bound tripped on 2026-09-21 at 31).
+      #
+      # The outage sample is polled, not slept (live-assertions.md rule 3): starvation is
+      # counted only once the Kafka client notices the broker is gone, and a `sleep 8`
+      # sampled before that on #95's run (`starved 0 -> 23 -> 23`). The poll ends when
+      # both outage claims hold in one scrape, or at 30 s and lets the asserts report.
       - name: the tick loop survives a broker outage
         run: |
           set -euo pipefail
-          metric() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" | awk -v m="$1" '$1 == m { print $2 }'; }
-          ticks_before=$(metric andara_ticks_total)
+          # Both counters from ONE scrape. Read separately, a tick starving between the
+          # two curls lands in one number and not the other, which quietly weakens the
+          # absence asserted below (docs/specs/testing/live-assertions.md rule 3).
+          pair() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" \
+            | awk '$1 == "andara_ticks_total" { t = $2 } $1 == "andara_tick_input_starved_total" { s = $2 } END { print t, s }'; }
+          gte() { awk -v a="$1" -v b="$2" -v n="$3" 'BEGIN { exit !(a - b >= n) }'; }
+          read -r ticks_before starved_before <<<"$(pair)"
           docker compose -f deploy/compose/docker-compose.yaml stop redpanda
-          sleep 8
-          starved=$(metric andara_tick_input_starved_total)
-          ticks_during=$(metric andara_ticks_total)
+          ticks_during=$ticks_before starved=$starved_before
+          for _ in $(seq 60); do
+            sleep 0.5
+            read -r t s <<<"$(pair)"
+            [[ -n "$t" && -n "$s" ]] || continue   # a missed scrape is not a verdict
+            ticks_during=$t starved=$s
+            gte "$s" "$starved_before" 20 && gte "$t" "$ticks_before" 40 && break
+          done
           docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'andara-server-1 healthy'
           docker compose -f deploy/compose/docker-compose.yaml start redpanda
           # A slow broker boot moves the test's clock, not its verdict.
@@ -168,11 +182,6 @@ jobs:
             docker compose -f deploy/compose/docker-compose.yaml ps --format '{{.Name}} {{.Health}}' | grep -q 'redpanda-1 healthy' && break
             sleep 1
           done
-          # Both counters from ONE scrape. Read separately, a tick starving between the
-          # two curls lands in one number and not the other, which quietly weakens the
-          # absence asserted below (docs/specs/testing/live-assertions.md rule 3).
-          pair() { curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" \
-            | awk '$1 == "andara_ticks_total" { t = $2 } $1 == "andara_tick_input_starved_total" { s = $2 } END { print t, s }'; }
           # Rejoin is not a fixed duration, so do not spend a fixed sleep on it. The claim
           # below is that starvation STOPS once the broker is back — absence, which cannot
           # be waited for (rule 3). Anchor it: poll until starvation has held still across
@@ -187,7 +196,6 @@ jobs:
           # both conditions gate the break, and the sample that satisfied them is the one
           # kept — reading `t`/`s` and breaking without assigning them back leaves
           # `ticks_after` a second stale, which is how this failed at 59 ticks.
-          gte() { awk -v a="$1" -v b="$2" -v n="$3" 'BEGIN { exit !(a - b >= n) }'; }
           read -r prev_t prev_s <<<"$(pair)"
           for _ in $(seq 40); do
             sleep 1
@@ -202,12 +210,12 @@ jobs:
           ticks_after=$prev_t starved_after=$prev_s
           sleep 5
           read -r ticks_settled starved_settled <<<"$(pair)"
-          echo "ticks $ticks_before -> $ticks_during -> $ticks_after -> $ticks_settled; starved $starved -> $starved_after -> $starved_settled"
-          python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$ticks_settled" "$starved" "$starved_after" "$starved_settled" <<'PY'
+          echo "ticks $ticks_before -> $ticks_during -> $ticks_after -> $ticks_settled; starved $starved_before -> $starved -> $starved_after -> $starved_settled"
+          python3 - "$ticks_before" "$ticks_during" "$ticks_after" "$ticks_settled" "$starved_before" "$starved" "$starved_after" "$starved_settled" <<'PY'
           import sys
-          tb, td, ta, ts, s, sa, ss = map(float, sys.argv[1:])
+          tb, td, ta, ts, sb, s, sa, ss = map(float, sys.argv[1:])
           assert td - tb >= 40, "the loop stalled while the broker was down"
-          assert s >= 20, "no starvation counted during the outage"
+          assert s - sb >= 20, "no starvation counted during the outage"
           assert ta - td >= 60, "the loop stalled after the broker returned"
           assert ts - ta >= 25, "the loop stalled once the broker was back"
           # Anchored absence: >= 25 ticks ran in this window and a starved tick would
