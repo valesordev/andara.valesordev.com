@@ -238,6 +238,23 @@ mismatch halts recovery as a State Hash mismatch does. Topology only; the State 
 
 ---
 
+**Content Repository** — The private git repository (`valesordev/andara-world`, `AW-INF-022`) where
+Builders keep the Content Language source of their packs, one directory per pack, checked by
+`andara-cli content fmt --check` and `content validate` on every pull request. Decided 2026-09-26
+(Brian). It holds source and history only. The content store stays authoritative for what's live
+(ADR-0004), and a merge publishes nothing. Separate from this repository, which Builders don't
+need access to.
+
+**Fixture Pack** — The dev fixture (the `town`, `docks`, and `wilds` Zones, spawning at
+`town/plaza`) published into `dev`'s content store as pack `town`, so `dev` is playable before any
+Builder content exists (`AW-INF-021`, decided 2026-09-26). It's seeded once, and a Builder holding
+`town` may replace it. Never seeded into `prod`.
+
+**Builder's Guide** — The Builder-facing documentation, `docs/builders/` (`AW-INF-023`): getting
+access, installing `andara-cli`, a first-Zone tutorial on `dev`, the publish loop, and generated
+reference tables. It explains and links to the Content Language specification. It never restates
+a normative rule.
+
 ## Players, accounts, sessions
 
 **Account** — The credential-bearing identity a human authenticates as. Owns up to five Characters, of
@@ -331,6 +348,11 @@ Story `As a <role>` lines use exactly these. "User" is not a role.
 `andara-cli` and the content store, **without repository access** — confirmed 2026-09-07; a Builder
 who needs a server change opens a GitHub issue (ADR-0004). Untrusted by the system in the security
 sense. May activate content only with a second approver.
+
+**Pack Grant** — An entry in an Account's `builder_packs`: a Content Pack that Account may publish
+to and approve for, given the `builder` role (`AW-SRV-013`, decided 2026-09-11). Set only by an
+Operator, with `andara-cli account set-packs` (`AW-SRV-035`). Stored independently of roles, and
+`andara.core` can never be granted.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
