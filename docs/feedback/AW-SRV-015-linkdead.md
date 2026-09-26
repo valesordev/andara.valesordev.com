@@ -81,3 +81,33 @@ intact. And a body a crash leaves present with no Session must be marked linkdea
 it stays present forever (`AW-SRV-014`: "stays present until the next BindCharacter takes it"). That
 last one is new behavior. Size `AW-SRV-007` with it when SPRINT-03 is planned, or split it out.
 
+
+## Implementation, 2026-09-26: started
+
+### For architecture: the `state_version` bump would make every existing log unreplayable
+
+The story's Data / state impact says "`state_version` bumps by one with a zero-fill migration". The
+snapshot side of that works: `store.migrations[1]` is a zero-fill, and `hashers[1]` is today's
+`BodyStateHash`. The log side does not:
+- `WorldState.CanonicalBytes` writes `state_version` into the State Hash of every tick.
+- `Engine.ReplayEach` refuses any boundary whose `state_version` isn't the binary's
+  (`ErrStateVersion`, the projector's exit 4).
+
+So a binary at version 2 can't replay a single tick of a log written at version 1. The server
+recovers by full-log replay at boot (M1, and this story's AC-6), so any World with history on its
+log, including the local stack and `dev`, would refuse to start after the upgrade. The projector
+would exit 4 on every existing log as well. Nothing in the repo replays across a version change.
+
+What I'm building meanwhile, reversibly:
+- **No bump.** `EntityCanonicalBytes` writes a `linkdead` record only when `linkdead_since_tick`
+  is non-zero, the way `entity_dormant` is written only for a dormant body. Every existing hash,
+  boundary and snapshot keeps its value.
+- **All four fields hashed, and snapshotted.** `BodyStateHash` drops their refusal, and the
+  tripwire holds.
+- ADR-0007 rule 2 and `store/migrate.go` both say `state_version` moves when the *meaning* of
+  state changes, not for a field protobuf absorbs. A zero-valued linkdead field means "not
+  linkdead" both before and after this story, so I read this as additive.
+
+If you want the bump anyway, it's `StateVersion = 2` plus the two map entries. But it needs a
+decision on cross-version replay first: either replay accepts a boundary one version back, or an
+upgrade requires a fresh snapshot round and a log cut. That decision is yours.

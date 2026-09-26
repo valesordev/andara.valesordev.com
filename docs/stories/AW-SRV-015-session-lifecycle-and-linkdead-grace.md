@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-014]
 blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
