@@ -142,3 +142,43 @@ func TestLinkdead_UnadoptedStateIsReleased(t *testing.T) {
 		t.Fatal("a quit was parked")
 	}
 }
+
+// The park is ParkSession's, done before it returns (#121). Parking when
+// forget woke on the Session's end left a window, unordered against the
+// reconnect's Subscribe, in which the new Session found nothing to adopt and
+// resumed with Resync{no_history}. Here the lost Session's end has not been
+// signaled at all when the reconnect subscribes: the widest that window
+// gets.
+func TestLinkdead_ReconnectBeforeTheOldSessionEnds(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.ParkFor = time.Minute })
+	f.place("s1", "aldric", "town", "plaza")
+	a := f.subscribe("s1", player, 0, false, nil)
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
+	seen := f.emit(plaza())
+	if got := a.next().GetEventId(); got != seen {
+		t.Fatalf("got %d", got)
+	}
+
+	// The connection is gone and the gateway parks the Session; its
+	// context has not been canceled yet.
+	a.cancel()
+	a.wait()
+	f.e.ParkSession("s1")
+	missed := f.emit(plaza())
+
+	f.place("s2", "aldric", "town", "plaza")
+	b := f.subscribe("s2", player, seen, false, nil)
+	if got := b.next(); got.GetEventId() != missed {
+		t.Fatalf("resumed with %v, want event %d", got, missed)
+	}
+
+	// The lost Session's end arriving now takes nothing from the reconnect.
+	close(a.ended)
+	live := f.emit(plaza())
+	if got := b.next().GetEventId(); got != live {
+		t.Fatalf("live %d, want %d", got, live)
+	}
+	b.end()
+	b.wait()
+	f.forgotten(0, 0)
+}
