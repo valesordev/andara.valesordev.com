@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: done
+status: review
 size: M
 depends_on: [AW-SRV-014]
 blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
@@ -408,13 +408,13 @@ that reasoning.
 
 ## §8 review, second pass (architecture, 2026-09-26)
 
-On `arch/sprint-02-review-4`, against `main` at `6561cde`. **`done`.** The three items the first
-pass held it on are closed:
+On `arch/sprint-02-review-4`, against `main` at `6561cde`. **Stays `review`** on #127, a lock-order
+inversion #124 introduced (below). The three items the first pass held it on are closed:
 
 | Item | Closed by | Checked |
 |------|-----------|---------|
 | The despawn line at the deadline or ceiling | #123 (`389a717`) | The roster fills `session_id` from the linkdead hold, or from a reconnect that took it over. A body recovery left carries `recovered=true` and no `session_id`. The tick loop stamps each linkdead step that has no Command with the `sim.tick` span's traceparent. `TestRoster_ExpiryLine` asserts both cases, and `TestRun_Linkdead` asserts the held line end to end. `Entity.Linkdead()` now keys on the deadline, as the hash does, which closes the nit |
-| #121, the reconnect's `Resync{no_history}` | #124 (`393c654`, `ef86c73`) | The park now happens in `ParkSession`, which the gateway calls before it cancels the Session. It no longer happens in `forget`, whose goroutine nothing ordered against the reconnect's `Subscribe`. The race was proven by widening the window (live-assertions rule 4): a 3 s delay before `forget` failed every run on the old code and passes on the new. `TestLinkdead_ReconnectBeforeTheOldSessionEnds` holds the window open deterministically. A stale `Rebind` of the lost Session leaves parked or adopted state alone (`TestLinkdead_StaleRebindLeavesTheParkedRing`). Lock order: `ParkSession` takes `e.mu` then `s.rebind`, the order `adopt` already used, and nothing takes `e.mu` under `s.rebind`. `server/egress` and `server/roster` pass `-race -count=10`, and `TestRun_Linkdead` passes `-race -count=5` |
+| #121, the reconnect's `Resync{no_history}` | #124 (`393c654`, `ef86c73`) | The park now happens in `ParkSession`, which the gateway calls before it cancels the Session. It no longer happens in `forget`, whose goroutine nothing ordered against the reconnect's `Subscribe`. The race was proven by widening the window (live-assertions rule 4): a 3 s delay before `forget` failed every run on the old code and passes on the new. `TestLinkdead_ReconnectBeforeTheOldSessionEnds` holds the window open deterministically. A stale `Rebind` of the lost Session leaves parked or adopted state alone (`TestLinkdead_StaleRebindLeavesTheParkedRing`). **But #124 inverts a lock order (#127):** `ParkSession` takes `e.mu` then `s.rebind`, while `session()` holds `s.rebind` and, on a failed first subscribe, calls `discard`, which takes `e.mu`. *(This record first said nothing takes `e.mu` under `s.rebind`. That was wrong, and review of #126 caught it.)* `server/egress` and `server/roster` pass `-race -count=10`, and `TestRun_Linkdead` passes `-race -count=5` |
 | Inertness | #122, Brian: wholly inert | Open questions above; ADR-0006 note |
 
 The rest of the first pass's table stands. `make stack-linkdead` runs in the `stack` workflow and
@@ -423,8 +423,15 @@ with #123 and #124 in it. The server logged `character linkdead` and `character 
 with their Sessions and non-empty `trace_id`s. The run doesn't wait out a grace, so it doesn't
 show the expiry line live; the tests above assert it.
 
+**Holding it: #127.** A playing Session's first `Subscribe` that fails while the same connection
+is parked can deadlock the egress. Each side holds the lock the other waits on, and `e.mu` then
+blocks every later stream operation in the process. It needs one lock order and a test that holds
+the window open, and then this story flips.
+
 Two lines are carried, not deferred:
-- **AC-13 (death while linkdead)** goes to the first story with lethal damage, as an inherited
-  line: `andara_linkdead_outcomes_total{outcome="died"}` is declared and pre-seeded.
+- **AC-13 (death while linkdead)** has no carrier yet: no story or epic defines lethal damage.
+  It's sent to PM (feedback file) to record as an inherited Definition-of-done line wherever
+  combat is first groomed. `andara_linkdead_outcomes_total{outcome="died"}` is declared and
+  pre-seeded meanwhile.
 - **AC-9 and the broker-level kill mid-grace** are `AW-SRV-007`'s (its inherited line), with
   snapshot recovery. AC-6 is proven here by full-log replay at the sim level.

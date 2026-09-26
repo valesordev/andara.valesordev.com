@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-69 stories — 6 review · 25 ready · 9 draft · 29 done
+69 stories — 7 review · 25 ready · 9 draft · 28 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -18,14 +18,16 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
   next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
-  review AW-SRV-014, AW-SRV-019 — run the §8 checklist, then flip to done
+  review AW-SRV-014, AW-SRV-015, AW-SRV-019 — run the §8 checklist, then flip to done
   held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
+  AW-SRV-015  ).
+  AW-SRV-015  ; it implies inert but doesn't decide it. Sent to PM for Brian's game-design batch.…
   AW-SRV-019  .
-              16 more, attached to stories neither lane has reached
+              14 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

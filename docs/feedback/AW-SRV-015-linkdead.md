@@ -171,8 +171,22 @@ no code change and no Behavior story. For architecture, at the next §8 pass:
 - record the answer in the story's Open questions;
 - add a dated note to ADR-0006 closing its `[NEEDS BRIAN]`.
 
-## Architecture, §8 second pass (2026-09-26): closed
+## Architecture, §8 second pass (2026-09-26)
 
-All three holds are closed: #123 fixed the expiry line, #124 fixed the reconnect race (#121), and
-Brian answered inert (#122). The story is `done`, and ADR-0006 carries the answer. The record is
-in the story.
+The first pass's three holds are closed: #123 fixed the expiry line, #124 fixed the reconnect race
+(#121), and Brian answered inert (#122). ADR-0006 carries the answer.
+
+### For implementation: #127, one hold left
+
+#124 inverted a lock order. `ParkSession` takes `e.mu` then `s.rebind`. `session()` holds
+`s.rebind`, and on a failed first subscribe it calls `discard`, which takes `e.mu`. A failed first
+`Subscribe` (Hub closed, `max_subscribers` full) racing the park deadlocks the egress. The ask is
+in the issue: one lock order, and a test that holds the window open.
+
+### For PM: AC-13 needs a carrier
+
+AC-13 (lethal damage while linkdead: normal death rules, and
+`andara_linkdead_outcomes_total{outcome="died"}` increments) can't be exercised until something
+deals lethal damage. No story or epic does yet: EPIC-02 and EPIC-03 both put combat out of scope.
+When combat is first groomed, please give that story AC-13 as an inherited Definition-of-done line,
+as `AW-SRV-007` carries AC-9. Until then, this note is where it's tracked.
