@@ -492,6 +492,17 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 			slog.String("code", out.Code), slog.String("stage", out.Stage),
 			slog.Float64("duration_ms", float64(d.Microseconds())/1000),
 			slog.String("trace_id", span.SpanContext().TraceID().String()))
+		if b := out.Bind; b != nil {
+			// AW-SRV-014: whether the Character entered the World, and
+			// where, is known only here. character selected says the
+			// Command was produced; this says what the apply did with it.
+			l.log.LogAttrs(ctx, slog.LevelInfo, "character bind applied",
+				slog.String("account_id", b.Account), slog.String("character_id", string(b.Character)),
+				slog.String("session_id", r.Command.GetSessionId()),
+				slog.String("zone", string(b.Zone)), slog.String("room", string(b.Room)), slog.String("body", string(b.Body)),
+				slog.Uint64("tick", uint64(l.tickNo)),
+				slog.String("trace_id", span.SpanContext().TraceID().String()))
+		}
 	}
 }
 

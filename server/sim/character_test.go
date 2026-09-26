@@ -325,3 +325,60 @@ func containsEntity(s sim.Scope, id sim.EntityID) bool {
 	}
 	return false
 }
+
+// outcomes records every Outcome the engine reports.
+type outcomes struct{ got []sim.Outcome }
+
+func (o *outcomes) Begin(sim.ZoneID, sim.Record) func(sim.Outcome) {
+	return func(out sim.Outcome) { o.got = append(o.got, out) }
+}
+
+func (o *outcomes) last(t *testing.T) sim.Outcome {
+	t.Helper()
+	if len(o.got) == 0 {
+		t.Fatal("no outcome reported")
+	}
+	return o.got[len(o.got)-1]
+}
+
+// The Outcome of an applied BindCharacter says where the body is and what
+// the bind did to it — the loop's bind-applied line (AW-SRV-014) — in each
+// of the handler's cases; a rejected one, and every other verb, carries
+// none.
+func TestBind_OutcomeReportsWhatTheBindDid(t *testing.T) {
+	e := emptyEngine(t)
+	obs := &outcomes{}
+	e.SetObserver(obs)
+	want := func(zone sim.ZoneID, room sim.RoomID, body sim.BindBody) {
+		t.Helper()
+		got := obs.last(t).Bind
+		if got == nil || *got != (sim.BindResult{Account: "acct-ch-1", Character: "ch-1", Zone: zone, Room: room, Body: body}) {
+			t.Fatalf("bind result %+v, want %s/%s %s", got, zone, room, body)
+		}
+	}
+
+	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	want("town", "plaza", sim.BindSpawned)
+	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	want("town", "plaza", sim.BindPresent)
+	res := step(t, e, simtest.Move("town", "ch-1", "east")) // cross-Zone: wilds/trail
+	if obs.last(t).Bind != nil {
+		t.Fatalf("a move reported a bind: %+v", obs.last(t).Bind)
+	}
+	for _, out := range res.Outbound {
+		step(t, e, out)
+	}
+	// Present in another Zone than the roster names.
+	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	want("wilds", "trail", sim.BindPresent)
+	step(t, e, simtest.Unbind("wilds", "ch-1"))
+	res = step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	want("wilds", "trail", sim.BindRerouted)
+	step(t, e, res.Outbound[0])
+	want("wilds", "trail", sim.BindWoken)
+
+	step(t, e, simtest.Bind("town", "ch-2", "Brenna", "nowhere"))
+	if out := obs.last(t); out.Code != sim.CodeUnknownRoom || out.Bind != nil {
+		t.Fatalf("a rejected bind: %+v", out)
+	}
+}
