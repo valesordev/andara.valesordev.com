@@ -38,6 +38,9 @@ What it is not:
 - AW-INF-018 — `make topics-apply` applies declared config drift to existing topics (new,
   architecture; #77)
 - AW-INF-017 — `make stack-linkdead` (new, architecture)
+- AW-INF-019 — Argo CD deploys `dev` from `main` on the box's kind cluster (new, architecture;
+  added 2026-09-26 at Brian's request). Answer the three items in `docs/feedback/AW-INF-019-argocd.md`
+  and `AW-INF-007`'s scope question in `docs/feedback/AW-INF-007-deploy-lifecycle.md` first.
 
 ## Architecture backlog (pickup order)
 Carryover first. The §8 queue, in the order its evidence is ready:
@@ -67,6 +70,12 @@ Then the box session with Brian, which is carryover:
 Then the demo slice:
 
 12. AW-INF-017 — `make stack-linkdead` — depends on AW-SRV-015, AW-CLI-007, AW-CLI-008
+
+Then, added 2026-09-26 at Brian's request:
+
+13. AW-INF-019 — Argo CD deploys `dev` from `main` — depends on AW-INF-013 and AW-INF-014, which
+    reach `done` in item 11's box session. It's built on the box, and it's last so it can't
+    delay the demo slice.
 
 ## Implementation backlog (pickup order)
 Carryover first. These are the owed items that keep SPRINT-01's stories at `review`:
