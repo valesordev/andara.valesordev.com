@@ -62,10 +62,12 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		}
 		if !ent.Dormant {
 			a.Emit(ScopeEntities(ent.ID), arrived(a.Zone.ID, ent.Room, ent.DisplayName()))
+			a.bound(bind, a.Zone.ID, ent.Room, BindPresent)
 			return nil
 		}
 		ent.Dormant, ent.DormantSince = false, 0
 		a.Emit(ScopeRoom(a.Zone.ID, ent.Room).With(ent.ID), arrived(a.Zone.ID, ent.Room, ent.DisplayName()))
+		a.bound(bind, a.Zone.ID, ent.Room, BindWoken)
 		return nil
 	}
 	// Elsewhere in this process's World?
@@ -81,6 +83,7 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 			// Present with no Session, in a Zone the roster did not
 			// name: the Character alone hears where it is.
 			a.Emit(ScopeEntities(ent.ID), arrived(z.ID, ent.Room, ent.DisplayName()))
+			a.bound(bind, z.ID, ent.Room, BindPresent)
 			return nil
 		}
 		a.Produce(&logv1.LoggedCommand{
@@ -90,6 +93,7 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 				CharacterId: bind.GetCharacterId(), AccountId: bind.GetAccountId(), Name: bind.GetName(),
 			}},
 		})
+		a.bound(bind, z.ID, ent.Room, BindRerouted)
 		return nil
 	}
 	// Never bound: a new body at the spawn Room.
@@ -108,7 +112,13 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	ent.Name = bind.GetName()
 	a.Zone.Entities[ent.ID] = &ent
 	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), arrived(a.Zone.ID, room.ID, ent.DisplayName()))
+	a.bound(bind, a.Zone.ID, room.ID, BindSpawned)
 	return nil
+}
+
+// bound reports what the bind did, for the Outcome.
+func (a *ApplyContext) bound(bind *logv1.BindCharacter, zone ZoneID, room RoomID, body BindBody) {
+	a.bind = &BindResult{Account: bind.GetAccountId(), Zone: zone, Room: room, Body: body}
 }
 
 // --- unbind_character --------------------------------------------------

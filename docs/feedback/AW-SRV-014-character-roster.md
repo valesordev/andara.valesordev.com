@@ -55,3 +55,19 @@ relaunches trips it, and so will a player on a fast machine. `AW-SRV-015` AC-5 r
 path (`UnbindCharacter{QUIT}` → `CharacterDespawned{QUIT}`), so decide there whether
 `CloseSession` should answer only after the unbind has applied, or whether the launch case should
 retry like the reconnect case does. No story is written for it yet.
+
+## Implementation, 2026-09-26: item 1 delivered
+
+On `impl/aw-srv-014-bind-applied-log`. The line is `character bind applied` at `info`, logged by the
+tick loop from the apply's outcome (`tickloop/loop.go`, `Begin`), so `server/sim` still logs
+nothing. The bind handler reports a `sim.BindResult` (account, Zone, Room, and what it did) on the
+`Outcome` it already returns. Fields: `account_id`, `character_id`, `session_id`, `trace_id`,
+`tick`, `zone`, `room`, and `body`:
+- `spawned`: a never-bound Character, made at the spawn Room
+- `woken`: a dormant body, woken in its old Room
+- `present`: a body with no Session, taken where it stands, in this Zone or another
+- `rerouted`: a dormant body in another Zone. The line names that Zone and Room, and that Zone's
+  apply logs `woken` a tick later.
+
+A rejected bind logs no such line; `command applied` at `debug` carries its code. Tests:
+`TestLoop_LogsTheAppliedBind` and `TestBind_OutcomeReportsWhatTheBindDid`.

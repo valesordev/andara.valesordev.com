@@ -617,6 +617,16 @@ departure, and the produced-Submit dedup).
 
 The `[NEEDS BRIAN]` above does not affect the contract and stays Brian's.
 
+**§8 owed item 1 (2026-09-26), delivered** on `impl/aw-srv-014-bind-applied-log`: the tick loop logs
+`character bind applied` at `info` from the apply's outcome, with `account_id`, `character_id`,
+`session_id`, `trace_id`, `tick`, `zone`, `room`, and `body` (`spawned`, `woken`, `present`,
+`rerouted`). The sim stays free of logging: the handler reports a `sim.BindResult` on the
+`Outcome`, and the loop logs it. Tests: `TestLoop_LogsTheAppliedBind` (`tickloop`, through the
+real handler: spawned, woken, present, and no line for a rejected bind) and
+`TestBind_OutcomeReportsWhatTheBindDid` (`sim`, every case including the cross-Zone present body
+and the re-route followed by its `woken`). Documented in `server/README.md`. Item 2 stays with
+`AW-CLI-007`.
+
 ## Open questions
 
 - **Resolved 2026-09-21 (Brian): `character.spawn_room` is `town/plaza`** for the dev content — a
