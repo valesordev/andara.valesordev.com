@@ -4,7 +4,7 @@ title: make up builds the server image from the tree it runs in
 epic: EPIC-01
 component: infra
 type: bug
-status: draft
+status: ready
 size: S
 depends_on: [AW-INF-002]
 blocks: []
@@ -79,6 +79,14 @@ demo or a §8 record observes the code under review and not an older build.
   `make image` passes them, with `-dirty` appended to `COMMIT` and `REVISION` on a dirty tree.
   `stack.sh` receives them from the Makefile rather than recomputing them, so `make up` and
   `make image` can't stamp a build differently.
+- **The suffix is added in the Makefile's `COMMIT` and `REVISION` themselves**, not in `stack.sh`,
+  so `make image` and `make build` stamp `-dirty` too and the three can't disagree. Dirty means
+  what `git describe --dirty` (which `VERSION` already uses) means: a tracked file differs from
+  `HEAD`. An untracked file doesn't count, even if it lands in the build context.
+  *(Amended at architecture's contract review, 2026-09-26: the draft named both the Makefile
+  as the single source and a suffix `make up` alone added, and those can't both hold.)*
+- A variable given on the command line (`make up COMMIT=…`) still wins, as `?=` already makes it.
+  CI's `publish.yaml` builds from a clean checkout, so the published image never carries `-dirty`.
 - Summary line, added after `andara-server localhost:8443 (gRPC, TLS)`:
   `  andara-server revision   <sha>[-dirty]`, read back from the running container's label, not
   from the build args.
@@ -119,4 +127,7 @@ CLAUDE.md §8, plus: #73 is closed by the merging PR.
 
 - `[ASSUMPTION]` Building every time is acceptable, because the layer cache keeps a no-change
   build short. Architecture records the measured no-change `make up` time in the verification
-  record.
+  record. If it's over 10 s, the record names what busts the cache.
+- The build context is the repo root minus `.dockerignore`. Until #78 removes it, that context
+  includes the 35 MB `andara-projector` at the root. It doesn't bust the cache, but it's sent to the
+  daemon on every `make up`. That's noted here, not fixed here.

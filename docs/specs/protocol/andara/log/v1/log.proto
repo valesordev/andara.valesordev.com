@@ -65,9 +65,10 @@ message LoggedCommand {
     BindCharacter bind_character = 15;
     UnbindCharacter unbind_character = 16;
     ContentSwap content_swap = 17;
+    MarkLinkdead mark_linkdead = 18;
   }
 
-  // Verbs beyond these arrive with their own stories, taking numbers from 17
+  // Verbs beyond these arrive with their own stories, taking numbers from 19
   // upward — deliberately NOT `reserved`. A reserved range would have
   // to shrink to add a verb, and buf treats shrinking one as a breaking change,
   // so reserving numbers "to hold them" makes the most routine schema change in
@@ -145,10 +146,39 @@ message UnbindCharacter {
 enum UnbindReason {
   UNBIND_REASON_UNSPECIFIED = 0;
   QUIT = 1;
-  // SWITCH is AW-SRV-032's, LINKDEAD AW-SRV-015's; declared so the field
-  // never changes shape.
+  // SWITCH is AW-SRV-032's; declared so the field never changes shape.
   SWITCH = 2;
+  // Declared for AW-SRV-015 and not produced by it: grace expiry is the sim
+  // reaching a deadline Tick in Zone state, not a Command in the log
+  // (MarkLinkdead below). Kept, because a number once declared stays.
   LINKDEAD = 3;
+}
+
+// The Session driving this Character lost its stream without a CloseSession
+// (AW-SRV-015, ADR-0006): a transport close, a keepalive miss past
+// session.linkdead_detect, or a drain. Produced by the Gateway; the tick that
+// applies it fixes the Tick the grace is counted from. Applied to a present,
+// bound body it sets, with T the applying Tick:
+//   linkdead_since_tick      = T
+//   linkdead_deadline_tick   = T + grace_ticks
+//   linkdead_ceiling_tick    = T + max_ticks
+//   linkdead_extension_ticks = extension_ticks
+// and emits CharacterLinkdead to the Room. Applied to a body already linkdead,
+// or dormant, or absent, it is a deterministic no-op, so a Gateway that
+// produces it twice (a drain racing a drop) changes nothing.
+//
+// The three durations are carried, in Ticks, rather than read from the sim's
+// configuration at apply. The log is the source of what a tick ran on
+// (ContentSwap below), and a grace read from config would make a World
+// replayed under a retuned session.linkdead_* land its despawns on different
+// Ticks than the World players were in, and fail its State Hash. The Gateway
+// converts session.linkdead_grace, _combat_extension and _max at
+// sim.tick_rate when it produces this; replay reads what was produced.
+message MarkLinkdead {
+  string character_id = 1;
+  uint64 grace_ticks = 2;
+  uint64 extension_ticks = 3;
+  uint64 max_ticks = 4;
 }
 
 // The World moves one pack to a new content version (AW-SRV-012). The Loader
@@ -229,7 +259,8 @@ message Entity {
   repeated andara.content.v1.ComponentValue components = 4;
   // The display name, when the Entity has one apart from its ID: a
   // Character's (AW-SRV-014). Dormancy is not carried — a dormant body
-  // never moves, so it never crosses a Zone.
+  // never moves, so it never crosses a Zone. Nor is linkdead state
+  // (AW-SRV-015): a linkdead body is inert, so it never moves either.
   string name = 5;
 }
 

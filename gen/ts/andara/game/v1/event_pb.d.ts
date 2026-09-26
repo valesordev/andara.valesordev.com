@@ -113,6 +113,24 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: EntityRelocated;
     case: "entityRelocated";
+  } | {
+    /**
+     * @generated from field: andara.game.v1.CharacterLinkdead character_linkdead = 20;
+     */
+    value: CharacterLinkdead;
+    case: "characterLinkdead";
+  } | {
+    /**
+     * @generated from field: andara.game.v1.CharacterReconnected character_reconnected = 21;
+     */
+    value: CharacterReconnected;
+    case: "characterReconnected";
+  } | {
+    /**
+     * @generated from field: andara.game.v1.CharacterDespawned character_despawned = 22;
+     */
+    value: CharacterDespawned;
+    case: "characterDespawned";
   } | { case: undefined; value?: undefined };
 };
 
@@ -159,6 +177,15 @@ export declare type RoomDescribed = Message<"andara.game.v1.RoomDescribed"> & {
    * @generated from field: repeated string occupants = 6;
    */
   occupants: string[];
+
+  /**
+   * The subset of occupants that is linkdead (AW-SRV-015), display names,
+   * sorted. A marker a client renders, kept out of occupants so a name there
+   * is always only a name.
+   *
+   * @generated from field: repeated string linkdead = 7;
+   */
+  linkdead: string[];
 };
 
 /**
@@ -412,4 +439,103 @@ export declare type Resync = Message<"andara.game.v1.Resync"> & {
  * Use `create(ResyncSchema)` to create a new message.
  */
 export declare const ResyncSchema: GenMessage<Resync>;
+
+/**
+ * A body's Session lost its stream; the body stays where it stands. No
+ * deadline is carried: combat moves it with no Event of its own, so a
+ * deadline here would go stale in the first fight.
+ *
+ * @generated from message andara.game.v1.CharacterLinkdead
+ */
+export declare type CharacterLinkdead = Message<"andara.game.v1.CharacterLinkdead"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 2;
+   */
+  roomId: string;
+
+  /**
+   * @generated from field: string character_name = 3;
+   */
+  characterName: string;
+};
+
+/**
+ * Describes the message andara.game.v1.CharacterLinkdead.
+ * Use `create(CharacterLinkdeadSchema)` to create a new message.
+ */
+export declare const CharacterLinkdeadSchema: GenMessage<CharacterLinkdead>;
+
+/**
+ * A new Session selected a linkdead body within its grace. The body never
+ * left, so this replaces CharacterArrived for a reconnect.
+ *
+ * @generated from message andara.game.v1.CharacterReconnected
+ */
+export declare type CharacterReconnected = Message<"andara.game.v1.CharacterReconnected"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 2;
+   */
+  roomId: string;
+
+  /**
+   * @generated from field: string character_name = 3;
+   */
+  characterName: string;
+};
+
+/**
+ * Describes the message andara.game.v1.CharacterReconnected.
+ * Use `create(CharacterReconnectedSchema)` to create a new message.
+ */
+export declare const CharacterReconnectedSchema: GenMessage<CharacterReconnected>;
+
+/**
+ * A body left the World: it went dormant where it stood. Emitted in place of
+ * CharacterLeft{to_direction: ""}, which AW-SRV-014's UnbindCharacter emitted
+ * before this Event existed; a departure through an Exit is still
+ * CharacterLeft.
+ *
+ * @generated from message andara.game.v1.CharacterDespawned
+ */
+export declare type CharacterDespawned = Message<"andara.game.v1.CharacterDespawned"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 2;
+   */
+  roomId: string;
+
+  /**
+   * @generated from field: string character_name = 3;
+   */
+  characterName: string;
+
+  /**
+   * quit, switch, linkdead, linkdead_ceiling. A string, as EntityRelocated's
+   * and Resync's are, so a new reason needs no schema change; a client
+   * renders an unknown one as it renders quit.
+   *
+   * @generated from field: string reason = 4;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message andara.game.v1.CharacterDespawned.
+ * Use `create(CharacterDespawnedSchema)` to create a new message.
+ */
+export declare const CharacterDespawnedSchema: GenMessage<CharacterDespawned>;
 

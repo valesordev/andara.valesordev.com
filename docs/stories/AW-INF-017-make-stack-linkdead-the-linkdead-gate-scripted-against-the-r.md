@@ -4,7 +4,7 @@ title: make stack-linkdead — the linkdead gate scripted against the running st
 epic: EPIC-08
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-015, AW-CLI-007, AW-CLI-008]
 blocks: []
@@ -62,9 +62,13 @@ cite it.
 4. **Given** A back **when** A quits cleanly **then** B's transcript shows `<A> leaves the world.`,
    and `character list` for A shows `dormant  town/plaza`.
 5. **Given** the run **when** it completes **then** the server's `/metrics` shows
-   `andara_linkdead_outcomes_total{outcome="reconnected"}` and `{outcome="quit"}` each risen by at
-   least 1, and `andara_sessions_linkdead` back to its value before the run, both polled to a
-   deadline.
+   `andara_linkdead_outcomes_total{outcome="reconnected"}` and
+   `andara_character_unbinds_total{reason="quit",outcome="ok"}` each risen by at least 1, and
+   `andara_sessions_linkdead` (summed over `in_combat`) back to its value before the run, all polled
+   to a deadline. *(Amended at architecture's contract review, 2026-09-26: the draft read
+   `andara_linkdead_outcomes_total{outcome="quit"}`, which counts a linkdead Session that is closed
+   while linkdead. A's quit comes after the reconnect, from a live Session, so that series doesn't
+   move.)*
 6. **Given** any assertion failing **when** the script exits **then** it exits 1 with
    `stack-linkdead: <what failed>`, prints both transcripts, and leaves no `andara-cli` child
    running.
@@ -112,6 +116,9 @@ target's run.
 
 ## Open questions
 
-- `[ASSUMPTION]` `SIGKILL` of the client is a faithful stand-in for a network drop. Both end the TCP
-  connection without a `CloseSession`, and `AW-SRV-015` detects the drop by stream keepalive
-  (`session.linkdead_detect`), not by the kind of failure.
+- **Settled at contract review (2026-09-26): `SIGKILL` exercises one of `AW-SRV-015`'s two drop
+  paths, not both.** The kernel closes the dead client's socket, so the server sees the stream end
+  at once. A partition with no close is the keepalive path (`session.linkdead_detect`), and that
+  path is covered by `AW-SRV-015`'s integration test through a proxy that stops forwarding. The
+  AC-2 deadline of `linkdead_detect` + 10 s covers either path, so the target stays correct if a
+  later change moves detection. A demo citing this target claims the transport-close path only.
