@@ -99,9 +99,9 @@ tls:
 auth-keys:
 	@$(SCRIPTS)/auth_keys.sh
 
-## topics-apply: create missing Kafka topics from deploy/kafka/topics.yaml
+## topics-apply: create missing Kafka topics and align existing ones to deploy/kafka/topics.yaml — ALLOW_DATA_LOSS=<topic>[,…] accepts a change that deletes data
 topics-apply:
-	@$(PY) $(SCRIPTS)/topics.py apply --env $(ANDARA_ENV)
+	@$(PY) $(SCRIPTS)/topics.py apply --env $(ANDARA_ENV) $(if $(ALLOW_DATA_LOSS),--allow-data-loss "$(ALLOW_DATA_LOSS)")
 
 ## topics-diff: fail if a live topic has drifted from the declaration
 topics-diff:

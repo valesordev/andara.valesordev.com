@@ -81,7 +81,17 @@ is deliberately no topic configuration in the compose file: local and production
 come from the same declaration, or they drift, and the properties that drift are the ones
 that are permanent.
 
-`make topics-diff` reports drift and exits non-zero.
+`make topics-diff` reports drift and exits non-zero. `make topics-apply` creates missing topics
+*and* aligns an existing topic's declared config: `retention.ms`, `cleanup.policy`,
+`min.insync.replicas` and `min.compaction.lag.ms` (`AW-INF-018`). It prints one
+`topics: altered <topic> <key> <old> -> <new>` per change. It checks every topic before changing
+any of them, and refuses two kinds of change:
+- **A partition-count change, always.** The partition comes from the key, so repartitioning
+  reorders history.
+- **A change that lets the broker delete data**, unless you name the topic. That means a lower
+  `retention.ms` (`-1`, unlimited, is above every finite value), or a `cleanup.policy` that gains
+  a policy. `make topics-apply ALLOW_DATA_LOSS=<topic>[,<topic>…]` accepts it for exactly those
+  topics. Once the broker's next cleanup runs, reverting the declaration restores nothing.
 
 ## Two things that will bite you
 
