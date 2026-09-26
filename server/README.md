@@ -770,9 +770,16 @@ the same Tick. `look` lists a linkdead body in `occupants` and in `linkdead`.
   again is the reconnect: a `BindCharacter` that clears the four fields and emits
   `CharacterReconnected` to the Room in place of `CharacterArrived`. Selecting any other Character
   is `already_live`, naming the linkdead one.
-- **Freeing the flag.** The body's despawn frees it; the loop hands the tick's
-  `StepResult.Linkdead` to the roster. So does `linkdead_max` passing in wall clock, in case the
-  mark applied as a no-op (the body was absent or dormant).
+- **Freeing the flag.** Only the sim frees it: the body's despawn, which the loop hands to the
+  roster in the tick's `StepResult.Linkdead`, or a reconnect. There is no wall-clock bound. The
+  deadline starts when the mark applies and runs in Ticks, so a timer could free the Account while
+  the body is still in the World. A reconnect whose `BindCharacter` fails to produce puts the hold
+  back.
+- **A drop mid-crossing.** The teardown waits for the crossing to settle, bounded by
+  `ingress.transit_hold`, and produces to the Zone the body arrived in. That applies to a quit's
+  `UnbindCharacter` too. A crossing that doesn't settle is produced to the Zone the body left, with
+  a `warn` line, and applies as a no-op. The body then stays present with no Session, and the
+  hold keeps it for the reconnect.
 - **Combat.** `sim.Engine.OnCombatInteraction(target)` is the one hook. It moves a linkdead
   target's deadline to `max(deadline, now + extension)`, capped at the ceiling. Nothing calls it
   until combat exists; the tests use a fixture verb.

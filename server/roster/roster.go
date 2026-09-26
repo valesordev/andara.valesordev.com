@@ -84,11 +84,9 @@ type Options struct {
 	Now     func() time.Time
 }
 
-// LinkdeadTicks is session.linkdead_* as MarkLinkdead carries it, and
-// linkdead_max as wall time for the roster's own bound on the flag.
+// LinkdeadTicks is session.linkdead_* as MarkLinkdead carries it.
 type LinkdeadTicks struct {
 	Grace, Extension, Max uint64
-	MaxWall               time.Duration
 }
 
 // Roster implements gateway.Roster.
@@ -136,7 +134,12 @@ type live struct {
 	// reconnects it, or the body's despawn frees it (ObserveLinkdead).
 	linkdead bool
 	end      gateway.SessionEnd
-	expiry   *time.Timer
+	// reconnectOf is the linkdead hold a reconnect took over, kept until its
+	// BindCharacter is in the log: a produce that fails puts it back, since
+	// the body is still linkdead (review of #114). ended records that the
+	// body's grace ended meanwhile, and there is nothing to put back.
+	reconnectOf *live
+	ended       bool
 }
 
 // New builds a Roster.
@@ -305,6 +308,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 
 	r.mu.Lock()
 	reconnect := false
+	var prev *live
 	for {
 		cur, ok := r.byAccount[acct]
 		if !ok {
@@ -328,6 +332,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 			// the BindCharacter below takes the body back.
 			r.drop(cur)
 			reconnect = true
+			prev = cur
 			break
 		}
 		outcome, name := OutcomeAlreadyLive, cur.name
@@ -352,7 +357,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		span.SetStatus(codes.Error, errSessionClosing.Error())
 		return nil, connect.NewError(connect.CodeCanceled, errSessionClosing)
 	}
-	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{})}
+	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), reconnectOf: prev}
 	r.byAccount[acct] = l
 	r.bySession[s.ID] = l
 	r.mu.Unlock()
@@ -383,6 +388,11 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		r.opts.Bindings.Unbind(s.ID)
 		r.mu.Lock()
 		r.drop(l)
+		if p := l.reconnectOf; p != nil && !p.ended && r.byAccount[acct] == nil {
+			// The reconnect did not reach the log: the body is still
+			// linkdead, and the Account still holds it.
+			r.byAccount[acct] = p
+		}
 		r.mu.Unlock()
 		r.log.LogAttrs(ctx, slog.LevelWarn, "character not bound: produce failed",
 			slog.String("account_id", acct), slog.String("character_id", characterID),
@@ -390,7 +400,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		return fail(OutcomeProduceFailed, ingress.WireError(err))
 	}
 	r.mu.Lock()
-	l.confirmed = true
+	l.confirmed, l.reconnectOf = true, nil
 	if !l.releasing {
 		l.bound = true
 		r.metrics.SessionsBound.Inc()
@@ -419,8 +429,10 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 //   - EndLinkdead: MarkLinkdead with the configured durations in Ticks; the
 //     binding cleared; the flag kept, marked linkdead, so the Account's next
 //     SelectCharacter of this Character reconnects it and any other is
-//     already_live. The body's despawn frees it (ObserveLinkdead), and so
-//     does linkdead_max passing, whatever the sim said.
+//     already_live. Only the body's despawn frees it (ObserveLinkdead).
+//
+// A Character mid-crossing is waited for, so the record goes to the Zone
+// the body arrives in rather than the one it left.
 //
 // Until the teardown has run, the Character is live: a SelectCharacter from
 // the same Account is already_live, except a reconnect, which waits for it.
@@ -446,8 +458,29 @@ func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-ch
 	r.mu.Unlock()
 
 	zone, room := l.zone, sim.RoomID("")
-	if b, bound, _ := r.opts.Bindings.Lookup(s.ID); bound {
+	b, bound, inTransit := r.opts.Bindings.Lookup(s.ID)
+	if bound {
 		zone, room = b.Zone, b.Room
+	}
+	if inTransit {
+		// Mid-crossing the body is in neither Zone: the source has let it
+		// go and the Arrive has not applied. A record produced to the
+		// source now would apply to nothing, and the body would arrive
+		// with no Session and no deadline (review of #114). Wait for the
+		// crossing to settle — bounded by ingress.transit_hold inside
+		// Binding, and by the produce deadline — while the routing entry
+		// still exists: the ingress drops it when the Session's context
+		// ends, which is after this returns.
+		wctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+		settled, err := r.opts.Bindings.Binding(wctx, s.ID)
+		cancel()
+		if err == nil {
+			zone, room = settled.Zone, settled.Room
+		} else {
+			r.log.LogAttrs(context.Background(), slog.LevelWarn, "character released mid-crossing: the crossing did not settle; producing to the Zone it left",
+				slog.String("account_id", l.account), slog.String("character_id", l.character),
+				slog.String("session_id", s.ID), slog.String("zone", string(zone)), slog.String("detail", err.Error()))
+		}
 	}
 	if end == gateway.EndLinkdead {
 		s.AddEvent("linkdead.enter", attribute.String("character.id", l.character))
@@ -528,10 +561,14 @@ func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-ch
 	return l.released
 }
 
-// holdLinkdead keeps l's flag for the linkdead body: off the Session that
-// left, off andara_sessions_bound, and bounded by linkdead_max in case the
-// despawn never reaches the roster (a MarkLinkdead that applied as a no-op,
-// a body in a Zone the Gateway did not know). Caller holds mu.
+// holdLinkdead keeps l's flag for the linkdead body, off the Session that
+// left and off andara_sessions_bound, until the sim says the grace ended
+// (ObserveLinkdead) or a reconnect takes it. No wall-clock bound: the sim's
+// deadline starts when the mark applies and runs in Ticks, and a timer here
+// could free the Account while the body is still in the World (review of
+// #114). A mark that applied as a no-op leaves the body present with no
+// Session; holding the flag is then right too, and the reconnect takes it.
+// Caller holds mu.
 func (r *Roster) holdLinkdead(l *live) {
 	l.linkdead = true
 	if r.bySession[l.session] == l {
@@ -540,13 +577,6 @@ func (r *Roster) holdLinkdead(l *live) {
 	if l.bound {
 		l.bound = false
 		r.metrics.SessionsBound.Dec()
-	}
-	if max := r.opts.Linkdead.MaxWall; max > 0 {
-		l.expiry = time.AfterFunc(max, func() {
-			r.mu.Lock()
-			defer r.mu.Unlock()
-			r.drop(l)
-		})
 	}
 }
 
@@ -596,6 +626,9 @@ func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
 					r.drop(l)
 					break
 				}
+				if p := l.reconnectOf; p != nil && p.character == string(c.Character) {
+					p.ended = true
+				}
 			}
 			r.mu.Unlock()
 		}
@@ -635,9 +668,6 @@ var closedChan = func() chan struct{} { c := make(chan struct{}); close(c); retu
 
 // drop clears l's flag if it is still the one held. Caller holds mu.
 func (r *Roster) drop(l *live) {
-	if l.expiry != nil {
-		l.expiry.Stop()
-	}
 	if r.byAccount[l.account] == l {
 		delete(r.byAccount, l.account)
 	}

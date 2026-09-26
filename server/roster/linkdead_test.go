@@ -17,9 +17,9 @@ import (
 )
 
 // withLinkdead is the 10 Hz defaults: 180 s, 60 s, 300 s.
-func withLinkdead(max time.Duration) func(*roster.Options) {
+func withLinkdead() func(*roster.Options) {
 	return func(o *roster.Options) {
-		o.Linkdead = roster.LinkdeadTicks{Grace: 1800, Extension: 600, Max: 3000, MaxWall: max}
+		o.Linkdead = roster.LinkdeadTicks{Grace: 1800, Extension: 600, Max: 3000}
 	}
 }
 
@@ -40,7 +40,7 @@ func selected(t *testing.T, opts ...func(*roster.Options)) (*fixture, string, *g
 // UnbindCharacter. The binding goes with the Session; the flag stays, on the
 // linkdead body, and andara_sessions_bound no longer counts it.
 func TestRoster_LinkdeadEndMarksTheBody(t *testing.T) {
-	f, id, s := selected(t, withLinkdead(time.Hour))
+	f, id, s := selected(t, withLinkdead())
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 
 	recs := f.log.records()
@@ -69,7 +69,7 @@ func TestRoster_LinkdeadEndMarksTheBody(t *testing.T) {
 // any other Character of the Account is already_live naming Aldric, with
 // nothing produced.
 func TestRoster_LinkdeadReconnectAndAlreadyLive(t *testing.T) {
-	f, id, s := selected(t, withLinkdead(time.Hour))
+	f, id, s := selected(t, withLinkdead())
 	other := f.create("Brin")
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	before := len(f.log.records())
@@ -101,7 +101,7 @@ func TestRoster_LinkdeadReconnectAndAlreadyLive(t *testing.T) {
 // A reconnect that arrives while the lost Session's MarkLinkdead is still
 // being produced waits for it rather than being answered already_live.
 func TestRoster_ReconnectWaitsForTheLinkdeadTeardown(t *testing.T) {
-	f, id, s := selected(t, withLinkdead(time.Hour))
+	f, id, s := selected(t, withLinkdead())
 	f.log.entered, f.log.gate = make(chan struct{}, 1), make(chan struct{})
 	released := f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	<-f.log.entered
@@ -126,7 +126,7 @@ func TestRoster_ReconnectWaitsForTheLinkdeadTeardown(t *testing.T) {
 // The body's despawn frees the flag: the sim's LinkdeadEnded reaches the
 // roster through the loop, and the Account may select anyone again.
 func TestRoster_DespawnFreesTheLinkdeadFlag(t *testing.T) {
-	f, id, s := selected(t, withLinkdead(time.Hour))
+	f, id, s := selected(t, withLinkdead())
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	// A step that ends somebody else's grace changes nothing.
 	f.roster.ObserveLinkdead(100, []sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: "someone-else"}, {Kind: sim.LinkdeadExtended, Character: sim.EntityID(id)}})
@@ -142,7 +142,7 @@ func TestRoster_DespawnFreesTheLinkdeadFlag(t *testing.T) {
 // A despawn that raced a reconnect frees nothing: the flag belongs to the
 // new Session, whose BindCharacter wakes the body the despawn left.
 func TestRoster_DespawnAfterAReconnectLeavesTheFlag(t *testing.T) {
-	f, id, s := selected(t, withLinkdead(time.Hour))
+	f, id, s := selected(t, withLinkdead())
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s2"), id); err != nil {
 		t.Fatal(err)
@@ -153,27 +153,88 @@ func TestRoster_DespawnAfterAReconnectLeavesTheFlag(t *testing.T) {
 	}
 }
 
-// The roster's own bound: a flag the sim never frees — a MarkLinkdead that
-// applied as a no-op — is freed at linkdead_max whatever.
-func TestRoster_LinkdeadFlagIsBoundedByTheCeiling(t *testing.T) {
-	f, _, s := selected(t, withLinkdead(50*time.Millisecond))
+// No wall clock frees the hold: only the sim's LinkdeadEnded does, or a
+// reconnect. The sim's deadline starts when the mark applies and runs in
+// Ticks, so a timer here could free the Account while the body stands in
+// the World (review of #114).
+func TestRoster_LinkdeadHoldWaitsForTheSim(t *testing.T) {
+	f, id, s := selected(t, withLinkdead())
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if _, _, ok := f.roster.Live(f.account); !ok {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the linkdead flag outlived linkdead_max")
-		}
-		time.Sleep(10 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
+	if _, char, ok := f.roster.Live(f.account); !ok || char != id {
+		t.Fatal("the hold went without the sim ending the grace")
+	}
+}
+
+// A reconnect whose BindCharacter never reaches the log leaves the body
+// linkdead, and the Account still holds it: another Character is still
+// already_live. If the grace ended meanwhile, there is nothing to hold.
+func TestRoster_FailedReconnectRestoresTheHold(t *testing.T) {
+	f, id, s := selected(t, withLinkdead())
+	other := f.create("Brin")
+	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
+
+	f.log.failWith(context.DeadlineExceeded)
+	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s2"), id); err == nil {
+		t.Fatal("the reconnect produced despite the failure")
+	}
+	if _, char, ok := f.roster.Live(f.account); !ok || char != id {
+		t.Fatalf("after a failed reconnect: live %v %s, want the hold on Aldric", ok, char)
+	}
+	f.log.fail.Store(nil)
+	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s3"), other); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("select another after a failed reconnect: %v, want already_live", err)
+	}
+	// And the reconnect, retried, works.
+	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s4"), id); err != nil {
+		t.Fatalf("the retried reconnect: %v", err)
+	}
+}
+
+func TestRoster_FailedReconnectAfterTheDespawnHoldsNothing(t *testing.T) {
+	f, id, s := selected(t, withLinkdead())
+	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
+	f.log.entered, f.log.gate = make(chan struct{}, 1), make(chan struct{})
+	f.log.failWith(context.DeadlineExceeded)
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.roster.SelectCharacter(context.Background(), f.session("s2"), id)
+		done <- err
+	}()
+	<-f.log.entered
+	// The grace ends while the reconnect is being produced.
+	f.roster.ObserveLinkdead(100, []sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id), Reason: sim.DespawnLinkdead}})
+	close(f.log.gate)
+	if err := <-done; err == nil {
+		t.Fatal("the reconnect produced despite the failure")
+	}
+	if _, _, ok := f.roster.Live(f.account); ok {
+		t.Fatal("a hold was restored for a body that already despawned")
+	}
+}
+
+// A drop mid-crossing: the body is in neither Zone until the Arrive
+// applies, so the teardown waits for the crossing to settle and marks the
+// Zone the body arrived in, not the one it left (review of #114).
+func TestRoster_LinkdeadMidCrossingMarksTheArrivalZone(t *testing.T) {
+	f, id, s := selected(t, withLinkdead())
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterLeft, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charLeft("town", "plaza", "east")})
+	released := make(chan (<-chan struct{}), 1)
+	go func() { released <- f.roster.ReleaseSession(s, gateway.EndLinkdead) }()
+	time.Sleep(50 * time.Millisecond)
+	f.bindings.Publish(sim.Event{Type: sim.EvCharacterArrived, Scope: sim.ScopeEntities(sim.EntityID(id)), Envelope: charArrived("wilds", "edge", "west")})
+	<-<-released
+	recs := f.log.records()
+	last := recs[len(recs)-1]
+	if last.GetMarkLinkdead() == nil || last.GetZoneId() != "wilds" {
+		t.Fatalf("marked %v, want a MarkLinkdead to wilds", last)
 	}
 }
 
 // A MarkLinkdead that cannot be produced frees the flag, as a failed unbind
 // does: the body stays present with no Session, and the next select takes it.
 func TestRoster_LinkdeadProduceFailureFreesTheFlag(t *testing.T) {
-	f, _, s := selected(t, withLinkdead(time.Hour))
+	f, _, s := selected(t, withLinkdead())
 	f.log.failWith(context.DeadlineExceeded)
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	if _, _, ok := f.roster.Live(f.account); ok {
@@ -199,7 +260,7 @@ func TestRoster_NoGraceMeansQuit(t *testing.T) {
 // combat; each end is an outcome and a duration at sim.tick_rate; a combat
 // interaction and a ceiling despawn are counted.
 func TestRoster_LinkdeadMetrics(t *testing.T) {
-	f := newFixture(t, withLinkdead(time.Hour))
+	f := newFixture(t, withLinkdead())
 	f.roster.SeedLinkdead([]sim.EntityID{"recovered"})
 	f.roster.ObserveLinkdead(10, []sim.LinkdeadChange{
 		{Kind: sim.LinkdeadEntered, Character: "a", Since: 10, Deadline: 1810},
