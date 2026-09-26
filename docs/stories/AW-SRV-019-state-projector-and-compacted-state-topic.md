@@ -354,3 +354,19 @@ Everything else is accepted as written: `keys.yaml`, the schema, `_env.tpl`, the
 Dockerfile, the glossary and the depguard rule. The committed 35 MB `andara-projector` binary is
 #78.
 
+### §8 owed items (2026-09-26, implementation): four of six delivered, the story stays `review`
+
+On `impl/aw-srv-019-s8-owed`. The detail is in `docs/feedback/AW-SRV-019-state-projector.md`, under
+"Implementation, 2026-09-26".
+
+| Item | Result |
+|------|--------|
+| #78, the 35 MB binary | Untracked, and `/andara-*` is ignored |
+| `andara_state_topic_bytes` reads 0 (feedback §1) | Fixed. `TopicBytes` named no partitions, and Redpanda answers that with nothing. It now names every partition, and a short answer is an error. The poll logs `warn` when the query starts failing and `info` when it recovers. Tests: `TestTopicBytesReportsWhatTheTopicHolds` (Redpanda), `TestTopicBytesReportLogsAChangeOfState` |
+| Sticky divergence (feedback §2) | Delivered as ruled. The halt commits T−1 with the divergence in the offset metadata, and a start that finds it exits `2` whatever rounds exist. Only `--rebuild` clears it, with an `info` line. Tests: `TestRun_ADivergenceSurvivesARestartPastANewerRound` (Redpanda), `TestCheckpointMetaRoundTripsADivergence`. Mutation-checked |
+| AC-7 after #93 | Holds. `TestCharacterRecordsNameTheirContentVersion`: every Character record carries `packID@version` |
+| AC-5, forced compaction | **Not delivered: needs architecture.** This Redpanda (v25.1) could not be made to compact a throwaway topic from topic config. See feedback |
+| AC-6 at 10,000 Entities and 24 h | **Not delivered this session.** Still owed by implementation |
+
+`make check` is clean, and so is `make test-integration`.
+
