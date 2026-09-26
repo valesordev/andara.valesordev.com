@@ -26,12 +26,13 @@ import (
 	"github.com/valesordev/andara/server/tickloop"
 )
 
-// defaultScaleTail is the tail a rebuild replays past its round: one
-// snapshot interval (60 s) at 10 Hz, the most a round can be behind the head.
-// ANDARA_AC6_TAIL_TICKS overrides it. A short tail is what separates the
-// history's cost from the replay's run-to-run noise: at 600 ticks the replay
-// is ~40 s of CPU and varies by seconds between runs.
-const defaultScaleTail = 600
+// defaultScaleTail is the tail a rebuild replays past its round. Short by
+// default, because a short tail is what lets the assertion catch a rebuild
+// that reads history: at 24 h the scan cost 6.7 s, which a 600-tick tail's
+// ~40 s of replay (varying by seconds between runs) would hide under the
+// bound (review of #108). ANDARA_AC6_TAIL_TICKS=600, one snapshot interval
+// at 10 Hz, is the measurement the story records.
+const defaultScaleTail = 10
 
 // AC-6 at the stated scale (§8 item 3): --rebuild of the sizing fixture
 // (simtest.SizingEntities, more than the story's 10,000) over H ticks of

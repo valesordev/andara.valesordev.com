@@ -174,8 +174,9 @@ Two things for architecture's §8:
   want a literal bound, name the overhead it allows.
 - **At 600 ticks the tail replay dominates:** about 65 ms per tick at 25,000 Entities, so a replica
   catches up at roughly 1.5× real time. The 600-tick runs vary by seconds from run to run, which
-  is why the short-tail runs are the ones that separate history from noise.
-  `ANDARA_AC6_TAIL_TICKS` sets the tail.
+  is why the short-tail runs are the ones that separate history from noise. The test defaults
+  to a 10-tick tail for that reason (review of #108): with the seek removed it fails.
+  `ANDARA_AC6_TAIL_TICKS=600` reproduces the 600-tick row.
 
 `AW-SRV-007` has the same scan in `tickloop.Recover` (its open question). `SeekAfter` is the
 projector's and isn't shared. Whether recovery reuses it is `AW-SRV-007`'s call.
