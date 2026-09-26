@@ -5,39 +5,159 @@ package sim
 
 import (
 	"bytes"
-	"reflect"
+	"fmt"
 	"testing"
 
-	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/reflect/protoreflect"
+
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 )
 
-// entityStateFields is how many fields sim.EntityState has. The snapshot body
-// must carry every one of them that the State Hash covers, and this number is
-// the tripwire: adding a field to the Go struct without adding it to
-// zone_state.proto and to the round trip below fails here, loudly, instead of
-// failing months later as an unrecoverable World.
-//
-// That is not hypothetical. The story's contract sketch was written before
-// AW-SRV-014 and AW-SRV-022 landed and omits Name, Template, and
-// ContentVersion — all three of which EntityCanonicalBytes hashes. See
-// docs/feedback/AW-SRV-006-zone-snapshots.md §1.
-const entityStateFields = 8
-
-// zoneStateFields is the same tripwire for ZoneState.
-const zoneStateFields = 4
-
-func TestSnapshotBodyCoversEveryStateField(t *testing.T) {
+// The tripwire (AC-3, as amended): every field of the ZoneState and
+// EntityState protos, and of the Components an Entity carries, is corrupted in
+// turn in an otherwise valid body, and the body must then either hash
+// differently or be refused. A field the hash neither covers nor refuses fails
+// here. The fields are read from the proto descriptors, not listed by hand, so
+// a field added to zone_state.proto is checked the day it is added — which is
+// what keeps "covering every field the body carries" true after the next
+// story touches the body.
+func TestBodyHashCoversEveryProtoField(t *testing.T) {
 	t.Parallel()
-	if got := reflect.TypeOf(EntityState{}).NumField(); got != entityStateFields {
-		t.Fatalf("sim.EntityState has %d fields, the snapshot body was written for %d.\n"+
-			"A field the State Hash covers but the body omits cannot be restored, and it surfaces as "+
-			"AW-SRV-007 exiting on a hash mismatch rather than as anything pointing here.\n"+
-			"Add it to andara/state/v1/zone_state.proto, to BodyProto and ZoneStateFromProto, to the "+
-			"round-trip fixture below, and then update this count.", got, entityStateFields)
+	s := fullSnapshot()
+	base := s.BodyProto()
+	want, err := BodyStateHash(base)
+	if err != nil || want != s.StateHash() {
+		t.Fatalf("the uncorrupted body: hash %x, err %v; the Snapshot says %x", want, err, s.StateHash())
 	}
-	if got := reflect.TypeOf(ZoneState{}).NumField(); got != zoneStateFields {
-		t.Fatalf("sim.ZoneState has %d fields, the snapshot body was written for %d (see above)", got, zoneStateFields)
+	check := func(path string, fd protoreflect.FieldDescriptor, pick func(*statev1.ZoneState) protoreflect.Message) {
+		t.Helper()
+		body := proto.Clone(base).(*statev1.ZoneState)
+		if !corrupt(pick(body), fd) {
+			t.Errorf("%s: the tripwire cannot corrupt a %s field; teach corrupt() its kind", path, fd.Kind())
+			return
+		}
+		if got, err := BodyStateHash(body); err == nil && got == want {
+			t.Errorf("%s: corrupting it leaves the body hash-valid.\n"+
+				"Cover it in ZoneCanonicalBytes or the snapshot record (SnapshotCanonicalBytes), or refuse "+
+				"a body that carries it in BodyStateHash.", path)
+		}
+	}
+	fields := func(m protoreflect.Message) protoreflect.FieldDescriptors { return m.Descriptor().Fields() }
+
+	zf := fields(base.ProtoReflect())
+	for i := 0; i < zf.Len(); i++ {
+		fd := zf.Get(i)
+		check(string(fd.FullName()), fd, func(b *statev1.ZoneState) protoreflect.Message { return b.ProtoReflect() })
+	}
+	// Every Entity: the full one and the sparse one, whose zero values take
+	// the encoder's omit-when-unset paths.
+	for ei, ent := range base.GetEntities() {
+		ef := fields(ent.ProtoReflect())
+		for i := 0; i < ef.Len(); i++ {
+			fd := ef.Get(i)
+			check(fmt.Sprintf("%s[%s]", fd.FullName(), ent.GetEntityId()), fd, func(b *statev1.ZoneState) protoreflect.Message {
+				return b.GetEntities()[ei].ProtoReflect()
+			})
+		}
+	}
+	// A Component and one of its fields, on the full Entity.
+	hero := base.GetEntities()[0]
+	cf := fields(hero.GetComponents()[0].ProtoReflect())
+	for i := 0; i < cf.Len(); i++ {
+		fd := cf.Get(i)
+		check(string(fd.FullName()), fd, func(b *statev1.ZoneState) protoreflect.Message {
+			return b.GetEntities()[0].GetComponents()[0].ProtoReflect()
+		})
+	}
+	ff := fields(hero.GetComponents()[0].GetFields()[0].ProtoReflect())
+	for i := 0; i < ff.Len(); i++ {
+		fd := ff.Get(i)
+		check(string(fd.FullName()), fd, func(b *statev1.ZoneState) protoreflect.Message {
+			return b.GetEntities()[0].GetComponents()[0].GetFields()[0].ProtoReflect()
+		})
+	}
+}
+
+// corrupt changes fd's value in m to a different valid one, and reports
+// whether it knew how. A list gains an element; a scalar moves by one.
+func corrupt(m protoreflect.Message, fd protoreflect.FieldDescriptor) bool {
+	switch {
+	case fd.IsMap():
+		return false
+	case fd.IsList():
+		l := m.Mutable(fd).List()
+		l.Append(l.NewElement())
+		return true
+	}
+	v := m.Get(fd)
+	switch fd.Kind() {
+	case protoreflect.BoolKind:
+		m.Set(fd, protoreflect.ValueOfBool(!v.Bool()))
+	case protoreflect.StringKind:
+		m.Set(fd, protoreflect.ValueOfString(v.String()+"x"))
+	case protoreflect.BytesKind:
+		b := append([]byte(nil), v.Bytes()...)
+		if len(b) == 0 {
+			b = []byte{1}
+		} else {
+			b[len(b)-1] ^= 1
+		}
+		m.Set(fd, protoreflect.ValueOfBytes(b))
+	case protoreflect.Uint64Kind, protoreflect.Fixed64Kind:
+		m.Set(fd, protoreflect.ValueOfUint64(v.Uint()+1))
+	case protoreflect.Uint32Kind, protoreflect.Fixed32Kind:
+		m.Set(fd, protoreflect.ValueOfUint32(uint32(v.Uint())+1))
+	case protoreflect.Int64Kind, protoreflect.Sint64Kind, protoreflect.Sfixed64Kind:
+		m.Set(fd, protoreflect.ValueOfInt64(v.Int()+1))
+	case protoreflect.Int32Kind, protoreflect.Sint32Kind, protoreflect.Sfixed32Kind:
+		m.Set(fd, protoreflect.ValueOfInt32(int32(v.Int())+1))
+	case protoreflect.EnumKind:
+		m.Set(fd, protoreflect.ValueOfEnum(v.Enum()+1))
+	default:
+		return false
+	}
+	return true
+}
+
+// The three values the snapshot record adds, named: each one corrupted alone
+// changes the hash. Against HashZone, the Zone-only hash the envelope carried
+// before AC-3 was amended, all three pass unnoticed — which is the gap.
+func TestBodyHashCoversTickPRNGAndNextEventID(t *testing.T) {
+	t.Parallel()
+	s := fullSnapshot()
+	want := s.StateHash()
+	for name, edit := range map[string]func(*statev1.ZoneState){
+		"tick":          func(b *statev1.ZoneState) { b.Tick++ },
+		"prng_state":    func(b *statev1.ZoneState) { b.PrngState[0] ^= 0x80 },
+		"next_event_id": func(b *statev1.ZoneState) { b.NextEventId++ },
+	} {
+		body := s.BodyProto()
+		edit(body)
+		got, err := BodyStateHash(body)
+		if err != nil || got == want {
+			t.Errorf("%s: hash %x, err %v; want a different hash", name, got, err)
+		}
+		if HashZone(ZoneStateFromProto(body)) != HashZone(s.Body()) {
+			t.Errorf("%s: the Zone-only hash moved, so this case no longer shows the gap", name)
+		}
+	}
+}
+
+// The values the hash does not cover are refused, not ignored.
+func TestBodyHashRefusesWhatItDoesNotCover(t *testing.T) {
+	t.Parallel()
+	for name, edit := range map[string]func(*statev1.ZoneState){
+		"deferred":                   func(b *statev1.ZoneState) { b.Deferred = append(b.Deferred, &logv1.LoggedCommand{ZoneId: "village"}) },
+		"linkdead_deadline_tick":     func(b *statev1.ZoneState) { b.Entities[0].LinkdeadDeadlineTick = 9 },
+		"dormant_since, not dormant": func(b *statev1.ZoneState) { b.Entities[1].DormantSinceTick = 9 },
+	} {
+		body := fullSnapshot().BodyProto()
+		edit(body)
+		if _, err := BodyStateHash(body); err == nil {
+			t.Errorf("%s: a body carrying it was hashed", name)
+		}
 	}
 }
 
@@ -112,8 +232,8 @@ func TestZoneStateRoundTripsThroughTheBody(t *testing.T) {
 	// The hash is a function of those bytes, so equal bytes are the whole
 	// claim — but assert it against the decoded Zone anyway, because that is
 	// the comparison AW-SRV-007 actually makes against the envelope.
-	if HashZone(ZoneStateFromProto(&back)) != HashZone(s.Body()) {
-		t.Fatal("the decoded Zone hashed differently from the original")
+	if got, err := BodyStateHash(&back); err != nil || got != s.StateHash() {
+		t.Fatalf("the decoded body hashed %x (%v), the Snapshot %x", got, err, s.StateHash())
 	}
 }
 

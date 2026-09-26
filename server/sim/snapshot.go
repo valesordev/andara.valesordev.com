@@ -79,7 +79,8 @@ func (s *Snapshot) Content() (map[string]uint64, [32]byte) {
 func (s *Snapshot) Body() *ZoneState { return s.body }
 
 // StateHash is the Zone's State Hash at Tick — the per-Zone hash the envelope
-// carries, not the World's. See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
+// carries, not the World's: SnapshotHash over the body and the process-wide
+// values it carries (AC-3). See docs/feedback/AW-SRV-006-zone-snapshots.md §2.
 //
 // Computed here, off the tick, rather than at the boundary. Hashing is
 // encoding: it walks every Entity, every Component, and every field and
@@ -94,7 +95,7 @@ func (s *Snapshot) Body() *ZoneState { return s.body }
 // — the round that owns it.
 func (s *Snapshot) StateHash() [32]byte {
 	if !s.hashed {
-		s.hash, s.hashed = HashZone(s.body), true
+		s.hash, s.hashed = SnapshotHash(s.body, s.Tick, s.prng, s.nextEventID), true
 	}
 	return s.hash
 }
@@ -140,6 +141,15 @@ func (s *Snapshot) PartitionOf() (PartitionOffset, bool) {
 func (s *Snapshot) Key() string {
 	po, _ := s.PartitionOf()
 	return SnapshotKey(s.Zone, s.StateVersion, s.Tick, po.Offset)
+}
+
+// BoundaryAcks is the seam AC-8 needs. The Publisher reports both outcomes
+// for a tick's TickCompleted; the loop routes them to the snapshot round so it
+// waits for its own boundary, rather than trusting that enqueueing a boundary
+// was the same as publishing it.
+type BoundaryAcks interface {
+	OnBoundaryAcked(tick Tick)
+	OnBoundaryLost(tick Tick, err error)
 }
 
 // SnapshotKey formats a store key. Exported so the store, the CLI, and

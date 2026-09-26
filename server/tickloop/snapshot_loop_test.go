@@ -46,6 +46,11 @@ func TestLoop_NoSnapshotWhenTheBoundaryWasNotPublished(t *testing.T) {
 	if got := counter(snap.Metrics().Rounds.WithLabelValues("complete")); got != 0 {
 		t.Errorf("rounds_total{complete} = %v, want 0", got)
 	}
+	// Not silently: every round that fell due is counted abandoned (AC-8).
+	// The cadence is a nanosecond, so that is every tick.
+	if got := counter(snap.Metrics().Failures.WithLabelValues("boundary")); got != 10 {
+		t.Errorf("failures_total{boundary} = %v, want 10, one per tick a round fell due", got)
+	}
 }
 
 // The gate is per tick, not a latch: once boundaries are published again, so

@@ -217,11 +217,11 @@ func TestS3CarriesAnEncodedSnapshot(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
-		_, zone, err := Decode(back)
+		_, body, err := decodeBody(back)
 		if err != nil {
 			t.Fatalf("Decode: %v", err)
 		}
-		if got := sim.HashZone(zone); got != snap.StateHash() {
+		if got, err := sim.BodyStateHash(body); err != nil || got != snap.StateHash() {
 			t.Errorf("zone %s: round-tripped through S3 with a different hash", snap.Zone)
 		}
 	}
