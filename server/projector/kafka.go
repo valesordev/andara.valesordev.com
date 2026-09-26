@@ -43,16 +43,25 @@ type Boundary struct {
 }
 
 // BoundaryReader streams every TickCompleted on andara.events.v1's boundary
-// Partition, in order, from the start. Reading from the start is the cost
-// tickloop.Recover pays too (AW-SRV-007's open question): the boundary
-// Partition has no index by tick.
+// Partition, in order, from the start, or from a tick SeekAfter found. The
+// Partition has no index by tick (AW-SRV-007's open question), so a replica
+// that bootstraps from a round finds its place by binary search rather than
+// by reading the history before it (AW-SRV-019 AC-6).
 type BoundaryReader struct {
-	client *kgo.Client
-	buf    []Boundary
+	client  *kgo.Client
+	brokers []string
+	topic   string
+	buf     []Boundary
 	// next is the offset after the last record read from the Partition, of
 	// any key; hwm the Partition's high watermark as the last fetch reported
 	// it. Together they say whether the reader is at the head.
 	next, hwm int64
+	// expect, once SeekAfter has moved the reader, is the tick the first
+	// boundary must carry. A later one means the search landed past it —
+	// boundaries out of tick order — and the reader starts over from the
+	// Partition's start, which is what it did before it could seek.
+	expect sim.Tick
+	start  int64
 }
 
 // NewBoundaryReader starts reading the boundary Partition from its start.
@@ -72,7 +81,98 @@ func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic string
 		client.Close()
 		return nil, err
 	}
-	return &BoundaryReader{client: client}, nil
+	return &BoundaryReader{client: client, brokers: brokers, topic: eventsTopic}, nil
+}
+
+// SeekAfter moves the reader to where the boundary for tick+1 is, or just
+// before it, so the boundaries at or before tick are never read. Boundary
+// ticks rise with the offset, so the first boundary at or after an offset is
+// a monotonic function of it and a binary search over the Partition finds
+// the place in log2(records) probes. Called before the first Next.
+//
+// It is a position, not a promise: the first boundary Next delivers is
+// checked against tick+1, and a reader that finds a later one falls back to
+// the start (see expect).
+func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, error) {
+	adm := kadm.NewClient(r.client)
+	starts, err := adm.ListStartOffsets(ctx, r.topic)
+	if err != nil {
+		return 0, fmt.Errorf("boundary start offset: %w", err)
+	}
+	ends, err := adm.ListEndOffsets(ctx, r.topic)
+	if err != nil {
+		return 0, fmt.Errorf("boundary end offset: %w", err)
+	}
+	so, _ := starts.Lookup(r.topic, tickloop.BoundaryPartition)
+	eo, _ := ends.Lookup(r.topic, tickloop.BoundaryPartition)
+	if so.Err != nil || eo.Err != nil {
+		return 0, fmt.Errorf("boundary offsets: %w", errors.Join(so.Err, eo.Err))
+	}
+	lo, hi := so.Offset, eo.Offset
+	for lo < hi {
+		mid := lo + (hi-lo)/2
+		t, at, ok, err := r.probe(ctx, mid, hi)
+		if err != nil {
+			return 0, err
+		}
+		if ok && t <= tick {
+			lo = at + 1
+		} else {
+			hi = mid
+		}
+	}
+	r.start, r.expect = so.Offset, tick+1
+	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {tickloop.BoundaryPartition: {Epoch: -1, Offset: lo}}})
+	return lo, nil
+}
+
+// probe reads from offset until the first boundary, returning its tick and
+// offset, or ok=false if there is none before end.
+func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick, int64, bool, error) {
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(r.brokers...),
+		kgo.ClientID(ClientID+"-boundaries"),
+		kgo.FetchMaxPartitionBytes(1<<20),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {tickloop.BoundaryPartition: kgo.NewOffset().At(offset)}}),
+	)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer cl.Close()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	for {
+		fetches := cl.PollFetches(ctx)
+		if ctx.Err() != nil {
+			return 0, 0, false, ctx.Err()
+		}
+		if err := fetches.Err0(); err != nil {
+			return 0, 0, false, fmt.Errorf("probe boundaries at %d: %w", offset, err)
+		}
+		var (
+			found bool
+			tick  sim.Tick
+			at    int64
+			last  = offset - 1
+		)
+		fetches.EachRecord(func(rec *kgo.Record) {
+			last = rec.Offset
+			if found || string(rec.Key) != tickloop.BoundaryKey {
+				return
+			}
+			var tc logv1.TickCompleted
+			if proto.Unmarshal(rec.Value, &tc) != nil {
+				return
+			}
+			found, tick, at = true, sim.Tick(tc.GetTick()), rec.Offset
+		})
+		if found {
+			return tick, at, true, nil
+		}
+		if last+1 >= end {
+			return 0, 0, false, nil
+		}
+	}
 }
 
 // Next returns up to max boundaries, waiting at most wait for the first. An
@@ -108,6 +208,16 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 			}
 			r.buf = append(r.buf, Boundary{TickCompleted: sim.TickCompletedFromProto(&tc), ProducedAt: rec.Timestamp})
 		})
+	}
+	if r.expect != 0 && len(r.buf) > 0 {
+		if got := r.buf[0].Tick; got > r.expect {
+			// The search landed past the boundary it was looking for. Read
+			// from the start instead, as the reader did before it could seek.
+			r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {tickloop.BoundaryPartition: {Epoch: -1, Offset: r.start}}})
+			r.buf, r.next, r.expect = nil, r.start, 0
+			return nil, nil
+		}
+		r.expect = 0
 	}
 	n := min(max, len(r.buf))
 	out := append([]Boundary(nil), r.buf[:n]...)
