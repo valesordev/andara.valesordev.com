@@ -11,9 +11,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `review` | 7 |
 | `ready` | 30 |
-| `draft` | 1 |
+| `draft` | 9 |
 | `done` | 23 |
-| **total** | **61** |
+| **total** | **69** |
 
 ## Attention first
 
@@ -76,11 +76,19 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
-### `draft` (1)
+### `draft` (9)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | architecture | A schema registry on the box for dev and prod | `AW-INF-014` |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | architecture | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
+| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `EPIC-05` | infra | M | medium | architecture | dev serves its content from the content store | `AW-SRV-013`, `AW-SRV-035`, `AW-CLI-003`, `AW-INF-019` |
+| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `EPIC-05` | infra | S | low | architecture | The content repository — where Builders keep their source | `AW-CLI-002`, `AW-INF-020`, `AW-INF-021` |
+| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
+| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | architecture | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
+| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `EPIC-06` | server | S | low | implementation | An Operator grants a Builder their packs | `AW-SRV-013` |
+| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
+| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
 
 ### `done` (23)
 
@@ -129,6 +137,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `ready` | make up builds the server image from the tree it runs in |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `ready` | Argo CD deploys dev from main on the box's kind cluster |
+| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `draft` | Every environment spawns new Characters in Purgatory |
 
 ### `EPIC-02` — World model and simulation core
 
@@ -145,6 +154,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `ready` | Loader and compiler agree on orphan_room and duplicate_direction |
+| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `draft` | Purgatory — the spawn Zone in the test content |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
@@ -162,6 +172,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `ready` | Gateway read path from the Event topic — routing and perception for Zones another process owns |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `done` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
+| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `draft` | goto — a Builder jumps to any Room |
 
 ### `EPIC-04` — Snapshots and recovery
 
@@ -183,6 +194,8 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `done` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `review` | Content Language compiler, formatter, and decompiler |
+| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `draft` | dev serves its content from the content store |
+| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `draft` | The content repository — where Builders keep their source |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `done` | Content resolution from the store and reload at a tick boundary |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
@@ -193,6 +206,9 @@ Milestone `M1-M3` · status `in-progress` · ADR gates: none · constrained by: 
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `done` | andara-cli skeleton — command tree, configuration precedence, and output contract |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `draft` | Builders download andara-cli without a Go toolchain |
+| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `draft` | The Builder's Guide — from no access to a live Zone on dev |
+| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `draft` | An Operator grants a Builder their packs |
 
 ### `EPIC-07` — Observability, SLOs, and runbooks
 

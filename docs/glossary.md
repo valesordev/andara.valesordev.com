@@ -178,6 +178,19 @@ references. Resolved from the content store at load and validated before use.
 
 ---
 
+**Purgatory** — The Zone every new Character spawns in, before moving to its Start Location
+(decided 2026-09-26, Brian). It's every environment's `character.spawn_room` (`purgatory/start`,
+`AW-INF-024`). Until the base content exists, its only way out is an Exit into the test town
+(`AW-SRV-037`). Its description is `[NEEDS BRIAN]`.
+
+**Start Location** — `[NEEDS BRIAN]` Where a Character goes when it leaves Purgatory. Brian named it
+on 2026-09-26. How a Character reaches it, and whether it differs by Character, isn't decided.
+Until it is, the way out of Purgatory is an ordinary Exit.
+
+**goto** — A Builder's command that moves their own Character to any Room by ID
+(`goto <zone>/<room>`), for testing a Zone nothing links to yet (decided 2026-09-26, Brian;
+`AW-SRV-036`). A game command through the ordinary pipeline, gated to `builder` at `authorize`.
+
 ## Content pipeline
 
 **Active Pointer** — The record on `andara.content.active.v1`, keyed by pack ID, naming the Content
@@ -190,7 +203,10 @@ never repeat, so compaction never removes one.
 **Approval** — A second Builder's sign-off on a Content Version, bound to `packID@version`, required
 before that version can be activated (decided 2026-09-07). Publishing is one person's act; activating
 is two. An Operator may override, loudly audited, with a reason. Rollback to a previously-approved
-version needs no fresh approval (`AW-SRV-013`).
+version needs no fresh approval (`AW-SRV-013`). **Operator self-approval** (decided 2026-09-26, Brian, temporary while one
+person builds): an Operator may approve a version they published as a Builder, audited as a
+self-approval. A Builder still can't. Pending contract review in
+`docs/feedback/AW-SRV-013-operator-self-approval.md`.
 
 **Content Language** — The purpose-built, text-based language Builders author content in, compiled by
 `andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
@@ -237,6 +253,22 @@ a swap, every pack's Zones and Templates in canonical order. Replay rebuilds and
 mismatch halts recovery as a State Hash mismatch does. Topology only; the State Hash covers state.
 
 ---
+
+**Content Repository** — The private git repository (`valesordev/andara-world`, `AW-INF-022`) where
+Builders keep the Content Language source of their packs, one directory per pack, checked by
+`andara-cli content fmt --check` and `content validate` on every pull request. Decided 2026-09-26
+(Brian). It holds source and history only. The content store stays authoritative for what's live
+(ADR-0004), and a merge publishes nothing. Separate from this repository, which Builders don't
+need access to.
+
+**Fixture Pack** — The dev fixture (the `town`, `docks`, `wilds`, and `purgatory` Zones), published
+into `dev`'s content store as pack `town`, so `dev` is playable before any Builder content exists (`AW-INF-021`, decided 2026-09-26). It's seeded once, and a Builder holding
+`town` may replace it. Never seeded into `prod`.
+
+**Builder's Guide** — The Builder-facing documentation, `docs/builders/` (`AW-INF-023`): getting
+access, installing `andara-cli`, a first-Zone tutorial on `dev`, the publish loop, and generated
+reference tables. It explains and links to the Content Language specification. It never restates
+a normative rule.
 
 ## Players, accounts, sessions
 
@@ -331,6 +363,11 @@ Story `As a <role>` lines use exactly these. "User" is not a role.
 `andara-cli` and the content store, **without repository access** — confirmed 2026-09-07; a Builder
 who needs a server change opens a GitHub issue (ADR-0004). Untrusted by the system in the security
 sense. May activate content only with a second approver.
+
+**Pack Grant** — An entry in an Account's `builder_packs`: a Content Pack that Account may publish
+to and approve for, given the `builder` role (`AW-SRV-013`, decided 2026-09-11). Set only by an
+Operator, with `andara-cli account set-packs` (`AW-SRV-035`). Stored independently of roles, and
+`andara.core` can never be granted.
 
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
