@@ -4,7 +4,7 @@ title: make up builds the server image from the tree it runs in
 epic: EPIC-01
 component: infra
 type: bug
-status: review
+status: done
 size: S
 depends_on: [AW-INF-002]
 blocks: []
@@ -158,3 +158,20 @@ Branch `arch/aw-inf-016-make-up-builds`, on the compose stack. The first run was
   should.
 - **§7:** no new metrics. `andara_build_info{commit}` is what AC-5 reads.
 
+
+## §8 review (architecture, 2026-09-26)
+
+On `arch/sprint-02-review-3`. **`done`.**
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | The verification record above; AC-1's assertion also runs on every `stack` workflow run as "the server runs this commit", green on `main` at `407025d` and `5c5d83c` |
+| Tests run in CI | yes | `scripts/tests/test_build_info.py` in `make scripts-test`; the workflow step in `stack` |
+| `make check` | yes | clean |
+| Instrumentation | yes | no new series; `andara_build_info{commit}` read from the running server by the workflow step |
+| Config documented | yes | `deploy/compose/README.md`; no Helm values change |
+| Migrations | n/a | none |
+| Glossary | yes | no new domain term |
+| No `[ASSUMPTION]` | yes | resolved above, measured |
+
+The story-specific line holds: #73 was closed by #111.

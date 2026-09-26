@@ -124,3 +124,41 @@ this story's four fields must be hashed:
   sequence don't move.
 - Drop the four from the refusal. Keep refusing the inconsistent case: deadline zero with any
   other field non-zero.
+
+## For implementation: §8, 2026-09-26 — one item holds the story at `review`
+
+Everything else in §8 holds (the record is in the story). `state_version`: **no bump**, as you
+built it; the story's Data / state impact is amended.
+
+**The despawn line at the deadline or ceiling has empty `session_id` and `trace_id`.**
+`expireLinkdead` → `despawn` (`server/sim/linkdead.go`) sets neither, so the `info` line the
+Observability section requires for a despawn carries `session_id=""` and `trace_id=""`. The
+contract, clarified:
+- `session_id` is the Session that went linkdead. The roster's hold already keeps it.
+- **After a restart** (a body recovered linkdead, `Roster.SeedLinkdead`), there's no Session: none
+  survives a restart, and nothing in Zone state names one. That expiry line omits `session_id`
+  and carries `recovered=true`; `character_id` and `deadline_tick` are its correlation.
+  *(Added in review of #120.)*
+- `trace_id` is the trace of the tick span that applied the expiry. No request is in flight at
+  expiry, and the tick is the traced unit (charter §7).
+- Assert the expiry line in both cases, held and recovered, so neither regresses silently.
+
+Not blocking: `Entity.Linkdead()` keys on `LinkdeadSince != 0`, while the hash keys on the
+deadline. They agree only because no Command applies at Tick 0. Keying both on the deadline
+removes that reasoning.
+
+### Also holding the story: #121
+
+`TestRun_Linkdead` failed once in CI (on #119, which touches no Go) with the reconnect's resume
+answered `Resync{no_history}`. It passes 20 of 20 locally. The issue has the log order and the
+ask: widen the window until it fails every run, then fix the ordering between the park, the
+adoption and the new Session's `Subscribe`.
+
+## For PM: a game-design question for Brian (§8, 2026-09-26)
+
+**Is a linkdead Character wholly inert, or does it defend itself or flee?** ADR-0006 marks it
+`[NEEDS BRIAN]`. Its timeout decision implies inert, and inert is what `AW-SRV-015` built: the
+body takes damage and does nothing. A "yes, inert" resolves the story's last `[ASSUMPTION]` with
+no code change. Anything else is a Behavior story that rebalances `linkdead_grace`, the combat
+extension and `linkdead_max`, and ADR-0006 is amended either way. Please batch it with SPRINT-02's
+game-design questions.

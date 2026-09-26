@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-69 stories — 10 review · 25 ready · 9 draft · 25 done
+69 stories — 8 review · 25 ready · 9 draft · 27 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -10,7 +10,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-INF-019  ready  Argo CD deploys dev from main on the box's kind cluster  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
-  review AW-INF-013, AW-INF-014, AW-INF-008, AW-INF-016, AW-INF-017, AW-INF-018 — run the §8…
+  review AW-INF-013, AW-INF-014, AW-INF-008, AW-INF-017, AW-INF-018 — run the §8 checklist,…
   held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
@@ -18,12 +18,14 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
   next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
-  review AW-SRV-014, AW-SRV-015, AW-CLI-008, AW-SRV-019 — run the §8 checklist, then flip to…
+  review AW-SRV-014, AW-SRV-015, AW-SRV-019 — run the §8 checklist, then flip to done
   held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
+  AW-SRV-015  ).
+  AW-SRV-015  ; it implies inert but doesn't decide it. Sent to PM for Brian's game-design batch.…
   AW-SRV-019  .
               14 more, attached to stories neither lane has reached
 
