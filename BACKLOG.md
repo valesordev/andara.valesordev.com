@@ -9,8 +9,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 8 |
-| `ready` | 27 |
+| `review` | 9 |
+| `ready` | 26 |
 | `draft` | 9 |
 | `done` | 25 |
 | **total** | **69** |
@@ -24,13 +24,14 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `review` | make up builds the server image from the tree it runs in | review by brian |
+| [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `review` | make topics-apply applies declared config drift to existing topics | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `review` | Session lifecycle and linkdead grace period | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
 
-### `review` (8)
+### `review` (9)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -39,11 +40,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `EPIC-01` | infra | S | low | architecture | Publish the server image to ghcr on merge to main | `AW-INF-003` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `EPIC-01` | infra | S | low | architecture | make up builds the server image from the tree it runs in | `AW-INF-002` |
+| [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `EPIC-10` | infra | S | medium | architecture | make topics-apply applies declared config drift to existing topics | `AW-INF-004` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `EPIC-08` | server | M | high | implementation | Session lifecycle and linkdead grace period | `AW-SRV-014` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (27)
+### `ready` (26)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -56,7 +58,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | architecture | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | architecture | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
 | [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `EPIC-08` | infra | S | low | architecture | make stack-linkdead — the linkdead gate scripted against the running stack | `AW-SRV-015`, `AW-CLI-007`, `AW-CLI-008` |
-| [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `EPIC-10` | infra | S | medium | architecture | make topics-apply applies declared config drift to existing topics | `AW-INF-004` |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028`, `AW-SRV-015` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
@@ -255,7 +256,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `ready` | Kafka operational contract, degradation mode, and availability SLO |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod |
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `draft` | A schema registry on the box for dev and prod |
-| [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `ready` | make topics-apply applies declared config drift to existing topics |
+| [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `review` | make topics-apply applies declared config drift to existing topics |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `ready` | Redis hot projection from the state topic |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `ready` | Postgres tabular projection for accounts, rosters, and builder queries |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic |

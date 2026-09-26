@@ -4,12 +4,17 @@
 
 """Apply and diff the Kafka topic declaration in deploy/kafka/topics.yaml.
 
-    scripts/topics.py apply [--env local]
+    scripts/topics.py apply [--env local] [--allow-data-loss <topic>[,<topic>...]]
     scripts/topics.py diff  [--env local]
 
 One declaration, applied identically everywhere (AW-INF-004). The local stack calls
 `apply` after `make up` so that local topics and production topics come from this file
 rather than from a compose-file duplicate.
+
+`apply` creates missing topics and aligns every COMPARED key on existing ones (AW-INF-018).
+It checks everything before it changes anything: partition drift is refused, and so is a
+change that lets the broker delete data (a lower retention.ms, or a cleanup policy the topic
+didn't have), unless the operator names that topic in --allow-data-loss.
 
 Talks to the broker through `rpk`, run inside the Redpanda container when one is up and
 otherwise from the host. Stdlib only: this tooling validates the stack, so it must not
@@ -230,7 +235,7 @@ def describe_config(run, name):
     """Return {key: value} of the topic's live configuration."""
     res = run(["topic", "describe", name, "--print-configs"])
     if res.returncode != 0:
-        return {}
+        die("could not describe %s: %s" % (name, (res.stderr or res.stdout).strip()))
     cfg = {}
     for line in res.stdout.split("\n"):
         parts = re.split(r"\s{2,}", line.strip())
@@ -239,46 +244,76 @@ def describe_config(run, name):
     return cfg
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("action", choices=["apply", "diff"])
-    ap.add_argument("--env", default=os.environ.get("ANDARA_ENV", "local"))
-    args = ap.parse_args()
+def policies(value):
+    """cleanup.policy as a set: `delete,compact` and `compact,delete` are the same policy."""
+    return frozenset(p.strip() for p in str(value).split(",") if p.strip())
 
-    defaults, topics, broker = parse_declaration(DECL)
-    rf = replication_factor(defaults, args.env)
-    run = rpk_runner(args.env)
+
+def same(key, have, want):
+    if key == "cleanup.policy":
+        return policies(have) == policies(want)
+    return str(have) == str(want)
+
+
+def retention(value):
+    """retention.ms as an order: -1 is unlimited, above every finite window."""
+    v = int(value)
+    return float("inf") if v < 0 else v
+
+
+def destructive(key, have, want):
+    """Whether setting `key` from `have` to `want` lets the broker delete data.
+
+    A lower retention.ms expires segments sooner. A lower min.compaction.lag.ms lets the cleaner
+    remove superseded records sooner: on andara.state.v1 that's the minute of intermediate
+    writes an index reading behind depends on. A cleanup.policy gaining a policy the topic
+    didn't have deletes too: `delete` added to a compacted topic expires old keys by time, and
+    `compact` added to a delete topic keeps only each key's last record. Dropping a policy only
+    deletes less. An unknown old value (the broker doesn't report the key) counts as
+    destructive, because nothing shows it isn't.
+    """
+    if have is None:
+        return key in ("retention.ms", "min.compaction.lag.ms", "cleanup.policy")
+    if key == "retention.ms":
+        return retention(want) < retention(have)
+    if key == "min.compaction.lag.ms":
+        return int(want) < int(have)
+    if key == "cleanup.policy":
+        return bool(policies(want) - policies(have))
+    return False
+
+
+def run_action(action, env, allow_data_loss, run, decl=DECL, out=sys.stdout, err=sys.stderr):
+    """Plan against the live broker, refuse what must be refused, then create and alter.
+
+    Returns the exit code. Every refusal is decided across all topics before the first
+    create or alter, so a refused run changes nothing anywhere.
+    """
+    defaults, topics, broker = parse_declaration(decl)
+    rf = replication_factor(defaults, env)
     live = existing_topics(run)
+    declared_names = {t["name"] for t in topics}
 
-    created, drift = [], []
+    missing, alters, drift, skipped = [], [], [], set()
 
     for topic in topics:
         name = topic["name"]
         want_parts = topic["partitions"]
-        want_cfg = declared_config(defaults, topic, args.env)
+        want_cfg = declared_config(defaults, topic, env)
 
         if name not in live:
-            if args.action == "diff":
+            if action == "diff":
                 drift.append("%s: does not exist (declared %d partitions)" % (name, want_parts))
-                continue
-            cmd = ["topic", "create", name, "-p", str(want_parts), "-r", str(rf)]
-            for key, val in sorted(want_cfg.items()):
-                cmd += ["-c", "%s=%s" % (key, val)]
-            res = run(cmd)
-            if res.returncode != 0:
-                die("could not create %s: %s" % (name, (res.stderr or res.stdout).strip()))
-            created.append(name)
+            else:
+                missing.append((name, want_parts, want_cfg))
             continue
 
         have_parts = live[name]["partitions"]
         if have_parts != want_parts:
-            # Never silently altered, and never altered at all by this tool: the partition
-            # is derived from the key, so changing the count reorders history (ADR-0002).
-            die(
-                "%s has %d partitions, declaration says %d. Repartitioning a keyed topic "
-                "reorders history; no change was made. Recreate the topic deliberately, or "
-                "amend the declaration." % (name, have_parts, want_parts)
-            )
+            # Never altered by this tool: the partition is derived from the key, so changing
+            # the count reorders history (ADR-0002). Refused before anything is changed.
+            die("%s has %d partitions, declared %d; repartitioning is refused"
+                % (name, have_parts, want_parts))
 
         have_cfg = describe_config(run, name)
         # The broker-level assertions are topic-level properties on Kafka too, reported
@@ -289,7 +324,7 @@ def main():
         # API and does not exist on Kafka — so against production it failed to read the
         # property and then treated the empty answer as agreement.
         want_all = dict(want_cfg)
-        if args.env != "local":
+        if env != "local":
             want_all.update(broker.get("assert", {}))
         for key in COMPARED + sorted(k for k in broker.get("assert", {}) if k not in COMPARED):
             if key not in want_all:
@@ -297,28 +332,75 @@ def main():
             if key not in have_cfg:
                 # Redpanda does not implement min.insync.replicas or unclean leader
                 # election (its Raft replication cannot elect a leader missing committed
-                # records), so a local broker never reports them and there is nothing to
-                # compare. Kafka reports every property with its effective value, so on
-                # any other environment an absent key means the declaration is not in
-                # force — which is drift, not assent. Until 2026-09-14 this was a silent
-                # `continue` on every environment, and the two settings the zero-RPO
-                # target rests on were never actually verified (AW-INF-004 AC-5a).
-                if args.env == "local":
+                # records), and accepts min.compaction.lag.ms without reporting it, so a
+                # local broker never reports them and there is nothing to compare. Kafka
+                # reports every property with its effective value, so on any other
+                # environment an absent key means the declaration is not in force — which
+                # is drift, not assent (AW-INF-004 AC-5a).
+                if env == "local":
+                    skipped.add(key)
                     continue
-                drift.append(
-                    "%s: %s is not reported by the broker, declaration says '%s' — "
-                    "the setting is not in force" % (name, key, want_all[key])
-                )
+                if action == "apply" and key in COMPARED:
+                    alters.append((name, key, None, want_all[key]))
+                else:
+                    drift.append(
+                        "%s: %s is not reported by the broker, declaration says '%s' — "
+                        "the setting is not in force" % (name, key, want_all[key]))
                 continue
-            if str(have_cfg[key]) != str(want_all[key]):
-                drift.append(
-                    "%s: %s is '%s', declaration says '%s'"
-                    % (name, key, have_cfg[key], want_all[key])
-                )
+            if same(key, have_cfg[key], want_all[key]):
+                continue
+            if action == "apply" and key in COMPARED:
+                alters.append((name, key, have_cfg[key], want_all[key]))
+            else:
+                drift.append("%s: %s is '%s', declaration says '%s'"
+                             % (name, key, have_cfg[key], want_all[key]))
+
+    if skipped:
+        out.write("topics: local broker does not report %s; skipped\n" % ", ".join(sorted(skipped)))
+
+    if action == "apply":
+        allowed = {t for t in allow_data_loss if t}
+        lossy = [(n, k, h, w) for (n, k, h, w) in alters if destructive(k, h, w)]
+        refused = [a for a in lossy if a[0] not in allowed]
+        for name, key, have, want in refused:
+            err.write("make: topics: %s %s %s -> %s can delete data the broker cannot restore; "
+                      "re-run with ALLOW_DATA_LOSS=%s to apply it\n"
+                      % (name, key, "(unreported)" if have is None else have, want, name))
+        if refused:
+            err.write("make: topics: nothing was changed\n")
+            return 1
+        lossy_topics = {a[0] for a in lossy}
+        for name in sorted(allowed - lossy_topics):
+            note = "" if name in declared_names else " (not a declared topic)"
+            out.write("topics: ALLOW_DATA_LOSS names %s, which has no destructive change%s\n"
+                      % (name, note))
+
+        for name, parts, cfg in missing:
+            cmd = ["topic", "create", name, "-p", str(parts), "-r", str(rf)]
+            for key, val in sorted(cfg.items()):
+                cmd += ["-c", "%s=%s" % (key, val)]
+            res = run(cmd)
+            if res.returncode != 0:
+                die("could not create %s: %s" % (name, (res.stderr or res.stdout).strip()))
+            out.write("topics: created %s\n" % name)
+
+        applied = []
+        for name, key, have, want in alters:
+            res = run(["topic", "alter-config", name, "--set", "%s=%s" % (key, want)])
+            if res.returncode != 0:
+                err.write("make: topics: the broker refused %s %s=%s: %s\n"
+                          % (name, key, want, (res.stderr or res.stdout).strip()))
+                err.write("make: topics: already applied: %s\n"
+                          % (", ".join(applied) if applied else "nothing"))
+                return 1
+            applied.append("%s %s" % (name, key))
+            out.write("topics: altered %s %s %s -> %s%s\n"
+                      % (name, key, "(unreported)" if have is None else have, want,
+                         " (data loss accepted)" if destructive(key, have, want) else ""))
 
     # A local broker is disposable, so broker settings are applied to it. Dev and prod
     # brokers are asserted against, never rewritten by a make target.
-    if args.env == "local" and args.action == "apply":
+    if env == "local" and action == "apply":
         for key, val in sorted(broker.get("local", {}).items()):
             res = run(["cluster", "config", "set", key, val])
             if res.returncode != 0:
@@ -327,21 +409,32 @@ def main():
 
     if drift:
         for line in drift:
-            sys.stderr.write("topics-%s: %s\n" % (args.action, line))
-        sys.stderr.write(
-            "make: topics-%s: %d drift(s) from deploy/kafka/topics.yaml\n"
-            % (args.action, len(drift))
-        )
+            err.write("topics-%s: %s\n" % (action, line))
+        err.write("make: topics-%s: %d drift(s) from deploy/kafka/topics.yaml\n"
+                  % (action, len(drift)))
         return 1
 
-    if args.action == "apply":
-        if created:
-            print("topics-apply: created %d topic(s): %s" % (len(created), ", ".join(created)))
-        print("topics-apply: %d topic(s) match deploy/kafka/topics.yaml (env=%s)"
-              % (len(topics), args.env))
+    if action == "apply":
+        out.write("topics-apply: %d topic(s) match deploy/kafka/topics.yaml (env=%s)\n"
+                  % (len(topics), env))
     else:
-        print("topics-diff: no drift across %d topic(s) (env=%s)" % (len(topics), args.env))
+        out.write("topics-diff: no drift across %d topic(s) (env=%s)\n" % (len(topics), env))
     return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("action", choices=["apply", "diff"])
+    ap.add_argument("--env", default=os.environ.get("ANDARA_ENV", "local"))
+    ap.add_argument("--allow-data-loss", default="",
+                    help="comma-separated topics whose destructive change the operator accepts")
+    args = ap.parse_args()
+    if args.allow_data_loss and args.action != "apply":
+        die("--allow-data-loss applies only to `apply`")
+    allow = [t.strip() for t in args.allow_data_loss.split(",")]
+    if "*" in allow:
+        die("ALLOW_DATA_LOSS names topics, never a wildcard")
+    return run_action(args.action, args.env, allow, rpk_runner(args.env))
 
 
 if __name__ == "__main__":
