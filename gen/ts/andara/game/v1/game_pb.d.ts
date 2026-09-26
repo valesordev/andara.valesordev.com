@@ -455,6 +455,15 @@ export declare const Game: GenService<{
     output: typeof EventEnvelopeSchema;
   },
   /**
+   * Answers once the Session's teardown has run: the UnbindCharacter{QUIT}
+   * is durable in the log and the Account's live flag is free, so a
+   * SelectCharacter sent after the response is never already_live on this
+   * Session's account, and its BindCharacter orders after the unbind in the
+   * Zone's Partition (AW-SRV-015). Not after the unbind is applied: log
+   * order already puts the next bind behind it. A teardown produce that
+   * fails is still answered OK — the body stays present and the next
+   * BindCharacter takes it (AW-SRV-014).
+   *
    * @generated from rpc andara.game.v1.Game.CloseSession
    */
   closeSession: {
@@ -490,8 +499,16 @@ export declare const Game: GenService<{
    * Submit's shape and meaning: the BindCharacter Command is durable in
    * the log at the returned offset, and the arrival — CharacterArrived
    * with an empty from_direction — comes on the Event stream when the
-   * tick applies it. The Session's teardown, whichever way it ends,
-   * produces the UnbindCharacter that makes the body dormant.
+   * tick applies it. The Session's teardown decides what the body does
+   * next (AW-SRV-015): CloseSession or a revoked credential produces
+   * UnbindCharacter{QUIT}, and the body goes dormant; a lost stream or a
+   * drain produces MarkLinkdead, and the body stays for the grace.
+   *
+   * Selecting the Character a linkdead Session left is the reconnect: it
+   * is not already_live, and the arrival is CharacterReconnected. Selecting
+   * any other Character of the Account while one is linkdead is
+   * already_live naming the linkdead one — the grace is not a way out of a
+   * fight (ADR-0006).
    *
    * @generated from rpc andara.game.v1.Game.SelectCharacter
    */

@@ -48,3 +48,36 @@ bystander is an identifier the existing Room-scoped Events deliberately don't ex
 **Recommendation:** give all three `zone_id`, `room_id` and `character_name`, matching
 `CharacterArrived`. Keep `character_id` and `deadline_tick` only if a consumer needs them;
 `AW-CLI-008` doesn't.
+
+## Architecture's answers (2026-09-26, contract review)
+
+Recorded in the story body, under "Contract review". The story stays `ready`, and implementation can
+start it.
+
+1. **Numbers:** `mark_linkdead = 18`. The Events are `character_linkdead = 20`,
+   `character_reconnected = 21`, `character_despawned = 22`. `EntityState` takes 7
+   (`linkdead_since_tick`) and two more, 11 and 12, because of the durations (below). The protos and
+   `gen/` are on `main` with this review.
+2. **AC-9 moved to `AW-SRV-007`** as an inherited DoD line, as recommended. AC-6 is stated against
+   full-log replay. `depends_on` is unchanged.
+3. **Names, not ids:** all three Events carry `zone_id`, `room_id`, `character_name`, and nothing
+   else except `CharacterDespawned.reason`, a string. No `character_id`, no `deadline_tick`: combat
+   moves the deadline without an Event, so a carried one goes stale.
+
+Beyond the three, the review changed:
+- `MarkLinkdead` carries `grace_ticks`, `extension_ticks`, `max_ticks`. The sim doesn't read
+  them from config at apply, or a replay under retuned config would fail its State Hash.
+- `ErrNotLinkdead` is struck. It would have broken `AW-SRV-014`'s crash path.
+- A drain produces `MarkLinkdead`, and a revoke produces `UnbindCharacter{QUIT}` (AC-15).
+- Selecting another Character while one is linkdead is `already_live` (AC-16).
+- `(linkdead)` comes from `RoomDescribed.linkdead`, not from a suffix in `occupants`. That touches
+  `AW-CLI-008`, amended in the same review.
+
+## For PM
+
+`AW-SRV-007` gained an inherited Definition-of-done line from this review: 015's old AC-9, plus two
+things the move exposed. A linkdead body must recover from a *snapshot* with its linkdead fields
+intact. And a body a crash leaves present with no Session must be marked linkdead at recovery. Today
+it stays present forever (`AW-SRV-014`: "stays present until the next BindCharacter takes it"). That
+last one is new behavior. Size `AW-SRV-007` with it when SPRINT-03 is planned, or split it out.
+

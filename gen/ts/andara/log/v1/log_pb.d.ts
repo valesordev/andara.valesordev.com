@@ -133,6 +133,12 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: ContentSwap;
     case: "contentSwap";
+  } | {
+    /**
+     * @generated from field: andara.log.v1.MarkLinkdead mark_linkdead = 18;
+     */
+    value: MarkLinkdead;
+    case: "markLinkdead";
   } | { case: undefined; value?: undefined };
 };
 
@@ -307,6 +313,58 @@ export declare type UnbindCharacter = Message<"andara.log.v1.UnbindCharacter"> &
 export declare const UnbindCharacterSchema: GenMessage<UnbindCharacter>;
 
 /**
+ * The Session driving this Character lost its stream without a CloseSession
+ * (AW-SRV-015, ADR-0006): a transport close, a keepalive miss past
+ * session.linkdead_detect, or a drain. Produced by the Gateway; the tick that
+ * applies it fixes the Tick the grace is counted from. Applied to a present,
+ * bound body it sets, with T the applying Tick:
+ *   linkdead_since_tick      = T
+ *   linkdead_deadline_tick   = T + grace_ticks
+ *   linkdead_ceiling_tick    = T + max_ticks
+ *   linkdead_extension_ticks = extension_ticks
+ * and emits CharacterLinkdead to the Room. Applied to a body already linkdead,
+ * or dormant, or absent, it is a deterministic no-op, so a Gateway that
+ * produces it twice (a drain racing a drop) changes nothing.
+ *
+ * The three durations are carried, in Ticks, rather than read from the sim's
+ * configuration at apply. The log is the source of what a tick ran on
+ * (ContentSwap below), and a grace read from config would make a World
+ * replayed under a retuned session.linkdead_* land its despawns on different
+ * Ticks than the World players were in, and fail its State Hash. The Gateway
+ * converts session.linkdead_grace, _combat_extension and _max at
+ * sim.tick_rate when it produces this; replay reads what was produced.
+ *
+ * @generated from message andara.log.v1.MarkLinkdead
+ */
+export declare type MarkLinkdead = Message<"andara.log.v1.MarkLinkdead"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+
+  /**
+   * @generated from field: uint64 grace_ticks = 2;
+   */
+  graceTicks: bigint;
+
+  /**
+   * @generated from field: uint64 extension_ticks = 3;
+   */
+  extensionTicks: bigint;
+
+  /**
+   * @generated from field: uint64 max_ticks = 4;
+   */
+  maxTicks: bigint;
+};
+
+/**
+ * Describes the message andara.log.v1.MarkLinkdead.
+ * Use `create(MarkLinkdeadSchema)` to create a new message.
+ */
+export declare const MarkLinkdeadSchema: GenMessage<MarkLinkdead>;
+
+/**
  * The World moves one pack to a new content version (AW-SRV-012). The Loader
  * resolves, validates and builds the new topology off-tick, then produces this
  * Command. It is in the log so that the tick a World changed content is part
@@ -431,7 +489,8 @@ export declare type Entity = Message<"andara.log.v1.Entity"> & {
   /**
    * The display name, when the Entity has one apart from its ID: a
    * Character's (AW-SRV-014). Dormancy is not carried — a dormant body
-   * never moves, so it never crosses a Zone.
+   * never moves, so it never crosses a Zone. Nor is linkdead state
+   * (AW-SRV-015): a linkdead body is inert, so it never moves either.
    *
    * @generated from field: string name = 5;
    */
@@ -695,14 +754,17 @@ export enum UnbindReason {
   QUIT = 1,
 
   /**
-   * SWITCH is AW-SRV-032's, LINKDEAD AW-SRV-015's; declared so the field
-   * never changes shape.
+   * SWITCH is AW-SRV-032's; declared so the field never changes shape.
    *
    * @generated from enum value: SWITCH = 2;
    */
   SWITCH = 2,
 
   /**
+   * Declared for AW-SRV-015 and not produced by it: grace expiry is the sim
+   * reaching a deadline Tick in Zone state, not a Command in the log
+   * (MarkLinkdead below). Kept, because a number once declared stays.
+   *
    * @generated from enum value: LINKDEAD = 3;
    */
   LINKDEAD = 3,

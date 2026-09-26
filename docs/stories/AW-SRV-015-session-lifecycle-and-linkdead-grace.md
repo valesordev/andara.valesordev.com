@@ -55,28 +55,38 @@ not cost me my place in the world.
 
 1. **Given** a playing Session **when** its stream drops **then** within `session.linkdead_detect`
    (default 5 s) a `MarkLinkdead` Command is produced, the Character stays in its Room, and a
-   `CharacterLinkdead` Event with Room scope is emitted; `look` in that Room shows `(linkdead)` after the
-   name.
+   `CharacterLinkdead` Event with Room scope is emitted; `look` in that Room lists the name in both
+   `RoomDescribed.occupants` and `RoomDescribed.linkdead`. A transport close is detected at once; a
+   keepalive miss with no close (a partition) within `linkdead_detect`.
 2. **Given** a linkdead Character **when** the player reconnects within the grace period and selects it
-   **then** the Session rebinds, the stream resumes from `last_event_id` with no gap, and a
-   `CharacterReconnected` Event is emitted; the Character was never removed.
+   **then** the Session rebinds, a stream that carries `last_event_id` resumes from it with no gap, and a
+   `CharacterReconnected` Event is emitted in place of `CharacterArrived`; the Character was never
+   removed. `SelectCharacter` is not `already_live` for the Character the linkdead Session left.
 3. **Given** a linkdead Character **when** its deadline Tick is reached **then** the sim despawns it in
    that tick, marks it dormant with its position, emits `CharacterDespawned{reason=LINKDEAD}`, and it is
    no longer targetable.
 4. **Given** a despawned Character **when** the player logs back in and selects it **then** it spawns at
    the position it held at despawn (`AW-SRV-014` AC-6).
 5. **Given** `CloseSession` **when** it is called by a playing Session **then** an `UnbindCharacter{QUIT}`
-   is produced and `CharacterDespawned{reason=QUIT}` follows; no linkdead body is left.
-6. **Given** a restart while a Character is linkdead **when** the World recovers **then** its deadline
-   Tick is exactly what the snapshot and log say; the grace is neither extended nor cancelled.
+   is produced and `CharacterDespawned{reason="quit"}` follows, in place of AW-SRV-014's
+   `CharacterLeft{to_direction: ""}`; no linkdead body is left. `CloseSessionResponse` is sent only
+   after the unbind is durable in the log and the Account's live flag is free, so a
+   `SelectCharacter` for the same Character sent after the response is never `already_live`
+   (`docs/feedback/AW-SRV-014-character-roster.md` §3).
+6. **Given** a server killed while a Character is linkdead **when** the World recovers by full-log
+   replay (M1's recovery) **then** the body's `linkdead_since_tick`, `linkdead_deadline_tick`,
+   `linkdead_ceiling_tick` and `linkdead_extension_ticks` equal their values before the kill, and it
+   despawns on the same Tick it would have; the grace is neither extended nor cancelled. The same
+   from a snapshot is `AW-SRV-007`'s (inherited line there).
 7. **Given** `egress.resume_window` (an Event count, `AW-SRV-011`), `session.linkdead_max`, and
    `egress.assumed_event_rate` **when** the server starts **then** it refuses to start if
    `resume_window < linkdead_max × assumed_event_rate`, naming all three; in production
    `andara_reconnect_resyncs_total` rising is the signal the assumed rate is too low.
 8. **Given** configuration violating `linkdead_max >= linkdead_grace > recovery.rto_target` **when** the
    server starts **then** it exits `1` naming the violated relation and every value in it.
-9. **Given** a full restart completing within RTO **when** clients reconnect **then** every Character
-   that was playing rebinds and none despawns. Exercised in CI on top of `AW-SRV-007`'s test.
+9. *(Moved to `AW-SRV-007` at contract review, 2026-09-26: the full-restart-within-RTO rebind needs
+   snapshot recovery, which this story doesn't have. It is an inherited Definition-of-done line
+   there.)*
 10. **Given** a linkdead Character **when** `OnCombatInteraction` fires for it **then** its deadline
     becomes `max(deadline, now + extension_ticks)`, capped at `linkdead_since + max_ticks`; a refresh,
     not an accumulation.
@@ -86,8 +96,17 @@ not cost me my place in the world.
     after the last blow, not at the original 180 s deadline.
 13. **Given** lethal damage before either deadline **when** it dies **then** normal death rules apply;
     `andara_linkdead_outcomes_total{outcome="died"}` increments.
-14. **Given** the same log replayed from a snapshot **when** replay completes **then** every despawn
-    lands on the identical Tick.
+14. **Given** the same log replayed **when** replay completes **then** every despawn lands on the
+    identical Tick, including when `session.linkdead_*` was retuned between the run and the replay:
+    the durations come from each `MarkLinkdead`, not from the replaying binary's config.
+15. **Given** a graceful drain (SIGTERM) **when** the Gateway tears down its Sessions **then** each
+    playing Session produces `MarkLinkdead`, not `UnbindCharacter{QUIT}`, and no Character despawns
+    because of the drain. A revoked credential tears down as `CloseSession` does.
+16. **Given** an Account whose Character is linkdead **when** a Session selects a *different*
+    Character of that Account **then** it is `FAILED_PRECONDITION already_live` naming the linkdead
+    Character, and nothing is produced.
+17. **Given** a `MarkLinkdead` for a body that is already linkdead, dormant, or absent **when** it is
+    applied **then** nothing changes and nothing is emitted.
 
 ## Interface contract
 
@@ -103,16 +122,30 @@ playing ─CloseSession─▶ closed          linkdead(gateway) ─grace expiry 
 The Gateway's linkdead state is bookkeeping; the World's is authoritative. On stream drop the Gateway
 produces `MarkLinkdead`; on the `CharacterDespawned` Event it closes the Session.
 
-```protobuf
-// CONTRACT SKETCH — additions to andara/log/v1/log.proto LoggedCommand oneof
-MarkLinkdead mark_linkdead = 15;        // character_id
-// BindCharacter (12) doubles as reconnect: applied to a linkdead body it clears the deadline.
+The wire and record shapes are on `main` in `docs/specs/protocol/` (contract review, 2026-09-26), and
+the comments there are the contract:
 
-// additions to andara/game/v1/event.proto payload oneof
-CharacterLinkdead    { string character_id = 1; uint64 deadline_tick = 2; }
-CharacterReconnected { string character_id = 1; }
-CharacterDespawned   { string character_id = 1; DespawnReason reason = 2; }   // QUIT, LINKDEAD, LINKDEAD_CEILING, SWITCH
-```
+- `andara.log.v1.LoggedCommand`: `MarkLinkdead mark_linkdead = 18` carrying `character_id`,
+  `grace_ticks`, `extension_ticks`, `max_ticks`. The Gateway converts the three `session.linkdead_*`
+  durations at `sim.tick_rate` when it produces it.
+- `BindCharacter` (15) doubles as reconnect: applied to a linkdead body it zeroes the four linkdead
+  fields and emits `CharacterReconnected`. Applied to a present body that isn't linkdead it does what
+  `AW-SRV-014` says (taken where it stands, nothing emitted).
+- `andara.game.v1.EventEnvelope`: `character_linkdead = 20`, `character_reconnected = 21`,
+  `character_despawned = 22`, each carrying `zone_id`, `room_id`, `character_name`, like
+  `CharacterArrived`. No `character_id`, no deadline. `CharacterDespawned.reason` is a string:
+  `quit`, `switch`, `linkdead`, `linkdead_ceiling`.
+- `RoomDescribed.linkdead = 7`: the linkdead subset of `occupants`.
+
+Teardown, by how the Session ends:
+
+| End | Produced | Body |
+|-----|----------|------|
+| `CloseSession` | `UnbindCharacter{QUIT}` | dormant, `CharacterDespawned{quit}` |
+| credential revoked | `UnbindCharacter{QUIT}` | dormant, `CharacterDespawned{quit}` |
+| stream closed or keepalive miss | `MarkLinkdead` | linkdead, `CharacterLinkdead` |
+| drain (SIGTERM) | `MarkLinkdead` | linkdead, `CharacterLinkdead` |
+| deadline or ceiling Tick | nothing; the sim despawns | dormant, `CharacterDespawned{linkdead\|linkdead_ceiling}` |
 
 ```go
 // CONTRACT SKETCH — not an implementation
@@ -122,8 +155,9 @@ package sim
 func (e *Engine) OnCombatInteraction(target EntityID)
 ```
 
-`EntityState` (`AW-SRV-006`) carries `linkdead_deadline_tick` (4), and gains `uint64 linkdead_since_tick
-= 7`. Both are hashed.
+`EntityState` (`AW-SRV-006`) carries `linkdead_deadline_tick` (4), and gains `linkdead_since_tick` (7),
+`linkdead_ceiling_tick` (11) and `linkdead_extension_ticks` (12). All four are hashed, and all four
+go in the snapshot body (`snapshot_codec_test.go`'s field count moves with them).
 
 ### Configuration
 
@@ -142,13 +176,15 @@ Startup asserts, in order, and exits `1` on the first failure:
 
 ### Error taxonomy
 
-`ErrNotLinkdead` — `BindCharacter` on a live body from another Session (already `FAILED_PRECONDITION`
-at the Gateway; the sim rejects as defence in depth). `ErrInvariant{Relation, Values}` at boot.
+`ErrInvariant{Relation, Values}` at boot. *(`ErrNotLinkdead` is struck at contract review: a sim that
+rejected `BindCharacter` on a present, non-linkdead body would break `AW-SRV-014`'s crash path and its
+idempotent retry after `DEADLINE_EXCEEDED`. The Gateway's live flag is the one-live guard, as
+`AW-SRV-014` records; the sim has no Session to compare against.)*
 
 ## Data / state impact
 
-`linkdead_deadline_tick` and `linkdead_since_tick` are Zone state, hashed and snapshotted;
-`state_version` bumps by one with a zero-fill migration. Deadlines are Ticks so replay is exact; a
+The four linkdead fields are Zone state, hashed and snapshotted; `state_version` bumps by one with a
+zero-fill migration. Deadlines are Ticks so replay is exact; a
 wall-clock deadline would make a recovered World differ from the one players were in.
 
 `session.linkdead_detect` is the one wall-clock number, and it is on the Gateway side of the log: it
@@ -180,9 +216,11 @@ None of its own. A rising linkdead rate is a symptom tied to the Session availab
 - **Unit:** deadline arithmetic for AC-10–12 as a table over Ticks; startup invariant table (AC-7, AC-8);
   state machine transitions including `CloseSession` while already linkdead.
 - **Integration:** drop-and-reconnect inside the window against `AW-SRV-011`'s stream (AC-2);
-  drop-and-expire (AC-3, AC-4); kill mid-grace and recover (AC-6); full restart within RTO with 50
-  Sessions (AC-9); replay determinism of despawn Ticks (AC-14) using a fixture combat verb that calls
-  `OnCombatInteraction`.
+  a keepalive miss with no transport close, through a proxy that stops forwarding (AC-1);
+  drop-and-expire (AC-3, AC-4); quit then an immediate select, 20 times, never `already_live`
+  (AC-5); kill mid-grace and recover by full-log replay (AC-6); replay determinism of despawn Ticks
+  under a retuned config (AC-14) using a fixture combat verb that calls `OnCombatInteraction`; drain
+  with two playing Sessions (AC-15).
 - **Manual/operator:**
   ```
   andara-cli play            # select a Character, then kill the client
@@ -192,8 +230,9 @@ None of its own. A rising linkdead rate is a symptom tied to the Session availab
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the restart-mid-grace test, the CI restart-within-RTO test, and the startup
-invariant test.
+CLAUDE.md §8, plus: the restart-mid-grace test and the startup invariant test. `make stack-linkdead`
+(`AW-INF-017`) is the live observation of `andara_linkdead_outcomes_total{outcome="reconnected"}` and
+`andara_sessions_linkdead` from the running server.
 
 ## Open questions
 
@@ -217,3 +256,34 @@ invariant test.
   own: `events.max_subscribers` bounds Sessions that have *ever* subscribed (each a pump and up to
   `resume_window` envelopes), not concurrent streams, and linkdead makes Sessions linger; the
   number is this story's to size with AC-7's invariant.
+
+## Contract review (architecture, 2026-09-26)
+
+Stays `ready`. The answers to `docs/feedback/AW-SRV-015-linkdead.md` and to §3 of
+`docs/feedback/AW-SRV-014-character-roster.md` are in the body above; this is the index.
+
+1. **Numbers.** `mark_linkdead = 18`; the Events 20–22; `EntityState` 7, 11, 12;
+   `RoomDescribed.linkdead = 7`. Landed in `docs/specs/protocol/` and `gen/` in this review, so
+   nothing else can take them.
+2. **AC-9 moved to `AW-SRV-007`**, as an inherited Definition-of-done line. AC-6 is stated against
+   full-log replay. `depends_on` stays `[AW-SRV-014]`, and the story can close in SPRINT-02.
+3. **The Events carry `zone_id`, `room_id`, `character_name`**, no `character_id` and no deadline.
+   `reason` is a string, as every client-facing reason is. `(linkdead)` in `look` is a field,
+   `RoomDescribed.linkdead`, not a suffix on a name in `occupants`.
+4. **SRV-014 §3, `already_live` after a clean quit:** `CloseSession` answers after the teardown's
+   produce and the flag release (AC-5). Not after apply: log order already puts the next
+   `BindCharacter` behind the unbind in the same Partition.
+
+Found in review, beyond the three items:
+
+5. **The durations ride in `MarkLinkdead`.** A grace read from config at apply makes a replay under
+   a retuned config despawn on different Ticks and fail its State Hash (AC-14). This is why the state
+   has four fields, not two.
+6. **`ErrNotLinkdead` struck** (Error taxonomy).
+7. **Teardown by cause** (the table): a drain must be linkdead, or every deploy despawns the map,
+   which is the thing the grace exists to prevent (AC-15).
+8. **Another Character while one is linkdead is `already_live`** (AC-16). ADR-0006 calls
+   `linkdead_max` the combat-logging knob. Switching Characters would be a way around it.
+9. **`CharacterDespawned` replaces `CharacterLeft{to_direction: ""}`** on an unbind, so a
+   bystander reads one line on a quit, not two. `AW-CLI-004`'s `leaves.` row for an empty direction
+   stays for older servers.

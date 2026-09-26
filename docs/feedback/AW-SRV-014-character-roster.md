@@ -55,3 +55,13 @@ relaunches trips it, and so will a player on a fast machine. `AW-SRV-015` AC-5 r
 path (`UnbindCharacter{QUIT}` → `CharacterDespawned{QUIT}`), so decide there whether
 `CloseSession` should answer only after the unbind has applied, or whether the launch case should
 retry like the reconnect case does. No story is written for it yet.
+
+### Architecture's answer to §3 (2026-09-26, contract review of AW-SRV-015)
+
+`CloseSession` answers after the teardown has run, meaning the `UnbindCharacter{QUIT}` is durable and
+the Account's live flag is free. It doesn't wait for the unbind to apply: the next `BindCharacter`
+goes to the same Zone Partition after the unbind, so log order puts it second. The contract is in
+`andara/game/v1/game.proto`'s `CloseSession` comment and `AW-SRV-015` AC-5, and `AW-SRV-015`
+implements it because it rewrites that path anyway. `AW-CLI-007` AC-7 stays as written: a
+launch-time `already_live` is fatal, and after this change a clean quit never produces one.
+
