@@ -6,6 +6,7 @@
 package projector_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -495,4 +496,27 @@ func TestRun_ReadyWhileTheWorldKeepsTicking(t *testing.T) {
 	<-ticking
 	b.waitCommitted(t, w.live.Tick())
 	sameContent(t, b.topic(t), dumpOf(t, w))
+}
+
+// andara_state_topic_bytes' query (feedback §1): against a topic holding
+// records it reports their size, summed over every Partition, rather than 0.
+// A topic the broker does not have is an error, not 0.
+func TestTopicBytesReportsWhatTheTopicHolds(t *testing.T) {
+	b := newBroker(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var recs []*kgo.Record
+	for p := int32(0); p < 4; p++ {
+		recs = append(recs, &kgo.Record{Topic: b.state, Partition: p, Key: []byte("zone:z"), Value: bytes.Repeat([]byte("x"), 512)})
+	}
+	if err := b.cl.ProduceSync(ctx, recs...).FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+	eventually.Observed(t, 30*time.Second, "TopicBytes reports the records on four Partitions", func() (bool, string) {
+		n, err := projector.TopicBytes(ctx, b.adm, b.state)
+		return err == nil && n >= 4*512, fmt.Sprintf("%d bytes, err %v", n, err)
+	})
+	if n, err := projector.TopicBytes(ctx, b.adm, b.state+".absent"); err == nil {
+		t.Fatalf("a missing topic reported %d bytes and no error", n)
+	}
 }

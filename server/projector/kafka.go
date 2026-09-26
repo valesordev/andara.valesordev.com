@@ -421,19 +421,55 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 
 // TopicBytes sums the topic's log size over partitions, one replica each —
 // the largest, since replicas of a partition hold the same log.
+//
+// The partitions are named in the request. A topic with an empty partition
+// set is a request for none of them, and Redpanda answers it with nothing and
+// no error, so the gauge read 0 over a topic holding records (feedback §1 of
+// AW-SRV-019). A describe that covers fewer partitions than the topic has is an
+// error, never a smaller number.
 func TopicBytes(ctx context.Context, adm *kadm.Client, topic string) (int64, error) {
-	dirs, err := adm.DescribeAllLogDirs(ctx, kadm.TopicsSet{topic: nil})
+	topics, err := adm.ListTopics(ctx, topic)
 	if err != nil {
-		return 0, err
+		return 0, fmt.Errorf("list %s: %w", topic, err)
+	}
+	td, ok := topics[topic]
+	if !ok || td.Err != nil {
+		if ok {
+			err = td.Err
+		} else {
+			err = errors.New("not in the metadata")
+		}
+		return 0, fmt.Errorf("list %s: %w", topic, err)
+	}
+	want := td.Partitions.Numbers()
+	if len(want) == 0 {
+		return 0, fmt.Errorf("%s has no partitions", topic)
+	}
+	var set kadm.TopicsSet
+	set.Add(topic, want...)
+	dirs, err := adm.DescribeAllLogDirs(ctx, set)
+	if err != nil {
+		return 0, fmt.Errorf("describe log dirs of %s: %w", topic, err)
 	}
 	sizes := map[int32]int64{}
+	var dirErr error
 	dirs.Each(func(d kadm.DescribedLogDir) {
+		if d.Err != nil {
+			dirErr = errors.Join(dirErr, fmt.Errorf("broker %d dir %s: %w", d.Broker, d.Dir, d.Err))
+			return
+		}
 		d.Topics.Each(func(p kadm.DescribedLogDirPartition) {
-			if p.Topic == topic && p.Size > sizes[p.Partition] {
+			if p.Topic != topic {
+				return
+			}
+			if cur, seen := sizes[p.Partition]; !seen || p.Size > cur {
 				sizes[p.Partition] = p.Size
 			}
 		})
 	})
+	if len(sizes) < len(want) {
+		return 0, fmt.Errorf("describe log dirs of %s: %d of %d partitions reported: %w", topic, len(sizes), len(want), dirErr)
+	}
 	parts := make([]int, 0, len(sizes))
 	for p := range sizes {
 		parts = append(parts, int(p))
