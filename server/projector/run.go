@@ -151,6 +151,15 @@ func Run(ctx context.Context, o RunOptions) error {
 	if eng == nil {
 		return nil // ctx ended before the World produced a first boundary
 	}
+	if round > 0 {
+		// The boundaries before the round are never replayed; the reader
+		// starts at the round's instead of reading its way there (AC-6).
+		at, err := boundaries.SeekAfter(ctx, round)
+		if err != nil {
+			return fmt.Errorf("boundaries: %w", err)
+		}
+		log.Info("boundary reader positioned after the round", "round_tick", uint64(round), "offset", at)
+	}
 	p := New(eng, Options{ContentVersion: o.ContentVersion, OnSwaps: o.OnSwaps})
 
 	prod, err := NewProducer(ctx, o.Brokers, o.StateTopic)

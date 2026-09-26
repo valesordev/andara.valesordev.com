@@ -26,14 +26,17 @@ import (
 	"github.com/valesordev/andara/server/tickloop"
 )
 
-// scaleTail is the tail a rebuild replays past its round: one snapshot
-// interval (60 s) at 10 Hz, the most a round can be behind the head.
-const scaleTail = 600
+// defaultScaleTail is the tail a rebuild replays past its round: one
+// snapshot interval (60 s) at 10 Hz, the most a round can be behind the head.
+// ANDARA_AC6_TAIL_TICKS overrides it. A short tail is what separates the
+// history's cost from the replay's run-to-run noise: at 600 ticks the replay
+// is ~40 s of CPU and varies by seconds between runs.
+const defaultScaleTail = 600
 
 // AC-6 at the stated scale (§8 item 3): --rebuild of the sizing fixture
 // (simtest.SizingEntities, more than the story's 10,000) over H ticks of
 // history. ANDARA_AC6_HISTORY_TICKS sets H; 864000 is the story's 24 h at
-// 10 Hz. Unset, the test is skipped: 24 h of boundaries is ~0.5 GB, which the
+// 10 Hz; ANDARA_AC6_TAIL_TICKS sets the tail. Unset, the test is skipped: 24 h of boundaries is ~0.5 GB, which the
 // shared stack's broker should not carry, so the record says which broker it
 // ran on.
 //
@@ -52,6 +55,13 @@ func TestRun_RebuildAtScaleIsBoundedByTheRoundAndTheTail(t *testing.T) {
 	history, err := strconv.Atoi(raw)
 	if err != nil || history < 1 {
 		t.Fatalf("ANDARA_AC6_HISTORY_TICKS=%q: want a positive tick count", raw)
+	}
+
+	scaleTail := defaultScaleTail
+	if raw := os.Getenv("ANDARA_AC6_TAIL_TICKS"); raw != "" {
+		if scaleTail, err = strconv.Atoi(raw); err != nil || scaleTail < 1 {
+			t.Fatalf("ANDARA_AC6_TAIL_TICKS=%q: want a positive tick count", raw)
+		}
 	}
 
 	src, w := scaleWorld(t, sim.Tick(history))
@@ -235,4 +245,92 @@ func loadAndReplay(t *testing.T, src *simtest.FixedContent, ws sim.WorldStore, w
 		t.Fatal(err)
 	}
 	return referenceTimes{load: load, replay: time.Since(began)}
+}
+
+// produceBoundaries writes a boundary per tick in ticks to the events topic's
+// boundary Partition, each behind an Event, as a live log interleaves them.
+func (b *broker) produceBoundaries(t *testing.T, ticks ...sim.Tick) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	var recs []*kgo.Record
+	for _, tick := range ticks {
+		body, err := proto.Marshal(sim.TickCompleted{Tick: tick, StateVersion: sim.StateVersion}.Proto())
+		if err != nil {
+			t.Fatal(err)
+		}
+		recs = append(recs,
+			&kgo.Record{Topic: b.events, Partition: tickloop.BoundaryPartition, Key: []byte("z00"), Value: []byte("event")},
+			&kgo.Record{Topic: b.events, Partition: tickloop.BoundaryPartition, Key: []byte(tickloop.BoundaryKey), Value: body})
+	}
+	if err := b.cl.ProduceSync(ctx, recs...).FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// firstBoundary is the tick of the first boundary r delivers.
+func firstBoundary(t *testing.T, r *projector.BoundaryReader) sim.Tick {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := r.Next(context.Background(), 1, 200*time.Millisecond)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) > 0 {
+			return got[0].Tick
+		}
+	}
+	t.Fatal("no boundary delivered")
+	return 0
+}
+
+// AC-6: after a round at tick R, the reader starts at R+1's boundary without
+// reading the ones before it, wherever R falls in the Partition.
+func TestBoundaryReader_SeekAfterStartsAtTheNextTick(t *testing.T) {
+	b := newBroker(t)
+	ticks := make([]sim.Tick, 500)
+	for i := range ticks {
+		ticks[i] = sim.Tick(i + 1)
+	}
+	b.produceBoundaries(t, ticks...)
+	for _, round := range []sim.Tick{1, 2, 137, 250, 499} {
+		r, err := projector.NewBoundaryReader(context.Background(), b.brokers, b.events)
+		if err != nil {
+			t.Fatal(err)
+		}
+		at, err := r.SeekAfter(context.Background(), round)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Each tick is an Event then its boundary: tick k's boundary is at
+		// offset 2k-1, and the reader lands no later than the Event before
+		// R+1's boundary.
+		if want := int64(2*round) + 1; at > want || at < want-1 {
+			t.Errorf("round %d: positioned at offset %d, want %d or just before it", round, at, want)
+		}
+		if got := firstBoundary(t, r); got != round+1 {
+			t.Errorf("round %d: first boundary delivered is tick %d, want %d", round, got, round+1)
+		}
+		r.Close()
+	}
+}
+
+// A Partition whose boundaries are out of tick order defeats the search. The
+// reader notices from the first boundary it delivers and reads from the
+// start, which is where it read from before it could seek.
+func TestBoundaryReader_SeekAfterFallsBackToTheStart(t *testing.T) {
+	b := newBroker(t)
+	b.produceBoundaries(t, 1, 2, 3, 40, 41, 42, 4, 5, 6, 7, 8, 9)
+	r, err := projector.NewBoundaryReader(context.Background(), b.brokers, b.events)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if _, err := r.SeekAfter(context.Background(), 3); err != nil { // lands on 40
+		t.Fatal(err)
+	}
+	if got := firstBoundary(t, r); got != 1 {
+		t.Fatalf("first boundary delivered is tick %d, want 1: the reader should have gone back to the start", got)
+	}
 }

@@ -129,3 +129,54 @@ The 10,000-Entity, 24 h `--rebuild` timing (§3) was not done this session. At 1
 records alone. It either gets its own throwaway broker or is measured in-process, and the record
 has to say which.
 
+## Implementation, 2026-09-26: AC-6 at scale, measured
+
+On `impl/aw-srv-019-ac6-scale`. `TestRun_RebuildAtScaleIsBoundedByTheRoundAndTheTail` is the
+measurement. It is skipped unless `ANDARA_AC6_HISTORY_TICKS` is set, so CI doesn't run it.
+
+**How it was measured.** A throwaway Redpanda v25.1.10 container (`--smp 2 --memory 6G`,
+`topic_memory_per_partition` lowered so six 64-partition topics fit), not the shared stack's.
+- **World:** the sizing fixture, 25,000 Entities (more than the story's 10,000) across 16 Zones,
+  brought into effect by a genesis swap. It is restored at tick 864,000, as if it had run 24 h.
+- **History:** 864,000 ticks of filler ahead of it on the boundary Partition, an Event and a
+  boundary per tick (1.73M records).
+- **Round and tail:** a round, then a tail of 600 ticks (one snapshot interval), with Characters
+  moving.
+- **Comparison:** `--rebuild` over those topics against the same World mirrored with no history,
+  and against snapshot load plus tail replay in process. Both rebuilds produce records equal to a
+  dump of the live World.
+
+**What it found.** The boundary reader always read from offset 0. After bootstrapping from a
+round it read, and discarded, every boundary and Event before it. At 24 h that cost **6.7 s**, and
+it grows linearly with retention. The fix is `BoundaryReader.SeekAfter`:
+- A binary search over the boundary Partition: boundary ticks rise with the offset, so it takes
+  about 21 probes at 1.73M records.
+- It positions the reader at the round's tick + 1 before the first read.
+- If the first boundary delivered is later than tick + 1 (boundaries out of tick order), the
+  reader falls back to the start, which is what it did before.
+- It reads the log only. `taken_at_unix_nano` would have been the obvious index, but
+  `snapshot.proto` says it is never read by recovery logic.
+
+| Run (864,000 ticks of history) | No history | With history |
+|---|---|---|
+| 10-tick tail, no seek | 1.51 s | **8.24 s** (fails the test) |
+| 10-tick tail, seek | 1.50 s | **1.71 s** (+0.13 s for the probes) |
+| 600-tick tail, seek | 38.99 s | 42.70 s |
+
+In process, at 600 ticks: snapshot load 0.12 s + tail replay 39.3 s = 39.5 s.
+
+Two things for architecture's §8:
+- **The strict AC-6 bound isn't met, and can't be.** `--rebuild` does the snapshot load and the
+  tail replay, *plus* the dump and the broker round trips, so it is always somewhat over their
+  sum: 1.5 s against 0.77 s at a 10-tick tail. What the test asserts is the property the bound
+  exists for: history adds less than snapshot load + tail replay, and no from-zero replay happens
+  (the existing `TestRun_RebuildFromTheRoundEqualsIncremental` deletes the pre-round log). If you
+  want a literal bound, name the overhead it allows.
+- **At 600 ticks the tail replay dominates:** about 65 ms per tick at 25,000 Entities, so a replica
+  catches up at roughly 1.5× real time. The 600-tick runs vary by seconds from run to run, which
+  is why the short-tail runs are the ones that separate history from noise.
+  `ANDARA_AC6_TAIL_TICKS` sets the tail.
+
+`AW-SRV-007` has the same scan in `tickloop.Recover` (its open question). `SeekAfter` is the
+projector's and isn't shared. Whether recovery reuses it is `AW-SRV-007`'s call.
+
