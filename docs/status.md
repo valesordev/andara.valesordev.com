@@ -24,6 +24,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 ## Decisions the lanes are waiting on
 
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
+  AW-SRV-015  ).
+  AW-SRV-015  ; it implies inert but doesn't decide it. Sent to PM for Brian's game-design batch.…
   AW-SRV-019  .
               14 more, attached to stories neither lane has reached
 
