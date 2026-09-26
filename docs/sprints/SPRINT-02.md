@@ -124,6 +124,10 @@ SPRINT-01's §9 defect, AW-INF-016, is in the architecture backlog as item 9.
 3. **When a Builder deletes a Zone, where do the Characters in it go?** Deletion is refused today
    (AW-SRV-012), and allowing it needs your evacuation policy. This gates a later story, not this
    sprint.
+4. **Is a linkdead Character inert?** Raised in AW-SRV-015's §8 review (#120), from ADR-0006's
+   `[NEEDS BRIAN]`. **Answered 2026-09-26: yes, wholly inert.** It takes damage and neither
+   defends itself nor flees. That is what AW-SRV-015 built, so no code changes. Recorded in
+   `docs/feedback/AW-SRV-015-linkdead.md` for architecture.
 
 ## Close-out
 (filled in by the next PM session)
