@@ -138,7 +138,16 @@ func (g *gameService) CloseSession(ctx context.Context, req *connect.Request[gam
 	if err != nil {
 		return nil, err
 	}
-	g.s.sessions.close(ctx, sess, OutcomeClosed, "closed by client")
+	// The response waits for the teardown: the UnbindCharacter durable in
+	// the log and the live flag free, so a SelectCharacter for the same
+	// Character sent after it is never already_live (AW-SRV-015 AC-5). The
+	// wait is bounded by the call; a teardown that outlives it still runs.
+	released := g.s.sessions.close(ctx, sess, OutcomeClosed, "closed by client", EndQuit)
+	select {
+	case <-released:
+	case <-ctx.Done():
+		return nil, connect.NewError(connect.CodeDeadlineExceeded, ctx.Err())
+	}
 	return connect.NewResponse(&gamev1.CloseSessionResponse{}), nil
 }
 

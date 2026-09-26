@@ -263,7 +263,12 @@ func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 		if eg != nil {
 			eg.ObserveTick(uint64(res.Tick))
 		}
-		if res.Completed.CommandsApplied > 0 {
+		if len(res.Linkdead) > 0 && rt.Roster != nil {
+			// A linkdead body's grace ended: its Account's flag is free
+			// (AW-SRV-015). Metrics and log lines are the loop's.
+			rt.Roster.ObserveLinkdead(res.Linkdead)
+		}
+		if res.Completed.CommandsApplied > 0 || len(res.Linkdead) > 0 {
 			rt.observeCharacters(rt.Engine)
 		}
 	}

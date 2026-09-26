@@ -45,16 +45,42 @@ type SessionEnder interface {
 // rule, the cap, and the name rule live behind the seam.
 //
 // ReleaseSession is the teardown: told, before the Session's context is
-// canceled, that the Session is ending for any reason, so the Character
-// it drives is unbound — an UnbindCharacter produced, the routing table
-// cleared, the live flag released. It must not block on the log; the
-// produce runs on its own context.
+// canceled, that the Session is ending and how (AW-SRV-015), so the
+// Character it drives leaves the World (EndQuit: an UnbindCharacter, the
+// live flag released) or waits out its grace (EndLinkdead: a MarkLinkdead,
+// the flag kept for the reconnect). It must not block on the log; the
+// produce runs on its own context, and the returned channel is closed when
+// it has finished — what CloseSession waits on before it answers.
 type Roster interface {
 	ListCharacters(ctx context.Context, s *Session) (*gamev1.ListCharactersResponse, error)
 	CreateCharacter(ctx context.Context, s *Session, name string) (*gamev1.CreateCharacterResponse, error)
 	SelectCharacter(ctx context.Context, s *Session, characterID string) (*gamev1.SelectCharacterResponse, error)
-	ReleaseSession(s *Session)
+	ReleaseSession(s *Session, end SessionEnd) <-chan struct{}
 }
+
+// SessionEnd is how a Session's end treats the Character it drives
+// (AW-SRV-015's teardown table).
+type SessionEnd int
+
+const (
+	// EndQuit: CloseSession, or a revoked credential. The body leaves the
+	// World now.
+	EndQuit SessionEnd = iota
+	// EndLinkdead: the stream was lost — a transport close, a keepalive
+	// miss — or the server is draining. The body stays for the grace.
+	EndLinkdead
+)
+
+// String names the end for logs.
+func (e SessionEnd) String() string {
+	if e == EndLinkdead {
+		return "linkdead"
+	}
+	return "quit"
+}
+
+// closed is a channel already closed: a teardown with nothing to wait for.
+var closed = func() <-chan struct{} { c := make(chan struct{}); close(c); return c }()
 
 // UnimplementedRoster is the roster seam when none is wired: the RPCs are
 // refused with UNIMPLEMENTED, and a Session's end frees nothing because
@@ -77,7 +103,7 @@ func (UnimplementedRoster) SelectCharacter(context.Context, *Session, string) (*
 }
 
 // ReleaseSession does nothing.
-func (UnimplementedRoster) ReleaseSession(*Session) {}
+func (UnimplementedRoster) ReleaseSession(*Session, SessionEnd) <-chan struct{} { return closed }
 
 var errRosterPending = errors.New("no character roster is wired into this gateway")
 

@@ -98,7 +98,7 @@ type fixture struct {
 	rebinds  atomic.Int64
 }
 
-func newFixture(t *testing.T) *fixture {
+func newFixture(t *testing.T, opts ...func(*roster.Options)) *fixture {
 	t.Helper()
 	kr, err := auth.ParseKeyring(strings.NewReader("k1: " + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)) + "\n"))
 	if err != nil {
@@ -119,11 +119,15 @@ func newFixture(t *testing.T) *fixture {
 	}
 	f := &fixture{t: t, store: store, bindings: ingress.NewBindings(time.Second, nil, nil), log: &fakeLog{}, reg: prometheus.NewRegistry(), account: acct}
 	f.bindings.OnChange = func(string) { f.rebinds.Add(1) }
-	r, err := roster.New(roster.Options{
+	ro := roster.Options{
 		Accounts: store, Bindings: f.bindings, Log: f.log,
 		SpawnRoom: sim.RoomRef{Zone: "town", Room: "plaza"}, ProduceDeadline: time.Second,
 		Metrics: roster.NewMetrics(f.reg),
-	})
+	}
+	for _, o := range opts {
+		o(&ro)
+	}
+	r, err := roster.New(ro)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -399,12 +403,12 @@ func TestRoster_ReleaseProducesUnbind(t *testing.T) {
 
 	// Hold the produce so the window is observable.
 	f.log.slow = 100 * time.Millisecond
-	f.roster.ReleaseSession(s)
+	f.roster.ReleaseSession(s, gateway.EndQuit)
 	// Inside the window: still live.
 	if _, err := f.roster.SelectCharacter(ctx, f.session("s2"), id); connect.CodeOf(err) != connect.CodeFailedPrecondition {
 		t.Fatalf("select during teardown: %v, want already_live", err)
 	}
-	f.roster.ReleaseSession(s) // idempotent
+	f.roster.ReleaseSession(s, gateway.EndQuit) // idempotent
 	f.roster.Wait()
 
 	recs := f.log.records()
@@ -450,7 +454,7 @@ func TestRoster_ReleaseProduceFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.log.failWith(ingress.ErrUnavailable)
-	f.roster.ReleaseSession(s)
+	f.roster.ReleaseSession(s, gateway.EndQuit)
 	f.roster.Wait()
 	if _, _, ok := f.roster.Live(f.account); ok {
 		t.Fatal("live flag survived")
@@ -459,7 +463,7 @@ func TestRoster_ReleaseProduceFailure(t *testing.T) {
 		t.Fatal("produce_failed not counted")
 	}
 	// A Session that never selected releases nothing.
-	f.roster.ReleaseSession(f.session("s-idle"))
+	f.roster.ReleaseSession(f.session("s-idle"), gateway.EndQuit)
 	f.roster.Wait()
 	if len(f.log.records()) != 1 {
 		t.Fatal("an idle Session produced")
@@ -492,7 +496,7 @@ func TestRoster_ReleaseDuringSelect(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("the bind never reached the log")
 	}
-	f.roster.ReleaseSession(s)
+	f.roster.ReleaseSession(s, gateway.EndQuit)
 	close(f.log.gate)
 	if err := <-done; err != nil {
 		t.Fatal(err)
@@ -592,11 +596,14 @@ func (captureRoster) SelectCharacter(context.Context, *gateway.Session, string) 
 	return &gamev1.SelectCharacterResponse{}, nil
 }
 
-func (c captureRoster) ReleaseSession(s *gateway.Session) {
+func (c captureRoster) ReleaseSession(s *gateway.Session, _ gateway.SessionEnd) <-chan struct{} {
 	select {
 	case c.out <- s:
 	default:
 	}
+	done := make(chan struct{})
+	close(done)
+	return done
 }
 
 // A SelectCharacter that resolved its Session just before the teardown
@@ -668,7 +675,7 @@ func TestRoster_FollowsTheBodyAcrossZones(t *testing.T) {
 	f.bindings.Publish(sim.Event{Type: sim.EvCharacterArrived, Scope: sim.ScopeEntities(sim.EntityID("other")), Envelope: charArrived("docks", "pier", "")})
 	f.roster.ObserveMove("s-unknown", command.Binding{Actor: "x", Zone: "docks", Room: "pier"})
 	f.roster.Wait()
-	f.roster.ReleaseSession(s)
+	f.roster.ReleaseSession(s, gateway.EndQuit)
 	f.roster.Wait()
 	if ref, _ := f.store.Character(f.account, id); ref.GetZoneId() != "wilds" || ref.GetRoomId() != "trail" {
 		t.Fatalf("roster after the teardown: %v", ref)

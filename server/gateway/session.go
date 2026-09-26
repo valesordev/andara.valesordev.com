@@ -44,6 +44,17 @@ type Session struct {
 	// before the teardown sees it or is refused; the context cannot serve
 	// for that, because it is canceled after the teardown has run.
 	closing atomic.Bool
+	// released is the roster's teardown, set once by close.
+	released <-chan struct{}
+}
+
+// AddEvent records a span event on session.lifetime — linkdead.enter and
+// linkdead.reconnect (AW-SRV-015). A Session with no lifetime span, a
+// test's, records nothing.
+func (s *Session) AddEvent(name string, attrs ...attribute.KeyValue) {
+	if s.span != nil {
+		s.span.AddEvent(name, trace.WithAttributes(attrs...))
+	}
 }
 
 // Closing reports whether the Session's teardown has begun.
@@ -133,7 +144,7 @@ func (st *sessionStore) connClosed(connID uint64) {
 	}
 	st.mu.Unlock()
 	for _, s := range victims {
-		st.close(context.Background(), s, OutcomeDropped, "connection dropped")
+		st.close(context.Background(), s, OutcomeDropped, "connection dropped", EndLinkdead)
 	}
 }
 
@@ -204,9 +215,13 @@ func (st *sessionStore) get(id string) (*Session, bool) {
 
 // close tears one Session down. Idempotent: the first caller's outcome and
 // reason win, and a later caller — a connection close racing a CloseSession,
-// say — is a no-op rather than a second decrement.
-func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason string) {
+// say — is a no-op rather than a second decrement. end says what the
+// Character the Session drives does (AW-SRV-015); the returned channel is
+// closed when the roster's teardown has finished, and a later caller gets
+// the first caller's.
+func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason string, end SessionEnd) <-chan struct{} {
 	s.once.Do(func() {
+		s.released = closed
 		// Before anything else: a seam registering Session state now is
 		// refused rather than left behind by the release below.
 		s.closing.Store(true)
@@ -227,7 +242,7 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			st.ender.EndSession(s.ID, "revoked")
 		}
 		if st.roster != nil {
-			st.roster.ReleaseSession(s)
+			s.released = st.roster.ReleaseSession(s, end)
 		}
 		s.cancel()
 		dur := time.Since(s.OpenedAt)
@@ -251,14 +266,18 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			slog.String("remote_addr", s.RemoteAddr),
 			slog.String("outcome", outcome),
 			slog.String("reason", reason),
+			slog.String("end", end.String()),
 			slog.Float64("duration_ms", float64(dur.Microseconds())/1000),
 			slog.String("trace_id", traceIDOr(ctx, s.span.SpanContext())),
 		)
 	})
+	return s.released
 }
 
-// closeAll ends every Session with one reason. Drain uses it.
-func (st *sessionStore) closeAll(outcome, reason string) {
+// closeAll ends every Session with one reason. Drain uses it, as a linkdead
+// end: a deploy that despawned every Character is what the grace exists to
+// prevent (AW-SRV-015 AC-15).
+func (st *sessionStore) closeAll(outcome, reason string, end SessionEnd) {
 	st.mu.Lock()
 	victims := make([]*Session, 0, len(st.byID))
 	for _, s := range st.byID {
@@ -266,7 +285,7 @@ func (st *sessionStore) closeAll(outcome, reason string) {
 	}
 	st.mu.Unlock()
 	for _, s := range victims {
-		st.close(context.Background(), s, outcome, reason)
+		st.close(context.Background(), s, outcome, reason, end)
 	}
 }
 
@@ -300,7 +319,7 @@ func (st *sessionStore) recheck(ctx context.Context, r Rechecker) int {
 	n := 0
 	for _, s := range live {
 		if err := r.Recheck(s.Principal); err != nil {
-			st.close(ctx, s, OutcomeRevoked, "revoked: "+err.Error())
+			st.close(ctx, s, OutcomeRevoked, "revoked: "+err.Error(), EndQuit)
 			n++
 		}
 	}

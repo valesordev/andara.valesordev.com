@@ -32,6 +32,7 @@ type rosterRelease struct {
 	// table, and everything working on the Session's behalf derives from
 	// that context.
 	canceled bool
+	end      SessionEnd
 }
 
 func (r *recordingRoster) ListCharacters(context.Context, *Session) (*gamev1.ListCharactersResponse, error) {
@@ -52,10 +53,11 @@ func (r *recordingRoster) SelectCharacter(_ context.Context, s *Session, id stri
 	return &gamev1.SelectCharacterResponse{Partition: 3, AcceptedOffset: 7}, nil
 }
 
-func (r *recordingRoster) ReleaseSession(s *Session) {
+func (r *recordingRoster) ReleaseSession(s *Session, end SessionEnd) <-chan struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.released = append(r.released, rosterRelease{id: s.ID, closing: s.Closing(), canceled: s.Context().Err() != nil})
+	r.released = append(r.released, rosterRelease{id: s.ID, closing: s.Closing(), canceled: s.Context().Err() != nil, end: end})
+	return closed
 }
 
 func (r *recordingRoster) releases() []rosterRelease {
@@ -103,6 +105,11 @@ func TestRoster_ReleasedBeforeTheContextIsCanceled(t *testing.T) {
 			t.Errorf("session %s: the roster was told after the context was canceled", id)
 		}
 	}
+	// AW-SRV-015's teardown table: a CloseSession is a quit, a lost
+	// connection is linkdead.
+	if seen[closed.SessionId].end != EndQuit || seen[dropped.SessionId].end != EndLinkdead {
+		t.Errorf("ends: closed %v, dropped %v; want quit, linkdead", seen[closed.SessionId].end, seen[dropped.SessionId].end)
+	}
 	// A Session that ended reports Closing for good, which is what the
 	// roster reads when a Select races the teardown.
 	if s, ok := h.srv.sessions.get(closed.SessionId); ok {
@@ -135,5 +142,43 @@ func TestRoster_SeamCarriesTheRPCs(t *testing.T) {
 	defer rr.mu.Unlock()
 	if len(rr.created) != 1 || rr.created[0] != "Aldric" || len(rr.selected) != 1 {
 		t.Fatalf("the seam saw created=%v selected=%v", rr.created, rr.selected)
+	}
+}
+
+// slowRoster is recordingRoster whose teardown finishes only when release
+// is closed.
+type slowRoster struct {
+	recordingRoster
+	release chan struct{}
+}
+
+func (r *slowRoster) ReleaseSession(s *Session, end SessionEnd) <-chan struct{} {
+	r.recordingRoster.ReleaseSession(s, end)
+	return r.release
+}
+
+// AW-SRV-015 AC-5: CloseSession answers only after the roster's teardown has
+// finished — the UnbindCharacter durable and the flag free — so a
+// SelectCharacter sent after the response is never already_live.
+func TestCloseSession_WaitsForTheTeardown(t *testing.T) {
+	rr := &slowRoster{release: make(chan struct{})}
+	h := start(t, func(o *Options) { o.Roster = rr })
+	client := h.game()
+	sess := h.open(t, client)
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := client.CloseSession(context.Background(), connect.NewRequest(&gamev1.CloseSessionRequest{SessionId: sess.SessionId}))
+		done <- err
+	}()
+	waitFor(t, 5*time.Second, func() bool { return len(rr.releases()) == 1 }, "the teardown to begin")
+	select {
+	case err := <-done:
+		t.Fatalf("CloseSession answered before the teardown finished: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(rr.release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }

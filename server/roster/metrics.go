@@ -29,6 +29,7 @@ const (
 // Unbind reasons and outcomes.
 const (
 	ReasonQuit          = "quit"
+	ReasonLinkdead      = "linkdead"
 	UnbindOK            = "ok"
 	UnbindProduceFailed = "produce_failed"
 )
@@ -53,7 +54,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_character_bindings_total", Help: "SelectCharacter calls by outcome.",
 		}, []string{"outcome"}),
 		Unbinds: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "andara_character_unbinds_total", Help: "UnbindCharacter produces at Session end by reason and outcome.",
+			Name: "andara_character_unbinds_total", Help: "Session-end teardown produces by reason and outcome: UnbindCharacter for quit, MarkLinkdead for linkdead.",
 		}, []string{"reason", "outcome"}),
 	}
 	for _, s := range []string{StatePresent, StateDormant} {
@@ -64,6 +65,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for _, o := range []string{UnbindOK, UnbindProduceFailed} {
 		m.Unbinds.WithLabelValues(ReasonQuit, o)
+		m.Unbinds.WithLabelValues(ReasonLinkdead, o)
 	}
 	if reg != nil {
 		reg.MustRegister(m.SessionsBound, m.Characters, m.Bindings, m.Unbinds)

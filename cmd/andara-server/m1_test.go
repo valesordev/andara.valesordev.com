@@ -255,7 +255,9 @@ func TestRun_M1Gate(t *testing.T) {
 			strings.Contains(m, `andara_character_creations_total{outcome="ok"} 2`)
 	}, "the roster metrics to settle")
 
-	// A drain unbinds both: the log lines say so and the exit is clean.
+	// A drain marks both linkdead rather than unbinding them (AW-SRV-015
+	// AC-15: a deploy must not despawn the map): the log lines say so and
+	// the exit is clean.
 	if err := syscall.Kill(os.Getpid(), syscall.SIGTERM); err != nil {
 		t.Fatal(err)
 	}
@@ -274,8 +276,11 @@ func TestRun_M1Gate(t *testing.T) {
 			t.Errorf("stderr lacks %q", want)
 		}
 	}
-	if n := strings.Count(out, `"msg":"character unbound"`); n != 3 {
-		t.Errorf("%d unbind lines, want 3 (the quit and the two drained)", n)
+	if n := strings.Count(out, `"msg":"character unbound"`); n != 1 {
+		t.Errorf("%d unbind lines, want 1 (the quit)", n)
+	}
+	if n := strings.Count(out, `"msg":"character marked linkdead"`); n != 2 {
+		t.Errorf("%d linkdead lines, want 2 (the two drained)", n)
 	}
 	if strings.Contains(out, `"name":"Aldric"`) {
 		t.Error("a Character name is a log key")

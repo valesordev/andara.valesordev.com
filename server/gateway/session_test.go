@@ -72,7 +72,7 @@ func TestSessionStore_OpenThenConnClosedDrops(t *testing.T) {
 	}
 
 	// Closing twice — a CloseSession racing the drop — is one decrement.
-	st.close(context.Background(), a, OutcomeClosed, "again")
+	st.close(context.Background(), a, OutcomeClosed, "again", EndQuit)
 	if got := testutil.ToFloat64(st.metrics.SessionsActive); got != 0 {
 		t.Errorf("sessions_active = %v after a double close", got)
 	}

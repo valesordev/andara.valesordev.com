@@ -365,7 +365,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.log.Info("grpc drain begin", "sessions", s.sessions.count(), "drain_timeout", s.opts.DrainTimeout.String())
 	s.drainStop()
-	s.sessions.closeAll(OutcomeClosed, "server draining")
+	s.sessions.closeAll(OutcomeClosed, "server draining", EndLinkdead)
 
 	dctx, cancel := context.WithTimeout(ctx, s.opts.DrainTimeout)
 	defer cancel()
