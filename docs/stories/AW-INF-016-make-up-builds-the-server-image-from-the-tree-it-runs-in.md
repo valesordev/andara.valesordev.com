@@ -36,9 +36,12 @@ demo or a §8 record observes the code under review and not an older build.
 ### In scope
 - `scripts/stack.sh up` builds `andara-server` from `deploy/compose/Dockerfile.server` before
   starting it, every time, relying on the layer cache for the no-change case.
-- The build passes `REVISION` (`git rev-parse HEAD`, plus `-dirty` when the tree has uncommitted
-  changes) and `VERSION`, which the Dockerfile already turns into
-  `org.opencontainers.image.revision`.
+- The build passes the same three build args `make image` passes: `VERSION`, `COMMIT` and
+  `REVISION`. `REVISION` becomes the `org.opencontainers.image.revision` label, and `COMMIT` is
+  stamped into both binaries as `main.commit`, which `andara_build_info{commit}` reports. Leaving
+  `COMMIT` out would stamp the Dockerfile's default, `unknown`.
+- A tree with uncommitted changes gives `COMMIT` and `REVISION` the same `-dirty` suffix, so the
+  metric and the label never disagree about what ran.
 - `make up` prints the running server's revision label on its summary, next to `andara-server`.
 - `make up` on an already-running stack whose server image changed recreates only `andara-server`.
 
@@ -59,7 +62,11 @@ demo or a §8 record observes the code under review and not an older build.
    every layer cached, and the command exits 0.
 4. **Given** a stack already up **when** a commit changes `server/` and `make up` runs **then**
    only `andara-server` is recreated, and it passes `--wait` before `make up` returns.
-5. **Given** a build that fails (a compile error) **when** `make up` runs **then** it exits
+5. **Given** `make up` on a clean tree and on a dirty one **when** the server's `/metrics` is read
+   **then** `andara_build_info{commit}` is never `unknown`. Its value, less any `-dirty` suffix, is
+   a prefix of the container's revision label less the same suffix, and both carry `-dirty`
+   exactly when the tree is dirty.
+6. **Given** a build that fails (a compile error) **when** `make up` runs **then** it exits
    non-zero with `up: andara-server image build failed; see the output above`, and the previously
    running server, if any, is left running.
 
@@ -67,7 +74,11 @@ demo or a §8 record observes the code under review and not an older build.
 
 - `make up`: unchanged invocation. It gains a build of `andara-server` before
   `up … andara-server` whenever the server profile is active (`server_profile_args`).
-- Build args: `REVISION=$(git rev-parse HEAD)[-dirty]`, `VERSION=$(git describe --always --dirty)`.
+- Build args: the Makefile's existing `VERSION` (`git describe --tags --always --dirty`),
+  `COMMIT` (`git rev-parse --short HEAD`) and `REVISION` (`git rev-parse HEAD`), each passed as
+  `make image` passes them, with `-dirty` appended to `COMMIT` and `REVISION` on a dirty tree.
+  `stack.sh` receives them from the Makefile rather than recomputing them, so `make up` and
+  `make image` can't stamp a build differently.
 - Summary line, added after `andara-server localhost:8443 (gRPC, TLS)`:
   `  andara-server revision   <sha>[-dirty]`, read back from the running container's label, not
   from the build args.
@@ -80,8 +91,8 @@ None. Volumes and `.local/` are untouched. A recreated server replays the log as
 
 ## Observability requirements
 
-- **Metrics:** none new. `andara_build_info{commit}` from the server already carries the commit,
-  and AC-1's check can compare it against the label.
+- **Metrics:** none new. `andara_build_info{commit}` from the server already carries the commit.
+  AC-5 compares it against the label.
 - **Logs:** `stack.sh` prints the build's result line and the revision; no structured logging
   (a developer script).
 - **Traces / Alerts:** none.
@@ -90,7 +101,9 @@ None. Volumes and `.local/` are untouched. A recreated server replays the log as
 
 - **Unit:** `scripts/tests/`: the revision string with a clean and a dirty tree, and the summary
   line reading the label.
-- **Integration:** `stack.yaml` asserts that the summary's revision equals `github.sha`.
+- **Integration:** `stack.yaml` asserts that the summary's revision equals `github.sha`, and that
+  `andara_build_info{commit}` scraped from the server is a prefix of it (AC-5), polled to a
+  deadline per `live-assertions.md`.
 - **Manual/operator:**
   ```
   make up                       # prints "andara-server revision <HEAD>"
