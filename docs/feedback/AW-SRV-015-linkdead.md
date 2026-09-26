@@ -81,3 +81,16 @@ intact. And a body a crash leaves present with no Session must be marked linkdea
 it stays present forever (`AW-SRV-014`: "stays present until the next BindCharacter takes it"). That
 last one is new behavior. Size `AW-SRV-007` with it when SPRINT-03 is planned, or split it out.
 
+
+## Architecture, 2026-09-26: a contract detail from `AW-SRV-006`'s second §8 pass
+
+Recorded in the story's Interface contract, beside the `EntityState` fields. #102 changed how
+this story's four fields must be hashed:
+- `sim.BodyStateHash` now **refuses** a snapshot body that carries any of the four non-zero. The
+  tripwire `TestBodyHashCoversEveryProtoField` fails for any proto field the hash neither covers
+  nor refuses.
+- This story hashes them in `EntityCanonicalBytes` as a linkdead record, written **only when
+  `linkdead_deadline_tick` is non-zero**, as the dormant record is. Existing hashes and the golden
+  sequence don't move.
+- Drop the four from the refusal. Keep refusing the inconsistent case: deadline zero with any
+  other field non-zero.

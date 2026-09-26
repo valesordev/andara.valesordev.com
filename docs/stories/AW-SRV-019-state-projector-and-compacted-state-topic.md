@@ -241,6 +241,38 @@ CLAUDE.md §8, plus: the digest assertion runs continuously in production; `--re
 CI; a test asserts the projector binary imports `server/sim` and contains no `Apply` of its own
 (depguard rule).
 
+### §8 pass (2026-09-26, architecture): stays `review`
+
+Against `origin/main` `3e0adf6`, on #103.
+
+**These hold:**
+- **`andara_state_topic_bytes` reads 0.** Fixed by naming the partitions, with
+  `TestTopicBytesReportsWhatTheTopicHolds` on Redpanda.
+- **Sticky divergence, as ruled.** `TestRun_ADivergenceSurvivesARestartPastANewerRound`, on Redpanda
+  and mutation-checked. `docs/runbooks/state-projector-diverged.md` is rewritten for it in this
+  pass: a crash loop on the same tick is the expected state, and `--rebuild` is the release.
+- **AC-7 after #93.** `TestCharacterRecordsNameTheirContentVersion`.
+- **#78.** The binary is untracked and `/andara-*` is ignored.
+
+**AC-5: architecture's ruling is (a), delivered on this branch.** The stack's Redpanda runs with
+`log_segment_ms_min` at 1 s. It's declared under `broker.local` in `deploy/kafka/topics.yaml`, so
+`make up` / `make topics-apply` set it on existing volumes and in CI. `make topics-diff` reports it.
+
+Measured on the stack before ruling, a throwaway topic with `segment.ms=1000`,
+`min.cleanable.dirty.ratio=0.01` and `delete.retention.ms=1000`, and a filler record every 5 s:
+- the key's two values were compacted away by 10 s;
+- the tombstone was gone by 21 s.
+
+AC-5 therefore stands as amended, and the test implementation held back can be restored. Poll it
+to about 60 s.
+
+**Still owed, and the story stays `review` until they land:**
+1. **Implementation: the AC-5 test**, restored against the lowered floor.
+2. **AC-6 at 10,000 Entities and 24 h.** Delivered in #108, which merged while this pass was
+   open. It's reviewed at the next §8 pass, with its two points in the feedback file.
+3. **Unchanged from the 2026-09-24 pass:** the production digest line waits on #77 (`AW-INF-018`,
+   this sprint) and #80 (SPRINT-03), and AC-9 has no carrier (with PM).
+
 ## Open questions
 
 - **Resolved 2026-09-24 (§8, architecture): accepted.** Partitioned by Zone with the commands partitioner. Permanent, and the same reason

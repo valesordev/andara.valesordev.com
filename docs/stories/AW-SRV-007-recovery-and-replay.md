@@ -265,7 +265,9 @@ CLAUDE.md §8, plus:
   snapshot failure through the server. Its §8 shows, from the running server's own registry,
   `andara_snapshot_failures_total{reason="encode"|"timeout"|"stall"}` moving, and
   `{reason="boundary"}` once `AW-SRV-006` AC-8 lands. `store` and `rounds_total{incomplete}` were
-  observed at 006's pass.
+  observed at 006's pass. *(2026-09-26, 006's second §8 pass: `timeout` was observed from the
+  compose server, on a round whose boundary ack didn't arrive while the broker was paused. It's
+  off this list. `encode`, `stall` and `boundary` remain.)*
 - **Inherited from `AW-SRV-012` (2026-09-25, architecture):** restore from a snapshot resolves
   `SnapshotEnvelope.content` (the per-pack versions in effect at its tick), rebuilds the topology,
   and checks `content_digest` *before* loading any Zone body. A mismatch halts recovery like a

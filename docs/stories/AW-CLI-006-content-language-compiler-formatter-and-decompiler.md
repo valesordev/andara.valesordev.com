@@ -4,7 +4,7 @@ title: Content Language compiler, formatter, and decompiler
 epic: EPIC-05
 component: cli
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-CLI-001, AW-CLI-005, AW-SRV-021, AW-SRV-022]
 blocks: [AW-CLI-002, AW-CLI-003, AW-SRV-034]
@@ -165,6 +165,24 @@ This story had no §8 record. The only review so far was the one inside `AW-CLI-
   (`fetch-core`) have no RPC to call. No story defines one (feedback §7). They are tested today
   against `--path` and `--from`. The RPC is sent to PM in the feedback file (§14). Whichever story
   gets it inherits these two ACs' published-version halves.
+
+### §8 pass (2026-09-26, architecture): `done`
+
+Against `origin/main` `3e0adf6`. Both owed items are closed:
+1. **The `valid/` recompile pass** (#75): 16 of 16 identical, in `make content-conformance` and
+   `TestConformance`, and not vacuous without the mask. This was closed at batch 1 with `AW-CLI-005`.
+2. **`admin/README.md`** (#99):
+   - The intro no longer defers `content` to `AW-CLI-002`.
+   - The Commands table has all four subcommands.
+   - Every flag in `admin/cli/testdata/help/content-*.txt` appears in the README, checked
+     mechanically. The only one absent is `--help`.
+   - `ANDARA_CONTENT_CACHE` and its precedence are documented.
+   - The three codes match `admin/cli/contentcmd.go`: `compile_failed` and `would_reformat` at
+     `ExitFail` (1), and `core_fetch_unavailable` at `ExitConnect` (3).
+
+The rest of the checklist held at the 2026-09-24 pass, and nothing it rested on has changed. The
+published-version halves of AC-4 and AC-5 are with the story that defines the read RPC, per that
+pass. `make check`: clean.
 
 ## Open questions
 

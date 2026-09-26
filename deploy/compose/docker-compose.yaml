@@ -312,6 +312,12 @@ services:
       - ${ANDARA_AUTH_DIR:-../../.local/auth}:/etc/andara/auth:ro
       # Dir-mode fixture until AW-SRV-012 resolves content from Kafka.
       - ../../testdata/content/valid:/etc/andara/content:ro
+      # The `fs` snapshot store (AW-SRV-006, snapshot.fs_path's default). The server runs
+      # as the host uid, and the image's /var/lib/andara is 10001's, so without this mount
+      # every round failed `store` with "mkdir /var/lib/andara: permission denied".
+      # ANDARA_DATA_DIR, not a named volume: a named volume copies the image's ownership.
+      # `make down VOLUMES=1` removes it with the rest of the data dir.
+      - ${ANDARA_DATA_DIR:-../../.local/data}/snapshots:/var/lib/andara/snapshots
     depends_on:
       redpanda:
         condition: service_healthy
