@@ -111,12 +111,20 @@ running a deploy, so that I can play the current World while the sprint is still
 4. **Given** the Application `Synced` **when** a PR that changes only `testdata/content/valid/`
    merges **then** the `andara-content` ConfigMap in `andara-dev` matches `main` within the same
    deadline, and the StatefulSet rolls.
-5. **Given** a merge to `main` **when** `publish` pushes its build **then** `andara-dev` rolls once
-   for it: one new pod, one World restart. **Given** no new build and no change to what the
-   Application renders **when** Argo CD polls **then** no pod in `andara-dev` restarts. `publish`
-   has no path filter today, so a merge that touches only a story file still builds a new
-   `sha-` image, and `dev` still rolls for it. `publish` keeps building every merge (contract
-   review, item 4), so this AC stands as written.
+5. **Given** a `publish` run that moves `:dev` **when** the merge it built changed nothing the
+   Application renders **then** `andara-dev` rolls once for it: one new pod, one World restart.
+   **Given** a merge that changes what the Application renders (AC-4) **then** it rolls at most
+   twice. Argo CD's git poll applies the render, and Image Updater's registry poll applies the
+   new digest, and the two aren't coordinated. **Given** no new build and no change to what the
+   Application renders **when** Argo CD polls **then** no pod in `andara-dev` restarts.
+   - `publish` has no path filter, so a merge that touches only a story file still moves `:dev`,
+     and `dev` still rolls for it (contract review, item 4).
+   - A merge whose pending `publish` run GitHub replaces gets no build of its own
+     (`publish.yaml`'s concurrency group keeps one pending run). The run that replaced it builds
+     `main`'s head, which contains that merge, so `dev` reaches it with that build: one roll for
+     both. AC-3's deadline is measured from the `publish` run that built the merge.
+   *(Amended at review of #107, 2026-09-26: the first draft said "rolls once" for every merge,
+   which neither the render-plus-image case nor a replaced run can meet.)*
 6. **Given** the Application **when** someone runs `kubectl edit` on a resource it manages, or
    deletes one **then** `selfHeal` puts it back to `main` within the deadline. When the change is
    deleting the Kafka CR, its topics, or either Secret, Argo CD leaves it alone, because it doesn't
@@ -173,6 +181,21 @@ Make targets:
     sync;
   - no `helm.parameters` in the file. Image Updater owns `image.tag` on the live Application, and
     a re-run of `make argocd-install` applies the file without clearing it;
+  - **the first render is already pinned.** `values/dev.yaml` says `image.tag: dev`, so an
+    Application created without a parameter would sync a StatefulSet naming the moving `:dev`,
+    before Image Updater's first poll. That breaks the immutable-reference rule below, and the
+    later rewrite to a digest is a second roll for the same build. So when `make argocd-install
+    ENV=dev` creates the Application, or finds it with no `image.tag` parameter, it first:
+    - resolves `:dev` to its digest with `scripts/image_digest.sh`, as `helm_install.sh` does;
+    - creates or patches the Application with `image.tag=dev@<digest>`, before automated sync
+      is on;
+    - never overwrites an `image.tag` parameter that's already set, since that's Image
+      Updater's.
+
+    The seed is written in exactly the form Image Updater writes (`dev@sha256:<digest>`), so
+    Image Updater's first poll finds the digest current and changes nothing. On the adoption in
+    AC-2, the seed equals the digest `helm-install` pinned, unless `:dev` has moved since, so
+    the move itself doesn't roll the pod.
   - `syncPolicy.automated: {prune: true, selfHeal: true}`;
   - Argo CD's resource tracking is by annotation, so resources `make kafka-install` labels
     `app.kubernetes.io/*` are never taken as the Application's.
@@ -222,9 +245,10 @@ Make targets:
 - **Rollback:** `make argocd-uninstall ENV=dev` (AC-10), then `make helm-install ENV=dev`, which
   takes the resources back as a fresh release. No data moves either way.
 - **Live Sessions:** each sync that changes the pod template restarts the World (ADR-0001, until
-  sharding). Every merge publishes a new image (AC-5), so with merges landing several times a day,
-  `dev` restarts that often, docs-only merges included, until `publish` skips them. That's expected on
-  `dev`, and it's the reason `prod` isn't in scope.
+  sharding). Every `publish` run moves `:dev` (AC-5), so with merges landing several times a day,
+  `dev` restarts about that often, docs-only merges included. A merge that also changes the
+  render can restart it twice. That's expected on `dev`, and it's the reason `prod` isn't in
+  scope.
 
 ## Observability requirements
 
@@ -240,7 +264,8 @@ Make targets:
 - **Unit:** `scripts/tests/`:
   - the refusal in `helm_install.sh` when the Application exists (AC-7);
   - the `ENV` guard (`local` and `prod` refused);
-  - the Secret rule (AC-9).
+  - the Secret rule (AC-9);
+  - the image seed: an Application with no `image.tag` parameter gets `dev@<digest>` before sync is on, and one that already has a parameter keeps it.
 - **Render:** `make k8s-dry` validates `deploy/argocd/` against the cluster API version and Argo CD's
   CRDs. `make helm-test` asserts:
   - the Application names `../values/dev.yaml`, `main`, `releaseName: andara`, and annotation
@@ -306,8 +331,9 @@ above, and the story is `ready`.
    alike, with a `checksum/content` roll. A multi-source Application or a kustomize overlay would
    leave `helm-install` and Argo CD building the same objects two ways. A kustomize overlay would
    also need `LoadRestrictionsNone`, cluster-wide.
-4. **`publish` keeps building every merge.** A `paths-ignore` breaks `AW-INF-013`'s `:dev`
-   guard. Suppose a code merge A is followed at once by a docs merge B. A's run sees `main`'s head
+4. **`publish` keeps running on every merge**, with no `paths-ignore`. It builds every merge
+   except one whose pending run GitHub replaces, which the next build contains (AC-5). A
+   `paths-ignore` would break `AW-INF-013`'s `:dev` guard. Suppose a code merge A is followed at once by a docs merge B. A's run sees `main`'s head
    is B, and leaves `:dev` to B's run. B's run never happens, so `:dev`, and `dev`, stay one build
    behind until the next code merge. A World restart for a docs merge is the price on `dev`
    (AC-5).
@@ -318,7 +344,10 @@ above, and the story is `ready`.
 
 Also changed:
 - `helm.releaseName: andara`.
-- No `helm.parameters` in git.
+- No `helm.parameters` in git. The first render is seeded with the resolved digest by
+  `argocd-install` instead (review of #107).
+- AC-5 allows two rolls for a merge that changes the render, and covers a replaced `publish` run
+  (review of #107).
 - Helm ownership metadata is given at `argocd-uninstall` (AC-10).
 - The exact release-history step.
 - The version-label defect, found while checking item 1. It's #106, against `AW-INF-013`.

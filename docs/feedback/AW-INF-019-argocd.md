@@ -93,7 +93,9 @@ Recorded in the story body under "Contract review". The story is `ready`.
    `deploy/helm/andara/files/`, with a `checksum/content` roll. `helm_install.sh` stops creating
    them. The fallback, if Argo CD refuses the links, is a generated copy that `make check` keeps
    identical.
-4. **No `paths-ignore`.** A skipped docs merge right after a code merge leaves `:dev` a build behind.
+4. **No `paths-ignore`.** *(Refined at review of #107: `publish` runs on every merge, but a
+   pending run GitHub replaces builds nothing of its own, and the next build contains it. AC-5
+   says so.)* A skipped docs merge right after a code merge leaves `:dev` a build behind.
    The code merge's run sees it isn't `main`'s head and defers to a run that never happens. AC-5
    stands.
 5. **Manual.** `make argocd-recover` stays an operator command.
