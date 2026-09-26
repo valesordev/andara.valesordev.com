@@ -157,7 +157,20 @@ func (e *Engine) OnCombatInteraction(target EntityID)
 
 `EntityState` (`AW-SRV-006`) carries `linkdead_deadline_tick` (4), and gains `linkdead_since_tick` (7),
 `linkdead_ceiling_tick` (11) and `linkdead_extension_ticks` (12). All four are hashed, and all four
-go in the snapshot body (`snapshot_codec_test.go`'s field count moves with them).
+go in the snapshot body. *(Amended 2026-09-26, `AW-SRV-006`'s second §8 pass: #102 replaced the
+field count with a tripwire over the proto descriptors, `TestBodyHashCoversEveryProtoField`. Until
+this story hashes the four, `sim.BodyStateHash` refuses a body carrying any of them non-zero.)*
+
+How they're hashed:
+- `EntityCanonicalBytes` writes a linkdead record, holding all four fields, **only for a body
+  whose `linkdead_deadline_tick` is non-zero**. This works the way the dormant record works.
+- A World with no linkdead body therefore hashes exactly as it does today. The golden sequence
+  and the determinism tests don't move.
+- This story removes the four from `BodyStateHash`'s refusal, and the tripwire must pass with
+  them covered.
+- A body with `linkdead_deadline_tick` zero and any other of the three non-zero is not a state
+  the sim produces. `BodyStateHash` keeps refusing it, the way it refuses `dormant_since_tick`
+  on a body that isn't dormant.
 
 ### Configuration
 

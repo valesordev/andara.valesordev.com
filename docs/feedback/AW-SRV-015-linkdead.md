@@ -111,3 +111,16 @@ What I'm building meanwhile, reversibly:
 If you want the bump anyway, it's `StateVersion = 2` plus the two map entries. But it needs a
 decision on cross-version replay first: either replay accepts a boundary one version back, or an
 upgrade requires a fresh snapshot round and a log cut. That decision is yours.
+
+## Architecture, 2026-09-26: a contract detail from `AW-SRV-006`'s second §8 pass
+
+Recorded in the story's Interface contract, beside the `EntityState` fields. #102 changed how
+this story's four fields must be hashed:
+- `sim.BodyStateHash` now **refuses** a snapshot body that carries any of the four non-zero. The
+  tripwire `TestBodyHashCoversEveryProtoField` fails for any proto field the hash neither covers
+  nor refuses.
+- This story hashes them in `EntityCanonicalBytes` as a linkdead record, written **only when
+  `linkdead_deadline_tick` is non-zero**, as the dormant record is. Existing hashes and the golden
+  sequence don't move.
+- Drop the four from the refusal. Keep refusing the inconsistent case: deadline zero with any
+  other field non-zero.

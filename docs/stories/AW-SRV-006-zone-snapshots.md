@@ -4,7 +4,7 @@ title: Zone snapshots keyed to partition offsets
 epic: EPIC-04
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-001, AW-SRV-004]
 blocks: [AW-SRV-007, AW-SRV-019]
@@ -634,6 +634,55 @@ fixture is that revising it is a visibly failing test rather than a drift.
 **The rebalance stall is a different number again.** ADR-0001 ties it to snapshot *cadence*, not to
 the copy: the stall is the rebalance plus the recovery it implies, and recovery duration follows
 snapshot age.
+
+### §8 pass (2026-09-26, architecture): `done`
+
+Against `origin/main` `3e0adf6`. The compose server image was rebuilt from it, and the compose
+stack's `fs` store was fixed on this review's branch (#74, below).
+
+**The three owed items hold:**
+- **AC-3.** `SnapshotHash` is the documented superset, and `migrate.go` verifies through
+  `BodyStateHash`.
+  - `TestBodyHashCoversEveryProtoField` walks the four descriptors.
+  - `TestReadVerifiedRefusesACorruptedProcessWideValue` covers tick, `prng_state` and
+    `next_event_id`.
+  - Both run in `make test`. The golden sequence and the determinism jobs are unchanged, so the
+    World's State Hash didn't move.
+- **AC-8, live.** I paused the stack's Redpanda across a round boundary. The round waited for the
+  ack, then was abandoned once as `reason="timeout"`, with `warn` `snapshot round abandoned: its
+  tick boundary was not acknowledged` (`trace_id ff3264a3…`). The next rounds completed. The server
+  registry and Prometheus agree: `failures_total{timeout}` 1, `{boundary}` 0,
+  `rounds_total{complete}` 3, `{incomplete}` 0. `boundary` is pre-created. The async cases are
+  tested, including on Redpanda.
+- **README.** `max_stall_ms` is `15`, the key order matches the contract, and `s3` is the cluster's
+  store, with versitygw locally.
+
+**Found in this pass, and fixed on this branch (architecture's, #74).** The compose stack had never
+completed a round: every one failed `store` with `mkdir /var/lib/andara: permission denied`.
+- **The fix.** Compose bind-mounts `$ANDARA_DATA_DIR/snapshots`, which `make up` creates owned by
+  the developer, at `snapshot.fs_path`.
+- **After the fix.** Rounds complete every 60 s. `andara-cli snapshot list` reads them.
+- **Regression guard.** The `stack` workflow asserts a complete round with no `store` failure,
+  polled to a deadline.
+
+**Architecture's answers to feedback §14:**
+1. **Refusing the three unhashed fields is accepted.** Refusal closes AC-3's gap without moving the
+   World's hash. `AW-SRV-015` hashes its four linkdead fields when it starts writing them, and drops
+   the refusal. That's recorded in its contract and feedback file.
+2. **An abandoned round is counted on `failures_total` only.** That's accepted: it wrote nothing,
+   so it isn't an `incomplete` round in `AW-SRV-007`'s listing sense.
+3. **Objects written before AC-3 fail verification by design.** `state_version` stays 1, as
+   implementation recommends. A bump would spend the version on a change in what the hash
+   covers, not in what state means. And nothing relies on those rounds:
+   - no reader restores from them yet;
+   - the compose stack never wrote one (#74);
+   - no cluster has written one either.
+
+   `AW-INF-007`'s rollback notes need nothing. Every binary a rollback could reach verifies
+   the same way.
+
+`timeout` is now observed from a server, so it's off `AW-SRV-007`'s inherited line. `encode`,
+`stall` and `boundary` remain there. `make check`: clean.
 
 ## Open questions
 

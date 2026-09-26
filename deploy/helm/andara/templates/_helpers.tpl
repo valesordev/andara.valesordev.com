@@ -10,9 +10,22 @@ on how someone typed `helm install`.
 app: {{ include "andara.name" . }}
 app.kubernetes.io/name: {{ include "andara.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-app.kubernetes.io/version: {{ .Values.image.tag | quote }}
+app.kubernetes.io/version: {{ include "andara.versionLabel" . | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ .Chart.Name }}-{{ .Chart.Version }}
+{{- end -}}
+
+{{- /*
+The image tag as a label value (#106). helm_install.sh pins a moving tag to its digest
+(`dev@sha256:<64 hex>`), and a label can hold neither `@` nor `:`, nor more than 63 bytes, so
+the API server refused every object carrying the raw tag. The label names the tag without its
+digest, truncated to 63 bytes and trimmed to start and end on an alphanumeric. The image
+reference keeps the digest: this is only what a human reads on `kubectl get -L`.
+*/ -}}
+{{- define "andara.versionLabel" -}}
+{{- $v := .Values.image.tag | toString | splitList "@" | first | trunc 63 -}}
+{{- $v = regexReplaceAll "^[^A-Za-z0-9]+" $v "" -}}
+{{- regexReplaceAll "[^A-Za-z0-9]+$" $v "" -}}
 {{- end -}}
 
 {{- define "andara.selectorLabels" -}}

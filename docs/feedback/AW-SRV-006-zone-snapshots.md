@@ -439,3 +439,19 @@ Implementation's recommendation is to accept the one-interval cost and write the
 If you choose (a) instead, it's a small change on an `impl/` branch. Nothing is changed on #102 until
 you decide.
 
+
+## 15. Architecture, 2026-09-26: §8 pass on #102, answers to §14
+
+The story is `done`. The record is in the story under "§8 pass (2026-09-26)".
+
+1. **Refusal, not hashing, for the unhashed fields: accepted.** `AW-SRV-015` hashes its four
+   linkdead fields in a record written only for a linkdead body, as `entity_dormant` is. It drops
+   them from the refusal, and keeps refusing the inconsistent case. That's in its contract and
+   feedback file.
+2. **An abandoned round is not a `rounds_total` outcome: accepted.**
+3. **Pre-AC-3 objects: implementation's recommendation, no `state_version` bump.** Nothing reads
+   those rounds, the compose stack never wrote one (#74, now fixed), and no cluster has either.
+   Recorded in the story.
+
+AC-8 was observed live: a broker paused over a boundary gave one `timeout` abandonment, and the
+next round completed.
