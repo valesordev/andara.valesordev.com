@@ -41,8 +41,21 @@ COMPOSE="docker compose -f deploy/compose/docker-compose.yaml --profile full --p
 # AC-2's deadline: session.linkdead_detect (5 s by default) plus 10 s. SIGKILL
 # closes the socket, so the drop is seen at once; the margin covers the
 # keepalive path too, if detection ever moves to it.
-DETECT_S="${ANDARA_LINKDEAD_DETECT:-5s}"
-DETECT_S="${DETECT_S%s}"
+# The env var is a Go duration (`500ms`, `1m30s`, `1.5s`), parsed here the
+# same way and rounded up to whole seconds.
+DETECT_S="$(python3 - "${ANDARA_LINKDEAD_DETECT:-5s}" <<'PY'
+import math, re, sys
+d = sys.argv[1].strip()
+units = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1, "m": 60, "h": 3600}
+parts = re.findall(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)", d)
+if d == "0":
+    print(0)
+elif not parts or "".join(n + u for n, u in parts) != d.lstrip("+"):
+    sys.exit("stack-linkdead: ANDARA_LINKDEAD_DETECT=%r is not a Go duration" % d)
+else:
+    print(math.ceil(sum(float(n) * units[u] for n, u in parts)))
+PY
+)" || exit 1
 DROP_DEADLINE=$(( DETECT_S + 10 ))
 
 # An isolated home: the credentials this writes must not land in the developer's.
