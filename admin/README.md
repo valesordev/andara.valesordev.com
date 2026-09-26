@@ -257,8 +257,11 @@ another against the same recorded stream.
 
 | Event | Rendered as |
 |-------|-------------|
-| `RoomDescribed` | title, description, `Exits: …`, `Here: …` |
+| `RoomDescribed` | title, description, `Exits: …`, `Here: …`, each linkdead occupant marked `(linkdead)` |
 | `CharacterArrived` / `CharacterLeft` | one line naming the Character and the direction |
+| `CharacterLinkdead` | "`<name>` goes linkdead." |
+| `CharacterReconnected` | "`<name>` reconnects." |
+| `CharacterDespawned` | "`<name>` fades from the world." for `linkdead` and `linkdead_ceiling`; "`<name>` leaves the world." for `quit`, `switch`, and any other reason. The wording is a placeholder, Brian's to change |
 | `CommandRejected` | the message, verbatim — the same voice as a refusal returned on `Submit` |
 | `Heartbeat` | nothing |
 | `Resync` | "You may have missed some events; the world continues from here." and a fresh `look` |

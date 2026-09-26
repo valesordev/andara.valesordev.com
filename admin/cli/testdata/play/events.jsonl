@@ -15,3 +15,12 @@
 {"tick":"18","subscriber_dropped":{"reason":"shutdown"}}
 {"event_id":"11","tick":"19","simulation_stopped":{"reason":"operator stop"}}
 {"event_id":"12","tick":"19","simulation_stopped":{}}
+{"event_id":"13","tick":"20","room_described":{"zone_id":"town","room_id":"plaza","title":"Market Plaza","exits":["north"],"occupants":["Aldric","Brin"],"linkdead":["Aldric","Nobody"]}}
+{"event_id":"14","tick":"20","character_linkdead":{"zone_id":"town","room_id":"plaza","character_name":"Aldric"}}
+{"event_id":"15","tick":"21","character_reconnected":{"zone_id":"town","room_id":"plaza","character_name":"Aldric"}}
+{"event_id":"16","tick":"22","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Aldric","reason":"quit"}}
+{"event_id":"17","tick":"22","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Brin","reason":"switch"}}
+{"event_id":"18","tick":"23","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Cato","reason":"linkdead"}}
+{"event_id":"19","tick":"23","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Dara","reason":"linkdead_ceiling"}}
+{"event_id":"20","tick":"24","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Edda","reason":"banished"}}
+{"event_id":"21","tick":"24","character_despawned":{"zone_id":"town","room_id":"plaza","character_name":"Finn"}}
