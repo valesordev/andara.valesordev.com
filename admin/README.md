@@ -6,7 +6,7 @@ access (`CLAUDE.md` §10).
 
 This package is the command tree and shared chassis (`AW-CLI-001`), the account
 and auth commands (`AW-SRV-008`), the in-process `sim repl` harness, and `play`,
-the Text Interface (`AW-CLI-004`). `content` arrives with `AW-CLI-002`.
+the Text Interface (`AW-CLI-004`), and `content`, the Content Language compiler (`AW-CLI-006`).
 
 ```
 make build
@@ -30,6 +30,10 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli snapshot list` | list a Zone's snapshot objects in the configured store (`AW-SRV-006`, operator) |
 | `andara-cli character create <name>` / `list` | make a Character; list yours with where each is (`AW-CLI-007`) |
 | `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`, `--character` from `AW-CLI-007`) |
+| `andara-cli content compile` | compile a Content Language pack to canonical blobs, offline (`AW-CLI-006`, builder) |
+| `andara-cli content fmt` | rewrite `.aw` sources to the canonical form; `--check` changes nothing (`AW-CLI-006`, builder) |
+| `andara-cli content decompile` | reconstruct `.aw` source from a pack on disk (`AW-CLI-006`, builder) |
+| `andara-cli content fetch-core` | populate the local `andara.core` cache from a pack directory (`AW-CLI-006`, builder) |
 
 ## Global flags
 
@@ -113,6 +117,9 @@ Codes the roster adds (`AW-CLI-007`): `no_character` and `character_required`
 `roster_full`, `name_taken`, `name_invalid`, `already_live`,
 `no_such_character` (exit 1).
 
+Codes `content` adds (`AW-CLI-006`): `compile_failed` and `would_reformat`
+(exit 1), and `core_fetch_unavailable` (exit 3).
+
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
 stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
 
@@ -142,6 +149,51 @@ like a missing one.
 over `Admin`, are `AW-SRV-007`'s. The two are not redundant: that one answers what the
 server sees, this one answers what is actually in the bucket, and a runbook wants the
 second when the first disagrees with it.
+
+## content — the Content Language compiler
+
+```
+andara-cli content fetch-core --from content/core
+andara-cli content compile --path mypack --out build
+andara-cli content fmt --path mypack --check
+andara-cli content decompile --path build --out src
+```
+
+None of the four talks to a server. `compile` is pure: it reads a pack directory
+and the cached `andara.core` the pack pins, and nothing else, so a Builder works
+offline and the server's publish gate can call the same function.
+
+| Command | Flag | Default | Purpose |
+|---------|------|---------|---------|
+| `compile` | `--path` | `.` | pack directory to compile |
+| | `--out` | empty (write nothing) | write the compiled blobs here: Zones at the root, Templates under `templates/`, sources under `src/`. Blobs a previous compile wrote that this one does not are removed; anything else in the directory is left alone. An `--out` inside `--path` is not read back as pack input |
+| | `--cache` | see below | core pack cache |
+| `fmt` | `--path` | `.` | directory whose `*.aw` files are rewritten |
+| | `--check` | `false` | rewrite nothing; list the files that would change and exit 1 (`would_reformat`) |
+| `decompile` | `--path` | `.` | the pack directory to decompile. It is compiled first, and its findings are reported like `compile`'s |
+| | `--out` | empty (list only) | write the reconstructed `.aw` files here |
+| | `--cache` | see below | core pack cache, needed to un-flatten inherited Components |
+| `fetch-core` | `--from` | empty | a pack directory on disk to cache, such as `content/core` or a checkout |
+| | `--version` | `1` | the `andara.core` version to cache it as |
+| | `--cache` | see below | core pack cache |
+
+**The core pack cache.** `--cache`, then `ANDARA_CONTENT_CACHE`, then
+`~/.cache/andara/packs`. `fetch-core` writes it; `compile` and `decompile` read it.
+A pack whose pinned core is not in the cache fails to compile with
+`core_version_mismatch`. The finding names the version the pack requires and the
+`fetch-core --version` command to run. The CLI looks up only that version, so it does
+not say which other versions the cache holds.
+
+**What is not here yet.** `fetch-core` without `--from` exits 3 with
+`core_fetch_unavailable`, and `decompile` has no `--pack`/`--version`. Both need an
+Admin RPC that serves a published Content Version, and no story defines one yet
+(`docs/feedback/AW-CLI-006-content-language-compiler.md` §7 and §14 item 3).
+
+Findings print one per line on stderr as `file:line:col: CODE message`, with the
+declaration chain indented beneath, and warnings print even when the compile
+succeeds. Under `--output json` they ride in the result's `diagnostics` array, or
+in `error.detail.diagnostics` when the compile is refused, so stdout stays one
+JSON value. The codes and positions are `docs/specs/content-language/errors.md`'s.
 
 ## character — the roster
 
