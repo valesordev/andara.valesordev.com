@@ -152,6 +152,21 @@ func (e *Engine) expireLinkdead(tick Tick, emit func(ZoneID, string, string, Sco
 	}
 }
 
+// LinkdeadBodies is every linkdead body, sorted: what recovery left, for the
+// roster's gauge. Read on the loop goroutine only.
+func (e *Engine) LinkdeadBodies() []EntityID {
+	var out []EntityID
+	for _, z := range e.state.Zones {
+		for id, ent := range z.Entities {
+			if ent.Linkdead() {
+				out = append(out, id)
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
+}
+
 // OnCombatInteraction is the one hook combat calls (ADR-0006): any Apply
 // that constitutes a combat interaction against target calls it, and nothing
 // else about linkdead. A linkdead target's deadline becomes

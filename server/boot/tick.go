@@ -193,6 +193,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	rt.Engine = engine
 	// The bodies as recovery left them; the loop keeps the gauge current.
 	rt.observeCharacters(engine)
+	if rt.Roster != nil {
+		rt.Roster.SeedLinkdead(engine.LinkdeadBodies())
+	}
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "tick loop configured",
 		slog.String("source", cfg.SimSource),
 		slog.Int("tick_rate", cfg.SimTickRate),
@@ -266,7 +269,7 @@ func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 		if len(res.Linkdead) > 0 && rt.Roster != nil {
 			// A linkdead body's grace ended: its Account's flag is free
 			// (AW-SRV-015). Metrics and log lines are the loop's.
-			rt.Roster.ObserveLinkdead(res.Linkdead)
+			rt.Roster.ObserveLinkdead(res.Tick, res.Linkdead)
 		}
 		if res.Completed.CommandsApplied > 0 || len(res.Linkdead) > 0 {
 			rt.observeCharacters(rt.Engine)

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
@@ -73,6 +74,10 @@ type Options struct {
 	// every lost stream a quit, as AW-SRV-014 had it.
 	Linkdead LinkdeadTicks
 
+	// TickRate is sim.tick_rate, for linkdead durations in seconds. Zero
+	// means 10.
+	TickRate int
+
 	Metrics *Metrics
 	Logger  *slog.Logger
 	Tracer  trace.Tracer
@@ -102,6 +107,10 @@ type Roster struct {
 	// wait for it. writes bounds the position writes in flight.
 	releases sync.WaitGroup
 	writes   chan struct{}
+	// linkdeadBodies is every body the sim has marked linkdead and not yet
+	// reconnected or despawned, with whether combat extended it: the
+	// andara_sessions_linkdead gauge's source. Loop goroutine only.
+	linkdeadBodies map[sim.EntityID]bool
 }
 
 // live is one Account's live flag: which Session drives which Character.
@@ -144,6 +153,9 @@ func New(o Options) (*Roster, error) {
 	if o.PositionWrites <= 0 {
 		o.PositionWrites = 32
 	}
+	if o.TickRate <= 0 {
+		o.TickRate = 10
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -159,7 +171,8 @@ func New(o Options) (*Roster, error) {
 	return &Roster{
 		opts: o, metrics: o.Metrics, log: o.Logger, tracer: o.Tracer, now: o.Now,
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
-		writes: make(chan struct{}, o.PositionWrites),
+		writes:         make(chan struct{}, o.PositionWrites),
+		linkdeadBodies: map[sim.EntityID]bool{},
 	}, nil
 }
 
@@ -537,25 +550,84 @@ func (r *Roster) holdLinkdead(l *live) {
 	}
 }
 
-// ObserveLinkdead frees the flag of every linkdead Character whose grace
-// ended this tick — the sim despawned it, or an UnbindCharacter took it. It
-// runs on the tick goroutine and only takes the roster's lock. A flag a
-// reconnect already took over is not linkdead any more, and is left alone:
-// the reconnect's BindCharacter wakes the body the despawn left.
-func (r *Roster) ObserveLinkdead(changes []sim.LinkdeadChange) {
-	for _, c := range changes {
-		if c.Kind != sim.LinkdeadEnded {
-			continue
-		}
-		r.mu.Lock()
-		for _, l := range r.byAccount {
-			if l.linkdead && l.character == string(c.Character) {
-				r.drop(l)
-				break
-			}
-		}
-		r.mu.Unlock()
+// SeedLinkdead is the bodies recovery left linkdead, for the gauge: called
+// once, before the loop runs.
+func (r *Roster) SeedLinkdead(ids []sim.EntityID) {
+	for _, id := range ids {
+		r.linkdeadBodies[id] = false
 	}
+	r.setLinkdeadGauge()
+}
+
+// ObserveLinkdead is the tick's linkdead lifecycle (AW-SRV-015), on the
+// loop goroutine: the metrics and the info lines, and the flag of every
+// linkdead Character whose grace ended freed. A flag a reconnect already
+// took over is not linkdead any more, and is left alone: the reconnect's
+// BindCharacter wakes the body the despawn left.
+func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
+	for _, c := range changes {
+		inCombat := r.linkdeadBodies[c.Character]
+		outcome := ""
+		switch c.Kind {
+		case sim.LinkdeadEntered:
+			r.linkdeadBodies[c.Character] = false
+			outcome = "entered"
+		case sim.LinkdeadExtended:
+			r.linkdeadBodies[c.Character] = true
+			r.metrics.CombatExtensions.Inc()
+			continue
+		case sim.LinkdeadReconnected:
+			delete(r.linkdeadBodies, c.Character)
+			outcome = LinkdeadReconnected
+		case sim.LinkdeadEnded:
+			delete(r.linkdeadBodies, c.Character)
+			switch c.Reason {
+			case sim.DespawnLinkdead:
+				outcome = LinkdeadDespawned
+			case sim.DespawnLinkdeadCeiling:
+				outcome = LinkdeadCeiling
+				r.metrics.CeilingDespawns.Inc()
+			default:
+				outcome = LinkdeadQuit
+			}
+			r.mu.Lock()
+			for _, l := range r.byAccount {
+				if l.linkdead && l.character == string(c.Character) {
+					r.drop(l)
+					break
+				}
+			}
+			r.mu.Unlock()
+		}
+		if c.Kind != sim.LinkdeadEntered {
+			r.metrics.LinkdeadOutcomes.WithLabelValues(outcome).Inc()
+			secs := float64(tick-c.Since) / float64(r.opts.TickRate)
+			r.metrics.LinkdeadDuration.WithLabelValues(strconv.FormatBool(inCombat)).Observe(secs)
+		}
+		ctx := command.ParentFrom(context.Background(), c.TraceID)
+		msg := map[sim.LinkdeadKind]string{
+			sim.LinkdeadEntered: "character linkdead", sim.LinkdeadReconnected: "character reconnected", sim.LinkdeadEnded: "character despawned",
+		}[c.Kind]
+		r.log.LogAttrs(ctx, slog.LevelInfo, msg,
+			slog.String("session_id", c.Session), slog.String("character_id", string(c.Character)),
+			slog.String("outcome", outcome), slog.Uint64("deadline_tick", uint64(c.Deadline)),
+			slog.Uint64("tick", uint64(tick)), slog.String("zone", string(c.Zone)),
+			slog.String("trace_id", traceID(ctx)))
+	}
+	r.setLinkdeadGauge()
+}
+
+func (r *Roster) setLinkdeadGauge() {
+	var combat, calm int
+	for _, in := range r.linkdeadBodies {
+		if in {
+			combat++
+		} else {
+			calm++
+		}
+	}
+	r.metrics.Linkdead.WithLabelValues("true").Set(float64(combat))
+	r.metrics.Linkdead.WithLabelValues("false").Set(float64(calm))
 }
 
 // closedChan is a teardown with nothing to wait for.

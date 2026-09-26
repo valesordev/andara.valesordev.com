@@ -36,6 +36,7 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	grace, extension, max := cfg.LinkdeadTicks()
 	r, err := roster.New(roster.Options{
 		Linkdead:        roster.LinkdeadTicks{Grace: grace, Extension: extension, Max: max, MaxWall: cfg.SessionLinkdeadMax},
+		TickRate:        cfg.SimTickRate,
 		Accounts:        rt.Accounts,
 		Bindings:        rt.Bindings,
 		Log:             rt.commandLog,

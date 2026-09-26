@@ -129,11 +129,11 @@ func TestRoster_DespawnFreesTheLinkdeadFlag(t *testing.T) {
 	f, id, s := selected(t, withLinkdead(time.Hour))
 	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
 	// A step that ends somebody else's grace changes nothing.
-	f.roster.ObserveLinkdead([]sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: "someone-else"}, {Kind: sim.LinkdeadExtended, Character: sim.EntityID(id)}})
+	f.roster.ObserveLinkdead(100, []sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: "someone-else"}, {Kind: sim.LinkdeadExtended, Character: sim.EntityID(id)}})
 	if _, _, ok := f.roster.Live(f.account); !ok {
 		t.Fatal("the flag was freed by another body's despawn")
 	}
-	f.roster.ObserveLinkdead([]sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id), Reason: sim.DespawnLinkdead}})
+	f.roster.ObserveLinkdead(100, []sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id), Reason: sim.DespawnLinkdead}})
 	if _, _, ok := f.roster.Live(f.account); ok {
 		t.Fatal("the flag survived the despawn")
 	}
@@ -147,7 +147,7 @@ func TestRoster_DespawnAfterAReconnectLeavesTheFlag(t *testing.T) {
 	if _, err := f.roster.SelectCharacter(context.Background(), f.session("s2"), id); err != nil {
 		t.Fatal(err)
 	}
-	f.roster.ObserveLinkdead([]sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id)}})
+	f.roster.ObserveLinkdead(100, []sim.LinkdeadChange{{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id)}})
 	if sess, _, ok := f.roster.Live(f.account); !ok || sess != "s2" {
 		t.Fatalf("live %v %s, want s2", ok, sess)
 	}
@@ -192,5 +192,44 @@ func TestRoster_NoGraceMeansQuit(t *testing.T) {
 	recs := f.log.records()
 	if recs[len(recs)-1].GetUnbindCharacter() == nil {
 		t.Fatalf("want an UnbindCharacter, got %v", recs[len(recs)-1])
+	}
+}
+
+// The lifecycle's observability: the gauge follows the bodies, split by
+// combat; each end is an outcome and a duration at sim.tick_rate; a combat
+// interaction and a ceiling despawn are counted.
+func TestRoster_LinkdeadMetrics(t *testing.T) {
+	f := newFixture(t, withLinkdead(time.Hour))
+	f.roster.SeedLinkdead([]sim.EntityID{"recovered"})
+	f.roster.ObserveLinkdead(10, []sim.LinkdeadChange{
+		{Kind: sim.LinkdeadEntered, Character: "a", Since: 10, Deadline: 1810},
+		{Kind: sim.LinkdeadEntered, Character: "b", Since: 10, Deadline: 1810},
+	})
+	f.roster.ObserveLinkdead(20, []sim.LinkdeadChange{{Kind: sim.LinkdeadExtended, Character: "b", Since: 10, Deadline: 1810}})
+	m := f.metrics()
+	for _, want := range []string{
+		`andara_sessions_linkdead{in_combat="false"} 2`, `andara_sessions_linkdead{in_combat="true"} 1`,
+		"andara_linkdead_combat_extensions_total 1",
+	} {
+		if !strings.Contains(m, want) {
+			t.Fatalf("want %s in\n%s", want, m)
+		}
+	}
+	f.roster.ObserveLinkdead(310, []sim.LinkdeadChange{
+		{Kind: sim.LinkdeadReconnected, Character: "a", Since: 10},
+		{Kind: sim.LinkdeadEnded, Character: "b", Since: 10, Reason: sim.DespawnLinkdeadCeiling},
+		{Kind: sim.LinkdeadEnded, Character: "recovered", Since: 0, Reason: sim.DespawnLinkdead},
+	})
+	m = f.metrics()
+	for _, want := range []string{
+		`andara_sessions_linkdead{in_combat="false"} 0`, `andara_sessions_linkdead{in_combat="true"} 0`,
+		`andara_linkdead_outcomes_total{outcome="reconnected"} 1`, `andara_linkdead_outcomes_total{outcome="ceiling"} 1`,
+		`andara_linkdead_outcomes_total{outcome="despawned"} 1`, "andara_linkdead_ceiling_despawns_total 1",
+		// a and b were linkdead 300 Ticks, 30 s at 10 Hz; b in combat.
+		`andara_linkdead_duration_seconds_sum{in_combat="true"} 30`,
+	} {
+		if !strings.Contains(m, want) {
+			t.Fatalf("want %s in\n%s", want, m)
+		}
 	}
 }
