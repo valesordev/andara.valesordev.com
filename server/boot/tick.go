@@ -60,10 +60,11 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	}
 
 	var (
-		source    tickloop.Source
-		publisher tickloop.Publisher
-		loop      *tickloop.Loop
-		err       error
+		source      tickloop.Source
+		publisher   tickloop.Publisher
+		loop        *tickloop.Loop
+		snapshotter *tickloop.Snapshotter
+		err         error
 	)
 	switch cfg.SimSource {
 	case "memory":
@@ -116,11 +117,14 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			// against the loop's metric by topic.
 			if loop != nil {
 				kp.OnBoundaryLost = func(tick sim.Tick, err error) {
+					snapshotter.OnBoundaryLost(tick, err)
 					loop.Metrics().PublishFailures.WithLabelValues("boundary").Inc()
 					rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "tick boundary lost: this process publishes no more boundaries; the next restart recovers exactly to the last delivered one and re-batches after it",
 						slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()))
 				}
-				kp.OnBoundaryAcked = func(_ sim.Tick, lag time.Duration) {
+				kp.OnBoundaryAcked = func(tick sim.Tick, lag time.Duration) {
+					// A snapshot round waits on this (AW-SRV-006 AC-8).
+					snapshotter.OnBoundaryAcked(tick)
 					rt.Events.Metrics().PublishLag.Set(lag.Seconds())
 				}
 				kp.OnFailure = func(topic string, err error) {
@@ -154,7 +158,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	// writer when there is one — the memory source has none, and a round
 	// without a manifest is a round that wrote its objects and skipped an
 	// audit record.
-	snapshotter, err := newSnapshotter(cfg, rt, publisher)
+	snapshotter, err = newSnapshotter(cfg, rt, publisher)
 	if err != nil {
 		_ = source.Close()
 		_ = publisher.Close()
@@ -230,6 +234,10 @@ func newSnapshotter(cfg config.Config, rt *Runtime, publisher tickloop.Publisher
 		if mp, ok := publisher.(tickloop.ManifestPublisher); ok {
 			o.Manifest = mp
 		}
+		// The Kafka publisher enqueues a boundary and reports its fate
+		// later, so a round waits for the acknowledgement; the memory
+		// publisher's Publish is the delivery.
+		_, o.AwaitBoundaryAck = publisher.(*tickloop.KafkaPublisher)
 	}
 	return tickloop.NewSnapshotter(o)
 }

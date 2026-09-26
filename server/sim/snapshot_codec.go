@@ -189,6 +189,41 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 	return z
 }
 
+// BodyStateHash is the state_hash of a decoded snapshot body: SnapshotHash over
+// the Zone it rebuilds and the tick, PRNG state and next EventID it carries.
+// What a reader checks an envelope's claim against (AW-SRV-006 AC-3), and the
+// form AW-SRV-007 needs, since a body belongs to no WorldState yet.
+//
+// A body that carries a value the hash does not cover is refused rather than
+// hashed, so no single-field corruption of a stored object leaves it valid:
+//   - deferred, which is never written (zone_state.proto; feedback §3)
+//   - linkdead_deadline_tick, which nothing writes until AW-SRV-015 gives it a
+//     place in the State Hash
+//   - dormant_since_tick on a body that is not dormant: EntityCanonicalBytes
+//     covers it only for a dormant body, and the sim clears it on waking
+//
+// TestBodyHashCoversEveryProtoField is the tripwire: it corrupts every field of
+// ZoneState and EntityState in turn, and fails for any field this function
+// neither hashes nor refuses.
+func BodyStateHash(p *statev1.ZoneState) ([32]byte, error) {
+	if n := len(p.GetDeferred()); n != 0 {
+		return [32]byte{}, fmt.Errorf("snapshot: zone %s carries %d deferred commands, a field no snapshot writes", p.GetZoneId(), n)
+	}
+	for _, e := range p.GetEntities() {
+		if e.GetLinkdeadDeadlineTick() != 0 {
+			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries linkdead_deadline_tick, which this binary does not hash", e.GetEntityId())
+		}
+		if !e.GetDormant() && e.GetDormantSinceTick() != 0 {
+			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries dormant_since_tick and is not dormant", e.GetEntityId())
+		}
+	}
+	prng, err := DecodePRNG(p.GetPrngState())
+	if err != nil {
+		return [32]byte{}, err
+	}
+	return SnapshotHash(ZoneStateFromProto(p), Tick(p.GetTick()), prng, p.GetNextEventId()), nil
+}
+
 // StateProto renders one Entity as the snapshot body carries it — the same
 // message the state projector's Entity records carry (AW-SRV-019), so an
 // index and a snapshot cannot disagree on an Entity's shape.

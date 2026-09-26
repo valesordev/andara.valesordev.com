@@ -372,3 +372,38 @@ implementation owes, in the order it matters:
    versitygw locally.
 
 Delivered on an `impl/aw-srv-006-…` branch; the story returns to §8 when it merges.
+
+## 14. Implementation, 2026-09-26: §13's three items, delivered
+
+On `impl/aw-srv-006-s8-owed`. The per-item record is in the story under "§8 owed items
+(2026-09-26)". Two things for architecture's §8.
+
+### For architecture: three body fields are refused, not hashed
+
+The tripwire corrupts every proto field. Three fields turned out to be covered by neither
+`ZoneCanonicalBytes` nor the snapshot record:
+- `ZoneState.deferred`: never written (§3), and the reader ignores it.
+- `EntityState.linkdead_deadline_tick`: nothing writes it until `AW-SRV-015`, and `sim.EntityState`
+  has no field for it.
+- `EntityState.dormant_since_tick` on a body that is not dormant: `EntityCanonicalBytes` writes it
+  only inside the dormant record.
+
+Hashing them would mean changing `ZoneCanonicalBytes`, which AC-3 keeps unchanged, and the World's
+State Hash with it. So `sim.BodyStateHash` **refuses** a body that carries any of the three with a
+non-zero value, and the verified read reports it as `ErrHashInvalid`. A single-field corruption of
+any of them therefore fails the read, as AC-3 asks, and every body this binary writes passes. If
+you would rather have the snapshot record carry them, that's a change to one function, and the
+tripwire holds either way.
+
+**Consequence for `AW-SRV-015`:** when it starts writing `linkdead_deadline_tick`, it has to hash it
+and drop the refusal. The tripwire fails until it does. Hashing it only when it's non-zero, as
+`entity_dormant` does, keeps every existing hash.
+
+### For architecture: the abandoned round is not a `rounds_total` outcome
+
+An abandoned round writes nothing, so it isn't `incomplete` in `AW-SRV-007`'s listing sense.
+`rounds_total{outcome}` stays `complete`/`incomplete` as the contract names it, and the abandonment
+is recorded only on `failures_total{reason}`. `boundary`, and `timeout` while waiting for the
+acknowledgement, each count once per round. That differs from `timeout` on a `Put`, which counts
+per Zone, and the metric's help text says so.
+

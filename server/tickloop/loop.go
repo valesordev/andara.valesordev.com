@@ -251,14 +251,13 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 			slog.String("panic", f.Panic), slog.String("trace_id", traceID(tctx)))
 	}
 
-	// boundaryPublished gates the snapshot round below. Every path that
+	// publishErr gates the snapshot round below. Every path that
 	// returns an error here leaves this tick without a TickCompleted: an
 	// Events send that fails returns before the boundary is even attempted,
 	// and ErrBoundaryLost means this process has stopped publishing them
 	// altogether.
-	boundaryPublished := true
-	if err := l.opts.Publisher.Publish(tctx, res.Events, res.Completed); err != nil {
-		boundaryPublished = false
+	publishErr := l.opts.Publisher.Publish(tctx, res.Events, res.Completed)
+	if err := publishErr; err != nil {
 		kind := "events"
 		if errors.Is(err, ErrBoundaryLost) {
 			kind = "boundary"
@@ -315,8 +314,13 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// would report a healthy round while recovery quietly degraded. Skipping
 	// costs an RTO optimisation for one cadence, which is the cheap side of
 	// that trade. The copy is inside this call; everything after it is not.
-	if boundaryPublished {
+	// Published is not yet acknowledged: a round that starts here waits for
+	// the broker's acknowledgement of this boundary before it writes
+	// anything (SnapshotOptions.AwaitBoundaryAck).
+	if publishErr == nil {
 		l.opts.Snapshotter.Maybe(tctx, e)
+	} else {
+		l.opts.Snapshotter.Skip(tctx, tick, publishErr)
 	}
 	l.mu.Lock()
 	l.metrics.CheckpointAge.Set(float64(tick - l.lastCommitted))

@@ -13,7 +13,10 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"google.golang.org/protobuf/proto"
+
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -267,14 +270,14 @@ func TestManifestResolvesToTheObjectItNames(t *testing.T) {
 		if err != nil {
 			t.Fatalf("zone %s: the key the manifest names does not resolve: %v", r.GetZoneId(), err)
 		}
-		env, zone, err := store.Decode(b)
+		env, _, err := store.Decode(b)
 		if err != nil {
 			t.Fatalf("zone %s: Decode: %v", r.GetZoneId(), err)
 		}
 		if string(env.GetStateHash()) != string(r.GetStateHash()) {
 			t.Errorf("zone %s: manifest hash %x, envelope hash %x", r.GetZoneId(), r.GetStateHash(), env.GetStateHash())
 		}
-		if got := sim.HashZone(zone); string(got[:]) != string(r.GetStateHash()) {
+		if got := bodyHash(t, env); string(got[:]) != string(r.GetStateHash()) {
 			t.Errorf("zone %s: the object's Zone does not hash to what the manifest claims", r.GetZoneId())
 		}
 		if r.GetTick() != 42 || r.GetStateVersion() != sim.StateVersion {
@@ -607,4 +610,18 @@ func TestPartialRoundLeavesThePreviousOneComplete(t *testing.T) {
 	if keys, _ := h.fs.List(context.Background(), "docks"); len(keys) != 1 {
 		t.Errorf("docks: %d object(s), want only the first round's", len(keys))
 	}
+}
+
+// bodyHash is the state_hash of the body env carries (AW-SRV-006 AC-3).
+func bodyHash(t *testing.T, env *statev1.SnapshotEnvelope) [32]byte {
+	t.Helper()
+	var body statev1.ZoneState
+	if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
+		t.Fatalf("zone %s: body: %v", env.GetZoneId(), err)
+	}
+	h, err := sim.BodyStateHash(&body)
+	if err != nil {
+		t.Fatalf("zone %s: %v", env.GetZoneId(), err)
+	}
+	return h
 }
