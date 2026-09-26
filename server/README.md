@@ -785,7 +785,9 @@ the same Tick. `look` lists a linkdead body in `occupants` and in `linkdead`.
   until combat exists; the tests use a fixture verb.
 - **The Event stream across a reconnect.** When a Session ends linkdead, the egress keeps its
   retained ring and the pump that fills it, parked under the Character, for up to
-  `session.linkdead_max`. The reconnecting Session's first `Subscribe` adopts it, so a stream
+  `session.linkdead_max`. The gateway parks it before it cancels the Session, so a reconnect that
+  arrives before the old Session's teardown finishes still finds it (#121). The reconnecting
+  Session's first `Subscribe` adopts it, so a stream
   carrying `last_event_id` resumes with no gap, including what the Room did meanwhile. A reconnect
   whose first stream is a `Resync` counts on `andara_reconnect_resyncs_total`. The consequence to
   own: `events.max_subscribers` counts parked subscriptions too.

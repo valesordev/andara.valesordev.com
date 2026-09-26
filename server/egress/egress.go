@@ -374,12 +374,25 @@ func (e *Egress) Rebind(sessionID string) {
 	if !ok {
 		return
 	}
+	e.rebindSession(sessionID, s)
+}
+
+// rebindSession is Rebind on the state it looked up, which may have been
+// parked, or adopted by a reconnect, since: e.mu is released before
+// s.rebind is taken.
+func (e *Egress) rebindSession(sessionID string, s *session) {
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
 	closing, cur, world := s.closing || s.over(), s.obs, s.world
+	// Parked, the state perceives as the Character the lost Session drove
+	// until a reconnect adopts it; adopted, it is another Session's. A
+	// rebind of the lost Session that raced the park would otherwise read
+	// that Session's now-empty binding and reset the ring the reconnect
+	// resumes from (review of #124).
+	stale := s.parked || s.id != sessionID
 	s.mu.Unlock()
-	if closing {
+	if closing || stale {
 		// The Session has ended and forget is on its way: the routing
 		// table's Unbind woke on the same signal. Nothing is subscribed
 		// for a Session that is over — no throwaway subscription, no
@@ -395,28 +408,13 @@ func (e *Egress) Rebind(sessionID string) {
 	}
 }
 
-// forget ends a Session's fan-out subscription and drops its history.
+// forget ends a Session's fan-out subscription and drops its history. A
+// Session ParkSession already moved to parked is not here, and is left for
+// its reconnect.
 func (e *Egress) forget(id string) {
 	e.mu.Lock()
 	s, ok := e.sessions[id]
 	delete(e.sessions, id)
-	if ok && e.opts.ParkFor > 0 {
-		s.mu.Lock()
-		park, who := s.parking && !s.closing, s.obs.Entity
-		s.mu.Unlock()
-		if park && who != "" {
-			// Kept for the reconnect: the pump goes on filling the ring
-			// while the body stands linkdead.
-			if old := e.parked[who]; old != nil {
-				old.parkTimer.Stop()
-				defer old.close()
-			}
-			e.parked[who] = s
-			s.parkTimer = time.AfterFunc(e.opts.ParkFor, func() { e.unpark(who, s) })
-			e.mu.Unlock()
-			return
-		}
-	}
 	e.mu.Unlock()
 	if ok {
 		s.close()
@@ -426,18 +424,47 @@ func (e *Egress) forget(id string) {
 // ParkSession implements gateway.SessionParker: sessionID is ending
 // linkdead, so its retained state is kept, under the Character it drives,
 // for a reconnect to adopt (AW-SRV-015). The gateway calls it before it
-// cancels the Session; a Session with no stream state, or no Character,
-// is forgotten as ever.
+// cancels the Session, and the move happens here, not when forget wakes
+// on the cancel: nothing orders forget against the reconnect's Subscribe,
+// which found nothing parked when it came first (#121). A Session with no
+// stream state, or no Character, is forgotten as ever.
 func (e *Egress) ParkSession(sessionID string) {
-	e.mu.Lock()
-	s, ok := e.sessions[sessionID]
-	e.mu.Unlock()
-	if !ok {
+	if e.opts.ParkFor <= 0 {
 		return
 	}
+	e.mu.Lock()
+	s, ok := e.sessions[sessionID]
+	if !ok {
+		e.mu.Unlock()
+		return
+	}
+	// Under rebind, as adopt is: a Rebind already past its lookup waits,
+	// then sees parked and leaves the state alone.
+	s.rebind.Lock()
 	s.mu.Lock()
-	s.parking = true
+	closing, who := s.closing, s.obs.Entity
+	if !closing && who != "" {
+		s.parked = true
+	}
 	s.mu.Unlock()
+	s.rebind.Unlock()
+	if closing || who == "" {
+		e.mu.Unlock()
+		return
+	}
+	// Kept for the reconnect: the pump goes on filling the ring while the
+	// body stands linkdead.
+	delete(e.sessions, sessionID)
+	old := e.parked[who]
+	if old != nil {
+		old.parkTimer.Stop()
+	}
+	e.parked[who] = s
+	s.parkTimer = time.AfterFunc(e.opts.ParkFor, func() { e.unpark(who, s) })
+	e.mu.Unlock()
+	if old != nil {
+		old.close()
+	}
 }
 
 // unpark closes parked state nobody adopted in time.
@@ -470,7 +497,7 @@ func (e *Egress) adopt(id string, principal auth.Principal, ended <-chan struct{
 	s.rebind.Lock()
 	s.mu.Lock()
 	s.id, s.principal, s.ended = id, principal, ended
-	s.parking, s.adopted = false, true
+	s.parked, s.adopted = false, true
 	s.mu.Unlock()
 	s.rebind.Unlock()
 	e.sessions[id] = s
@@ -519,10 +546,10 @@ type session struct {
 	closing  bool
 	inDrop   bool
 	stream   *stream
-	// parking: the Session is ending linkdead, and forget keeps this state
-	// for a reconnect instead of closing it. adopted: a reconnecting
-	// Session took it over, and its first stream has not attached yet.
-	parking   bool
+	// parked: the Session ended linkdead and this state waits for a
+	// reconnect. adopted: a reconnecting Session took it over, and its
+	// first stream has not attached yet.
+	parked    bool
 	adopted   bool
 	parkTimer *time.Timer
 }
