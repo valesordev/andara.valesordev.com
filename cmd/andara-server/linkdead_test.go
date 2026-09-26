@@ -6,6 +6,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -275,5 +276,21 @@ func TestRun_Linkdead(t *testing.T) {
 		if !strings.Contains(stderr.String(), want) {
 			t.Errorf("stderr lacks %s", want)
 		}
+	}
+	// The expiry's line names the Session that went linkdead, from the
+	// roster's hold, and the trace of the tick that applied it (§8 review).
+	var despawned map[string]any
+	for _, l := range strings.Split(stderr.String(), "\n") {
+		if strings.Contains(l, `"msg":"character despawned"`) {
+			if err := json.Unmarshal([]byte(l), &despawned); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if despawned["session_id"] != sA2 || despawned["outcome"] != "despawned" {
+		t.Errorf("the despawn line: session_id %v outcome %v, want %s despawned", despawned["session_id"], despawned["outcome"], sA2)
+	}
+	if tr, _ := despawned["trace_id"].(string); len(tr) != 32 || strings.Trim(tr, "0") == "" {
+		t.Errorf("the despawn line's trace_id is %q", tr)
 	}
 }

@@ -4,7 +4,10 @@
 package roster_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -292,5 +295,43 @@ func TestRoster_LinkdeadMetrics(t *testing.T) {
 		if !strings.Contains(m, want) {
 			t.Fatalf("want %s in\n%s", want, m)
 		}
+	}
+}
+
+// The expiry's info line (§8 review of AW-SRV-015). A held body's names the
+// Session that went linkdead, which the hold kept, and the trace of the tick
+// that applied it. A body recovery left has no Session: its line omits
+// session_id and says recovered, with character_id and deadline_tick to
+// correlate.
+func TestRoster_ExpiryLine(t *testing.T) {
+	var buf bytes.Buffer
+	logTo := func(o *roster.Options) { o.Logger = slog.New(slog.NewJSONHandler(&buf, nil)) }
+	f, id, s := selected(t, withLinkdead(), logTo)
+	<-f.roster.ReleaseSession(s, gateway.EndLinkdead)
+	f.roster.SeedLinkdead([]sim.EntityID{"recovered"})
+	const tick = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	f.roster.ObserveLinkdead(1900, []sim.LinkdeadChange{
+		{Kind: sim.LinkdeadEnded, Character: sim.EntityID(id), Reason: sim.DespawnLinkdead, Since: 100, Deadline: 1900, TraceID: tick},
+		{Kind: sim.LinkdeadEnded, Character: "recovered", Reason: sim.DespawnLinkdead, Deadline: 1800, TraceID: tick},
+	})
+	lines := map[string]map[string]any{}
+	for _, l := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		var m map[string]any
+		if err := json.Unmarshal([]byte(l), &m); err != nil {
+			t.Fatal(err)
+		}
+		if m["msg"] == "character despawned" {
+			lines[m["character_id"].(string)] = m
+		}
+	}
+	held, recovered := lines[id], lines["recovered"]
+	if held == nil || recovered == nil {
+		t.Fatalf("despawn lines %v", lines)
+	}
+	if held["session_id"] != "s1" || held["recovered"] != nil || held["trace_id"] != "0af7651916cd43dd8448eb211c80319c" || held["deadline_tick"] != float64(1900) {
+		t.Errorf("the held body's line: %v", held)
+	}
+	if _, ok := recovered["session_id"]; ok || recovered["recovered"] != true || recovered["trace_id"] != "0af7651916cd43dd8448eb211c80319c" || recovered["deadline_tick"] != float64(1800) {
+		t.Errorf("the recovered body's line: %v", recovered)
 	}
 }
