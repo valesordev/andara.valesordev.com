@@ -109,6 +109,10 @@ type Roster struct {
 	// reconnected or despawned, with whether combat extended it: the
 	// andara_sessions_linkdead gauge's source. Loop goroutine only.
 	linkdeadBodies map[sim.EntityID]bool
+	// recovered is the linkdead bodies recovery left (SeedLinkdead): no
+	// Session survives a restart, so their lines name none. Loop goroutine
+	// only.
+	recovered map[sim.EntityID]bool
 }
 
 // live is one Account's live flag: which Session drives which Character.
@@ -176,6 +180,7 @@ func New(o Options) (*Roster, error) {
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
 		writes:         make(chan struct{}, o.PositionWrites),
 		linkdeadBodies: map[sim.EntityID]bool{},
+		recovered:      map[sim.EntityID]bool{},
 	}, nil
 }
 
@@ -585,6 +590,7 @@ func (r *Roster) holdLinkdead(l *live) {
 func (r *Roster) SeedLinkdead(ids []sim.EntityID) {
 	for _, id := range ids {
 		r.linkdeadBodies[id] = false
+		r.recovered[id] = true
 	}
 	r.setLinkdeadGauge()
 }
@@ -597,6 +603,7 @@ func (r *Roster) SeedLinkdead(ids []sim.EntityID) {
 func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
 	for _, c := range changes {
 		inCombat := r.linkdeadBodies[c.Character]
+		recovered := r.recovered[c.Character]
 		outcome := ""
 		switch c.Kind {
 		case sim.LinkdeadEntered:
@@ -608,9 +615,11 @@ func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
 			continue
 		case sim.LinkdeadReconnected:
 			delete(r.linkdeadBodies, c.Character)
+			delete(r.recovered, c.Character)
 			outcome = LinkdeadReconnected
 		case sim.LinkdeadEnded:
 			delete(r.linkdeadBodies, c.Character)
+			delete(r.recovered, c.Character)
 			switch c.Reason {
 			case sim.DespawnLinkdead:
 				outcome = LinkdeadDespawned
@@ -624,10 +633,16 @@ func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
 			for _, l := range r.byAccount {
 				if l.linkdead && l.character == string(c.Character) {
 					r.drop(l)
+					if c.Session == "" {
+						c.Session = l.session
+					}
 					break
 				}
 				if p := l.reconnectOf; p != nil && p.character == string(c.Character) {
 					p.ended = true
+					if c.Session == "" {
+						c.Session = p.session
+					}
 				}
 			}
 			r.mu.Unlock()
@@ -641,8 +656,15 @@ func (r *Roster) ObserveLinkdead(tick sim.Tick, changes []sim.LinkdeadChange) {
 		msg := map[sim.LinkdeadKind]string{
 			sim.LinkdeadEntered: "character linkdead", sim.LinkdeadReconnected: "character reconnected", sim.LinkdeadEnded: "character despawned",
 		}[c.Kind]
+		// An expiry names the Session that went linkdead, which the hold
+		// kept. A body recovery left has none: no Session survives a
+		// restart, so its line omits session_id and says recovered.
+		session := slog.String("session_id", c.Session)
+		if c.Session == "" && recovered {
+			session = slog.Bool("recovered", true)
+		}
 		r.log.LogAttrs(ctx, slog.LevelInfo, msg,
-			slog.String("session_id", c.Session), slog.String("character_id", string(c.Character)),
+			session, slog.String("character_id", string(c.Character)),
 			slog.String("outcome", outcome), slog.Uint64("deadline_tick", uint64(c.Deadline)),
 			slog.Uint64("tick", uint64(tick)), slog.String("zone", string(c.Zone)),
 			slog.String("trace_id", traceID(ctx)))

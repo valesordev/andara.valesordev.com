@@ -824,7 +824,9 @@ Character name and Account ID are never labels. Logs at `info`: `character creat
 `character marked linkdead` (with `reason`, `outcome`, `zone`, `room`), each with `account_id`,
 `character_id`, `session_id`, `trace_id`. From the loop, `character linkdead`,
 `character reconnected` and `character despawned` carry `session_id`, `character_id`, `outcome`,
-`deadline_tick`, `tick`, `zone` and `trace_id`; the
+`deadline_tick`, `tick`, `zone` and `trace_id`. An expiry's `session_id` is the Session that went
+linkdead, and its `trace_id` the `sim.tick` span that applied it; a body recovery left linkdead has
+no Session, so its line omits `session_id` and carries `recovered=true`; the
 name appears quoted as a value on `created`, never as a key. The tick loop logs `character bind
 applied` at `info` when a `BindCharacter` applies, with the same four fields plus `tick`, the
 `zone` and `room` the body is in, and `body`: `spawned` (a never-bound Character made at the spawn

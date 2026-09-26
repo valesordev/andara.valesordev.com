@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
@@ -326,6 +327,17 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	l.metrics.CheckpointAge.Set(float64(tick - l.lastCommitted))
 	l.mu.Unlock()
 	if l.opts.OnTick != nil {
+		// A linkdead step with no Command behind it, an expiry, was applied
+		// by the tick itself: the tick span is its trace (AW-SRV-015).
+		if len(res.Linkdead) > 0 {
+			carrier := propagation.MapCarrier{}
+			propagation.TraceContext{}.Inject(tctx, carrier)
+			for i := range res.Linkdead {
+				if res.Linkdead[i].TraceID == "" {
+					res.Linkdead[i].TraceID = carrier.Get("traceparent")
+				}
+			}
+		}
 		l.opts.OnTick(res, duration)
 	}
 	return nil

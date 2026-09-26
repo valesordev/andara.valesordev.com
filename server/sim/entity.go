@@ -55,8 +55,9 @@ type EntityState struct {
 }
 
 // Linkdead reports whether the body's Session lost its stream and the body
-// is waiting out its grace (AW-SRV-015).
-func (e *EntityState) Linkdead() bool { return e != nil && e.LinkdeadSince != 0 }
+// is waiting out its grace (AW-SRV-015). It keys on the deadline, as the
+// state hash does: a mark always sets one after its Tick.
+func (e *EntityState) Linkdead() bool { return e != nil && e.LinkdeadDeadline != 0 }
 
 // clearLinkdead zeroes the four linkdead fields: a reconnect or a despawn.
 func (e *EntityState) clearLinkdead() {
