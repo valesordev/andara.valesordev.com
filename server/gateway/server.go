@@ -67,6 +67,13 @@ type Options struct {
 	Rechecker       Rechecker
 	RecheckInterval time.Duration
 
+	// KeepaliveTimeout is session.linkdead_detect (AW-SRV-015 AC-1): a
+	// connection that sends nothing is pinged after half of it, and closed
+	// if the ping goes unanswered for the other half, so a partitioned
+	// client — no transport close ever arrives — is torn down, and its
+	// Session marked linkdead, within it. Zero leaves HTTP/2's defaults.
+	KeepaliveTimeout time.Duration
+
 	// Content reports the content in effect for GetServerInfo (AW-SRV-012):
 	// pack versions and their world_digest. Nil leaves the fields empty.
 	Content func() (map[string]uint64, [32]byte)
@@ -197,6 +204,9 @@ func New(opts Options) (*Server, error) {
 		MaxHeaderBytes: 1 << 16,
 		ConnContext:    s.connContext,
 		ConnState:      s.connState,
+	}
+	if k := opts.KeepaliveTimeout; k > 0 {
+		s.http.HTTP2 = &http.HTTP2Config{SendPingTimeout: k / 2, PingTimeout: k / 2}
 	}
 	return s, nil
 }
