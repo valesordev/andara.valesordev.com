@@ -11,9 +11,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `review` | 7 |
 | `ready` | 29 |
-| `draft` | 1 |
+| `draft` | 2 |
 | `done` | 23 |
-| **total** | **60** |
+| **total** | **61** |
 
 ## Attention first
 
@@ -75,11 +75,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
-### `draft` (1)
+### `draft` (2)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | architecture | A schema registry on the box for dev and prod | `AW-INF-014` |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 
 ### `done` (23)
 
@@ -127,6 +128,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `ready` | Ingress forwards the client address to the Gateway |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `review` | Publish the server image to ghcr on merge to main |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `ready` | make up builds the server image from the tree it runs in |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `draft` | Argo CD deploys dev from main on the box's kind cluster |
 
 ### `EPIC-02` — World model and simulation core
 
