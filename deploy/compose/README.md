@@ -30,6 +30,20 @@ make down VOLUMES=1      # stop and reset to an empty log
 CLAUDE.md §8 requires instrumentation verified against a real backend rather than merely
 registered. That is what this stack is for.
 
+## The server is the tree you're standing in
+
+`make up` builds `andara-server` from the working tree every time (`AW-INF-016`), then starts
+it. When nothing changed, the layer cache makes that a no-op: the image ID doesn't move and no
+container is recreated. When the tree changed, only `andara-server` is recreated.
+
+- **The build is stamped by the Makefile**, as `make image` and `make build` stamp theirs.
+  `make build-info` prints the stamps. `COMMIT` and `REVISION` carry `-dirty` exactly when a
+  tracked file differs from `HEAD`.
+- **The summary line `andara-server revision` is read from the running container's label**,
+  and `scripts/stack.sh revision` prints the same.
+- **A tree that doesn't compile fails `make up`** before anything is recreated, and leaves the
+  running server as it was.
+
 ## TLS is not optional
 
 ADR-0003 puts TLS on the wire. `make up` provisions a local CA and a server certificate in
