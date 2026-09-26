@@ -2,12 +2,13 @@
 
 # Status — Andara's World
 
-69 stories — 5 review · 30 ready · 9 draft · 25 done
+69 stories — 1 in-progress · 5 review · 29 ready · 9 draft · 25 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    — nothing in flight
+  now    AW-INF-016  make up builds the server image from the tree it runs in
+         branch aw-inf-016-make-up-builds-the-server-image-from-the-tree-it-runs-in
   next   AW-INF-019  ready  Argo CD deploys dev from main on the box's kind cluster  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   review AW-INF-013, AW-INF-014, AW-INF-008 — run the §8 checklist, then flip to done

@@ -4,7 +4,7 @@ title: make up builds the server image from the tree it runs in
 epic: EPIC-01
 component: infra
 type: bug
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-INF-002]
 blocks: []

@@ -85,7 +85,28 @@ jobs:
         run: make bootstrap
 
       - name: up
-        run: make up
+        run: make up | tee "$RUNNER_TEMP/up.log"
+
+      # AW-INF-016: `make up` builds the server from the tree it runs in, stamped the way
+      # `make image` stamps it. The runner starts with no image, so this can't catch a stale
+      # one. What it catches is a stamp that drifts: the summary, the container label and
+      # andara_build_info{commit} must all name this commit, clean. The metric is polled,
+      # because `--wait` sees /readyz, not a scrape (live-assertions.md).
+      - name: the server runs this commit
+        run: |
+          set -euo pipefail
+          want="${{ github.sha }}"
+          grep -E "^  andara-server revision +${want}\$" "$RUNNER_TEMP/up.log"
+          [[ "$(scripts/stack.sh revision)" == "$want" ]]
+          commit=""
+          for _ in $(seq 30); do
+            commit="$(curl -sf "http://127.0.0.1:${ANDARA_HTTP_PORT:-8080}/metrics" \
+              | sed -n 's/^andara_build_info{.*commit="\([^"]*\)".*/\1/p' || true)"
+            [[ -n "$commit" ]] && break
+            sleep 1
+          done
+          echo "revision=$want build_info.commit=$commit"
+          [[ -n "$commit" && "$commit" != unknown && "$commit" != *-dirty && "$want" == "$commit"* ]]
 
       - name: topics match the declaration
         run: make topics-diff
