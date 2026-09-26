@@ -4,7 +4,7 @@ title: andara-cli play — the text interface as a first-class protocol client
 epic: EPIC-03
 component: cli
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-CLI-001, AW-SRV-005, AW-SRV-011, AW-SRV-031]
 blocks: [AW-CLI-007, AW-CLI-008]
@@ -436,3 +436,20 @@ own. Written up in `docs/feedback/AW-CLI-004-play.md`, with one ownership gap fo
   that has it, and until `AW-SRV-008` lands, `play` has no `--as` at all rather than an anonymous one.
   The alternative — ship anonymous now, add identity later — means an audit trail with a hole in it
   exactly where the early, least careful commands live.
+
+### §8 closed — 2026-09-26 (architecture, SPRINT-02), `done`
+
+The one failing item from the 2026-09-24 pass is closed: the scripted M1 gate in CI. `make
+stack-play` runs `play` with a bound Character in the `stack` workflow. `AW-CLI-007`'s §8 (same
+date) records each live observation this story's inherited lines asked for:
+- AC-1–4 from the gate's transcript;
+- AC-6 under a stopped broker;
+- AC-7 across a server restart;
+- AC-8 with a live `resume_window_exceeded`.
+
+As 2026-09-24's pass recorded, nothing else is re-reviewed.
+
+Carried forward: the `perceived_from` renderer row is `AW-SRV-029`'s, by the contract-change PM
+recorded in `docs/feedback/AW-CLI-004-play.md`. Architecture amends 029's scope when it enters a
+sprint.
+

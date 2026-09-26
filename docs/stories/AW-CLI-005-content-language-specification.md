@@ -4,7 +4,7 @@ title: Content Language v1 — grammar, semantics, error contract, and conforman
 epic: EPIC-05
 component: cli
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-020, AW-SRV-021, AW-SRV-022]
 blocks: [AW-CLI-006]
@@ -222,7 +222,7 @@ frontmatter said `draft` — a compiler written before the syntax is pinned, whi
 the story is `review`: merged, syntax pinned, the §8 checklist outstanding. No `[ASSUMPTION]` remains —
 the `src/<path>.aw` publication prefix was pinned on 2026-09-23 (below), because it is normative
 compiler output in `semantics.md` §6 and a dependency `AW-CLI-006` builds on cannot leave it movable.
-The §8 record is below. The story stays `review` until AC-9's `valid/` half runs in CI.
+The §8 record is below. *(Done 2026-09-26: AC-9's `valid/` half runs in CI since #75.)*
 
 ## Review — 2026-09-24 (§8, against `main` at `63727dd`, after `AW-CLI-006` merged in PR #57)
 
@@ -353,3 +353,13 @@ calls the pin mandatory.
   but the path is normative `Compile` output in `semantics.md` §6 and `AW-CLI-006` AC-1 emits it, so
   moving it later would rework the compiler, the corpus, and the fetch/decompile flow. `AW-CLI-003`'s
   `fetch` reads the path the manifest names; it does not choose it.
+
+### Closed — 2026-09-26 (architecture, SPRINT-02 §8 pass)
+
+**Outcome: `done`.** The one open item was AC-9's `valid/` half with no CI runner. PR #75
+(`2e8f902`, "content-conformance: decompile and recompile every valid/ case") put it in
+`make content-conformance`, which `make check` and `ci.yaml`'s "content-language conformance" step
+both run. At `cbe409e` it reports `72 cases agree with the corpus`, and the four pending cases each
+name the story whose protobuf field they wait on. The flip was due at #75's merge and was missed.
+That was a status defect, not an open item, so nothing else is re-reviewed.
+

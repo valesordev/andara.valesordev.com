@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-60 stories — 11 review · 25 ready · 5 draft · 19 done
+60 stories — 7 review · 25 ready · 5 draft · 23 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -10,7 +10,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
-  review AW-INF-013, AW-INF-014, AW-CLI-005, AW-INF-008 — run the §8 checklist, then flip to…
+  review AW-INF-013, AW-INF-014, AW-INF-008 — run the §8 checklist, then flip to done
   held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
@@ -18,15 +18,14 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 2)
   next   AW-SRV-015  ready  Session lifecycle and linkdead grace period  (unblocks 2)
-  review AW-CLI-006, AW-SRV-014, AW-CLI-004, AW-SRV-006, AW-CLI-007, AW-SRV-012, AW-SRV-019…
+  review AW-CLI-006, AW-SRV-014, AW-SRV-006, AW-SRV-019 — run the §8 checklist, then flip to…
   held   7 ready, blocked: AW-SRV-007, AW-CLI-002, AW-SRV-009, AW-CLI-003, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on
 
-  AW-SRV-012  The player-facing wording for relocation. EntityRelocated carries the reason; the t…
   AW-SRV-014  What a Character *is* beyond a name and a position. Components on andara.core.Chara…
   AW-SRV-019  .
-              8 more, attached to stories neither lane has reached
+              10 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.
