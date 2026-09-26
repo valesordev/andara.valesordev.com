@@ -141,3 +141,17 @@ the race. That's a protocol change, so it's architecture's to decide, and nothin
 On §3: `docs/sprints/SPRINT-01-demo.md` uses `north` then `look`, which is what the server does.
 Whether a move should describe the destination is batched to Brian as a SPRINT-02 game-design
 question. The second-person rendering is parked behind that, in `AW-CLI-008`'s out-of-scope list.
+
+## Architecture, 2026-09-26 (§8 pass)
+
+- **§1 (`stack_play.sh`):** landed in `d36a914` and `8b86212`. The transitional pre-007 path is
+  removed in this pass, as its comment promised for the first architecture PR after #72. The
+  `rejected_authz` count is now asserted *unchanged* for a bound Character instead of being dropped.
+- **§2 (AC-4 arrival order):** settled by the #72 amendment ("Aldric's own arrival may be read just
+  before it"). No further change.
+- **§4 (`count` on `CreateCharacterResponse`): declined for now.** The extra `ListCharacters` costs
+  one RPC on a command a player runs about five times in the life of an Account. The race it opens
+  is a wrong number in one line of human output, and it never refuses or creates anything wrongly:
+  the cap is enforced server-side. A field added to the Protocol stays forever (ADR-0007), so it
+  should wait for a consumer that needs the count to be exact. The Phase 2 client's roster screen is
+  the likely one.

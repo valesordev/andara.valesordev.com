@@ -4,7 +4,7 @@ title: Content resolution from the store and reload at a tick boundary
 epic: EPIC-05
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-001, AW-SRV-021, AW-SRV-022]
 blocks: [AW-SRV-013]
@@ -485,4 +485,18 @@ review"): assertions for the untested instruments, and README and comment correc
 
 **The `[NEEDS BRIAN]`** on relocation wording doesn't bind the contract: the client renders from
 `reason`, and no client renders `EntityRelocated` yet. It stays Brian's.
+
+### Closed — 2026-09-26 (architecture, SPRINT-02 §8 pass)
+
+**Outcome: `done`.** The only open items at the 2026-09-25 pass were implementation's owed
+assertions and README/comment corrections. #95 delivered them (`impl/aw-srv-012-s8-owed`, the
+record above), with CI green after the `onTick` ordering fix. SPRINT-02 moves the story on that
+basis with no further review. Carried forward, unchanged:
+- `AW-SRV-013` observes the `kafka`-source instruments live.
+- `AW-SRV-007` resolves snapshot content before loading any Zone body.
+- Brian's `[NEEDS BRIAN]` on relocation wording.
+
+The feedback file's "For architecture" note on `stack`'s broker-outage step is fixed in this pass
+(`.github/workflows/stack.yaml`: the outage sample is now polled to a deadline, not taken after
+`sleep 8`).
 

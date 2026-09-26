@@ -4,7 +4,7 @@ title: andara-cli character create and list, and play --character
 epic: EPIC-03
 component: cli
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-004, AW-SRV-014]
 blocks: [AW-INF-017]
@@ -149,8 +149,9 @@ that carries it next. It does not hold this story in `review`.
 
 ## Open questions
 
-- `[ASSUMPTION]` `--character` takes the display name, case-insensitively, resolved through
-  `ListCharacters` on the client; `character_id` is never typed by a human.
+- **Resolved 2026-09-26 (§8):** `--character` takes the display name, case-insensitively, resolved
+  through `ListCharacters` on the client; `character_id` is never typed by a human. As built and as
+  `stack_play.sh` drives it (lower-case resolution).
 
 ## Verification record — 2026-09-24 (implementation; `review` until the §8 checklist passes)
 
@@ -187,3 +188,82 @@ A second `play` as B exited 1 with `already_live`.
   with no Character, which AC-6 makes exit 2. That same change closes the inherited lines
   `AW-CLI-004` and `AW-SRV-011` left on `AW-SRV-014`.
 - AC-4's wording (feedback §2) and the demo's `north` → `look` (feedback §3, PM).
+
+## §8 pass — 2026-09-26 (architecture, SPRINT-02) — `done`
+
+Against `main` at `cbe409e`, on the compose stack with the server image built from that tree
+(`org.opencontainers.image.revision` = `cbe409e…`, `andara_build_info{commit="cbe409e"}`; built
+explicitly, #73). `bin/andara-cli` is from the same tree.
+
+| §8 item | Result |
+|---|---|
+| Every AC demonstrably passes | Pass. ACs 1–8 are covered by the tests in the verification record. AC-1–7 were live in `make stack-play`, and AC-8 in its restart section, which re-selects the Character on the new Session. |
+| Tests from the test plan run in CI | Pass. `go test ./admin/cli/...` runs in `ci.yaml`, and `make stack-play` in `stack.yaml`. |
+| `make check` clean | Pass, on `arch/sprint-02-s8-cli-007-review`. |
+| Instrumentation verified against a real backend | Pass. `TestCharacter_SpanParentsTheRPCs`, plus the server series in the inherited lines below, scraped from the running server. The story adds no metrics of its own. |
+| Config documented | Pass. No config keys. `admin/README.md` lists `character create`/`list` and `play --character`. |
+| Migrations | None. |
+| Glossary | Pass. Character, Roster, Session and Linkdead are all present. |
+| No `[ASSUMPTION]` unresolved | Pass. The one is resolved above. |
+
+**Definition-of-done line:** `scripts/stack_play.sh` runs the full M1 gate. Its play half has been
+on `main` since `d36a914`/`8b86212`. This pass removes its pre-007 transitional path and asserts
+`rejected_authz` unchanged for a bound Character. With that script, `make stack-play` passes on a
+fresh stack at `cbe409e`.
+
+**Inherited lines, each observed live:**
+
+1. **`AW-CLI-004`'s transcript.**
+   - AC-1–4 come from `make stack-play`'s transcript: the plaza on the first `look`, `leaves north`
+     and the hall after `north` and `look`, B reading A arrive and leave unprompted, and
+     `there is no exit west` as prose.
+   - **AC-6:** with `docker compose stop redpanda`, two `look`s each printed "The world is
+     read-only for a moment: your command was not taken. Try it again shortly." The prompt was kept
+     and the Session was the same one throughout. After `start` (ready in 1 s), `look` answered with
+     the Room on that Session. Exit 0 at quit.
+2. **`AW-SRV-011`.**
+   - A `play` stopped with SIGSTOP in the plaza while 12 movers walked through it. The client's
+     4 MB HTTP/2 stream window (plus docker-proxy's queue) sits in front of `egress.buffer`, so the
+     drop came after about 8 minutes.
+   - `andara_session_egress_drops_total{reason="buffer_full"}` went 0 → 1 and
+     `andara_sessions_in_drop_state` 0 → 1.
+   - Loki had the `warn` "stream ended: client not reading, buffer full" with `session_id`,
+     `buffered=1024`, `last_sent=115183`, `tick` and `trace_id=0139a9d4…`.
+   - **Resume with retained Events:** after SIGCONT the client resubscribed from `last_sent`, and
+     the `Game/Subscribe` span in the same trace (`0139a9d4…`) carries `stream.resumed=true`.
+     `in_drop_state` went back to 0.
+   - **`resume_window_exceeded`:** a second run kept the movers going 60 s past the drop. After
+     SIGCONT, `andara_stream_resyncs_total{reason="resume_window_exceeded"}` went 0 → 1, and `play`
+     printed "You may have missed some events; the world continues from here." and then the Room
+     (`AW-CLI-004` AC-8).
+   - What the client reports as the end is `code=internal … INTERNAL_ERROR; received from peer`,
+     not `buffer_full`. The writer was blocked behind the full window, so the server reset the
+     stream, as `server/README.md`'s writer-return rule says. The player sees one `warn` line on
+     stderr and no prose. That is accepted; a friendlier line would be a `play` change for a later
+     story.
+3. **`AW-SRV-031`.** Ran `play --client-timeout 50ms` with `docker compose pause redpanda`, then
+   `south`, then unpause.
+   - Four Submits carried the same `client_ref` (`11a03c9e-2`), each `deadline_exceeded` at the
+     client. The player read "The world has not answered that yet; it may still take it."
+   - The server counted `andara_ingress_submits_total{outcome="deadline"}` +3.
+   - After the unpause the transcript has exactly one `arrives from the north` and one
+     `leaves south`: the Command applied once.
+4. **`AW-SRV-014`, Session availability SLO:** first measurement, from the stack's Prometheus over
+   the hour of these runs.
+   - `sum_over_time(andara_sessions_in_drop_state[1h])` = 1 (one 5 s sample).
+   - The denominator is 1317 Session-samples, so the SLI reads 0.99924.
+   - Measuring it found a units defect in the spec's query: the numerator summed raw samples
+     and the denominator subquery points. Those are equal only while scrape and rule-evaluation
+     intervals are equal, which they are locally and nothing guarantees in Grafana Cloud.
+     `docs/specs/slo/session-availability.md` now uses `[28d:1m]` on both sides.
+
+**Also in this pass:**
+- **#101:** `TestKafka_ConcurrentSubmitsOrdered` flaked on `main`'s `stack` run at `343cdbe`. Filed
+  for implementation. It doesn't bear on this story.
+- A stack whose log holds about 125k Commands (these floods) recovered in 73 s, beyond
+  `stack_play.sh`'s 60 s reconnect window. That's #74's full-log replay, on a developer's
+  long-lived stack only. CI's stack is fresh. The gate passed after `make down VOLUMES=1`.
+
+Feedback §4 (`count` on `CreateCharacterResponse`) is declined for now; the reasoning is in the
+feedback file.
+

@@ -741,3 +741,10 @@ On one `impl/` branch, `impl/aw-srv-012-s8-owed`, stacked on #94.
   `andara_tick_input_starved_total` to rise, with a deadline, would remove the race
   (`docs/specs/testing/live-assertions.md` rule 3). `.github/` is architecture's, so this only
   records it.
+
+## Architecture, 2026-09-26 (SPRINT-02 §8 pass)
+
+On "`stack`'s broker-outage step is timing-sensitive": fixed on `arch/sprint-02-s8-cli-007-review`.
+The outage sample now polls a single scrape of `andara_ticks_total` and
+`andara_tick_input_starved_total` until starvation has risen by 20 and ticks by 40, with a 30 s
+deadline. The assertion is relative to the pre-outage value, not absolute. The story is `done`.
