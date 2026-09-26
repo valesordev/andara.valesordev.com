@@ -23,11 +23,20 @@ the SLI is the ratio of the two integrals over the window:
 
 ```promql
 1 - (
-  sum_over_time(andara_sessions_in_drop_state[28d])
+  sum_over_time(andara_sessions_in_drop_state[28d:1m])
   /
-  sum_over_time((andara_stream_subscribers + andara_sessions_in_drop_state)[28d:])
+  sum_over_time((andara_stream_subscribers + andara_sessions_in_drop_state)[28d:1m])
 )
 ```
+
+Both sides are subqueries at the same explicit step. *(Amended 2026-09-26 at `AW-CLI-007`'s §8, where
+the SLI was first measured.)* The first form summed the numerator's raw samples and the denominator's
+subquery points. Those are counted at the scrape interval and the rule-evaluation interval, and the
+ratio is only in Session-seconds while the two are equal. They are equal on the compose stack (5 s /
+5 s), but nothing holds them equal in Grafana Cloud. A shared step makes each point one minute of one
+Session, whatever the scrape interval is. A drop shorter than the step can fall between points: the
+SLI undercounts sub-minute drops rather than inventing them. That's acceptable for a 28-day, 99.5 %
+target, and the `SessionsDroppingAtRate` alert counts drops by the counter, which misses none.
 
 The denominator is every Session-second that had a stream or was waiting to get one back; a
 Session that never subscribed is in neither. `client_gone` — the client closing its stream or its
