@@ -250,8 +250,8 @@ func (c *Content) InEffect() (map[string]uint64, [32]byte) {
 }
 
 // Versions reports the content version each pack has in effect, for
-// andara_build_info and Admin.GetServerInfo. Empty for the dir source, which
-// has no versions: a directory is whatever is in it.
+// andara_build_info and Admin.GetServerInfo. For the dir source it is dir@0
+// once the directory is in effect, as andara_build_info reports it.
 func (c *Content) Versions() map[string]uint64 {
 	if c == nil {
 		return nil
@@ -262,8 +262,8 @@ func (c *Content) Versions() map[string]uint64 {
 	return c.loader.Versions()
 }
 
-// ZoneVersions names the packID@version each Zone in effect came from. Empty
-// for the dir source, for the reason Versions is.
+// ZoneVersions names the packID@version each Zone in effect came from: dir@0
+// for every Zone of a directory in effect.
 func (c *Content) ZoneVersions() map[sim.ZoneID]string {
 	if c == nil {
 		return nil

@@ -253,7 +253,7 @@ never out of band.
   findings; `warn` per relocation with `entity_id`, `from`, `to`.
 
 ### Traces
-- `content.resolve` → `content.validate` → `content.build`; `content.swap` inside `sim.tick`.
+- `content.resolve` → `content.validate` → `content.build`; `content.swap` a child of `content.load` (via the swap's traceparent), linked to `sim.tick` *(amended 2026-09-25 at §8)*.
 
 ### Alerts
 - `ContentLoadFailing` on `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m,
@@ -291,6 +291,13 @@ running server does not react to a pointer move until AC-2 lands. The story stay
 until then. Per-AC state, deviations and the architecture-owned items are in
 `docs/feedback/AW-SRV-012-content-resolution-and-reload.md`.
 
+**§8 owed items (2026-09-25), delivered** on `impl/aw-srv-012-s8-owed`:
+`TestLoader_InstrumentsALoadAndAPointerMove` (the phases, the load spans, and the gauges on a pointer
+move), `TestContentSwap_SpanIsAChildOfTheLoadAndLinksTheTick`, cache hits in
+`TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic`, and gauges and spans in
+`TestKafka_APointerMoveSwapsTheWorldThroughTheLog`. Also the README's `content.swap` parent and two
+stale comments.
+
 ## Open questions
 
 - **Inherited from `AW-CLI-005` (2026-09-22):** the Content Language keyword for `fallback_room` is
@@ -313,9 +320,11 @@ until then. Per-AC state, deviations and the architecture-owned items are in
 
 - `[NEEDS BRIAN]` The player-facing wording for relocation. `EntityRelocated` carries the reason; the
   text is rendered by the client from it, so the words do not affect this contract.
-- `[ASSUMPTION]` One fallback Room per Zone, declared in the Zone Definition, required. A World-level
-  fallback would teleport players across the map.
-- `[ASSUMPTION]` Whole-pack reload, debounced 2 s.
+- **Resolved 2026-09-25 (§8, architecture): one fallback Room per Zone**, declared in the Zone
+  Definition and required. That is field 6 and `fallback_missing` at compile and at load. A
+  World-level fallback would teleport players across the map.
+- **Resolved 2026-09-25 (§8, architecture): whole-pack reload, debounced 2 s.** It is the
+  `content.reload_debounce` default. Per-Zone reload stays out of scope.
 
 - **Handoff to architecture (raised 2026-09-24, implementation lane):** six items inside this story's
   scope are architecture-owned under CLAUDE.md §2 and implementation cannot land them. Written up in
@@ -392,7 +401,7 @@ snapshots, the projector and the metrics. Decisions and findings are in the feed
 - **Loader:** `TestLoader_AStaleSwapIsEvaluatedAgain`, `_AnAmbiguousProduceWaitsForItsFate`,
   `_TheWaitForApplyIsBounded`, `_TransitionsTheVersionAloneCannotShow`, `_PendingStartsWhenTheMoveIsRead`,
   `_FollowRetriesWhatReconcileCouldNotLoad`, `_ASupersededHeldVersionIsNeverApplied`.
-- **Boot and Gateway:** `TestRecovery_APreRuleLogIsRefusedByName`, `TestAdmin_ServerInfoCarriesTheContentInEffect`.
+- **Boot and Gateway:** `TestStartTickLoop_RefusesAPreRuleLogByName` and `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` (the recorded pre-rule test was later driven through `StartTickLoop`, review of #91), `TestAdmin_ServerInfoCarriesTheContentInEffect`.
 
 Verified on the combined state (this branch with #86's fix and #89 merged): `make check` is clean,
 `-race` is clean, and the six `make test-integration` packages pass against Redpanda.
@@ -411,3 +420,69 @@ each mutation-checked: `TestStartTickLoop_RefusesAPreRuleLogByName`,
 - The live observation of the new series on the compose stack: `content.source=dir` there
   exercises genesis and the stall metric, and a pointer move needs the Kafka source.
 - The three findings in the feedback file for architecture.
+
+### §8 pass (2026-09-25, architecture) — stays `review`
+
+Against `d171861` (the stack as merged, landing on `main` via #93), with CI green on #90, which is
+the same tree.
+
+**Live, from a fresh compose stack on this image** (the server image built explicitly, #73):
+- `make stack-smoke` and the full `make stack-play` M1 gate pass, the mid-session restart included.
+- `make test-integration` is green (S3 included), with both Redpanda swap tests.
+- **Metrics from the server:**
+  - `andara_content_active_version{pack="dir"} 0`
+  - `andara_build_info{pack="dir",content_version="0",…} 1`
+  - the ten `load_failures_total{reason}` and four `load_phase_duration_seconds{phase}` series, pre-seeded
+  - `content_zones_loaded` / `rooms_loaded{zone}` / `templates_loaded{pack}`
+- **Tempo:** `content.swap{pack="dir", version=0, tick=2}` (the genesis swap), `content.reconcile` (one per boot), and `content.load`.
+- **Loki:** `content swap applied` with `pack`, `version`, `tick`, `stall_ms`, `trace_id`; and `content in effect` with `world_digest`.
+- **`Admin.GetServerInfo` over gRPC:** `content: [{packId: "dir"}]` and `contentDigest`. It decodes to the digest in the logs (`77f962b8…`), so the inherited line holds.
+- **The pre-rule refusal:** reproduced on #91's image, on a log recorded by `main`'s server. Exit 1, naming this story.
+
+**Not emittable from the compose server,** because `content.source=dir` has no Active Pointer:
+- `andara_content_pending_seconds`
+- `relocations_total{zone}` increments
+- `load_failures_total` increments
+- `cache_hits_total` increments
+- the resolve, validate and build phase observations
+- a non-genesis `reload_stall`
+- the `content.resolve` and `content.build` spans
+
+The integration suite covers the swap, relocation and recovery against Redpanda. `AW-SRV-013` (the
+first story that makes the `kafka` source live on a running stack) carries the live observation of
+each, as an inherited Definition-of-done line added in this pass.
+
+**Holds:**
+- ACs 1–11, with tests in CI.
+  - AC-9's CI bound runs under the race detector's ×8 factor. That is accepted, as for AW-SRV-006
+    AC-1: 5.4 ms against 25 ms at fixture scale is the recorded measurement, and CI guards against
+    an order-of-magnitude regression.
+  - AC-6's "previous version retained" after `blob_missing` runs through the same reject path the
+    `format_version` and validation tests assert, so it is accepted.
+- `make check` is clean.
+- Config is in `server/README.md`, `keys.yaml`, the schema and `_env.tpl`.
+- The migration is forward-only, with its recovery path stated.
+- The replay-across-swap test, the SLO, the runbook and the `ContentLoadFailing` rule are in place.
+
+**Rulings on two deviations:**
+- **`content.swap` is a child of `content.load`** (via the swap's traceparent) and is linked to
+  `sim.tick`. The Observability section said "inside `sim.tick`". The as-built form joins a
+  Builder's activation to its apply in one trace, which is the question an operator asks, and the
+  link keeps the tick reachable. Accepted, and the Observability section is amended here.
+- **The per-load `info` line** carries `zones` and `templates`, not `blobs`. Accepted: they say
+  what loaded, while a blob count says how it was stored.
+
+**Architecture's fixes in this pass:**
+- **SLO:** the alert's `max by (namespace, pack)`; the obsolete `Follow` known-gap replaced by the
+  `dir` one; the activation-only refusals named.
+- **Runbook:** the alert expression; row 1's five `store_unavailable` causes; row 6 rewritten (the
+  wait is bounded, and it counts); `zone_removed` and `spawn_room_removed` called out.
+- **Glossary:** Relocation now covers the arrival case, and Genesis swap is added.
+- **Markers:** the two `[ASSUMPTION]`s are resolved.
+
+**Owed by implementation** (in `docs/feedback/AW-SRV-012-content-resolution-and-reload.md`, "§8
+review"): assertions for the untested instruments, and README and comment corrections.
+
+**The `[NEEDS BRIAN]`** on relocation wording doesn't bind the contract: the client renders from
+`reason`, and no client renders `EntityRelocated` yet. It stays Brian's.
+

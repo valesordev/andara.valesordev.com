@@ -180,6 +180,17 @@ None directly. A failing publish is visible to the Builder; a bad activation ale
 CLAUDE.md §8, plus: the compaction test (AC-10) against a broker with compaction forced, and the
 three-way equivalence fixture wired in.
 
+**Inherited from `AW-SRV-012`'s §8 pass (2026-09-25):** this story is the first that makes the `kafka`
+content source live on a running stack. Publish, then activate, moves a real Active Pointer. Its
+§8 shows, from the running server:
+- `andara_content_pending_seconds{pack}` rising, then clearing on apply;
+- `andara_content_active_version{pack}` and `andara_build_info{pack,content_version}` moving on the swap;
+- `andara_content_reload_stall_seconds` and `andara_content_load_phase_duration_seconds{phase}` observing resolve, validate, build and swap;
+- `andara_content_cache_hits_total{outcome}`;
+- a refused version counted on `andara_content_load_failures_total{reason}`;
+- `andara_content_relocations_total{zone}`, with its `warn` line, for a version that removes an occupied Room;
+- in Tempo, `content.load` → `content.resolve`, `content.validate` → `content.build`, and `content.swap` under the load.
+
 **Inherited from `AW-CLI-006`'s §8 pass (2026-09-24):** the publish gate imports `content/lang`
 itself, so the three-way equivalence test compiles with the same package the CLI ships, not a copy.
 `server/content/lang_test.go` already shows the import compiles.

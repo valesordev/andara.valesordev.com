@@ -649,3 +649,95 @@ stale-swap test now uses a core@4 whose content really differs.
 
 **Codex, both done:** the swap carries the W3C traceparent (`TestTheSwapCarriesTheLoadsTraceparent`),
 and the debounce is honoured (`TestApplyWaitFollowsTheDebounce`).
+
+---
+
+## §8 review (2026-09-25, architecture)
+
+The story stays `review`. The record is in the story ("§8 pass (2026-09-25)"). Live on the compose
+stack everything holds, and what the `dir` source can't show is carried to `AW-SRV-013`.
+
+### For implementation: what closes it
+
+1. **Tests for the instruments nothing asserts** (§8: instrumentation verified):
+   - `andara_content_cache_hits_total{outcome}` increments: a cold resolve counts `miss`, and a
+     second resolve counts `hit`;
+   - `andara_content_load_phase_duration_seconds{phase}` observed for `resolve`, `validate` and
+     `build` on a load;
+   - the `content.resolve` / `content.build` spans, and `content.swap`'s parent (`content.load`)
+     and its link to `sim.tick`, with an in-process span recorder (as `TestContentCompileEmitsTheSpan`
+     does);
+   - `andara_content_active_version` / `andara_build_info` on a pointer move, asserting the gauge
+     rather than `loader.Versions()`.
+
+   The Redpanda swap test is the natural home for the last two.
+2. **`server/README.md`** contradicts itself on `content.swap`'s parent (`:975` "child of
+   `sim.tick`", `:980` "child of `content.load`"). The ruling is `content.load`, with a link to
+   `sim.tick`.
+3. **Stale comments:**
+   - `server/content/metrics.go:26-34` says the metric name is architecture's to decide. It was decided.
+   - `server/content/load.go:253,266` says `Versions`/`ZoneVersions` are empty for `dir`. They aren't.
+4. **The story's verification record** cites `TestRecovery_APreRuleLogIsRefusedByName`, which
+   doesn't exist. The tests are `TestStartTickLoop_*`.
+
+Deliver them on one `impl/` branch. The story flips to `done` at the next §8 with no further
+review of the rest.
+
+### For PM: work this story found that no story carries
+
+- **`AW-SRV-013` activation refusals.** Activation should refuse a core rollback that strands a
+  pack (§9b), a version that removes a Zone (`zone_removed`), and one that drops the spawn Room
+  (`spawn_room_removed`). All three depend on what is in effect, so publish can't catch them. The
+  Loader refuses them later, as a ticket.
+- **Deleting a Zone.** It is refused today. Allowing it needs an evacuation policy (where do
+  Characters in it go?) and a cross-Zone relocation, which `EntityRelocated`'s single `zone_id`
+  can't express. A later story, and Brian's design call on the policy.
+- **The manual test's commands:** `andara-cli content activate` and `andara-cli server info` don't
+  exist. `AW-CLI-003` should carry `server info` over the new `GetServerInfo.content`.
+- **Observing the swap's prepare cost.** `andara_content_reload_stall_seconds` times the apply only.
+  Prepare (about 1 ms, and store I/O on a stage miss) is in-tick and unobserved, as documented.
+  It's a small follow-up: a `phase="prepare"` observation.
+
+---
+
+## Implementation, 2026-09-25: the §8 review's owed items, delivered
+
+On one `impl/` branch, `impl/aw-srv-012-s8-owed`, stacked on #94.
+
+1. **The instruments are now asserted.** Each test below was mutation-checked: it fails when the
+   instrument is removed.
+   - `andara_content_cache_hits_total{outcome}`: `TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic`
+     (Redpanda). The cold resolve counts one `miss` per blob and no `hit`; the warm one counts as
+     many `hit`s and no new `miss`.
+   - `andara_content_load_phase_duration_seconds{phase}` for `resolve`, `validate` and `build`, and
+     the `content.load` → `content.resolve`/`content.validate` → `content.build` spans:
+     `TestLoader_InstrumentsALoadAndAPointerMove`.
+   - `content.swap` is a child of `content.load` and links to `sim.tick`: unit-level,
+     `TestContentSwap_SpanIsAChildOfTheLoadAndLinksTheTick` (`tickloop`); on the broker,
+     `TestKafka_APointerMoveSwapsTheWorldThroughTheLog`, for both genesis and the move.
+   - `andara_content_active_version` and `andara_build_info` on a pointer move, read from the
+     gauges: `TestLoader_InstrumentsALoadAndAPointerMove`, and on the broker in the swap test.
+2. **`server/README.md`** now says `content.swap` is a child of `content.load`, with a link to the
+   `sim.tick` that applied it, and nothing else.
+3. **Stale comments:** the `metrics.go` naming comment records the 2026-09-24 decision, and
+   `load.go`'s `Versions`/`ZoneVersions` comments say `dir@0`.
+4. **The story's record** cites `TestStartTickLoop_*`. Every test name the story cites was
+   checked to exist.
+
+`make check` is clean, and the six `make test-integration` packages pass against Redpanda.
+
+### #95's CI, 2026-09-25
+
+- **`check`: `TestWorldBarrier_FollowsTheLoop` failed on CI.** A real ordering bug from #91, not
+  the test. `onTick` reported applied swaps, which releases whoever waited on them, before it
+  recorded the World Partition position. Fixed: the position is stored first, for the same reason
+  the gauges move before waiters are released. Locally the old order failed 1 run in 300 under
+  `-race`, and the fixed order failed 0 in 300.
+- **For architecture: `stack`'s broker-outage step is timing-sensitive.** On #95's first run it
+  read `starved 0 -> 23 -> 23`: `docker compose stop redpanda` took 2 s, and the tick loop only
+  counts starvation once the Kafka client notices the broker is gone. The `sleep 8` sample then
+  landed before any starvation was counted, although 23 ticks starved by the next sample. The
+  same branch passed `stack` earlier, and #95 changes no server code. Polling for
+  `andara_tick_input_starved_total` to rise, with a deadline, would remove the race
+  (`docs/specs/testing/live-assertions.md` rule 3). `.github/` is architecture's, so this only
+  records it.

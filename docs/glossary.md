@@ -223,8 +223,14 @@ refuses it as a no-op rather than applying it.
 it stands in (`ZoneDefinition.fallback_room`, `fallback <room>` in the Content Language). Every Zone
 names one of its own Rooms. The one Room a Zone may not delete (`AW-SRV-012`).
 
-**Relocation** — An Entity moved to its Zone's Fallback Room by a Content Swap, announced by
-`EntityRelocated` to the Fallback Room and to the Entity. A dormant body moves too, silently.
+**Relocation** — An Entity moved to its Zone's Fallback Room, announced by `EntityRelocated`
+(reason `room_removed`) to the Fallback Room and to the Entity. It happens in two cases: a Content
+Swap removes the Room the Entity stands in, or an Entity in transit arrives at a Room its target
+Zone no longer has. A dormant body moves too, silently.
+
+**Genesis swap** — The first Content Swap of a pack on an empty log, produced at boot before the
+World serves anything: `andara.core` first, then the other followed packs by id (`AW-SRV-012`).
+Every version a World serves enters through a swap, so recovery rebuilds content from the log alone.
 
 **World Digest** — `ContentSwap.world_digest`: SHA-256 over the whole World's content topology after
 a swap, every pack's Zones and Templates in canonical order. Replay rebuilds and compares, and a

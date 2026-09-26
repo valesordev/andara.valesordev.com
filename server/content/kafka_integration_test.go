@@ -23,6 +23,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
@@ -260,7 +261,8 @@ func TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic(t *testing.T) {
 	p.activate("town", 1)
 
 	cache := BlobCache{Dir: t.TempDir()}
-	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Cache: cache, Topics: topics})
+	m := NewMetrics(nil)
+	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Cache: cache, Topics: topics, Metrics: m})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -269,6 +271,12 @@ func TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic(t *testing.T) {
 	cold, err := Resolve(ctx, r, "town", 1)
 	if err != nil {
 		t.Fatalf("cold: %v", err)
+	}
+	// andara_content_cache_hits_total (§8, 2026-09-25): the cold resolve
+	// misses on every blob and hits none.
+	misses := testutil.ToFloat64(m.CacheHits.WithLabelValues(OutcomeMiss))
+	if misses < 1 || testutil.ToFloat64(m.CacheHits.WithLabelValues(OutcomeHit)) != 0 {
+		t.Fatalf("cold: %v misses, %v hits", misses, testutil.ToFloat64(m.CacheHits.WithLabelValues(OutcomeHit)))
 	}
 
 	adm := kadm.NewClient(cl)
@@ -282,6 +290,10 @@ func TestKafkaResolver_WarmCacheDoesNotReadTheBlobTopic(t *testing.T) {
 	}
 	if len(cold.Zones) != len(warm.Zones) || cold.Zones[0].Def.GetId() != warm.Zones[0].Def.GetId() {
 		t.Fatal("cold and cached must resolve to the same content (AC-7)")
+	}
+	// The warm resolve hits on every blob the cold one missed, and misses none.
+	if hits := testutil.ToFloat64(m.CacheHits.WithLabelValues(OutcomeHit)); hits != misses || testutil.ToFloat64(m.CacheHits.WithLabelValues(OutcomeMiss)) != misses {
+		t.Fatalf("warm: %v hits for %v cold misses", hits, misses)
 	}
 }
 

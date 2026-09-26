@@ -972,12 +972,12 @@ existing `content.load` and `content.validate` spans (`component_count`, `error_
 `warning_count`), not spans of their own: a span per Room would be one span per Room.
 
 A swap (AW-SRV-012) is traced as `content.load` → `content.resolve`, `content.validate`,
-`content.build` in the Loader, and `content.swap` as a child of `sim.tick`, always kept. Boot's
+`content.build` in the Loader, and `content.swap` in the tick that applies it, always kept. Boot's
 reconcile is `content.reconcile`. It logs `content version accepted; swap produced` (pack,
 version, core_version, zones, templates, world_digest, duration_ms), `content swap applied`
 (stall_ms, trace_id), and `content in effect` when the swap applies. A relocation is a `warn` line
 with `zone`, `entity_id`, `from`, `to` and `dormant`, and a refused swap is a `warn` naming its
-reason. The swap `LoggedCommand` carries the load's `trace_id`, so `content.swap` is a child of
-`content.load` and links to `sim.tick`.
+reason. The swap `LoggedCommand` carries the load's W3C traceparent in `trace_id`, so
+`content.swap` is a child of `content.load` and carries a link to the `sim.tick` that applied it.
 A refusal is logged at `error`, ending "the previous version keeps serving". The runbook's query
 matches that suffix, so a rewording keeps it.

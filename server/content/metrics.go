@@ -23,14 +23,12 @@ type Metrics struct {
 	ActiveVersion *prometheus.GaugeVec
 	// LoadDuration is the cost of one load, by phase.
 	//
-	// Named andara_content_load_phase_duration_seconds, not the
-	// andara_content_load_duration_seconds this story's Observability section
-	// asks for: AW-SRV-001 already publishes that name with no labels and
-	// states "Labels: none. Cardinality: 1 series." Adding a label to a
-	// published metric silently breaks every query written against it, and
-	// which of the two contracts gives way is architecture's to decide
-	// (docs/feedback/AW-SRV-012-content-resolution-and-reload.md §9). A new
-	// name is the reversible choice.
+	// Named andara_content_load_phase_duration_seconds, beside AW-SRV-001's
+	// unlabelled andara_content_load_duration_seconds: one says how long a
+	// load took, this one where the time went. Adding a label to the published
+	// name would have broken every query written against it, so both are kept
+	// (decided by architecture, 2026-09-24; the story's metric list is
+	// amended to match).
 	LoadDuration *prometheus.HistogramVec
 	// LoadFailures counts versions refused, by reason. The previous version
 	// keeps serving after each one, so this is not an availability signal —

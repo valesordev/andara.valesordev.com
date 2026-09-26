@@ -68,7 +68,7 @@ Under about 5 s, this would measure the debounce, not the system (feedback §1).
 ## Alert
 
 `ContentLoadFailing`:
-- **Expression:** `max by (pack) (andara_content_pending_seconds) > 300` for 5 m. A pointer move
+- **Expression:** `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pointer move
   that has been unserved, for a system reason, for over five minutes. That is ten times the
   good-minute bound, so a slow but working swap does not ticket.
 - **Severity:** `ticket`. No player is harmed and the previous version is served.
@@ -80,15 +80,18 @@ This SLO replaces it.
 
 ## Known gaps
 
-- **A server that is not following pointers exports 0.** Until `AW-SRV-012` starts `Follow` from
-  `server/boot` (its second half), no process observes a pointer move, and the gauge is honestly 0
-  while the World is stale. The rule cannot see this. It closes when the watch is wired.
+- **A `dir` source exports no gauge.** `content.source=dir` has no Active Pointer, so there is no
+  move to be pending on (the compose stack). The SLO applies to the `kafka` source.
+  *(Corrected 2026-09-25 at AW-SRV-012's §8: the first bullet here said `Follow` was not yet
+  wired. It is now.)*
 - **Rejections for a Builder reason alert nobody here.** The Builder learns at publish
-  (`AW-SRV-013` validates the same way). A refusal at load that publish did not catch means the two
+  (`AW-SRV-013` validates the same way). The exceptions are `zone_removed` and
+  `spawn_room_removed`: they depend on what is in effect, not on the version alone, so publish
+  can't catch them, and only activation can (`AW-SRV-013`'s activation check, routed to PM). A refusal at load that publish did not catch means the two
   gates disagree, which is a bug `AW-SRV-013`'s three-way equivalence test exists to prevent. It is
   still visible on `andara_content_load_failures_total{reason}` for anyone looking.
 - **Per-process.** Under ADR-0001 there is one server. When the sharding story lands, every
-  process that follows a pack reports its own gauge, and the rule's `max by (pack)` is the right
+  process that follows a pack reports its own gauge, and the rule's `max by (namespace, pack)` is the right
   aggregation.
 
 ## Revisit when

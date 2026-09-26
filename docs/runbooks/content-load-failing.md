@@ -5,7 +5,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 # ContentLoadFailing
 
-**Alert:** `max by (pack) (andara_content_pending_seconds) > 300` for 5 m. A pack's Active Pointer
+**Alert:** `max by (namespace, pack) (andara_content_pending_seconds) > 300` for 5 m. A pack's Active Pointer
 has named a version for more than five minutes that the World is not serving, and nothing the
 Builder did explains it. **Severity:** ticket. **SLO:** `docs/specs/slo/content-freshness.md`.
 **Ships with:** `AW-SRV-012`.
@@ -19,8 +19,10 @@ activated it and it has not gone live: a new area not open, a fixed description 
 
 The alert is on the **system** failing to serve published content. A version refused for a
 Builder's mistake does not fire it: `validation`, `fallback_missing`, `pack_mismatch` and
-`blob_too_large` are the Builder's to fix, and `AW-SRV-013` rejects them at publish. What remains
-is the store, the binary, or the activation order.
+`blob_too_large` are the Builder's to fix, and `AW-SRV-013` rejects them at publish. `zone_removed`
+and `spawn_room_removed`, also Builder reasons under `validation`, can't be caught at publish
+because they depend on what is in effect. The `error` line names them. What remains is the store,
+the binary, or the activation order.
 
 ## How to confirm
 
@@ -54,12 +56,12 @@ Stop at the first row that explains it.
 
 | Step | `reason` rising | Means, and what to do |
 |------|-----------------|-----------------------|
-| 1 | `store_unavailable` | The content topics are not answering: a broker restart, a leader move, or the broker is down. The resolver retries with backoff (see the story's ruling), so this clears when the broker does. Check `WorldReadOnly` and `world-read-only.md` first; a broker outage is that alert's too, and this one is its echo. |
+| 1 | `store_unavailable` | Five causes share this reason, and the `error` line's `error` field says which. The content topics are not answering; the swap's produce to the command log failed; the swap did not apply within the bounded wait (`reload_debounce` × 15); the World Partition did not catch up; or a stale swap was refused three times. The first two are a broker restart, a leader move, or the broker being down. The resolver retries with backoff (see the story's ruling), so this clears when the broker does. Check `WorldReadOnly` and `world-read-only.md` first; a broker outage is that alert's too, and this one is its echo. |
 | 2 | `core_version` | The pack was compiled against an `andara.core` newer than the one active. It is **held**, not refused, and loads on its own as soon as that core is activated. Fix: activate the core version the pack names, which the `error` line gives. Activation is `andara-cli content activate` (`AW-CLI-003`); until that lands there is no command, and the Builder publishes against the active core instead. The reverse also holds: a core rollback that would strand an active pack is refused (see below), and it shows here as the *core* pack pending. |
 | 3 | `format_version` | The content was compiled by a newer toolchain than this server binary reads. The server needs a rollout to a binary that supports the version (`AW-INF-007`), or the Builder recompiles with the matching toolchain. It will not clear on its own. |
 | 4 | `manifest_missing`, `blob_missing` | The pointer names a version, or the manifest names a blob, that the content topics do not hold. The publisher was interrupted between writes, or retention removed something that must be kept forever. The content topics are compacted, and every blob and version key is unique, so compaction keeps every record ever published (`deploy/kafka/topics.yaml`). A missing record there is a publish bug (`AW-SRV-013`), and the fix is to republish the version. |
 | 5 | `blob_corrupt` | A blob's bytes do not hash to its key. The store is content-addressed, so this is corruption on the broker or in the server's blob cache. Delete the cache directory (`content.cache_dir`) on the pod by restarting it with an empty volume, and it refetches. If the broker copy is the corrupt one, republish. |
-| 6 | nothing rising, `pending_seconds` climbing | The load is not failing. It is not happening: the pointer move was read but the swap never applied. Check that the tick loop is running (`andara_ticks_total` advancing; `SimulationLagging`). A `ContentSwap` produced during a log outage waits for the log. |
+| 6 | `store_unavailable` whose `error` says "did not apply within" or "the world partition was not consumed to its end" | The swap was produced but never applied, so Partition 0 is not being consumed. Check that the tick loop is running (`andara_ticks_total` advancing; `SimulationLagging`), and whether a Zone on Partition 0 has faulted (`ZoneFaulted`). A faulted Partition stays frozen until the process restarts, and every content change waits on it. *(Corrected 2026-09-25: this row said nothing rises. The wait is bounded now, and it counts.)* |
 
 ## How to mitigate
 
