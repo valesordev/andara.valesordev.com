@@ -115,6 +115,36 @@ jobs:
       - name: topics match the declaration
         run: make topics-diff
 
+      # AW-INF-018: topics-apply aligns an existing topic's config, and refuses a change that
+      # can delete data until the operator names the topic. This runner's topics hold
+      # nothing, which is the only reason the step may move a live retention by hand:
+      # lowering one is the destructive act the target guards, so it's never done to a
+      # developer's stack or the box. andara.audit.v1 declares 365 days.
+      - name: topics-apply aligns drift and refuses data loss
+        run: |
+          set -euo pipefail
+          rpk() { docker compose -f deploy/compose/docker-compose.yaml exec -T redpanda rpk "$@"; }
+          live() { rpk topic describe andara.audit.v1 -c | awk '$1 == "retention.ms" { print $2 }'; }
+          declared=31536000000
+          # Live below the declaration: applying it widens the window, so it just applies.
+          rpk topic alter-config andara.audit.v1 --set retention.ms=86400000
+          make topics-apply | tee "$RUNNER_TEMP/apply.log"
+          grep -qx "topics: altered andara.audit.v1 retention.ms 86400000 -> $declared" "$RUNNER_TEMP/apply.log"
+          [[ "$(live)" == "$declared" ]]
+          make topics-diff
+          # Live above it: applying it narrows the window, which is refused, changing nothing.
+          rpk topic alter-config andara.audit.v1 --set retention.ms=63072000000
+          if make topics-apply 2>"$RUNNER_TEMP/refused.log"; then
+            echo "topics-apply applied a retention decrease without ALLOW_DATA_LOSS"; exit 1
+          fi
+          grep -q "re-run with ALLOW_DATA_LOSS=andara.audit.v1" "$RUNNER_TEMP/refused.log"
+          [[ "$(live)" == 63072000000 ]]
+          # Named, it applies, and says so.
+          make topics-apply ALLOW_DATA_LOSS=andara.audit.v1 > "$RUNNER_TEMP/accepted.log"
+          grep -q '^topics: altered andara.audit.v1 retention.ms 63072000000 -> [0-9]* (data loss accepted)$' "$RUNNER_TEMP/accepted.log"
+          [[ "$(live)" == "$declared" ]]
+          make topics-diff
+
       # AC-6 and AC-7 live here rather than in `check`, because they are the questions git
       # cannot answer — what is actually registered — and answering them needs a registry.
       # `make up` already registered the subjects; this proves the registry agrees with the

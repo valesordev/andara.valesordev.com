@@ -128,8 +128,8 @@ observability:
 
 # `state` has a binary (AW-SRV-019: `andara-projector state`, in the server image) and is
 # still off. Enabling it on dev or prod waits on three things:
-#   - andara.state.v1 carrying min.compaction.lag.ms there. `make topics-diff ENV=<env>` names
-#     the drift, and no target applies it yet: §9 defect → #77.
+#   - andara.state.v1 carrying min.compaction.lag.ms there. `make topics-diff ANDARA_ENV=<env>` names
+#     the drift, and `make topics-apply ANDARA_ENV=<env>` applies it (AW-INF-018).
 #   - The projector Deployment mounting a readable snapshot store and the Kafka credentials.
 #     Without the store it replays from zero (#80).
 #   - A target to stop and rebuild it for the runbooks (#80).
