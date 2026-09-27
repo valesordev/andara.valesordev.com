@@ -12,9 +12,9 @@
 # their namespace's Kafka `andara-log` (AW-INF-014), which `make kafka-install` creates;
 # this script refuses to touch their release until it is Ready.
 #
-# Content: local and dev read Zone Definitions from a ConfigMap built out of
-# testdata/content/valid, as compose reads a directory, until AW-SRV-012 serves content from
-# the store. prod has neither yet; its deploy path is AW-INF-007.
+# Content: local and dev read Zone Definitions from a ConfigMap the chart renders out of
+# testdata/content/valid (contentVolume.render), as compose reads a directory, until
+# AW-SRV-012 serves content from the store. prod has neither yet; its deploy path is AW-INF-007.
 #
 # Every environment (AW-INF-006): the private CA is bootstrapped ahead of the chart and
 # its certificate exported for `andara-cli`, because a chart that renders a Certificate
@@ -38,6 +38,14 @@ NS="andara-${ENVNAME}"
 for tool in helm kubectl; do
   command -v "$tool" >/dev/null 2>&1 || { echo "make: helm-install: $tool not found" >&2; exit 1; }
 done
+
+# One owner per namespace (AW-INF-019 AC-7): once Argo CD deploys it, a helm upgrade here
+# would fight its sync. `make argocd-uninstall ENV=<env>` hands it back.
+if kubectl get crd applications.argoproj.io >/dev/null 2>&1 \
+   && kubectl -n argocd get application "$NS" >/dev/null 2>&1; then
+  echo "make: helm-install: $NS is deployed by Argo CD (application $NS); see make argocd-status" >&2
+  exit 1
+fi
 
 kubectl get namespace "$NS" >/dev/null 2>&1 || kubectl create namespace "$NS" >/dev/null
 echo "helm-install: namespace $NS"
@@ -84,19 +92,19 @@ if [[ " $CONTENT_FROM_CONFIGMAP " == *" $ENVNAME "* ]]; then
     exit 1
   fi
 
-  # Zone Definition JSON as a ConfigMap, mounted at /content (values/<env>.yaml sets
-  # server.content.source: dir). Recreated every run so a fixture edit is applied.
-  kubectl -n "$NS" create configmap andara-content \
-    --from-file=testdata/content/valid \
-    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
-  echo "helm-install: configmap andara-content from testdata/content/valid"
-  # The core Template pack (AW-SRV-022), mounted at /content/templates: a ConfigMap
-  # cannot hold the templates/ subdirectory, and a Character is made from
-  # andara.core.Character (AW-SRV-014), so the boot refuses a World without it.
-  kubectl -n "$NS" create configmap andara-content-templates \
-    --from-file=content/core/templates \
-    --dry-run=client -o yaml | kubectl -n "$NS" apply -f - >/dev/null
-  echo "helm-install: configmap andara-content-templates from content/core/templates"
+  # Zone Definitions and the core Template pack are rendered by the chart now
+  # (contentVolume.render, AW-INF-019), from the same directories this script used to
+  # `kubectl create` them from. ConfigMaps an earlier run created carry no Helm ownership,
+  # and `helm upgrade` refuses an object it doesn't own, so they're handed to the release
+  # before it runs: one writer, whichever deploy path runs.
+  for cm in andara-content andara-content-templates; do
+    if kubectl -n "$NS" get configmap "$cm" >/dev/null 2>&1 \
+       && [[ -z "$(kubectl -n "$NS" get configmap "$cm" -o jsonpath='{.metadata.annotations.meta\.helm\.sh/release-name}')" ]]; then
+      kubectl -n "$NS" label configmap "$cm" app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+      kubectl -n "$NS" annotate configmap "$cm" meta.helm.sh/release-name=andara meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
+      echo "helm-install: configmap $cm handed to the release (the chart renders it now)"
+    fi
+  done
 
   # The session-token keyring (AW-SRV-008), same per-machine key `make up` uses, under the
   # name values/<env>.yaml gives secrets.tokenKey. A real deployment provisions this

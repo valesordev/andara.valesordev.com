@@ -16,6 +16,10 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `files/alerts.yaml` | Prometheus rules, shipped as a ConfigMap and mounted by the compose stack | yes, with a runbook |
 | `../tests/alerts_test.yaml` | `promtool test rules` over `files/alerts.yaml`: the compose shape and the per-namespace cluster shape | yes, with every rule change |
 | `../values/{local,dev,prod}.yaml` | per-environment values | yes |
+| `files/content`, `files/content-templates` | symlinks to `testdata/content/valid` and `content/core/templates`, which the chart renders as ConfigMaps when `contentVolume.render` is set | no — edit the targets |
+| `../../argocd/andara-dev.yaml` | the Argo CD Application that makes `dev` follow `main` (AW-INF-019) | yes |
+| `../../argocd/andara-dev-image-updater.yaml` | Image Updater: `:dev` by digest, written to the Application's `image.tag` | yes |
+| `../../argocd/argocd-values.yaml` | Argo CD's settings: annotation tracking, the Ingress health check | yes |
 | `../../k8s/cert-manager/andara-ca.yaml` | the private CA chain (cluster-scoped; applied by `make helm-install`, not by the chart) | yes |
 | `../../k8s/traefik/values.yaml` | Traefik as the box has it, for `make kind-platform` on a fresh cluster | yes |
 | `../../kind/config.yaml` | a kind cluster shaped like the box: `:80`/`:443` mapped, `ingress-ready` node | yes |
@@ -34,9 +38,14 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `make kafka-broker-bounce ENV=<env>` | delete one broker; after it rejoins with every partition in sync, assert once that the server never left Ready, never logged `command log unreachable`, and refused no Submit |
 | `make image-check ENV=<env> [TAG=dev] [REGISTRY_ONLY=1]` | prove a published tag pulls anonymously (and a `sha-` tag carries its commit), then from the cluster with a throwaway `/bin/true` pod in `andara-<env>` |
 | `make kind-load [KIND_CLUSTER=]` | load the image into kind |
-| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; applies and waits on the private CA first; `local` also builds the content ConfigMap from `testdata/content/valid`; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
+| `make helm-install ENV=<env> [TAG=]` | idempotent `helm upgrade --install` into namespace `andara-<env>`; `local` installs the kind-loaded `IMAGE:TAG`, any other environment its values file's image, with `TAG=` pinning one (`scripts/helm_image_args.sh`), and a moving tag like `:dev` pinned to the digest it names now, so a rerun rolls the pod exactly when `publish` has moved it; applies and waits on the private CA first; the chart renders the content ConfigMaps from `testdata/content/valid` and `content/core/templates` (`contentVolume.render`, through symlinks under `files/`); refuses a namespace an Argo CD Application deploys; writes the CA bundle to `.local/tls/cluster/<env>/ca.pem` and prints the `andara-cli` line and the `/etc/hosts` hint |
 | `make kind-platform [KIND_CLUSTER=]` | install Traefik and cert-manager into a fresh kind cluster (skips releases that already exist — the box's are Brian's) |
 | `make stream-soak ENV=<env> [SOAK=5m]` | hold a Subscribe through the edge for `SOAK`, renew the edge certificate mid-stream, assert Traefik counted gRPC; nightly at 60 m in CI |
+| `make argocd-install [ENV=dev]` | Argo CD (chart 10.9.2) and Image Updater (1.3.1) into `argocd`, settings from `deploy/argocd/argocd-values.yaml`; a no-op when installed as pinned. With `ENV=dev`: dev's two Secrets if absent (`ANDARA_BOOTSTRAP_OPERATOR` only then), the Application seeded with `:dev`'s digest, and `deploy/argocd/` applied (AW-INF-019) |
+| `make argocd-status [ENV=dev]` | sync and health, the `main` revision synced, the image the StatefulSet runs and the commit it was built from; names `argocd-recover` when the rollout is stuck; exit 1 unless `Synced`/`Healthy` |
+| `make argocd-ui` | the UI on `localhost:8090` (`ARGOCD_UI_PORT=`) by port-forward, and where the admin password is |
+| `make argocd-recover ENV=dev` | Kubernetes' forced rollback: delete an `andara` pod stuck on a build that never became Ready, once the StatefulSet's `updateRevision` is the Application's current image; refuses otherwise |
+| `make argocd-uninstall ENV=dev` | remove the Application without cascading and give its resources Helm's ownership metadata, so `make helm-install ENV=dev` takes them back |
 | `make measure-tick [DURATION=300]` | record p99 CPU and RSS into `measurements.yaml`; refuses until the server exposes `andara_tick_duration_seconds` (AW-SRV-002) |
 
 `make image && make kind-load && make helm-install ENV=local` is the whole local path on the box;
@@ -109,6 +118,23 @@ cluster's `letsencrypt` ClusterIssuer (clients need no CA file), and pull from `
 which CI publishes on every merge to `main` (AW-INF-013): `dev` follows the moving `:dev` tag (`pullPolicy: Always`),
 and `make helm-install ENV=dev TAG=sha-<12 hex>` pins a build. `prod`'s tag is always overridden by `make deploy TAG=`
 (AW-INF-007).
+
+| Environment | Deployed by |
+|-------------|-------------|
+| `local` | `make helm-install ENV=local`, a kind-loaded image |
+| `dev` | **Argo CD**, following `main` (AW-INF-019); `make helm-install ENV=dev` refuses while it does |
+| `prod` | `make deploy` / `make rollback` (AW-INF-007) |
+
+**`dev` follows `main` (AW-INF-019).** The `andara-dev` Application (`deploy/argocd/andara-dev.yaml`) renders
+this chart from `main` with `values/dev.yaml`, with automated sync, `prune` and `selfHeal`. A new build reaches
+`dev` without a commit: when `publish` moves `:dev`, Image Updater writes `image.tag=dev@sha256:<digest>` onto the
+Application (`argocd` write-back; nothing writes to `main`), and Argo CD rolls the StatefulSet. A merge that changes
+what the chart renders (a fixture under `testdata/content/valid`, a value) reaches `dev` through Argo CD's git poll.
+Every merge restarts the World on `dev`, docs-only ones included, because `publish` builds every merge.
+`make argocd-status` says what runs and which commit built it. Not managed, so never pruned: the Kafka CR and its
+topics, the two Secrets, the snapshot PVC, and the cluster platform. **To take `dev` back:**
+`make argocd-uninstall ENV=dev`, then `ANDARA_BOOTSTRAP_OPERATOR=… make helm-install ENV=dev`; nothing restarts and
+no data moves.
 
 **The broker (AW-INF-014).** `dev` and `prod` each run Apache Kafka `andara-log` in their namespace, three brokers
 under the Strimzi operator (ADR-0002 §7: Kafka in production); `local` stays broker-free. So a `dev` install is

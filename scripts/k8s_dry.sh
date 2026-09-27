@@ -56,4 +56,37 @@ kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/kafka/*.yaml | sed "s/^/k8s-dry [kafka]: /"
+# dev follows main (AW-INF-019): the Application from the catalog's Argo CD schema. The
+# ImageUpdater against the CRD of the Image Updater chart scripts/argocd.py pins, not the
+# catalog's, which is an older version's (it requires a spec.namespace 1.x dropped).
+IU_VERSION="$(sed -n 's/^IMAGE_UPDATER_CHART_VERSION = "\(.*\)".*/\1/p' scripts/argocd.py)"
+IU_SCHEMAS="$(mktemp -d)"
+trap 'rm -rf "$IU_SCHEMAS"' EXIT
+helm template iu argocd-image-updater --repo https://argoproj.github.io/argo-helm --version "$IU_VERSION" \
+    --show-only templates/crd-imageupdaters.yaml \
+  | "${PY:-python3}" -c '
+import json, sys, yaml
+crd = yaml.safe_load(sys.stdin)
+def strict(n):
+    # Unknown fields are errors, as in the catalog schemas (openapi2jsonschema --strict),
+    # except where the CRD itself keeps unknown fields.
+    if isinstance(n, dict):
+        if "properties" in n and "additionalProperties" not in n and not n.get("x-kubernetes-preserve-unknown-fields"):
+            n["additionalProperties"] = False
+        for c in n.values():
+            strict(c)
+    elif isinstance(n, list):
+        for c in n:
+            strict(c)
+for v in crd["spec"]["versions"]:
+    s = v["schema"]["openAPIV3Schema"]
+    strict(s)
+    s["properties"]["metadata"] = {"type": "object"}
+    name = "%s_%s.json" % (crd["spec"]["names"]["kind"].lower(), v["name"])
+    json.dump(s, open(sys.argv[1] + "/" + name, "w"))
+' "$IU_SCHEMAS"
+kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  -schema-location default -schema-location "$IU_SCHEMAS/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json" \
+  -schema-location "$CRD_SCHEMAS" \
+  deploy/argocd/andara-dev.yaml deploy/argocd/andara-dev-image-updater.yaml | sed "s/^/k8s-dry [argocd]: /"
 echo "k8s-dry: ${envs[*]} render and validate against Kubernetes $KUBE_VERSION"

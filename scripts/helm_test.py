@@ -511,6 +511,115 @@ def test_kafka_on_the_box():
              % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
 
 
+ARGOCD = os.path.join(REPO, "deploy", "argocd")
+
+
+def test_argocd_application():
+    """AW-INF-019: the Application's contract (main, ../values/dev.yaml, releaseName andara,
+    automated prune and selfHeal, no helm.parameters in git), annotation tracking, and the
+    Image Updater that owns image.tag (digest on :dev, argocd write-back)."""
+    app = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev.yaml")))
+    src = app["spec"]["source"]
+    want = {
+        "repoURL": "https://github.com/valesordev/andara.valesordev.com",
+        "targetRevision": "main",
+        "path": "deploy/helm/andara",
+    }
+    for k, v in want.items():
+        if src.get(k) != v:
+            fail("argocd application: source.%s is %r, want %r" % (k, src.get(k), v))
+    helm = src.get("helm", {})
+    if helm.get("releaseName") != "andara":
+        fail("argocd application: helm.releaseName %r, want 'andara'" % helm.get("releaseName"))
+    if helm.get("valueFiles") != ["../values/dev.yaml"]:
+        fail("argocd application: helm.valueFiles %r" % helm.get("valueFiles"))
+    if "parameters" in helm:
+        fail("argocd application: helm.parameters in git; Image Updater owns image.tag")
+    if app["spec"]["destination"].get("namespace") != "andara-dev":
+        fail("argocd application: destination namespace %r" % app["spec"]["destination"].get("namespace"))
+    auto = app["spec"].get("syncPolicy", {}).get("automated", {})
+    if not (auto.get("prune") and auto.get("selfHeal")):
+        fail("argocd application: syncPolicy.automated must prune and selfHeal, got %r" % auto)
+    cm = yaml.safe_load(open(os.path.join(ARGOCD, "argocd-values.yaml")))["configs"]["cm"]
+    if cm.get("application.resourceTrackingMethod") != "annotation":
+        fail("argocd values: resource tracking must be by annotation")
+    upd = yaml.safe_load(open(os.path.join(ARGOCD, "andara-dev-image-updater.yaml")))["spec"]
+    if upd.get("writeBackConfig", {}).get("method") != "argocd":
+        fail("image updater: write-back must be argocd; nothing writes to main")
+    refs = upd.get("applicationRefs", [])
+    imgs = [i for r in refs if r.get("namePattern") == "andara-dev" for i in r.get("images", [])]
+    if len(imgs) != 1:
+        fail("image updater: want one image for andara-dev, got %r" % imgs)
+        return
+    i = imgs[0]
+    if i.get("imageName") != "ghcr.io/valesordev/andara-server:dev":
+        fail("image updater: tracks %r, want ghcr.io/valesordev/andara-server:dev" % i.get("imageName"))
+    if i.get("commonUpdateSettings", {}).get("updateStrategy") != "digest":
+        fail("image updater: strategy %r, want digest" % i.get("commonUpdateSettings"))
+    if i.get("manifestTargets", {}).get("helm", {}).get("tag") != "image.tag":
+        fail("image updater: must write image.tag")
+
+
+def content_files(d):
+    """What `kubectl create configmap --from-file=<d>` takes: top-level regular files."""
+    out = {}
+    for n in sorted(os.listdir(d)):
+        p = os.path.join(d, n)
+        if os.path.isfile(p):
+            with open(p) as f:
+                out[n] = f.read()
+    return out
+
+
+def test_content_configmaps():
+    """AW-INF-019: with contentVolume.render, the chart's two ConfigMaps hold exactly the
+    files under testdata/content/valid and content/core/templates, key for key and byte
+    for byte (trailing newline included); without it, prod renders neither."""
+    for env in ("local", "dev"):
+        rc, out, err = render(env)
+        if rc:
+            fail("%s: render failed: %s" % (env, err.strip()))
+            continue
+        ds = docs(out)
+        for name, src in (("andara-content", "testdata/content/valid"),
+                          ("andara-content-templates", "content/core/templates")):
+            cm = find(ds, "ConfigMap", name)
+            if cm is None:
+                fail("%s: ConfigMap %s not rendered" % (env, name))
+                continue
+            want = content_files(os.path.join(REPO, src))
+            if cm.get("data") != want:
+                fail("%s: ConfigMap %s differs from %s: keys %s vs %s"
+                     % (env, name, src, sorted(cm.get("data") or {}), sorted(want)))
+    rc, out, err = render("prod")
+    for name in ("andara-content", "andara-content-templates"):
+        if find(docs(out), "ConfigMap", name) is not None:
+            fail("prod: ConfigMap %s rendered; prod's content comes from the store" % name)
+
+
+def checksum_content(chart):
+    p = subprocess.run(["helm", "template", "andara", chart, "--kube-version", KUBE_VERSION,
+                        "--values", os.path.join(VALUES, "dev.yaml")], capture_output=True, text=True)
+    sts = find(docs(p.stdout), "StatefulSet")
+    return (sts or {}).get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {}).get("checksum/content")
+
+
+def test_content_checksum():
+    """AW-INF-019 AC-4: a fixture byte changed on main rolls the pod: checksum/content moves."""
+    base = checksum_content(CHART)
+    if not base:
+        fail("dev: no checksum/content annotation on the pod template")
+        return
+    with tempfile.TemporaryDirectory() as d:
+        copy = os.path.join(d, "andara")
+        subprocess.run(["cp", "-rL", CHART, copy], check=True)
+        target = sorted(n for n in os.listdir(os.path.join(copy, "files", "content")) if n.endswith(".json"))[0]
+        with open(os.path.join(copy, "files", "content", target), "a") as f:
+            f.write(" ")
+        if checksum_content(copy) == base:
+            fail("dev: checksum/content did not change when files/content/%s changed" % target)
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -529,6 +638,9 @@ def main():
     test_image_source()
     test_label_values()
     test_kafka_on_the_box()
+    test_argocd_application()
+    test_content_configmaps()
+    test_content_checksum()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

@@ -151,8 +151,12 @@ projectors:
     resources: {}
 
 # Mount a ConfigMap of Zone Definition JSON at /content for `server.content.source: dir`.
-# `make helm-install ENV=local` creates it from testdata/content/valid.
+# With `render: true` the chart renders both ConfigMaps from files/content and
+# files/content-templates, symlinks to testdata/content/valid and content/core/templates,
+# so helm-install and Argo CD build them from git alike (AW-INF-019). A fixture change
+# rolls the pod through checksum/content.
 contentVolume:
+  render: false
   configMapName: ""
   templatesConfigMapName: ""
 

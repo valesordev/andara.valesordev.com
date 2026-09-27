@@ -4,7 +4,7 @@ title: Argo CD deploys dev from main on the box's kind cluster
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: review
 size: M
 depends_on: [AW-INF-013, AW-INF-014]
 blocks: [AW-INF-021]
@@ -351,3 +351,68 @@ Also changed:
 - Helm ownership metadata is given at `argocd-uninstall` (AC-10).
 - The exact release-history step.
 - The version-label defect, found while checking item 1. It's #106, against `AW-INF-013`.
+
+## Verification record (architecture, 2026-09-26)
+
+On `arch/aw-inf-019-argocd`. Box: `kind-solo7`, `andara-dev` on `main` at `5a9bba4`.
+
+**Built:**
+- `scripts/argocd.py` behind `make argocd-install [ENV=dev]`, `argocd-status`, `argocd-ui`,
+  `argocd-recover ENV=dev` and `argocd-uninstall ENV=dev`. Argo CD's chart is pinned at 10.9.2
+  (v3.5.3), and Image Updater's at 1.3.1 (v1.3.0).
+- `deploy/argocd/`:
+  - the Application;
+  - the `ImageUpdater` (1.x configures through this CR, not Application annotations): `digest`
+    on `:dev`, `argocd` write-back, `image.tag`;
+  - Argo CD's settings.
+- The chart renders both content ConfigMaps through `files/content` and `files/content-templates`
+  (`contentVolume.render`, on for `local` and `dev`), with `checksum/content` on the pod template.
+- `helm_install.sh` changes:
+  - It stops creating the ConfigMaps, and hands any it created earlier to the release with Helm's
+    ownership metadata, so the first upgrade adopts them instead of refusing.
+  - It refuses a namespace an Application deploys.
+
+| AC | Result |
+|----|--------|
+| 1 | **Pass (box).** The first `make argocd-install` installed both charts and waited for `argocd-server`. The second printed `already installed` for both, and the Helm revisions stayed at 1. CI's `kind` job runs the same pair |
+| 2 | **Pass (box).** Before: a Character `Moverwyn` made on the operator Account through the public edge. Then `make argocd-install ENV=dev`: the Application was created with `image.tag` seeded `dev@sha256:55032871…` and sync off, then `deploy/argocd/` applied; the Application went `Synced`/`Healthy`, and the 3 Helm release records were removed. **Same objects by UID:** the PVC `26b813ca…`, `kafka/andara-log` `432d3198…`, the StatefulSet `9f17ec90…`, all 8 topic IDs (from `kafka-topics.sh --describe`), and **the pod `c9406373…`: the move didn't roll it.** `character list`: `Moverwyn  dormant  town/plaza`. Image Updater's first cycle: `images_considered=1 images_updated=0 errors=0`, so the seed is exactly what it writes |
+| 3 | **Owed:** the first merge touching `server/` after this one |
+| 4 | **Owed:** a merge touching only `testdata/content/valid/` |
+| 5 | **Owed:** observed across the merges for AC-3 and AC-4 |
+| 6 | **Pass (box).** An extra ingress rule patched into NetworkPolicy `andara` was gone within 5 s. The deleted PodDisruptionBudget `andara` was back within 5 s, without the label I'd added before deleting it. The Kafka CR, the topics, both Secrets and the PVC aren't in the Application's resources |
+| 7 | **Pass (box).** `make helm-install ENV=dev`: exit 1, `make: helm-install: andara-dev is deployed by Argo CD (application andara-dev); see make argocd-status`, and the pod is unchanged. `test_argocd.HelmInstallRefusal` asserts the refusal is the last thing the script does (mutation-checked) |
+| 8 | **Owed, after this merge.** Needs a build that fails readiness; the plan is in the PR |
+| 9 | **Pass.** Box: both Secrets existed and the run left them as they were. `test_argocd.Secrets` covers the refusal when both the Secret and the variable are absent (the message is `helm-install`'s), existing Secrets untouched without the variable, and the operator going in on stdin, never argv |
+| 10 | **Owed, after this merge**, so `dev` goes Argo CD → Helm → Argo CD on one chart. Run now, it would switch between this branch's chart and `main`'s and roll twice for nothing |
+
+**Tests:**
+- `scripts/tests/test_argocd.py` (9 tests: the `ENV` guard, the Secret rule, the image seed, and
+  the refusal). The guard and the refusal are mutation-checked.
+- `helm-test` additions:
+  - `test_argocd_application`;
+  - `test_content_configmaps`: key for key and byte for byte with the directories, and none for
+    `prod`;
+  - `test_content_checksum`: one byte changed in a copy moves `checksum/content`;
+  - the existing `test_label_values` covers `dev@sha256:<64 hex>`.
+- `k8s-dry [argocd]` validates:
+  - the Application against the catalog schema;
+  - the `ImageUpdater` against the pinned chart's own CRD, made strict. The catalog's is an older
+    version's, requiring a `spec.namespace` 1.x dropped. A misspelled field fails it.
+- The `kind` workflow runs `argocd-install` twice. It then applies the committed Application at
+  the PR's commit with `local`'s values, adopting `andara-local`: `Synced`/`Healthy`, and the pod
+  is not rolled.
+
+**Deviations, recorded:**
+- **Argo CD's settings are a values file** (`deploy/argocd/argocd-values.yaml`), and
+  `argocd-install` reapplies them when the release's differ, not only when the chart version does.
+- **An Ingress health check is added.** The box's Traefik publishes no Ingress status (it owns the
+  host port; kind has no load balancer), and Argo CD's built-in check held both Ingresses at
+  `Progressing` forever. The Application sat `Synced`/`Progressing` until the Lua check was in
+  `argocd-cm` and a hard refresh ran.
+- **The symlinks work in Argo CD 3.5.3's repo server.** No fallback copy was needed.
+- **The pre-move Account is the operator's own.** The edge's Admin allowlist
+  (`10.0.0.0/8`, `192.168.0.0/16`) refuses `account create` from the box, as AW-INF-006 AC-4
+  intends. `character create` and `list` are Game API.
+- **`argocd.py` is Python**, not shell like `kafka.sh`: most of it is JSON over `kubectl`.
+- **Found while building it:** `make argocd-install ENV=local` installed Argo CD before refusing
+  the `ENV`. It now refuses first, and `test_argocd.EnvGuard` holds it (mutation-checked).

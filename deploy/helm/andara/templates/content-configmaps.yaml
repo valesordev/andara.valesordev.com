@@ -1,0 +1,35 @@
+{{- /*
+The content ConfigMaps, rendered from git (AW-INF-019): files/content and
+files/content-templates are symlinks to testdata/content/valid and
+content/core/templates, so helm-install and Argo CD build the same objects from the
+same bytes. Top-level *.json only, as `kubectl create configmap --from-file=<dir>`
+took them: a ConfigMap holds no subdirectory. Each value is the file's exact bytes, as a JSON
+string: a block scalar would strip the final newline.
+*/ -}}
+{{- if .Values.contentVolume.render }}
+{{- if .Values.contentVolume.configMapName }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.contentVolume.configMapName }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/content/*.json" }}
+  {{ base $path | quote }}: {{ $.Files.Get $path | toJson }}
+  {{- end }}
+{{- end }}
+{{- if .Values.contentVolume.templatesConfigMapName }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.contentVolume.templatesConfigMapName }}
+  labels:
+    {{- include "andara.labels" . | nindent 4 }}
+data:
+  {{- range $path, $_ := .Files.Glob "files/content-templates/*.json" }}
+  {{ base $path | quote }}: {{ $.Files.Get $path | toJson }}
+  {{- end }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+#
+# A new build reaches dev without a commit (AW-INF-019). Image Updater watches :dev and,
+# when publish moves it, writes image.tag=dev@sha256:<digest> onto the andara-dev
+# Application (argocd write-back: nothing is written to main).
+#
+# `digest` on :dev, not `newest-build` over sha- tags: image_publish.sh moves :dev only
+# while its commit is still main's head (AW-INF-013), which keeps it in commit order. A
+# creation-time sort doesn't, because publish doesn't build in commit order.
+apiVersion: argocd-image-updater.argoproj.io/v1alpha1
+kind: ImageUpdater
+metadata:
+  name: andara-dev
+  namespace: argocd
+spec:
+  writeBackConfig:
+    method: argocd
+  applicationRefs:
+    - namePattern: andara-dev
+      images:
+        - alias: server
+          imageName: ghcr.io/valesordev/andara-server:dev
+          commonUpdateSettings:
+            updateStrategy: digest
+          manifestTargets:
+            helm:
+              name: image.repository
+              tag: image.tag

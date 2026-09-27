@@ -51,5 +51,6 @@ secrets:
     secretName: andara-server-bootstrap
 
 contentVolume:
+  render: true
   configMapName: andara-content
   templatesConfigMapName: andara-content-templates
