@@ -71,3 +71,8 @@ Architecture recommends **(a)**. It's a charter change, so it's Brian's call thr
 
 Lane: architecture (`Makefile`, `scripts/`, `.github/`), with PM or Brian amending the charter.
 Size S.
+
+## Brian's answer (2026-09-27): option (a)
+
+Approved: generate the views and don't commit them. PM groomed it as `AW-INF-026`, first in
+SPRINT-03's architecture backlog.
