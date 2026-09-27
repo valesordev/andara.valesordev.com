@@ -247,3 +247,8 @@ jobs:
           kubectl -n andara-local get certificate,ingress,middleware,serverstransport -o wide || true
           kubectl -n traefik logs deploy/traefik --tail=200 || true
           kubectl -n argocd get application -o yaml || true
+          helm -n argocd status argocd || true
+          kubectl -n argocd get pods,jobs -o wide || true
+          kubectl -n argocd describe pods | tail -120 || true
+          kubectl -n argocd get events --sort-by=.lastTimestamp | tail -60 || true
+          kubectl describe nodes | sed -n '/Allocated resources/,/Events/p' || true
