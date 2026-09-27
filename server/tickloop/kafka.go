@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/recordlog"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -169,7 +170,9 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			lastPing = time.Now()
 			pinged = true
 			pctx, pcancel := context.WithTimeout(ctx, 500*time.Millisecond)
-			pingErr = s.client.Ping(pctx)
+			// Every broker at once: kgo's Ping asks one at a time, and a
+			// broker whose pod is gone spends the budget (#129).
+			pingErr = recordlog.Ping(pctx, s.client)
 			pcancel()
 		}
 		s.mu.Lock()
