@@ -9,8 +9,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
-| `review` | 5 |
-| `in-progress` | 1 |
+| `review` | 6 |
 | `ready` | 24 |
 | `draft` | 9 |
 | `done` | 30 |
@@ -22,27 +21,23 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|--------|-------|------------------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `review` | A Kafka broker on the box for dev and prod | review by brian |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster | review by brian |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `review` | Character creation, selection, and binding — a Session enters the World | review by brian |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `review` | Session lifecycle and linkdead grace period | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
 
-### `review` (5)
+### `review` (6)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | architecture | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | M | medium | architecture | A Kafka broker on the box for dev and prod | `AW-INF-004`, `AW-INF-013` |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 | [`AW-SRV-014`](docs/stories/AW-SRV-014-character-roster-and-selection.md) | `EPIC-08` | server | M | medium | implementation | Character creation, selection, and binding — a Session enters the World | `AW-SRV-008`, `AW-SRV-022` |
 | [`AW-SRV-015`](docs/stories/AW-SRV-015-session-lifecycle-and-linkdead-grace.md) | `EPIC-08` | server | M | high | implementation | Session lifecycle and linkdead grace period | `AW-SRV-014` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
-| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | architecture | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 
 ### `ready` (24)
 
@@ -140,7 +135,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `ready` | Ingress forwards the client address to the Gateway |
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `done` | Publish the server image to ghcr on merge to main |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `done` | make up builds the server image from the tree it runs in |
-| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `in-progress` | Argo CD deploys dev from main on the box's kind cluster |
+| [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `draft` | Every environment spawns new Characters in Purgatory |
 
 ### `EPIC-02` — World model and simulation core

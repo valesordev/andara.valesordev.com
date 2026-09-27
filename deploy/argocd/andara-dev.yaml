@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+#
+# dev follows main (AW-INF-019). `make argocd-install ENV=dev` applies this with
+# server-side apply, after seeding image.tag (below), so a re-run never clears what
+# Image Updater writes.
+#
+# - helm.releaseName: andara, so every name and label derived from .Release.Name renders
+#   as it does under `make helm-install`, and the move from the Helm release adopts the
+#   same objects rather than renaming them.
+# - No helm.parameters here. Image Updater owns image.tag on the live Application
+#   (andara-dev-image-updater.yaml); argocd-install seeds it with `dev@<digest>` before
+#   automated sync is on, so the first render is already pinned.
+# - Not managed, so a sync never prunes them: the Kafka CR and its topics
+#   (`make kafka-install`), the two Secrets (`make argocd-install ENV=dev`), the snapshot
+#   PVC (a volumeClaimTemplate), and the cluster platform.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: andara-dev
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/valesordev/andara.valesordev.com
+    targetRevision: main
+    path: deploy/helm/andara
+    helm:
+      releaseName: andara
+      valueFiles:
+        - ../values/dev.yaml
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: andara-dev
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true

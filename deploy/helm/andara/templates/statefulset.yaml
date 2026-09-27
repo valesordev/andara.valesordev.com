@@ -33,6 +33,11 @@ spec:
       annotations:
         # A values change re-renders the ConfigMap; this rolls the pod so it is applied.
         checksum/config: {{ include "andara.serverEnv" . | sha256sum }}
+        {{- if .Values.contentVolume.render }}
+        # The rendered content (AW-INF-019): a fixture or template change on main rolls the
+        # pod, since the server reads content once at boot.
+        checksum/content: {{ include (print $.Template.BasePath "/content-configmaps.yaml") . | sha256sum }}
+        {{- end }}
         {{- with include "andara.scrapeAnnotations" (dict "root" . "job" "andara-server") }}
         {{- . | nindent 8 }}
         {{- end }}

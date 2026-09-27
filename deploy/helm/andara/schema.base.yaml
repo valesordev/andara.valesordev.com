@@ -183,6 +183,7 @@ properties:
     additionalProperties: false
     description: "When configMapName is set, that ConfigMap is mounted read-only at /content for server.content.source=dir (local and CI); templatesConfigMapName, a ConfigMap cannot hold a subdirectory, is mounted at /content/templates — the core pack a Character is made from (AW-SRV-014). Production content comes from the store (ADR-0004)."
     properties:
+      render: {type: boolean, description: "Render both ConfigMaps from files/content and files/content-templates (AW-INF-019)"}
       configMapName: {type: string}
       templatesConfigMapName: {type: string}
   podAnnotations:

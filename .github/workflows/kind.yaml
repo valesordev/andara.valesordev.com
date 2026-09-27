@@ -16,6 +16,8 @@ on:
   push:
     branches: [main]
     paths:
+      - "deploy/argocd/**"
+      - "scripts/argocd.py"
       - "deploy/helm/**"
       - "deploy/k8s/**"
       - "deploy/kind/**"
@@ -28,6 +30,8 @@ on:
       - ".github/workflows/kind.yaml"
   pull_request:
     paths:
+      - "deploy/argocd/**"
+      - "scripts/argocd.py"
       - "deploy/helm/**"
       - "deploy/k8s/**"
       - "deploy/kind/**"
@@ -192,6 +196,46 @@ jobs:
           kubectl delete ns andara-probe --wait=false
       - name: stream soak through the edge, renewal mid-stream (AC-1, AC-3)
         run: make stream-soak ENV=local SOAK=${{ github.event_name == 'schedule' && '60m' || '5m' }}
+      # AW-INF-019, the install and render half. The follow-main loop needs `publish` and
+      # is recorded on the box instead. AC-1: Argo CD and Image Updater at the pinned
+      # versions, and a second run that changes nothing.
+      - name: argocd-install twice, the second a no-op (AW-INF-019 AC-1)
+        run: |
+          set -euo pipefail
+          make argocd-install
+          before="$(helm list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
+          make argocd-install | tee /tmp/second.txt
+          after="$(helm list -n argocd -o json | python3 -c 'import json,sys; print(sorted((r["name"], r["revision"]) for r in json.load(sys.stdin)))')"
+          [ "$before" = "$after" ] || { echo "::error::the second argocd-install changed a release: $before -> $after"; exit 1; }
+          [ "$(grep -c 'already installed' /tmp/second.txt)" = 2 ]
+      # The committed Application, pointed at this commit with local's values (no broker,
+      # the kind-loaded image), adopting the andara release the steps above installed: the
+      # same adoption dev's move makes. Synced/Healthy within the deadline, and the pod the
+      # release left is the one still running (the move doesn't roll it).
+      - name: an Application at this commit adopts andara-local, Synced and Healthy (AW-INF-019)
+        env:
+          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          uid="$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')"
+          python3 - "$REVISION" <<'PY' | kubectl apply -f -
+          import json, sys, yaml
+          app = yaml.safe_load(open("deploy/argocd/andara-dev.yaml"))
+          app["metadata"]["name"] = "andara-ci"
+          app["spec"]["source"]["targetRevision"] = sys.argv[1]
+          app["spec"]["source"]["helm"]["valueFiles"] = ["../values/local.yaml"]
+          app["spec"]["destination"]["namespace"] = "andara-local"
+          print(json.dumps(app))
+          PY
+          for i in $(seq 1 120); do
+            s="$(kubectl -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status}')"
+            [ "$s" = "Synced Healthy" ] && break
+            sleep 5
+          done
+          kubectl -n argocd get application andara-ci -o jsonpath='{.status.sync.status} {.status.health.status} {.status.sync.revision}{"\n"}'
+          [ "$s" = "Synced Healthy" ] || { echo "::error::andara-ci is '$s' after 10 minutes"; exit 1; }
+          [ "$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')" = "$uid" ] \
+            || { echo "::error::the adoption rolled andara-0"; exit 1; }
       - name: dump on failure
         if: failure()
         run: |
@@ -199,3 +243,4 @@ jobs:
           kubectl -n andara-local logs andara-0 --all-containers || true
           kubectl -n andara-local get certificate,ingress,middleware,serverstransport -o wide || true
           kubectl -n traefik logs deploy/traefik --tail=200 || true
+          kubectl -n argocd get application -o yaml || true

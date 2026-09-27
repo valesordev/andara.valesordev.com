@@ -56,7 +56,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
-        kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce
+        kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
+        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall
 
 ## help: print this target list
 help:
@@ -330,6 +331,26 @@ kafka-install:
 ## kafka-broker-bounce: delete one broker and prove the server never left service while it was gone — ENV=<dev|prod> (AW-INF-014 AC-5)
 kafka-broker-bounce:
 	@PY=$(PY) $(SCRIPTS)/kafka.sh bounce "$(ENV)"
+
+## argocd-install: Argo CD and Image Updater into `argocd` at pinned versions; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application — dev follows main (AW-INF-019)
+argocd-install:
+	@$(PY) $(SCRIPTS)/argocd.py install "$(if $(filter command line,$(origin ENV)),$(ENV),)"
+
+## argocd-status: the andara-dev Application's sync and health, the main revision it synced, and the image it runs with the commit that built it — exit 1 unless Synced/Healthy
+argocd-status:
+	@$(PY) $(SCRIPTS)/argocd.py status "$(if $(filter command line,$(origin ENV)),$(ENV),dev)"
+
+## argocd-ui: port-forward the Argo CD UI to localhost (ARGOCD_UI_PORT, default 8090), and say where the admin password is
+argocd-ui:
+	@$(PY) $(SCRIPTS)/argocd.py ui
+
+## argocd-recover: replace an andara pod stuck on a build that never became Ready, once a good build has synced (Kubernetes' forced rollback) — ENV=dev
+argocd-recover:
+	@$(PY) $(SCRIPTS)/argocd.py recover "$(ENV)"
+
+## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev` then works again — ENV=dev
+argocd-uninstall:
+	@$(PY) $(SCRIPTS)/argocd.py uninstall "$(ENV)"
 
 ## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
 observe-check:

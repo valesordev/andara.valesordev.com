@@ -1,0 +1,25 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+#
+# Argo CD's settings on the box (AW-INF-019), for the argo-cd chart version pinned in
+# scripts/argocd.py. `make argocd-install` reapplies them whenever they differ from the
+# release's.
+dex:
+  enabled: false          # one operator, the initial admin; no SSO
+notifications:
+  enabled: false          # out of scope (AW-INF-019)
+configs:
+  cm:
+    # Annotation tracking, so the app.kubernetes.io/* labels `make kafka-install` and
+    # others put on resources are never read as the Application's.
+    application.resourceTrackingMethod: annotation
+    # The box's Traefik doesn't publish an address into Ingress status (it owns the host
+    # port directly; kind has no load balancer), and Argo CD's built-in check holds an
+    # Ingress with an empty status.loadBalancer at Progressing forever. An Ingress that
+    # exists is served by the cluster's Traefik; whether it routes is the edge's own
+    # checks (AW-INF-006), not a status field.
+    resource.customizations.health.networking.k8s.io_Ingress: |
+      hs = {}
+      hs.status = "Healthy"
+      hs.message = "served by the cluster's Traefik, which publishes no Ingress status"
+      return hs
