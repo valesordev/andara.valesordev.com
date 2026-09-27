@@ -371,6 +371,13 @@ and may have reached the broker, so each is answered `DEADLINE_EXCEEDED` (reason
 so nothing it still held lands minutes later on a player who was told the World was read-only. When a broker answers the
 probe again the state clears without a restart. `docs/runbooks/world-read-only.md` is the runbook.
 
+"None answers" means none. The probe, the ping after a failed produce, and the tick source's check
+behind `tick input starved` all use `recordlog.Ping`. It asks every broker the client has
+discovered at once, and the first answer wins. kgo's own `Ping` asks them one at a time under one
+deadline, so a deleted broker pod whose address has gone dark used up the whole budget while two
+live brokers went unasked. That lasted until the controller dropped the broker from metadata,
+about 14 s, and made one broker bounce read as an outage (#129).
+
 | Condition | gRPC code | `ErrorInfo.reason` | Log record written |
 |-----------|-----------|--------------------|--------------------|
 | parse failure | `INVALID_ARGUMENT` | the pre-log code | none |

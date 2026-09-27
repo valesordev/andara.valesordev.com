@@ -23,6 +23,7 @@ import (
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/recordlog"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -257,7 +258,7 @@ func (k *KafkaProducer) classify(ctx context.Context, err error) error {
 	}
 	if !k.degraded.Load() {
 		pctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), k.deadline/4)
-		perr := k.client.Load().Ping(pctx)
+		perr := recordlog.Ping(pctx, k.client.Load())
 		cancel()
 		if perr != nil {
 			k.degrade(perr)
@@ -335,7 +336,10 @@ func (k *KafkaProducer) probeLoop() {
 			return
 		case <-t.C:
 			pctx, cancel := context.WithTimeout(context.Background(), k.probe)
-			err := k.client.Load().Ping(pctx)
+			// Any broker answering is the log answering: kgo's Ping asks
+			// one at a time, and a broker whose pod is gone would degrade
+			// the World while two of three serve (#129).
+			err := recordlog.Ping(pctx, k.client.Load())
 			cancel()
 			if err != nil {
 				k.degrade(err)
