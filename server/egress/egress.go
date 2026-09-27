@@ -308,8 +308,14 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 			}()
 		}
 	}
+	s.users++
 	e.mu.Unlock()
 
+	// Letting go of the state takes e.mu, so it runs after s.rebind is
+	// released: deferred first, it runs last. The order everywhere is e.mu
+	// before s.rebind; ParkSession holding e.mu while it waits on s.rebind
+	// would otherwise wait forever (#127).
+	defer e.release(id, s)
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
@@ -330,23 +336,25 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 		return nil, ErrAlreadySubscribed
 	}
 	if err := s.resubscribe(ctx, e.observer(id, world)); err != nil {
-		if !subscribed {
-			e.discard(id, s)
-		}
 		return nil, err
 	}
 	return s, nil
 }
 
-// discard removes a Session whose first subscription never happened, so
-// the next Subscribe starts clean and nothing is retained for nobody.
-func (e *Egress) discard(id string, s *session) {
+// release ends one Subscribe's use of s. The last one out removes state
+// whose first subscription never happened, so the next Subscribe starts
+// clean and nothing is retained for nobody. Not before: s.rebind is free
+// by now, and a Subscribe still using the state may be subscribing on it
+// this moment, which a removal would leave untracked, out of reach of
+// EndSession, ParkSession and forget (review of #131).
+func (e *Egress) release(id string, s *session) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
+	s.users--
 	s.mu.Lock()
 	empty := s.sub == nil
 	s.mu.Unlock()
-	if empty && e.sessions[id] == s {
+	if s.users == 0 && empty && e.sessions[id] == s {
 		delete(e.sessions, id)
 	}
 }
@@ -384,7 +392,7 @@ func (e *Egress) rebindSession(sessionID string, s *session) {
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
-	closing, cur, world := s.closing || s.over(), s.obs, s.world
+	closing, cur, world, never := s.closing || s.over(), s.obs, s.world, s.sub == nil
 	// Parked, the state perceives as the Character the lost Session drove
 	// until a reconnect adopts it; adopted, it is another Session's. A
 	// rebind of the lost Session that raced the park would otherwise read
@@ -392,6 +400,12 @@ func (e *Egress) rebindSession(sessionID string, s *session) {
 	// resumes from (review of #124).
 	stale := s.parked || s.id != sessionID
 	s.mu.Unlock()
+	if never {
+		// Nothing to replace: the next Subscribe reads where the Session
+		// perceives from itself. Subscribing here could land on state a
+		// failed first Subscribe is letting go of (review of #131).
+		return
+	}
 	if closing || stale {
 		// The Session has ended and forget is on its way: the routing
 		// table's Unbind woke on the same signal. Nothing is subscribed
@@ -552,6 +566,9 @@ type session struct {
 	parked    bool
 	adopted   bool
 	parkTimer *time.Timer
+	// users counts the Subscribes between taking this state and returning,
+	// under e.mu: only the last one out may discard it (review of #131).
+	users int
 }
 
 // over reports whether the Session's lifetime has ended, whether or not
