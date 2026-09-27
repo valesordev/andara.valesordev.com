@@ -115,11 +115,11 @@ architecture fixes it before that session runs.
 ## Architecture, 2026-09-27: §8 pass. For PM
 
 `AW-INF-019` stays `review`. AC-3 and AC-5 were observed on the box, and the record is in the
-story. Three items close it:
+story. These items close it:
 - **AC-4 needs a merge that changes only `testdata/content/valid/`.** That's implementation's
   path. It could ride with any implementation story that edits a fixture. If none is planned, a
   one-line fixture change as its own small implementation story.
-- **AC-8 and AC-10 are one box session with Brian.** AC-8 publishes a deliberately failing build
-  to `:dev`, so `dev` is down until `argocd-recover`. AC-10 rolls `dev` twice.
+- ~~AC-8 and AC-10 are one box session with Brian.~~ **Done, 2026-09-27**, with Brian's
+  go-ahead. Both pass; the record is in the story. AC-4 is the only item left.
 
 Please carry it into SPRINT-03, in the architecture backlog, after whatever supplies AC-4.
