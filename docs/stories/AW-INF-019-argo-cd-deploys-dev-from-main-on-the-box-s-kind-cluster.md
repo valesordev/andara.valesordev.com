@@ -416,3 +416,40 @@ On `arch/aw-inf-019-argocd`. Box: `kind-solo7`, `andara-dev` on `main` at `5a9bb
 - **`argocd.py` is Python**, not shell like `kafka.sh`: most of it is JSON over `kubectl`.
 - **Found while building it:** `make argocd-install ENV=local` installed Argo CD before refusing
   the `ENV`. It now refuses first, and `test_argocd.EnvGuard` holds it (mutation-checked).
+
+## §8 pass (architecture, 2026-09-27): stays `review`
+
+Against `main` at `3d34212`, #134 merged. Box: `kind-solo7`. `make check` is clean. `make argocd-status`:
+`Synced main@3d34212f3b2f`, `Healthy`, the image `dev@sha256:d312259f…` `built from 3d34212f…`.
+
+AC-3 and AC-5 are now observed, from Argo CD's sync history, Image Updater's log, the `publish`
+runs, and `andara_build_info{namespace="andara-dev"}` in Grafana Cloud at a 15 s step:
+
+| Time (UTC) | What happened |
+|------------|---------------|
+| 01:49:30–01:50:13 | #131, #132 and #133 merge; all three touch `server/` |
+| 01:50:17 | `publish` for `2de1fe3` (#132) is cancelled, replaced by the next run |
+| 01:50:36 | `publish` for `81dd3a4` (#131) succeeds. `AW-INF-013`'s guard leaves `:dev` to `main`'s newer head |
+| 01:51:32 | Image Updater: `550328…` → `c079b8…` (the build of `ea7f21b`, #133). Sync history id 1, 01:51:33 |
+| 01:51:34 | `publish` for `ea7f21b` completes |
+| 01:52:29 → 03:08:14 | `andara_build_info{commit="ea7f21b"}`, 304 points, no gap. Sync history: nothing between id 1 and id 2 |
+| 03:06:13–03:06:14 | #134 (the chart renders the content ConfigMaps) and #135 (a story file only) merge |
+| 03:07:19 | Argo CD's git poll syncs `3d34212`'s render with the old digest (id 2). Roll 1 |
+| 03:07:23 | `publish` for `3d34212` completes. It's the only run for #134 and #135 |
+| 03:07:56 | Image Updater: `c079b8…` → `d31225…`, whose `org.opencontainers.image.revision` is `3d34212`. Roll 2; the pod started 03:07:57 |
+| from 03:08:59 | `andara_build_info{commit="3d34212"}` |
+
+| AC | Result |
+|----|--------|
+| 3 | **Pass (box).** `ea7f21b`, a `server/` merge, was running on `dev` within 1 min of its `publish` completing. The deadline is 10 min. The image's revision label is `ea7f21b67cac…`, and `andara_build_info{commit}` is `ea7f21b`, a prefix of it. `argocd-status` names the build on `3d34212` the same way. #131 and #132 reached `dev` in that build: one roll for three merges, as AC-5's replaced-run clause allows |
+| 4 | **Owed.** It needs a merge that changes only `testdata/content/valid/`, which is implementation's path. #134 changed what's rendered, so the `andara-content` ConfigMap on `dev` now comes from `main`'s chart. The fixture-only case hasn't happened |
+| 5 | **Pass (box) on all three clauses:** <br>• **No new build and no render change: no restart.** 75 min and about 25 git polls between 01:52 and 03:07. <br>• **A merge that changes the render: two rolls**, render first, then the image. That's the "at most twice" the amendment allows. <br>• **A story-only merge moves `:dev`:** #135 went out in the same build as #134 |
+| 8 | **Owed.** It needs a published build that fails readiness. That's a deliberate bad `:dev`, which takes `dev` down until `argocd-recover`. It's run with Brian, at a time he picks |
+| 10 | **Owed.** The Argo CD → Helm → Argo CD round trip on `main`'s chart. It's now possible, since the chart is merged. It rolls `dev` twice, so it's run in the same session as AC-8 |
+
+The rest of the verification record stands: 1, 2, 6, 7 and 9 pass. So do the tests,
+`k8s-dry [argocd]`, and the `kind` job.
+
+**What closes it:** a fixture-only merge (AC-4), then one box session for AC-8 and AC-10. Neither
+fits SPRINT-02, which ends when PM closes it. This is carried to SPRINT-03, and the feedback file
+has it for PM.

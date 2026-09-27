@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-014]
 blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
@@ -435,3 +435,37 @@ Two lines are carried, not deferred:
   pre-seeded meanwhile.
 - **AC-9 and the broker-level kill mid-grace** are `AW-SRV-007`'s (its inherited line), with
   snapshot recovery. AC-6 is proven here by full-log replay at the sim level.
+
+## §8 review, third pass (architecture, 2026-09-27): `done`
+
+On `arch/sprint-02-review-5`, against `main` at `3d34212`. The one item holding it, #127, is closed
+by #131 (`81dd3a4`).
+
+**The fix.** The discard now runs in `release`, deferred ahead of `s.rebind.Unlock`, so it runs
+after the unlock. Every path now takes `e.mu` → `s.rebind` → `s.mu`. `rebindSession`, `resubscribe`
+and `close` take nothing under `s.rebind` except `s.mu`, the Hub and the Observers.
+
+Review of #131 found the race the fix opened: a second Subscribe waiting on `s.rebind` could
+subscribe on state the first one's discard then dropped. `users` closes it:
+- The count is taken under `e.mu`, and only the last one out discards.
+- A `Rebind` of state that never subscribed leaves it alone.
+
+**The tests.** Three hold windows open per `live-assertions.md` rule 4:
+- `TestLinkdead_FailedFirstSubscribeRacingThePark` hung 3 of 3 on the old code.
+- `TestLinkdead_FailedFirstSubscribeLeavesAConcurrentOneTracked` covers the second Subscribe.
+- `TestLinkdead_RebindLeavesNeverSubscribedStateAlone` covers the Rebind.
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes, AC-13 excepted | As the first pass recorded. AC-13 is carried (below) |
+| Tests run in CI | yes | `make test`. `server/egress` and `server/roster` pass `-race -count=10` on `3d34212` |
+| `make check` | yes | clean on `3d34212` |
+| Instrumentation, live | yes | `make stack-linkdead` passed on a stack `make up` built from `3d34212`. In Loki, `character linkdead` and `character reconnected` carry the LoggedCommand's `trace_id`, and each one resolves in Tempo. The three `session closed{outcome=dropped}` lines resolve to their `session.lifetime` span, which #132 fixed (`AW-SRV-014`'s pass). The expiry line isn't shown live: the run doesn't wait out a grace. `TestRoster_ExpiryLine` covers it, and #132 keeps the tick that applies an expiry |
+| Config documented | yes | unchanged from the first pass |
+| Migrations | yes, no bump | first pass's ruling |
+| Glossary | yes | first pass |
+| No `[ASSUMPTION]` | yes | inertness answered in #122 |
+
+**Carried, as inherited Definition-of-done lines** (the second pass):
+- **AC-13** goes to the first story with lethal damage. The feedback file sends it to PM.
+- **AC-9 and the broker-level kill mid-grace** go to `AW-SRV-007`.

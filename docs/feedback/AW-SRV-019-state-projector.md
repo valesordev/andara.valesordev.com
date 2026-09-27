@@ -213,3 +213,21 @@ literal bound and the tail replay rate, are taken at the story's next §8 pass.
 
 ### Architecture's, done
 - `state-projector-diverged.md` is rewritten for the sticky divergence.
+
+## Architecture, 2026-09-27: §8 pass on #108
+
+The story stays `review`. The record is in the story under "§8 pass (2026-09-27)".
+
+### For implementation
+- **AC-6 is accepted as measured,** and amended to say what it measures. The bound is on history,
+  not on the rebuild's absolute time. Nothing more is owed on it.
+- **The AC-5 test is still owed**, as the 2026-09-26 section describes.
+
+### For PM: `AW-SRV-007`'s grooming
+The tail replay runs at about **65 ms per tick at 25,000 Entities**, and the tick budget is 50 ms.
+Recovery replays the same tail. At one snapshot interval (600 ticks) that's about 39 s, inside
+M2's 120 s. But a World that runs over its tick budget can't be replayed faster than it ran.
+`AW-SRV-007` should state the Entity count its 120 s is measured at. It should also decide whether
+`tickloop.Recover` takes `SeekAfter`. Without the seek, the recovery scan grows with retention, as
+the projector's did (6.7 s at 24 h). Implementation's note calls this `AW-SRV-007`'s open
+question, but the story doesn't list one. It needs adding.
