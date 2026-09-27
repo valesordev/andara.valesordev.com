@@ -284,7 +284,10 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// Head-sampled one tick in a hundred, tail-sampled at 100% on overrun:
 	// the span always starts, and telemetry.SpanFilter exports only the
 	// ones marked here.
-	keep := overrun || tick%TraceEveryTicks == 0
+	// A tick that expired a linkdead body is that expiry's trace, and its
+	// despawn line names it: kept, as a content swap is, so the line
+	// resolves (AW-SRV-015).
+	keep := overrun || tick%TraceEveryTicks == 0 || expired(res.Linkdead)
 	if overrun {
 		l.metrics.Overruns.Inc()
 		l.log.LogAttrs(tctx, slog.LevelWarn, "tick overran its budget",
@@ -483,7 +486,10 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 		}
 	}
 	parent := command.ParentFrom(ctx, r.Command.GetTraceId())
-	_, span := l.tracer.Start(parent, "command.apply",
+	// Its lines are logged under this span, not the loop's context: the log
+	// bridge stamps the record's trace from the context, and sim.tick's is
+	// exported one tick in a hundred (AW-SRV-014 §8).
+	actx, span := l.tracer.Start(parent, "command.apply",
 		trace.WithLinks(trace.Link{SpanContext: tickSpan.SpanContext()}),
 		trace.WithAttributes(attrs...))
 	return func(out sim.Outcome) {
@@ -501,23 +507,23 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 			span.SetStatus(codes.Error, out.Code)
 		}
 		span.End()
-		l.log.LogAttrs(ctx, slog.LevelDebug, "command applied",
+		l.log.LogAttrs(actx, slog.LevelDebug, "command applied",
 			slog.String("verb", verb), slog.String("actor", r.Command.GetActorId()),
 			slog.String("session_id", r.Command.GetSessionId()),
 			slog.Uint64("tick", uint64(l.tickNo)), slog.Int64("partition", int64(r.Partition)), slog.Int64("offset", r.Offset),
 			slog.String("code", out.Code), slog.String("stage", out.Stage),
 			slog.Float64("duration_ms", float64(d.Microseconds())/1000),
-			slog.String("trace_id", span.SpanContext().TraceID().String()))
+			slog.String("trace_id", traceID(actx)))
 		if b := out.Bind; b != nil {
 			// AW-SRV-014: whether the Character entered the World, and
 			// where, is known only here. character selected says the
 			// Command was produced; this says what the apply did with it.
-			l.log.LogAttrs(ctx, slog.LevelInfo, "character bind applied",
+			l.log.LogAttrs(actx, slog.LevelInfo, "character bind applied",
 				slog.String("account_id", b.Account), slog.String("character_id", string(b.Character)),
 				slog.String("session_id", r.Command.GetSessionId()),
 				slog.String("zone", string(b.Zone)), slog.String("room", string(b.Room)), slog.String("body", string(b.Body)),
 				slog.Uint64("tick", uint64(l.tickNo)),
-				slog.String("trace_id", span.SpanContext().TraceID().String()))
+				slog.String("trace_id", traceID(actx)))
 		}
 	}
 }
@@ -540,6 +546,20 @@ func (l *Loop) observeZones(ctx context.Context, tick sim.Tick, keep bool) {
 // TraceEveryTicks is the head-sample rate for sim.tick spans: one in a
 // hundred, plus every overrun.
 const TraceEveryTicks = 100
+
+// expired reports whether the tick despawned a linkdead body with no
+// Command behind it: an expiry, whose line has only the tick's trace. A
+// combat extension carries no trace either, but logs no line, and at
+// tick-rate combat keeping its ticks would undo the one-in-a-hundred
+// sampling (review of #132).
+func expired(cs []sim.LinkdeadChange) bool {
+	for _, c := range cs {
+		if c.Kind == sim.LinkdeadEnded && c.TraceID == "" {
+			return true
+		}
+	}
+	return false
+}
 
 // slowestZone names the Zone that took the most of this tick, for the
 // overrun line, or "" when no Zone was applied to.

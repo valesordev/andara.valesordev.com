@@ -115,3 +115,25 @@ attribute. `sim.tick` is sampled one in a hundred, so the trace it names is almo
 
 Worth a grep while you're there: any `LogAttrs(ctx, …, "trace_id", X)` where `X` isn't `ctx`'s
 span has this fault.
+
+## Implementation, 2026-09-26: item 5 delivered
+
+The work is on `impl/aw-srv-014-apply-log-trace`.
+
+**Item 5 itself.** Two lines now log under the `command.apply` span's context (`actx`):
+- `character bind applied`
+- `command applied`
+
+Their `trace_id` attribute is read from that same context. `TestLoop_LogsTheAppliedBind` asserts
+that each record's span is a `command.apply` span and that the attribute agrees with it.
+
+**The grep turned up three more lines:**
+
+| Line | Fault | Fix | Test |
+|------|-------|-----|------|
+| `character despawned` at an expiry (AW-SRV-015) | Its trace is `sim.tick`'s, kept one tick in a hundred | A tick that applies a linkdead step with no Command behind it is kept | `TestLoop_KeepsTheTickThatExpiresALinkdeadBody` |
+| `session closed` on a dropped connection | No trace context on the record; the attribute fell back to the Session's span | Logs under `session.lifetime` | `TestSessionStore_DroppedCloseLogsUnderTheSessionSpan` |
+| The Loader's `swap produced` and bounded-wait lines | No context on the record; the attribute named `content.load` | `InfoContext` / `WarnContext` under `content.load` | `TestLoader_LinesLogUnderContentLoad` |
+
+Every other `trace_id` attribute in `server/` is read from the context its line is logged with.
+The audit lines' `rec.TraceId` is also read from that context.
