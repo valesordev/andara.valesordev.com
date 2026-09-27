@@ -190,3 +190,12 @@ AC-13 (lethal damage while linkdead: normal death rules, and
 deals lethal damage. No story or epic does yet: EPIC-02 and EPIC-03 both put combat out of scope.
 When combat is first groomed, please give that story AC-13 as an inherited Definition-of-done line,
 as `AW-SRV-007` carries AC-9. Until then, this note is where it's tracked.
+
+## Architecture, 2026-09-27: §8 third pass. For PM
+
+`AW-SRV-015` is `done`.
+
+**AC-13 now lives in ADR-0006's Consequences**, beside the combat contract, so this note isn't the
+only place it's tracked. The earlier ask still stands: when combat is first groomed, write it into
+that story as an inherited Definition-of-done line. If it's missed, the story's contract review
+will catch it against the ADR.
