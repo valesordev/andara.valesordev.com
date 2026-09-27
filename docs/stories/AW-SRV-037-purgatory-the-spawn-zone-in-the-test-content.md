@@ -33,7 +33,7 @@ the spawn point is a place of its own, not a Room in whatever content happens to
 
 ### In scope
 - `testdata/content/valid/purgatory.json`: Zone `purgatory` with one Room, `purgatory/start`
-  (`[ASSUMPTION]`), titled `Purgatory`, and `fallback start`.
+  titled `Purgatory`, and `fallback start`.
 - One Exit, `out -> town.plaza`. It's one-way, as Brian asked ("just having an exit from the start
   Zone"), so it carries the `missing_reverse_exit` warning.
 - Every test that counts the valid fixture's Zones or Rooms, or lists its Zones, updated for the
@@ -46,7 +46,7 @@ the spawn point is a place of its own, not a Room in whatever content happens to
 - The dev fixture pack in `dev`'s store: `AW-INF-021`, which includes Purgatory.
 - Moving a Character from Purgatory to a start location automatically. That's `[NEEDS BRIAN]`
   (glossary, Start Location).
-- Purgatory's prose. The description is a placeholder until Brian writes it.
+- Purgatory's prose. The description stays a placeholder (Brian, 2026-09-27).
 
 ## Acceptance criteria
 
@@ -95,7 +95,6 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` The Room ID `purgatory/start` and the Exit direction `out`. Both are content, and
-  Brian may rename them before `AW-INF-024` makes Purgatory the spawn Room. After that, renaming
-  one means renaming it in every environment's `character.spawn_room` too.
-- **[NEEDS BRIAN]** Purgatory's description.
+- **Resolved 2026-09-27 (Brian):** the Room ID `purgatory/start` and the Exit direction `out`
+  stand, and the description stays a placeholder. After `AW-INF-024` makes Purgatory the spawn Room,
+  renaming either means renaming it in every environment's `character.spawn_room` too.

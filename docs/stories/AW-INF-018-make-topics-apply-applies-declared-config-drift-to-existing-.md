@@ -7,7 +7,7 @@ type: bug
 status: done
 size: S
 depends_on: [AW-INF-004]
-blocks: []
+blocks: [AW-INF-025]
 lane: architecture
 risk: medium
 ---

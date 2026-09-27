@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-69 stories — 3 review · 24 ready · 9 draft · 33 done
+72 stories — 3 review · 24 ready · 12 draft · 33 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -24,7 +24,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 ## Decisions the lanes are waiting on
 
   AW-SRV-019  .
-              17 more, attached to stories neither lane has reached
+              16 more, attached to stories neither lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

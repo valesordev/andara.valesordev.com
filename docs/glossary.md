@@ -181,7 +181,9 @@ references. Resolved from the content store at load and validated before use.
 **Purgatory** — The Zone every new Character spawns in, before moving to its Start Location
 (decided 2026-09-26, Brian). It's every environment's `character.spawn_room` (`purgatory/start`,
 `AW-INF-024`). Until the base content exists, its only way out is an Exit into the test town
-(`AW-SRV-037`). Its description is `[NEEDS BRIAN]`.
+(`AW-SRV-037`). Its description stays a placeholder (Brian, 2026-09-27). It's also where Characters
+go when the Zone they're in is deleted (Brian, 2026-09-27; no story yet, since deletion is refused
+today).
 
 **Start Location** — `[NEEDS BRIAN]` Where a Character goes when it leaves Purgatory. Brian named it
 on 2026-09-26. How a Character reaches it, and whether it differs by Character, isn't decided.

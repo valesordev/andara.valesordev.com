@@ -153,6 +153,9 @@ CLAUDE.md §8.
 
 ## Open questions
 
+- **Consistent with Brian's 2026-09-27 decision** that a move describes the destination Room to
+  the mover (`AW-SRV-038`): `goto` already emits `RoomDescribed` for the target Room.
+
 - `[ASSUMPTION]` A Builder can `goto` any Room in the World, not only Rooms in packs they hold.
   Reading a Room isn't a write, and testing a link into someone else's Zone needs it.
 - `[ASSUMPTION]` Bystanders see the ordinary `<name> leaves.` and `<name> arrives.`, with no special

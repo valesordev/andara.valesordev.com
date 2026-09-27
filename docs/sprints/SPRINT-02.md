@@ -1,6 +1,6 @@
 # SPRINT-02 — A dropped connection is survivable
-Status: active
-Dates: 2026-09-25 →
+Status: closed
+Dates: 2026-09-25 → 2026-09-27
 
 ## Demo goal
 An Operator runs two players in `town/plaza` on a fresh local stack and drops the first one's
@@ -118,16 +118,74 @@ SPRINT-01's §9 defect, AW-INF-016, is in the architecture backlog as item 9.
 1. **Does a move describe the destination Room?** Today the mover reads `leaves north` /
    `arrives from the south` and has to `look`. A move that describes the destination is a server
    change: the sim would emit the destination's `RoomDescribed` to the mover.
+   **Answered 2026-09-27: yes.** Groomed as `AW-SRV-038`, in SPRINT-03.
 2. **The linkdead lines' wording.** AW-CLI-008 uses `goes linkdead.`, `reconnects.`,
    `leaves the world.` (quit) and `fades from the world.` (grace expired) as placeholders. Changing
    them changes a golden file, not a contract.
 3. **When a Builder deletes a Zone, where do the Characters in it go?** Deletion is refused today
    (AW-SRV-012), and allowing it needs your evacuation policy. This gates a later story, not this
    sprint.
+   **Answered 2026-09-27: they go back to Purgatory.** Recorded in
+   `docs/feedback/AW-SRV-013-activation-refusals.md` for the later deletion story.
 4. **Is a linkdead Character inert?** Raised in AW-SRV-015's §8 review (#120), from ADR-0006's
    `[NEEDS BRIAN]`. **Answered 2026-09-26: yes, wholly inert.** It takes damage and neither
    defends itself nor flees. That is what AW-SRV-015 built, so no code changes. Recorded in
    `docs/feedback/AW-SRV-015-linkdead.md` for architecture.
 
 ## Close-out
-(filled in by the next PM session)
+Closed 2026-09-27 by PM, against `origin/main` at `478d547`.
+
+**Demo goal: met.** Every step of `docs/sprints/SPRINT-02-demo.md` passed on a fresh clone, with no
+§9 defects. `make stack-linkdead` asserts the drop, the linkdead mark, the reconnect, and the quit
+against the running stack, and runs in the `stack` workflow. `make up` now builds the tree it runs
+in, so SPRINT-01's hand-written rebuild is gone.
+
+**Stories: 14 of 17 done.** All 11 carried from SPRINT-01 passed §8 except AW-SRV-019 and
+AW-INF-008. The box session (#130) happened, and Argo CD now runs `dev` from `main`.
+
+### Final status on `origin/main`
+
+| Story | Status | Merged in | §8 record |
+|-------|--------|-----------|-----------|
+| AW-CLI-007 | **done** | SPRINT-01 | #104 |
+| AW-CLI-004 | **done** | SPRINT-01 | #104 |
+| AW-CLI-005 | **done** | SPRINT-01 | #104 |
+| AW-SRV-012 | **done** | #95 | #104 |
+| AW-SRV-014 | **done** | #98, #132 | #110, #137 |
+| AW-CLI-006 | **done** | #99 | #110 |
+| AW-SRV-006 | **done** | #102 | #110 |
+| AW-SRV-019 | review | #103, #108 | #110, #137 |
+| AW-INF-016 | **done** | #111 | #120 |
+| AW-INF-018 | **done** | #112 | #130 (AC-8 on the box) |
+| AW-INF-013 | **done** | #113, #134 | #130, #134 |
+| AW-INF-014 | **done** | #133 | #130, #135 |
+| AW-INF-008 | review | — | #130 |
+| AW-INF-017 | **done** | #119 | #126 |
+| AW-INF-019 | review | #105, #107, #134 | #137 |
+| AW-SRV-015 | **done** | #114, #123, #124, #131 | #120, #126, #137 |
+| AW-CLI-008 | **done** | #115 | #120 |
+
+### Carryover to SPRINT-03, and why
+- **AW-INF-019:** only AC-4 is left. It needs a merge that changes only `testdata/content/valid/`
+  (`docs/feedback/AW-INF-019-argocd.md`, 2026-09-27). AC-3, AC-5, AC-8 and AC-10 passed on the box.
+- **AW-SRV-019:** implementation owes the AC-5 test. The production line waits on #80, and AC-9 has
+  no carrier story (#137).
+- **AW-INF-008:** ACs 1, 3, 4 and 6 pass against Grafana Cloud. AC-2, the state projector on `dev`,
+  waits on #80 (#130).
+
+### Status defects (reported, not fixed)
+- **#78 is open, but fixed on `main`.** `4f83b1b` untracked the 35 MB `andara-projector` binary
+  and ignores `/andara-*`. The issue needs closing.
+
+### Other findings
+- **Every stated hold closed quickly once it had an owner.** The three bugs the §8 reviews found
+  in SPRINT-02's own work (#121, #127, #129) were each fixed within the sprint.
+- **The generated views cost a rebase after almost every merge** (#118). Brian chose to stop
+  committing them (option (a)), groomed as `AW-INF-026`.
+- **Issues triaged for SPRINT-03:** #80 (§9 defect, groomed as `AW-INF-025`) and #128 (snapshot
+  rounds stall after a broker disruption; implementation). Not planned: #125 (architecture), and
+  the flaky tests #116/#117, #101 and #69 (implementation).
+- **Game-design answers (2026-09-27):** question 1, a move describes the destination
+  (`AW-SRV-038`); question 3, Characters in a deleted Zone go back to Purgatory; and question 4,
+  a linkdead Character is inert (#122). Question 2, the linkdead lines' wording, stays with the
+  placeholders.
