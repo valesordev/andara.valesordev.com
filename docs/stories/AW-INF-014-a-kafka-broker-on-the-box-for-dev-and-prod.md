@@ -362,3 +362,22 @@ step is a `make` target.
   Redpanda per namespace with a superseding ADR. It is cheaper and has a built-in registry, but it
   would have left production on an approximation of the broker ADR-0002 chose, and made `AW-INF-004`'s
   `unclean.leader.election.enable` assertion a permanent no-op.
+
+## Box session — 2026-09-26 (with Brian): stays `review` on AC-5 (#129)
+
+On `kind-solo7`, in the order above. Step 2 now applies the drift, because #77 landed as
+`AW-INF-018`.
+
+| AC | Result |
+|----|--------|
+| 4 | **Pass.** `make helm-install ENV=dev`: `kafka/andara-log` Ready, the image pinned by digest, and `andara-0` Ready 14 s after install. The boot log shows `source: kafka` for the tick loop and the command ingress. `andara_ingress_degraded 0`. The bootstrap created account `567c2511…`, and that is the record at `andara.accounts.v1` partition 3, offset 0, read through the toolbox (keys only). `make stream-soak ENV=dev SOAK=1m` passed. After `kubectl delete pod andara-0`, the new pod logged no `bootstrap operator created` and the second soak logged in against the same record |
+| 5 | **Fails, intermittently (#129).** Run 1: the broker was deleted at 23:57:36Z and the checkpoint came at 23:58:25Z, but the server logged `command log unreachable` 8×. Its first error was `lookup andara-log-kafka-bootstrap: i/o timeout`, and ticks starved for ~15 s. `andara-0` stayed Ready with 0 restarts, and no Submit was refused. Runs 2 and 3 passed, with a DNS probe on the same node seeing 0 failures. A repeat loop, meant to run until a failure or 10 passes, failed on its first run (00:15:35Z): the same shape, 77 starved ticks and the bootstrap lookup timing out from the server, while the same-node probe resolved the FQDN every 0.5 s with 0 failures. **2 failures in 4 bounces.** Cluster DNS isn't failing generally, so it's the server's Kafka client's (#129, updated) |
+| 6 | **Pass.** A pod without the `andara` labels resolved the bootstrap Service (`10.96.114.6`), and `nc` to `:9092` was blocked, while the same pod reached the API server on 443. `andara-0` connects: it runs on Kafka. The toolbox connects: `topics-apply` ran through it |
+| 9, Grafana half | **Pass.** Recorded in `AW-INF-008`'s box session |
+
+**Found in the session:**
+- **`scripts/kafka.sh`'s `ready_since` never worked.** Its jsonpath printed no newline, so `read -r` hit EOF and failed, and `kafka-broker-bounce` died with "no andara-0 … run `make helm-install`" beside a Ready pod. Fixed in this PR (`{"\n"}`). Its first run was this session.
+- **Snapshot rounds stop after a broker disruption (#128).** On the pod that went through the bounces, every round from 00:00 was abandoned (`timeout` ×3, `boundary` ×2), and snapshot age climbed to 322 s until the pod was replaced. That's AW-SRV-006 code, and it's for PM to triage.
+
+**DoD line:** the first `dev` install Ready on Kafka was `andara-0` at 23:53:46Z (helm revision 1),
+image `…:dev@sha256:09f35b1f…`.

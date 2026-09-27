@@ -236,3 +236,15 @@ This goes in before the box session's `dev` install.
   to `AW-INF-009`.
 - **Package visibility.** The repo is public, so the package should be too, which means no pull
   secret on the box. If GitHub creates it private on the first push, Brian flips it; AC-2 says so.
+
+## Box session — 2026-09-26 (with Brian): stays `review` on AC-7's moving half
+
+On `kind-solo7`, run in `AW-INF-014`'s order.
+
+| AC | Result |
+|----|--------|
+| 3 | **Pass.** `make image-check ENV=dev`: `:dev` pulled anonymously, revision `6561cde3c2e8…` = `main`'s head; `andara-dev` pulled and ran it. `make image-check ENV=dev TAG=sha-6561cde3c2e8`: same revision, same result |
+| 7, unmoved half | **Pass.** `make helm-install ENV=dev` rerun with `:dev` still at `sha256:09f35b1f…`: same pod UID, image and StatefulSet revision (`andara-65f65b486b`). Only Helm's release counter moved, to 2 |
+| 7, moving half | **Owed.** Needs a merge that moves `:dev` after this install, then one `make helm-install ENV=dev`. The session's own PR does that |
+
+**DoD line:** the first install on the box pinned `ghcr.io/valesordev/andara-server:dev@sha256:09f35b1f97c1ab79ec6126a835e7294cffdf5c6892e33c52cb70ca3b92dad513`. That's the image of `main` at `4da819d`: #126 merged between step 1 and step 3 and moved `:dev`, as publish should.
