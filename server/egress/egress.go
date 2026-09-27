@@ -310,6 +310,16 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 	}
 	e.mu.Unlock()
 
+	// A first subscription that fails is discarded, which takes e.mu, so it
+	// runs after s.rebind is released: deferred first, it runs last. The
+	// order everywhere is e.mu before s.rebind; ParkSession holding e.mu
+	// while it waits on s.rebind would otherwise wait forever (#127).
+	var discard bool
+	defer func() {
+		if discard {
+			e.discard(id, s)
+		}
+	}()
 	s.rebind.Lock()
 	defer s.rebind.Unlock()
 	s.mu.Lock()
@@ -330,9 +340,7 @@ func (e *Egress) session(ctx context.Context, id string, principal auth.Principa
 		return nil, ErrAlreadySubscribed
 	}
 	if err := s.resubscribe(ctx, e.observer(id, world)); err != nil {
-		if !subscribed {
-			e.discard(id, s)
-		}
+		discard = !subscribed
 		return nil, err
 	}
 	return s, nil

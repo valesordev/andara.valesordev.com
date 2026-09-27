@@ -4,12 +4,15 @@
 package egress
 
 import (
+	"context"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"connectrpc.com/connect"
-	"context"
+
+	"github.com/valesordev/andara/server/events"
 )
 
 // AW-SRV-015 AC-2: a Session that ends linkdead leaves its retained state
@@ -229,4 +232,75 @@ func TestLinkdead_StaleRebindLeavesTheParkedRing(t *testing.T) {
 	b.end()
 	b.wait()
 	f.forgotten(0, 0)
+}
+
+// #127: a Session's first Subscribe that fails — events.max_subscribers
+// reached — discards the state it made, while the same connection drops
+// and the gateway parks it. ParkSession takes e.mu then s.rebind; the
+// failing Subscribe must not take e.mu while it still holds s.rebind, or
+// each waits on the other and every later Subscribe, park and adopt on
+// the process hangs behind e.mu. The observer hook holds the Subscribe
+// under s.rebind until ParkSession is waiting on it (live-assertions.md
+// rule 4).
+func TestLinkdead_FailedFirstSubscribeRacingThePark(t *testing.T) {
+	inObserver, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	var hub *events.Hub
+	f := newFixture(t, func(o *Options) {
+		o.ParkFor = time.Minute
+		hub = events.New(events.Options{Buffer: 64, MaxSubscribers: 1})
+		t.Cleanup(hub.Close)
+		o.Hub = hub
+		next := o.Observers
+		o.Observers = ObserverFunc(func(id string) (events.Observer, bool) {
+			// The first call is the adopt lookup, before s.rebind; the
+			// second is the subscription's own, under it.
+			if id == "s1" && calls.Add(1) == 2 {
+				close(inObserver)
+				<-release
+			}
+			return next.Observer(id)
+		})
+	})
+	if _, err := hub.Subscribe(context.Background(), events.Subscriber{Observer: events.Observer{Entity: "other"}, Principal: player}); err != nil {
+		t.Fatal(err)
+	}
+	f.place("s1", "aldric", "town", "plaza")
+	a := f.subscribe("s1", player, 0, false, nil)
+	<-inObserver
+
+	parked := make(chan struct{})
+	go func() {
+		f.e.ParkSession("s1")
+		close(parked)
+	}()
+	// ParkSession holds e.mu once it is waiting on s.rebind.
+	waitFor(t, func() bool {
+		if f.e.mu.TryLock() {
+			f.e.mu.Unlock()
+			return false
+		}
+		return true
+	}, "ParkSession to hold e.mu")
+	close(release)
+
+	deadline := time.After(5 * time.Second)
+	select {
+	case err := <-a.done:
+		if err == nil {
+			t.Fatal("the first Subscribe succeeded past a full events.max_subscribers")
+		}
+	case <-deadline:
+		t.Fatal("the failed first Subscribe hung: its discard waits on e.mu, which ParkSession holds waiting on s.rebind")
+	}
+	select {
+	case <-parked:
+	case <-deadline:
+		t.Fatal("ParkSession hung")
+	}
+	f.e.mu.Lock()
+	defer f.e.mu.Unlock()
+	if f.e.sessions["s1"] != nil || f.e.parked["aldric"] != nil {
+		t.Fatal("a Session that never subscribed left state behind")
+	}
 }
