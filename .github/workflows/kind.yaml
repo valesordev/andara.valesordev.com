@@ -214,7 +214,10 @@ jobs:
       # release left is the one still running (the move doesn't roll it).
       - name: an Application at this commit adopts andara-local, Synced and Healthy (AW-INF-019)
         env:
-          REVISION: ${{ github.event.pull_request.head.sha || github.sha }}
+          # The tree checkout tested: on a pull_request run github.sha is GitHub's merge of
+          # the PR into the base (refs/pull/N/merge), not the PR's head, so Argo CD renders
+          # the same chart and values the helm-install above did (review of #134).
+          REVISION: ${{ github.sha }}
         run: |
           set -euo pipefail
           uid="$(kubectl -n andara-local get pod andara-0 -o jsonpath='{.metadata.uid}')"
