@@ -142,6 +142,26 @@ func TestLoop_KeepsTheTickThatExpiresALinkdeadBody(t *testing.T) {
 	t.Fatalf("no sim.tick span %s", sc.SpanID())
 }
 
+// Only an expiry keeps its tick. A combat extension has no trace either,
+// but logs no line, and keeping every combat tick would undo the sampling;
+// a despawn by a Command carries that Command's trace (review of #132).
+func TestLoop_OnlyAnExpiryKeepsItsTick(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		c    sim.LinkdeadChange
+		want bool
+	}{
+		{"expiry", sim.LinkdeadChange{Kind: sim.LinkdeadEnded}, true},
+		{"combat extension", sim.LinkdeadChange{Kind: sim.LinkdeadExtended}, false},
+		{"despawn by a Command", sim.LinkdeadChange{Kind: sim.LinkdeadEnded, TraceID: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}, false},
+		{"entered", sim.LinkdeadChange{Kind: sim.LinkdeadEntered, TraceID: "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"}, false},
+	} {
+		if got := expired([]sim.LinkdeadChange{tc.c}); got != tc.want {
+			t.Errorf("%s: kept %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
 // spanRecords is the span context each log record was handled with, by
 // message: what the OTel log bridge stamps on the exported record.
 type spanRecords struct {

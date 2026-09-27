@@ -284,10 +284,10 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// Head-sampled one tick in a hundred, tail-sampled at 100% on overrun:
 	// the span always starts, and telemetry.SpanFilter exports only the
 	// ones marked here.
-	// A tick that applied a linkdead step with no Command behind it, an
-	// expiry, is that step's trace, and its despawn line names it: kept, as
-	// a content swap is, so the line resolves (AW-SRV-015).
-	keep := overrun || tick%TraceEveryTicks == 0 || appliedUncommanded(res.Linkdead)
+	// A tick that expired a linkdead body is that expiry's trace, and its
+	// despawn line names it: kept, as a content swap is, so the line
+	// resolves (AW-SRV-015).
+	keep := overrun || tick%TraceEveryTicks == 0 || expired(res.Linkdead)
 	if overrun {
 		l.metrics.Overruns.Inc()
 		l.log.LogAttrs(tctx, slog.LevelWarn, "tick overran its budget",
@@ -547,11 +547,14 @@ func (l *Loop) observeZones(ctx context.Context, tick sim.Tick, keep bool) {
 // hundred, plus every overrun.
 const TraceEveryTicks = 100
 
-// appliedUncommanded reports whether any linkdead step was the tick's own,
-// with no Command's trace to carry.
-func appliedUncommanded(cs []sim.LinkdeadChange) bool {
+// expired reports whether the tick despawned a linkdead body with no
+// Command behind it: an expiry, whose line has only the tick's trace. A
+// combat extension carries no trace either, but logs no line, and at
+// tick-rate combat keeping its ticks would undo the one-in-a-hundred
+// sampling (review of #132).
+func expired(cs []sim.LinkdeadChange) bool {
 	for _, c := range cs {
-		if c.TraceID == "" {
+		if c.Kind == sim.LinkdeadEnded && c.TraceID == "" {
 			return true
 		}
 	}
