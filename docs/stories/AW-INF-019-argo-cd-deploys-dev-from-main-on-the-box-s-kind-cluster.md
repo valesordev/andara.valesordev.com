@@ -133,7 +133,7 @@ running a deploy, so that I can play the current World while the sprint is still
    with `make: helm-install: andara-dev is deployed by Argo CD (application andara-dev); see make
    argocd-status`, and changes nothing.
 8. **Given** a published build that fails its readiness probe **when** the Application syncs it
-   **then** `make argocd-status` reports `Degraded` with the pod's reason and exits 1, and the
+   **then** `make argocd-status` reports the stall with the pod's reason and exits 1, and the
    previous pod's PVC is untouched. The StatefulSet is `OrderedReady`, so its rolling update stalls
    on the pod that never becomes Ready. A later good template doesn't replace that pod
    (Kubernetes' *Forced rollback*). **When** a good build has since synced, **then**
@@ -141,6 +141,10 @@ running a deploy, so that I can play the current World while the sprint is still
    comes back on the good build. It refuses, and changes nothing, when the StatefulSet's
    `updateRevision` is still the failing one. The step stays an operator command (contract
    review, item 5), and `make argocd-status` names it when it reports the stall.
+   *(Amended 2026-09-27, §8 on the box. The first draft said Argo CD reports `Degraded`, but Argo CD
+   reports a StatefulSet whose rollout is stuck as `Progressing`, and a StatefulSet has no
+   progress deadline to turn it into anything else. The signal is `argocd-status`'s `stalled`
+   line, which carries the pod's reason and exits 1. `health` shows whatever Argo CD reports.)*
 9. **Given** `make argocd-install ENV=dev` **when** `ANDARA_BOOTSTRAP_OPERATOR` is unset and
    `andara-server-bootstrap` doesn't exist **then** it exits 1 with the same message
    `helm-install` gives today. When the Secret already exists, it's left as it is, and the run
@@ -416,3 +420,88 @@ On `arch/aw-inf-019-argocd`. Box: `kind-solo7`, `andara-dev` on `main` at `5a9bb
 - **`argocd.py` is Python**, not shell like `kafka.sh`: most of it is JSON over `kubectl`.
 - **Found while building it:** `make argocd-install ENV=local` installed Argo CD before refusing
   the `ENV`. It now refuses first, and `test_argocd.EnvGuard` holds it (mutation-checked).
+
+## §8 pass (architecture, 2026-09-27): stays `review`
+
+Against `main` at `3d34212`, #134 merged. Box: `kind-solo7`. `make check` is clean. `make argocd-status`:
+`Synced main@3d34212f3b2f`, `Healthy`, the image `dev@sha256:d312259f…` `built from 3d34212f…`.
+
+AC-3 and AC-5 are now observed, from Argo CD's sync history, Image Updater's log, the `publish`
+runs, and `andara_build_info{namespace="andara-dev"}` in Grafana Cloud at a 15 s step:
+
+| Time (UTC) | What happened |
+|------------|---------------|
+| 01:49:30–01:50:13 | #131, #132 and #133 merge; all three touch `server/` |
+| 01:50:17 | `publish` for `2de1fe3` (#132) is cancelled, replaced by the next run |
+| 01:50:36 | `publish` for `81dd3a4` (#131) succeeds. `AW-INF-013`'s guard leaves `:dev` to `main`'s newer head |
+| 01:51:32 | Image Updater: `550328…` → `c079b8…` (the build of `ea7f21b`, #133). Sync history id 1, 01:51:33 |
+| 01:51:34 | `publish` for `ea7f21b` completes |
+| 01:52:29 → 03:08:14 | `andara_build_info{commit="ea7f21b"}`, 304 points, no gap. Sync history: nothing between id 1 and id 2 |
+| 03:06:13–03:06:14 | #134 (the chart renders the content ConfigMaps) and #135 (a story file only) merge |
+| 03:07:19 | Argo CD's git poll syncs `3d34212`'s render with the old digest (id 2). Roll 1 |
+| 03:07:23 | `publish` for `3d34212` completes. It's the only run for #134 and #135 |
+| 03:07:56 | Image Updater: `c079b8…` → `d31225…`, whose `org.opencontainers.image.revision` is `3d34212`. Roll 2; the pod started 03:07:57 |
+| from 03:08:59 | `andara_build_info{commit="3d34212"}` |
+
+| AC | Result |
+|----|--------|
+| 3 | **Pass (box).** `ea7f21b`, a `server/` merge, was running on `dev` within 1 min of its `publish` completing. The deadline is 10 min. The image's revision label is `ea7f21b67cac…`, and `andara_build_info{commit}` is `ea7f21b`, a prefix of it. `argocd-status` names the build on `3d34212` the same way. #131 and #132 reached `dev` in that build: one roll for three merges, as AC-5's replaced-run clause allows |
+| 4 | **Owed.** It needs a merge that changes only `testdata/content/valid/`, which is implementation's path. #134 changed what's rendered, so the `andara-content` ConfigMap on `dev` now comes from `main`'s chart. The fixture-only case hasn't happened |
+| 5 | **Pass (box) on all three clauses:** <br>• **No new build and no render change: no restart.** 75 min and about 25 git polls between 01:52 and 03:07. <br>• **A merge that changes the render: two rolls**, render first, then the image. That's the "at most twice" the amendment allows. <br>• **A story-only merge moves `:dev`:** #135 went out in the same build as #134 |
+| 8 | **Pass (box), with the reason fixed and the wording amended.** Below |
+| 10 | **Pass (box).** Below |
+
+The rest of the verification record stands: 1, 2, 6, 7 and 9 pass. So do the tests,
+`k8s-dry [argocd]`, and the `kind` job.
+
+**What closes it:** a merge that changes only `testdata/content/valid/` (AC-4). That's
+implementation's path. Everything else passes. This is carried to SPRINT-03, and the feedback file
+has it for PM.
+
+### AC-8 and AC-10 on the box (2026-09-27, with Brian's go-ahead)
+
+Before: PVC `snapshots-andara-0` `26b813ca…`, StatefulSet `9f17ec90…`, Kafka `andara-log`
+`432d3198…` (the same objects as AC-2), pod `6810860e…` on revision `andara-599bc8b8f`.
+
+**AC-8.** The failing build was `:dev`'s `3d34212` image with `/usr/local/bin/andara-server` replaced by a
+`sleep`. It was never published: the session's GitHub token has `read:packages` only. So it was
+loaded onto the kind nodes as `andara-server:ac8-fails-readiness`, and written into the
+Application's `image.tag`, the parameter Image Updater writes. That was at 03:32:05, one second
+after an Image Updater cycle.
+- **The failure wasn't a readiness probe.** Dev's values set `image.pullPolicy: Always`, so the
+  kubelet ignored the loaded image and failed the pull, and the init container `partitions` sat
+  in `ImagePullBackOff`. That's still a build that never becomes Ready, and everything after
+  the sync is the same path: an `OrderedReady` rollout stalled on its one pod. A probe failure
+  proper needs a published bad build, which is outside this session.
+
+| Time (UTC) | Observed |
+|------------|----------|
+| 03:32:05 | `image.tag` → `ac8-fails-readiness`. Argo CD synced it, and the StatefulSet's `updateRevision` became `andara-c4974657c`. The pod `4ba8b407…` was created on it and never became Ready |
+| 03:33:00 | `make argocd-status`: `health Progressing`, `stalled server: PodInitializing — once a good build has synced, make argocd-recover ENV=dev replaces the pod`. Exit 1 |
+| 03:33:00 | `make argocd-recover ENV=dev`: `andara-0 is on the StatefulSet's updateRevision andara-c4974657c, the failing one; let a good build sync first`. Exit 1, nothing deleted |
+| 03:34:03 | Image Updater wrote `:dev`'s digest back (`images_updated=1`), and `updateRevision` returned to `andara-599bc8b8f` |
+| 03:35:29 | **Forced rollback, as the AC states.** 85 s after the good template, the pod `4ba8b407…` was still on `andara-c4974657c`, and `argocd-status` still reported the stall |
+| 03:35:42 | `make argocd-recover ENV=dev`: `deleted andara-0 (revision andara-c4974657c); the StatefulSet recreates it at andara-599bc8b8f`. Exit 0 |
+| 03:35:55 | Pod `bf61ad72…` Ready on `andara-599bc8b8f`. `argocd-status`: `Synced`, `Healthy`, `built from 3d34212`. Exit 0. The PVC, StatefulSet and Kafka are unchanged |
+
+Two findings, both fixed in this pass:
+- **The stall's reason named the symptom.** `stalled()` read `containerStatuses` only, so it
+  reported the server's `PodInitializing`, not the init container's `ImagePullBackOff`. It now
+  reads init containers first and prefers a real cause to `PodInitializing`. Test:
+  `test_argocd.Stalled`. Its init-container case fails on the old code with exactly the box's
+  output.
+- **`Degraded` was the wrong word.** Argo CD reports a stuck StatefulSet rollout as `Progressing`.
+  AC-8 is amended above: the signal is the `stalled` line and exit 1.
+
+**AC-10.** Run on `main`'s chart at `3d34212`:
+
+| Step | Result |
+|------|--------|
+| `make argocd-uninstall ENV=dev` (03:36:15) | `application andara-dev removed without cascading`, and `19 resource(s) … given Helm's ownership metadata`. The Application and the ImageUpdater are gone. Pod `bf61ad72…` kept running; the StatefulSet carried `managed-by=Helm`, `release-name=andara` |
+| `make helm-install ENV=dev` (03:36:55) | Exit 0, `andara in andara-dev is serving (…dev@sha256:d312259f…)`. Helm release revision 1, `Install complete`: it adopted every object and refused none. **No roll:** the pod was still `bf61ad72…`, because `helm-install` resolved the same digest |
+| `make argocd-install ENV=dev` (03:37:07) | `helm release history in andara-dev: 1 record(s) removed`, then `argocd-status` read `Synced`, `Healthy`, `built from 3d34212`. Still pod `bf61ad72…` |
+| Image Updater | The ImageUpdater came back with the install. Its 03:37:09 cycle ran before the Application existed (`applications=0`). The 03:39:10 cycle found it: `applications=1 images_considered=1 images_updated=0` |
+
+The PVC `26b813ca…`, the StatefulSet `9f17ec90…` and Kafka `432d3198…` were the same objects after
+every step. The round trip didn't restart the World once, where the verification record expected
+two rolls.

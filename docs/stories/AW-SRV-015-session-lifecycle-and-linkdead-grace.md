@@ -4,7 +4,7 @@ title: Session lifecycle and linkdead grace period
 epic: EPIC-08
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-014]
 blocks: [AW-CLI-008, AW-INF-017, AW-SRV-007]
@@ -94,8 +94,11 @@ not cost me my place in the world.
     `reason="linkdead_ceiling"` and `andara_linkdead_ceiling_despawns_total` increments.
 12. **Given** one attack then silence **when** `extension_ticks` elapse **then** it despawns — 60 s
     after the last blow, not at the original 180 s deadline.
-13. **Given** lethal damage before either deadline **when** it dies **then** normal death rules apply;
-    `andara_linkdead_outcomes_total{outcome="died"}` increments.
+13. *(Moved to ADR-0006's Consequences at §8, 2026-09-27. It said: given lethal damage before
+    either deadline, when the Character dies, normal death rules apply and
+    `andara_linkdead_outcomes_total{outcome="died"}` increments. There are no death rules to
+    exercise, and no story or epic defines them yet. The ADR binds the first story that does. This
+    story's part, the `died` series declared and pre-seeded at 0, is delivered.)*
 14. **Given** the same log replayed **when** replay completes **then** every despawn lands on the
     identical Tick, including when `session.linkdead_*` was retuned between the run and the replay:
     the durations come from each `MarkLinkdead`, not from the replaying binary's config.
@@ -435,3 +438,54 @@ Two lines are carried, not deferred:
   pre-seeded meanwhile.
 - **AC-9 and the broker-level kill mid-grace** are `AW-SRV-007`'s (its inherited line), with
   snapshot recovery. AC-6 is proven here by full-log replay at the sim level.
+
+## §8 review, third pass (architecture, 2026-09-27): `done`
+
+On `arch/sprint-02-review-5`, against `main` at `3d34212`. The one item holding it, #127, is closed
+by #131 (`81dd3a4`).
+
+**The fix.** The discard now runs in `release`, deferred ahead of `s.rebind.Unlock`, so it runs
+after the unlock. Every path now takes `e.mu` → `s.rebind` → `s.mu`. `rebindSession`, `resubscribe`
+and `close` take nothing under `s.rebind` except `s.mu`, the Hub and the Observers.
+
+Review of #131 found the race the fix opened: a second Subscribe waiting on `s.rebind` could
+subscribe on state the first one's discard then dropped. `users` closes it:
+- The count is taken under `e.mu`, and only the last one out discards.
+- A `Rebind` of state that never subscribed leaves it alone.
+
+**The tests.** Three hold windows open per `live-assertions.md` rule 4:
+- `TestLinkdead_FailedFirstSubscribeRacingThePark` hung 3 of 3 on the old code.
+- `TestLinkdead_FailedFirstSubscribeLeavesAConcurrentOneTracked` covers the second Subscribe.
+- `TestLinkdead_RebindLeavesNeverSubscribedStateAlone` covers the Rebind.
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | As the first pass recorded. AC-9 moved to `AW-SRV-007` at contract review, and AC-13 to ADR-0006 in this pass (below) |
+| Tests run in CI | yes | `make test`. `server/egress` and `server/roster` pass `-race -count=10` on `3d34212` |
+| `make check` | yes | clean on `3d34212` |
+| Instrumentation, live | yes | `make stack-linkdead` passed on a stack `make up` built from `3d34212`. In Loki, `character linkdead` and `character reconnected` carry the LoggedCommand's `trace_id`, and each one resolves in Tempo. The three `session closed{outcome=dropped}` lines resolve to their `session.lifetime` span, which #132 fixed (`AW-SRV-014`'s pass). **The expiry line, both cases, live** (review of #137; below) |
+| Config documented | yes | unchanged from the first pass |
+| Migrations | yes, no bump | first pass's ruling |
+| Glossary | yes | first pass |
+| No `[ASSUMPTION]` | yes | inertness answered in #122 |
+
+**The expiry line, live** (review of #137). The first version of this record called
+instrumentation done with the expiry line seen only in tests. Both cases are now observed on the
+compose stack, built from `3d34212`, with the default 180 s grace:
+
+| Case | How | Loki line | Tempo |
+|------|-----|-----------|-------|
+| Held | A fresh Character's `play` got SIGKILL at 03:21:20; nothing else touched it | `character despawned` at 03:24:20, `session_id=6cf0acc7…` (the Session marked linkdead), `deadline_tick=tick=367670`, no `recovered` | `06b40cda…` resolves, and `span_id` is its `sim.tick` span. 367670 isn't a multiple of 100, so the trace exists because #132 keeps the tick that applies an expiry |
+| Recovered | `make stack-play` dropped two Sessions at 03:10:32, then bounced the server (drain) at 03:10:39 | Two `character despawned` at 03:13:47, `recovered=true`, no `session_id`, `deadline_tick=361342` | `21ffcf3e…` resolves to its `sim.tick` span |
+
+The three items the contract names are all there: `session_id` from the hold,
+`recovered=true` after a restart, and a `trace_id` that resolves.
+
+**Carried:**
+- **AC-13 is moved to ADR-0006** (review of #137). The second pass sent it to PM to attach
+  "wherever combat is first groomed". That named no story, and a `done` story can't hold an AC
+  with no carrier. No story or epic defines lethal damage (EPIC-02 and EPIC-03 put combat out of
+  scope). So the obligation goes in the ADR's Consequences, beside the combat contract it belongs
+  to. Every combat story's contract review is checked against it.
+- **AC-9 and the broker-level kill mid-grace** go to `AW-SRV-007`, as an inherited
+  Definition-of-done line.

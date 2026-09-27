@@ -274,13 +274,17 @@ def stalled(ns):
     ready = [c for c in pod.get("status", {}).get("conditions", []) if c.get("type") == "Ready"]
     if ready and ready[0].get("status") == "True":
         return None
-    reason = ""
-    for cs in pod.get("status", {}).get("containerStatuses", []):
-        st = cs.get("state", {})
-        w = st.get("waiting") or st.get("terminated") or {}
-        if w.get("reason"):
-            reason = "%s: %s" % (cs["name"], w["reason"])
-    return reason or "andara-0 not Ready"
+    # Init containers first: one stuck pulling leaves the server waiting on PodInitializing,
+    # which names the symptom, not the cause (AW-INF-019 §8, 2026-09-27).
+    reasons = []
+    st = pod.get("status", {})
+    for cs in st.get("initContainerStatuses", []) + st.get("containerStatuses", []):
+        s = cs.get("state", {})
+        w = s.get("waiting") or s.get("terminated") or {}
+        if w.get("reason") and w["reason"] != "Completed":
+            reasons.append("%s: %s" % (cs["name"], w["reason"]))
+    causes = [r for r in reasons if not r.endswith(": PodInitializing")]
+    return (causes or reasons or ["andara-0 not Ready"])[0]
 
 
 def status(env):

@@ -168,6 +168,35 @@ class Seed(unittest.TestCase):
         self.assertTrue(patches and applies and max(patches) < min(applies), c.calls)
 
 
+class Stalled(unittest.TestCase):
+    """AC-8: argocd-status names the pod's reason for the stall, not the symptom."""
+
+    def stalled(self, pod_status):
+        mod = load_argocd()
+        pod = {"status": dict({"conditions": [{"type": "Ready", "status": "False"}]}, **pod_status)}
+        mod.kubectl_json = lambda *a: pod if "pod" in a else {"status": {}}
+        return mod.stalled("andara-dev")
+
+    def test_an_init_container_that_cannot_pull_is_the_reason(self):
+        # What the box showed on 2026-09-27: the server waits on PodInitializing because the
+        # init container, on the same image, is in ImagePullBackOff.
+        self.assertEqual(self.stalled({
+            "initContainerStatuses": [{"name": "partitions", "state": {"waiting": {"reason": "ImagePullBackOff"}}}],
+            "containerStatuses": [{"name": "server", "state": {"waiting": {"reason": "PodInitializing"}}}],
+        }), "partitions: ImagePullBackOff")
+
+    def test_a_crashing_server_is_the_reason_after_a_completed_init(self):
+        self.assertEqual(self.stalled({
+            "initContainerStatuses": [{"name": "partitions", "state": {"terminated": {"reason": "Completed"}}}],
+            "containerStatuses": [{"name": "server", "state": {"waiting": {"reason": "CrashLoopBackOff"}}}],
+        }), "server: CrashLoopBackOff")
+
+    def test_a_running_server_that_is_not_ready_says_so(self):
+        self.assertEqual(self.stalled({
+            "containerStatuses": [{"name": "server", "state": {"running": {}}}],
+        }), "andara-0 not Ready")
+
+
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 

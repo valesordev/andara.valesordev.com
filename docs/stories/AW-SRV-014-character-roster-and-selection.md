@@ -4,7 +4,7 @@ title: Character creation, selection, and binding — a Session enters the World
 epic: EPIC-08
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-008, AW-SRV-022]
 blocks: [AW-SRV-015, AW-SRV-032, AW-CLI-007, AW-SRV-036, AW-SRV-037]
@@ -684,6 +684,39 @@ fails on the old code:
   carried `content.load`'s `trace_id`. They now log under it (`TestLoader_LinesLogUnderContentLoad`).
 
 The Loki-to-Tempo check on the stack is architecture's, at §8.
+
+### §8 pass (2026-09-27, architecture): `done`
+
+Against `main` at `3d34212`. Item 3 is delivered in #132 (`2de1fe3`). Its diff matches the record
+above. `make check` is clean.
+
+**The live check.** It ran on the compose stack, rebuilt by `make up` from `3d34212`
+(`andara_build_info{commit="3d34212"}`). `make stack-play` and `make stack-linkdead` both passed.
+Loki has 35 lines from the two runs:
+- 11 `character bind applied`: `spawned`, `woken` and `reconnected`;
+- 4 `character linkdead`;
+- 2 `character reconnected`;
+- 18 `session closed`: 15 `closed` and 3 `dropped`.
+
+Every line's record-level `trace_id` resolves in Tempo, where the 2026-09-26 pass found a 404 for
+every bind line. Its `span_id` names the span the line should hang from:
+
+| Line | Span in Tempo |
+|------|---------------|
+| `character bind applied` (e.g. `0b216b79…`, `59019295…`, `58d5786a…`) | `command.apply` |
+| `session closed{outcome=dropped}` (`6a248a7f…`) | `session.lifetime`, a 1-span trace |
+| `session closed{outcome=closed}` (`c99618c3…`) | `andara.game.v1.Game/CloseSession` |
+
+The server's stdout `trace_id` attribute equals the record-level ID on every line compared.
+
+| §8 item | Holds? |
+|---------|--------|
+| Every AC passes | yes: earlier passes, and `make stack-play` on `3d34212` |
+| Tests run in CI | yes: `TestLoop_LogsTheAppliedBind`, plus #132's three more |
+| `make check` | yes |
+| Instrumentation, live | **yes**: metrics and traces in earlier passes; logs now correlate, above |
+| Config, migrations, glossary | yes, unchanged from earlier passes |
+| No `[ASSUMPTION]` | yes. The `[NEEDS BRIAN]` on what a Character *is* is additive and binds nothing here |
 
 ## Open questions
 

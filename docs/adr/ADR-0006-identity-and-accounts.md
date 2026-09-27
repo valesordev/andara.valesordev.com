@@ -162,6 +162,12 @@ credentials, and a World snapshot shared for debugging must not carry them.
 - Combat now reaches into Session lifecycle, so the combat system and `AW-SRV-015` share an interface:
   combat emits an interaction Event that refreshes the deadline. Whichever epic defines combat inherits
   that contract rather than inventing its own.
+  - **Death while linkdead is part of it.** When lethal damage kills a linkdead Character before
+    either deadline, normal death rules apply, and `andara_linkdead_outcomes_total{outcome="died"}`
+    increments. `AW-SRV-015` declares and pre-seeds that series. The first story that deals lethal
+    damage asserts it, and its contract review checks for it. *(Moved here from `AW-SRV-015` AC-13
+    at its §8, 2026-09-27. No story or epic defines lethal damage yet, so there's no story to carry
+    it as an inherited line. This ADR is what that story's contract is reviewed against.)*
 - **We are foreclosing** email-based flows, federated identity, and multi-live characters in Phase 1 —
   each recoverable, none free.
 

@@ -90,6 +90,10 @@ projection schema change is routine.
    key at its bootstrap tick, and the incremental projector writes each at the tick that last
    touched it, so those two fields can differ while the topics describe the same World. They say
    when a record was written, not what it describes.
+   *(Amended 2026-09-27, §8, architecture:)* "in under `snapshot load + tail replay`" can't be met
+   literally. `--rebuild` does both, plus the dump and the broker round trips. The bound is on
+   history: the rebuild starts from the latest complete round, and 24 h of history ahead of that
+   round adds less to its run time than `snapshot load + tail replay`.
 7. **Given** any record **when** it is inspected **then** `content_version` names the `packID@version`
    active when the aggregate was last written, so a runtime object traces to authored source.
 8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
@@ -414,3 +418,32 @@ Measured with 25,000 Entities and 864,000 ticks (24 h at 10 Hz) of history, on a
 
 `make check` is clean, and so is `make test-integration`.
 
+
+### §8 pass (2026-09-27, architecture): stays `review`
+
+Against `main` at `3d34212`. This is the pass the 2026-09-26 record deferred #108 to.
+
+**AC-6 at scale: accepted, and AC-6 is amended to what it measures** (above). The two points
+implementation raised:
+- **The literal bound.** It can't be met, as implementation says. The overhead the old wording left
+  unnamed is the dump and the broker, and neither scales with history. The property the bound
+  existed for is the one `TestRun_RebuildAtScaleIsBoundedByTheRoundAndTheTail` asserts:
+  - history adds less than a snapshot load plus the tail replay;
+  - the rebuild never replays from zero while a round exists.
+
+  The test defaults to a 10-tick tail, which separates history from run-to-run noise, and fails
+  with `SeekAfter` removed. That's the right shape. It stays opt-in (`ANDARA_AC6_HISTORY_TICKS`):
+  1.73M records don't belong in every CI run.
+- **The tail replay rate.** 65 ms per tick at 25,000 Entities is slower than the 50 ms tick budget.
+  A replica catches up at about 1.5× real time. That doesn't bind this story, whose Entities and
+  budget are 10,000 and "under snapshot load + tail replay". It does bind `AW-SRV-007`, whose
+  recovery replays the same tail under a 120 s target. At one snapshot interval (600 ticks) that's
+  about 39 s, inside the target. A World that runs over budget can't be replayed faster than it
+  ran. Sent to PM in the feedback file for `AW-SRV-007`'s grooming, with the `SeekAfter` question that
+  story doesn't yet list.
+
+**Still owed; the story stays `review`:**
+1. **Implementation: AC-5's forced-compaction test.** It hasn't landed. The floor it needs has
+   been on the stack since the 2026-09-26 pass.
+2. **The production digest line** waits on #80 (SPRINT-03). #77's half was closed by `AW-INF-018`.
+3. **AC-9 has no carrier.** Unchanged; it's with PM.
