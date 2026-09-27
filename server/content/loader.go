@@ -512,7 +512,7 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 		drop(true)
 		return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrProduce{Pack: pack, Version: version, Err: perr}})
 	}
-	l.log.Info("content version accepted; swap produced",
+	l.log.InfoContext(ctx, "content version accepted; swap produced",
 		"pack", pack, "version", version, "core_version", res.CoreVersion,
 		"zones", len(res.Zones), "templates", len(res.Templates),
 		"world_digest", fmt.Sprintf("%x", digest[:8]),
@@ -528,7 +528,7 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 		// still apply — Applied needs no waiter — but this move stops
 		// blocking every other.
 		drop(false)
-		l.log.Warn("content swap produced but not applied within the bounded wait; retrying later",
+		l.log.WarnContext(ctx, "content swap produced but not applied within the bounded wait; retrying later",
 			"pack", pack, "version", version, "wait", l.applyWait.String(), "trace_id", traceID)
 		return nil, l.reject(Rejection{Pack: pack, Version: version, Err: &ErrApplyTimeout{Pack: pack, Version: version, Wait: l.applyWait}})
 	case <-ctx.Done():

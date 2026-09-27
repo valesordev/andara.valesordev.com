@@ -78,8 +78,9 @@ func newHarness(t *testing.T, mutate func(*Options)) *harness {
 		t.Fatal(err)
 	}
 	handlers := simtest.Handlers(reg)
-	// The real binding verbs, for the bind-applied line (AW-SRV-014).
-	for _, k := range []sim.CommandKind{sim.KindBindCharacter, sim.KindUnbindCharacter} {
+	// The real binding verbs, for the bind-applied line (AW-SRV-014), and
+	// MarkLinkdead, for the expiry's trace (AW-SRV-015).
+	for _, k := range []sim.CommandKind{sim.KindBindCharacter, sim.KindUnbindCharacter, sim.KindMarkLinkdead} {
 		handlers[k] = sim.Handlers()[k]
 	}
 	// Every Command costs h.cost of stepped time.

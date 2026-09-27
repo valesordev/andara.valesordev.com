@@ -265,7 +265,14 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 		}
 		s.span.End()
 
-		st.log.LogAttrs(ctx, slog.LevelInfo, "session closed",
+		// A teardown with no RPC in flight, a dropped connection, logs
+		// under the Session's own span. The log bridge stamps the record's
+		// trace from the context, so the record and the attribute agree.
+		lctx := ctx
+		if traceID(ctx) == "" {
+			lctx = trace.ContextWithSpanContext(ctx, s.span.SpanContext())
+		}
+		st.log.LogAttrs(lctx, slog.LevelInfo, "session closed",
 			slog.String("session_id", s.ID),
 			slog.String("client_name", s.ClientName),
 			slog.Uint64("negotiated_version", uint64(s.NegotiatedVersion)),
@@ -274,7 +281,7 @@ func (st *sessionStore) close(ctx context.Context, s *Session, outcome, reason s
 			slog.String("reason", reason),
 			slog.String("end", end.String()),
 			slog.Float64("duration_ms", float64(dur.Microseconds())/1000),
-			slog.String("trace_id", traceIDOr(ctx, s.span.SpanContext())),
+			slog.String("trace_id", traceID(lctx)),
 		)
 	})
 	return s.released
@@ -344,16 +351,4 @@ func traceID(ctx context.Context) string {
 		return ""
 	}
 	return sc.TraceID().String()
-}
-
-// traceIDOr prefers the RPC's trace and falls back to the Session's own, so
-// a teardown with no RPC in flight (a dropped connection) still correlates.
-func traceIDOr(ctx context.Context, fallback trace.SpanContext) string {
-	if id := traceID(ctx); id != "" {
-		return id
-	}
-	if fallback.HasTraceID() {
-		return fallback.TraceID().String()
-	}
-	return ""
 }

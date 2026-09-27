@@ -660,6 +660,31 @@ Against `origin/main` `3e0adf6`, on the compose stack with the server image rebu
    `command.apply`'s. The story moves to `done` when that merges and a Loki line resolves in
    Tempo. Written up in `docs/feedback/AW-SRV-014-character-roster.md`.
 
+**§8 owed item 3 (2026-09-26), delivered** on `impl/aw-srv-014-apply-log-trace`:
+- **The fix.** `character bind applied` and `command applied` are logged under the
+  `command.apply` span's context. Their `trace_id` attribute is read from that same context, so
+  the record-level and attribute `trace_id`s agree.
+- **The test.** `TestLoop_LogsTheAppliedBind` wraps the loop's handler and asserts three things:
+  - each record's span is a recorded `command.apply` span;
+  - its trace is that span's trace;
+  - the attribute matches it.
+
+  It fails on the old code, where every record carried `sim.tick`'s span.
+
+The grep the feedback asked for found three more lines with the same fault. Each has a test that
+fails on the old code:
+- **`character despawned` at a linkdead expiry** (`AW-SRV-015`). The record and the attribute
+  agree, but both name the `sim.tick` trace that applied the expiry, and that trace is kept one
+  tick in a hundred. A tick that applies an expiry is now kept, as a content swap is
+  (`TestLoop_KeepsTheTickThatExpiresALinkdeadBody`).
+- **`session closed` on a dropped connection.** It logged with no trace context, with the
+  attribute falling back to the Session's span. It now logs under `session.lifetime`
+  (`TestSessionStore_DroppedCloseLogsUnderTheSessionSpan`).
+- **The Loader's `swap produced` and bounded-wait lines.** They logged with no context but
+  carried `content.load`'s `trace_id`. They now log under it (`TestLoader_LinesLogUnderContentLoad`).
+
+The Loki-to-Tempo check on the stack is architecture's, at §8.
+
 ## Open questions
 
 - **Resolved 2026-09-21 (Brian): `character.spawn_room` is `town/plaza`** for the dev content — a
