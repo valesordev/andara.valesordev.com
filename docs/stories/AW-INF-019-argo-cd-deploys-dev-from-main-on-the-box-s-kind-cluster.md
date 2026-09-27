@@ -4,7 +4,7 @@ title: Argo CD deploys dev from main on the box's kind cluster
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-INF-013, AW-INF-014]
 blocks: [AW-INF-021]

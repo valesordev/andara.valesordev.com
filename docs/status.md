@@ -2,15 +2,16 @@
 
 # Status — Andara's World
 
-69 stories — 6 review · 25 ready · 9 draft · 29 done
+69 stories — 1 in-progress · 5 review · 24 ready · 9 draft · 30 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
 
-  now    — nothing in flight
-  next   AW-INF-019  ready  Argo CD deploys dev from main on the box's kind cluster  (unblocks 1)
+  now    AW-INF-019  Argo CD deploys dev from main on the box's kind cluster
+         branch aw-inf-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
-  review AW-INF-013, AW-INF-014, AW-INF-008 — run the §8 checklist, then flip to done
+  next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
+  review AW-INF-014, AW-INF-008 — run the §8 checklist, then flip to done
   held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
