@@ -217,7 +217,7 @@ This story *is* the observability requirement. Cardinality it introduces: `job` 
   make observe-check ENV=dev
   # expect: ok up{…namespace="andara-dev"…} 1, ok andara_sessions_active, ok loki … trace_id=<id>,
   #         ok tempo trace <id> carries andara.game.v1.Game/OpenSession; exit 0
-  kubectl -n andara-dev delete pod andara-0 && make observe-check ENV=dev   # AC-6, within the restart
+  make observe-unavailable ENV=dev   # AC-6: scale to 0, the andara-dev result appears, scale to 1, it clears
   # expect: AndaraServerUnavailable  {namespace="andara-dev"} new, plus the standing
   #         {namespace="andara-prod"} from its absent() line until AW-INF-007 makes prod Ready (AC-6)
   ```
@@ -398,6 +398,18 @@ variables, run from `.local/box.env` and never printed.
 replaced faster than an absent series registers, so deletion couldn't show the result the criterion
 asks for. The rule has `for: 2m`, so a pod that's back within that window is correctly never
 alerted on.
+
+**The instrument is a target** (review of #130): `make observe-unavailable ENV=dev` scales to 0,
+polls the rule's expression to a deadline, restores the server whatever happened, polls until it
+clears, and fails if any other namespace moves. Run on the box:
+```
+observe-unavailable: before: AndaraServerUnavailable returns ['andara-prod']
+observe-unavailable: scaling statefulset/andara in andara-dev to 0 at 00:47:10Z
+observe-unavailable: ok     AndaraServerUnavailable names andara-dev at 00:49:11Z: ['andara-dev', 'andara-prod']
+observe-unavailable: scaling statefulset/andara in andara-dev back to 1
+observe-unavailable: ok     AndaraServerUnavailable clears andara-dev at 00:49:42Z: ['andara-prod']
+observe-unavailable: ok — AndaraServerUnavailable followed andara-dev's server down and back, and no other namespace moved
+```
 
 **Also seen:** `SnapshotStale` matched `andara-dev` on the pod that went through the broker bounces.
 It was right: #128.

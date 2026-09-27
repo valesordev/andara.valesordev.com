@@ -349,7 +349,8 @@ step is a `make` target.
 5. `make kafka-broker-bounce ENV=dev`: AC-5. Then AC-6's probe from the server pod.
 6. With `GRAFANA_CLOUD_READ_TOKEN` and the six URL/USER variables, `make observe-check ENV=dev`.
    That covers 008 ACs 1, 3 and 4, and this story's AC-9 Grafana Cloud half.
-7. Delete `andara-0` in `andara-dev`, then `make observe-check ENV=dev`: 008 AC-6 as amended. A new
+7. `make observe-unavailable ENV=dev`: 008 AC-6 as amended at the box session (scale to 0, not a
+   pod delete; the target polls to a deadline and restores the server). A new
    `andara-dev` result appears, and the standing `andara-prod` absence stays.
 8. After the next merge moves `:dev`, rerun `make helm-install ENV=dev`: 013 AC-7.
 
