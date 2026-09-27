@@ -17,8 +17,8 @@ chart wires up actually arrived:
 
 Then, informational and outside the exit status, every expression in files/alerts.yaml
 evaluated as an instant query against the same series, printed with the labels each result
-carries. That is AC-6's instrument: delete one environment's pod, run this, and the
-AndaraServerUnavailable line names that namespace and no other.
+carries. AC-6 itself is `make observe-unavailable ENV=dev`, which takes the server away
+and polls AndaraServerUnavailable here until it names that namespace and no other.
 
 Credentials come from the environment and nowhere else; nothing here prints them.
 

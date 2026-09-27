@@ -106,7 +106,7 @@ unavailable_count() {
 
 ready_since() {
   kubectl -n "$1" get pod andara-0 \
-    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime} {.status.containerStatuses[?(@.name=="server")].restartCount}'
+    -o jsonpath='{.status.conditions[?(@.type=="Ready")].status} {.status.conditions[?(@.type=="Ready")].lastTransitionTime} {.status.containerStatuses[?(@.name=="server")].restartCount}{"\n"}'
 }
 
 # Under-replicated partitions, counted by a broker other than the one that was lost.

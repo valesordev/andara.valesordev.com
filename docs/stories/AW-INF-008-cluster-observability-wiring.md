@@ -71,7 +71,9 @@ that "is the World healthy" is answerable without `kubectl exec`.
 5. **Given** `files/alerts.yaml` **when** `promtool check rules` and the compose Prometheus load it
    **then** both pass, and `AndaraServerUnavailable` still goes `pending` on `docker stop` of the compose
    server (the `AW-INF-003` verification, repeated).
-6. **Given** the chart installed and Ready in `andara-dev` **when** `andara-0` there is deleted **then**
+6. **Given** the chart installed and Ready in `andara-dev` **when** `andara` there is scaled to 0 until a
+   result appears, then back to 1 *(amended 2026-09-26 at the box session: was "`andara-0` there is
+   deleted", which the StatefulSet replaces faster than an absent series registers)* **then**
    the rule expressions, evaluated against the Grafana Cloud series with `promtool query
    instant`-equivalent calls, return a new result carrying `namespace="andara-dev"`, and no result
    for any namespace other than `andara-dev` and `andara-prod` appears or disappears across the
@@ -215,7 +217,7 @@ This story *is* the observability requirement. Cardinality it introduces: `job` 
   make observe-check ENV=dev
   # expect: ok up{…namespace="andara-dev"…} 1, ok andara_sessions_active, ok loki … trace_id=<id>,
   #         ok tempo trace <id> carries andara.game.v1.Game/OpenSession; exit 0
-  kubectl -n andara-dev delete pod andara-0 && make observe-check ENV=dev   # AC-6, within the restart
+  make observe-unavailable ENV=dev   # AC-6: scale to 0, the andara-dev result appears, scale to 1, it clears
   # expect: AndaraServerUnavailable  {namespace="andara-dev"} new, plus the standing
   #         {namespace="andara-prod"} from its absent() line until AW-INF-007 makes prod Ready (AC-6)
   ```
@@ -377,3 +379,37 @@ The run order for that session is in `AW-INF-014`'s §8 record, so the three sto
 - **Amends EPIC-07:** "This epic owns no stories of its own, by design" was true while the observed
   things were being built. The wiring to a backend nobody's story owned is exactly the gap that
   sentence said the epic would name; `AW-INF-008` and `AW-INF-009` are its first stories.
+
+## Box session — 2026-09-26 (with Brian): stays `review` on AC-2 (#80)
+
+`make observe-check ENV=dev` with Brian's Grafana Cloud read token and the six URL/USER
+variables, run from `.local/box.env` and never printed.
+
+| AC | Result |
+|----|--------|
+| 1 | **Pass.** `up{job="andara-server", namespace="andara-dev", cluster="solo7-local", pod="andara-0"} 1`, and `andara_sessions_active` carries the same labels |
+| 2 | **Owed, on #80.** `andara.state.v1`'s lag is now applied on `dev` (`AW-INF-018` AC-8), but the projector's Deployment still lacks the snapshot-store and Kafka-credential volumes, so `projectors.state.enabled=true` can't run on `dev` |
+| 3 | **Pass.** No `otlp log export failed` in the pod's first 6 minutes (booted 00:08:02Z, read at 00:14:21Z). The soak's trace `654735e3…` is in Tempo carrying `andara.game.v1.Game/OpenSession` |
+| 4 | **Pass.** Loki returned the `session opened` line for Session `7a9f7dfb…`, with its trace ID |
+| 6 | **Pass, with the instrument corrected (amended below).** A pod delete never showed a result: the StatefulSet's replacement was Ready well inside the ~80 s a missing series takes to register. Polling every ~12 s for 2.5 min after `kubectl delete pod andara-0` saw only the standing `andara-prod` result. With `kubectl -n andara-dev scale statefulset andara --replicas=0` at 00:06:40Z, `AndaraServerUnavailable` returned `namespace="andara-dev"` at 00:08:02Z beside `andara-prod`. After scaling back to 1, it cleared by 00:09:11Z. No other namespace appeared or disappeared, and `andara-prod`'s standing result was there before, during and after |
+
+**AC-6 amended (2026-09-26, box session):** "`andara-0` there is deleted" becomes "`andara` in
+`andara-dev` is scaled to 0 until a result appears, then back to 1". A deleted StatefulSet pod is
+replaced faster than an absent series registers, so deletion couldn't show the result the criterion
+asks for. The rule has `for: 2m`, so a pod that's back within that window is correctly never
+alerted on.
+
+**The instrument is a target** (review of #130): `make observe-unavailable ENV=dev` scales to 0,
+polls the rule's expression to a deadline, restores the server whatever happened, polls until it
+clears, and fails if any other namespace moves. Run on the box:
+```
+observe-unavailable: before: AndaraServerUnavailable returns ['andara-prod']
+observe-unavailable: scaling statefulset/andara in andara-dev to 0 at 00:47:10Z
+observe-unavailable: ok     AndaraServerUnavailable names andara-dev at 00:49:11Z: ['andara-dev', 'andara-prod']
+observe-unavailable: scaling statefulset/andara in andara-dev back to 1
+observe-unavailable: ok     AndaraServerUnavailable clears andara-dev at 00:49:42Z: ['andara-prod']
+observe-unavailable: ok — AndaraServerUnavailable followed andara-dev's server down and back, and no other namespace moved
+```
+
+**Also seen:** `SnapshotStale` matched `andara-dev` on the pod that went through the broker bounces.
+It was right: #128.

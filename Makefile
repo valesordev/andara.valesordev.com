@@ -56,7 +56,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
-        kind-platform stream-soak content-grammar-check observe-check scripts-test kafka-operator kafka-install kafka-broker-bounce
+        kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce
 
 ## help: print this target list
 help:
@@ -334,6 +334,10 @@ kafka-broker-bounce:
 ## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
 observe-check:
 	@$(PY) $(SCRIPTS)/observe_check.py "$(ENV)"
+
+## observe-unavailable: scale andara-dev's server to 0 and back, and assert AndaraServerUnavailable names andara-dev and clears, no other namespace moving (GRAFANA_CLOUD_* from the environment) — ENV=dev
+observe-unavailable:
+	@$(PY) $(SCRIPTS)/observe_unavailable.py "$(ENV)"
 
 ## stream-soak: hold a Subscribe through the edge for SOAK (default 5m), renewing the edge certificate mid-stream — ENV=<env> SOAK=<duration>
 stream-soak:

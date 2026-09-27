@@ -4,7 +4,7 @@ title: make topics-apply applies declared config drift to existing topics
 epic: EPIC-10
 component: infra
 type: bug
-status: review
+status: done
 size: S
 depends_on: [AW-INF-004]
 blocks: []
@@ -204,3 +204,28 @@ this story guards, so it's done only on CI's fresh runner. AC-8 is on the box.
 
 The story stays `review` until AC-8 is run on the box.
 
+## Box session and §8 — 2026-09-26: `done`
+
+**AC-8, on the box** (`kind-solo7`, `andara-dev`):
+```
+make topics-diff ANDARA_ENV=dev    # andara.state.v1: min.compaction.lag.ms is '0', declaration says '60000'  (exit 1)
+make topics-apply ANDARA_ENV=dev   # topics: altered andara.state.v1 min.compaction.lag.ms 0 -> 60000
+                                   # topics-apply: 8 topic(s) match deploy/kafka/topics.yaml (env=dev)
+make topics-diff ANDARA_ENV=dev    # no drift across 8 topic(s) (env=dev)  (exit 0)
+make topics-apply ANDARA_ENV=dev   # 8 topic(s) match — nothing altered
+```
+Raising a lag isn't destructive, so no `ALLOW_DATA_LOSS` was needed.
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | ACs 1–7 in the verification record and CI's `stack` step; AC-8 above |
+| Tests run in CI | yes | `scripts/tests/test_topics.py` in `make scripts-test`; the `stack` workflow's `andara.audit.v1` step |
+| `make check` | yes | clean |
+| Instrumentation | n/a | none added |
+| Config documented | yes | `ALLOW_DATA_LOSS` in `make help` and the compose README |
+| Migrations | yes | the target is the migration path for topic config; destructive changes are refused unless named |
+| Glossary | yes | no new domain term |
+| No `[ASSUMPTION]` | yes | none |
+
+The story-specific line holds: #112 closed #77, and `values.yaml`'s comment now names
+`make topics-apply ANDARA_ENV=<env>` in place of "operator step, not a make target".
