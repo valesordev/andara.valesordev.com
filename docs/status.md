@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-69 stories — 6 review · 24 ready · 9 draft · 30 done
+69 stories — 5 review · 24 ready · 9 draft · 31 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, infra, automation
@@ -10,7 +10,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   now    — nothing in flight
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
-  review AW-INF-014, AW-INF-008, AW-INF-019 — run the §8 checklist, then flip to done
+  review AW-INF-008, AW-INF-019 — run the §8 checklist, then flip to done
   held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests

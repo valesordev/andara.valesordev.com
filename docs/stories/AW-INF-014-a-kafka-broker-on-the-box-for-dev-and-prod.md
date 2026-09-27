@@ -4,7 +4,7 @@ title: A Kafka broker on the box for dev and prod
 epic: EPIC-10
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-INF-004, AW-INF-013]
 blocks: [AW-INF-007, AW-INF-015, AW-INF-019]
@@ -382,3 +382,32 @@ On `kind-solo7`, in the order above. Step 2 now applies the drift, because #77 l
 
 **DoD line:** the first `dev` install Ready on Kafka was `andara-0` at 23:53:46Z (helm revision 1),
 image `…:dev@sha256:09f35b1f…`.
+
+## AC-5 rerun and §8 — 2026-09-27: `done`
+
+**#129 fixed by #133** (implementation, `ea7f21b`). The liveness ping asked the brokers one at a
+time, and a deleted broker stays in metadata for about 14 s, so every ping spent its budget dialling
+the dead one. The tick source starved, and the producer's probe degraded the World. The
+bootstrap-Service lookup in the log was degraded mode's fresh seed-only client. `recordlog.Ping`
+now asks every discovered broker at once and takes the first answer.
+
+**AC-5 on the box.** `dev` runs `ea7f21b` through Argo CD (`AW-INF-019`): `andara-0` started
+01:51:45Z, `andara_build_info{commit="ea7f21b"}`. `make kafka-broker-bounce ENV=dev` ran 10 times
+in a row, from 01:52:15Z to 02:10:54Z. **10 of 10 passed.** Every run shows `andara-0 stayed Ready
+(restarts 0), logged no degradation, refused no Submit`, and the server logged 0
+`command log unreachable` and 0 `tick input starved` lines across the window. Before the fix, 2 of
+4 failed.
+
+| §8 item | Holds? | Evidence |
+|---------|--------|----------|
+| Every AC passes | yes | ACs 1–3, 7 and 8 in the 2026-09-24 records; ACs 4, 6 and 9 in the box session; AC-5 above |
+| Tests run in CI | yes | `helm-test`'s `test_kafka_on_the_box`; `k8s-dry [kafka]`; the box ACs are recorded, as the test plan says |
+| `make check` | yes | clean |
+| Instrumentation | yes | `andara_ingress_degraded`, `andara_ingress_submits_total{outcome}` and the `command log unreachable` line, read from the running server in AC-4 and AC-5 |
+| Config documented | yes | `deploy/helm/andara/README.md` (the broker); `values/dev.yaml` and `values/prod.yaml` |
+| Migrations | yes | the move from broker-free `dev` to Kafka is recorded; rollback is the values change |
+| Glossary | yes | no new domain term |
+| No `[ASSUMPTION]` | yes | none open |
+
+**Not this story's, and still open:** #128. The same 10 bounces left snapshot rounds failing on this
+pod (`boundary` 15, `timeout` 4, 0 complete, age 1162 s). That's `AW-SRV-006` code, for PM to triage.
