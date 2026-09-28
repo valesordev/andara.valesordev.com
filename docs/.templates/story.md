@@ -8,7 +8,7 @@ status: draft              # draft | ready | in-progress | review | done | block
 size: M                    # S | M | L  — L means "split it"
 depends_on: []
 blocks: []
-lane: implementation       # architecture (contracts, infra) | implementation (source)
+lane: implementation       # architecture (contracts) | sre (infra, ops) | implementation (source)
 risk: medium               # low | medium | high
 ---
 

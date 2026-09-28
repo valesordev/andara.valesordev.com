@@ -214,7 +214,7 @@ backlog:
 backlog-check:
 	@$(PY) $(SCRIPTS)/gen_backlog.py --check
 
-## status: regenerate docs/status.md — the two-lane development state, one screen
+## status: regenerate docs/status.md — each lane's development state, one screen
 status:
 	@$(PY) $(SCRIPTS)/gen_status.py
 

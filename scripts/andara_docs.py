@@ -22,11 +22,13 @@ COMPONENTS = {"SRV": "server", "CLI": "cli", "INF": "infra", "CLT": "client"}
 TYPES = ["feature", "infra", "spike", "chore", "bug"]
 STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
 SIZES = ["S", "M", "L"]
-# The lane a story belongs to: does it produce a contract, or the thing built to it?
-# This was `assignee` while two tools split the work. The split was never really about
-# who held the keyboard — it is about which kind of artifact the story produces, and
-# that distinction survives one agent doing both.
-LANES = ["architecture", "implementation"]
+# The lane a story belongs to: which role builds it (CLAUDE.md §2). It specifies the
+# contract (architecture), builds, ships, operates, or observes what runs to it (sre), or
+# is the thing built to it (implementation). This was `assignee` while two tools split
+# the work; the split was never about who held the keyboard but about which kind of
+# artifact the story produces. The one list of permitted values: gen_status.py refuses a
+# lane here that it has no view for (AW-INF-027).
+LANES = ["architecture", "sre", "implementation"]
 RISKS = ["low", "medium", "high"]
 
 # (key, kind, allowed) — order is the required frontmatter order.

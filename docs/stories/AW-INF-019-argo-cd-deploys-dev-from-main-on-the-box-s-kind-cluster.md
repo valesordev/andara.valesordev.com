@@ -8,7 +8,7 @@ status: review
 size: M
 depends_on: [AW-INF-013, AW-INF-014]
 blocks: [AW-INF-021]
-lane: architecture
+lane: sre
 risk: medium
 ---
 

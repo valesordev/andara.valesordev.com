@@ -8,7 +8,7 @@ status: draft
 size: S
 depends_on: [AW-INF-001, AW-INF-027]
 blocks: []
-lane: architecture
+lane: sre
 risk: low
 ---
 

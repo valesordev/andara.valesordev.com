@@ -2,29 +2,35 @@
 
 # Status — Andara's World
 
-73 stories — 3 review · 25 ready · 12 draft · 33 done
+73 stories — 4 review · 24 ready · 12 draft · 33 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
-## Architecture lane — contracts, specs, ADRs, infra, automation
+## Architecture lane — contracts, specs, ADRs, the §8 review
 
   now    — nothing in flight
-  next   AW-INF-027  ready  The story tooling knows the SRE lane  (unblocks 1)
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
-  review AW-INF-008, AW-INF-019 — run the §8 checklist, then flip to done
-  held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
+  review AW-SRV-019, AW-INF-008, AW-INF-019, AW-INF-027 — run the §8 checklist, then flip to done
+  held   1 ready, blocked: AW-INF-007
+
+## SRE lane — build, ship, operate, observe
+
+  now    — nothing in flight
+  next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
+  review AW-SRV-019, AW-INF-008, +2 more — verify §7 instrumentation, record it in the §8 record
+  held   3 ready, blocked: AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
   next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
-  review AW-SRV-019 — run the §8 checklist, then flip to done
+  review AW-SRV-019 — awaiting §8
   held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-019  .
-              16 more, attached to stories neither lane has reached
+              16 more, attached to stories no lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

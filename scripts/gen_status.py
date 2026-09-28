@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""Regenerate docs/status.md — the two-lane development state, one screen.
+"""Regenerate docs/status.md — the development state of each lane, one screen.
 
 The question this answers is not "what is in the backlog" (BACKLOG.md answers that).
 It is "what do I prompt next in each lane, and what am I holding up by not deciding".
@@ -21,7 +21,7 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from andara_docs import ADR_DIR, REPO, load_dir, load_stories, die  # noqa: E402
+from andara_docs import ADR_DIR, LANES, REPO, load_dir, load_stories, die  # noqa: E402
 
 STATUS = os.path.join(REPO, "docs", "status.md")
 MAX_LINES = 50
@@ -36,12 +36,37 @@ HEADER = (
 # unmerged work is how two lanes deadlock.
 SATISFIED = ("done", "review")
 
-# One agent works both lanes. They stay separate in this report because they are still
-# two different prompts: write the contract, or build to it.
+# One section per lane, in CLAUDE.md §2's order: (lane, heading, scope, branch prefix). The
+# lane names who builds a story; its prefix is that role's branch prefix (§4). LANES in
+# andara_docs.py is the one list of permitted values, and render() refuses a lane this table
+# has no row for, so a lane the validator accepts can't silently drop out of this report.
 LANE_VIEWS = [
-    ("architecture", "Architecture", "contracts, specs, ADRs, infra, automation"),
-    ("implementation", "Implementation", "server and cli source, tests"),
+    ("architecture", "Architecture", "contracts, specs, ADRs, the §8 review", "arch/"),
+    ("sre", "SRE", "build, ship, operate, observe", "sre/"),
+    ("implementation", "Implementation", "server and cli source, tests", "impl/"),
 ]
+
+# A story at `review` is routed by who acts on it, not by its lane (AW-INF-027). §8 is split:
+# SRE verifies §7 instrumentation for the components §7 covers, and architecture runs the
+# rest and moves the story to `done`. The builder's own section only says it is waiting. The
+# frontmatter can't say whether SRE has recorded its check, so a story stays on SRE's line
+# until it leaves `review`.
+INSTRUMENTED = ("server", "cli", "infra")
+REVIEW_PROMPTS = {
+    "architecture": "run the §8 checklist, then flip to done",
+    "sre": "verify §7 instrumentation, record it in the §8 record",
+}
+AWAITING = "awaiting §8"
+
+
+def reviewing(lane, stories):
+    """The stories at `review` that lane's section lists, and the prompt it gives them."""
+    at = [d for d in stories if d.get("status") == "review"]
+    if lane == "architecture":
+        return at, REVIEW_PROMPTS[lane]
+    if lane == "sre":
+        return [d for d in at if d.get("component") in INSTRUMENTED], REVIEW_PROMPTS[lane]
+    return [d for d in at if d.get("lane") == lane], AWAITING
 
 # Only list items. ADR-0008 mentions the tag in prose ("the largest `[NEEDS BRIAN]` in the
 # repo"); pulling that in would render half a sentence as if it were a question.
@@ -85,12 +110,30 @@ def needs_brian(body):
     return out
 
 
+def review_line(ids, prompt, width):
+    """IDs then the prompt, within width. The prompt is the action, so it is never cut:
+    when the IDs don't fit, the tail of the list becomes `+N more` (PR #146 review)."""
+    tail = " — " + prompt
+    for n in range(len(ids), 0, -1):
+        rest = len(ids) - n
+        head = ", ".join(ids[:n] + (["+%d more" % rest] if rest else []))
+        if len(head) + len(tail) <= width:
+            return head + tail
+    return "%d stories%s" % (len(ids), tail)
+
+
 def branch_for(path, story_id):
     m = SLUG_RE.match(os.path.basename(path))
     return "%s-%s" % (story_id.lower(), m.group(1)) if m else story_id.lower()
 
 
 def render():
+    unviewed = [lane for lane in LANES if lane not in {v[0] for v in LANE_VIEWS}]
+    if unviewed:
+        die(
+            "status: lane '%s' is permitted by andara_docs.LANES but has no row in "
+            "gen_status.LANE_VIEWS; add one" % unviewed[0]
+        )
     stories = []
     for path, d, _, body in load_stories():
         d = dict(d)
@@ -121,15 +164,16 @@ def render():
     out.append("Regenerate with `make status`; `make check` fails if this file is stale.\n")
 
     surfaced = []
-    for lane, heading, scope in LANE_VIEWS:
+    for lane, heading, scope, prefix in LANE_VIEWS:
         mine = [d for d in stories if d.get("lane") == lane]
         now = sorted([d for d in mine if d.get("status") == "in-progress"], key=rank)
-        review = sorted([d for d in mine if d.get("status") == "review"], key=rank)
+        review, prompt = reviewing(lane, stories)
+        review = sorted(review, key=rank)
         ready = sorted([d for d in mine if d.get("status") == "ready" and satisfied(d)], key=rank)
         held = [d for d in mine if d.get("status") == "ready" and not satisfied(d)]
 
         # Falling back to a draft used to be architecture-only, because the tool that held
-        # the implementation lane could not groom. One agent can, so both lanes fall back —
+        # the implementation lane could not groom. Every role can, so every lane falls back —
         # the status word on the `next` line already says which verb applies.
         if not ready:
             ready = sorted([d for d in mine if d.get("status") == "draft"], key=rank)[:1]
@@ -138,13 +182,13 @@ def render():
 
         for d in now[:1]:
             out.append("  now    %s  %s\n" % (d["id"], fit(d["title"], 79)))
-            out.append("         branch %s\n" % branch_for(d["_path"], d["id"]))
+            out.append("         branch %s%s\n" % (prefix, branch_for(d["_path"], d["id"])))
             surfaced.append(d)
         if not now:
             out.append("  now    — nothing in flight\n")
 
         # The status word is the prompt: `ready` means assign it, `draft` means groom it.
-        # Without it the reader has to infer which of the two lanes' verbs applies.
+        # Without it the reader has to infer which verb applies.
         for d in ready[:2]:
             gates = len(d.get("blocks", []))
             tag = "  (unblocks %d)" % gates if gates else ""
@@ -158,8 +202,7 @@ def render():
             out.append("  next   — nothing groomed and unblocked\n")
 
         if review:
-            ids = ", ".join(d["id"] for d in review)
-            out.append("  review %s\n" % fit("%s — run the §8 checklist, then flip to done" % ids, 84))
+            out.append("  review %s\n" % review_line([d["id"] for d in review], prompt, 91))
             surfaced.extend(review)
         if held:
             ids = ", ".join(d["id"] for d in sorted(held, key=rank))
@@ -195,10 +238,10 @@ def render():
         rest = total_open - len(pending[:9])
         if rest > 0:
             out.append(
-                "  %-11s %d more, attached to stories neither lane has reached\n" % ("", rest)
+                "  %-11s %d more, attached to stories no lane has reached\n" % ("", rest)
             )
     else:
-        out.append("  none on the stories above — the rest are on stories neither lane has reached\n")
+        out.append("  none on the stories above — the rest are on stories no lane has reached\n")
 
     out.append(
         "\nLegend: `now` is in flight · `next` is groomed with every dependency merged ·\n"

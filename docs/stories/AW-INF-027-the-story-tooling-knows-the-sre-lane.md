@@ -4,11 +4,11 @@ title: The story tooling knows the SRE lane
 epic: EPIC-01
 component: infra
 type: chore
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-INF-026]
-lane: architecture
+lane: sre
 risk: low
 ---
 
@@ -182,3 +182,40 @@ the tooling emits no runtime signals. The story is `ready`.
    and AW-INF-008 would then have moved their §8 prompt into SRE's section and out of
    architecture's. That was already wrong for implementation's stories, whose §8 prompt appeared
    under Implementation. The table under Interface contract routes it, and AC-6 tests it.
+
+## Verification record (SRE, 2026-09-28)
+
+On `sre/aw-inf-027-the-story-tooling-knows-the-sre-lane`. The first commit added `sre` to `LANES`
+and flipped this story's `lane` and `status` together, so every commit on the branch validates.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `Validator.test_each_lane_is_accepted` (a story of each lane); `make validate-stories` on the tree: 73 valid, 14 of them `lane: sre` | pass |
+| 2 | `Validator.test_any_other_lane_is_refused_naming_the_file_and_the_three`, for `pm` and `ops`: exit 1, naming the file and `permitted values: architecture, sre, implementation` | pass |
+| 3 | `Status.test_three_sections_in_charter_order`, with the three headings pinned exactly; `docs/status.md` as regenerated | pass |
+| 4 | `Status.test_now_line_carries_the_lanes_branch_prefix`, for `arch/`, `sre/` and `impl/`. `docs/status.md` shows `branch sre/aw-inf-027-the-story-tooling-knows-the-sre-lane` | pass |
+| 5 | Each listed story's `grep '^lane:'` reads `lane: sre`. Against the merge base, the 13 re-laned files differ only on `lane`, and this file differs on `lane`, `status`, and this record | pass |
+| 6 | `Status.test_review_is_routed_by_who_acts`, with the table's three prompts asserted verbatim. `Status.test_sre_review_line_is_the_section_7_scope`: a `client` story at `review` is on architecture's line and not on SRE's | pass |
+| 7 | `Scaffold.test_a_new_story_names_all_three_lanes` runs `new_story.main()` against a throwaway directory | pass |
+
+Also asserted: a lane in `LANES` with no row in `LANE_VIEWS` fails the generator, naming it
+(`Status.test_a_permitted_lane_with_no_view_fails_the_generator`).
+
+- **Width:** the `review` line's fit widened from 84 to 91 columns, the same as `held` (100 with its
+  9-column prefix). At 84, SRE's prompt was cut to `record it in the §8…`.
+- **`make check`:** every target in `make check-targets` exits 0, after `make bootstrap`
+  installed `buf`, `kubeconform` and `promtool` in this clone.
+- **Template:** `docs/.templates/story.md` isn't on SRE's writable list. The ownership hook allowed
+  the one-line comment edit, which AC-7 requires.
+- **Re-lane:** Brian approved the 13 re-lane edits on 2026-09-28, after auto mode's classifier
+  stopped the first attempt.
+
+**Review of #146 (Codex, 2026-09-28):**
+- **Fixed: the `review` line never cuts the prompt.** With four stories at `review`, SRE's line
+  read `record it in t…`. `review_line` now shortens the ID list to `+N more` instead, and the
+  prompt stays verbatim, as AC-6's table requires. Test: `Status.test_review_prompt_is_never_cut`.
+- **Fixed: the documented lane model.** `README.md`, `CONTRIBUTING.md`, the glossary's **Story**
+  entry and `make help`'s `status` line named two lanes. They now name three.
+- **Routed to PM, not changed:** `next` isn't filtered to the active sprint. That was already so
+  in every lane before this story, and the contract doesn't cover selection. The options are in
+  `docs/feedback/AW-INF-027-status-sprint-scope.md`.

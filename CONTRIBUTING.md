@@ -1,7 +1,7 @@
 # Contributing to Andara's World
 
 Thanks for looking. This repository is the engine, toolchain, and design record for
-Andara's World, a server-authoritative MUD. It is built in the open, in two lanes, with an
+Andara's World, a server-authoritative MUD. It is built in the open, in three lanes, with an
 unusual amount of the work done by Claude Code against a written charter — read
 [`CLAUDE.md`](CLAUDE.md) first; it is the operating manual for this repo, human or not.
 

@@ -8,7 +8,7 @@ status: ready
 size: S
 depends_on: [AW-INF-003, AW-SRV-002, AW-SRV-007]
 blocks: []
-lane: architecture
+lane: sre
 risk: medium
 ---
 
