@@ -1,0 +1,22 @@
+{
+  "source": "automate.bashburn.com@1208b9b-dirty",
+  "target": "andaras-world",
+  "files": {
+    ".claude/skills/arch-start-sprint/SKILL.md": "a567794d910c615493d621a70019c67b16cda8c1fb3b0e6bbcf8f7931c27f07d",
+    ".claude/skills/impl-start-sprint/SKILL.md": "eac477147fff8e82f313686ae97b58da5071441fae79a28dff8bc95093e8e8aa",
+    ".claude/skills/pm-close-sprint/SKILL.md": "a2e2139dc855bf748fb2a9a1d74ad0d02eeb2737e6d6d2fabf66d9acbda894d0",
+    ".claude/skills/pm-start-sprint/SKILL.md": "5ae20d9520c845f1256322c660553a7f748a982c494382a91cac8076cd8bd335",
+    ".claude/skills/role/SKILL.md": "73c33b3e7b9395756ebb7d0af584decab6296f620096fecd143405854b8c0c5b",
+    ".claude/skills/sre-start-sprint/SKILL.md": "548c2e721b6540a31458f37a21012168dbe5c4096e158d3e91a32afb1d97fb8d",
+    ".claude/bin/role": "dcfb079eb6a4398f8125882fd060e582aecf9984a892e0967c140c012b08866a",
+    ".claude/roles/_repo.md": "4031cd838672d82ff79647b74af194c26e4b930f287468e1f1810491bbbc082d",
+    ".claude/roles/architecture.md": "9c9ade08c4624aa0515264f6152d669d781cb7b29ce083e609bc60a4c7cc1254",
+    ".claude/roles/implementation.md": "837d7990f6a5df3c7231e3042d435fd7d1cdc10f9bb0183c9a71896716af2091",
+    ".claude/roles/pm.md": "2a96717fe64b22d9c04740cf1bdf05dade3cb11a305083da97905d8472ce06c2",
+    ".claude/roles/sre.md": "5eb760428e4a65a5f4ac2373895766f5f9a4848b034dc2777268bc0303ceedf5"
+  },
+  "hook_commands": [
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-tool-use",
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
+  ]
+}

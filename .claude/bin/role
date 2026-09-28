@@ -1,0 +1,343 @@
+#!/usr/bin/env python3
+"""Per-session role control for Claude Code.
+
+Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/role.
+Vendored into target repos as .claude/bin/role by `make install`. Don't edit it there.
+
+Role definitions live in <repo>/.claude/roles/<role>.md: YAML-ish frontmatter
+(role, aliases, branch_prefix, writes, skills) followed by the role charter.
+`writes` entries are `dir/` prefixes, exact paths, or globs; `!entry` excludes.
+<repo>/.claude/roles/_repo.md holds repo-wide keys (generated).
+
+Session state is kept in <git-common-dir>/claude-roles/<session_id>, so it is
+per session, shared across worktrees, and never committed.
+
+Commands:
+  role list
+  role set <role|none> <session_id>
+  role show <session_id>
+  role require <role> <session_id>
+  role clear <session_id>
+  role hook-session-start      (stdin: SessionStart hook JSON)
+  role hook-pre-tool-use       (stdin: PreToolUse hook JSON)
+"""
+from __future__ import annotations
+
+import fnmatch
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+UNRESTRICTED = "none"
+SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+
+
+# --------------------------------------------------------------------------- repo
+
+def _git(cwd: Path, *args: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(cwd), *args], capture_output=True, text=True, check=True
+    ).stdout.strip()
+
+
+def _existing_dir(p: Path) -> Path:
+    p = p if p.is_dir() else p.parent
+    while not p.exists():
+        p = p.parent
+    return p
+
+
+def repo_root(start: Path) -> Path | None:
+    try:
+        return Path(_git(_existing_dir(start), "rev-parse", "--show-toplevel"))
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return None
+
+
+def state_dir(root: Path) -> Path:
+    common = Path(_git(root, "rev-parse", "--git-common-dir"))
+    if not common.is_absolute():
+        common = (root / common).resolve()
+    return common / "claude-roles"
+
+
+# ---------------------------------------------------------------------- roles
+
+def parse_frontmatter(text: str) -> tuple[dict, str]:
+    """Minimal parser: `key: value` and `key: [a, b]` lines only."""
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.find("\n---", 4)
+    if end < 0:
+        return {}, text
+    meta: dict = {}
+    for line in text[4:end].splitlines():
+        line = line.split(" #", 1)[0].rstrip()
+        if not line.strip() or ":" not in line:
+            continue
+        key, val = (s.strip() for s in line.split(":", 1))
+        if val.startswith("[") and val.endswith("]"):
+            meta[key] = [v.strip().strip("'\"") for v in val[1:-1].split(",") if v.strip()]
+        else:
+            meta[key] = val.strip("'\"")
+    body = text[end + 4 :].lstrip("\n")
+    return meta, body
+
+
+class Roles:
+    def __init__(self, root: Path):
+        self.root = root
+        self.dir = root / ".claude" / "roles"
+        self.roles: dict[str, tuple[dict, str]] = {}
+        self.alias: dict[str, str] = {}
+        self.repo: dict = {}
+        if not self.dir.is_dir():
+            return
+        for f in sorted(self.dir.glob("*.md")):
+            meta, body = parse_frontmatter(f.read_text())
+            if f.name.startswith("_"):
+                if f.name == "_repo.md":
+                    self.repo = meta
+                continue
+            name = meta.get("role", f.stem)
+            self.roles[name] = (meta, body)
+            self.alias[name] = name
+            for a in meta.get("aliases", []):
+                self.alias[a] = name
+
+    def resolve(self, name: str) -> str | None:
+        if name == UNRESTRICTED:
+            return UNRESTRICTED
+        return self.alias.get(name)
+
+    def owners(self, rel: str) -> list[str]:
+        return [n for n, (m, _) in self.roles.items() if matches(rel, m.get("writes", []))]
+
+    def names(self) -> str:
+        return " | ".join([*self.roles, UNRESTRICTED])
+
+
+def _match_one(rel: str, p: str) -> bool:
+    if p.endswith("/"):
+        return rel.startswith(p)
+    return rel == p or fnmatch.fnmatchcase(rel, p)
+
+
+def matches(rel: str, patterns: list[str]) -> bool:
+    """Prefix (`dir/`), exact, or glob patterns; `!pattern` excludes and wins."""
+    if any(_match_one(rel, p[1:]) for p in patterns if p.startswith("!")):
+        return False
+    return any(_match_one(rel, p) for p in patterns if not p.startswith("!"))
+
+
+# ---------------------------------------------------------------------- state
+
+def _check_session(sid: str) -> str:
+    if not SESSION_RE.match(sid or ""):
+        sys.exit(f"role: invalid session id {sid!r}")
+    return sid
+
+
+def get_role(root: Path, sid: str) -> str | None:
+    f = state_dir(root) / _check_session(sid)
+    return f.read_text().strip() if f.is_file() else None
+
+
+def put_role(root: Path, sid: str, role: str | None) -> None:
+    d = state_dir(root)
+    f = d / _check_session(sid)
+    if role is None:
+        f.unlink(missing_ok=True)
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    f.write_text(role + "\n")
+
+
+def charter(roles: Roles, role: str) -> str:
+    if role == UNRESTRICTED:
+        return (
+            "Role: none (unrestricted). No role charter applies; path ownership is "
+            "not enforced. The repo CLAUDE.md still binds."
+        )
+    meta, body = roles.roles[role]
+    skills = " ".join(f"/{s}" for s in meta.get("skills", [])) or "(none)"
+    return "\n".join(
+        [
+            f"Active role: {role}",
+            f"Branch prefix: {meta.get('branch_prefix', '(unset)')}",
+            f"Writable paths: {', '.join(meta.get('writes', [])) or '(none)'}",
+            f"Role skills: {skills}",
+            "Edits outside the writable paths are blocked or require Brian's approval.",
+            "",
+            body.rstrip(),
+        ]
+    )
+
+
+# ------------------------------------------------------------------- commands
+
+def _root_or_die() -> Path:
+    root = repo_root(Path.cwd())
+    if root is None:
+        sys.exit("role: not inside a git repository")
+    return root
+
+
+def cmd_list(_: list[str]) -> int:
+    roles = Roles(_root_or_die())
+    for name, (meta, _) in roles.roles.items():
+        al = ", ".join(meta.get("aliases", []))
+        print(f"{name:16} {meta.get('branch_prefix', ''):8} {('aliases: ' + al) if al else ''}".rstrip())
+    print(f"{UNRESTRICTED:16} unrestricted session, no ownership enforcement")
+    return 0
+
+
+def cmd_set(args: list[str]) -> int:
+    if len(args) != 2 or not args[0].strip():
+        root = _root_or_die()
+        print(f"usage: role set <{Roles(root).names()}> <session_id>", file=sys.stderr)
+        return 2
+    root = _root_or_die()
+    roles = Roles(root)
+    role = roles.resolve(args[0].strip().lower())
+    if role is None:
+        print(f"role: unknown role {args[0]!r}. Choose one of: {roles.names()}", file=sys.stderr)
+        return 1
+    prev = get_role(root, args[1])
+    put_role(root, args[1], role)
+    if prev and prev != role:
+        print(f"(role changed: {prev} -> {role})\n")
+    print(charter(roles, role))
+    return 0
+
+
+def cmd_show(args: list[str]) -> int:
+    if len(args) != 1:
+        print("usage: role show <session_id>", file=sys.stderr)
+        return 2
+    print(get_role(_root_or_die(), args[0]) or "unset")
+    return 0
+
+
+def cmd_require(args: list[str]) -> int:
+    if len(args) != 2:
+        print("usage: role require <role> <session_id>", file=sys.stderr)
+        return 2
+    root = _root_or_die()
+    want = Roles(root).resolve(args[0]) or args[0]
+    have = get_role(root, args[1])
+    if have != want:
+        print(f"role: this skill needs role '{want}', session role is '{have or 'unset'}'. "
+              f"Run /role {want} first.", file=sys.stderr)
+        return 1
+    return 0
+
+
+def cmd_clear(args: list[str]) -> int:
+    if len(args) != 1:
+        print("usage: role clear <session_id>", file=sys.stderr)
+        return 2
+    put_role(_root_or_die(), args[0], None)
+    print("role cleared")
+    return 0
+
+
+# ---------------------------------------------------------------------- hooks
+
+def _hook_input() -> dict:
+    try:
+        return json.load(sys.stdin)
+    except json.JSONDecodeError:
+        return {}
+
+
+def hook_session_start(_: list[str]) -> int:
+    data = _hook_input()
+    root = repo_root(Path(data.get("cwd") or os.getcwd()))
+    if root is None:
+        return 0
+    roles = Roles(root)
+    if not roles.roles:
+        return 0
+    role = get_role(root, data.get("session_id", ""))
+    if role:
+        # resume / compact / clear with a role already set: re-inject the charter.
+        print(charter(roles, role))
+    else:
+        print(
+            "No role is set for this session. Before doing any work, ask Brian which role "
+            f"this session is ({roles.names()}) and have him run /role <name>. "
+            "Don't choose a role yourself. Edits inside the repo are blocked until a role is set."
+        )
+    return 0
+
+
+def _decision(kind: str, reason: str) -> int:
+    print(json.dumps({"hookSpecificOutput": {
+        "hookEventName": "PreToolUse",
+        "permissionDecision": kind,
+        "permissionDecisionReason": reason,
+    }}))
+    return 0
+
+
+def hook_pre_tool_use(_: list[str]) -> int:
+    data = _hook_input()
+    ti = data.get("tool_input") or {}
+    target = ti.get("file_path") or ti.get("notebook_path")
+    if not target:
+        return 0
+    cwd = Path(data.get("cwd") or os.getcwd())
+    path = Path(target) if os.path.isabs(target) else cwd / target
+    path = Path(os.path.normpath(path))
+    root = repo_root(path)
+    if root is None:
+        return 0  # outside any repo: not ours to police
+    roles = Roles(root)
+    if not roles.roles:
+        return 0  # repo doesn't use roles
+    rel = path.relative_to(root).as_posix()
+
+    if matches(rel, roles.repo.get("generated", [])):
+        return _decision("deny", f"{rel} is generated. Regenerate it with the make target "
+                                 "(e.g. `make backlog status`); never hand-edit it.")
+
+    role = get_role(root, data.get("session_id", ""))
+    if role is None:
+        return _decision("deny", f"No role set for this session. Ask Brian to run "
+                                 f"/role <{roles.names()}> before editing {rel}.")
+    if role == UNRESTRICTED:
+        return 0
+    if role in roles.owners(rel):
+        return 0
+    others = roles.owners(rel)
+    if others:
+        return _decision("deny", f"{rel} belongs to the {'/'.join(others)} role, not {role}. "
+                                 "Stop and flag it, or route it through docs/feedback/.")
+    return _decision("ask", f"{rel} isn't owned by any role. The {role} role needs Brian's "
+                            "explicit approval to edit it.")
+
+
+COMMANDS = {
+    "list": cmd_list,
+    "set": cmd_set,
+    "show": cmd_show,
+    "require": cmd_require,
+    "clear": cmd_clear,
+    "hook-session-start": hook_session_start,
+    "hook-pre-tool-use": hook_pre_tool_use,
+}
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] not in COMMANDS:
+        print(__doc__, file=sys.stderr)
+        return 2
+    return COMMANDS[argv[0]](argv[1:])
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
