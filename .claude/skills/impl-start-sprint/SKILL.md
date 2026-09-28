@@ -2,7 +2,7 @@
 name: impl-start-sprint
 description: Work the active sprint as implementation. Finishes carried-over in-progress stories first, then takes the implementation backlog in order, one fresh impl/ branch per story. Run after architecture's contract-review PR merges; it also resumes a sprint already under way.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
 ---
 
 # Implementation: work the active sprint
@@ -12,8 +12,9 @@ allowed-tools: Bash(.claude/bin/role:*)
 0. Run `.claude/bin/role require implementation ${CLAUDE_SESSION_ID}`. If it
    fails, stop and tell Brian to run `/role implementation` first.
 1. Run `git fetch origin` and work from `origin/main` (repo §11 session start).
-2. Find the one `docs/sprints/SPRINT-*.md` with `Status: active`. If there's
-   none, PM hasn't planned one yet: stop and say so.
+2. Run `.claude/bin/sprint-state`. Unless it reports `state: active`, stop and
+   report its output: PM hasn't planned a sprint yet, or the sprint files need
+   PM's attention. The active sprint is `current`, `docs/sprints/<current>.md`.
 3. Read the session-start documents in the order repo §11 gives them.
 4. If every story you could pick is still `draft`, architecture's contract
    review hasn't merged. Stop and say so.

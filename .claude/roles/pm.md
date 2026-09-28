@@ -34,7 +34,14 @@ grooms, and plans the next.
   to him per repo §6.
 
 ## The sprint-boundary session
-Do these in order, all on one `pm/sprint-NN-<slug>` branch, as one PR:
+Sprint numbers come from `.claude/bin/sprint-state` (`current`, `next`), never
+from memory or examples. Two entry points:
+
+- `/pm-close-sprint` when a sprint is `active`: steps 1–5 below, one PR.
+- `/pm-start-sprint` when none is active (`first`, `closed`, or `planned`):
+  steps 3–5 only, carrying over from the last close-out.
+
+Do these in order, all on one `pm/sprint-<next>-<slug>` branch, as one PR:
 
 1. **Close out the active sprint** by editing its `## Close-out` section:
    - Each story's final `status` on `origin/main`, with the merging PR
@@ -50,7 +57,7 @@ Do these in order, all on one `pm/sprint-NN-<slug>` branch, as one PR:
    step that fails is a close-out finding. Never write around it.
 3. **Groom** the stories the next sprint needs. Pull existing `ready` stories
    as-is. Write new ones only where the roadmap needs them.
-4. **Plan the next sprint** at `docs/sprints/SPRINT-NN.md` (format below).
+4. **Plan the next sprint** at `docs/sprints/SPRINT-<next>.md` (format below).
    Include only stories whose dependencies are `done`, are ahead of them in
    the same sprint, or are carried over. At least one sprint goal must be
    demoable: a milestone gate from `docs/roadmap.md`, or a slice of one, that
@@ -58,7 +65,7 @@ Do these in order, all on one `pm/sprint-NN-<slug>` branch, as one PR:
 5. `make backlog status check`, then open the PR. The other roles don't start
    until it merges.
 
-**First sprint (no sprint closed yet):** skip steps 1 and 2. SPRINT-01's
+**First sprint (`sprint-state` reports `first`):** skip steps 1 and 2. SPRINT-01's
 carryover section is a snapshot of `origin/main`: stories `in-progress`,
 stories waiting at `review` (they go on architecture's §8 list), and any
 status defects you find. Its demo can build on the existing M1 gate,

@@ -1,56 +1,70 @@
 ---
 name: pm-start-sprint
-description: Start SPRINT-01, the first sprint, when no sprint file exists yet. Snapshots origin/main into carryover, picks a demo goal, grooms only what it needs, and opens the pm/sprint-01 PR. Not for later sprints; use pm-close-sprint for those.
+description: Plan and start the next sprint when no sprint is active. Works for SPRINT-01 (no sprint files yet), after a sprint was closed without a successor, or to activate a sprint left at planned. If a sprint is still active, it stops and points to /pm-close-sprint, which closes it and plans the next in one PR.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
 ---
 
-# PM: start the first sprint
-
-This is the first sprint, so there's nothing to close out and no demo to write
-for a previous sprint. Follow the "First sprint" note in your role file.
+# PM: start the next sprint
 
 ## Preflight
 
-0. Run `.claude/bin/role require pm ${CLAUDE_SESSION_ID}`. If it
-   fails, stop and tell Brian to run `/role pm` first.
+0. Run `.claude/bin/role require pm ${CLAUDE_SESSION_ID}`. If it fails, stop
+   and tell Brian to run `/role pm` first.
 1. Run `git fetch origin` and work from `origin/main` (repo §11 session start).
-2. List `docs/sprints/`. If any `SPRINT-*.md` already exists, stop. Tell Brian
-   this skill is only for SPRINT-01 and that `/pm-close-sprint` is the right one.
-3. Read the session-start documents in the order repo §11 gives them.
+2. Run `.claude/bin/sprint-state`. Its `state:` decides what happens next:
 
-## Steps
+   | state | Meaning | Do |
+   |---|---|---|
+   | `first` | no sprint files | plan **SPRINT-01**: *First sprint* below |
+   | `closed` | last sprint closed, none planned | plan `next`: *After a closed sprint* below |
+   | `planned` | `next` exists at `Status: planned` | *Activate a planned sprint* below |
+   | `active` | `current` is still running | stop: tell Brian `current` must be closed first and `/pm-close-sprint` closes it and plans `next` in one PR |
+   | `invalid` / error | files contradict each other, or no `origin/main` | stop and report the output verbatim; don't repair sprint files |
 
-1. **Carryover snapshot.** Snapshot `origin/main` into SPRINT-01's carryover:
-   every story `in-progress`, every story at `review` (these become
-   architecture's §8 list), and any status defects you find. Use the sources in
-   your role file's "Status reporting" section. Don't infer anything from prose.
-2. **Demo goal.** Choose the milestone gate from `docs/roadmap.md`, or the slice
-   of one, that is the nearest thing an operator can actually run once the
-   carryover and the fewest new stories land. Say why you chose it, and say what
-   it is not. It can build on the existing M1 gate, `make stack-play`.
-3. **Groom** only what that goal needs. Pull `ready` stories as they are. Write
-   new stories in full at `draft`, and list them under "Contract review" for
-   architecture. A story that needs a decision no ADR covers stays out of the
-   sprint, with its question in `docs/feedback/`.
-4. **Size.** Keep the sprint small enough to finish: the §8 queue plus one
-   demoable slice, not everything that's ready.
+3. Check for an open PM PR (`gh pr list --state open --json headRefName,url --jq '.[] | select(.headRefName | startswith("pm/"))'`). If
+   one already plans `next`, stop and report its URL rather than planning twice.
+4. Read the session-start documents in the order repo §11 gives them.
 
-## Checkpoint: stop before writing
+## First sprint (`state: first`)
 
-Before you write any file, send Brian one message containing:
+Follow the "First sprint" note in your role file. There's nothing to close and
+no previous demo.
 
-- the demo goal you chose, why, and what it is not
-- the story list per role, in pickup order
-- any game-design questions (up to 3, per repo §6)
+- **CARRYOVER**: snapshot `origin/main`: every story `in-progress`, every
+  story at `review` (they go on architecture's §8 list), and any status defects
+  you find. Use the sources in your role file's "Status reporting" section, and
+  don't infer anything from prose.
+- **DEFECTS**: none.
 
-Wait for his answer, then write.
+## After a closed sprint (`state: closed`)
 
-## Write
+`current` is the closed sprint, **PREV**.
 
-5. Write `docs/sprints/SPRINT-01.md` in the role file's sprint format, with
-   `Status: active`.
-6. Run `make backlog status check`. Fix what it reports in files you own. If it
-   fails on something you don't own, report it and don't touch it.
-7. Commit on `pm/sprint-01-<slug>` with the `Sprint: SPRINT-01` trailer, push,
-   and open the PR. Report the PR URL. The other roles don't start until it merges.
+- **CARRYOVER**: take PREV's `## Close-out` carryover list, then check each
+  story against its frontmatter on `origin/main` (`make status`). Anything
+  merged to `done` since the close-out drops out. Anything the close-out
+  missed that is still `in-progress` or `review` is added, flagged as a
+  status finding.
+- **DEFECTS**: every `§9 defect → AW-INF-NNN` in `docs/sprints/<PREV>-demo.md`.
+- If PREV has no `## Close-out` content or no demo file, it wasn't closed
+  properly. Stop and tell Brian; closing is `/pm-close-sprint`'s job.
+
+## Activate a planned sprint (`state: planned`)
+
+`next` already exists at `Status: planned`. Re-check it against `origin/main`
+instead of replanning from scratch: drop stories that are now `done`, add
+carryover the plan missed, and confirm every `depends_on` still holds. Then
+continue at the checkpoint in the planning procedure, and set
+`Status: active` when you write.
+
+## Plan
+
+Read `.claude/skills/pm-start-sprint/references/plan-sprint.md` and follow it
+with NEXT = `next`, CARRYOVER, and DEFECTS from above.
+
+## Ship
+
+On one `pm/<next-lower>-<slug>` branch (e.g. `pm/sprint-02-combat-loop`),
+commit with the `Sprint: <NEXT>` trailer, push, and open the PR. Report the PR
+URL. The other roles don't start until it merges.
