@@ -2,23 +2,22 @@
 
 # Status — Andara's World
 
-73 stories — 1 in-progress · 3 review · 24 ready · 12 draft · 33 done
+73 stories — 4 review · 24 ready · 12 draft · 33 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, the §8 review
 
   now    — nothing in flight
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
-  next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
-  review AW-SRV-019, AW-INF-008, AW-INF-019 — run the §8 checklist, then flip to done
-  held   4 ready, blocked: AW-INF-007, AW-INF-010, AW-INF-011, AW-INF-012
+  review AW-SRV-019, AW-INF-008, AW-INF-019, AW-INF-027 — run the §8 checklist, then flip to done
+  held   1 ready, blocked: AW-INF-007
 
 ## SRE lane — build, ship, operate, observe
 
-  now    AW-INF-027  The story tooling knows the SRE lane
-         branch sre/aw-inf-027-the-story-tooling-knows-the-sre-lane
-  next   — nothing groomed and unblocked
-  review AW-SRV-019, AW-INF-008, AW-INF-019 — verify §7 instrumentation, record it in the §8 record
+  now    — nothing in flight
+  next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
+  review AW-SRV-019, AW-INF-008, AW-INF-019, AW-INF-027 — verify §7 instrumentation, record it in t…
+  held   3 ready, blocked: AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
 

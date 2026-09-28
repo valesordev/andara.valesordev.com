@@ -8,7 +8,7 @@ status: draft
 size: M
 depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019]
 blocks: [AW-INF-022, AW-INF-023]
-lane: architecture
+lane: sre
 risk: medium
 ---
 
