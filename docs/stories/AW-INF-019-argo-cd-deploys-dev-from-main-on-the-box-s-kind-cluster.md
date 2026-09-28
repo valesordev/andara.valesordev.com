@@ -505,3 +505,19 @@ Two findings, both fixed in this pass:
 The PVC `26b813ca…`, the StatefulSet `9f17ec90…` and Kafka `432d3198…` were the same objects after
 every step. The round trip didn't restart the World once, where the verification record expected
 two rolls.
+
+## §8 instrumentation check (2026-09-28, SRE)
+
+The story's Observability section names two signals:
+
+| Signal | Observed |
+|--------|----------|
+| The targets' progress lines | `make argocd-status ENV=dev`, 2026-09-28: `sync Synced main@0819105d0365`, `health Healthy`, `image …andara-server:dev@sha256:d7afcc86…`, `built from 0819105d0365…`. The stall reason and exit codes were observed at the 2026-09-27 box session (AC-8) |
+| `argocd_app_info{sync_status,health_status}` | **Not emitted to Grafana Cloud.** An instant query returns no series. The story scopes it as "scraped when `AW-INF-008`'s observability is wired, and is otherwise out of scope". `AW-INF-008` scrapes the Andara workloads by annotation, and Argo CD's metrics endpoint isn't annotated. So a `dev` stuck mid-sync is visible only through `make argocd-status`, as the story says |
+
+`andara_build_info{namespace="andara-dev"}` in Grafana Cloud reads `commit="0819105"`, which is
+`main`'s head, so the delivery loop is observable end to end without the Argo CD series.
+
+The instrumentation item is **satisfied** as the story scopes it. `argocd_app_info` isn't owed
+by this story. If an alert on a stuck sync is wanted, it's `AW-INF-009`'s, with a scrape of Argo CD
+added then. AC-4 is unchanged and still waits on a fixture-only merge (SPRINT-03 SRE item 3).

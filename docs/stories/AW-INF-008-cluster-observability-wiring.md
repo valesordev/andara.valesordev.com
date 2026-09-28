@@ -413,3 +413,20 @@ observe-unavailable: ok — AndaraServerUnavailable followed andara-dev's server
 
 **Also seen:** `SnapshotStale` matched `andara-dev` on the pod that went through the broker bounces.
 It was right: #128.
+
+## §8 instrumentation check (2026-09-28, SRE): AC-2 still owed
+
+`make observe-check ENV=dev` with Brian's Grafana Cloud read credentials, sourced and never
+printed. `dev` was on `main` `0819105`, with pod `andara-0` 12 minutes old.
+
+| AC | Result today |
+|----|--------------|
+| 1 | **Pass.** `up{job="andara-server", namespace="andara-dev", cluster="solo7-local", pod="andara-0"} 1`, and `andara_sessions_active` carries the same labels |
+| 2 | **Owed**, on `AW-INF-025` (#80). The projector runs nowhere, so there's no `job="andara-projector-state"` series |
+| 3, 4 | **Not re-observed today.** No Session had opened on the 12-minute-old pod, so there was no `session opened` line or trace to fetch. Opening one needs an operator login on `dev`, which this check didn't use. The 2026-09-26 box session's pass stands: trace `654735e3…`, Session `7a9f7dfb…`. `observe-check` exits 1 in that case, which is the target failing loudly as it should, not a regression |
+| 6 | Unchanged. The rules listing shows only `AndaraServerUnavailable`'s standing `andara-prod` result, and every other rule is empty |
+
+The instrumentation item is satisfied for the server. **The story stays at `review` on AC-2 alone.**
+Its carrier is SRE's `AW-INF-025` (SPRINT-03 SRE items 4 and 5). #143 is a risk to that carrier:
+a projector that bootstraps from a round halts on the first tick. So `AW-INF-025` either closes
+with #143 fixed, or with the projector enabled from zero, and architecture rules on which.
