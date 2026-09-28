@@ -95,6 +95,22 @@ alternative is the Content Repository, but then this repository's `make check` c
 guide in step with `andara-cli`. Please confirm the location and add the path to §2's
 architecture row.
 
+## For SRE (added 2026-09-28)
+
+The SRE role arrived after these questions were written (#139). AW-INF-020, AW-INF-021, AW-INF-022
+and AW-INF-024 are now SRE's to build (`AW-INF-027`), so SRE should weigh in before architecture
+decides the items it will operate:
+
+- **Item 1:** which carrier SRE can run and roll back on `dev`, and later on `prod`: a `PreSync`
+  hook Job, the server's own boot path, or a `dir` bootstrap. Include what each one does to a
+  first install and to a failed roll.
+- **Item 2:** if `dev` needs fresh topics, what `make` target does the cut-over, and what its
+  rollback to `dir` is.
+- **Item 4:** whether GitHub's runners can reach `dev`'s edge at all. If they can't, option (a) is
+  out.
+
+Architecture still decides all three. Write SRE's answers under this heading.
+
 ## Brian's answers (2026-09-26)
 
 1. **Reaching a new Zone: a `goto` command for Builders**, now `AW-SRV-036`. Until the base content
