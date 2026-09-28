@@ -4,7 +4,7 @@ title: Builders download andara-cli without a Go toolchain
 epic: EPIC-06
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-INF-013]
 blocks: [AW-INF-022, AW-INF-023]
@@ -46,6 +46,9 @@ can compile, validate, and publish content without cloning or building the game.
 - Code signing and notarization for macOS. Gatekeeper's quarantine prompt is documented in the guide
   (`AW-INF-023`) instead.
 - `andara-server` and `andara-projector` binaries. They ship as images.
+- Bundling `andara.core`. The binary embeds it at build time (`AW-CLI-002`, from
+  `content/core/VERSION`), so the archive carries no core file and needs no install step.
+  Checking the embedded core against `dev`'s is `AW-INF-022`'s.
 
 ## Acceptance criteria
 
@@ -66,8 +69,8 @@ can compile, validate, and publish content without cloning or building the game.
    and nothing is published.
 7. **Given** the `linux/amd64` binary on a machine with no Go toolchain **when**
    `andara-cli content fmt --check --path docs/specs/content-language/v1/corpus/valid/town` runs
-   **then** it exits 0. The binary is statically linked (`CGO_ENABLED=0`). `fmt` needs no cached
-   core pack, so it runs with no server either.
+   **then** it exits 0. The binary is statically linked (`CGO_ENABLED=0`). `fmt` needs no core
+   pack, so it runs with no server either.
 
 ## Interface contract
 
@@ -115,7 +118,24 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` Attaching the binaries to this repository's releases is acceptable. This
-  repository is public, so a Builder downloads them with no access to it. A Builder never needs to
-  read or write the source.
+- **Resolved 2026-09-28 (architecture): the binaries attach to this repository's releases.**
+  `valesordev/andara.valesordev.com` is public, so a Builder downloads them with no access to it.
 - `[ASSUMPTION]` Five platforms. Brian works on Linux. Dropping Windows is a one-line change.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in `docs/feedback/AW-INF-020-cli-release.md` and the story. The story
+is `ready`.
+
+1. **Core ships inside the binary, not beside it** (`docs/feedback/AW-INF-021-dev-content-store.md`,
+   item 4). SRE's version of (b) had the archive carry the compiled core, and `andara-cli version`
+   print it. Embedding and the version line are Go source under `cmd/`, which is
+   implementation's, so both are in `AW-CLI-002`. This story builds whatever `cmd/andara-cli` is
+   at the commit, and gains no dependency on `AW-CLI-002`. Once `AW-CLI-002` has merged, AC-1's
+   `andara-cli version` also prints `andara.core@<N>`. That line is `AW-CLI-002`'s AC, and this
+   story's AC-3 matches only `andara-cli <version> (<commit>)`, so it holds before and after.
+2. **AC-7 keeps `fmt`.** It's the one content command that needs neither a server nor a core. That's
+   what makes it a clean "no Go toolchain" check before `AW-CLI-002` lands. `AW-INF-022`'s `check`
+   runs `validate` with the downloaded binary, which covers the embedded core end to end.
+3. **The public-repository assumption is resolved.** It's public (`gh repo view`, 2026-09-28).
+   The five-platform assumption doesn't touch the contract, and it stays.

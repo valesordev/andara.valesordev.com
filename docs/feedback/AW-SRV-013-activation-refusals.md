@@ -32,3 +32,13 @@ demo reads it at every step. Please confirm `AW-CLI-003` carries it.
 **When a Zone is deleted, the Characters in it go back to Purgatory.** Deletion stays refused for
 now, so this changes nothing in `AW-SRV-013`. It's the evacuation policy the later deletion story
 needs, and it answers SPRINT-02's game-design question 3.
+
+## Architecture's contract review (2026-09-28)
+
+1. **Adopted.** `AW-SRV-013` AC-14 refuses `zone_removed`, `spawn_room_removed`, and `core_version`
+   before the pointer moves: `FAILED_PRECONDITION`, with an `ActivationRefusal` detail naming the
+   subjects (`admin.proto`). `override` doesn't bypass them. `AW-CLI-003` prints the reason and the
+   subjects.
+2. **Confirmed, and added.** `AW-CLI-003` didn't carry `server info`, and no command in `admin/cli/`
+   implements it. It's now in `AW-CLI-003`'s scope as `andara-cli server info`, over
+   `GetServerInfo`, printing `content` one pack per line.

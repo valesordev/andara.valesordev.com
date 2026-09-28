@@ -4,7 +4,7 @@ title: The Builder's Guide — from no access to a live Zone on dev
 epic: EPIC-06
 component: infra
 type: infra
-status: draft
+status: blocked
 size: M
 depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
@@ -37,17 +37,22 @@ live on `dev` and back, so that I spend my time writing the World, not working o
 ## Scope
 
 ### In scope
-The guide, at `docs/builders/` (`[ASSUMPTION]`, item 5 in `docs/feedback/AW-INF-021-dev-content-store.md`), in these sections:
+The guide, at `docs/builders/` (decided 2026-09-28, item 5 in
+`docs/feedback/AW-INF-021-dev-content-store.md`), in these sections:
 
 1. **What a Builder does here.** Packs, versions, and the Active Pointer in the Builder's words.
    Publish is one person and activation is two. What content can express today: Zones, Rooms,
    Exits, Components on Rooms and Zones, and Templates extending `andara.core`. What waits:
    Behaviors (`AW-SRV-016`), Items and NPCs in play (M4).
 2. **Getting access.** What to ask an Operator for: an Account with `builder`, a pack
-   (`AW-SRV-035`), and the Content Repository. The Operator's side of each request is written as the
-   `andara-cli` commands the Operator runs.
+   (`AW-SRV-035`), the Content Repository, and a place on the tailnet. `dev`'s edge resolves only
+   inside Brian's tailnet (SRE, 2026-09-28), so a Builder who can't reach it can write and
+   `validate` but can't publish. The Operator's side of each request is written as the commands the
+   Operator runs. After a `make world-reset`, the Builder Account and its grants are re-created the
+   same way (`AW-INF-021`).
 3. **Installing `andara-cli`.** The `cli-dev` download, checksum, and first login to `dev`
-   (`AW-INF-020`). macOS's quarantine prompt.
+   (`AW-INF-020`). macOS's quarantine prompt. The core the binary carries (`andara-cli version`),
+   and what a `core_version_mismatch` after a core bump asks of the Builder (`AW-INF-022` AC-8).
 4. **Your first Zone.** A tutorial: clone the Content Repository, copy `packs/example`, add a Room,
    `fmt`, `validate`, open a pull request, publish, have it approved, activate, see it in
    `server info`, walk it with `andara-cli play`, change it, and roll it back.
@@ -88,9 +93,10 @@ Also in scope:
 2. **Given** a Component type added to the server's closed table **when** `make check` runs without
    `make builder-reference` **then** it fails with `builder-reference: stale; run make
    builder-reference`.
-3. **Given** a person with no clone of this repository, access to the Content Repository, and only
-   the guide **when** they follow sections 2–4 against `dev` **then** they publish, get approval
-   for, activate, walk, and roll back a Zone of their own. The verification record has the
+3. **Given** a person with no clone of this repository, access to the Content Repository and the
+   tailnet, and only the guide **when** they follow sections 2–4 against `dev` **then** they
+   publish, get approval for, activate, walk, and roll back a Zone of their own. Until `dev` has a
+   public edge, that person is Brian. The verification record has the
    transcript and names each point where they needed anything the guide didn't say. There must be
    none at close.
 4. **Given** section 4 **when** it's read **then** every step is a product command
@@ -105,8 +111,7 @@ Also in scope:
 
 ## Interface contract
 
-- Location: `docs/builders/README.md` (the entry point), with one file per section above
-  (`[ASSUMPTION]`).
+- Location: `docs/builders/README.md` (the entry point), with one file per section above.
 - `make builder-reference`: `## builder-reference: regenerate the Builder's Guide reference tables
   from the server's Direction and Component tables, andara.core, and errors.md`.
 - `make guide-check`: `## guide-check: every andara-cli command in the Builder's Guide exists,
@@ -144,6 +149,45 @@ CLAUDE.md §8, plus AC-3's transcript in the verification record.
    build they published as a Builder, audited as a self-approval. It's temporary, until others
    build. The contract change to `AW-SRV-013` and `AW-CLI-003` is in
    `docs/feedback/AW-SRV-013-operator-self-approval.md`.
-3. `[ASSUMPTION]` The guide lives in this public repository, where architecture reviews it with the
-   specs it links to. Item 5 in `docs/feedback/AW-INF-021-dev-content-store.md` asks architecture to confirm that and to name `docs/builders/`
-   in CLAUDE.md §2's ownership table.
+3. **Resolved 2026-09-28 (architecture): the guide lives in `docs/builders/` in this public
+   repository.** Brian adds the path to CLAUDE.md §2's architecture row and to the architecture
+   charter's writable paths upstream (item 5 in `docs/feedback/AW-INF-021-dev-content-store.md`).
+4. **For PM: the story's tooling isn't architecture's to build.** See Blocked by.
+
+## Blocked by
+
+Three things, none of them another story's code:
+
+1. **Brian: `docs/builders/` isn't writable by any role yet.** CLAUDE.md §2's architecture row and
+   the architecture charter's writable paths (installed from automate.bashburn.com) both need it.
+2. **PM: `make builder-reference` and `make guide-check` are SRE's,** since they live in
+   `Makefile` and `scripts/`. Architecture can't write either, and can't commit to an SRE branch.
+3. **PM: the Component table has no source outside the code.** Section 7's Component types come
+   from `sim.ComponentTypes()`, the server-defined registry (`semantics.md`). Reading that is
+   implementation's. The Directions (glossary), the core Templates (`content/core/`) and the
+   codes (`errors.md`) can be read from docs.
+
+The split architecture recommends, for PM to write:
+- an implementation story for `andara-cli content reference --output json`, which prints the
+  Direction set, the Component types with their fields, the embedded core's Templates with their
+  chains, and every diagnostic code with its severity. It's useful to a Builder offline in its own
+  right, and it's the one source `builder-reference` reads;
+- an SRE story for `make builder-reference` (renders that JSON into section 7) and
+  `make guide-check`, both in `make check`.
+
+This story then depends on both, and architecture writes only `docs/builders/`. It stays last in
+the sprint either way, so the split costs no order.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's review is in `docs/feedback/AW-INF-021-dev-content-store.md`: no change to Observability, plus
+the tailnet finding. The story is `blocked` on the three items above. None of them affects the
+guide's content contract.
+
+1. **Location decided:** `docs/builders/` (item 5).
+2. **The tailnet is part of getting access.** SRE found `dev`'s edge is tailnet-only, so section 2
+   covers it, and AC-3's reader is Brian until `dev` has a public edge.
+3. **Core bumps and `world-reset` get a line each,** in sections 2 and 3. Both are things a Builder
+   meets on `dev` that the guide didn't mention.
+4. **The tooling moves out** to the stories PM writes (Blocked by, 2 and 3). The guide's ACs 1 and
+   2 stand. They name targets that other lanes build.

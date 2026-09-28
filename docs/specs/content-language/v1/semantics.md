@@ -115,8 +115,10 @@ pack andara.core                   // the core pack requires nothing; it is the 
 ```
 
 `requires andara.core@N` becomes `ContentVersion.core_version` and is what turns version skew into
-a legible error instead of a mystery (ADR-0010 decision 8). Compiling against a cache holding a
-different version — or no cache — is `core_version_mismatch` naming both numbers.
+a legible error instead of a mystery (ADR-0010 decision 8). The compiler looks `N` up in the core
+`andara-cli` embeds (numbered by `content/core/VERSION`), then in the cache. Finding it in neither is
+`core_version_mismatch` naming both numbers. *(Amended 2026-09-28, ADR-0004: core's version comes
+from the build, so `andara.core@N` is the same bytes in every environment and offline.)*
 
 **Order is not meaning.** Neither the order of files in the pack nor the order of declarations
 within a file affects the compiled output: names resolve across the whole pack, a Template may

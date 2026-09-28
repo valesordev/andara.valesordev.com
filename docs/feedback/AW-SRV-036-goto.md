@@ -26,3 +26,12 @@ Story: `AW-SRV-036` (`draft`).
 - **A successful `goto` isn't audited.** Only the denial is (`auth.Authorizer`). A privileged
   teleport is a Game-Master-class power in waiting. Whether a successful `goto` writes an audit
   record is your call. If it does, it's `andara_privileged_actions_total{action="goto"}`.
+
+## Architecture's answers (contract review, 2026-09-28)
+
+- **`usage` is dropped.** AC-5 uses `missing_argument` and `invalid_argument`, with
+  `usage: goto <zone>/<room>` as the detail. The pre-log code set doesn't change.
+- **A successful `goto` isn't audited.** The `LoggedCommand` is the durable record, with actor,
+  Session and trace. Revisit when `goto` reaches `game_master`, or can target another Entity.
+- **New pre-seed pair:** `{stage="validate", code="unknown_zone"}` on
+  `andara_command_rejected_total`.

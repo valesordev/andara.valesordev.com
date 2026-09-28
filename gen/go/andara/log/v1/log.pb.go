@@ -136,6 +136,7 @@ type LoggedCommand struct {
 	//	*LoggedCommand_UnbindCharacter
 	//	*LoggedCommand_ContentSwap
 	//	*LoggedCommand_MarkLinkdead
+	//	*LoggedCommand_Goto
 	Command       isLoggedCommand_Command `protobuf_oneof:"command"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -283,6 +284,15 @@ func (x *LoggedCommand) GetMarkLinkdead() *MarkLinkdead {
 	return nil
 }
 
+func (x *LoggedCommand) GetGoto() *Goto {
+	if x != nil {
+		if x, ok := x.Command.(*LoggedCommand_Goto); ok {
+			return x.Goto
+		}
+	}
+	return nil
+}
+
 type isLoggedCommand_Command interface {
 	isLoggedCommand_Command()
 }
@@ -316,6 +326,10 @@ type LoggedCommand_MarkLinkdead struct {
 	MarkLinkdead *MarkLinkdead `protobuf:"bytes,18,opt,name=mark_linkdead,json=markLinkdead,proto3,oneof"`
 }
 
+type LoggedCommand_Goto struct {
+	Goto *Goto `protobuf:"bytes,19,opt,name=goto,proto3,oneof"`
+}
+
 func (*LoggedCommand_Look) isLoggedCommand_Command() {}
 
 func (*LoggedCommand_Move) isLoggedCommand_Command() {}
@@ -329,6 +343,8 @@ func (*LoggedCommand_UnbindCharacter) isLoggedCommand_Command() {}
 func (*LoggedCommand_ContentSwap) isLoggedCommand_Command() {}
 
 func (*LoggedCommand_MarkLinkdead) isLoggedCommand_Command() {}
+
+func (*LoggedCommand_Goto) isLoggedCommand_Command() {}
 
 type Look struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -416,6 +432,66 @@ func (x *Move) GetDirection() string {
 	return ""
 }
 
+// A Builder's jump to a Room by ID (AW-SRV-036). Applied in the actor's
+// Zone, like Move: the parser resolves "<zone>/<room>" or "<room>" (the
+// actor's current Zone, read from the Session's Binding) into both fields, so
+// apply never depends on where the Gateway thought the actor was. Validate
+// checks the target against the World in effect at the tick it applies. A
+// target in another Zone leaves through an Arrive with an empty
+// from_direction, exactly as a cross-Zone Move does, so a swap that removes
+// the Room before the Arrive applies lands it at that Zone's fallback.
+type Goto struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TargetZoneId  string                 `protobuf:"bytes,1,opt,name=target_zone_id,json=targetZoneId,proto3" json:"target_zone_id,omitempty"`
+	TargetRoomId  string                 `protobuf:"bytes,2,opt,name=target_room_id,json=targetRoomId,proto3" json:"target_room_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Goto) Reset() {
+	*x = Goto{}
+	mi := &file_andara_log_v1_log_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Goto) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Goto) ProtoMessage() {}
+
+func (x *Goto) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_log_v1_log_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Goto.ProtoReflect.Descriptor instead.
+func (*Goto) Descriptor() ([]byte, []int) {
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *Goto) GetTargetZoneId() string {
+	if x != nil {
+		return x.TargetZoneId
+	}
+	return ""
+}
+
+func (x *Goto) GetTargetRoomId() string {
+	if x != nil {
+		return x.TargetRoomId
+	}
+	return ""
+}
+
 // The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The
 // source Zone's tick removed the Entity from its own state and produced this
 // to the target Zone's partition; the target's tick places it. It is never a
@@ -445,7 +521,7 @@ type Arrive struct {
 
 func (x *Arrive) Reset() {
 	*x = Arrive{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[3]
+	mi := &file_andara_log_v1_log_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -457,7 +533,7 @@ func (x *Arrive) String() string {
 func (*Arrive) ProtoMessage() {}
 
 func (x *Arrive) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[3]
+	mi := &file_andara_log_v1_log_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -470,7 +546,7 @@ func (x *Arrive) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Arrive.ProtoReflect.Descriptor instead.
 func (*Arrive) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{3}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *Arrive) GetRoomId() string {
@@ -531,7 +607,7 @@ type BindCharacter struct {
 
 func (x *BindCharacter) Reset() {
 	*x = BindCharacter{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[4]
+	mi := &file_andara_log_v1_log_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -543,7 +619,7 @@ func (x *BindCharacter) String() string {
 func (*BindCharacter) ProtoMessage() {}
 
 func (x *BindCharacter) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[4]
+	mi := &file_andara_log_v1_log_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -556,7 +632,7 @@ func (x *BindCharacter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use BindCharacter.ProtoReflect.Descriptor instead.
 func (*BindCharacter) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{4}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *BindCharacter) GetCharacterId() string {
@@ -602,7 +678,7 @@ type UnbindCharacter struct {
 
 func (x *UnbindCharacter) Reset() {
 	*x = UnbindCharacter{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[5]
+	mi := &file_andara_log_v1_log_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -614,7 +690,7 @@ func (x *UnbindCharacter) String() string {
 func (*UnbindCharacter) ProtoMessage() {}
 
 func (x *UnbindCharacter) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[5]
+	mi := &file_andara_log_v1_log_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -627,7 +703,7 @@ func (x *UnbindCharacter) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use UnbindCharacter.ProtoReflect.Descriptor instead.
 func (*UnbindCharacter) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{5}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *UnbindCharacter) GetCharacterId() string {
@@ -678,7 +754,7 @@ type MarkLinkdead struct {
 
 func (x *MarkLinkdead) Reset() {
 	*x = MarkLinkdead{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[6]
+	mi := &file_andara_log_v1_log_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -690,7 +766,7 @@ func (x *MarkLinkdead) String() string {
 func (*MarkLinkdead) ProtoMessage() {}
 
 func (x *MarkLinkdead) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[6]
+	mi := &file_andara_log_v1_log_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -703,7 +779,7 @@ func (x *MarkLinkdead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MarkLinkdead.ProtoReflect.Descriptor instead.
 func (*MarkLinkdead) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{6}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MarkLinkdead) GetCharacterId() string {
@@ -803,7 +879,7 @@ type ContentSwap struct {
 
 func (x *ContentSwap) Reset() {
 	*x = ContentSwap{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[7]
+	mi := &file_andara_log_v1_log_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -815,7 +891,7 @@ func (x *ContentSwap) String() string {
 func (*ContentSwap) ProtoMessage() {}
 
 func (x *ContentSwap) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[7]
+	mi := &file_andara_log_v1_log_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -828,7 +904,7 @@ func (x *ContentSwap) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ContentSwap.ProtoReflect.Descriptor instead.
 func (*ContentSwap) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{7}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *ContentSwap) GetPackId() string {
@@ -882,7 +958,7 @@ type Entity struct {
 
 func (x *Entity) Reset() {
 	*x = Entity{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[8]
+	mi := &file_andara_log_v1_log_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -894,7 +970,7 @@ func (x *Entity) String() string {
 func (*Entity) ProtoMessage() {}
 
 func (x *Entity) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[8]
+	mi := &file_andara_log_v1_log_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -907,7 +983,7 @@ func (x *Entity) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Entity.ProtoReflect.Descriptor instead.
 func (*Entity) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{8}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *Entity) GetId() string {
@@ -969,7 +1045,7 @@ type Event struct {
 
 func (x *Event) Reset() {
 	*x = Event{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[9]
+	mi := &file_andara_log_v1_log_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -981,7 +1057,7 @@ func (x *Event) String() string {
 func (*Event) ProtoMessage() {}
 
 func (x *Event) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[9]
+	mi := &file_andara_log_v1_log_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -994,7 +1070,7 @@ func (x *Event) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Event.ProtoReflect.Descriptor instead.
 func (*Event) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{9}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Event) GetEventId() uint64 {
@@ -1054,7 +1130,7 @@ type Scope struct {
 
 func (x *Scope) Reset() {
 	*x = Scope{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[10]
+	mi := &file_andara_log_v1_log_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1066,7 +1142,7 @@ func (x *Scope) String() string {
 func (*Scope) ProtoMessage() {}
 
 func (x *Scope) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[10]
+	mi := &file_andara_log_v1_log_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1079,7 +1155,7 @@ func (x *Scope) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Scope.ProtoReflect.Descriptor instead.
 func (*Scope) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{10}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Scope) GetRoomZoneId() string {
@@ -1133,7 +1209,7 @@ type TickCompleted struct {
 
 func (x *TickCompleted) Reset() {
 	*x = TickCompleted{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[11]
+	mi := &file_andara_log_v1_log_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1145,7 +1221,7 @@ func (x *TickCompleted) String() string {
 func (*TickCompleted) ProtoMessage() {}
 
 func (x *TickCompleted) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[11]
+	mi := &file_andara_log_v1_log_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1158,7 +1234,7 @@ func (x *TickCompleted) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TickCompleted.ProtoReflect.Descriptor instead.
 func (*TickCompleted) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{11}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *TickCompleted) GetTick() uint64 {
@@ -1213,7 +1289,7 @@ type PartitionOffset struct {
 
 func (x *PartitionOffset) Reset() {
 	*x = PartitionOffset{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[12]
+	mi := &file_andara_log_v1_log_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1225,7 +1301,7 @@ func (x *PartitionOffset) String() string {
 func (*PartitionOffset) ProtoMessage() {}
 
 func (x *PartitionOffset) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[12]
+	mi := &file_andara_log_v1_log_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1238,7 +1314,7 @@ func (x *PartitionOffset) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PartitionOffset.ProtoReflect.Descriptor instead.
 func (*PartitionOffset) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{12}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *PartitionOffset) GetPartition() int32 {
@@ -1290,7 +1366,7 @@ type SnapshotWritten struct {
 
 func (x *SnapshotWritten) Reset() {
 	*x = SnapshotWritten{}
-	mi := &file_andara_log_v1_log_proto_msgTypes[13]
+	mi := &file_andara_log_v1_log_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1302,7 +1378,7 @@ func (x *SnapshotWritten) String() string {
 func (*SnapshotWritten) ProtoMessage() {}
 
 func (x *SnapshotWritten) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_log_v1_log_proto_msgTypes[13]
+	mi := &file_andara_log_v1_log_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1315,7 +1391,7 @@ func (x *SnapshotWritten) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SnapshotWritten.ProtoReflect.Descriptor instead.
 func (*SnapshotWritten) Descriptor() ([]byte, []int) {
-	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{13}
+	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SnapshotWritten) GetZoneId() string {
@@ -1371,7 +1447,7 @@ var File_andara_log_v1_log_proto protoreflect.FileDescriptor
 
 const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\n" +
-	"\x17andara/log/v1/log.proto\x12\randara.log.v1\x1a\x1candara/content/v1/zone.proto\"\xfa\x04\n" +
+	"\x17andara/log/v1/log.proto\x12\randara.log.v1\x1a\x1candara/content/v1/zone.proto\"\xa5\x05\n" +
 	"\rLoggedCommand\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x19\n" +
 	"\bactor_id\x18\x02 \x01(\tR\aactorId\x12\x1d\n" +
@@ -1388,11 +1464,15 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\x0ebind_character\x18\x0f \x01(\v2\x1c.andara.log.v1.BindCharacterH\x00R\rbindCharacter\x12K\n" +
 	"\x10unbind_character\x18\x10 \x01(\v2\x1e.andara.log.v1.UnbindCharacterH\x00R\x0funbindCharacter\x12?\n" +
 	"\fcontent_swap\x18\x11 \x01(\v2\x1a.andara.log.v1.ContentSwapH\x00R\vcontentSwap\x12B\n" +
-	"\rmark_linkdead\x18\x12 \x01(\v2\x1b.andara.log.v1.MarkLinkdeadH\x00R\fmarkLinkdeadB\t\n" +
+	"\rmark_linkdead\x18\x12 \x01(\v2\x1b.andara.log.v1.MarkLinkdeadH\x00R\fmarkLinkdead\x12)\n" +
+	"\x04goto\x18\x13 \x01(\v2\x13.andara.log.v1.GotoH\x00R\x04gotoB\t\n" +
 	"\acommand\"\x06\n" +
 	"\x04Look\"$\n" +
 	"\x04Move\x12\x1c\n" +
-	"\tdirection\x18\x01 \x01(\tR\tdirection\"\xc3\x01\n" +
+	"\tdirection\x18\x01 \x01(\tR\tdirection\"R\n" +
+	"\x04Goto\x12$\n" +
+	"\x0etarget_zone_id\x18\x01 \x01(\tR\ftargetZoneId\x12$\n" +
+	"\x0etarget_room_id\x18\x02 \x01(\tR\ftargetRoomId\"\xc3\x01\n" +
 	"\x06Arrive\x12\x17\n" +
 	"\aroom_id\x18\x01 \x01(\tR\x06roomId\x12%\n" +
 	"\x0efrom_direction\x18\x02 \x01(\tR\rfromDirection\x12-\n" +
@@ -1484,44 +1564,46 @@ func file_andara_log_v1_log_proto_rawDescGZIP() []byte {
 }
 
 var file_andara_log_v1_log_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_andara_log_v1_log_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_andara_log_v1_log_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
 var file_andara_log_v1_log_proto_goTypes = []any{
 	(UnbindReason)(0),         // 0: andara.log.v1.UnbindReason
 	(*LoggedCommand)(nil),     // 1: andara.log.v1.LoggedCommand
 	(*Look)(nil),              // 2: andara.log.v1.Look
 	(*Move)(nil),              // 3: andara.log.v1.Move
-	(*Arrive)(nil),            // 4: andara.log.v1.Arrive
-	(*BindCharacter)(nil),     // 5: andara.log.v1.BindCharacter
-	(*UnbindCharacter)(nil),   // 6: andara.log.v1.UnbindCharacter
-	(*MarkLinkdead)(nil),      // 7: andara.log.v1.MarkLinkdead
-	(*ContentSwap)(nil),       // 8: andara.log.v1.ContentSwap
-	(*Entity)(nil),            // 9: andara.log.v1.Entity
-	(*Event)(nil),             // 10: andara.log.v1.Event
-	(*Scope)(nil),             // 11: andara.log.v1.Scope
-	(*TickCompleted)(nil),     // 12: andara.log.v1.TickCompleted
-	(*PartitionOffset)(nil),   // 13: andara.log.v1.PartitionOffset
-	(*SnapshotWritten)(nil),   // 14: andara.log.v1.SnapshotWritten
-	(*v1.ComponentValue)(nil), // 15: andara.content.v1.ComponentValue
+	(*Goto)(nil),              // 4: andara.log.v1.Goto
+	(*Arrive)(nil),            // 5: andara.log.v1.Arrive
+	(*BindCharacter)(nil),     // 6: andara.log.v1.BindCharacter
+	(*UnbindCharacter)(nil),   // 7: andara.log.v1.UnbindCharacter
+	(*MarkLinkdead)(nil),      // 8: andara.log.v1.MarkLinkdead
+	(*ContentSwap)(nil),       // 9: andara.log.v1.ContentSwap
+	(*Entity)(nil),            // 10: andara.log.v1.Entity
+	(*Event)(nil),             // 11: andara.log.v1.Event
+	(*Scope)(nil),             // 12: andara.log.v1.Scope
+	(*TickCompleted)(nil),     // 13: andara.log.v1.TickCompleted
+	(*PartitionOffset)(nil),   // 14: andara.log.v1.PartitionOffset
+	(*SnapshotWritten)(nil),   // 15: andara.log.v1.SnapshotWritten
+	(*v1.ComponentValue)(nil), // 16: andara.content.v1.ComponentValue
 }
 var file_andara_log_v1_log_proto_depIdxs = []int32{
 	2,  // 0: andara.log.v1.LoggedCommand.look:type_name -> andara.log.v1.Look
 	3,  // 1: andara.log.v1.LoggedCommand.move:type_name -> andara.log.v1.Move
-	4,  // 2: andara.log.v1.LoggedCommand.arrive:type_name -> andara.log.v1.Arrive
-	5,  // 3: andara.log.v1.LoggedCommand.bind_character:type_name -> andara.log.v1.BindCharacter
-	6,  // 4: andara.log.v1.LoggedCommand.unbind_character:type_name -> andara.log.v1.UnbindCharacter
-	8,  // 5: andara.log.v1.LoggedCommand.content_swap:type_name -> andara.log.v1.ContentSwap
-	7,  // 6: andara.log.v1.LoggedCommand.mark_linkdead:type_name -> andara.log.v1.MarkLinkdead
-	9,  // 7: andara.log.v1.Arrive.entity:type_name -> andara.log.v1.Entity
-	0,  // 8: andara.log.v1.UnbindCharacter.reason:type_name -> andara.log.v1.UnbindReason
-	15, // 9: andara.log.v1.Entity.components:type_name -> andara.content.v1.ComponentValue
-	11, // 10: andara.log.v1.Event.scope:type_name -> andara.log.v1.Scope
-	13, // 11: andara.log.v1.TickCompleted.offsets:type_name -> andara.log.v1.PartitionOffset
-	13, // 12: andara.log.v1.SnapshotWritten.offsets:type_name -> andara.log.v1.PartitionOffset
-	13, // [13:13] is the sub-list for method output_type
-	13, // [13:13] is the sub-list for method input_type
-	13, // [13:13] is the sub-list for extension type_name
-	13, // [13:13] is the sub-list for extension extendee
-	0,  // [0:13] is the sub-list for field type_name
+	5,  // 2: andara.log.v1.LoggedCommand.arrive:type_name -> andara.log.v1.Arrive
+	6,  // 3: andara.log.v1.LoggedCommand.bind_character:type_name -> andara.log.v1.BindCharacter
+	7,  // 4: andara.log.v1.LoggedCommand.unbind_character:type_name -> andara.log.v1.UnbindCharacter
+	9,  // 5: andara.log.v1.LoggedCommand.content_swap:type_name -> andara.log.v1.ContentSwap
+	8,  // 6: andara.log.v1.LoggedCommand.mark_linkdead:type_name -> andara.log.v1.MarkLinkdead
+	4,  // 7: andara.log.v1.LoggedCommand.goto:type_name -> andara.log.v1.Goto
+	10, // 8: andara.log.v1.Arrive.entity:type_name -> andara.log.v1.Entity
+	0,  // 9: andara.log.v1.UnbindCharacter.reason:type_name -> andara.log.v1.UnbindReason
+	16, // 10: andara.log.v1.Entity.components:type_name -> andara.content.v1.ComponentValue
+	12, // 11: andara.log.v1.Event.scope:type_name -> andara.log.v1.Scope
+	14, // 12: andara.log.v1.TickCompleted.offsets:type_name -> andara.log.v1.PartitionOffset
+	14, // 13: andara.log.v1.SnapshotWritten.offsets:type_name -> andara.log.v1.PartitionOffset
+	14, // [14:14] is the sub-list for method output_type
+	14, // [14:14] is the sub-list for method input_type
+	14, // [14:14] is the sub-list for extension type_name
+	14, // [14:14] is the sub-list for extension extendee
+	0,  // [0:14] is the sub-list for field type_name
 }
 
 func init() { file_andara_log_v1_log_proto_init() }
@@ -1537,6 +1619,7 @@ func file_andara_log_v1_log_proto_init() {
 		(*LoggedCommand_UnbindCharacter)(nil),
 		(*LoggedCommand_ContentSwap)(nil),
 		(*LoggedCommand_MarkLinkdead)(nil),
+		(*LoggedCommand_Goto)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1544,7 +1627,7 @@ func file_andara_log_v1_log_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_log_v1_log_proto_rawDesc), len(file_andara_log_v1_log_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   14,
+			NumMessages:   15,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

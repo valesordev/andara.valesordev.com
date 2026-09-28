@@ -87,6 +87,28 @@ same three topics, so neither is foreclosed.
    topics, nothing in this ADR changes; what changes is that the authoring surface is now known to be
    plural, so `andara-cli` should not accumulate assumptions that make it the only writer.
 
+**Amended 2026-09-26 (Brian), recorded 2026-09-28 at SPRINT-03's contract review: an Operator may
+approve a version they published.** It amends answer 2 for Operators only, and it's temporary:
+Brian is the only Builder, and he'll revisit it when others join. The approval is recorded on the
+manifest like any other, with `approved_by` set to the Operator. It isn't the activation
+`override`. A Builder without `operator` still can't approve their own version. Every such
+approval is flagged `self_approval=true` in the audit record and counted apart
+(`approvals_total{outcome="self_operator"}`). `content.operator_self_approval` (default `true`)
+turns it off, so turning it off is a values change. `AW-SRV-013` owns the rule
+(`docs/feedback/AW-SRV-013-operator-self-approval.md`).
+
+**Decided 2026-09-28 (architecture, SPRINT-03 contract review): `andara.core` reaches the store
+through the server's boot, and its version comes from the build.** Every `andara-server` binary
+embeds the core pack it was built with, and `content/core/VERSION` numbers it. At boot, the server
+publishes that core as exactly `andara.core@<VERSION>` if the store doesn't hold it. It activates
+it only if that version is newer than the active one. That covers a first install, which has no
+pod to publish through, and works the same way for `dev`, `prod` and `local`. It also means
+`andara.core@N` is the same bytes everywhere, so a Builder pack's `requires andara.core@N` can be
+checked offline against the core `andara-cli` embeds. Core is the one pack whose version numbers
+aren't assigned by the store. No RPC publishes it, and an Operator can only move its pointer. The
+rules, the audit identity, and what an image rollback across a core bump costs are in `AW-SRV-013`
+(`docs/feedback/AW-INF-021-dev-content-store.md`, item 1).
+
 Alongside (3), Brian stated that **Builders can build new game types that subtype server types.** That
 is a content-model constraint, not an authoring-surface one, and its semantics are not yet specified —
 what a server type is, what subtyping means, and what a subtype may override are all open. It

@@ -6,7 +6,7 @@ component: cli
 type: feature
 status: ready
 size: S
-depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001, AW-SRV-034]
+depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001, AW-SRV-034, AW-SRV-013]
 blocks: [AW-CLI-003, AW-INF-010, AW-INF-022]
 lane: implementation
 risk: low
@@ -37,7 +37,12 @@ publish a Zone that fails to load.
 - `andara-cli content inspect zone|room|template <ref> [--pack --version]`: print the resolved
   definition — flattened Template with per-field provenance (ADR-0010 §9), Room with Components and
   Exits, Zone summary.
-- Offline operation for `--path` against the cached core pack.
+- Offline operation for `--path` against the core pack `andara-cli` embeds: the compiled
+  `content/core/` and its `content/core/VERSION`, the same files the server embeds and publishes at
+  boot (ADR-0004 and ADR-0010 §8, amended 2026-09-28). The cache (`--cache`, `ANDARA_CONTENT_CACHE`,
+  filled by `content fetch-core --from`, `AW-CLI-006`) stays as the second place a core version is
+  looked up.
+- `andara-cli version` prints the embedded core as `andara.core@<N>`.
 - The three-way equivalence fixture: one fixture set, three runners (CLI, CI job, server publish gate),
   identical findings.
 
@@ -55,16 +60,28 @@ publish a Zone that fails to load.
    and nothing else; stderr carries nothing but the exit summary.
 4. **Given** the equivalence fixture **when** run by the CLI, by `make content-conformance`, and by
    `AW-SRV-013`'s gate **then** all three produce identical diagnostics (code, position, chain).
-5. **Given** no network and a cached core **when** `validate --path` runs **then** it succeeds; with no
-   cache it fails with `core_version_mismatch` and the `fetch-core` hint, exit `1`.
+5. **Given** no network, no cache, and a pack declaring `requires andara.core@<N>`, where `N` is the
+   build's `content/core/VERSION` **when** `validate --path` runs **then** it succeeds against the
+   embedded core. **Given** a pack requiring `andara.core@M`, `M ≠ N`, with no cached `M` **then** it
+   fails with `core_version_mismatch` naming `M` and `N`, and the hint `this andara-cli embeds
+   andara.core@N; use the andara-cli release that embeds andara.core@M`, exit `1`. **Given** a cached
+   `M` **then** it validates against the cache. *(Amended 2026-09-28: the embedded core replaces
+   the cached-core-or-fail contract.)*
 6. **Given** `--pack town --version 8` **when** `validate` runs **then** it fetches the version over
-   `Admin.GetVersion` and the blobs, validates, and exits `0`/`1` as above; server unreachable is exit
+   `Admin.GetVersion` and the blobs over `Admin.GetBlob` (`AW-SRV-013`), validates, and exits `0`/`1` as above; server unreachable is exit
    `3`.
 7. **Given** `inspect template town.Merchant` **when** it runs **then** each Component field shows the
    ancestor that set it, e.g. `Dialogue.greeting = "Fine wares!"  (town.Merchant)` and
    `Aggro.threshold = 3  (andara.core.Npc)`.
 8. **Given** `inspect room market/square` **when** it runs **then** Exits are listed in the closed
    Direction order with reverse-Exit presence marked.
+9. **Given** a build whose `content/core/VERSION` is `N` **when** `andara-cli version` runs **then**
+   it prints `core:     andara.core@<N>` after `built_at`, and `--output json` carries
+   `"core_version": N`. `AW-INF-022`'s check compares this with `dev`'s active core.
+10. **Given** the embedded core **when** `make check` runs **then** a test holds its digest (sha256 of
+    the sorted blob hashes, as `AW-SRV-013` defines it) equal to the `content/core/VERSIONS` line
+    for `VERSION`, the same check `AW-SRV-013` AC-19 makes for the server. The two binaries can't
+    embed different cores under one number.
 
 ## Interface contract
 
@@ -81,6 +98,16 @@ andara-cli content inspect template <pack>.<name> [...]
 | `1` | diagnostics (compile or validation) |
 | `2` | usage or IO |
 | `3` | server unreachable (`AW-CLI-001` taxonomy) |
+
+Core lookup for `requires andara.core@M`, in order:
+1. the embedded core, if `M` is the build's `VERSION`;
+2. the cache, `<cache>/andara.core/<M>/` (`AW-CLI-006`'s layout);
+3. otherwise `core_version_mismatch` (AC-5).
+
+`content fetch-core` keeps `--from` (`AW-CLI-006`). It never fetches over Admin: the embedded core
+is the network-free source, and an older or newer core comes with the `andara-cli` release that
+embeds it. Without `--from`, its `core_fetch_unavailable` message names the embedded core and the
+releases instead of `AW-SRV-013`.
 
 Diagnostics are `lang.Diagnostic` from `AW-CLI-006`; `sim.ValidationError` findings are mapped into the
 same shape with `file:line:col` recovered from the source map the compiler emits. JSON schema is
@@ -99,7 +126,7 @@ Per `AW-CLI-001`: no metrics, structured stderr diagnostics, `cli.command` root 
 
 - **Unit:** finding-to-diagnostic mapping with source map; output formatting both modes.
 - **Integration:** the three-way equivalence test (AC-4) in CI; offline run in a network-less container
-  (AC-5); `--pack` path against a throwaway Redpanda (AC-6).
+  with no cache (AC-5), and the mismatch case with a pack requiring another core; `--pack` path against a throwaway Redpanda (AC-6).
 - **Manual/operator:**
   ```
   andara-cli content validate --path ./town            # expect: "3 zones, 41 rooms, 7 templates, core andara.core@3"
@@ -121,3 +148,24 @@ and `AW-CLI-005`'s corpus use.
   while the compiler warns only on a Room with no Exit either way and skips one-Room Zones. The
   loader also has no `duplicate_direction`. `AW-SRV-034` makes them agree, on the rule now in
   `errors.md` §3.3. Pick this story up after that one lands.
+
+## Contract review (architecture, 2026-09-28)
+
+A contract change after `ready`, recorded here (CLAUDE.md §6). Implementation hasn't started.
+
+1. **The CLI embeds `andara.core`** (ADR-0004 and ADR-0010 §8, amended 2026-09-28;
+   `docs/feedback/AW-INF-021-dev-content-store.md` item 4). The Content Repository's CI and a Builder
+   validate offline with no network, no credential, and no cache step. `andara.core@N` means the same
+   bytes in the CLI and on every server, because both embed `content/core/` under one `VERSION`, and
+   AC-10 holds them to `VERSIONS`.
+2. **AC-5 is rewritten.** Its `fetch-core` hint pointed at an Admin fetch no story defined
+   (`docs/feedback/AW-CLI-006-content-language-compiler.md` §7). The hint now names the release that
+   embeds the required core. `fetch-core --from` and the cache stay, since `AW-CLI-006` built them.
+3. **`andara-cli version` prints the embedded core** (AC-9). It's here rather than in `AW-INF-020`,
+   because embedding is Go source under `cmd/` and `admin/`, and `AW-INF-020` only builds and
+   publishes the binary. `AW-INF-022`'s core check reads this line.
+4. **`AW-SRV-013` is added to `depends_on`.** AC-6 already needed its `GetVersion` and `GetBlob`
+   against a throwaway Redpanda, and AC-5 and AC-10 need its `content/core/VERSION` and `VERSIONS`.
+   The sprint already orders `AW-SRV-013` (item 4) before this story (item 6). If PM splits the core
+   boot out of `AW-SRV-013`, this story depends on both halves.
+5. `errors.md`'s `core_version_mismatch` row and `semantics.md` §2 are amended to match.

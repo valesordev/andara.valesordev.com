@@ -37,6 +37,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type Severity int32
+
+const (
+	Severity_SEVERITY_UNSPECIFIED Severity = 0
+	Severity_ERROR                Severity = 1
+	Severity_WARNING              Severity = 2
+)
+
+// Enum value maps for Severity.
+var (
+	Severity_name = map[int32]string{
+		0: "SEVERITY_UNSPECIFIED",
+		1: "ERROR",
+		2: "WARNING",
+	}
+	Severity_value = map[string]int32{
+		"SEVERITY_UNSPECIFIED": 0,
+		"ERROR":                1,
+		"WARNING":              2,
+	}
+)
+
+func (x Severity) Enum() *Severity {
+	p := new(Severity)
+	*p = x
+	return p
+}
+
+func (x Severity) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (Severity) Descriptor() protoreflect.EnumDescriptor {
+	return file_andara_content_v1_content_proto_enumTypes[0].Descriptor()
+}
+
+func (Severity) Type() protoreflect.EnumType {
+	return &file_andara_content_v1_content_proto_enumTypes[0]
+}
+
+func (x Severity) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use Severity.Descriptor instead.
+func (Severity) EnumDescriptor() ([]byte, []int) {
+	return file_andara_content_v1_content_proto_rawDescGZIP(), []int{0}
+}
+
 // A content blob, addressed by the hash of its body.
 type Blob struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
@@ -106,17 +155,25 @@ type ContentVersion struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
 	PackId string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
 	// Monotonic per pack, assigned by the server rather than the Builder
-	// (AW-SRV-013).
+	// (AW-SRV-013). andara.core is the exception: its version is the build's
+	// content/core/VERSION, so andara.core@N is the same bytes in every
+	// environment (ADR-0004, 2026-09-28).
 	Version uint64 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
 	// The version this was published on top of. Zero for the first, which is
 	// what makes the history a chain rather than a set.
 	ParentVersion uint64     `protobuf:"varint,3,opt,name=parent_version,json=parentVersion,proto3" json:"parent_version,omitempty"`
 	Blobs         []*BlobRef `protobuf:"bytes,4,rep,name=blobs,proto3" json:"blobs,omitempty"`
 	// Who published it. Every publish is audited (ADR-0004); this is the record,
-	// not the audit trail itself, which lives on andara.audit.v1.
+	// not the audit trail itself, which lives on andara.audit.v1. For a
+	// publish in an acting-as Session, the acting-as Account; the audit record
+	// names the real actor too. For andara.core, the reserved principal
+	// `server`, which is not an Account and cannot authenticate.
 	Author              string `protobuf:"bytes,5,opt,name=author,proto3" json:"author,omitempty"`
 	PublishedAtUnixNano int64  `protobuf:"varint,6,opt,name=published_at_unix_nano,json=publishedAtUnixNano,proto3" json:"published_at_unix_nano,omitempty"`
-	// Set when a second approver has approved this version for activation.
+	// Set when an approver has approved this version for activation: a second
+	// Builder holding the pack, or an OPERATOR, who may approve their own
+	// publish while content.operator_self_approval holds (ADR-0004, amended
+	// 2026-09-26).
 	// Publishing is a single-Builder action; moving the Active Pointer is not
 	// (AW-SRV-013, decided 2026-09-07). Empty means unapproved, and an
 	// activation naming an unapproved version is rejected by the server.
@@ -124,8 +181,9 @@ type ContentVersion struct {
 	ApprovedAtUnixNano int64  `protobuf:"varint,8,opt,name=approved_at_unix_nano,json=approvedAtUnixNano,proto3" json:"approved_at_unix_nano,omitempty"`
 	// The core pack version this content was compiled against. ADR-0010 publishes
 	// base Templates as `andara.core`, and a Builder pack pins what it compiled
-	// against so version skew is a legible error rather than a mystery. Empty
-	// until ADR-0010 is accepted.
+	// against so version skew is a legible error rather than a mystery. The
+	// server reads it from the compiled pack (`requires andara.core@N`); a
+	// publisher does not supply it. 0 for andara.core itself.
 	CoreVersion   uint64 `protobuf:"varint,9,opt,name=core_version,json=coreVersion,proto3" json:"core_version,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -292,7 +350,9 @@ type ActiveVersion struct {
 	state   protoimpl.MessageState `protogen:"open.v1"`
 	PackId  string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
 	Version uint64                 `protobuf:"varint,2,opt,name=version,proto3" json:"version,omitempty"`
-	// Who moved the pointer, which is the approver rather than the publisher.
+	// Who moved the pointer: the caller of ActivateVersion, or `server` for
+	// andara.core activated at boot. The boot never moves a core pointer an
+	// Account moved last (AW-SRV-013).
 	ActivatedBy         string `protobuf:"bytes,3,opt,name=activated_by,json=activatedBy,proto3" json:"activated_by,omitempty"`
 	ActivatedAtUnixNano int64  `protobuf:"varint,4,opt,name=activated_at_unix_nano,json=activatedAtUnixNano,proto3" json:"activated_at_unix_nano,omitempty"`
 	unknownFields       protoimpl.UnknownFields
@@ -357,6 +417,107 @@ func (x *ActiveVersion) GetActivatedAtUnixNano() int64 {
 	return 0
 }
 
+// One finding from the compiler or the validator, as errors.md §1 shapes it.
+// The same shape andara-cli prints and make content-conformance compares, so
+// the three runners AW-CLI-002 AC-4 holds equal compare values, not a
+// mapping.
+type Diagnostic struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Within the pack, as published (`src/town.aw`).
+	File string `protobuf:"bytes,1,opt,name=file,proto3" json:"file,omitempty"`
+	// 1-based. 0 when the finding is pack-level.
+	Line uint32 `protobuf:"varint,2,opt,name=line,proto3" json:"line,omitempty"`
+	// 1-based, in runes.
+	Col uint32 `protobuf:"varint,3,opt,name=col,proto3" json:"col,omitempty"`
+	// errors.md §3.
+	Code    string `protobuf:"bytes,4,opt,name=code,proto3" json:"code,omitempty"`
+	Message string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
+	// The declaration chain, outermost first.
+	Chain         []string `protobuf:"bytes,6,rep,name=chain,proto3" json:"chain,omitempty"`
+	Severity      Severity `protobuf:"varint,7,opt,name=severity,proto3,enum=andara.content.v1.Severity" json:"severity,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Diagnostic) Reset() {
+	*x = Diagnostic{}
+	mi := &file_andara_content_v1_content_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Diagnostic) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Diagnostic) ProtoMessage() {}
+
+func (x *Diagnostic) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_content_v1_content_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Diagnostic.ProtoReflect.Descriptor instead.
+func (*Diagnostic) Descriptor() ([]byte, []int) {
+	return file_andara_content_v1_content_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *Diagnostic) GetFile() string {
+	if x != nil {
+		return x.File
+	}
+	return ""
+}
+
+func (x *Diagnostic) GetLine() uint32 {
+	if x != nil {
+		return x.Line
+	}
+	return 0
+}
+
+func (x *Diagnostic) GetCol() uint32 {
+	if x != nil {
+		return x.Col
+	}
+	return 0
+}
+
+func (x *Diagnostic) GetCode() string {
+	if x != nil {
+		return x.Code
+	}
+	return ""
+}
+
+func (x *Diagnostic) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *Diagnostic) GetChain() []string {
+	if x != nil {
+		return x.Chain
+	}
+	return nil
+}
+
+func (x *Diagnostic) GetSeverity() Severity {
+	if x != nil {
+		return x.Severity
+	}
+	return Severity_SEVERITY_UNSPECIFIED
+}
+
 var File_andara_content_v1_content_proto protoreflect.FileDescriptor
 
 const file_andara_content_v1_content_proto_rawDesc = "" +
@@ -387,7 +548,20 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12!\n" +
 	"\factivated_by\x18\x03 \x01(\tR\vactivatedBy\x123\n" +
-	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNanoB\xcc\x01\n" +
+	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNano\"\xc3\x01\n" +
+	"\n" +
+	"Diagnostic\x12\x12\n" +
+	"\x04file\x18\x01 \x01(\tR\x04file\x12\x12\n" +
+	"\x04line\x18\x02 \x01(\rR\x04line\x12\x10\n" +
+	"\x03col\x18\x03 \x01(\rR\x03col\x12\x12\n" +
+	"\x04code\x18\x04 \x01(\tR\x04code\x12\x18\n" +
+	"\amessage\x18\x05 \x01(\tR\amessage\x12\x14\n" +
+	"\x05chain\x18\x06 \x03(\tR\x05chain\x127\n" +
+	"\bseverity\x18\a \x01(\x0e2\x1b.andara.content.v1.SeverityR\bseverity*<\n" +
+	"\bSeverity\x12\x18\n" +
+	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\t\n" +
+	"\x05ERROR\x10\x01\x12\v\n" +
+	"\aWARNING\x10\x02B\xcc\x01\n" +
 	"\x15com.andara.content.v1B\fContentProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03ACX\xaa\x02\x11Andara.Content.V1\xca\x02\x11Andara\\Content\\V1\xe2\x02\x1dAndara\\Content\\V1\\GPBMetadata\xea\x02\x13Andara::Content::V1b\x06proto3"
 
 var (
@@ -402,20 +576,24 @@ func file_andara_content_v1_content_proto_rawDescGZIP() []byte {
 	return file_andara_content_v1_content_proto_rawDescData
 }
 
-var file_andara_content_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
+var file_andara_content_v1_content_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_andara_content_v1_content_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_andara_content_v1_content_proto_goTypes = []any{
-	(*Blob)(nil),           // 0: andara.content.v1.Blob
-	(*ContentVersion)(nil), // 1: andara.content.v1.ContentVersion
-	(*BlobRef)(nil),        // 2: andara.content.v1.BlobRef
-	(*ActiveVersion)(nil),  // 3: andara.content.v1.ActiveVersion
+	(Severity)(0),          // 0: andara.content.v1.Severity
+	(*Blob)(nil),           // 1: andara.content.v1.Blob
+	(*ContentVersion)(nil), // 2: andara.content.v1.ContentVersion
+	(*BlobRef)(nil),        // 3: andara.content.v1.BlobRef
+	(*ActiveVersion)(nil),  // 4: andara.content.v1.ActiveVersion
+	(*Diagnostic)(nil),     // 5: andara.content.v1.Diagnostic
 }
 var file_andara_content_v1_content_proto_depIdxs = []int32{
-	2, // 0: andara.content.v1.ContentVersion.blobs:type_name -> andara.content.v1.BlobRef
-	1, // [1:1] is the sub-list for method output_type
-	1, // [1:1] is the sub-list for method input_type
-	1, // [1:1] is the sub-list for extension type_name
-	1, // [1:1] is the sub-list for extension extendee
-	0, // [0:1] is the sub-list for field type_name
+	3, // 0: andara.content.v1.ContentVersion.blobs:type_name -> andara.content.v1.BlobRef
+	0, // 1: andara.content.v1.Diagnostic.severity:type_name -> andara.content.v1.Severity
+	2, // [2:2] is the sub-list for method output_type
+	2, // [2:2] is the sub-list for method input_type
+	2, // [2:2] is the sub-list for extension type_name
+	2, // [2:2] is the sub-list for extension extendee
+	0, // [0:2] is the sub-list for field type_name
 }
 
 func init() { file_andara_content_v1_content_proto_init() }
@@ -428,13 +606,14 @@ func file_andara_content_v1_content_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_content_v1_content_proto_rawDesc), len(file_andara_content_v1_content_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   4,
+			NumEnums:      1,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_andara_content_v1_content_proto_goTypes,
 		DependencyIndexes: file_andara_content_v1_content_proto_depIdxs,
+		EnumInfos:         file_andara_content_v1_content_proto_enumTypes,
 		MessageInfos:      file_andara_content_v1_content_proto_msgTypes,
 	}.Build()
 	File_andara_content_v1_content_proto = out.File

@@ -18,6 +18,7 @@ syntax = "proto3";
 package andara.admin.v1;
 
 import "andara/accounts/v1/account.proto";
+import "andara/content/v1/content.proto";
 import "andara/state/v1/snapshot.proto";
 
 service Admin {
@@ -58,6 +59,45 @@ service Admin {
   // there is no secret to return and workload_subject is what the projected
   // token's `sub` must equal.
   rpc CreateAgentAccount(CreateAgentAccountRequest) returns (CreateAgentAccountResponse);
+  // Replace the Content Packs a Builder may publish to (AW-SRV-035). The whole
+  // set, not a delta, as SetRoles is. Roles and packs are independent: a grant
+  // on an Account without BUILDER is stored and inert.
+  rpc SetBuilderPacks(SetBuilderPacksRequest) returns (SetBuilderPacksResponse);
+
+  // Content publishing (AW-SRV-013, ADR-0004). Every call is authorized on
+  // BUILDER plus the pack in Account.builder_packs, or OPERATOR, and every
+  // publish, approval, activation and refusal writes one andara.audit.v1
+  // record. andara.core is never published over this service: the server
+  // publishes its own embedded core at boot (ADR-0004, 2026-09-28), and an
+  // OPERATOR may only move its pointer.
+
+  // Which of these blobs does the store already hold? Lets a publisher
+  // upload only what is missing. pack_id is required: it is what the call is
+  // authorized on, not a filter on the answer.
+  rpc HasBlobs(HasBlobsRequest) returns (HasBlobsResponse);
+  // One blob per stream: a header chunk, then data chunks. The server hashes
+  // what it receives and refuses a body whose hash differs from the header's.
+  // Publishing a blob the store holds is idempotent.
+  rpc PublishBlob(stream PublishBlobRequest) returns (PublishBlobResponse);
+  // Validate the blobs as one pack and write its version manifest. Findings
+  // that refuse the publish are INVALID_ARGUMENT, carried in the status
+  // details as PublishFindings. Warnings return in the response.
+  rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse);
+  // Record an approval on the manifest. Never moves the pointer.
+  rpc ApproveVersion(ApproveVersionRequest) returns (ApproveVersionResponse);
+  // Move the Active Pointer, forward or back. Refuses, before the pointer
+  // moves, what the Loader would refuse after it (zone_removed,
+  // spawn_room_removed, core_version).
+  rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse);
+  rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);
+  rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+  // One blob's body, streamed. Authorized on the pack and version named, and
+  // refused unless the hash is in that version's manifest, so a hash from
+  // another pack reads nothing. Serves content fetch, content diff, content
+  // validate --pack, and content decompile --pack (AW-CLI-006 feedback §7).
+  rpc GetBlob(GetBlobRequest) returns (stream GetBlobResponse);
+  // Re-resolve the active versions without a pointer move. OPERATOR only.
+  rpc ReloadContent(ReloadContentRequest) returns (ReloadContentResponse);
 }
 
 message CreateAccountRequest {
@@ -164,4 +204,170 @@ message GetServerInfoResponse {
   // content topology. The same values a snapshot records.
   repeated andara.state.v1.PackVersion content = 8;
   bytes content_digest = 9;
+}
+
+message SetBuilderPacksRequest {
+  string account_id = 1;
+  // The whole new set. Empty clears it. Each is a pack id (Content Language
+  // semantics.md §1: LOWER_ID segments joined by dots); andara.core is
+  // refused.
+  repeated string packs = 2;
+  uint64 expected_record_version = 3;
+}
+
+message SetBuilderPacksResponse {
+  // As stored: sorted, deduplicated.
+  repeated string builder_packs = 1;
+  uint64 record_version = 2;
+  // False when the Account lacks BUILDER: the grant is stored and inert.
+  bool builder_role = 3;
+}
+
+message HasBlobsRequest {
+  string pack_id = 1;
+  // sha256 of each body. At most 10000 per call.
+  repeated bytes hashes = 2;
+}
+
+message HasBlobsResponse {
+  // present[i] answers hashes[i].
+  repeated bool present = 1;
+}
+
+message PublishBlobRequest {
+  oneof chunk {
+    // The first chunk, and only the first.
+    PublishBlobHeader header = 1;
+    bytes data = 2;
+  }
+}
+
+message PublishBlobHeader {
+  string pack_id = 1;
+  // Path within the pack (semantics.md: `<zone>.json`, `templates/…`,
+  // `src/….aw`). Diagnostic only: a blob is addressed by its hash.
+  string path = 2;
+  string media_type = 3;
+  // Declared size. Over content.max_blob_bytes is RESOURCE_EXHAUSTED before
+  // any data chunk is read; a body longer than declared is refused the same
+  // way.
+  uint64 size_bytes = 4;
+  // sha256 of the body.
+  bytes hash = 5;
+}
+
+message PublishBlobResponse {
+  bytes hash = 1;
+  // True when the store already held it and nothing was produced.
+  bool deduplicated = 2;
+}
+
+message PublishVersionRequest {
+  // Never andara.core.
+  string pack_id = 1;
+  // Sorted by path; every hash must already be in the store.
+  repeated andara.content.v1.BlobRef blobs = 2;
+  // The newest version the publisher saw (0 for a pack's first). Any other
+  // newest version is FAILED_PRECONDITION, reason stale_parent.
+  uint64 parent_version = 3;
+}
+
+message PublishVersionResponse {
+  // Server-assigned, monotonic per pack.
+  uint64 version = 1;
+  // The andara.core version the pack requires (`requires andara.core@N`),
+  // read from the compiled source, not trusted from the caller.
+  uint64 core_version = 2;
+  // Warnings only (missing_reverse_exit, orphan_room). Errors refuse the
+  // publish and are in the status details.
+  repeated andara.content.v1.Diagnostic warnings = 3;
+}
+
+// The status detail of a refused PublishVersion (INVALID_ARGUMENT).
+message PublishFindings {
+  repeated andara.content.v1.Diagnostic findings = 1;
+}
+
+message ApproveVersionRequest {
+  string pack_id = 1;
+  uint64 version = 2;
+}
+
+message ApproveVersionResponse {
+  string approved_by = 1;
+  int64 approved_at_unix_nano = 2;
+  // The approver is the publisher, or the real actor behind the publisher's
+  // acting-as Session. Only an OPERATOR can do this, and only while
+  // content.operator_self_approval is true.
+  bool self_approval = 3;
+}
+
+message ActivateVersionRequest {
+  string pack_id = 1;
+  uint64 version = 2;
+  // OPERATOR only: activate an unapproved version. Requires reason.
+  bool override = 3;
+  string reason = 4;
+}
+
+message ActivateVersionResponse {
+  // The version the pointer left. 0 when the pack had none.
+  uint64 previous_version = 1;
+  // True when version < previous_version.
+  bool rollback = 2;
+}
+
+// The status detail of an ActivateVersion refused because of what the version
+// would do to the World in effect (FAILED_PRECONDITION). Not sent for a
+// missing approval, which is reason `unapproved` in the ErrorInfo alone.
+message ActivationRefusal {
+  // zone_removed, spawn_room_removed, or core_version (AW-SRV-012's codes).
+  string reason = 1;
+  // The Zone removed, the spawn Room dropped, or for core_version every pack
+  // that the move would strand, as `pack@version`.
+  repeated string subjects = 2;
+}
+
+message ListVersionsRequest {
+  string pack_id = 1;
+  // 0 means all. Newest first.
+  uint32 limit = 2;
+}
+
+message ListVersionsResponse {
+  // Newest first.
+  repeated andara.content.v1.ContentVersion versions = 1;
+  // 0 when nothing is active.
+  uint64 active_version = 2;
+  // Every pointer move for this pack, oldest first, so history can show
+  // active intervals.
+  repeated andara.content.v1.ActiveVersion activations = 3;
+}
+
+message GetVersionRequest {
+  string pack_id = 1;
+  uint64 version = 2;
+}
+
+message GetVersionResponse {
+  andara.content.v1.ContentVersion version = 1;
+}
+
+message GetBlobRequest {
+  string pack_id = 1;
+  uint64 version = 2;
+  bytes hash = 3;
+}
+
+message GetBlobResponse {
+  // The body, in order. Chunks are at most 1 MiB.
+  bytes data = 1;
+}
+
+message ReloadContentRequest {}
+
+message ReloadContentResponse {
+  // What the reload found active, sorted by pack_id. The swap itself happens
+  // at a tick boundary; GetServerInfo.content shows when it has.
+  repeated andara.state.v1.PackVersion active = 1;
 }

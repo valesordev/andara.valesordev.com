@@ -18,7 +18,7 @@
 // @generated from file andara/content/v1/content.proto (package andara.content.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 
 /**
@@ -72,7 +72,9 @@ export declare type ContentVersion = Message<"andara.content.v1.ContentVersion">
 
   /**
    * Monotonic per pack, assigned by the server rather than the Builder
-   * (AW-SRV-013).
+   * (AW-SRV-013). andara.core is the exception: its version is the build's
+   * content/core/VERSION, so andara.core@N is the same bytes in every
+   * environment (ADR-0004, 2026-09-28).
    *
    * @generated from field: uint64 version = 2;
    */
@@ -93,7 +95,10 @@ export declare type ContentVersion = Message<"andara.content.v1.ContentVersion">
 
   /**
    * Who published it. Every publish is audited (ADR-0004); this is the record,
-   * not the audit trail itself, which lives on andara.audit.v1.
+   * not the audit trail itself, which lives on andara.audit.v1. For a
+   * publish in an acting-as Session, the acting-as Account; the audit record
+   * names the real actor too. For andara.core, the reserved principal
+   * `server`, which is not an Account and cannot authenticate.
    *
    * @generated from field: string author = 5;
    */
@@ -105,7 +110,10 @@ export declare type ContentVersion = Message<"andara.content.v1.ContentVersion">
   publishedAtUnixNano: bigint;
 
   /**
-   * Set when a second approver has approved this version for activation.
+   * Set when an approver has approved this version for activation: a second
+   * Builder holding the pack, or an OPERATOR, who may approve their own
+   * publish while content.operator_self_approval holds (ADR-0004, amended
+   * 2026-09-26).
    * Publishing is a single-Builder action; moving the Active Pointer is not
    * (AW-SRV-013, decided 2026-09-07). Empty means unapproved, and an
    * activation naming an unapproved version is rejected by the server.
@@ -122,8 +130,9 @@ export declare type ContentVersion = Message<"andara.content.v1.ContentVersion">
   /**
    * The core pack version this content was compiled against. ADR-0010 publishes
    * base Templates as `andara.core`, and a Builder pack pins what it compiled
-   * against so version skew is a legible error rather than a mystery. Empty
-   * until ADR-0010 is accepted.
+   * against so version skew is a legible error rather than a mystery. The
+   * server reads it from the compiled pack (`requires andara.core@N`); a
+   * publisher does not supply it. 0 for andara.core itself.
    *
    * @generated from field: uint64 core_version = 9;
    */
@@ -183,7 +192,9 @@ export declare type ActiveVersion = Message<"andara.content.v1.ActiveVersion"> &
   version: bigint;
 
   /**
-   * Who moved the pointer, which is the approver rather than the publisher.
+   * Who moved the pointer: the caller of ActivateVersion, or `server` for
+   * andara.core activated at boot. The boot never moves a core pointer an
+   * Account moved last (AW-SRV-013).
    *
    * @generated from field: string activated_by = 3;
    */
@@ -200,4 +211,90 @@ export declare type ActiveVersion = Message<"andara.content.v1.ActiveVersion"> &
  * Use `create(ActiveVersionSchema)` to create a new message.
  */
 export declare const ActiveVersionSchema: GenMessage<ActiveVersion>;
+
+/**
+ * One finding from the compiler or the validator, as errors.md §1 shapes it.
+ * The same shape andara-cli prints and make content-conformance compares, so
+ * the three runners AW-CLI-002 AC-4 holds equal compare values, not a
+ * mapping.
+ *
+ * @generated from message andara.content.v1.Diagnostic
+ */
+export declare type Diagnostic = Message<"andara.content.v1.Diagnostic"> & {
+  /**
+   * Within the pack, as published (`src/town.aw`).
+   *
+   * @generated from field: string file = 1;
+   */
+  file: string;
+
+  /**
+   * 1-based. 0 when the finding is pack-level.
+   *
+   * @generated from field: uint32 line = 2;
+   */
+  line: number;
+
+  /**
+   * 1-based, in runes.
+   *
+   * @generated from field: uint32 col = 3;
+   */
+  col: number;
+
+  /**
+   * errors.md §3.
+   *
+   * @generated from field: string code = 4;
+   */
+  code: string;
+
+  /**
+   * @generated from field: string message = 5;
+   */
+  message: string;
+
+  /**
+   * The declaration chain, outermost first.
+   *
+   * @generated from field: repeated string chain = 6;
+   */
+  chain: string[];
+
+  /**
+   * @generated from field: andara.content.v1.Severity severity = 7;
+   */
+  severity: Severity;
+};
+
+/**
+ * Describes the message andara.content.v1.Diagnostic.
+ * Use `create(DiagnosticSchema)` to create a new message.
+ */
+export declare const DiagnosticSchema: GenMessage<Diagnostic>;
+
+/**
+ * @generated from enum andara.content.v1.Severity
+ */
+export enum Severity {
+  /**
+   * @generated from enum value: SEVERITY_UNSPECIFIED = 0;
+   */
+  SEVERITY_UNSPECIFIED = 0,
+
+  /**
+   * @generated from enum value: ERROR = 1;
+   */
+  ERROR = 1,
+
+  /**
+   * @generated from enum value: WARNING = 2;
+   */
+  WARNING = 2,
+}
+
+/**
+ * Describes the enum andara.content.v1.Severity.
+ */
+export declare const SeveritySchema: GenEnum<Severity>;
 

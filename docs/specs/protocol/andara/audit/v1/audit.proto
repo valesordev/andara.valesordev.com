@@ -40,4 +40,23 @@ message AuditRecord {
   // Free text for the operator reading the record, with the same
   // prohibition as every other field: no secret, no token, no hash.
   string detail = 9;
+
+  // Content publishing (AW-SRV-013). action is publish, approve, activate,
+  // rollback, reject, or override; target is `pack@version`.
+  string pack_id = 20;
+  uint64 version = 21;
+  // sha256 of the sorted list of the version's blob hashes.
+  bytes blob_hashes_sha256 = 22;
+  bool override = 23;
+  // Required with override. For andara.core published or activated at boot,
+  // `boot <build version>`, and actor_account_id is `server`.
+  string reason = 24;
+  uint32 findings_count = 25;
+  // The approver is the publisher, or the real actor behind the publisher's
+  // acting-as Session (ADR-0004, amended 2026-09-26).
+  bool self_approval = 26;
+
+  // SetBuilderPacks (AW-SRV-035): the Account's pack set before and after.
+  repeated string builder_packs_before = 27;
+  repeated string builder_packs_after = 28;
 }

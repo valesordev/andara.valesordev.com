@@ -155,8 +155,18 @@ export declare type Account = Message<"andara.accounts.v1.Account"> & {
   characters: CharacterRef[];
 
   /**
+   * Content Packs this Account may publish to while it holds BUILDER
+   * (AW-SRV-013; set by Admin.SetBuilderPacks, AW-SRV-035). Sorted, no
+   * duplicates, never andara.core. Stored independently of roles, so revoking
+   * BUILDER keeps the grant.
+   *
+   * @generated from field: repeated string builder_packs = 12;
+   */
+  builderPacks: string[];
+
+  /**
    * AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
-   * must carry. 12 is unused, not reserved — see zone.proto for why.
+   * must carry.
    *
    * @generated from field: string workload_subject = 13;
    */

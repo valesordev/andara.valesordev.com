@@ -18,13 +18,13 @@
 // @generated from file andara/content/v1/content.proto (package andara.content.v1, syntax proto3)
 /* eslint-disable */
 
-import { fileDesc, messageDesc } from "@bufbuild/protobuf/codegenv2";
+import { enumDesc, fileDesc, messageDesc, tsEnum } from "@bufbuild/protobuf/codegenv2";
 
 /**
  * Describes the file andara/content/v1/content.proto.
  */
 export const file_andara_content_v1_content = /*@__PURE__*/
-  fileDesc("Ch9hbmRhcmEvY29udGVudC92MS9jb250ZW50LnByb3RvEhFhbmRhcmEuY29udGVudC52MSI2CgRCbG9iEgwKBGhhc2gYASABKAwSDAoEYm9keRgCIAEoDBISCgptZWRpYV90eXBlGAMgASgJIu8BCg5Db250ZW50VmVyc2lvbhIPCgdwYWNrX2lkGAEgASgJEg8KB3ZlcnNpb24YAiABKAQSFgoOcGFyZW50X3ZlcnNpb24YAyABKAQSKQoFYmxvYnMYBCADKAsyGi5hbmRhcmEuY29udGVudC52MS5CbG9iUmVmEg4KBmF1dGhvchgFIAEoCRIeChZwdWJsaXNoZWRfYXRfdW5peF9uYW5vGAYgASgDEhMKC2FwcHJvdmVkX2J5GAcgASgJEh0KFWFwcHJvdmVkX2F0X3VuaXhfbmFubxgIIAEoAxIUCgxjb3JlX3ZlcnNpb24YCSABKAQiOQoHQmxvYlJlZhIMCgRwYXRoGAEgASgJEgwKBGhhc2gYAiABKAwSEgoKc2l6ZV9ieXRlcxgDIAEoBCJnCg1BY3RpdmVWZXJzaW9uEg8KB3BhY2tfaWQYASABKAkSDwoHdmVyc2lvbhgCIAEoBBIUCgxhY3RpdmF0ZWRfYnkYAyABKAkSHgoWYWN0aXZhdGVkX2F0X3VuaXhfbmFubxgEIAEoA0LMAQoVY29tLmFuZGFyYS5jb250ZW50LnYxQgxDb250ZW50UHJvdG9QAVo/Z2l0aHViLmNvbS92YWxlc29yZGV2L2FuZGFyYS9nZW4vZ28vYW5kYXJhL2NvbnRlbnQvdjE7Y29udGVudHYxogIDQUNYqgIRQW5kYXJhLkNvbnRlbnQuVjHKAhFBbmRhcmFcQ29udGVudFxWMeICHUFuZGFyYVxDb250ZW50XFYxXEdQQk1ldGFkYXRh6gITQW5kYXJhOjpDb250ZW50OjpWMWIGcHJvdG8z");
+  fileDesc("Ch9hbmRhcmEvY29udGVudC92MS9jb250ZW50LnByb3RvEhFhbmRhcmEuY29udGVudC52MSI2CgRCbG9iEgwKBGhhc2gYASABKAwSDAoEYm9keRgCIAEoDBISCgptZWRpYV90eXBlGAMgASgJIu8BCg5Db250ZW50VmVyc2lvbhIPCgdwYWNrX2lkGAEgASgJEg8KB3ZlcnNpb24YAiABKAQSFgoOcGFyZW50X3ZlcnNpb24YAyABKAQSKQoFYmxvYnMYBCADKAsyGi5hbmRhcmEuY29udGVudC52MS5CbG9iUmVmEg4KBmF1dGhvchgFIAEoCRIeChZwdWJsaXNoZWRfYXRfdW5peF9uYW5vGAYgASgDEhMKC2FwcHJvdmVkX2J5GAcgASgJEh0KFWFwcHJvdmVkX2F0X3VuaXhfbmFubxgIIAEoAxIUCgxjb3JlX3ZlcnNpb24YCSABKAQiOQoHQmxvYlJlZhIMCgRwYXRoGAEgASgJEgwKBGhhc2gYAiABKAwSEgoKc2l6ZV9ieXRlcxgDIAEoBCJnCg1BY3RpdmVWZXJzaW9uEg8KB3BhY2tfaWQYASABKAkSDwoHdmVyc2lvbhgCIAEoBBIUCgxhY3RpdmF0ZWRfYnkYAyABKAkSHgoWYWN0aXZhdGVkX2F0X3VuaXhfbmFubxgEIAEoAyKSAQoKRGlhZ25vc3RpYxIMCgRmaWxlGAEgASgJEgwKBGxpbmUYAiABKA0SCwoDY29sGAMgASgNEgwKBGNvZGUYBCABKAkSDwoHbWVzc2FnZRgFIAEoCRINCgVjaGFpbhgGIAMoCRItCghzZXZlcml0eRgHIAEoDjIbLmFuZGFyYS5jb250ZW50LnYxLlNldmVyaXR5KjwKCFNldmVyaXR5EhgKFFNFVkVSSVRZX1VOU1BFQ0lGSUVEEAASCQoFRVJST1IQARILCgdXQVJOSU5HEAJCzAEKFWNvbS5hbmRhcmEuY29udGVudC52MUIMQ29udGVudFByb3RvUAFaP2dpdGh1Yi5jb20vdmFsZXNvcmRldi9hbmRhcmEvZ2VuL2dvL2FuZGFyYS9jb250ZW50L3YxO2NvbnRlbnR2MaICA0FDWKoCEUFuZGFyYS5Db250ZW50LlYxygIRQW5kYXJhXENvbnRlbnRcVjHiAh1BbmRhcmFcQ29udGVudFxWMVxHUEJNZXRhZGF0YeoCE0FuZGFyYTo6Q29udGVudDo6VjFiBnByb3RvMw");
 
 /**
  * Describes the message andara.content.v1.Blob.
@@ -53,4 +53,23 @@ export const BlobRefSchema = /*@__PURE__*/
  */
 export const ActiveVersionSchema = /*@__PURE__*/
   messageDesc(file_andara_content_v1_content, 3);
+
+/**
+ * Describes the message andara.content.v1.Diagnostic.
+ * Use `create(DiagnosticSchema)` to create a new message.
+ */
+export const DiagnosticSchema = /*@__PURE__*/
+  messageDesc(file_andara_content_v1_content, 4);
+
+/**
+ * Describes the enum andara.content.v1.Severity.
+ */
+export const SeveritySchema = /*@__PURE__*/
+  enumDesc(file_andara_content_v1_content, 0);
+
+/**
+ * @generated from enum andara.content.v1.Severity
+ */
+export const Severity = /*@__PURE__*/
+  tsEnum(SeveritySchema);
 

@@ -198,6 +198,14 @@ Two carve-outs this forces, worth stating rather than discovering:
 - `AW-INF-007`'s deploy lifecycle gains a step: publish and activate the core pack for the version
   being deployed, before the server reports ready.
 
+*Amended 2026-09-28 (architecture, SPRINT-03 contract review): the deploy step is the server's own
+boot.* Each binary embeds its `andara.core`, numbered by `content/core/VERSION`, and publishes and
+activates it before it reports ready (ADR-0004, 2026-09-28). No step runs outside the pod, so
+`dev`'s Argo CD rolls and `prod`'s `make deploy` carry core the same way. `andara-cli` embeds the
+same core, and that is the "cached copy" offline validation uses: a pack that requires another
+core version is `core_version_mismatch` naming both, with the `andara-cli` release that carries it
+as the remedy.
+
 **9. Resolution happens at compile time; the resolved component set is what is published**, with the
 inheritance chain and each component's originating ancestor retained in the manifest. The sim receives
 flat Templates and needs no resolver, which keeps `server/sim` free of a subsystem it would otherwise

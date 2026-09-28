@@ -7,7 +7,7 @@ type: feature
 status: ready
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
-blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021]
+blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021, AW-CLI-002]
 lane: implementation
 risk: high
 ---
@@ -21,7 +21,9 @@ authoritative gate is server-side.
 This story implements publish, approval, activation, and rollback over `Admin`: write blobs, write a
 version manifest, approve, move the Active Pointer — each step authorized and audited. Two decisions
 shape it: **activation requires a second approver** (2026-09-07) and **Builder authority is scoped per
-pack** (2026-09-11).
+pack** (2026-09-11). Three more were made at SPRINT-03's contract review (2026-09-28, below): an
+**Operator may approve their own publish** (Brian, 2026-09-26); **activation refuses what the Loader
+would refuse**; and **the server publishes its own `andara.core` at boot**, numbered by the build.
 
 ## User story
 
@@ -32,7 +34,7 @@ costs a minute rather than a deploy.
 
 ### In scope
 - `Admin` RPCs: `HasBlobs`, `PublishBlob` (client-streaming), `PublishVersion`, `ApproveVersion`,
-  `ActivateVersion`, `ListVersions`, `GetVersion`, `ReloadContent`.
+  `ActivateVersion`, `ListVersions`, `GetVersion`, `GetBlob` (server-streaming), `ReloadContent`.
 - Server-side validation at `PublishVersion` using `AW-SRV-012`'s resolver over the just-written blobs
   and `AW-SRV-001`/`021`'s validator, rejecting before the manifest is written.
 - Authorization: `builder` role **and** the pack in `Account.builder_packs`; `operator` may act on any
@@ -40,8 +42,16 @@ costs a minute rather than a deploy.
 - The two-person rule: `ApproveVersion` by a distinct identity holding the pack; `ActivateVersion`
   requires `approved_by` set, or `operator` with `override=true`. Rollback to a previously-approved
   version needs no fresh approval. Approvals do not expire; they are bound to `packID@version`.
-- `andara.core` carve-out (ADR-0010 §8): publish and activate by `operator` only, no second approver;
-  it is a deploy step (`AW-INF-007`).
+- Operator self-approval (ADR-0004, amended 2026-09-26): an `operator` may approve a version they
+  published, directly or while acting as the publisher. Flagged and counted apart, and switched by
+  `content.operator_self_approval`.
+- Activation refusals: `ActivateVersion` refuses `zone_removed`, `spawn_room_removed`, and
+  `core_version` before the pointer moves, with `AW-SRV-012`'s codes.
+- `andara.core` at boot (ADR-0004 and ADR-0010 §8, amended 2026-09-28): the server publishes the
+  core it embeds, as `andara.core@<content/core/VERSION>`, and activates it under the rules below. No
+  RPC publishes core; an `operator` may only move its pointer, with no approver.
+- `content/core/VERSION` and the append-only `content/core/VERSIONS`, and the `make check` test that
+  holds the embedded core's digest to them.
 - Audit records for every publish, approval, activation, rejection, and override.
 - Blob deduplication and size limits.
 
@@ -61,9 +71,11 @@ costs a minute rather than a deploy.
 3. **Given** an unapproved version **when** `ActivateVersion` is called by its publisher or anyone else
    without `override` **then** `FAILED_PRECONDITION` names the missing approval and one audit record is
    written.
-4. **Given** `ApproveVersion` by the same Account that published **then** `PERMISSION_DENIED`; by a
-   distinct Builder holding the pack **then** `approved_by` and `approved_at_unix_nano` are set on the
-   manifest and audited.
+4. **Given** `ApproveVersion` by a caller without `operator` who is the publisher, or the real actor
+   behind the Session that published as the publisher **then** `PERMISSION_DENIED`, reason
+   `self_approval`, counted `approvals_total{outcome="self"}`; by a distinct Builder holding the pack
+   **then** `approved_by` and `approved_at_unix_nano` are set on the manifest and audited.
+   *(Amended 2026-09-28: an Operator's own approval is AC-13.)*
 5. **Given** an approved version **when** `ActivateVersion` runs **then** one record is written to
    `andara.content.active.v1` with `activated_by` = the caller and one to `andara.audit.v1`.
 6. **Given** a rollback to a previously-activated version `N-3` **when** requested **then** it succeeds
@@ -76,44 +88,112 @@ costs a minute rather than a deploy.
    `PublishBlob` for it is not required; publishing it anyway is idempotent.
 10. **Given** the versions topic **when** compaction is forced **then** every version ever published is
     still listed by `ListVersions`.
-11. **Given** `andara.core` **when** a Builder attempts any write **then** `PERMISSION_DENIED`; **when**
-    an `operator` activates it **then** no approval is required and the audit record names the deploy
-    tag.
+11. **Given** `andara.core` **when** anyone calls `PublishBlob` or `PublishVersion` for it **then**
+    `PERMISSION_DENIED`, reason `core_published_at_boot`, and one audit record; **when** a Builder calls
+    `ActivateVersion` on it **then** `PERMISSION_DENIED`; **when** an `operator` activates any published
+    core version **then** no approval is required, and the audit record names the operator.
+    *(Amended 2026-09-28: the deploy tag is now on the boot's record, AC-15.)*
 12. **Given** a blob over `content.max_blob_bytes` **when** streamed **then** `RESOURCE_EXHAUSTED`
     before any bytes are produced.
+13. **Given** a version published by Account `B`, either by `B` or by operator `O` acting as `B`,
+    **when** `O` calls `ApproveVersion` **then** `approved_by` is `O`, the response and the audit record
+    carry `self_approval=true`, `approvals_total{outcome="self_operator"}` increments, and a `warn`
+    line carries `self_approval=true`. `O` approving a version `O` published directly is the same.
+    **With** `content.operator_self_approval=false` **then** it is AC-4's refusal, counted `self`.
+14. **Given** the World in effect **when** `ActivateVersion` names a version that removes a Zone the
+    active version has, that drops the Room `character.spawn_room` names, or that moves `andara.core`
+    below the `core_version` of an active pack **then** `FAILED_PRECONDITION` with reason
+    `zone_removed`, `spawn_room_removed`, or `core_version`, an `ActivationRefusal` detail naming the
+    Zones, the Room, or every stranded `pack@version`, the pointer unmoved, one audit record with
+    `outcome=refused`, and `activations_refused_total{reason}` incremented. `override` doesn't bypass
+    these: it bypasses approval only, and the Loader would refuse the move anyway.
+15. **Given** a store with no `andara.core` **when** a server with `content.source=kafka` boots
+    **then** it publishes `andara.core@<VERSION>` with `author=server`, activates it with
+    `activated_by=server`, writes one audit record per step with `actor_account_id=server` and
+    `reason=boot <build version>`, and reports ready only once the World in effect includes it. A
+    second boot of the same build publishes nothing and moves nothing.
+16. **Given** the store holds `andara.core@<VERSION>` with a digest other than the build's **when**
+    the server boots **then** it exits `1` with an `error` line naming both digests, and writes nothing.
+17. **Given** active `andara.core@M` with `M < VERSION` **when** the server boots **then** it activates
+    `VERSION` if `M`'s pointer was moved by `server`, and leaves `M` if an Account moved it, with a
+    `warn` line naming `M`, `VERSION`, and that Account. **Given** `M > VERSION` (an older build)
+    **then** it leaves `M` and logs it at `info`. It never moves core's pointer backwards.
+18. **Given** a Builder holding `town` **when** `GetBlob` names `town@8` and a hash in that manifest
+    **then** the body streams in chunks of at most 1 MiB and hashes to the request's hash; a hash not
+    in that manifest is `NOT_FOUND`, whether or not the store holds it; a Builder without `town` is
+    `PERMISSION_DENIED`.
+19. **Given** `content/core/` changed without a new line in `content/core/VERSIONS` and a new
+    `content/core/VERSION` **when** `make check` runs **then** it fails naming the digest the build
+    embeds and the one `VERSIONS` records for `VERSION`.
 
 ## Interface contract
 
-```protobuf
-// CONTRACT SKETCH — additions to andara/admin/v1/admin.proto
-rpc HasBlobs(HasBlobsRequest) returns (HasBlobsResponse);                 // hashes → present[]
-rpc PublishBlob(stream PublishBlobChunk) returns (PublishBlobResponse);  // first chunk: pack_id, path, media_type, size; then bytes
-rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse); // pack_id, blobs[], core_version → version, findings[]
-rpc ApproveVersion(ApproveVersionRequest) returns (ApproveVersionResponse); // pack_id, version
-rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse); // pack_id, version, override, reason
-rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);     // pack_id → ContentVersion[], active
-rpc GetVersion(GetVersionRequest) returns (ContentVersion);
-rpc ReloadContent(ReloadContentRequest) returns (ReloadContentResponse); // operator; re-resolve without a pointer move
+**Pinned 2026-09-28** in `docs/specs/protocol/`, with every field number assigned. `gen/` is
+regenerated. The files are the contract; this is the summary.
 
-// andara/accounts/v1/account.proto (AW-SRV-008) Account: next free number
-repeated string builder_packs = 12;   // sorted
+```protobuf
+// CONTRACT SKETCH — not an implementation. The pinned form is admin.proto.
+rpc HasBlobs(HasBlobsRequest) returns (HasBlobsResponse);                  // pack_id, hashes → present[]
+rpc PublishBlob(stream PublishBlobRequest) returns (PublishBlobResponse);  // header{pack_id,path,media_type,size_bytes,hash}, then data
+rpc PublishVersion(PublishVersionRequest) returns (PublishVersionResponse); // pack_id, blobs[], parent_version → version, core_version, warnings[]
+rpc ApproveVersion(ApproveVersionRequest) returns (ApproveVersionResponse); // → approved_by, approved_at, self_approval
+rpc ActivateVersion(ActivateVersionRequest) returns (ActivateVersionResponse); // override, reason → previous_version, rollback
+rpc ListVersions(ListVersionsRequest) returns (ListVersionsResponse);      // → versions[], active_version, activations[]
+rpc GetVersion(GetVersionRequest) returns (GetVersionResponse);
+rpc GetBlob(GetBlobRequest) returns (stream GetBlobResponse);              // pack_id, version, hash → data chunks
+rpc ReloadContent(ReloadContentRequest) returns (ReloadContentResponse);
+// status details: PublishFindings{findings[]} on INVALID_ARGUMENT; ActivationRefusal{reason, subjects[]}
 ```
+
+- `andara/accounts/v1/account.proto`: `Account.builder_packs = 12`.
+- `andara/content/v1/content.proto`: `Diagnostic` and `Severity`, the errors.md §1 shape the three
+  runners compare. `ContentVersion.core_version` is read by the server from the compiled pack, not
+  taken from the caller.
+- `andara/audit/v1/audit.proto`: `pack_id = 20` through `self_approval = 26`.
+
+### `andara.core` at boot
+
+Runs only with `content.source=kafka`, under `AW-SRV-008`'s single-writer lock, before readiness.
+`N` is the build's `content/core/VERSION`. A core's **digest** is the sha256 of the sorted list of its
+blob hashes, the same value as the audit record's `blob_hashes_sha256`.
+
+1. The store holds `andara.core@N` with the build's digest: publish nothing.
+2. The store holds `andara.core@N` with another digest: exit `1` (AC-16). Never overwrite.
+3. The store lacks `@N`: write the blobs and the manifest, `author=server`, `parent_version` the
+   newest core version below `N` (`0` if none).
+4. Activate `@N` if nothing is active, or if the active `M < N` and `ActiveVersion.activated_by` is
+   `server`. Otherwise leave it (AC-17).
+5. Readiness waits until the World in effect includes `andara.core` at the active version.
+
+`server` is a reserved principal: not an Account, never authenticated. Account IDs are 32 hex
+characters, so they can't collide with it. `content/core/VERSIONS` is one line per core ever
+shipped, `<N> <digest-hex>`, append-only. The build embeds `content/core/` and `VERSION`, and
+`andara-cli` embeds the same (`AW-CLI-002`).
 
 ### Authorization matrix
 
 | RPC | `builder` with pack | `builder` without | `operator` |
 |-----|:---:|:---:|:---:|
 | `HasBlobs`, `PublishBlob`, `PublishVersion`, `ListVersions`, `GetVersion` | ✓ | ✗ | ✓ |
-| `ApproveVersion` | ✓ if ≠ publisher | ✗ | ✓ if ≠ publisher |
+| `GetBlob` (hash in the named manifest) | ✓ | ✗ | ✓ |
+| `ApproveVersion` | ✓ if ≠ publisher | ✗ | ✓, including their own publish while `content.operator_self_approval` |
 | `ActivateVersion` | ✓ if approved | ✗ | ✓; unapproved needs `override` + `reason` |
-| any on `andara.core` | ✗ | ✗ | ✓, no approval |
+| `PublishBlob`, `PublishVersion` on `andara.core` | ✗ | ✗ | ✗ (the server publishes it at boot) |
+| `ActivateVersion` on `andara.core` | ✗ | ✗ | ✓, no approval |
+| read RPCs on `andara.core` | ✓ | ✓ | ✓ |
 | `ReloadContent` | ✗ | ✗ | ✓ |
+
+"Publisher" is the manifest's `author` or the real actor behind the Session that published it. An
+approval by either is a self-approval. Every activation refusal in AC-14 applies to every column,
+`override` included.
 
 ### Audit record
 
 `{actor_account_id, acting_as_account_id, action, pack_id, version, blob_hashes_sha256 (hash of the
-sorted list), override, reason, outcome, findings_count, session_id, trace_id}` on `andara.audit.v1`,
-keyed by actor. `action ∈ {publish, approve, activate, rollback, reject, override}`.
+sorted list), override, reason, outcome, findings_count, self_approval, session_id, trace_id}` on
+`andara.audit.v1`, keyed by actor. `action ∈ {publish, approve, activate, rollback, reject, override}`.
+`outcome ∈ {ok, denied, refused, rejected, stale_parent, too_large}`. The boot's records have
+`actor_account_id=server` and `reason=boot <build version>`.
 
 ### Configuration
 
@@ -122,18 +202,39 @@ keyed by actor. `action ∈ {publish, approve, activate, rollback, reject, overr
 | `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` (shared with `AW-SRV-012`) |
 | `content.max_pack_bytes` | `ANDARA_CONTENT_MAX_PACK_BYTES` | `268435456` (256 MiB per version) |
 | `content.core_pack` | `ANDARA_CONTENT_CORE_PACK` | `andara.core` |
+| `content.operator_self_approval` | `ANDARA_CONTENT_OPERATOR_SELF_APPROVAL` | `true` (ADR-0004, amended 2026-09-26; turning it off is a values change) |
 
 ### Error taxonomy
 
-| Condition | gRPC code |
-|-----------|-----------|
-| validation findings | `INVALID_ARGUMENT` (findings in details) |
-| pack not held, self-approval, Builder on core | `PERMISSION_DENIED` |
-| unapproved activation, `parent_version` stale | `FAILED_PRECONDITION` |
-| blob or pack too large | `RESOURCE_EXHAUSTED` |
-| version not found | `NOT_FOUND` |
+Every error carries `ErrorInfo{domain: "andara.content", reason}`. The CLI prints the reason and
+maps the code (`AW-CLI-003`).
+
+| Condition | gRPC code | `reason` |
+|-----------|-----------|----------|
+| validation findings | `INVALID_ARGUMENT` (`PublishFindings` in details) | `validation` |
+| body hash differs from the header's | `INVALID_ARGUMENT` | `blob_hash_mismatch` |
+| pack not held | `PERMISSION_DENIED` | `pack_not_held` |
+| self-approval without `operator`, or with it switched off | `PERMISSION_DENIED` | `self_approval` |
+| any publish of `andara.core` | `PERMISSION_DENIED` | `core_published_at_boot` |
+| Builder activating `andara.core`, non-operator `ReloadContent` | `PERMISSION_DENIED` | `operator_only` |
+| unapproved activation | `FAILED_PRECONDITION` | `unapproved` |
+| `parent_version` stale | `FAILED_PRECONDITION` | `stale_parent` |
+| activation refused (AC-14) | `FAILED_PRECONDITION` (`ActivationRefusal` in details) | `zone_removed`, `spawn_room_removed`, `core_version` |
+| blob or pack too large | `RESOURCE_EXHAUSTED` | `blob_too_large`, `pack_too_large` |
+| version, or hash in that version, not found | `NOT_FOUND` | `not_found` |
 
 ## Data / state impact
+
+**An image rollback across a core bump** (2026-09-28). The older build finds a newer core active and
+leaves it (AC-17). If it can load it, it runs. If it can't, it exits `1` with nothing loadable. The
+order is therefore pointer first, then image: `andara-cli content rollback andara.core` while the
+newer build still serves, then roll the image back. If the image went first, roll forward, move the
+pointer, and roll back again. **SRE:** please put that order in `docs/runbooks/server-unavailable.md`.
+It's the one failure here that pages as `AndaraServerUnavailable`.
+
+**`content/core/VERSIONS` is append-only.** Removing or rewriting a line would let two builds publish
+different bytes as the same `andara.core@N`. AC-16 catches that at boot, but only after it has
+shipped.
 
 Blob storage grows monotonically; ADR-0004 accepts this and flags a retention story before the topic is
 the largest thing in the cluster. `andara_content_blob_bytes_total` is the number to watch. The
@@ -153,16 +254,14 @@ metric names are unchanged.)*
   more bounded `method` values. The counters below are the domain outcomes RED can't tell apart.
 - `andara_content_publishes_total{outcome}`: `ok`, `rejected`, `denied`, `too_large`, `stale_parent`.
 - `andara_content_approvals_total{outcome}`: `ok`, `self` (refused), `denied`, and
-  `self_operator` (an Operator approving their own build). `self_operator` exists only if
-  architecture adopts `docs/feedback/AW-SRV-013-operator-self-approval.md`. It's a distinct value,
-  never folded into `ok`, so the temporary rule's use is visible on a dashboard and not only in the
+  `self_operator` (an Operator approving their own build, AC-13). It's a distinct value, never
+  folded into `ok`, so the temporary rule's use is visible on a dashboard and not only in the
   audit topic.
 - `andara_content_pointer_moves_total{direction, override}`: `forward` or `rollback`, × `true` or
   `false`. A refused activation doesn't move the pointer, and counts on
-  `andara_content_activations_refused_total{reason}`. `reason` is `unapproved`, plus, if
-  architecture adopts `docs/feedback/AW-SRV-013-activation-refusals.md` item 1, the closed set of
-  `AW-SRV-012` refusal codes that activation checks (`zone_removed`, `spawn_room_removed`,
-  `core_version`).
+  `andara_content_activations_refused_total{reason}`. `reason` is the closed set `unapproved`,
+  `zone_removed`, `spawn_room_removed`, `core_version` (AC-3, AC-14). The boot's own activation
+  (AC-15) counts on `pointer_moves_total{direction="forward",override="false"}`.
 - `andara_content_blob_bytes_total`: counter, bytes accepted after deduplication. It's the number
   ADR-0004's retention question watches. No alert until that story exists.
 - `andara_content_validation_failures_total{code}`: reuses `AW-SRV-001`'s closed taxonomy.
@@ -178,7 +277,11 @@ metric names are unchanged.)*
 - `warn` per rejection, with `findings_count` and the first finding's code. The findings
   themselves go in the RPC's status details and the audit record, not the log.
 - `warn` per override, with `reason`.
-- `warn` per self-approval, with `self_approval=true`, if architecture adopts the rule.
+- `warn` per self-approval, with `self_approval=true` (AC-13).
+- `warn` per activation refused under AC-14, with `reason` and the subjects.
+- The boot's core line, once per boot, at `info`:
+  `content core: andara.core@<N> <published|present>; <activated|active andara.core@<M> by <who>>`.
+  At `warn` when AC-17 leaves an Account's pointer. At `error` for AC-16, with both digests.
 
 ### Traces
 All spans are under the Gateway interceptor's server span for the RPC, which the CLI's
@@ -195,6 +298,10 @@ All spans are under the Gateway interceptor's server span for the RPC, which the
 - The audit write is a child of each operation span: `audit.write`.
 - `content.write_*` spans are persistence writes (CLAUDE.md §7), one per produce, never one per
   blob chunk.
+- `content.get_blob`, per `GetBlob` stream, with `bytes`.
+- `content.core_boot`, a root span at boot, with `content.write_blob`, `content.write_manifest`,
+  `content.write_pointer` and `audit.write` children for whatever it wrote. It's the one trace of
+  the core publish, since no RPC carries it.
 
 ### Alerts
 None directly. A failing publish is visible to the Builder; a bad activation alerts via `AW-SRV-012`'s
@@ -202,7 +309,9 @@ None directly. A failing publish is visible to the Builder; a bad activation ale
 
 ## Test plan
 
-- **Unit:** authorization matrix as a table; audit record shape per action; version assignment.
+- **Unit:** authorization matrix as a table, the self-approval rows included; audit record shape per
+  action; version assignment; the boot's rules 1–5 as a table over store states (AC-15–17); the
+  `VERSIONS` digest test (AC-19) as part of `make check`.
 - **Integration:** against a throwaway Redpanda — every AC, including forced compaction (AC-10) and
   the streamed size limit (AC-12); the three-way equivalence fixture from `AW-CLI-002` AC-4 asserting
   server findings equal CLI findings.
@@ -213,6 +322,8 @@ None directly. A failing publish is visible to the Builder; a bad activation ale
   andara-cli content activate pack.town 8      # as A or B: pointer moves; audit shows both
   andara-cli content rollback pack.town        # pointer to 7, no approval needed
   ```
+  And, as Brian on `dev` (AC-13): publish as `--as <builder>`, `content approve` as the Operator,
+  `content activate`; the audit record carries `self_approval=true`.
 
 ## Definition of done
 
@@ -242,3 +353,37 @@ itself, so the three-way equivalence test compiles with the same package the CLI
   that a bad activation cannot be rolled back at 3 am.
 - `[ASSUMPTION]` Rollback to a previously-approved version needs no fresh approval; approvals do not
   expire. Both follow from binding an approval to byte-identical content.
+
+## Contract review (architecture, 2026-09-28)
+
+A contract change after `ready`, recorded here (CLAUDE.md §6). Implementation hasn't started. SRE's
+observability review is in `docs/feedback/AW-SRV-013-operator-self-approval.md`, and its two
+conditional additions are now unconditional.
+
+1. **Operator self-approval is adopted** (Brian, 2026-09-26; ADR-0004's dated note). AC-4 narrows to
+   callers without `operator`. AC-13 is the Operator's case. The approver is compared against both
+   the manifest's author and the real actor behind the publishing Session, so `--as` can't hide one
+   person doing both. `content.operator_self_approval` exists now: turning it off when other
+   Builders join is a values change, not a code change.
+2. **Activation refuses what the Loader would refuse** (feedback, activation refusals item 1). AC-14
+   uses `AW-SRV-012`'s codes. `override` doesn't bypass them, because the Loader would refuse the
+   same move after the pointer had moved, and the Builder would learn it from an alert instead of
+   an error.
+3. **`andara.core` is published by the server at boot, numbered by the build** (ADR-0004 and
+   ADR-0010 §8, 2026-09-28; `docs/feedback/AW-INF-021-dev-content-store.md` item 1). AC-11 is
+   amended, and AC-15 to AC-17 and AC-19 are new. No RPC publishes core. The five boot rules are
+   under Interface contract.
+4. **`GetBlob` is added.** Nothing served a published blob's body. `AW-CLI-003`'s `fetch` and `diff`,
+   `AW-CLI-002`'s `validate --pack`, and `AW-CLI-006`'s deferred `decompile --pack` all needed one
+   (`docs/feedback/AW-CLI-006-content-language-compiler.md` §7, §14 item 3). It's authorized on
+   `pack@version` plus manifest membership, because a hash-only read would leak other packs'
+   blobs. `fetch-core` over Admin isn't needed any more: the CLI embeds core.
+5. **The proto is pinned**, not sketched: `admin.proto`, `content.proto` (`Diagnostic`),
+   `account.proto` (`builder_packs = 12`), and `audit.proto` (20–26). `make proto-check` passes with
+   no breaking change. `PublishVersion` takes `parent_version` for the stale-parent check, which the
+   sketch left implicit. It no longer takes `core_version` from the caller: the server reads it
+   from the compiled pack, which the caller can't forge.
+6. **Error reasons are pinned** in one `ErrorInfo` domain, so `AW-CLI-003` maps reasons rather than
+   parsing messages.
+7. **This story grew.** PM: see `docs/feedback/AW-SRV-013-operator-self-approval.md`, *For PM*, for the
+   split architecture recommends.

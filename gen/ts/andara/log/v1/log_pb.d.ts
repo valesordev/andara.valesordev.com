@@ -139,6 +139,12 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: MarkLinkdead;
     case: "markLinkdead";
+  } | {
+    /**
+     * @generated from field: andara.log.v1.Goto goto = 19;
+     */
+    value: Goto;
+    case: "goto";
   } | { case: undefined; value?: undefined };
 };
 
@@ -182,6 +188,36 @@ export declare type Move = Message<"andara.log.v1.Move"> & {
  * Use `create(MoveSchema)` to create a new message.
  */
 export declare const MoveSchema: GenMessage<Move>;
+
+/**
+ * A Builder's jump to a Room by ID (AW-SRV-036). Applied in the actor's
+ * Zone, like Move: the parser resolves "<zone>/<room>" or "<room>" (the
+ * actor's current Zone, read from the Session's Binding) into both fields, so
+ * apply never depends on where the Gateway thought the actor was. Validate
+ * checks the target against the World in effect at the tick it applies. A
+ * target in another Zone leaves through an Arrive with an empty
+ * from_direction, exactly as a cross-Zone Move does, so a swap that removes
+ * the Room before the Arrive applies lands it at that Zone's fallback.
+ *
+ * @generated from message andara.log.v1.Goto
+ */
+export declare type Goto = Message<"andara.log.v1.Goto"> & {
+  /**
+   * @generated from field: string target_zone_id = 1;
+   */
+  targetZoneId: string;
+
+  /**
+   * @generated from field: string target_room_id = 2;
+   */
+  targetRoomId: string;
+};
+
+/**
+ * Describes the message andara.log.v1.Goto.
+ * Use `create(GotoSchema)` to create a new message.
+ */
+export declare const GotoSchema: GenMessage<Goto>;
 
 /**
  * The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The

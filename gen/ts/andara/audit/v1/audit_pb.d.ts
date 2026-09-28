@@ -93,6 +93,64 @@ export declare type AuditRecord = Message<"andara.audit.v1.AuditRecord"> & {
    * @generated from field: string detail = 9;
    */
   detail: string;
+
+  /**
+   * Content publishing (AW-SRV-013). action is publish, approve, activate,
+   * rollback, reject, or override; target is `pack@version`.
+   *
+   * @generated from field: string pack_id = 20;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 21;
+   */
+  version: bigint;
+
+  /**
+   * sha256 of the sorted list of the version's blob hashes.
+   *
+   * @generated from field: bytes blob_hashes_sha256 = 22;
+   */
+  blobHashesSha256: Uint8Array;
+
+  /**
+   * @generated from field: bool override = 23;
+   */
+  override: boolean;
+
+  /**
+   * Required with override. For andara.core published or activated at boot,
+   * `boot <build version>`, and actor_account_id is `server`.
+   *
+   * @generated from field: string reason = 24;
+   */
+  reason: string;
+
+  /**
+   * @generated from field: uint32 findings_count = 25;
+   */
+  findingsCount: number;
+
+  /**
+   * The approver is the publisher, or the real actor behind the publisher's
+   * acting-as Session (ADR-0004, amended 2026-09-26).
+   *
+   * @generated from field: bool self_approval = 26;
+   */
+  selfApproval: boolean;
+
+  /**
+   * SetBuilderPacks (AW-SRV-035): the Account's pack set before and after.
+   *
+   * @generated from field: repeated string builder_packs_before = 27;
+   */
+  builderPacksBefore: string[];
+
+  /**
+   * @generated from field: repeated string builder_packs_after = 28;
+   */
+  builderPacksAfter: string[];
 };
 
 /**

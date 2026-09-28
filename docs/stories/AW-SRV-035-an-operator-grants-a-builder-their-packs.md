@@ -4,7 +4,7 @@ title: An Operator grants a Builder their packs
 epic: EPIC-06
 component: server
 type: feature
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-013]
 blocks: [AW-INF-021, AW-INF-023]
@@ -33,7 +33,8 @@ Builder can publish their pack and nobody else's.
 
 ### In scope
 - `Admin.SetBuilderPacks`: replaces an Account's `builder_packs` with the given set. Operator only.
-- `andara-cli account set-packs <account-id> --pack ID [--pack ID ...]`, and `--clear`.
+- `andara-cli account set-packs <account-id> --pack ID [--pack ID ...]`, and `--clear`, with
+  `--expected-version` as `set-roles` has.
 - An audit record per change on `andara.audit.v1`, as `SetRoles` writes one.
 
 ### Out of scope
@@ -49,7 +50,7 @@ Builder can publish their pack and nobody else's.
    `<username>: builder packs docks, town`, and that Builder's `content publish` for `town` passes
    `AW-SRV-013`'s authorization.
 2. **Given** that Builder **when** they publish to `wilds` **then** `AW-SRV-013` AC-7 holds:
-   `PERMISSION_DENIED`, and the CLI exits `4`.
+   `PERMISSION_DENIED`, and the CLI exits `1` with `error.code` `pack_not_held`.
 3. **Given** `set-packs <id> --pack town` on an Account holding `docks, town` **when** it runs
    **then** `builder_packs` is exactly `[town]`. The call replaces the set; it doesn't add to it.
 4. **Given** `set-packs <id> --clear` **when** it runs **then** `builder_packs` is empty, it prints
@@ -58,9 +59,11 @@ Builder can publish their pack and nobody else's.
    `PERMISSION_DENIED`, the Account is unchanged, and one audit record is written with
    `outcome=denied`.
 6. **Given** `--pack andara.core` **when** it runs **then** `INVALID_ARGUMENT`, `andara.core is
-   operator-only and can't be granted` (`AW-SRV-013` AC-11), exit `2`.
-7. **Given** a pack ID that isn't a valid pack identifier (Content Language `semantics.md` §1)
-   **when** it runs **then** `INVALID_ARGUMENT` naming it, exit `2`, and the Account is unchanged.
+   published by the server and can't be granted` (`AW-SRV-013` AC-11), exit `1`, and the Account is
+   unchanged.
+7. **Given** a pack ID that isn't a valid pack identifier, `LOWER_ID` segments joined by `.`
+   (Content Language `semantics.md` §1) **when** it runs **then** `INVALID_ARGUMENT` naming it, exit
+   `1`, and the Account is unchanged. The CLI doesn't pre-check it: the server is the boundary.
 8. **Given** an Account without `builder` **when** packs are granted **then** the grant is stored
    and it prints `<username>: builder packs town (inactive: no builder role)`. Roles and packs are
    set independently, so revoking the role doesn't lose the grant.
@@ -68,38 +71,55 @@ Builder can publish their pack and nobody else's.
    `action=set_builder_packs`, the actor, the target, and the before and after sets.
 10. **Given** a grant and then a server restart **when** the Builder publishes to `town` **then**
     the publish passes authorization. The grant lives in the Account store, as roles do.
+11. **Given** `--expected-version 3` on an Account at record version `4` **when** it runs **then**
+    `ABORTED`, exit `1`, and the Account is unchanged, as `set-roles` behaves (`AW-SRV-008`).
 
 ## Interface contract
 
+**Pinned 2026-09-28** in `docs/specs/protocol/andara/admin/v1/admin.proto`. The audit fields are in
+`audit.proto` (`builder_packs_before = 27`, `builder_packs_after = 28`).
+
 ```protobuf
-// CONTRACT SKETCH — not an implementation. Additions to andara/admin/v1/admin.proto
+// CONTRACT SKETCH — not an implementation. The pinned form is admin.proto.
 rpc SetBuilderPacks(SetBuilderPacksRequest) returns (SetBuilderPacksResponse);
 
 message SetBuilderPacksRequest {
   string account_id = 1;
-  repeated string packs = 2;   // the whole new set; empty clears
+  repeated string packs = 2;              // the whole new set; empty clears
+  uint64 expected_record_version = 3;     // 0: any, as SetRoles
 }
 message SetBuilderPacksResponse {
-  repeated string builder_packs = 1;   // as stored: sorted, deduplicated
+  repeated string builder_packs = 1;      // as stored: sorted, deduplicated
+  uint64 record_version = 2;
+  bool builder_role = 3;                  // false: stored and inert (AC-8)
 }
 ```
 
 ```
-andara-cli account set-packs <account-id> (--pack ID)... | --clear
+andara-cli account set-packs <account-id> ((--pack ID)... | --clear) [--expected-version N]
 ```
+
+Exit codes are `AW-CLI-001`'s shared taxonomy:
 
 | Exit | Meaning |
 |-----:|---------|
 | `0` | set |
-| `2` | usage, invalid pack ID, `andara.core` |
+| `1` | the server refused: not an operator, account not found, invalid pack ID, `andara.core`, stale record version. `error.code` is the reason below |
+| `2` | usage: neither `--pack` nor `--clear`, or both |
 | `3` | server unreachable |
-| `4` | refused: not an operator, account not found |
+| `4` | timeout |
 
-| Condition | gRPC code |
-|-----------|-----------|
-| caller lacks `operator` | `PERMISSION_DENIED` |
-| account not found | `NOT_FOUND` |
-| invalid pack ID, `andara.core` | `INVALID_ARGUMENT` |
+| Condition | gRPC code | `ErrorInfo.reason` |
+|-----------|-----------|--------------------|
+| caller lacks `operator` | `PERMISSION_DENIED` | `operator_only` |
+| account not found | `NOT_FOUND` | `account_not_found` |
+| invalid pack ID | `INVALID_ARGUMENT` | `invalid_pack_id` |
+| `andara.core` | `INVALID_ARGUMENT` | `core_not_grantable` |
+| record version stale | `ABORTED` | `record_version` |
+
+The audit record is `action=set_builder_packs`, `target=<account_id>`, and `outcome` one of `ok`,
+`denied`, `invalid`, `conflict`. It also carries `builder_packs_before` and `builder_packs_after`,
+with `after` empty unless `ok`.
 
 `--output json` returns the `AW-CLI-001` envelope with `builder_packs`. No new configuration.
 
@@ -154,8 +174,31 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` Replace, not add or remove, matching `SetRoles`. An Operator re-states the set. If
-  architecture prefers `--add`/`--remove`, that changes the CLI flags only.
+- **Resolved 2026-09-28 (architecture): replace**, matching `SetRoles`. `expected_record_version`
+  makes a replace safe against a concurrent grant, which an add/remove pair wouldn't need but a
+  replace does.
 - There's no `account show` and no `GetAccount` RPC, so an Operator can't read a grant back except
   through `set-packs`' own output. That's left out here. If the guide (`AW-INF-023`) needs a read,
   it's a separate story.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in `docs/feedback/AW-INF-021-dev-content-store.md` and in the story's
+Observability section: the privileged-action counter and the `accounts.write` span. The story is
+`ready`.
+
+1. **The proto is pinned** in `admin.proto`, with `expected_record_version`, `record_version` and
+   `builder_role` added. Every other Account write in `Admin` has optimistic concurrency, and a
+   replace without it silently drops a grant made between an Operator's read and write (AC-11).
+   `builder_role` is how the CLI knows to print AC-8's `(inactive: no builder role)` without a
+   second read.
+2. **Exit codes follow `AW-CLI-001`.** The draft used `4` for "refused", which is a timeout in the
+   shared taxonomy and in `admin/cli/errors.go`. A server refusal is `1` with the reason as
+   `error.code`. `2` stays for invocations the CLI can reject on its own.
+3. **AC-6's message follows the core decision** (ADR-0004, 2026-09-28): `andara.core` is published by
+   the server, so no Account holds a grant to it. That includes Operators, who move its pointer
+   without one.
+4. **The audit record's before and after sets are fields** (`audit.proto` 27, 28), not free text in
+   `detail`. AC-9 is asserted on them.
+5. `AW-SRV-013` supplies `Account.builder_packs = 12`, now pinned. The glossary's **Pack Grant**
+   already names it.

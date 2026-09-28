@@ -67,6 +67,26 @@ const (
 	// AdminCreateAgentAccountProcedure is the fully-qualified name of the Admin's CreateAgentAccount
 	// RPC.
 	AdminCreateAgentAccountProcedure = "/andara.admin.v1.Admin/CreateAgentAccount"
+	// AdminSetBuilderPacksProcedure is the fully-qualified name of the Admin's SetBuilderPacks RPC.
+	AdminSetBuilderPacksProcedure = "/andara.admin.v1.Admin/SetBuilderPacks"
+	// AdminHasBlobsProcedure is the fully-qualified name of the Admin's HasBlobs RPC.
+	AdminHasBlobsProcedure = "/andara.admin.v1.Admin/HasBlobs"
+	// AdminPublishBlobProcedure is the fully-qualified name of the Admin's PublishBlob RPC.
+	AdminPublishBlobProcedure = "/andara.admin.v1.Admin/PublishBlob"
+	// AdminPublishVersionProcedure is the fully-qualified name of the Admin's PublishVersion RPC.
+	AdminPublishVersionProcedure = "/andara.admin.v1.Admin/PublishVersion"
+	// AdminApproveVersionProcedure is the fully-qualified name of the Admin's ApproveVersion RPC.
+	AdminApproveVersionProcedure = "/andara.admin.v1.Admin/ApproveVersion"
+	// AdminActivateVersionProcedure is the fully-qualified name of the Admin's ActivateVersion RPC.
+	AdminActivateVersionProcedure = "/andara.admin.v1.Admin/ActivateVersion"
+	// AdminListVersionsProcedure is the fully-qualified name of the Admin's ListVersions RPC.
+	AdminListVersionsProcedure = "/andara.admin.v1.Admin/ListVersions"
+	// AdminGetVersionProcedure is the fully-qualified name of the Admin's GetVersion RPC.
+	AdminGetVersionProcedure = "/andara.admin.v1.Admin/GetVersion"
+	// AdminGetBlobProcedure is the fully-qualified name of the Admin's GetBlob RPC.
+	AdminGetBlobProcedure = "/andara.admin.v1.Admin/GetBlob"
+	// AdminReloadContentProcedure is the fully-qualified name of the Admin's ReloadContent RPC.
+	AdminReloadContentProcedure = "/andara.admin.v1.Admin/ReloadContent"
 )
 
 // AdminClient is a client for the andara.admin.v1.Admin service.
@@ -100,6 +120,37 @@ type AdminClient interface {
 	// there is no secret to return and workload_subject is what the projected
 	// token's `sub` must equal.
 	CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error)
+	// Replace the Content Packs a Builder may publish to (AW-SRV-035). The whole
+	// set, not a delta, as SetRoles is. Roles and packs are independent: a grant
+	// on an Account without BUILDER is stored and inert.
+	SetBuilderPacks(context.Context, *connect.Request[v1.SetBuilderPacksRequest]) (*connect.Response[v1.SetBuilderPacksResponse], error)
+	// Which of these blobs does the store already hold? Lets a publisher
+	// upload only what is missing. pack_id is required: it is what the call is
+	// authorized on, not a filter on the answer.
+	HasBlobs(context.Context, *connect.Request[v1.HasBlobsRequest]) (*connect.Response[v1.HasBlobsResponse], error)
+	// One blob per stream: a header chunk, then data chunks. The server hashes
+	// what it receives and refuses a body whose hash differs from the header's.
+	// Publishing a blob the store holds is idempotent.
+	PublishBlob(context.Context) *connect.ClientStreamForClient[v1.PublishBlobRequest, v1.PublishBlobResponse]
+	// Validate the blobs as one pack and write its version manifest. Findings
+	// that refuse the publish are INVALID_ARGUMENT, carried in the status
+	// details as PublishFindings. Warnings return in the response.
+	PublishVersion(context.Context, *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error)
+	// Record an approval on the manifest. Never moves the pointer.
+	ApproveVersion(context.Context, *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error)
+	// Move the Active Pointer, forward or back. Refuses, before the pointer
+	// moves, what the Loader would refuse after it (zone_removed,
+	// spawn_room_removed, core_version).
+	ActivateVersion(context.Context, *connect.Request[v1.ActivateVersionRequest]) (*connect.Response[v1.ActivateVersionResponse], error)
+	ListVersions(context.Context, *connect.Request[v1.ListVersionsRequest]) (*connect.Response[v1.ListVersionsResponse], error)
+	GetVersion(context.Context, *connect.Request[v1.GetVersionRequest]) (*connect.Response[v1.GetVersionResponse], error)
+	// One blob's body, streamed. Authorized on the pack and version named, and
+	// refused unless the hash is in that version's manifest, so a hash from
+	// another pack reads nothing. Serves content fetch, content diff, content
+	// validate --pack, and content decompile --pack (AW-CLI-006 feedback §7).
+	GetBlob(context.Context, *connect.Request[v1.GetBlobRequest]) (*connect.ServerStreamForClient[v1.GetBlobResponse], error)
+	// Re-resolve the active versions without a pointer move. OPERATOR only.
+	ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error)
 }
 
 // NewAdminClient constructs a client for the andara.admin.v1.Admin service. By default, it uses the
@@ -167,6 +218,66 @@ func NewAdminClient(httpClient connect.HTTPClient, baseURL string, opts ...conne
 			connect.WithSchema(adminMethods.ByName("CreateAgentAccount")),
 			connect.WithClientOptions(opts...),
 		),
+		setBuilderPacks: connect.NewClient[v1.SetBuilderPacksRequest, v1.SetBuilderPacksResponse](
+			httpClient,
+			baseURL+AdminSetBuilderPacksProcedure,
+			connect.WithSchema(adminMethods.ByName("SetBuilderPacks")),
+			connect.WithClientOptions(opts...),
+		),
+		hasBlobs: connect.NewClient[v1.HasBlobsRequest, v1.HasBlobsResponse](
+			httpClient,
+			baseURL+AdminHasBlobsProcedure,
+			connect.WithSchema(adminMethods.ByName("HasBlobs")),
+			connect.WithClientOptions(opts...),
+		),
+		publishBlob: connect.NewClient[v1.PublishBlobRequest, v1.PublishBlobResponse](
+			httpClient,
+			baseURL+AdminPublishBlobProcedure,
+			connect.WithSchema(adminMethods.ByName("PublishBlob")),
+			connect.WithClientOptions(opts...),
+		),
+		publishVersion: connect.NewClient[v1.PublishVersionRequest, v1.PublishVersionResponse](
+			httpClient,
+			baseURL+AdminPublishVersionProcedure,
+			connect.WithSchema(adminMethods.ByName("PublishVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		approveVersion: connect.NewClient[v1.ApproveVersionRequest, v1.ApproveVersionResponse](
+			httpClient,
+			baseURL+AdminApproveVersionProcedure,
+			connect.WithSchema(adminMethods.ByName("ApproveVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		activateVersion: connect.NewClient[v1.ActivateVersionRequest, v1.ActivateVersionResponse](
+			httpClient,
+			baseURL+AdminActivateVersionProcedure,
+			connect.WithSchema(adminMethods.ByName("ActivateVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		listVersions: connect.NewClient[v1.ListVersionsRequest, v1.ListVersionsResponse](
+			httpClient,
+			baseURL+AdminListVersionsProcedure,
+			connect.WithSchema(adminMethods.ByName("ListVersions")),
+			connect.WithClientOptions(opts...),
+		),
+		getVersion: connect.NewClient[v1.GetVersionRequest, v1.GetVersionResponse](
+			httpClient,
+			baseURL+AdminGetVersionProcedure,
+			connect.WithSchema(adminMethods.ByName("GetVersion")),
+			connect.WithClientOptions(opts...),
+		),
+		getBlob: connect.NewClient[v1.GetBlobRequest, v1.GetBlobResponse](
+			httpClient,
+			baseURL+AdminGetBlobProcedure,
+			connect.WithSchema(adminMethods.ByName("GetBlob")),
+			connect.WithClientOptions(opts...),
+		),
+		reloadContent: connect.NewClient[v1.ReloadContentRequest, v1.ReloadContentResponse](
+			httpClient,
+			baseURL+AdminReloadContentProcedure,
+			connect.WithSchema(adminMethods.ByName("ReloadContent")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -181,6 +292,16 @@ type adminClient struct {
 	revokeInvite        *connect.Client[v1.RevokeInviteRequest, v1.RevokeInviteResponse]
 	setRegistrationMode *connect.Client[v1.SetRegistrationModeRequest, v1.SetRegistrationModeResponse]
 	createAgentAccount  *connect.Client[v1.CreateAgentAccountRequest, v1.CreateAgentAccountResponse]
+	setBuilderPacks     *connect.Client[v1.SetBuilderPacksRequest, v1.SetBuilderPacksResponse]
+	hasBlobs            *connect.Client[v1.HasBlobsRequest, v1.HasBlobsResponse]
+	publishBlob         *connect.Client[v1.PublishBlobRequest, v1.PublishBlobResponse]
+	publishVersion      *connect.Client[v1.PublishVersionRequest, v1.PublishVersionResponse]
+	approveVersion      *connect.Client[v1.ApproveVersionRequest, v1.ApproveVersionResponse]
+	activateVersion     *connect.Client[v1.ActivateVersionRequest, v1.ActivateVersionResponse]
+	listVersions        *connect.Client[v1.ListVersionsRequest, v1.ListVersionsResponse]
+	getVersion          *connect.Client[v1.GetVersionRequest, v1.GetVersionResponse]
+	getBlob             *connect.Client[v1.GetBlobRequest, v1.GetBlobResponse]
+	reloadContent       *connect.Client[v1.ReloadContentRequest, v1.ReloadContentResponse]
 }
 
 // GetServerInfo calls andara.admin.v1.Admin.GetServerInfo.
@@ -228,6 +349,56 @@ func (c *adminClient) CreateAgentAccount(ctx context.Context, req *connect.Reque
 	return c.createAgentAccount.CallUnary(ctx, req)
 }
 
+// SetBuilderPacks calls andara.admin.v1.Admin.SetBuilderPacks.
+func (c *adminClient) SetBuilderPacks(ctx context.Context, req *connect.Request[v1.SetBuilderPacksRequest]) (*connect.Response[v1.SetBuilderPacksResponse], error) {
+	return c.setBuilderPacks.CallUnary(ctx, req)
+}
+
+// HasBlobs calls andara.admin.v1.Admin.HasBlobs.
+func (c *adminClient) HasBlobs(ctx context.Context, req *connect.Request[v1.HasBlobsRequest]) (*connect.Response[v1.HasBlobsResponse], error) {
+	return c.hasBlobs.CallUnary(ctx, req)
+}
+
+// PublishBlob calls andara.admin.v1.Admin.PublishBlob.
+func (c *adminClient) PublishBlob(ctx context.Context) *connect.ClientStreamForClient[v1.PublishBlobRequest, v1.PublishBlobResponse] {
+	return c.publishBlob.CallClientStream(ctx)
+}
+
+// PublishVersion calls andara.admin.v1.Admin.PublishVersion.
+func (c *adminClient) PublishVersion(ctx context.Context, req *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error) {
+	return c.publishVersion.CallUnary(ctx, req)
+}
+
+// ApproveVersion calls andara.admin.v1.Admin.ApproveVersion.
+func (c *adminClient) ApproveVersion(ctx context.Context, req *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error) {
+	return c.approveVersion.CallUnary(ctx, req)
+}
+
+// ActivateVersion calls andara.admin.v1.Admin.ActivateVersion.
+func (c *adminClient) ActivateVersion(ctx context.Context, req *connect.Request[v1.ActivateVersionRequest]) (*connect.Response[v1.ActivateVersionResponse], error) {
+	return c.activateVersion.CallUnary(ctx, req)
+}
+
+// ListVersions calls andara.admin.v1.Admin.ListVersions.
+func (c *adminClient) ListVersions(ctx context.Context, req *connect.Request[v1.ListVersionsRequest]) (*connect.Response[v1.ListVersionsResponse], error) {
+	return c.listVersions.CallUnary(ctx, req)
+}
+
+// GetVersion calls andara.admin.v1.Admin.GetVersion.
+func (c *adminClient) GetVersion(ctx context.Context, req *connect.Request[v1.GetVersionRequest]) (*connect.Response[v1.GetVersionResponse], error) {
+	return c.getVersion.CallUnary(ctx, req)
+}
+
+// GetBlob calls andara.admin.v1.Admin.GetBlob.
+func (c *adminClient) GetBlob(ctx context.Context, req *connect.Request[v1.GetBlobRequest]) (*connect.ServerStreamForClient[v1.GetBlobResponse], error) {
+	return c.getBlob.CallServerStream(ctx, req)
+}
+
+// ReloadContent calls andara.admin.v1.Admin.ReloadContent.
+func (c *adminClient) ReloadContent(ctx context.Context, req *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error) {
+	return c.reloadContent.CallUnary(ctx, req)
+}
+
 // AdminHandler is an implementation of the andara.admin.v1.Admin service.
 type AdminHandler interface {
 	// Build and content identity of the running server. ADR-0004 decoupled
@@ -259,6 +430,37 @@ type AdminHandler interface {
 	// there is no secret to return and workload_subject is what the projected
 	// token's `sub` must equal.
 	CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error)
+	// Replace the Content Packs a Builder may publish to (AW-SRV-035). The whole
+	// set, not a delta, as SetRoles is. Roles and packs are independent: a grant
+	// on an Account without BUILDER is stored and inert.
+	SetBuilderPacks(context.Context, *connect.Request[v1.SetBuilderPacksRequest]) (*connect.Response[v1.SetBuilderPacksResponse], error)
+	// Which of these blobs does the store already hold? Lets a publisher
+	// upload only what is missing. pack_id is required: it is what the call is
+	// authorized on, not a filter on the answer.
+	HasBlobs(context.Context, *connect.Request[v1.HasBlobsRequest]) (*connect.Response[v1.HasBlobsResponse], error)
+	// One blob per stream: a header chunk, then data chunks. The server hashes
+	// what it receives and refuses a body whose hash differs from the header's.
+	// Publishing a blob the store holds is idempotent.
+	PublishBlob(context.Context, *connect.ClientStream[v1.PublishBlobRequest]) (*connect.Response[v1.PublishBlobResponse], error)
+	// Validate the blobs as one pack and write its version manifest. Findings
+	// that refuse the publish are INVALID_ARGUMENT, carried in the status
+	// details as PublishFindings. Warnings return in the response.
+	PublishVersion(context.Context, *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error)
+	// Record an approval on the manifest. Never moves the pointer.
+	ApproveVersion(context.Context, *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error)
+	// Move the Active Pointer, forward or back. Refuses, before the pointer
+	// moves, what the Loader would refuse after it (zone_removed,
+	// spawn_room_removed, core_version).
+	ActivateVersion(context.Context, *connect.Request[v1.ActivateVersionRequest]) (*connect.Response[v1.ActivateVersionResponse], error)
+	ListVersions(context.Context, *connect.Request[v1.ListVersionsRequest]) (*connect.Response[v1.ListVersionsResponse], error)
+	GetVersion(context.Context, *connect.Request[v1.GetVersionRequest]) (*connect.Response[v1.GetVersionResponse], error)
+	// One blob's body, streamed. Authorized on the pack and version named, and
+	// refused unless the hash is in that version's manifest, so a hash from
+	// another pack reads nothing. Serves content fetch, content diff, content
+	// validate --pack, and content decompile --pack (AW-CLI-006 feedback §7).
+	GetBlob(context.Context, *connect.Request[v1.GetBlobRequest], *connect.ServerStream[v1.GetBlobResponse]) error
+	// Re-resolve the active versions without a pointer move. OPERATOR only.
+	ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error)
 }
 
 // NewAdminHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -322,6 +524,66 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 		connect.WithSchema(adminMethods.ByName("CreateAgentAccount")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminSetBuilderPacksHandler := connect.NewUnaryHandler(
+		AdminSetBuilderPacksProcedure,
+		svc.SetBuilderPacks,
+		connect.WithSchema(adminMethods.ByName("SetBuilderPacks")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminHasBlobsHandler := connect.NewUnaryHandler(
+		AdminHasBlobsProcedure,
+		svc.HasBlobs,
+		connect.WithSchema(adminMethods.ByName("HasBlobs")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminPublishBlobHandler := connect.NewClientStreamHandler(
+		AdminPublishBlobProcedure,
+		svc.PublishBlob,
+		connect.WithSchema(adminMethods.ByName("PublishBlob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminPublishVersionHandler := connect.NewUnaryHandler(
+		AdminPublishVersionProcedure,
+		svc.PublishVersion,
+		connect.WithSchema(adminMethods.ByName("PublishVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminApproveVersionHandler := connect.NewUnaryHandler(
+		AdminApproveVersionProcedure,
+		svc.ApproveVersion,
+		connect.WithSchema(adminMethods.ByName("ApproveVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminActivateVersionHandler := connect.NewUnaryHandler(
+		AdminActivateVersionProcedure,
+		svc.ActivateVersion,
+		connect.WithSchema(adminMethods.ByName("ActivateVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminListVersionsHandler := connect.NewUnaryHandler(
+		AdminListVersionsProcedure,
+		svc.ListVersions,
+		connect.WithSchema(adminMethods.ByName("ListVersions")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminGetVersionHandler := connect.NewUnaryHandler(
+		AdminGetVersionProcedure,
+		svc.GetVersion,
+		connect.WithSchema(adminMethods.ByName("GetVersion")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminGetBlobHandler := connect.NewServerStreamHandler(
+		AdminGetBlobProcedure,
+		svc.GetBlob,
+		connect.WithSchema(adminMethods.ByName("GetBlob")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminReloadContentHandler := connect.NewUnaryHandler(
+		AdminReloadContentProcedure,
+		svc.ReloadContent,
+		connect.WithSchema(adminMethods.ByName("ReloadContent")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/andara.admin.v1.Admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminGetServerInfoProcedure:
@@ -342,6 +604,26 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 			adminSetRegistrationModeHandler.ServeHTTP(w, r)
 		case AdminCreateAgentAccountProcedure:
 			adminCreateAgentAccountHandler.ServeHTTP(w, r)
+		case AdminSetBuilderPacksProcedure:
+			adminSetBuilderPacksHandler.ServeHTTP(w, r)
+		case AdminHasBlobsProcedure:
+			adminHasBlobsHandler.ServeHTTP(w, r)
+		case AdminPublishBlobProcedure:
+			adminPublishBlobHandler.ServeHTTP(w, r)
+		case AdminPublishVersionProcedure:
+			adminPublishVersionHandler.ServeHTTP(w, r)
+		case AdminApproveVersionProcedure:
+			adminApproveVersionHandler.ServeHTTP(w, r)
+		case AdminActivateVersionProcedure:
+			adminActivateVersionHandler.ServeHTTP(w, r)
+		case AdminListVersionsProcedure:
+			adminListVersionsHandler.ServeHTTP(w, r)
+		case AdminGetVersionProcedure:
+			adminGetVersionHandler.ServeHTTP(w, r)
+		case AdminGetBlobProcedure:
+			adminGetBlobHandler.ServeHTTP(w, r)
+		case AdminReloadContentProcedure:
+			adminReloadContentHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -385,4 +667,44 @@ func (UnimplementedAdminHandler) SetRegistrationMode(context.Context, *connect.R
 
 func (UnimplementedAdminHandler) CreateAgentAccount(context.Context, *connect.Request[v1.CreateAgentAccountRequest]) (*connect.Response[v1.CreateAgentAccountResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.CreateAgentAccount is not implemented"))
+}
+
+func (UnimplementedAdminHandler) SetBuilderPacks(context.Context, *connect.Request[v1.SetBuilderPacksRequest]) (*connect.Response[v1.SetBuilderPacksResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.SetBuilderPacks is not implemented"))
+}
+
+func (UnimplementedAdminHandler) HasBlobs(context.Context, *connect.Request[v1.HasBlobsRequest]) (*connect.Response[v1.HasBlobsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.HasBlobs is not implemented"))
+}
+
+func (UnimplementedAdminHandler) PublishBlob(context.Context, *connect.ClientStream[v1.PublishBlobRequest]) (*connect.Response[v1.PublishBlobResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.PublishBlob is not implemented"))
+}
+
+func (UnimplementedAdminHandler) PublishVersion(context.Context, *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.PublishVersion is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ApproveVersion(context.Context, *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ApproveVersion is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ActivateVersion(context.Context, *connect.Request[v1.ActivateVersionRequest]) (*connect.Response[v1.ActivateVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ActivateVersion is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ListVersions(context.Context, *connect.Request[v1.ListVersionsRequest]) (*connect.Response[v1.ListVersionsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ListVersions is not implemented"))
+}
+
+func (UnimplementedAdminHandler) GetVersion(context.Context, *connect.Request[v1.GetVersionRequest]) (*connect.Response[v1.GetVersionResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.GetVersion is not implemented"))
+}
+
+func (UnimplementedAdminHandler) GetBlob(context.Context, *connect.Request[v1.GetBlobRequest], *connect.ServerStream[v1.GetBlobResponse]) error {
+	return connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.GetBlob is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ReloadContent is not implemented"))
 }

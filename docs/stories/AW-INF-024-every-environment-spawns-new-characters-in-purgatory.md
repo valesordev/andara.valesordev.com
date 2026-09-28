@@ -4,7 +4,7 @@ title: Every environment spawns new Characters in Purgatory
 epic: EPIC-01
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-037]
 blocks: [AW-INF-023]
@@ -40,7 +40,10 @@ point is the same everywhere, and the gates prove the path a real player takes.
 - `stack_play.sh`:
   - a new Character is `dormant  purgatory/start` before its first `play`;
   - its first `look` reads `Purgatory`;
-  - it walks `out` to `Market Plaza` before the existing plaza-to-hall steps.
+  - both players walk `out`, then `look`, before the existing steps. B goes first, and its
+    `look` reading `Market Plaza` is the existing "B is in the plaza" wait. Then A walks `out` and
+    `look`s, and the existing plaza-to-hall steps follow. A move describes no Room today (the
+    script's own comment), so the `look` after `out` is what reads the plaza.
 - `stack_linkdead.sh` (`AW-INF-017`): both players walk `out` before the linkdead steps, which stay
   in `town/plaza`.
 - The dev fixture pack (`AW-INF-021`) includes Purgatory, so `dev`'s spawn Room exists in its store.
@@ -61,13 +64,17 @@ point is the same everywhere, and the gates prove the path a real player takes.
    `purgatory/start` in all four.
 2. **Given** a fresh compose stack **when** `character create` and then `character list` run
    **then** the list shows `<name>  dormant  purgatory/start`.
-3. **Given** `make stack-play` **when** it runs **then** it passes. Its transcript shows `Purgatory`
-   first, then `Market Plaza` after `out`, then the existing walk north.
+3. **Given** `make stack-play` **when** it runs **then** it passes. Each player's transcript shows
+   `Purgatory` first, then `Market Plaza` from the `look` after `out`, then A's existing walk
+   north. B's transcript shows A's arrival line in the plaza (its wording is whatever `AW-SRV-037`
+   AC-3 leaves it) before `<A> leaves north.`.
 4. **Given** `make stack-linkdead` **when** it runs **then** it passes, with both players in
    `town/plaza` for the drop and reconnect.
-5. **Given** a server whose loaded content lacks `purgatory/start` **when** it boots **then** it
-   exits 1, naming the spawn Room. That's `AW-SRV-014`'s existing rule; this AC only confirms each
-   environment's content has the Room.
+5. **Given** each environment after this story **when** its server boots **then** it reaches
+   Ready. The spawn Room must exist, and a server whose content lacks it exits `1` naming it
+   (`AW-SRV-014`'s existing rule and test). So a Ready pod in each environment is the evidence
+   that its content has `purgatory/start`: the compose stack (AC-2), `local` (`make helm-test`),
+   and `dev` after the merge rolls it.
 
 ## Interface contract
 
@@ -88,7 +95,8 @@ that have never been bound start in Purgatory. A local stack from before `AW-SRV
 
 ## Test plan
 
-- **Unit:** `helm-test` asserts AC-1 on each environment's render.
+- **Unit:** `helm-test` asserts AC-1 on each environment's render, and a `local` pod reaching
+  Ready (AC-5).
 - **Integration:** the `stack` workflow runs `stack-play` and `stack-linkdead` (AC-3, AC-4).
 - **Manual/operator:**
   ```
@@ -102,5 +110,27 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` `prod` changes too, since Brian said "all characters". `prod` serves no players
-  yet.
+- **Ordering with `AW-INF-021`.** Until `AW-INF-021` lands, `dev` reads `testdata/content/valid/`
+  from a ConfigMap, which has Purgatory once `AW-SRV-037` merges. After it, `dev`'s spawn Room is
+  in the store's `town` pack (`content/fixtures/town/`, which `AW-SRV-037` also adds). Either
+  order works, and neither needs this story to change.
+
+- **Resolved 2026-09-28 (architecture): `prod` changes too**, since Brian said "all characters".
+  `prod` serves no players yet.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in `docs/feedback/AW-INF-024-purgatory-spawn.md`: no change. The
+story is `ready`.
+
+1. **Both players walk out, not just A.** `stack_play.sh` waits for B to read `Market Plaza` before A
+   moves, so that B witnesses A. With Purgatory as the spawn Room, B spawns there too, and the wait
+   would never pass. B walks out first and A second, so B is in the plaza to see A arrive.
+2. **`look` after `out`.** A move describes no Room until `AW-SRV-038`, so the plaza is read from a
+   `look`. If `AW-SRV-038` lands first, the move's own description appears before the `look`. The
+   script's ordered matching finds the first `Market Plaza` either way.
+3. **AC-5 is now observable per environment.** As written, it restated `AW-SRV-014`'s rule and
+   tested nothing new. A Ready pod is the per-environment evidence, since boot refuses a missing
+   spawn Room.
+4. **`prod` changes too.** It serves no players, and its content is the same test content, so the
+   `[ASSUMPTION]` holds with nothing to resolve. It was never a contract question.

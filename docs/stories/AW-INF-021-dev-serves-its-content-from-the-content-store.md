@@ -4,9 +4,9 @@ title: dev serves its content from the content store
 epic: EPIC-05
 component: infra
 type: infra
-status: draft
+status: ready
 size: M
-depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019]
+depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019, AW-SRV-037]
 blocks: [AW-INF-022, AW-INF-023]
 lane: sre
 risk: medium
@@ -28,8 +28,8 @@ docks, and wilds Zones that `town/plaza` spawns into are published into `dev`'s 
 Zone every new Character enters (Brian, 2026-09-26; `AW-SRV-037`, `AW-INF-024`). A Builder's packs load beside it. It also
 gives `AW-INF-007`'s `andara.core` activation step a carrier on `dev`. Architecture's review of
 `AW-INF-019` (#107) found "nothing to act on while `dev` reads its content from ConfigMaps", and
-after this story there is. The open mechanism questions are in
-`docs/feedback/AW-INF-021-dev-content-store.md`.
+after this story there is. Architecture decided the mechanisms on 2026-09-28
+(`docs/feedback/AW-INF-021-dev-content-store.md`, "Architecture's decisions").
 
 ## User story
 
@@ -41,15 +41,18 @@ running server minutes after I write it, without a deploy.
 ### In scope
 - `values/dev.yaml`: `server.content.source: kafka` and `content.packs: "*"`. The chart's content
   ConfigMaps and their mounts are no longer rendered for `dev`. `local` keeps `dir`.
-- `andara.core` active in `dev`'s store at the version the running build carries, before a pod
-  from that build reports ready, on every roll `AW-INF-019`'s Application makes. The mechanism is
-  feedback item 1.
-- `make content-seed ENV=dev`: publishes and activates the dev fixture as pack `town`, from Content
-  Language source, as the operator with `override` and the reason `dev fixture`.
+- Verifying on `dev` that `andara.core` is active at the version the running build carries,
+  before a pod from that build reports ready, on every roll `AW-INF-019`'s Application makes. The
+  server does it at boot (`AW-SRV-013`, feedback item 1). This story adds no carrier: no hook, Job,
+  or image.
+- `make content-seed ENV=dev`: publishes and activates the dev fixture as pack `town`, from
+  `content/fixtures/town/` (`AW-SRV-037`, feedback item 3), as the operator with `override` and the
+  reason `dev fixture`.
 - A seed that runs once. If `town` already has an active version, whoever published it, the seed
   publishes nothing, so a Builder who has taken over `town` never has their work overwritten.
-- The move of `dev`'s existing log and Account store from `dir` genesis swaps to store-backed
-  content, per feedback item 2.
+- `make world-reset ENV=dev CONFIRM=andara-dev` (feedback item 2), and one run of it to move `dev`
+  off its `dir`-genesis log. It recreates the World's log topics and the Account store, and empties
+  the snapshot store and the projector's state. The content topics and `andara.audit.v1` are kept.
 - `make argocd-status ENV=dev` (from `AW-INF-019`) adds one line per active pack:
   `content <pack>@<version>`.
 
@@ -76,47 +79,83 @@ running server minutes after I write it, without a deploy.
 5. **Given** a merge to `main` that rolls `dev` **when** the new pod reports ready **then** every
    pack active before the roll is still active at the same version. A roll never re-seeds or moves
    a Builder's pointer.
-6. **Given** a build whose `andara.core` is newer than the one active in the store **when**
-   `AW-INF-019` rolls it **then** that core version is active before the pod reports ready, and a
-   Builder pack compiled against the older core still loads, unless `AW-SRV-012`'s core-skew rule
-   refuses it. In that case the refusal is visible in `make argocd-status` and in the server's
-   `error` line, not as a crash loop.
+6. **Given** a build whose `content/core/VERSION` is newer than the core active in `dev`'s store
+   **when** `AW-INF-019` rolls it **then** the new pod's boot line reports that core published and
+   activated, `server info` lists it once the pod is Ready, and every Builder pack active before
+   the roll is still active. `AW-SRV-012`'s skew rule refuses only packs built against a *newer*
+   core, so none is refused. Observing this needs a core bump on `main`. If none lands before
+   §8, the verification record observes the first-install case (AC-7) and names this AC as owed
+   to the first core bump.
 7. **Given** a `dev` namespace rebuilt from nothing (`make argocd-uninstall`, fresh topics, then
    `make argocd-install ENV=dev`) **when** the Application syncs and `make content-seed ENV=dev`
-   runs **then** AC-1 and AC-2 hold without another hand step.
+   runs **then** AC-1 and AC-2 hold without another hand step. The first pod's boot line reports
+   `andara.core` published and activated, into an empty store.
 8. **Given** the rendered `dev` manifests (`make k8s-dry ENV=dev`) **when** they're read **then**
    there's no `andara-content` or `andara-content-templates` ConfigMap and no `/content` mount.
    `local`'s render still has both.
 9. **Given** `make content-seed ENV=dev` with no operator credential in the environment **when** it
    runs **then** it exits 1 with `content-seed: ANDARA_BOOTSTRAP_OPERATOR is not set`, before any
    RPC.
+10. **Given** `make world-reset` with `ENV=prod`, or with a `CONFIRM` that isn't the target
+    namespace **when** it runs **then** it exits 2 before touching the cluster, naming the reason.
+11. **Given** `dev` with active packs, an Account, and a Character **when**
+    `make world-reset ENV=dev CONFIRM=andara-dev` runs **then** it ends with
+    `world-reset: andara-dev reset; content kept, accounts and characters gone`, and exits 0.
+    Once the pod is Ready:
+    - `server info` lists the same packs at the same versions;
+    - the bootstrap operator can log in;
+    - the Account and the Character are gone;
+    - `andara.audit.v1`'s high-water mark is not lower than before.
 
 ## Interface contract
 
 - `make content-seed ENV=<env>`: `## content-seed: publish and activate the dev fixture as pack town
   in ENV's content store — idempotent — needs the operator credential`. It refuses `ENV=prod` with
   exit 2 (`content-seed: prod is not seeded with the fixture`).
-- It uses the product commands only: `andara-cli content publish --path <fixture>` and
+- It uses the product commands only: `andara-cli content publish --path content/fixtures/town` and
   `andara-cli content activate town <m> --override --reason "dev fixture" --yes`, as the bootstrap
   operator. It uses no `kafka-console-producer` and no direct topic write (CLAUDE.md §10).
-- Fixture source: Content Language, compiling to the same Zone Definitions as
-  `testdata/content/valid` (`[ASSUMPTION]` below).
+- Fixture source: `content/fixtures/town/`, which `AW-SRV-037`'s test holds equal to
+  `testdata/content/valid`.
+- `make world-reset ENV=<env> CONFIRM=<namespace>`: `## world-reset: recreate ENV's World log and
+  Account store, keeping content — destroys every Character and Account`.
+  - Refusals, exit 2: `ENV=prod`, a missing `CONFIRM`, or a `CONFIRM` that isn't the namespace.
+  - Steps, in order: scale the server StatefulSet and the projector Deployment to 0; delete and
+    recreate the topics it resets (the list below); empty the snapshot PVC and the projector's
+    store; scale back up; wait for Ready. The projector steps are skipped, with a line saying so,
+    while `dev` runs no projector (`AW-INF-008` AC-2 and `AW-INF-025` put it there). After
+    `AW-INF-025`, the snapshot store is its S3 bucket rather than the PVC. The projector's state
+    to clear is its consumer group, as `AW-INF-025`'s contract lists. `world-reset` empties
+    whichever of these `dev` has when it runs.
+  - Topics it resets, named explicitly from `deploy/kafka/topics.yaml`: `andara.commands.v1`,
+    `andara.events.v1`, `andara.state.v1`, `andara.accounts.v1`. It never touches
+    `andara.content.*` or `andara.audit.v1`. A topic added to `topics.yaml` later is kept unless
+    it's added to this list.
+  - Exit codes: 0 reset; 1 a step failed, naming it; 2 usage or refusal.
 - Environment read: `ANDARA_BOOTSTRAP_OPERATOR` (existing). None added.
 - Exit codes: 0 seeded or already seeded; 1 a precondition or a command failed; 2 usage.
 - Server configuration on `dev`, all existing keys (`AW-SRV-012`):
-  `content.source=kafka`, `content.packs=*`. `character.spawn_room` stays `town/plaza`.
+  `content.source=kafka`, `content.packs=*`. `character.spawn_room` is whatever `AW-INF-024` sets,
+  and this story doesn't change it.
 
 ## Data / state impact
 
 - **`dev`'s log.** Its genesis swaps name `pack="dir"`, version 0 (`AW-SRV-012`, Data/state).
-  Recovery on a store-backed server builds only from replayed swaps, so whether the switch needs
-  fresh topics, and what survives (Accounts, Characters), is feedback item 2. No player World
-  exists on `dev`, and `AW-SRV-012` already names "fresh topics for `dev`" as the recovery for a
-  pre-rule log.
+  Recovery on a store-backed server builds only from replayed swaps, so the switch runs
+  `make world-reset` once, in the same roll as the values change. Everything in the World and the
+  Account store goes: Characters, Brian's Builder Account, and its grants. The bootstrap
+  operator comes back by itself. A Builder Account comes back with `account create` and
+  `account set-packs`. No player World exists on `dev` before M2, so this is acceptable here and
+  nowhere else.
+- **Why the Account store resets too:** the Character roster lives in it (`AW-SRV-014`), and a
+  roster kept across a log reset points at bodies that no longer exist.
 - **The content topics** on `dev`'s broker already exist (`AW-INF-004`, `AW-INF-014`). Blobs and
   versions are never deleted (ADR-0004), so every fixture and Builder version stays in history.
-- **Rollback:** set `content.source: dir` back in `values/dev.yaml` and restore the ConfigMap
-  render. That's the same log question in reverse, and feedback item 2 answers it too.
+- **Rollback:** set `content.source: dir` back in `values/dev.yaml`, restore the ConfigMap render,
+  and run `make world-reset` again. A store-backed log replayed with `content.source=dir` fails the
+  genesis digest check, just as the forward direction does. So a rollback costs `dev`'s World a
+  second time. The content topics keep everything published, so going forward again loses no
+  content.
 
 ## Observability requirements
 
@@ -143,9 +182,11 @@ on `dev`, and the core carrier's signals added.)*
     - AC-9's refusal
   - The server's existing `content.load`, `content swap applied` and `error` lines, each with
     `pack`, `version` and `trace_id`.
-  - Whichever carrier feedback item 1 chooses logs one line per roll naming the core version, and
-    whether it activated it or found it already active. It fails the roll visibly: a failed
-    Argo CD sync or a failed boot. It never leaves a pod unready with nothing in the log.
+  - The server's boot line for `andara.core` (`AW-SRV-013`) names the version and what it did:
+    published, found, activated, or left an Operator's pointer alone. A failure is a boot exit
+    `1` with an `error` line. It never leaves a pod unready with nothing in the log.
+  - `world-reset: <step>` progress lines, ending in exactly one of AC-11's line, a named step
+    failure, or AC-10's refusal.
 - **Traces:** the server's existing `content.load` → `content.resolve`, `content.validate` →
   `content.build`, and `content.swap` spans, now emitted from `dev`. This is `AW-SRV-012`'s §8 line
   "not emittable from the compose server, because `content.source=dir` has no Active Pointer". This
@@ -158,9 +199,11 @@ on `dev`, and the core carrier's signals added.)*
   - *Known gaps* in `content-freshness.md`: the `dir` bullet names `local` and compose only.
   - `docs/runbooks/content-load-failing.md`: one line for `dev`. A pending `town` means the fixture
     seed, and a pending Builder pack means that Builder's version. Diagnosis is the same.
-  - `docs/runbooks/server-unavailable.md`: if the core carrier gates readiness, a diagnostic step
-    for "no ready pod because `andara.core` isn't active". That failure pages as
-    `AndaraServerUnavailable`, and today's runbook doesn't name it.
+  - `docs/runbooks/server-unavailable.md`: the core carrier gates readiness, so it gains a
+    diagnostic step for "no ready pod because `andara.core` isn't active". That failure pages as
+    `AndaraServerUnavailable`, and today's runbook doesn't name it. The step includes the image
+    rollback order from `AW-SRV-013`'s Data/state impact: move the core pointer first, then the
+    image.
   - Evaluation in Grafana Cloud waits on `AW-INF-009`, as in `AW-INF-025`. The §8 record says
     whether the rule was evaluated or only the series was observed.
 
@@ -171,6 +214,7 @@ on `dev`, and the core carrier's signals added.)*
   change (`local` stays `dir`).
 - **Manual/operator**, on the box, recorded in the verification record:
   ```
+  make world-reset ENV=dev CONFIRM=andara-dev   # once, with the values change
   make content-seed ENV=dev              # town@1 published and active
   make content-seed ENV=dev              # "town@1 is already active; nothing published"
   make argocd-status ENV=dev             # content andara.core@<n>, content town@1
@@ -186,12 +230,32 @@ against `dev`.
 
 ## Open questions
 
-- `[ASSUMPTION]` The fixture's Content Language source starts from the spec corpus's
-  `docs/specs/content-language/v1/corpus/valid/town/`, pack `town`, plus a `purgatory` Zone to match
-  `AW-SRV-037`. The corpus case lacks Purgatory, so the seed probably needs its own copy (item 3 in
-  the feedback file).
+- **Resolved 2026-09-28 (architecture):** the fixture's source is its own copy,
+  `content/fixtures/town/`, which `AW-SRV-037` adds (feedback item 3).
 - `[ASSUMPTION]` The fixture keeps pack ID `town` and Zone IDs `town`, `docks`, `wilds`, and adds
   `purgatory`. A Builder's packs can't reuse those Zone IDs while the fixture is
   active. The guide says so (`AW-INF-023`).
-- Items 1–3 in `docs/feedback/AW-INF-021-dev-content-store.md` affect the interface contract.
-  Architecture answers them at contract review.
+- **Resolved 2026-09-28 (architecture):** items 1–3 in
+  `docs/feedback/AW-INF-021-dev-content-store.md`. They are the core carrier (the server at boot),
+  `make world-reset`, and the fixture's source.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in the story and in `docs/feedback/AW-INF-021-dev-content-store.md`,
+and SRE's answers to items 1, 2 and 4 are there too. The story is `ready`.
+
+1. **No carrier in this story.** The server publishes and activates its own core at boot
+   (`AW-SRV-013`, item 1). This story verifies it on `dev` (AC-6, AC-7) and adds none of the
+   options it offered: a hook, a Job, or an `andara-cli` image.
+2. **`make world-reset` is in scope,** with SRE's shape and one change. The Account store resets
+   too, because the roster lives there (item 2). AC-10 and AC-11 are new. The list of topics it
+   resets is explicit, so a new topic is kept by default, not destroyed by default.
+3. **AC-6 is rewritten.** It tested a carrier's ordering. Now it tests what the boot rules
+   promise, and it names what to do if no core bump lands in time: owe it to the first one, as
+   CLAUDE.md §8 allows for a caller that doesn't exist yet.
+4. **The spawn Room line contradicted `AW-INF-024`,** which moves it to `purgatory/start`. It now
+   defers to that story.
+5. **`AW-SRV-037` is a new dependency,** for `content/fixtures/town/`.
+6. **AC-4's "second identity"** can be Brian's Operator approving his own build, once
+   `AW-SRV-013` adopts the self-approval rule. Two identities are still involved, as the roadmap
+   says, even though they're one person.

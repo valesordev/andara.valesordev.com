@@ -28,3 +28,15 @@ AC-4 is observed the same way.
 
 Alert evaluation in Grafana Cloud waits on `AW-INF-009`, which isn't in SPRINT-03. Until it lands,
 the §8 check covers the rule under `promtool` and the series on the real backend.
+
+## For SRE: architecture's contract review, 2026-09-28
+
+The snapshot source is `s3`, served in-cluster by versitygw (`make objectstore-install`). The
+reasoning is in the story's *Contract review*. Two things for you as you build it:
+- **Before `dev` switches from `fs`,** check that the earliest offset on every
+  `andara.events.v1` partition is still 0, and record it in the PR. The first `s3` boot finds no
+  round and replays from the log's start. If retention has already trimmed it, the switch waits
+  for `AW-INF-021`'s `world-reset`.
+- **`make world-reset` (`AW-INF-021`) clears the bucket, not the PVC,** once this story lands.
+  It also stops the projector and deletes its group with the recreated `andara.state.v1`. That's
+  written into this story's Interface contract, so `AW-INF-021` can cite it.
