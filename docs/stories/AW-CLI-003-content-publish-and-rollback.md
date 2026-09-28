@@ -105,6 +105,22 @@ Per `AW-CLI-001`, plus: `content.publish` span with `blobs_total`, `blobs_upload
 `activate`/`rollback` log the confirmation text they showed, so an audit question can be answered from
 the CLI's own trace as well as the server's record.
 
+*(SRE observability review, 2026-09-28.)*
+- **Metrics:** none. The CLI is a short-lived process, and the server's counters (`AW-SRV-013`)
+  are the record.
+- **Traces:**
+  - Each command's `cli.command` span carries `pack` and `version` attributes. It propagates
+    `traceparent` on every RPC, so one trace runs from the Builder's command to the server's
+    `content.activate`, and from there to the Loader's `content.swap` (`AW-INF-021` AC-4).
+  - `content.publish`'s blob uploads are one child span per `PublishBlob` stream, never one per
+    chunk.
+  - `--override` sets `override=true` and `reason` on the span.
+- **Logs:**
+  - The confirmation text is logged at `info` with the `trace_id` the CLI sent, so the CLI's line
+    and the server's audit record join on one ID.
+  - `--output json` includes `trace_id` in the envelope, so an operator can go from a Builder's
+    report to the trace.
+
 ## Test plan
 
 - **Unit:** confirmation prompt logic (TTY, `--yes`); exit-code mapping from gRPC status; diff renderer

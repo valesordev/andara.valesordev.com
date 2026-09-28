@@ -143,19 +143,58 @@ monotonic per pack, under the `AW-SRV-008` single-writer lock.
 
 ## Observability requirements
 
+*(SRE observability review, 2026-09-28: label sets closed, the self-approval outcome added
+pending architecture's decision, correlation fields and the persistence-write spans named. The
+metric names are unchanged.)*
+
 ### Metrics
-- `andara_content_publishes_total{outcome}` (`ok`, `rejected`, `denied`, `too_large`).
-- `andara_content_approvals_total{outcome}` (`ok`, `self`, `denied`).
-- `andara_content_pointer_moves_total{direction, override}` (`forward`/`rollback` × `true`/`false`).
-- `andara_content_blob_bytes_total` — counter. `andara_content_validation_failures_total{code}` reusing
-  `AW-SRV-001`'s taxonomy. Pack ID is a bounded label; blob hash and account are rejected.
+- RED for every new `Admin` RPC comes from the Gateway's existing
+  `andara_grpc_requests_total{method,code}` and `andara_grpc_request_duration_seconds{method}`: eight
+  more bounded `method` values. The counters below are the domain outcomes RED can't tell apart.
+- `andara_content_publishes_total{outcome}`: `ok`, `rejected`, `denied`, `too_large`, `stale_parent`.
+- `andara_content_approvals_total{outcome}`: `ok`, `self` (refused), `denied`, and
+  `self_operator` (an Operator approving their own build). `self_operator` exists only if
+  architecture adopts `docs/feedback/AW-SRV-013-operator-self-approval.md`. It's a distinct value,
+  never folded into `ok`, so the temporary rule's use is visible on a dashboard and not only in the
+  audit topic.
+- `andara_content_pointer_moves_total{direction, override}`: `forward` or `rollback`, × `true` or
+  `false`. A refused activation doesn't move the pointer, and counts on
+  `andara_content_activations_refused_total{reason}`. `reason` is `unapproved`, plus, if
+  architecture adopts `docs/feedback/AW-SRV-013-activation-refusals.md` item 1, the closed set of
+  `AW-SRV-012` refusal codes that activation checks (`zone_removed`, `spawn_room_removed`,
+  `core_version`).
+- `andara_content_blob_bytes_total`: counter, bytes accepted after deduplication. It's the number
+  ADR-0004's retention question watches. No alert until that story exists.
+- `andara_content_validation_failures_total{code}`: reuses `AW-SRV-001`'s closed taxonomy.
+- Every label set above is closed and pre-seeded at 0. Pack ID is **not** a label on any of these
+  counters: publishes are rare, and the audit topic answers "which pack". Blob hash, version, and
+  account are rejected as labels.
 
 ### Logs
-- `info` per publish, approve, activate with actor, pack, version; `warn` per rejection with findings;
-  `warn` per override with reason.
+- Every line carries `actor_account_id`, `acting_as_account_id` (empty unless acting as),
+  `pack_id`, `version`, `session_id`, and `trace_id`. The Admin path is a command path
+  (CLAUDE.md §7).
+- `info` per publish, approve, and activate.
+- `warn` per rejection, with `findings_count` and the first finding's code. The findings
+  themselves go in the RPC's status details and the audit record, not the log.
+- `warn` per override, with `reason`.
+- `warn` per self-approval, with `self_approval=true`, if architecture adopts the rule.
 
 ### Traces
-- `content.publish` → `content.write_blobs`, `content.validate`; `content.activate`.
+All spans are under the Gateway interceptor's server span for the RPC, which the CLI's
+`cli.command` parents through `traceparent`.
+- `content.publish_blob`, per `PublishBlob` stream: `bytes` and `deduplicated` attributes, and one
+  child `content.write_blob` per produce.
+- `content.publish`, under `PublishVersion`, in order:
+  - `content.validate`: the same validator, and the same span name, as the Loader's; the parent
+    tells them apart;
+  - then `content.write_manifest`.
+- `content.approve` → `content.write_manifest`.
+- `content.activate` → `content.write_pointer`. `rollback` is the same span with
+  `direction=rollback`.
+- The audit write is a child of each operation span: `audit.write`.
+- `content.write_*` spans are persistence writes (CLAUDE.md §7), one per produce, never one per
+  blob chunk.
 
 ### Alerts
 None directly. A failing publish is visible to the Builder; a bad activation alerts via `AW-SRV-012`'s

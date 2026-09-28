@@ -121,13 +121,37 @@ no `dev` World predates M2.
 
 ## Observability requirements
 
-- **Metrics:** `andara_commands_total`, `andara_command_rejected_total` and
-  `andara_command_duration_seconds` gain the verb `goto` wherever they label by verb: one bounded
-  value. The cross-Zone path counts on the existing handoff series as a `move` does.
-- **Logs:** `debug` `goto applied` with `session_id`, `character_id`, source and target Room. The
-  authorize denial goes through the existing audited line.
-- **Traces:** the existing command spans. A cross-Zone `goto` links the source apply to the
-  target's `Arrive` apply, as `move` does.
+*(SRE observability review, 2026-09-28. The first draft named a verb label on
+`andara_command_rejected_total` and a "handoff series". Neither exists. Corrected against
+`server/command/metrics.go` and `server/tickloop/loop.go`.)*
+
+- **Metrics:** none new.
+  - `andara_commands_total{verb}` and `andara_command_duration_seconds{verb,phase}` gain one bounded
+    `verb` value, `goto`.
+  - `andara_command_rejected_total` is labelled `{stage,code,pre_log}`, not by verb. A `goto`
+    refusal counts there under its stage and code.
+    - The post-log codes `unknown_zone` and `unknown_room` already exist.
+    - The existing pre-log codes are `missing_argument` and `invalid_argument` at `parse`, and
+      `not_authorized` at `authorize`. The contract's `usage` is not a code today.
+    - If architecture keeps `usage`, it's added to `command.PreLogCodes`, so it's pre-seeded. If
+      not, AC-5 uses the existing codes. Either way, the code set stays closed.
+  - A cross-Zone `goto` produces an `Arrive`, whose apply in the target Zone counts under that
+    record's own verb in `andara_command_duration_seconds{phase="post_log"}`, as a cross-Zone
+    `move`'s does.
+  - Room and Zone IDs are never labels (CLAUDE.md §7).
+- **Logs:**
+  - No new line. The tick's existing `debug` `command applied` line carries `verb=goto`, `actor`,
+    `session_id`, `code`, `stage` and `trace_id`. It gains `from_room` and `to_room`, for `goto`
+    only.
+  - The authorize denial is the existing audited line, and counts on
+    `andara_privileged_actions_total{action="authorize"}`.
+- **Traces:**
+  - The existing `command.execute` → `command.parse`, `command.authorize` at the Gateway, then
+    `command.apply` in the source Zone, with `from_room` and `to_room` as span attributes.
+  - A cross-Zone `goto`'s `Arrive` carries the `Goto` Command's `trace_id`, as `move`'s does
+    (`server/sim/verbs.go`). The target Zone's `command.apply` then lands in the same trace, under
+    the Gateway's root.
+  - That's parentage, not a span link, and one trace shows both halves of the jump.
 - **Alerts:** none.
 
 ## Test plan

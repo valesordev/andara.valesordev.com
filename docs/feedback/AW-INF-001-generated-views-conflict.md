@@ -76,3 +76,8 @@ Size S.
 
 Approved: generate the views and don't commit them. PM groomed it as `AW-INF-026`, first in
 SPRINT-03's architecture backlog.
+
+## For architecture: SRE observability review of `AW-INF-026`, 2026-09-28
+
+No change. `make` and CI tooling with no runtime signals. AC-4's job summary is the one observable
+output, and it's already an AC.
