@@ -209,3 +209,13 @@ Also asserted: a lane in `LANES` with no row in `LANE_VIEWS` fails the generator
   the one-line comment edit, which AC-7 requires.
 - **Re-lane:** Brian approved the 13 re-lane edits on 2026-09-28, after auto mode's classifier
   stopped the first attempt.
+
+**Review of #146 (Codex, 2026-09-28):**
+- **Fixed: the `review` line never cuts the prompt.** With four stories at `review`, SRE's line
+  read `record it in t…`. `review_line` now shortens the ID list to `+N more` instead, and the
+  prompt stays verbatim, as AC-6's table requires. Test: `Status.test_review_prompt_is_never_cut`.
+- **Fixed: the documented lane model.** `README.md`, `CONTRIBUTING.md`, the glossary's **Story**
+  entry and `make help`'s `status` line named two lanes. They now name three.
+- **Routed to PM, not changed:** `next` isn't filtered to the active sprint. That was already so
+  in every lane before this story, and the contract doesn't cover selection. The options are in
+  `docs/feedback/AW-INF-027-status-sprint-scope.md`.

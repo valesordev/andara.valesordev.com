@@ -143,6 +143,16 @@ class Status(Fixture):
                          ["  review %s — verify §7 instrumentation, record it in the §8 record" % all3])
         self.assertEqual(review["Implementation"], ["  review AW-SRV-003 — awaiting §8"])
 
+    def test_review_prompt_is_never_cut(self):
+        # Four stories at review cut SRE's prompt to "record it in t…" (PR #146 review).
+        for i in range(1, 7):
+            self.add("AW-INF-%03d" % i, "sre", status="review")
+        line = [l for l in self.section("SRE").splitlines() if l.startswith("  review")][0]
+        self.assertTrue(line.endswith("— verify §7 instrumentation, record it in the §8 record"))
+        self.assertLessEqual(len(line), gen_status.MAX_COLS)
+        shown = line.split(" — ")[0].split(", ")
+        self.assertEqual(shown[-1], "+%d more" % (6 - len(shown) + 1))
+
     def test_sre_review_line_is_the_section_7_scope(self):
         # A client story has no §7 section, so SRE has nothing to verify on it.
         with mock.patch.dict(COMP, {"CLT": "client"}):

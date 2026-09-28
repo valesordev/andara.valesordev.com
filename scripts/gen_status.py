@@ -110,6 +110,18 @@ def needs_brian(body):
     return out
 
 
+def review_line(ids, prompt, width):
+    """IDs then the prompt, within width. The prompt is the action, so it is never cut:
+    when the IDs don't fit, the tail of the list becomes `+N more` (PR #146 review)."""
+    tail = " — " + prompt
+    for n in range(len(ids), 0, -1):
+        rest = len(ids) - n
+        head = ", ".join(ids[:n] + (["+%d more" % rest] if rest else []))
+        if len(head) + len(tail) <= width:
+            return head + tail
+    return "%d stories%s" % (len(ids), tail)
+
+
 def branch_for(path, story_id):
     m = SLUG_RE.match(os.path.basename(path))
     return "%s-%s" % (story_id.lower(), m.group(1)) if m else story_id.lower()
@@ -176,7 +188,7 @@ def render():
             out.append("  now    — nothing in flight\n")
 
         # The status word is the prompt: `ready` means assign it, `draft` means groom it.
-        # Without it the reader has to infer which of the two lanes' verbs applies.
+        # Without it the reader has to infer which verb applies.
         for d in ready[:2]:
             gates = len(d.get("blocks", []))
             tag = "  (unblocks %d)" % gates if gates else ""
@@ -190,8 +202,7 @@ def render():
             out.append("  next   — nothing groomed and unblocked\n")
 
         if review:
-            ids = ", ".join(d["id"] for d in review)
-            out.append("  review %s\n" % fit("%s — %s" % (ids, prompt), 91))
+            out.append("  review %s\n" % review_line([d["id"] for d in review], prompt, 91))
             surfaced.extend(review)
         if held:
             ids = ", ".join(d["id"] for d in sorted(held, key=rank))

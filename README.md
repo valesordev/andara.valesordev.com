@@ -41,10 +41,17 @@ shell commands that is not a target is a defect.
 
 ## Who writes what
 
-Work splits into two lanes: *architecture* is what runs **around** the game — specifications,
-stories, ADRs, infrastructure, CI, runbooks — and *implementation* is what runs **in** it, the Go
-and TypeScript application source and its tests. Claude Code works both, in that order. Every
-story declares its lane; `docs/status.md` reports the two separately. See `CLAUDE.md` §2.
+Work splits into three lanes:
+- *implementation* is what runs **in** the game: the Go and TypeScript application source and its
+  tests.
+- *architecture* is what runs **around** it and specifies it: ADRs, specs, contracts, and their
+  review.
+- *sre* is what runs around it and builds, ships, operates, or observes it: CI, deployment,
+  dashboards, alerts, SLOs, and runbooks.
+
+Each lane is its own Claude Code role, and project management plans the work without building
+any. Every story declares its lane, and `docs/status.md` reports each lane separately. See
+`CLAUDE.md` §2.
 
 ## Architecture
 

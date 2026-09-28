@@ -686,7 +686,8 @@ are marked, not removed.
 **Epic** — A themed grouping of Stories that delivers a coherent capability. `EPIC-NN`.
 
 **Story** — The unit of work one focused session takes on. `AW-<COMP>-<NNN>`. Carries a `lane` of
-`architecture` or `implementation`. Format in CLAUDE.md §5.
+`architecture`, `sre` or `implementation`: the role that builds it (CLAUDE.md §2). Format in
+CLAUDE.md §5.
 
 **Milestone** — A demonstrable state of the product on the roadmap. Defined by what a human can
 observably do, not by which stories are closed.

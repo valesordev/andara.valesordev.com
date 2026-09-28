@@ -16,7 +16,7 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
   now    — nothing in flight
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
-  review AW-SRV-019, AW-INF-008, AW-INF-019, AW-INF-027 — verify §7 instrumentation, record it in t…
+  review AW-SRV-019, AW-INF-008, +2 more — verify §7 instrumentation, record it in the §8 record
   held   3 ready, blocked: AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
