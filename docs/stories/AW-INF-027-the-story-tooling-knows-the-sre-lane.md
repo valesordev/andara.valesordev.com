@@ -4,11 +4,11 @@ title: The story tooling knows the SRE lane
 epic: EPIC-01
 component: infra
 type: chore
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-INF-026]
-lane: architecture
+lane: sre
 risk: low
 ---
 
