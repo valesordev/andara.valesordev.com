@@ -11,9 +11,9 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `review` | 3 |
 | `ready` | 24 |
-| `draft` | 12 |
+| `draft` | 13 |
 | `done` | 33 |
-| **total** | **72** |
+| **total** | **73** |
 
 ## Attention first
 
@@ -62,7 +62,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
-### `draft` (12)
+### `draft` (13)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -73,7 +73,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | architecture | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
 | [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `EPIC-10` | infra | M | medium | architecture | Operating the state projector — stop, rebuild, start, and its volumes | `AW-SRV-019`, `AW-INF-018` |
-| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | architecture | Generated views stop being committed | `AW-INF-001` |
+| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | architecture | Generated views stop being committed | `AW-INF-001`, `AW-INF-027` |
+| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `EPIC-01` | infra | S | low | architecture | The story tooling knows the SRE lane | `AW-INF-001` |
 | [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `EPIC-06` | server | S | low | implementation | An Operator grants a Builder their packs | `AW-SRV-013` |
 | [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
 | [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
@@ -138,6 +139,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `draft` | Every environment spawns new Characters in Purgatory |
 | [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `draft` | Generated views stop being committed |
+| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `draft` | The story tooling knows the SRE lane |
 
 ### `EPIC-02` — World model and simulation core
 

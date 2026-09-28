@@ -6,7 +6,7 @@ component: infra
 type: infra
 status: draft
 size: S
-depends_on: [AW-INF-001]
+depends_on: [AW-INF-001, AW-INF-027]
 blocks: []
 lane: architecture
 risk: low
@@ -36,12 +36,18 @@ sibling PRs stop conflicting on files nobody edits by hand.
 - `make check` drops `backlog-check` and `status-check`. `make validate-stories` still gates the
   frontmatter.
 - CI's `check` job on `main` writes both views to the job summary.
-- The charter's §3, §6 step 6 and §11, and each lane's `CLAUDE.md`, say to run `make status`
-  instead of reading the file, and drop "regenerate in the same commit".
+- CLAUDE.md §2, §3, §6 step 6 and §11 say to run `make status` instead of reading the file, and
+  drop "regenerate in the same commit". CLAUDE.md is unowned, so the ownership hook asks Brian
+  before the edit.
 
 ### Out of scope
 - The generators' output format.
 - Options (b) and (c) in the feedback file.
+- The role charters, skills, and the hook's generated-file list (`.claude/roles/_repo.md`) in
+  `.claude/`. They're installed from automate.bashburn.com
+  (`make install TARGET=andaras-world`), so their wording changes there, as Brian's change, and
+  this repository picks it up on the next install. *(PM, 2026-09-28: #139 moved the lane files
+  into `.claude/roles/` after this story was written.)*
 
 ## Acceptance criteria
 
@@ -55,8 +61,8 @@ sibling PRs stop conflicting on files nobody edits by hand.
    views for that commit.
 5. **Given** a story with invalid frontmatter **when** `make check` runs **then** it fails through
    `validate-stories`.
-6. **Given** the charter and the lane files **when** they're searched for "regenerate" or for
-   reading `status.md` **then** nothing still asks for the committed file.
+6. **Given** CLAUDE.md **when** it's searched for "regenerate" or for reading `status.md` **then**
+   nothing still asks for the committed file.
 
 ## Interface contract
 
