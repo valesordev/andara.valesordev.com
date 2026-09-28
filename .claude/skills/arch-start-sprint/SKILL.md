@@ -2,7 +2,7 @@
 name: arch-start-sprint
 description: Work the active sprint as architecture. Contract review of the sprint's drafts first (implementation waits on it), then the §8 review queue, then architecture's own backlog. Run after the PM sprint PR merges; it also resumes a sprint already under way.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
 ---
 
 # Architecture: work the active sprint
@@ -14,8 +14,9 @@ Follow the order of work in your role file.
 0. Run `.claude/bin/role require architecture ${CLAUDE_SESSION_ID}`. If it
    fails, stop and tell Brian to run `/role architecture` first.
 1. Run `git fetch origin` and work from `origin/main` (repo §11 session start).
-2. Find the one `docs/sprints/SPRINT-*.md` with `Status: active`. If there's
-   none, PM hasn't planned one yet: stop and say so.
+2. Run `.claude/bin/sprint-state`. Unless it reports `state: active`, stop and
+   report its output: PM hasn't planned a sprint yet, or the sprint files need
+   PM's attention. The active sprint is `current`, `docs/sprints/<current>.md`.
 3. Read the session-start documents in the order repo §11 gives them.
 4. Check where the sprint stands. If every story on the "Contract review" list
    is already past `draft` on `origin/main`, or an open `arch/` PR covers them,
