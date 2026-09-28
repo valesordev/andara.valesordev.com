@@ -447,3 +447,40 @@ implementation raised:
    been on the stack since the 2026-09-26 pass.
 2. **The production digest line** waits on #80 (SPRINT-03). #77's half was closed by `AW-INF-018`.
 3. **AC-9 has no carrier.** Unchanged; it's with PM.
+
+### §8 instrumentation check (2026-09-28, SRE): emitting; one backend owed; #143 found
+
+On `sre/sprint-03-carryover-verify`. The binary is built from `main` at `0819105`. It ran against
+the running compose stack, whose server is `478d547`; `git diff 478d547 0819105` is empty over
+`server internal cmd gen testdata`. CLAUDE.md §8's instrumentation line, per signal:
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `andara_state_projector_lag_seconds` / `_lag_budget_seconds` | the process's `/metrics` | 0.0116 against 5, following live after catch-up |
+| `andara_state_projector_tick` | `/metrics` | 1,391,527 and advancing with the World |
+| `andara_state_records_produced_total{kind}` | `/metrics` | character 33, room 40, zone 30; `item` and `npc` pre-seeded at 0. Bounded, as specified |
+| `andara_state_tombstones_total` | `/metrics` | 15, the stale keys a from-zero bootstrap tombstoned |
+| `andara_state_topic_bytes` | `/metrics` | 19,310. **Non-zero**: #103's fix holds live |
+| `andara_state_rebuild_duration_seconds{phase}` | `/metrics` | `bootstrap` 0.04 s, `replay` 107.3 s for 1,391,496 ticks |
+| `andara_state_digest_mismatches_total` | `/metrics` | 1 on each round bootstrap (below), with `/metrics` held 60 s, then exit `2`. 0 on the from-zero run |
+| Spans `state.replay` → `state.verify` | local Tempo | `state.replay` roots with `state.verify` children, service `andara-projector-state` (e.g. trace `22e42828de641a8c…`) |
+| Logs | local Loki | `{service_name="andara-projector-state"} |= "diverged"` returns the `error` line with `tick`, both hashes, and `last_good_offsets`: the runbook's query works as written. `service`, `env` and `tick` are on every line. The start line carries `round_tick` |
+
+**Not yet observed on a real Prometheus.** The compose stack has no projector scrape job, and no
+environment runs the projector. So the series above were read from the process's own registry,
+not from Prometheus or Grafana Cloud. **Inherited Definition-of-done line, carried by
+`AW-INF-025`:** the projector's series are scraped under `job="andara-projector-state"` on `dev`
+and queried from Grafana Cloud. That's also `AW-INF-008` AC-2.
+
+**Found: #143.** Bootstrapped from a snapshot round, the projector diverged at round + 1, twice:
+- rounds 1,387,750 and 1,389,553;
+- the first divergent tick applied no Commands.
+
+From offset zero, the same binary verified every tick through 1,391,496. So apply is
+deterministic, and a round, or its restore, doesn't reproduce hashed state. That contradicts
+AC-6's property, "`--rebuild` from round equals incremental", on a live 38-hour World. The fixture
+test passes. It's filed for implementation, and PM triages it. For architecture's §8: whether #143
+reopens AC-6 is yours to rule. It will fail `AW-INF-025` AC-4 as written, and it bears on
+`AW-SRV-007`.
+
+The instrumentation item is **satisfied**, except for the Prometheus scrape carried above.
