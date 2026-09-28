@@ -2,10 +2,12 @@
 
 Operating charter for Claude Code on this repository.
 
-Three Claude Code agents work this repo, each in its own clone: **project management** grooms
-stories and plans sprints, **architecture** owns contracts and everything around the game, and
-**implementation** builds the game. Each clone's parent directory holds a lane `CLAUDE.md` that
-narrows this file to one agent's job. Read §2 before touching any file.
+Four Claude Code agents work this repo, each in its own clone or cloud session: **project
+management** grooms stories and plans sprints, **architecture** owns the contracts, **SRE** owns
+how the game is built, shipped, operated, and observed, and **implementation** builds the game.
+Every session starts with `/role <pm|architecture|sre|implementation>`, which loads the role
+charter from `.claude/roles/` that narrows this file to one agent's job. Read §2 before touching
+any file.
 
 ---
 
@@ -40,19 +42,20 @@ burns that cost twice. When drafting roadmap items, defend this ordering.
 
 ## 2. Lane discipline
 
-Work in this repo belongs to one of two lanes. Every story declares which in its `lane`
-frontmatter field, and `docs/status.md` reports the two separately. Project management is an
-agent, not a lane: it decides what gets built and in what order, and it builds nothing, so no
-story ever has `lane: pm`.
+Work in this repo belongs to one of three lanes. Every story declares which in its `lane`
+frontmatter field, and `docs/status.md` reports each lane separately. A lane names the role that
+builds a story. Project management is a role but not a lane: it decides what gets built and in
+what order, and it builds nothing, so no story ever has `lane: pm`.
 
 | Lane | Produces | Examples |
 |------|----------|----------|
-| `architecture` | The contract's technical truth, and everything that builds, ships, operates, or observes what runs to it | ADRs, protocol and schema definitions, contract review, Helm charts, CI, Makefiles, dashboards, SLOs, runbooks |
+| `architecture` | The contract's technical truth | ADRs, protocol and schema definitions, contract review, the §8 review |
+| `sre` | Everything that builds, ships, operates, or observes what runs to the contract | Helm charts, CI, Makefiles, dashboards, alerts, SLOs, runbooks |
 | `implementation` | The thing built to the contract | Go and TypeScript application source, unit and integration tests |
 
 One rule resolves every ambiguity: if the artifact runs **in** the game it is
-`implementation`; if it runs **around** the game — build, ship, operate, observe, specify —
-it is `architecture`.
+`implementation`; if it runs **around** the game, it is `architecture` when it *specifies*
+and `sre` when it *builds, ships, operates, or observes*.
 
 Under that rule, `content/` is implementation, like `server/`, `admin/`, and `client/`.
 `content/lang` compiles what the game loads, and `content/core` is the `andara.core` seed it loads.
@@ -68,9 +71,9 @@ not letting the contract be written by the code. The rule that carries that forw
 
 Two habits enforce it in practice:
 
-1. Groom and implement in **separate sessions**. The three agents make this structural: PM
-   writes the story, architecture reviews its contract and moves it to `ready`, and only then
-   does the lane named in `lane:` build it. Grooming a story and then implementing it in the
+1. Groom and implement in **separate sessions**. The four roles make this structural: PM
+   writes the story, SRE reviews its observability, architecture reviews its contract and moves
+   it to `ready`, and only then does the role named in `lane:` build it. Grooming a story and then implementing it in the
    same context would make the story a memory of intent rather than a specification anything
    can be verified against.
 2. A story still contains **contracts, not code drops**. Illustrative snippets inside a story
@@ -80,15 +83,22 @@ Two habits enforce it in practice:
 
 ### Agents and ownership
 
-| Agent | Branch prefix | Owns | Status moves |
-|-------|---------------|------|--------------|
+| Role | Branch prefix | Owns | Status moves |
+|------|---------------|------|--------------|
 | PM | `pm/` | `docs/sprints/`, `docs/roadmap.md`, `docs/epics/`, new stories in full (contract included), GitHub milestones and triage | creates stories at `draft` |
-| Architecture | `arch/` | Contract review; `docs/adr/`, `docs/specs/`, `docs/runbooks/`; `deploy/`, `Makefile`, `scripts/`, `.github/`, `buf.gen.yaml`; `lane: architecture` stories; the §8 review for both lanes | `draft` → `ready` / `blocked`; `review` → `done` |
+| Architecture | `arch/` | Contract review; `docs/adr/`, `docs/specs/` (except `docs/specs/slo/`), `buf.gen.yaml`; `lane: architecture` stories; the §8 review for every lane | `draft` → `ready` / `blocked`; `review` → `done` |
+| SRE | `sre/` | Observability review of drafts; `deploy/`, `.github/`, `Makefile`, `scripts/`, `docs/runbooks/`, `docs/specs/slo/`; `lane: sre` stories; the §8 instrumentation check | its own stories: `ready` → `in-progress` → `review` |
 | Implementation | `impl/` | `server/`, `internal/`, `cmd/`, `admin/`, `content/`, `agents/`, `client/`, `testdata/`; `lane: implementation` stories | its own stories: `ready` → `in-progress` → `review` |
 
-Architecture moves its own `lane: architecture` stories through `in-progress` and `review` the
-same way implementation does. A question for another agent goes in
-`docs/feedback/<story-id>-<slug>.md`, under a heading naming the agent that should answer.
+Architecture and SRE move their own stories through `in-progress` and `review` the same way
+implementation does. A question for another agent goes in
+`docs/feedback/<story-id>-<slug>.md`, under a heading naming the role that should answer.
+
+Ownership is enforced, not just documented: the `.claude/roles/` charters list each role's
+writable paths, and a hook denies edits to another role's paths, asks Brian before edits to
+unowned paths (this file, `.claude/`, `go.mod`), and denies hand edits to generated files
+(`BACKLOG.md`, `docs/status.md`, `gen/`). `.claude/` is installed from automate.bashburn.com
+(`make install TARGET=andaras-world`); don't edit it here.
 
 ### The sprint cycle
 
@@ -99,18 +109,21 @@ carries `Status: active`.
    sprint, writes `docs/sprints/SPRINT-NN-demo.md` for what it delivered, grooms, and plans the
    next sprint. Each sprint has at least one demo goal an operator can run, tied to a milestone
    gate in `docs/roadmap.md` or a slice of one.
-2. **Architecture** reviews the contracts of the sprint's drafts first, since implementation
-   waits on them. Next comes the §8 review of anything at `review`, then its own backlog.
-3. **Implementation** takes the first story in its sprint list that is `ready` with every
+2. **SRE** reviews the Observability requirements of the sprint's drafts first, then verifies
+   instrumentation for anything at `review`, then works its own backlog.
+3. **Architecture** reviews the contracts of the sprint's drafts once SRE's review is in, since
+   implementation waits on them. Next comes the §8 review of anything at `review`, then its
+   own backlog.
+4. **Implementation** takes the first story in its sprint list that is `ready` with every
    `depends_on` at `review` or later.
-4. Architecture and implementation work only on stories in the active sprint. A lane with
+5. Architecture, SRE, and implementation work only on stories in the active sprint. A role with
    nothing pickable stops and reports; it doesn't pull work from outside the sprint. No active
    sprint means PM hasn't planned one yet, so stop. The sprint ends when every story is `done`
    or PM carries it over.
 
 Demo instructions obey §9: every step is a `make` target or a product command. A step that
-needs a hand-written shell sequence is marked `§9 defect → AW-INF-NNN`, and that story goes
-into the next sprint.
+needs a hand-written shell sequence is marked `§9 defect → AW-INF-NNN`, and that `lane: sre`
+story goes into the next sprint.
 
 ---
 
@@ -140,6 +153,11 @@ docs/
     AW-SRV-012-<slug>.md  # cross-agent questions and deviations for one story
 BACKLOG.md                # GENERATED — do not hand-edit
 Makefile
+.claude/                  # INSTALLED from automate.bashburn.com — do not hand-edit
+  roles/                  # role charters + writable paths (pm, architecture, sre, implementation)
+  skills/                 # /role, /pm-start-sprint, /pm-close-sprint, /arch-start-sprint, …
+  bin/role                # role state + ownership hooks
+  settings.json           # hooks merged in by the installer; other keys are this repo's
 ```
 
 Story status lives in **frontmatter**, not in directory structure. Files never move. The
@@ -153,8 +171,8 @@ backlog view is generated.
 - Epic ID: `EPIC-<NN>`.
 - ADR ID: `ADR-<NNNN>`, monotonic, never deleted — superseded ADRs get `status: superseded by ADR-XXXX`.
 - Branch name: `<prefix>/<story-id-lower>-<slug>` → `impl/aw-srv-014-room-graph-loader`, with
-  the owning agent's prefix from §2. PM branches are `pm/sprint-NN-<slug>`, and §8 reviews go
-  on `arch/…-review`. Never commit to another agent's branch or directly to `main`.
+  the owning role's prefix from §2. PM branches are `pm/sprint-NN-<slug>`, §8 reviews go
+  on `arch/…-review`, and SRE's instrumentation checks on `sre/…-verify`. Never commit to another agent's branch or directly to `main`.
 - Commit trailer: `Story: AW-SRV-014`, or `Sprint: SPRINT-NN` for PM commits.
 - Sprint ID: `SPRINT-<NN>`, monotonic.
 - **Commits are signed.** `main` is branch-protected to require signatures (2026-09-22), so an
@@ -181,7 +199,7 @@ status: ready              # draft | ready | in-progress | review | done | block
 size: M                    # S | M | L  — L means "split it"
 depends_on: [AW-SRV-011, AW-INF-002]
 blocks: []
-lane: implementation       # architecture (contracts, infra) | implementation (source)
+lane: implementation       # architecture (contracts) | sre (infra, ops) | implementation (source)
 risk: medium               # low | medium | high
 ---
 
@@ -261,8 +279,9 @@ Interface contract included, and left at `draft`. Architecture's contract review
 5. **Declares dependencies** in `depends_on` and back-fills `blocks` on the referenced stories.
 6. **Regenerates the backlog and status** (`make backlog status`).
 
-Architecture's contract review checks the same list, amends what's wrong, and moves the story to
-`ready`, or to `blocked` naming what it waits on. A contract change after `ready` is recorded in
+SRE reviews the story's Observability requirements against §7 and amends only that section.
+Architecture's contract review then checks the same list, amends what's wrong, and moves the
+story to `ready`, or to `blocked` naming what it waits on. A contract change after `ready` is recorded in
 the story's body, and in its feedback file if implementation has started.
 
 Anti-patterns to reject during grooming, in this repo specifically:
@@ -278,7 +297,8 @@ Anti-patterns to reject during grooming, in this repo specifically:
 ## 7. Observability requirements (SRE lane)
 
 Every `server`, `cli`, and `infra` story carries an **Observability requirements** section.
-Instrumentation is part of the acceptance criteria, not a follow-up story.
+Instrumentation is part of the acceptance criteria, not a follow-up story. SRE owns this section:
+it reviews it before the contract review, and verifies it at §8.
 
 Specify, by name:
 
@@ -306,7 +326,9 @@ and the policy when the budget is exhausted.
 ## 8. Definition of done
 
 A story is done when all of the following hold. Architecture runs this checklist at review for
-both lanes' stories, on an `arch/…-review` branch, and moves the story from `review` to `done`.
+every lane's stories, on an `arch/…-review` branch, and moves the story from `review` to `done`.
+The instrumentation item is SRE's: it verifies it on an `sre/…-verify` branch and records the
+result in the story's §8 record before architecture moves the story.
 
 - [ ] Every acceptance criterion demonstrably passes.
 - [ ] Tests from the test plan exist and run in CI.
@@ -335,7 +357,7 @@ Every workflow in this repo is a make target. If Claude Code writes a procedure 
 it writes the target in the same pass. A documented sequence of shell commands that isn't a
 target is a defect.
 
-Baseline targets the architecture agent owns and keeps working:
+Baseline targets the SRE role owns and keeps working:
 
 ```
 make help              # self-documenting target list; default goal
@@ -399,11 +421,12 @@ An ADR states: context, options considered with honest trade-offs, decision, con
 - Assume deep systems and infrastructure background. Explain the domain decision, not the
   technology.
 - Game design, world lore, and mechanics are Brian's call. Sequencing and decomposition are PM's to
-  drive; operability, reliability, and contracts are architecture's.
+  drive; contracts are architecture's; operability and reliability are SRE's.
 
 ### Session start
 
-`git fetch origin` and start from `origin/main`. Read the `Status: active` sprint in
+Brian starts the session with `/role <name>`. Until he does, don't pick up work, and don't choose
+a role yourself. Then `git fetch origin` and start from `origin/main`. Read the `Status: active` sprint in
 `docs/sprints/` first: it is the work, in order. Then `docs/status.md`, which names the story in
 flight in each lane and the decisions the lanes are waiting on. Then `docs/roadmap.md`, `docs/glossary.md`, and any
 ADR with `status: proposed`. `BACKLOG.md` is the full view when `status.md` is not enough.
