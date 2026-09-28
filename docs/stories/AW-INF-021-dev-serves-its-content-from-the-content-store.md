@@ -120,16 +120,49 @@ running server minutes after I write it, without a deploy.
 
 ## Observability requirements
 
-- **Metrics:** none new. AC-1 and AC-6 read `andara_content_active_version{pack}` and
-  `andara_content_load_failures_total{reason}` from `dev`'s server. `pack` is bounded by the
-  packs followed.
-- **Logs:** `content-seed: <step>` progress lines. The server's existing `content.load` and swap
-  lines.
-- **Traces:** the server's existing `content.load` and `content.swap` spans, now emitted from `dev`.
-  This is `AW-SRV-012`'s §8 line "not emittable from the compose server, because
-  `content.source=dir` has no Active Pointer". This story carries that live observation, recorded
-  in its verification record.
-- **Alerts:** none.
+*(SRE observability review, 2026-09-28: `pack` cardinality stated, `ContentLoadFailing` made live
+on `dev`, and the core carrier's signals added.)*
+
+- **Metrics:** none new in code. AC-1, AC-4 and AC-6 read these from `dev`'s server, polled per
+  `live-assertions.md`:
+  - `andara_content_active_version{pack}`;
+  - `andara_content_pending_seconds{pack}`;
+  - `andara_content_load_failures_total{reason}`;
+  - `andara_build_info{pack,content_version}`.
+
+  With `content.packs: "*"`, `pack` has one value per pack that has an active version:
+  `andara.core`, `town`, and one per granted Builder pack (`AW-SRV-035`). That's bounded by the
+  Operator's grants, expected under 20 on `dev`. It's never a per-version or per-Builder label.
+  AC-6's core-skew case reads `andara_content_load_failures_total{reason="core_version"}` and
+  `andara_content_pending_seconds{pack}` on the held pack. `content-freshness.md` counts that as
+  unfresh (system reason), and so does this story's verification.
+- **Logs:**
+  - `content-seed: <step>` progress lines, ending in exactly one of:
+    - `content-seed: town@<m> published and active`
+    - AC-3's `already active` line
+    - AC-9's refusal
+  - The server's existing `content.load`, `content swap applied` and `error` lines, each with
+    `pack`, `version` and `trace_id`.
+  - Whichever carrier feedback item 1 chooses logs one line per roll naming the core version, and
+    whether it activated it or found it already active. It fails the roll visibly: a failed
+    Argo CD sync or a failed boot. It never leaves a pod unready with nothing in the log.
+- **Traces:** the server's existing `content.load` → `content.resolve`, `content.validate` →
+  `content.build`, and `content.swap` spans, now emitted from `dev`. This is `AW-SRV-012`'s §8 line
+  "not emittable from the compose server, because `content.source=dir` has no Active Pointer". This
+  story carries that live observation, recorded in its verification record. AC-4's activation shows
+  as one trace, from the CLI's `cli.command` through `ActivateVersion`, to the Loader's
+  `content.load`, and on to the tick's `content.swap`.
+- **Alerts:** none new. **`ContentLoadFailing` goes live on `dev` with this story.** It was silent
+  there, because `content.source=dir` exports no `andara_content_pending_seconds`
+  (`content-freshness.md`, *Known gaps*). This story changes, in the same PR:
+  - *Known gaps* in `content-freshness.md`: the `dir` bullet names `local` and compose only.
+  - `docs/runbooks/content-load-failing.md`: one line for `dev`. A pending `town` means the fixture
+    seed, and a pending Builder pack means that Builder's version. Diagnosis is the same.
+  - `docs/runbooks/server-unavailable.md`: if the core carrier gates readiness, a diagnostic step
+    for "no ready pod because `andara.core` isn't active". That failure pages as
+    `AndaraServerUnavailable`, and today's runbook doesn't name it.
+  - Evaluation in Grafana Cloud waits on `AW-INF-009`, as in `AW-INF-025`. The §8 record says
+    whether the rule was evaluated or only the series was observed.
 
 ## Test plan
 

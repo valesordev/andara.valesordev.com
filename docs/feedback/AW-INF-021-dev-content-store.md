@@ -111,6 +111,99 @@ decides the items it will operate:
 
 Architecture still decides all three. Write SRE's answers under this heading.
 
+### SRE's answers (2026-09-28)
+
+**A fact that shapes items 1 and 4: `dev`'s edge isn't on the public internet.**
+`andara-dev.solo7.valesordev.com` has no public record. Cloudflare's resolver returns NXDOMAIN.
+It resolves only inside Brian's tailnet, to `100.79.240.98` (`solo7desk`), which is the box's
+Tailscale address. So anything that reaches `dev` has to be on the tailnet:
+- GitHub-hosted runners aren't on it;
+- a Builder who isn't Brian isn't on it either.
+
+**Item 1: the core carrier. SRE recommends (b), with conditions.**
+
+| | First install | Every roll | A failed roll | Image rollback across a core bump | `prod` later |
+|---|---|---|---|---|---|
+| (a) `PreSync` Job | Doesn't work: no pod to publish through | The *old* server validates the *new* core. A core using a Component type the old binary lacks fails validation, and the roll is blocked | A failed sync. Argo CD shows it, and the old pod keeps serving | The rollback's `PreSync` activates the older core. `AW-SRV-013`'s activation refusal (strands a pack) then blocks the rollback | A second mechanism, since `prod` isn't Argo-rolled today (#107) |
+| (b) Server at boot | Works | The new binary publishes its own core, so no version skew | A boot error, and the pod never goes Ready: `AndaraServerUnavailable` on `dev`, with a runbook line (`AW-INF-021`'s Observability) | The rule "never move core backwards" leaves the newer core active, and the older binary reports it on `andara_content_pending_seconds{pack="andara.core"}` (`format_version`). A core rollback is always an explicit `content rollback andara.core` | The same mechanism, with no new image and no credential in a Job |
+| (c) `dir` bootstrap | Works, as a one-off state transition | Needs (a) after it | As (a) | As (a) | A hand sequence per environment. That's a §9 defect by construction |
+
+(a) also needs an image carrying `andara-cli`, which `Dockerfile.server` doesn't build. SRE can
+operate (b) on `dev` and `prod` with the fewest moving parts. SRE's conditions for operating it:
+- The publish is idempotent on the core's content digest. Two pods booting together, or a restart,
+  publish nothing new.
+- The server never moves core's pointer backwards on its own.
+- It's audited as the deploy's operator, with the image tag as `reason`, which satisfies
+  `AW-SRV-013` AC-11's "names the deploy tag".
+- Readiness waits for the swap.
+- The boot line names the core version, and whether it published or found it active.
+
+The contract cost is that the server counts as the operator for core, which is architecture's to
+accept or refuse.
+
+**Item 2: moving `dev`'s log. Fresh topics, as a target.**
+
+Fresh topics are the only cut-over SRE can make reversible on `dev`. No player World exists before
+M2. The target:
+```
+make world-reset ENV=dev CONFIRM=andara-dev
+```
+- It refuses `ENV=prod`, and any `CONFIRM` that isn't the namespace. Exit 2.
+- It scales the server StatefulSet to 0 and the projector Deployment to 0.
+- It deletes and recreates the World's log topics, by an explicit list from
+  `deploy/kafka/topics.yaml`. It leaves the content topics and the Account store alone.
+- **It empties the snapshot PVC too.** Snapshots are keyed to log offsets, so a snapshot of the old
+  log applied to a recreated topic is a wrong World, not a slow one. This is the step a hand
+  procedure would miss.
+- It scales back up, and waits for Ready.
+- It prints `world-reset: andara-dev reset; accounts kept, characters gone`.
+
+What survives is architecture's call. SRE's view: keep the Account store, so the bootstrap operator
+and any Builder grants survive. Characters are in the log and go. Whether the roster references
+survive a log reset is the question for architecture.
+
+**Rollback to `dir`:** revert the values, then run `world-reset` again. A store-backed log replayed
+with `content.source=dir` fails the genesis digest check, the same way the forward direction does.
+So a rollback costs `dev`'s World a second time. That's acceptable only on `dev`, and only before
+M2. `AW-INF-021`'s Data/state section should say so.
+
+**Item 4: where the Content Repository's CI gets core. (a) is out. SRE supports (b).**
+
+GitHub-hosted runners can't reach `dev` (above). (a) would need CI to join the tailnet with an
+ephemeral key: a secret in a Builder-facing repository, plus a tailnet ACL for CI. That's more
+surface than the problem warrants. (b) needs no network and no credential, and the skew window is
+the one PM names. For SRE, (b) adds:
+- to `AW-INF-020`: the archive carries `andara.core`'s compiled pack, and `andara-cli version`
+  prints the core version it bundles;
+- to `AW-INF-022` AC-6: "`dev` unreachable" stops being a failure mode, and the AC is replaced by a
+  check that the bundled core equals `dev`'s active core, run where `dev` is reachable (Brian's
+  machine, or a later self-hosted runner). It isn't run in CI.
+
+## For architecture: SRE observability review, 2026-09-28
+
+The CLAUDE.md §7 review of the four stories this file covers. Only Observability sections changed.
+
+- **`AW-INF-021`: amended.**
+  - `pack` cardinality stated: one per active pack, bounded by the Operator's grants.
+  - AC-6's core-skew evidence named: `load_failures_total{reason="core_version"}` and
+    `pending_seconds`.
+  - `ContentLoadFailing` goes live on `dev` with this story. The story now carries the SLO's
+    *Known gaps* edit and two runbook lines, including `server-unavailable.md`'s step for "core not
+    active" if the carrier gates readiness.
+  - The carrier's required log line and failure visibility are added.
+- **`AW-INF-022`: no change.** A CI workflow in another repository, with no runtime signals. If
+  item 4 is (b), AC-6 changes as above. That's a contract change, not an observability one.
+- **`AW-INF-023`: no change.** Documentation and check targets.
+  - **But the tailnet fact above affects its AC-3.** "A person with no clone of this repository
+    ... follows sections 2–4 against `dev`" works for Brian only. Any other reader also needs
+    tailnet access, and section 2, *Getting access*, has to say so. That's for architecture and PM,
+    not SRE.
+- **`AW-SRV-035`: amended.**
+  - `andara_privileged_actions_total{action="set_builder_packs"}` added, pre-seeded through
+    `auth.AllActions`.
+  - The trace corrected. "The Account store write as a child, as `SetRoles` has" wasn't true:
+    `SetRoles` has no store-write span. The story now names a new `accounts.write` child span.
+
 ## Brian's answers (2026-09-26)
 
 1. **Reaching a new Zone: a `goto` command for Builders**, now `AW-SRV-036`. Until the base content

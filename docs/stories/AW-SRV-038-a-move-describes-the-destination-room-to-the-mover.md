@@ -80,6 +80,11 @@ None. The log's Commands are unchanged, and the extra Event isn't state.
 ## Observability requirements
 
 - **Metrics / Logs / Traces / Alerts:** none new. The Event is counted wherever Events already are.
+- *(SRE observability review, 2026-09-28.)* Expected shift, stated so the §8 check doesn't read it
+  as a regression: `andara_events_emitted_total{type="room_described"}` rises by one per successful `move`. `andara_stream_events_sent_total` rises by one
+  per mover. The per-tick cost is one Event per move, under the 50 ms budget's noise floor at the
+  sizing fixture. The §8 record states the before and after rate on `make stack-play`, and states
+  that `andara_tick_duration_seconds` p99 didn't move.
 
 ## Test plan
 

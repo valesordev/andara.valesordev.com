@@ -89,8 +89,14 @@ releases are permanent.
 
 ## Observability requirements
 
-- **Metrics / Traces / Alerts:** none; it's a CI job.
-- **Logs:** the workflow's step output, ending with the `cli-release-check` line.
+- **Metrics / Traces:** none; it's a CI job.
+- **Logs:** the workflow's step output, ending with the `cli-release-check` line. The job summary
+  names the commit `cli-dev` now carries and lists the five archives with their checksums, so
+  "which CLI is current" is answered from the run, not by downloading. *(SRE observability review,
+  2026-09-28.)*
+- **Alerts:** none. A failed publish is a red run on `main`, the same signal a failed `:dev` image
+  publish gives (`AW-INF-013`). A `cli-dev` older than `dev`'s image is the AC-2 guard's to
+  prevent. It isn't alerted on.
 
 ## Test plan
 

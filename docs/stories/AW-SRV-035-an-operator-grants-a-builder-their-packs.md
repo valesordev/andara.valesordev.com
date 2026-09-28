@@ -111,12 +111,29 @@ before that field exists reads as empty, so no migration is needed. Rolling back
 
 ## Observability requirements
 
-- **Metrics:** none new. The Gateway's RED series, `andara_grpc_requests_total{method,code}` and
-  `andara_grpc_request_duration_seconds{method}`, gain one more bounded `method` value.
-- **Logs:** `info` `builder packs set` with `actor_account_id`, `target_account_id`, `before`,
-  `after`, `session_id`, `trace_id`. `warn` on denial.
-- **Traces:** the RPC's server span, with the Account store write as a child, as `SetRoles` has.
-- **Alerts:** none.
+*(SRE observability review, 2026-09-28: the privileged-action counter added, and the trace
+corrected. `SetRoles` has no store-write span to copy.)*
+
+- **Metrics:** none new.
+  - The Gateway's RED series, `andara_grpc_requests_total{method,code}` and
+    `andara_grpc_request_duration_seconds{method}`, gain one bounded `method` value.
+  - `andara_privileged_actions_total{action}` gains `action="set_builder_packs"`. The value is added
+    to `auth.AllActions`, so it's pre-seeded at 0 from the first scrape, as every other action is.
+  - Pack IDs and account IDs are never labels. They appear only in logs, span attributes, and the
+    audit record.
+- **Logs:**
+  - `info` `builder packs set`, with `actor_account_id`, `acting_as_account_id` (empty unless
+    `--as`), `target_account_id`, `before`, `after`, `session_id`, `trace_id`.
+  - `warn` on denial, with the same fields minus `after`, plus `reason`.
+- **Traces:**
+  - The Gateway interceptor's server span for `SetBuilderPacks`, parented by the CLI's `cli.command`
+    through `traceparent`, as for every Admin RPC.
+  - Under it, one new child span, `accounts.write`, around the Account store produce, with
+    attributes `action=set_builder_packs` and `outcome`. CLAUDE.md §7 makes persistence writes
+    trace-worthy.
+  - `SetRoles` has no such span today. Adding one there is out of scope, and it isn't a reason to
+    omit it here.
+- **Alerts:** none. A denied grant is audited and counted, not alerted.
 
 ## Test plan
 

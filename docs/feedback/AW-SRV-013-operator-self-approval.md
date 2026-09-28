@@ -55,3 +55,31 @@ PM's reading of what changes:
   that in `docs/roadmap.md` once architecture confirms the rule.
 - `AW-INF-023`'s guide documents this as how Brian works on `dev`. It isn't how it teaches other
   Builders.
+
+## For architecture: SRE observability review, 2026-09-28
+
+The CLAUDE.md §7 review of `AW-SRV-013` and `AW-CLI-003`, both `ready`, for SPRINT-03's contract
+review. Only their Observability sections changed. The metric names are unchanged.
+
+- **`AW-SRV-013`: amended.**
+  - RED for the eight new `Admin` RPCs is named: the Gateway's existing `andara_grpc_*` series.
+  - Every label set is closed and pre-seeded. `stale_parent` is added to publishes' outcomes.
+  - "Pack ID is a bounded label" is removed. No counter in the story carries it, and none needs to.
+  - Correlation fields (`session_id`, `trace_id`, `acting_as_account_id`) are required on every
+    line.
+  - Persistence-write spans are named: `content.write_blob`, `content.write_manifest`,
+    `content.write_pointer`, and `audit.write`.
+  - Two additions depend on your decisions:
+    - **`andara_content_approvals_total{outcome="self_operator"}`** exists only if you adopt this
+      file's rule. It's kept apart from `ok`, so the temporary rule's use shows on a dashboard.
+    - **`andara_content_activations_refused_total{reason}`** is new. Its `reason` is `unapproved`,
+      plus the activation-refusal codes if you adopt
+      `docs/feedback/AW-SRV-013-activation-refusals.md` item 1.
+  - `content.validate` keeps the Loader's span name. The parent tells publish-time and load-time
+    apart. If you'd rather it were distinct, say so at contract review.
+- **`AW-CLI-003`: amended.**
+  - No metrics, since the CLI is short-lived.
+  - `pack`, `version` and `override`/`reason` on the `cli.command` span.
+  - One span per blob stream, never per chunk.
+  - `trace_id` in the logged confirmation line and in the `--output json` envelope, so a Builder's
+    report joins the server's audit record on one ID.

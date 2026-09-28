@@ -86,8 +86,57 @@ That's `AW-SRV-019`'s contract; this story only runs it safely.
 
 ## Observability requirements
 
-- **Metrics / Logs / Traces / Alerts:** none new. AC-2 and AC-4 read `AW-SRV-019`'s existing
-  instruments.
+*(SRE observability review, 2026-09-28. The first draft said "none new". Enabling the projector on
+`dev` is what `projection-freshness.md` deferred its absence rule to, so this story carries it.)*
+
+- **Metrics:** none new in code. The projector Deployment is scraped by annotation under
+  `job="andara-projector-state"` (the chart's `andara.scrapeAnnotations`, already rendered).
+  AC-2 reads `andara_state_projector_lag_seconds` against `andara_state_projector_lag_budget_seconds`,
+  polled per `live-assertions.md`. The one-shot `--rebuild` Job carries **no** scrape annotation:
+  it's short-lived, and a second target under the same job would read as a second writer. So
+  `andara_state_rebuild_duration_seconds` from the Job is never scraped, and the rebuild's duration
+  comes from its log line (below), not the histogram.
+- **Logs:** each target prints `projector-<stop|rebuild|start>: <step>` progress lines to stderr and
+  a final line naming the outcome and elapsed time:
+  - `projector-stop: stopped (group <group> empty) in <n>s`
+  - `projector-rebuild: rebuilt to tick <t> in <n>s`
+  - `projector-start: ready in <n>s`
+  On failure, the final line names the step that failed, and the target exits non-zero. The Job's
+  and the Deployment's own lines ship to Loki through the cluster's OTLP receiver as the server's
+  do: `consumer group wiped for a rebuild`, `state projector started` (with `round_tick`), and
+  `state projector caught up`. AC-4 is evidenced by `state projector started` carrying a non-zero
+  `round_tick` equal to the newest complete round's tick, not by the lag gauge.
+- **Traces:** none new. The rebuild Job emits `AW-SRV-019`'s `state.replay` → `state.verify` spans.
+  The Job must flush its exporter before it exits 0. If the §8 check finds the Job's spans missing
+  from Tempo, that's an `AW-SRV-019` defect, filed as an issue, not a reason to hold this story.
+- **Alerts:** one new alert, `StateProjectorDown`, with its runbook:
+  - **Expression:** the projector's Deployment wants a replica and no Ready projector pod has been
+    scraped, per namespace:
+    ```
+    max by (namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
+      unless on(namespace) max by (namespace) (up{job="andara-projector-state"} == 1)
+    ```
+    for 10 m. `projector-stop` and `projector-rebuild` scale the Deployment to 0, so a planned stop
+    never fires. A crash loop or an unready pod drops out of the annotation scrape and does fire.
+    The expression never uses `absent()` over every namespace (the `AndaraServerUnavailable`
+    lesson). It's keyed on desired replicas, so an environment with the projector disabled has no
+    Deployment and no series.
+  - **Severity:** `ticket`, `slo: projection-freshness`. No player reads a projection.
+  - **Runbook:** `docs/runbooks/state-projector-down.md`, in this story. Its first steps are the
+    pod's restart count and last exit code (`2` divergence, `3` log gap, `4` state_version). Each
+    exit code routes to `state-projector-diverged.md`, to `make projector-rebuild`, or to an
+    escalation.
+  - `projection-freshness.md`'s *Known gaps* bullet "A projector that is not running exports no
+    lag" is replaced by a pointer to this alert. `docs/runbooks/README.md` lists the runbook.
+  - `deploy/helm/tests/alerts_test.yaml` covers three cases: fires on replicas 1 with no `up`;
+    silent on replicas 0; silent in compose, which has no `kube_*` series.
+- **Rebuild and `ProjectionStale`.** After a rebuild, lag stays over budget until the projector
+  catches up. A rebuild longer than the rule's `for` (5 m) tickets `ProjectionStale`. That's correct:
+  the SLO's exhaustion policy counts rebuilds against the budget. `projection-stale.md` gains one
+  line: check `projector-rebuild`'s final line before diagnosing. No inhibition is added.
+- **Delivery.** The rules are evaluated in Grafana Cloud only once `AW-INF-009` delivers
+  `files/alerts.yaml`. Until then, §8 verifies the rule with `promtool` (`make helm-test`) and the
+  series it reads on the real backend. The §8 record says which of the two was observed.
 
 ## Test plan
 
