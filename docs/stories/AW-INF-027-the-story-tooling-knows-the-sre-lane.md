@@ -4,7 +4,7 @@ title: The story tooling knows the SRE lane
 epic: EPIC-01
 component: infra
 type: chore
-status: draft
+status: ready
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-INF-026]
@@ -58,17 +58,48 @@ story and the infra stories stop being reported as architecture's.
    `now` line reads `branch sre/<id-lower>-<slug>`. The same holds for `arch/` and `impl/`.
 5. **Given** the table under Interface contract **when** `grep '^lane:'` runs on each listed story
    **then** every one reads `lane: sre`, and `git diff` on those files against the merge base
-   shows only that line changed.
-6. **Given** `make story COMP=INF TITLE=x` **when** it scaffolds **then** the file's `lane` comment
+   shows only that line changed. The one exception is this story's own file, whose `status` line
+   also changes as it moves through `in-progress` and `review`.
+6. **Given** three stories at `review` — one each with `lane: architecture`, `lane: sre` and
+   `lane: implementation`, all `component: server` or `infra` — **when** `make status` runs
+   **then** the Architecture section's `review` line lists all three with the §8 prompt, the SRE
+   section's lists all three with the instrumentation prompt, and the Implementation section's
+   lists only the implementation story, with `awaiting §8`.
+7. **Given** `make story COMP=INF TITLE=x` **when** it scaffolds **then** the file's `lane` comment
    names `architecture`, `sre` and `implementation`.
 
 ## Interface contract
 
 - `scripts/andara_docs.py`: `LANES = ["architecture", "sre", "implementation"]`.
-- `make status`: a third section, `## SRE lane — build, ship, operate, observe`, with the same
-  `now` / `next` / `review` / `held` lines as the other two.
+- `make status`: three sections, with these headings exactly, in this order:
+  - `## Architecture lane — contracts, specs, ADRs, the §8 review`
+  - `## SRE lane — build, ship, operate, observe`
+  - `## Implementation lane — server and cli source, tests`
+
+  Only the Architecture scope text changes. It drops "infra, automation", which are now SRE's.
+  The SRE section has the same `now` / `next` / `held` / `BLOCKED` lines as the other two, drawn
+  from `lane: sre` stories.
+- The `review` line is routed by who acts at `review`, not by `lane`. `lane` names who builds a
+  story, and the §8 review is split by §8 itself: SRE verifies instrumentation, architecture runs
+  the rest and moves the story to `done`.
+
+  | Section | Stories on its `review` line | Prompt |
+  |---------|------------------------------|--------|
+  | Architecture | every story at `review`, any lane | `run the §8 checklist, then flip to done` |
+  | SRE | every story at `review` with `component` `server`, `cli` or `infra` (the §7 scope), any lane | `verify §7 instrumentation, record it in the §8 record` |
+  | Implementation | its own `lane: implementation` stories at `review` | `awaiting §8` (no action) |
+
+  The frontmatter can't say whether SRE has already recorded its check, so a story stays on SRE's
+  line until it leaves `review`.
 - Branch prefixes for the `now` line: `architecture` → `arch/`, `sre` → `sre/`,
-  `implementation` → `impl/`.
+  `implementation` → `impl/`. The rest of the branch name is unchanged: the story ID in lower
+  case, then the file's slug (`branch_for` in `scripts/gen_status.py`).
+- The lane → heading, scope and prefix mapping lives in one table in `scripts/gen_status.py`.
+  `LANES` in `scripts/andara_docs.py` stays the one list of permitted values, and the generator
+  fails loudly (non-zero exit, naming the lane) if a lane in `LANES` has no row in that table.
+  A fourth lane then can't vanish from `docs/status.md`.
+- AC-2's error is the validator's existing enum message, unchanged:
+  `<file>: key 'lane' has value '<v>'; permitted values: architecture, sre, implementation`.
 
 Stories re-laned to `sre`:
 
@@ -104,9 +135,11 @@ their instrumentation check.
 
 ## Test plan
 
-- **Unit:** the validator accepts each of the three lanes and rejects any other value (AC-1, AC-2).
-  The status generator places a story of each lane in its own section, with the lane's branch
-  prefix (AC-3, AC-4).
+- **Unit:** in `scripts/tests/`, so `make scripts-test` runs them under `make check`. The
+  validator accepts each of the three lanes and rejects any other value (AC-1, AC-2). The status
+  generator places a story of each lane in its own section, with the lane's branch prefix (AC-3,
+  AC-4), and routes `review` stories by the table under Interface contract (AC-6). A lane in
+  `LANES` with no row in the generator's table fails the generator.
 - **Integration:** `make check` on the story's own PR.
 - **Manual/operator:** `make status`, and AC-5's `grep`.
 
@@ -118,3 +151,34 @@ CLAUDE.md §8.
 
 - None that affect the contract. Architecture confirms the re-lane table at contract review, since
   it moves AW-INF-019 and AW-INF-008 out of architecture's lane while they're at `review`.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in `docs/feedback/AW-INF-027-sre-lane.md` on #142: no change, since
+the tooling emits no runtime signals. The story is `ready`.
+
+1. **The re-lane table is confirmed, and it's complete.** On `origin/main` at `0819105` there are
+   17 non-`done` stories with `lane: architecture`. The table moves 14 of them. The other three are
+   AW-INF-005 and AW-INF-007, which PM splits at the SPRINT-04 boundary, and AW-INF-023, which
+   stays architecture's. AW-INF-019 and AW-INF-008 move while they're at `review`. That's
+   right: `lane` names who builds a story, and the §8 review is architecture's in every lane
+   whatever the field says. Their §8 reviews stay on architecture's list, as the sprint plan
+   says. `docs/status.md` shows that too, once `review` is routed by who acts (item 7).
+2. **AC-5 exempts this story's own `status` line.** As written, the story couldn't pass its own
+   criterion: its first commit moves its `status` along with its `lane`.
+3. **The three section headings are pinned.** The draft named only the SRE heading, and left
+   Architecture's scope text claiming "infra, automation", which §2 now gives to SRE.
+4. **Adding a lane is now one edit, plus a loud failure.** `LANES` and the generator's view table
+   were two lists nothing held together. A lane the validator accepts and the generator doesn't
+   render would silently drop its stories from `docs/status.md`. That's the same failure this
+   story fixes, so the generator now refuses it.
+5. **The unit tests go in `scripts/tests/`,** which `make scripts-test` already discovers under
+   `make check`.
+6. **Expect a rebase against #142.** #142 edits the bodies of AW-INF-020, AW-INF-021 and
+   AW-INF-025, and this story edits their `lane` line. The hunks don't overlap. AC-5 still holds,
+   because it diffs against the merge base.
+7. **`review` is routed by who acts, not by `lane`** (Codex on #145, 2026-09-28). The draft gave
+   every section the same `review` line, drawn from its own lane's stories. Re-laning AW-INF-019
+   and AW-INF-008 would then have moved their §8 prompt into SRE's section and out of
+   architecture's. That was already wrong for implementation's stories, whose §8 prompt appeared
+   under Implementation. The table under Interface contract routes it, and AC-6 tests it.
