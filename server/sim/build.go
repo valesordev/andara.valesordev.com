@@ -244,7 +244,7 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 				desc:       rd.Description,
 				components: roomComps,
 			}
-			seenDir := make(map[Direction]struct{}, len(rd.Exits))
+			seenDir := make(map[Direction]*contentv1.ExitDefinition, len(rd.Exits))
 			for ei, ed := range rd.Exits {
 				exitLine := in.exitLine(ri, ei)
 				if ed == nil {
@@ -285,18 +285,19 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 					})
 					continue
 				}
-				if _, dup := seenDir[dir]; dup {
+				if prev, dup := seenDir[dir]; dup {
 					errs = append(errs, ValidationError{
-						File:   in.File,
-						Line:   exitLine,
-						Zone:   zid,
-						Room:   rid,
-						Code:   ErrDuplicateDirection,
-						Detail: fmt.Sprintf("duplicate exit direction %q", dir),
+						File: in.File,
+						Line: exitLine,
+						Zone: zid,
+						Room: rid,
+						Code: ErrDuplicateDirection,
+						Detail: fmt.Sprintf("duplicate exit direction %q: to %s, and again to %s",
+							dir, exitTarget(prev), exitTarget(ed)),
 					})
 					continue
 				}
-				seenDir[dir] = struct{}{}
+				seenDir[dir] = ed
 				toZone := ZoneID(ed.ToZone)
 				if toZone == "" {
 					toZone = zid
@@ -468,16 +469,18 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 		}
 	}
 
-	fatal := false
+	// A load that fails reports only its errors (errors.md §1 rule 7, as the
+	// compiler does): a warning computed over content that was refused, such
+	// as an orphan left by a refused Exit, describes a World that will not
+	// exist. Strict-mode orphans are errors, so they stay.
+	var refusals []ValidationError
 	for _, e := range errs {
-		if IsWarning(e, opts.StrictOrphans) {
-			continue
+		if !IsWarning(e, opts.StrictOrphans) {
+			refusals = append(refusals, e)
 		}
-		fatal = true
-		break
 	}
-	if fatal {
-		return nil, errs
+	if len(refusals) > 0 {
+		return nil, refusals
 	}
 
 	world := &World{Zones: make(map[ZoneID]*Zone, len(byID))}
@@ -695,4 +698,13 @@ func fieldValue(fd *contentv1.ComponentField) (ComponentField, FieldKind) {
 		f.Kind = FieldUnset
 	}
 	return f, f.Kind
+}
+
+// exitTarget is an Exit's target as the Builder wrote it: the Room alone
+// within the Zone, zone/room across one.
+func exitTarget(ed *contentv1.ExitDefinition) string {
+	if ed.GetToZone() == "" {
+		return ed.GetToRoom()
+	}
+	return ed.GetToZone() + "/" + ed.GetToRoom()
 }

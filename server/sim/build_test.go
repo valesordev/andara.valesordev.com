@@ -526,6 +526,7 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 		strict  bool
 		want    []ErrCode // Zone z's findings, in the order BuildWorld reports them
 		orphans []RoomID
+		detail  string // the first finding's, when set
 		fatal   bool
 	}{
 		{
@@ -548,23 +549,26 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 			want:   []ErrCode{ErrMissingReverseExit},
 		},
 		{
-			// AC-3: the second north is refused, so nothing enters yard.
+			// AC-3: the second north is refused, and a refused load reports
+			// only its errors, so yard, which only that Exit entered, is not
+			// reported as an orphan (errors.md §1 rule 7).
 			name: "two Exits north",
 			rooms: []*contentv1.RoomDefinition{
 				room("plaza", "Plaza", exit("north", "", "hall"), exit("north", "", "yard")),
 				room("hall", "Hall", exit("south", "", "plaza")),
 				room("yard", "Yard"),
 			},
-			want:    []ErrCode{ErrDuplicateDirection, ErrOrphanRoom},
-			orphans: []RoomID{"yard"},
-			fatal:   true,
+			want:   []ErrCode{ErrDuplicateDirection},
+			detail: `duplicate exit direction "north": to hall, and again to yard`,
+			fatal:  true,
 		},
 		{
-			// AC-5: strict mode promotes AC-1's orphan.
+			// AC-5: strict mode promotes AC-1's orphan to an error, and the
+			// refused load drops the chute's missing_reverse_exit warning.
 			name:    "the chute under strict_orphans",
 			rooms:   chute,
 			strict:  true,
-			want:    []ErrCode{ErrMissingReverseExit, ErrOrphanRoom},
+			want:    []ErrCode{ErrOrphanRoom},
 			orphans: []RoomID{"loft"},
 			fatal:   true,
 		},
@@ -589,6 +593,9 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 			}
 			if !slices.Equal(orphans, tc.orphans) {
 				t.Errorf("orphans = %v, want %v", orphans, tc.orphans)
+			}
+			if tc.detail != "" && (len(errs) == 0 || errs[0].Detail != tc.detail) {
+				t.Errorf("detail = %v, want %q", errs, tc.detail)
 			}
 			if (world == nil) != tc.fatal {
 				t.Errorf("world nil = %t, want %t: %v", world == nil, tc.fatal, errs)

@@ -95,3 +95,19 @@ yours. The contract is amended (AC-3, `errors.md` §1 rule 7) in #161's architec
 that PR as superseding #161, the way #161 superseded #156. Merging it merges everything.
 Close #161 then.
 
+
+## Implementation, 2026-09-29: the two fixes
+
+On `impl/aw-srv-034-review-fixes`, branched from `origin/arch/aw-srv-034-sidecar`. The PR
+supersedes #161.
+1. **A refused load reports only its errors.** When any finding is fatal, `BuildWorld` returns
+   those findings and drops the warnings. Strict-mode orphans are errors, so they stay. In
+   `TestBuildWorld_LoaderAgreesWithCompiler`:
+   - "two Exits north" now expects `[duplicate_direction]` alone, with no orphans;
+   - "the chute under strict_orphans" expects `[orphan_room]` alone, because the chute's
+     `missing_reverse_exit` is a warning on a refused load.
+2. **`duplicate_direction`'s detail names both targets:**
+   `duplicate exit direction "north": to hall, and again to yard`. A cross-Zone target is written
+   `zone/room`, as the loader's other details write it. The table test asserts this detail.
+
+Nothing else in `go test ./...` moved.
