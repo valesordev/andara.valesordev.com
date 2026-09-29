@@ -4,7 +4,7 @@ title: Generated views stop being committed
 epic: EPIC-01
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-INF-001, AW-INF-027]
 blocks: []
@@ -134,3 +134,28 @@ change. The story is `ready`.
    meaning.
 6. **Brian approves two edits at the hook: CLAUDE.md and `.gitignore`.** Both are unowned paths.
    The `.claude/` wording goes upstream, as the story already says.
+
+## Verification record (SRE, 2026-09-29)
+
+On `sre/aw-inf-026-generated-views-stop-being-committed`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `git ls-files BACKLOG.md docs/status.md` prints nothing; `git check-ignore` prints both | pass on the branch; **re-run on a clean clone of `main` after merge** |
+| 2 | Two throwaway branches from `91d82dd`, one moving AW-INF-025's `status` and one AW-INF-024's. Each diff names only its story. `git merge-tree --write-tree tmp-a tmp-b` printed `ee002e31…` and exited 0 | pass |
+| 3 | `Views.test_status_prints_what_it_writes`, `Views.test_backlog_prints_what_it_writes`. By hand: `make -s status > out.md` and `cmp docs/status.md out.md` agree. The `wrote` lines go to stderr | pass |
+| 4 | `ci.yaml`'s `status and backlog in the summary` step runs only on a push to `main` | **owed on the first merge** |
+| 5 | Unchanged: `validate-stories` is still first in `make check` | pass |
+| 6 | `Views.test_check_over_the_line_budget_fails_with_no_file` and `…_column_budget_…`: `--check` exits 1 with no `status.md` written. By hand: `make status-check` with `docs/status.md` moved away exits 0 | pass |
+| 7 | `grep -rni 'regenerat\|freshness\|status\.md\|BACKLOG\.md' CLAUDE.md .github`: every remaining hit says the view is rendered and not committed | pass |
+
+- **Where the views are named now:** CLAUDE.md §2, §3, §6 step 6, §9's target list and §11. §6
+  step 6 now reads "checks the views render" (`make validate-stories status-check`). §11 drops
+  "regenerate in the same commit" and the rebase note. README's two mentions follow. Brian
+  should confirm the CLAUDE.md and `.gitignore` wording in review: both are unowned paths.
+- **The views' own footers** said `make check` fails if the file is stale. They now say it isn't
+  committed. That's one line each, the same length, so the status budget doesn't move.
+- **The pre-commit hook** that `make bootstrap` installs still runs `backlog-check` and
+  `status-check`. They're render checks now, so a commit no longer needs the files regenerated.
+- **Not changed, as scoped:** `.claude/roles/_repo.md` still lists both paths as generated, which
+  makes the hook deny hand edits to them. Nobody hand-edits them, so that denial is harmless.
