@@ -303,6 +303,126 @@ func TestRun_FollowsTheLogAndDescribesTheWorld(t *testing.T) {
 	sameContent(t, b.topic(t), dumpOf(t, w))
 }
 
+// raw reads one Partition of the state topic end to end and returns every
+// record on it, compacted or not — unlike topic, which folds them into what
+// compaction converges to. It relies on the Partition's last offset still
+// holding a record, which compaction guarantees: it never removes a key's
+// latest record, and never touches the active segment.
+func (b *broker) raw(t *testing.T, p int32) []*kgo.Record {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	end := b.endOffsets(t)[p]
+	if end == 0 {
+		return nil
+	}
+	cl, err := kgo.NewClient(kgo.SeedBrokers(b.brokers...), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{b.state: {p: kgo.NewOffset().AtStart()}}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	var out []*kgo.Record
+	for {
+		fetches := cl.PollFetches(ctx)
+		if err := fetches.Err0(); err != nil {
+			t.Fatal(err)
+		}
+		done := false
+		fetches.EachRecord(func(r *kgo.Record) {
+			out = append(out, r)
+			done = done || r.Offset+1 >= end
+		})
+		if done {
+			return out
+		}
+	}
+}
+
+// compactWithinSeconds lowers the state topic's segment.ms,
+// min.cleanable.dirty.ratio and delete.retention.ms to seconds, which the
+// local broker's log_segment_ms_min of 1 s permits (deploy/kafka/topics.yaml,
+// broker.local), so the broker compacts within a test's deadline.
+func (b *broker) compactWithinSeconds(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	second, ratio := "1000", "0.01" // 0 is stored as -1, which disables the ratio
+	resps, err := b.adm.AlterTopicConfigs(ctx, []kadm.AlterConfig{
+		{Op: kadm.SetConfig, Name: "segment.ms", Value: &second},
+		{Op: kadm.SetConfig, Name: "min.cleanable.dirty.ratio", Value: &ratio},
+		{Op: kadm.SetConfig, Name: "delete.retention.ms", Value: &second},
+	}, b.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resps {
+		if r.Err != nil {
+			t.Fatalf("altering %s: %v (%s)", r.Name, r.Err, r.ErrMessage)
+		}
+	}
+}
+
+// AC-5 as amended at §8: the projector's tombstone for an Entity that left
+// its Zone is compacted away, key and all. The state topic is a throwaway
+// one, and andara.state.v1's own settings are untouched.
+//
+// It starts with the broker's default segment.ms, so the projector's writes
+// can't roll the segment holding the tombstone before the tombstone is seen.
+// Only then is compaction lowered to seconds. Compaction never touches the
+// active segment, and a segment rolls only on an append after segment.ms, so
+// each poll first appends a filler record to the Partition the key is on.
+// The filler is one key rewritten, so it compacts down to one record and adds
+// nothing to what is asserted.
+func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
+	b := newBroker(t)
+	w := script(t)
+	b.mirror(w, 0)
+	r := start(b.options(w))
+	b.waitCommitted(t, w.live.Tick())
+	r.stop(t)
+
+	const key = "character:town/hero"
+	p := sim.PartitionFor("town")
+	// At the default segment.ms the segment holding the tombstone has not
+	// rolled, so it cannot have been compacted: the tombstone is still there
+	// to be seen.
+	var values, tombstones int
+	for _, rec := range b.raw(t, p) {
+		if string(rec.Key) == key {
+			if rec.Value == nil {
+				tombstones++
+			} else {
+				values++
+			}
+		}
+	}
+	if tombstones != 1 || values == 0 {
+		t.Fatalf("before compaction, partition %d holds %d values and %d tombstones for %s; want some values and one tombstone", p, values, tombstones, key)
+	}
+	b.compactWithinSeconds(t)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	eventually.Observed(t, 90*time.Second, key+" compacted away, tombstone included", func() (bool, string) {
+		if err := b.cl.ProduceSync(ctx, &kgo.Record{Topic: b.state, Partition: p, Key: []byte("test:filler"), Value: []byte("x")}).FirstErr(); err != nil {
+			t.Fatal(err)
+		}
+		recs := b.raw(t, p)
+		var left []string
+		for _, rec := range recs {
+			if string(rec.Key) == key {
+				left = append(left, fmt.Sprintf("offset %d (tombstone %t)", rec.Offset, rec.Value == nil))
+			}
+		}
+		return len(left) == 0, fmt.Sprintf("%d records on partition %d, %s at %v", len(recs), p, key, left)
+	})
+
+	// Compaction removed the key and nothing the World still describes.
+	got := b.topic(t)
+	delete(got, "test:filler")
+	sameContent(t, got, dumpOf(t, w))
+}
+
 // AC-4 and the restart path: a projector restarted behind its checkpoint
 // replays silently to it — the topic gains nothing it already had — and then
 // resumes producing.

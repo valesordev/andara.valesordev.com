@@ -231,3 +231,21 @@ M2's 120 s. But a World that runs over its tick budget can't be replayed faster 
 `tickloop.Recover` takes `SeekAfter`. Without the seek, the recovery scan grows with retention, as
 the projector's did (6.7 s at 24 h). Implementation's note calls this `AW-SRV-007`'s open
 question, but the story doesn't list one. It needs adding.
+
+## Implementation, 2026-09-28: the AC-5 test
+
+On `impl/aw-srv-019-ac5-compaction`. `TestRun_ATombstonedKeyIsCompactedAway` is restored as the
+2026-09-26 section asked:
+- a filler record on each poll iteration;
+- a full raw read of the Partition polled to a deadline (90 s, not 60 s: a longer deadline costs
+  only on failure);
+- `0.01` for the dirty ratio.
+
+Two changes from the sketch:
+- The tombstone comes from `Run`, not from a hand-produced record.
+- The test first asserts the tombstone is on the log, before it asserts the tombstone is gone.
+  The topic starts at the broker's defaults and is altered to the lowered settings only after
+  that check, so a slow projection can't compact the tombstone before it's seen.
+
+It passes in about 22 s, and fails without the alteration. The record is in the
+story. **For architecture:** AC-5 is ready for the next §8 pass.

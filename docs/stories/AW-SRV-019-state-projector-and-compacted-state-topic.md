@@ -484,3 +484,27 @@ reopens AC-6 is yours to rule. It will fail `AW-INF-025` AC-4 as written, and it
 `AW-SRV-007`.
 
 The instrumentation item is **satisfied**, except for the Prometheus scrape carried above.
+
+### AC-5's forced-compaction test (2026-09-28, implementation)
+
+On `impl/aw-srv-019-ac5-compaction`, as the 2026-09-26 §8 pass ruled it (option (a), the stack's
+`log_segment_ms_min=1000`). `TestRun_ATombstonedKeyIsCompactedAway` (Redpanda):
+- The projector itself runs the script into a throwaway state topic at the broker's default
+  `segment.ms`. `andara.state.v1`'s settings are untouched.
+- A raw read of town's Partition then shows `character:town/hero`'s values and its one tombstone.
+  At the default `segment.ms` the segment holding the tombstone can't roll, so it can't be compacted.
+- Only then is the topic altered to `segment.ms=1000`, `min.cleanable.dirty.ratio=0.01` and
+  `delete.retention.ms=1000`. Declaring them at creation, as the first push did, let a slow
+  projection roll and clean the tombstone before the test looked for it (Codex on #147).
+- Then each poll appends a filler record to that Partition and reads the whole Partition raw,
+  to a 90 s deadline (`live-assertions.md`). It passes once no record with the key remains,
+  tombstone included.
+- Last, the compacted topic still equals a dump of the World, so compaction removed only the key.
+
+Measured on the stack's Redpanda v25.1.10: it passes in about 22 s, and it passed 3 of 3 runs back to back.
+**Mutation-checked:** without the alteration, the test fails at 90 s. Its failure
+message names the four records still there (three values and the tombstone).
+
+`make check` is clean, and so is the projector's integration suite. Nothing more on AC-5 is owed by
+implementation. The story stays `review` for the production digest line (#80), AC-9's carrier (PM), and
+whatever architecture rules on #143 (SRE's finding above).
