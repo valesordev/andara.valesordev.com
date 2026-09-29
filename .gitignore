@@ -1,5 +1,7 @@
 # Build artifacts
 /bin/
+# `make cli-release` archives (AW-INF-020).
+/dist/
 # A `go build ./cmd/andara-…` at the root lands here; builds go to bin/ (#78).
 /andara-*
 *.test

@@ -98,6 +98,30 @@ jobs:
           path: content-conformance.json
           if-no-files-found: ignore
 
+  # AW-INF-020 AC-6: every pull request builds the five andara-cli archives a merge would
+  # publish, and publishes nothing (this workflow has no write permission). AC-7: the
+  # linux/amd64 binary runs `content fmt --check` in a busybox container, which has no Go
+  # toolchain and no libc, so a dynamic link or a toolchain dependency fails here.
+  cli-release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # VERSION is `git describe --tags`, which needs the tags.
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: build the five archives
+        run: make cli-release
+      - name: linux/amd64 runs with no Go toolchain
+        run: |
+          mkdir -p "$RUNNER_TEMP/cli"
+          tar -C "$RUNNER_TEMP/cli" -xzf dist/andara-cli_*_linux_amd64.tar.gz
+          docker run --rm -v "$RUNNER_TEMP/cli:/cli:ro" -v "$PWD/docs/specs/content-language/v1/corpus:/corpus:ro" \
+            busybox:stable /cli/andara-cli content fmt --check --path /corpus/valid/town
+
   # AW-SRV-002 AC-3 and its Definition of Done: replay equality and the golden State Hash
   # sequence run on every architecture a replica or a developer might be, and a
   # determinism regression cannot merge. darwin/arm64 is a real macOS runner, not an

@@ -35,7 +35,9 @@ TAG         ?= dev
 KIND_CLUSTER ?= $(shell kind get clusters 2>/dev/null | head -1)
 DURATION    ?= 300
 SOAK        ?= 5m
-VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+# `--match 'v*'`: release tags only. The rolling `cli-dev` tag (AW-INF-020) sits on a recent
+# main commit, and without the match every build after it would call itself `cli-dev-N-g…`.
+VERSION     ?= $(shell git describe --tags --match 'v*' --always --dirty 2>/dev/null || echo dev)
 # `-dirty` exactly when a tracked file differs from HEAD, which is what VERSION's
 # `git describe --dirty` means; an untracked file doesn't count. It's in COMMIT and REVISION
 # themselves, so `make up`, `make image` and `make build` can't stamp one tree two ways, and
@@ -55,7 +57,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
-        values-schema values-schema-check helm-test image image-publish image-check kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
+        values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall
 
@@ -290,6 +292,22 @@ image-publish:
 ## image-check: prove a published tag pulls anonymously and from the cluster — ENV=<env> TAG=<tag>, default dev; REGISTRY_ONLY=1 skips the cluster (AW-INF-013)
 image-check:
 	@$(SCRIPTS)/image_check.sh "$(ENV)" "$(REGISTRY_IMAGE)" "$(TAG)" "$(REGISTRY_ONLY)"
+
+# TAG defaults to `dev` for the image targets; the CLI's rolling release is `cli-dev`, so
+# the CLI targets take TAG only when it's given on the command line.
+CLI_TAG = $(if $(filter command line,$(origin TAG)),$(TAG),cli-dev)
+
+## cli-release: build andara-cli for every Builder platform into dist/, with SHA256SUMS
+cli-release:
+	@$(SCRIPTS)/cli_release.sh "$(GO)" "$(VERSION)" "$(LDFLAGS_CLI)"
+
+## cli-release-check: download a published andara-cli anonymously, verify it, and run it — TAG=<tag>, default cli-dev (AW-INF-020)
+cli-release-check:
+	@$(SCRIPTS)/cli_release_check.sh "$(CLI_TAG)"
+
+## cli-release-publish: attach dist/ to the cli-dev pre-release (only from main's head) or a v* release — TAG=<cli-dev|v*>; what CI runs, needs gh with contents: write (AW-INF-020)
+cli-release-publish:
+	@$(SCRIPTS)/cli_release_publish.sh "$(CLI_TAG)"
 
 ## kind-load: load the built image into the kind cluster — KIND_CLUSTER=<name>
 kind-load:

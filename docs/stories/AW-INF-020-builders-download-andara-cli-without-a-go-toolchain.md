@@ -4,7 +4,7 @@ title: Builders download andara-cli without a Go toolchain
 epic: EPIC-06
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-INF-013]
 blocks: [AW-INF-022, AW-INF-023]
@@ -139,3 +139,28 @@ is `ready`.
    runs `validate` with the downloaded binary, which covers the embedded core end to end.
 3. **The public-repository assumption is resolved.** It's public (`gh repo view`, 2026-09-28).
    The five-platform assumption doesn't touch the contract, and it stays.
+
+## Verification record (SRE, 2026-09-29)
+
+On `sre/aw-inf-020-builders-download-andara-cli-without-a-go-toolchain`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `publish.yaml`'s `cli` job, after `publish`: `make cli-release`, `make cli-release-publish TAG=cli-dev`, then an anonymous download whose `andara-cli version` must name the commit the `cli-dev` tag points at | **owed on the first merge** |
+| 2 | `cli_release_publish.sh` moves the `cli-dev` tag only when `HEAD` is `origin/main`'s head, as `image_publish.sh` does for `:dev`; otherwise it exits 0 and says which commit owns it | **owed on the first merge**; checked the way AW-INF-013 checked it |
+| 3 | `Check.test_a_good_release_prints_version_and_commit`: a release laid out on disk, fetched by `file://`, prints `cli-release-check: andara-cli <version> (<commit>) ok`, exit 0. Against GitHub, the workflow's anonymous step runs it under `env -u GH_TOKEN` | pass locally; **GitHub half owed on the first merge** |
+| 4 | `Check.test_a_changed_archive_is_a_checksum_mismatch`: exit 1, `cli-release-check: checksum mismatch for <file>` | pass |
+| 5 | `release.yaml` on `v*` tags: `make cli-release-publish TAG=<tag>` creates a normal release (never `--prerelease`) and doesn't touch `cli-dev` | **owed**: needs a `v*` tag, which is Brian's to cut |
+| 6 | `ci.yaml`'s `cli-release` job runs `make cli-release` on every pull request. The workflow's token is read-only | this PR's run |
+| 7 | Locally: the `linux/amd64` binary is `ELF … statically linked`, and `content fmt --check --path …/corpus/valid/town` exits 0. In CI, the same command runs in `busybox:stable`, which has no Go toolchain and no libc | pass locally; this PR's run |
+
+- **`VERSION` now ignores non-release tags.** `git describe --tags` would have found the `cli-dev`
+  tag on a recent `main` commit and stamped every later build `cli-dev-N-g…`. `VERSION` matches
+  `v*` only (`Targets.test_version_ignores_the_cli_dev_tag`, which fails without the change).
+- **`TAG` stays `dev` for the image targets.** The CLI targets take `TAG` only from the command line
+  and default to `cli-dev` (`Targets.test_check_defaults_to_cli_dev`).
+- **One target past the contract:** `make cli-release-publish`, so that CI's publish step is a
+  make target (§9), as `image-publish` is.
+- **`.gitignore`** gains `/dist/`. It isn't on SRE's writable list.
+- **`make cli-release`:** five archives in 77 s on the box. Each holds the binary, `LICENSE` and
+  `NOTICE`.
