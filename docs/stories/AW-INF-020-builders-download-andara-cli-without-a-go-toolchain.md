@@ -181,4 +181,11 @@ Three `publish` runs on `main` since #158 merged: `65889c8` (run 36635779296), `
 **§8 instrumentation (SRE):** the Observability requirements are the job's log line and its
 summary. Each `cli` job ends with the `cli-release-check` line, and its `publish cli-dev` step,
 which writes the summary table (commit, archives, checksums), exits 0. No metrics, traces or
-alerts are specified. The item holds. **The story stays at `review` on AC-5 alone.**
+alerts are specified. The item holds.
+
+**The story stays at `review` on two items** (Codex on #164):
+- AC-5, which needs a `v*` tag.
+- The `[ASSUMPTION]` under Open questions, five platforms. §8 requires every assumption to be
+  resolved before `done`. Architecture kept it at contract review because it doesn't touch the
+  contract, but it still has to be resolved. It's Brian's to confirm or narrow: which platforms
+  Builders use.
