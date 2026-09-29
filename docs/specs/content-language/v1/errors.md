@@ -76,6 +76,9 @@ carrying the fields above, `severity` as `"error"` or `"warning"`.
    errors.** A warning is advice about content the compiler accepted, and a failed compile accepted
    nothing — an `orphan_room` that exists only because a broken Exit did not resolve describes the
    compiler's half-finished analysis, not the source. No `invalid/` sidecar carries a warning.
+   **The loader follows the same rule** (`AW-SRV-034`, 2026-09-29): when `BuildWorld` reports an
+   error it reports no warning, so a publish or a boot that fails shows the Builder what the
+   compile showed. A warning promoted to an error by `content.strict_orphans` is an error.
 8. **A duplicate is reported at the one that lost.** `duplicate_zone`, `duplicate_room`,
    `duplicate_template`, `duplicate_component_type`, `duplicate_declaration`, and
    `duplicate_direction` land on the second occurrence in sorted order, the first being the one that

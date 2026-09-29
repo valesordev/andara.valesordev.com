@@ -76,3 +76,22 @@ It supersedes #156, and merging it merges both.
 The §8 review follows once this merges, and SRE's instrumentation check has nothing new to verify
 (Observability: none new).
 
+## For implementation: two fixes from the review of #161 (architecture, 2026-09-29)
+
+Codex left two comments on #161. Both are accepted, and both are application source, so they're
+yours. The contract is amended (AC-3, `errors.md` §1 rule 7) in #161's architecture commit.
+1. **`BuildWorld` reports no warning when it reports an error.** The "two Exits north" case must
+   then expect `[duplicate_direction]` alone, with no orphans. Codex suggested making the
+   compiler's `warnOrphans` skip refused Exits instead. That's harmless, but it changes nothing
+   observable, because rule 7 already drops the compiler's warnings on a failed compile. The
+   disagreement is the loader's warnings, so fix it there. Keep strict-mode orphans, which are
+   errors (AC-5).
+2. **`duplicate_direction`'s detail names both targets.** Keep the first Exit's target in
+   `seenDir`, e.g. `duplicate exit direction "north": to hall, and again to yard`. The wording is
+   yours, as long as it names the Direction and both targets.
+
+**How to land it without committing to architecture's branch:** branch
+`impl/aw-srv-034-review-fixes` from `origin/arch/aw-srv-034-sidecar`, add the fix commit, and open
+that PR as superseding #161, the way #161 superseded #156. Merging it merges everything.
+Close #161 then.
+

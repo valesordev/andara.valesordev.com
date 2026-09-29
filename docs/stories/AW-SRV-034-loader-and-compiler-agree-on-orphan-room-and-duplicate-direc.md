@@ -81,7 +81,11 @@ or boot.
 2. **Given** a Zone with exactly one Room and no Exits **when** either runs **then** neither warns
    `orphan_room`. The corpus's four one-Room valid cases stay finding-free.
 3. **Given** a Room with two Exits `north` **when** either runs **then** both fail with
-   `duplicate_direction` on the second Exit; `BuildWorld` returns no World.
+   `duplicate_direction` on the second Exit, and it's the only finding for that Zone: neither
+   reports `orphan_room` for the Room the refused Exit named (`errors.md` §1 rule 7, which binds
+   the loader too). `BuildWorld` returns no World. The loader's detail names the Direction and both
+   targets, as the compiler's message does. *(Amended 2026-09-29, architecture, from the review
+   of #161.)*
 4. **Given** `make content-conformance` **when** `make check` runs **then** all cases agree,
    including the amended `warn-missing-reverse-exit` sidecar.
 5. **Given** `content.strict_orphans: true` **when** the AC-1 content boots **then** the load fails
@@ -132,3 +136,15 @@ closed.
 ## Open questions
 
 - None. The rule was decided at the `AW-CLI-005` review; see Context.
+
+## Contract amendment (architecture, 2026-09-29): AC-3 after the review of #161
+
+Implementation had started, so this is recorded here and in the feedback file.
+- **Only errors when the load fails.** `TestBuildWorld_LoaderAgreesWithCompiler`'s "two Exits
+  north" case expected `duplicate_direction` *and* `orphan_room` for `yard`. The compiler reports
+  only the error (`errors.md` §1 rule 7), so the two still disagreed on exactly the input AC-3
+  names. Rule 7 now binds the loader too, and AC-3 says so. A strict-mode orphan is an error, so
+  AC-5 is unchanged.
+- **The loader's detail names both targets.** `errors.md` §3.2 states it, and `AW-SRV-013`'s
+  publish gate shows the loader's detail to a Builder. Detail isn't part of the three-way
+  equivalence (code, position and chain), but it's the contract's text.
