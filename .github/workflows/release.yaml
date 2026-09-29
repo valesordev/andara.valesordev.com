@@ -1,0 +1,39 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
+# A `v*` tag becomes a normal GitHub release carrying andara-cli for every Builder platform
+# (AW-INF-020, AC-5). The same `make cli-release` build as publish.yaml's `cli` job;
+# `make cli-release-publish` refuses to replace an existing release and never touches cli-dev.
+
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  cli:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        run: make cli-release
+
+      - name: publish ${{ github.ref_name }}
+        run: make cli-release-publish TAG=${{ github.ref_name }}
+
+      - name: anonymous download
+        run: env -u GH_TOKEN make cli-release-check TAG=${{ github.ref_name }}

@@ -10,8 +10,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `blocked` | 1 |
-| `review` | 3 |
-| `ready` | 34 |
+| `review` | 4 |
+| `ready` | 33 |
 | `draft` | 1 |
 | `done` | 34 |
 | **total** | **73** |
@@ -23,6 +23,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `blocked` | The Builder's Guide — from no access to a live Zone on dev | see story header |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster | review by brian |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `review` | Builders download andara-cli without a Go toolchain | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
@@ -33,15 +34,16 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
 
-### `review` (3)
+### `review` (4)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | sre | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | sre | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | sre | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (34)
+### `ready` (33)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -53,7 +55,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | sre | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | sre | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | sre | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
-| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | sre | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
 | [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `EPIC-05` | infra | M | medium | sre | dev serves its content from the content store | `AW-SRV-013`, `AW-SRV-035`, `AW-CLI-003`, `AW-INF-019`, `AW-SRV-037` |
 | [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `EPIC-05` | infra | S | low | sre | The content repository — where Builders keep their source | `AW-CLI-002`, `AW-INF-020`, `AW-INF-021` |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | sre | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
@@ -216,7 +217,7 @@ Milestone `M1-M3` · status `in-progress` · ADR gates: none · constrained by: 
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `done` | andara-cli skeleton — command tree, configuration precedence, and output contract |
-| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `ready` | Builders download andara-cli without a Go toolchain |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `review` | Builders download andara-cli without a Go toolchain |
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `blocked` | The Builder's Guide — from no access to a live Zone on dev |
 | [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `ready` | An Operator grants a Builder their packs |
 

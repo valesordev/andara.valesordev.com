@@ -4,6 +4,10 @@
 # Publish the server image on every merge to main (AW-INF-013): ghcr.io/valesordev/andara-server
 # as :sha-<12 hex>, immutable, and :dev, which values/dev.yaml pulls. The build is
 # `make image-publish` and the proof is `make image-check`, so this file only logs in.
+#
+# Then andara-cli (AW-INF-020): `make cli-release` builds the five archives, and
+# `make cli-release-publish` attaches them to the rolling `cli-dev` pre-release, which Builders
+# and the Content Repository's CI download. `v*` tags are release.yaml's.
 
 name: publish
 
@@ -44,3 +48,39 @@ jobs:
       # naming the fix, rather than at the box's next pull.
       - name: anonymous pull
         run: make image-check REGISTRY_ONLY=1 TAG="sha-$(git rev-parse --short=12 HEAD)"
+
+  cli:
+    # After the image, so `cli-dev` never names a commit whose `:dev` image failed to publish.
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Moving the cli-dev tag and editing its release.
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: build
+        run: make cli-release
+
+      # Moves cli-dev only if this commit is still main's head (AC-2), and writes the job
+      # summary: the commit cli-dev carries and each archive's checksum.
+      - name: publish cli-dev
+        run: make cli-release-publish TAG=cli-dev
+
+      # AC-3 from the outside, with no credentials, and AC-1: what downloads is the commit the
+      # cli-dev tag names. When a newer merge's run owns the tag, that's its commit.
+      - name: anonymous download
+        run: |
+          out="$(env -u GH_TOKEN make cli-release-check)"
+          echo "$out"
+          tagged="$(git ls-remote origin refs/tags/cli-dev | cut -c1-7)"
+          grep -q "(${tagged}" <<<"$out" || { echo "::error::cli-dev's binary does not report the commit its tag names (${tagged})"; exit 1; }
