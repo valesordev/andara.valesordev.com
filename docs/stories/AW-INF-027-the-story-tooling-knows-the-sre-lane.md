@@ -219,3 +219,11 @@ Also asserted: a lane in `LANES` with no row in `LANE_VIEWS` fails the generator
 - **Routed to PM, not changed:** `next` isn't filtered to the active sprint. That was already so
   in every lane before this story, and the contract doesn't cover selection. The options are in
   `docs/feedback/AW-INF-027-status-sprint-scope.md`.
+
+## §8 instrumentation check (2026-09-29, SRE): nothing to verify
+
+The story has no §7 instrumentation to verify. Its Observability requirements declare no metrics,
+logs, traces or alerts, and SRE's observability review (#142) agreed. The merge (#146, `1644ed4`)
+changes `scripts/`, `Makefile`, docs and story frontmatter only. It touches nothing under
+`deploy/`, `server/`, `internal/`, `cmd/` or `admin/`, so nothing new runs in a cluster or emits a
+signal. The instrumentation item holds. Architecture runs the rest of §8.
