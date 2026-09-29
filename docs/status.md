@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-73 stories — 4 review · 33 ready · 1 draft · 1 blocked · 34 done
+73 stories — 1 in-progress · 4 review · 32 ready · 1 draft · 1 blocked · 34 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, the §8 review
@@ -15,7 +15,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## SRE lane — build, ship, operate, observe
 
-  now    — nothing in flight
+  now    AW-INF-026  Generated views stop being committed
+         branch sre/aw-inf-026-generated-views-stop-being-committed
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
   next   AW-INF-025  ready  Operating the state projector — stop, rebuild, start, and its volumes
   review AW-INF-020, AW-SRV-019, +2 more — verify §7 instrumentation, record it in the §8 record

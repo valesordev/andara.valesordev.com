@@ -11,7 +11,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `blocked` | 1 |
 | `review` | 4 |
-| `ready` | 33 |
+| `in-progress` | 1 |
+| `ready` | 32 |
 | `draft` | 1 |
 | `done` | 34 |
 | **total** | **73** |
@@ -43,7 +44,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | sre | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (33)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | sre | Generated views stop being committed | `AW-INF-001`, `AW-INF-027` |
+
+### `ready` (32)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -59,7 +66,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `EPIC-05` | infra | S | low | sre | The content repository — where Builders keep their source | `AW-CLI-002`, `AW-INF-020`, `AW-INF-021` |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | sre | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
 | [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `EPIC-10` | infra | M | medium | sre | Operating the state projector — stop, rebuild, start, and its volumes | `AW-SRV-019`, `AW-INF-018` |
-| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | sre | Generated views stop being committed | `AW-INF-001`, `AW-INF-027` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028`, `AW-SRV-015` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
@@ -146,7 +152,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `done` | make up builds the server image from the tree it runs in |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `ready` | Every environment spawns new Characters in Purgatory |
-| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `ready` | Generated views stop being committed |
+| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `in-progress` | Generated views stop being committed |
 | [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `done` | The story tooling knows the SRE lane |
 
 ### `EPIC-02` — World model and simulation core
