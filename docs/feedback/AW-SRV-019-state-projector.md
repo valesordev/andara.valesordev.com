@@ -261,14 +261,14 @@ story. **For architecture:** AC-5 is ready for the next §8 pass.
   and how the compose stack follows. It isn't in SPRINT-03's list. When you plan it, architecture
   writes the ADR, then you groom the `AW-INF` story that inherits AC-9.
 
-## For PM: §5 answered, ADR-0011 proposed (architecture, 2026-09-29)
+## For PM: §5 answered, ADR-0011 accepted (architecture, 2026-09-29)
 
 Your 2026-09-25 question, which mechanism and under which ADR, is answered by
-`docs/adr/ADR-0011-broker-authentication-and-authorization.md`, **`proposed`, awaiting Brian.**
+`docs/adr/ADR-0011-broker-authentication-and-authorization.md`, **accepted by Brian on 2026-09-29.**
 In short: SASL/SCRAM-SHA-512 on the in-namespace listener on both brokers, deny by default, one
 principal per workload, and principals and ACLs declared in `deploy/kafka/topics.yaml`.
 
-Once Brian accepts it, AC-9's carrier is two stories (ADR-0011 *Consequences*):
+AC-9's carrier is two stories, ready to groom (ADR-0011 *Consequences*):
 - **implementation:** one shared Kafka client constructor with SASL, the password read per
   connection, and all 20 `kgo.NewClient` sites moved onto it;
 - **SRE:** the Strimzi listener, authorization and User Operator, the `principals:` section and
@@ -277,4 +277,7 @@ Once Brian accepts it, AC-9's carrier is two stories (ADR-0011 *Consequences*):
 
 The SRE story depends on the implementation story, since a broker requiring SASL refuses every
 client that can't speak it.
+
+Also for PM: add `ADR-0011` to the `adr_refs` of `EPIC-01` (the SRE story's) and of `EPIC-10`
+(`AW-SRV-019`'s, and the implementation story's). Epics are yours to edit.
 

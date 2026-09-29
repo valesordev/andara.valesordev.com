@@ -1,7 +1,7 @@
 ---
 id: ADR-0011
 title: Broker authentication and authorization
-status: proposed          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
+status: accepted          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
 date: 2026-09-29
 deciders: [brian]
 gates: []                 # epic/story IDs that cannot reach `ready` until this is accepted
