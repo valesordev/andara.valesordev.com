@@ -4,7 +4,7 @@ title: The story tooling knows the SRE lane
 epic: EPIC-01
 component: infra
 type: chore
-status: review
+status: done
 size: S
 depends_on: [AW-INF-001]
 blocks: [AW-INF-026]
@@ -227,3 +227,22 @@ logs, traces or alerts, and SRE's observability review (#142) agreed. The merge 
 changes `scripts/`, `Makefile`, docs and story frontmatter only. It touches nothing under
 `deploy/`, `server/`, `internal/`, `cmd/` or `admin/`, so nothing new runs in a cluster or emits a
 signal. The instrumentation item holds. Architecture runs the rest of §8.
+
+## §8 review (architecture, 2026-09-29): `done`
+
+Against `main` at `f8ad970`; `check`, `stack` and `publish` are green there. Re-run in this
+review, not read from the record:
+
+| Item | Evidence |
+|------|----------|
+| AC-1 to AC-4, AC-6, AC-7 | `make scripts-test`: 48 tests OK, including the nine `test_story_lanes` cases the record names. `scripts-test` is in `CHECK_TARGETS`, so CI runs them. `docs/status.md` on `main` has the three headings, in order |
+| AC-2 | `lane: ops` on a story: `make validate-stories` fails (`Error 1`), printing `…: key 'lane' has value 'ops'; permitted values: architecture, sre, implementation` |
+| AC-5 | Against #146's merge base, each of the 13 re-laned stories reads `lane: sre` and differs on no other line |
+| `make check` | green on `main` |
+| Instrumentation | none owed: SRE's §8 instrumentation check (2026-09-29, above, #153) |
+| Config / Helm schema, migrations | none |
+| Glossary | **Story** names three lanes (#146's review) |
+| `[ASSUMPTION]` | none |
+
+The Context's line that this story "says `lane: architecture`" describes the story before its first
+commit. It's history, so it stays.

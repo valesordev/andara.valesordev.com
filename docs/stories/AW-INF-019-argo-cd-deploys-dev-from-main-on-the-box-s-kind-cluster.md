@@ -306,13 +306,16 @@ CLAUDE.md §8, plus:
 
 ## Open questions
 
-- `[ASSUMPTION]` "The application" is the `dev` environment (`andara-dev`, `values/dev.yaml`), the
-  one whose image already comes from `main` via `AW-INF-013`. `local` stays a kind-loaded
-  developer loop, and `prod` stays on `make deploy`.
-- `[ASSUMPTION]` 10 minutes from `publish` completing to the new pod serving is enough for "follows
-  `main`". That covers Argo CD's default 3-minute poll, a registry check, and the World's restart
-  and recovery. Architecture sets the real number after measuring it on the box.
-- `[ASSUMPTION]` The Argo CD UI on a port-forward is enough for one operator on the box.
+- **Resolved 2026-09-29 (architecture, §8), was an assumption:** "the application" is the `dev`
+  environment (`andara-dev`, `values/dev.yaml`), the one whose image already comes from `main` via
+  `AW-INF-013`. `local` stays a kind-loaded developer loop, and `prod` stays on `make deploy`.
+- **Resolved 2026-09-29 (architecture, §8), was an assumption: AC-3's deadline stays 10 minutes.**
+  Measured on the box, a `server/` merge was serving under 1 minute after its `publish` completed
+  (§8 pass, 2026-09-27). The margin covers Argo CD's 3-minute git poll when a render change lands
+  first, plus a slow World recovery. Tightening it buys no signal while one operator watches `dev`.
+- **Resolved 2026-09-29 (architecture, §8), was an assumption:** the Argo CD UI on a port-forward
+  is enough for one operator on the box. SRE's 2026-09-28 check needed only `make argocd-status`.
+  A second operator, or access from off the box, brings it under `AW-INF-012`'s ingress.
 - ~~For architecture, in `docs/feedback/AW-INF-019-argocd.md`~~: answered in "Contract review"
   below.
 
@@ -521,3 +524,22 @@ The story's Observability section names two signals:
 The instrumentation item is **satisfied** as the story scopes it. `argocd_app_info` isn't owed
 by this story. If an alert on a stuck sync is wanted, it's `AW-INF-009`'s, with a scrape of Argo CD
 added then. AC-4 is unchanged and still waits on a fixture-only merge (SPRINT-03 SRE item 3).
+
+## §8 review (architecture, 2026-09-29): stays `review` on AC-4
+
+Against `main` at `f8ad970`. SRE's instrumentation check (2026-09-28, above) is **satisfied** as the
+story scopes it, and architecture accepts its reading: `argocd_app_info` isn't this story's to
+emit. Any alert on a stuck sync is `AW-INF-009`'s.
+
+| Item | Result |
+|------|--------|
+| AC-1, 2, 6, 7, 9 | pass (verification record, 2026-09-26) |
+| AC-3, 5, 8, 10 | pass on the box (§8 pass, 2026-09-27) |
+| AC-4 | **owed.** No merge since 2026-09-27 touches `testdata/content/valid/`. Its carrier is `AW-SRV-037`, which is `ready` and not started. #148's contract review ruled that `AW-SRV-037`'s merge supplies AC-4 |
+| DoD extras | AC-3 elapsed time recorded (under 1 min). The chart README has "`dev` follows `main`" and `argocd-uninstall`. `AW-INF-007`'s body records the scoping |
+| `make check` | green on `main` |
+| `[ASSUMPTION]` | none left. The three are resolved above, in *Open questions* |
+
+**What closes it:** `AW-SRV-037` merging (SPRINT-03 implementation item 1), then SRE observing the
+`andara-content` ConfigMap and the roll within 10 minutes of that merge's `publish`, recorded here.
+Architecture then moves it to `done` without another full pass.

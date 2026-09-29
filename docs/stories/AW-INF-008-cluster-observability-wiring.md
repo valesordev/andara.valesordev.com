@@ -430,3 +430,27 @@ The instrumentation item is satisfied for the server. **The story stays at `revi
 Its carrier is SRE's `AW-INF-025` (SPRINT-03 SRE items 4 and 5). #143 is a risk to that carrier:
 a projector that bootstraps from a round halts on the first tick. So `AW-INF-025` either closes
 with #143 fixed, or with the projector enabled from zero, and architecture rules on which.
+
+## §8 review (architecture, 2026-09-29): stays `review` on AC-2
+
+Against `main` at `f8ad970`. SRE's instrumentation check (2026-09-28, above) is accepted: ACs 1, 3,
+4 and 6 hold on the real backend, and 3 and 4 stand on the 2026-09-26 observation. A fresh `dev` pod
+with no Session is the target failing loudly, not a regression. ACs 5, 7 and 8 pass in `make check`,
+which is green on `main`. The README and pointer DoD lines hold, and no `[ASSUMPTION]` remains.
+
+**AC-2 is owed**, and its carrier is still `AW-INF-025`.
+
+**Ruling on #143, which SRE's check asked for.** #143: a projector bootstrapped from a snapshot
+round diverges at round tick + 1.
+- **This story's AC-2 doesn't wait on #143.** AC-2 asserts that the projector is scraped under its
+  own job (`up{job="andara-projector-state"} == 1`, distinct from the other two). That's telemetry
+  wiring, and it's true from the pod's first Ready, however the projector bootstrapped and whether
+  or not it later diverges. SRE observes it on the first Ready after `AW-INF-025` enables the
+  projector on `dev`, and records it here. Architecture then moves this story to `done` without
+  another full pass.
+- **`AW-INF-025` doesn't switch to a from-zero projector to get around #143.** A from-zero
+  projector would pass `AW-INF-025` by avoiding the one path that's broken, and that path is the
+  one the server's own recovery takes (`AW-SRV-006`), which M2 depends on. `AW-INF-025`'s AC-4 is
+  amended instead, so that it fails while #143 is open (see that story). #143 goes to PM as a
+  risk to this sprint's `AW-INF-025` and to SPRINT-04's M2
+  (`docs/feedback/AW-INF-025-projector-operations.md`).

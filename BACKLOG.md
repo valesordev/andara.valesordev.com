@@ -10,10 +10,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `blocked` | 1 |
-| `review` | 4 |
+| `review` | 3 |
 | `ready` | 34 |
 | `draft` | 1 |
-| `done` | 33 |
+| `done` | 34 |
 | **total** | **73** |
 
 ## Attention first
@@ -23,7 +23,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `blocked` | The Builder's Guide — from no access to a live Zone on dev | see story header |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster | review by brian |
-| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `review` | The story tooling knows the SRE lane | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
@@ -34,13 +33,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
 
-### `review` (4)
+### `review` (3)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | sre | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | sre | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
-| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `EPIC-01` | infra | S | low | sre | The story tooling knows the SRE lane | `AW-INF-001` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
 ### `ready` (34)
@@ -88,7 +86,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | sre | A schema registry on the box for dev and prod | `AW-INF-014` |
 
-### `done` (33)
+### `done` (34)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -108,6 +106,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `EPIC-01` | infra | S | low | architecture | make up builds the server image from the tree it runs in | `AW-INF-002` |
 | [`AW-INF-017`](docs/stories/AW-INF-017-make-stack-linkdead-the-linkdead-gate-scripted-against-the-r.md) | `EPIC-08` | infra | S | low | architecture | make stack-linkdead — the linkdead gate scripted against the running stack | `AW-SRV-015`, `AW-CLI-007`, `AW-CLI-008` |
 | [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `EPIC-10` | infra | S | medium | architecture | make topics-apply applies declared config drift to existing topics | `AW-INF-004` |
+| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `EPIC-01` | infra | S | low | sre | The story tooling knows the SRE lane | `AW-INF-001` |
 | [`AW-SRV-001`](docs/stories/AW-SRV-001-world-model-and-zone-loading.md) | `EPIC-02` | server | M | medium | implementation | World model types and zone definition loading with referential validation at boot | `AW-INF-001`, `AW-SRV-020` |
 | [`AW-SRV-002`](docs/stories/AW-SRV-002-deterministic-tick-loop-and-tick-slis.md) | `EPIC-02` | server | M | high | implementation | Deterministic tick loop driven by partition consumers, with tick SLIs | `AW-SRV-001`, `AW-INF-002`, `AW-INF-004` |
 | [`AW-SRV-003`](docs/stories/AW-SRV-003-command-pipeline-look-and-move.md) | `EPIC-03` | server | M | medium | implementation | Command pipeline stages split across the log boundary, with look and move | `AW-SRV-001`, `AW-SRV-002`, `AW-SRV-008` |
@@ -147,7 +146,7 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster |
 | [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `ready` | Every environment spawns new Characters in Purgatory |
 | [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `ready` | Generated views stop being committed |
-| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `review` | The story tooling knows the SRE lane |
+| [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `done` | The story tooling knows the SRE lane |
 
 ### `EPIC-02` — World model and simulation core
 
