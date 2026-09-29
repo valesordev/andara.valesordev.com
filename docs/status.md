@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-73 stories — 3 review · 34 ready · 1 draft · 1 blocked · 34 done
+73 stories — 1 in-progress · 3 review · 33 ready · 1 draft · 1 blocked · 34 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, the §8 review
@@ -15,9 +15,10 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## SRE lane — build, ship, operate, observe
 
-  now    — nothing in flight
-  next   AW-INF-020  ready  Builders download andara-cli without a Go toolchain  (unblocks 2)
+  now    AW-INF-020  Builders download andara-cli without a Go toolchain
+         branch sre/aw-inf-020-builders-download-andara-cli-without-a-go-toolchain
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
+  next   AW-INF-025  ready  Operating the state projector — stop, rebuild, start, and its volumes
   review AW-SRV-019, AW-INF-008, AW-INF-019 — verify §7 instrumentation, record it in the §8 record
   held   6 ready, blocked: AW-INF-021, AW-INF-022, AW-INF-024, AW-INF-010, AW-INF-011, AW-INF-012
 
