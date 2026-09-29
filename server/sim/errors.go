@@ -53,6 +53,11 @@ const (
 	// effect has it. Both are the Builder's, under reason validation.
 	ErrZoneRemoved      ErrCode = "zone_removed"
 	ErrSpawnRoomRemoved ErrCode = "spawn_room_removed"
+
+	// AW-SRV-034. A second Exit with a Direction its Room already uses. The
+	// compiler's code, now the loader's too, so the two agree on the word
+	// (errors.md §2). Fatal, like every duplicate_* code.
+	ErrDuplicateDirection ErrCode = "duplicate_direction"
 )
 
 // warningCodes are findings that do not refuse a load. They are advisory

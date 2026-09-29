@@ -76,6 +76,9 @@ carrying the fields above, `severity` as `"error"` or `"warning"`.
    errors.** A warning is advice about content the compiler accepted, and a failed compile accepted
    nothing — an `orphan_room` that exists only because a broken Exit did not resolve describes the
    compiler's half-finished analysis, not the source. No `invalid/` sidecar carries a warning.
+   **The loader follows the same rule** (`AW-SRV-034`, 2026-09-29): when `BuildWorld` reports an
+   error it reports no warning, so a publish or a boot that fails shows the Builder what the
+   compile showed. A warning promoted to an error by `content.strict_orphans` is an error.
 8. **A duplicate is reported at the one that lost.** `duplicate_zone`, `duplicate_room`,
    `duplicate_template`, `duplicate_component_type`, `duplicate_declaration`, and
    `duplicate_direction` land on the second occurrence in sorted order, the first being the one that
@@ -197,7 +200,6 @@ has no occasion to raise it.
 | `extends_cycle` | `extends` forms a cycle | every Template in the cycle, in order |
 | `removed_by_subtype` | a `remove` form | the ancestor that defined it, the substitutability rule, and `enabled: false` |
 | `duplicate_declaration` | a second `desc` in a Room or a second `fallback` in a Zone | both positions |
-| `duplicate_direction` | two Exits in one Room with the same Direction | the Direction and both targets |
 
 ### 3.2 Raised by the compiler, defined by the loader
 
@@ -219,6 +221,7 @@ gate the server trusts, and hand-written content reaching the store still has to
 | `duplicate_template` | `AW-SRV-022` | two Templates in one pack share a name |
 | `chain_too_deep` | `AW-SRV-022` | a chain over `sim.MaxChainDepth` (16) — the message names every Template in it |
 | `fallback_missing` | `AW-SRV-012` | `fallback` names a Room the Zone does not declare, or a Zone declares none. *(Moved from §3.4 on 2026-09-25, when field 6 landed.)* |
+| `duplicate_direction` | `AW-SRV-034` | two Exits in one Room with the same Direction — the message names the Direction and both targets. *(Moved from §3.1 on 2026-09-29: the loader raised it as `malformed_file` until `AW-SRV-034` gave it this code.)* |
 
 ### 3.3 Warnings
 
@@ -230,13 +233,10 @@ is `AW-SRV-001`'s: legal, never silent.
 | `orphan_room` | `AW-SRV-001` | a Room no Exit from another Room in its Zone reaches — inbound, as `AW-SRV-001` AC-6 has it; a Room's Exit to itself does not count, and a Zone of one Room never warns. A Builder mid-work |
 | `missing_reverse_exit` | `AW-SRV-021` | an Exit whose reverse is absent — names both Rooms. A chute is real; forgetting the way back is more common |
 
-**`orphan_room` was decided at the `AW-CLI-005` review (2026-09-24).** The corpus's
-`valid/warn-missing-reverse-exit/` holds no `orphan_room` for `loft`, a Room the chute leaves and
-nothing enters, and `AW-CLI-006` implemented a rule that doesn't warn when a Room has any Exit,
-in or out, to match. That sidecar contradicts this row and `AW-SRV-001` AC-6. A Room you can leave
-but never enter is unreachable, and unreachable is what the warning is for. `AW-SRV-034` corrects
-the sidecar and the compiler together, and gives the loader the one-Room exemption. Until it lands,
-the chute case is the one place where the corpus disagrees with this document.
+**`orphan_room` was decided at the `AW-CLI-005` review (2026-09-24),** and `AW-SRV-034` made the
+loader and the compiler apply it alike. A Room you can leave but never enter is unreachable, and
+unreachable is what the warning is for. The corpus's `valid/warn-missing-reverse-exit/` is that case:
+`loft`, which the chute leaves and nothing enters, carries both warnings.
 
 `AW-CLI-002` adds a third at validate time — the *inert Component* warning ADR-0010 asks for, on a
 Component no system and no bound Behavior reads. It is that story's because it needs the system

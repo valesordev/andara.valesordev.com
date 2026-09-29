@@ -4,7 +4,7 @@ title: Loader and compiler agree on orphan_room and duplicate_direction
 epic: EPIC-02
 component: server
 type: bug
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-001, AW-CLI-006]
 blocks: [AW-CLI-002]
@@ -32,7 +32,9 @@ boundary or at spawn and can never be entered from inside itself, so the loader 
 rule is now in `errors.md` §3.3.
 
 **`duplicate_direction`.** The compiler rejects two Exits with the same Direction in one Room. The
-loader accepts them: it sorts and keeps both, so hand-written JSON reaching the store is not refused.
+loader refuses them too, but as `malformed_file` ("duplicate exit direction"), so the two report
+different codes for one finding. *(Corrected 2026-09-29, architecture, from implementation's
+feedback: this said the loader "sorts and keeps both". It never did.)*
 `AW-CLI-005` filed this for `AW-SRV-021` as an Open question. It lands here because it is the same
 three-way-equivalence gap.
 
@@ -55,10 +57,11 @@ or boot.
   story instead of the corpus case.
 - Corpus, in the same PR (a sidecar change is a compiler change, and `make check` must stay green):
   `docs/specs/content-language/v1/corpus/valid/warn-missing-reverse-exit/expected.errors` gains
-  `z.aw:2:3: orphan_room` with chain `z`, `loft`, sorted ahead of the existing
-  `missing_reverse_exit`.
-- Not in this PR: `errors.md` prose. Architecture moves `duplicate_direction` from §3.1 to §3.2 and
-  drops the §3.3 note about the chute case once this merges. The sidecar is different: it has to
+  `z.aw:4:3: orphan_room` with chain `z`, `loft`, sorted ahead of the existing
+  `missing_reverse_exit`. *(Corrected 2026-09-29: `loft`'s `room` keyword is on line 4, not 2.
+  Architecture writes the sidecar, since `docs/specs/` is architecture's.)*
+- `errors.md` prose, by architecture in the same merge (2026-09-29): `duplicate_direction` moves from
+  §3.1 to §3.2, and the §3.3 note about the chute case is replaced. The sidecar is different: it has to
   change with the compiler, or `make check` goes red in between.
 
 ### Out of scope
@@ -78,7 +81,11 @@ or boot.
 2. **Given** a Zone with exactly one Room and no Exits **when** either runs **then** neither warns
    `orphan_room`. The corpus's four one-Room valid cases stay finding-free.
 3. **Given** a Room with two Exits `north` **when** either runs **then** both fail with
-   `duplicate_direction` on the second Exit; `BuildWorld` returns no World.
+   `duplicate_direction` on the second Exit, and it's the only finding for that Zone: neither
+   reports `orphan_room` for the Room the refused Exit named (`errors.md` §1 rule 7, which binds
+   the loader too). `BuildWorld` returns no World. The loader's detail names the Direction and both
+   targets, as the compiler's message does. *(Amended 2026-09-29, architecture, from the review
+   of #161.)*
 4. **Given** `make content-conformance` **when** `make check` runs **then** all cases agree,
    including the amended `warn-missing-reverse-exit` sidecar.
 5. **Given** `content.strict_orphans: true` **when** the AC-1 content boots **then** the load fails
@@ -100,8 +107,12 @@ Zone has more than one Room and no Exit from another Room in that Zone targets i
 
 ## Data / state impact
 
-None. A pack with a duplicated Direction that boots today will be refused after this lands. None of
-the 17 Zone files under `content/` and `testdata/` has one (checked while writing this story). The
+None. A pack with a duplicated Direction was already refused at boot, as `malformed_file`. After
+this lands it's refused as `duplicate_direction`, which is the same outcome with a new code. None of
+the 17 Zone files under `content/` and `testdata/` has one (checked while writing this story).
+*(Corrected 2026-09-29, with the Context.)*
+Builder packs in `valesordev/andara.solo7.media` compile unchanged, apart from the new code on an
+already-fatal duplicate and `orphan_room` on a Room nothing enters, which is a warning, exit `0`. The
 corpus's `invalid/semantic/duplicate-direction/` is compiler input, not loader input.
 
 ## Observability requirements
@@ -125,3 +136,15 @@ closed.
 ## Open questions
 
 - None. The rule was decided at the `AW-CLI-005` review; see Context.
+
+## Contract amendment (architecture, 2026-09-29): AC-3 after the review of #161
+
+Implementation had started, so this is recorded here and in the feedback file.
+- **Only errors when the load fails.** `TestBuildWorld_LoaderAgreesWithCompiler`'s "two Exits
+  north" case expected `duplicate_direction` *and* `orphan_room` for `yard`. The compiler reports
+  only the error (`errors.md` §1 rule 7), so the two still disagreed on exactly the input AC-3
+  names. Rule 7 now binds the loader too, and AC-3 says so. A strict-mode orphan is an error, so
+  AC-5 is unchanged.
+- **The loader's detail names both targets.** `errors.md` §3.2 states it, and `AW-SRV-013`'s
+  publish gate shows the loader's detail to a Builder. Detail isn't part of the three-way
+  equivalence (code, position and chain), but it's the contract's text.

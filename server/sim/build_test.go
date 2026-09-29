@@ -218,6 +218,7 @@ func TestBuildWorld_StrictOrphansFatal(t *testing.T) {
 	world, errs := BuildWorld([]Input{
 		zone("town.json", "town", "Town",
 			room("plaza", "Plaza"),
+			room("attic", "Attic"),
 		),
 	}, Options{StrictOrphans: true})
 	if world != nil {
@@ -350,17 +351,24 @@ func TestBuildWorld_ExitsSortedByDirection(t *testing.T) {
 // AC-6: a Room whose only inbound Exit is its own is still reachable by no
 // other Room, so it is still an orphan. A self-loop is not an arrival.
 func TestBuildWorld_SelfLoopIsStillAnOrphan(t *testing.T) {
+	// plaza's only inbound Exit is its own; hall is entered from plaza.
 	world, errs := BuildWorld([]Input{
 		zone("town.json", "town", "Town",
-			room("plaza", "Plaza", exit("north", "", "plaza")),
+			room("plaza", "Plaza", exit("north", "", "plaza"), exit("south", "", "hall")),
+			room("hall", "Hall"),
 		),
 	}, Options{})
 	if world == nil {
 		t.Fatalf("world is nil; orphans are not fatal by default: %v", errs)
 	}
-	e := requireCode(t, errs, ErrOrphanRoom)
-	if e.Room != "plaza" {
-		t.Errorf("Room = %q, want plaza", e.Room)
+	var orphans []RoomID
+	for _, e := range errs {
+		if e.Code == ErrOrphanRoom {
+			orphans = append(orphans, e.Room)
+		}
+	}
+	if !slices.Equal(orphans, []RoomID{"plaza"}) {
+		t.Errorf("orphans = %v, want [plaza]", orphans)
 	}
 }
 
@@ -497,5 +505,101 @@ func TestBuildWorld_FallbackIsRequiredAndLocal(t *testing.T) {
 	ok, errs := BuildWorld([]Input{zone("town.json", "town", "Town", room("plaza", "Plaza"))}, Options{})
 	if ok == nil || ok.Zones["town"].Fallback != "plaza" {
 		t.Fatalf("world %v errs %v", ok, errs)
+	}
+}
+
+// AW-SRV-034: the loader's orphan_room and duplicate_direction, which the
+// compiler raises identically (content/lang, the conformance corpus).
+func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
+	town := zone("town.json", "town", "Town",
+		room("plaza", "Plaza", exit("north", "", "hall")),
+		room("hall", "Hall", exit("south", "", "plaza")),
+	)
+	chute := []*contentv1.RoomDefinition{
+		room("loft", "Loft", exit("down", "", "cellar")),
+		room("cellar", "Cellar"),
+	}
+	cases := []struct {
+		name    string
+		rooms   []*contentv1.RoomDefinition
+		others  []Input
+		strict  bool
+		want    []ErrCode // Zone z's findings, in the order BuildWorld reports them
+		orphans []RoomID
+		detail  string // the first finding's, when set
+		fatal   bool
+	}{
+		{
+			// AC-1: loft leaves down a chute to cellar, and nothing enters loft.
+			name:    "a Room you can leave but never enter",
+			rooms:   chute,
+			want:    []ErrCode{ErrMissingReverseExit, ErrOrphanRoom},
+			orphans: []RoomID{"loft"},
+		},
+		{
+			// AC-2.
+			name:  "a Zone of one Room with no Exits",
+			rooms: []*contentv1.RoomDefinition{room("start", "Start")},
+		},
+		{
+			// AC-2, as Purgatory is: one Room, its only Exit leaving the Zone.
+			name:   "a Zone of one Room whose Exit leaves it",
+			rooms:  []*contentv1.RoomDefinition{room("start", "Start", exit("out", "town", "plaza"))},
+			others: []Input{town},
+			want:   []ErrCode{ErrMissingReverseExit},
+		},
+		{
+			// AC-3: the second north is refused, and a refused load reports
+			// only its errors, so yard, which only that Exit entered, is not
+			// reported as an orphan (errors.md §1 rule 7).
+			name: "two Exits north",
+			rooms: []*contentv1.RoomDefinition{
+				room("plaza", "Plaza", exit("north", "", "hall"), exit("north", "", "yard")),
+				room("hall", "Hall", exit("south", "", "plaza")),
+				room("yard", "Yard"),
+			},
+			want:   []ErrCode{ErrDuplicateDirection},
+			detail: `duplicate exit direction "north": to hall, and again to yard`,
+			fatal:  true,
+		},
+		{
+			// AC-5: strict mode promotes AC-1's orphan to an error, and the
+			// refused load drops the chute's missing_reverse_exit warning.
+			name:    "the chute under strict_orphans",
+			rooms:   chute,
+			strict:  true,
+			want:    []ErrCode{ErrOrphanRoom},
+			orphans: []RoomID{"loft"},
+			fatal:   true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := append([]Input{zone("z.json", "z", "Z", tc.rooms...)}, tc.others...)
+			world, errs := BuildWorld(in, Options{StrictOrphans: tc.strict})
+			var got []ErrCode
+			var orphans []RoomID
+			for _, e := range errs {
+				if e.Zone != "z" {
+					continue
+				}
+				got = append(got, e.Code)
+				if e.Code == ErrOrphanRoom {
+					orphans = append(orphans, e.Room)
+				}
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Errorf("findings = %v, want %v (%v)", got, tc.want, errs)
+			}
+			if !slices.Equal(orphans, tc.orphans) {
+				t.Errorf("orphans = %v, want %v", orphans, tc.orphans)
+			}
+			if tc.detail != "" && (len(errs) == 0 || errs[0].Detail != tc.detail) {
+				t.Errorf("detail = %v, want %q", errs, tc.detail)
+			}
+			if (world == nil) != tc.fatal {
+				t.Errorf("world nil = %t, want %t: %v", world == nil, tc.fatal, errs)
+			}
+		})
 	}
 }

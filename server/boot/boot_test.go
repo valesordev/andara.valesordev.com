@@ -212,7 +212,7 @@ func TestLoadContent_OrphanWarnNotFatal(t *testing.T) {
 	dir := t.TempDir()
 	writeJSON(t, dir, "town.json", `{
 		"formatVersion":1,"id":"town","name":"Town","fallbackRoom":"plaza",
-		"rooms":[{"id":"plaza","title":"Plaza","description":"d"}]
+		"rooms":[{"id":"plaza","title":"Plaza","description":"d"},{"id":"attic","title":"Attic","description":"d"}]
 	}`)
 	rt, logs := runtime(t, dir, false)
 	code := rt.LoadContent(context.Background())
