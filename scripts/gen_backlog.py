@@ -4,8 +4,9 @@
 
 """Regenerate BACKLOG.md from docs/stories/*.md frontmatter.
 
-Deterministic: same inputs produce byte-identical output. `--check` verifies the
-committed file is current and exits 1 if it is stale.
+Deterministic: same inputs produce byte-identical output. The file is not committed
+(AW-INF-026): `make backlog` writes it and prints it to stdout. `--check` renders it and
+writes nothing, so `make check` fails on frontmatter the generator can't render.
 """
 
 import os
@@ -48,7 +49,7 @@ def render():
     out = [HEADER, "\n# Backlog — Andara's World\n\n"]
     out.append(
         "Generated view of `docs/stories/`. Story status lives in frontmatter; files never move.\n"
-        "Run `make backlog` after any story change. `make check` fails if this file is stale.\n\n"
+        "Regenerate with `make backlog`. Not committed: each clone renders its own.\n\n"
     )
 
     counts = {}
@@ -130,22 +131,13 @@ def render():
 def main():
     text = render()
     if "--check" in sys.argv:
-        current = ""
-        if os.path.exists(BACKLOG):
-            with open(BACKLOG, "r", encoding="utf-8") as fh:
-                current = fh.read()
-        if current != text:
-            sys.stderr.write(
-                "backlog: BACKLOG.md is stale relative to docs/stories/ (run `make backlog`)\n"
-            )
-            return 1
-        print("backlog: BACKLOG.md is current")
+        sys.stderr.write("backlog: renders (%d stories)\n" % len(load_stories()))
         return 0
     with open(BACKLOG, "w", encoding="utf-8") as fh:
         fh.write(text)
-    print("backlog: wrote %s" % BACKLOG)
+    sys.stdout.write(text)
+    sys.stderr.write("backlog: wrote %s\n" % rel(BACKLOG))
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

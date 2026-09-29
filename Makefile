@@ -208,19 +208,19 @@ proto:
 proto-check:
 	@$(SCRIPTS)/proto.sh check
 
-## backlog: regenerate BACKLOG.md from story frontmatter
+## backlog: render BACKLOG.md from story frontmatter, write it, and print it — not committed (AW-INF-026)
 backlog:
 	@$(PY) $(SCRIPTS)/gen_backlog.py
 
-## backlog-check: fail if BACKLOG.md is stale
+## backlog-check: fail if the backlog view doesn't render; writes nothing
 backlog-check:
 	@$(PY) $(SCRIPTS)/gen_backlog.py --check
 
-## status: regenerate docs/status.md — each lane's development state, one screen
+## status: render docs/status.md — each lane's development state, one screen — write it and print it; not committed (AW-INF-026)
 status:
 	@$(PY) $(SCRIPTS)/gen_status.py
 
-## status-check: fail if docs/status.md is stale
+## status-check: fail if the status view doesn't render within its one-screen budget; writes nothing
 status-check:
 	@$(PY) $(SCRIPTS)/gen_status.py --check
 

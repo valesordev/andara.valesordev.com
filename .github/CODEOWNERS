@@ -42,9 +42,8 @@
 # a diff here without a matching .proto diff means someone edited output.
 /gen/                       @solo-seven
 
-# Planning and decisions. Story status is frontmatter; BACKLOG.md is generated.
+# Planning and decisions. Story status is frontmatter.
 /docs/                      @solo-seven
-/BACKLOG.md                 @solo-seven
 /CLAUDE.md                  @solo-seven
 
 # Infrastructure, automation, and the single automation surface (CLAUDE.md §9).

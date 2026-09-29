@@ -73,9 +73,10 @@ jobs:
         run: make schemas-check
       - name: validate-stories
         run: make validate-stories
-      - name: backlog freshness
+      # Render checks, not freshness checks: neither view is committed (AW-INF-026).
+      - name: backlog render
         run: make backlog-check
-      - name: status freshness
+      - name: status render
         run: make status-check
       - name: values schema freshness
         run: make values-schema-check
@@ -91,6 +92,11 @@ jobs:
         run: make content-conformance
       - name: scripts unit tests
         run: make scripts-test
+      # The views as of this commit, since neither is committed (AW-INF-026, AC-4).
+      - name: status and backlog in the summary
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          { echo '## Status'; echo; echo '```'; make -s status; echo '```'; echo; make -s backlog; } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

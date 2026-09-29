@@ -11,7 +11,9 @@ Hard budget: 50 lines, 100 columns. The generator refuses to emit more, because 
 status report that scrolls is a status report nobody reads. When it refuses, the fix
 is to close something, not to raise the budget.
 
-Deterministic: same docs produce byte-identical output, so `--check` can gate CI. Git
+Deterministic: same docs produce byte-identical output. The file is not committed
+(AW-INF-026): `make status` writes it and prints it to stdout. `--check` renders it and
+applies the budget, writing nothing, so `make check` fails on a view over budget. Git
 state is deliberately not read — story frontmatter is the record, and drift between
 frontmatter and branches is a discipline problem that a generator must not paper over.
 """
@@ -161,7 +163,7 @@ def render():
         if counts.get(s)
     )
     out.append("%d stories — %s\n" % (len(stories), tally))
-    out.append("Regenerate with `make status`; `make check` fails if this file is stale.\n")
+    out.append("Regenerate with `make status`. Not committed: each clone renders its own.\n")
 
     surfaced = []
     for lane, heading, scope, prefix in LANE_VIEWS:
@@ -264,19 +266,12 @@ def main():
         die("status: line %d is %d columns, budget is %d" % (wide[0][0], len(wide[0][1]), MAX_COLS))
 
     if "--check" in sys.argv:
-        try:
-            with open(STATUS, "r", encoding="utf-8") as fh:
-                current = fh.read()
-        except FileNotFoundError:
-            die("status: docs/status.md does not exist. Run `make status`.")
-        if current != text:
-            die("status: docs/status.md is stale. Run `make status` and commit the result.")
-        sys.stderr.write("status: docs/status.md is current\n")
+        sys.stderr.write("status: renders within budget (%d lines)\n" % (len(lines) - 1))
         return
     with open(STATUS, "w", encoding="utf-8") as fh:
         fh.write(text)
+    sys.stdout.write(text)
     sys.stderr.write("status: wrote docs/status.md (%d lines)\n" % (len(lines) - 1))
-
 
 if __name__ == "__main__":
     main()
