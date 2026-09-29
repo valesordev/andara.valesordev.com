@@ -143,7 +143,9 @@ and `AW-CLI-005`'s corpus use.
 - **Resolved 2026-09-07 (Brian):** no Builder has repository access; `--path` is a Builder's own working
   directory of `.aw` source, `--pack/--version` is what is already published.
 
-- **Blocked on `AW-SRV-034` (found at the `AW-CLI-005` review, 2026-09-24):** AC-4 cannot hold yet.
+- **Closed by `AW-SRV-034` (2026-09-29, architecture):** the loader and the compiler apply one
+  `orphan_room` rule and share `duplicate_direction`, and the corpus agrees (#156). AC-4's
+  equivalence has nothing left to wait on. *As found at the `AW-CLI-005` review, 2026-09-24:* AC-4 could not hold yet.
   The loader and the compiler disagree on `orphan_room`: the loader warns on a Room nothing enters,
   while the compiler warns only on a Room with no Exit either way and skips one-Room Zones. The
   loader also has no `duplicate_direction`. `AW-SRV-034` makes them agree, on the rule now in

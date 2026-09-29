@@ -32,7 +32,9 @@ boundary or at spawn and can never be entered from inside itself, so the loader 
 rule is now in `errors.md` §3.3.
 
 **`duplicate_direction`.** The compiler rejects two Exits with the same Direction in one Room. The
-loader accepts them: it sorts and keeps both, so hand-written JSON reaching the store is not refused.
+loader refuses them too, but as `malformed_file` ("duplicate exit direction"), so the two report
+different codes for one finding. *(Corrected 2026-09-29, architecture, from implementation's
+feedback: this said the loader "sorts and keeps both". It never did.)*
 `AW-CLI-005` filed this for `AW-SRV-021` as an Open question. It lands here because it is the same
 three-way-equivalence gap.
 
@@ -55,10 +57,11 @@ or boot.
   story instead of the corpus case.
 - Corpus, in the same PR (a sidecar change is a compiler change, and `make check` must stay green):
   `docs/specs/content-language/v1/corpus/valid/warn-missing-reverse-exit/expected.errors` gains
-  `z.aw:2:3: orphan_room` with chain `z`, `loft`, sorted ahead of the existing
-  `missing_reverse_exit`.
-- Not in this PR: `errors.md` prose. Architecture moves `duplicate_direction` from §3.1 to §3.2 and
-  drops the §3.3 note about the chute case once this merges. The sidecar is different: it has to
+  `z.aw:4:3: orphan_room` with chain `z`, `loft`, sorted ahead of the existing
+  `missing_reverse_exit`. *(Corrected 2026-09-29: `loft`'s `room` keyword is on line 4, not 2.
+  Architecture writes the sidecar, since `docs/specs/` is architecture's.)*
+- `errors.md` prose, by architecture in the same merge (2026-09-29): `duplicate_direction` moves from
+  §3.1 to §3.2, and the §3.3 note about the chute case is replaced. The sidecar is different: it has to
   change with the compiler, or `make check` goes red in between.
 
 ### Out of scope
@@ -100,8 +103,12 @@ Zone has more than one Room and no Exit from another Room in that Zone targets i
 
 ## Data / state impact
 
-None. A pack with a duplicated Direction that boots today will be refused after this lands. None of
-the 17 Zone files under `content/` and `testdata/` has one (checked while writing this story). The
+None. A pack with a duplicated Direction was already refused at boot, as `malformed_file`. After
+this lands it's refused as `duplicate_direction`, which is the same outcome with a new code. None of
+the 17 Zone files under `content/` and `testdata/` has one (checked while writing this story).
+*(Corrected 2026-09-29, with the Context.)*
+Builder packs in `valesordev/andara.solo7.media` compile unchanged, apart from the new code on an
+already-fatal duplicate and `orphan_room` on a Room nothing enters, which is a warning, exit `0`. The
 corpus's `invalid/semantic/duplicate-direction/` is compiler input, not loader input.
 
 ## Observability requirements
