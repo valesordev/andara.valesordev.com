@@ -23,6 +23,8 @@ import (
 	"github.com/valesordev/andara/server/telemetry"
 )
 
+// AW-SRV-037 AC-1 and AC-2: the valid fixture is four Zones, Purgatory among
+// them, and Purgatory's one-way Exit is its only finding.
 func TestLoadContent_ValidThreeZones(t *testing.T) {
 	rt, logs := runtime(t, fixture(t, "valid"), false)
 	code := rt.LoadContent(context.Background())
@@ -37,8 +39,28 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	if rt.Ready() {
 		t.Fatal("ready before any content is in effect")
 	}
-	if got := testutil.ToFloat64(rt.Tel.Metrics.ZonesLoaded); got != 3 {
-		t.Errorf("zones_loaded = %v, want 3", got)
+	if got := testutil.ToFloat64(rt.Tel.Metrics.ZonesLoaded); got != 4 {
+		t.Errorf("zones_loaded = %v, want 4", got)
+	}
+	if _, ok := rt.World.Resolve(sim.RoomRef{Zone: "purgatory", Room: "start"}); !ok {
+		t.Error("purgatory/start does not resolve")
+	}
+	if got := testutil.ToFloat64(rt.Tel.Metrics.RoomsLoaded.WithLabelValues("purgatory")); got != 1 {
+		t.Errorf("rooms_loaded{zone=purgatory} = %v, want 1", got)
+	}
+	if got := testutil.CollectAndCount(rt.Tel.Metrics.LoadWarnings); got != 1 {
+		t.Errorf("load_warnings_total has %d series, want 1 (missing_reverse_exit)", got)
+	}
+	if got := testutil.ToFloat64(
+		rt.Tel.Metrics.LoadWarnings.WithLabelValues(string(sim.ErrMissingReverseExit))); got != 1 {
+		t.Errorf("load_warnings_total{kind=missing_reverse_exit} = %v, want 1", got)
+	}
+	warn := findLog(t, logs, string(sim.ErrMissingReverseExit))
+	if warn["zone"] != "purgatory" || warn["room"] != "start" {
+		t.Errorf("missing_reverse_exit on %v/%v, want purgatory/start", warn["zone"], warn["room"])
+	}
+	if warn["level"] != "WARN" && warn["level"] != "warn" {
+		t.Errorf("missing_reverse_exit level = %v, want warn", warn["level"])
 	}
 	if got := testutil.ToFloat64(rt.Tel.Metrics.RoomsLoaded.WithLabelValues("town")); got != 2 {
 		t.Errorf("rooms_loaded{zone=town} = %v, want 2", got)
@@ -62,8 +84,8 @@ func TestLoadContent_ValidThreeZones(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Errorf("readyz with content in effect = %d", rr.Code)
 	}
-	if v, _ := rt.Engine.Content(); len(v) != 1 || len(rt.World.Zones) != 3 {
-		t.Errorf("in effect: %v, %d Zones; want the directory's genesis swap and its three Zones", v, len(rt.World.Zones))
+	if v, _ := rt.Engine.Content(); len(v) != 1 || len(rt.World.Zones) != 4 {
+		t.Errorf("in effect: %v, %d Zones; want the directory's genesis swap and its four Zones", v, len(rt.World.Zones))
 	}
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))

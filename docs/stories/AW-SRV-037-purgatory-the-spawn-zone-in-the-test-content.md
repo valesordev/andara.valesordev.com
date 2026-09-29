@@ -4,7 +4,7 @@ title: Purgatory — the spawn Zone in the test content
 epic: EPIC-02
 component: server
 type: feature
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-014]
 blocks: [AW-INF-024, AW-INF-021]

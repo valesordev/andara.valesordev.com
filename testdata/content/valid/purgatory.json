@@ -1,0 +1,20 @@
+{
+  "formatVersion": 1,
+  "id": "purgatory",
+  "name": "Purgatory",
+  "rooms": [
+    {
+      "id": "start",
+      "title": "Purgatory",
+      "description": "Placeholder: Purgatory's description is Brian's to write.",
+      "exits": [
+        {
+          "direction": "out",
+          "toZone": "town",
+          "toRoom": "plaza"
+        }
+      ]
+    }
+  ],
+  "fallbackRoom": "start"
+}

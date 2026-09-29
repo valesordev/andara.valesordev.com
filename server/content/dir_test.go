@@ -18,8 +18,8 @@ func TestLoadDir_ValidThreeZones(t *testing.T) {
 	if len(verrs) != 0 {
 		t.Fatalf("load errors: %v", verrs)
 	}
-	if len(inputs) != 3 {
-		t.Fatalf("inputs = %d, want 3", len(inputs))
+	if len(inputs) != 4 {
+		t.Fatalf("inputs = %d, want 4", len(inputs))
 	}
 	world, errs := sim.BuildWorld(inputs, sim.Options{Source: "dir:" + fixture(t, "valid")})
 	if hasFatal(errs) {
