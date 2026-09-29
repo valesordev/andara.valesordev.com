@@ -11,7 +11,7 @@ No change. The existing instruments it reads were checked against the code:
 
 ## Implementation, 2026-09-29
 
-On `impl/aw-srv-037-purgatory`, stacked on `impl/aw-srv-034-loader-compiler-agree`.
+On `impl/aw-srv-037-purgatory`, stacked on `impl/aw-srv-034-review-fixes` (#162, which supersedes #161 and #156).
 
 ### For architecture: AC-2 needs AW-SRV-034
 
