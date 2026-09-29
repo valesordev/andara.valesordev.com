@@ -120,7 +120,8 @@ CLAUDE.md §8.
 
 - **Resolved 2026-09-28 (architecture): the binaries attach to this repository's releases.**
   `valesordev/andara.valesordev.com` is public, so a Builder downloads them with no access to it.
-- `[ASSUMPTION]` Five platforms. Brian works on Linux. Dropping Windows is a one-line change.
+- **Resolved 2026-09-29 (Brian): five platforms.** `linux` and `darwin` on `amd64` and `arm64`,
+  and `windows/amd64`, as built.
 
 ## Contract review (architecture, 2026-09-28)
 
@@ -164,3 +165,24 @@ On `sre/aw-inf-020-builders-download-andara-cli-without-a-go-toolchain`.
 - **`.gitignore`** gains `/dist/`. It isn't on SRE's writable list.
 - **`make cli-release`:** five archives in 77 s on the box. Each holds the binary, `LICENSE` and
   `NOTICE`.
+
+## Verification after merge (SRE, 2026-09-29)
+
+Three `publish` runs on `main` since #158 merged: `65889c8` (run 36635779296), `d3d855e`
+(36637878128) and `f3648da` (36639509017). All three are green, and each `cli` job logged
+`cli-release-publish: cli-dev -> <commit>` and then its anonymous `cli-release-check`.
+
+| AC | Result |
+|----|--------|
+| 1 | **Pass.** `cli-dev` carries `andara-cli_f3648da_{darwin,linux}_{amd64,arm64}.tar.gz`, `…_windows_amd64.zip` and `SHA256SUMS`, and the tag names `f3648daa0372`. Each run's download reported its own commit: `andara-cli 65889c8 (65889c8) ok`, then `d3d855e`, then `f3648da` |
+| 2 | **Pass by construction, as AW-INF-013's AC-6 was.** `cli-dev` moved `65889c8 → d3d855e → f3648da`, each run finishing before the next merge, and the previous version's archives were deleted each time: the release holds only `f3648da`'s. The runs never overlapped, so the branch that leaves the tag to a newer run (`cli_release_publish.sh`, the `origin/main` comparison) hasn't executed. That branch is read, not run: the only way to exercise it is to race two merges on `main` |
+| 3 | **Pass.** From the box with no `GH_TOKEN`: `cli-release-check: andara-cli f3648da (f3648da) ok`, exit 0. CI's step runs under `env -u GH_TOKEN` |
+| 5 | **Owed.** Needs a `v*` tag, which is Brian's to cut |
+
+**§8 instrumentation (SRE):** the Observability requirements are the job's log line and its
+summary. Each `cli` job ends with the `cli-release-check` line, and its `publish cli-dev` step,
+which writes the summary table (commit, archives, checksums), exits 0. No metrics, traces or
+alerts are specified. The item holds.
+
+**The story stays at `review` on AC-5 alone** (a `v*` tag). Codex on #164 caught that the
+five-platform `[ASSUMPTION]` also held it. Brian resolved that on 2026-09-29, keeping all five.
