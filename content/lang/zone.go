@@ -284,44 +284,38 @@ func (r *resolver) warnReverse(zd zoneDecl, rd *RoomDecl, e *ExitDecl, byID map[
 		zd.d.ID, rd.ID, e.Direction)
 }
 
-// warnOrphans emits orphan_room for a Room that no intra-Zone Exit connects to
-// any other Room in its Zone. A Builder mid-work (AW-SRV-001 AC-6): legal,
-// never silent.
+// warnOrphans emits orphan_room for a Room that no Exit from another Room in
+// its Zone leads into. A Builder mid-work (AW-SRV-001 AC-6): legal, never
+// silent.
 //
-// The test is an *incident* Exit, in either direction, not an inbound one.
-// corpus/valid/warn-missing-reverse-exit/ is the case that fixes this: `loft`
-// has a one-way chute down to `cellar` and nothing reaches `loft`, and the
-// sidecar carries missing_reverse_exit and no orphan_room. A Room a Builder can
-// walk out of is connected to the Zone; the warning is for the Room that is
-// joined to nothing.
+// The rule is the loader's (sim.BuildWorld), stated once for both in
+// errors.md §3.3 (AW-SRV-034): a Room you can leave but never enter is
+// unreachable, and unreachable is what the warning is for. A self-loop is not
+// an inbound Exit, and neither is one arriving from another Zone, because the
+// compiler sees one pack and the loader sees the World.
 //
-// A Zone with a single Room has no orphan either — AC-6 scopes the finding to a
-// Room unreachable from "any other Room in that Zone", and where there is no
-// other Room the question is vacuous.
-//
-// This is wider than the loader's rule, which counts inbound Exits only
-// (sim.BuildWorld). See docs/feedback/AW-CLI-006-content-language-compiler.md §6.
+// A Zone with a single Room has no orphan: it is entered across a Zone
+// boundary or at spawn, and can never be entered from inside itself.
 func (r *resolver) warnOrphans(zd zoneDecl, rooms []*RoomDecl) {
 	if len(rooms) < 2 {
 		return
 	}
-	joined := map[string]bool{}
+	entered := map[string]bool{}
 	for _, rd := range rooms {
 		for _, e := range rd.Exits {
 			if e.ToZone != "" && e.ToZone != zd.d.ID {
-				continue // leaving the Zone does not join it to this Room
+				continue // an Exit leaving the Zone enters none of its Rooms
 			}
 			if e.ToRoom == rd.ID {
-				continue // a self-loop leaves the Room as joined as it was
+				continue // a self-loop leaves the Room as unreachable as it was
 			}
-			joined[rd.ID] = true
-			joined[e.ToRoom] = true
+			entered[e.ToRoom] = true
 		}
 	}
 	for _, rd := range rooms {
-		if !joined[rd.ID] {
+		if !entered[rd.ID] {
 			r.warn(zd.file, rd.Pos, CodeOrphanRoom,
-				fmt.Sprintf("no Exit joins Room %q to any other Room in Zone %q", rd.ID, zd.d.ID), zd.d.ID, rd.ID)
+				fmt.Sprintf("no Exit from another Room in Zone %q leads into Room %q", zd.d.ID, rd.ID), zd.d.ID, rd.ID)
 		}
 	}
 }

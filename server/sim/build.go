@@ -291,7 +291,7 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 						Line:   exitLine,
 						Zone:   zid,
 						Room:   rid,
-						Code:   ErrMalformed,
+						Code:   ErrDuplicateDirection,
 						Detail: fmt.Sprintf("duplicate exit direction %q", dir),
 					})
 					continue
@@ -435,9 +435,14 @@ func BuildWorld(inputs []Input, opts Options) (*World, []ValidationError) {
 	// Orphans: no inbound intra-zone exit from another Room. Legal unless
 	// StrictOrphans. A Room's own Exit back to itself is not an inbound edge —
 	// AC-6 scopes reachability to "any other Room in that Zone", and a self-loop
-	// leaves the Room as unreachable as it was.
+	// leaves the Room as unreachable as it was. A Zone of one Room has no
+	// orphan: it is entered across a Zone boundary or at spawn, and can never
+	// be entered from inside itself (AW-SRV-034, errors.md §3.3).
 	for _, zid := range order {
 		z := byID[zid]
+		if len(z.rooms) == 1 {
+			continue
+		}
 		inbound := make(map[RoomID]struct{}, len(z.rooms))
 		for _, r := range z.rooms {
 			for _, e := range r.exits {
