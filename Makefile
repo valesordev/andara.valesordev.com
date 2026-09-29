@@ -59,7 +59,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
-        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall
+        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset
 
 ## help: print this target list
 help:
@@ -353,6 +353,10 @@ kafka-broker-bounce:
 ## argocd-install: Argo CD and Image Updater into `argocd` at pinned versions; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application — dev follows main (AW-INF-019)
 argocd-install:
 	@$(PY) $(SCRIPTS)/argocd.py install "$(if $(filter command line,$(origin ENV)),$(ENV),)"
+
+## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> (AW-INF-021)
+world-reset:
+	@$(PY) $(SCRIPTS)/world_reset.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 
 ## argocd-status: the andara-dev Application's sync and health, the main revision it synced, and the image it runs with the commit that built it — exit 1 unless Synced/Healthy
 argocd-status:
