@@ -10,6 +10,9 @@ package tickloop
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -18,6 +21,7 @@ import (
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
+	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -276,4 +280,104 @@ func TestSnapshotRoundWaitsForTheBrokersBoundaryAck(t *testing.T) {
 	if got := counter(snapshotter.Metrics().Rounds.WithLabelValues("complete")); got != 1 {
 		t.Fatalf("rounds_total{complete} = %v, want 1", got)
 	}
+}
+
+// #128: a broker that answers UNKNOWN_TOPIC_OR_PARTITION for the boundary
+// Partition while a restart loads its partitions must not lose a boundary,
+// and snapshot rounds complete again once it answers. On dev, ten broker
+// bounces left rounds_total{complete} at 0 for the life of the process:
+// franz-go gave up on the boundary after five such answers, about twenty
+// seconds, long inside the minute a delivery is allowed, and a lost boundary
+// stops every later round. The disruption here is thirty seconds, wider than
+// the window that used to lose it (live-assertions rule 4).
+func TestSnapshotRoundsCompleteAgainAfterALeaderRestart(t *testing.T) {
+	bs := brokers(t)
+	_, events := topics(t, bs)
+	px := newLeaderProxy(t, bs[0], BoundaryPartition)
+	pub, err := NewKafkaPublisher(context.Background(), []string{px.Addr()}, "snapshot-leader-restart-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pub.Close()
+	pub.Events = events
+
+	rounds := make(chan error, 64)
+	var mu sync.Mutex
+	now := time.Unix(1758500000, 0)
+	snapshotter, err := NewSnapshotter(SnapshotOptions{
+		Store:            store.NewFS(t.TempDir()),
+		Interval:         time.Second,
+		MaxStall:         time.Second,
+		UploadTimeout:    5 * time.Second,
+		AwaitBoundaryAck: true,
+		Now: func() time.Time {
+			mu.Lock()
+			defer mu.Unlock()
+			return now
+		},
+		OnRound: func(_ sim.Tick, err error) { rounds <- err },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lost atomic.Bool
+	pub.OnBoundaryAcked = func(tick sim.Tick, _ time.Duration) { snapshotter.OnBoundaryAcked(tick) }
+	pub.OnBoundaryLost = func(tick sim.Tick, err error) {
+		lost.Store(true)
+		snapshotter.OnBoundaryLost(tick, err)
+	}
+
+	e, err := simtest.NewEngine(1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One tick as the loop runs it: step, publish the boundary, and take a
+	// round when one is due — or count it abandoned when the publish failed.
+	tick := func(round bool) {
+		t.Helper()
+		res, err := e.Step(sim.TickInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if round {
+			mu.Lock()
+			now = now.Add(time.Second)
+			mu.Unlock()
+		}
+		if err := pub.Publish(context.Background(), nil, res.Completed); err != nil {
+			snapshotter.Skip(context.Background(), e.Tick(), err)
+			return
+		}
+		snapshotter.Maybe(context.Background(), e)
+	}
+	complete := func() float64 { return counter(snapshotter.Metrics().Rounds.WithLabelValues("complete")) }
+
+	tick(true)
+	eventually.True(t, 30*time.Second, "a round before the disruption", func() bool { return complete() == 1 })
+
+	// The disruption: a round starts inside it, and ticks keep publishing.
+	px.Unknown.Store(true)
+	tick(true)
+	for deadline := time.Now().Add(30 * time.Second); time.Now().Before(deadline); {
+		tick(false)
+		time.Sleep(50 * time.Millisecond)
+	}
+	px.Unknown.Store(false)
+	if px.Injected.Load() == 0 {
+		t.Fatal("the proxy rewrote no Produce response; the test disrupted nothing")
+	}
+
+	eventually.Observed(t, 60*time.Second, "a round completes after the disruption", func() (bool, string) {
+		tick(true)
+		failures := snapshotter.Metrics().Failures
+		return complete() >= 2, fmt.Sprintf("complete=%v timeout=%v boundary=%v lost=%t",
+			complete(), counter(failures.WithLabelValues("timeout")), counter(failures.WithLabelValues("boundary")), lost.Load())
+	})
+	if lost.Load() {
+		t.Error("a boundary was lost to a thirty-second disruption, inside the delivery timeout")
+	}
+	if got := counter(snapshotter.Metrics().Failures.WithLabelValues("boundary")); got != 0 {
+		t.Errorf("failures_total{boundary} = %v, want 0", got)
+	}
+	snapshotter.Wait()
 }
