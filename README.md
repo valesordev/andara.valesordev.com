@@ -29,7 +29,7 @@ shell commands that is not a target is a defect.
 | `docs/stories/` | The unit of work. Status lives in frontmatter; files never move. |
 | `docs/specs/` | Protocol, schema, and SLO definitions. |
 | `docs/runbooks/` | On-call procedures. Every alert has one. |
-| `BACKLOG.md` | **Generated.** Run `make backlog`; never hand-edit. |
+| `BACKLOG.md` | **Generated, not committed.** `make backlog` renders it from `docs/stories/`. |
 | `server/` | `andara-server` — simulation, gateway, projections (Go). `server/sim` is dependency-free. |
 | `admin/` | `andara-cli` — operator, builder, **and player** tooling (Go). |
 | `agents/` | Python Behavior Agent SDK and runtime — NPC logic, outside the tick. |
@@ -50,7 +50,7 @@ Work splits into three lanes:
   dashboards, alerts, SLOs, and runbooks.
 
 Each lane is its own Claude Code role, and project management plans the work without building
-any. Every story declares its lane, and `docs/status.md` reports each lane separately. See
+any. Every story declares its lane, and `make status` reports each lane separately. See
 `CLAUDE.md` §2.
 
 ## Architecture
@@ -76,7 +76,7 @@ Phase 1, milestone M0. The planning skeleton and automation surface exist; no ga
 ADR-0001 through ADR-0007 are accepted and ADR-0008 (tick rate) is proposed, so nothing in the backlog is
 ADR-blocked.
 
-`BACKLOG.md` shows what is ready. The M1 stories — protobuf schema, Kafka topics, simulation core, command
+`make backlog` shows what is ready. The M1 stories — protobuf schema, Kafka topics, simulation core, command
 pipeline, gRPC gateway, `andara-cli play` — are groomed to `ready`. M2 through M4 stories are `draft`:
 scoped, sequenced, and dependency-linked, with interface contracts written when their milestone
 approaches rather than guessed at now.
