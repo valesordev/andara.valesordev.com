@@ -40,3 +40,30 @@ reasoning is in the story's *Contract review*. Two things for you as you build i
 - **`make world-reset` (`AW-INF-021`) clears the bucket, not the PVC,** once this story lands.
   It also stops the projector and deletes its group with the recreated `andara.state.v1`. That's
   written into this story's Interface contract, so `AW-INF-021` can cite it.
+
+## For PM: #143 is a risk to this sprint and to M2 (architecture, 2026-09-29)
+
+#143 (a projector bootstrapped from a snapshot round diverges at round tick + 1) isn't in
+SPRINT-03. It has three consequences:
+- **`AW-INF-025` can't close on `dev` until #143 is fixed.** AC-4 is amended so that it can't pass
+  while #143 is open, and AC-2 fails the same way on a bootstrapped rebuild. The rest of the story
+  (ACs 1, 3, 5–8) can proceed, and it may reach `review` owing AC-2 and AC-4.
+- **`AW-INF-008` does *not* wait on it.** Its AC-2 is observed on the projector's first Ready.
+- **M2 is at risk.** The server's recovery restores the same rounds (`AW-SRV-006`). If a round
+  doesn't reproduce hashed state, M2's "matching State Hash" gate and `AW-SRV-007` (SPRINT-04)
+  fail the same way.
+
+Architecture's recommendation: take #143 into implementation's SPRINT-03 list beside #128, which
+is also `AW-SRV-006` recovery code, ahead of `AW-SRV-038`. The investigation starts where #143 left
+off: the fixture World's round test passes, so a regression test needs state the fixture lacks.
+That could be a bound, unbound, or linkdead Character across the round. Scope and ordering are
+PM's call.
+
+## For SRE: AW-INF-025 AC-4 amended (architecture, 2026-09-29)
+
+AC-4 now also polls the lag to budget with `andara_state_digest_mismatches_total` at 0 and no
+`diverged` line. Don't start the projector from zero to meet AC-2 or AC-4. Everything else can be
+built now. If #143 is still open when you're done, take the story to `review` owing AC-2 and AC-4.
+Separately, record `AW-INF-008` AC-2 (`up{job="andara-projector-state"} == 1`) on the projector's
+first Ready on `dev`, whatever happens after.
+

@@ -89,7 +89,11 @@ it read the same snapshots the server writes, so that the runbooks work and `dev
    first.
 4. **Given** a complete snapshot round in `andara-snapshots-dev` **when** the projector starts
    **then** its `state projector started` line carries `round_tick` equal to that round's tick,
-   not 0 (`AW-SRV-019` AC-6, in-cluster).
+   not 0 (`AW-SRV-019` AC-6, in-cluster). **And**, polled to `PROJECTOR_REBUILD_TIMEOUT` per
+   `live-assertions.md`, `andara_state_projector_lag_seconds` falls to or under
+   `andara_state_projector_lag_budget_seconds` while `andara_state_digest_mismatches_total` stays 0
+   and no `state projector diverged` line is logged. *(Amended 2026-09-29, §8 review of
+   `AW-INF-008`: without this, AC-4 passes on a projector that halts one tick later, which is #143.)*
 5. **Given** `make k8s-dry ENV=dev` **when** it renders **then** the projector Deployment mounts
    `kafkaCreds`, and both it and the server StatefulSet take `andara-snapshot-s3` by `envFrom` and
    carry `ANDARA_SNAPSHOT_STORE=s3`.
@@ -245,3 +249,19 @@ doesn't depend on the snapshot source. The story is `ready`.
 8. **Size stays M.** The object store is one Deployment, one PVC, one Secret and one bucket,
    installed as `kafka-install` installs the broker. If SRE finds it bigger, the split is
    `objectstore-install` alone, ahead of this story.
+
+## Contract amendment (architecture, 2026-09-29): AC-4 must see the projector verify past the round
+
+#143: a projector bootstrapped from a round diverges at round tick + 1, and a from-zero replay of
+the same log verifies. AC-4 as reviewed on 2026-09-28 read only `round_tick` on the `started` line,
+so it would have passed #143. It now also requires the projector to catch up with no digest
+mismatch.
+- **#143 is a prerequisite for AC-2 and AC-4 on `dev`, not a reason to weaken them.** Neither
+  criterion may be met by starting the projector from zero. Everything else in this story, ACs 1,
+  3 and 5 to 8, can be built and verified now.
+- **If #143 is still open when the rest is done,** the story goes to `review` owing AC-2 and AC-4,
+  as `AW-INF-019` did with its AC-4. Enabling the projector on `dev` is still in scope. If it
+  diverges there, that's #143's evidence, and it doesn't fail this story's other ACs.
+- **`AW-INF-008` AC-2 doesn't wait on #143.** It's observed on the projector's first Ready
+  (`AW-INF-008`, §8 review 2026-09-29).
+- No Interface contract change. The metrics and log line are `AW-SRV-019`'s and the SLO's.
