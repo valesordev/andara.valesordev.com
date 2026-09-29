@@ -10,8 +10,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | Status | Count |
 |--------|-------|
 | `blocked` | 1 |
-| `review` | 3 |
-| `in-progress` | 1 |
+| `review` | 4 |
 | `ready` | 33 |
 | `draft` | 1 |
 | `done` | 34 |
@@ -25,6 +24,7 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `review` | Loader and compiler agree on orphan_room and duplicate_direction | review by brian |
 
 ## By status
 
@@ -34,18 +34,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
 
-### `review` (3)
+### `review` (4)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `EPIC-07` | infra | S | low | sre | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | `AW-INF-003`, `AW-INF-006` |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | sre | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
-
-### `in-progress` (1)
-
-| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
-|----|------|-----------|------|------|----------|-------|------------|
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 
 ### `ready` (33)
@@ -168,7 +163,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
-| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `in-progress` | Loader and compiler agree on orphan_room and duplicate_direction |
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `review` | Loader and compiler agree on orphan_room and duplicate_direction |
 | [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `ready` | Purgatory — the spawn Zone in the test content |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
