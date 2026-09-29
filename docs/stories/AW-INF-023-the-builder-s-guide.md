@@ -53,7 +53,7 @@ The guide, at `docs/builders/` (decided 2026-09-28, item 5 in
 3. **Installing `andara-cli`.** The `cli-dev` download, checksum, and first login to `dev`
    (`AW-INF-020`). macOS's quarantine prompt. The core the binary carries (`andara-cli version`),
    and what a `core_version_mismatch` after a core bump asks of the Builder (`AW-INF-022` AC-8).
-4. **Your first Zone.** A tutorial: clone the Content Repository, copy `packs/example`, add a Room,
+4. **Your first Zone.** A tutorial: clone the Content Repository, copy `content/example`, add a Room,
    `fmt`, `validate`, open a pull request, publish, have it approved, activate, see it in
    `server info`, walk it with `andara-cli play`, change it, and roll it back.
 5. **The everyday loop.** `history`, `diff`, `fetch`, and rollback, plus what last-pointer-move-wins

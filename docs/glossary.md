@@ -256,7 +256,7 @@ mismatch halts recovery as a State Hash mismatch does. Topology only; the State 
 
 ---
 
-**Content Repository** — The private git repository (`valesordev/andara-world`, `AW-INF-022`) where
+**Content Repository** — The private git repository (`valesordev/andara.solo7.media`, `AW-INF-022`) where
 Builders keep the Content Language source of their packs, one directory per pack, checked by
 `andara-cli content fmt --check` and `content validate` on every pull request. Decided 2026-09-26
 (Brian). It holds source and history only. The content store stays authoritative for what's live
