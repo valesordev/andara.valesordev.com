@@ -159,3 +159,13 @@ On `sre/aw-inf-026-generated-views-stop-being-committed`.
   `status-check`. They're render checks now, so a commit no longer needs the files regenerated.
 - **Not changed, as scoped:** `.claude/roles/_repo.md` still lists both paths as generated, which
   makes the hook deny hand edits to them. Nobody hand-edits them, so that denial is harmless.
+
+## Verification after merge (SRE, 2026-09-29)
+
+| AC | Result |
+|----|--------|
+| 1 | **Pass.** A fresh `git clone --depth 1` of `main` at `d3d855e`: `git ls-files BACKLOG.md docs/status.md` printed nothing, and `git check-ignore` printed both |
+| 4 | **Pass.** The `check` run on `d3d855e` (36637878092) ran its `status and backlog in the summary` step, which exited 0 on the push to `main`. The step doesn't run on pull requests |
+
+**§8 instrumentation (SRE):** none specified, since the story emits no runtime signals. The item
+holds. Every AC is now recorded as passing.
