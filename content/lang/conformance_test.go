@@ -6,6 +6,7 @@ package lang
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -405,6 +406,65 @@ func TestWarningsDoNotFailACompile(t *testing.T) {
 	}
 	if HasError(ds) {
 		t.Error("HasError is true for a warning-only compile")
+	}
+}
+
+// TestOrphanIsInbound is AW-SRV-034 for the compiler: a Room you can leave but
+// never enter is an orphan, as the loader has it, and a Zone of one Room has
+// none. The corpus's warn-missing-reverse-exit case is the chute through the
+// conformance run.
+func TestOrphanIsInbound(t *testing.T) {
+	cases := []struct {
+		name, zone string
+		orphans    []string
+	}{
+		{"the chute", `zone z "Z" {
+  fallback loft
+
+  room loft "Loft" {
+    exit down -> cellar
+  }
+
+  room cellar "Cellar" {}
+}
+`, []string{"loft"}},
+		{"a Zone of one Room with no Exits", `zone z "Z" {
+  fallback start
+
+  room start "Start" {}
+}
+`, nil},
+		{"a self-loop is not an arrival", `zone z "Z" {
+  fallback plaza
+
+  room plaza "Plaza" {
+    exit north -> plaza
+    exit south -> hall
+  }
+
+  room hall "Hall" {}
+}
+`, []string{"plaza"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, filepath.Join(dir, "pack.aw"), "pack z requires andara.core@1\n")
+			write(t, filepath.Join(dir, "z.aw"), tc.zone)
+			out, ds := Compile(dir, corpusCore(t), nil)
+			if out == nil {
+				t.Fatalf("compile: %v", ds)
+			}
+			var orphans []string
+			for _, d := range ds {
+				if d.Code == CodeOrphanRoom {
+					orphans = append(orphans, d.Chain[len(d.Chain)-1])
+				}
+			}
+			if !slices.Equal(orphans, tc.orphans) {
+				t.Errorf("orphans = %v, want %v (%v)", orphans, tc.orphans, ds)
+			}
+		})
 	}
 }
 

@@ -63,7 +63,6 @@ const (
 	CodeExtendsCycle        = "extends_cycle"
 	CodeRemovedBySubtype    = "removed_by_subtype"
 	CodeDuplicateDecl       = "duplicate_declaration"
-	CodeDuplicateDirection  = "duplicate_direction"
 
 	// Pending a protobuf field (semantics.md §9). Specified, in the grammar,
 	// and reachable only once the field lands.
@@ -81,6 +80,7 @@ var (
 	CodeUnknownZone           = string(sim.ErrUnknownZone)
 	CodeDuplicateRoom         = string(sim.ErrDuplicateRoom)
 	CodeDuplicateZone         = string(sim.ErrDuplicateZone)
+	CodeDuplicateDirection    = string(sim.ErrDuplicateDirection)
 	CodeUnknownDirection      = string(sim.ErrUnknownDirection)
 	CodeUnknownComponent      = string(sim.ErrUnknownComponent)
 	CodeDuplicateComponent    = string(sim.ErrDuplicateComponent)
