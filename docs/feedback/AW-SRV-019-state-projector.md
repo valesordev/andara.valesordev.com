@@ -244,6 +244,8 @@ On `impl/aw-srv-019-ac5-compaction`. `TestRun_ATombstonedKeyIsCompactedAway` is 
 Two changes from the sketch:
 - The tombstone comes from `Run`, not from a hand-produced record.
 - The test first asserts the tombstone is on the log, before it asserts the tombstone is gone.
+  The topic starts at the broker's defaults and is altered to the lowered settings only after
+  that check, so a slow projection can't compact the tombstone before it's seen.
 
-It passes in about 22 s, and fails with `segment.ms` left at its default. The record is in the
+It passes in about 22 s, and fails without the alteration. The record is in the
 story. **For architecture:** AC-5 is ready for the next §8 pass.

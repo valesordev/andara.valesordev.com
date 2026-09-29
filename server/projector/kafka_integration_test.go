@@ -58,13 +58,6 @@ type broker struct {
 
 func newBroker(t *testing.T) *broker {
 	t.Helper()
-	return newBrokerWithState(t, nil)
-}
-
-// newBrokerWithState is newBroker with extra config on the compacted state
-// topic, for a test that needs the broker to compact it within its deadline.
-func newBrokerWithState(t *testing.T, stateCfg map[string]*string) *broker {
-	t.Helper()
 	bs := brokers(t)
 	cl, err := kgo.NewClient(kgo.SeedBrokers(bs...), kgo.RecordPartitioner(kgo.ManualPartitioner()))
 	if err != nil {
@@ -83,12 +76,8 @@ func newBrokerWithState(t *testing.T, stateCfg map[string]*string) *broker {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	compact := "compact"
-	state := map[string]*string{"cleanup.policy": &compact}
-	for k, v := range stateCfg {
-		state[k] = v
-	}
 	for topic, cfg := range map[string]map[string]*string{
-		b.commands: nil, b.events: nil, b.state: state,
+		b.commands: nil, b.events: nil, b.state: {"cleanup.policy": &compact},
 	} {
 		if _, err := adm.CreateTopic(ctx, sim.PartitionCount, 1, cfg, topic); err != nil {
 			t.Fatal(err)
@@ -349,25 +338,43 @@ func (b *broker) raw(t *testing.T, p int32) []*kgo.Record {
 	}
 }
 
-// AC-5 as amended at §8: the projector's tombstone for an Entity that left
-// its Zone is compacted away, key and all. The state topic here is a
-// throwaway one declared so the broker compacts within a test's deadline —
-// segment.ms, min.cleanable.dirty.ratio and delete.retention.ms lowered to
-// seconds, which the local broker's log_segment_ms_min of 1 s permits
-// (deploy/kafka/topics.yaml, broker.local). andara.state.v1's own settings
-// are untouched.
-//
-// Compaction never touches the active segment, and a segment rolls only on
-// an append after segment.ms, so each poll first appends a filler record to
-// the Partition the key is on. The filler is one key rewritten, so it
-// compacts down to one record and adds nothing to what is asserted.
-func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
+// compactWithinSeconds lowers the state topic's segment.ms,
+// min.cleanable.dirty.ratio and delete.retention.ms to seconds, which the
+// local broker's log_segment_ms_min of 1 s permits (deploy/kafka/topics.yaml,
+// broker.local), so the broker compacts within a test's deadline.
+func (b *broker) compactWithinSeconds(t *testing.T) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
 	second, ratio := "1000", "0.01" // 0 is stored as -1, which disables the ratio
-	b := newBrokerWithState(t, map[string]*string{
-		"segment.ms":                &second,
-		"min.cleanable.dirty.ratio": &ratio,
-		"delete.retention.ms":       &second,
-	})
+	resps, err := b.adm.AlterTopicConfigs(ctx, []kadm.AlterConfig{
+		{Op: kadm.SetConfig, Name: "segment.ms", Value: &second},
+		{Op: kadm.SetConfig, Name: "min.cleanable.dirty.ratio", Value: &ratio},
+		{Op: kadm.SetConfig, Name: "delete.retention.ms", Value: &second},
+	}, b.state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range resps {
+		if r.Err != nil {
+			t.Fatalf("altering %s: %v (%s)", r.Name, r.Err, r.ErrMessage)
+		}
+	}
+}
+
+// AC-5 as amended at §8: the projector's tombstone for an Entity that left
+// its Zone is compacted away, key and all. The state topic is a throwaway
+// one, and andara.state.v1's own settings are untouched.
+//
+// It starts with the broker's default segment.ms, so the projector's writes
+// can't roll the segment holding the tombstone before the tombstone is seen.
+// Only then is compaction lowered to seconds. Compaction never touches the
+// active segment, and a segment rolls only on an append after segment.ms, so
+// each poll first appends a filler record to the Partition the key is on.
+// The filler is one key rewritten, so it compacts down to one record and adds
+// nothing to what is asserted.
+func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
+	b := newBroker(t)
 	w := script(t)
 	b.mirror(w, 0)
 	r := start(b.options(w))
@@ -376,9 +383,9 @@ func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
 
 	const key = "character:town/hero"
 	p := sim.PartitionFor("town")
-	// Nothing has been appended since the projector's own writes, so the
-	// segment holding the tombstone has not rolled and cannot have been
-	// compacted: the tombstone is still there to be seen.
+	// At the default segment.ms the segment holding the tombstone has not
+	// rolled, so it cannot have been compacted: the tombstone is still there
+	// to be seen.
 	var values, tombstones int
 	for _, rec := range b.raw(t, p) {
 		if string(rec.Key) == key {
@@ -392,6 +399,7 @@ func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
 	if tombstones != 1 || values == 0 {
 		t.Fatalf("before compaction, partition %d holds %d values and %d tombstones for %s; want some values and one tombstone", p, values, tombstones, key)
 	}
+	b.compactWithinSeconds(t)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
