@@ -56,7 +56,8 @@ it read the same snapshots the server writes, so that the runbooks work and `dev
     `s3_endpoint: http://andara-objectstore:9000`.
   - The server StatefulSet and the projector Deployment both take `andara-snapshot-s3` by
     `envFrom`. The server's S3 store reads the default credential chain (`server/store/s3.go`).
-- The projector Deployment mounts `kafkaCreds`.
+- The projector Deployment mounts its own `projectors.state.kafkaCreds`, never the server's
+  `secrets.kafkaCreds` (ADR-0011 decision 6).
 - `projectors.state.enabled=true` on `dev`, once the above holds.
 - The two runbooks name the targets instead of hand steps.
 
@@ -95,8 +96,11 @@ it read the same snapshots the server writes, so that the runbooks work and `dev
    and no `state projector diverged` line is logged. *(Amended 2026-09-29, §8 review of
    `AW-INF-008`: without this, AC-4 passes on a projector that halts one tick later, which is #143.)*
 5. **Given** `make k8s-dry ENV=dev` **when** it renders **then** the projector Deployment mounts
-   `kafkaCreds`, and both it and the server StatefulSet take `andara-snapshot-s3` by `envFrom` and
-   carry `ANDARA_SNAPSHOT_STORE=s3`.
+   the Secret named by `projectors.state.kafkaCreds.secretName` at `/etc/andara/secrets/kafka`,
+   renders no Kafka credential mount when that value is empty (it doesn't fall back to
+   `secrets.kafkaCreds`), and both it and the server StatefulSet take `andara-snapshot-s3` by
+   `envFrom` and carry `ANDARA_SNAPSHOT_STORE=s3`. *(Amended 2026-09-29, ADR-0011: the projector
+   has its own Kafka principal, so it can't share the server's Secret.)*
 6. **Given** `make objectstore-install ENV=dev` run twice **when** the second run finishes **then**
    it exits 0, the bucket and Secret are unchanged (the Secret's `resourceVersion` doesn't move),
    and the server's next round lands in the bucket within `3 × snapshot.interval`.
@@ -265,3 +269,15 @@ mismatch.
 - **`AW-INF-008` AC-2 doesn't wait on #143.** It's observed on the projector's first Ready
   (`AW-INF-008`, §8 review 2026-09-29).
 - No Interface contract change. The metrics and log line are `AW-SRV-019`'s and the SLO's.
+
+## Contract amendment (architecture, 2026-09-29): the projector's own Kafka credentials
+
+ADR-0011 (accepted 2026-09-29) gives each workload its own Kafka principal. The projector is
+`andara-projector-state`, the only writer of `andara.state.v1`. So the projector can't mount the
+server's `secrets.kafkaCreds`: whichever principal both used would carry both sets of rights, and
+`AW-SRV-019` AC-9 would be unmeetable. The scope bullet and AC-5 now name
+`projectors.state.kafkaCreds.secretName`, with no fallback to the server's value.
+
+The broker still authenticates nobody until ADR-0011's SRE story lands. So on `dev` this story
+renders the mount only if the value is set, and it's fine for it to be empty until then. What
+matters is that the chart can't hand the projector the server's Secret.

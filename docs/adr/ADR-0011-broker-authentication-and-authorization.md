@@ -146,13 +146,21 @@ hold to. TLS waits for a reason (*Revisit when*).
    User Operators to keep `topics.yaml` single-sourced. The Topic Operator stays excluded. The User
    Operator comes in, because its `KafkaUser`s are *generated from* `topics.yaml` (item 4), so they
    aren't a second declaration. Hand-editing a `KafkaUser` is drift, like hand-editing a topic.
-6. **Credentials are Kubernetes Secrets, mounted as files.** Each workload mounts its principal's
-   Secret at the chart's existing `secrets.kafkaCreds` path, `/etc/andara/secrets/kafka`. Clients
-   read the username from `ANDARA_KAFKA_SASL_USERNAME` and the password from the file
-   `ANDARA_KAFKA_SASL_PASSWORD_FILE` names, **on each new connection**, so a rotated Secret takes
-   effect without a restart. On the compose stack the passwords are fixed and local-only, and they
-   live in the compose file. A process given brokers and no username connects without SASL, and
-   any SASL listener then refuses it at the first request, loudly.
+6. **Credentials are Kubernetes Secrets, one per principal, mounted as files.** A workload's Secret
+   is the one Strimzi's User Operator generates for its `KafkaUser`, named after the principal,
+   with the password under `password`. The chart gives **each workload its own Secret
+   reference**: `secrets.kafkaCreds.secretName` is the server's (`andara-server`), and each
+   projector has `projectors.<name>.kafkaCreds.secretName` (`andara-projector-state`, and so on).
+   No workload falls back to another's reference. A projector with no reference of its own renders
+   no mount, and fails to authenticate. Every workload mounts its Secret at the same path,
+   `/etc/andara/secrets/kafka`, so the client code is identical. Clients read the username from
+   `ANDARA_KAFKA_SASL_USERNAME` and the password from the file `ANDARA_KAFKA_SASL_PASSWORD_FILE`
+   names, **on each new connection**, so a rotated Secret takes effect without a restart. On the
+   compose stack the passwords are fixed and local-only, and they live in the compose file. A
+   process given brokers and no username connects without SASL, and any SASL listener then
+   refuses it at the first request, loudly.
+   *(Amended 2026-09-29, from Codex on #163: the first text pointed every workload at the one
+   existing `secrets.kafkaCreds`, which would have given the server the projector's rights.)*
 7. **One place builds a Kafka client's options.** Every `kgo.NewClient` in the server and projector
    takes its seed brokers, client ID, and SASL mechanism from one shared constructor. A client site
    that forgets SASL must not be able to compile past review, and the compose stack running with
@@ -164,17 +172,34 @@ hold to. TLS waits for a reason (*Revisit when*).
   - an **implementation** story for decision items 6 and 7: the shared client constructor, SASL
     config, the password file read per connection, and every `kgo.NewClient` moved onto it;
   - an **SRE** story for items 1–5: the Strimzi listener, authorization and User Operator, the
-    `principals:` section and its apply path on both brokers, the compose Redpanda with SASL,
+    `principals:` section and its apply path on both brokers, a Secret reference per workload in
+    the chart (decision 6), the compose Redpanda with SASL,
     `make` wrappers so an `rpk` call carries the operator's credentials, and the `dev` migration.
     AC-9 is its inherited Definition-of-done line, asserted on the compose stack in CI.
 - **The local loop gets heavier.** Every `rpk` call against the compose stack needs credentials,
   so the targets that wrap `rpk` supply them. A developer running `rpk` by hand passes
   `-X user=… -X pass=…` or uses the target. That's the price of CI enforcing what `dev` does.
-- **`dev` migrates, and the migration can be undone.** Switching the listener rolls the brokers.
-  The order is the SRE story's to pin, and it has to keep clients connected throughout: users and
-  ACLs first, then a SCRAM listener beside `plain`, then clients moved, then `plain` removed and
-  authorization turned on. Rollback is the reverse: restore `plain` and turn authorization off. No
-  topic, offset, or record changes either way.
+- **`dev` migrates, and no client is denied at any step.** Kafka refuses to create an ACL while no
+  authorizer is configured (`SecurityDisabledException`), so authorization has to come first, and
+  the clients still on `plain` have to be let through while it does. The SRE story pins the
+  details. The order is fixed here:
+  1. **Authorizer on, nobody restricted yet.** Turn on `authorization: simple`, with
+     `andara-operator` and `ANONYMOUS` as super users. Clients on `plain` authenticate as
+     `ANONYMOUS`, so they keep every right they have today. Brokers roll.
+  2. **Principals and ACLs installed and verified.** Add the SCRAM listener beside `plain`, and
+     enable the User Operator, which now can create the `KafkaUser`s' credentials and ACLs. Check
+     them with `make topics-diff` before any client depends on them. Brokers roll.
+  3. **Clients move.** Each workload redeploys onto the SCRAM listener with its own Secret, and is
+     now held to its ACLs. They're in place since step 2, so nothing is denied.
+  4. **The bootstrap access goes.** Remove `plain`, and `ANONYMOUS` from the super users. Brokers
+     roll.
+
+  Each step is a separate apply, and each can be undone by restoring the previous one. From step 4,
+  rollback is restoring `plain` with `ANONYMOUS` as a super user. No topic, offset, or record
+  changes at any step. *(Amended 2026-09-29, from Codex on #163: the first order installed the
+  ACLs before the authorizer, which Kafka refuses, then turned authorization on last, which would
+  have denied every client until reconciliation.)* The compose Redpanda starts empty, with SASL
+  and ACLs on from its first boot, so it has no migration.
 - **Traffic is still unencrypted inside the namespace.** The NetworkPolicy stays as a second,
   independent barrier. Anyone who can capture the namespace's pod traffic can read the World's
   records. They can't write them without a password, which is the property this ADR is for.

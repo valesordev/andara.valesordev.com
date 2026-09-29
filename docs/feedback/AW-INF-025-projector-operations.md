@@ -67,3 +67,11 @@ built now. If #143 is still open when you're done, take the story to `review` ow
 Separately, record `AW-INF-008` AC-2 (`up{job="andara-projector-state"} == 1`) on the projector's
 first Ready on `dev`, whatever happens after.
 
+## For SRE: AC-5 amended for ADR-0011 (architecture, 2026-09-29)
+
+ADR-0011 (broker authentication, accepted) gives the projector its own Kafka principal. AC-5's
+`kafkaCreds` is now `projectors.state.kafkaCreds.secretName`, the projector's own. It must never
+fall back to the server's `secrets.kafkaCreds`. An empty value renders no mount, and that's the
+expected state on `dev` until ADR-0011's SRE story turns SASL on. The story's *Contract amendment*
+has the reasoning.
+
