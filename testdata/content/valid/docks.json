@@ -8,8 +8,15 @@
       "title": "The Pier",
       "description": "Salt air and creaking boards.",
       "exits": [
-        {"direction": "north", "toZone": "town", "toRoom": "plaza"},
-        {"direction": "south", "toRoom": "warehouse"}
+        {
+          "direction": "north",
+          "toZone": "town",
+          "toRoom": "plaza"
+        },
+        {
+          "direction": "south",
+          "toRoom": "warehouse"
+        }
       ]
     },
     {
@@ -17,7 +24,10 @@
       "title": "Warehouse",
       "description": "Barrels and rope.",
       "exits": [
-        {"direction": "north", "toRoom": "pier"}
+        {
+          "direction": "north",
+          "toRoom": "pier"
+        }
       ]
     }
   ],

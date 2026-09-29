@@ -4,20 +4,30 @@
   "name": "Wilds",
   "rooms": [
     {
-      "id": "trail",
-      "title": "Forest Trail",
-      "description": "A narrow path under pines.",
-      "exits": [
-        {"direction": "west", "toZone": "town", "toRoom": "plaza"},
-        {"direction": "north", "toRoom": "copse"}
-      ]
-    },
-    {
       "id": "copse",
       "title": "Copse",
       "description": "A ring of younger trees.",
       "exits": [
-        {"direction": "south", "toRoom": "trail"}
+        {
+          "direction": "south",
+          "toRoom": "trail"
+        }
+      ]
+    },
+    {
+      "id": "trail",
+      "title": "Forest Trail",
+      "description": "A narrow path under pines.",
+      "exits": [
+        {
+          "direction": "north",
+          "toRoom": "copse"
+        },
+        {
+          "direction": "west",
+          "toZone": "town",
+          "toRoom": "plaza"
+        }
       ]
     }
   ],

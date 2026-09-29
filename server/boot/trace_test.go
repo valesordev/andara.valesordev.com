@@ -81,11 +81,11 @@ func TestLoadContent_EmitsLoadAndValidateSpans(t *testing.T) {
 	}
 
 	load := spanByName(t, rec, "content.load")
-	if got := intAttr(t, load, "zone_count"); got != 3 {
-		t.Errorf("content.load zone_count = %d, want 3", got)
+	if got := intAttr(t, load, "zone_count"); got != 4 {
+		t.Errorf("content.load zone_count = %d, want 4", got)
 	}
-	if got := intAttr(t, load, "room_count"); got != 6 {
-		t.Errorf("content.load room_count = %d, want 6", got)
+	if got := intAttr(t, load, "room_count"); got != 7 {
+		t.Errorf("content.load room_count = %d, want 7", got)
 	}
 
 	validate := spanByName(t, rec, "content.validate")
