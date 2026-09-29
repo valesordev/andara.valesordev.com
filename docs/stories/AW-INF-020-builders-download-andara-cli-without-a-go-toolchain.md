@@ -120,7 +120,8 @@ CLAUDE.md §8.
 
 - **Resolved 2026-09-28 (architecture): the binaries attach to this repository's releases.**
   `valesordev/andara.valesordev.com` is public, so a Builder downloads them with no access to it.
-- `[ASSUMPTION]` Five platforms. Brian works on Linux. Dropping Windows is a one-line change.
+- **Resolved 2026-09-29 (Brian): five platforms.** `linux` and `darwin` on `amd64` and `arm64`,
+  and `windows/amd64`, as built.
 
 ## Contract review (architecture, 2026-09-28)
 
@@ -183,9 +184,5 @@ summary. Each `cli` job ends with the `cli-release-check` line, and its `publish
 which writes the summary table (commit, archives, checksums), exits 0. No metrics, traces or
 alerts are specified. The item holds.
 
-**The story stays at `review` on two items** (Codex on #164):
-- AC-5, which needs a `v*` tag.
-- The `[ASSUMPTION]` under Open questions, five platforms. §8 requires every assumption to be
-  resolved before `done`. Architecture kept it at contract review because it doesn't touch the
-  contract, but it still has to be resolved. It's Brian's to confirm or narrow: which platforms
-  Builders use.
+**The story stays at `review` on AC-5 alone** (a `v*` tag). Codex on #164 caught that the
+five-platform `[ASSUMPTION]` also held it. Brian resolved that on 2026-09-29, keeping all five.
