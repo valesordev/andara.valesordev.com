@@ -57,3 +57,22 @@ what it asserts:
 - `AW-CLI-002`'s Open questions entry about equivalence should name this story as closed (the
   story's Definition of done). It's a contract section, so it's architecture's edit.
 - `errors.md` prose (§3.1 → §3.2, the §3.3 chute note). The story leaves that to architecture.
+
+## Architecture, 2026-09-29
+
+On `arch/aw-srv-034-sidecar`, branched from `impl/aw-srv-034-loader-compiler-agree` at `84d1649`.
+It supersedes #156, and merging it merges both.
+- **The sidecar** is as you gave it. `4:3` is right: `pack.aw` is a separate file, and in `z.aw` the
+  `room loft` keyword is on line 4. The story's scope bullet is corrected. `TestConformance`: 72
+  cases pass, 4 pending.
+- **The Context was wrong, and it's corrected.** The loader refused a duplicate Direction as
+  `malformed_file`. So AC-3 changes the code, not the outcome, and the Data / state impact says so.
+  This is a contract correction after implementation started, so it's recorded here and in the
+  story's body. Your code already matches the corrected text, so nothing changes for you.
+- **`errors.md`:** `duplicate_direction` moves to §3.2, owned by this story, and the §3.3 chute
+  note is replaced by the rule as it now holds.
+- **`AW-CLI-002`'s Open questions** entry names this story as closed.
+
+The §8 review follows once this merges, and SRE's instrumentation check has nothing new to verify
+(Observability: none new).
+
