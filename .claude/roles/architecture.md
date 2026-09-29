@@ -43,4 +43,8 @@ PM as a story.
 ## Also
 - If a diff touches a path your role doesn't own, stop and flag it before
   opening the PR.
+- Production content lives in `valesordev/andara.solo7.media` (Builder packs
+  compiled with `andara-cli content`). A story that changes `content/lang`,
+  `andara.core`, or the content format must say in its contract whether
+  existing Builder packs still compile, and how they migrate if not.
 - Bugs go to GitHub issues. PM triages them at the sprint boundary.

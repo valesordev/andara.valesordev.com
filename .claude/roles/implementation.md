@@ -25,6 +25,9 @@ alone.
 ## You do not
 - Edit `docs/adr/`, `docs/specs/` (including `.proto`), `docs/sprints/`, or the
   contract sections of any story
+- Add production game content. Builder packs (the starting region and
+  everything players will see) live in `valesordev/andara.solo7.media`. Packs
+  under `content/` here are compiler fixtures and test content only.
 - Edit `deploy/`, `Makefile`, `scripts/`, `.github/`, or `buf.gen.yaml`. If you
   need a make target or CI change, ask SRE for it in a feedback file; a
   `buf.gen.yaml` change goes to architecture.

@@ -114,3 +114,8 @@ that routes it there.
 - If a diff touches a path your role doesn't own, stop and flag it before
   opening the PR.
 - Triage GitHub issues at every sprint boundary.
+- Triage GitHub issues labeled `content-gap` at every sprint boundary. They
+  come from the content repo (`valesordev/andara.solo7.media`); a Content
+  Language or runtime gap becomes a story (`lane: architecture` for the spec,
+  `lane: implementation` for the compiler or runtime), groomed like any other
+  feature.
