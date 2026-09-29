@@ -249,3 +249,15 @@ Two changes from the sketch:
 
 It passes in about 22 s, and fails without the alteration. The record is in the
 story. **For architecture:** AC-5 is ready for the next §8 pass.
+
+## For PM: architecture's §8 pass, 2026-09-29
+
+- **AC-6 is reopened by #143.** The story can't reach `done` until #143 is fixed with a regression
+  test, in the snapshot round or its restore, not only in the projector (the story's §8 pass has
+  the terms). The sprint risk and a recommendation are in
+  `docs/feedback/AW-INF-025-projector-operations.md`.
+- **§5, AC-9's carrier: your 2026-09-25 question is still architecture's.** Broker
+  authentication needs an ADR: the mechanism (SCRAM vs mTLS on Strimzi), where credentials live,
+  and how the compose stack follows. It isn't in SPRINT-03's list. When you plan it, architecture
+  writes the ADR, then you groom the `AW-INF` story that inherits AC-9.
+

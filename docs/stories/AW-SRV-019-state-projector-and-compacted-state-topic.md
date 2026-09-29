@@ -94,6 +94,9 @@ projection schema change is routine.
    literally. `--rebuild` does both, plus the dump and the broker round trips. The bound is on
    history: the rebuild starts from the latest complete round, and 24 h of history ahead of that
    round adds less to its run time than `snapshot load + tail replay`.
+   *(Reopened 2026-09-29, §8, architecture: #143 falsifies this criterion's property on a live
+   World. A rebuild from a round diverges at round tick + 1, and a from-zero replay of the same log
+   verifies. AC-6 fails until #143 is fixed.)*
 7. **Given** any record **when** it is inspected **then** `content_version` names the `packID@version`
    active when the aggregate was last written, so a runtime object traces to authored source.
 8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
@@ -508,3 +511,42 @@ message names the four records still there (three values and the tombstone).
 `make check` is clean, and so is the projector's integration suite. Nothing more on AC-5 is owed by
 implementation. The story stays `review` for the production digest line (#80), AC-9's carrier (PM), and
 whatever architecture rules on #143 (SRE's finding above).
+
+### §8 pass (2026-09-29, architecture): stays `review` on AC-6 (#143) and AC-9
+
+Against `main` at `c25a789`. SRE's instrumentation check (2026-09-28) is accepted: every series is
+emitting from the process's registry, and the scrape from a real Prometheus is carried by
+`AW-INF-025` as an inherited line. `AW-INF-025`'s Definition of done names it.
+
+**Now holds:**
+- **AC-5.** `TestRun_ATombstonedKeyIsCompactedAway` is on `main` (#147) and runs in `stack`'s
+  `make test-integration`. It passed in 14.3 s on run 36632695351, for #147's merge `0374624`. The
+  implementation record's mutation check and 3-of-3 runs stand. Nothing more is owed on AC-5.
+
+**Ruling: #143 reopens AC-6.** AC-6's property is that `--rebuild` from a round reaches a state
+equal to the incremental projector's. #143 shows that property failing on a 38-hour World: the
+first tick after the round, an idle one, hashes differently. A from-zero replay of the same log
+verifies, so apply is deterministic and the fault is in what a round captures or restores. The
+fixture test `TestRun_RebuildFromTheRoundEqualsIncremental` passes, because the fixture World
+doesn't hold the state that differs. So the 2026-09-27 acceptance of AC-6 is withdrawn, and AC-6 is
+marked above.
+
+AC-6 passes again when #143's fix lands with:
+- **a regression test that fails on the code before the fix,** by building the state the live
+  World had and the fixture lacks, taking a round, and verifying round tick + 1 onward. Mutation-
+  checked like AC-5;
+- **the fix in the round, or its restore, not in the projector.** The server's recovery
+  (`AW-SRV-006`) restores the same rounds. A projector-only fix would leave `AW-SRV-007` and M2's
+  "matching State Hash" gate exposed.
+
+`AW-INF-025` AC-4, as amended on 2026-09-29, is the in-cluster observation of the same fix.
+
+**Still owed; the story stays `review`:**
+1. **AC-6: #143** (implementation). With PM, as a risk to `AW-INF-025` and M2
+   (`docs/feedback/AW-INF-025-projector-operations.md`).
+2. **AC-9's carrier.** PM's 2026-09-25 question in the feedback file is architecture's and is
+   unanswered: no ADR decides broker authentication, so PM can't groom the story that inherits
+   AC-9. The write ACL in `deploy/kafka/topics.yaml` is declared and enforced nowhere. Architecture
+   owes that ADR.
+3. **The production digest line:** carried by `AW-INF-025`'s Definition of done, not owed here.
+   It no longer holds this story in `review` once 1 and 2 close.
