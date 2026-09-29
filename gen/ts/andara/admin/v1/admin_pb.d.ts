@@ -21,6 +21,7 @@ import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegen
 import type { Message } from "@bufbuild/protobuf";
 import type { AccountStatus, CredentialKind, RegistrationMode, Role } from "../../accounts/v1/account_pb";
 import type { PackVersion } from "../../state/v1/snapshot_pb";
+import type { ActiveVersion, BlobRef, ContentVersion, Diagnostic } from "../../content/v1/content_pb";
 
 /**
  * Describes the file andara/admin/v1/admin.proto.
@@ -437,6 +438,597 @@ export declare type GetServerInfoResponse = Message<"andara.admin.v1.GetServerIn
 export declare const GetServerInfoResponseSchema: GenMessage<GetServerInfoResponse>;
 
 /**
+ * @generated from message andara.admin.v1.SetBuilderPacksRequest
+ */
+export declare type SetBuilderPacksRequest = Message<"andara.admin.v1.SetBuilderPacksRequest"> & {
+  /**
+   * @generated from field: string account_id = 1;
+   */
+  accountId: string;
+
+  /**
+   * The whole new set. Empty clears it. Each is a pack id (Content Language
+   * semantics.md §1: LOWER_ID segments joined by dots); andara.core is
+   * refused.
+   *
+   * @generated from field: repeated string packs = 2;
+   */
+  packs: string[];
+
+  /**
+   * @generated from field: uint64 expected_record_version = 3;
+   */
+  expectedRecordVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetBuilderPacksRequest.
+ * Use `create(SetBuilderPacksRequestSchema)` to create a new message.
+ */
+export declare const SetBuilderPacksRequestSchema: GenMessage<SetBuilderPacksRequest>;
+
+/**
+ * @generated from message andara.admin.v1.SetBuilderPacksResponse
+ */
+export declare type SetBuilderPacksResponse = Message<"andara.admin.v1.SetBuilderPacksResponse"> & {
+  /**
+   * As stored: sorted, deduplicated.
+   *
+   * @generated from field: repeated string builder_packs = 1;
+   */
+  builderPacks: string[];
+
+  /**
+   * @generated from field: uint64 record_version = 2;
+   */
+  recordVersion: bigint;
+
+  /**
+   * False when the Account lacks BUILDER: the grant is stored and inert.
+   *
+   * @generated from field: bool builder_role = 3;
+   */
+  builderRole: boolean;
+};
+
+/**
+ * Describes the message andara.admin.v1.SetBuilderPacksResponse.
+ * Use `create(SetBuilderPacksResponseSchema)` to create a new message.
+ */
+export declare const SetBuilderPacksResponseSchema: GenMessage<SetBuilderPacksResponse>;
+
+/**
+ * @generated from message andara.admin.v1.HasBlobsRequest
+ */
+export declare type HasBlobsRequest = Message<"andara.admin.v1.HasBlobsRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * sha256 of each body. At most 10000 per call.
+   *
+   * @generated from field: repeated bytes hashes = 2;
+   */
+  hashes: Uint8Array[];
+};
+
+/**
+ * Describes the message andara.admin.v1.HasBlobsRequest.
+ * Use `create(HasBlobsRequestSchema)` to create a new message.
+ */
+export declare const HasBlobsRequestSchema: GenMessage<HasBlobsRequest>;
+
+/**
+ * @generated from message andara.admin.v1.HasBlobsResponse
+ */
+export declare type HasBlobsResponse = Message<"andara.admin.v1.HasBlobsResponse"> & {
+  /**
+   * present[i] answers hashes[i].
+   *
+   * @generated from field: repeated bool present = 1;
+   */
+  present: boolean[];
+};
+
+/**
+ * Describes the message andara.admin.v1.HasBlobsResponse.
+ * Use `create(HasBlobsResponseSchema)` to create a new message.
+ */
+export declare const HasBlobsResponseSchema: GenMessage<HasBlobsResponse>;
+
+/**
+ * @generated from message andara.admin.v1.PublishBlobRequest
+ */
+export declare type PublishBlobRequest = Message<"andara.admin.v1.PublishBlobRequest"> & {
+  /**
+   * @generated from oneof andara.admin.v1.PublishBlobRequest.chunk
+   */
+  chunk: {
+    /**
+     * The first chunk, and only the first.
+     *
+     * @generated from field: andara.admin.v1.PublishBlobHeader header = 1;
+     */
+    value: PublishBlobHeader;
+    case: "header";
+  } | {
+    /**
+     * @generated from field: bytes data = 2;
+     */
+    value: Uint8Array;
+    case: "data";
+  } | { case: undefined; value?: undefined };
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishBlobRequest.
+ * Use `create(PublishBlobRequestSchema)` to create a new message.
+ */
+export declare const PublishBlobRequestSchema: GenMessage<PublishBlobRequest>;
+
+/**
+ * @generated from message andara.admin.v1.PublishBlobHeader
+ */
+export declare type PublishBlobHeader = Message<"andara.admin.v1.PublishBlobHeader"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * Path within the pack (semantics.md: `<zone>.json`, `templates/…`,
+   * `src/….aw`). Diagnostic only: a blob is addressed by its hash.
+   *
+   * @generated from field: string path = 2;
+   */
+  path: string;
+
+  /**
+   * @generated from field: string media_type = 3;
+   */
+  mediaType: string;
+
+  /**
+   * Declared size. Over content.max_blob_bytes is RESOURCE_EXHAUSTED before
+   * any data chunk is read; a body longer than declared is refused the same
+   * way.
+   *
+   * @generated from field: uint64 size_bytes = 4;
+   */
+  sizeBytes: bigint;
+
+  /**
+   * sha256 of the body.
+   *
+   * @generated from field: bytes hash = 5;
+   */
+  hash: Uint8Array;
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishBlobHeader.
+ * Use `create(PublishBlobHeaderSchema)` to create a new message.
+ */
+export declare const PublishBlobHeaderSchema: GenMessage<PublishBlobHeader>;
+
+/**
+ * @generated from message andara.admin.v1.PublishBlobResponse
+ */
+export declare type PublishBlobResponse = Message<"andara.admin.v1.PublishBlobResponse"> & {
+  /**
+   * @generated from field: bytes hash = 1;
+   */
+  hash: Uint8Array;
+
+  /**
+   * True when the store already held it and nothing was produced.
+   *
+   * @generated from field: bool deduplicated = 2;
+   */
+  deduplicated: boolean;
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishBlobResponse.
+ * Use `create(PublishBlobResponseSchema)` to create a new message.
+ */
+export declare const PublishBlobResponseSchema: GenMessage<PublishBlobResponse>;
+
+/**
+ * @generated from message andara.admin.v1.PublishVersionRequest
+ */
+export declare type PublishVersionRequest = Message<"andara.admin.v1.PublishVersionRequest"> & {
+  /**
+   * Never andara.core.
+   *
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * Sorted by path; every hash must already be in the store.
+   *
+   * @generated from field: repeated andara.content.v1.BlobRef blobs = 2;
+   */
+  blobs: BlobRef[];
+
+  /**
+   * The newest version the publisher saw (0 for a pack's first). Any other
+   * newest version is FAILED_PRECONDITION, reason stale_parent.
+   *
+   * @generated from field: uint64 parent_version = 3;
+   */
+  parentVersion: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishVersionRequest.
+ * Use `create(PublishVersionRequestSchema)` to create a new message.
+ */
+export declare const PublishVersionRequestSchema: GenMessage<PublishVersionRequest>;
+
+/**
+ * @generated from message andara.admin.v1.PublishVersionResponse
+ */
+export declare type PublishVersionResponse = Message<"andara.admin.v1.PublishVersionResponse"> & {
+  /**
+   * Server-assigned, monotonic per pack.
+   *
+   * @generated from field: uint64 version = 1;
+   */
+  version: bigint;
+
+  /**
+   * The andara.core version the pack requires (`requires andara.core@N`),
+   * read from the compiled source, not trusted from the caller.
+   *
+   * @generated from field: uint64 core_version = 2;
+   */
+  coreVersion: bigint;
+
+  /**
+   * Warnings only (missing_reverse_exit, orphan_room). Errors refuse the
+   * publish and are in the status details.
+   *
+   * @generated from field: repeated andara.content.v1.Diagnostic warnings = 3;
+   */
+  warnings: Diagnostic[];
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishVersionResponse.
+ * Use `create(PublishVersionResponseSchema)` to create a new message.
+ */
+export declare const PublishVersionResponseSchema: GenMessage<PublishVersionResponse>;
+
+/**
+ * The status detail of a refused PublishVersion (INVALID_ARGUMENT).
+ *
+ * @generated from message andara.admin.v1.PublishFindings
+ */
+export declare type PublishFindings = Message<"andara.admin.v1.PublishFindings"> & {
+  /**
+   * @generated from field: repeated andara.content.v1.Diagnostic findings = 1;
+   */
+  findings: Diagnostic[];
+};
+
+/**
+ * Describes the message andara.admin.v1.PublishFindings.
+ * Use `create(PublishFindingsSchema)` to create a new message.
+ */
+export declare const PublishFindingsSchema: GenMessage<PublishFindings>;
+
+/**
+ * @generated from message andara.admin.v1.ApproveVersionRequest
+ */
+export declare type ApproveVersionRequest = Message<"andara.admin.v1.ApproveVersionRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.ApproveVersionRequest.
+ * Use `create(ApproveVersionRequestSchema)` to create a new message.
+ */
+export declare const ApproveVersionRequestSchema: GenMessage<ApproveVersionRequest>;
+
+/**
+ * @generated from message andara.admin.v1.ApproveVersionResponse
+ */
+export declare type ApproveVersionResponse = Message<"andara.admin.v1.ApproveVersionResponse"> & {
+  /**
+   * @generated from field: string approved_by = 1;
+   */
+  approvedBy: string;
+
+  /**
+   * @generated from field: int64 approved_at_unix_nano = 2;
+   */
+  approvedAtUnixNano: bigint;
+
+  /**
+   * The approver is the publisher, or the real actor behind the publisher's
+   * acting-as Session. Only an OPERATOR can do this, and only while
+   * content.operator_self_approval is true.
+   *
+   * @generated from field: bool self_approval = 3;
+   */
+  selfApproval: boolean;
+};
+
+/**
+ * Describes the message andara.admin.v1.ApproveVersionResponse.
+ * Use `create(ApproveVersionResponseSchema)` to create a new message.
+ */
+export declare const ApproveVersionResponseSchema: GenMessage<ApproveVersionResponse>;
+
+/**
+ * @generated from message andara.admin.v1.ActivateVersionRequest
+ */
+export declare type ActivateVersionRequest = Message<"andara.admin.v1.ActivateVersionRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+
+  /**
+   * OPERATOR only: activate an unapproved version. Requires reason.
+   *
+   * @generated from field: bool override = 3;
+   */
+  override: boolean;
+
+  /**
+   * @generated from field: string reason = 4;
+   */
+  reason: string;
+};
+
+/**
+ * Describes the message andara.admin.v1.ActivateVersionRequest.
+ * Use `create(ActivateVersionRequestSchema)` to create a new message.
+ */
+export declare const ActivateVersionRequestSchema: GenMessage<ActivateVersionRequest>;
+
+/**
+ * @generated from message andara.admin.v1.ActivateVersionResponse
+ */
+export declare type ActivateVersionResponse = Message<"andara.admin.v1.ActivateVersionResponse"> & {
+  /**
+   * The version the pointer left. 0 when the pack had none.
+   *
+   * @generated from field: uint64 previous_version = 1;
+   */
+  previousVersion: bigint;
+
+  /**
+   * True when version < previous_version.
+   *
+   * @generated from field: bool rollback = 2;
+   */
+  rollback: boolean;
+};
+
+/**
+ * Describes the message andara.admin.v1.ActivateVersionResponse.
+ * Use `create(ActivateVersionResponseSchema)` to create a new message.
+ */
+export declare const ActivateVersionResponseSchema: GenMessage<ActivateVersionResponse>;
+
+/**
+ * The status detail of an ActivateVersion refused because of what the version
+ * would do to the World in effect (FAILED_PRECONDITION). Not sent for a
+ * missing approval, which is reason `unapproved` in the ErrorInfo alone.
+ *
+ * @generated from message andara.admin.v1.ActivationRefusal
+ */
+export declare type ActivationRefusal = Message<"andara.admin.v1.ActivationRefusal"> & {
+  /**
+   * zone_removed, spawn_room_removed, or core_version (AW-SRV-012's codes).
+   *
+   * @generated from field: string reason = 1;
+   */
+  reason: string;
+
+  /**
+   * The Zone removed, the spawn Room dropped, or for core_version every pack
+   * that the move would strand, as `pack@version`.
+   *
+   * @generated from field: repeated string subjects = 2;
+   */
+  subjects: string[];
+};
+
+/**
+ * Describes the message andara.admin.v1.ActivationRefusal.
+ * Use `create(ActivationRefusalSchema)` to create a new message.
+ */
+export declare const ActivationRefusalSchema: GenMessage<ActivationRefusal>;
+
+/**
+ * @generated from message andara.admin.v1.ListVersionsRequest
+ */
+export declare type ListVersionsRequest = Message<"andara.admin.v1.ListVersionsRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * 0 means all. Newest first.
+   *
+   * @generated from field: uint32 limit = 2;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message andara.admin.v1.ListVersionsRequest.
+ * Use `create(ListVersionsRequestSchema)` to create a new message.
+ */
+export declare const ListVersionsRequestSchema: GenMessage<ListVersionsRequest>;
+
+/**
+ * @generated from message andara.admin.v1.ListVersionsResponse
+ */
+export declare type ListVersionsResponse = Message<"andara.admin.v1.ListVersionsResponse"> & {
+  /**
+   * Newest first.
+   *
+   * @generated from field: repeated andara.content.v1.ContentVersion versions = 1;
+   */
+  versions: ContentVersion[];
+
+  /**
+   * 0 when nothing is active.
+   *
+   * @generated from field: uint64 active_version = 2;
+   */
+  activeVersion: bigint;
+
+  /**
+   * Every pointer move for this pack, oldest first, so history can show
+   * active intervals.
+   *
+   * @generated from field: repeated andara.content.v1.ActiveVersion activations = 3;
+   */
+  activations: ActiveVersion[];
+};
+
+/**
+ * Describes the message andara.admin.v1.ListVersionsResponse.
+ * Use `create(ListVersionsResponseSchema)` to create a new message.
+ */
+export declare const ListVersionsResponseSchema: GenMessage<ListVersionsResponse>;
+
+/**
+ * @generated from message andara.admin.v1.GetVersionRequest
+ */
+export declare type GetVersionRequest = Message<"andara.admin.v1.GetVersionRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.GetVersionRequest.
+ * Use `create(GetVersionRequestSchema)` to create a new message.
+ */
+export declare const GetVersionRequestSchema: GenMessage<GetVersionRequest>;
+
+/**
+ * @generated from message andara.admin.v1.GetVersionResponse
+ */
+export declare type GetVersionResponse = Message<"andara.admin.v1.GetVersionResponse"> & {
+  /**
+   * @generated from field: andara.content.v1.ContentVersion version = 1;
+   */
+  version?: ContentVersion | undefined;
+};
+
+/**
+ * Describes the message andara.admin.v1.GetVersionResponse.
+ * Use `create(GetVersionResponseSchema)` to create a new message.
+ */
+export declare const GetVersionResponseSchema: GenMessage<GetVersionResponse>;
+
+/**
+ * @generated from message andara.admin.v1.GetBlobRequest
+ */
+export declare type GetBlobRequest = Message<"andara.admin.v1.GetBlobRequest"> & {
+  /**
+   * @generated from field: string pack_id = 1;
+   */
+  packId: string;
+
+  /**
+   * @generated from field: uint64 version = 2;
+   */
+  version: bigint;
+
+  /**
+   * @generated from field: bytes hash = 3;
+   */
+  hash: Uint8Array;
+};
+
+/**
+ * Describes the message andara.admin.v1.GetBlobRequest.
+ * Use `create(GetBlobRequestSchema)` to create a new message.
+ */
+export declare const GetBlobRequestSchema: GenMessage<GetBlobRequest>;
+
+/**
+ * @generated from message andara.admin.v1.GetBlobResponse
+ */
+export declare type GetBlobResponse = Message<"andara.admin.v1.GetBlobResponse"> & {
+  /**
+   * The body, in order. Chunks are at most 1 MiB.
+   *
+   * @generated from field: bytes data = 1;
+   */
+  data: Uint8Array;
+};
+
+/**
+ * Describes the message andara.admin.v1.GetBlobResponse.
+ * Use `create(GetBlobResponseSchema)` to create a new message.
+ */
+export declare const GetBlobResponseSchema: GenMessage<GetBlobResponse>;
+
+/**
+ * @generated from message andara.admin.v1.ReloadContentRequest
+ */
+export declare type ReloadContentRequest = Message<"andara.admin.v1.ReloadContentRequest"> & {
+};
+
+/**
+ * Describes the message andara.admin.v1.ReloadContentRequest.
+ * Use `create(ReloadContentRequestSchema)` to create a new message.
+ */
+export declare const ReloadContentRequestSchema: GenMessage<ReloadContentRequest>;
+
+/**
+ * @generated from message andara.admin.v1.ReloadContentResponse
+ */
+export declare type ReloadContentResponse = Message<"andara.admin.v1.ReloadContentResponse"> & {
+  /**
+   * What the reload found active, sorted by pack_id. The swap itself happens
+   * at a tick boundary; GetServerInfo.content shows when it has.
+   *
+   * @generated from field: repeated andara.state.v1.PackVersion active = 1;
+   */
+  active: PackVersion[];
+};
+
+/**
+ * Describes the message andara.admin.v1.ReloadContentResponse.
+ * Use `create(ReloadContentResponseSchema)` to create a new message.
+ */
+export declare const ReloadContentResponseSchema: GenMessage<ReloadContentResponse>;
+
+/**
  * @generated from service andara.admin.v1.Admin
  */
 export declare const Admin: GenService<{
@@ -539,6 +1131,115 @@ export declare const Admin: GenService<{
     methodKind: "unary";
     input: typeof CreateAgentAccountRequestSchema;
     output: typeof CreateAgentAccountResponseSchema;
+  },
+  /**
+   * Replace the Content Packs a Builder may publish to (AW-SRV-035). The whole
+   * set, not a delta, as SetRoles is. Roles and packs are independent: a grant
+   * on an Account without BUILDER is stored and inert.
+   *
+   * @generated from rpc andara.admin.v1.Admin.SetBuilderPacks
+   */
+  setBuilderPacks: {
+    methodKind: "unary";
+    input: typeof SetBuilderPacksRequestSchema;
+    output: typeof SetBuilderPacksResponseSchema;
+  },
+  /**
+   * Which of these blobs does the store already hold? Lets a publisher
+   * upload only what is missing. pack_id is required: it is what the call is
+   * authorized on, not a filter on the answer.
+   *
+   * @generated from rpc andara.admin.v1.Admin.HasBlobs
+   */
+  hasBlobs: {
+    methodKind: "unary";
+    input: typeof HasBlobsRequestSchema;
+    output: typeof HasBlobsResponseSchema;
+  },
+  /**
+   * One blob per stream: a header chunk, then data chunks. The server hashes
+   * what it receives and refuses a body whose hash differs from the header's.
+   * Publishing a blob the store holds is idempotent.
+   *
+   * @generated from rpc andara.admin.v1.Admin.PublishBlob
+   */
+  publishBlob: {
+    methodKind: "client_streaming";
+    input: typeof PublishBlobRequestSchema;
+    output: typeof PublishBlobResponseSchema;
+  },
+  /**
+   * Validate the blobs as one pack and write its version manifest. Findings
+   * that refuse the publish are INVALID_ARGUMENT, carried in the status
+   * details as PublishFindings. Warnings return in the response.
+   *
+   * @generated from rpc andara.admin.v1.Admin.PublishVersion
+   */
+  publishVersion: {
+    methodKind: "unary";
+    input: typeof PublishVersionRequestSchema;
+    output: typeof PublishVersionResponseSchema;
+  },
+  /**
+   * Record an approval on the manifest. Never moves the pointer.
+   *
+   * @generated from rpc andara.admin.v1.Admin.ApproveVersion
+   */
+  approveVersion: {
+    methodKind: "unary";
+    input: typeof ApproveVersionRequestSchema;
+    output: typeof ApproveVersionResponseSchema;
+  },
+  /**
+   * Move the Active Pointer, forward or back. Refuses, before the pointer
+   * moves, what the Loader would refuse after it (zone_removed,
+   * spawn_room_removed, core_version).
+   *
+   * @generated from rpc andara.admin.v1.Admin.ActivateVersion
+   */
+  activateVersion: {
+    methodKind: "unary";
+    input: typeof ActivateVersionRequestSchema;
+    output: typeof ActivateVersionResponseSchema;
+  },
+  /**
+   * @generated from rpc andara.admin.v1.Admin.ListVersions
+   */
+  listVersions: {
+    methodKind: "unary";
+    input: typeof ListVersionsRequestSchema;
+    output: typeof ListVersionsResponseSchema;
+  },
+  /**
+   * @generated from rpc andara.admin.v1.Admin.GetVersion
+   */
+  getVersion: {
+    methodKind: "unary";
+    input: typeof GetVersionRequestSchema;
+    output: typeof GetVersionResponseSchema;
+  },
+  /**
+   * One blob's body, streamed. Authorized on the pack and version named, and
+   * refused unless the hash is in that version's manifest, so a hash from
+   * another pack reads nothing. Serves content fetch, content diff, content
+   * validate --pack, and content decompile --pack (AW-CLI-006 feedback §7).
+   *
+   * @generated from rpc andara.admin.v1.Admin.GetBlob
+   */
+  getBlob: {
+    methodKind: "server_streaming";
+    input: typeof GetBlobRequestSchema;
+    output: typeof GetBlobResponseSchema;
+  },
+  /**
+   * Re-resolve the active versions without a pointer move. OPERATOR only.
+   *
+   * @generated from rpc andara.admin.v1.Admin.ReloadContent
+   */
+  reloadContent: {
+    methodKind: "unary";
+    input: typeof ReloadContentRequestSchema;
+    output: typeof ReloadContentResponseSchema;
   },
 }>;
 

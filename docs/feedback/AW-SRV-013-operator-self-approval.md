@@ -83,3 +83,36 @@ review. Only their Observability sections changed. The metric names are unchange
   - One span per blob stream, never per chunk.
   - `trace_id` in the logged confirmation line and in the `--output json` envelope, so a Builder's
     report joins the server's audit record on one ID.
+
+## Architecture's contract review (2026-09-28)
+
+The rule is adopted as PM read it, items 1–4, with the switch: `content.operator_self_approval`,
+default `true`. It's recorded in `AW-SRV-013` (AC-4 narrowed, AC-13 new), in `AW-CLI-003`, and as a
+dated note in ADR-0004. The same review adopted `AW-SRV-013-activation-refusals.md` item 1 (AC-14)
+and made the server publish `andara.core` at boot (AC-15–17, AC-19;
+`AW-INF-021-dev-content-store.md` item 1). PM can update `docs/roadmap.md`'s "two identities" wording.
+
+### For PM: split `AW-SRV-013`
+
+It was the size of the sprint before this review. It's now an `L`. Architecture recommends lifting
+the boot publish into its own story. The contract is already written as a separate section, so the
+split moves text and doesn't change it:
+- **`AW-SRV-013`** keeps the Admin RPCs, the two-person rule and self-approval, activation refusals,
+  and `GetBlob`: AC-1 to AC-14, and AC-18.
+- **New story, "the server publishes its `andara.core` at boot"**: AC-15 to AC-17, AC-19, the
+  *`andara.core` at boot* section, `content/core/VERSION` and `VERSIONS`, and the image-rollback
+  note. It depends on `AW-SRV-013`, since it writes through the same store adapter and audit path.
+  `AW-INF-021` depends on it, and `AW-CLI-002` needs its `VERSION` file. It's implementation lane,
+  size S–M.
+
+If PM would rather not split mid-sprint, `AW-SRV-013` stays `ready` as it is. The core section is
+self-contained, and implementation can deliver it as a second PR on the same story.
+
+### For SRE
+
+- The boot publish has a log line and a `content.core_boot` trace, and counts on
+  `pointer_moves_total`. There's no metric of its own. If SRE wants one, for example
+  `andara_content_core_boot_total{outcome}` with `published`, `present`, `held`, it can be added
+  under this heading before implementation starts.
+- The image-rollback order (pointer first, then image) needs a line in
+  `docs/runbooks/server-unavailable.md`. It's in `AW-SRV-013`'s Data/state impact.

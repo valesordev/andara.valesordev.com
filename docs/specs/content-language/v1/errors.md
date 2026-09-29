@@ -192,7 +192,7 @@ has no occasion to raise it.
 | `pack_missing` | no `pack` declaration in the pack | that one file must declare the pack |
 | `duplicate_pack` | more than one `pack` declaration | both files |
 | `pack_mismatch` | the declared pack is not the pack being compiled | both names |
-| `core_version_mismatch` | `requires andara.core@N` against a cache of another version, or none | both versions, and `content fetch-core` |
+| `core_version_mismatch` | `requires andara.core@N` when neither the embedded core nor the cache holds `N` | both versions, and that the `andara-cli` release embedding `andara.core@N` is the remedy (amended 2026-09-28) |
 | `template_head` | a Template declares both `kind` and `extends`, or neither | that a root states its kind and a subtype inherits it |
 | `extends_cycle` | `extends` forms a cycle | every Template in the cycle, in order |
 | `removed_by_subtype` | a `remove` form | the ancestor that defined it, the substitutability rule, and `enabled: false` |

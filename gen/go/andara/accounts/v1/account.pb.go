@@ -443,8 +443,13 @@ type Account struct {
 	// room_id are the Gateway's last knowledge of where the body is, and the
 	// sim's position is authoritative.
 	Characters []*CharacterRef `protobuf:"bytes,11,rep,name=characters,proto3" json:"characters,omitempty"`
+	// Content Packs this Account may publish to while it holds BUILDER
+	// (AW-SRV-013; set by Admin.SetBuilderPacks, AW-SRV-035). Sorted, no
+	// duplicates, never andara.core. Stored independently of roles, so revoking
+	// BUILDER keeps the grant.
+	BuilderPacks []string `protobuf:"bytes,12,rep,name=builder_packs,json=builderPacks,proto3" json:"builder_packs,omitempty"`
 	// AGENT with WORKLOAD_JWT: the `sub` the projected service-account token
-	// must carry. 12 is unused, not reserved — see zone.proto for why.
+	// must carry.
 	WorkloadSubject string `protobuf:"bytes,13,opt,name=workload_subject,json=workloadSubject,proto3" json:"workload_subject,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache
@@ -553,6 +558,13 @@ func (x *Account) GetRecordVersion() uint64 {
 func (x *Account) GetCharacters() []*CharacterRef {
 	if x != nil {
 		return x.Characters
+	}
+	return nil
+}
+
+func (x *Account) GetBuilderPacks() []string {
+	if x != nil {
+		return x.BuilderPacks
 	}
 	return nil
 }
@@ -1071,7 +1083,7 @@ const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	"\aaccount\x18\x01 \x01(\v2\x1b.andara.accounts.v1.AccountH\x00R\aaccount\x128\n" +
 	"\x06config\x18\x02 \x01(\v2\x1e.andara.accounts.v1.AuthConfigH\x00R\x06config\x12P\n" +
 	"\x10name_reservation\x18\x03 \x01(\v2#.andara.accounts.v1.NameReservationH\x00R\x0fnameReservationB\b\n" +
-	"\x06record\"\xcf\x04\n" +
+	"\x06record\"\xf4\x04\n" +
 	"\aAccount\x12\x1d\n" +
 	"\n" +
 	"account_id\x18\x01 \x01(\tR\taccountId\x12\x1a\n" +
@@ -1089,7 +1101,8 @@ const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	" \x01(\x04R\rrecordVersion\x12@\n" +
 	"\n" +
 	"characters\x18\v \x03(\v2 .andara.accounts.v1.CharacterRefR\n" +
-	"characters\x12)\n" +
+	"characters\x12#\n" +
+	"\rbuilder_packs\x18\f \x03(\tR\fbuilderPacks\x12)\n" +
 	"\x10workload_subject\x18\r \x01(\tR\x0fworkloadSubject\"\xd7\x01\n" +
 	"\fCharacterRef\x12!\n" +
 	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x12\n" +

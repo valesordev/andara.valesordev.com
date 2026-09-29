@@ -59,9 +59,26 @@ type AuditRecord struct {
 	TsUnixNano int64  `protobuf:"varint,8,opt,name=ts_unix_nano,json=tsUnixNano,proto3" json:"ts_unix_nano,omitempty"`
 	// Free text for the operator reading the record, with the same
 	// prohibition as every other field: no secret, no token, no hash.
-	Detail        string `protobuf:"bytes,9,opt,name=detail,proto3" json:"detail,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
+	Detail string `protobuf:"bytes,9,opt,name=detail,proto3" json:"detail,omitempty"`
+	// Content publishing (AW-SRV-013). action is publish, approve, activate,
+	// rollback, reject, or override; target is `pack@version`.
+	PackId  string `protobuf:"bytes,20,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
+	Version uint64 `protobuf:"varint,21,opt,name=version,proto3" json:"version,omitempty"`
+	// sha256 of the sorted list of the version's blob hashes.
+	BlobHashesSha256 []byte `protobuf:"bytes,22,opt,name=blob_hashes_sha256,json=blobHashesSha256,proto3" json:"blob_hashes_sha256,omitempty"`
+	Override         bool   `protobuf:"varint,23,opt,name=override,proto3" json:"override,omitempty"`
+	// Required with override. For andara.core published or activated at boot,
+	// `boot <build version>`, and actor_account_id is `server`.
+	Reason        string `protobuf:"bytes,24,opt,name=reason,proto3" json:"reason,omitempty"`
+	FindingsCount uint32 `protobuf:"varint,25,opt,name=findings_count,json=findingsCount,proto3" json:"findings_count,omitempty"`
+	// The approver is the publisher, or the real actor behind the publisher's
+	// acting-as Session (ADR-0004, amended 2026-09-26).
+	SelfApproval bool `protobuf:"varint,26,opt,name=self_approval,json=selfApproval,proto3" json:"self_approval,omitempty"`
+	// SetBuilderPacks (AW-SRV-035): the Account's pack set before and after.
+	BuilderPacksBefore []string `protobuf:"bytes,27,rep,name=builder_packs_before,json=builderPacksBefore,proto3" json:"builder_packs_before,omitempty"`
+	BuilderPacksAfter  []string `protobuf:"bytes,28,rep,name=builder_packs_after,json=builderPacksAfter,proto3" json:"builder_packs_after,omitempty"`
+	unknownFields      protoimpl.UnknownFields
+	sizeCache          protoimpl.SizeCache
 }
 
 func (x *AuditRecord) Reset() {
@@ -157,11 +174,74 @@ func (x *AuditRecord) GetDetail() string {
 	return ""
 }
 
+func (x *AuditRecord) GetPackId() string {
+	if x != nil {
+		return x.PackId
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetVersion() uint64 {
+	if x != nil {
+		return x.Version
+	}
+	return 0
+}
+
+func (x *AuditRecord) GetBlobHashesSha256() []byte {
+	if x != nil {
+		return x.BlobHashesSha256
+	}
+	return nil
+}
+
+func (x *AuditRecord) GetOverride() bool {
+	if x != nil {
+		return x.Override
+	}
+	return false
+}
+
+func (x *AuditRecord) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *AuditRecord) GetFindingsCount() uint32 {
+	if x != nil {
+		return x.FindingsCount
+	}
+	return 0
+}
+
+func (x *AuditRecord) GetSelfApproval() bool {
+	if x != nil {
+		return x.SelfApproval
+	}
+	return false
+}
+
+func (x *AuditRecord) GetBuilderPacksBefore() []string {
+	if x != nil {
+		return x.BuilderPacksBefore
+	}
+	return nil
+}
+
+func (x *AuditRecord) GetBuilderPacksAfter() []string {
+	if x != nil {
+		return x.BuilderPacksAfter
+	}
+	return nil
+}
+
 var File_andara_audit_v1_audit_proto protoreflect.FileDescriptor
 
 const file_andara_audit_v1_audit_proto_rawDesc = "" +
 	"\n" +
-	"\x1bandara/audit/v1/audit.proto\x12\x0fandara.audit.v1\"\xa6\x02\n" +
+	"\x1bandara/audit/v1/audit.proto\x12\x0fandara.audit.v1\"\xe9\x04\n" +
 	"\vAuditRecord\x12(\n" +
 	"\x10actor_account_id\x18\x01 \x01(\tR\x0eactorAccountId\x12/\n" +
 	"\x14acting_as_account_id\x18\x02 \x01(\tR\x11actingAsAccountId\x12\x16\n" +
@@ -173,7 +253,16 @@ const file_andara_audit_v1_audit_proto_rawDesc = "" +
 	"\btrace_id\x18\a \x01(\tR\atraceId\x12 \n" +
 	"\fts_unix_nano\x18\b \x01(\x03R\n" +
 	"tsUnixNano\x12\x16\n" +
-	"\x06detail\x18\t \x01(\tR\x06detailB\xbc\x01\n" +
+	"\x06detail\x18\t \x01(\tR\x06detail\x12\x17\n" +
+	"\apack_id\x18\x14 \x01(\tR\x06packId\x12\x18\n" +
+	"\aversion\x18\x15 \x01(\x04R\aversion\x12,\n" +
+	"\x12blob_hashes_sha256\x18\x16 \x01(\fR\x10blobHashesSha256\x12\x1a\n" +
+	"\boverride\x18\x17 \x01(\bR\boverride\x12\x16\n" +
+	"\x06reason\x18\x18 \x01(\tR\x06reason\x12%\n" +
+	"\x0efindings_count\x18\x19 \x01(\rR\rfindingsCount\x12#\n" +
+	"\rself_approval\x18\x1a \x01(\bR\fselfApproval\x120\n" +
+	"\x14builder_packs_before\x18\x1b \x03(\tR\x12builderPacksBefore\x12.\n" +
+	"\x13builder_packs_after\x18\x1c \x03(\tR\x11builderPacksAfterB\xbc\x01\n" +
 	"\x13com.andara.audit.v1B\n" +
 	"AuditProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/audit/v1;auditv1\xa2\x02\x03AAX\xaa\x02\x0fAndara.Audit.V1\xca\x02\x0fAndara\\Audit\\V1\xe2\x02\x1bAndara\\Audit\\V1\\GPBMetadata\xea\x02\x11Andara::Audit::V1b\x06proto3"
 

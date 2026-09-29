@@ -4,9 +4,9 @@ title: A move describes the destination Room to the mover
 epic: EPIC-03
 component: server
 type: feature
-status: draft
+status: ready
 size: S
-depends_on: [AW-SRV-003]
+depends_on: [AW-SRV-003, AW-SRV-036]
 blocks: []
 lane: implementation
 risk: low
@@ -35,15 +35,16 @@ step.
 ## Scope
 
 ### In scope
-- An in-Zone `move`: the apply emits `RoomDescribed` for the destination Room to the mover, after
-  its `CharacterArrived`.
+- An in-Zone `move`: the apply emits `RoomDescribed` for the destination Room to the mover only
+  (`ScopeEntities`), after its `CharacterArrived`, with the fields `look` produces.
 - A cross-Zone `move`: the target Zone's `Arrive` apply emits it, so the description reads the
-  target Zone's content.
+  target Zone's content. **`AW-SRV-036` builds this**, since every `Arrive` describes the Room it
+  lands in. This story asserts it for `move` and changes no `Arrive` code.
 - Bystanders' Events are unchanged: they read `leaves` and `arrives`, not the description.
 - Golden recordings, and any test that counts the mover's Events, updated in the same PR.
-- `scripts/stack_play.sh` is architecture's. Its assertions search forward through the transcript,
-  so an extra description should still pass (AC-6). If it doesn't, the contract review names the
-  script change and who lands it.
+- `scripts/stack_play.sh` is SRE's (CLAUDE.md §2), not architecture's. Its walk assertion
+  searches forward through the transcript, so the extra description passes with no script change
+  (AC-6). Its comment "A move describes no Room" goes stale, and SRE updates it.
 
 ### Out of scope
 - An arrival that isn't a move: a bind, a reconnect, or a relocation. A bind already describes the
@@ -64,8 +65,14 @@ step.
    `RoomDescribed`, as before.
 5. **Given** a replay of the same log **when** it runs **then** the Events and the State Hash are
    identical (§4 determinism). The description is an Event, not state.
-6. **Given** `make stack-play` **when** it runs **then** it passes, and its transcript shows
-   `Town Hall` straight after `<name> arrives from the south.`, with no `look` between them.
+6. **Given** `make stack-play` **when** it runs, with `scripts/stack_play.sh` unchanged, **then**
+   it passes. Its walk still finds `Market Plaza`, then `<name> leaves north.`, then `Town Hall`,
+   in that order. The order within the move (no `look` between the arrival and the description)
+   is AC-1's, asserted on the Event stream, not on the rendered transcript.
+7. **Given** a cross-Zone `move` whose target Room a Content Swap removed before the `Arrive`
+   applies **when** it lands at the fallback Room **then** the mover reads `EntityRelocated` and
+   then the fallback Room's `RoomDescribed`. That's `AW-SRV-036` AC-10's rule, asserted here for
+   `move`.
 
 ## Interface contract
 
@@ -100,6 +107,26 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` The description follows `CharacterArrived` on the same Tick, rather than
-  replacing the mover's own `arrives from` line. Whether the mover still reads their own arrival is
-  a rendering detail architecture may settle at contract review.
+- **Settled at contract review (2026-09-28):** the description follows `CharacterArrived` on the
+  same Tick. It doesn't replace it. The mover's stream keeps every Event it has today, so the wire
+  only gains. What `andara-cli play` prints for the mover's own arrival is unchanged by this story.
+
+## Contract review (architecture, 2026-09-28)
+
+SRE's observability review is in `docs/feedback/AW-SRV-038-move-describes-room.md`. The story is
+`ready`.
+
+1. **No protocol change is confirmed.** `RoomDescribed` (`event.proto`) already carries what a
+   `look` shows, and the new emission is addressed to the actor only, as `look`'s is. It's an
+   Event, not a new message or a new field.
+2. **The cross-Zone half moves to `AW-SRV-036`.** A cross-Zone `goto` needs the `Arrive` apply to
+   describe the Room, and an `Arrive` can't tell which verb produced it. So one change serves
+   both, and it lands with the earlier story in the sprint. This story now depends on
+   `AW-SRV-036`, and keeps AC-2 as a `move` assertion.
+3. **`scripts/stack_play.sh` is SRE's**, not architecture's. It passes unchanged: its assertion
+   searches forward. AC-6 no longer claims an ordering the script doesn't check. AC-1 asserts that
+   ordering on the Event stream.
+4. **AC-7 adds the fallback landing**, since that's a way a mover arrives that the draft didn't
+   cover.
+5. **The mover's own `CharacterArrived` stays.** Dropping it would take an Event off the wire,
+   which changes the protocol for no gain. A client can choose what to print.

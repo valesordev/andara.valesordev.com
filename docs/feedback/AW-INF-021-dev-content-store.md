@@ -179,6 +179,112 @@ the one PM names. For SRE, (b) adds:
   check that the bundled core equals `dev`'s active core, run where `dev` is reachable (Brian's
   machine, or a later self-hosted runner). It isn't run in CI.
 
+## Architecture's decisions (2026-09-28, SPRINT-03 contract review)
+
+Each is recorded in the stories it changes. SRE's answers above shaped items 1, 2 and 4.
+
+### 1. Core carrier: (b), the server at boot, with the version taken from the build
+
+SRE's table settles it against (a) and (c). (a) can't do a first install. Its old-binary-validates-
+new-core skew blocks rolls, and its rollback is refused by the activation rule. (c) is a hand
+sequence by construction. ADR-0010 §8 already says "the server publishes `andara.core`". What
+changes is that the deploy step is the new image's boot, not a step outside the pod.
+
+The piece (b) was missing: **core's version number comes from the build, not the store.** With
+store-assigned numbers, `dev`'s `andara.core@3` and `prod`'s could be different bytes. A Builder
+pack's `requires andara.core@N` would then mean a different core in each environment, and nothing
+offline could check it (item 4). So:
+- `content/core/VERSION` holds one integer, and both `andara-server` and `andara-cli` embed it with
+  the compiled core.
+- `content/core/VERSIONS` is an append-only list of `<N> <sha256>`, one line per core ever shipped.
+  A `make check` test fails if the embedded core's digest isn't the line for `VERSION`. Changing
+  core without a new number can't merge.
+
+The boot rules, in `AW-SRV-013` (new AC-13 to AC-16):
+1. The store holds `andara.core@N` with the same digest: publish nothing.
+2. The store holds `andara.core@N` with a **different** digest: exit `1`, naming both digests. The
+   server never overwrites a published version.
+3. The store lacks `@N`: publish it. The author is the reserved principal `server`, which isn't an
+   Account and can't authenticate. The reason is `boot <build version>`.
+4. Activate `@N` only if nothing is active, or the active version is lower **and** its pointer was
+   last moved by `server`. If an Operator moved core's pointer, the server never overrides them. It
+   logs that at `warn`, and an Operator moves it forward with `content activate andara.core N`.
+   This also covers a boot that crashed between its publish and its activation.
+5. Readiness waits for the core swap, as it waits for any content load.
+
+That meets SRE's five conditions: idempotent on the digest, never backwards on its own, audited
+with the build as the reason, gated readiness, and a boot line naming the version and what it did.
+**No RPC publishes core** (`PublishVersion` on `andara.core` is `PERMISSION_DENIED` for everyone).
+An Operator can only move its pointer, with no approval. That replaces `AW-SRV-013` AC-11's
+"operator publishes core".
+
+**An image rollback across a core bump:** the older binary finds a newer core active and leaves it
+(rule 4). If it can load it, it runs. If it can't, it exits `1` with nothing loadable. So the
+order is pointer first, then image: `content rollback andara.core` while the newer binary still
+serves, then roll the image. If the image goes first, roll forward, move the pointer, and roll back
+again. SRE, please put this order in `server-unavailable.md` (a request for SRE, in `AW-SRV-013`'s
+Data/state impact).
+
+`AW-INF-007`'s `make deploy` core step is superseded, since the boot does it for `prod` too. PM,
+please carry that into the `AW-INF-007` split at SPRINT-04.
+
+### 2. `dev`'s log: fresh topics with `make world-reset`, which also resets Accounts
+
+SRE's target stands, with one change to what survives. **The Account store is reset too**, and
+the content topics and `andara.audit.v1` are kept:
+- The Character roster lives in the Account store (`AW-SRV-014`: roster records under
+  `AW-SRV-008`'s lock). Keeping it across a log reset would leave every roster entry pointing at a
+  body that no longer exists. Each dead entry would hold one of the five roster slots, and nothing
+  can delete it except a direct store write, which CLAUDE.md §10 rules out.
+- The bootstrap operator comes back by itself: `auth.bootstrap_operator` is applied while no
+  operator exists. A Builder Account and its grants come back with two product commands
+  (`account create`, `account set-packs`), and the guide says so.
+- The audit topic is history and stays. The content topics stay, so every pack's pointer and
+  history survive the reset.
+- The projector's store is emptied along with the snapshot PVC, since it projects the recreated
+  state topic. SRE owns which volumes that is (`AW-INF-025`).
+
+The final line becomes `world-reset: andara-dev reset; content kept, accounts and characters gone`.
+The target is SRE's, in `AW-INF-021`. The rollback to `dir` is as SRE wrote: revert the values and
+reset again, acceptable on `dev` before M2 only.
+
+### 3. Fixture source: its own copy under `content/`, held equal to the test content
+
+A conformance case specifies the language. If it were also `dev`'s live content, every corpus edit
+would change a running environment, and `dev`'s needs (Purgatory now, more later) would bend the
+spec's test vectors. The fixture's Content Language source lives at `content/fixtures/town/`: the
+corpus `town` case's `.aw` files, plus `purgatory.aw`. A `make check` test compiles it and holds
+the Zone Definitions byte-equal to `testdata/content/valid/*.json`, the same pattern as
+`TestCoreSeedMatchesFixture`. `content/` is implementation's (CLAUDE.md §2), so `AW-SRV-037` writes
+it along with Purgatory's JSON. `make content-seed` publishes from that path.
+
+### 4. The Content Repository's CI: (b), with core embedded in `andara-cli`
+
+SRE's reachability finding rules out (a). Item 1 makes (b) cheap. `andara-cli` embeds the same
+compiled core as the server, numbered by the same `VERSION`, so no archive entry or cache install
+step is needed. `content validate` checks a pack's `requires andara.core@N` against the embedded
+core. A mismatch is `core_version_mismatch` naming both numbers, and the remedy it prints is the
+`andara-cli` release carrying the required core. `andara-cli version` prints
+`andara.core@<N>`.
+
+This also settles `content fetch-core`. `AW-CLI-006` built `fetch-core --from <dir>`, which stays
+for a core that isn't embedded. Fetching core from a server over `Admin` is dropped. `AW-CLI-002`'s
+lookup order is: the embedded core, then the cache, then `core_version_mismatch`. `AW-CLI-002`,
+`errors.md` and `semantics.md` are amended to match. *(Corrected 2026-09-28: the first version of
+this note said no story defines `fetch-core`.)*
+
+`AW-INF-022` AC-6 becomes SRE's replacement: a check that the bundled core equals `dev`'s active
+core, run where `dev` is reachable, and not in CI.
+
+### 5. The Builder's Guide lives in `docs/builders/`, architecture's path
+
+It's public, it sits next to the specs it links to, and this repository's `make check` can hold it
+to `andara-cli`. **Brian:** two edits only you can make. Add `docs/builders/` to the architecture
+row of CLAUDE.md §2, and to the architecture charter's writable paths upstream in
+automate.bashburn.com. Neither is needed until `AW-INF-023` starts, which is the last item on
+architecture's list. SRE's tailnet finding goes into `AW-INF-023`: section 2, *Getting access*,
+covers joining the tailnet, and AC-3's reader is Brian until `dev` has a public edge.
+
 ## For architecture: SRE observability review, 2026-09-28
 
 The CLAUDE.md §7 review of the four stories this file covers. Only Observability sections changed.

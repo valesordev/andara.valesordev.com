@@ -9,9 +9,10 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | Status | Count |
 |--------|-------|
+| `blocked` | 1 |
 | `review` | 4 |
-| `ready` | 24 |
-| `draft` | 12 |
+| `ready` | 34 |
+| `draft` | 1 |
 | `done` | 33 |
 | **total** | **73** |
 
@@ -19,12 +20,19 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 
 | ID | Status | Title | Blocked by / awaiting |
 |----|--------|-------|------------------------|
+| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `blocked` | The Builder's Guide — from no access to a live Zone on dev | see story header |
 | [`AW-INF-008`](docs/stories/AW-INF-008-cluster-observability-wiring.md) | `review` | Cluster observability wiring — the chart's metrics, logs, and traces reach Grafana Cloud | review by brian |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster | review by brian |
 | [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `review` | The story tooling knows the SRE lane | review by brian |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic | review by brian |
 
 ## By status
+
+### `blocked` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
 
 ### `review` (4)
 
@@ -35,11 +43,11 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `EPIC-01` | infra | S | low | sre | The story tooling knows the SRE lane | `AW-INF-001` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (24)
+### `ready` (34)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
-| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001`, `AW-SRV-034` |
+| [`AW-CLI-002`](docs/stories/AW-CLI-002-content-validate-and-inspect.md) | `EPIC-05` | cli | S | low | implementation | andara-cli content validate and inspect | `AW-CLI-001`, `AW-CLI-006`, `AW-SRV-001`, `AW-SRV-034`, `AW-SRV-013` |
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `EPIC-05` | cli | M | medium | implementation | andara-cli content publish, approve, activate, rollback, history, diff, and fetch | `AW-CLI-001`, `AW-CLI-002`, `AW-CLI-006`, `AW-SRV-013`, `AW-SRV-021` |
 | [`AW-INF-005`](docs/stories/AW-INF-005-kafka-operational-contract-and-availability-slo.md) | `EPIC-10` | infra | M | high | architecture | Kafka operational contract, degradation mode, and availability SLO | `AW-INF-004`, `AW-SRV-010` |
 | [`AW-INF-007`](docs/stories/AW-INF-007-deploy-lifecycle-snapshot-and-recovery.md) | `EPIC-01` | infra | M | high | architecture | Deploy lifecycle — pre-stop snapshot, post-start recovery, and rollback | `AW-INF-003`, `AW-SRV-007`, `AW-SRV-030`, `AW-INF-013`, `AW-INF-014` |
@@ -47,6 +55,12 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-010`](docs/stories/AW-INF-010-local-stack-server-dependent-criteria.md) | `EPIC-01` | infra | S | low | sre | Local stack — the criteria that needed a server | `AW-INF-002`, `AW-CLI-002`, `AW-SRV-002`, `AW-SRV-010`, `AW-SRV-024` |
 | [`AW-INF-011`](docs/stories/AW-INF-011-workload-topology-server-dependent-criteria.md) | `EPIC-01` | infra | S | medium | sre | Workload topology — probes and sizing against the real tick loop and recovery | `AW-INF-003`, `AW-SRV-002`, `AW-SRV-007` |
 | [`AW-INF-012`](docs/stories/AW-INF-012-ingress-forwards-the-client-address-to-the-gateway.md) | `EPIC-01` | infra | S | medium | sre | Ingress forwards the client address to the Gateway | `AW-INF-006`, `AW-SRV-025` |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | sre | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
+| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `EPIC-05` | infra | M | medium | sre | dev serves its content from the content store | `AW-SRV-013`, `AW-SRV-035`, `AW-CLI-003`, `AW-INF-019`, `AW-SRV-037` |
+| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `EPIC-05` | infra | S | low | sre | The content repository — where Builders keep their source | `AW-CLI-002`, `AW-INF-020`, `AW-INF-021` |
+| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | sre | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
+| [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `EPIC-10` | infra | M | medium | sre | Operating the state projector — stop, rebuild, start, and its volumes | `AW-SRV-019`, `AW-INF-018` |
+| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | sre | Generated views stop being committed | `AW-INF-001`, `AW-INF-027` |
 | [`AW-SRV-007`](docs/stories/AW-SRV-007-recovery-and-replay.md) | `EPIC-04` | server | M | high | implementation | Recovery from snapshot and log tail, verified in CI | `AW-SRV-006`, `AW-SRV-026`, `AW-SRV-028`, `AW-SRV-015` |
 | [`AW-SRV-009`](docs/stories/AW-SRV-009-behavior-agent-protocol-and-identity.md) | `EPIC-09` | server | M | high | implementation | Behavior agent protocol, identity, and runtime boundary | `AW-SRV-008`, `AW-SRV-011`, `AW-SRV-013`, `AW-SRV-022` |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `EPIC-05` | server | M | high | implementation | Content publish path — server-side validation, versioning, approval, and audit | `AW-SRV-008`, `AW-SRV-012` |
@@ -63,23 +77,16 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
+| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `EPIC-06` | server | S | low | implementation | An Operator grants a Builder their packs | `AW-SRV-013` |
+| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
+| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
+| [`AW-SRV-038`](docs/stories/AW-SRV-038-a-move-describes-the-destination-room-to-the-mover.md) | `EPIC-03` | server | S | low | implementation | A move describes the destination Room to the mover | `AW-SRV-003`, `AW-SRV-036` |
 
-### `draft` (12)
+### `draft` (1)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `EPIC-10` | infra | S | low | sre | A schema registry on the box for dev and prod | `AW-INF-014` |
-| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `EPIC-06` | infra | S | low | sre | Builders download andara-cli without a Go toolchain | `AW-INF-013` |
-| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `EPIC-05` | infra | M | medium | sre | dev serves its content from the content store | `AW-SRV-013`, `AW-SRV-035`, `AW-CLI-003`, `AW-INF-019` |
-| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `EPIC-05` | infra | S | low | sre | The content repository — where Builders keep their source | `AW-CLI-002`, `AW-INF-020`, `AW-INF-021` |
-| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `EPIC-06` | infra | M | low | architecture | The Builder's Guide — from no access to a live Zone on dev | `AW-CLI-003`, `AW-SRV-035`, `AW-SRV-036`, `AW-INF-020`, `AW-INF-021`, `AW-INF-022`, `AW-INF-024` |
-| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `EPIC-01` | infra | S | low | sre | Every environment spawns new Characters in Purgatory | `AW-SRV-037` |
-| [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `EPIC-10` | infra | M | medium | sre | Operating the state projector — stop, rebuild, start, and its volumes | `AW-SRV-019`, `AW-INF-018` |
-| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `EPIC-01` | infra | S | low | sre | Generated views stop being committed | `AW-INF-001`, `AW-INF-027` |
-| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `EPIC-06` | server | S | low | implementation | An Operator grants a Builder their packs | `AW-SRV-013` |
-| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
-| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
-| [`AW-SRV-038`](docs/stories/AW-SRV-038-a-move-describes-the-destination-room-to-the-mover.md) | `EPIC-03` | server | S | low | implementation | A move describes the destination Room to the mover | `AW-SRV-003` |
 
 ### `done` (33)
 
@@ -138,8 +145,8 @@ Milestone `M0-M2` · status `in-progress` · ADR gates: none · constrained by: 
 | [`AW-INF-013`](docs/stories/AW-INF-013-publish-the-server-image-to-ghcr-on-merge-to-main.md) | `done` | Publish the server image to ghcr on merge to main |
 | [`AW-INF-016`](docs/stories/AW-INF-016-make-up-builds-the-server-image-from-the-tree-it-runs-in.md) | `done` | make up builds the server image from the tree it runs in |
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `review` | Argo CD deploys dev from main on the box's kind cluster |
-| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `draft` | Every environment spawns new Characters in Purgatory |
-| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `draft` | Generated views stop being committed |
+| [`AW-INF-024`](docs/stories/AW-INF-024-every-environment-spawns-new-characters-in-purgatory.md) | `ready` | Every environment spawns new Characters in Purgatory |
+| [`AW-INF-026`](docs/stories/AW-INF-026-generated-views-stop-being-committed.md) | `ready` | Generated views stop being committed |
 | [`AW-INF-027`](docs/stories/AW-INF-027-the-story-tooling-knows-the-sre-lane.md) | `review` | The story tooling knows the SRE lane |
 
 ### `EPIC-02` — World model and simulation core
@@ -157,7 +164,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
 | [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `ready` | Loader and compiler agree on orphan_room and duplicate_direction |
-| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `draft` | Purgatory — the spawn Zone in the test content |
+| [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `ready` | Purgatory — the spawn Zone in the test content |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway
 
@@ -175,8 +182,8 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-SRV-023`](docs/stories/AW-SRV-023-gateway-tls-hot-reload.md) | `ready` | Gateway TLS hot-reload — serve a renewed certificate without a restart |
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `ready` | Gateway read path from the Event topic — routing and perception for Zones another process owns |
 | [`AW-SRV-031`](docs/stories/AW-SRV-031-submit-idempotency-by-client-ref.md) | `done` | Submit idempotency — a client retry after an ambiguous outcome is the same Command |
-| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `draft` | goto — a Builder jumps to any Room |
-| [`AW-SRV-038`](docs/stories/AW-SRV-038-a-move-describes-the-destination-room-to-the-mover.md) | `draft` | A move describes the destination Room to the mover |
+| [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `ready` | goto — a Builder jumps to any Room |
+| [`AW-SRV-038`](docs/stories/AW-SRV-038-a-move-describes-the-destination-room-to-the-mover.md) | `ready` | A move describes the destination Room to the mover |
 
 ### `EPIC-04` — Snapshots and recovery
 
@@ -198,8 +205,8 @@ Milestone `M3` · status `ready` · ADR gates: none · constrained by: `ADR-0004
 | [`AW-CLI-003`](docs/stories/AW-CLI-003-content-publish-and-rollback.md) | `ready` | andara-cli content publish, approve, activate, rollback, history, diff, and fetch |
 | [`AW-CLI-005`](docs/stories/AW-CLI-005-content-language-specification.md) | `done` | Content Language v1 — grammar, semantics, error contract, and conformance corpus |
 | [`AW-CLI-006`](docs/stories/AW-CLI-006-content-language-compiler-formatter-and-decompiler.md) | `done` | Content Language compiler, formatter, and decompiler |
-| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `draft` | dev serves its content from the content store |
-| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `draft` | The content repository — where Builders keep their source |
+| [`AW-INF-021`](docs/stories/AW-INF-021-dev-serves-its-content-from-the-content-store.md) | `ready` | dev serves its content from the content store |
+| [`AW-INF-022`](docs/stories/AW-INF-022-the-content-repository-where-builders-keep-their-source.md) | `ready` | The content repository — where Builders keep their source |
 | [`AW-SRV-012`](docs/stories/AW-SRV-012-content-resolution-and-reload.md) | `done` | Content resolution from the store and reload at a tick boundary |
 | [`AW-SRV-013`](docs/stories/AW-SRV-013-content-publish-validation-and-audit.md) | `ready` | Content publish path — server-side validation, versioning, approval, and audit |
 
@@ -210,9 +217,9 @@ Milestone `M1-M3` · status `in-progress` · ADR gates: none · constrained by: 
 | ID | Status | Title |
 |----|--------|-------|
 | [`AW-CLI-001`](docs/stories/AW-CLI-001-cli-skeleton-config-and-output.md) | `done` | andara-cli skeleton — command tree, configuration precedence, and output contract |
-| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `draft` | Builders download andara-cli without a Go toolchain |
-| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `draft` | The Builder's Guide — from no access to a live Zone on dev |
-| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `draft` | An Operator grants a Builder their packs |
+| [`AW-INF-020`](docs/stories/AW-INF-020-builders-download-andara-cli-without-a-go-toolchain.md) | `ready` | Builders download andara-cli without a Go toolchain |
+| [`AW-INF-023`](docs/stories/AW-INF-023-the-builder-s-guide.md) | `blocked` | The Builder's Guide — from no access to a live Zone on dev |
+| [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `ready` | An Operator grants a Builder their packs |
 
 ### `EPIC-07` — Observability, SLOs, and runbooks
 
@@ -259,7 +266,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0002
 | [`AW-INF-014`](docs/stories/AW-INF-014-a-kafka-broker-on-the-box-for-dev-and-prod.md) | `done` | A Kafka broker on the box for dev and prod |
 | [`AW-INF-015`](docs/stories/AW-INF-015-a-schema-registry-on-the-box-for-dev-and-prod.md) | `draft` | A schema registry on the box for dev and prod |
 | [`AW-INF-018`](docs/stories/AW-INF-018-make-topics-apply-applies-declared-config-drift-to-existing-.md) | `done` | make topics-apply applies declared config drift to existing topics |
-| [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `draft` | Operating the state projector — stop, rebuild, start, and its volumes |
+| [`AW-INF-025`](docs/stories/AW-INF-025-operating-the-state-projector-stop-rebuild-start-and-its-volumes.md) | `ready` | Operating the state projector — stop, rebuild, start, and its volumes |
 | [`AW-SRV-017`](docs/stories/AW-SRV-017-redis-hot-projection.md) | `ready` | Redis hot projection from the state topic |
 | [`AW-SRV-018`](docs/stories/AW-SRV-018-postgres-tabular-projection.md) | `ready` | Postgres tabular projection for accounts, rosters, and builder queries |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `review` | State projector and the compacted current-state topic |

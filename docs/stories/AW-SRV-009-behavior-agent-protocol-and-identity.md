@@ -92,9 +92,9 @@ message SubscribeRequest { /* … */ repeated string entity_ids = 3; }          
 message EventEnvelope   { /* … */ repeated string perceived_by = 4; }         // set only on Agent streams
 
 // additions to andara/log/v1/log.proto LoggedCommand oneof
-MarkAttendance mark_attendance = 17;   // entity_id, attended, agent_account_id
-SetMemory      set_memory = 18;        // entity_id, slot (uint32), value (bytes, canonical)
-Say            say = 19;               // actor_id, text — the first social verb, one Command for players and NPCs alike
+MarkAttendance mark_attendance = 20;   // entity_id, attended, agent_account_id
+SetMemory      set_memory = 21;        // entity_id, slot (uint32), value (bytes, canonical)
+Say            say = 22;               // actor_id, text — the first social verb, one Command for players and NPCs alike
 
 // additions to andara/game/v1/event.proto payload oneof
 NpcUnattended { string entity_id = 1; }  NpcAttended { string entity_id = 1; }
@@ -209,3 +209,9 @@ and runbook.
   enqueue rather than after ack (the client library preserves order); client-streaming `Submit` is
   the larger one and reopens rate limiting and error mapping. Decide here, with the agent's real rate.
 
+**Contract change after `ready` (architecture, 2026-09-28).** The `LoggedCommand` numbers in the
+sketch above were 17–19, which collide with arms already in `log.proto`: `content_swap = 17`
+(`AW-SRV-012`), `mark_linkdead = 18` (`AW-SRV-015`), and `goto = 19` (`AW-SRV-036`). They're now
+20–22. Implementation hasn't started, so no feedback file is needed. The story isn't in a sprint.
+Architecture writes these arms into `log.proto` at the contract review of the sprint that takes it,
+so another story can't take the numbers in between. Implementation never assigns them.

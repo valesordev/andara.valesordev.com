@@ -25,7 +25,7 @@ _sym_db = _symbol_database.Default()
 from andara.content.v1 import zone_pb2 as andara_dot_content_dot_v1_dot_zone__pb2
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17\x61ndara/log/v1/log.proto\x12\randara.log.v1\x1a\x1c\x61ndara/content/v1/zone.proto\"\xfa\x04\n\rLoggedCommand\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x19\n\x08\x61\x63tor_id\x18\x02 \x01(\tR\x07\x61\x63torId\x12\x1d\n\nsession_id\x18\x03 \x01(\tR\tsessionId\x12\x1d\n\nclient_ref\x18\x04 \x01(\tR\tclientRef\x12\x19\n\x08trace_id\x18\x05 \x01(\tR\x07traceId\x12\x31\n\x15\x61\x63\x63\x65pted_at_unix_nano\x18\x06 \x01(\x03R\x12\x61\x63\x63\x65ptedAtUnixNano\x12)\n\x04look\x18\n \x01(\x0b\x32\x13.andara.log.v1.LookH\x00R\x04look\x12)\n\x04move\x18\x0b \x01(\x0b\x32\x13.andara.log.v1.MoveH\x00R\x04move\x12/\n\x06\x61rrive\x18\x0c \x01(\x0b\x32\x15.andara.log.v1.ArriveH\x00R\x06\x61rrive\x12\x45\n\x0e\x62ind_character\x18\x0f \x01(\x0b\x32\x1c.andara.log.v1.BindCharacterH\x00R\rbindCharacter\x12K\n\x10unbind_character\x18\x10 \x01(\x0b\x32\x1e.andara.log.v1.UnbindCharacterH\x00R\x0funbindCharacter\x12?\n\x0c\x63ontent_swap\x18\x11 \x01(\x0b\x32\x1a.andara.log.v1.ContentSwapH\x00R\x0b\x63ontentSwap\x12\x42\n\rmark_linkdead\x18\x12 \x01(\x0b\x32\x1b.andara.log.v1.MarkLinkdeadH\x00R\x0cmarkLinkdeadB\t\n\x07\x63ommand\"\x06\n\x04Look\"$\n\x04Move\x12\x1c\n\tdirection\x18\x01 \x01(\tR\tdirection\"\xc3\x01\n\x06\x41rrive\x12\x17\n\x07room_id\x18\x01 \x01(\tR\x06roomId\x12%\n\x0e\x66rom_direction\x18\x02 \x01(\tR\rfromDirection\x12-\n\x06\x65ntity\x18\x03 \x01(\x0b\x32\x15.andara.log.v1.EntityR\x06\x65ntity\x12$\n\x0eorigin_zone_id\x18\x04 \x01(\tR\x0coriginZoneId\x12$\n\x0eorigin_room_id\x18\x05 \x01(\tR\x0coriginRoomId\"\x89\x01\n\rBindCharacter\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x1d\n\naccount_id\x18\x02 \x01(\tR\taccountId\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\"\n\rspawn_room_id\x18\x04 \x01(\tR\x0bspawnRoomId\"i\n\x0fUnbindCharacter\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x33\n\x06reason\x18\x02 \x01(\x0e\x32\x1b.andara.log.v1.UnbindReasonR\x06reason\"\x98\x01\n\x0cMarkLinkdead\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x1f\n\x0bgrace_ticks\x18\x02 \x01(\x04R\ngraceTicks\x12\'\n\x0f\x65xtension_ticks\x18\x03 \x01(\x04R\x0e\x65xtensionTicks\x12\x1b\n\tmax_ticks\x18\x04 \x01(\x04R\x08maxTicks\"\x84\x01\n\x0b\x43ontentSwap\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12!\n\x0cworld_digest\x18\x03 \x01(\x0cR\x0bworldDigest\x12\x1f\n\x0b\x62\x61se_digest\x18\x04 \x01(\x0cR\nbaseDigest\"\xb4\x01\n\x06\x45ntity\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n\x08template\x18\x02 \x01(\tR\x08template\x12\'\n\x0f\x63ontent_version\x18\x03 \x01(\tR\x0e\x63ontentVersion\x12\x41\n\ncomponents\x18\x04 \x03(\x0b\x32!.andara.content.v1.ComponentValueR\ncomponents\x12\x12\n\x04name\x18\x05 \x01(\tR\x04name\"\xbc\x01\n\x05\x45vent\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\x04R\x07\x65ventId\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x17\n\x07zone_id\x18\x03 \x01(\tR\x06zoneId\x12%\n\x0eschema_version\x18\x04 \x01(\rR\rschemaVersion\x12\x18\n\x07payload\x18\x05 \x01(\x0cR\x07payload\x12*\n\x05scope\x18\x06 \x01(\x0b\x32\x14.andara.log.v1.ScopeR\x05scope\"w\n\x05Scope\x12 \n\x0croom_zone_id\x18\x01 \x01(\tR\nroomZoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12\x1d\n\nentity_ids\x18\x03 \x03(\tR\tentityIds\x12\x14\n\x05world\x18\x04 \x01(\x08R\x05world\"\xf3\x01\n\rTickCompleted\x12\x12\n\x04tick\x18\x01 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x02 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x03 \x01(\x0cR\tstateHash\x12#\n\rstate_version\x18\x04 \x01(\rR\x0cstateVersion\x12%\n\x0e\x65vents_emitted\x18\x05 \x01(\x04R\reventsEmitted\x12)\n\x10\x63ommands_applied\x18\x06 \x01(\x04R\x0f\x63ommandsApplied\"G\n\x0fPartitionOffset\x12\x1c\n\tpartition\x18\x01 \x01(\x05R\tpartition\x12\x16\n\x06offset\x18\x02 \x01(\x03R\x06offset\"\xed\x01\n\x0fSnapshotWritten\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12#\n\rstate_version\x18\x02 \x01(\rR\x0cstateVersion\x12\x12\n\x04tick\x18\x03 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x04 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x05 \x01(\x0cR\tstateHash\x12\x10\n\x03key\x18\x06 \x01(\tR\x03key\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes*Q\n\x0cUnbindReason\x12\x1d\n\x19UNBIND_REASON_UNSPECIFIED\x10\x00\x12\x08\n\x04QUIT\x10\x01\x12\n\n\x06SWITCH\x10\x02\x12\x0c\n\x08LINKDEAD\x10\x03\x42\xac\x01\n\x11\x63om.andara.log.v1B\x08LogProtoP\x01Z7github.com/valesordev/andara/gen/go/andara/log/v1;logv1\xa2\x02\x03\x41LX\xaa\x02\rAndara.Log.V1\xca\x02\rAndara\\Log\\V1\xe2\x02\x19\x41ndara\\Log\\V1\\GPBMetadata\xea\x02\x0f\x41ndara::Log::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x17\x61ndara/log/v1/log.proto\x12\randara.log.v1\x1a\x1c\x61ndara/content/v1/zone.proto\"\xa5\x05\n\rLoggedCommand\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12\x19\n\x08\x61\x63tor_id\x18\x02 \x01(\tR\x07\x61\x63torId\x12\x1d\n\nsession_id\x18\x03 \x01(\tR\tsessionId\x12\x1d\n\nclient_ref\x18\x04 \x01(\tR\tclientRef\x12\x19\n\x08trace_id\x18\x05 \x01(\tR\x07traceId\x12\x31\n\x15\x61\x63\x63\x65pted_at_unix_nano\x18\x06 \x01(\x03R\x12\x61\x63\x63\x65ptedAtUnixNano\x12)\n\x04look\x18\n \x01(\x0b\x32\x13.andara.log.v1.LookH\x00R\x04look\x12)\n\x04move\x18\x0b \x01(\x0b\x32\x13.andara.log.v1.MoveH\x00R\x04move\x12/\n\x06\x61rrive\x18\x0c \x01(\x0b\x32\x15.andara.log.v1.ArriveH\x00R\x06\x61rrive\x12\x45\n\x0e\x62ind_character\x18\x0f \x01(\x0b\x32\x1c.andara.log.v1.BindCharacterH\x00R\rbindCharacter\x12K\n\x10unbind_character\x18\x10 \x01(\x0b\x32\x1e.andara.log.v1.UnbindCharacterH\x00R\x0funbindCharacter\x12?\n\x0c\x63ontent_swap\x18\x11 \x01(\x0b\x32\x1a.andara.log.v1.ContentSwapH\x00R\x0b\x63ontentSwap\x12\x42\n\rmark_linkdead\x18\x12 \x01(\x0b\x32\x1b.andara.log.v1.MarkLinkdeadH\x00R\x0cmarkLinkdead\x12)\n\x04goto\x18\x13 \x01(\x0b\x32\x13.andara.log.v1.GotoH\x00R\x04gotoB\t\n\x07\x63ommand\"\x06\n\x04Look\"$\n\x04Move\x12\x1c\n\tdirection\x18\x01 \x01(\tR\tdirection\"R\n\x04Goto\x12$\n\x0etarget_zone_id\x18\x01 \x01(\tR\x0ctargetZoneId\x12$\n\x0etarget_room_id\x18\x02 \x01(\tR\x0ctargetRoomId\"\xc3\x01\n\x06\x41rrive\x12\x17\n\x07room_id\x18\x01 \x01(\tR\x06roomId\x12%\n\x0e\x66rom_direction\x18\x02 \x01(\tR\rfromDirection\x12-\n\x06\x65ntity\x18\x03 \x01(\x0b\x32\x15.andara.log.v1.EntityR\x06\x65ntity\x12$\n\x0eorigin_zone_id\x18\x04 \x01(\tR\x0coriginZoneId\x12$\n\x0eorigin_room_id\x18\x05 \x01(\tR\x0coriginRoomId\"\x89\x01\n\rBindCharacter\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x1d\n\naccount_id\x18\x02 \x01(\tR\taccountId\x12\x12\n\x04name\x18\x03 \x01(\tR\x04name\x12\"\n\rspawn_room_id\x18\x04 \x01(\tR\x0bspawnRoomId\"i\n\x0fUnbindCharacter\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x33\n\x06reason\x18\x02 \x01(\x0e\x32\x1b.andara.log.v1.UnbindReasonR\x06reason\"\x98\x01\n\x0cMarkLinkdead\x12!\n\x0c\x63haracter_id\x18\x01 \x01(\tR\x0b\x63haracterId\x12\x1f\n\x0bgrace_ticks\x18\x02 \x01(\x04R\ngraceTicks\x12\'\n\x0f\x65xtension_ticks\x18\x03 \x01(\x04R\x0e\x65xtensionTicks\x12\x1b\n\tmax_ticks\x18\x04 \x01(\x04R\x08maxTicks\"\x84\x01\n\x0b\x43ontentSwap\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12!\n\x0cworld_digest\x18\x03 \x01(\x0cR\x0bworldDigest\x12\x1f\n\x0b\x62\x61se_digest\x18\x04 \x01(\x0cR\nbaseDigest\"\xb4\x01\n\x06\x45ntity\x12\x0e\n\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n\x08template\x18\x02 \x01(\tR\x08template\x12\'\n\x0f\x63ontent_version\x18\x03 \x01(\tR\x0e\x63ontentVersion\x12\x41\n\ncomponents\x18\x04 \x03(\x0b\x32!.andara.content.v1.ComponentValueR\ncomponents\x12\x12\n\x04name\x18\x05 \x01(\tR\x04name\"\xbc\x01\n\x05\x45vent\x12\x19\n\x08\x65vent_id\x18\x01 \x01(\x04R\x07\x65ventId\x12\x12\n\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x17\n\x07zone_id\x18\x03 \x01(\tR\x06zoneId\x12%\n\x0eschema_version\x18\x04 \x01(\rR\rschemaVersion\x12\x18\n\x07payload\x18\x05 \x01(\x0cR\x07payload\x12*\n\x05scope\x18\x06 \x01(\x0b\x32\x14.andara.log.v1.ScopeR\x05scope\"w\n\x05Scope\x12 \n\x0croom_zone_id\x18\x01 \x01(\tR\nroomZoneId\x12\x17\n\x07room_id\x18\x02 \x01(\tR\x06roomId\x12\x1d\n\nentity_ids\x18\x03 \x03(\tR\tentityIds\x12\x14\n\x05world\x18\x04 \x01(\x08R\x05world\"\xf3\x01\n\rTickCompleted\x12\x12\n\x04tick\x18\x01 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x02 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x03 \x01(\x0cR\tstateHash\x12#\n\rstate_version\x18\x04 \x01(\rR\x0cstateVersion\x12%\n\x0e\x65vents_emitted\x18\x05 \x01(\x04R\reventsEmitted\x12)\n\x10\x63ommands_applied\x18\x06 \x01(\x04R\x0f\x63ommandsApplied\"G\n\x0fPartitionOffset\x12\x1c\n\tpartition\x18\x01 \x01(\x05R\tpartition\x12\x16\n\x06offset\x18\x02 \x01(\x03R\x06offset\"\xed\x01\n\x0fSnapshotWritten\x12\x17\n\x07zone_id\x18\x01 \x01(\tR\x06zoneId\x12#\n\rstate_version\x18\x02 \x01(\rR\x0cstateVersion\x12\x12\n\x04tick\x18\x03 \x01(\x04R\x04tick\x12\x38\n\x07offsets\x18\x04 \x03(\x0b\x32\x1e.andara.log.v1.PartitionOffsetR\x07offsets\x12\x1d\n\nstate_hash\x18\x05 \x01(\x0cR\tstateHash\x12\x10\n\x03key\x18\x06 \x01(\tR\x03key\x12\x1d\n\nsize_bytes\x18\x07 \x01(\x04R\tsizeBytes*Q\n\x0cUnbindReason\x12\x1d\n\x19UNBIND_REASON_UNSPECIFIED\x10\x00\x12\x08\n\x04QUIT\x10\x01\x12\n\n\x06SWITCH\x10\x02\x12\x0c\n\x08LINKDEAD\x10\x03\x42\xac\x01\n\x11\x63om.andara.log.v1B\x08LogProtoP\x01Z7github.com/valesordev/andara/gen/go/andara/log/v1;logv1\xa2\x02\x03\x41LX\xaa\x02\rAndara.Log.V1\xca\x02\rAndara\\Log\\V1\xe2\x02\x19\x41ndara\\Log\\V1\\GPBMetadata\xea\x02\x0f\x41ndara::Log::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -33,34 +33,36 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'andara.log.v1.log_pb2', _gl
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\021com.andara.log.v1B\010LogProtoP\001Z7github.com/valesordev/andara/gen/go/andara/log/v1;logv1\242\002\003ALX\252\002\rAndara.Log.V1\312\002\rAndara\\Log\\V1\342\002\031Andara\\Log\\V1\\GPBMetadata\352\002\017Andara::Log::V1'
-  _globals['_UNBINDREASON']._serialized_start=2544
-  _globals['_UNBINDREASON']._serialized_end=2625
+  _globals['_UNBINDREASON']._serialized_start=2671
+  _globals['_UNBINDREASON']._serialized_end=2752
   _globals['_LOGGEDCOMMAND']._serialized_start=73
-  _globals['_LOGGEDCOMMAND']._serialized_end=707
-  _globals['_LOOK']._serialized_start=709
-  _globals['_LOOK']._serialized_end=715
-  _globals['_MOVE']._serialized_start=717
-  _globals['_MOVE']._serialized_end=753
-  _globals['_ARRIVE']._serialized_start=756
-  _globals['_ARRIVE']._serialized_end=951
-  _globals['_BINDCHARACTER']._serialized_start=954
-  _globals['_BINDCHARACTER']._serialized_end=1091
-  _globals['_UNBINDCHARACTER']._serialized_start=1093
-  _globals['_UNBINDCHARACTER']._serialized_end=1198
-  _globals['_MARKLINKDEAD']._serialized_start=1201
-  _globals['_MARKLINKDEAD']._serialized_end=1353
-  _globals['_CONTENTSWAP']._serialized_start=1356
-  _globals['_CONTENTSWAP']._serialized_end=1488
-  _globals['_ENTITY']._serialized_start=1491
-  _globals['_ENTITY']._serialized_end=1671
-  _globals['_EVENT']._serialized_start=1674
-  _globals['_EVENT']._serialized_end=1862
-  _globals['_SCOPE']._serialized_start=1864
-  _globals['_SCOPE']._serialized_end=1983
-  _globals['_TICKCOMPLETED']._serialized_start=1986
-  _globals['_TICKCOMPLETED']._serialized_end=2229
-  _globals['_PARTITIONOFFSET']._serialized_start=2231
-  _globals['_PARTITIONOFFSET']._serialized_end=2302
-  _globals['_SNAPSHOTWRITTEN']._serialized_start=2305
-  _globals['_SNAPSHOTWRITTEN']._serialized_end=2542
+  _globals['_LOGGEDCOMMAND']._serialized_end=750
+  _globals['_LOOK']._serialized_start=752
+  _globals['_LOOK']._serialized_end=758
+  _globals['_MOVE']._serialized_start=760
+  _globals['_MOVE']._serialized_end=796
+  _globals['_GOTO']._serialized_start=798
+  _globals['_GOTO']._serialized_end=880
+  _globals['_ARRIVE']._serialized_start=883
+  _globals['_ARRIVE']._serialized_end=1078
+  _globals['_BINDCHARACTER']._serialized_start=1081
+  _globals['_BINDCHARACTER']._serialized_end=1218
+  _globals['_UNBINDCHARACTER']._serialized_start=1220
+  _globals['_UNBINDCHARACTER']._serialized_end=1325
+  _globals['_MARKLINKDEAD']._serialized_start=1328
+  _globals['_MARKLINKDEAD']._serialized_end=1480
+  _globals['_CONTENTSWAP']._serialized_start=1483
+  _globals['_CONTENTSWAP']._serialized_end=1615
+  _globals['_ENTITY']._serialized_start=1618
+  _globals['_ENTITY']._serialized_end=1798
+  _globals['_EVENT']._serialized_start=1801
+  _globals['_EVENT']._serialized_end=1989
+  _globals['_SCOPE']._serialized_start=1991
+  _globals['_SCOPE']._serialized_end=2110
+  _globals['_TICKCOMPLETED']._serialized_start=2113
+  _globals['_TICKCOMPLETED']._serialized_end=2356
+  _globals['_PARTITIONOFFSET']._serialized_start=2358
+  _globals['_PARTITIONOFFSET']._serialized_end=2429
+  _globals['_SNAPSHOTWRITTEN']._serialized_start=2432
+  _globals['_SNAPSHOTWRITTEN']._serialized_end=2669
 # @@protoc_insertion_point(module_scope)

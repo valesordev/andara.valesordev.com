@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-73 stories — 4 review · 24 ready · 12 draft · 33 done
+73 stories — 4 review · 34 ready · 1 draft · 1 blocked · 33 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, the §8 review
@@ -11,26 +11,29 @@ Regenerate with `make status`; `make check` fails if this file is stale.
   next   AW-INF-005  ready  Kafka operational contract, degradation mode, and availability SLO
   review AW-SRV-019, AW-INF-008, AW-INF-019, AW-INF-027 — run the §8 checklist, then flip to done
   held   1 ready, blocked: AW-INF-007
+  BLOCKED AW-INF-023 — see each story's 'Blocked by'
 
 ## SRE lane — build, ship, operate, observe
 
   now    — nothing in flight
+  next   AW-INF-020  ready  Builders download andara-cli without a Go toolchain  (unblocks 2)
   next   AW-INF-009  ready  Alert rule delivery — evaluate files/alerts.yaml in Grafana Cloud
   review AW-SRV-019, AW-INF-008, +2 more — verify §7 instrumentation, record it in the §8 record
-  held   3 ready, blocked: AW-INF-010, AW-INF-011, AW-INF-012
+  held   6 ready, blocked: AW-INF-021, AW-INF-022, AW-INF-024, AW-INF-010, AW-INF-011, AW-INF-012
 
 ## Implementation lane — server and cli source, tests
 
   now    — nothing in flight
-  next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 4)
-  next   AW-SRV-017  ready  Redis hot projection from the state topic  (unblocks 1)
+  next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 5)
+  next   AW-SRV-036  ready  goto — a Builder jumps to any Room  (unblocks 2)
   review AW-SRV-019 — awaiting §8
-  held   7 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-009, AW-SRV-016, AW-SRV-018,…
+  held   9 ready, blocked: AW-CLI-002, AW-SRV-007, AW-CLI-003, AW-SRV-035, AW-SRV-009, AW-SRV-016,…
 
 ## Decisions the lanes are waiting on
 
   AW-SRV-019  .
-              16 more, attached to stories no lane has reached
+  AW-SRV-036  mechanic (glossary, Start Location).
+              15 more, attached to stories no lane has reached
 
 Legend: `now` is in flight · `next` is groomed with every dependency merged ·
 `held` is groomed but waiting · a dependency counts as met at `review`, not at merge-to-branch.

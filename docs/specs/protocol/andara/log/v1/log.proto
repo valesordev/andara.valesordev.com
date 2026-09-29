@@ -66,9 +66,10 @@ message LoggedCommand {
     UnbindCharacter unbind_character = 16;
     ContentSwap content_swap = 17;
     MarkLinkdead mark_linkdead = 18;
+    Goto goto = 19;
   }
 
-  // Verbs beyond these arrive with their own stories, taking numbers from 19
+  // Verbs beyond these arrive with their own stories, taking numbers from 20
   // upward — deliberately NOT `reserved`. A reserved range would have
   // to shrink to add a verb, and buf treats shrinking one as a breaking change,
   // so reserving numbers "to hold them" makes the most routine schema change in
@@ -86,6 +87,19 @@ message Move {
   // with a real error where the wire would silently drop an unknown enum
   // member, and it lets the set grow without a schema change.
   string direction = 1;
+}
+
+// A Builder's jump to a Room by ID (AW-SRV-036). Applied in the actor's
+// Zone, like Move: the parser resolves "<zone>/<room>" or "<room>" (the
+// actor's current Zone, read from the Session's Binding) into both fields, so
+// apply never depends on where the Gateway thought the actor was. Validate
+// checks the target against the World in effect at the tick it applies. A
+// target in another Zone leaves through an Arrive with an empty
+// from_direction, exactly as a cross-Zone Move does, so a swap that removes
+// the Room before the Arrive applies lands it at that Zone's fallback.
+message Goto {
+  string target_zone_id = 1;
+  string target_room_id = 2;
 }
 
 // The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The

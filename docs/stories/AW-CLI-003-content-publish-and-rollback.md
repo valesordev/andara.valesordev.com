@@ -33,11 +33,16 @@ I was wrong, so that world-building is a fast loop rather than a release process
 ### In scope
 - `content publish [--path DIR]` — compile, validate locally, `HasBlobs`, stream missing blobs,
   `PublishVersion`; prints the version and `awaiting approval`.
-- `content approve <pack> <version>`, `content activate <pack> <version> [--yes] [--override --reason]`,
-  `content rollback <pack> [--to N] [--yes]`.
+- `content approve <pack> <version> [--yes]`, `content activate <pack> <version> [--yes] [--override
+  --reason]`, `content rollback <pack> [--to N] [--yes]`. An Operator's approval of their own publish
+  asks first (ADR-0004, amended 2026-09-26).
+- `server info`, over `Admin.GetServerInfo`: build, protocol range, and the content in effect, one
+  pack per line. The demo and `AW-INF-021` read it at every step.
 - `content history <pack>` and `content diff <pack> <N> <M>` at the level of Zones, Rooms, Exits,
   Templates, and Component fields — a semantic diff over decompiled source, never a byte diff.
-- `content fetch <pack> <version> [--out DIR]` — the published source blobs (ADR-0009).
+- `content fetch <pack> <version> [--out DIR]` — the published source blobs (ADR-0009), over
+  `GetVersion` and `GetBlob`. It supersedes the `decompile --pack/--version` that `AW-CLI-006` left
+  here: the source is always published, so there's nothing to decompile.
 - Confirmation on live-world mutations: `activate` and `rollback` print pack, both versions, publisher,
   approver, and the current pointer, and wait unless `--yes`.
 
@@ -55,8 +60,8 @@ I was wrong, so that world-building is a fast loop rather than a release process
 2. **Given** a published version **when** `content activate town 8 --yes` runs as the approver **then**
    the pointer moves and `andara-cli server info` shows `town@8` within `content.reload_debounce + 2 s`.
 3. **Given** `activate` of an unapproved version **when** it runs **then** it prints the server's
-   `FAILED_PRECONDITION` as `town@8 needs approval by a second builder holding the pack (published by
-   <user>)` and exits `4`.
+   `FAILED_PRECONDITION` as `town@8 needs approval by a second builder holding the pack or an operator
+   (published by <user>)` and exits `1` with `error.code` `unapproved`.
 4. **Given** a bad activation **when** `content rollback town --yes` runs **then** the previous active
    version is active again, `history` shows `8` as published and inactive, and `8` can be re-activated.
 5. **Given** local validation passing but the server rejecting **when** `publish` runs **then** the
@@ -71,28 +76,52 @@ I was wrong, so that world-building is a fast loop rather than a release process
 9. **Given** `activate` without `--yes` on a non-TTY **when** it runs **then** it exits `2` with `--yes
    required` rather than hanging.
 10. **Given** `--override` without `--reason` **when** `activate` runs **then** exit `2` before any RPC.
+11. **Given** an Operator approving a version whose author is the Operator, or the Account the
+    Operator is acting as **when** `content approve town 8` runs on a TTY **then** it asks
+    `You published town@8. Approve it yourself as <operator>? [y/N]` before any `ApproveVersion`; on a
+    non-TTY without `--yes` it exits `2` with `--yes required`. On success it prints
+    `town@8 approved by <operator> (self-approval: you published it)`, taken from the response's
+    `self_approval`. Any other approval prints `town@8 approved by <user>`.
+12. **Given** `activate` or `rollback` refused under `AW-SRV-013` AC-14 **when** it runs **then** it
+    prints `town@8 refused: <reason> (<subject>, …)`, for example `town@8 refused: zone_removed
+    (docks)`, and exits `1`, with `error.code` the reason and `error.detail.subjects` the list.
+13. **Given** a server whose content in effect is `andara.core@1` and `town@8` **when**
+    `andara-cli server info` runs **then** it prints `version`, `commit`, `environment`,
+    `protocol <min>-<max>`, one `content <pack>@<version>` line per pack sorted by pack, and
+    `content_digest <hex>`, and exits `0`. `--output json` carries `content` as an array of
+    `{pack, version}`. Server unreachable is exit `3`.
+14. **Given** an Operator **when** `content rollback andara.core --yes` runs **then** the core pointer
+    moves back with no approval (`AW-SRV-013` AC-11). **When** `content publish` is run on a pack
+    declaring `pack andara.core` **then** it prints the server's refusal,
+    `andara.core is published by the server at boot`, and exits `1`.
 
 ## Interface contract
 
 ```
 andara-cli content publish  [--path DIR] [--pack ID]              # pack from `pack` declaration unless overridden
-andara-cli content approve  <pack> <version>
+andara-cli content approve  <pack> <version> [--yes]
 andara-cli content activate <pack> <version> [--yes] [--override --reason TEXT]
 andara-cli content rollback <pack> [--to N] [--yes]               # default: previous active
 andara-cli content history  <pack> [--limit N]
 andara-cli content diff     <pack> <N> <M>
 andara-cli content fetch    <pack> <version> [--out DIR]
+andara-cli server info
 ```
 
 | Exit | Meaning |
 |-----:|---------|
 | `0` | done |
-| `1` | diagnostics (local or server) |
+| `1` | diagnostics (local or server), or the server refused: approval, permission, stale parent, activation refusal. `error.code` is the server's `ErrorInfo.reason` |
 | `2` | usage, missing `--yes`/`--reason` |
 | `3` | server unreachable |
-| `4` | server refused: approval, permission, stale parent (message from the server's status details) |
+| `4` | timeout |
 
-RPC mapping is one-to-one onto `AW-SRV-013`'s `Admin` methods. `--output json` applies to every
+This is `AW-CLI-001`'s shared taxonomy, which `admin/cli/errors.go` already implements.
+*(Amended 2026-09-28: the draft used `4` for "server refused", which `AW-CLI-001` reserves for a
+timeout.)* The `error.code` values are `AW-SRV-013`'s reasons, pinned in its error taxonomy.
+
+RPC mapping is one-to-one onto `AW-SRV-013`'s `Admin` methods, pinned in `admin.proto`. `server info`
+maps to `GetServerInfo`. `--output json` applies to every
 command with the `AW-CLI-001` envelope.
 
 ## Data / state impact
@@ -134,11 +163,18 @@ the CLI's own trace as well as the server's record.
   A$ andara-cli content activate town 8            # prompt → y
   A$ andara-cli content rollback town              # prompt → y; town@7 active
   ```
+  And Brian's path on `dev` (ADR-0004, amended 2026-09-26), as one Operator:
+  ```
+  andara-cli --as <builder> content publish --path ./brian   # brian@1, awaiting approval
+  andara-cli content approve brian 1                         # prompt → y; "(self-approval: you published it)"
+  andara-cli content activate brian 1 --yes
+  andara-cli server info                                     # content brian@1
+  ```
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the two-identity rehearsal is a scripted CI job, because a single-person rehearsal
-now fails by design.
+CLAUDE.md §8, plus: the two-identity rehearsal is a scripted CI job. A single Builder still can't
+approve their own work, and only an Operator's self-approval (AC-11) lets one person pass.
 
 ## Open questions
 
@@ -146,3 +182,25 @@ now fails by design.
   `EPIC-11`.
 - **Resolved 2026-09-10 (Brian):** ADR-0010 accepted; the grammar moved to `AW-CLI-005` and the
   compiler to `AW-CLI-006` on 2026-09-11 so this story is the commands only.
+
+## Contract review (architecture, 2026-09-28)
+
+A contract change after `ready`, recorded here (CLAUDE.md §6). Implementation hasn't started. SRE's
+observability review is in `docs/feedback/AW-SRV-013-operator-self-approval.md`.
+
+1. **Operator self-approval** (ADR-0004, amended 2026-09-26): AC-11. The CLI asks before the RPC,
+   comparing the manifest's author with the caller and the `--as` Account. The printed line comes
+   from the server's `self_approval`, so the CLI never claims what the server didn't record. AC-3's
+   message gains "or an operator".
+2. **Exit `4` was a timeout.** `AW-CLI-001` defines `4` as timeout, and `admin/cli/errors.go`
+   implements that. The draft's "server refused" is exit `1` with the reason as `error.code`.
+   `AW-SRV-035` had the same mistake, and it's fixed there too.
+3. **`server info` wasn't carried by any story**, though `AW-SRV-012`'s test plan, `AW-INF-021` and
+   the SPRINT-03 demo read it (`docs/feedback/AW-SRV-013-activation-refusals.md` item 2). It's here now:
+   AC-13.
+4. **Activation refusals print their reason and subjects** (AC-12), from `AW-SRV-013` AC-14's
+   `ActivationRefusal` detail.
+5. **`andara.core`**: an Operator rolls its pointer back with the same command (AC-14). That's the
+   first step of `AW-SRV-013`'s image-rollback order. A publish of core is refused by the server.
+6. **`fetch` and `diff` read over `GetBlob`**, which `AW-SRV-013` now pins. `fetch` supersedes the
+   `decompile --pack/--version` that `AW-CLI-006` deferred here.
