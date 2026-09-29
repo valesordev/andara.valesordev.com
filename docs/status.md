@@ -2,7 +2,7 @@
 
 # Status — Andara's World
 
-73 stories — 3 review · 34 ready · 1 draft · 1 blocked · 34 done
+73 stories — 1 in-progress · 3 review · 33 ready · 1 draft · 1 blocked · 34 done
 Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Architecture lane — contracts, specs, ADRs, the §8 review
@@ -23,7 +23,8 @@ Regenerate with `make status`; `make check` fails if this file is stale.
 
 ## Implementation lane — server and cli source, tests
 
-  now    — nothing in flight
+  now    AW-SRV-034  Loader and compiler agree on orphan_room and duplicate_direction
+         branch impl/aw-srv-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc
   next   AW-SRV-013  ready  Content publish path — server-side validation, versioni…  (unblocks 5)
   next   AW-SRV-036  ready  goto — a Builder jumps to any Room  (unblocks 2)
   review AW-SRV-019 — awaiting §8

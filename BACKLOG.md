@@ -11,7 +11,8 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 |--------|-------|
 | `blocked` | 1 |
 | `review` | 3 |
-| `ready` | 34 |
+| `in-progress` | 1 |
+| `ready` | 33 |
 | `draft` | 1 |
 | `done` | 34 |
 | **total** | **73** |
@@ -41,7 +42,13 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-INF-019`](docs/stories/AW-INF-019-argo-cd-deploys-dev-from-main-on-the-box-s-kind-cluster.md) | `EPIC-01` | infra | M | medium | sre | Argo CD deploys dev from main on the box's kind cluster | `AW-INF-013`, `AW-INF-014` |
 | [`AW-SRV-019`](docs/stories/AW-SRV-019-state-projector-and-compacted-state-topic.md) | `EPIC-10` | server | M | high | implementation | State projector and the compacted current-state topic | `AW-SRV-004`, `AW-SRV-006` |
 
-### `ready` (34)
+### `in-progress` (1)
+
+| ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
+|----|------|-----------|------|------|----------|-------|------------|
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
+
+### `ready` (33)
 
 | ID | Epic | Component | Size | Risk | Lane | Title | Depends on |
 |----|------|-----------|------|------|----------|-------|------------|
@@ -74,7 +81,6 @@ Run `make backlog` after any story change. `make check` fails if this file is st
 | [`AW-SRV-030`](docs/stories/AW-SRV-030-gateway-read-path-from-the-event-topic.md) | `EPIC-03` | server | M | high | implementation | Gateway read path from the Event topic — routing and perception for Zones another process owns | `AW-SRV-004`, `AW-SRV-010` |
 | [`AW-SRV-032`](docs/stories/AW-SRV-032-character-deletion-retention-and-switching.md) | `EPIC-08` | server | M | medium | implementation | Character deletion, name retention, purge, and switching bodies | `AW-SRV-014`, `AW-SRV-007` |
 | [`AW-SRV-033`](docs/stories/AW-SRV-033-turn-off-otlp-log-export-independently-of-traces.md) | `EPIC-07` | server | S | low | implementation | Turn off OTLP log export independently of traces | `AW-SRV-024` |
-| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `EPIC-02` | server | S | low | implementation | Loader and compiler agree on orphan_room and duplicate_direction | `AW-SRV-001`, `AW-CLI-006` |
 | [`AW-SRV-035`](docs/stories/AW-SRV-035-an-operator-grants-a-builder-their-packs.md) | `EPIC-06` | server | S | low | implementation | An Operator grants a Builder their packs | `AW-SRV-013` |
 | [`AW-SRV-036`](docs/stories/AW-SRV-036-goto-a-builder-jumps-to-any-room.md) | `EPIC-03` | server | M | medium | implementation | goto — a Builder jumps to any Room | `AW-SRV-003`, `AW-SRV-014` |
 | [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `EPIC-02` | server | S | low | implementation | Purgatory — the spawn Zone in the test content | `AW-SRV-014` |
@@ -162,7 +168,7 @@ Milestone `M1` · status `ready` · ADR gates: none · constrained by: `ADR-0001
 | [`AW-SRV-027`](docs/stories/AW-SRV-027-per-zone-quarantine-on-a-tick-fault.md) | `ready` | Per-Zone quarantine on a tick fault |
 | [`AW-SRV-028`](docs/stories/AW-SRV-028-durable-cross-zone-handoff.md) | `ready` | Durable cross-Zone handoff — in-transit state, acknowledgement, and tick-driven retry |
 | [`AW-SRV-029`](docs/stories/AW-SRV-029-perception-through-exits.md) | `ready` | Perception through Exits — Builder-declared senses on a room connection |
-| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `ready` | Loader and compiler agree on orphan_room and duplicate_direction |
+| [`AW-SRV-034`](docs/stories/AW-SRV-034-loader-and-compiler-agree-on-orphan-room-and-duplicate-direc.md) | `in-progress` | Loader and compiler agree on orphan_room and duplicate_direction |
 | [`AW-SRV-037`](docs/stories/AW-SRV-037-purgatory-the-spawn-zone-in-the-test-content.md) | `ready` | Purgatory — the spawn Zone in the test content |
 
 ### `EPIC-03` — Command pipeline and gRPC gateway

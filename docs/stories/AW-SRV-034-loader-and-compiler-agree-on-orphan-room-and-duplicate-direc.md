@@ -4,7 +4,7 @@ title: Loader and compiler agree on orphan_room and duplicate_direction
 epic: EPIC-02
 component: server
 type: bug
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-001, AW-CLI-006]
 blocks: [AW-CLI-002]
