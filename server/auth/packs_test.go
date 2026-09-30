@@ -8,9 +8,12 @@ import (
 	"errors"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	auditv1 "github.com/valesordev/andara/gen/go/andara/audit/v1"
+	"github.com/valesordev/andara/server/recordlog"
 )
 
 // AW-SRV-035: an Operator grants a Builder their packs.
@@ -255,5 +258,56 @@ func TestSetBuilderPacks_Instrumentation(t *testing.T) {
 		if !strings.Contains(logs, want) {
 			t.Errorf("the info line lacks %s", want)
 		}
+	}
+}
+
+// stallingLog, once armed, holds the next Append until released and passes
+// the rest through: an audit topic that goes slow for exactly one write.
+type stallingLog struct {
+	recordlog.Log
+	armed   atomic.Bool
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (l *stallingLog) Append(ctx context.Context, key string, value []byte) error {
+	if l.armed.CompareAndSwap(true, false) {
+		close(l.entered)
+		<-l.release
+	}
+	return l.Log.Append(ctx, key, value)
+}
+
+// A refusal's audit write happens outside wmu (Codex on #266). With the audit
+// topic stalled on a non-operator's refused call, an Operator's grant still
+// goes through, well inside the audit timeout.
+func TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock(t *testing.T) {
+	stall := &stallingLog{entered: make(chan struct{}), release: make(chan struct{})}
+	f := newFixture(t, func(o *Options) {
+		stall.Log = o.Audit
+		o.Audit = stall
+	})
+	defer close(stall.release)
+	id := f.builder("alice")
+	stall.armed.Store(true)
+
+	go func() {
+		ctx := WithPrincipal(context.Background(), Principal{AccountID: id, Roles: []Role{RoleBuilder}})
+		_, _ = f.store.SetBuilderPacks(ctx, id, []string{"town"}, 0)
+	}()
+	<-stall.entered
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := f.store.SetBuilderPacks(f.operatorCtx(), id, []string{"docks"}, 0)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(AuditWriteTimeout / 2):
+		t.Fatal("an Operator's grant waited on a non-operator's refusal being audited")
 	}
 }

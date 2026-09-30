@@ -71,78 +71,100 @@ type PackGrant struct {
 // call with a Principal writes one audit record, a refusal for want of
 // operator included: granting publish rights is the privileged action this
 // exists to account for (AC-5).
+//
+// No audit record is written under wmu. A write waits up to the audit
+// timeout when the broker is slow, and every Account writer (login and
+// refresh included) queues on wmu. A non-operator never takes the lock at
+// all, so repeated refused calls can't hold the store's writers behind a
+// slow audit topic.
 func (s *Store) SetBuilderPacks(ctx context.Context, accountID string, packs []string, expectedVersion uint64) (PackGrant, error) {
 	actor, ok := PrincipalFrom(ctx)
 	if !ok {
 		return PackGrant{}, ErrUnauthenticated
 	}
-
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	acc, found := s.clone(accountID)
-	var before []string
-	if found {
-		before = slices.Clone(acc.GetBuilderPacks())
-	}
-	refuse := func(outcome, reason string, err error) (PackGrant, error) {
-		s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetBuilderPacks, Target: accountID, Outcome: outcome,
-			Detail: err.Error(), Packs: &PackAudit{Before: before}})
-		s.log.LogAttrs(ctx, slog.LevelWarn, "builder packs refused",
-			slog.String("actor_account_id", actor.AccountID),
-			slog.String("acting_as_account_id", actor.ActingAs),
-			slog.String("target_account_id", accountID),
-			slog.Any("before", before),
-			slog.String("reason", reason),
-			slog.String("session_id", SessionIDFrom(ctx)),
-			slog.String("trace_id", traceID(ctx)),
-		)
-		return PackGrant{}, reasoned(reason, err)
-	}
-
 	if !actor.Has(RoleOperator) {
-		return refuse(AuditDenied, ReasonOperatorOnly, fmt.Errorf("%w: requires operator", ErrPermissionDenied))
-	}
-	if !found {
-		return refuse(AuditDenied, ReasonAccountNotFound, ErrNotFound)
-	}
-	after, err := normalizePacks(packs)
-	if err != nil {
-		var re *ReasonError
-		errors.As(err, &re)
-		return refuse(AuditInvalid, re.Reason, re.Err)
-	}
-	if err := checkVersion(acc, expectedVersion); err != nil {
-		return refuse(AuditConflict, ReasonRecordVersion, err)
+		var before []string
+		if acc, found := s.lookupID(accountID); found {
+			before = slices.Clone(acc.GetBuilderPacks())
+		}
+		return s.refusePacks(ctx, actor, accountID, before, AuditDenied, ReasonOperatorOnly,
+			fmt.Errorf("%w: requires operator", ErrPermissionDenied))
 	}
 
-	acc.BuilderPacks = after
-	wctx, span := s.tracer.Start(ctx, spanAccountsWrite)
-	span.SetAttributes(attribute.String("action", ActionSetBuilderPacks))
-	if err := s.commit(wctx, acc); err != nil {
-		span.SetAttributes(attribute.String("outcome", "error"))
-		span.SetStatus(codes.Error, err.Error())
-		span.End()
-		return PackGrant{}, err
+	g, before, outcome, reason, err := s.setBuilderPacks(ctx, accountID, packs, expectedVersion)
+	switch {
+	case reason != "":
+		return s.refusePacks(ctx, actor, accountID, before, outcome, reason, err)
+	case err != nil:
+		return PackGrant{}, err // the store write failed; nothing was granted
 	}
-	span.SetAttributes(attribute.String("outcome", AuditOK))
-	span.End()
-
 	s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetBuilderPacks, Target: accountID, Outcome: AuditOK,
-		Detail: "builder packs " + packList(after), Packs: &PackAudit{Before: before, After: after}})
+		Detail: "builder packs " + packList(g.Packs), Packs: &PackAudit{Before: before, After: g.Packs}})
 	s.log.LogAttrs(ctx, slog.LevelInfo, "builder packs set",
 		slog.String("actor_account_id", actor.AccountID),
 		slog.String("acting_as_account_id", actor.ActingAs),
 		slog.String("target_account_id", accountID),
 		slog.Any("before", before),
-		slog.Any("after", after),
+		slog.Any("after", g.Packs),
 		slog.String("session_id", SessionIDFrom(ctx)),
 		slog.String("trace_id", traceID(ctx)),
 	)
+	return g, nil
+}
+
+// setBuilderPacks is the decision and the write, under wmu. A refusal comes
+// back with its audit outcome and reason for the caller to record once the
+// lock is released.
+func (s *Store) setBuilderPacks(ctx context.Context, accountID string, packs []string, expectedVersion uint64) (g PackGrant, before []string, outcome, reason string, err error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	acc, found := s.clone(accountID)
+	if !found {
+		return PackGrant{}, nil, AuditDenied, ReasonAccountNotFound, ErrNotFound
+	}
+	before = slices.Clone(acc.GetBuilderPacks())
+	after, err := normalizePacks(packs)
+	if err != nil {
+		var re *ReasonError
+		errors.As(err, &re)
+		return PackGrant{}, before, AuditInvalid, re.Reason, re.Err
+	}
+	if err := checkVersion(acc, expectedVersion); err != nil {
+		return PackGrant{}, before, AuditConflict, ReasonRecordVersion, err
+	}
+
+	acc.BuilderPacks = after
+	wctx, span := s.tracer.Start(ctx, spanAccountsWrite)
+	defer span.End()
+	span.SetAttributes(attribute.String("action", ActionSetBuilderPacks))
+	if err := s.commit(wctx, acc); err != nil {
+		span.SetAttributes(attribute.String("outcome", "error"))
+		span.SetStatus(codes.Error, err.Error())
+		return PackGrant{}, before, "", "", err
+	}
+	span.SetAttributes(attribute.String("outcome", AuditOK))
 	return PackGrant{
 		Packs:         slices.Clone(after),
 		RecordVersion: acc.GetRecordVersion(),
 		BuilderRole:   slices.Contains(RolesFromProto(acc.GetRoles()), RoleBuilder),
-	}, nil
+	}, before, AuditOK, "", nil
+}
+
+// refusePacks audits and logs a refused grant, and returns its error. Called
+// without wmu held.
+func (s *Store) refusePacks(ctx context.Context, actor Principal, accountID string, before []string, outcome, reason string, err error) (PackGrant, error) {
+	s.audit.Record(ctx, Entry{Actor: actor, Action: ActionSetBuilderPacks, Target: accountID, Outcome: outcome,
+		Detail: err.Error(), Packs: &PackAudit{Before: before}})
+	s.log.LogAttrs(ctx, slog.LevelWarn, "builder packs refused",
+		slog.String("actor_account_id", actor.AccountID),
+		slog.String("acting_as_account_id", actor.ActingAs),
+		slog.String("target_account_id", accountID),
+		slog.Any("before", before),
+		slog.String("reason", reason),
+		slog.String("session_id", SessionIDFrom(ctx)),
+		slog.String("trace_id", traceID(ctx)),
+	)
+	return PackGrant{}, reasoned(reason, err)
 }
 
 // normalizePacks validates a requested set and returns it sorted and

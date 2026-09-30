@@ -45,3 +45,14 @@ story asks. A call with no Principal at all is still unaudited.
 The span wraps the Account store produce, so only a grant that reaches the store has one.
 `outcome` is `ok`, or `error` when the produce fails. A refusal never reaches the store, so it has
 no span. The refusal is in the audit record, the counter and the `warn` line.
+
+### 6. No audit write under the Account store's write lock (Codex on #266)
+
+AC-5 audits a non-operator's refusal. The first build wrote that record while holding `wmu`, so on
+a slow audit topic any authenticated account could make every Account writer (login and refresh
+included) wait up to the audit timeout on each call. Now a non-operator never takes `wmu`, and
+every refusal or grant is audited after the lock is released.
+`TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock` stalls the audit topic on a refusal and
+requires an Operator's grant to go through meanwhile. With the lock put back, the test fails.
+`SetRoles` and the other Admin writes still audit under `wmu`, but only for Operators. Those
+aren't changed here; one story can do all of them.
