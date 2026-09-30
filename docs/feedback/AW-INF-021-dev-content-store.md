@@ -320,3 +320,52 @@ The CLAUDE.md §7 review of the four stories this file covers. Only Observabilit
 2. **Approving your own work: an Operator may approve a build they published as a Builder.** It's
    temporary, until others build. That changes `AW-SRV-013` and `AW-CLI-003`, which are `ready`, so
    it's written up for architecture in `docs/feedback/AW-SRV-013-operator-self-approval.md`.
+
+## For architecture: an empty store can't be seeded (SRE, 2026-09-30, blocks AW-INF-021)
+
+**Found while starting the story, before any change to `dev`.** A `content.source=kafka` server
+with an empty store and an empty World log exits before it can serve the RPC that would fill the
+store. So `make content-seed` has nothing to publish through, both on `dev`'s first switch (its
+store is empty, since `dev` has been `dir` all along) and in AC-7's rebuild from nothing.
+
+**Rehearsed on the compose stack**, `main` at `d996066`, fresh volumes, the World topics recreated,
+server run with `ANDARA_CONTENT_SOURCE=kafka`, `ANDARA_CONTENT_PACKS=*`:
+1. `content core: andara.core@1 published; activated`: the boot core works (`AW-SRV-013`).
+2. `error` `no Zones were found in kafka: no followed pack has a loadable Active Pointer`. The core
+   has Templates, not Zones.
+3. `warn` `the content the Active Pointers name does not load; recovering what the log recorded`.
+   The log is empty.
+4. `tick loop started`, then `error` `no content in effect: the World has no Zones and there is no
+   previous version to retain` (`server/boot/tick.go`, `ReconcileContent`), and exit `1`. It was
+   never Ready and never served Admin.
+
+That exit is `AW-SRV-012`'s rule, and it's right for a World that has lost its content. But AW-INF-021's
+contract assumes the server comes up with nothing to serve and waits for the seed (AC-7: "the
+Application syncs and `make content-seed ENV=dev` runs"). The two can't both hold. `world-reset`
+alone is fine: it keeps the content topics, so a store that has `town` recovers. Only a store with
+no Zone-bearing pack deadlocks.
+
+**What SRE can't do inside the contract.** `content-seed` must use product commands only (the
+Interface contract; CLAUDE.md §10), so no direct topic write. And a second, `dir`-source server
+can't publish: its content RPCs answer `unimplemented`. Pointing any other server at `dev`'s
+broker would make two writers of one World log.
+
+**Options, for architecture to decide:**
+1. **(SRE's recommendation) A store-backed server with no content in effect stays up, unready.**
+   It serves Admin (the content RPCs), refuses Game (`OpenSession`), keeps `/readyz` failing, and
+   waits for the first swap that brings Zones, which then goes through today's `ReconcileContent`
+   path. `content-seed` reaches the pod directly with `kubectl port-forward` to the gRPC port, since
+   the Service routes only to Ready pods. `AndaraServerUnavailable` fires while `dev` waits, which
+   is true. The "no content in effect" exit stays for a World that *had* content, where the log
+   holds a swap and the store now refuses it. That's implementation work in `server/boot`, with
+   a test, and a line in `server-unavailable.md`.
+2. **Seed through a `dir`-mode publish:** the content RPCs work in `dir` mode too, publishing to the
+   store without serving from it. `dev` switches only after the seed. That's a larger change to
+   `AW-SRV-013`'s wiring, and the switch becomes two rolls.
+3. **The fixture in the server's boot**, like `andara.core`. It couples the server binary to test
+   content. SRE recommends against it.
+
+**Until it's decided, AW-INF-021 stays `ready`, with nothing merged,** because the values change
+alone would crash `dev`. SRE can build the parts that don't depend on it (the chart change and AC-8's
+test, `content-seed`, `argocd-status`'s pack lines, and the runbook lines) and hold them on a branch.
+The sprint's demo (M3) waits on this decision, and so does AW-INF-022 after it.
