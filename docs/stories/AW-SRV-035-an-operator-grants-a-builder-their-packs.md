@@ -4,7 +4,7 @@ title: An Operator grants a Builder their packs
 epic: EPIC-06
 component: server
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-013]
 blocks: [AW-INF-021, AW-INF-023]
@@ -202,3 +202,39 @@ Observability section: the privileged-action counter and the `accounts.write` sp
    `detail`. AC-9 is asserted on them.
 5. `AW-SRV-013` supplies `Account.builder_packs = 12`, now pinned. The glossary's **Pack Grant**
    already names it.
+
+## Implementation record (2026-09-30)
+
+On `impl/aw-srv-035-account-set-packs`. `auth.Store.SetBuilderPacks` is the grant, next to
+`SetRoles`. `auth.Admin.SetBuilderPacks` serves it and the Gateway delegates to it. Refusals carry
+`ErrorInfo` (domain `andara.accounts`) with the contract's reasons. `andara-cli account set-packs`
+passes each reason through as `error.code`. Decisions the contract didn't make are in
+`docs/feedback/AW-SRV-035-pack-grants.md`.
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `TestAccountSetPacks_GrantReplaceClear`: exit 0, `<id>: builder packs docks, town`. The publish passes authorization in `server/content` `TestPackGrant_IsWhatThePublishPathAuthorizesOn` and `TestPackGrant_AgainstABroker` | pass; prints the account ID, not the username (feedback 1) |
+| 2 | `TestPackGrant_*`: a publish to `wilds` is `PERMISSION_DENIED` `pack_not_held` | pass for the server; the CLI exit is `content publish`'s, AW-CLI-003 (feedback 2) |
+| 3 | `TestSetBuilderPacks_ReplacesSortsAndAudits`; `TestAccountSetPacks_GrantReplaceClear` | pass |
+| 4 | the same two tests (`builder packs none`, empty set); the `TestPackGrant_*` tests refuse the publish after clearing | pass |
+| 5 | `TestSetBuilderPacks_OperatorOnly`: `operator_only`, the Account unchanged, one `denied` record. `TestAccountSetPacks_Refusals` logs in as the Builder: exit 1, `operator_only`. Mutation-checked: without the refusal's audit, the tests fail | pass |
+| 6 | `TestSetBuilderPacks_Refusals`, `TestAccountSetPacks_Refusals`: `core_not_grantable` with the contract's message, exit 1. Mutation-checked | pass |
+| 7 | the same two: uppercase, an empty segment, a leading digit, a comma, empty. Each is `invalid_pack_id` naming the value, exit 1. The CLI passes `--pack` through as given | pass |
+| 8 | `TestSetBuilderPacks_IndependentOfTheRole`: the grant survives the role coming and going. The CLI prints `(inactive: no builder role)` | pass |
+| 9 | `TestSetBuilderPacks_ReplacesSortsAndAudits`: `action=set_builder_packs`, actor, target, `builder_packs_before` and `builder_packs_after`. `TestPackGrant_AgainstABroker` reads the three records back from Redpanda, polled | pass |
+| 10 | `TestSetBuilderPacks_SurvivesARestart` over in-memory logs. `TestPackGrant_AgainstABroker` reopens the store from the broker and publishes again | pass |
+| 11 | `TestSetBuilderPacks_Refusals` and `TestAccountSetPacks_Refusals`: `ABORTED` `record_version`, exit 1, unchanged | pass |
+
+**Instrumentation**, asserted by `TestSetBuilderPacks_Instrumentation`:
+- `andara_privileged_actions_total{action="set_builder_packs"}` is pre-seeded at 0 and counts each
+  call.
+- The `accounts.write` span carries `action` and `outcome`.
+- The `info` `builder packs set` line carries `actor_account_id`, `acting_as_account_id`,
+  `target_account_id`, `before`, `after`, `session_id` and `trace_id`.
+- `TestSetBuilderPacks_OperatorOnly` asserts the `warn` `builder packs refused` line with its
+  `reason`.
+- The Gateway's RED series and server span come from its interceptor, as for every Admin RPC.
+
+`make check` passes. `TestSnapshotCopyStaysInsideTheStallBudget` (#172) failed once under
+full-suite load and passed on the rerun. `server/content`'s broker tests pass against the local
+Redpanda.
