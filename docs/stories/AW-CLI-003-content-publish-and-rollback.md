@@ -76,12 +76,13 @@ I was wrong, so that world-building is a fast loop rather than a release process
 9. **Given** `activate` without `--yes` on a non-TTY **when** it runs **then** it exits `2` with `--yes
    required` rather than hanging.
 10. **Given** `--override` without `--reason` **when** `activate` runs **then** exit `2` before any RPC.
-11. **Given** an Operator approving a version whose author is the Operator, or the Account the
-    Operator is acting as **when** `content approve town 8` runs on a TTY **then** it asks
+11. **Given** an Operator approving a version whose author is the Operator **when** `content approve town 8` runs on a TTY **then** it asks
     `You published town@8. Approve it yourself as <operator>? [y/N]` before any `ApproveVersion`; on a
     non-TTY without `--yes` it exits `2` with `--yes required`. On success it prints
     `town@8 approved by <operator> (self-approval: you published it)`, taken from the response's
-    `self_approval`. Any other approval prints `town@8 approved by <user>`.
+    `self_approval`. Any other approval prints `town@8 approved by <user>`. *(Amended 2026-09-30, §8
+    review: "or the Account the Operator is acting as" moves to the Admin acting-as story, with
+    `--as` on content commands. Acting-as over Admin isn't built.)*
 12. **Given** `activate` or `rollback` refused under `AW-SRV-013` AC-14 **when** it runs **then** it
     prints `town@8 refused: <reason> (<subject>, …)`, for example `town@8 refused: zone_removed
     (docks)`, and exits `1`, with `error.code` the reason and `error.detail.subjects` the list.
@@ -163,9 +164,10 @@ the CLI's own trace as well as the server's record.
   A$ andara-cli content activate town 8            # prompt → y
   A$ andara-cli content rollback town              # prompt → y; town@7 active
   ```
-  And Brian's path on `dev` (ADR-0004, amended 2026-09-26), as one Operator:
+  And Brian's path on `dev` (ADR-0004, amended 2026-09-26), as one Operator. It publishes as the
+  Operator: `--as <builder>` moves to the Admin acting-as story (amended 2026-09-30).
   ```
-  andara-cli --as <builder> content publish --path ./brian   # brian@1, awaiting approval
+  andara-cli content publish --path ./brian                  # brian@1, awaiting approval
   andara-cli content approve brian 1                         # prompt → y; "(self-approval: you published it)"
   andara-cli content activate brian 1 --yes
   andara-cli server info                                     # content brian@1
@@ -303,17 +305,25 @@ Chunks are `content.BlobChunkBytes` (1 MiB). That's correct by reading, and no f
 enough to test it.
 
 **Not holding the story** (implementation, feedback file):
-- `fetch` and `diff` go through `rpcError`, not `contentError`, so they drop the server's reason
-  (`server_error` for `not_found`, `permission_denied` for `pack_not_held`). The README claims
-  reasons pass through for every content command.
 - A `fetch` test with a `..` path. A `previousActive` test with three or more moves. AC-2's test
   activating as the approver. A blob over 1 MiB.
 - The implementation record says the confirmation `info` line is asserted. It isn't, and at the
   default `--log-level warn` it isn't printed. SRE decides whether it needs a test.
 
-**What closes it:**
+**What closes it** *(revised on review of #275: items 2–4 were first filed as follow-ups)*:
 1. **AC-7** (implementation): a diff test covering a Zone added and removed, a Template changed,
    and a Component field added, removed and changed, each with `file:line`. Mutation-checked against
    `diffComponents` and the Template loop.
-2. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
+2. **`fetch` and `diff` pass the server's reason through** (implementation). They go through
+   `rpcError`, not `contentError`, so `error.code` is `server_error` for `not_found` and
+   `permission_denied` for `pack_not_held`. The Interface contract's exit table says `error.code` is
+   the server's `ErrorInfo.reason`. Owed with a test per command.
+3. **The test plan's stale-parent integration case** (implementation). The only CLI test,
+   `TestContentPublish_StaleParentIsExplained`, builds a synthetic error. Two publishes against one
+   parent, over the Redpanda rehearsal, must show the second exiting 1 with `stale_parent` and its
+   hint.
+4. **`AW-SRV-035` AC-2's CLI half** (implementation): `content publish` by a Builder without the pack
+   exits 1 with `error.code` `pack_not_held`. It's that story's AC, and the test lives in
+   `admin/cli`. It closes both stories.
+5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
    (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.

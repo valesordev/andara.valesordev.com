@@ -61,13 +61,17 @@ aren't changed here; one story can do all of them.
 
 Items 1–6 are ruled in the story's §8 review:
 1. The Account ID, and the ACs are amended.
-2. `AW-CLI-003`'s, untested, and added to its follow-ups.
+2. Owed as a test, and it holds this story (revised on review of #275).
 3. `andara.accounts`, recorded in the contract.
 4. Accepted.
 5. Accepted, and SRE confirms.
 6. Accepted, and the rest go to PM as one story.
 
-The story needs only SRE's record.
+### For implementation: owed before `done`
+- **AC-2 at the CLI:** a test where `content publish` by a Builder without the pack exits 1 with
+  `error.code` `pack_not_held`. It's also on `AW-CLI-003`'s list, and it closes both stories.
+
+With that and SRE's record, the story closes.
 
 ### For implementation, not holding the story
 - `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`: wait on `stall.entered` in a `select`

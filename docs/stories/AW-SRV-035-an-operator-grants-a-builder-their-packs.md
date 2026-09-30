@@ -241,7 +241,7 @@ passes each reason through as `error.code`. Decisions the contract didn't make a
 full-suite load and passed on the rerun. `server/content`'s broker tests pass against the local
 Redpanda.
 
-## §8 review (architecture, 2026-09-30): stays `review` on SRE's record only
+## §8 review (architecture, 2026-09-30): stays `review`
 
 Against `main` at `fa9911e`. Merged in #266 (`94f3ad0`). The PR's `check`, `stack`, `cli-release` and
 `determinism` passed, and `stack`'s log shows `TestPackGrant_AgainstABroker` passing. The push run on
@@ -252,7 +252,7 @@ this review: `server/auth` `SetBuilderPacks` (with `-race`), `admin/cli` `Accoun
 | AC | Evidence | Result |
 |----|----------|--------|
 | 1 | `setpacks_test.go` `TestAccountSetPacks_GrantReplaceClear`; `grant_test.go` `TestPackGrant_IsWhatThePublishPathAuthorizesOn`; the broker test | pass (text amended, ruling 1) |
-| 2 | `grant_test.go`: `pack_not_held`, `PERMISSION_DENIED`; the broker test | pass on the server. The CLI half holds by reading (ruling 2) |
+| 2 | `grant_test.go`: `pack_not_held`, `PERMISSION_DENIED`; the broker test | **server half passes. The CLI half is untested** (ruling 2) |
 | 3, 4 | `packs_test.go` `TestSetBuilderPacks_ReplacesSortsAndAudits`; CLI grant, replace and clear | pass |
 | 5 | `TestSetBuilderPacks_OperatorOnly`: reason, Account unchanged, one `denied` record, `warn` line; CLI as the Builder: exit 1 | pass |
 | 6, 7, 11 | `packs_test.go` refusal cases (exact messages; uppercase, `..`, leading digit, comma, empty; `andara.core`); CLI refusals | pass |
@@ -274,9 +274,11 @@ restores them with `account create` and `account set-packs`. The glossary has Pa
    `set-roles` echoes an ID, and nothing returns a username. AC-1, AC-4, AC-8 and the test plan are
    amended. `string username = 4` on the response stays available as an additive change if the
    Builder's Guide wants it.
-2. **AC-2's CLI half is `AW-CLI-003`'s.** `contentError` passes any server reason through, so
-   `content publish` exits 1 with `error.code` `pack_not_held` by reading. It's untested, and it's
-   added to `AW-CLI-003`'s follow-ups. It doesn't hold either story.
+2. **AC-2's CLI half is owed, as a test.** `contentError` passes any server reason through, so
+   `content publish` should exit 1 with `error.code` `pack_not_held`. But the AC states it, and no
+   test crosses the CLI boundary. The test lives in `admin/cli`, it holds this story, and it's also
+   on `AW-CLI-003`'s closing list, since it closes both. *(Revised on review of #275: first ruled as
+   a follow-up.)*
 3. **`ErrorInfo.domain` is `andara.accounts`,** as built, and it's recorded in the contract.
 4. **The audit outcome per refusal:** accepted. Not-found is `denied`, as `SetRoles` does; invalid is
    `invalid`; stale is `conflict`; and a non-Operator is audited, as AC-5 requires.
@@ -292,11 +294,14 @@ restores them with `account create` and `account set-packs`. The glossary has Pa
   `trace_id`. They assert fewer fields, though the code emits all of them.
 - `server/README.md`'s Accounts section doesn't list `accounts.write` or the `andara.accounts` domain.
 
-**What closes it:** SRE's §8 instrumentation record, observed on the compose stack:
+**What closes it:**
+1. **AC-2's CLI half** (implementation): `content publish` by a Builder without the pack exits 1 with
+   `error.code` `pack_not_held`, in a test.
+2. SRE's §8 instrumentation record, observed on the compose stack:
 - `andara_privileged_actions_total{action="set_builder_packs"}`;
 - the Gateway's RED series for the method;
 - `accounts.write` under the Gateway span, under the CLI's trace ID;
 - the `info` and `warn` lines with their required fields;
 - the audit record on `andara.audit.v1`.
 
-Architecture then moves the story to `done` without another pass.
+Architecture then moves the story to `done` once both are recorded, without another full pass.

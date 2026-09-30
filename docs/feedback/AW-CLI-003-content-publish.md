@@ -83,16 +83,20 @@ Items 1–6 are ruled in the story's §8 review. All are accepted as built. Item
 content commands, AC-11's acting-as clause and the test plan's `--as` line to the Admin acting-as
 story (`AW-SRV-013` rulings 2 and 3). PM places that story, in `docs/feedback/AW-SRV-013-publish-path.md`.
 
-### For implementation: owed before `done`
+### For implementation: owed before `done` (revised on review of #275)
+- **`fetch` and `diff`:** route `fetchVersion` through `contentError`, so that `error.code` is the
+  server's reason (`not_found`, `pack_not_held`), as the contract's exit table says. Add a test per
+  command.
+- **Stale parent over Redpanda:** two publishes on one parent, and the second exits 1 with
+  `stale_parent` and its hint (the test plan's integration case).
+- **`pack_not_held` at the CLI:** `content publish` by a Builder without the pack exits 1 with
+  `error.code` `pack_not_held` (`AW-SRV-035` AC-2).
 - **AC-7:** a `diff` test covering a Zone added and removed, a Template changed, and a Component field
   added, removed and changed, each with `file:line`. Emptying `diffComponents` and the Template loop
   currently leaves every test green.
 
 ### For implementation, not holding the story
-- Route `fetchVersion` (`fetch`, `diff`) through `contentError`, so that the server's reason reaches
-  `error.code`, as the README says it does.
-- Tests: `content publish` by a Builder without the pack exits 1 with `error.code` `pack_not_held`
-  (`AW-SRV-035` AC-2's CLI half, ruled here); `fetch` with a `src/../x` path; `previousActive` over three or more moves; AC-2 activating
+- Tests: `fetch` with a `src/../x` path; `previousActive` over three or more moves; AC-2 activating
   as the approver; a blob over 1 MiB, to exercise chunking.
 - The implementation record: the rehearsal is in CI (#265), and the confirmation `info` line isn't
   asserted.
