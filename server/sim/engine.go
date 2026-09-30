@@ -117,6 +117,8 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "look"
 	case *logv1.LoggedCommand_Move:
 		return "move"
+	case *logv1.LoggedCommand_Goto:
+		return "goto"
 	case *logv1.LoggedCommand_Arrive:
 		return "arrive"
 	case *logv1.LoggedCommand_BindCharacter:
@@ -136,8 +138,10 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 // KindBindCharacter and KindUnbindCharacter have none either: the Gateway's
 // roster produces them (AW-SRV-014).
 const (
-	KindLook            CommandKind = "look"
-	KindMove            CommandKind = "move"
+	KindLook CommandKind = "look"
+	KindMove CommandKind = "move"
+	// KindGoto is a Builder's jump to a Room by ID (AW-SRV-036).
+	KindGoto            CommandKind = "goto"
 	KindArrive          CommandKind = "arrive"
 	KindBindCharacter   CommandKind = "bind_character"
 	KindUnbindCharacter CommandKind = "unbind_character"
@@ -169,6 +173,8 @@ type ApplyContext struct {
 	consumed bool
 	// bind is the bind_character handler's report, copied to the Outcome.
 	bind *BindResult
+	// jump is the goto handler's report, copied to the Outcome.
+	jump *JumpResult
 }
 
 // ErrNotConsumed is what a handler returns for an ApplyContext that Step
@@ -224,6 +230,15 @@ type Outcome struct {
 	// Bind is what an accepted bind_character did to the body, for the
 	// loop's bind-applied line (AW-SRV-014); nil for every other verb.
 	Bind *BindResult
+	// Jump is where an accepted goto took its actor from and to, for the
+	// loop's command-applied line and span (AW-SRV-036); nil for every
+	// other verb.
+	Jump *JumpResult
+}
+
+// JumpResult is a goto's two ends.
+type JumpResult struct {
+	From, To RoomRef
 }
 
 // BindResult is where an applied BindCharacter left the body, and how.
@@ -560,6 +575,7 @@ func (e *Engine) applyOne(tick Tick, zone *ZoneState, r Record, emit func(ZoneID
 		emit(zone.ID, r.Command.GetSessionId(), r.Command.GetClientRef(), actor, rejected(out.Code, msg))
 	} else {
 		out.Bind = actx.bind
+		out.Jump = actx.jump
 	}
 	end(out)
 	return true

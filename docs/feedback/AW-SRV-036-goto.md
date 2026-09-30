@@ -80,3 +80,30 @@ patterns to `arrives( from the <dir>)?.` **or** `has arrived.`, so:
 The carrier's own test plan names `make stack-play` and `make stack-linkdead` passing with the new
 wording. *(Corrected before merge, from Codex on #273: this first said the gates already accepted
 it, which is true only on #269's branch.)*
+
+## Implementation, 2026-09-30: built
+
+Built on `impl/aw-srv-036-goto`. The story is at `review`, and the record is in the story. Decided
+in building, for architecture's review:
+
+- **Where a bare Room gets its Zone.** `log.proto` says the parser resolves `<room>` from the
+  Binding, but `Parse` reads no Session state. The pipeline fills `target_zone_id` from the Binding
+  right after authorize, where it sets `zone_id`, so the log still always carries both.
+- **Case.** Every verb's arguments are lowercased before they're checked, so `GOTO Docks/Pier` is
+  `docks/pier`. Characters outside the ID set, an empty part, or more than one `/` are
+  `invalid_argument`.
+- **Every `Arrive` describes where it lands**, as the contract review said. That changes a
+  cross-Zone `move`: its arrival is now followed by a `RoomDescribed` to the mover.
+  `TestMove_CrossZone` and `events`' `TestObserverFollowsEntity` now expect it. It delivers
+  `AW-SRV-038`'s cross-Zone half.
+- **`goto`'s jump report.** A new `sim.Outcome.Jump` gives the tick loop `from_room` and `to_room`,
+  as `<zone>/<room>`, for the `command applied` line and the `command.apply` span. No other verb
+  sets it.
+
+## For SRE: `TestLive_Goto` needs a stack built from this branch
+
+AC-1, AC-2 and AC-3 end to end are `internal/smoke/goto_test.go`, `TestLive_Goto`: through the
+Gateway, the Command through Redpanda, two Zones' ticks, and the roster after quit. The test plan
+asks for exactly that. The shared compose stack runs a server built from your checkout, so I
+haven't run it against this code. It works with either spawn Room, as `TestLive_M1Gate` does. Could
+you run `make stack-smoke` (or `stack-play`) against this branch, as you did for #272?

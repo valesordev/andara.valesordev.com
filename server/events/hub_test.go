@@ -449,8 +449,8 @@ func TestObserverFollowsEntity(t *testing.T) {
 	if got := drain(alice); len(got) != 0 {
 		t.Fatalf("in transit, alice heard her old Room: %v", types(got))
 	}
-	f.step(res.Outbound[0]) // arrives at the pier
-	if got := types(drain(alice)); len(got) != 1 || got[0] != sim.EvCharacterArrived {
+	f.step(res.Outbound[0]) // arrives at the pier, and is shown it (AW-SRV-036)
+	if got := types(drain(alice)); len(got) != 2 || got[0] != sim.EvCharacterArrived || got[1] != sim.EvRoomDescribed {
 		t.Fatalf("arrival saw %v", got)
 	}
 	simtest.Place(f.e, "dave", "docks", "pier")
