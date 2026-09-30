@@ -1,0 +1,21 @@
+Activate the version that was active before the current one, or --to N. A version
+once approved needs no fresh approval to go back to. Like activate, it shows what
+changes and waits for y unless --yes.
+
+Usage:
+  andara-cli content rollback <pack> [flags]
+
+Flags:
+  -h, --help      help for rollback
+      --to uint   the version to go back to (default: the one active before this)
+      --yes       don't ask for confirmation
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

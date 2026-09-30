@@ -10,11 +10,12 @@ Available Commands:
   character    Create and list your Characters
   completion   Generate shell completion scripts
   config       Show and inspect CLI configuration
-  content      Compile, validate, inspect, and format Content Language packs (builder)
+  content      Compile, validate, publish, and roll back Content Language packs (builder)
   help         Help about any command
   invite       Issue and revoke invite codes (operator)
   play         Enter the world: a text interface over the Protocol
   registration Switch the registration mode (operator)
+  server       Read the server's state
   sim          Run the simulation in-process against content on disk (developer)
   snapshot     Inspect Zone snapshots in the configured store (operator)
   version      Print version, commit, and build date

@@ -28,7 +28,7 @@ import (
 func newContentCmd(rt *runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "content",
-		Short:         "Compile, validate, inspect, and format Content Language packs (builder)",
+		Short:         "Compile, validate, publish, and roll back Content Language packs (builder)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -39,6 +39,8 @@ func newContentCmd(rt *runtime) *cobra.Command {
 	cmd.AddCommand(newContentCompileCmd(rt))
 	cmd.AddCommand(newContentValidateCmd(rt))
 	cmd.AddCommand(newContentInspectCmd(rt))
+	cmd.AddCommand(newContentPublishCmd(rt), newContentApproveCmd(rt), newContentActivateCmd(rt),
+		newContentRollbackCmd(rt), newContentHistoryCmd(rt), newContentDiffCmd(rt), newContentFetchCmd(rt))
 	cmd.AddCommand(newContentFmtCmd(rt))
 	cmd.AddCommand(newContentDecompileCmd(rt))
 	cmd.AddCommand(newContentFetchCoreCmd(rt))
@@ -480,8 +482,8 @@ func newContentDecompileCmd(rt *runtime) *cobra.Command {
 			"The source it produces recompiles to the same blobs byte for byte. It carries no\n" +
 			"comments: what preserves those is the source blob published beside the compiled\n" +
 			"output, which `content fetch` returns.\n\n" +
-			"--pack and --version are AW-CLI-003's, once Admin can serve a published version;\n" +
-			"today --path decompiles a pack that is already on disk.",
+			"For a published version, `content fetch` returns the source it was published with,\n" +
+			"so there's nothing to decompile; --path decompiles a pack already on disk.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,

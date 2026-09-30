@@ -49,6 +49,10 @@ type validated struct {
 	// to validate.
 	resolved *content.Resolved
 	diags    []lang.Diagnostic
+	// compiled is the compile's output, when the source compiled: its
+	// blobs are what `content publish` uploads, and its source map places
+	// the server's findings (AW-CLI-003).
+	compiled *lang.Output
 }
 
 func (v *validated) failed() bool { return v.resolved == nil || lang.HasError(v.diags) }
@@ -81,17 +85,20 @@ func (v *validated) rooms() int {
 	return n
 }
 
-// validatePath compiles and validates a pack directory on disk.
-func (rt *runtime) validatePath(dir, cacheFlag string) (*validated, error) {
+// validatePath compiles and validates a pack directory on disk. pack, when
+// set, is the pack the caller means to compile, and a source declaring
+// another is pack_mismatch.
+func (rt *runtime) validatePath(dir, pack, cacheFlag string) (*validated, error) {
 	corePack, err := rt.loadCore(dir, cacheFlag)
 	if err != nil {
 		return nil, err
 	}
 	v := &validated{label: dir, corePack: corePack}
-	out, ok := rt.compileSpan(dir, corePack, lang.Options{}, v)
+	out, ok := rt.compileSpan(dir, corePack, lang.Options{Pack: pack}, v)
 	if !ok {
 		return v, nil
 	}
+	v.compiled = out
 	blobs := make(map[string][]byte, len(out.Blobs))
 	for _, b := range out.Blobs {
 		blobs[b.Path] = b.Bytes
@@ -395,7 +402,7 @@ func (rt *runtime) load(f *packFlags) (*validated, error) {
 	if st, err := os.Stat(dir); err != nil || !st.IsDir() {
 		return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: fmt.Sprintf("--path %s is not a directory", dir), Detail: map[string]any{"path": dir}}
 	}
-	return rt.validatePath(dir, f.cache)
+	return rt.validatePath(dir, "", f.cache)
 }
 
 func newContentValidateCmd(rt *runtime) *cobra.Command {

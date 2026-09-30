@@ -1,0 +1,25 @@
+Make pack@version the version the World runs. It shows the pack, the version in
+effect and the one replacing it, who published it and who approved it, and
+waits for y unless --yes.
+
+--override activates an unapproved version. It's for an Operator only, needs
+--reason, and is audited as an override.
+
+Usage:
+  andara-cli content activate <pack> <version> [flags]
+
+Flags:
+  -h, --help            help for activate
+      --override        activate without approval (operator; needs --reason)
+      --reason string   why --override skips approval; recorded in the audit log
+      --yes             don't ask for confirmation
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

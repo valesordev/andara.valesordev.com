@@ -1,20 +1,17 @@
-Reconstruct .aw source from compiled output, in the canonical layout.
+Compile and validate the pack under --path as `content validate` does, upload the
+blobs the server doesn't already hold, and publish them as the pack's next version.
 
-The source it produces recompiles to the same blobs byte for byte. It carries no
-comments: what preserves those is the source blob published beside the compiled
-output, which `content fetch` returns.
-
-For a published version, `content fetch` returns the source it was published with,
-so there's nothing to decompile; --path decompiles a pack already on disk.
+The new version's parent is the newest version the server has. Publishing never
+moves the Active Pointer: a version needs a second approver, then `content activate`.
 
 Usage:
-  andara-cli content decompile [flags]
+  andara-cli content publish [flags]
 
 Flags:
       --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
-  -h, --help           help for decompile
-      --out string     write the reconstructed sources under this directory
-      --path string    pack directory to decompile (default ".")
+  -h, --help           help for publish
+      --pack pack      the pack to publish as (default: the source's pack declaration)
+      --path string    pack directory of .aw source (default ".")
 
 Global Flags:
       --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)

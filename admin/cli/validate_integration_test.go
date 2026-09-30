@@ -20,62 +20,93 @@ import (
 	"github.com/valesordev/andara/server/recordlog"
 )
 
-// TestContentValidate_PublishedVersionOverRedpanda is AC-6 against a
-// throwaway Redpanda: the content topics are real, and Admin reads each blob
-// back from the broker on a cold cache before streaming it to the CLI.
-func TestContentValidate_PublishedVersionOverRedpanda(t *testing.T) {
+// redpanda is a throwaway set of content topics on the local broker: the
+// three content topics and an audit topic, deleted when the test ends.
+type redpanda struct {
+	brokers []string
+	topics  map[string]string
+	logs    map[string]recordlog.Log
+}
+
+func throwawayRedpanda(t *testing.T) *redpanda {
+	t.Helper()
 	v := os.Getenv("ANDARA_KAFKA_BROKERS")
 	if v == "" {
 		t.Skip("ANDARA_KAFKA_BROKERS not set; run `make up` and `make test-integration`")
 	}
-	brokers := strings.Split(v, ",")
-
+	r := &redpanda{brokers: strings.Split(v, ","), topics: map[string]string{}, logs: map[string]recordlog.Log{}}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	cl, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...))
 	if err != nil {
 		t.Fatal(err)
 	}
 	adm := kadm.NewClient(cl)
 	stamp := time.Now().UnixNano()
-	topics := map[string]string{}
 	for _, name := range []string{"blobs", "versions", "active", "audit"} {
-		topics[name] = fmt.Sprintf("andara.test.validate.%s.%d", name, stamp)
+		r.topics[name] = fmt.Sprintf("andara.test.cli.%s.%d", name, stamp)
 		policy := "compact"
 		if name == "audit" {
 			policy = "delete"
 		}
-		if _, err := adm.CreateTopic(ctx, 1, 1, map[string]*string{"cleanup.policy": kadm.StringPtr(policy)}, topics[name]); err != nil {
+		if _, err := adm.CreateTopic(ctx, 1, 1, map[string]*string{"cleanup.policy": kadm.StringPtr(policy)}, r.topics[name]); err != nil {
 			t.Fatal(err)
 		}
 	}
 	t.Cleanup(func() {
 		dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer dcancel()
-		_, _ = adm.DeleteTopics(dctx, topics["blobs"], topics["versions"], topics["active"], topics["audit"])
+		_, _ = adm.DeleteTopics(dctx, r.topics["blobs"], r.topics["versions"], r.topics["active"], r.topics["audit"])
 		cl.Close()
 	})
+	return r
+}
 
-	logs := map[string]recordlog.Log{}
-	open := func(name string) recordlog.Log {
-		if l, ok := logs[name]; ok {
+func (r *redpanda) open(t *testing.T) func(name string) recordlog.Log {
+	return func(name string) recordlog.Log {
+		if l, ok := r.logs[name]; ok {
 			return l
 		}
-		l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Brokers: brokers, Topic: topics[name]})
+		l, err := recordlog.NewKafka(context.Background(), recordlog.KafkaOptions{Brokers: r.brokers, Topic: r.topics[name]})
 		if err != nil {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { _ = l.Close() })
-		logs[name] = l
+		r.logs[name] = l
 		return l
 	}
-	resolver, err := content.NewKafkaResolver(content.KafkaOptions{
-		Brokers: brokers, Cache: content.BlobCache{Dir: t.TempDir()},
-		Topics: content.Topics{Blobs: topics["blobs"], Versions: topics["versions"], Active: topics["active"]},
+}
+
+// resolver reads the topics back on a cold cache, as a server's
+// KafkaResolver does: the store blobs are read from, and the watcher of the
+// active topic.
+func (r *redpanda) resolver(t *testing.T) *content.KafkaResolver {
+	t.Helper()
+	res, err := content.NewKafkaResolver(content.KafkaOptions{
+		Brokers: r.brokers, Cache: content.BlobCache{Dir: t.TempDir()},
+		Topics: content.Topics{Blobs: r.topics["blobs"], Versions: r.topics["versions"], Active: r.topics["active"]},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = resolver.Close() })
-	testContentValidatePack(t, startContentServer(t, open, resolver))
+	t.Cleanup(func() { _ = res.Close() })
+	return res
+}
+
+// TestContentValidate_PublishedVersionOverRedpanda is AW-CLI-002 AC-6
+// against a throwaway Redpanda: Admin reads each blob back from the broker on
+// a cold cache before streaming it to the CLI.
+func TestContentValidate_PublishedVersionOverRedpanda(t *testing.T) {
+	r := throwawayRedpanda(t)
+	testContentValidatePack(t, startContentServer(t, r.open(t), r.resolver(t)))
+}
+
+// TestContentPublishPath_TwoIdentitiesOverRedpanda is AW-CLI-003's
+// rehearsal against a throwaway Redpanda: every write lands on the broker,
+// the Loader follows the active topic through a KafkaResolver, and `server
+// info` shows what the Engine applied (AC-1–8).
+func TestContentPublishPath_TwoIdentitiesOverRedpanda(t *testing.T) {
+	r := throwawayRedpanda(t)
+	res := r.resolver(t)
+	testTwoIdentities(t, startContentStack(t, r.open(t), res, res))
 }
