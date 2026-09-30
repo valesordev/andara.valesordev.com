@@ -4,7 +4,7 @@ title: andara-cli content validate and inspect
 epic: EPIC-05
 component: cli
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001, AW-SRV-034, AW-SRV-013]
 blocks: [AW-CLI-003, AW-INF-010, AW-INF-022, AW-CLI-009]
@@ -171,3 +171,42 @@ A contract change after `ready`, recorded here (CLAUDE.md §6). Implementation h
    The sprint already orders `AW-SRV-013` (item 4) before this story (item 6). If PM splits the core
    boot out of `AW-SRV-013`, this story depends on both halves.
 5. `errors.md`'s `core_version_mismatch` row and `semantics.md` §2 are amended to match.
+
+## Implementation record (2026-09-30)
+
+On `impl/aw-cli-002-content-validate-inspect`. `validate` compiles with `content/lang` and then
+runs `content.Validate`, the Loader's own validator factored out of `Loader.build`, over blobs
+decoded by the gate's decoder (`content.ResolveBlobs`). The CLI has no validation logic of its
+own. The compiler's new source map (`lang.SourceMap`), keyed by declaration chain, places each
+validator finding on its `.aw` line. `sim.ValidationError` gained the Exit direction, so a loader
+chain reaches the Exit the way the compiler's does. Decisions the contract didn't make are in
+`docs/feedback/AW-CLI-002-content-validate-inspect.md`, with the questions for architecture and SRE.
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `TestContentValidate_DanglingExit`: exit 1, and the first line is `…/z.aw:5:19: unknown_room Room "r" exits north to nowhere, and Zone "z" has no Room "nowhere"` | pass |
+| 2 | `TestContentValidate_ValidPrintsCounts`: `4 zones, 7 rooms, 3 templates, core andara.core@1` for the dev fixture | pass |
+| 3 | `TestContentValidate_JSONIsTheArrayAlone`: stdout decodes as one array and nothing follows it, and stderr is exactly the summary. Built as AC-3, not as the envelope the Interface contract names (feedback, For architecture 1) | pass |
+| 4 | `internal/contentequiv`'s fixture set (47 cases) held to its expected findings by the compiler (`TestCompilerAgrees`, through `lang.Conformance`), by the CLI (`TestContentValidate_AgreesWithTheEquivalenceFixture`), and by the gate (`server/content` `TestPublishGateAgreesWithTheEquivalenceFixture`, 17 cases that compile). Mutation-checked: when Exit findings are placed on their Room, the CLI and gate runners both fail | pass; scope in feedback, For architecture 3 |
+| 5 | `TestContentValidate_EmbeddedCoreThenCache`: with no cache and no server, `@1` validates against the embedded core. `@2` fails `core_version_mismatch` with the release hint, then validates once `@2` is cached | pass |
+| 6 | `TestContentValidate_PublishedVersion`: the real gateway and `content.Admin` over in-memory topics. A valid version exits 0, with its warning placed on `town@1/purgatory.aw:6:5`. A version with a dangling Exit and no sources exits 1 on `town.json`. With the server stopped, exit 3. `TestContentValidate_PublishedVersionOverRedpanda` (`-tags integration`) runs the same flow over throwaway Redpanda topics and passes locally | pass; CI doesn't run the Redpanda test yet (feedback, For SRE 1) |
+| 7 | `TestContentInspect_TemplateProvenance`: `Behavior.name = "town.merchant"  (town.Merchant)` and `Memory  (andara.core.Npc)`, with an inherited field attributed to the ancestor that set it | pass |
+| 8 | `TestContentInspect_RoomExitsInDirectionOrder`: north, west, up in that order (written up, west, north), each marked `back: <dir>` or `one-way` | pass |
+| 9 | `TestVersion_NamesTheEmbeddedCore`: `core:     andara.core@1` after `built_at`, and `"core_version": 1` in the JSON | pass |
+| 10 | `TestEmbeddedCoreIsTheOneVERSIONSRecords` (`admin/cli`): the Templates the CLI resolves against, re-encoded, hash to `VERSIONS`' line for `VERSION`. `content/core`'s test makes the same check for the server | pass |
+
+`make check` passes. `TestSnapshotCopyStaysInsideTheStallBudget` failed once under full-suite load
+(#172, which fails on `main` too) and passed alone and on the rerun. `server/content`'s integration
+tests pass against the local Redpanda after the `Loader.build` refactor.
+
+**Instrumentation:** `cli.command` is the root span, with children `content.compile` (`files`,
+`zones`, `rooms`, `templates`, `diagnostics`) and `content.validate` (`zones`, `rooms`,
+`templates`, `error_count`, `warning_count`), asserted by `TestContentValidate_EmitsTheSpans`. There
+are no metrics, per `AW-CLI-001`.
+
+**Not done here, and why:**
+- **The Redpanda variant of AC-6 isn't in CI.** `make test-integration` doesn't list `./admin/cli/`,
+  and the Makefile is SRE's (feedback, For SRE 1).
+- **The gate still reports compiled-blob positions.** Placing them is the job of whoever holds the
+  source: `content validate` does it now, and `content publish` (AW-CLI-003) will
+  (feedback, For architecture 2).
