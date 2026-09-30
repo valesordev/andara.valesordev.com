@@ -66,6 +66,10 @@ func (r *resolver) resolveZones() []*contentv1.ZoneDefinition {
 func (r *resolver) buildZone(zd zoneDecl, byID map[string]zoneDecl, rooms map[string]map[string]*RoomDecl) *contentv1.ZoneDefinition {
 	z := zd.d
 	chain := []string{z.ID}
+	r.smap.zones[z.ID] = at(zd.file, z.Pos, z.ID)
+	if len(z.Fallbacks) > 0 {
+		r.smap.fallbacks[z.ID] = at(zd.file, z.Fallbacks[0].RefPos, z.ID)
+	}
 
 	// At most one fallback per Zone; a second is duplicate_declaration at the
 	// second keyword. The first is ZoneDefinition.fallback_room (AW-SRV-012),
@@ -138,6 +142,7 @@ func (r *resolver) checkFallback(zd zoneDecl, def *contentv1.ZoneDefinition, roo
 func (r *resolver) buildRoom(zd zoneDecl, rd *RoomDecl, byID map[string]zoneDecl) *contentv1.RoomDefinition {
 	z := zd.d
 	chain := []string{z.ID, rd.ID}
+	r.smap.rooms[key(chain...)] = at(zd.file, rd.Pos, chain...)
 
 	// At most one desc per Room. A Room with no desc compiles with an empty
 	// description, which is legal: an unwritten room is a Builder mid-work
@@ -201,6 +206,8 @@ func (r *resolver) buildExit(zd zoneDecl, rd *RoomDecl, e *ExitDecl, byID map[st
 		return nil
 	}
 	seenDir[e.Direction] = e
+	r.smap.exits[key(withDir...)] = at(zd.file, e.Pos, withDir...)
+	r.smap.exitRefs[key(withDir...)] = at(zd.file, e.RefPos, withDir...)
 
 	// perceives is PENDING AW-SRV-029: the senses are validated and dropped,
 	// because ExitDefinition has no field to hold them (semantics.md §9).
@@ -212,18 +219,19 @@ func (r *resolver) buildExit(zd zoneDecl, rd *RoomDecl, e *ExitDecl, byID map[st
 		tz, known := byID[e.ToZone]
 		if !known {
 			r.report(zd.file, e.RefPos, CodeUnknownZone,
-				fmt.Sprintf("no Zone %q in pack %q; a pack is the unit of publication and an Exit may not leave it", e.ToZone, r.pack),
+				fmt.Sprintf("Room %q exits %s to %s, and pack %q has no Zone %q; a pack is the unit of publication and an Exit may not leave it",
+					rd.ID, e.Direction, exitTarget(e), r.pack, e.ToZone),
 				withDir...)
 			return nil
 		}
 		if !hasRoom(tz.d, e.ToRoom) {
 			r.report(zd.file, e.RefPos, CodeUnknownRoom,
-				fmt.Sprintf("Zone %q has no Room %q", e.ToZone, e.ToRoom), withDir...)
+				fmt.Sprintf("Room %q exits %s to %s, and Zone %q has no Room %q", rd.ID, e.Direction, exitTarget(e), e.ToZone, e.ToRoom), withDir...)
 			return nil
 		}
 	} else if !hasRoom(z, e.ToRoom) {
 		r.report(zd.file, e.RefPos, CodeUnknownRoom,
-			fmt.Sprintf("Zone %q has no Room %q", z.ID, e.ToRoom), withDir...)
+			fmt.Sprintf("Room %q exits %s to %s, and Zone %q has no Room %q", rd.ID, e.Direction, exitTarget(e), z.ID, e.ToRoom), withDir...)
 		return nil
 	}
 

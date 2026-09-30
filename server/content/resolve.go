@@ -5,6 +5,7 @@ package content
 
 import (
 	"context"
+	"crypto/sha256"
 	"path"
 	"sort"
 	"strings"
@@ -126,6 +127,20 @@ func Resolve(ctx context.Context, s Store, pack string, version uint64) (*Resolv
 		}
 	}
 	return out, nil
+}
+
+// ResolveBlobs decodes a pack from blob bodies by published path, with the
+// decoder a load and the publish gate use: a pack a Builder compiled on their
+// laptop, or one `andara-cli` fetched over Admin, reaches the validator
+// exactly as the server's copy would (AW-CLI-002).
+func ResolveBlobs(pack string, bodies map[string][]byte) (*Resolved, error) {
+	refs := make([]*contentv1.BlobRef, 0, len(bodies))
+	for p, body := range bodies {
+		sum := sha256.Sum256(body)
+		refs = append(refs, &contentv1.BlobRef{Path: p, Hash: sum[:], SizeBytes: uint64(len(body))})
+	}
+	cv := &contentv1.ContentVersion{PackId: pack, Blobs: refs}
+	return Resolve(context.Background(), candidateStore{cv: cv, bodies: bodies}, pack, 0)
 }
 
 // isTemplatePath reports whether a manifest path is a Template blob:

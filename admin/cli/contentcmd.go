@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/valesordev/andara/content/core"
 	"github.com/valesordev/andara/content/lang"
 )
 
@@ -27,7 +28,7 @@ import (
 func newContentCmd(rt *runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:           "content",
-		Short:         "Compile, format, and decompile Content Language packs (builder)",
+		Short:         "Compile, validate, inspect, and format Content Language packs (builder)",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
@@ -36,6 +37,8 @@ func newContentCmd(rt *runtime) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newContentCompileCmd(rt))
+	cmd.AddCommand(newContentValidateCmd(rt))
+	cmd.AddCommand(newContentInspectCmd(rt))
 	cmd.AddCommand(newContentFmtCmd(rt))
 	cmd.AddCommand(newContentDecompileCmd(rt))
 	cmd.AddCommand(newContentFetchCoreCmd(rt))
@@ -127,15 +130,27 @@ func compileFailed(path string, ds []lang.Diagnostic) *AppError {
 	}
 }
 
-// loadCore reads the andara.core version a pack pins, from the cache. A pack
-// that requires nothing — andara.core itself — needs no core.
+// loadCore reads the andara.core version a pack pins. A pack that requires
+// nothing — andara.core itself — needs no core.
 func (rt *runtime) loadCore(path, cacheFlag string) (*lang.Pack, error) {
 	ref, err := lang.RequiredCore(path)
 	if err != nil {
 		return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
 	}
+	return rt.findCore(ref, cacheFlag)
+}
+
+// findCore looks andara.core@M up where AW-CLI-002's contract says to, in
+// order: the core this binary embeds, if M is its VERSION; then the cache.
+// Neither is not an error here. Compile turns a missing core into
+// core_version_mismatch naming both versions and the release to use, which is
+// the finding a Builder can act on (AC-5).
+func (rt *runtime) findCore(ref lang.CoreRef, cacheFlag string) (*lang.Pack, error) {
 	if ref.Pack == "" {
 		return nil, nil
+	}
+	if ref.Pack == core.Pack && uint64(ref.Version) == core.Version() {
+		return embeddedCore()
 	}
 	root := rt.contentCacheRoot(cacheFlag)
 	pack, ok, err := lang.LoadCachedPack(root, ref.Pack, ref.Version)
@@ -143,12 +158,28 @@ func (rt *runtime) loadCore(path, cacheFlag string) (*lang.Pack, error) {
 		return nil, &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: err.Error()}
 	}
 	if !ok {
-		// Not an error here. Compile turns a missing cache into
-		// core_version_mismatch naming both versions and the command to run,
-		// which is the finding a Builder can act on (AC-5).
 		return nil, nil
 	}
 	return pack, nil
+}
+
+// embeddedCore is content/core as a pack to resolve against: the same bytes,
+// under the same VERSION, that every server embeds and publishes at boot
+// (ADR-0004 and ADR-0010 §8, amended 2026-09-28).
+func embeddedCore() (*lang.Pack, error) {
+	p, err := lang.PackFromBlobs(core.Pack, embeddedCoreVersion(), core.Blobs())
+	if err != nil {
+		// Embedded at build time; a failure is a broken build, not input.
+		return nil, &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: "the embedded andara.core does not parse: " + err.Error()}
+	}
+	return p, nil
+}
+
+func embeddedCoreVersion() uint32 { return uint32(core.Version()) }
+
+// compileOptions are the options every compile the CLI runs shares.
+func compileOptions(ignore []string) lang.Options {
+	return lang.Options{Ignore: ignore, EmbeddedCore: embeddedCoreVersion()}
 }
 
 func newContentCompileCmd(rt *runtime) *cobra.Command {
@@ -167,7 +198,7 @@ func newContentCompileCmd(rt *runtime) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			core, err := rt.loadCore(path, cache)
+			corePack, err := rt.loadCore(path, cache)
 			if err != nil {
 				return err
 			}
@@ -176,7 +207,7 @@ func newContentCompileCmd(rt *runtime) *cobra.Command {
 				return err
 			}
 			_, span := rt.childSpan("content.compile")
-			result, ds := lang.CompileOpts(path, core, nil, lang.Options{Ignore: ignore})
+			result, ds := lang.CompileOpts(path, corePack, nil, compileOptions(ignore))
 			span.SetAttributes(attribute.Int("diagnostics", len(ds)))
 			if result != nil {
 				span.SetAttributes(
@@ -455,18 +486,18 @@ func newContentDecompileCmd(rt *runtime) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			core, err := rt.loadCore(path, cache)
+			corePack, err := rt.loadCore(path, cache)
 			if err != nil {
 				return err
 			}
-			result, ds := lang.Compile(path, core, nil)
+			result, ds := lang.CompileOpts(path, corePack, nil, compileOptions(nil))
 			if err := rt.writeDiagnostics(ds, path); err != nil {
 				return err
 			}
 			if result == nil {
 				return compileFailed(path, ds)
 			}
-			files, err := lang.DecompileWith(result, core)
+			files, err := lang.DecompileWith(result, corePack)
 			if err != nil {
 				return &AppError{Exit: ExitFail, Code: CodeInvalidValue, Message: err.Error()}
 			}
@@ -513,21 +544,23 @@ func newContentFetchCoreCmd(rt *runtime) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "fetch-core",
 		Short: "Populate the local andara.core pack cache",
-		Long: "Populate the local andara.core cache so that `content compile` works offline.\n\n" +
-			"--from reads a pack directory that is already on disk — the shipped seed under\n" +
-			"content/core, or a checkout. Fetching over Admin needs an RPC that serves a\n" +
-			"published ContentVersion, which is AW-SRV-013's and AW-CLI-003's to define; see\n" +
-			"docs/feedback/AW-CLI-006-content-language-compiler.md §7.",
+		Long: "Populate the local andara.core cache with a core this andara-cli does not embed.\n\n" +
+			"andara-cli embeds one andara.core (`andara-cli version` names it), and a pack\n" +
+			"requiring it compiles offline with no cache at all. --from reads another core's\n" +
+			"pack directory from disk into the cache. It never fetches over Admin: a core this\n" +
+			"binary doesn't embed comes with the andara-cli release that embeds it.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if from == "" {
+				v := embeddedCoreVersion()
 				return &AppError{
-					Exit:    ExitConnect,
-					Code:    "core_fetch_unavailable",
-					Message: "no Admin RPC serves a published content version yet; pass --from with a pack directory to populate the cache from disk",
-					Detail:  map[string]any{"story": "AW-SRV-013", "flag": "--from"},
+					Exit: ExitConnect,
+					Code: "core_fetch_unavailable",
+					Message: fmt.Sprintf("this andara-cli embeds %s@%d and fetches no other core; use the andara-cli release that embeds the core you need, or pass --from with its pack directory",
+						core.Pack, v),
+					Detail: map[string]any{"embedded_core": v, "flag": "--from"},
 				}
 			}
 			result, ds := lang.Compile(from, nil, nil)

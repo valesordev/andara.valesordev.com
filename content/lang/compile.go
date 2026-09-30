@@ -54,6 +54,12 @@ type Options struct {
 	// — the sources the last run published — back as pack input and reports
 	// duplicate_pack against the Builder's own output.
 	Ignore []string
+	// EmbeddedCore is the andara.core version the caller embeds (AW-CLI-002),
+	// or 0. A pack requiring a core the caller could not supply is then told
+	// which core this build has and that the remedy is the release embedding
+	// the one it requires, rather than a cache command (errors.md §6,
+	// amended 2026-09-28).
+	EmbeddedCore uint32
 }
 
 // CompileOpts is Compile with the inputs a directory cannot supply.
@@ -92,7 +98,7 @@ func CompileOpts(dir string, core *Pack, deps []*Pack, opts Options) (*Output, [
 		return nil, ds
 	}
 
-	r := &resolver{dir: dir, files: files, core: core, deps: deps, want: opts.Pack}
+	r := &resolver{dir: dir, files: files, core: core, deps: deps, want: opts.Pack, embedded: opts.EmbeddedCore}
 	out := r.run()
 	sortDiagnostics(r.ds)
 	if HasError(r.ds) {
@@ -202,6 +208,9 @@ type resolver struct {
 	deps  []*Pack
 	want  string // the pack the caller is compiling; "" skips pack_mismatch
 	ds    []Diagnostic
+	smap  *SourceMap
+
+	embedded uint32 // Options.EmbeddedCore
 
 	pack string
 }
@@ -233,7 +242,8 @@ func (r *resolver) run() *Output {
 	if !ok {
 		return nil
 	}
-	out := &Output{Pack: r.pack, Requires: requires}
+	r.smap = newSourceMap()
+	out := &Output{Pack: r.pack, Requires: requires, SourceMap: r.smap}
 	out.Templates = r.resolveTemplates()
 	out.Zones = r.resolveZones()
 	if HasError(r.ds) {
@@ -297,6 +307,11 @@ func (r *resolver) resolvePack() (CoreRef, bool) {
 	}
 	ref := CoreRef{Pack: pd.Requires.Pack, Version: pd.Requires.Version}
 	switch {
+	case r.core == nil && r.embedded != 0:
+		r.report(decls[0].file, pd.Requires.VersionPos, CodeCoreVersionMismatch,
+			fmt.Sprintf("this pack requires %s@%d, and neither the embedded core nor the cache holds it; this andara-cli embeds %s@%d; use the andara-cli release that embeds %s@%d",
+				ref.Pack, ref.Version, CorePack, r.embedded, ref.Pack, ref.Version))
+		return ref, false
 	case r.core == nil:
 		r.report(decls[0].file, pd.Requires.VersionPos, CodeCoreVersionMismatch,
 			fmt.Sprintf("this pack requires %s@%d and no cached copy was found; run `andara-cli content fetch-core --version %d`",

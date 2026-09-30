@@ -1,19 +1,14 @@
-Compile, validate, inspect, and format Content Language packs (builder)
+Print a flattened Template, naming the ancestor that set each field
 
 Usage:
-  andara-cli content [flags]
-  andara-cli content [command]
-
-Available Commands:
-  compile     Compile a Content Language pack to canonical blobs
-  decompile   Reconstruct Content Language source from compiled output
-  fetch-core  Populate the local andara.core pack cache
-  fmt         Rewrite Content Language sources to the canonical form
-  inspect     Print a resolved Zone, Room, or Template
-  validate    Compile and validate a pack as the server would, offline
+  andara-cli content inspect template <pack>.<Name> [flags]
 
 Flags:
-  -h, --help   help for content
+      --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
+  -h, --help           help for template
+      --pack string    a published pack to fetch over Admin, with --version
+      --path string    pack directory of .aw source (default .)
+      --version uint   the published version of --pack
 
 Global Flags:
       --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
@@ -24,5 +19,3 @@ Global Flags:
       --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
       --timeout duration        per-command deadline (default 30s)
       --tls-ca string           CA bundle to trust (empty uses the system trust store)
-
-Use "andara-cli content [command] --help" for more information about a command.

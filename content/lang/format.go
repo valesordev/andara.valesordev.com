@@ -519,6 +519,10 @@ func (v Value) canonical() string {
 // \\ and nothing else.
 func quote(s string) string { return `"` + escape(s) + `"` }
 
+// Quote renders a string as a Content Language literal, for a caller that
+// shows a Builder a value in the notation they wrote it in.
+func Quote(s string) string { return quote(s) }
+
 func escape(s string) string {
 	var sb strings.Builder
 	for _, r := range s {

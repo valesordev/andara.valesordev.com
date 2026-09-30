@@ -1,19 +1,16 @@
-Compile, validate, inspect, and format Content Language packs (builder)
+Print a resolved Zone, Room, or Template
 
 Usage:
-  andara-cli content [flags]
-  andara-cli content [command]
+  andara-cli content inspect [flags]
+  andara-cli content inspect [command]
 
 Available Commands:
-  compile     Compile a Content Language pack to canonical blobs
-  decompile   Reconstruct Content Language source from compiled output
-  fetch-core  Populate the local andara.core pack cache
-  fmt         Rewrite Content Language sources to the canonical form
-  inspect     Print a resolved Zone, Room, or Template
-  validate    Compile and validate a pack as the server would, offline
+  room        Print a Room with its Components, and its Exits in Direction order
+  template    Print a flattened Template, naming the ancestor that set each field
+  zone        Print a Zone's summary: its fallback, Rooms, and Exits
 
 Flags:
-  -h, --help   help for content
+  -h, --help   help for inspect
 
 Global Flags:
       --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
@@ -25,4 +22,4 @@ Global Flags:
       --timeout duration        per-command deadline (default 30s)
       --tls-ca string           CA bundle to trust (empty uses the system trust store)
 
-Use "andara-cli content [command] --help" for more information about a command.
+Use "andara-cli content inspect [command] --help" for more information about a command.

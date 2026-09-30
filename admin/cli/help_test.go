@@ -33,6 +33,9 @@ func TestHelpGoldens(t *testing.T) {
 		{file: "content-fmt.txt", args: []string{"content", "fmt", "--help"}},
 		{file: "content-decompile.txt", args: []string{"content", "decompile", "--help"}},
 		{file: "content-fetch-core.txt", args: []string{"content", "fetch-core", "--help"}},
+		{file: "content-validate.txt", args: []string{"content", "validate", "--help"}},
+		{file: "content-inspect.txt", args: []string{"content", "inspect", "--help"}},
+		{file: "content-inspect-template.txt", args: []string{"content", "inspect", "template", "--help"}},
 	}
 
 	dir := filepath.Join("testdata", "help")

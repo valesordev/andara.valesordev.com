@@ -130,6 +130,10 @@ func sortDiagnostics(ds []Diagnostic) {
 	})
 }
 
+// SortDiagnostics orders findings as the compiler does (errors.md rule 5), for
+// a caller that merges them with findings of its own.
+func SortDiagnostics(ds []Diagnostic) { sortDiagnostics(ds) }
+
 // HasError reports whether any finding refuses the compile. Warnings do not
 // (errors.md rule 7).
 func HasError(ds []Diagnostic) bool {

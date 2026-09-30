@@ -365,6 +365,7 @@ func (r *resolver) buildTemplate(td templateDecl, byRef map[string]templateDecl,
 		},
 	}
 	def.Components, def.Provenance = flatten(merged, markers)
+	r.smap.templates[td.ref] = at(td.file, td.d.Pos, chain...)
 	return def
 }
 

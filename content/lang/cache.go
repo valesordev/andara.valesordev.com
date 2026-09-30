@@ -70,6 +70,28 @@ func LoadCachedPack(root, pack string, version uint32) (*Pack, bool, error) {
 	return out, true, nil
 }
 
+// PackFromBlobs builds a pack from its Template blobs by published path
+// (templates/<name>.json), in path order: the andara.core a binary embeds
+// (AW-CLI-002), read the way the cache is.
+func PackFromBlobs(name string, version uint32, blobs map[string][]byte) (*Pack, error) {
+	paths := make([]string, 0, len(blobs))
+	for p := range blobs {
+		if strings.HasPrefix(p, "templates/") && strings.HasSuffix(p, ".json") {
+			paths = append(paths, p)
+		}
+	}
+	sort.Strings(paths)
+	out := &Pack{Name: name, Version: version}
+	for _, p := range paths {
+		var def contentv1.TemplateDefinition
+		if err := protojson.Unmarshal(blobs[p], &def); err != nil {
+			return nil, fmt.Errorf("%s: %w", p, err)
+		}
+		out.Templates = append(out.Templates, &def)
+	}
+	return out, nil
+}
+
 // WriteCachedPack stores a pack's Templates in the cache, replacing whatever
 // was there. The bytes are the canonical ones, so a cached pack and a published
 // pack are the same file.

@@ -43,7 +43,7 @@ func (rt *runtime) writeError(err error) int {
 	if rt.settings != nil {
 		output = rt.settings.Output
 	}
-	if output == outputJSON {
+	if output == outputJSON && !ae.Rendered {
 		if err := json.NewEncoder(rt.stdout).Encode(jsonErrorEnvelope{Error: jsonErrorBody{
 			Code:    ae.Code,
 			Message: ae.Message,

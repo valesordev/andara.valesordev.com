@@ -98,10 +98,15 @@ func IsWarning(e ValidationError, strictOrphans bool) bool {
 // ValidationError carries everything a Builder needs to fix the problem without
 // opening the loader source.
 type ValidationError struct {
-	File     string
-	Line     int // 0 when not line-scoped
-	Zone     ZoneID
-	Room     RoomID
+	File string
+	Line int // 0 when not line-scoped
+	Zone ZoneID
+	Room RoomID
+	// Exit is the Direction of the Exit a finding is about, when it is about
+	// one: the third link of the declaration chain the compiler reports
+	// (errors.md §1), which is what lets a finding on compiled content be
+	// placed back on the `exit` line that produced it (AW-CLI-002).
+	Exit     Direction
 	Template TemplateRef // set for Template findings (AW-SRV-022)
 	Code     ErrCode
 	Detail   string
