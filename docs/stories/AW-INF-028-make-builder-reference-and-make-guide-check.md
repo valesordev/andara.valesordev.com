@@ -7,7 +7,7 @@ type: infra
 status: draft
 size: S
 depends_on: [AW-CLI-009]
-blocks: [AW-INF-023]
+blocks: []
 lane: sre
 risk: low
 ---
@@ -96,10 +96,10 @@ drift from the `andara-cli` a Builder downloads.
 
 ## Interface contract
 
-Help lines. The first and third are `AW-INF-023`'s, verbatim.
+Help lines. The third is `AW-INF-023`'s, verbatim. The first was amended by architecture on 2026-09-30.
 
 ```
-## builder-reference: regenerate the Builder's Guide reference tables from the server's Direction and Component tables, andara.core, and errors.md
+## builder-reference: regenerate the Builder's Guide reference tables from andara-cli content reference
 ## builder-reference-check: fail if docs/builders/reference.md differs from what make builder-reference writes
 ## guide-check: every andara-cli command in the Builder's Guide exists, every diagnostic code is documented, every link resolves
 ```
@@ -183,10 +183,11 @@ CLAUDE.md §8, plus: the `.claude/` generated-files list and CLAUDE.md §2 both 
      approves the edit.
 
    Until both land, this story can't merge cleanly. Its PR would write a file that SRE doesn't own.
-2. `[ASSUMPTION]` The first help line keeps `AW-INF-023`'s wording ("…and errors.md") verbatim, as
-   that story's contract requires. But `builder-reference` reads only `AW-CLI-009`'s JSON, and it
-   links to `errors.md` rather than reading it. Whether the line changes is architecture's call, in
-   `docs/feedback/AW-INF-023-builders-guide.md`.
+2. **Resolved 2026-09-30 (architecture):** the first help line names what the target reads,
+   `andara-cli content reference`, and not `errors.md`, which it only links to
+   (`docs/feedback/AW-INF-023-builders-guide.md`). Also from that ruling, for the contract review:
+   `AW-INF-023`'s AC-1 and AC-2 now live here, and the code check runs both directions. Every
+   `errors.md` code is in the reference, and every code in the reference is in `errors.md`.
 3. `[ASSUMPTION]` No `andara-cli` command both has subcommands and takes positional arguments. That
    holds today, and AC-5's leftover-word rule depends on it.
 4. `[ASSUMPTION]` `builder-reference-check` is a separate target, as `values-schema-check` is, so that

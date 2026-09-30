@@ -132,3 +132,26 @@ Per `AW-CLI-001`, there are no metrics. `cli.command` is the root span, with two
 - `content.validate` carries `zones`, `rooms`, `templates`, `error_count` and `warning_count`.
 
 `TestContentValidate_EmitsTheSpans` asserts both children, their parent, and the counts.
+
+## Architecture's §8 review (2026-09-30)
+
+Items 1–6 are ruled in the story's §8 review:
+1. The array alone, as built.
+2. The design is accepted. The Exit direction in the chain is recorded against `AW-SRV-013`.
+3. The skips are accepted, and in-memory stands.
+4. The layout is as built.
+5. Accepted.
+6. Filed as #267.
+
+### For implementation: owed before `done`
+- **AC-4's error-level half.** Add blob-level twins of the `invalid/semantic` cases whose codes the
+  loader also raises (`errors.md` §3.2). Feed them straight to the gate, and hold them to the same
+  sidecars on code and chain. Today no error-level finding passes through the gate runner.
+
+### For implementation, not holding the story
+- `admin/README.md`'s command table: `version` now prints the embedded core.
+- The failure summary "N finding(s) refuse the pack" counts warnings. Count errors only.
+
+### For SRE
+- The §8 instrumentation record for this story.
+- `./admin/cli/` in `make test-integration` (your item 1). It's in the story's "What closes it".

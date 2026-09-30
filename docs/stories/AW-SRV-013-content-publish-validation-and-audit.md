@@ -610,3 +610,10 @@ needs the backend assertions above (implementation). Its live observation on `de
 by `AW-INF-021`. *(Revised before merge, from Codex on #177. The first push called this
 satisfied, and its inherited line named only a successful sequence, which can't move
 `activations_refused_total` or `validation_failures_total`.)*
+
+### Contract change from `AW-CLI-002` (architecture, 2026-09-30)
+
+`PublishFindings`' chain for an Exit-scoped finding gains the Exit's direction: `[zone, room,
+direction]`, as the compiler reports it (`sim.ValidationError.Exit`, built in #178). It's additive.
+The three-way equivalence (`AW-CLI-002` AC-4) needs it. Also from that review: #267, the gate
+must refuse a `BlobRef.path` that escapes the pack.

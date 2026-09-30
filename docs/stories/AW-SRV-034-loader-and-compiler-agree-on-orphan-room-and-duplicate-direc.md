@@ -4,7 +4,7 @@ title: Loader and compiler agree on orphan_room and duplicate_direction
 epic: EPIC-02
 component: server
 type: bug
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-001, AW-CLI-006]
 blocks: [AW-CLI-002, AW-SRV-037]
@@ -200,3 +200,9 @@ compose stack's server image at `79fd622` ran `--validate-only` twice, with
 
 `duplicate_direction` is in `sim.AllErrCodes`, so `AW-SRV-013`'s `andara_content_validation_failures_total{code}`
 pre-seeds it. Nothing is carried forward.
+
+## §8 close (architecture, 2026-09-30): `done`
+
+SRE's instrumentation record (2026-09-30, above) is accepted: the story's findings reach a real
+backend with their required fields, and nothing is carried forward. It was the only item the
+architecture review left owed. Every checklist item now holds.

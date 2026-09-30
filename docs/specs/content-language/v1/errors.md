@@ -45,8 +45,9 @@ town/npcs.aw:14:3: removed_by_subtype cannot remove Component "andara.core.Memor
   town.Merchant
 ```
 
-Rendered, JSON (`--output json`): `AW-CLI-001`'s error envelope with `diagnostics: []`, each object
-carrying the fields above, `severity` as `"error"` or `"warning"`.
+Rendered, JSON (`--output json`): the array of diagnostics alone on stdout, each object carrying
+the fields above, with `severity` as `"error"` or `"warning"`. Failures that aren't diagnostics use
+`AW-CLI-001`'s error envelope. *(Amended 2026-09-30 at `AW-CLI-002`'s §8 review.)*
 
 ### Rules
 
@@ -268,9 +269,16 @@ cannot have one.
 | `unflattened_template` | `resolved: false` would be a compiler bug, not a source error |
 | `chain_mismatch` | the loader's check on compiler output — a chain that is not the parent's chain plus self |
 | `invalid_provenance` | likewise: provenance naming a field the Template does not carry |
+| `zone_removed` | a version that drops a Zone the World in effect has (`AW-SRV-012`). It compares the version with the live World, which a compile of one pack never sees. Removing a Zone isn't supported, so the fix is to keep the Zone. Raised at activation and on reload, as `validation` |
+| `spawn_room_removed` | a version whose World lacks `character.spawn_room` while the World in effect has it (`AW-SRV-012`). It depends on server configuration, not on the source. The fix is to keep the Room, or have an Operator move `character.spawn_room` first. Raised at activation and on reload, as `validation` |
 
-The last three are the server checking the compiler. That they exist is the reason this story
-specifies the compiler's output rather than the compiler defining it (CLAUDE.md §2).
+`unflattened_template`, `chain_mismatch` and `invalid_provenance` are the server checking the
+compiler. That they exist is the reason this story specifies the compiler's output rather than the
+compiler defining it (CLAUDE.md §2).
+
+*(`zone_removed` and `spawn_room_removed` added 2026-09-30, from
+`docs/feedback/AW-INF-023-builders-guide.md` item 5. They were in `sim.AllErrCodes` and nowhere in
+this taxonomy.)*
 
 ---
 

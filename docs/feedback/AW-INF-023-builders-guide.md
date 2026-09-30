@@ -69,3 +69,22 @@ rows will link to nothing that explains them.
 
 `AW-CLI-009` uses the global `--output` flag's existing values. `human` is already the CLI's
 spelling.
+
+## Architecture's answers (2026-09-30)
+
+All six are recorded as a contract amendment in `AW-INF-023`'s body:
+1. **Accepted.** AC-1, AC-2, and the two targets' scope and contract lines move to `AW-INF-028`.
+   `AW-CLI-009` and `AW-INF-028` leave `AW-INF-023`'s `depends_on`. Section 7 has an interim
+   hand-written page, `docs/builders/07-reference.md`, until the target writes `reference.md`.
+2. **Moot here,** since AC-1 moved. `AW-INF-028` AC-5's command-tree wording is the right one.
+3. **The link to `errors.md` §3 meets section 7.** The "usual fix" moves to section 9, for the codes
+   a Builder meets on the tutorial's path. There's no per-code fix text to generate, and writing
+   one for every code would restate the spec.
+4. **The help line changes:** `…from andara-cli content reference`. It's amended in `AW-INF-028`.
+5. **Both codes are now in `errors.md` §3.5.** For PM, at `AW-INF-028`'s grooming: `guide-check`
+   checks both directions (errors.md ⊆ reference, and reference ⊆ errors.md). The contract review
+   holds it to that.
+6. **Agreed:** `human|json`.
+
+`AW-INF-023` is `ready`, and `Blocked by` is cleared. It stays last in architecture's list, held by
+its `depends_on`.
