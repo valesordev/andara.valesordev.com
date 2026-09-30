@@ -4,7 +4,7 @@ title: Builders download andara-cli without a Go toolchain
 epic: EPIC-06
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-INF-013]
 blocks: [AW-INF-022, AW-INF-023]
@@ -186,3 +186,31 @@ alerts are specified. The item holds.
 
 **The story stays at `review` on AC-5 alone** (a `v*` tag). Codex on #164 caught that the
 five-platform `[ASSUMPTION]` also held it. Brian resolved that on 2026-09-29, keeping all five.
+
+## §8 review (architecture, 2026-09-29): `done`
+
+Against `main` at `4576941`. SRE's verification records and post-merge check are accepted, and
+the instrumentation item holds: the log line and the summary are specified, and there are no
+metrics, traces or alerts.
+
+**AC-5, observed with a throwaway tag (Brian, 2026-09-29).** The tag `v0.0.0-aw-inf-020`,
+annotated and on `4576941`, was pushed, and `release.yaml` ran as run 36648275265, green:
+- `cli-release-publish: v0.0.0-aw-inf-020 -> 4576941efe16 (5 archives and SHA256SUMS)`;
+- `cli-release-check: andara-cli v0.0.0-aw-inf-020 (4576941) ok`, from the anonymous step;
+- the release `andara-cli v0.0.0-aw-inf-020` had `prerelease=false` and `draft=false`, and held
+  the five `andara-cli_v0.0.0-aw-inf-020_<os>_<arch>` archives and `SHA256SUMS`;
+- `cli-dev` was unchanged. Its tag was still on `4576941`, and its six assets had the same names
+  and upload times as a snapshot taken before the push.
+
+The release and the tag were then deleted, and no `v*` tag remains. No `publish` run happened
+while the tag existed (the last was at 23:48, and the tag was pushed at about 00:04), so no
+`cli-dev` build was stamped with its version.
+
+| Item | Evidence |
+|------|----------|
+| AC-1, 2, 3 | SRE's post-merge record. AC-2's guard branch was read, not raced, as AC-6 of `AW-INF-013` was, and that's accepted. `cli-dev` now carries `4576941`, `main`'s head |
+| AC-4, 6, 7 | SRE's verification record: `test_cli_release.py` in `scripts-test`, and the `cli-release` PR job, green on every PR since |
+| AC-5 | above |
+| `make check` | green on `main` |
+| Config / Helm schema, migrations | none; release objects only |
+| `[ASSUMPTION]` | none. Both are resolved in *Open questions* |
