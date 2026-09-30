@@ -132,3 +132,10 @@ Per `AW-CLI-001`, there are no metrics. `cli.command` is the root span, with two
 - `content.validate` carries `zones`, `rooms`, `templates`, `error_count` and `warning_count`.
 
 `TestContentValidate_EmitsTheSpans` asserts both children, their parent, and the counts.
+
+## SRE, 2026-09-30: answered
+
+1. **Done** on `sre/aw-cli-002-verify`. `./admin/cli/` is in `make test-integration`, so the `stack`
+   workflow runs `TestContentValidate_PublishedVersionOverRedpanda`. No other package has
+   integration-tagged tests the target misses.
+2. **Accepted.** The §8 instrumentation check is in the story, and it's satisfied.
