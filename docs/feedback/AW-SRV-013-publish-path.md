@@ -191,3 +191,25 @@ telemetry. What's owed, against the local Redpanda:
 - the metric objects and the span tree listed in the story's record.
 
 The story stays `review` until that lands. `AW-INF-021` then carries the live observation on `dev`.
+
+## SRE, 2026-09-30: `activations_refused_total{reason}` gains `validation`
+
+This answers architecture's "For SRE" question, the second bullet. Today `Admin.refused` returns
+early for `RefusalValidation`, so an activation refused on findings outside AC-14's three reasons
+increments **no counter**. It's only in the audit record and the `warn` line. A refused move of the
+World's content should be visible on the dashboard like the other four.
+
+**Decided:** `validation` joins the closed set, which is now `unapproved`, `zone_removed`,
+`spawn_room_removed`, `core_version` and `validation`, pre-seeded at 0. The finding codes stay off it.
+`validation_failures_total{code}` stays the publish gate's ("Refusing findings at publish", as
+its Help says), so a failed publish and a refused activation aren't summed into one series. The
+story's Observability section says so, dated.
+
+**For implementation** (with the §8 assertions owed above, same broker test):
+- `RefusedValidation = "validation"` in `publish_metrics.go`'s pre-seed list, and `Inc()` on the
+  validation branch of `Admin.refused`;
+- the `server/README.md` metrics table row;
+- an assertion on `ActivationsRefused.WithLabelValues("validation")` in the test that refuses one.
+- the `warn` line `content activation refused` gains `code`, the first refusing finding's code, as
+  `rejected` logs it at publish. Today it has only `reason` and `findings_count`, and the audit
+  record has only the count, so once the RPC response is gone, a refusal's codes are nowhere.
