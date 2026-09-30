@@ -38,9 +38,13 @@ the spawn Room. It missed the Go smoke test those scripts run, which asserts it 
 decide: the item above routes the fix. For later contracts that move a spawn or a fixture, `grep`
 `internal/smoke` along with `scripts/`.
 
-## For Brian: `<name> arrives from the in.`
+## For Brian: `<name> arrives from the in.` (answered 2026-09-30)
 
 Walking `out` of Purgatory, a bystander in the plaza reads `Walkerupharojk arrives from the in.`.
 The move rule names the reverse of the Exit's direction, and `out` reverses to `in`, even though
 the plaza has no `in` Exit. The gates accept it, as AW-SRV-037 AC-3 says to, but it's player-facing
 prose. Whether an arrival over a one-way Exit names a direction at all is a design call.
+
+**Answered (Brian, 2026-09-30):** an arrival with no way back, including this one, a `goto` and a
+first bind in Purgatory, reads `<name> has arrived.`. It's routed in `docs/feedback/AW-SRV-036-goto.md`.
+The gates accept both texts.

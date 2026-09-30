@@ -190,12 +190,14 @@ for no in stage offset partition pre_log permission_denied invalid_argument fail
 done
 
 # B saw A come and go, unprompted (AW-CLI-004 AC-3).
-# Out of Purgatory, the Exit has no reverse, so the arrival names whatever
-# direction the move rule gives it (AW-SRV-037 AC-3): `arrives from the in.`.
+# Out of Purgatory the Exit has no reverse. Today the arrival names the move
+# rule's reverse direction (`arrives from the in.`, AW-SRV-037 AC-3). Brian's
+# 2026-09-30 decision makes it `has arrived.` (docs/feedback/AW-SRV-036-goto.md).
+# Both are accepted, so the gate passes before and after that change.
 for _ in $(seq 1 20); do grep -q "^$CHAR_A leaves north\.$" "$BOUT" && break; sleep 0.5; done
-grep -q "^$CHAR_A arrives\( from the [a-z]\+\)\?\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A arrive"; }
+grep -q "^$CHAR_A \(arrives\( from the [a-z]\+\)\?\|has arrived\)\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A arrive"; }
 grep -q "^$CHAR_A leaves north\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A leave north"; }
-arrived="$(grep -n "^$CHAR_A arrives\( from the [a-z]\+\)\?\.$" "$BOUT" | head -1 | cut -d: -f1)"
+arrived="$(grep -n "^$CHAR_A \(arrives\( from the [a-z]\+\)\?\|has arrived\)\.$" "$BOUT" | head -1 | cut -d: -f1)"
 left="$(grep -n "^$CHAR_A leaves north\.$" "$BOUT" | head -1 | cut -d: -f1)"
 [[ "$arrived" -lt "$left" ]] || { sed 's/^/  B| /' "$BOUT" >&2; fail "B read $CHAR_A leave north before arriving"; }
 

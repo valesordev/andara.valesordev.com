@@ -171,7 +171,7 @@ poll "$AOUT" "^-- Connected to [^ ]\+ as linkdead-a-$hex, playing $CHAR_A " 20 "
 poll "$AOUT" '^Purgatory$' 20 "$APID" || fail "A never read Purgatory from its automatic look"
 printf 'out\nlook\n' >&3
 poll "$AOUT" '^Market Plaza$' 20 "$APID" || fail "A never read the plaza from its look after out"
-poll "$BOUT" "^$CHAR_A arrives\( from the [a-z]\+\)\?\.$" 20 "$BPID" || fail "B did not see $CHAR_A arrive"
+poll "$BOUT" "^$CHAR_A \(arrives\( from the [a-z]\+\)\?\|has arrived\)\.$" 20 "$BPID" || fail "B did not see $CHAR_A arrive"
 
 # AC-2. The drop: SIGKILL, so the client sends nothing on its way out.
 echo "stack-linkdead: SIGKILL to $CHAR_A's play ..."
