@@ -176,6 +176,13 @@ class Apply(unittest.TestCase):
             ("state", "min.compaction.lag.ms=60000"),
         ])
 
+    def test_the_blob_record_limit_is_compared_and_never_data_loss(self):
+        # AW-SRV-013: andara.content.blobs.v1 takes an 8 MiB blob only with max.message.bytes
+        # raised. Raising it, lowering it, or setting one the broker didn't report deletes nothing.
+        self.assertIn("max.message.bytes", topics.COMPARED)
+        for have, want in (("1048588", "9437184"), ("9437184", "1048576"), (None, "9437184")):
+            self.assertFalse(topics.destructive("max.message.bytes", have, want), (have, want))
+
     def test_policy_sets_compare_as_sets(self):
         b = FakeBroker(with_(state={"cleanup.policy": "compact"}))
         self.assertTrue(topics.same("cleanup.policy", "delete,compact", "compact,delete"))
