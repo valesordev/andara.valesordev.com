@@ -14,10 +14,10 @@ server:
     # server's exporter dials it.
     otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
   character:
-    # Where a new Character enters the World (AW-SRV-014). Required outside local: the
-    # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content
-    # from the store this environment runs that fixture too.
-    spawn_room: town/plaza
+    # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
+    # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
+    # too, so the server's compiled-in default (town/plaza) no longer matters anywhere.
+    spawn_room: purgatory/start
   # The namespace's Kafka `andara-log` (AW-INF-014, `make kafka-install ENV=dev`): the sim's
   # command log and the Account store live there, as sim.source and auth.store default to.
   kafka:

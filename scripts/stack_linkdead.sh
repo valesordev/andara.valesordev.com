@@ -5,8 +5,9 @@
 # The linkdead gate (AW-INF-017), scripted against the running stack: the
 # linkdead slice of M2, "every linkdead Character rebinds rather than
 # despawning".
-#   - Two player Accounts each create a Character. B enters town/plaza and
-#     watches; A enters and B sees A arrive.
+#   - Two player Accounts each create a Character. Both spawn in Purgatory
+#     (AW-INF-024) and walk `out` to town/plaza: B first, to watch; then A,
+#     and B sees A arrive.
 #   - The script SIGKILLs A's `andara-cli play`. No CloseSession is sent, so
 #     the stream just ends (AW-SRV-015's transport-close path; the keepalive
 #     path, a partition with no close, is AW-SRV-015's integration test).
@@ -149,23 +150,28 @@ quits_before="$(metric andara_character_unbinds_total reason=quit outcome=ok)"
 linkdead_before="$(metric andara_sessions_linkdead)"
 
 # AC-1. B first, on a held-open FIFO, and in the plaza before A arrives: the
-# arrival reaches B only over its stream.
-echo "stack-linkdead: $CHAR_B enters town/plaza to watch ..."
+# arrival reaches B only over its stream. Both spawn in Purgatory (AW-INF-024)
+# and walk `out`. A move describes no Room, so the `look` after it reads the plaza.
+echo "stack-linkdead: $CHAR_B spawns in Purgatory and walks out to town/plaza to watch ..."
 mkfifo "$WORK/b-in"
 bin/andara-cli "${B[@]}" play --character "$CHAR_B" <"$WORK/b-in" >"$BOUT" 2>"$BERR" &
 BPID=$!
 exec 4>"$WORK/b-in"
 poll "$BOUT" "^-- Connected to [^ ]\+ as linkdead-b-$hex, playing $CHAR_B " 20 "$BPID" || fail "B never connected playing $CHAR_B"
-poll "$BOUT" '^Market Plaza$' 20 "$BPID" || fail "B never read the plaza from its automatic look"
+poll "$BOUT" '^Purgatory$' 20 "$BPID" || fail "B never read Purgatory from its automatic look"
+printf 'out\nlook\n' >&4
+poll "$BOUT" '^Market Plaza$' 20 "$BPID" || fail "B never read the plaza from its look after out"
 
-echo "stack-linkdead: $CHAR_A enters town/plaza ..."
+echo "stack-linkdead: $CHAR_A spawns in Purgatory and walks out to town/plaza ..."
 mkfifo "$WORK/a-in"
 bin/andara-cli "${A[@]}" play --character "$CHAR_A" <"$WORK/a-in" >"$AOUT" 2>"$AERR" &
 APID=$!
 exec 3>"$WORK/a-in"
 poll "$AOUT" "^-- Connected to [^ ]\+ as linkdead-a-$hex, playing $CHAR_A " 20 "$APID" || fail "A never connected playing $CHAR_A"
-poll "$AOUT" '^Market Plaza$' 20 "$APID" || fail "A never read the plaza from its automatic look"
-poll "$BOUT" "^$CHAR_A arrives\.$" 20 "$BPID" || fail "B did not see $CHAR_A arrive"
+poll "$AOUT" '^Purgatory$' 20 "$APID" || fail "A never read Purgatory from its automatic look"
+printf 'out\nlook\n' >&3
+poll "$AOUT" '^Market Plaza$' 20 "$APID" || fail "A never read the plaza from its look after out"
+poll "$BOUT" "^$CHAR_A arrives\( from the [a-z]\+\)\?\.$" 20 "$BPID" || fail "B did not see $CHAR_A arrive"
 
 # AC-2. The drop: SIGKILL, so the client sends nothing on its way out.
 echo "stack-linkdead: SIGKILL to $CHAR_A's play ..."
