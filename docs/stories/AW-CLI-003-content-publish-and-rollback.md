@@ -4,7 +4,7 @@ title: andara-cli content publish, approve, activate, rollback, history, diff, a
 epic: EPIC-05
 component: cli
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-CLI-001, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-021]
 blocks: [AW-INF-021, AW-INF-023]
