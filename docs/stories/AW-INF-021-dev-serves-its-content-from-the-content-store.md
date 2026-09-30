@@ -259,3 +259,51 @@ and SRE's answers to items 1, 2 and 4 are there too. The story is `ready`.
 6. **AC-4's "second identity"** can be Brian's Operator approving his own build, once
    `AW-SRV-013` adopts the self-approval rule. Two identities are still involved, as the roadmap
    says, even though they're one person.
+
+## `world-reset` delivered early (SRE, 2026-09-29)
+
+**Why now.** #157 (AW-SRV-037) added Purgatory to the `dir` fixture, which `dev` still boots from,
+because this story hasn't moved it to the store. `dev`'s log no longer replayed. `andara-0` went
+to CrashLoopBackOff with `recovery: replay: tick 3: content digest mismatch at tick 3: dir@0
+recorded 77f962b854e1ed23, built 6b130c9b90951d86`. AW-SRV-037's Data section expected `dev` to
+be unaffected, but that assumed this story had already landed. Brian chose to build
+`make world-reset` to this story's contract and run it, rather than roll `dev` back or reset it by
+hand.
+
+**What was built:** `make world-reset` and `scripts/world_reset.py`, to the Interface contract.
+It adds one step the contract didn't name: it suspends Argo CD's automated sync on the
+Application for the duration, and restores it on the way out whatever happens. Without that,
+selfHeal scales the server back up mid-reset. It also refuses `ENV=local` with exit 2, naming
+`make down VOLUMES=1`. The rest of the story (`content-seed`, the store source, `argocd-status`'s
+pack lines) is untouched. **Status stays `ready`**, and this part ships ahead on
+`sre/aw-inf-021-world-reset`.
+
+**The run, 23:52Z:**
+`make world-reset ENV=dev CONFIRM=andara-dev` exited 0, ending
+`world-reset: andara-dev reset; content kept, accounts and characters gone`.
+
+| Check | Before | After |
+|-------|--------|-------|
+| `andara-0` | CrashLoopBackOff, 6 restarts | `1/1 Running`, 0 restarts. `tick loop started` at tick 0; `bootstrap operator created` |
+| `andara.audit.v1` high-water mark | 1 | 2 (not lower) |
+| `andara.accounts.v1` | 6 records | 1: the bootstrap operator |
+| `andara.content.*` | 0 each (`dev` is still `dir`) | kept, 0 each |
+| Argo CD | automated, prune, selfHeal | the same, restored. `argocd-status`: Synced, Healthy, `main@4576941` |
+
+- **AC-10: pass.** `scripts/tests/test_world_reset.py` covers `prod`, `local`, a missing `CONFIRM`,
+  a `CONFIRM` that isn't the namespace, and no `ENV`. Each exits 2, with no `kubectl` on `PATH`.
+- **AC-11: partly observed.** The line, the exit code and the audit mark held. The server logged
+  `bootstrap operator created`, but a login wasn't tried. "Same packs at the same versions" can't be observed until `dev` reads the store, since it
+  had no packs. It's owed with the rest of the story.
+
+**Review of #165 (Codex, 2026-09-29):**
+- **Fixed, P1: Argo CD fails closed.** Only a confirmed `NotFound` counts as no Application. Any
+  other error, such as RBAC or a timeout, stops the reset before anything changes. Test:
+  `FailsClosed.test_an_unreadable_application_stops_before_any_change`.
+- **Fixed: the projector is waited on.** After scaling to 0, the reset waits until its pods are
+  gone and `andara-projector-state-<env>` is `Empty` before touching Kafka. `dev` runs no
+  projector yet, so this path first runs after AW-INF-025.
+- **Fixed by refusing: an `s3` snapshot store.** The reset reads `ANDARA_SNAPSHOT_STORE` from
+  `andara-config` before any change. On `s3` it exits 1 with nothing changed, because emptying the
+  bucket is AW-INF-025's to add. Test: `FailsClosed.test_an_s3_snapshot_store_stops_before_any_change`.
+  On `dev` today, read-only: the Application is readable and the store is `fs`.
