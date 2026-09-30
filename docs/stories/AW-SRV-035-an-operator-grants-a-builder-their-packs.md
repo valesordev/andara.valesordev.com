@@ -4,7 +4,7 @@ title: An Operator grants a Builder their packs
 epic: EPIC-06
 component: server
 type: feature
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-013]
 blocks: [AW-INF-021, AW-INF-023]
