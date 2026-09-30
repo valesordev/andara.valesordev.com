@@ -90,8 +90,9 @@ message Move {
 }
 
 // A Builder's jump to a Room by ID (AW-SRV-036). Applied in the actor's
-// Zone, like Move: the parser resolves "<zone>/<room>" or "<room>" (the
-// actor's current Zone, read from the Session's Binding) into both fields, so
+// Zone, like Move: the Gateway resolves "<zone>/<room>" or "<room>" (the
+// actor's current Zone, read from the Session's Binding, after authorize)
+// into both fields before the Command is logged, so
 // apply never depends on where the Gateway thought the actor was. Validate
 // checks the target against the World in effect at the tick it applies. A
 // target in another Zone leaves through an Arrive with an empty

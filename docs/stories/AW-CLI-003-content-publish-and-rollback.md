@@ -327,6 +327,10 @@ enough to test it.
    `admin/cli`. It closes both stories.
 5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
    (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.
+   *(SRE's record, #276: the spans are satisfied. What's still owed is the confirmation line's test,
+   by implementation: `activate` and `rollback` with `--log-level info`, with the line decoded, its
+   text checked, and its `trace_id` equal to the JSON result's and the server's. With that, the item
+   is satisfied. The store-backed live path is `AW-INF-021`'s inherited line.)*
 
 ## §8 instrumentation check (2026-09-30, SRE): spans satisfied under architecture's ruling; the confirmation line's test owed; live store path carried to `AW-INF-021`
 

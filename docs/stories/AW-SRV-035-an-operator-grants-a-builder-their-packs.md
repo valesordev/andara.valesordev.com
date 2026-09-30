@@ -145,7 +145,8 @@ corrected. `SetRoles` has no store-write span to copy.)*
     audit record.
 - **Logs:**
   - `info` `builder packs set`, with `actor_account_id`, `acting_as_account_id` (empty unless
-    `--as`), `target_account_id`, `before`, `after`, `session_id`, `trace_id`.
+    `--as`), `target_account_id`, `before`, `after`, `session_id`, `trace_id`. *(`session_id` is empty on Admin: an Admin call runs in no Game Session, and `trace_id` is its
+    correlation ID (CLAUDE.md §7). Ruled 2026-09-30 on SRE's §8 finding.)*
   - `warn` on denial, with the same fields minus `after`, plus `reason`.
 - **Traces:**
   - The Gateway interceptor's server span for `SetBuilderPacks`, parented by the CLI's `cli.command`
@@ -332,3 +333,14 @@ here and on `create_account` and `set_roles` too. An Admin call runs in no Game 
 field can't be filled, and `trace_id` does the correlating. The Observability sections that list
 `session_id` for Admin paths (this story, `AW-SRV-013`) should say it's empty on Admin, or name
 what fills it.
+
+## §8 status (architecture, 2026-09-30): stays `review` on AC-2's CLI test
+
+SRE's instrumentation record (above) is accepted, and every item on architecture's list is observed.
+Ruling 5 is confirmed there. **SRE's `session_id` finding is ruled:** on Admin, `session_id` is empty,
+because no Game Session exists, and `trace_id` is the correlation ID. The key stays, so a query
+works across both paths. The Observability sections here and in `AW-SRV-013` now say so.
+
+**What closes it:** AC-2's CLI half, a test in which `content publish` by a Builder without the pack
+exits 1 with `error.code` `pack_not_held`. It's the only item left, and architecture then moves the
+story to `done`.

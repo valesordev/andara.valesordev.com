@@ -420,7 +420,13 @@ type CharacterArrived struct {
 	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
 	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
-	FromDirection string                 `protobuf:"bytes,4,opt,name=from_direction,json=fromDirection,proto3" json:"from_direction,omitempty"` // empty when it did not come through an Exit
+	// The Direction the arrival came from, as the destination Room sees it:
+	// set only when that Room has an Exit in this Direction leading back to
+	// the Room the mover left. Empty otherwise: a goto, a first bind, or a
+	// one-way Exit such as Purgatory's `out` (Brian, 2026-09-30; renders as
+	// "<name> has arrived."). Decided when the event is emitted, from the
+	// World at that tick. Arrive.from_direction in the log is unchanged.
+	FromDirection string `protobuf:"bytes,4,opt,name=from_direction,json=fromDirection,proto3" json:"from_direction,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
