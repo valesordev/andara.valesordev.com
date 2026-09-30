@@ -103,18 +103,6 @@ func TestLive_M1Gate(t *testing.T) {
 		}
 		t.Logf("BindCharacter at partition=%d offset=%d", resp.Msg.GetPartition(), resp.Msg.GetAcceptedOffset())
 	}
-	sel(sB, chB)
-	if a := streamB.next(t, "character_arrived").GetCharacterArrived(); a.GetCharacterName() != nameB || a.GetRoomId() != "plaza" || a.GetFromDirection() != "" {
-		t.Fatalf("B's own arrival: %v", a)
-	}
-	sel(sA, chA)
-	if a := streamA.next(t, "character_arrived").GetCharacterArrived(); a.GetCharacterName() != nameA || a.GetFromDirection() != "" {
-		t.Fatalf("A's own arrival: %v", a)
-	}
-	if a := streamB.next(t, "character_arrived").GetCharacterArrived(); a.GetCharacterName() != nameA {
-		t.Fatalf("B's view of A arriving: %v", a)
-	}
-
 	submit := func(session, raw, ref string) *gamev1.SubmitResponse {
 		t.Helper()
 		resp, err := game.Submit(ctx, connect.NewRequest(&gamev1.SubmitRequest{SessionId: session, Raw: raw, ClientRef: ref}))
@@ -122,6 +110,37 @@ func TestLive_M1Gate(t *testing.T) {
 			t.Fatalf("Submit %q: %v", raw, err)
 		}
 		return resp.Msg
+	}
+	// intoPlaza reads a Character's own arrival at spawn and brings it to
+	// the plaza, where this gate plays. The spawn Room is an environment's
+	// character.spawn_room: town/plaza, or purgatory/start, whose one Exit,
+	// out, leads to the plaza (AW-SRV-037, AW-INF-024). Walking out of
+	// Purgatory arrives "from the in", the reverse of out over a one-way
+	// Exit (AW-SRV-037 AC-3), so only the Room is asserted.
+	intoPlaza := func(who, session, name string, stream *eventStream) {
+		t.Helper()
+		a := stream.next(t, "character_arrived").GetCharacterArrived()
+		if a.GetCharacterName() != name || a.GetFromDirection() != "" {
+			t.Fatalf("%s's own arrival: %v", who, a)
+		}
+		switch {
+		case a.GetZoneId() == "purgatory" && a.GetRoomId() == "start":
+			submit(session, "out", "out-"+who+"-"+run)
+			if a := stream.next(t, "character_arrived").GetCharacterArrived(); a.GetCharacterName() != name || a.GetRoomId() != "plaza" {
+				t.Fatalf("%s's arrival out of Purgatory: %v", who, a)
+			}
+		case a.GetRoomId() != "plaza":
+			t.Fatalf("%s's own arrival is neither Purgatory nor the plaza: %v", who, a)
+		}
+	}
+	// B first, so B is in the plaza to see A arrive there, whether A spawns
+	// in it or walks in.
+	sel(sB, chB)
+	intoPlaza("B", sB, nameB, streamB)
+	sel(sA, chA)
+	intoPlaza("A", sA, nameA, streamA)
+	if a := streamB.next(t, "character_arrived").GetCharacterArrived(); a.GetCharacterName() != nameA || a.GetRoomId() != "plaza" {
+		t.Fatalf("B's view of A arriving: %v", a)
 	}
 	// AC-5 / play AC-1: the Room, Here: naming the other.
 	submit(sA, "look", "look-1-"+run)
