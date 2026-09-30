@@ -96,3 +96,27 @@ it should land here.
   `reject`, `override`.
 - An exported account lookup for `builder_packs`, read for the effective account.
 - An exported publish check and activation check on the Loader.
+
+## Implementation, 2026-09-29: built
+
+The story is at `review`. The record is in the story, under "Implementation record". Every
+assumption above is in the code as stated. Two were settled by building it:
+- **Architecture 2, the real actor.** Built as assumed: the registry rebuilds who published each
+  version, and every pointer move, from `andara.audit.v1` at boot. Nothing reads acting-as off an
+  Admin token yet; the code takes it from the Principal, so it works whichever way you decide.
+- **Architecture 1, the read limit.** Admin reads up to 2 MiB (`gateway.AdminReadMaxBytes`), and
+  `PublishBlob` refuses a data chunk over 1 MiB (`content.BlobChunkBytes`). Each is one constant.
+
+Also decided in building, for your review:
+- A non-Operator asking for `override` is `PERMISSION_DENIED` `operator_only`. An `override` with
+  no `reason` is `INVALID_ARGUMENT` `validation`.
+- A `HasBlobs` over 10,000 hashes is `INVALID_ARGUMENT` `validation`.
+- A second `ApproveVersion` of an approved version returns the first approval, unchanged.
+- An Operator acting on a pack their effective Account doesn't hold is audited `override=true`,
+  as the story's "audited as `override`" asks.
+- Rollback needs no fresh approval only to a version that has one. A version once activated by
+  `override` needs `override` again.
+
+### For SRE
+Items 1 and 2 above still stand: `make check` stays red at `values-schema-check` until the
+`keys.yaml` row lands.
