@@ -35,6 +35,15 @@ const (
 	// ActionSubscribeWorld: a World-visibility Event subscription — a
 	// privileged read of everything that happens (AW-SRV-004 AC-8).
 	ActionSubscribeWorld = "subscribe_world"
+
+	// The content publish path (AW-SRV-013). reject is a publish refused
+	// for its content; override is an activation that skipped approval.
+	ActionPublish  = "publish"
+	ActionApprove  = "approve"
+	ActionActivate = "activate"
+	ActionRollback = "rollback"
+	ActionReject   = "reject"
+	ActionOverride = "override"
 )
 
 // AllActions lists every audited action, for metric pre-seeding.
@@ -43,6 +52,7 @@ var AllActions = []string{
 	ActionIssueInvite, ActionRevokeInvite, ActionSetRegistrationMode, ActionCreateAgentAccount,
 	ActionRedeemInvite, ActionRefreshRevoked, ActionRevokeRefresh, ActionActAs,
 	ActionAuthorize, ActionBind, ActionSubscribeWorld,
+	ActionPublish, ActionApprove, ActionActivate, ActionRollback, ActionReject, ActionOverride,
 }
 
 // Audit outcomes.
@@ -94,6 +104,20 @@ type Entry struct {
 	Target  string
 	Outcome string
 	Detail  string
+	// Content is set for the content publish path's records (AW-SRV-013),
+	// and fills AuditRecord fields 20–26.
+	Content *ContentAudit
+}
+
+// ContentAudit is an audit record's content fields (AW-SRV-013).
+type ContentAudit struct {
+	PackID           string
+	Version          uint64
+	BlobHashesSHA256 []byte // sha256 of the sorted list of blob hashes
+	Override         bool
+	Reason           string
+	FindingsCount    uint32
+	SelfApproval     bool
 }
 
 // Record writes one audit record and one info log line. A write failure is
@@ -110,6 +134,10 @@ func (a *Auditor) Record(ctx context.Context, e Entry) {
 		TraceId:           traceID(ctx),
 		TsUnixNano:        a.now().UnixNano(),
 		Detail:            e.Detail,
+	}
+	if c := e.Content; c != nil {
+		rec.PackId, rec.Version, rec.BlobHashesSha256 = c.PackID, c.Version, c.BlobHashesSHA256
+		rec.Override, rec.Reason, rec.FindingsCount, rec.SelfApproval = c.Override, c.Reason, c.FindingsCount, c.SelfApproval
 	}
 	a.metrics.PrivilegedActions.WithLabelValues(e.Action).Inc()
 	a.slog.LogAttrs(ctx, slog.LevelInfo, "privileged action",

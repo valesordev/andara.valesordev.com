@@ -578,7 +578,7 @@ func (l *Loader) evaluate(ctx context.Context, pack string, version uint64, base
 
 	vctx, vspan := l.tracer.Start(ctx, "content.validate")
 	vstart := time.Now()
-	topo, findings := l.build(vctx, base, res)
+	topo, findings, _ := l.build(vctx, base, res)
 	l.metrics.LoadDuration.WithLabelValues(PhaseValidate).Observe(time.Since(vstart).Seconds())
 	vspan.SetAttributes(attribute.Int("error_count", len(findings)))
 	vspan.End()
@@ -600,9 +600,10 @@ func refusal(findings []sim.ValidationError) error {
 }
 
 // build builds the World that candidate plus base would produce, and returns
-// it with the findings that refuse it. A pack is not validated alone: an Exit
-// from town into a Zone that only core declares is valid only in the whole.
-func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate *Resolved) (sim.Topology, []sim.ValidationError) {
+// it with the findings that refuse it and the warnings that don't. A pack is
+// not validated alone: an Exit from town into a Zone that only core declares
+// is valid only in the whole.
+func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate *Resolved) (sim.Topology, []sim.ValidationError, []sim.ValidationError) {
 	with := make(map[string]*Resolved, len(base)+1)
 	for p, r := range base {
 		with[p] = r
@@ -624,7 +625,7 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 			Code: sim.ErrEmptyContent,
 			Detail: fmt.Sprintf("%s@%d would leave the World with no Zones; the previous version keeps serving",
 				candidate.Pack, candidate.Version),
-		}}
+		}}, nil
 	}
 
 	_, span := l.tracer.Start(ctx, "content.build")
@@ -636,7 +637,7 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 	defer func() { l.metrics.LoadDuration.WithLabelValues(PhaseBuild).Observe(time.Since(bstart).Seconds()) }()
 
 	topo := sim.Topology{World: sim.EmptyWorld()}
-	var findings []sim.ValidationError
+	var findings, warnings []sim.ValidationError
 	if candidate != nil {
 		// Transitions the version alone cannot be judged on (review of
 		// #86–#88): removing a Zone the World has — an evacuation policy is
@@ -656,12 +657,14 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 	if len(templates) > 0 {
 		reg, errs := sim.BuildTemplates(templates, sim.TemplateOptions{})
 		findings = append(findings, l.fatalOnly(errs)...)
+		warnings = append(warnings, l.warningsOnly(errs)...)
 		topo.Templates = reg
 	}
 	if len(zones) > 0 {
 		opts := sim.Options{Source: SourceKafka, StrictOrphans: l.strictOrphans}
 		w, errs := sim.BuildWorld(zones, opts)
 		findings = append(findings, l.fatalOnly(errs)...)
+		warnings = append(warnings, l.warningsOnly(errs)...)
 		if w != nil {
 			topo.World = w
 		}
@@ -674,7 +677,7 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 			}
 		}
 	}
-	return topo, findings
+	return topo, findings, warnings
 }
 
 // spawnIn reports whether the content base names the spawn Room.
@@ -708,6 +711,17 @@ func (l *Loader) fatalOnly(errs []sim.ValidationError) []sim.ValidationError {
 	return out
 }
 
+// warningsOnly is fatalOnly's complement.
+func (l *Loader) warningsOnly(errs []sim.ValidationError) []sim.ValidationError {
+	var out []sim.ValidationError
+	for _, e := range errs {
+		if sim.IsWarning(e, l.strictOrphans) {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 // Prepare implements sim.ContentSource: the Topology the World has after swap,
 // given the versions in effect before it. Live it is the build load staged;
 // on replay, or a swap this process did not produce, it resolves every
@@ -734,7 +748,7 @@ func (l *Loader) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap) (s
 		}
 		base[p] = res
 	}
-	topo, findings := l.build(ctx, base, nil)
+	topo, findings, _ := l.build(ctx, base, nil)
 	if len(findings) > 0 {
 		// A version the log says was applied no longer builds: a binary whose
 		// validator has changed under it. Halt rather than serve something

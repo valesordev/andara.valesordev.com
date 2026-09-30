@@ -61,6 +61,9 @@ type Options struct {
 	// Accounts is the account-administration half of Admin. Nil leaves
 	// those methods UNIMPLEMENTED.
 	Accounts AccountAdmin
+	// ContentAdmin is the content publish half of Admin (AW-SRV-013). Nil
+	// leaves those methods UNIMPLEMENTED, as on a content.source=dir server.
+	ContentAdmin ContentAdmin
 	// Rechecker, with RecheckInterval, is the AC-12 loop: every open
 	// Session's Principal is re-read on the interval and the Session closed
 	// if its Account was disabled or its roles changed. Nil disables it.
@@ -181,7 +184,13 @@ func New(opts Options) (*Server, error) {
 	}
 	mux := http.NewServeMux()
 	mux.Handle(gamev1connect.NewGameHandler(&gameService{s: s}, handlerOpts...))
-	mux.Handle(adminv1connect.NewAdminHandler(&adminService{s: s}, handlerOpts...))
+	// Admin reads up to AdminReadMaxBytes, or grpc.max_recv_bytes if that
+	// is larger: the publish path's messages are bigger than Game's.
+	adminOpts := []connect.HandlerOption{
+		s.interceptors(),
+		connect.WithReadMaxBytes(max(opts.MaxRecvBytes, AdminReadMaxBytes)),
+	}
+	mux.Handle(adminv1connect.NewAdminHandler(&adminService{s: s}, adminOpts...))
 	if opts.Auth != nil {
 		mux.Handle(authv1connect.NewAuthHandler(opts.Auth, handlerOpts...))
 	}

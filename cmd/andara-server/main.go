@@ -75,6 +75,19 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 	defer accounts.Close()
 
+	// The content publish path (AW-SRV-013), on a content.source=kafka
+	// server: the store's write side, beside the Loader that reads it.
+	var contentAdmin gateway.ContentAdmin
+	publish, registry, err := rt.OpenContentAdmin(ctx)
+	if err != nil {
+		tel.Log.Error("content publish path", "detail", err.Error())
+		return boot.ExitFail
+	}
+	if publish != nil {
+		contentAdmin = publish
+		defer func() { _ = registry.Close() }()
+	}
+
 	// The Event fan-out (AW-SRV-004) and the two halves of the Protocol
 	// the gateway takes as seams: Submit (AW-SRV-010) — parse, authorize,
 	// produce — and Subscribe (AW-SRV-011), which streams from the fan-out.
@@ -179,6 +192,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Verifier:                accounts,
 		Auth:                    auth.NewService(accounts),
 		Accounts:                auth.NewAdmin(accounts),
+		ContentAdmin:            contentAdmin,
 		Rechecker:               accounts,
 		RecheckInterval:         cfg.AuthRecheckInterval,
 		KeepaliveTimeout:        cfg.SessionLinkdeadDetect,

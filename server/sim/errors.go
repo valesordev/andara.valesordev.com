@@ -60,6 +60,18 @@ const (
 	ErrDuplicateDirection ErrCode = "duplicate_direction"
 )
 
+// AllErrCodes is every ErrCode, the closed set a metric labelled by code is
+// pre-seeded from (andara_content_validation_failures_total, AW-SRV-013). A
+// new code is added here in the same change that declares it.
+var AllErrCodes = []ErrCode{
+	ErrUnknownRoom, ErrUnknownZone, ErrDuplicateRoom, ErrDuplicateZone,
+	ErrUnsupportedVersion, ErrMalformed, ErrEmptyContent, ErrOrphanRoom,
+	ErrUnknownDirection, ErrUnknownComponent, ErrDuplicateComponent, ErrInvalidComponentField,
+	ErrMissingReverseExit, ErrUnresolvedExtends, ErrUnflattenedTemplate, ErrDuplicateTemplate,
+	ErrChainMismatch, ErrChainTooDeep, ErrInvalidProvenance, ErrPackMismatch,
+	ErrFallbackMissing, ErrZoneRemoved, ErrSpawnRoomRemoved, ErrDuplicateDirection,
+}
+
 // warningCodes are findings that do not refuse a load. They are advisory
 // because the thing they describe is legal — a Room a Builder has not connected
 // yet, a chute that only goes down — and refusing content for being unfinished

@@ -194,6 +194,10 @@ func (s *Store) Metrics() *Metrics { return s.metrics }
 // publish) record through.
 func (s *Store) Auditor() *Auditor { return s.audit }
 
+// AuditLog is andara.audit.v1, for a reader that rebuilds history from it:
+// the content registry's activation history (AW-SRV-013).
+func (s *Store) AuditLog() recordlog.Log { return s.opts.Audit }
+
 // RegistrationMode is the mode in effect.
 func (s *Store) RegistrationMode() accountsv1.RegistrationMode {
 	s.mu.RLock()
@@ -243,6 +247,18 @@ func (s *Store) lookupID(id string) (*accountsv1.Account, bool) {
 	defer s.mu.RUnlock()
 	a, ok := s.byID[id]
 	return a, ok
+}
+
+// BuilderPacks returns the packs an Account may build (Account.builder_packs,
+// AW-SRV-013's per-pack authority), or nil for an unknown Account. The
+// content publish path reads it for the effective Account, so an Operator
+// acting as a Builder holds that Builder's packs.
+func (s *Store) BuilderPacks(accountID string) []string {
+	a, ok := s.lookupID(accountID)
+	if !ok {
+		return nil
+	}
+	return slices.Clone(a.GetBuilderPacks())
 }
 
 func (s *Store) lookupUsername(username string) (*accountsv1.Account, bool) {
