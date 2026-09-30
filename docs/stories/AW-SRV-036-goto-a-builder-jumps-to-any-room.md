@@ -4,7 +4,7 @@ title: goto — a Builder jumps to any Room
 epic: EPIC-03
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-003, AW-SRV-014]
 blocks: [AW-INF-023, AW-SRV-038]
