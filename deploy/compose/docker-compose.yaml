@@ -278,6 +278,8 @@ services:
       ANDARA_HTTP_PORT: "8080"
       ANDARA_CONTENT_SOURCE: "dir"
       ANDARA_CONTENT_PATH: "/etc/andara/content"
+      # Purgatory, as in every environment (AW-INF-024).
+      ANDARA_CHARACTER_SPAWN_ROOM: "purgatory/start"
       ANDARA_KAFKA_BROKERS: "redpanda:29092"
       ANDARA_SCHEMA_REGISTRY: "http://redpanda:8081"
       ANDARA_REDIS_ADDR: "redis:6379"
