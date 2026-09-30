@@ -112,6 +112,9 @@ Also in scope:
 ## Interface contract
 
 - Location: `docs/builders/README.md` (the entry point), with one file per section above.
+  Section 7 is `docs/builders/reference.md`, a generated file. Only `make builder-reference`
+  writes it, and the PR that changes its sources commits it, whatever that PR's role (CLAUDE.md
+  §2, 2026-09-29). Architecture writes every other file in `docs/builders/`.
 - `make builder-reference`: `## builder-reference: regenerate the Builder's Guide reference tables
   from the server's Direction and Component tables, andara.core, and errors.md`.
 - `make guide-check`: `## guide-check: every andara-cli command in the Builder's Guide exists,
