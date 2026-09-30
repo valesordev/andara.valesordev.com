@@ -263,14 +263,9 @@ func (a *Admin) PublishBlob(ctx context.Context, stream BlobStream) (*adminv1.Pu
 	ctx, span := a.tracer.Start(ctx, "content.publish_blob", trace.WithAttributes(attribute.String("pack_id", pack)))
 	defer span.End()
 
-	c, err := a.authorize(ctx, pack, false)
+	c, err := a.authorizePublish(ctx, pack)
 	if err != nil {
-		a.m.Publishes.WithLabelValues(PublishDenied).Inc()
-		a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, pack, 0, ContentAudit{}, err.Error())
 		return nil, err
-	}
-	if pack == a.o.CorePack {
-		return nil, a.corePublishRefused(ctx, c)
 	}
 	if len(hdr.GetHash()) != sha256.Size {
 		return nil, adminErr(CodeInvalidArgument, ErrReasonHashMismatch, "the header's hash is %d bytes; a sha256 is %d", len(hdr.GetHash()), sha256.Size)
@@ -328,6 +323,27 @@ func (a *Admin) tooLarge(ctx context.Context, c caller, pack, path string, n int
 	return err
 }
 
+// authorizePublish is authorize for the two RPCs that write a pack's
+// content, with andara.core refused to everyone first (AC-11): no RPC
+// publishes it, whoever calls.
+func (a *Admin) authorizePublish(ctx context.Context, pack string) (caller, error) {
+	if pack == a.o.CorePack {
+		p, err := a.principal(ctx)
+		if err != nil {
+			return caller{}, err
+		}
+		return caller{}, a.corePublishRefused(ctx, caller{p: p, operator: p.Has(auth.RoleOperator)})
+	}
+	c, err := a.authorize(ctx, pack, false)
+	if err != nil {
+		a.m.Publishes.WithLabelValues(PublishDenied).Inc()
+		a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, pack, 0, ContentAudit{}, err.Error())
+		a.log.LogAttrs(ctx, slog.LevelWarn, "content publish denied", attrs(ctx, c, pack, 0, slog.String("detail", err.Error()))...)
+		return c, err
+	}
+	return c, nil
+}
+
 func (a *Admin) corePublishRefused(ctx context.Context, c caller) error {
 	a.m.Publishes.WithLabelValues(PublishDenied).Inc()
 	err := adminErr(CodePermissionDenied, ErrReasonCorePublish, "%s is published by the server at boot; no RPC publishes it", a.o.CorePack)
@@ -344,15 +360,9 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	ctx, span := a.tracer.Start(ctx, "content.publish", trace.WithAttributes(attribute.String("pack_id", pack)))
 	defer span.End()
 
-	c, err := a.authorize(ctx, pack, false)
+	c, err := a.authorizePublish(ctx, pack)
 	if err != nil {
-		a.m.Publishes.WithLabelValues(PublishDenied).Inc()
-		a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, pack, 0, ContentAudit{}, err.Error())
-		a.log.LogAttrs(ctx, slog.LevelWarn, "content publish denied", attrs(ctx, c, pack, 0, slog.String("detail", err.Error()))...)
 		return nil, err
-	}
-	if pack == a.o.CorePack {
-		return nil, a.corePublishRefused(ctx, c)
 	}
 	refs := req.GetBlobs()
 	digest := BlobHashesDigest(refs)
