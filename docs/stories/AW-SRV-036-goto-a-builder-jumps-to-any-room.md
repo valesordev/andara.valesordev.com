@@ -256,8 +256,8 @@ Decisions are in `docs/feedback/AW-SRV-036-goto.md`, "Implementation, 2026-09-30
 
 | AC | Covered by | Result |
 |----|------------|--------|
-| 1 | `sim` `TestGoto_CrossZone`: a departure with no direction, an `Arrive` with origin, trace, Session and `client_ref`, then an arrival and `RoomDescribed` of The Pier. `smoke` `TestLive_Goto`: bystanders in the plaza and at the pier, and the roster at `docks/pier` after quit | pass in process; `TestLive_Goto` awaits a stack built from this branch (feedback, For SRE) |
-| 2 | `command` `TestGoto_ParsesBothFormsAndFillsTheZone`: `goto hall` goes to `town`'s Partition carrying `town/hall`. `sim` `TestGoto_InZone`: no `Arrive` is produced, and the events are left, arrived, then described. `TestLive_Goto` checks the Partition on the stack | pass |
+| 1 | `sim` `TestGoto_CrossZone`: a departure with no direction, an `Arrive` with origin, trace, Session and `client_ref`, then an arrival and `RoomDescribed` of The Pier. `smoke` `TestLive_Goto`: bystanders in the plaza and at the pier, and the roster at `docks/pier` after quit | pass; `TestLive_Goto` passes on a compose stack built from this branch at 9553a5a, with both the `town/plaza` spawn and `purgatory/start` (#269 merged in locally), alongside `stack-smoke`, `stack-play` and `stack-linkdead` (SRE on #274) |
+| 2 | `command` `TestGoto_ParsesBothFormsAndFillsTheZone`: `goto hall` goes to `town`'s Partition carrying `town/hall`. `sim` `TestGoto_InZone`: no `Arrive` is produced, and the events are left, arrived, then described. `TestLive_Goto` checks the Partition on the stack | pass, and on the stack (SRE on #274) |
 | 3 | `command` `TestGoto_NeedsBuilder`: a player is refused `not_authorized`, `you may not goto`, audited, with no offset consumed. `TestLive_Goto` checks `PERMISSION_DENIED` with reason `not_authorized` on the wire. Mutation-checked: without the role, the test fails | pass |
 | 4 | `sim` `TestGoto_UnknownTarget`: `unknown_zone` and `unknown_room` at `validate`, `there is no room <zone>/<room>`, and nothing moves | pass |
 | 5 | `command` `TestGoto_ParseRefusals`: `missing_argument` (`arg` `target`) and six malformed forms as `invalid_argument`, each with the detail `usage: goto <zone>/<room>`. No prefix reaches `goto`, and nothing is logged | pass |
@@ -276,3 +276,7 @@ Decisions are in `docs/feedback/AW-SRV-036-goto.md`, "Implementation, 2026-09-30
 
 `make check` passes. `TestSnapshotCopyStaysInsideTheStallBudget` (#172) failed twice under
 full-suite load, and passed alone on this branch and on `main`.
+
+**The arrival text.** The Open questions `[ASSUMPTION]` about bystander wording is answered by Brian
+(2026-09-30, recorded on #273): a bystander reads `<name> has arrived.` for a `goto`. This branch
+still renders `<name> arrives.`, per the contract as written, until architecture amends it.
