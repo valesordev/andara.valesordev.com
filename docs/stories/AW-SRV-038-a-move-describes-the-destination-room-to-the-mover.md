@@ -146,7 +146,7 @@ change, and it's asserted here for `move`. Notes, and what's for SRE, are in
 | 3 | `events` `TestScope_RoomMove`: the bystander in the source Room sees one `CharacterLeft`, the one in the destination one `CharacterArrived`, and neither sees a `RoomDescribed`. `TestClientRefOnlyToOwnSession`: the description carries the mover's `client_ref` to the mover only | pass |
 | 4 | `sim` `TestMove_NoSuchExit`: the rejection is the only Event | pass |
 | 5 | `sim` `TestMove_ReplayIsIdentical`: two Engines on the same log, in-Zone and cross-Zone moves with their `Arrive`s, emit equal Events and agree on the State Hash at every tick | pass |
-| 6 | `make stack-play` with `scripts/stack_play.sh` unchanged | awaits a stack built from this branch (feedback, For SRE) |
+| 6 | `make stack-play` with `scripts/stack_play.sh` unchanged, on a compose stack built from this branch at 249e025 with fresh volumes. `stack-smoke` and `stack-linkdead` pass too, and the transcript shows each move's own description ahead of the `look`'s (SRE on #278) | pass |
 | 7 | `sim` `TestArrive_IntoAGoneRoomLandsAtTheFallback`: a cross-Zone `move` into a gone Room reads `EntityRelocated`, then the fallback's `RoomDescribed` | pass |
 
 Tests that counted a mover's Events are updated in this PR: `sim`'s `TestMove_InZone`,
