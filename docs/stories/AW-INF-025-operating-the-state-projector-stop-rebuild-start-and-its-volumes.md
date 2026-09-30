@@ -4,7 +4,7 @@ title: Operating the state projector — stop, rebuild, start, and its volumes
 epic: EPIC-10
 component: infra
 type: infra
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-019, AW-INF-018]
 blocks: []
@@ -281,3 +281,43 @@ server's `secrets.kafkaCreds`: whichever principal both used would carry both se
 The broker still authenticates nobody until ADR-0011's SRE story lands. So on `dev` this story
 renders the mount only if the value is set, and it's fine for it to be empty until then. What
 matters is that the chart can't hand the projector the server's Secret.
+
+## Verification record (SRE, 2026-09-29), before merge
+
+On `sre/aw-inf-025-operating-the-state-projector`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `make projector-stop ENV=dev` on the box | **owed after merge.** The Deployment exists only once `values/dev.yaml` reaches `main` |
+| 2 | `make projector-rebuild ENV=dev`, then the lag gauge against its budget | **owed after merge, and on #143** (architecture, 2026-09-29) |
+| 3 | The same run: `projector-stop`'s final line before the Job is created | **owed after merge.** By construction, `rebuild()` runs `stop()` to completion before `create job` |
+| 4 | `state projector started` with `round_tick` equal to the newest round in `andara-snapshots-dev`, then lag within budget with no divergence | **owed after merge, and on #143** |
+| 5 | `helm_test.test_snapshot_s3_and_projector_creds`: on `dev`, both workloads take `andara-snapshot-s3` by `envFrom`, and `ANDARA_SNAPSHOT_STORE=s3`. The projector mounts `projectors.state.kafkaCreds` at `/etc/andara/secrets/kafka` when it's set. With only `secrets.kafkaCreds` set, it has no `kafka-creds` volume. `local` is unchanged (`fs`, no Secret, no projector). Mutation-checked: removing `snapshotS3` from `dev.yaml` fails it twice | pass |
+| 6 | `make objectstore-install ENV=dev`, run twice. The first run created the Secret. The second said `Secret andara-snapshot-s3 exists; unchanged`, and `resourceVersion` stayed `5245701`. Both exited 0. A write, list and delete through rclone worked on the local-path PVC (versitygw's xattr metadata). "The server's next round lands within 3 × `snapshot.interval`" | first half pass; **the round is owed after merge** |
+| 7 | `Usage.*` in `scripts/tests/test_projector.py`: no `ENV`, or `ENV=local`, exits 2 with no `kubectl` on `PATH`. `Preconditions.test_a_disabled_projector_is_refused_naming_the_environment`: exit 1, no `scale`, `create` or `delete` | pass |
+| 8 | `Preconditions.test_a_running_rebuild_job_is_refused_before_scaling`: names the Job, with no change made | pass; the box half is owed after merge |
+
+**Before the switch to `s3` (Data section):** all 64 `andara.events.v1` partitions have
+log-start-offset 0 (after `world-reset`, 23:52Z). So the first `s3` boot's replay from zero has
+its whole log.
+
+**Beyond the contract:**
+- **The Application ignores the projector's replica count.** It has `ignoreDifferences` on
+  `/spec/replicas` for `andara-projector-state`, with `RespectIgnoreDifferences=true`. Without
+  that, selfHeal would undo `projector-stop` within seconds. This is in `deploy/argocd/andara-dev.yaml`,
+  applied with `make argocd-install ENV=dev` (Synced/Healthy afterwards).
+- **The rebuild ends at `caught up`, not at `Complete`,** because `--rebuild` never exits. The
+  question is in `docs/feedback/AW-INF-025-projector-operations.md`, for architecture.
+- **`world-reset` on `s3` empties the bucket** through `objectstore.py` (verified against the
+  bucket: two objects in, none out, bucket kept). It stops the projector through `projector-stop`'s
+  code, as the contract's note to AW-INF-021 asks. Its `s3` refusal from #165 is gone.
+- **`k8s-dry` validates `deploy/k8s/objectstore/`** (4 resources).
+- **Bucket tool:** `rclone/rclone:1.75.1` by digest, 130 MB, rather than `amazon/aws-cli`, which is
+  594 MB, for two operations.
+
+**Alert:** `StateProjectorDown` in `files/alerts.yaml`, with three promtool cases: it fires for
+`andara-dev` alone at 13 m, is silent on replicas 0, and is silent in compose. Mutation-checked.
+Its runbook is `docs/runbooks/state-projector-down.md`, listed in the runbook README.
+`projection-freshness.md`'s known gap now points to it. Delivery to Grafana Cloud is AW-INF-009's.
+**Also owed at §8:** that Grafana Cloud's kube-state-metrics keeps `kube_deployment_spec_replicas`
+for `andara-projector-state`.

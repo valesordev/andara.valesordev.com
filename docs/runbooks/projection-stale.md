@@ -32,6 +32,11 @@ has nothing to project.
 
 ## Diagnose, in this order
 
+**First, check whether a rebuild is running.** A `make projector-rebuild` longer than this rule's
+5 minutes fires it, which is correct: rebuilds count against the budget. Its final line
+(`projector-rebuild: rebuilt to tick <t> in <n>s`), or the Job `andara-projector-state-rebuild`
+still running, answers it. If so, wait for the lag to return under budget.
+
 | Step | Look at | Means |
 |------|---------|-------|
 | 1 | Pod restarts and the last exit code | `2`: see `state-projector-diverged.md`. This alert is its echo. `3`: a log gap, and the `error` line names the topic and Partition. `andara.commands.v1` keeps everything, so in practice it is `andara.events.v1` (30-day retention) with no complete snapshot round newer than the gap. Fix the server's snapshots first (`SnapshotStale`, #74 locally). A plain restart then bootstraps from the newest round, with no rebuild needed. `4`: the snapshot round was written by a newer binary; roll the projector forward to the server's version. `1`: configuration or the broker; the last `error` line names it. That includes a produce to `andara.state.v1` the broker refused: it fails after the one-minute delivery timeout and the process exits `1`, so a refused write shows up as a crash loop, not as a stall. |
@@ -43,6 +48,7 @@ has nothing to project.
 ## Recover
 
 A lagging projector recovers on its own once the cause is gone: it catches up from its checkpoint.
-A rebuild is for when the checkpoint itself is unusable, not a way to catch up faster, and there is
-no target for it yet (`§9 defect → #80`). Never run `--rebuild` beside a live Deployment: two
-writers on one consumer group corrupt its checkpoint.
+A rebuild is for when the checkpoint itself is unusable, not a way to catch up faster:
+`make projector-rebuild ENV=<env>`. Never run `andara-projector state --rebuild` by hand beside the
+Deployment: two writers on one consumer group corrupt its checkpoint, which is what the target's
+stop-first order prevents.

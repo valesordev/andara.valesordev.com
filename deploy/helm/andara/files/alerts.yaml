@@ -147,6 +147,24 @@ groups:
         annotations:
           summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
           runbook: docs/runbooks/projection-stale.md
+      - alert: StateProjectorDown
+        # AW-INF-025. The projector's Deployment wants a replica and no ready projector pod
+        # is scraped. `make projector-stop` and `projector-rebuild` scale it to 0, so a
+        # planned stop never fires; a crash loop or an unready pod drops out of the
+        # annotation scrape and does. Keyed on desired replicas, not absent(): an environment
+        # with the projector disabled has no Deployment and no series, and compose has no
+        # kube_* series at all.
+        expr: |
+          max by (namespace) (kube_deployment_spec_replicas{deployment="andara-projector-state"}) > 0
+            unless on(namespace) max by (namespace) (up{job="andara-projector-state"} == 1)
+        for: 10m
+        labels:
+          severity: ticket
+          slo: projection-freshness
+          projection: state
+        annotations:
+          summary: "The state projector should be running and no ready projector pod has been scraped for 10 minutes"
+          runbook: docs/runbooks/state-projector-down.md
   - name: andara-content
     # AW-SRV-012, tied to docs/specs/slo/content-freshness.md. A pointer move the World has
     # not served for five minutes, for a system reason; a version refused for a Builder's

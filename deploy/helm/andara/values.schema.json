@@ -589,6 +589,16 @@
             }
           }
         },
+        "snapshotS3": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The snapshot store's credential (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY), taken by envFrom into the server and every projector (AW-INF-025).",
+          "properties": {
+            "secretName": {
+              "type": "string"
+            }
+          }
+        },
         "bootstrapOperator": {
           "type": "object",
           "additionalProperties": false,
@@ -824,6 +834,17 @@
         }
       }
     },
+    "objectstore": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "The in-cluster snapshot object store `make objectstore-install` puts in the namespace (AW-INF-025).",
+      "properties": {
+        "service": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "projectors": {
       "type": "object",
       "additionalProperties": false,
@@ -896,6 +917,16 @@
       "properties": {
         "enabled": {
           "type": "boolean"
+        },
+        "kafkaCreds": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "The projector's own Kafka principal (ADR-0011 decision 6). Never falls back to secrets.kafkaCreds.",
+          "properties": {
+            "secretName": {
+              "type": "string"
+            }
+          }
         },
         "replicas": {
           "type": "integer",

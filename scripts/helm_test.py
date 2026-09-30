@@ -620,6 +620,65 @@ def test_content_checksum():
             fail("dev: checksum/content did not change when files/content/%s changed" % target)
 
 
+def container(d):
+    return d["spec"]["template"]["spec"]["containers"][0]
+
+
+def env_from_secrets(d):
+    return [e["secretRef"]["name"] for e in container(d).get("envFrom", []) if "secretRef" in e]
+
+
+def test_snapshot_s3_and_projector_creds():
+    """AW-INF-025 AC-5: dev's server and projector share the s3 store; the projector has its own
+    Kafka principal and never the server's."""
+    code, out, err = render("dev")
+    if code:
+        return fail("dev render failed: %s" % err.strip())
+    ds = docs(out)
+    cfg = find(ds, "ConfigMap", "andara-config")["data"]
+    if cfg.get("ANDARA_SNAPSHOT_STORE") != "s3":
+        fail("dev: ANDARA_SNAPSHOT_STORE is %r, want s3" % cfg.get("ANDARA_SNAPSHOT_STORE"))
+    endpoint = cfg.get("ANDARA_SNAPSHOT_S3_ENDPOINT", "")
+    service = yaml.safe_load(open(os.path.join(VALUES, "dev.yaml")))
+    service = (service.get("objectstore") or {}).get("service") or \
+        yaml.safe_load(open(os.path.join(CHART, "values.yaml")))["objectstore"]["service"]
+    if endpoint.split("//")[-1].split(":")[0] != service:
+        fail("dev: ANDARA_SNAPSHOT_S3_ENDPOINT %r doesn't name objectstore.service %r" % (endpoint, service))
+    sts = find(ds, "StatefulSet", "andara")
+    proj = find(ds, "Deployment", "andara-projector-state")
+    if proj is None:
+        return fail("dev: projectors.state.enabled renders no Deployment")
+    for name, d in (("server", sts), ("projector", proj)):
+        if env_from_secrets(d) != ["andara-snapshot-s3"]:
+            fail("dev: %s envFrom secrets are %r, want andara-snapshot-s3" % (name, env_from_secrets(d)))
+    if [m for m in container(proj).get("volumeMounts", []) if m["name"] == "kafka-creds"]:
+        fail("dev: projector mounts kafka-creds with projectors.state.kafkaCreds.secretName empty")
+
+    # Its own Secret when set; nothing, never the server's, when only the server's is set.
+    code, out, err = render("dev", "--set", "projectors.state.kafkaCreds.secretName=andara-projector-kafka",
+                            "--set", "secrets.kafkaCreds.secretName=andara-server-kafka")
+    proj = find(docs(out), "Deployment", "andara-projector-state")
+    mounts = {m["name"]: m["mountPath"] for m in container(proj).get("volumeMounts", [])}
+    vols = {v["name"]: v.get("secret", {}).get("secretName") for v in proj["spec"]["template"]["spec"]["volumes"]}
+    if mounts.get("kafka-creds") != "/etc/andara/secrets/kafka" or vols.get("kafka-creds") != "andara-projector-kafka":
+        fail("projector: kafka-creds should mount andara-projector-kafka at /etc/andara/secrets/kafka, got %r %r"
+             % (mounts, vols))
+    code, out, err = render("dev", "--set", "secrets.kafkaCreds.secretName=andara-server-kafka")
+    proj = find(docs(out), "Deployment", "andara-projector-state")
+    if "kafka-creds" in {v["name"] for v in proj["spec"]["template"]["spec"]["volumes"]}:
+        fail("projector: falls back to secrets.kafkaCreds when its own kafkaCreds is empty")
+
+    # local is unchanged: fs, no snapshot Secret, no projector.
+    code, out, err = render("local")
+    ds = docs(out)
+    if find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_SNAPSHOT_STORE", "fs") != "fs":
+        fail("local: snapshot store moved off fs")
+    if env_from_secrets(find(ds, "StatefulSet", "andara")):
+        fail("local: the server takes a snapshot Secret")
+    if find(ds, "Deployment", "andara-projector-state") is not None:
+        fail("local: renders a projector")
+
+
 def main():
     for env in ENVS:
         test_pvc_retained(env)
@@ -641,6 +700,7 @@ def main():
     test_argocd_application()
     test_content_configmaps()
     test_content_checksum()
+    test_snapshot_s3_and_projector_creds()
     if failures:
         print("helm-test: %d failure(s)" % len(failures), file=sys.stderr)
         sys.exit(1)

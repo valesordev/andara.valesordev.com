@@ -66,13 +66,14 @@ tick, the checkpoint was cleared, or a newer divergence was recorded after a `--
 2. **Rule out the known causes** in the table below. If one explains it, follow that row.
 3. **Otherwise, escalate as a simulation bug** with that evidence. The projector keeps halting
    on the same tick meanwhile, and nothing is lost by leaving it there.
-4. **Clear it with `--rebuild` once the cause is understood**, or once it's escalated with the
-   evidence captured. `--rebuild` wipes the group, logs `--rebuild discards an unresolved
-   divergence` with the tick, and bootstraps from the newest complete round. There's no make
-   target for a rebuild beside a live Deployment yet (`§9 defect → #80`), and two writers on one
-   consumer group corrupt its checkpoint. So in a cluster, scale the projector's Deployment to 0
-   before running it, and back to 1 after. If the rebuilt projector diverges again at a later
-   tick, that's a new divergence. Start again at step 1.
+4. **Clear it with `make projector-rebuild ENV=<env>` once the cause is understood**, or once
+   it's escalated with the evidence captured. The target stops the projector first
+   (`projector-stop`, so there are never two writers on the group), runs `--rebuild` as the Job
+   `andara-projector-state-rebuild`, and starts the Deployment once the Job has caught up. It ends
+   `projector-rebuild: rebuilt to tick <t> in <n>s`. `--rebuild` wipes the group, logs
+   `--rebuild discards an unresolved divergence` with the tick, and bootstraps from the newest
+   complete round. If the rebuilt projector diverges again at a later tick, that's a new
+   divergence. Start again at step 1.
 
 ## Known causes worth ruling out before escalating
 ## Known causes worth ruling out before escalating

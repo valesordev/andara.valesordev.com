@@ -37,6 +37,11 @@ secrets:
     keyKey: tls.key
   kafkaCreds:
     secretName: ""
+  # The snapshot store's S3 credential, by envFrom into the server and the projectors, when
+  # server.snapshot.store is s3 (AW-INF-025). `make objectstore-install` creates it as
+  # andara-snapshot-s3. The server's S3 store reads it through the default credential chain.
+  snapshotS3:
+    secretName: ""
   # `username:password` for the first operator Account (AW-SRV-008). Injected as
   # ANDARA_AUTH_BOOTSTRAP_OPERATOR from the Secret, applied by the server only while no
   # operator exists, and ignored afterwards — so it can stay set without being a back door.
@@ -126,13 +131,15 @@ alerts:
 observability:
   annotations: true
 
-# `state` has a binary (AW-SRV-019: `andara-projector state`, in the server image) and is
-# still off. Enabling it on dev or prod waits on three things:
-#   - andara.state.v1 carrying min.compaction.lag.ms there. `make topics-diff ANDARA_ENV=<env>` names
-#     the drift, and `make topics-apply ANDARA_ENV=<env>` applies it (AW-INF-018).
-#   - The projector Deployment mounting a readable snapshot store and the Kafka credentials.
-#     Without the store it replays from zero (#80).
-#   - A target to stop and rebuild it for the runbooks (#80).
+# The in-cluster snapshot object store (AW-INF-025). server.snapshot.s3_endpoint names this
+# Service where server.snapshot.store is s3; helm-test holds the two together.
+objectstore:
+  service: andara-objectstore
+
+# `state` has a binary (AW-SRV-019: `andara-projector state`, in the server image). It runs on
+# an environment once its snapshot store is s3 (so it reads the rounds the server writes) and
+# `make projector-stop/-start/-rebuild` operate it (AW-INF-025, #80). kafkaCreds is its own
+# principal (ADR-0011): empty renders no mount, and it never falls back to the server's.
 # redis and postgres have no binary yet
 # (AW-SRV-017, AW-SRV-018); enabling one renders a Deployment that exits 1 on an unknown
 # projection.
@@ -141,6 +148,8 @@ projectors:
     enabled: false
     replicas: 1
     resources: {}
+    kafkaCreds:
+      secretName: ""
   redis:
     enabled: false
     replicas: 1

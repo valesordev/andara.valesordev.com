@@ -29,6 +29,18 @@ server:
     path: /content
   auth:
     token_key_file: /etc/andara/secrets/token-key/token.keys
+  # Snapshots in the namespace's object store (AW-INF-025, `make objectstore-install ENV=dev`),
+  # so the state projector reads the rounds the server writes. The StatefulSet's snapshot PVC
+  # stays, unused, until AW-INF-007 retires it. Rollback: store back to fs, and the projector
+  # off, in one revert.
+  snapshot:
+    store: s3
+    s3_bucket: andara-snapshots-dev
+    s3_endpoint: http://andara-objectstore:9000
+
+projectors:
+  state:
+    enabled: true
 
 snapshots:
   size: 5Gi
@@ -49,6 +61,8 @@ secrets:
     secretName: andara-server-token-key
   bootstrapOperator:
     secretName: andara-server-bootstrap
+  snapshotS3:
+    secretName: andara-snapshot-s3
 
 contentVolume:
   render: true

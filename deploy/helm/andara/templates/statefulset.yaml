@@ -105,6 +105,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "andara.name" . }}-config
+            {{- if .Values.secrets.snapshotS3.secretName }}
+            - secretRef:
+                name: {{ .Values.secrets.snapshotS3.secretName }}
+            {{- end }}
           env:
             - name: ANDARA_POD_NAME
               valueFrom:

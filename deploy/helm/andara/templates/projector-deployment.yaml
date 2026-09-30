@@ -49,6 +49,10 @@ spec:
           envFrom:
             - configMapRef:
                 name: {{ include "andara.name" $ }}-config
+            {{- if $.Values.secrets.snapshotS3.secretName }}
+            - secretRef:
+                name: {{ $.Values.secrets.snapshotS3.secretName }}
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ include "andara.httpPort" $ }}
@@ -68,8 +72,20 @@ spec:
           volumeMounts:
             - name: cache
               mountPath: /var/cache/andara
+            {{- with ($spec.kafkaCreds | default dict).secretName }}
+            - name: kafka-creds
+              mountPath: /etc/andara/secrets/kafka
+              readOnly: true
+            {{- end }}
       volumes:
         - name: cache
           emptyDir: {}
+        {{- with ($spec.kafkaCreds | default dict).secretName }}
+        # The projector's own principal (ADR-0011 decision 6), never secrets.kafkaCreds.
+        - name: kafka-creds
+          secret:
+            secretName: {{ . }}
+            defaultMode: 0400
+        {{- end }}
 {{- end }}
 {{- end }}

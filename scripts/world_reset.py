@@ -15,15 +15,15 @@ Refused with exit 2 before anything touches the cluster: ENV=prod, ENV=local (wh
 
 Steps, in order, each named on failure:
   0. Preconditions, before anything changes: the Argo CD Application is readable (only a
-     confirmed NotFound counts as "none"), and the configured snapshot store is `fs`. An `s3`
-     store stops the reset: nothing here empties a bucket yet (AW-INF-025), and a bucket left
-     full would restore the World this command claims to have removed.
+     confirmed NotFound counts as "none"), and the configured snapshot store is `fs` or `s3`.
   1. Argo CD's automated sync on the environment's Application is suspended, or selfHeal would
      scale the server back up mid-reset. It's restored on the way out, whatever happens.
-  2. The server StatefulSet and the projector Deployment scale to 0, and both are waited on: the
-     server pod gone, the projector's pods gone and its consumer group with no members.
+  2. The server StatefulSet scales to 0 and its pod is waited on; the projector stops through
+     `make projector-stop`'s code (pods gone, consumer group with no members).
   3. RESET_TOPICS are deleted, and recreated from deploy/kafka/topics.yaml by topics.py.
-  4. The snapshot PVCs are deleted, and the StatefulSet makes them again, empty.
+  4. The snapshot store is emptied: on `s3` (AW-INF-025) every object in
+     andara-snapshots-<env>, through objectstore.py; on `fs` the snapshot PVCs, which the
+     StatefulSet makes again, empty. A round that outlives its log is a wrong World.
   5. The projector's consumer group is deleted.
   6. Both scale back to what they were, and the server is waited on until Ready.
 Projector steps are skipped with a line saying so while the environment runs no projector.
@@ -38,6 +38,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import objectstore  # noqa: E402
+import projector  # noqa: E402
 import topics  # noqa: E402
 
 # Named explicitly: a topic added to topics.yaml later is kept unless it's added here. Never
@@ -163,35 +165,13 @@ def reset_topics(env, run):
         raise StepFailed("recreate topics from deploy/kafka/topics.yaml")
 
 
-def wait_projector_stopped(ns, env, run):
-    sel = json.loads(kubectl(ns, "get", PROJECTOR, "-o", "jsonpath={.spec.selector.matchLabels}").stdout or "{}")
-    selector = ",".join("%s=%s" % kv for kv in sorted(sel.items()))
-    kubectl(ns, "wait", "--for=delete", "pod", "-l", selector, "--timeout=%ds" % STOP_DEADLINE, check=False)
-    if kubectl(ns, "get", "pod", "-l", selector, "-o", "name").stdout.strip():
-        raise StepFailed("projector pods still running after scaling to 0")
-    group = "andara-projector-state-" + env
-    deadline = time.time() + STOP_DEADLINE
-    while True:
-        res = run(["group", "describe", group])
-        text = res.stdout + res.stderr
-        if res.returncode != 0 and "not found" in text.lower():
-            return
-        state = [l.split()[-1] for l in text.splitlines() if l.startswith("STATE")]
-        if res.returncode == 0 and state and state[0] in ("Empty", "Dead"):
-            return
-        if time.time() > deadline:
-            raise StepFailed("consumer group %s still has members %ds after the projector stopped"
-                             % (group, STOP_DEADLINE))
-        time.sleep(2)
-
-
 def reset(env, ns):
     run = topics.rpk_runner(env)
     argo_policy(ns)
     store = snapshot_store(ns)
-    if store != "fs":
-        raise StepFailed("snapshot.store=%s in %s: world-reset empties only the fs store until "
-                         "AW-INF-025 adds the bucket; nothing was changed" % (store, ns))
+    if store not in ("fs", "s3"):
+        raise StepFailed("snapshot.store=%s in %s isn't one world-reset can empty; nothing was changed"
+                         % (store, ns))
     app, policy = suspend_argo(ns)
     try:
         server_n = replicas(ns, SERVER) or 1
@@ -200,9 +180,10 @@ def reset(env, ns):
 
         scale(ns, SERVER, 0)
         if has_projector:
-            scale(ns, PROJECTOR, 0)
-            wait_projector_stopped(ns, env, run)
-            say("scaled %s to 0; its group has no members" % PROJECTOR)
+            try:
+                say("projector-stop: " + projector.stop(env, ns, run))
+            except projector.Failed as e:
+                raise StepFailed(str(e))
         else:
             say("no projector in %s; skipping its steps" % ns)
         kubectl(ns, "wait", "--for=delete", "pod/" + SERVER_POD, "--timeout=%ds" % STOP_DEADLINE, check=False)
@@ -212,11 +193,17 @@ def reset(env, ns):
 
         reset_topics(env, run)
 
-        pvcs = [n.split("/", 1)[1] for n in kubectl(ns, "get", "pvc", "-o", "name").stdout.split()
-                if n.split("/", 1)[1].startswith(SNAPSHOT_PVC_PREFIX)]
-        for pvc in pvcs:
-            kubectl(ns, "delete", "pvc", pvc, "--wait=true", "--timeout=120s")
-        say("emptied the snapshot store (%s)" % (", ".join(pvcs) or "no PVC"))
+        if store == "s3":
+            try:
+                say("emptied the snapshot store (bucket %s)" % objectstore.empty(env))
+            except objectstore.Failed as e:
+                raise StepFailed("empty the snapshot bucket: %s" % e)
+        else:
+            pvcs = [n.split("/", 1)[1] for n in kubectl(ns, "get", "pvc", "-o", "name").stdout.split()
+                    if n.split("/", 1)[1].startswith(SNAPSHOT_PVC_PREFIX)]
+            for pvc in pvcs:
+                kubectl(ns, "delete", "pvc", pvc, "--wait=true", "--timeout=120s")
+            say("emptied the snapshot store (%s)" % (", ".join(pvcs) or "no PVC"))
 
         if has_projector:
             group = "andara-projector-state-" + env
