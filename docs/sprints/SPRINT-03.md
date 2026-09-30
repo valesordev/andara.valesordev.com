@@ -35,6 +35,15 @@ AW-INF-023, the Builder's Guide, stays with architecture: Brian assigned the gui
 on 2026-09-26. AW-INF-005 and AW-INF-007 each mix contract, SRE and implementation work. They aren't
 in this sprint, and PM splits them at the SPRINT-04 boundary.
 
+## Re-planned 2026-09-29: AW-INF-023's tooling
+Architecture's contract review of AW-INF-023 sent its tooling to PM (Blocked by, items 2 and 3).
+PM wrote it as AW-CLI-009 (`andara-cli content reference`) and AW-INF-028 (`make builder-reference`
+and `make guide-check`). Both are at `draft` and **not in this sprint**. Implementation's list is
+already full, and AW-INF-028 can't merge until Brian changes the `.claude/` generated-files list
+upstream. The demo needs neither story. PM proposes moving AW-INF-023's AC-1 and AC-2 to AW-INF-028
+so that the guide ships this sprint. That's a contract change, so it's architecture's call, in
+`docs/feedback/AW-INF-023-builders-guide.md`. Both stories go to SPRINT-04's contract review.
+
 ## Contract review (SRE observability, then architecture — first)
 SRE reviews each draft's Observability requirements (§7) first. Architecture's contract review
 follows, and moves each draft to `ready` or `blocked`.
@@ -55,7 +64,9 @@ follows, and moves each draft to `ready` or `blocked`.
 - AW-INF-024 — every environment spawns new Characters in Purgatory
 - AW-INF-021 — `dev` serves its content from the content store
 - AW-INF-022 — the Content Repository
-- AW-INF-023 — the Builder's Guide (architecture)
+- AW-INF-023 — the Builder's Guide (architecture). Answer
+  `docs/feedback/AW-INF-023-builders-guide.md` items 1–5, and the proposal in item 1 first. It
+  decides whether the guide waits on AW-CLI-009 and AW-INF-028.
 - AW-SRV-036 — `goto`: a Builder jumps to any Room (implementation)
 - AW-SRV-038 — a move describes the destination Room to the mover (implementation; Brian
   2026-09-27)
