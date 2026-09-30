@@ -71,10 +71,14 @@ drift from the `andara-cli` a Builder downloads.
    **then** it ignores the addition and exits `0`. **Given** a `format_version` other than `1`
    **then** it prints `builder-reference: unsupported format_version <N>` and exits `1`.
 5. **Given** a code block in any `docs/builders/**/*.md` whose line starts `andara-cli ` (after an
-   optional `$ ` prompt) **when** `make guide-check` runs **then** it takes the command path, runs
-   `andara-cli <command path> --help`, and requires two things: exit `0`, and a `Usage:` line that
-   names `andara-cli <command path>` exactly. A path that fails either check prints
-   `guide-check: <file>:<line>: no command "andara-cli <command path>"`.
+   optional `$ ` prompt) **when** `make guide-check` runs **then** it resolves the command path from
+   `andara-cli`'s own command tree, as the Interface contract describes, and runs
+   `andara-cli <command path> --help`. The line fails if either of two things is true. The resolved
+   command has subcommands and the line has a positional word left over, as in
+   `andara-cli content bogus`. Or `--help` exits non-zero. A failing line prints
+   `guide-check: <file>:<line>: no command "andara-cli <the line's words up to the first unresolved one>"`.
+   **Given** `andara-cli content approve brian 1` or `andara-cli -o json content validate --path .`
+   **then** the path is `content approve` or `content validate` respectively, and the line passes.
 6. **Given** a code in `errors.md` §3 that isn't in `reference.md` **then** `guide-check` prints
    `guide-check: code <code> is in errors.md but not the reference`.
 7. **Given** a relative link in `docs/builders/**/*.md` whose target file doesn't exist, or whose
@@ -108,12 +112,19 @@ Help lines. The first and third are `AW-INF-023`'s, verbatim.
 
 - **Files:** `docs/builders/reference.md` is the only file either target writes.
   `builder-reference-check` and `guide-check` write nothing in the tree.
-- **The command path (AC-5)** is the tokens after `andara-cli` up to, but not including, the first
-  token that starts with `-`, `<`, `[`, `$` or a quote, or that contains `/`, `.`, `=` or `@`.
-  `andara-cli content inspect room market/square` gives `content inspect room`.
-- **Why `Usage:` too.** `andara-cli content bogus --help` exits `0` today. It prints the help for
-  `content`, because an unknown trailing word falls back to the nearest parent (checked
-  2026-09-29). Exit `0` alone can't show that a command exists.
+- **The command path (AC-5)** comes from the binary, not from how the tokens are spelled. The line
+  is split shell-style. Starting from the root, each word is appended to the path only while
+  `andara-cli __complete <words so far> ''` lists it as a subcommand. That's Cobra's hidden
+  completion command, and it parses flags and their values against the real flag set, so a global
+  flag anywhere in the line is skipped (checked against `main` 2026-09-29). The first word that
+  isn't a subcommand ends the path, and it and everything after it are positionals. Placeholders
+  such as `<zone>/<room>` are positionals too.
+- **Why the leftover-word rule.** `andara-cli content bogus --help` exits `0` today. It prints the
+  help for `content`, because an unknown trailing word falls back to the nearest parent. So neither
+  exit `0` nor the `Usage:` line can tell a typo from a positional. What can is whether the command
+  has subcommands. A group such as `content` takes none, and a leaf such as `content approve` takes
+  its arguments. *(Revised after review of #170: an earlier rule inferred the path from token
+  spelling, which misread positional arguments as subcommands.)*
 - **Codes in `errors.md` (AC-6)** are the backticked `snake_case` tokens in the first column of
   §3's tables.
 - **Build:** `go build ./cmd/andara-cli` into `mktemp -d`, removed on exit. Neither target reads an
@@ -134,8 +145,11 @@ and their `builder-reference:` and `guide-check:` lines, which CI's job log keep
 ## Test plan
 
 - **Unit** (`scripts/tests/`, run by `make scripts-test`), using fixture guides and fixture JSON:
-  - a missing command, a command whose `--help` falls back to a parent, a missing `errors.md` code, a
-    missing link target, and a missing anchor each exit `1`, naming the failure (AC-5 to AC-8);
+  - a missing command, a group followed by an unknown word (`content bogus`), a missing `errors.md`
+    code, a missing link target, and a missing anchor each exit `1`, naming the failure (AC-5 to
+    AC-8);
+  - a leaf command with positional arguments, and a line with a global flag before the command,
+    both pass (AC-5);
   - three failures at once are all reported (AC-8);
   - a guide with only `reference.md` passes (AC-9);
   - the JSON with an added key renders the same file, and `format_version: 2` exits `1` (AC-4).
@@ -173,6 +187,8 @@ CLAUDE.md §8, plus: the `.claude/` generated-files list and CLAUDE.md §2 both 
    that story's contract requires. But `builder-reference` reads only `AW-CLI-009`'s JSON, and it
    links to `errors.md` rather than reading it. Whether the line changes is architecture's call, in
    `docs/feedback/AW-INF-023-builders-guide.md`.
-3. `[ASSUMPTION]` `builder-reference-check` is a separate target, as `values-schema-check` is, so that
+3. `[ASSUMPTION]` No `andara-cli` command both has subcommands and takes positional arguments. That
+   holds today, and AC-5's leftover-word rule depends on it.
+4. `[ASSUMPTION]` `builder-reference-check` is a separate target, as `values-schema-check` is, so that
    `make check` never writes the tree. `AW-INF-023` AC-2 names only the failure message, and this
    target prints exactly that.

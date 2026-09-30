@@ -39,8 +39,9 @@ would then be the last thing to close.
 AC-1 says every `andara-cli` command in the guide "exits 0 for `--help`". But
 `andara-cli content bogus --help` exits `0` today. It prints the help for `content`, because an
 unknown trailing word falls back to the nearest parent. PM checked this against `main` at 910f785.
-So `AW-INF-028` AC-5 also requires the `Usage:` line to name the full command path. If AC-1 stays
-on the guide, it wants the same wording.
+So `AW-INF-028` AC-5 resolves the path from the binary's own command tree, through Cobra's
+`__complete`. A line then fails if it leaves a positional word after a command that has
+subcommands. If AC-1 stays on the guide, it wants the same wording.
 
 ### 3. Section 7's "what triggers it, and the usual fix"
 
