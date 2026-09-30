@@ -94,6 +94,9 @@ and made the server publish `andara.core` at boot (AC-15–17, AC-19;
 
 ### For PM: split `AW-SRV-013`
 
+**Superseded 2026-09-29: Brian keeps `AW-SRV-013` as one story.** Implementation delivers all of
+it. The recommendation below stands only as the record of what was weighed.
+
 It was the size of the sprint before this review. It's now an `L`. Architecture recommends lifting
 the boot publish into its own story. The contract is already written as a separate section, so the
 split moves text and doesn't change it:

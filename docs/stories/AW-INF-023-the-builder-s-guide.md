@@ -112,6 +112,9 @@ Also in scope:
 ## Interface contract
 
 - Location: `docs/builders/README.md` (the entry point), with one file per section above.
+  Section 7 is `docs/builders/reference.md`, a generated file. Only `make builder-reference`
+  writes it, and the PR that changes its sources commits it, whatever that PR's role (CLAUDE.md
+  §2, 2026-09-29). Architecture writes every other file in `docs/builders/`.
 - `make builder-reference`: `## builder-reference: regenerate the Builder's Guide reference tables
   from the server's Direction and Component tables, andara.core, and errors.md`.
 - `make guide-check`: `## guide-check: every andara-cli command in the Builder's Guide exists,
@@ -160,6 +163,8 @@ Three things, none of them another story's code:
 
 1. **Brian: `docs/builders/` isn't writable by any role yet.** CLAUDE.md §2's architecture row and
    the architecture charter's writable paths (installed from automate.bashburn.com) both need it.
+   *(2026-09-29: CLAUDE.md §2 and §3 now name it. The charter's writable paths are upstream, so
+   this item clears when `make install` brings a charter that lists `docs/builders/`.)*
 2. **PM: `make builder-reference` and `make guide-check` are SRE's,** since they live in
    `Makefile` and `scripts/`. Architecture can't write either, and can't commit to an SRE branch.
 3. **PM: the Component table has no source outside the code.** Section 7's Component types come
