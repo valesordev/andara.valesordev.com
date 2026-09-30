@@ -267,8 +267,12 @@ metric names are unchanged.)*
   `zone_removed`, `spawn_room_removed`, `core_version` (AC-3, AC-14), and `validation` for any
   other refusing finding at activation (architecture's ruling 4). *(Added 2026-09-30, SRE:
   those refusals incremented no counter at all.)* `validation_failures_total{code}` stays the
-  publish gate's, so it counts one thing. An activation's finding codes are in its audit record
-  and its `warn` line (`findings_count`). The boot's own activation
+  publish gate's, so it counts one thing. The finding codes themselves reach only the caller, in
+  the RPC's `PublishFindings` detail. Telemetry keeps their count (`findings_count` in the audit
+  record and the `warn` line). The `warn` line also carries the first finding's `code`, as a
+  rejected publish's does, so a refusal can be triaged from Loki without the RPC response.
+  *(Corrected before merge, from Codex on #270: this first said the audit record and the log kept
+  the codes. They keep only the count, and the log line had no `code`.)* The boot's own activation
   (AC-15) counts on `pointer_moves_total{direction="forward",override="false"}`.
 - `andara_content_blob_bytes_total`: counter, bytes accepted after deduplication. It's the number
   ADR-0004's retention question watches. No alert until that story exists.

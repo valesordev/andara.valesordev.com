@@ -210,3 +210,6 @@ story's Observability section says so, dated.
   validation branch of `Admin.refused`;
 - the `server/README.md` metrics table row;
 - an assertion on `ActivationsRefused.WithLabelValues("validation")` in the test that refuses one.
+- the `warn` line `content activation refused` gains `code`, the first refusing finding's code, as
+  `rejected` logs it at publish. Today it has only `reason` and `findings_count`, and the audit
+  record has only the count, so once the RPC response is gone, a refusal's codes are nowhere.
