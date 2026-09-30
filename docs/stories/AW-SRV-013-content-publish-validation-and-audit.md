@@ -264,7 +264,11 @@ metric names are unchanged.)*
 - `andara_content_pointer_moves_total{direction, override}`: `forward` or `rollback`, × `true` or
   `false`. A refused activation doesn't move the pointer, and counts on
   `andara_content_activations_refused_total{reason}`. `reason` is the closed set `unapproved`,
-  `zone_removed`, `spawn_room_removed`, `core_version` (AC-3, AC-14). The boot's own activation
+  `zone_removed`, `spawn_room_removed`, `core_version` (AC-3, AC-14), and `validation` for any
+  other refusing finding at activation (architecture's ruling 4). *(Added 2026-09-30, SRE:
+  those refusals incremented no counter at all.)* `validation_failures_total{code}` stays the
+  publish gate's, so it counts one thing. An activation's finding codes are in its audit record
+  and its `warn` line (`findings_count`). The boot's own activation
   (AC-15) counts on `pointer_moves_total{direction="forward",override="false"}`.
 - `andara_content_blob_bytes_total`: counter, bytes accepted after deduplication. It's the number
   ADR-0004's retention question watches. No alert until that story exists.
