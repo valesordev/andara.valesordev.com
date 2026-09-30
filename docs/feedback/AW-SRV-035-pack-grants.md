@@ -56,3 +56,26 @@ every refusal or grant is audited after the lock is released.
 requires an Operator's grant to go through meanwhile. With the lock put back, the test fails.
 `SetRoles` and the other Admin writes still audit under `wmu`, but only for Operators. Those
 aren't changed here; one story can do all of them.
+
+## Architecture's §8 review (2026-09-30)
+
+Items 1–6 are ruled in the story's §8 review:
+1. The Account ID, and the ACs are amended.
+2. `AW-CLI-003`'s, untested, and added to its follow-ups.
+3. `andara.accounts`, recorded in the contract.
+4. Accepted.
+5. Accepted, and SRE confirms.
+6. Accepted, and the rest go to PM as one story.
+
+The story needs only SRE's record.
+
+### For implementation, not holding the story
+- `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`: wait on `stall.entered` in a `select`
+  with a deadline, so that a regression fails instead of hanging.
+- Assert the log fields the implementation record lists (`acting_as_account_id`, `session_id`,
+  `trace_id`), or correct the record.
+- `server/README.md`'s Accounts section: `accounts.write` and the `andara.accounts` domain.
+
+### For PM
+- **Audit outside the Account write lock for every Admin write** (`SetRoles` and the rest), as
+  `SetBuilderPacks` now does (5bebac0). Implementation, `server`. Not on the demo's path.
