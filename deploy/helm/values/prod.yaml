@@ -16,10 +16,10 @@ server:
   kafka:
     brokers: andara-log-kafka-bootstrap:9092
   character:
-    # Where a new Character enters the World (AW-SRV-014). Required outside local: the
-    # server's default is the dev fixture's Room, and until AW-SRV-012 serves real content
-    # from the store this environment runs that fixture too.
-    spawn_room: town/plaza
+    # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
+    # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
+    # too, so the server's compiled-in default (town/plaza) no longer matters anywhere.
+    spawn_room: purgatory/start
 
 snapshots:
   size: 20Gi

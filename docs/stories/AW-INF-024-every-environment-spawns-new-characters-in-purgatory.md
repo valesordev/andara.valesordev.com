@@ -4,7 +4,7 @@ title: Every environment spawns new Characters in Purgatory
 epic: EPIC-01
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-037]
 blocks: [AW-INF-023]
@@ -134,3 +134,24 @@ story is `ready`.
    spawn Room.
 4. **`prod` changes too.** It serves no players, and its content is the same test content, so the
    `[ASSUMPTION]` holds with nothing to resolve. It was never a contract question.
+
+## Implementation record (SRE, 2026-09-30)
+
+On `sre/aw-inf-024-purgatory-spawn`.
+
+| AC | How | Result |
+|----|-----|--------|
+| 1 | `helm_test.test_spawn_room_is_purgatory`: `ANDARA_CHARACTER_SPAWN_ROOM=purgatory/start` in the `local`, `dev` and `prod` renders and in the compose server's environment. Where the chart renders content (`local`, `dev`), `andara-content` holds `purgatory/start`. Mutation-checked: `town/plaza` in `prod.yaml`, and then in the compose file, each fails it naming the environment | pass |
+| 2 | `stack-play` on a fresh compose stack: `character list` shows `<A>  dormant  purgatory/start` | pass |
+| 3 | `make stack-play`: A's transcript reads `Purgatory`, then `Market Plaza` after `out`, then `leaves north` and `Town Hall`. B's reads `<A> arrives from the in.` before `<A> leaves north.`. `TestLive_M1Gate` passes, now spawn-agnostic (#272, implementation) | pass |
+| 4 | `make stack-linkdead` on the same stack: both walk `out`, then drop, mark, reconnect and quit in `town/plaza` | pass |
+| 5 | The compose server is Ready (AC-2's run). `local` renders the Room (AC-1), and the `kind` workflow installs it. `dev` is observed after the merge rolls it | compose pass; `local` in CI; `dev` owed after merge |
+
+**The arrival wording** out of Purgatory is `arrives from the in.` today. The Exit is one-way, and
+the move rule names the reverse of `out`. Brian decided (2026-09-30) that an arrival with no way back
+reads `<name> has arrived.`, and that's routed to architecture and PM in
+`docs/feedback/AW-SRV-036-goto.md`. Both gates accept today's line and `has arrived.`, so they pass
+either side of that change.
+
+**Contract gap:** the scope missed `internal/smoke/m1_test.go`, which asserts the spawn Room too.
+Implementation made it spawn-agnostic in #272, merged ahead of this PR.
