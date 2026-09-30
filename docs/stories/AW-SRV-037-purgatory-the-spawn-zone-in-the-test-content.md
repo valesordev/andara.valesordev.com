@@ -180,3 +180,17 @@ Purgatory, Start Location (its `[NEEDS BRIAN]` is out of scope here), and Fixtur
 **What closes it:** SRE's §8 instrumentation record. No new series; ACs 1 and 2 read the existing
 `andara_content_zones_loaded` and `andara_content_load_warnings_total{kind}`. Architecture then
 moves the story to `done` without another pass.
+
+## §8 instrumentation check (2026-09-30, SRE): satisfied
+
+On `sre/sprint-03-review-verify`, against the compose stack built from `main` at `79fd622`. The stack
+first halted at recovery, `content digest mismatch at tick 2: dir@0`. That's the Data section's
+predicted case, and its named recovery, `make down VOLUMES=1`, cleared it.
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `andara_content_zones_loaded` | local Prometheus, `job="andara-server"` | `4` (AC-1) |
+| `andara_content_load_warnings_total{kind}` | local Prometheus | `kind="missing_reverse_exit"` `1`, the only warning series (AC-2) |
+| The finding's `warn` line | local Loki, `{service_name="andara-server"} \| code="missing_reverse_exit"` | one line, `zone=purgatory`, `room=start`, `file=/etc/andara/content/purgatory.json`, with `trace_id` |
+
+No `orphan_room` for the one-Room Zone, as `AW-SRV-034` rules. Nothing is carried forward.

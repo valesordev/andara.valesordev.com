@@ -179,3 +179,15 @@ Your other building decisions are accepted as they stand.
 2. **`content/core/VERSIONS` is append-only, mechanically.** `make check` fails when a line other
    than a new last one changes against the merge base. SRE's CI supplies the base. Not on the
    demo's path.
+
+## SRE, 2026-09-30: for implementation, the §8 instrumentation check's owed assertions
+
+SRE's §8 instrumentation check (story body, 2026-09-30) is **not satisfied**. The RPC path has no
+in-cluster caller yet, so CLAUDE.md §8 accepts the integration suite in its place, but only if that
+suite asserts on the telemetry. Today the RPC path's metric assertions are unit tests over
+in-memory topics, no test asserts its spans, and `TestPublishPath_AgainstABroker` asserts no
+telemetry. What's owed, against the local Redpanda:
+- a rejected publish and a refused (`unapproved`) activation alongside the successful path;
+- the metric objects and the span tree listed in the story's record.
+
+The story stays `review` until that lands. `AW-INF-021` then carries the live observation on `dev`.

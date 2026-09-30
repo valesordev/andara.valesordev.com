@@ -184,3 +184,19 @@ new domain term. No `[ASSUMPTION]`. `AW-CLI-002`'s Open questions name this stor
 **What closes it:** SRE's §8 instrumentation record. The story specifies no new series, and the
 `orphan_room` warn and the validation-failure counter are `AW-SRV-001`'s. Once SRE records that
 here, architecture moves the story to `done` without another pass.
+
+## §8 instrumentation check (2026-09-30, SRE): satisfied
+
+On `sre/sprint-03-review-verify`. The story adds no instrument. Its obligation is that the two
+findings are logged as every other finding is, so the check is those lines on a real backend. The
+compose stack's server image at `79fd622` ran `--validate-only` twice, with
+`ANDARA_SERVICE_NAME=andara-server-verify`, over a copy of `testdata/content/valid/` plus one Zone
+`z`, shipping to the stack's collector:
+
+| Content | Exit | Findings (stdout) | Local Loki, `{service_name="andara-server-verify"}` |
+|---------|------|-------------------|-----|
+| `loft` -down-> `cellar`, nothing into `loft` (AC-1) | `0` | `missing_reverse_exit` on `z/loft`, `orphan_room` on `z/loft`, and Purgatory's `missing_reverse_exit`. No `orphan_room` on the one-Room `purgatory` (AC-2) | `\| code="orphan_room"`: one `warn` line, `zone=z`, `room=loft`, `file`, `trace_id` |
+| `hall` with two Exits `north`, to `yard` and `shed` (AC-3) | `1` | `duplicate_direction` alone: `duplicate exit direction "north": to z/yard, and again to z/shed`. No `orphan_room` | `\| code="duplicate_direction"`: one `error` line, same fields |
+
+`duplicate_direction` is in `sim.AllErrCodes`, so `AW-SRV-013`'s `andara_content_validation_failures_total{code}`
+pre-seeds it. Nothing is carried forward.

@@ -241,11 +241,26 @@ names the carrier for each series it can't produce:
   - a refused version on `andara_content_load_failures_total{reason}`;
   - `andara_content_relocations_total{zone}` with its `warn` line, which needs a version that
     removes an occupied Room (a fixture seed can't produce one, so name the carrier);
-- `AW-SRV-013`'s own series, from the `dev` server that publishes the seed:
-  - `andara_content_publishes_total{outcome}`, `approvals_total{outcome}`,
+- `AW-SRV-013`'s own series, from the `dev` server that publishes the seed. Run this sequence
+  (SRE's §8 instrumentation check of `AW-SRV-013`, 2026-09-30) so that every family can move:
+  1. a publish refused by validation;
+  2. a valid publish;
+  3. an activation of the unapproved version, refused;
+  4. the Operator's self-approval;
+  5. activate;
+  6. rollback.
+
+  Then observe:
+  - `andara_content_publishes_total{outcome}` (`rejected`, `ok`), `validation_failures_total{code}`,
+    `activations_refused_total{unapproved}`, `approvals_total{self_operator}`,
     `pointer_moves_total{direction,override}` and `blob_bytes_total` moving;
-  - `content.publish` → `content.validate`, `content.write_manifest` in Tempo;
-  - the boot-time `content.core_boot` root span.
+  - the RPC span tree in Tempo under the CLI's `cli.command`: `content.publish` →
+    `content.validate`, `content.write_manifest`; `content.approve`; `content.activate` →
+    `content.write_pointer`; and `audit.write` under each;
+  - the `info`/`warn` lines in Loki with `actor_account_id`, `pack_id`, `version`, `session_id` and
+    `trace_id`;
+  - the boot-time `content.core_boot` root span. It's already observed on the local stack, so
+    re-observe it on `dev`.
 
 ## Open questions
 
