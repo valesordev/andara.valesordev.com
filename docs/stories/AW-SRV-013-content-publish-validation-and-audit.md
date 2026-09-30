@@ -497,9 +497,16 @@ of them are recorded as the contract from here on:
    `auth.store=memory`. When it's lost, AC-4's acting-as clause stops seeing that an Operator
    approving as themselves published as a Builder. So it goes on the manifest:
    `ContentVersion.publisher = 10` (`string`), the real actor, always set, and equal to `author`
-   when nobody acted as anyone. An empty `publisher` on a version written before the field reads as
-   "rebuild from audit, as now". That's additive, with no migration. It's new work, routed to PM.
-   The proto changes with that story, not before it.
+   when nobody acted as anyone. **It ships in the same story as acting-as on Admin (ruling 2),
+   and no earlier.** Today no Admin call can act as anyone, so every manifest written so far was
+   published by its `author`. With the two together, no acted-as manifest can exist without a
+   `publisher`. An empty `publisher` therefore reads as `author`, and that's true, not a fallback.
+   It needs no backfill, and the audit rebuild isn't needed for this any more. The story
+   that ships the field must keep the two inseparable: the metadata can't be honoured on
+   `PublishVersion` until the field is written. That's additive, with no migration. It's new work,
+   routed to PM. The proto changes with that story, not before it. *(Revised 2026-09-30 on review
+   of #176. It first read an empty `publisher` as "rebuild from audit", which leaves exactly the gap
+   this ruling closes.)*
 4. **Findings outside AC-14's three reasons: as built.** They're `INVALID_ARGUMENT` `validation` with
    `PublishFindings`, the same as at publish. A pack compiled against a core newer than the active
    one is `FAILED_PRECONDITION` `core_version`, subject `andara.core@<compiled>`. Whether

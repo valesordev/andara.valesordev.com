@@ -364,8 +364,13 @@ Deployment from that checkpoint, with no second `--rebuild`. AC-2's "the Job com
 and "waits for the Job to complete" read the same way. Making `--rebuild` exit on caught-up isn't
 routed to implementation: it would change `AW-SRV-019`'s binary so a Job condition could be read
 literally, and it would buy nothing the log line doesn't. One condition binds the reading: **AC-2's
-observation must show the Deployment's first `state projector started` after the rebuild resuming
-from the Job's checkpoint, not bootstrapping from a round.** Otherwise the Job's work is thrown away.
+observation must show the Deployment reusing the Job's checkpoint.** Every start bootstraps its World
+from a snapshot round (`server/projector/run.go`), because the checkpoint holds a tick and offsets,
+not state. So what shows reuse is the Deployment's first `state projector started` line after the
+rebuild. It has `committed=true` and a `committed_tick` at or after the `<t>` in
+`projector-rebuild: rebuilt to tick <t>`. A `committed=false` there means the checkpoint was lost and
+the Job's work thrown away. *(Corrected 2026-09-30 on review of #176, which first said "not
+bootstrapping from a round". No start can meet that.)*
 
 **Deviations accepted as they stand:** `objectstore-install` exits 3 when `kubectl` is missing, the
 same usage class as `projector-*`'s 2. The enabled check reads the Deployment's existence. `make`

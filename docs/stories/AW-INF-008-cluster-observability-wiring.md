@@ -455,28 +455,23 @@ round diverges at round tick + 1.
   risk to this sprint's `AW-INF-025` and to SPRINT-04's M2
   (`docs/feedback/AW-INF-025-projector-operations.md`).
 
-## §8 re-ruling on AC-2 (architecture, 2026-09-30): stays `review`
+## §8 re-ruling on AC-2 (architecture, 2026-09-30): stays `review`, now on #143
 
 The 2026-09-29 ruling assumed the projector would reach `Ready` once `AW-INF-025` enabled it. It
 hasn't. Since #171 it has crash-looped on #143, exiting 2 on a recorded divergence at every start
-(`AW-INF-025`'s §8 review), so AC-2's "when its pod is `Ready`" has no moment to be observed in.
+(`AW-INF-025`'s §8 review), so AC-2's "when its pod is `Ready`" never happens.
 
-**Amendment: AC-2's precondition is a running projector container, not a `Ready` pod.** The
-2026-09-29 ruling named the property: AC-2 checks telemetry wiring, the scrape under the
-projector's own job, and that holds however the projector bootstrapped and whether it later
-diverged. `Ready` was the means of catching the pod up, not the property. Each crash-looping start
-holds `/metrics` open for a minute (`holding /metrics for the divergence to be scraped`), so AC-2
-reads:
+**AC-2 isn't amended, and it now waits on #143.** Loosening it to "a running container" doesn't
+help. The platform's annotation scrape keeps only `Running`, `Ready` pods (this story, *Alerts*), so
+the minute each crashing start holds `/metrics` open produces no `up` series. Changing target
+discovery to keep non-Ready pods would change `AndaraServerDown`'s semantics too, which rely on a
+failing pod dropping out, and it would do that only to satisfy this AC. The ban on a from-zero
+projector as a workaround still stands, for this story as for `AW-INF-025`.
 
-> **Given** `projectors.state.enabled=true` **when** its container is running **then**
-> `up{job="andara-projector-state", namespace="andara-<env>"}` is `1` in at least one scrape; the
-> three projector jobs are distinct.
+So the 2026-09-29 ruling's "doesn't wait on #143" is withdrawn. AC-2's property is still
+telemetry wiring, but a Ready projector is the only way to observe it, and #143 prevents that.
 
-That doesn't paper over #143: `AW-INF-025` AC-4 still fails until the fix lands. And it doesn't
-switch the projector to from-zero: the ban on that workaround stands, for this story as well as
-`AW-INF-025`. If the scraper drops targets that aren't Ready, so that `up` never reads 1 during the
-hold, then AC-2 waits on #143 after all. SRE records which it is.
-
-**What closes it:** SRE observes `up{job="andara-projector-state", namespace="andara-dev"} == 1` in
-Grafana Cloud, as amended, and records it here. Architecture then moves the story to `done` without
-another pass.
+**What closes it:** #143's fix, then the first Ready projector on `dev`. SRE observes
+`up{job="andara-projector-state", namespace="andara-dev"} == 1` and records it here, and
+architecture moves the story to `done` without another pass. *(Revised 2026-09-30 on review of
+#176, which first amended AC-2 to "a running container".)*

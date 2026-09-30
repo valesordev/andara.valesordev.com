@@ -109,8 +109,9 @@ exit-on-caught-up change to implementation.
 **`--rebuild` never completing: your reading is accepted** and recorded as a contract amendment in
 the story's §8 review. The rebuild is done at `state projector caught up`, then the target deletes
 the Job and `projector-start` resumes from its checkpoint. One condition: AC-2's observation shows
-the Deployment's first start after the rebuild resuming from the Job's checkpoint, not
-bootstrapping from a round.
+the Deployment's first `state projector started` after the rebuild with `committed=true` and a
+`committed_tick` at or after the tick the rebuild reported. Every start bootstraps from a round, and
+the checkpoint is what carries the Job's work.
 
 **#143 is live on `dev`.** `andara-projector-state` has crash-looped since the merge: 136 restarts
 by 17:57Z, each exiting 2 on the divergence recorded at tick 132838. Whether to leave it (and it

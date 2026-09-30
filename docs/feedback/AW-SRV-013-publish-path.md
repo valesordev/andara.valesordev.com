@@ -143,7 +143,8 @@ The rulings are in the story's §8 review, and bind as contract. In short:
 2. **Acting-as over Admin is gRPC metadata `andara-act-as: <account_id>`,** honoured for `operator`
    and `game_master` only, with `OpenSession`'s refusals. Not the token's `act` claim. The real actor
    goes on the manifest as `ContentVersion.publisher = 10`, since rebuilding it from audit doesn't
-   survive retention or `auth.store=memory`.
+   survive retention or `auth.store=memory`. It ships with the acting-as metadata, so every
+   manifest without it was published by its `author`.
 3. **As built,** for both outcomes.
 4. **The DoD line moves to `AW-CLI-002`** (its AC-4).
 5. **Corrected** in the story and in `AW-INF-021`.
@@ -169,12 +170,12 @@ Your other building decisions are accepted as they stand.
   the Observability section should say which.
 
 ### For PM: new work from this review
-1. **The gateway half of Admin acting-as** (`andara-act-as` metadata; ruling 2 in the story).
-   `AW-CLI-003`'s `andara-cli --as <builder> content publish` needs it, so it lands before
-   `AW-CLI-003` or inside it. Which one is your call. If the SPRINT-03 demo has Brian publishing
-   `--as` a Builder, it's on the demo's path.
-2. **`ContentVersion.publisher = 10`**, set on publish, read in place of the audit rebuild when set
-   (implementation, `server`). Not on the demo's path.
-3. **`content/core/VERSIONS` is append-only, mechanically.** `make check` fails when a line other
+1. **Admin acting-as, as one story** (implementation, `server`): the `andara-act-as` metadata in
+   the gateway (ruling 2), and `ContentVersion.publisher = 10` written on every publish (ruling 3).
+   They're one story because they're only safe together. Metadata honoured before the field exists
+   would write acted-as manifests with no durable real actor. `AW-CLI-003`'s `andara-cli --as
+   <builder> content publish` needs it, so it lands before `AW-CLI-003` or inside it. Which one is
+   your call. If the SPRINT-03 demo has Brian publishing `--as` a Builder, it's on the demo's path.
+2. **`content/core/VERSIONS` is append-only, mechanically.** `make check` fails when a line other
    than a new last one changes against the merge base. SRE's CI supplies the base. Not on the
    demo's path.
