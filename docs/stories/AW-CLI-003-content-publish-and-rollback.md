@@ -76,12 +76,13 @@ I was wrong, so that world-building is a fast loop rather than a release process
 9. **Given** `activate` without `--yes` on a non-TTY **when** it runs **then** it exits `2` with `--yes
    required` rather than hanging.
 10. **Given** `--override` without `--reason` **when** `activate` runs **then** exit `2` before any RPC.
-11. **Given** an Operator approving a version whose author is the Operator, or the Account the
-    Operator is acting as **when** `content approve town 8` runs on a TTY **then** it asks
+11. **Given** an Operator approving a version whose author is the Operator **when** `content approve town 8` runs on a TTY **then** it asks
     `You published town@8. Approve it yourself as <operator>? [y/N]` before any `ApproveVersion`; on a
     non-TTY without `--yes` it exits `2` with `--yes required`. On success it prints
     `town@8 approved by <operator> (self-approval: you published it)`, taken from the response's
-    `self_approval`. Any other approval prints `town@8 approved by <user>`.
+    `self_approval`. Any other approval prints `town@8 approved by <user>`. *(Amended 2026-09-30, §8
+    review: "or the Account the Operator is acting as" moves to the Admin acting-as story, with
+    `--as` on content commands. Acting-as over Admin isn't built.)*
 12. **Given** `activate` or `rollback` refused under `AW-SRV-013` AC-14 **when** it runs **then** it
     prints `town@8 refused: <reason> (<subject>, …)`, for example `town@8 refused: zone_removed
     (docks)`, and exits `1`, with `error.code` the reason and `error.detail.subjects` the list.
@@ -163,9 +164,10 @@ the CLI's own trace as well as the server's record.
   A$ andara-cli content activate town 8            # prompt → y
   A$ andara-cli content rollback town              # prompt → y; town@7 active
   ```
-  And Brian's path on `dev` (ADR-0004, amended 2026-09-26), as one Operator:
+  And Brian's path on `dev` (ADR-0004, amended 2026-09-26), as one Operator. It publishes as the
+  Operator: `--as <builder>` moves to the Admin acting-as story (amended 2026-09-30).
   ```
-  andara-cli --as <builder> content publish --path ./brian   # brian@1, awaiting approval
+  andara-cli content publish --path ./brian                  # brian@1, awaiting approval
   andara-cli content approve brian 1                         # prompt → y; "(self-approval: you published it)"
   andara-cli content activate brian 1 --yes
   andara-cli server info                                     # content brian@1
@@ -248,3 +250,80 @@ the contract didn't make are in `docs/feedback/AW-CLI-003-content-publish.md`.
 - **The Redpanda rehearsal isn't in CI yet.** `make test-integration` doesn't list `./admin/cli/`,
   and the Makefile is SRE's (feedback, For SRE 1).
 - **`--as`:** acting-as doesn't exist for Admin RPCs (feedback, For architecture 1).
+
+## §8 review (architecture, 2026-09-30): stays `review`
+
+Against `main` at `fa9911e`. Merged in #271. `check`, `stack`, `cli-release` and `determinism` are
+green on `af5fd11`. `stack` run 36783844089 ran `TestContentPublishPath_TwoIdentitiesOverRedpanda`
+in CI (3.4 s): `./admin/cli/` has been in `make test-integration` since #265. So the Definition of
+done's scripted rehearsal is met, and the implementation record's "not in CI yet" is stale.
+Re-run in this review: the story's `admin/cli` tests with `-race` and the Redpanda rehearsal (2.5 s).
+
+| AC | Evidence (`admin/cli/publish_test.go`) | Result |
+|----|----------|--------|
+| 1, 3 | `testTwoIdentities`: all blobs, then 0 on repeat, exact lines, pointer unmoved; `unapproved` refusal | pass |
+| 2 | same test, `awaitServing` polls `server info` within debounce + 2 s | pass. Weak: it activates as the publisher, not the approver |
+| 4 | same test: rollback, `history` shows 4 inactive then re-activated | pass. Weak: `previousActive` iterating oldest-first survives, because two moves can't tell the orders apart |
+| 5 | `TestContentPublish_ServerRefusalPrintsLikeLocal` | pass |
+| 6 | the `history` regexes in `testTwoIdentities` | pass |
+| 7 | the `diff` case: a Room title, an added Room, an added Exit | **gap.** No Zone, Template or Component-field case. Emptying `diffComponents` and the Template loop leaves the suite green (mutation-checked), and the test plan's diff-renderer unit test doesn't exist |
+| 8 | `fetch`, compile, hashes equal the manifest's | pass, under the default `--out` name (ruling 4) |
+| 9, 10 | `TestContentActivate_UsageBeforeAnyRPC` | pass |
+| 11 | `TestContentApprove_OperatorSelfApproval`. Mutation-checked | pass, for the caller. The acting-as clause moves (ruling 1) |
+| 12 | `TestContentActivate_RefusalReasonAndSubjects` | pass |
+| 13 | `TestServerInfo` | pass |
+| 14 | `TestContent_CoreRollbackAndPublish` | pass |
+
+**#267's defence holds on the client.** `fetch` checks `filepath.IsLocal`, then writes through
+`os.Root`. In a scratch test, `src/../x`, a doubled slash and `src/zz/../../x` are each refused
+`unsafe_source_path`, and nothing lands outside `--out`. With either layer removed, the other still
+refuses (mutation-checked). The repository has a symlink case but no `..` case.
+
+**Contract rulings** on implementation's questions (`docs/feedback/AW-CLI-003-content-publish.md`),
+recorded as the contract from here on:
+1. **No `--as` on content commands: accepted for this story.** Acting-as over Admin is `andara-act-as`
+   metadata, and that story isn't built (`AW-SRV-013` rulings 2 and 3). Sending the header now would
+   be silently ignored, and the publish would land as the Operator. **Moving to that story:** `--as`
+   on content commands, AC-11's "or the Account the Operator is acting as", and the test plan's
+   `--as <builder>` line. There, the CLI compares with its own `--as` value, not a token's `act` claim.
+   Until then, `isCaller` (`contentpublish.go`) reading `act` is dead code, harmless because no token
+   carries one, and that story removes it. **The demo doesn't need it:** the Operator publishes as
+   themselves, audited `override=true` on a pack they don't hold, then self-approves (AC-11).
+2. **Accounts named by ID, the username only for the caller:** accepted. A username lookup is
+   separate work, the same gap as `AW-SRV-035`'s.
+3. **The CLI reading its own Account from the token, unverified:** accepted. It decides only
+   whether to prompt. The server decides everything.
+4. **AC-8 depends on the `--out` name:** accepted. Byte identity under any name is a change to
+   `source.file`, an `AW-CLI-006` corpus decision. Not now.
+5. **`publish`'s parent is the newest version, read just before `PublishVersion`:** accepted. It keeps
+   stale-parent semantics and holds no local state.
+6. **The smaller decisions:** accepted.
+
+**Accepted deviations:** the self-approval prompt fires for any author, not only an Operator. The
+token carries no roles, and with `--yes` a Builder still gets the server's `self_approval` refusal.
+Chunks are `content.BlobChunkBytes` (1 MiB). That's correct by reading, and no fixture is big
+enough to test it.
+
+**Not holding the story** (implementation, feedback file):
+- A `fetch` test with a `..` path. A `previousActive` test with three or more moves. AC-2's test
+  activating as the approver. A blob over 1 MiB.
+- The implementation record says the confirmation `info` line is asserted. It isn't, and at the
+  default `--log-level warn` it isn't printed. SRE decides whether it needs a test.
+
+**What closes it** *(revised on review of #275: items 2–4 were first filed as follow-ups)*:
+1. **AC-7** (implementation): a diff test covering a Zone added and removed, a Template changed,
+   and a Component field added, removed and changed, each with `file:line`. Mutation-checked against
+   `diffComponents` and the Template loop.
+2. **`fetch` and `diff` pass the server's reason through** (implementation). They go through
+   `rpcError`, not `contentError`, so `error.code` is `server_error` for `not_found` and
+   `permission_denied` for `pack_not_held`. The Interface contract's exit table says `error.code` is
+   the server's `ErrorInfo.reason`. Owed with a test per command.
+3. **The test plan's stale-parent integration case** (implementation). The only CLI test,
+   `TestContentPublish_StaleParentIsExplained`, builds a synthetic error. Two publishes against one
+   parent, over the Redpanda rehearsal, must show the second exiting 1 with `stale_parent` and its
+   hint.
+4. **`AW-SRV-035` AC-2's CLI half** (implementation): `content publish` by a Builder without the pack
+   exits 1 with `error.code` `pack_not_held`. It's that story's AC, and the test lives in
+   `admin/cli`. It closes both stories.
+5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
+   (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.

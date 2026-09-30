@@ -47,14 +47,14 @@ Builder can publish their pack and nobody else's.
 
 1. **Given** an Account holding `builder` and no packs **when** an Operator runs
    `account set-packs <id> --pack town --pack docks` **then** it exits 0, prints
-   `<username>: builder packs docks, town`, and that Builder's `content publish` for `town` passes
+   `<account-id>: builder packs docks, town`, and that Builder's `content publish` for `town` passes
    `AW-SRV-013`'s authorization.
 2. **Given** that Builder **when** they publish to `wilds` **then** `AW-SRV-013` AC-7 holds:
    `PERMISSION_DENIED`, and the CLI exits `1` with `error.code` `pack_not_held`.
 3. **Given** `set-packs <id> --pack town` on an Account holding `docks, town` **when** it runs
    **then** `builder_packs` is exactly `[town]`. The call replaces the set; it doesn't add to it.
 4. **Given** `set-packs <id> --clear` **when** it runs **then** `builder_packs` is empty, it prints
-   `<username>: builder packs none`, and a publish to `town` by that Builder is `PERMISSION_DENIED`.
+   `<account-id>: builder packs none`, and a publish to `town` by that Builder is `PERMISSION_DENIED`.
 5. **Given** a caller without `operator` **when** it calls `SetBuilderPacks` **then**
    `PERMISSION_DENIED`, the Account is unchanged, and one audit record is written with
    `outcome=denied`.
@@ -65,7 +65,7 @@ Builder can publish their pack and nobody else's.
    (Content Language `semantics.md` §1) **when** it runs **then** `INVALID_ARGUMENT` naming it, exit
    `1`, and the Account is unchanged. The CLI doesn't pre-check it: the server is the boundary.
 8. **Given** an Account without `builder` **when** packs are granted **then** the grant is stored
-   and it prints `<username>: builder packs town (inactive: no builder role)`. Roles and packs are
+   and it prints `<account-id>: builder packs town (inactive: no builder role)`. Roles and packs are
    set independently, so revoking the role doesn't lose the grant.
 9. **Given** any successful change **when** the audit topic is read **then** one record carries
    `action=set_builder_packs`, the actor, the target, and the before and after sets.
@@ -117,6 +117,8 @@ Exit codes are `AW-CLI-001`'s shared taxonomy:
 | `andara.core` | `INVALID_ARGUMENT` | `core_not_grantable` |
 | record version stale | `ABORTED` | `record_version` |
 
+Every refusal's `ErrorInfo.domain` is `andara.accounts`. *(Recorded 2026-09-30, §8 review, as built.)*
+
 The audit record is `action=set_builder_packs`, `target=<account_id>`, and `outcome` one of `ok`,
 `denied`, `invalid`, `conflict`. It also carries `builder_packs_before` and `builder_packs_after`,
 with `after` empty unless `ok`.
@@ -165,7 +167,7 @@ corrected. `SetRoles` has no store-write span to copy.)*
 - **Manual/operator:**
   ```
   andara-cli account set-roles <id> --role builder
-  andara-cli account set-packs <id> --pack town        # "<username>: builder packs town"
+  andara-cli account set-packs <id> --pack town        # "<account-id>: builder packs town"
   ```
 
 ## Definition of done
@@ -238,3 +240,68 @@ passes each reason through as `error.code`. Decisions the contract didn't make a
 `make check` passes. `TestSnapshotCopyStaysInsideTheStallBudget` (#172) failed once under
 full-suite load and passed on the rerun. `server/content`'s broker tests pass against the local
 Redpanda.
+
+## §8 review (architecture, 2026-09-30): stays `review`
+
+Against `main` at `fa9911e`. Merged in #266 (`94f3ad0`). The PR's `check`, `stack`, `cli-release` and
+`determinism` passed, and `stack`'s log shows `TestPackGrant_AgainstABroker` passing. The push run on
+`94f3ad0` was cancelled, superseded by the next merge, and every later `main` run is green. Re-run in
+this review: `server/auth` `SetBuilderPacks` (with `-race`), `admin/cli` `AccountSetPacks` and
+`TestHelpGoldens`, `server/content` `PackGrant`, and the broker test against local Redpanda (1.4 s).
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1 | `setpacks_test.go` `TestAccountSetPacks_GrantReplaceClear`; `grant_test.go` `TestPackGrant_IsWhatThePublishPathAuthorizesOn`; the broker test | pass (text amended, ruling 1) |
+| 2 | `grant_test.go`: `pack_not_held`, `PERMISSION_DENIED`; the broker test | **server half passes. The CLI half is untested** (ruling 2) |
+| 3, 4 | `packs_test.go` `TestSetBuilderPacks_ReplacesSortsAndAudits`; CLI grant, replace and clear | pass |
+| 5 | `TestSetBuilderPacks_OperatorOnly`: reason, Account unchanged, one `denied` record, `warn` line; CLI as the Builder: exit 1 | pass |
+| 6, 7, 11 | `packs_test.go` refusal cases (exact messages; uppercase, `..`, leading digit, comma, empty; `andara.core`); CLI refusals | pass |
+| 8 | `TestSetBuilderPacks_IndependentOfTheRole`; CLI `(inactive: no builder role)` | pass |
+| 9 | fields 27 and 28, actor and target in unit; three records read back from Redpanda, polled | pass |
+| 10 | memory reopen; the broker test reopens, then publishes | pass |
+
+Mutation-checked, and all seven caught: the refusal audit under the write lock, the sort dropped,
+`builder_packs_before` dropped, `expected_record_version` ignored, `rpcError` in place of
+`accountError`, the role hard-coded, and the `denied` audit skipped. The proto (`admin.proto`
+`SetBuilderPacks` 1–3 and 1–3; `audit.proto` 27–28; `account.proto` 12) matches the pinned contract,
+and `gen/` matches it. No schema change or migration: `builder_packs` came with `AW-SRV-013`, and an
+older Account reads empty. Grants don't survive `make world-reset`, by design, and `AW-INF-021`
+restores them with `account create` and `account set-packs`. The glossary has Pack Grant. No
+`[ASSUMPTION]`.
+
+**Contract rulings** on implementation's questions (`docs/feedback/AW-SRV-035-pack-grants.md`):
+1. **The printed line names the Account ID,** not the username. The command takes an ID,
+   `set-roles` echoes an ID, and nothing returns a username. AC-1, AC-4, AC-8 and the test plan are
+   amended. `string username = 4` on the response stays available as an additive change if the
+   Builder's Guide wants it.
+2. **AC-2's CLI half is owed, as a test.** `contentError` passes any server reason through, so
+   `content publish` should exit 1 with `error.code` `pack_not_held`. But the AC states it, and no
+   test crosses the CLI boundary. The test lives in `admin/cli`, it holds this story, and it's also
+   on `AW-CLI-003`'s closing list, since it closes both. *(Revised on review of #275: first ruled as
+   a follow-up.)*
+3. **`ErrorInfo.domain` is `andara.accounts`,** as built, and it's recorded in the contract.
+4. **The audit outcome per refusal:** accepted. Not-found is `denied`, as `SetRoles` does; invalid is
+   `invalid`; stale is `conflict`; and a non-Operator is audited, as AC-5 requires.
+5. **`accounts.write` spans only a write that reaches the store,** so a refusal has no span. Accepted,
+   and SRE's to confirm in its record.
+6. **The refusal audit is outside the write lock here;** `SetRoles` and the other Admin writes still
+   audit under it. Accepted. Doing the rest together is a follow-up story, routed to PM.
+
+**Not holding the story** (implementation, feedback file):
+- `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock` hangs to the test timeout, instead of
+  failing, when the `denied` audit is skipped. `<-stall.entered` has no deadline.
+- The implementation record says the log tests assert `acting_as_account_id`, `session_id` and
+  `trace_id`. They assert fewer fields, though the code emits all of them.
+- `server/README.md`'s Accounts section doesn't list `accounts.write` or the `andara.accounts` domain.
+
+**What closes it:**
+1. **AC-2's CLI half** (implementation): `content publish` by a Builder without the pack exits 1 with
+   `error.code` `pack_not_held`, in a test.
+2. SRE's §8 instrumentation record, observed on the compose stack:
+- `andara_privileged_actions_total{action="set_builder_packs"}`;
+- the Gateway's RED series for the method;
+- `accounts.write` under the Gateway span, under the CLI's trace ID;
+- the `info` and `warn` lines with their required fields;
+- the audit record on `andara.audit.v1`.
+
+Architecture then moves the story to `done` once both are recorded, without another full pass.
