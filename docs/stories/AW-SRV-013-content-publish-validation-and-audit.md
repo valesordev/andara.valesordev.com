@@ -4,7 +4,7 @@ title: Content publish path — server-side validation, versioning, approval, an
 epic: EPIC-05
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
 blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021, AW-CLI-002]
