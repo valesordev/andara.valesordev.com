@@ -511,6 +511,39 @@ def test_kafka_on_the_box():
              % (data.get("ANDARA_SIM_SOURCE"), data.get("ANDARA_AUTH_STORE")))
 
 
+SPAWN_ROOM = "purgatory/start"
+COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
+
+
+def test_spawn_room_is_purgatory():
+    """AW-INF-024 AC-1: every environment sets ANDARA_CHARACTER_SPAWN_ROOM to Purgatory
+    explicitly: the three renders and the compose server. Where the chart renders the
+    content (local, dev), that content holds the Room, since boot refuses a spawn Room
+    it can't find (AC-5)."""
+    for env in ENVS:
+        rc, out, err = render(env)
+        if rc:
+            fail("%s: render failed: %s" % (env, err.strip()))
+            continue
+        ds = docs(out)
+        got = find(ds, "ConfigMap", "andara-config")["data"].get("ANDARA_CHARACTER_SPAWN_ROOM")
+        if got != SPAWN_ROOM:
+            fail("%s: ANDARA_CHARACTER_SPAWN_ROOM is %r, want %r" % (env, got, SPAWN_ROOM))
+        cm = find(ds, "ConfigMap", "andara-content")
+        if cm is None:
+            continue
+        zone, room = SPAWN_ROOM.split("/")
+        zones = [yaml.safe_load(v) for k, v in (cm.get("data") or {}).items() if k.endswith(".json")]
+        if not any(z.get("id") == zone and any(r.get("id") == room for r in z.get("rooms") or [])
+                   for z in zones):
+            fail("%s: andara-content holds no Room %s; the server would refuse to boot" % (env, SPAWN_ROOM))
+    with open(COMPOSE) as f:
+        compose = yaml.safe_load(f)
+    got = compose["services"]["andara-server"]["environment"].get("ANDARA_CHARACTER_SPAWN_ROOM")
+    if got != SPAWN_ROOM:
+        fail("compose: ANDARA_CHARACTER_SPAWN_ROOM is %r, want %r" % (got, SPAWN_ROOM))
+
+
 ARGOCD = os.path.join(REPO, "deploy", "argocd")
 
 
@@ -709,6 +742,7 @@ def main():
     test_image_source()
     test_label_values()
     test_kafka_on_the_box()
+    test_spawn_room_is_purgatory()
     test_argocd_application()
     test_content_configmaps()
     test_content_checksum()

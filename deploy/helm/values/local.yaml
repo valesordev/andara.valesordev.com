@@ -23,6 +23,11 @@ server:
     # The mount the chart gives secrets.tokenKey; scripts/helm_install.sh writes the
     # Secret from `make auth-keys`.
     token_key_file: /etc/andara/secrets/token-key/token.keys
+  character:
+    # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
+    # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
+    # too, so the server's compiled-in default (town/plaza) no longer matters anywhere.
+    spawn_room: purgatory/start
   sim:
     # Same reason: the tick loop runs on the memory source — the World ticks with no
     # Command input and publishes nothing — until the local cluster has a broker.

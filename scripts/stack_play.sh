@@ -16,7 +16,9 @@
 # The client half (AW-CLI-004, AW-CLI-007): `andara-cli play` driving a bound
 # Character, with the transcript asserted.
 #   - Two player Accounts each create a Character (`character create`, `list`).
-#   - A walks: the plaza, `north`, and the Town Hall on the next `look`.
+#   - Both spawn in Purgatory (AW-INF-024) and walk `out` to the plaza, B first.
+#   - A walks: Purgatory, `out`, the plaza, `north`, and the Town Hall on the
+#     next `look`.
 #   - A tries `west` from the Hall: a post-log rejection, as prose.
 #   - A types `frobnicate`: a pre-log rejection, as prose.
 #   - B, playing alongside, sees A arrive and leave.
@@ -94,8 +96,8 @@ echo "stack-play: character create $CHAR_A, $CHAR_B; character list ..."
 [[ "$(bin/andara-cli "${A[@]}" character create "$CHAR_A")" == "$CHAR_A (1 of 5)" ]] || fail "character create $CHAR_A did not print '$CHAR_A (1 of 5)'"
 [[ "$(bin/andara-cli "${B[@]}" character create "$CHAR_B")" == "$CHAR_B (1 of 5)" ]] || fail "character create $CHAR_B did not print '$CHAR_B (1 of 5)'"
 list="$(bin/andara-cli "${A[@]}" character list)"
-grep -q "^$CHAR_A \+dormant \+town/plaza$" <<<"$list" \
-  || { echo "$list" >&2; fail "character list does not show $CHAR_A dormant in town/plaza"; }
+grep -q "^$CHAR_A \+dormant \+purgatory/start$" <<<"$list" \
+  || { echo "$list" >&2; fail "character list does not show $CHAR_A dormant in purgatory/start"; }
 # PLAY is how every later section launches play: as A, the Account's only
 # Character, so AW-CLI-007 AC-5's default selects it.
 PLAY=(bin/andara-cli "${A[@]}" play)
@@ -109,12 +111,16 @@ exec 4>"$BFIFO"
 for _ in $(seq 1 40); do grep -q '^-- Connected to ' "$BOUT" && break; kill -0 "$BPID" 2>/dev/null || break; sleep 0.5; done
 grep -q "^-- Connected to [^ ]\+ as play-b-$hex, playing $CHAR_B (session [0-9a-f]\{32\}, protocol 1)\.$" "$BOUT" \
   || { cat "$BOUT" "$BERR" >&2; fail "B never connected playing $CHAR_B"; }
-# B's automatic look answered, so B is subscribed and in the plaza before A
-# arrives: the Room reaches B only over its stream. Polled to a deadline, not
-# slept (docs/specs/testing/live-assertions.md): on a loaded stack a fixed
-# delay can pass before the look is answered, and A's arrival then goes unseen.
+# B spawns in Purgatory (AW-INF-024): its automatic look reads it. Then B walks
+# `out` and looks, so B is subscribed and in the plaza before A arrives: the
+# Room reaches B only over its stream. Polled to a deadline, not slept
+# (docs/specs/testing/live-assertions.md): on a loaded stack a fixed delay can
+# pass before the look is answered, and A's arrival then goes unseen.
+for _ in $(seq 1 40); do grep -q '^Purgatory$' "$BOUT" && break; kill -0 "$BPID" 2>/dev/null || break; sleep 0.5; done
+grep -q '^Purgatory$' "$BOUT" || { cat "$BOUT" "$BERR" >&2; fail "B never read Purgatory from its automatic look"; }
+printf 'out\nlook\n' >&4
 for _ in $(seq 1 40); do grep -q '^Market Plaza$' "$BOUT" && break; kill -0 "$BPID" 2>/dev/null || break; sleep 0.5; done
-grep -q '^Market Plaza$' "$BOUT" || { cat "$BOUT" "$BERR" >&2; fail "B never read the plaza from its automatic look"; }
+grep -q '^Market Plaza$' "$BOUT" || { cat "$BOUT" "$BERR" >&2; fail "B never read the plaza from its look after out"; }
 
 parse_before="$(metric 'andara_ingress_submits_total{outcome="rejected_parse"}')"
 authz_before="$(metric 'andara_ingress_submits_total{outcome="rejected_authz"}')"
@@ -125,10 +131,10 @@ ERR="$WORK/stderr.txt"
 # The Character is named in lower case: resolution ignores case (AW-CLI-007).
 # The `sleep`s let each Event land before the next line; the assertions do
 # not depend on it, only the transcript's readability.
-echo "stack-play: $CHAR_A: look, north, look, west, frobnicate, quit ..."
-WALK="look north look west frobnicate"
+echo "stack-play: $CHAR_A: look, out, look, north, look, west, frobnicate, quit ..."
+WALK="look out look north look west frobnicate"
 set +e
-{ for l in look north look west frobnicate; do printf '%s\n' "$l"; sleep 1; done; } \
+{ for l in $WALK; do printf '%s\n' "$l"; sleep 1; done; } \
   | bin/andara-cli "${A[@]}" play --character "$(printf '%s' "$CHAR_A" | tr 'A-Z' 'a-z')" --show-protocol >"$OUT" 2>"$ERR"
 code=$?
 set -e
@@ -159,9 +165,9 @@ refs="$(grep -o 'client_ref=[0-9a-f]\{8\}-[0-9]\+ raw=' "$OUT" | sort | uniq -d)
 # about where in the pipeline they were made (AC-4, AC-5).
 PLAYER="$WORK/player.txt"
 grep -v '^  [»«]' "$OUT" > "$PLAYER" || true
-# The M1 gate in play's own transcript: a Room, the move, a different Room.
-# A move describes no Room, so the second one is the answer to the `look`
-# after it (AW-CLI-007 feedback §3).
+# The M1 gate in play's own transcript: Purgatory, out to the plaza, the move,
+# a different Room. A move describes no Room, so each Room after a move is the
+# answer to the `look` after it (AW-CLI-007 feedback §3).
 python3 - "$PLAYER" "$CHAR_A" <<'PY' || fail "the walk is not in the transcript in order"
 import sys
 lines = [l.rstrip("\n") for l in open(sys.argv[1])]
@@ -171,7 +177,8 @@ def at(pred, start, what):
       if pred(lines[i]):
           return i
   sys.exit("missing, in order: %s" % what)
-i = at(lambda l: l == "Market Plaza", 0, "Market Plaza")
+i = at(lambda l: l == "Purgatory", 0, "Purgatory")
+i = at(lambda l: l == "Market Plaza", i + 1, "Market Plaza after out")
 i = at(lambda l: l == a + " leaves north.", i + 1, a + " leaves north.")
 i = at(lambda l: l == "Town Hall", i + 1, "Town Hall after the move")
 i = at(lambda l: l.lower().rstrip(".") == "there is no exit west", i + 1, "the no-exit rejection")
@@ -183,9 +190,16 @@ for no in stage offset partition pre_log permission_denied invalid_argument fail
 done
 
 # B saw A come and go, unprompted (AW-CLI-004 AC-3).
+# Out of Purgatory the Exit has no reverse. Today the arrival names the move
+# rule's reverse direction (`arrives from the in.`, AW-SRV-037 AC-3). Brian's
+# 2026-09-30 decision makes it `has arrived.` (docs/feedback/AW-SRV-036-goto.md).
+# Both are accepted, so the gate passes before and after that change.
 for _ in $(seq 1 20); do grep -q "^$CHAR_A leaves north\.$" "$BOUT" && break; sleep 0.5; done
-grep -q "^$CHAR_A arrives\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A arrive"; }
+grep -q "^$CHAR_A \(arrives\( from the [a-z]\+\)\?\|has arrived\)\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A arrive"; }
 grep -q "^$CHAR_A leaves north\.$" "$BOUT" || { sed 's/^/  B| /' "$BOUT" >&2; fail "B did not see $CHAR_A leave north"; }
+arrived="$(grep -n "^$CHAR_A \(arrives\( from the [a-z]\+\)\?\|has arrived\)\.$" "$BOUT" | head -1 | cut -d: -f1)"
+left="$(grep -n "^$CHAR_A leaves north\.$" "$BOUT" | head -1 | cut -d: -f1)"
+[[ "$arrived" -lt "$left" ]] || { sed 's/^/  B| /' "$BOUT" >&2; fail "B read $CHAR_A leave north before arriving"; }
 
 # AW-CLI-007 AC-7: a second launch while B is live is refused, and nothing is subscribed.
 set +e
