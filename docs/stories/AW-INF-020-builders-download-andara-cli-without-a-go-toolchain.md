@@ -214,3 +214,11 @@ while the tag existed (the last was at 23:48, and the tag was pushed at about 00
 | `make check` | green on `main` |
 | Config / Helm schema, migrations | none; release objects only |
 | `[ASSUMPTION]` | none. Both are resolved in *Open questions* |
+
+**The stale-run branch and the summary** (Codex on #167). A `publish` run that finds `HEAD` behind
+`origin/main` exits before `summary`, so it writes no archive table. That's right. The
+Observability section asks the summary to name "the commit `cli-dev` now carries", and a stale run
+didn't move `cli-dev`. A table from it would list archives that were never published. Its log line,
+`cli-dev left to that commit's run`, names the commit that does own `cli-dev`, which answers "which
+CLI is current" from that run. The branch is accepted as read and not raced, on `AW-INF-013` AC-6's
+precedent. The first real overlap exercises it, and that run's log line is the evidence.
