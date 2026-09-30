@@ -506,14 +506,23 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 			span.SetAttributes(attribute.String("stage_failed", out.Stage), attribute.String("code", out.Code))
 			span.SetStatus(codes.Error, out.Code)
 		}
-		span.End()
-		l.log.LogAttrs(actx, slog.LevelDebug, "command applied",
+		fields := []slog.Attr{
 			slog.String("verb", verb), slog.String("actor", r.Command.GetActorId()),
 			slog.String("session_id", r.Command.GetSessionId()),
 			slog.Uint64("tick", uint64(l.tickNo)), slog.Int64("partition", int64(r.Partition)), slog.Int64("offset", r.Offset),
 			slog.String("code", out.Code), slog.String("stage", out.Stage),
 			slog.Float64("duration_ms", float64(d.Microseconds())/1000),
-			slog.String("trace_id", traceID(actx)))
+			slog.String("trace_id", traceID(actx)),
+		}
+		if j := out.Jump; j != nil {
+			// A goto's two ends (AW-SRV-036): a jump has no Exit to
+			// read them from afterwards.
+			from, to := string(j.From.Zone)+"/"+string(j.From.Room), string(j.To.Zone)+"/"+string(j.To.Room)
+			span.SetAttributes(attribute.String("from_room", from), attribute.String("to_room", to))
+			fields = append(fields, slog.String("from_room", from), slog.String("to_room", to))
+		}
+		span.End()
+		l.log.LogAttrs(actx, slog.LevelDebug, "command applied", fields...)
 		if b := out.Bind; b != nil {
 			// AW-SRV-014: whether the Character entered the World, and
 			// where, is known only here. character selected says the

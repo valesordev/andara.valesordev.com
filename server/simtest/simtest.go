@@ -213,6 +213,13 @@ func Move(zone, actor, dir string) *logv1.LoggedCommand {
 	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, Command: &logv1.LoggedCommand_Move{Move: &logv1.Move{Direction: dir}}}
 }
 
+// Goto is a Builder's jump from zone to targetZone/targetRoom (AW-SRV-036),
+// with a Session and client_ref so correlation can be checked.
+func Goto(zone, actor, targetZone, targetRoom string) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, SessionId: "s-" + actor, ClientRef: "ref-goto", TraceId: "00-trace",
+		Command: &logv1.LoggedCommand_Goto{Goto: &logv1.Goto{TargetZoneId: targetZone, TargetRoomId: targetRoom}}}
+}
+
 // Bind is a BindCharacter for actor, named name, spawning in room of zone
 // when never bound (AW-SRV-014).
 func Bind(zone, actor, name, room string) *logv1.LoggedCommand {

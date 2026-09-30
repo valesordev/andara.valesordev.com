@@ -261,8 +261,8 @@ names the carrier for each series it can't produce:
     `trace_id`;
   - the boot-time `content.core_boot` root span. It's already observed on the local stack, so
     re-observe it on `dev`.
-- `AW-CLI-003`'s own items (its §8 instrumentation check, 2026-09-30): the activation's `info`
-  confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
+- `AW-CLI-003`'s own items (its §8 instrumentation check, 2026-09-30): run with `--log-level info`,
+  the activation's `info` confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
   through `content.activate` to the Loader's `content.swap`.
 
 ## Open questions

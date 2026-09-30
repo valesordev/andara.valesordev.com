@@ -157,6 +157,11 @@ func (p *Pipeline) Submit(ctx context.Context, in Intent, principal auth.Princip
 	}
 	cmd.ZoneId = string(binding.Zone)
 	cmd.ActorId = string(binding.Actor)
+	if g := cmd.GetGoto(); g != nil && g.GetTargetZoneId() == "" {
+		// `goto <room>` is a Room in the actor's Zone, resolved here so
+		// the log carries both halves and apply never guesses (log.proto).
+		g.TargetZoneId = string(binding.Zone)
+	}
 	cmd.AcceptedAtUnixNano = clock.Now().UnixNano()
 	cmd.TraceId = TraceParent(ctx)
 	if p.Metrics != nil {

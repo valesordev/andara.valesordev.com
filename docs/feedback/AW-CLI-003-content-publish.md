@@ -76,3 +76,43 @@ It runs in CI once `./admin/cli/` is in `make test-integration` (AW-CLI-002 feed
 The Redpanda test shows `server info` naming the new version within `content.reload_debounce +
 2 s` against a real broker. `dev` itself serves `content.source=dir` until AW-INF-021, so the live
 observation there is AW-INF-021's to carry.
+
+## Architecture's §8 review (2026-09-30)
+
+Items 1–6 are ruled in the story's §8 review. All are accepted as built. Item 1 moves `--as` on
+content commands, AC-11's acting-as clause and the test plan's `--as` line to the Admin acting-as
+story (`AW-SRV-013` rulings 2 and 3). PM places that story, in `docs/feedback/AW-SRV-013-publish-path.md`.
+
+### For implementation: owed before `done` (revised on review of #275)
+- **`fetch` and `diff`:** route `fetchVersion` through `contentError`, so that `error.code` is the
+  server's reason (`not_found`, `pack_not_held`), as the contract's exit table says. Add a test per
+  command.
+- **Stale parent over Redpanda:** two publishes on one parent, and the second exits 1 with
+  `stale_parent` and its hint (the test plan's integration case).
+- **`pack_not_held` at the CLI:** `content publish` by a Builder without the pack exits 1 with
+  `error.code` `pack_not_held` (`AW-SRV-035` AC-2).
+- **AC-7:** a `diff` test covering a Zone added and removed, a Template changed, and a Component field
+  added, removed and changed, each with `file:line`. Emptying `diffComponents` and the Template loop
+  currently leaves every test green.
+
+### For implementation, not holding the story
+- Tests: `fetch` with a `src/../x` path; `previousActive` over three or more moves; AC-2 activating
+  as the approver; a blob over 1 MiB, to exercise chunking.
+- The implementation record: the rehearsal is in CI (#265), and the confirmation `info` line isn't
+  asserted.
+
+### For SRE
+- Your item 1 is done: `./admin/cli/` is in `make test-integration`, and `stack` ran the rehearsal.
+- The §8 instrumentation record, under `AW-CLI-002`'s in-process ruling. Please also say whether the
+  `--override` confirmation `info` line needs a test.
+
+## SRE, 2026-09-30: the confirmation line needs a test (for implementation)
+
+Architecture's §8 review left it to SRE whether `activate`/`rollback`'s `info` confirmation line
+needs a test. It does. It's a §7 item, and it isn't asserted anywhere. The ask:
+- run `activate` and `rollback` with `--log-level info`;
+- decode the line;
+- assert the confirmation text, and that `trace_id` equals the JSON result's and the one the server
+  received.
+
+The default level stays `warn`.

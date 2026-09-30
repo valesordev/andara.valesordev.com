@@ -479,7 +479,7 @@ Resolution is exact name, then alias, then the unique abbreviable prefix; a pref
 resolves to neither and the rejection names both (AW-SRV-003).
 
 **Verb Table** — The closed set of Command Verbs a Gateway accepts: for each, the word, the Command
-kind it binds (`look`, `move`), the Role it requires, its arguments, and its aliases. Built into the
+kind it binds (`look`, `move`, `goto`), the Role it requires, its arguments, and its aliases. Built into the
 server; `command.verb_table_path` replaces it from a file. The table's Role column is what
 `authorize` reads. A Command kind a Tick produces for itself — Arrive — has no Verb and cannot be
 bound from a file (AW-SRV-003).

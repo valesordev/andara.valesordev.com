@@ -61,8 +61,11 @@ func Parse(in Intent, t *VerbTable, maxBytes int) (*logv1.LoggedCommand, string,
 	// ignored, which is what lets `look around` mean `look`.
 	for i, spec := range verb.Args {
 		if i+1 >= len(fields) {
-			return nil, "", &Error{Stage: StageParse, Code: CodeMissingArgument, Arg: spec.Name,
-				Detail: verb.Name + " needs a " + spec.Name}
+			detail := verb.Name + " needs a " + spec.Name
+			if spec.Kind == ArgRoomRef {
+				detail = gotoUsage
+			}
+			return nil, "", &Error{Stage: StageParse, Code: CodeMissingArgument, Arg: spec.Name, Detail: detail}
 		}
 		val, err := checkArg(spec, strings.ToLower(fields[i+1]))
 		if err != nil {
@@ -76,6 +79,14 @@ func Parse(in Intent, t *VerbTable, maxBytes int) (*logv1.LoggedCommand, string,
 		cmd.Command = &logv1.LoggedCommand_Look{Look: &logv1.Look{}}
 	case sim.KindMove:
 		cmd.Command = &logv1.LoggedCommand_Move{Move: &logv1.Move{Direction: values["direction"]}}
+	case sim.KindGoto:
+		// A bare Room leaves the Zone empty: parse reads no Session state,
+		// and the pipeline fills it from the Binding before the log.
+		g := &logv1.Goto{TargetRoomId: values["target"]}
+		if zone, room, ok := strings.Cut(values["target"], "/"); ok {
+			g.TargetZoneId, g.TargetRoomId = zone, room
+		}
+		cmd.Command = &logv1.LoggedCommand_Goto{Goto: g}
 	}
 	return cmd, verb.Name, nil
 }

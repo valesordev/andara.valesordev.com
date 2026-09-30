@@ -67,6 +67,7 @@ func Handlers() map[CommandKind]Apply {
 	return map[CommandKind]Apply{
 		KindLook:            applyLook,
 		KindMove:            applyMove,
+		KindGoto:            applyGoto,
 		KindArrive:          applyArrive,
 		KindBindCharacter:   applyBindCharacter,
 		KindUnbindCharacter: applyUnbindCharacter,
@@ -204,6 +205,87 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	return nil
 }
 
+// --- goto --------------------------------------------------------------
+
+// gotoView is what validateGoto found: the actor, its Room, and the target.
+type gotoView struct {
+	actor  *EntityState
+	from   *Room
+	target RoomRef
+	to     *Room
+}
+
+// validateGoto reads state and mutates nothing: the actor is here, and the
+// target Zone and Room exist in the World in effect at this tick. The parser
+// resolved both fields before the log, so apply never guesses where the
+// actor thought it was.
+func validateGoto(a *ApplyContext, cmd *logv1.LoggedCommand) (gotoView, error) {
+	actor, room, err := locate(a, cmd)
+	if err != nil {
+		return gotoView{}, err
+	}
+	g := cmd.GetGoto()
+	target := RoomRef{Zone: ZoneID(g.GetTargetZoneId()), Room: RoomID(g.GetTargetRoomId())}
+	msg := "there is no room " + string(target.Zone) + "/" + string(target.Room)
+	if _, ok := a.World.Zones[target.Zone]; !ok {
+		return gotoView{}, &RejectError{Code: CodeUnknownZone, Stage: StageValidate, Message: msg}
+	}
+	to, ok := a.World.Resolve(target)
+	if !ok {
+		return gotoView{}, &RejectError{Code: CodeUnknownRoom, Stage: StageValidate, Message: msg}
+	}
+	return gotoView{actor: actor, from: room, target: target, to: to}, nil
+}
+
+// applyGoto jumps the actor to the target Room. The Room it's already in is
+// a fresh look and nothing else (AC-6). Within the Zone it's a relocation,
+// with CharacterLeft and CharacterArrived carrying no direction and the new
+// Room described to the jumper. Across Zones it leaves as a cross-Zone move
+// does: gone from this Zone's state, and an Arrive produced to the target
+// Zone's Partition, whose apply places and describes it (ADR-0001 rule 4).
+func applyGoto(a *ApplyContext, cmd *logv1.LoggedCommand) error {
+	if !a.Consumed() {
+		return ErrNotConsumed
+	}
+	v, err := validateGoto(a, cmd)
+	if err != nil {
+		return err
+	}
+	from := RoomRef{Zone: a.Zone.ID, Room: v.from.ID}
+	a.jump = &JumpResult{From: from, To: v.target}
+	if v.target == from {
+		describeTo(a, v.from, v.actor.ID)
+		return nil
+	}
+	name := v.actor.DisplayName()
+	a.Emit(ScopeRoom(a.Zone.ID, v.from.ID).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{
+		ZoneId: string(a.Zone.ID), RoomId: string(v.from.ID), CharacterName: name,
+	}}})
+	if v.target.Zone == a.Zone.ID {
+		v.actor.Room = v.to.ID
+		a.Emit(ScopeRoom(a.Zone.ID, v.to.ID).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
+			ZoneId: string(a.Zone.ID), RoomId: string(v.to.ID), CharacterName: name,
+		}}})
+		describeTo(a, v.to, v.actor.ID)
+		return nil
+	}
+	delete(a.Zone.Entities, v.actor.ID)
+	a.Produce(&logv1.LoggedCommand{
+		ZoneId:    string(v.target.Zone),
+		ActorId:   cmd.GetActorId(),
+		SessionId: cmd.GetSessionId(),
+		ClientRef: cmd.GetClientRef(),
+		TraceId:   cmd.GetTraceId(),
+		Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
+			RoomId:       string(v.target.Room),
+			Entity:       v.actor.Proto(),
+			OriginZoneId: string(a.Zone.ID),
+			OriginRoomId: string(v.from.ID),
+		}},
+	})
+	return nil
+}
+
 // --- arrive ------------------------------------------------------------
 
 // validateArrive checks the target Room exists in this Zone.
@@ -238,6 +320,7 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		a.Emit(ScopeRoom(a.Zone.ID, fallback.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
 			ZoneId: string(a.Zone.ID), EntityName: ent.DisplayName(), FromRoomId: arr.GetRoomId(), ToRoomId: string(fallback.ID), Reason: ReasonRoomRemoved,
 		}}})
+		describeTo(a, fallback, ent.ID)
 		return nil
 	}
 	ent := EntityFromProto(arr.GetEntity(), room.ID)
@@ -245,7 +328,17 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
 		ZoneId: string(a.Zone.ID), RoomId: string(room.ID), CharacterName: ent.DisplayName(), FromDirection: arr.GetFromDirection(),
 	}}})
+	// Every Arrive describes the Room it lands in to the arrival
+	// (AW-SRV-036): an Arrive can't tell a goto from a move, and a player
+	// who crossed into another Zone should see where they are.
+	describeTo(a, room, ent.ID)
 	return nil
+}
+
+// describeTo emits one RoomDescribed of room to viewer alone, as a look
+// does.
+func describeTo(a *ApplyContext, room *Room, viewer EntityID) {
+	a.Emit(ScopeEntities(viewer), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_RoomDescribed{RoomDescribed: describe(a.Zone, room, viewer)}})
 }
 
 // locate finds the Command's actor in this Zone and the Room it stands in.

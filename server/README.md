@@ -78,7 +78,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `events.subscriber_buffer` | `ANDARA_SUBSCRIBER_BUFFER` | `1024` | Events a subscriber may leave unread before it is dropped with `SubscriberDropped`. |
 | `events.max_subscribers` | `ANDARA_MAX_SUBSCRIBERS` | `10000` | Event subscriptions this process accepts; registration past it is refused. |
 | `command.max_intent_bytes` | `ANDARA_MAX_INTENT_BYTES` | `4096` | Largest Intent `parse` will read; over it is `intent_too_large` on the length alone, before tokenizing. |
-| `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in | JSON verb table that *replaces* the built-in one (`look`, `move`, the twelve Directions and their compass aliases). A file that does not parse fails the boot. |
+| `command.verb_table_path` | `ANDARA_VERB_TABLE` | built in | JSON verb table that *replaces* the built-in one (`look`, `move`, the twelve Directions and their compass aliases, and `goto`, which needs `builder`). A file that does not parse fails the boot. |
 | `ingress.rate_limit` | `ANDARA_INGRESS_RATE_LIMIT` | `20/s` | Submits per Session, `N/period`; `off` disables. Applied before parse. |
 | `ingress.agent_rate_limit` | `ANDARA_AGENT_RATE_LIMIT` | `100/s` | The rate for `agent` Principals, which drive many NPCs per Session (ADR-0005). |
 | `ingress.burst` | `ANDARA_INGRESS_BURST` | `40` | Token bucket depth per Session: how many Submits may arrive at once before the rate applies. |
@@ -269,8 +269,8 @@ nothing. Both reject before the produce, so **the log holds only Commands that p
 authorized**; an unauthorized attempt goes to `andara.audit.v1` instead. An ack means *accepted and
 ordered*, never *succeeded* — the outcome arrives later as an Event.
 
-`server/sim` is the post-log half. `sim.Handlers()` is the apply column — `look`, `move`, and
-`arrive` — and each handler is `validate` then `apply`: validate reads state and never mutates it,
+`server/sim` is the post-log half. `sim.Handlers()` is the apply column — `look`, `move`, `goto`,
+`arrive`, and the roster's binds — and each handler is `validate` then `apply`: validate reads state and never mutates it,
 apply is the only mutating stage, and a validate failure returns before apply runs. Both are
 reachable only through a `Record` that `Step` took from the log: a handler refuses an
 `ApplyContext` it did not build (`ErrNotConsumed`), so the boundary is a guard, not a convention. A
@@ -284,8 +284,19 @@ Components and all — to the target Zone's Partition, where the next tick place
 4). It is never a call, whichever process owns the target, so the arrival is one tick later even in
 a single process; in between, a Command on either Zone is `actor_not_found`. `Arrive` is not a verb:
 only a tick produces one, and the verb table cannot bind it. An `Arrive` whose Room is gone
-(content moved under the log) is bounced back to its origin once, and rejected `unknown_room` if
-that is gone too.
+(content moved under the log) lands at the target Zone's fallback Room with
+`EntityRelocated{room_removed}` (`AW-SRV-012`). Every `Arrive` then describes the Room it landed in
+to the arrival alone, since it can't tell a `move` from a `goto` (`AW-SRV-036`).
+
+**`goto <zone>/<room>`** (or `goto <room>`, in the actor's Zone) is a Builder's jump, gated to
+`builder` in the verb table, with no abbreviation and no alias. The pipeline fills a bare Room's
+Zone from the Binding before the log, so the `Goto` arm always carries both. Its apply validates the
+target against the World in effect, and a missing one is `unknown_zone` or `unknown_room` at
+`validate`, `there is no room <zone>/<room>`. Within a Zone it relocates the actor, with
+`CharacterLeft` and `CharacterArrived` carrying no direction, then describes the new Room to the
+jumper. Across Zones it leaves as a cross-Zone move does, through an `Arrive` with no direction.
+The Room one already stands in is a fresh look. The tick's `command applied` line and
+`command.apply` span carry `from_room` and `to_room` for a `goto`.
 
 | Code | Stage | Pre-log |
 |------|-------|:-------:|

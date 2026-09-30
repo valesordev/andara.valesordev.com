@@ -257,3 +257,51 @@ func histogramCount(t *testing.T, h *prometheus.HistogramVec, labels map[string]
 	}
 	return m.GetHistogram().GetSampleCount()
 }
+
+// AW-SRV-036 Observability: a goto's command applied line and command.apply
+// span carry from_room and to_room; no other verb's do.
+func TestPipeline_GotoLogsBothEnds(t *testing.T) {
+	vh := newVerbHarness(t)
+	if err := vh.submit("s-alice", "goto hall"); err != nil {
+		t.Fatal(err)
+	}
+	if err := vh.submit("s-bob", "look"); err != nil {
+		t.Fatal(err)
+	}
+	vh.runTicks(2)
+	if vh.engine.State().Zones["town"].Entities["alice"].Room != "hall" {
+		t.Fatal("alice did not jump")
+	}
+	lines := map[string]map[string]any{}
+	for _, l := range strings.Split(vh.logs.String(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) == nil && m["msg"] == "command applied" {
+			lines[m["verb"].(string)] = m
+		}
+	}
+	if g := lines["goto"]; g == nil || g["from_room"] != "town/plaza" || g["to_room"] != "town/hall" {
+		t.Errorf("goto line = %v", g)
+	}
+	if l := lines["look"]; l == nil || l["from_room"] != nil {
+		t.Errorf("look line = %v", l)
+	}
+	found := false
+	for _, s := range vh.spans.Ended() {
+		if s.Name() != "command.apply" {
+			continue
+		}
+		attrs := map[string]string{}
+		for _, kv := range s.Attributes() {
+			attrs[string(kv.Key)] = kv.Value.AsString()
+		}
+		if attrs["from_room"] == "town/plaza" && attrs["to_room"] == "town/hall" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("no command.apply span with from_room and to_room")
+	}
+	if n := histogramCount(t, vh.metrics.Duration, map[string]string{"verb": "goto", "phase": "post_log"}); n != 1 {
+		t.Errorf("duration{goto,post_log} count = %d", n)
+	}
+}

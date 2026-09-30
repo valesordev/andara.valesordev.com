@@ -728,3 +728,27 @@ func swapFor(t *testing.T, src sim.ContentSource, e *sim.Engine, pack string, ve
 	cs.WorldDigest = d[:]
 	return &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: cs}}
 }
+
+// AW-SRV-036 AC-8: goto checks the World in effect at the tick it applies.
+// Into a pack's Zone before that pack's swap has applied it's unknown_zone;
+// the same goto after the swap goes through.
+func TestGoto_SeesAZoneOnceItsSwapHasApplied(t *testing.T) {
+	c := newContent(t)
+	e := contentEngine(t, c)
+	mustStep(t, e, c.swap(t, e, nil, "town", 1))
+	simtest.Place(e, "alice", "town", "plaza")
+
+	res := mustStep(t, e, simtest.Goto("town", "alice", "docks", "pier"))
+	if rej := rejection(t, res.Events); rej.GetCode() != sim.CodeUnknownZone {
+		t.Fatalf("before the swap: %v", rej)
+	}
+	mustStep(t, e, c.swap(t, e, nil, "docks", 1))
+	res = mustStep(t, e, simtest.Goto("town", "alice", "docks", "pier"))
+	if len(res.Outbound) != 1 {
+		t.Fatalf("after the swap, no Arrive: %v", res.Events)
+	}
+	mustStep(t, e, res.Outbound[0])
+	if got := e.State().Zones["docks"].Entities["alice"]; got == nil || got.Room != "pier" {
+		t.Fatalf("alice = %+v", got)
+	}
+}
