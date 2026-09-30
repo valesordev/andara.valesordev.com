@@ -448,12 +448,14 @@ Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the str
   an Auditor with no registry, so they aren't counted on `andara_privileged_actions_total`. The log
   line, the `content.core_boot` trace, and `pointer_moves_total` carry them.
 
-## §8 instrumentation check (2026-09-30, SRE): the boot's core path observed; the RPC path owed to `AW-INF-021`
+## §8 instrumentation check (2026-09-30, SRE): not satisfied; the RPC path's backend assertions are owed
 
 On `sre/sprint-03-review-verify`, against `main` at `79fd622`. The publish path exists only in a
 `content.source=kafka` server (`OpenContentAdmin`, `bootCore`). Compose and `dev` both run `dir`, and
 no client of `PublishBlob`/`PublishVersion`/`ApproveVersion`/`ActivateVersion` exists before
-`AW-CLI-003`. So this is CLAUDE.md §8's "no caller yet" case, for the RPC half.
+`AW-CLI-003`. So the RPC half is CLAUDE.md §8's "no caller yet" case. That case is satisfied only by
+the integration suite exercising the story's code against the local stack's backends, with
+assertions on the metric objects. Carrying the live observation forward doesn't replace it.
 
 **Observed live.** The compose stack's server image ran once with `ANDARA_CONTENT_SOURCE=kafka`,
 `ANDARA_CONTENT_PACKS=*` against a fresh local stack:
@@ -474,15 +476,47 @@ and `validation_failures_total{unknown_room}`. No test asserts the RPC path's sp
 `content.activate` → `content.write_pointer`; `content.publish_blob`; `content.get_blob`; and
 `audit.write` under each. `TestPublishPath_AgainstABroker` asserts no telemetry.
 
+**Owed by implementation, before architecture moves the story.** A broker-backed integration test
+(`TestPublishPath_AgainstABroker`, or a sibling beside it, against the local Redpanda) that drives
+the RPC path, including one rejected publish and one refused activation, and asserts:
+1. the metric objects: `publishes_total{ok,rejected}`, `approvals_total{ok,self_operator}`,
+   `pointer_moves_total{forward,false}` and `{rollback,false}`, `activations_refused_total{unapproved}`,
+   `validation_failures_total{<the rejected publish's code>}`, and `blob_bytes_total` equal to the
+   bytes accepted after deduplication;
+2. the span tree, on a recording tracer: `content.publish` → `content.validate`, `content.write_manifest`;
+   `content.approve` → `content.write_manifest`; `content.activate` → `content.write_pointer`
+   (`direction` set); `content.publish_blob` → `content.write_blob`; and `audit.write` under each
+   operation span.
+
+Routed in `docs/feedback/AW-SRV-013-publish-path.md` ("SRE, 2026-09-30").
+
 **Inherited Definition-of-done line, carried by `AW-INF-021`,** the first story with a
-store-backed server and a caller (`make content-seed`, through `AW-CLI-003`): on `dev`, one
-publish → approve → activate → rollback of the fixture pack shows each counter above move on
-Prometheus, the RPC span tree in Tempo under the CLI's `cli.command`, and the `info`/`warn` lines in
-Loki carrying `actor_account_id`, `pack_id`, `version`, `session_id` and `trace_id`. The
-`self_operator` approval is visible on `approvals_total` and as `self_approval=true` in the log.
+store-backed server and a caller (`make content-seed`, through `AW-CLI-003`). On `dev`, run this
+sequence against the fixture pack:
+1. a publish refused by validation;
+2. a valid publish;
+3. an activation of the unapproved version, refused `unapproved`;
+4. the Operator's self-approval;
+5. activate;
+6. rollback.
+
+Each of these moves on Prometheus:
+- `publishes_total{rejected}` and `{ok}`;
+- `validation_failures_total{code}` for the refused publish's code;
+- `activations_refused_total{unapproved}`;
+- `approvals_total{self_operator}`;
+- `pointer_moves_total{forward,false}` and `{rollback,false}`;
+- `blob_bytes_total`.
+
+The RPC span tree reaches Tempo under the CLI's `cli.command`. The `info` and `warn` lines reach Loki
+carrying `actor_account_id`, `pack_id`, `version`, `session_id` and `trace_id`, including the
+rejection's `findings_count`, the refusal's `reason` and `self_approval=true`.
 
 **Noted, not blocking.** The core line on stdout has no `trace_id`. The OTLP record in Loki
 does, so it correlates on the backend, but not in `kubectl logs`.
 
-The instrumentation item is **satisfied** for what a running server can reach today. The
-RPC path's live observation is carried as above.
+The instrumentation item is **not satisfied.** The boot's core path is verified live. The RPC path
+needs the backend assertions above (implementation). Its live observation on `dev` is then carried
+by `AW-INF-021`. *(Revised before merge, from Codex on #177. The first push called this
+satisfied, and its inherited line named only a successful sequence, which can't move
+`activations_refused_total` or `validation_failures_total`.)*

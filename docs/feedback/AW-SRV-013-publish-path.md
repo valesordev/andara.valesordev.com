@@ -134,3 +134,15 @@ refusal already names every stranded `pack@version`. The story line is yours to 
 
 `max.message.bytes: 9437184` on `andara.content.blobs.v1` (applied locally and on `dev`), the
 `content.operator_self_approval` row, and the rollback order in the runbook.
+
+## SRE, 2026-09-30: for implementation, the §8 instrumentation check's owed assertions
+
+SRE's §8 instrumentation check (story body, 2026-09-30) is **not satisfied**. The RPC path has no
+in-cluster caller yet, so CLAUDE.md §8 accepts the integration suite in its place, but only if that
+suite asserts on the telemetry. Today the RPC path's metric assertions are unit tests over
+in-memory topics, no test asserts its spans, and `TestPublishPath_AgainstABroker` asserts no
+telemetry. What's owed, against the local Redpanda:
+- a rejected publish and a refused (`unapproved`) activation alongside the successful path;
+- the metric objects and the span tree listed in the story's record.
+
+The story stays `review` until that lands. `AW-INF-021` then carries the live observation on `dev`.
