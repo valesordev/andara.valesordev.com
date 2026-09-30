@@ -395,6 +395,15 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		// A record is retried for a minute before it is given up on, so an
 		// outage shorter than that loses nothing; a longer one is counted.
 		kgo.RecordDeliveryTimeout(time.Minute),
+		// And only the delivery timeout: by default franz-go fails a record
+		// after five consecutive UNKNOWN_TOPIC_OR_PARTITION answers, which a
+		// broker gives while a restart is still loading its partitions. With
+		// the metadata refresh limited to one per five seconds, that is about
+		// twenty seconds of a broker bounce, and a boundary lost that way
+		// stops every later snapshot round (#128). The topics are declared
+		// (deploy/kafka/topics.yaml), so a missing one is an outage like any
+		// other, and a minute of it is still a loss.
+		kgo.UnknownTopicRetries(-1),
 		kgo.MaxBufferedRecords(1<<16),
 	)
 	if err != nil {
