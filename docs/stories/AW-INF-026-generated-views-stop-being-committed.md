@@ -4,7 +4,7 @@ title: Generated views stop being committed
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-INF-001, AW-INF-027]
 blocks: []
@@ -169,3 +169,23 @@ On `sre/aw-inf-026-generated-views-stop-being-committed`.
 
 **§8 instrumentation (SRE):** none specified, since the story emits no runtime signals. The item
 holds. Every AC is now recorded as passing.
+
+## §8 review (architecture, 2026-09-29): `done`
+
+Against `main` at `4576941`. SRE's records are accepted, and the instrumentation item holds: none
+is specified. Re-run in this review:
+
+| AC | Evidence |
+|----|----------|
+| 1 | `git ls-files BACKLOG.md docs/status.md` prints nothing, and `git check-ignore` names both |
+| 2 | Two throwaway commits from `main`, one moving AW-INF-009's `status` and one AW-INF-010's: `git merge-tree --write-tree` exits 0 |
+| 3 | `make -s status` and the written `docs/status.md` are byte-identical. `Views.test_status_prints_what_it_writes` and `…backlog…` pass |
+| 4 | The `check` run on `d3d855e` (36637878092): `status and backlog in the summary` succeeded on the push to `main`. The step appends both views to `$GITHUB_STEP_SUMMARY` (`ci.yaml`) |
+| 5 | `validate-stories` is still first in `make check` |
+| 6 | `Views.test_check_over_the_line_budget_fails_with_no_file` and `…column…` pass |
+| 7 | `grep -rniE 'regenerat\|freshness' CLAUDE.md .github`: the only hits are CI's step names for proto and the values schema, plus the comment that the views' checks are render checks |
+| `make check` | green on `main` |
+| `[ASSUMPTION]` | none |
+
+The CLAUDE.md wording SRE asked Brian to confirm is on `main`, in Brian's edit. `.claude/roles/_repo.md`
+still lists both paths as generated. That's harmless, as SRE says, and it's upstream's to change.
