@@ -35,6 +35,11 @@ type AppError struct {
 	Code    string
 	Message string
 	Detail  map[string]any
+	// Rendered means the command already wrote its answer to stdout, and
+	// the error is only its exit and the one-line summary on stderr: the
+	// `--output json` of `content validate` is a Diagnostic array and
+	// nothing else (AW-CLI-002 AC-3).
+	Rendered bool
 }
 
 func (e *AppError) Error() string {

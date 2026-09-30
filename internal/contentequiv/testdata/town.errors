@@ -1,0 +1,7 @@
+# content/fixtures/town — the dev fixture. Purgatory's one Exit leaves for
+# town.plaza, and nothing leads back into Purgatory: a spawn Zone is entered at
+# spawn, never on foot (AW-SRV-037). Legal, and never silent.
+purgatory.aw:6:5: missing_reverse_exit
+  purgatory
+  start
+  out

@@ -654,20 +654,12 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 			}
 		}
 	}
-	if len(templates) > 0 {
-		reg, errs := sim.BuildTemplates(templates, sim.TemplateOptions{})
-		findings = append(findings, l.fatalOnly(errs)...)
-		warnings = append(warnings, l.warningsOnly(errs)...)
-		topo.Templates = reg
-	}
-	if len(zones) > 0 {
-		opts := sim.Options{Source: SourceKafka, StrictOrphans: l.strictOrphans}
-		w, errs := sim.BuildWorld(zones, opts)
-		findings = append(findings, l.fatalOnly(errs)...)
-		warnings = append(warnings, l.warningsOnly(errs)...)
-		if w != nil {
-			topo.World = w
-		}
+	built, bf, bw := buildContent(zones, templates, l.strictOrphans)
+	findings = append(findings, bf...)
+	warnings = append(warnings, bw...)
+	topo.Templates = built.Templates
+	if built.World != nil {
+		topo.World = built.World
 	}
 	if candidate != nil && l.spawn.Zone != "" && len(findings) == 0 {
 		if _, had := spawnIn(base, l.spawn); had {
@@ -697,13 +689,55 @@ func spawnIn(base map[string]*Resolved, spawn sim.RoomRef) (string, bool) {
 	return "", false
 }
 
+// buildContent is the validator: the Template registry and the World built
+// from a content set, with every finding split into the ones that refuse it
+// and the warnings that don't. The Loader runs it at boot, at load, and at the
+// publish gate; `andara-cli content validate` runs it through Validate. One
+// function, so a Builder's laptop and the server can't disagree about what is
+// valid (ADR-0004, AW-CLI-002 AC-4).
+//
+// World is nil when there are no Zones, or when they don't build.
+func buildContent(zones []sim.Input, templates []sim.TemplateInput, strict bool) (sim.Topology, []sim.ValidationError, []sim.ValidationError) {
+	var topo sim.Topology
+	var findings, warnings []sim.ValidationError
+	if len(templates) > 0 {
+		reg, errs := sim.BuildTemplates(templates, sim.TemplateOptions{})
+		findings = append(findings, fatalOnly(errs, strict)...)
+		warnings = append(warnings, warningsOnly(errs, strict)...)
+		topo.Templates = reg
+	}
+	if len(zones) > 0 {
+		opts := sim.Options{Source: SourceKafka, StrictOrphans: strict}
+		w, errs := sim.BuildWorld(zones, opts)
+		findings = append(findings, fatalOnly(errs, strict)...)
+		warnings = append(warnings, warningsOnly(errs, strict)...)
+		topo.World = w
+	}
+	return topo, findings, warnings
+}
+
+// Validate runs the Loader's validator over packs on their own: what the
+// publish gate checks of a version, less the checks against what is in effect
+// (a removed Zone, the spawn Room), which need a World to compare with. It's
+// how `andara-cli content validate` agrees with the gate by construction
+// rather than by test.
+func Validate(packs []*Resolved, strictOrphans bool) (refusing, warnings []sim.ValidationError) {
+	byPack := make(map[string]*Resolved, len(packs))
+	for _, p := range packs {
+		byPack[p.Pack] = p
+	}
+	zones, templates := inputsOf(byPack)
+	_, refusing, warnings = buildContent(zones, templates, strictOrphans)
+	return refusing, warnings
+}
+
 // fatalOnly drops warnings. A warning is advisory by construction — an
 // unconnected Room, a one-way chute — and refusing a version for one would
 // make the loader useless to the Builder it is meant to help (AW-SRV-001).
-func (l *Loader) fatalOnly(errs []sim.ValidationError) []sim.ValidationError {
+func fatalOnly(errs []sim.ValidationError, strict bool) []sim.ValidationError {
 	var out []sim.ValidationError
 	for _, e := range errs {
-		if sim.IsWarning(e, l.strictOrphans) {
+		if sim.IsWarning(e, strict) {
 			continue
 		}
 		out = append(out, e)
@@ -712,10 +746,10 @@ func (l *Loader) fatalOnly(errs []sim.ValidationError) []sim.ValidationError {
 }
 
 // warningsOnly is fatalOnly's complement.
-func (l *Loader) warningsOnly(errs []sim.ValidationError) []sim.ValidationError {
+func warningsOnly(errs []sim.ValidationError, strict bool) []sim.ValidationError {
 	var out []sim.ValidationError
 	for _, e := range errs {
-		if sim.IsWarning(e, l.strictOrphans) {
+		if sim.IsWarning(e, strict) {
 			out = append(out, e)
 		}
 	}

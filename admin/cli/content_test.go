@@ -5,8 +5,10 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -25,8 +27,8 @@ func corpusCase(parts ...string) string {
 }
 
 // contentEnv gives the CLI a private core-pack cache and populates it from the
-// corpus's own andara.core, so that `content compile` resolves offline — which
-// is the only way it ever resolves (AC-5).
+// corpus's own andara.core. A pack requiring the embedded core resolves against
+// that first (AW-CLI-002), so the cache matters only for another version.
 func contentEnv(t *testing.T) map[string]string {
 	t.Helper()
 	cache := t.TempDir()
@@ -277,27 +279,31 @@ func TestContentDecompileRoundTrips(t *testing.T) {
 	}
 }
 
-// TestContentCompileOfflineWithoutCache is AC-5's second clause: no cache is
-// core_version_mismatch telling the Builder what to run, not a missing-file
-// error.
+// TestContentCompileOfflineWithoutCache is AW-CLI-006 AC-5 as AW-CLI-002
+// amended it: with no cache, a pack requiring the core this binary embeds
+// compiles, and one requiring another is core_version_mismatch naming the
+// release to use rather than a missing-file error.
 func TestContentCompileOfflineWithoutCache(t *testing.T) {
 	env := isolatedEnv(t, map[string]string{"ANDARA_CONTENT_CACHE": t.TempDir()})
-	res := runCLI(t, []string{"content", "compile", "--path", corpusCase("valid", "town")}, env)
+	if res := runCLI(t, []string{"content", "compile", "--path", corpusCase("valid", "town")}, env); res.exit != ExitOK {
+		t.Errorf("requiring the embedded core: exit=%d stderr=%q", res.exit, res.stderr)
+	}
 
+	res := runCLI(t, []string{"content", "compile", "--path", requiringCore(t, corpusCase("valid", "town"), 2)}, env)
 	if res.exit != ExitFail {
 		t.Errorf("exit=%d, want %d", res.exit, ExitFail)
 	}
 	if !strings.Contains(res.stderr, "core_version_mismatch") {
 		t.Errorf("stderr does not name the code:\n%s", res.stderr)
 	}
-	if !strings.Contains(res.stderr, "fetch-core") {
-		t.Errorf("stderr does not say what to run:\n%s", res.stderr)
+	if !strings.Contains(res.stderr, "use the andara-cli release that embeds andara.core@2") {
+		t.Errorf("stderr does not say what to use:\n%s", res.stderr)
 	}
 }
 
-// TestContentFetchCoreHasNoServerToFetchFrom records the deviation: no Admin
-// RPC serves a published ContentVersion yet, so the command exits 3 — the
-// AW-CLI-001 taxonomy's "server unreachable" — and says which story owns it.
+// TestContentFetchCoreHasNoServerToFetchFrom: fetch-core never fetches over
+// Admin (AW-CLI-002). Without --from it exits 3, the AW-CLI-001 taxonomy's
+// "server unreachable", naming the core this binary embeds and the remedy.
 func TestContentFetchCoreHasNoServerToFetchFrom(t *testing.T) {
 	env := isolatedEnv(t, map[string]string{"ANDARA_CONTENT_CACHE": t.TempDir()})
 	res := runCLI(t, []string{"content", "fetch-core"}, env)
@@ -308,6 +314,35 @@ func TestContentFetchCoreHasNoServerToFetchFrom(t *testing.T) {
 	if !strings.Contains(res.stderr, "--from") {
 		t.Errorf("the message does not offer the alternative:\n%s", res.stderr)
 	}
+	if !strings.Contains(res.stderr, "embeds andara.core@1") {
+		t.Errorf("the message does not name the embedded core:\n%s", res.stderr)
+	}
+}
+
+// requiringCore copies a pack directory, rewriting its `requires` to
+// andara.core@v.
+func requiringCore(t *testing.T, src string, v int) string {
+	t.Helper()
+	dst := filepath.Join(t.TempDir(), filepath.Base(src))
+	err := filepath.WalkDir(src, func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".aw") {
+			return err
+		}
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		b = []byte(regexp.MustCompile(`requires andara\.core@\d+`).ReplaceAllString(string(b), fmt.Sprintf("requires andara.core@%d", v)))
+		rel, _ := filepath.Rel(src, p)
+		if err := os.MkdirAll(filepath.Dir(filepath.Join(dst, rel)), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(filepath.Join(dst, rel), b, 0o644)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return dst
 }
 
 // TestContentCompileEmitsTheSpan is the story's Observability requirement: a

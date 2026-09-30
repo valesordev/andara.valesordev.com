@@ -1,9 +1,9 @@
-Populate the local andara.core cache so that `content compile` works offline.
+Populate the local andara.core cache with a core this andara-cli does not embed.
 
---from reads a pack directory that is already on disk — the shipped seed under
-content/core, or a checkout. Fetching over Admin needs an RPC that serves a
-published ContentVersion, which is AW-SRV-013's and AW-CLI-003's to define; see
-docs/feedback/AW-CLI-006-content-language-compiler.md §7.
+andara-cli embeds one andara.core (`andara-cli version` names it), and a pack
+requiring it compiles offline with no cache at all. --from reads another core's
+pack directory from disk into the cache. It never fetches over Admin: a core this
+binary doesn't embed comes with the andara-cli release that embeds it.
 
 Usage:
   andara-cli content fetch-core [flags]

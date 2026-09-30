@@ -1,0 +1,28 @@
+Compile a pack's .aw source and run the server's validator over the result.
+
+--path validates a directory of source against the andara.core this andara-cli
+embeds (`andara-cli version`), or a cached one; no network. --pack and --version
+fetch a published version over Admin and validate it.
+
+Exits 1 with one finding per line when the pack would be refused, 0 with
+warnings. Under --output json, stdout is the array of findings and nothing else.
+
+Usage:
+  andara-cli content validate [flags]
+
+Flags:
+      --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
+  -h, --help           help for validate
+      --pack string    a published pack to fetch over Admin, with --version
+      --path string    pack directory of .aw source (default .)
+      --version uint   the published version of --pack
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)

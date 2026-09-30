@@ -228,7 +228,9 @@ compiled from. Authored outside the repository by Builders and published through
 It ships in the server build (`content/core/`, numbered by `content/core/VERSION`, with every core
 ever shipped in the append-only `content/core/VERSIONS`), and the server publishes and activates it
 itself at boot, as the reserved principal `server` (`AW-SRV-013`). No RPC publishes it, and only an
-Operator moves its pointer.
+Operator moves its pointer. `andara-cli` embeds the same `content/core/` under the same `VERSION`, so a
+Builder validates offline against the core a server runs, and `andara-cli version` names it
+(`AW-CLI-002`).
 
 **Content Version** — An immutable manifest on `andara.content.versions.v1`, keyed by `packID@version`,
 naming its Content Blobs, its parent version, its author, and its timestamp. The linked history a

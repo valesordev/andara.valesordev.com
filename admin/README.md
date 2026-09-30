@@ -31,9 +31,11 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli character create <name>` / `list` | make a Character; list yours with where each is (`AW-CLI-007`) |
 | `andara-cli play` | enter the world: the Text Interface over the Protocol (`AW-CLI-004`, `--character` from `AW-CLI-007`) |
 | `andara-cli content compile` | compile a Content Language pack to canonical blobs, offline (`AW-CLI-006`, builder) |
+| `andara-cli content validate` | compile a pack and run the server's validator over it, offline; or validate a published version (`AW-CLI-002`, builder) |
+| `andara-cli content inspect` | print a resolved Zone, Room, or Template, with each field's provenance (`AW-CLI-002`, builder) |
 | `andara-cli content fmt` | rewrite `.aw` sources to the canonical form; `--check` changes nothing (`AW-CLI-006`, builder) |
 | `andara-cli content decompile` | reconstruct `.aw` source from a pack on disk (`AW-CLI-006`, builder) |
-| `andara-cli content fetch-core` | populate the local `andara.core` cache from a pack directory (`AW-CLI-006`, builder) |
+| `andara-cli content fetch-core` | cache an `andara.core` this binary does not embed, from a pack directory (`AW-CLI-006`, builder) |
 
 ## Global flags
 
@@ -117,8 +119,9 @@ Codes the roster adds (`AW-CLI-007`): `no_character` and `character_required`
 `roster_full`, `name_taken`, `name_invalid`, `already_live`,
 `no_such_character` (exit 1).
 
-Codes `content` adds (`AW-CLI-006`): `compile_failed` and `would_reformat`
-(exit 1), and `core_fetch_unavailable` (exit 3).
+Codes `content` adds (`AW-CLI-006`, `AW-CLI-002`): `compile_failed`,
+`would_reformat`, `validation_failed`, `blob_hash_mismatch`, `unsafe_source_path`, `not_found` and
+`core_version_mismatch` (exit 1), and `core_fetch_unavailable` (exit 3).
 
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
 stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
@@ -153,15 +156,41 @@ second when the first disagrees with it.
 ## content — the Content Language compiler
 
 ```
-andara-cli content fetch-core --from content/core
+andara-cli content validate --path mypack
+andara-cli content inspect template mypack.Merchant --path mypack
 andara-cli content compile --path mypack --out build
 andara-cli content fmt --path mypack --check
 andara-cli content decompile --path build --out src
+andara-cli content validate --pack town --version 8
 ```
 
-None of the four talks to a server. `compile` is pure: it reads a pack directory
-and the cached `andara.core` the pack pins, and nothing else, so a Builder works
-offline and the server's publish gate can call the same function.
+Only `--pack` talks to a server. `compile` is pure: it reads a pack directory and
+the `andara.core` the pack pins, and nothing else, so a Builder works offline and
+the server's publish gate can call the same function.
+
+**`validate`** compiles the pack, then runs the server's own validator
+(`content.Validate`, the Loader's) over the compiled blobs, decoded by the server's
+decoder, against the core. It has no validation logic of its own, so a pack that
+passes here passes the publish gate on the same core. Findings from both stages
+come out in the compiler's one format, each validator finding placed back on its
+`.aw` line by the compiler's source map. A finding both stages raise is listed
+once. It prints `N zones, M rooms, T templates, core andara.core@V`, or exits 1.
+Under `--output json`, stdout is the array of findings and nothing else, and
+stderr carries the one-line summary. `--pack ID --version N` fetches a published
+version over `Admin.GetVersion` and `Admin.GetBlob`, checks every blob against its
+manifest hash, compiles the sources it was published with, and validates the
+compiled blobs the server holds. The blobs decide the result: sources that don't
+compile are reported as warnings beside them. A source path that would leave the
+pack is refused (`unsafe_source_path`) before anything is written. An unreachable
+server is exit 3.
+
+**`inspect zone|room|template <ref>`** reads the same validated pack. `zone <zone>`
+prints the fallback and the Rooms. `room <zone>/<room>` prints the Components, and
+the Exits in Direction order (compass, then up, down, in, out), each marked `back:
+<direction>` or `one-way`. `template <pack>.<Name>` prints the flattened
+Components, one field per line as `Behavior.name = "town.merchant"  (town.Merchant)`,
+naming the ancestor that set each value and the one that added each marker
+Component. Core Templates can be inspected too.
 
 | Command | Flag | Default | Purpose |
 |---------|------|---------|---------|
@@ -173,27 +202,31 @@ offline and the server's publish gate can call the same function.
 | `decompile` | `--path` | `.` | the pack directory to decompile. It is compiled first, and its findings are reported like `compile`'s |
 | | `--out` | empty (list only) | write the reconstructed `.aw` files here |
 | | `--cache` | see below | core pack cache, needed to un-flatten inherited Components |
+| `validate`, `inspect …` | `--path` | `.` | pack directory of `.aw` source |
+| | `--pack`, `--version` | empty | a published version to fetch over Admin instead; exclusive with `--path` |
+| | `--cache` | see below | core pack cache |
 | `fetch-core` | `--from` | empty | a pack directory on disk to cache, such as `content/core` or a checkout |
 | | `--version` | `1` | the `andara.core` version to cache it as |
 | | `--cache` | see below | core pack cache |
 
-**The core pack cache.** `--cache`, then `ANDARA_CONTENT_CACHE`, then
-`~/.cache/andara/packs`. `fetch-core` writes it; `compile` and `decompile` read it.
-A pack whose pinned core is not in the cache fails to compile with
-`core_version_mismatch`. The finding names the version the pack requires and the
-`fetch-core --version` command to run. The CLI looks up only that version, so it does
-not say which other versions the cache holds.
+**Finding the core.** A pack's `requires andara.core@M` is looked up in order:
+1. the core this binary embeds, `content/core/` under its `VERSION`, if `M` is that
+   version. `andara-cli version` names it. It's the same bytes every server embeds and
+   publishes at boot, and a test holds its digest to `content/core/VERSIONS`;
+2. the cache: `--cache`, then `ANDARA_CONTENT_CACHE`, then `~/.cache/andara/packs`.
+   `fetch-core --from` writes it.
 
-**What is not here yet.** `fetch-core` without `--from` exits 3 with
-`core_fetch_unavailable`, and `decompile` has no `--pack`/`--version`. Both need an
-Admin RPC that serves a published Content Version, and no story defines one yet
-(`docs/feedback/AW-CLI-006-content-language-compiler.md` §7 and §14 item 3).
+Otherwise the compile fails with `core_version_mismatch`, naming both versions and
+the remedy, the `andara-cli` release that embeds `andara.core@M`. `fetch-core`
+never fetches over Admin: without `--from` it exits 3 with `core_fetch_unavailable`,
+naming the embedded core. `decompile` has no `--pack`/`--version` yet
+(`docs/feedback/AW-CLI-006-content-language-compiler.md` §14 item 3).
 
 Findings print one per line on stderr as `file:line:col: CODE message`, with the
 declaration chain indented beneath, and warnings print even when the compile
-succeeds. Under `--output json` they ride in the result's `diagnostics` array, or
-in `error.detail.diagnostics` when the compile is refused, so stdout stays one
-JSON value. The codes and positions are `docs/specs/content-language/errors.md`'s.
+succeeds. Under `--output json`, `compile`'s findings ride in the result's
+`diagnostics` array, or in `error.detail.diagnostics` when the compile is refused,
+so stdout stays one JSON value. `validate`'s stdout is the array itself. The codes and positions are `docs/specs/content-language/errors.md`'s.
 
 ## character — the roster
 

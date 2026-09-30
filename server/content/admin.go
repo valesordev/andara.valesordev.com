@@ -555,24 +555,40 @@ func requiredCore(pack, corePack string, sources []*contentv1.BlobRef, bodies ma
 }
 
 // Diagnostics renders loader findings in errors.md §1's shape. The loader
-// knows no column, so col is 0; the chain is the Zone and Room, or the
+// knows no column, so col is 0; the chain is the Zone, Room and Exit, or the
 // Template.
+//
+// The file and line are the compiled blob's. A caller holding the pack's
+// source — `andara-cli`, which compiled it — places each finding back on the
+// `.aw` line with the compiler's source map (lang.SourceMap, AW-CLI-002),
+// keyed by this chain.
 func Diagnostics(fs []sim.ValidationError, sev contentv1.Severity) []*contentv1.Diagnostic {
 	out := make([]*contentv1.Diagnostic, 0, len(fs))
 	for _, f := range fs {
 		d := &contentv1.Diagnostic{File: f.File, Line: uint32(max(f.Line, 0)), Code: string(f.Code), Message: f.Detail, Severity: sev}
-		switch {
-		case f.Template != "":
-			d.Chain = []string{string(f.Template)}
-		case f.Zone != "":
-			d.Chain = []string{string(f.Zone)}
-			if f.Room != "" {
-				d.Chain = append(d.Chain, string(f.Room))
-			}
-		}
+		d.Chain = FindingChain(f)
 		out = append(out, d)
 	}
 	return out
+}
+
+// FindingChain is a loader finding's declaration chain: the Template, or the
+// Zone, Room and Exit direction as far as the finding names them.
+func FindingChain(f sim.ValidationError) []string {
+	switch {
+	case f.Template != "":
+		return []string{string(f.Template)}
+	case f.Zone == "":
+		return nil
+	}
+	chain := []string{string(f.Zone)}
+	if f.Room != "" {
+		chain = append(chain, string(f.Room))
+		if f.Exit != "" {
+			chain = append(chain, string(f.Exit))
+		}
+	}
+	return chain
 }
 
 // --- approve -----------------------------------------------------------------

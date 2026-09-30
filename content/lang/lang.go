@@ -75,4 +75,7 @@ type Output struct {
 	Templates []*contentv1.TemplateDefinition
 	Blobs     []Blob
 	Requires  CoreRef
+	// SourceMap places a loader finding on the compiled content back on the
+	// declaration it came from (AW-CLI-002).
+	SourceMap *SourceMap
 }
