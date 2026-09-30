@@ -4,7 +4,7 @@ title: A move describes the destination Room to the mover
 epic: EPIC-03
 component: server
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-003, AW-SRV-036]
 blocks: []
@@ -130,3 +130,29 @@ SRE's observability review is in `docs/feedback/AW-SRV-038-move-describes-room.m
    cover.
 5. **The mover's own `CharacterArrived` stays.** Dropping it would take an Event off the wire,
    which changes the protocol for no gain. A client can choose what to print.
+
+## Implementation record (2026-09-30)
+
+On `impl/aw-srv-038-move-describes`. An in-Zone `move`'s apply now emits `RoomDescribed` for the
+destination, to the mover alone (`ScopeEntities`), after its `CharacterArrived`. It uses the same
+`describeTo` a `look` and an `Arrive` use. The cross-Zone half came with AW-SRV-036's `Arrive`
+change, and it's asserted here for `move`. Notes, and what's for SRE, are in
+`docs/feedback/AW-SRV-038-move-describes-room.md`, "Implementation, 2026-09-30".
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `sim` `TestMove_InZone`: left, arrived, then `RoomDescribed` of Town Hall on the same Tick, to alice alone, equal (`proto.Equal`) to what her `look` then returns. `events` `TestScope_RoomMove`: the mover's stream is those three. Mutation-checked: without the emit, six tests fail | pass |
+| 2 | `sim` `TestMove_CrossZone`: the target Zone's `Arrive` apply emits the description of the Forest Trail, to alice alone | pass |
+| 3 | `events` `TestScope_RoomMove`: the bystander in the source Room sees one `CharacterLeft`, the one in the destination one `CharacterArrived`, and neither sees a `RoomDescribed`. `TestClientRefOnlyToOwnSession`: the description carries the mover's `client_ref` to the mover only | pass |
+| 4 | `sim` `TestMove_NoSuchExit`: the rejection is the only Event | pass |
+| 5 | `sim` `TestMove_ReplayIsIdentical`: two Engines on the same log, in-Zone and cross-Zone moves with their `Arrive`s, emit equal Events and agree on the State Hash at every tick | pass |
+| 6 | `make stack-play` with `scripts/stack_play.sh` unchanged | awaits a stack built from this branch (feedback, For SRE) |
+| 7 | `sim` `TestArrive_IntoAGoneRoomLandsAtTheFallback`: a cross-Zone `move` into a gone Room reads `EntityRelocated`, then the fallback's `RoomDescribed` | pass |
+
+Tests that counted a mover's Events are updated in this PR: `sim`'s `TestMove_InZone`,
+`TestValidateFailure_SkipsApply` and `TestStep_BuildsConsumedContexts`, and `events`'
+`TestScope_RoomMove`, `TestOrdering` and `TestClientRefOnlyToOwnSession`.
+
+Every `make check` target passes. `TestSnapshotCopyStaysInsideTheStallBudget` (#172) failed under
+full-suite load on three runs, and passed five times alone and with its package. The suite outside
+`simtest` passes, and so does every target after `test`, each run on its own.
