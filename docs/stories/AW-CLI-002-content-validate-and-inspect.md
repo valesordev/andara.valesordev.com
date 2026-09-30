@@ -71,8 +71,10 @@ publish a Zone that fails to load.
    `Admin.GetVersion` and the blobs over `Admin.GetBlob` (`AW-SRV-013`), validates, and exits `0`/`1` as above; server unreachable is exit
    `3`.
 7. **Given** `inspect template town.Merchant` **when** it runs **then** each Component field shows the
-   ancestor that set it, e.g. `Dialogue.greeting = "Fine wares!"  (town.Merchant)` and
-   `Aggro.threshold = 3  (andara.core.Npc)`.
+   ancestor that set it, e.g. `Behavior.name = "town.merchant"  (town.Merchant)`, and each marker
+   Component shows the ancestor that added it, e.g. `Memory  (andara.core.Npc)`. *(Example amended
+   2026-09-30: `Dialogue` and `Aggro` aren't Component types, and `andara.core` adds only marker
+   Components.)*
 8. **Given** `inspect room market/square` **when** it runs **then** Exits are listed in the closed
    Direction order with reverse-Exit presence marked.
 9. **Given** a build whose `content/core/VERSION` is `N` **when** `andara-cli version` runs **then**
@@ -101,7 +103,7 @@ andara-cli content inspect template <pack>.<name> [...]
 
 Core lookup for `requires andara.core@M`, in order:
 1. the embedded core, if `M` is the build's `VERSION`;
-2. the cache, `<cache>/andara.core/<M>/` (`AW-CLI-006`'s layout);
+2. the cache, `<cache>/andara.core@M/templates/` (`AW-CLI-006`'s layout, as built; amended 2026-09-30);
 3. otherwise `core_version_mismatch` (AC-5).
 
 `content fetch-core` keeps `--from` (`AW-CLI-006`). It never fetches over Admin: the embedded core
@@ -109,9 +111,12 @@ is the network-free source, and an older or newer core comes with the `andara-cl
 embeds it. Without `--from`, its `core_fetch_unavailable` message names the embedded core and the
 releases instead of `AW-SRV-013`.
 
-Diagnostics are `lang.Diagnostic` from `AW-CLI-006`; `sim.ValidationError` findings are mapped into the
-same shape with `file:line:col` recovered from the source map the compiler emits. JSON schema is
-`AW-CLI-001`'s error envelope with `diagnostics: []`.
+Diagnostics are `lang.Diagnostic` from `AW-CLI-006`. `sim.ValidationError` findings are mapped into
+the same shape, placed by the compiler's source map, which is keyed by declaration chain. With
+`--output json`, stdout is the `Diagnostic` array alone, even when it's empty, and the summary goes to
+stderr (AC-3). Usage, IO and connection failures (exit 2 and 3) use `AW-CLI-001`'s error envelope.
+*(Amended 2026-09-30: this said the envelope with `diagnostics: []` for everything, which AC-3
+contradicted.)*
 
 ## Data / state impact
 
@@ -246,3 +251,91 @@ non-blocking)*:
 
 `cli.command` reaching the server as `traceparent` on `--pack` isn't observed here. `dev` and compose
 have no store-backed server to call, so `AW-INF-021` observes it, with `AW-SRV-013`'s RPC span tree.
+
+## §8 review (architecture, 2026-09-30): stays `review`
+
+Against `main` at `49bfafb`. Merged in #178. `check` is green on the merge (36778418657), and
+`check`, `stack`, `cli-release` and `determinism` passed on the PR. Re-run in this review:
+- `admin/cli`, `internal/contentequiv`, `server/content`, `content/...` and `server/sim`;
+- the `-tags integration` Redpanda test for AC-6;
+- the operator commands, by hand, with a built `andara-cli`.
+
+| AC | Evidence (`admin/cli/validate_test.go` unless named) | Result |
+|----|----------|--------|
+| 1 | `TestContentValidate_DanglingExit`: exit 1, the exact first line, empty stdout. The chain prints indented beneath, per `errors.md` §4 | pass |
+| 2 | `TestContentValidate_ValidPrintsCounts` | pass |
+| 3 | `TestContentValidate_JSONIsTheArrayAlone`. Mutation-checked: the summary printed to stdout fails it | pass. The Interface contract is amended to match |
+| 4 | compiler `TestCompilerAgrees`; CLI `…AgreesWithTheEquivalenceFixture` (47 cases); gate `TestPublishGateAgreesWithTheEquivalenceFixture` (17). Mutation-checked: dropping the Exit from the gate's chain fails both CLI and gate | **gap, see below** |
+| 5 | `TestContentValidate_EmbeddedCoreThenCache`. Mutation-checked | pass |
+| 6 | `TestContentValidate_PublishedVersion` (in-memory, in `make check`), plus `validate_integration_test.go`'s Redpanda twin | pass. The twin is in `make test-integration` since #265 |
+| 7 | `TestContentInspect_TemplateProvenance` | pass. The AC's example is amended to fields that exist |
+| 8 | `TestContentInspect_RoomExitsInDirectionOrder` | pass |
+| 9 | `TestVersion_NamesTheEmbeddedCore` | pass |
+| 10 | `TestEmbeddedCoreIsTheOneVERSIONSRecords` | pass |
+
+**AC-4's gap: no error-level finding goes through the gate.** The gate runner takes only the cases
+that compile. Of its 17, three have findings, all warnings, and 14 agree only in having none. An
+`invalid/semantic` case fails at compile, before the gate sees it. So "identical diagnostics" has
+never been shown for any *error* the gate raises, and that's the half a Builder is refused on.
+`AW-SRV-013` AC-1 (gate equals Loader) and `AW-SRV-034`'s loader tests cover some of it
+transitively, but the three-way claim is this story's, and it should hold directly.
+**Owed:** blob-level twins of the `invalid/semantic` cases whose codes the loader also raises
+(`errors.md` §3.2), fed straight to the gate and held to the same `.errors` sidecars (code and
+chain; position by the source map, as the CLI places it). Mutation-checked like the rest.
+
+**Contract rulings** on implementation's questions (`docs/feedback/AW-CLI-002-content-validate-inspect.md`),
+recorded as the contract from here on:
+1. **JSON is the array alone** (AC-3, as built). The Interface contract and `errors.md` §1 are
+   amended. Exit 2 and 3 keep `AW-CLI-001`'s envelope.
+2. **Source positions: the design is accepted.** The source map is keyed by chain, whoever holds
+   the source places the gate's findings, and the gate keeps reporting blob positions. **The Exit
+   direction in the gate's chain is a change to `AW-SRV-013`'s `PublishFindings`.** It's additive:
+   an Exit finding's chain is `[zone, room, direction]`, as the compiler's is. It's recorded in
+   `AW-SRV-013`'s body. It's not a new story.
+3. **Fixture scope:** the skips (`pack-mismatch`, `valid/core`) are accepted. The error-level gap is
+   owed as above. The gate runner's in-memory harness stands in for the "throwaway Redpanda" of
+   `AW-SRV-013`'s test plan. The gate's findings don't depend on the broker, and the Redpanda path
+   is `TestPublishPath_AgainstABroker`'s.
+4. **Cache layout:** `<cache>/andara.core@M/templates/`, as built. The text is amended.
+5. **The embedded core applies to `compile` and `decompile` too:** accepted.
+6. **The gate accepting `src/../x`:** filed as #267 (implementation, `server`), with its contract.
+   It's before `AW-CLI-003`'s `fetch` if it can be.
+
+**Accepted as built:**
+- the four exit-1 CLI codes `validation_failed`, `blob_hash_mismatch`, `unsafe_source_path` and
+  `not_found`, now part of this contract;
+- the release hint on `core_version_mismatch` only where a core is embedded. The server's message
+  is its own, and sidecars don't pin wording.
+
+**Existing Builder packs still compile.** Blob bytes are unchanged. The compiler's changes are
+`unknown_room` and `unknown_zone` wording and the mismatch hint. `TestDevFixtureSourceMatchesTestContent`
+and the `VERSIONS` digest tests pass.
+
+**Not holding the story** (feedback file):
+- `admin/README.md`'s command table still describes `version` without its core line.
+- The failure summary's count includes warnings.
+
+**Ruling on SRE's item 2, CLI spans and their backend** (architecture, 2026-09-30, for every CLI
+command): **the CLI exports no spans.** `AW-CLI-001` says a CLI isn't a service, and it has no
+exporter. An OTLP exporter would add a flush on every short-lived invocation, and a configuration
+surface, to observe spans whose only consumer is a test. So:
+- a CLI span's verification is the in-process assertion (`TestContentValidate_EmitsTheSpans`), run in
+  CI. For the CLI, that's what §8's "verified against a real backend" means;
+- the backend observation of a CLI command is the **server's** spans in Tempo under the trace ID the
+  CLI logs and propagates as `traceparent`. That's how `AW-CLI-001` makes an operator action
+  traceable end to end. The root `cli.command` isn't in Tempo, and nothing requires it to be. Where a
+  record says "under the CLI's `cli.command`" (`AW-SRV-013`'s inherited line, carried by
+  `AW-INF-021`), it means under that trace ID, with `cli.command`'s span ID as the parent;
+- `content validate --path` calls no server, so its spans are in-process only. `--pack`'s trace
+  reaching the server is `AW-INF-021`'s observation, as SRE's record says.
+
+Revisit this if a CLI command gets long-running work whose timing only the CLI sees.
+
+**What closes it** *(revised after SRE's record, #265)*:
+1. AC-4's error-level twins (implementation).
+2. `--output json`'s stderr summary as one structured line (`ts`, `level`, `msg`, `command`,
+   `trace_id`), with a test that decodes it (implementation, SRE's item 1).
+3. SRE records the instrumentation item satisfied under the ruling above. The span item is the
+   in-process assertion, and it's met.
+
+The Redpanda test in `make test-integration` is done (#265).

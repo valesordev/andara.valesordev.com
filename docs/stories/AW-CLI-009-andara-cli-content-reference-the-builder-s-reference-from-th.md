@@ -7,7 +7,7 @@ type: feature
 status: draft
 size: S
 depends_on: [AW-CLI-002]
-blocks: [AW-INF-028, AW-INF-023]
+blocks: [AW-INF-028]
 lane: implementation
 risk: low
 ---

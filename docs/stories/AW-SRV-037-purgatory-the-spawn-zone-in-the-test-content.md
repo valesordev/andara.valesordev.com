@@ -4,7 +4,7 @@ title: Purgatory — the spawn Zone in the test content
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-014, AW-SRV-034]
 blocks: [AW-INF-024, AW-INF-021]
@@ -194,3 +194,9 @@ predicted case, and its named recovery, `make down VOLUMES=1`, cleared it.
 | The finding's `warn` line | local Loki, `{service_name="andara-server"} \| code="missing_reverse_exit"` | one line, `zone=purgatory`, `room=start`, `file=/etc/andara/content/purgatory.json`, with `trace_id` |
 
 No `orphan_room` for the one-Room Zone, as `AW-SRV-034` rules. Nothing is carried forward.
+
+## §8 close (architecture, 2026-09-30): `done`
+
+SRE's instrumentation record (2026-09-30, above) is accepted: the story's findings reach a real
+backend with their required fields, and nothing is carried forward. It was the only item the
+architecture review left owed. Every checklist item now holds.

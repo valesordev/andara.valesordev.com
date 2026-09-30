@@ -4,9 +4,9 @@ title: The Builder's Guide — from no access to a live Zone on dev
 epic: EPIC-06
 component: infra
 type: infra
-status: blocked
+status: ready
 size: M
-depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024, AW-CLI-009, AW-INF-028]
+depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
 lane: architecture
 risk: low
@@ -60,22 +60,29 @@ The guide, at `docs/builders/` (decided 2026-09-28, item 5 in
    means when two Builders share a pack.
 6. **The language, by example.** A guided tour that links into `semantics.md` for every rule it
    mentions and restates none of them.
-7. **Reference**, generated from the code and the spec by `make builder-reference`: the Direction
-   set with reverses, the Component types with their fields, the `andara.core` Templates with their
-   chains, and every diagnostic code with its severity, what triggers it, and the usual fix.
+7. **Reference**, generated from the code by `make builder-reference` (`AW-INF-028`): the
+   Direction set with reverses, the Component types with their fields, the `andara.core` Templates
+   with their chains, and every diagnostic code with its severity, linked to its `errors.md` §3 row
+   for what triggers it. The usual fix for the codes a Builder actually meets is in section 9, not
+   per row. *Until `AW-INF-028` lands,* section 7 is a short hand-written page,
+   `docs/builders/07-reference.md`. It links to the glossary's Direction entry, `semantics.md`,
+   `content/core/` and `errors.md` §3, and says the generated tables are coming. It's never
+   `reference.md`, which only the target writes. When `AW-INF-028` lands, architecture deletes
+   `07-reference.md` and points the README at `reference.md` in one PR, as `AW-INF-028`'s
+   Definition of done requires.
+   *(Amended 2026-09-30; see the contract amendment below.)*
 8. **Building on `dev`.** Covers:
    - the fixture pack `town` and the Zone IDs it reserves;
    - Purgatory, the spawn Zone, with its Exit to the town (`AW-SRV-037`, `AW-INF-024`);
    - `goto <zone>/<room>` to reach a Zone nothing links to yet (`AW-SRV-036`).
 9. **When something fails.** `andara-cli`'s exit codes 1–4 for the content commands, each with its
-   usual cause, and how to ask for a server change (a GitHub issue on this public repository).
+   usual cause. The diagnostic codes a Builder meets on the tutorial's path, each with its usual fix
+   and a link to its `errors.md` row. And how to ask for a server change (a GitHub issue on this
+   public repository).
 
-Also in scope:
-- `make builder-reference` writes section 7's tables. `make check` fails if they're stale.
-- `make guide-check`, part of `make check`, asserts that:
-  - every `andara-cli …` command in the guide's code blocks exists (`<command path> --help` exits 0);
-  - every diagnostic code in `errors.md` appears in section 7;
-  - every link resolves inside this repository.
+`make builder-reference` and `make guide-check` are `AW-INF-028`'s, with the ACs that assert them
+(this story's former AC-1 and AC-2). When `AW-INF-028` lands, `guide-check` runs over this guide as
+written.
 
 ### Out of scope
 - The Content Language specification itself. It stays normative in `docs/specs/content-language/`.
@@ -86,13 +93,8 @@ Also in scope:
 
 ## Acceptance criteria
 
-1. **Given** the guide **when** `make guide-check` runs **then** every `andara-cli` command it shows
-   exits 0 for `--help`, every `errors.md` code appears in the reference, every relative link
-   resolves, and it exits 0. Removing any one of those makes it exit 1, naming the command, code,
-   or link.
-2. **Given** a Component type added to the server's closed table **when** `make check` runs without
-   `make builder-reference` **then** it fails with `builder-reference: stale; run make
-   builder-reference`.
+1. *Moved to `AW-INF-028` (2026-09-30).* `guide-check` over the guide.
+2. *Moved to `AW-INF-028` (2026-09-30).* The reference going stale fails `make check`.
 3. **Given** a person with no clone of this repository, access to the Content Repository and the
    tailnet, and only the guide **when** they follow sections 2–4 against `dev` **then** they
    publish, get approval for, activate, walk, and roll back a Zone of their own. Until `dev` has a
@@ -108,6 +110,10 @@ Also in scope:
 6. **Given** a Builder working alone on `dev` **when** they read section 4 **then** it shows the
    Operator approving their own build (`docs/feedback/AW-SRV-013-operator-self-approval.md`),
    labeled as how `dev` works while one person builds, not as the process for a team.
+7. **Given** `docs/builders/` **when** this story closes **then** exactly one reference page
+   exists, and `README.md`'s section 7 links to it. That's `07-reference.md` if `reference.md`
+   doesn't exist yet, and `reference.md` if it does, with `07-reference.md` deleted. *(Added
+   2026-09-30. The switch after this story closes is `AW-INF-028`'s Definition of done.)*
 
 ## Interface contract
 
@@ -115,11 +121,9 @@ Also in scope:
   Section 7 is `docs/builders/reference.md`, a generated file. Only `make builder-reference`
   writes it, and the PR that changes its sources commits it, whatever that PR's role (CLAUDE.md
   §2, 2026-09-29). Architecture writes every other file in `docs/builders/`.
-- `make builder-reference`: `## builder-reference: regenerate the Builder's Guide reference tables
-  from the server's Direction and Component tables, andara.core, and errors.md`.
-- `make guide-check`: `## guide-check: every andara-cli command in the Builder's Guide exists,
-  every diagnostic code is documented, every link resolves`. Added to `make check`.
-- Exit codes: 0 ok; 1 a check failed, naming it.
+- `make builder-reference` and `make guide-check`: their help lines and exit codes are
+  `AW-INF-028`'s contract (moved 2026-09-30).
+- Until `AW-INF-028` lands: `docs/builders/07-reference.md`, hand-written, as in section 7.
 - The Content Repository's `README.md` (`AW-INF-022`) links to `docs/builders/README.md` on `main`.
 
 ## Data / state impact
@@ -157,7 +161,7 @@ CLAUDE.md §8, plus AC-3's transcript in the verification record.
    charter's writable paths upstream (item 5 in `docs/feedback/AW-INF-021-dev-content-store.md`).
 4. **For PM: the story's tooling isn't architecture's to build.** See Blocked by.
 
-## Blocked by
+## Blocked by (cleared 2026-09-30; see the contract amendment)
 
 Three things, none of them another story's code:
 
@@ -196,3 +200,37 @@ guide's content contract.
    meets on `dev` that the guide didn't mention.
 4. **The tooling moves out** to the stories PM writes (Blocked by, 2 and 3). The guide's ACs 1 and
    2 stand. They name targets that other lanes build.
+
+## Contract amendment (architecture, 2026-09-30): the tooling moves to `AW-INF-028`
+
+Answers `docs/feedback/AW-INF-023-builders-guide.md` items 1–6. Implementation hasn't started, so
+this is recorded here and in the feedback file.
+
+1. **PM's proposal is accepted.** AC-1 and AC-2 go to `AW-INF-028`, which already restates them, and
+   so do the scope bullets and the Interface contract lines for the two targets. `AW-CLI-009` and
+   `AW-INF-028` leave `depends_on`. Section 7 has an interim hand-written page until
+   `AW-INF-028` lands, and it's never `reference.md`. The guide can ship this sprint. The checks
+   follow in SPRINT-04, and `guide-check` then runs over the guide as written.
+2. **`--help` can't prove a command exists.** It's `AW-INF-028` AC-5's wording, which resolves the
+   path from the binary's command tree, since AC-1 now lives there.
+3. **Section 7 links to the trigger rather than restating it.** Each code's row links to its
+   `errors.md` §3 row, which has the trigger. Nothing in the code has a "usual fix" to generate from,
+   and a fix for every one of 30-odd codes would restate the spec. So the usual fix moves to section
+   9, for the codes a Builder meets on the tutorial's path, each linked to its row. Section 7's
+   scope is amended to match.
+4. **`builder-reference`'s help line changes** to what it reads: `andara-cli content reference`.
+   It's amended in `AW-INF-028`, whose `[ASSUMPTION]` 2 is resolved.
+5. **`zone_removed` and `spawn_room_removed` are in `errors.md` §3.5** now, with why the compiler
+   can't raise them and the usual fix. And `guide-check` checks both directions: every `errors.md`
+   code is in the reference, *and* every reference code is in `errors.md`. The second direction is
+   what would have caught these two. It's in `AW-INF-028`'s AC-6 and test plan, and its Out of
+   scope no longer says otherwise.
+7. **The interim page's end has an owner.** AC-7 here fixes which reference page exists. Replacing
+   `07-reference.md` with `reference.md` after this story closes is an architecture PR, required by
+   `AW-INF-028`'s Definition of done.
+6. **`--output human|json`** is right, and it's the CLI's existing spelling.
+
+**`Blocked by` is cleared.** Item 1: this session's architecture charter lists `docs/builders/` as
+writable (2026-09-30). Items 2 and 3: PM's split into `AW-CLI-009` and `AW-INF-028`. The story is
+`ready`. It stays last in architecture's list, held by its `depends_on`, so that it describes what
+was built.

@@ -144,3 +144,33 @@ Per `AW-CLI-001`, there are no metrics. `cli.command` is the root span, with two
    - **For architecture:** whether CLI spans are exported (OTLP when the environment configures it)
      or verified in-process only. No exporter exists, so as the requirement reads today, §8 can't
      verify it against a backend.
+
+## Architecture's §8 review (2026-09-30)
+
+Items 1–6 are ruled in the story's §8 review:
+1. The array alone, as built.
+2. The design is accepted. The Exit direction in the chain is recorded against `AW-SRV-013`.
+3. The skips are accepted, and in-memory stands.
+4. The layout is as built.
+5. Accepted.
+6. Filed as #267.
+
+### For implementation: owed before `done`
+- **AC-4's error-level half.** Add blob-level twins of the `invalid/semantic` cases whose codes the
+  loader also raises (`errors.md` §3.2). Feed them straight to the gate, and hold them to the same
+  sidecars on code and chain. Today no error-level finding passes through the gate runner.
+
+### For implementation, not holding the story
+- `admin/README.md`'s command table: `version` now prints the embedded core.
+- The failure summary "N finding(s) refuse the pack" counts warnings. Count errors only.
+
+### For implementation, also owed before `done` (from SRE's record)
+- `--output json`'s stderr summary as one structured line (`ts`, `level`, `msg`, `command`,
+  `trace_id`), per `AW-CLI-001`, with a test that decodes it.
+
+### For SRE: your item 2 ruled (architecture, 2026-09-30)
+**CLI spans stay in-process. The CLI gets no OTLP exporter.** The in-process assertion in CI is
+their verification. The backend observation of a CLI command is the server's spans in Tempo under
+the trace ID the CLI propagates. The full ruling is in the story's §8 review. Your item 1 is done
+(#265). Once implementation's structured-stderr fix lands, record the instrumentation item as
+satisfied.
