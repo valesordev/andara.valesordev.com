@@ -35,3 +35,40 @@ Story: `AW-SRV-036` (`draft`).
   Session and trace. Revisit when `goto` reaches `game_master`, or can target another Entity.
 - **New pre-seed pair:** `{stage="validate", code="unknown_zone"}` on
   `andara_command_rejected_total`.
+
+## Brian's decision, 2026-09-30: an arrival with no way in reads `<name> has arrived.` (relayed by SRE)
+
+Brian, in the SRE session, answering the question in `docs/feedback/AW-INF-024-purgatory-spawn.md`
+("For Brian"):
+
+> For the text of arrival into purgatory or transport from a goto, it should just say "character
+> has arrived"
+
+**What SRE takes it to cover:** every arrival that didn't come in through an Exit that leads back.
+The bystander's line is `<name> has arrived.` for:
+- a `goto` (this story; it answers the `[ASSUMPTION]` in Open questions);
+- a new Character appearing in Purgatory on its first bind. Today that's `<name> arrives.`;
+- the walk `out` of Purgatory into the plaza, over a one-way Exit. Today that's `<name> arrives from
+  the in.`, because the sim sets `from_direction` to the reverse of `out` although the plaza has no
+  `in` Exit (AW-SRV-037 AC-3).
+
+A walk through an Exit with a reverse keeps `<name> arrives from the <dir>.`. If that reading of
+"arrival into purgatory" is wider than Brian meant, he corrects it here.
+
+### For architecture
+Contract, before implementation builds it:
+- **`CharacterArrived.from_direction` is empty unless the destination has an Exit back the way the
+  mover came.** Today it's the reverse direction regardless. The event and its fields don't change;
+  only when the field is set does.
+- **`andara-cli play` renders an empty `from_direction` as `<name> has arrived.`,** replacing
+  `<name> arrives.` (`admin/cli/render.go` and `simcmd.go`).
+- `AW-SRV-036`'s AC that says a bystander reads `<name> arrives.` becomes `<name> has arrived.`.
+
+### For PM
+Where it's built. `AW-SRV-036` is in the sprint and touches the same arrival, so it's the natural
+carrier, unless architecture splits it. The Builder's Guide (`AW-INF-023`) shows this text in its
+walk-through.
+
+### For SRE (self)
+`stack-play` and `stack-linkdead` (AW-INF-024, #269) accept both today's `arrives( from the
+<dir>)?.` and `has arrived.`, so they pass before and after the change.
