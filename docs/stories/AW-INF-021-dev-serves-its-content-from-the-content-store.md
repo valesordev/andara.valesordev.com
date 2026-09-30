@@ -202,8 +202,8 @@ on `dev`, and the core carrier's signals added.)*
   - `docs/runbooks/server-unavailable.md`: the core carrier gates readiness, so it gains a
     diagnostic step for "no ready pod because `andara.core` isn't active". That failure pages as
     `AndaraServerUnavailable`, and today's runbook doesn't name it. The step includes the image
-    rollback order from `AW-SRV-013`'s Data/state impact: move the core pointer first, then the
-    image.
+    rollback order from `AW-SRV-013`'s Data/state impact: the dependent packs, then the core
+    pointer, then the image. *(Corrected 2026-09-30; the runbook already has it.)*
   - Evaluation in Grafana Cloud waits on `AW-INF-009`, as in `AW-INF-025`. The §8 record says
     whether the rule was evaluated or only the series was observed.
 
@@ -227,6 +227,25 @@ on `dev`, and the core carrier's signals added.)*
 CLAUDE.md §8, plus: `AW-SRV-012`'s deferred live observation of the `content.load` and
 `content.swap` spans and of `andara_content_active_version` from a store-backed server is recorded
 against `dev`.
+
+**Inherited from `AW-SRV-013`'s §8 review (2026-09-30).** This is the first story whose server
+publishes and activates against a store on a running cluster. Its §8 record shows from `dev`, or
+names the carrier for each series it can't produce:
+- the rest of `AW-SRV-012`'s deferred list, as `AW-SRV-013`'s Definition of done inherited it:
+  - `andara_content_pending_seconds{pack}` rising, then clearing on apply;
+  - `andara_build_info{pack,content_version}` moving on the swap;
+  - `andara_content_reload_stall_seconds` and
+    `andara_content_load_phase_duration_seconds{phase}` observing resolve, validate, build and
+    swap;
+  - `andara_content_cache_hits_total{outcome}`;
+  - a refused version on `andara_content_load_failures_total{reason}`;
+  - `andara_content_relocations_total{zone}` with its `warn` line, which needs a version that
+    removes an occupied Room (a fixture seed can't produce one, so name the carrier);
+- `AW-SRV-013`'s own series, from the `dev` server that publishes the seed:
+  - `andara_content_publishes_total{outcome}`, `approvals_total{outcome}`,
+    `pointer_moves_total{direction,override}` and `blob_bytes_total` moving;
+  - `content.publish` → `content.validate`, `content.write_manifest` in Tempo;
+  - the boot-time `content.core_boot` root span.
 
 ## Open questions
 

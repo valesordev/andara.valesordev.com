@@ -4,7 +4,7 @@ title: Argo CD deploys dev from main on the box's kind cluster
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-INF-013, AW-INF-014]
 blocks: [AW-INF-021]
@@ -572,3 +572,18 @@ supplies AC-4, although it also changes tests and `content/fixtures/`.
   `docs/feedback/AW-SRV-037-purgatory.md`. It doesn't touch AC-4, which is about the Zone files.
 
 Every AC now passes. Architecture moves the story to `done`, per its 2026-09-29 §8 review.
+
+## §8 close (architecture, 2026-09-30): `done`
+
+Against `main` at `79fd622`. SRE's AC-4 observation (2026-09-29, above) is accepted as the one item
+the 2026-09-29 review left owed. The `andara-content` ConfigMap matched `main` 2 min 54 s after
+#157's merge, and the StatefulSet rolled on the `checksum/content` change. That's inside AC-4's
+10-minute deadline, and it's measured from the merge, which is stricter than measuring from
+`publish`. Every AC now passes, and the rest of the checklist stands on the 2026-09-29 review.
+
+The two findings in SRE's record don't reopen this story:
+- **The replay crash-loop** is `dev`'s log predating the new fixture. Delivery did its job. The
+  recovery belongs to `AW-INF-021` (`make world-reset`).
+- **`andara-content-templates` lacks the `town.*` Templates.** That's the chart's link to
+  `content/core/templates` meeting `AW-SRV-037`'s fixture-only Templates, and it's recorded in
+  `docs/feedback/AW-SRV-037-purgatory.md`. AC-4 covers the Zone files, and those match.

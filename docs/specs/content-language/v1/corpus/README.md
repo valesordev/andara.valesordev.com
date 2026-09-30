@@ -69,10 +69,12 @@ already names — `core/entity.aw:1`, `town/npcs.aw:12`, `town/npcs.aw:30`, `tow
 line numbers were chosen by `AW-SRV-022` before this language had a grammar; the corpus fits the
 grammar to them rather than the other way round.
 
-`valid/town/` also carries the three Zones of `testdata/content/valid/`. Its expected `*.json` are
-**not** byte-identical to those files: the loader fixtures are hand-written loader *inputs* written
-with one-line exits, and this corpus holds compiler *outputs* in canonical form (semantics.md §7).
-Same content, different provenance.
+`valid/town/` also carries three of the four Zones of `testdata/content/valid/` (not `purgatory`).
+Since `AW-SRV-037` its expected `*.json` are byte-identical to those files: the fixture now holds
+compiler output in canonical form (semantics.md §7), not hand-written loader inputs. The fixture's
+own source is `content/fixtures/town/`, which also has Purgatory, and
+`TestDevFixtureSourceMatchesTestContent` keeps the two byte-equal. This case doesn't track the
+fixture. It's the grammar's worked example, and it changes only when the language does.
 
 `valid/town/town.aw` is the file AC-10 puts in front of Brian.
 
