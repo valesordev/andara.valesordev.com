@@ -5,7 +5,9 @@
 import os
 import subprocess
 import sys
+import types
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
@@ -39,6 +41,54 @@ class Refusals(unittest.TestCase):
 
     def test_no_env_is_usage(self):
         self.assertRefused(make("CONFIRM=andara-dev"), "usage: make world-reset")
+
+
+class FailsClosed(unittest.TestCase):
+    """Preconditions stop the reset before anything on the cluster changes (Codex on #165)."""
+
+    def fake(self, argo_err=None, store=""):
+        calls = []
+
+        def kubectl(ns, *args, check=True):
+            calls.append(args)
+            if args[:2] == ("get", "application"):
+                if argo_err:
+                    p = types.SimpleNamespace(returncode=1, stdout="", stderr=argo_err)
+                else:
+                    p = types.SimpleNamespace(returncode=0, stderr="",
+                                              stdout='{"spec": {"syncPolicy": {"automated": {}}}}')
+            elif args[:2] == ("get", "configmap"):
+                p = types.SimpleNamespace(returncode=0, stdout=store, stderr="")
+            else:
+                p = types.SimpleNamespace(returncode=0, stdout="", stderr="")
+            if check and p.returncode != 0:
+                raise world_reset.StepFailed(p.stderr)
+            return p
+        return calls, kubectl
+
+    def run_reset(self, **kw):
+        calls, kubectl = self.fake(**kw)
+        with mock.patch.object(world_reset, "kubectl", kubectl), \
+                mock.patch.object(world_reset.topics, "rpk_runner", lambda env: None):
+            with self.assertRaises(world_reset.StepFailed) as e:
+                world_reset.reset("dev", "andara-dev")
+        changed = [c for c in calls if c[0] in ("patch", "scale", "delete")]
+        return str(e.exception), changed
+
+    def test_an_unreadable_application_stops_before_any_change(self):
+        msg, changed = self.run_reset(argo_err='Error from server (Forbidden): applications is forbidden')
+        self.assertIn("only NotFound counts as none", msg)
+        self.assertEqual(changed, [])
+
+    def test_an_s3_snapshot_store_stops_before_any_change(self):
+        msg, changed = self.run_reset(store="s3")
+        self.assertIn("snapshot.store=s3", msg)
+        self.assertEqual(changed, [])
+
+    def test_a_missing_application_is_not_an_error(self):
+        _, kubectl = self.fake(argo_err='Error from server (NotFound): applications "andara-dev" not found')
+        with mock.patch.object(world_reset, "kubectl", kubectl):
+            self.assertEqual(world_reset.argo_policy("andara-dev"), (False, None))
 
 
 class Scope(unittest.TestCase):

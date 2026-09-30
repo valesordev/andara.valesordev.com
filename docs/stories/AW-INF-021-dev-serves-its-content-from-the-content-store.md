@@ -295,3 +295,15 @@ pack lines) is untouched. **Status stays `ready`**, and this part ships ahead on
 - **AC-11: partly observed.** The line, the exit code and the audit mark held. The server logged
   `bootstrap operator created`, but a login wasn't tried. "Same packs at the same versions" can't be observed until `dev` reads the store, since it
   had no packs. It's owed with the rest of the story.
+
+**Review of #165 (Codex, 2026-09-29):**
+- **Fixed, P1: Argo CD fails closed.** Only a confirmed `NotFound` counts as no Application. Any
+  other error, such as RBAC or a timeout, stops the reset before anything changes. Test:
+  `FailsClosed.test_an_unreadable_application_stops_before_any_change`.
+- **Fixed: the projector is waited on.** After scaling to 0, the reset waits until its pods are
+  gone and `andara-projector-state-<env>` is `Empty` before touching Kafka. `dev` runs no
+  projector yet, so this path first runs after AW-INF-025.
+- **Fixed by refusing: an `s3` snapshot store.** The reset reads `ANDARA_SNAPSHOT_STORE` from
+  `andara-config` before any change. On `s3` it exits 1 with nothing changed, because emptying the
+  bucket is AW-INF-025's to add. Test: `FailsClosed.test_an_s3_snapshot_store_stops_before_any_change`.
+  On `dev` today, read-only: the Application is readable and the store is `fs`.
