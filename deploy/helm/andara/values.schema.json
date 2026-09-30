@@ -88,6 +88,19 @@
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_CONTENT_RELOAD_DEBOUNCE (AW-SRV-012). Default when unset: '2s'."
+            },
+            "max_pack_bytes": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_CONTENT_MAX_PACK_BYTES (AW-SRV-013). Default when unset: 268435456."
+            },
+            "core_pack": {
+              "type": "string",
+              "description": "ANDARA_CONTENT_CORE_PACK (AW-SRV-013). Default when unset: 'andara.core'."
+            },
+            "operator_self_approval": {
+              "type": "boolean",
+              "description": "ANDARA_CONTENT_OPERATOR_SELF_APPROVAL (AW-SRV-013). Default when unset: True."
             }
           }
         },

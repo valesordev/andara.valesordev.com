@@ -298,6 +298,18 @@ ANDARA_CONTENT_MAX_BLOB_BYTES: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CONTENT_RELOAD_DEBOUNCE: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "content" "max_pack_bytes" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_MAX_PACK_BYTES: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "content" "core_pack" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_CORE_PACK: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "content" "operator_self_approval" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CONTENT_OPERATOR_SELF_APPROVAL: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "projector" "state" "batch_ticks" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_PROJECTOR_BATCH_TICKS: {{ $v | toString | quote }}
