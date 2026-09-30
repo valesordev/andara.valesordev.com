@@ -36,7 +36,7 @@ The fastest safe action depends on what `describe` says:
 | `Pending`, volume events | the PVC is bound to a node that is gone; see "Diagnose" |
 | `CrashLoopBackOff` | this is `AndaraServerCrashLooping` — follow `server-crashlooping.md` |
 | startup probe failing, `/readyz` returns `{"phase":"replay"}` | recovery is running; do nothing until `startupProbe` budget (600 s) elapses — the pod is working |
-| exit `1` after an image rollback, the log naming `andara.core` | the older build can't load the newer core that's active (AW-SRV-013 AC-17). Roll the image forward again, move the pointer back with `andara-cli content rollback andara.core`, then roll the image back. **An image rollback across a core bump is always pointer first, then image**, while the newer build still serves |
+| exit `1` after an image rollback, the log naming `andara.core` | the older build can't load the newer core that's active (AW-SRV-013 AC-17). Roll the image forward again. While the newer build serves, move the pointers back in this order: (1) every active pack that pins the newer core, with `andara-cli content rollback <pack>`. `andara-cli content rollback andara.core` refuses with `core_version` and names each of them (`pack@version`) until they're back (AC-14). (2) Then `andara-cli content rollback andara.core`. (3) Then roll the image back. **An image rollback across a core bump is always dependent packs, then core, then image** |
 | startup probe failing with exit `2` in logs | `RecoveryStateMismatch`; follow `recovery-state-mismatch.md`. **Do not** delete the snapshot volume to "reset" — that is the one action that turns a 60 s recovery into a full-history replay |
 
 ## How to diagnose
