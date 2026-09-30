@@ -321,3 +321,13 @@ Its runbook is `docs/runbooks/state-projector-down.md`, listed in the runbook RE
 `projection-freshness.md`'s known gap now points to it. Delivery to Grafana Cloud is AW-INF-009's.
 **Also owed at §8:** that Grafana Cloud's kube-state-metrics keeps `kube_deployment_spec_replicas`
 for `andara-projector-state`.
+
+**Review of #171 (Codex, 2026-09-29):**
+- **Fixed, P1: the projector mounts the server's content.** `dev` runs `content.source=dir` at
+  `/content`, and `andara-projector` loads content before it starts. The Deployment mounted
+  neither ConfigMap, so it would have exited at boot instead of becoming Ready, and so would the
+  rebuild Job copied from it. It now mounts `andara-content` at `/content` and
+  `andara-content-templates` at `/content/templates`, as the StatefulSet does. It also carries the
+  server's `checksum/content`, so a fixture change rolls both and the replica never runs other
+  content than the server. `helm_test.test_snapshot_s3_and_projector_creds` asserts both.
+  Mutation-checked: without the template change it fails twice.

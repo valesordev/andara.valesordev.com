@@ -29,6 +29,11 @@ spec:
         app.kubernetes.io/component: projector-{{ $name }}
       annotations:
         checksum/config: {{ include "andara.serverEnv" $ | sha256sum }}
+        {{- if $.Values.contentVolume.render }}
+        # The replica must load the content the server loads, or it diverges: a fixture change
+        # rolls both (AW-INF-025).
+        checksum/content: {{ include (print $.Template.BasePath "/content-configmaps.yaml") $ | sha256sum }}
+        {{- end }}
         {{- with include "andara.scrapeAnnotations" (dict "root" $ "job" (printf "andara-projector-%s" $name)) }}
         {{- . | nindent 8 }}
         {{- end }}
@@ -72,6 +77,17 @@ spec:
           volumeMounts:
             - name: cache
               mountPath: /var/cache/andara
+            {{- /* The server's content, at the server's paths, for content.source=dir (AW-INF-025). */}}
+            {{- if $.Values.contentVolume.configMapName }}
+            - name: content
+              mountPath: /content
+              readOnly: true
+            {{- end }}
+            {{- if $.Values.contentVolume.templatesConfigMapName }}
+            - name: content-templates
+              mountPath: /content/templates
+              readOnly: true
+            {{- end }}
             {{- with ($spec.kafkaCreds | default dict).secretName }}
             - name: kafka-creds
               mountPath: /etc/andara/secrets/kafka
@@ -80,6 +96,16 @@ spec:
       volumes:
         - name: cache
           emptyDir: {}
+        {{- if $.Values.contentVolume.configMapName }}
+        - name: content
+          configMap:
+            name: {{ $.Values.contentVolume.configMapName }}
+        {{- end }}
+        {{- if $.Values.contentVolume.templatesConfigMapName }}
+        - name: content-templates
+          configMap:
+            name: {{ $.Values.contentVolume.templatesConfigMapName }}
+        {{- end }}
         {{- with ($spec.kafkaCreds | default dict).secretName }}
         # The projector's own principal (ADR-0011 decision 6), never secrets.kafkaCreds.
         - name: kafka-creds

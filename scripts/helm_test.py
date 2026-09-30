@@ -654,6 +654,18 @@ def test_snapshot_s3_and_projector_creds():
     if [m for m in container(proj).get("volumeMounts", []) if m["name"] == "kafka-creds"]:
         fail("dev: projector mounts kafka-creds with projectors.state.kafkaCreds.secretName empty")
 
+    # The replica loads the server's content (Codex on #171): the same ConfigMaps at the same
+    # paths, and the same checksum/content, so a fixture change rolls both.
+    def content_mounts(d):
+        vols = {v["name"]: (v.get("configMap") or {}).get("name") for v in d["spec"]["template"]["spec"]["volumes"]}
+        return sorted((m["mountPath"], vols.get(m["name"])) for m in container(d).get("volumeMounts", [])
+                      if m["name"] in ("content", "content-templates"))
+    if not content_mounts(sts) or content_mounts(proj) != content_mounts(sts):
+        fail("dev: projector content mounts %r differ from the server's %r" % (content_mounts(proj), content_mounts(sts)))
+    ann = lambda d: d["spec"]["template"]["metadata"].get("annotations", {}).get("checksum/content")
+    if not ann(sts) or ann(proj) != ann(sts):
+        fail("dev: projector checksum/content %r differs from the server's %r" % (ann(proj), ann(sts)))
+
     # Its own Secret when set; nothing, never the server's, when only the server's is set.
     code, out, err = render("dev", "--set", "projectors.state.kafkaCreds.secretName=andara-projector-kafka",
                             "--set", "secrets.kafkaCreds.secretName=andara-server-kafka")
