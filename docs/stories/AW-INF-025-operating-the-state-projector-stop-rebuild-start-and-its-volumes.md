@@ -4,7 +4,7 @@ title: Operating the state projector — stop, rebuild, start, and its volumes
 epic: EPIC-10
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-019, AW-INF-018]
 blocks: []
