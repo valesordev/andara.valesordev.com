@@ -4,7 +4,7 @@ title: Content publish path — server-side validation, versioning, approval, an
 epic: EPIC-05
 component: server
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
 blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021, AW-CLI-002]
@@ -393,3 +393,57 @@ conditional additions are now unconditional.
    what Brian decided against. The *`andara.core` at boot* section stays
    self-contained, so implementation may still land it as a second PR on this story. Nothing in the
    contract changes.)*
+
+## Implementation record (2026-09-29)
+
+On `impl/aw-srv-013-publish-path`, as one story (Brian, 2026-09-29). Unit tests run over in-memory
+topics, with a real Loader and Engine behind the publish path. The broker test runs against the
+local Redpanda over throwaway topics. Questions for SRE and architecture, and the working assumptions
+the code carries until they're answered, are in `docs/feedback/AW-SRV-013-publish-path.md`.
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `TestPublishVersion_ADanglingExitIsRefusedWithTheLoadersFindings`: the refusing findings equal `sim.BuildWorld`'s on the same Zones; no manifest; the blobs stay | pass |
+| 2 | `TestPublishVersion_AValidVersionIsWrittenUnapprovedAndInactive`; `TestPublishPath_AgainstABroker` | pass |
+| 3 | `TestActivateVersion_UnapprovedIsRefusedForAnyoneWithoutOverride`: the publisher, another Builder, and an Operator without `override` | pass |
+| 4 | `TestApproveVersion_ABuilderCannotApproveTheirOwnAndAnotherCan`; `TestApproveVersion_ActingAsDoesNotHideTheSamePerson` | pass |
+| 5 | `TestActivateVersion_AnApprovedVersionMovesThePointer` | pass |
+| 6 | `TestActivateVersion_RollbackNeedsNoFreshApprovalAndLeavesNewerIntact` (`N-3`); `TestPublishPath_AgainstABroker` | pass |
+| 7 | `TestPublishVersion_ABuilderWithoutThePackIsDenied`; `TestAuthorizationMatrix` | pass |
+| 8 | `TestActivateVersion_AnOperatorOverridesApprovalWithAReason` | pass |
+| 9 | `TestPublishBlob_APresentBlobIsReportedAndDeduplicated` | pass |
+| 10 | `TestPublishPath_AgainstABroker`: forced compaction of the versions topic until `town@1`'s superseded record is gone, then a restart lists every version with its approval. Mutation-checked: without forced compaction it times out with two records left | pass |
+| 11 | `TestCore_NoRPCPublishesItAndOnlyAnOperatorMovesIt` | pass |
+| 12 | `TestPublishBlob_ABlobOverTheLimitIsRefusedBeforeAnythingIsProduced` (header, and a lying header); `TestPublishPath_AgainstABroker` (a 5 MiB blob through the broker, and 8 MiB + 1 produced nowhere) | pass; 8 MiB on a real topic needs SRE's `max.message.bytes` |
+| 13 | `TestApproveVersion_AnOperatorApprovesTheirOwnPublish`: published directly, published acting as a Builder, and switched off | pass |
+| 14 | `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse`: `zone_removed`, `spawn_room_removed`, `core_version`, with `override` too | pass |
+| 15 | `TestBootCore_AnEmptyStoreGetsTheBuildsCore`; `TestPublishPath_AgainstABroker` | pass; readiness (rule 5) is `ReconcileContent`'s check, not yet exercised by a test |
+| 16 | `TestBootCore_AnotherDigestForTheSameVersionExitsAndWritesNothing` | pass |
+| 17 | `TestBootCore_WhoseCorePointerMoves`: the server's pointer, an Account's, an older build, and a parent across a gap | pass |
+| 18 | `TestGetBlob_StreamsAManifestsBlobInBoundedChunks`; `TestPublishPath_AgainstABroker` after a restart | pass |
+| 19 | `content/core`'s `TestEmbeddedCoreIsTheOneVERSIONSRecords`. Mutation-checked: an added template fails it, naming both digests | pass |
+
+The wire is `server/gateway`'s `TestContentAdmin_*`: `ErrorInfo` in the `andara.content` domain,
+`PublishFindings`, `ActivationRefusal`, both streams at 1 MiB chunks, and a 10,000-hash `HasBlobs`.
+Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the stream test fails.
+
+**Not done here, and why:**
+- **`values-schema-check`:** SRE added the `keys.yaml` row in #174. The chart's generated
+  `values.schema.json` and `_env.tpl` change once this code reads the key, so they're regenerated on
+  this branch with `make values-schema` (SRE on #173).
+  `TestSnapshotCopyStaysInsideTheStallBudget` fails intermittently under full-suite load, on `main`
+  too (#172).
+- **Blobs over about 1 MiB fail on the real topics** until `andara.content.blobs.v1` declares
+  `max.message.bytes` (feedback, For SRE 1). The producer side is set.
+- **The observations inherited from `AW-SRV-012`'s §8 pass** need a `content.source=kafka` server
+  with a Builder pack, which `dev` gets with `AW-INF-021`. That story carries them.
+- **The three-way equivalence fixture:** this story has the server's half (AC-1 above). The CLI's
+  half is `AW-CLI-002`'s (feedback, For architecture 4).
+- **The Data section's image-rollback order is incomplete** (Codex and SRE on #174). A core rollback
+  is refused `core_version` while any active pack pins the newer core. That's AC-14, and the code
+  does refuse it, naming each pack in the `ActivationRefusal`. So the order is every pack the refusal
+  names, then `andara.core`, then the image. `docs/runbooks/server-unavailable.md` says so now. The
+  Data section is architecture's to amend (feedback, For architecture 5).
+- **The boot's core audit records** go to `andara.audit.v1` before the account store opens, through
+  an Auditor with no registry, so they aren't counted on `andara_privileged_actions_total`. The log
+  line, the `content.core_boot` trace, and `pointer_moves_total` carry them.

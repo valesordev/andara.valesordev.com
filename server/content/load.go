@@ -122,6 +122,13 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 	return c, nil
 }
 
+// Loader is the kafka source's Loader, nil for dir: the publish path runs
+// its checks (AW-SRV-013).
+func (c *Content) Loader() *Loader { return c.loader }
+
+// Resolver is the kafka source's read side of the store, nil for dir.
+func (c *Content) Resolver() *KafkaResolver { return c.resolver }
+
 // Candidates is what the World would run on if the source were brought into
 // effect now, validated, for the boot's findings and --validate-only. For
 // Kafka a refused pack is logged and skipped, and only a source with no Zones

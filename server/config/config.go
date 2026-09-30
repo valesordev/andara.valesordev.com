@@ -28,14 +28,21 @@ type Config struct {
 	ContentCacheDir       string
 	ContentMaxBlobBytes   int64
 	ContentReloadDebounce time.Duration
-	StrictOrphans         bool
-	ValidateOnly          bool
-	HTTPPort              string
-	ServiceName           string
-	Environment           string
-	LogFormat             string
-	LogLevel              string
-	OTLPEndpoint          string
+	// AW-SRV-013, the publish path. content.max_pack_bytes bounds one
+	// version's blobs; content.core_pack names the pack the server publishes
+	// at boot and no RPC may; content.operator_self_approval lets an
+	// Operator approve their own publish (ADR-0004, amended 2026-09-26).
+	ContentMaxPackBytes         int64
+	ContentCorePack             string
+	ContentOperatorSelfApproval bool
+	StrictOrphans               bool
+	ValidateOnly                bool
+	HTTPPort                    string
+	ServiceName                 string
+	Environment                 string
+	LogFormat                   string
+	LogLevel                    string
+	OTLPEndpoint                string
 
 	// Gateway (AW-SRV-005). TLS material is required to serve: there is no
 	// plaintext mode and no flag to create one (ADR-0003).
@@ -174,6 +181,8 @@ const (
 	DefaultContentCacheDir       = "/var/cache/andara/blobs"
 	DefaultContentMaxBlobBytes   = int64(8 << 20) // 8 MiB
 	DefaultContentReloadDebounce = 2 * time.Second
+	DefaultContentMaxPackBytes   = int64(256 << 20) // 256 MiB
+	DefaultContentCorePack       = "andara.core"
 	DefaultHTTPPort              = "8080"
 	DefaultServiceName           = "andara-server"
 	DefaultEnvironment           = "local"
@@ -270,12 +279,17 @@ func defaults() Config {
 		ContentCacheDir:       DefaultContentCacheDir,
 		ContentMaxBlobBytes:   DefaultContentMaxBlobBytes,
 		ContentReloadDebounce: DefaultContentReloadDebounce,
-		HTTPPort:              DefaultHTTPPort,
-		ServiceName:           DefaultServiceName,
-		Environment:           DefaultEnvironment,
-		LogFormat:             DefaultLogFormat,
-		LogLevel:              DefaultLogLevel,
-		OTLPEndpoint:          DefaultOTLPEndpoint,
+		ContentMaxPackBytes:   DefaultContentMaxPackBytes,
+		ContentCorePack:       DefaultContentCorePack,
+		// On while Brian is the only Builder; turning it off is a values
+		// change (ADR-0004, 2026-09-26).
+		ContentOperatorSelfApproval: true,
+		HTTPPort:                    DefaultHTTPPort,
+		ServiceName:                 DefaultServiceName,
+		Environment:                 DefaultEnvironment,
+		LogFormat:                   DefaultLogFormat,
+		LogLevel:                    DefaultLogLevel,
+		OTLPEndpoint:                DefaultOTLPEndpoint,
 
 		GRPCListen:            DefaultGRPCListen,
 		GRPCMaxRecvBytes:      DefaultGRPCMaxRecvBytes,
@@ -362,6 +376,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.ContentCacheDir, "content-cache-dir", c.ContentCacheDir, "hash-keyed blob cache directory (ANDARA_CONTENT_CACHE_DIR)")
 	fs.Int64Var(&c.ContentMaxBlobBytes, "content-max-blob-bytes", c.ContentMaxBlobBytes, "largest content blob accepted (ANDARA_CONTENT_MAX_BLOB_BYTES)")
 	fs.DurationVar(&c.ContentReloadDebounce, "content-reload-debounce", c.ContentReloadDebounce, "coalesce a burst of Active Pointer moves (ANDARA_CONTENT_RELOAD_DEBOUNCE)")
+	fs.Int64Var(&c.ContentMaxPackBytes, "content-max-pack-bytes", c.ContentMaxPackBytes, "largest content version accepted, all its blobs together (ANDARA_CONTENT_MAX_PACK_BYTES)")
+	fs.StringVar(&c.ContentCorePack, "content-core-pack", c.ContentCorePack, "the pack the server publishes at boot, and no RPC may (ANDARA_CONTENT_CORE_PACK)")
+	fs.BoolVar(&c.ContentOperatorSelfApproval, "content-operator-self-approval", c.ContentOperatorSelfApproval, "let an Operator approve a version they published (ANDARA_CONTENT_OPERATOR_SELF_APPROVAL)")
 	fs.BoolVar(&c.StrictOrphans, "strict-orphans", c.StrictOrphans, "treat orphan Rooms as errors")
 	fs.BoolVar(&c.ValidateOnly, "validate-only", c.ValidateOnly, "load and validate, then exit")
 	fs.StringVar(&c.HTTPPort, "http-port", c.HTTPPort, "plain-text health and metrics port")
@@ -460,6 +477,12 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		// keys.yaml declares min: 1. Zero would mean "refuse every blob",
 		// which reads as a disabled limit and behaves as a broken server.
 		return Config{}, fmt.Errorf("content.max_blob_bytes must be at least 1, got %d", c.ContentMaxBlobBytes)
+	}
+	if c.ContentMaxPackBytes < 1 {
+		return Config{}, fmt.Errorf("content.max_pack_bytes must be at least 1, got %d", c.ContentMaxPackBytes)
+	}
+	if c.ContentCorePack == "" {
+		return Config{}, fmt.Errorf("content.core_pack must name a pack")
 	}
 	if c.ContentReloadDebounce < 0 {
 		return Config{}, fmt.Errorf("content.reload_debounce must not be negative, got %s", c.ContentReloadDebounce)
@@ -842,13 +865,16 @@ func parseVersion(v string, dst *uint32) error {
 
 type fileConfig struct {
 	Content *struct {
-		Source         *string  `yaml:"source"`
-		Path           *string  `yaml:"path"`
-		StrictOrphans  *bool    `yaml:"strict_orphans"`
-		Packs          []string `yaml:"packs"`
-		CacheDir       *string  `yaml:"cache_dir"`
-		MaxBlobBytes   *int64   `yaml:"max_blob_bytes"`
-		ReloadDebounce *string  `yaml:"reload_debounce"`
+		Source               *string  `yaml:"source"`
+		Path                 *string  `yaml:"path"`
+		StrictOrphans        *bool    `yaml:"strict_orphans"`
+		Packs                []string `yaml:"packs"`
+		CacheDir             *string  `yaml:"cache_dir"`
+		MaxBlobBytes         *int64   `yaml:"max_blob_bytes"`
+		ReloadDebounce       *string  `yaml:"reload_debounce"`
+		MaxPackBytes         *int64   `yaml:"max_pack_bytes"`
+		CorePack             *string  `yaml:"core_pack"`
+		OperatorSelfApproval *bool    `yaml:"operator_self_approval"`
 	} `yaml:"content"`
 	HTTP *struct {
 		Port *string `yaml:"port"`
@@ -994,6 +1020,15 @@ func applyFile(c *Config, path string) error {
 		}
 		if fc.Content.MaxBlobBytes != nil {
 			c.ContentMaxBlobBytes = *fc.Content.MaxBlobBytes
+		}
+		if fc.Content.MaxPackBytes != nil {
+			c.ContentMaxPackBytes = *fc.Content.MaxPackBytes
+		}
+		if fc.Content.CorePack != nil {
+			c.ContentCorePack = *fc.Content.CorePack
+		}
+		if fc.Content.OperatorSelfApproval != nil {
+			c.ContentOperatorSelfApproval = *fc.Content.OperatorSelfApproval
 		}
 		if fc.Content.ReloadDebounce != nil {
 			if err := parseDuration("content.reload_debounce", *fc.Content.ReloadDebounce, &c.ContentReloadDebounce); err != nil {
@@ -1292,6 +1327,12 @@ func applyEnv(c *Config, env EnvLookup) error {
 	if v, ok := env("ANDARA_CONTENT_PACKS"); ok {
 		c.ContentPacks = splitList(v)
 	}
+	if v, ok := env("ANDARA_CONTENT_CORE_PACK"); ok {
+		c.ContentCorePack = v
+	}
+	if v, ok := env("ANDARA_CONTENT_OPERATOR_SELF_APPROVAL"); ok {
+		c.ContentOperatorSelfApproval = parseBool(v)
+	}
 	if v, ok := env("ANDARA_HTTP_PORT"); ok {
 		c.HTTPPort = v
 	}
@@ -1428,6 +1469,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		dst  *int64
 	}{
 		{"ANDARA_CONTENT_MAX_BLOB_BYTES", &c.ContentMaxBlobBytes},
+		{"ANDARA_CONTENT_MAX_PACK_BYTES", &c.ContentMaxPackBytes},
 	} {
 		if v, ok := env(lv.name); ok {
 			n, err := strconv.ParseInt(strings.TrimSpace(v), 10, 64)

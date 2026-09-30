@@ -40,6 +40,11 @@ type KafkaOptions struct {
 	ClientID string
 	// ProduceTimeout bounds a single Append. Zero means 10s.
 	ProduceTimeout time.Duration
+	// MaxRecordBytes raises the producer's batch limit (franz-go's default
+	// is about 1 MB) for a topic whose records are larger: the content
+	// store's blobs, up to content.max_blob_bytes (AW-SRV-013). The topic's
+	// max.message.bytes has to allow it too. Zero keeps the default.
+	MaxRecordBytes int32
 }
 
 // NewKafka connects to the brokers and verifies the topic exists. It does
@@ -66,6 +71,9 @@ func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
 		kgo.ProduceRequestTimeout(o.ProduceTimeout),
 		kgo.RecordDeliveryTimeout(o.ProduceTimeout),
 		kgo.DefaultProduceTopic(o.Topic),
+	}
+	if o.MaxRecordBytes > 0 {
+		base = append(base, kgo.ProducerBatchMaxBytes(o.MaxRecordBytes))
 	}
 	client, err := kgo.NewClient(base...)
 	if err != nil {
