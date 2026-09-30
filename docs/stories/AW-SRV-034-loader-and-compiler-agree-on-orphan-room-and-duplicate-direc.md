@@ -7,7 +7,7 @@ type: bug
 status: review
 size: S
 depends_on: [AW-SRV-001, AW-CLI-006]
-blocks: [AW-CLI-002]
+blocks: [AW-CLI-002, AW-SRV-037]
 lane: implementation
 risk: low
 ---
@@ -148,3 +148,39 @@ Implementation had started, so this is recorded here and in the feedback file.
 - **The loader's detail names both targets.** `errors.md` §3.2 states it, and `AW-SRV-013`'s
   publish gate shows the loader's detail to a Builder. Detail isn't part of the three-way
   equivalence (code, position and chain), but it's the contract's text.
+
+## §8 review (architecture, 2026-09-30): stays `review` on SRE's record only
+
+Against `main` at `79fd622`. Merged in #162 (`7f403f2`). `check` and `stack` on `7f403f2` were
+cancelled because #157 superseded them 25 s later, and they're green on `3593d46`, which contains
+this story. Re-run in this review: the `server/sim`, `server/content`, `server/boot` and
+`content/lang` tests, and `make content-conformance` (72 cases agree).
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1 | `TestBuildWorld_LoaderAgreesWithCompiler` "a Room you can leave but never enter" (`[missing_reverse_exit, orphan_room]`, orphans `[loft]`); corpus `valid/warn-missing-reverse-exit/expected.errors`; `TestOrphanIsInbound` "the chute" | pass |
+| 2 | the one-Room cases of the same test (no Exits; an Exit out of the Zone); `TestOrphanIsInbound` "a Zone of one Room" | pass |
+| 3 | "two Exits north": exactly `[duplicate_direction]`, no `orphan_room` for `yard`, nil World, detail names both targets; corpus `invalid/semantic/duplicate-direction` | pass |
+| 4 | `make content-conformance` in `CHECK_TARGETS` and a `ci.yaml` step | pass |
+| 5 | "chute under strict_orphans": `[orphan_room]` only, nil World. The config key → option path is `TestLoadContent_StrictOrphansRefusesToBoot` | pass |
+
+Mutation-checked in a scratch copy. Dropping the loader's one-Room exemption fails the one-Room
+cases and `TestLoadContent_ValidThreeZones`. Returning every finding instead of only the refusals
+fails "two Exits north" and "chute under strict".
+
+Checklist: tests run in CI (`make test`, `make content-conformance`). No config, no migration, no
+new domain term. No `[ASSUMPTION]`. `AW-CLI-002`'s Open questions name this story closed.
+`duplicate_direction` is in `AllErrCodes`, so its failure series is pre-seeded.
+
+**Not holding the story, for implementation** (`docs/feedback/AW-SRV-034-loader-compiler-agree.md`):
+- `server/README.md`'s refusal list lacks `duplicate_direction`. The `content.strict_orphans` row
+  doesn't state the one-Room exemption, and the refusal section doesn't state that a refused load
+  reports only its errors. That's DoD's "documented in the component README", owed on the next
+  `server/README.md` touch.
+- The "two Exits north" case doesn't assert the finding's line, which is the second Exit's. The
+  code uses it (`build.go:290`), and the corpus case pins it on the compiler side. It's a gap in
+  the loader test, not a defect.
+
+**What closes it:** SRE's §8 instrumentation record. The story specifies no new series, and the
+`orphan_room` warn and the validation-failure counter are `AW-SRV-001`'s. Once SRE records that
+here, architecture moves the story to `done` without another pass.

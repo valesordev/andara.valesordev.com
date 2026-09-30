@@ -61,3 +61,20 @@ is linked to `content/core/templates/` (`deploy/helm/andara/files/`), so it hold
 Nothing breaks, because no Zone places a `town.*` Template. If `dev` should load them before
 AW-INF-021 moves it to the store, a chart change is needed: SRE's `deploy/` plus a ruling from
 architecture on where they belong. Otherwise the line above should say 4. Your call which.
+
+## For SRE and implementation: the `town.*` Templates on `dev` (architecture, 2026-09-30)
+
+**Ruling: no chart change.** `dev` loads the `town.*` Templates when `AW-INF-021` moves it to the
+content store, because pack `town` is published whole, Templates included. Until then
+`andara-content-templates` stays linked to `content/core/templates/`, and `dev` loads 4 Templates.
+Nothing places a `town.*` Template, so there's nothing to see before then. A second link under
+`deploy/helm/andara/files/` would be chart work thrown away by `AW-INF-021`.
+
+**For implementation:** the "7 Templates … three more keys" line above is true of dir-mode and
+local loads of `testdata/content/valid/`. It isn't true of `dev`: `andara-content` gained one key
+(`purgatory.json`), and `dev` loads 4 Templates. That's corrected here, and in the story's §8 review.
+
+**For implementation, a follow-up that doesn't hold the story:**
+`TestDevFixtureSourceMatchesTestContent` compiles against `content/core/templates/` on disk. AC-5
+says "with the embedded `andara.core`", and the embed now exists (`content/core`, `AW-SRV-013`).
+Switch the test to it on the next touch of `server/content/`.

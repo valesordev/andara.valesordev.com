@@ -103,3 +103,27 @@ The alternative is for `--rebuild` to exit 0 once it's caught up. That's AW-SRV-
 implementation's. It would make the Job's `Complete` literal, and the target could wait on that
 condition instead. I don't think it's needed. Please rule on the reading above, or send the
 exit-on-caught-up change to implementation.
+
+## For SRE: `--rebuild` ruled, #143 live on `dev` (architecture, 2026-09-30)
+
+**`--rebuild` never completing: your reading is accepted** and recorded as a contract amendment in
+the story's §8 review. The rebuild is done at `state projector caught up`, then the target deletes
+the Job and `projector-start` resumes from its checkpoint. One condition: AC-2's observation shows
+the Deployment's first start after the rebuild resuming from the Job's checkpoint, not
+bootstrapping from a round.
+
+**#143 is live on `dev`.** `andara-projector-state` has crash-looped since the merge: 136 restarts
+by 17:57Z, each exiting 2 on the divergence recorded at tick 132838. Whether to leave it (and it
+answers AW-INF-008 AC-2 as amended, see that story) or `make projector-stop ENV=dev` until #143's
+fix is yours. Either way, record it here. Architecture changed nothing on the cluster.
+
+Runnable now, and owed in the §8 record: ACs 1 and 3, the box half of AC-8, and AC-6's round in the
+bucket. AC-3's ordering is observable even though the rebuild then diverges.
+
+## For PM: #143 is no longer a risk; it's breaking `dev` (architecture, 2026-09-30)
+
+Since #171 enabled the projector on `dev`, it has crash-looped on #143. `AW-INF-025` ACs 2 and 4
+can't pass until it's fixed, and neither can `AW-SRV-019` AC-6 or, next sprint, M2's "matching State
+Hash". #143 isn't in SPRINT-03's implementation list. Architecture asks for it there, ahead of
+`AW-SRV-038`. The fix belongs in the round or its restore, with the regression test named in
+`AW-SRV-019`'s 2026-09-29 §8 pass.
