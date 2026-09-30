@@ -471,7 +471,11 @@ func (rt *runtime) approve(pack string, version uint64, yes bool) error {
 			return err
 		}
 	}
-	resp, err := client.ApproveVersion(ctx, connect.NewRequest(&adminv1.ApproveVersionRequest{PackId: pack, Version: version}))
+	// A fresh --timeout for the write: the prompt may have taken longer
+	// than the reads' deadline.
+	actx, acancel := rt.callCtx()
+	defer acancel()
+	resp, err := client.ApproveVersion(actx, connect.NewRequest(&adminv1.ApproveVersionRequest{PackId: pack, Version: version}))
 	if err != nil {
 		return rt.contentError(err)
 	}
@@ -617,7 +621,11 @@ func (rt *runtime) activate(pack string, version uint64, isRollback, yes, overri
 		return err
 	}
 
-	resp, err := client.ActivateVersion(ctx, connect.NewRequest(&adminv1.ActivateVersionRequest{PackId: pack, Version: version, Override: override, Reason: reason}))
+	// A fresh --timeout for the write: someone reading the confirmation
+	// may take longer than the reads' deadline.
+	actx, acancel := rt.callCtx()
+	defer acancel()
+	resp, err := client.ActivateVersion(actx, connect.NewRequest(&adminv1.ActivateVersionRequest{PackId: pack, Version: version, Override: override, Reason: reason}))
 	if err != nil {
 		return rt.activationRefused(err, pack, version, cv)
 	}

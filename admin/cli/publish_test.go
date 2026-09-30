@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -549,5 +550,78 @@ func TestContentPublish_Spans(t *testing.T) {
 		if m["override"] != true || m["reason"] != "demo" || !strings.Contains(m["confirmation"].(string), "override: demo") {
 			t.Errorf("cli.command = %v", m)
 		}
+	}
+}
+
+// slowReader answers a prompt after a delay: someone reading the
+// confirmation before typing.
+type slowReader struct {
+	delay  time.Duration
+	answer string
+	done   bool
+}
+
+func (r *slowReader) Read(p []byte) (int, error) {
+	if r.done {
+		return 0, io.EOF
+	}
+	time.Sleep(r.delay)
+	r.done = true
+	return copy(p, r.answer), nil
+}
+
+// A confirmation that takes longer than --timeout still sends its write
+// under a deadline of its own (Codex on #271): the prompt doesn't spend the
+// write's --timeout.
+func TestContent_ASlowConfirmationKeepsItsDeadline(t *testing.T) {
+	s := memoryStack(t)
+	oper := s.identity(t, "oper", "operator-password")
+	mustRun(t, oper, "content", "publish", "--path", devFixture)
+	answer := func(args ...string) runResult {
+		var stdout, stderr bytes.Buffer
+		exit := execute(&runtime{
+			args: append(args, "--timeout", "300ms"), stdout: &stdout, stderr: &stderr, lookupEnv: lookupFrom(oper),
+			stdin: &slowReader{delay: 600 * time.Millisecond, answer: "y\n"}, tty: func() bool { return true },
+		})
+		return runResult{stdout: stdout.String(), stderr: stderr.String(), exit: exit}
+	}
+	if res := answer("content", "approve", "town", "1"); res.exit != ExitOK || !strings.Contains(res.stdout, "approved by oper") {
+		t.Errorf("approve after a slow answer: exit=%d stdout=%q stderr=%q", res.exit, res.stdout, res.stderr)
+	}
+	if res := answer("content", "activate", "town", "1"); res.exit != ExitOK || res.stdout != "town@1 active (nothing was active)\n" {
+		t.Errorf("activate after a slow answer: exit=%d stdout=%q stderr=%q", res.exit, res.stdout, res.stderr)
+	}
+}
+
+// fetch writes only inside --out, whatever the manifest's paths and
+// whatever is already in the directory (Codex on #271): a symlinked
+// subdirectory pointing outside is refused, not followed.
+func TestContentFetch_StaysInsideOut(t *testing.T) {
+	s := memoryStack(t)
+	_, alice := s.builder(t, "alice", "town")
+	raw := &contentServer{reg: s.reg}
+	v := raw.publish(t, "town", 1, map[string][]byte{
+		"src/pack.aw":    []byte("pack town requires andara.core@1\n"),
+		"src/sub/pwn.aw": []byte("// written through a symlink\n"),
+	})
+
+	outside := t.TempDir()
+	victim := filepath.Join(outside, "pwn.aw")
+	if err := os.WriteFile(victim, []byte("mine\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "town")
+	if err := os.MkdirAll(out, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(out, "sub")); err != nil {
+		t.Fatal(err)
+	}
+	res := runCLI(t, []string{"content", "fetch", "town", itoa(v), "--out", out, "-o", "json"}, alice)
+	if res.exit != ExitFail || jsonErrorCode(t, res.stdout) != "unsafe_source_path" {
+		t.Errorf("exit=%d stdout=%q", res.exit, res.stdout)
+	}
+	if b, _ := os.ReadFile(victim); string(b) != "mine\n" {
+		t.Errorf("a file outside --out was overwritten: %q", b)
 	}
 }

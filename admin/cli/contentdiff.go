@@ -69,22 +69,38 @@ func (rt *runtime) fetch(pack string, version uint64, dir string) error {
 		return rt.withTrace(&AppError{Exit: ExitFail, Code: "no_sources",
 			Message: fmt.Sprintf("%s@%d was published without sources; there's nothing to fetch", pack, version)})
 	}
+	// Every write goes through an os.Root on --out, so no source path, and
+	// no symlink already inside the directory, can put a file outside it: a
+	// manifest's paths are the publisher's, and the gate takes any unique one.
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
+	}
+	defer func() { _ = root.Close() }()
 	written := make([]string, 0, len(files))
 	for _, p := range files {
 		rel := filepath.FromSlash(strings.TrimPrefix(p, lang.SourcePrefix))
+		unsafe := &AppError{Exit: ExitFail, Code: "unsafe_source_path",
+			Message: fmt.Sprintf("%s@%d publishes a source at %q, which leaves %s; nothing more was written", pack, version, p, dir),
+			Detail:  map[string]any{"path": p}}
 		if !filepath.IsLocal(rel) {
-			return rt.withTrace(&AppError{Exit: ExitFail, Code: "unsafe_source_path",
-				Message: fmt.Sprintf("%s@%d publishes a source at %q, which leaves the pack; nothing more was written", pack, version, p),
-				Detail:  map[string]any{"path": p}})
+			return rt.withTrace(unsafe)
 		}
-		target := filepath.Join(dir, rel)
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
+		if d := filepath.Dir(rel); d != "." {
+			if err := root.MkdirAll(d, 0o755); err != nil {
+				return rt.withTrace(unsafe)
+			}
+		}
+		if err := root.WriteFile(rel, bodies[p], 0o644); err != nil {
+			if strings.Contains(err.Error(), "escapes") {
+				return rt.withTrace(unsafe)
+			}
 			return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
 		}
-		if err := os.WriteFile(target, bodies[p], 0o644); err != nil {
-			return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
-		}
-		written = append(written, target)
+		written = append(written, filepath.Join(dir, rel))
 	}
 	if rt.settings.Output == outputJSON {
 		return rt.writeJSON(map[string]any{"pack": pack, "version": version, "dir": dir, "files": written, "trace_id": rt.traceID()})
