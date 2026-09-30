@@ -30,6 +30,7 @@ type AccountAdmin interface {
 	CreateAccount(context.Context, *adminv1.CreateAccountRequest) (*adminv1.CreateAccountResponse, error)
 	ResetPassword(context.Context, *adminv1.ResetPasswordRequest) (*adminv1.ResetPasswordResponse, error)
 	SetRoles(context.Context, *adminv1.SetRolesRequest) (*adminv1.SetRolesResponse, error)
+	SetBuilderPacks(context.Context, *adminv1.SetBuilderPacksRequest) (*adminv1.SetBuilderPacksResponse, error)
 	SetAccountStatus(context.Context, *adminv1.SetAccountStatusRequest) (*adminv1.SetAccountStatusResponse, error)
 	IssueInvite(context.Context, *adminv1.IssueInviteRequest) (*adminv1.IssueInviteResponse, error)
 	RevokeInvite(context.Context, *adminv1.RevokeInviteRequest) (*adminv1.RevokeInviteResponse, error)
@@ -103,6 +104,10 @@ func (a *adminService) ResetPassword(ctx context.Context, req *connect.Request[a
 
 func (a *adminService) SetRoles(ctx context.Context, req *connect.Request[adminv1.SetRolesRequest]) (*connect.Response[adminv1.SetRolesResponse], error) {
 	return delegate(ctx, a, req, AccountAdmin.SetRoles)
+}
+
+func (a *adminService) SetBuilderPacks(ctx context.Context, req *connect.Request[adminv1.SetBuilderPacksRequest]) (*connect.Response[adminv1.SetBuilderPacksResponse], error) {
+	return delegate(ctx, a, req, AccountAdmin.SetBuilderPacks)
 }
 
 func (a *adminService) SetAccountStatus(ctx context.Context, req *connect.Request[adminv1.SetAccountStatusRequest]) (*connect.Response[adminv1.SetAccountStatusResponse], error) {

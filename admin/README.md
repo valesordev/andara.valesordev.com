@@ -26,6 +26,7 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli completion zsh` | shell completion script (`bash`/`fish`/`powershell` also) |
 | `andara-cli auth login` / `logout` / `refresh` / `whoami` | the stored credential (`AW-SRV-008`) |
 | `andara-cli account …` / `invite …` / `registration …` | account administration (operator) |
+| `andara-cli account set-packs <id> --pack ID … \| --clear` | replace the Content Packs a Builder may publish to (`AW-SRV-035`, operator) |
 | `andara-cli sim repl` | drive the Command Pipeline in-process against content on disk (developer) |
 | `andara-cli snapshot list` | list a Zone's snapshot objects in the configured store (`AW-SRV-006`, operator) |
 | `andara-cli character create <name>` / `list` | make a Character; list yours with where each is (`AW-CLI-007`) |
@@ -118,6 +119,11 @@ Codes the roster adds (`AW-CLI-007`): `no_character` and `character_required`
 (exit 2), and the server's `ErrorInfo` reasons passed through as they are —
 `roster_full`, `name_taken`, `name_invalid`, `already_live`,
 `no_such_character` (exit 1).
+
+Codes `account set-packs` adds (`AW-SRV-035`): the server's `ErrorInfo` reasons
+(domain `andara.accounts`) passed through as they are, all exit 1:
+`operator_only`, `account_not_found`, `invalid_pack_id`, `core_not_grantable`,
+`record_version`. Neither `--pack` nor `--clear`, or both, is exit 2.
 
 Codes `content` adds (`AW-CLI-006`, `AW-CLI-002`): `compile_failed`,
 `would_reformat`, `validation_failed`, `blob_hash_mismatch`, `unsafe_source_path`, `not_found` and

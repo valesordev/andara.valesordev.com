@@ -4,6 +4,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -79,7 +80,7 @@ func newAccountCmd(rt *runtime) *cobra.Command {
 			return rt.writeCommandTree(cmd)
 		},
 	}
-	cmd.AddCommand(newAccountCreateCmd(rt), newAccountResetPasswordCmd(rt), newAccountSetRolesCmd(rt),
+	cmd.AddCommand(newAccountCreateCmd(rt), newAccountResetPasswordCmd(rt), newAccountSetRolesCmd(rt), newAccountSetPacksCmd(rt),
 		newAccountSetStatusCmd(rt), newAccountCreateAgentCmd(rt))
 	return cmd
 }
@@ -200,6 +201,79 @@ func newAccountSetRolesCmd(rt *runtime) *cobra.Command {
 		},
 	}
 	cmd.Flags().StringSliceVar(&roles, "role", nil, "role to hold (repeatable): player, builder, game_master, operator")
+	cmd.Flags().Uint64Var(&version, "expected-version", 0, "refuse unless the record is at this version (0: any)")
+	return cmd
+}
+
+// accountReasons are the ErrorInfo reasons SetBuilderPacks refuses with
+// (domain andara.accounts), passed through as error.code (AW-SRV-035).
+var accountReasons = []string{"operator_only", "account_not_found", "invalid_pack_id", "core_not_grantable", "record_version"}
+
+// accountsDomain is ErrorInfo.domain on an Account refusal with a reason.
+const accountsDomain = "andara.accounts"
+
+// accountError maps a reasoned Account refusal to exit 1 with the server's
+// reason as error.code; anything else is rpcError's.
+func accountError(err error) error {
+	var ce *connect.Error
+	if reason, _ := errorInfo(err); slices.Contains(accountReasons, reason) && errors.As(err, &ce) {
+		return &AppError{Exit: ExitFail, Code: reason, Message: ce.Message(),
+			Detail: map[string]any{"grpc_code": ce.Code().String(), "domain": accountsDomain}}
+	}
+	return rpcError(err)
+}
+
+// newAccountSetPacksCmd is the Pack Grant (AW-SRV-035): the whole set of
+// Content Packs a Builder may publish to, replaced. Pack IDs aren't checked
+// here; the server is the boundary (AC-7).
+func newAccountSetPacksCmd(rt *runtime) *cobra.Command {
+	var packs []string
+	var clearAll bool
+	var version uint64
+	cmd := &cobra.Command{
+		Use:   "set-packs <account-id> ((--pack ID)... | --clear)",
+		Short: "Replace the Content Packs a Builder may publish to",
+		Long: "Replace the whole set of Content Packs an account may publish to. It doesn't add\n" +
+			"to the set: name every pack the account should hold, or --clear to hold none.\n\n" +
+			"The grant is independent of the builder role. An account without it keeps the\n" +
+			"grant, inactive, until it has the role. andara.core can't be granted.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			switch {
+			case clearAll && len(packs) > 0:
+				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--pack and --clear are exclusive", Detail: map[string]any{"flag": "--clear"}}
+			case !clearAll && len(packs) == 0:
+				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "name the packs with --pack, or --clear to hold none", Detail: map[string]any{"flag": "--pack"}}
+			}
+			client, err := rt.adminClient()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := rt.callCtx()
+			defer cancel()
+			resp, err := client.SetBuilderPacks(ctx, connect.NewRequest(&adminv1.SetBuilderPacksRequest{AccountId: args[0], Packs: packs, ExpectedRecordVersion: version}))
+			if err != nil {
+				return accountError(err)
+			}
+			got := resp.Msg.GetBuilderPacks()
+			line := fmt.Sprintf("%s: builder packs %s", args[0], strings.Join(got, ", "))
+			if len(got) == 0 {
+				line = args[0] + ": builder packs none"
+			}
+			if len(got) > 0 && !resp.Msg.GetBuilderRole() {
+				line += " (inactive: no builder role)"
+			}
+			if got == nil {
+				got = []string{}
+			}
+			return rt.writeResult(line, map[string]any{"account_id": args[0], "builder_packs": got,
+				"builder_role": resp.Msg.GetBuilderRole(), "record_version": resp.Msg.GetRecordVersion()})
+		},
+	}
+	cmd.Flags().StringArrayVar(&packs, "pack", nil, "a pack the account may publish to (repeatable)")
+	cmd.Flags().BoolVar(&clearAll, "clear", false, "hold no packs")
 	cmd.Flags().Uint64Var(&version, "expected-version", 0, "refuse unless the record is at this version (0: any)")
 	return cmd
 }

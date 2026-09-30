@@ -28,6 +28,7 @@ func TestHelpGoldens(t *testing.T) {
 		{file: "character.txt", args: []string{"character", "--help"}},
 		{file: "character-create.txt", args: []string{"character", "create", "--help"}},
 		{file: "character-list.txt", args: []string{"character", "list", "--help"}},
+		{file: "account-set-packs.txt", args: []string{"account", "set-packs", "--help"}},
 		{file: "content.txt", args: []string{"content", "--help"}},
 		{file: "content-compile.txt", args: []string{"content", "compile", "--help"}},
 		{file: "content-fmt.txt", args: []string{"content", "fmt", "--help"}},

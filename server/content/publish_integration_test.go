@@ -83,6 +83,9 @@ type brokerPublish struct {
 	resolver *KafkaResolver
 	loader   *Loader
 	admin    *Admin
+	// holder is the Account store the publish path authorizes on; nil is
+	// the fixed alice/bob map.
+	holder PackHolder
 }
 
 func (b *brokerPublish) open(topic string, maxRecord int32) recordlog.Log {
@@ -113,9 +116,13 @@ func (b *brokerPublish) start() {
 	b.loader = NewLoader(LoaderOptions{Store: b.resolver, Packs: []string{CorePack, "town"}, Metrics: NewMetrics(nil)})
 	attachEngine(b.loader)
 	auditor := auth.NewAuditor(audit, slog.New(slog.DiscardHandler), nil, nil)
+	var holder PackHolder = packHolders{alice: {"town"}, bob: {"town"}}
+	if b.holder != nil {
+		holder = b.holder
+	}
 	b.admin, err = NewAdmin(AdminOptions{
 		Registry: b.reg, Loader: b.loader, Blobs: b.resolver,
-		Accounts: packHolders{alice: {"town"}, bob: {"town"}},
+		Accounts: holder,
 		Auditor:  auditor, MaxBlobBytes: 8 << 20, MaxPackBytes: 256 << 20, OperatorSelfApproval: true,
 	})
 	if err != nil {

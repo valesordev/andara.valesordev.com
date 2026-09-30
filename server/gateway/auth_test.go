@@ -218,6 +218,10 @@ func (f *fakeAccounts) SetRoles(ctx context.Context, _ *adminv1.SetRolesRequest)
 	f.note(ctx, "SetRoles")
 	return &adminv1.SetRolesResponse{}, nil
 }
+func (f *fakeAccounts) SetBuilderPacks(ctx context.Context, _ *adminv1.SetBuilderPacksRequest) (*adminv1.SetBuilderPacksResponse, error) {
+	f.note(ctx, "SetBuilderPacks")
+	return &adminv1.SetBuilderPacksResponse{}, nil
+}
 func (f *fakeAccounts) SetAccountStatus(ctx context.Context, _ *adminv1.SetAccountStatusRequest) (*adminv1.SetAccountStatusResponse, error) {
 	f.note(ctx, "SetAccountStatus")
 	return &adminv1.SetAccountStatusResponse{}, nil
