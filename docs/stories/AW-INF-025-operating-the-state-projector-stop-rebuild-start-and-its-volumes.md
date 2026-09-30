@@ -331,3 +331,45 @@ for `andara-projector-state`.
   server's `checksum/content`, so a fixture change rolls both and the replica never runs other
   content than the server. `helm_test.test_snapshot_s3_and_projector_creds` asserts both.
   Mutation-checked: without the template change it fails twice.
+
+## §8 instrumentation check and after-merge ACs (2026-09-30, SRE): AC-2 and AC-4 owed on #143
+
+On `sre/sprint-03-review-verify`, on the box, with `andara-dev` Synced at `main@79fd622` and Degraded.
+It was Degraded because the projector had been in CrashLoopBackOff for 13 h (135 restarts, exit `2`).
+Each start logged `state projector diverged earlier and it is unresolved` for tick 132,838. That's
+the divergence marker from its first start after this story merged.
+
+| AC | Run | Result |
+|----|-----|--------|
+| 6 (owed half) | The bucket, listed through `objectstore.py`'s rclone pod | pass. A round per 600 ticks, each four Zone objects, the newest `…/00000000000000656692/…` at 18:08:09Z. The server logs `snapshot round complete` each minute. 3,480 objects, growing by four a minute, until `AW-INF-007`'s retention |
+| 1 | `make projector-stop ENV=dev` | pass. `projector-stop: stopped (group andara-projector-state-dev empty) in 2s`, exit 0. `spec.replicas` 0; `rpk group describe`: `Empty`, 0 members |
+| — | `make projector-start ENV=dev PROJECTOR_START_TIMEOUT=45s` | exit 1, `failed in andara-dev: start: andara-projector-state not Ready in 45s`. Correct for a projector holding a divergence |
+| 3 | `make projector-rebuild ENV=dev`, from the unready running projector | pass. `projector-stop` completed first in the output. The last projector pod's `Killing` came about 18:10:38Z, and the Job and its pod started at 18:10:39Z |
+| 8 (box half) | A second `make projector-rebuild ENV=dev` while the Job's pod ran | pass. `rebuild: Job andara-projector-state-rebuild is still running in andara-dev; nothing was changed`, exit 1 (make: `Error 1`). Replicas stayed 0 |
+| 4 | The Job's log | **first half passes; the second fails on #143.** `state projector started` with `round_tick=657893`, `from_zero=false`, `rebuild=true`, after `bootstrap from snapshot round` and `boundary reader positioned after the round`. Then `state projector diverged` at tick 657,894, round + 1 |
+| 2 | Same run | **owed on #143.** The Job failed (`backoffLimit: 0`, exit 2). The target said `rebuild: Job andara-projector-state-rebuild failed; its pod's exit code is in kubectl … describe job …` and exited 1 without running `projector-start` |
+
+**#143 on `dev`.** This is its in-cluster reproduction, through the rebuild path, from a round the
+server wrote to `s3`. So the round-capture fault isn't an `fs` artifact. It's added to #143.
+
+**Instrumentation.**
+- **Logs:** `consumer group wiped for a rebuild`, `state projector started` (with `round_tick`) and
+  `state projector diverged` are on the pods' stdout, with `service`, `env` and `tick`. Each target's
+  final line matches the Observability section's form.
+- **Not verified on Grafana Cloud.** No `GRAFANA_CLOUD_*` credentials were in this session, so
+  three things remain owed at §8 before the story moves:
+  1. the projector scraped under `job="andara-projector-state"`;
+  2. `kube_deployment_spec_replicas{deployment="andara-projector-state"}` kept by Grafana Cloud's
+     kube-state-metrics;
+  3. the lines above in Loki.
+  `make observe-check ENV=dev` covers 1 and 3 once the projector is Ready.
+  `StateProjectorDown`'s promtool cases pass (`make helm-test`). Its delivery is `AW-INF-009`'s.
+- **What the 13 h crash loop says about the alert.** It's the case `StateProjectorDown` exists for:
+  desired 1, never scraped Ready. It paged nobody because no rule is evaluated yet (`AW-INF-009`).
+
+**`dev` as left:** the projector is at 0 replicas, which the Application ignores. The failed Job
+stays until its TTL, 18:11Z + 1 h. At 0 replicas `StateProjectorDown` is silent by design, and no
+lag is exported. Restarting it before #143 is fixed only reproduces the crash loop. After the
+fix, `make projector-rebuild ENV=dev` is AC-2 and AC-4.
+
+The story stays `review`, owing AC-2 and AC-4 (#143) and the Grafana Cloud observations above.

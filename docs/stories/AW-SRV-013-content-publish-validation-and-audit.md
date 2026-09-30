@@ -447,3 +447,42 @@ Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the str
 - **The boot's core audit records** go to `andara.audit.v1` before the account store opens, through
   an Auditor with no registry, so they aren't counted on `andara_privileged_actions_total`. The log
   line, the `content.core_boot` trace, and `pointer_moves_total` carry them.
+
+## §8 instrumentation check (2026-09-30, SRE): the boot's core path observed; the RPC path owed to `AW-INF-021`
+
+On `sre/sprint-03-review-verify`, against `main` at `79fd622`. The publish path exists only in a
+`content.source=kafka` server (`OpenContentAdmin`, `bootCore`). Compose and `dev` both run `dir`, and
+no client of `PublishBlob`/`PublishVersion`/`ApproveVersion`/`ActivateVersion` exists before
+`AW-CLI-003`. So this is CLAUDE.md §8's "no caller yet" case, for the RPC half.
+
+**Observed live.** The compose stack's server image ran once with `ANDARA_CONTENT_SOURCE=kafka`,
+`ANDARA_CONTENT_PACKS=*` against a fresh local stack:
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `content.core_boot` trace | local Tempo (trace `7549b55bf753752d…`) | root `content.core_boot` (`pack_id=andara.core`, `version=1`), with children `content.write_blob` ×4, `content.write_manifest`, `content.write_pointer` (`direction=forward`) and `audit.write` ×2. One `write_blob` per produce, as §7 requires |
+| The core line | local Loki | `content core: andara.core@1 published; activated` at `info`, with `pack_id`, `version`, `activated_by=server` and `trace_id`. A second boot logged `andara.core@1 present; active andara.core@1 by server` |
+| The publish counters | — | **not scraped.** With no Builder pack, a `kafka` World can't recover (`no_zones_found`, then `no manifest for dir@0`), and the process exits about 0.1 s after the core line, inside one 5 s scrape interval |
+
+The stack was then restored with `make down VOLUMES=1 && make up`.
+
+**Covered by tests, not observed.** The unit tests (in-memory topics) assert the metric objects for
+`publishes_total{rejected,stale_parent}`, `approvals_total{ok,self,self_operator}`,
+`pointer_moves_total` (three of the four label pairs), `activations_refused_total`, `blob_bytes_total`
+and `validation_failures_total{unknown_room}`. No test asserts the RPC path's span tree, which is
+`content.publish` → `content.validate`, `content.write_manifest`; `content.approve`;
+`content.activate` → `content.write_pointer`; `content.publish_blob`; `content.get_blob`; and
+`audit.write` under each. `TestPublishPath_AgainstABroker` asserts no telemetry.
+
+**Inherited Definition-of-done line, carried by `AW-INF-021`,** the first story with a
+store-backed server and a caller (`make content-seed`, through `AW-CLI-003`): on `dev`, one
+publish → approve → activate → rollback of the fixture pack shows each counter above move on
+Prometheus, the RPC span tree in Tempo under the CLI's `cli.command`, and the `info`/`warn` lines in
+Loki carrying `actor_account_id`, `pack_id`, `version`, `session_id` and `trace_id`. The
+`self_operator` approval is visible on `approvals_total` and as `self_approval=true` in the log.
+
+**Noted, not blocking.** The core line on stdout has no `trace_id`. The OTLP record in Loki
+does, so it correlates on the backend, but not in `kubectl logs`.
+
+The instrumentation item is **satisfied** for what a running server can reach today. The
+RPC path's live observation is carried as above.

@@ -226,7 +226,10 @@ on `dev`, and the core carrier's signals added.)*
 
 CLAUDE.md §8, plus: `AW-SRV-012`'s deferred live observation of the `content.load` and
 `content.swap` spans and of `andara_content_active_version` from a store-backed server is recorded
-against `dev`.
+against `dev`. And `AW-SRV-013`'s publish RPC path, observed on `dev` (its §8 instrumentation
+check, 2026-09-30): one publish → approve → activate → rollback moves each of its counters on
+Prometheus, its span tree reaches Tempo under `cli.command`, and its log lines reach Loki with the
+correlation fields.
 
 ## Open questions
 
