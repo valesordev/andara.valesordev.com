@@ -227,9 +227,13 @@ maps the code (`AW-CLI-003`).
 
 **An image rollback across a core bump** (2026-09-28). The older build finds a newer core active and
 leaves it (AC-17). If it can load it, it runs. If it can't, it exits `1` with nothing loadable. The
-order is therefore pointer first, then image: `andara-cli content rollback andara.core` while the
-newer build still serves, then roll the image back. If the image went first, roll forward, move the
-pointer, and roll back again. **SRE:** please put that order in `docs/runbooks/server-unavailable.md`.
+order is therefore packs, then core, then image, all while the newer build still serves. First,
+`andara-cli content rollback <pack>` for every `pack@version` that pins the newer core: a core
+rollback is refused `core_version` while any active pack pins it, and the refusal names each one
+(AC-14). Then `andara-cli content rollback andara.core`, then roll the image back. If the image went
+first, roll forward, move the pointers, and roll back again. *(Corrected 2026-09-30, §8 review: this
+said "pointer first, then image", which AC-14's refusal makes fail at the first step.
+`docs/runbooks/server-unavailable.md` already has the right order.)* **SRE:** please put that order in `docs/runbooks/server-unavailable.md`.
 It's the one failure here that pages as `AndaraServerUnavailable`.
 
 **`content/core/VERSIONS` is append-only.** Removing or rewriting a line would let two builds publish
@@ -349,10 +353,14 @@ itself, so the three-way equivalence test compiles with the same package the CLI
 
 - **Resolved 2026-09-07 (Brian): a second approver is required to activate.** AC-3–5.
 - **Resolved 2026-09-11 (Brian): Builders are scoped per pack.** `builder_packs` and AC-7.
-- `[ASSUMPTION]` Operator override exists, is loud, and requires a reason (AC-8) — the alternative is
-  that a bad activation cannot be rolled back at 3 am.
-- `[ASSUMPTION]` Rollback to a previously-approved version needs no fresh approval; approvals do not
-  expire. Both follow from binding an approval to byte-identical content.
+- **Resolved 2026-09-30 (architecture, §8 review):** Operator override exists, is loud, and requires
+  a reason (AC-8). The alternative is that a bad activation can't be rolled back at 3 am. ADR-0004
+  names the activation `override` as distinct from approval, and the glossary's Approval entry states
+  it.
+- **Resolved 2026-09-30 (architecture, §8 review):** rollback to a previously-approved version needs
+  no fresh approval, and approvals don't expire. Both follow from binding an approval to
+  byte-identical content. A version activated only by `override` was never approved, so rolling back
+  to it needs `override` again.
 
 ## Contract review (architecture, 2026-09-28)
 
@@ -447,6 +455,88 @@ Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the str
 - **The boot's core audit records** go to `andara.audit.v1` before the account store opens, through
   an Auditor with no registry, so they aren't counted on `andara_privileged_actions_total`. The log
   line, the `content.core_boot` trace, and `pointer_moves_total` carry them.
+
+## §8 review (architecture, 2026-09-30): stays `review`
+
+Against `main` at `79fd622`. Merged in #173 (`8c06bb7`). `check` and `stack` are green on the merge,
+and `stack`'s `make test-integration` ran `TestPublishPath_AgainstABroker` (14.3 s). Re-run in this
+review: the `server/content` unit tests with `-race`, `server/gateway`'s `TestContentAdmin_*`,
+`content/core`'s test, and the broker test against local Redpanda (9.2 s). The failed `kind` run on
+the merge (36667804698) was `argocd-redis` pulling a 429 from `ecr-public`, not this story. The PR's
+own `kind` run passed, and so did the next scheduled one.
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1–9, 11–13, 17, 18 | the `admin_test.go` / `coreboot_test.go` case named for each in the implementation record | pass |
+| 10 | `TestPublishPath_AgainstABroker`: compaction forced to one record per key, restart, v2 and v1 listed with their approvals | pass |
+| 14 | `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse` | pass. Weak test: the audit loop checks the records it finds, not that there's exactly one, so it'd pass on none. The code writes one |
+| 15 | `TestBootCore_AnEmptyStoreGetsTheBuildsCore` | **gap.** Publish, activate, audit, and the second boot writing nothing are tested. "Reports ready only once the World in effect includes it" (`coreInEffect`, `boot/tick.go`) has no test, as the implementation record says |
+| 16 | `…AnotherDigestForTheSameVersionExitsAndWritesNothing` | pass. The test checks the error, nothing written, and both digests. Exit `1` is `Run`'s `bootCore` → `ExitFail` path, shared by every boot failure, so this review accepts it by reading |
+| 19 | `content/core/core_test.go` | pass as written. **Finding:** editing `VERSIONS`' existing line for `N` to the new digest also passes, and that's the append-only break the Data section warns of. Only AC-16 catches it, at boot, after it's shipped |
+
+Checklist, beyond the ACs: the four config keys are in `server/README.md`, `keys.yaml`, the values
+schema and `_env.tpl`, and the defaults match. No migration: audit fields 20–26 are additive, and
+`VERSIONS` is documented append-only. The glossary gains Core Pack and the self-approval rule. Error
+reasons, `ErrorInfo` domain, audit fields, action and outcome values, and every metric name and
+label set match the contract. The two `[ASSUMPTION]`s are resolved above, in *Open questions*.
+
+**Contract rulings** on implementation's questions (`docs/feedback/AW-SRV-013-publish-path.md`). All
+of them are recorded as the contract from here on:
+1. **Read limit and chunk size: pinned as built.** Admin reads up to 2 MiB, fixed, with no key
+   (`gateway.AdminReadMaxBytes`). `grpc.max_recv_bytes` keeps guarding Game. A `PublishBlob` data
+   chunk is at most 1 MiB (`content.BlobChunkBytes`), matching `GetBlob`. A larger chunk is
+   `INVALID_ARGUMENT` `validation`. `AW-CLI-003` sends chunks of at most 1 MiB.
+2. **Acting-as on Admin: gRPC metadata `andara-act-as: <account_id>`,** per call. It's honoured on
+   Admin only, and only for a principal holding `operator` or `game_master`, the same principals and
+   refusals as `Game.OpenSession.act_as_account_id`. The gateway resolves it into the Principal the
+   content code already reads. Every acted-as call is audited with both identities. The token's `act`
+   claim isn't used for this: it would need a mint and refresh path for a per-call choice. The
+   gateway half isn't built, and PM places it (feedback file).
+3. **The real actor survives the audit topic.** Rebuilding it from `andara.audit.v1` at boot, as
+   built, loses it after the topic's 365-day retention, and at every restart under
+   `auth.store=memory`. When it's lost, AC-4's acting-as clause stops seeing that an Operator
+   approving as themselves published as a Builder. So it goes on the manifest:
+   `ContentVersion.publisher = 10` (`string`), the real actor, always set, and equal to `author`
+   when nobody acted as anyone. **It ships in the same story as acting-as on Admin (ruling 2),
+   and no earlier.** Today no Admin call can act as anyone, so every manifest written so far was
+   published by its `author`. With the two together, no acted-as manifest can exist without a
+   `publisher`. An empty `publisher` therefore reads as `author`, and that's true, not a fallback.
+   It needs no backfill, and the audit rebuild isn't needed for this any more. The story
+   that ships the field must keep the two inseparable: the metadata can't be honoured on
+   `PublishVersion` until the field is written. That's additive, with no migration. It's new work,
+   routed to PM. The proto changes with that story, not before it. *(Revised 2026-09-30 on review
+   of #176. It first read an empty `publisher` as "rebuild from audit", which leaves exactly the gap
+   this ruling closes.)*
+4. **Findings outside AC-14's three reasons: as built.** They're `INVALID_ARGUMENT` `validation` with
+   `PublishFindings`, the same as at publish. A pack compiled against a core newer than the active
+   one is `FAILED_PRECONDITION` `core_version`, subject `andara.core@<compiled>`. Whether
+   `activations_refused_total` gains a `validation` reason is SRE's (feedback file). Until then it
+   counts only the three.
+5. **The other decisions made while building: accepted.** A non-Operator asking for `override` is
+   `PERMISSION_DENIED` `operator_only`. An `override` without a `reason` is `INVALID_ARGUMENT`
+   `validation`, and so is a `HasBlobs` over 10,000 hashes. A second approval returns the first,
+   unchanged, with no audit record. An Operator acting on a pack their effective Account doesn't hold
+   is audited `override=true`. Rollback to a version activated only by `override` needs `override`.
+6. **The three-way equivalence fixture:** this story's Definition-of-done line moves to `AW-CLI-002`,
+   whose AC-4 already carries it. This story's half, the publish gate's findings equal to the
+   Loader's, is AC-1's test.
+7. **The rollback order** in *Data / state impact* is corrected: packs, then core, then image. The
+   same line is corrected in `AW-INF-021`.
+
+**The deferred observations** from this story's inherited Definition of done, and its own series, go
+to `AW-INF-021` as an explicit inherited line (added there today). `dev` isn't store-backed until
+`AW-INF-021`, so no running server here can move a real Active Pointer (CLAUDE.md §8).
+
+**What closes it:**
+1. **AC-15's readiness half, with a test** (implementation): a server whose core isn't in the World
+   in effect reports not-ready, then ready once it is. Mutation-checked.
+2. **SRE's §8 instrumentation record:** the series and spans above, emitting against the local
+   stack's backends in the integration suite, with the rest named as carried by `AW-INF-021`.
+
+**Follow-ups that don't hold the story** (implementation, feedback file): tighten AC-14's audit
+count to exactly one. And a mechanical append-only check on `content/core/VERSIONS`, against the
+merge base, so that rewriting a line fails `make check`. It needs SRE's CI to hand it the base, so
+it's routed to PM as a story.
 
 ## §8 instrumentation check (2026-09-30, SRE): not satisfied; the RPC path's backend assertions are owed
 

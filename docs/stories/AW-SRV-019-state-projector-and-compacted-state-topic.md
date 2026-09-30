@@ -550,3 +550,14 @@ AC-6 passes again when #143's fix lands with:
    owes that ADR.
 3. **The production digest line:** carried by `AW-INF-025`'s Definition of done, not owed here.
    It no longer holds this story in `review` once 1 and 2 close.
+
+### §8 check (2026-09-30, architecture): stays `review` on AC-6 (#143)
+
+Against `main` at `79fd622`. Nothing that touches this story's code has merged since the 2026-09-29
+pass, and #143 is still open, so **AC-6 is still owed** on the terms set out there.
+
+The pass's item 2 has moved on: architecture answered PM's question with `ADR-0011`, which Brian
+accepted on 2026-09-29. AC-9's carrier is now PM's to groom (the SRE authentication story, with AC-9
+as its inherited Definition-of-done line; `docs/feedback/AW-SRV-019-state-projector.md`). Once that
+story is written, AC-9 stops holding this story, per CLAUDE.md §8. From then on, #143 is the only
+thing keeping it in `review`.

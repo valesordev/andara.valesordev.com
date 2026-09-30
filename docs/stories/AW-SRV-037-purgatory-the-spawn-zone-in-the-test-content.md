@@ -6,7 +6,7 @@ component: server
 type: feature
 status: review
 size: S
-depends_on: [AW-SRV-014]
+depends_on: [AW-SRV-014, AW-SRV-034]
 blocks: [AW-INF-024, AW-INF-021]
 lane: implementation
 risk: low
@@ -137,6 +137,49 @@ SRE's observability review is in `docs/feedback/AW-SRV-037-purgatory.md`: no cha
 3. **The Exit is `out -> town.plaza`,** which is the Content Language's cross-Zone form. The JSON
    form is `to_zone: town, to_room: plaza`. The source and the compiled file agree because AC-5
    holds them equal.
+
+## §8 review (architecture, 2026-09-30): stays `review` on SRE's record only
+
+Against `main` at `79fd622`. Merged in #157 (`3593d46`), after #162. `check`, `stack` and
+`publish` are green on `3593d46`. The tests below re-ran green in this review.
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1 | `TestLoadContent_ValidThreeZones`: `ZonesLoaded == 4`, `purgatory/start` resolves, `rooms_loaded{zone=purgatory} == 1` | pass |
+| 2 | same test: one `load_warnings_total` series, `{kind=missing_reverse_exit} == 1`, warn on `purgatory/start`, exit OK | pass |
+| 3 | `TestPurgatoryWalksOutToThePlaza`: a plaza-scoped arrival, and the bystander's `look` names the mover | pass |
+| 4 | default `character.spawn_room` is still `town/plaza`. Only the counts the scope names moved (`trace_test.go`, `dir_test.go`) | pass |
+| 5 | `TestDevFixtureSourceMatchesTestContent`: `content/fixtures/town/` compiles clean, byte-equal, 4 Zones, 3 Templates | pass, see below |
+| 6 | same test. A one-character change to `purgatory.json` fails it, naming the file (mutation-checked) | pass |
+
+**AC-5, "with the embedded `andara.core`".** The test reads `content/core/templates/` from disk,
+because the embed didn't exist until `AW-SRV-013` (`906d2d8`). They're the same bytes, so AC-5
+holds. Switching the test to the embed is a follow-up, recorded for implementation in
+`docs/feedback/AW-SRV-037-purgatory.md`, and it doesn't hold the story.
+
+**Record fixes made in this review:**
+- **`depends_on` gains `AW-SRV-034`** (and `AW-SRV-034`'s `blocks` gains this story). AC-2 holds
+  only with that story's one-Room rule. The merge order was already right.
+- **Data / state impact was wrong in practice.** It said `dev` isn't affected, because `dev` reads
+  the store after `AW-INF-021`. This story merged before `AW-INF-021`, so Argo CD rolled the new
+  fixture onto `dev`, whose log predated it, and the server crash-looped on `content digest
+  mismatch at tick 3`. `make world-reset` recovered it at 23:52Z (`AW-INF-019`'s AC-4 record and
+  `AW-INF-021`). The lesson for later contracts: while `dev` renders `testdata/content/valid/`, a
+  fixture change is a content change on `dev`, and its Data section has to say so.
+- **`docs/specs/content-language/v1/corpus/README.md`** said `valid/town/`'s outputs aren't
+  byte-identical to the fixture. After this story they are, and it now says so.
+
+**The `town.*` Templates on `dev`: ruled** in the feedback file. They arrive with `AW-INF-021`, not
+through a chart change. Implementation's "7 Templates" line holds for dir-mode and local loads of
+`testdata/content/valid/`. On `dev` it's 4 until `AW-INF-021`.
+
+Checklist: tests run in CI (`make test`). No config or values-schema change. The glossary has
+Purgatory, Start Location (its `[NEEDS BRIAN]` is out of scope here), and Fixture Pack. No
+`[ASSUMPTION]`. The `AW-INF-019` AC-4 observation this merge carried is recorded there.
+
+**What closes it:** SRE's §8 instrumentation record. No new series; ACs 1 and 2 read the existing
+`andara_content_zones_loaded` and `andara_content_load_warnings_total{kind}`. Architecture then
+moves the story to `done` without another pass.
 
 ## §8 instrumentation check (2026-09-30, SRE): satisfied
 

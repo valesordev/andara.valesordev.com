@@ -332,6 +332,60 @@ for `andara-projector-state`.
   content than the server. `helm_test.test_snapshot_s3_and_projector_creds` asserts both.
   Mutation-checked: without the template change it fails twice.
 
+## §8 review (architecture, 2026-09-30): stays `review`
+
+Against `main` at `79fd622`. Merged in #171 (`7967a38`). `make check` is green on `main`, and
+`helm_test` and `scripts/tests/test_projector.py` (79 cases) re-ran green in this review.
+
+| AC | Result |
+|----|--------|
+| 1 | **owed.** Not yet run on `main`, though it can be now |
+| 2 | **owed, on #143.** Read as amended below |
+| 3 | **owed.** Runnable now: the stop-before-Job ordering shows even though the rebuild then diverges |
+| 4 | **fails on `dev`**, which is the amendment working. See below |
+| 5 | pass (SRE's record; re-run) |
+| 6 | first half pass. The second half, a round in `andara-snapshots-dev` within 3 × `snapshot.interval`, is **owed**. `andara-0` logs `snapshot round complete` about every 60 s on `s3`, but a bucket listing hasn't been recorded |
+| 7, 8 | pass (unit). The box half of 8 is **owed** |
+
+**#143 has reproduced on `dev`.** Observed read-only at 17:57Z: `andara-projector-state` is in
+CrashLoopBackOff, with 136 restarts in 13 h, each exiting 2 on `state projector diverged at tick
+132838`. That's the first start after the merge, bootstrapped from the server's first `s3` round and
+diverging right after it. The Application is Synced/Degraded. `StateProjectorDown` would be firing,
+but it isn't delivered until `AW-INF-009`. Leaving the projector crash-looping or stopping it is
+SRE's call (`docs/feedback/AW-INF-025-projector-operations.md`). A `projector-rebuild` won't clear
+it, because it bootstraps from the newest round again.
+
+**Ruling on `--rebuild` never completing** (SRE's question in the feedback file): **SRE's reading is
+accepted, and it's recorded here as a contract amendment.** A rebuild is done when the Job's pod
+logs `state projector caught up`. The target reads the tick from that line and deletes the Job,
+which is a SIGTERM and a clean stop, committing its checkpoint. `projector-start` then resumes the
+Deployment from that checkpoint, with no second `--rebuild`. AC-2's "the Job completes" reads as
+"the Job's pod logs `caught up`, and the target deletes it". The Interface contract's "to completion"
+and "waits for the Job to complete" read the same way. Making `--rebuild` exit on caught-up isn't
+routed to implementation: it would change `AW-SRV-019`'s binary so a Job condition could be read
+literally, and it would buy nothing the log line doesn't. One condition binds the reading: **AC-2's
+observation must show the Deployment reusing the Job's checkpoint.** Every start bootstraps its World
+from a snapshot round (`server/projector/run.go`), because the checkpoint holds a tick and offsets,
+not state. So what shows reuse is the Deployment's first `state projector started` line after the
+rebuild. It has `committed=true` and a `committed_tick` at or after the `<t>` in
+`projector-rebuild: rebuilt to tick <t>`. A `committed=false` there means the checkpoint was lost and
+the Job's work thrown away. *(Corrected 2026-09-30 on review of #176, which first said "not
+bootstrapping from a round". No start can meet that.)*
+
+**Deviations accepted as they stand:** `objectstore-install` exits 3 when `kubectl` is missing, the
+same usage class as `projector-*`'s 2. The enabled check reads the Deployment's existence. `make`
+reports any failed recipe as 2, so exit codes are asserted on the script, as everywhere else. Two
+nits for SRE's next touch: `objectstore.py` hard-codes `andara-objectstore` where the chart has
+`objectstore.service`, and `deploy/k8s/objectstore/objectstore.yaml:12` still names `objectstore.sh`.
+
+**What closes it:**
+1. SRE runs ACs 1, 3, 6 (the round) and 8 (the box half) on `main`, and records them here.
+2. #143's fix, then ACs 2 and 4 observed on `dev`, with AC-2 read as above.
+3. SRE's §8 instrumentation record: `up{job="andara-projector-state"}` with the lag and budget
+   gauges; the Job's `state.replay` → `state.verify` spans in Tempo; kube-state-metrics keeping
+   `kube_deployment_spec_replicas` for the projector in Grafana Cloud; and the production digest
+   line inherited from `AW-SRV-019`.
+
 ## §8 instrumentation check and after-merge ACs (2026-09-30, SRE): AC-2 and AC-4 owed on #143
 
 On `sre/sprint-03-review-verify`, on the box, with `andara-dev` Synced at `main@79fd622` and Degraded.
@@ -356,18 +410,21 @@ server wrote to `s3`. So the round-capture fault isn't an `fs` artifact. It's ad
 - **Logs:** `consumer group wiped for a rebuild`, `state projector started` (with `round_tick`) and
   `state projector diverged` are on the pods' stdout, with `service`, `env` and `tick`. Each target's
   final line matches the Observability section's form.
-- **Not verified on Grafana Cloud.** No `GRAFANA_CLOUD_*` credentials were in this session, so
-  three things remain owed at §8 before the story moves:
-  1. the projector scraped under `job="andara-projector-state"`;
-  2. `kube_deployment_spec_replicas{deployment="andara-projector-state"}` kept by Grafana Cloud's
+- **Not verified on Grafana Cloud.** No `GRAFANA_CLOUD_*` credentials were in this session. These are
+  owed at §8, and they're the list in architecture's "What closes it" item 3:
+  1. `up{job="andara-projector-state"}`, with the lag and lag-budget gauges;
+  2. the rebuild Job's `state.replay` → `state.verify` spans in Tempo. This Job diverged, so a
+     `state.verify` carrying the mismatch is the one to look for;
+  3. `kube_deployment_spec_replicas{deployment="andara-projector-state"}` kept by Grafana Cloud's
      kube-state-metrics;
-  3. the lines above in Loki.
-  `make observe-check ENV=dev` covers 1 and 3 once the projector is Ready.
+  4. the production digest line inherited from `AW-SRV-019`;
+  5. the lines above in Loki.
+  `make observe-check ENV=dev` covers 1 and 5 once the projector is Ready, which waits on #143.
   `StateProjectorDown`'s promtool cases pass (`make helm-test`). Its delivery is `AW-INF-009`'s.
 - **What the 13 h crash loop says about the alert.** It's the case `StateProjectorDown` exists for:
   desired 1, never scraped Ready. It paged nobody because no rule is evaluated yet (`AW-INF-009`).
 
-**`dev` as left:** the projector is at 0 replicas, which the Application ignores. The failed Job
+**`dev` as left, which is SRE's call as the §8 review above asks:** the projector is at 0 replicas, which the Application ignores. The failed Job
 stays until its TTL, 18:11Z + 1 h. At 0 replicas `StateProjectorDown` is silent by design, and no
 lag is exported. Restarting it before #143 is fixed only reproduces the crash loop. After the
 fix, `make projector-rebuild ENV=dev` is AC-2 and AC-4.

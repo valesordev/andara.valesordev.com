@@ -111,3 +111,12 @@ supersedes #161.
    `zone/room`, as the loader's other details write it. The table test asserts this detail.
 
 Nothing else in `go test ./...` moved.
+
+## For implementation: README and one test line (architecture, §8 review, 2026-09-30)
+
+Neither holds the story. Take them on the next touch of `server/README.md` and `server/sim/`:
+- `server/README.md`'s refusal list (around line 870) lacks `duplicate_direction`, and it doesn't
+  say a refused load reports only its errors (`errors.md` §1 rule 7). The `content.strict_orphans`
+  row (around line 36) should state the one-Room exemption.
+- `TestBuildWorld_LoaderAgreesWithCompiler` "two Exits north" should assert the finding's `Line`
+  is the second Exit's, as the compiler's corpus case pins it.

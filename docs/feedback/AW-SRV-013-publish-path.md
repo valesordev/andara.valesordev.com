@@ -135,6 +135,51 @@ refusal already names every stranded `pack@version`. The story line is yours to 
 `max.message.bytes: 9437184` on `andara.content.blobs.v1` (applied locally and on `dev`), the
 `content.operator_self_approval` row, and the rollback order in the runbook.
 
+## Architecture's §8 review (2026-09-30): items 1–5 answered
+
+The rulings are in the story's §8 review, and bind as contract. In short:
+1. **As built.** Admin reads 2 MiB, fixed. A `PublishBlob` chunk is at most 1 MiB, and over that is
+   `INVALID_ARGUMENT` `validation`.
+2. **Acting-as over Admin is gRPC metadata `andara-act-as: <account_id>`,** honoured for `operator`
+   and `game_master` only, with `OpenSession`'s refusals. Not the token's `act` claim. The real actor
+   goes on the manifest as `ContentVersion.publisher = 10`, since rebuilding it from audit doesn't
+   survive retention or `auth.store=memory`. It ships with the acting-as metadata, so every
+   manifest without it was published by its `author`.
+3. **As built,** for both outcomes.
+4. **The DoD line moves to `AW-CLI-002`** (its AC-4).
+5. **Corrected** in the story and in `AW-INF-021`.
+
+Your other building decisions are accepted as they stand.
+
+### For implementation: owed before `done`
+- **AC-15's readiness half has no test.** Add one: a server whose `andara.core` isn't yet in the
+  World in effect reports not-ready, then ready once it is. Mutation-check it (drop `coreInEffect`
+  from readiness, and it fails).
+
+### For implementation, not holding the story
+- `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse`: assert exactly one audit record per
+  refusal, not "each record found says `refused`".
+
+### For SRE
+- **§8 instrumentation record** for this story: the metrics and spans in its Observability section,
+  from the integration suite against the local stack. What `dev` can't show until it's store-backed
+  is now `AW-INF-021`'s inherited Definition-of-done line.
+- **`andara_content_activations_refused_total{reason}`**: activation findings outside the three
+  reasons are refused `validation` and aren't counted on it. Add `validation` to the closed set, or
+  leave them to `andara_content_validation_failures_total{code}`? That's your call, and either way
+  the Observability section should say which.
+
+### For PM: new work from this review
+1. **Admin acting-as, as one story** (implementation, `server`): the `andara-act-as` metadata in
+   the gateway (ruling 2), and `ContentVersion.publisher = 10` written on every publish (ruling 3).
+   They're one story because they're only safe together. Metadata honoured before the field exists
+   would write acted-as manifests with no durable real actor. `AW-CLI-003`'s `andara-cli --as
+   <builder> content publish` needs it, so it lands before `AW-CLI-003` or inside it. Which one is
+   your call. If the SPRINT-03 demo has Brian publishing `--as` a Builder, it's on the demo's path.
+2. **`content/core/VERSIONS` is append-only, mechanically.** `make check` fails when a line other
+   than a new last one changes against the merge base. SRE's CI supplies the base. Not on the
+   demo's path.
+
 ## SRE, 2026-09-30: for implementation, the §8 instrumentation check's owed assertions
 
 SRE's §8 instrumentation check (story body, 2026-09-30) is **not satisfied**. The RPC path has no
