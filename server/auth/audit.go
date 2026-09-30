@@ -44,6 +44,9 @@ const (
 	ActionRollback = "rollback"
 	ActionReject   = "reject"
 	ActionOverride = "override"
+
+	// ActionSetBuilderPacks is a Pack Grant (AW-SRV-035).
+	ActionSetBuilderPacks = "set_builder_packs"
 )
 
 // AllActions lists every audited action, for metric pre-seeding.
@@ -53,6 +56,7 @@ var AllActions = []string{
 	ActionRedeemInvite, ActionRefreshRevoked, ActionRevokeRefresh, ActionActAs,
 	ActionAuthorize, ActionBind, ActionSubscribeWorld,
 	ActionPublish, ActionApprove, ActionActivate, ActionRollback, ActionReject, ActionOverride,
+	ActionSetBuilderPacks,
 }
 
 // Audit outcomes.
@@ -60,6 +64,9 @@ const (
 	AuditOK       = "ok"
 	AuditDenied   = "denied"
 	AuditConflict = "conflict"
+	// AuditInvalid is a request refused for what it asked for, as opposed
+	// to who asked (AW-SRV-035).
+	AuditInvalid = "invalid"
 )
 
 // AuditWriteTimeout is how long Record waits for the write before
@@ -107,6 +114,15 @@ type Entry struct {
 	// Content is set for the content publish path's records (AW-SRV-013),
 	// and fills AuditRecord fields 20–26.
 	Content *ContentAudit
+	// Packs is set for a Pack Grant's records (AW-SRV-035), and fills
+	// AuditRecord fields 27 and 28.
+	Packs *PackAudit
+}
+
+// PackAudit is a Pack Grant's before and after sets. After is empty unless
+// the grant was made.
+type PackAudit struct {
+	Before, After []string
 }
 
 // ContentAudit is an audit record's content fields (AW-SRV-013).
@@ -138,6 +154,9 @@ func (a *Auditor) Record(ctx context.Context, e Entry) {
 	if c := e.Content; c != nil {
 		rec.PackId, rec.Version, rec.BlobHashesSha256 = c.PackID, c.Version, c.BlobHashesSHA256
 		rec.Override, rec.Reason, rec.FindingsCount, rec.SelfApproval = c.Override, c.Reason, c.FindingsCount, c.SelfApproval
+	}
+	if p := e.Packs; p != nil {
+		rec.BuilderPacksBefore, rec.BuilderPacksAfter = p.Before, p.After
 	}
 	a.metrics.PrivilegedActions.WithLabelValues(e.Action).Inc()
 	a.slog.LogAttrs(ctx, slog.LevelInfo, "privileged action",

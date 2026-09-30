@@ -1,0 +1,24 @@
+Replace the whole set of Content Packs an account may publish to. It doesn't add
+to the set: name every pack the account should hold, or --clear to hold none.
+
+The grant is independent of the builder role. An account without it keeps the
+grant, inactive, until it has the role. andara.core can't be granted.
+
+Usage:
+  andara-cli account set-packs <account-id> ((--pack ID)... | --clear) [flags]
+
+Flags:
+      --clear                   hold no packs
+      --expected-version uint   refuse unless the record is at this version (0: any)
+  -h, --help                    help for set-packs
+      --pack stringArray        a pack the account may publish to (repeatable)
+
+Global Flags:
+      --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
+      --credentials string      credential file path (default $XDG_CONFIG_HOME/andara/credentials.yaml)
+      --log-level string        CLI diagnostic level (default "warn")
+      --no-color                disable ANSI output
+  -o, --output string           output format: human or json (default "human")
+      --server-address string   server endpoint (gRPC/Connect over TLS) (default "localhost:8443")
+      --timeout duration        per-command deadline (default 30s)
+      --tls-ca string           CA bundle to trust (empty uses the system trust store)
