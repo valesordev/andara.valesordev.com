@@ -8,6 +8,7 @@ import (
 	"errors"
 
 	"connectrpc.com/connect"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
 	authv1 "github.com/valesordev/andara/gen/go/andara/auth/v1"
@@ -54,7 +55,14 @@ func connectError(err error) error {
 	if code == connect.CodeInternal {
 		return connect.NewError(code, errors.New("internal error"))
 	}
-	return connect.NewError(code, err)
+	ce = connect.NewError(code, err)
+	var re *ReasonError
+	if errors.As(err, &re) {
+		if d, derr := connect.NewErrorDetail(&errdetails.ErrorInfo{Domain: AccountsDomain, Reason: re.Reason}); derr == nil {
+			ce.AddDetail(d)
+		}
+	}
+	return ce
 }
 
 // Service serves andara.auth.v1.Auth over the Store.
@@ -146,6 +154,15 @@ func (a *Admin) SetRoles(ctx context.Context, req *adminv1.SetRolesRequest) (*ad
 		return nil, connectError(err)
 	}
 	return &adminv1.SetRolesResponse{RecordVersion: v}, nil
+}
+
+// SetBuilderPacks implements Admin.SetBuilderPacks (AW-SRV-035).
+func (a *Admin) SetBuilderPacks(ctx context.Context, req *adminv1.SetBuilderPacksRequest) (*adminv1.SetBuilderPacksResponse, error) {
+	g, err := a.store.SetBuilderPacks(ctx, req.GetAccountId(), req.GetPacks(), req.GetExpectedRecordVersion())
+	if err != nil {
+		return nil, connectError(err)
+	}
+	return &adminv1.SetBuilderPacksResponse{BuilderPacks: g.Packs, RecordVersion: g.RecordVersion, BuilderRole: g.BuilderRole}, nil
 }
 
 // SetAccountStatus implements Admin.SetAccountStatus.

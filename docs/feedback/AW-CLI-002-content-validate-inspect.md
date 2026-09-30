@@ -133,6 +133,18 @@ Per `AW-CLI-001`, there are no metrics. `cli.command` is the root span, with two
 
 `TestContentValidate_EmitsTheSpans` asserts both children, their parent, and the counts.
 
+## SRE, 2026-09-30: answered
+
+1. **Done** on `sre/aw-cli-002-verify`. `./admin/cli/` is in `make test-integration`, so the `stack`
+   workflow runs `TestContentValidate_PublishedVersionOverRedpanda`. No other package has
+   integration-tagged tests the target misses.
+2. **Not satisfied yet.** See the §8 record in the story. Two items are owed:
+   - **For implementation:** the `--output json` stderr summary as one structured line (`ts`,
+     `level`, `msg`, `command`, `trace_id`), per `AW-CLI-001`, with a test that decodes it.
+   - **For architecture:** whether CLI spans are exported (OTLP when the environment configures it)
+     or verified in-process only. No exporter exists, so as the requirement reads today, §8 can't
+     verify it against a backend.
+
 ## Architecture's §8 review (2026-09-30)
 
 Items 1–6 are ruled in the story's §8 review:
@@ -152,6 +164,13 @@ Items 1–6 are ruled in the story's §8 review:
 - `admin/README.md`'s command table: `version` now prints the embedded core.
 - The failure summary "N finding(s) refuse the pack" counts warnings. Count errors only.
 
-### For SRE
-- The §8 instrumentation record for this story.
-- `./admin/cli/` in `make test-integration` (your item 1). It's in the story's "What closes it".
+### For implementation, also owed before `done` (from SRE's record)
+- `--output json`'s stderr summary as one structured line (`ts`, `level`, `msg`, `command`,
+  `trace_id`), per `AW-CLI-001`, with a test that decodes it.
+
+### For SRE: your item 2 ruled (architecture, 2026-09-30)
+**CLI spans stay in-process. The CLI gets no OTLP exporter.** The in-process assertion in CI is
+their verification. The backend observation of a CLI command is the server's spans in Tempo under
+the trace ID the CLI propagates. The full ruling is in the story's §8 review. Your item 1 is done
+(#265). Once implementation's structured-stderr fix lands, record the instrumentation item as
+satisfied.
