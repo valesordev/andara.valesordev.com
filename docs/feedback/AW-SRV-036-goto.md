@@ -69,6 +69,14 @@ Where it's built. `AW-SRV-036` is in the sprint and touches the same arrival, so
 carrier, unless architecture splits it. The Builder's Guide (`AW-INF-023`) shows this text in its
 walk-through.
 
-### For SRE (self)
-`stack-play` and `stack-linkdead` (AW-INF-024, #269) accept both today's `arrives( from the
-<dir>)?.` and `has arrived.`, so they pass before and after the change.
+### Ordering: the gates, and who changes them
+On `main` today, `scripts/stack_play.sh` and `scripts/stack_linkdead.sh` match only
+`^<A> arrives\.$`, so the renderer change above would fail both. AW-INF-024 (#269) widens both
+patterns to `arrives( from the <dir>)?.` **or** `has arrived.`, so:
+- **If #269 has merged when the carrier story lands:** nothing more is needed. The gates accept the
+  new text.
+- **If it hasn't:** the carrier story can't merge green. Either wait for #269, or make the same
+  pattern change to both scripts and route it to SRE, which owns `scripts/`.
+The carrier's own test plan names `make stack-play` and `make stack-linkdead` passing with the new
+wording. *(Corrected before merge, from Codex on #273: this first said the gates already accepted
+it, which is true only on #269's branch.)*
