@@ -36,6 +36,9 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli content inspect` | print a resolved Zone, Room, or Template, with each field's provenance (`AW-CLI-002`, builder) |
 | `andara-cli content fmt` | rewrite `.aw` sources to the canonical form; `--check` changes nothing (`AW-CLI-006`, builder) |
 | `andara-cli content decompile` | reconstruct `.aw` source from a pack on disk (`AW-CLI-006`, builder) |
+| `andara-cli content publish` / `approve` / `activate` / `rollback` | the publish path: a new version, a second approval, the Active Pointer moved or moved back (`AW-CLI-003`, builder) |
+| `andara-cli content history` / `diff` / `fetch` | a pack's versions, what changed between two, and a version's source (`AW-CLI-003`, builder) |
+| `andara-cli server info` | the server's build, protocol range, and content in effect (`AW-CLI-003`) |
 | `andara-cli content fetch-core` | cache an `andara.core` this binary does not embed, from a pack directory (`AW-CLI-006`, builder) |
 
 ## Global flags
@@ -128,6 +131,14 @@ Codes `account set-packs` adds (`AW-SRV-035`): the server's `ErrorInfo` reasons
 Codes `content` adds (`AW-CLI-006`, `AW-CLI-002`): `compile_failed`,
 `would_reformat`, `validation_failed`, `blob_hash_mismatch`, `unsafe_source_path`, `not_found` and
 `core_version_mismatch` (exit 1), and `core_fetch_unavailable` (exit 3).
+
+Codes the publish path adds (`AW-CLI-003`): the server's `ErrorInfo` reasons (domain
+`andara.content`) passed through as they are, all exit 1: `validation`, `pack_not_held`,
+`self_approval`, `core_published_at_boot`, `operator_only`, `unapproved`, `stale_parent`,
+`blob_too_large`, `pack_too_large`, `not_found`, and an activation refusal's own reason
+(`zone_removed`, `spawn_room_removed`, `core_version`) with `error.detail.subjects`. The CLI's
+own: `declined` and `no_previous_version` (exit 1), `no_sources` (exit 1), and `yes_required`
+(exit 2).
 
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
 stream (`admin/cli/testdata/play/`). Regenerate both with `make goldens`.
@@ -225,14 +236,52 @@ Component. Core Templates can be inspected too.
 Otherwise the compile fails with `core_version_mismatch`, naming both versions and
 the remedy, the `andara-cli` release that embeds `andara.core@M`. `fetch-core`
 never fetches over Admin: without `--from` it exits 3 with `core_fetch_unavailable`,
-naming the embedded core. `decompile` has no `--pack`/`--version` yet
-(`docs/feedback/AW-CLI-006-content-language-compiler.md` §14 item 3).
+naming the embedded core. `decompile` has no `--pack`/`--version`: a published
+version's source is `content fetch`'s.
 
 Findings print one per line on stderr as `file:line:col: CODE message`, with the
 declaration chain indented beneath, and warnings print even when the compile
 succeeds. Under `--output json`, `compile`'s findings ride in the result's
 `diagnostics` array, or in `error.detail.diagnostics` when the compile is refused,
 so stdout stays one JSON value. `validate`'s stdout is the array itself. The codes and positions are `docs/specs/content-language/errors.md`'s.
+
+### The publish path (`AW-CLI-003`)
+
+```
+A$ andara-cli content publish --path ./town      # town@8 published (parent 7), awaiting approval
+B$ andara-cli content approve town 8             # town@8 approved by B
+A$ andara-cli content activate town 8            # shows what changes; y to proceed
+A$ andara-cli server info                        # content town@8
+A$ andara-cli content rollback town              # back to the version active before
+```
+
+Each command is one of `AW-SRV-013`'s Admin RPCs. The server is the security boundary; the
+commands show approval state before a change and render the server's refusal.
+
+- **`publish [--path DIR] [--pack ID]`** validates locally as `content validate` does, and a
+  local finding stops it there. It then asks `HasBlobs` which blobs the server already has and
+  uploads only the rest, one `PublishBlob` stream each, and publishes with the pack's newest
+  version as parent. A stale parent (someone published meanwhile) is explained, not retried.
+  The server's findings print in the same format as local ones, placed on the source.
+- **`approve <pack> <version> [--yes]`**: approving a version you published (an Operator's
+  self-approval) asks first; with no terminal it needs `--yes`.
+- **`activate <pack> <version> [--yes] [--override --reason TEXT]`** and **`rollback <pack>
+  [--to N] [--yes]`** print the pack, the version in effect and the one replacing it, who
+  published it and who approved it, and wait for `y`. With no terminal they need `--yes`. The
+  text is logged at `info` with the trace ID the RPCs carry. `rollback` defaults to the version
+  active before the current one.
+- **`history <pack> [--limit N]`**: every version, newest first, `*` on the active one, with
+  author, approval and every interval it was active.
+- **`diff <pack> <N> <M>`**: Zones, Rooms, Exits, Templates and Component fields added (`+`),
+  removed (`-`) or changed (`~`), each pointing into M's source, or N's for a removal.
+- **`fetch <pack> <version> [--out DIR]`** writes the source the version was published with.
+  A compiled Template records its source as `<pack directory>/<file>`, so `--out` defaults to
+  the directory name it was published from, where it compiles back to the same blobs.
+- **`server info`** prints `version`, `commit`, `environment`, `protocol <min>-<max>`, one
+  `content <pack>@<version>` per pack, and `content_digest <hex>`.
+
+Accounts are named by ID, except your own, which is your username: no RPC reads another
+Account's name. Every `--output json` result and error carries `trace_id`.
 
 ## character — the roster
 

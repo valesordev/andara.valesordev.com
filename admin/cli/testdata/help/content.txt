@@ -1,15 +1,22 @@
-Compile, validate, inspect, and format Content Language packs (builder)
+Compile, validate, publish, and roll back Content Language packs (builder)
 
 Usage:
   andara-cli content [flags]
   andara-cli content [command]
 
 Available Commands:
+  activate    Move a pack's Active Pointer to an approved version
+  approve     Approve a published version, so it can be activated
   compile     Compile a Content Language pack to canonical blobs
   decompile   Reconstruct Content Language source from compiled output
+  diff        What changed from version N to M: Zones, Rooms, Exits, Templates, fields
+  fetch       Write a published version's .aw source to a directory
   fetch-core  Populate the local andara.core pack cache
   fmt         Rewrite Content Language sources to the canonical form
+  history     List a pack's versions: author, approval, and when each was active
   inspect     Print a resolved Zone, Room, or Template
+  publish     Compile, validate, and publish a pack as a new version, awaiting approval
+  rollback    Move a pack's Active Pointer back to the version active before this one
   validate    Compile and validate a pack as the server would, offline
 
 Flags:

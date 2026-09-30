@@ -4,7 +4,7 @@ title: andara-cli content publish, approve, activate, rollback, history, diff, a
 epic: EPIC-05
 component: cli
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-CLI-001, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-021]
 blocks: [AW-INF-021, AW-INF-023]
@@ -204,3 +204,47 @@ observability review is in `docs/feedback/AW-SRV-013-operator-self-approval.md`.
    first step of `AW-SRV-013`'s image-rollback order. A publish of core is refused by the server.
 6. **`fetch` and `diff` read over `GetBlob`**, which `AW-SRV-013` now pins. `fetch` supersedes the
    `decompile --pack/--version` that `AW-CLI-006` deferred here.
+
+## Implementation record (2026-09-30)
+
+On `impl/aw-cli-003-content-publish`. The commands are in `admin/cli/contentpublish.go`,
+`contentdiff.go` and `servercmd.go`. `publish` reuses `content validate`'s local compile and
+validation, and places the server's findings on the source with the compiler's source map. The
+tests run against `contentStack`: the gateway, AW-SRV-013's Admin, the Account store, and a Loader
+following pointer moves through an Engine. The same rehearsal also runs over Redpanda. Decisions
+the contract didn't make are in `docs/feedback/AW-CLI-003-content-publish.md`.
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `TestContentPublishPath_TwoIdentities`: `town@2 published (parent 1), awaiting approval`. The first publish uploads every blob; the same source again uploads none. The pointer doesn't move. Mutation-checked: uploading without `HasBlobs` fails it | pass |
+| 2 | the same test: `activate town 1 --yes` as the publisher once bob approves, then `server info` polled until it shows `content town@1`, within `reload_debounce + 2 s` | pass; `dev` itself waits on AW-INF-021 (feedback, For SRE 2) |
+| 3 | the same test: exit 1, `unapproved`, `town@1 needs approval by a second builder holding the pack or an operator (published by alice)` | pass |
+| 4 | the same test: `rollback town --yes` restores `town@1`; `history` shows 4 published and inactive; 4 is activated again | pass |
+| 5 | `TestContentPublish_ServerRefusalPrintsLikeLocal`: a pack valid alone, whose Zone collides with `town`, is refused by the server. `duplicate_zone` is printed as `z.aw:1:1`, in the local format, exit 1. Server unreachable is exit 3 | pass |
+| 6 | the rehearsal's `history`: four versions newest first, `*` on the active one, author, approver, every active interval | pass |
+| 7 | the rehearsal's `diff town 1 4`: a changed title, an added Room, an added Exit, each with `(town.aw:N)`. Identical versions say so | pass |
+| 8 | the rehearsal's `fetch town 4`: the sources compile to exactly the manifest's blobs. They must be in a directory with the name they were published from, and `fetch` defaults to it (feedback, For architecture 4) | pass |
+| 9 | `TestContentActivate_UsageBeforeAnyRPC`: `activate` and `rollback` on a non-TTY without `--yes` exit 2, `yes_required`, `--yes required`; the pointer doesn't move. Mutation-checked | pass |
+| 10 | the same test: `--override` without `--reason` exits 2 with no server configured | pass |
+| 11 | `TestContentApprove_OperatorSelfApproval`: non-TTY without `--yes` exits 2. On a TTY it asks `You published town@1. Approve it yourself as oper? [y/N]`; `n` changes nothing, and `y` prints `town@1 approved by oper (self-approval: you published it)`. Another's approval asks nothing | pass; compares with the caller only (feedback, For architecture 1) |
+| 12 | `TestContentActivate_RefusalReasonAndSubjects`: `town@2 refused: zone_removed (purgatory)`, exit 1, `error.code` `zone_removed`, `error.detail.subjects` `[purgatory]` | pass |
+| 13 | `TestServerInfo`: the lines in order, `content andara.core@1`, `content town@1`, a 64-hex digest. JSON `content` is `[{pack, version}]`. Unreachable is exit 3 | pass |
+| 14 | `TestContent_CoreRollbackAndPublish`: an Operator rolls `andara.core` from 2 back to 1 with no approval. Publishing a pack declaring `andara.core` prints `andara.core is published by the server at boot`, exit 1 | pass |
+
+`TestContentPublishPath_TwoIdentitiesOverRedpanda` passes against the local Redpanda.
+
+**Instrumentation**, asserted by `TestContentPublish_Spans`:
+- `content.publish` carries `blobs_total`, `blobs_uploaded` and `bytes`, with one
+  `content.publish_blob` child per stream.
+- `cli.command` carries `pack` and `version`, and, for `--override`, `override`, `reason` and the
+  confirmation text.
+- The confirmation is logged at `info` with the trace ID.
+- `trace_id` is in every JSON result and error. `TestContentActivate_RefusalReasonAndSubjects`
+  checks it on a refusal.
+
+`make check` passes.
+
+**Not done here, and why:**
+- **The Redpanda rehearsal isn't in CI yet.** `make test-integration` doesn't list `./admin/cli/`,
+  and the Makefile is SRE's (feedback, For SRE 1).
+- **`--as`:** acting-as doesn't exist for Admin RPCs (feedback, For architecture 1).

@@ -46,6 +46,10 @@ type runtime struct {
 	// stdin is where a password is read from with --password-stdin; nil
 	// means os.Stdin.
 	stdin io.Reader
+	// tty reports whether a person is at the terminal to answer a prompt;
+	// nil means stdin and stdout are both terminals. A test sets it, with
+	// stdin, to answer confirmations (AW-CLI-003).
+	tty func() bool
 	// tpOptions configures the tracer provider. Empty in a real process;
 	// a test passes a recorder so the spans a story promises are assertable.
 	tpOptions []sdktrace.TracerProviderOption
@@ -139,6 +143,7 @@ func newRoot(rt *runtime) *cobra.Command {
 	root.AddCommand(newSimCmd(rt))
 	root.AddCommand(newSnapshotCmd(rt))
 	root.AddCommand(newContentCmd(rt))
+	root.AddCommand(newServerCmd(rt))
 	root.AddCommand(newCompletionCmd(rt))
 	return root
 }

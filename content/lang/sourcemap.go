@@ -108,3 +108,14 @@ func (m *SourceMap) lookup(code string, chain []string) (origin, bool) {
 	}
 	return origin{}, false
 }
+
+// Position is where the declaration a chain names was written: a Zone, a
+// Room, an Exit (its `exit` keyword), or a Template by its full name. It's
+// what `content diff` points a Builder at (AW-CLI-003).
+func (m *SourceMap) Position(chain ...string) (file string, line int, ok bool) {
+	if m == nil {
+		return "", 0, false
+	}
+	o, ok := m.lookup("", chain)
+	return o.file, o.line, ok
+}

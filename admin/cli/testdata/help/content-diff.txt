@@ -1,20 +1,13 @@
-Reconstruct .aw source from compiled output, in the canonical layout.
-
-The source it produces recompiles to the same blobs byte for byte. It carries no
-comments: what preserves those is the source blob published beside the compiled
-output, which `content fetch` returns.
-
-For a published version, `content fetch` returns the source it was published with,
-so there's nothing to decompile; --path decompiles a pack already on disk.
+Compare two published versions of a pack by what they define, not by their bytes:
+Zones, Rooms, Exits, Templates and Component fields added, removed or changed.
+Each line points into version M's source, or into N's for something M removed.
 
 Usage:
-  andara-cli content decompile [flags]
+  andara-cli content diff <pack> <N> <M> [flags]
 
 Flags:
       --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
-  -h, --help           help for decompile
-      --out string     write the reconstructed sources under this directory
-      --path string    pack directory to decompile (default ".")
+  -h, --help           help for diff
 
 Global Flags:
       --config string           config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)
