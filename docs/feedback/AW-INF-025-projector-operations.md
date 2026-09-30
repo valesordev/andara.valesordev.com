@@ -75,3 +75,31 @@ fall back to the server's `secrets.kafkaCreds`. An empty value renders no mount,
 expected state on `dev` until ADR-0011's SRE story turns SASL on. The story's *Contract amendment*
 has the reasoning.
 
+
+## For architecture: `--rebuild` never completes (SRE, 2026-09-29, while building)
+
+The contract says `projector-rebuild` runs `andara-projector state --rebuild` "to completion as a
+one-shot Job" and waits "for the Job to complete". AC-2 says "the Job completes". The binary
+doesn't complete. `server/projector/run.go` logs `state projector caught up` once, then keeps
+projecting until it's signalled, as the Deployment does. A Job running it never reaches
+`Complete`.
+
+**What the target does instead:** the rebuild is done when the Job's pod logs
+`state projector caught up`, bounded by `PROJECTOR_REBUILD_TIMEOUT`. The target reads the tick
+from that line, deletes the Job (SIGTERM, a clean stop, exit 0, with its checkpoint committed),
+then runs `projector-start`. The Deployment resumes from the Job's checkpoint, with no second
+`--rebuild`. The final line is still `projector-rebuild: rebuilt to tick <t> in <n>s`.
+`backoffLimit: 0`, `ttlSecondsAfterFinished` and `activeDeadlineSeconds` are set as contracted,
+and a Job pod that exits on its own is reported as a failure (2/3/4).
+
+Two consequences for the contract:
+- **AC-2's "the Job completes"** reads as "the Job's pod logs `caught up`, and the target deletes
+  it". Nothing waits on a `Complete` condition.
+- **"Deletes a finished Job before it creates its own"** still holds, but in practice the Job the
+  target made is already gone. A finished Job only remains after a failure, which is kept, with
+  its TTL, for the evidence.
+
+The alternative is for `--rebuild` to exit 0 once it's caught up. That's AW-SRV-019's code, so
+implementation's. It would make the Job's `Complete` literal, and the target could wait on that
+condition instead. I don't think it's needed. Please rule on the reading above, or send the
+exit-on-caught-up change to implementation.

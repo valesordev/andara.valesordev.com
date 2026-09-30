@@ -80,9 +80,9 @@ class FailsClosed(unittest.TestCase):
         self.assertIn("only NotFound counts as none", msg)
         self.assertEqual(changed, [])
 
-    def test_an_s3_snapshot_store_stops_before_any_change(self):
-        msg, changed = self.run_reset(store="s3")
-        self.assertIn("snapshot.store=s3", msg)
+    def test_an_unknown_snapshot_store_stops_before_any_change(self):
+        msg, changed = self.run_reset(store="gcs")
+        self.assertIn("snapshot.store=gcs", msg)
         self.assertEqual(changed, [])
 
     def test_a_missing_application_is_not_an_error(self):

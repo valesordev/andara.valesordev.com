@@ -59,7 +59,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
-        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset
+        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset \
+        objectstore-install projector-stop projector-start projector-rebuild
 
 ## help: print this target list
 help:
@@ -353,6 +354,22 @@ kafka-broker-bounce:
 ## argocd-install: Argo CD and Image Updater into `argocd` at pinned versions; with ENV=dev, dev's Secrets (if absent) and the andara-dev Application — dev follows main (AW-INF-019)
 argocd-install:
 	@$(PY) $(SCRIPTS)/argocd.py install "$(if $(filter command line,$(origin ENV)),$(ENV),)"
+
+## objectstore-install: versitygw, its PVC, the Secret andara-snapshot-s3 (generated once) and the bucket andara-snapshots-<env> in andara-<env> — idempotent — ENV=<dev|prod> (AW-INF-025)
+objectstore-install:
+	@$(PY) $(SCRIPTS)/objectstore.py install "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## projector-stop: scale the state projector to 0 and wait for its consumer group to empty — ENV=<dev|prod> [PROJECTOR_STOP_TIMEOUT=120s] (AW-INF-025)
+projector-stop:
+	@$(PY) $(SCRIPTS)/projector.py stop "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## projector-start: scale the state projector to 1 and wait for Ready — ENV=<dev|prod> [PROJECTOR_START_TIMEOUT=300s] (AW-INF-025)
+projector-start:
+	@$(PY) $(SCRIPTS)/projector.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## projector-rebuild: stop the state projector, run `andara-projector state --rebuild` as a one-shot Job until it catches up, then start it — ENV=<dev|prod> [PROJECTOR_REBUILD_TIMEOUT=30m] (AW-INF-025)
+projector-rebuild:
+	@$(PY) $(SCRIPTS)/projector.py rebuild "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
 ## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> (AW-INF-021)
 world-reset:

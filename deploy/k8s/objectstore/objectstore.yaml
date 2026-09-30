@@ -1,0 +1,127 @@
+# The snapshot object store for an in-cluster environment (AW-INF-025): versitygw, the S3
+# gateway compose already pins and server/store's s3 suite passes on (AW-SRV-006), over a
+# directory on its own PVC. The server writes snapshot rounds to it and the state projector
+# reads them, with no volume shared between the two (contract review, 2026-09-28).
+#
+# Applied into andara-<env> by `make objectstore-install ENV=<env>`, which creates the Secret
+# andara-snapshot-s3 first. The gateway's root credential is that Secret's pair, so the
+# server, the projector and this gateway agree on one credential that exists only in the
+# namespace.
+#
+# NetworkPolicy: port 9000 admits the server and projector pods (the chart's
+# app.kubernetes.io/name) and the bucket tool pods objectstore.sh runs, nothing else.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: standard
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  replicas: 1
+  # One writer on an RWO volume.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: andara-objectstore
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: andara-objectstore
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: versitygw
+          image: versity/versitygw:v1.8.0@sha256:30292fc2eeacc67a36993b01f7a7a5e3361a19cced0e80c1d71cfa2a4b0a2499
+          # The same flags as compose, with the credential from the Secret rather than inline.
+          args:
+            - --access=$(AWS_ACCESS_KEY_ID)
+            - --secret=$(AWS_SECRET_ACCESS_KEY)
+            - --port=:9000
+            - --health=/health
+            - --quiet
+            - posix
+            - /data
+          envFrom:
+            - secretRef:
+                name: andara-snapshot-s3
+          ports:
+            - name: s3
+              containerPort: 9000
+          readinessProbe:
+            httpGet: {path: /health, port: s3}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /health, port: s3}
+            periodSeconds: 10
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {memory: 256Mi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: andara-objectstore
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  selector:
+    app.kubernetes.io/name: andara-objectstore
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: s3
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: andara-objectstore
+  labels:
+    app.kubernetes.io/name: andara-objectstore
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: andara-objectstore
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [andara, andara-objectstore-tools]
+      ports:
+        - port: s3
+          protocol: TCP

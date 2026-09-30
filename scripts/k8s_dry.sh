@@ -56,6 +56,9 @@ kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
 kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
   -schema-location default -schema-location "$CRD_SCHEMAS" \
   deploy/k8s/kafka/*.yaml | sed "s/^/k8s-dry [kafka]: /"
+# The snapshot object store `make objectstore-install` applies per namespace (AW-INF-025).
+kubeconform -strict -summary -kubernetes-version "$KUBE_VERSION" \
+  deploy/k8s/objectstore/*.yaml | sed "s/^/k8s-dry [objectstore]: /"
 # dev follows main (AW-INF-019): the Application from the catalog's Argo CD schema. The
 # ImageUpdater against the CRD of the Image Updater chart scripts/argocd.py pins, not the
 # catalog's, which is an older version's (it requires a spec.namespace 1.x dropped).

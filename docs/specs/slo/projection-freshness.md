@@ -70,12 +70,11 @@ and the runbook treats the first one as the evidence. *(Corrected at §8, 2026-0
 
 ## Known gaps
 
-- **A projector that is not running exports no lag.** `ProjectionStale` cannot fire for a projector
-  that is down, crash-looping, or disabled. For crash-looping, the runbook's first step is the pod's
-  restart count and last exit code (`2` divergence, `3` log gap, `4` state_version). An
-  absence-based rule has to be careful the way `AndaraServerUnavailable` is (one per environment,
-  never `absent()` over every namespace). It is deferred until the chart enables the projector
-  anywhere.
+- **A projector that is not running exports no lag,** so `ProjectionStale` can't fire for one that
+  is down or crash-looping. `StateProjectorDown` covers it (AW-INF-025): the Deployment wants a
+  replica and no ready projector pod is scraped, for 10 m, severity `ticket`. Runbook:
+  `docs/runbooks/state-projector-down.md`. It's keyed on desired replicas, so a planned stop
+  (`make projector-stop`) and a disabled projector are both silent.
 - **Lag grows while the World is stopped.** No new boundary means the lag gauge climbs even though
   there is nothing to project. The SLI and `ProjectionStale` count only minutes in which
   `andara_ticks_total` advanced, so a server outage is the server's alert, not this one. An idle

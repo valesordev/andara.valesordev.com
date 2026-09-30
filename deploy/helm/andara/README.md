@@ -46,6 +46,11 @@ chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kuber
 | `make argocd-ui` | the UI on `localhost:8090` (`ARGOCD_UI_PORT=`) by port-forward, and where the admin password is |
 | `make argocd-recover ENV=dev` | Kubernetes' forced rollback: delete an `andara` pod stuck on a build that never became Ready, once the StatefulSet's `updateRevision` is the Application's current image; refuses otherwise |
 | `make argocd-uninstall ENV=dev` | remove the Application without cascading and give its resources Helm's ownership metadata, so `make helm-install ENV=dev` takes them back |
+| `make objectstore-install ENV=<dev\|prod>` | the snapshot object store in `andara-<env>` (`deploy/k8s/objectstore/`): versitygw on its own PVC, the Secret `andara-snapshot-s3` (generated once, never rewritten), and the bucket `andara-snapshots-<env>`; idempotent (AW-INF-025) |
+| `make projector-stop ENV=<env>` | scale the state projector to 0 and wait for its pods to go and its consumer group to empty (`PROJECTOR_STOP_TIMEOUT`, 120s) |
+| `make projector-start ENV=<env>` | scale it to 1 and wait for Ready (`PROJECTOR_START_TIMEOUT`, 300s) |
+| `make projector-rebuild ENV=<env>` | refuse while a rebuild Job runs; `projector-stop`; the Job `andara-projector-state-rebuild` (`--rebuild`, from the Deployment's pod template, unscraped) until it logs `caught up`; delete it; `projector-start` (`PROJECTOR_REBUILD_TIMEOUT`, 30m) |
+| `make world-reset ENV=<env> CONFIRM=andara-<env>` | recreate the World's log topics and Account store, keeping content; stops the projector and empties the snapshot store (the bucket on `s3`, the PVC on `fs`); refuses `prod` (AW-INF-021) |
 | `make measure-tick [DURATION=300]` | record p99 CPU and RSS into `measurements.yaml`; refuses until the server exposes `andara_tick_duration_seconds` (AW-SRV-002) |
 
 `make image && make kind-load && make helm-install ENV=local` is the whole local path on the box;
@@ -69,7 +74,15 @@ a fresh cluster needs `kind create cluster --config deploy/kind/config.yaml && m
 - **Resources.** `resources.requests` when set; else `measurements.yaml` × `resourcesMultiplier`
   (1.5), rounded up. Limits only when set explicitly.
 - **Projectors.** `projectors.{state,redis,postgres}.enabled` render a `Deployment` each,
-  `strategy: Recreate` (one consumer-group holder). All `false` until AW-SRV-017/018/019 exist.
+  `strategy: Recreate` (one consumer-group holder). `state` is on for `dev` (AW-INF-025); the
+  others wait on AW-SRV-017/018. A projector's Kafka credential is its own,
+  `projectors.<name>.kafkaCreds.secretName`, mounted at `/etc/andara/secrets/kafka`; empty renders
+  no mount, and it never falls back to the server's `secrets.kafkaCreds` (ADR-0011).
+- **Snapshot store.** `server.snapshot.store` is `fs` (the `snapshots` claim) or `s3`. On `s3`,
+  `secrets.snapshotS3.secretName` (`andara-snapshot-s3`) goes into the server and every projector
+  by `envFrom`, so both read the rounds the server writes, and `server.snapshot.s3_endpoint` names
+  `objectstore.service` (`andara-objectstore`), which `helm-test` holds together. `dev` is on `s3`
+  (AW-INF-025). The claim stays on the StatefulSet, unused there, until AW-INF-007 retires it.
 - **Edge (AW-INF-006).** Two `Ingress` on `host` (class `traefik`, entrypoint `websecure`): `/` for
   Game, `/andara.admin.v1.Admin/` behind a `Middleware` `ipAllowList` of `admin.allowedCIDRs`
   (403 at the edge; the server never sees it). TLS ends at Traefik with `andara-edge-tls` and is
@@ -132,7 +145,9 @@ Application (`argocd` write-back; nothing writes to `main`), and Argo CD rolls t
 what the chart renders (a fixture under `testdata/content/valid`, a value) reaches `dev` through Argo CD's git poll.
 Every merge restarts the World on `dev`, docs-only ones included, because `publish` builds every merge.
 `make argocd-status` says what runs and which commit built it. Not managed, so never pruned: the Kafka CR and its
-topics, the two Secrets, the snapshot PVC, and the cluster platform. **To take `dev` back:**
+topics, the two Secrets, the snapshot PVC, the object store (`make objectstore-install`), and the cluster platform.
+The state projector's replica count is ignored (`ignoreDifferences`, `RespectIgnoreDifferences`), so
+`make projector-stop` holds until `projector-start`. **To take `dev` back:**
 `make argocd-uninstall ENV=dev`, then `ANDARA_BOOTSTRAP_OPERATOR=… make helm-install ENV=dev`; nothing restarts and
 no data moves.
 

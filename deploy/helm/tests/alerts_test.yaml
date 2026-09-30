@@ -257,6 +257,52 @@ tests:
               summary: "The state projection is behind the World by more than its lag budget for 5 minutes"
               runbook: docs/runbooks/projection-stale.md
 
+  # AW-INF-025: StateProjectorDown. Wanted and not scraped fires, for its namespace only.
+  - name: cluster — a projector that should run and isn't scraped tickets
+    interval: 1m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{namespace="andara-dev", deployment="andara-projector-state"}'
+        values: '1x15'
+      - series: 'up{namespace="andara-dev", job="andara-projector-state"}'
+        values: '1 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0'
+      - series: 'kube_deployment_spec_replicas{namespace="andara-prod", deployment="andara-projector-state"}'
+        values: '1x15'
+      - series: 'up{namespace="andara-prod", job="andara-projector-state"}'
+        values: '1x15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: StateProjectorDown
+        exp_alerts: []
+      - eval_time: 13m
+        alertname: StateProjectorDown
+        exp_alerts:
+          - exp_labels: {severity: ticket, slo: projection-freshness, projection: state, namespace: andara-dev}
+            exp_annotations:
+              summary: "The state projector should be running and no ready projector pod has been scraped for 10 minutes"
+              runbook: docs/runbooks/state-projector-down.md
+
+  # A planned stop (projector-stop, projector-rebuild) scales to 0: no scrape, no alert.
+  - name: cluster — a stopped projector is silent
+    interval: 1m
+    input_series:
+      - series: 'kube_deployment_spec_replicas{namespace="andara-dev", deployment="andara-projector-state"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: StateProjectorDown
+        exp_alerts: []
+
+  # Compose runs no projector and has no kube_* series.
+  - name: compose — no projector, no StateProjectorDown
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server"}'
+        values: '1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: StateProjectorDown
+        exp_alerts: []
+
   # Corrected at AW-SRV-019's §8 (2026-09-24). The mismatch counter lives one minute, and the
   # restart usually skips the divergent tick, so the ticket must outlive the process.
   - name: the divergence ticket outlives the process that saw it
