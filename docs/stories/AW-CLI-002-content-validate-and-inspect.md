@@ -211,7 +211,7 @@ are no metrics, per `AW-CLI-001`.
   source: `content validate` does it now, and `content publish` (AW-CLI-003) will
   (feedback, For architecture 2).
 
-## §8 instrumentation check (2026-09-30, SRE): satisfied
+## §8 instrumentation check (2026-09-30, SRE): not satisfied; stderr structure and span export owed
 
 On `sre/aw-cli-002-verify`, with `andara-cli` built from `main` at `49bfafb`. Per `AW-CLI-001`, a CLI
 has no metrics and exports no spans: its real backend is its streams and its exit code, with the
@@ -224,13 +224,25 @@ live, and the span assertion running in CI.
 | Human output | the same runs | the finding on stdout as `town.aw:6:19: unknown_room …` with chain `town`, `plaza`, `north`; the valid run ends `4 zones, 7 rooms, 3 templates, core andara.core@1` |
 | `--output json` | the bad copy | stdout is the one `Diagnostic` array. stderr is only `…: 1 finding(s) refuse the pack` (AC-3). A usage error is the `AW-CLI-001` envelope on stdout, with stderr empty |
 | Structured log | `--output json --log-level debug` | `{"ts","level":"debug","msg":"command completed in …","command":"content validate","trace_id":"ffa75256…"}` carries `AW-CLI-001`'s required fields |
-| Spans | `TestContentValidate_EmitsTheSpans`, in `make test` | `cli.command` → `content.compile`, `content.validate`, with the counts, asserted. The CLI exports nowhere by design, so a span can't be seen on Tempo |
+| Spans | `TestContentValidate_EmitsTheSpans`, in `make test` | constructed and asserted in-process: `cli.command` → `content.compile`, `content.validate`, with the counts. **Not observed on any backend.** `admin/cli` builds its tracer provider with no exporter, so these spans never leave the process |
 | AC-6 over Redpanda | `TestContentValidate_PublishedVersionOverRedpanda` | **now in CI.** `./admin/cli/` is added to `make test-integration`, which the `stack` workflow runs (feedback, For SRE 1). Passed locally in 1.56 s, and the whole target passes |
 
-**Noted for architecture, not holding the story.** In `--output json` mode the stderr summary is a
-plain line, not an `AW-CLI-001` structured line with `trace_id`. AC-3 asks for exactly that, and it's
-the envelope question implementation already raised (feedback, For architecture 1). Whichever way
-that's ruled, the stderr contract should say whether the summary is structured.
+**Not satisfied** *(revised before merge, from Codex on #265; the first push called both of these
+non-blocking)*:
+1. **JSON-mode stderr isn't structured** (implementation). `reportValidated` writes the summary with
+   `fmt.Fprintln`, so an `--output json` run's stderr is one plain line, with no `ts`, `level`,
+   `command` or `trace_id`. `AW-CLI-001` requires structured CLI diagnostics in JSON mode. AC-3 says
+   stderr holds only the exit summary, not that the summary is plain, so it should be one structured
+   line with `msg` set to the summary. `play` already does this: `stack-play` parses every JSON-mode
+   stderr line and requires those five fields. Owed with a test that decodes the line.
+2. **The spans have no backend** (architecture). The Observability section names `content.compile`
+   and `content.validate` under `cli.command`, but no exporter exists. The trace ID in the log line
+   correlates only with a server that receives `traceparent`, and that carries the parent's context,
+   not these spans. So they can't be verified "against a real backend" (§8), in any environment.
+   The rule is architecture's to make, for every CLI command. Either the CLI exports OTLP when the
+   operator's environment configures it (`OTEL_EXPORTER_OTLP_ENDPOINT`, off by default), and §8
+   observes them in the compose stack's Tempo. Or `AW-CLI-001`'s span requirement is in-process
+   only, and a unit assertion is its verification. Until that's ruled, this item stays open.
 
 `cli.command` reaching the server as `traceparent` on `--pack` isn't observed here. `dev` and compose
 have no store-backed server to call, so `AW-INF-021` observes it, with `AW-SRV-013`'s RPC span tree.

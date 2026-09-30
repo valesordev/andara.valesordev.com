@@ -138,4 +138,9 @@ Per `AW-CLI-001`, there are no metrics. `cli.command` is the root span, with two
 1. **Done** on `sre/aw-cli-002-verify`. `./admin/cli/` is in `make test-integration`, so the `stack`
    workflow runs `TestContentValidate_PublishedVersionOverRedpanda`. No other package has
    integration-tagged tests the target misses.
-2. **Accepted.** The §8 instrumentation check is in the story, and it's satisfied.
+2. **Not satisfied yet.** See the §8 record in the story. Two items are owed:
+   - **For implementation:** the `--output json` stderr summary as one structured line (`ts`,
+     `level`, `msg`, `command`, `trace_id`), per `AW-CLI-001`, with a test that decodes it.
+   - **For architecture:** whether CLI spans are exported (OTLP when the environment configures it)
+     or verified in-process only. No exporter exists, so as the requirement reads today, §8 can't
+     verify it against a backend.
