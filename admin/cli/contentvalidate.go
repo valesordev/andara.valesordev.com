@@ -241,15 +241,8 @@ func (rt *runtime) validatePublished(pack string, version uint64, cacheFlag stri
 		// Published without sources: andara.core, or a pack from before
 		// ADR-0009. Nothing to place findings on; the blobs are validated
 		// as they are.
-		if cv.GetCoreVersion() > 0 {
-			ref := lang.CoreRef{Pack: core.Pack, Version: uint32(cv.GetCoreVersion())}
-			if v.corePack, err = rt.findCore(ref, cacheFlag); err != nil {
-				return nil, err
-			}
-			if v.corePack == nil {
-				return nil, coreMissing(ref)
-			}
-			v.core = ref
+		if err := rt.manifestCore(v, cv, cacheFlag); err != nil {
+			return nil, err
 		}
 		return v, rt.runValidator(v, bodies, nil)
 	}
@@ -260,7 +253,17 @@ func (rt *runtime) validatePublished(pack string, version uint64, cacheFlag stri
 	}
 	defer func() { _ = os.RemoveAll(dir) }()
 	for _, p := range sources {
-		target := filepath.Join(dir, filepath.FromSlash(strings.TrimPrefix(p, lang.SourcePrefix)))
+		// A manifest path is the publisher's, and the gate takes any unique
+		// one. Only a path that stays under the scratch directory is
+		// written, or a Builder's version could overwrite files on the
+		// machine of whoever validates it.
+		rel := filepath.FromSlash(strings.TrimPrefix(p, lang.SourcePrefix))
+		if !filepath.IsLocal(rel) {
+			return nil, &AppError{Exit: ExitFail, Code: "unsafe_source_path",
+				Message: fmt.Sprintf("%s@%d publishes a source at %q, which leaves the pack; nothing was written", pack, version, p),
+				Detail:  map[string]any{"path": p}}
+		}
+		target := filepath.Join(dir, rel)
 		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return nil, &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: err.Error()}
 		}
@@ -272,10 +275,42 @@ func (rt *runtime) validatePublished(pack string, version uint64, cacheFlag stri
 		return nil, err
 	}
 	out, ok := rt.compileSpan(dir, v.corePack, lang.Options{Pack: pack}, v)
-	if !ok {
-		return v, nil
+	if ok {
+		return v, rt.runValidator(v, bodies, out.SourceMap)
 	}
-	return v, rt.runValidator(v, bodies, out.SourceMap)
+
+	// The sources don't compile. They're retained with the version, not
+	// loaded: the server validated, and would load, the compiled blobs. So
+	// the blobs are still validated, and they decide the result. The
+	// source's findings are reported beside them as warnings, since they
+	// say something true about the version without refusing it.
+	for i := range v.diags {
+		v.diags[i].Severity = lang.SeverityWarning
+		v.diags[i].Message = "the published source does not compile: " + v.diags[i].Message
+	}
+	if err := rt.manifestCore(v, cv, cacheFlag); err != nil {
+		return nil, err
+	}
+	return v, rt.runValidator(v, bodies, nil)
+}
+
+// manifestCore resolves the andara.core a published version's manifest names,
+// for validating its blobs without a compile to say which core it pinned.
+func (rt *runtime) manifestCore(v *validated, cv *contentv1.ContentVersion, cacheFlag string) error {
+	if cv.GetCoreVersion() == 0 {
+		v.corePack, v.core = nil, lang.CoreRef{}
+		return nil
+	}
+	ref := lang.CoreRef{Pack: core.Pack, Version: uint32(cv.GetCoreVersion())}
+	p, err := rt.findCore(ref, cacheFlag)
+	if err != nil {
+		return err
+	}
+	if p == nil {
+		return coreMissing(ref)
+	}
+	v.corePack, v.core = p, ref
+	return nil
 }
 
 // coreMissing is AC-5's finding for a version whose core this binary can't

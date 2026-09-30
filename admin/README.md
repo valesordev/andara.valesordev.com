@@ -120,7 +120,7 @@ Codes the roster adds (`AW-CLI-007`): `no_character` and `character_required`
 `no_such_character` (exit 1).
 
 Codes `content` adds (`AW-CLI-006`, `AW-CLI-002`): `compile_failed`,
-`would_reformat`, `validation_failed`, `blob_hash_mismatch`, `not_found` and
+`would_reformat`, `validation_failed`, `blob_hash_mismatch`, `unsafe_source_path`, `not_found` and
 `core_version_mismatch` (exit 1), and `core_fetch_unavailable` (exit 3).
 
 Help text is golden-tested, as is `play`'s rendering over a recorded Event
@@ -179,7 +179,10 @@ Under `--output json`, stdout is the array of findings and nothing else, and
 stderr carries the one-line summary. `--pack ID --version N` fetches a published
 version over `Admin.GetVersion` and `Admin.GetBlob`, checks every blob against its
 manifest hash, compiles the sources it was published with, and validates the
-compiled blobs the server holds. An unreachable server is exit 3.
+compiled blobs the server holds. The blobs decide the result: sources that don't
+compile are reported as warnings beside them. A source path that would leave the
+pack is refused (`unsafe_source_path`) before anything is written. An unreachable
+server is exit 3.
 
 **`inspect zone|room|template <ref>`** reads the same validated pack. `zone <zone>`
 prints the fallback and the Rooms. `room <zone>/<room>` prints the Components, and

@@ -96,8 +96,17 @@ that don't embed a core, such as the conformance run and the server, keep the ol
 - **`--pack` with no published sources**, as andara.core has, validates the blobs against the core
   its manifest names. Findings stay on the blob path.
 - **New `content` error codes:** `validation_failed`, `blob_hash_mismatch` (a fetched blob that
-  doesn't hash to its manifest entry) and `not_found` (an `inspect` ref), all exit 1. They're in
-  `admin/README.md`.
+  doesn't hash to its manifest entry), `unsafe_source_path` and `not_found` (an `inspect` ref), all
+  exit 1. They're in `admin/README.md`.
+- **`--pack` with sources that don't compile** (from Codex's review of #178). The gate validates
+  the compiled blobs and keeps the sources without loading them. So `validate` still runs the
+  blobs through the validator, and the blobs decide the exit. The source's findings are reported as
+  warnings, prefixed `the published source does not compile:`, and without a source map the
+  validator's findings stay on the blob paths.
+- **Published source paths are untrusted** (Codex, #178). `checkRefs` accepts any unique path, so
+  `--pack` writes a source only when its path stays under the scratch directory
+  (`filepath.IsLocal`), and refuses the version as `unsafe_source_path` otherwise. The gate taking
+  such a path at all is arguably AW-SRV-013's to refuse. Say if you want that as a bug.
 
 ## For SRE
 

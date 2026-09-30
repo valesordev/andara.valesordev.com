@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
@@ -519,6 +520,42 @@ func testContentValidatePack(t *testing.T, s *contentServer) {
 	if err := json.Unmarshal([]byte(res.stdout), &ds); err != nil || len(ds) != 1 || ds[0].Code != "unknown_room" || ds[0].File != "town.json" ||
 		strings.Join(ds[0].Chain, "/") != "town/plaza/north" {
 		t.Errorf("diagnostics = %+v (%v)", ds, err)
+	}
+
+	// Sources that don't compile, beside blobs that are valid: the blobs are
+	// what the server holds and loads, so they decide the result, and the
+	// source's finding rides out as a warning.
+	withBadSource := compiledFixture(t)
+	withBadSource["src/town.aw"] = []byte("zone town \"Town\" {\n")
+	mixed := s.publish(t, "town", 1, withBadSource)
+	res = runCLI(t, []string{"content", "validate", "--pack", "town", "--version", itoa(mixed)}, env)
+	if res.exit != ExitOK {
+		t.Fatalf("valid blobs, broken source: exit=%d stderr=%q", res.exit, res.stderr)
+	}
+	if !strings.Contains(res.stderr, "syntax_error the published source does not compile:") {
+		t.Errorf("the source's finding is not reported:\n%s", res.stderr)
+	}
+	if want := "4 zones, 7 rooms, 3 templates, core andara.core@1\n"; res.stdout != want {
+		t.Errorf("stdout = %q, want %q", res.stdout, want)
+	}
+
+	// A source path that leaves the pack is refused before anything is
+	// written, for validate and inspect alike.
+	escape := "pwned-" + strconv.FormatInt(time.Now().UnixNano(), 10) + ".aw"
+	withEscape := compiledFixture(t)
+	withEscape["src/../"+escape] = []byte("pack town requires andara.core@1\n")
+	hostile := s.publish(t, "town", 1, withEscape)
+	for _, args := range [][]string{
+		{"content", "validate", "--pack", "town", "--version", itoa(hostile)},
+		{"content", "inspect", "zone", "town", "--pack", "town", "--version", itoa(hostile)},
+	} {
+		res = runCLI(t, append(args, "-o", "json"), env)
+		if res.exit != ExitFail || !strings.Contains(res.stdout, `"code":"unsafe_source_path"`) {
+			t.Errorf("%v: exit=%d stdout=%q", args[1], res.exit, res.stdout)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(os.TempDir(), escape)); !os.IsNotExist(err) {
+		t.Errorf("a source outside the pack was written: %v", err)
 	}
 
 	// Server unreachable is exit 3.
