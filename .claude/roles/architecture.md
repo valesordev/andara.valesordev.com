@@ -2,7 +2,7 @@
 role: architecture
 aliases: [arch]
 branch_prefix: arch/
-writes: [docs/adr/, docs/specs/, "!docs/specs/slo/", buf.gen.yaml, docs/stories/, docs/feedback/, docs/glossary.md]
+writes: [docs/adr/, docs/specs/, "!docs/specs/slo/", docs/builders/, buf.gen.yaml, docs/stories/, docs/feedback/, docs/glossary.md]
 skills: [arch-start-sprint]
 ---
 # Role: ARCHITECTURE
@@ -42,7 +42,8 @@ PM as a story.
 
 ## Also
 - If a diff touches a path your role doesn't own, stop and flag it before
-  opening the PR.
+  opening the PR. Generated files (`generated` in `_repo.md`) that your change's
+  `make` target rebuilt don't count: commit them with the source change.
 - Production content lives in `valesordev/andara.solo7.media` (Builder packs
   compiled with `andara-cli content`). A story that changes `content/lang`,
   `andara.core`, or the content format must say in its contract whether

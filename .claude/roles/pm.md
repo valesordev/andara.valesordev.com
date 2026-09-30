@@ -112,7 +112,8 @@ that routes it there.
 
 ## Also
 - If a diff touches a path your role doesn't own, stop and flag it before
-  opening the PR.
+  opening the PR. Generated files (`generated` in `_repo.md`) that your change's
+  `make` target rebuilt don't count: commit them with the source change.
 - Triage GitHub issues at every sprint boundary.
 - Triage GitHub issues labeled `content-gap` at every sprint boundary. They
   come from the content repo (`valesordev/andara.solo7.media`); a Content
