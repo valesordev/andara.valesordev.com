@@ -383,12 +383,24 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	if err := a.checkRefs(refs); err != nil {
 		return nil, err
 	}
+	// The limits are checked against the store's sizes, not the caller's:
+	// a manifest declaring 0 bytes for a large blob would otherwise pass
+	// content.max_pack_bytes. A declared size the store disagrees with is
+	// refused. A blob the store doesn't hold is left to Resolve, which
+	// refuses it as blob_missing.
 	var total int64
 	for _, ref := range refs {
-		if limit := a.o.MaxBlobBytes; limit > 0 && int64(ref.GetSizeBytes()) > limit {
-			return nil, a.tooLarge(ctx, c, pack, ref.GetPath(), int64(ref.GetSizeBytes()))
+		n := int64(ref.GetSizeBytes())
+		if actual, ok := a.o.Registry.BlobSize(ref.GetHash()); ok {
+			if actual != ref.GetSizeBytes() {
+				return nil, adminErr(CodeInvalidArgument, ErrReasonValidation, "%s declares %d bytes; the blob with its hash is %d", ref.GetPath(), ref.GetSizeBytes(), actual)
+			}
+			n = int64(actual)
 		}
-		total += int64(ref.GetSizeBytes())
+		if limit := a.o.MaxBlobBytes; limit > 0 && n > limit {
+			return nil, a.tooLarge(ctx, c, pack, ref.GetPath(), n)
+		}
+		total += n
 	}
 	if limit := a.o.MaxPackBytes; limit > 0 && total > limit {
 		a.m.Publishes.WithLabelValues(PublishTooLarge).Inc()
@@ -593,16 +605,16 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 		a.log.LogAttrs(ctx, slog.LevelWarn, "content approval refused: self-approval", attrs(ctx, c, pack, version)...)
 		return nil, err
 	}
-	if cv.GetApprovedBy() != "" {
-		// Approvals bind to pack@version and never expire; a second one
-		// changes nothing.
-		return &adminv1.ApproveVersionResponse{ApprovedBy: cv.GetApprovedBy(), ApprovedAtUnixNano: cv.GetApprovedAtUnixNano()}, nil
-	}
 	mctx, mspan := a.tracer.Start(ctx, "content.write_manifest")
-	out, err := a.o.Registry.Approve(mctx, pack, version, c.p.AccountID)
+	out, approved, err := a.o.Registry.Approve(mctx, pack, version, c.p.AccountID)
 	mspan.End()
 	if err != nil {
 		return nil, &AdminError{Code: CodeUnavailable, Err: err}
+	}
+	if !approved {
+		// Approvals bind to pack@version and never expire; a second one,
+		// racing or not, changes nothing and records nothing.
+		return &adminv1.ApproveVersionResponse{ApprovedBy: out.GetApprovedBy(), ApprovedAtUnixNano: out.GetApprovedAtUnixNano()}, nil
 	}
 	outcome := ApprovalOK
 	if self {

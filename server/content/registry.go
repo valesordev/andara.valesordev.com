@@ -41,8 +41,11 @@ type Registry struct {
 	cache                   BlobCache
 	now                     func() time.Time
 
-	mu          sync.Mutex
-	present     map[[32]byte]struct{}
+	mu sync.Mutex
+	// sizes is every blob the store holds, by hash, with its body's size:
+	// what HasBlobs answers from, and what PublishVersion checks a
+	// manifest's declared sizes against.
+	sizes       map[[32]byte]uint64
 	manifests   map[string]map[uint64]*contentv1.ContentVersion
 	newest      map[string]uint64
 	pointer     map[string]*contentv1.ActiveVersion
@@ -85,7 +88,7 @@ func OpenRegistry(ctx context.Context, o RegistryOptions) (*Registry, error) {
 	r := &Registry{
 		blobs: o.Blobs, versions: o.Versions, active: o.Active,
 		cache: o.Cache, now: o.Now,
-		present:     map[[32]byte]struct{}{},
+		sizes:       map[[32]byte]uint64{},
 		manifests:   map[string]map[uint64]*contentv1.ContentVersion{},
 		newest:      map[string]uint64{},
 		pointer:     map[string]*contentv1.ActiveVersion{},
@@ -119,12 +122,17 @@ func OpenRegistry(ctx context.Context, o RegistryOptions) (*Registry, error) {
 	}); err != nil {
 		return nil, fmt.Errorf("content: replay active pointers: %w", err)
 	}
-	// Keys only: a blob's key is its hash, and the store is content-addressed,
-	// so presence is all HasBlobs needs.
+	// A blob's key is its hash, and the store is content-addressed, so the
+	// index keeps presence and size, never the body.
 	if err := o.Blobs.Replay(ctx, func(rec recordlog.Record) error {
-		if len(rec.Key) == sha256.Size && len(rec.Value) > 0 {
-			r.present[[32]byte([]byte(rec.Key))] = struct{}{}
+		if len(rec.Key) != sha256.Size || len(rec.Value) == 0 {
+			return nil
 		}
+		var b contentv1.Blob
+		if err := proto.Unmarshal(rec.Value, &b); err != nil {
+			return fmt.Errorf("content: decode blob %x: %w", rec.Key, err)
+		}
+		r.sizes[[32]byte([]byte(rec.Key))] = uint64(len(b.GetBody()))
 		return nil
 	}); err != nil {
 		return nil, fmt.Errorf("content: replay blobs: %w", err)
@@ -184,8 +192,19 @@ func (r *Registry) HasBlob(hash []byte) bool {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	_, ok := r.present[[32]byte(hash)]
+	_, ok := r.sizes[[32]byte(hash)]
 	return ok
+}
+
+// BlobSize is the size of the blob with this hash, if the store holds it.
+func (r *Registry) BlobSize(hash []byte) (uint64, bool) {
+	if len(hash) != sha256.Size {
+		return 0, false
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	n, ok := r.sizes[[32]byte(hash)]
+	return n, ok
 }
 
 // PutBlob writes a blob the caller has already hashed and checked. A blob the
@@ -203,7 +222,7 @@ func (r *Registry) PutBlob(ctx context.Context, hash []byte, mediaType string, b
 	}
 	_ = r.cache.Put(hash, body) // a cache that can't be written is slow, not wrong
 	r.mu.Lock()
-	r.present[[32]byte(hash)] = struct{}{}
+	r.sizes[[32]byte(hash)] = uint64(len(body))
 	r.mu.Unlock()
 	return false, nil
 }
@@ -237,20 +256,25 @@ func (r *Registry) Publish(ctx context.Context, cv *contentv1.ContentVersion, pa
 }
 
 // Approve sets approved_by on pack@version. The manifest is rewritten under
-// the same key; compaction keeps the approved one.
-func (r *Registry) Approve(ctx context.Context, pack string, version uint64, by string) (*contentv1.ContentVersion, error) {
+// the same key; compaction keeps the approved one. An approved version is
+// left as it is, and reported with approved false: checked here, under the
+// lock, so two approvals racing can't both write.
+func (r *Registry) Approve(ctx context.Context, pack string, version uint64, by string) (out *contentv1.ContentVersion, approved bool, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	cv, ok := r.manifests[pack][version]
 	if !ok {
-		return nil, &ErrManifestMissing{Pack: pack, Version: version}
+		return nil, false, &ErrManifestMissing{Pack: pack, Version: version}
 	}
-	out := proto.Clone(cv).(*contentv1.ContentVersion)
+	if cv.GetApprovedBy() != "" {
+		return proto.Clone(cv).(*contentv1.ContentVersion), false, nil
+	}
+	out = proto.Clone(cv).(*contentv1.ContentVersion)
 	out.ApprovedBy, out.ApprovedAtUnixNano = by, r.now().UnixNano()
 	if err := r.writeManifest(ctx, out); err != nil {
-		return nil, err
+		return nil, false, err
 	}
-	return proto.Clone(out).(*contentv1.ContentVersion), nil
+	return proto.Clone(out).(*contentv1.ContentVersion), true, nil
 }
 
 // writeManifest writes and indexes. Caller holds mu.

@@ -928,3 +928,65 @@ func TestRegistry_ReopenRebuildsTheIndexAndTheHistory(t *testing.T) {
 		}
 	}
 }
+
+// Codex on #173: the pack limit is the store's sizes, not the caller's. A
+// manifest declaring 0 bytes for its blobs doesn't slip under it, and one
+// declaring a size the store disagrees with is refused.
+func TestPublishVersion_ThePackLimitIsTheStoresSizesNotTheCallers(t *testing.T) {
+	h := newPubHarness(t, func(o *AdminOptions, _ *LoaderOptions) { o.MaxPackBytes = 1024 })
+	refs := h.putBlobs(townFiles(t))
+	var total uint64
+	for _, r := range refs {
+		total += r.GetSizeBytes()
+	}
+	if total <= 1024 {
+		t.Fatalf("the fixture is %d bytes; the test needs it over the limit", total)
+	}
+	zeroed := make([]*contentv1.BlobRef, len(refs))
+	for i, r := range refs {
+		zeroed[i] = &contentv1.BlobRef{Path: r.GetPath(), Hash: r.GetHash(), SizeBytes: 0}
+	}
+	_, err := h.admin.PublishVersion(builder(alice), &adminv1.PublishVersionRequest{PackId: "town", Blobs: zeroed})
+	adminError(t, err, CodeInvalidArgument, ErrReasonValidation)
+
+	h2 := newPubHarness(t, func(o *AdminOptions, _ *LoaderOptions) { o.MaxPackBytes = 1 << 20 })
+	refs = h2.putBlobs(townFiles(t))
+	refs[0].SizeBytes++
+	_, err = h2.admin.PublishVersion(builder(alice), &adminv1.PublishVersionRequest{PackId: "town", Blobs: refs})
+	adminError(t, err, CodeInvalidArgument, ErrReasonValidation)
+	if h2.reg.Newest("town") != 0 {
+		t.Error("a manifest with a wrong size was written")
+	}
+}
+
+// Codex on #173: two approvals racing on an unapproved version write one
+// approval between them; the loser gets the winner's, and no audit record.
+func TestApproveVersion_RacingApprovalsWriteOne(t *testing.T) {
+	h := newPubHarness(t, func(o *AdminOptions, _ *LoaderOptions) {
+		o.Accounts = packHolders{alice: {"town"}, bob: {"town"}, carol: {"town"}}
+	})
+	if _, err := h.publish(builder(alice), "town", townFiles(t)); err != nil {
+		t.Fatal(err)
+	}
+	before, manifests := len(h.auditRecords()), len(h.versions.Records())
+	results := make(chan *adminv1.ApproveVersionResponse, 2)
+	for _, who := range []string{bob, carol} {
+		go func() {
+			ap, err := h.admin.ApproveVersion(builder(who), &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
+			if err != nil {
+				t.Error(err)
+			}
+			results <- ap
+		}()
+	}
+	a, b := <-results, <-results
+	if a.GetApprovedBy() != b.GetApprovedBy() || a.GetApprovedAtUnixNano() != b.GetApprovedAtUnixNano() {
+		t.Fatalf("two approvals disagree: %v and %v", a, b)
+	}
+	if n := len(h.versions.Records()) - manifests; n != 1 {
+		t.Errorf("%d manifest writes, want 1", n)
+	}
+	if recs := h.auditSince(before); len(recs) != 1 || recs[0].GetActorAccountId() != a.GetApprovedBy() {
+		t.Errorf("audit %v, want one record by %s", recs, a.GetApprovedBy())
+	}
+}
