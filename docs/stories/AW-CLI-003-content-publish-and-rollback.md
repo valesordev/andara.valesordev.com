@@ -327,3 +327,38 @@ enough to test it.
    `admin/cli`. It closes both stories.
 5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
    (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.
+
+## §8 instrumentation check (2026-09-30, SRE): spans satisfied under architecture's ruling; the confirmation line's test owed; live store path carried to `AW-INF-021`
+
+On `sre/sprint-03-srv035-cli003-verify`, against `main` at `fa9911e`.
+
+| Signal | How | Observed |
+|--------|-----|----------|
+| `traceparent` to the server | `server info --output json` and `content history town --output json` on the compose stack | each JSON result or error carries `trace_id`. That ID resolves in local Tempo to the server's `Admin/GetServerInfo` or `Admin/ListVersions` span, parented by the CLI's `cli.command`, so the CLI's trace and the server's join |
+| The Redpanda rehearsal | `TestContentPublishPath_TwoIdentitiesOverRedpanda` | pass (1.82 s). It runs in CI now: #265 put `./admin/cli/` in `make test-integration` (feedback, For SRE 1) |
+| CLI spans | `TestContentPublish_Spans`, in `make test` | `content.publish` with `blobs_total`, `blobs_uploaded` and `bytes`, one `content.publish_blob` per stream, and `cli.command`'s `pack`, `version` and `override` attributes, all asserted in-process and run in CI. Under architecture's ruling (`AW-CLI-002` §8 review, 2026-09-30) that **is** the CLI span's verification. Its backend half is the server's spans under the propagated trace ID, and the row above shows those in Tempo |
+
+**Not observable here:** publish, approve, activate and rollback against a store. Compose and `dev`
+run `content.source=dir`, where the content RPCs answer `unimplemented`, as the `history` call above
+showed. `AW-INF-021` already carries that path on `dev`, with `AW-SRV-013`'s series and the RPC span
+tree under `cli.command`. Its run should also check this story's own two items: the activation's
+`info` confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
+through `content.activate` to the Loader's `content.swap`.
+
+**The confirmation line needs a test** (SRE's call, asked for in architecture's §8 review above).
+The Observability section requires `activate` and `rollback` to log the confirmation text they
+showed, at `info`, with the `trace_id` the CLI sent. It's the CLI's half of the audit join. No test
+asserts it, and a log line nobody asserts is unverified, so it's owed by implementation:
+- a test that runs `activate` and `rollback` with `--log-level info`;
+- it decodes the line and checks the confirmation text, and that `trace_id` equals the one in the
+  JSON result and the one the server received.
+
+The default level stays `warn` (`AW-CLI-001`). An operator tracing an action raises it, and the
+JSON result's `trace_id` still joins the server's audit record at the default.
+
+The span item is **satisfied** under that ruling. The item as a whole is satisfied once the
+confirmation line's test lands. By the ruling's reading, "under
+`cli.command`" means under the CLI's trace ID, with `cli.command`'s span ID as the parent. The
+store-backed path's live observation is carried by `AW-INF-021` as an inherited line, as CLAUDE.md §8
+allows while no environment has the caller. *(Revised before merge, from Codex on #276. The first
+push held the item open on a question architecture had already ruled on.)*

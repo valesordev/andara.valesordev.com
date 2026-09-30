@@ -305,3 +305,30 @@ restores them with `account create` and `account set-packs`. The glossary has Pa
 - the audit record on `andara.audit.v1`.
 
 Architecture then moves the story to `done` once both are recorded, without another full pass.
+
+## §8 instrumentation check (2026-09-30, SRE): satisfied
+
+On `sre/sprint-03-srv035-cli003-verify`, against the compose stack built from `main` at `fa9911e`,
+with fresh volumes. `andara-cli account set-packs` was run as the bootstrap Operator on a new
+Account `sre-builder`, then as that Builder, then with `andara.core`, then with no flags.
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `andara_privileged_actions_total{action="set_builder_packs"}` | local Prometheus | `0` before any call (pre-seeded), `3` after the three calls |
+| `andara_grpc_requests_total{method="andara.admin.v1.Admin/SetBuilderPacks",code}` | local Prometheus | `ok` 1, `permission_denied` 1, `invalid_argument` 1. `…_duration_seconds_count` 3 |
+| `info` `builder packs set` | local Loki | `actor_account_id` (the Operator), `acting_as_account_id` empty, `target_account_id`, `before=[]`, `after=["sre.docks","sre.town"]`, `trace_id` |
+| `warn` `builder packs refused` | local Loki | the Builder's call: `reason=operator_only`, with `before` and no `after`. The core grant: `reason=core_not_grantable` |
+| Trace | local Tempo (`6a21e921…`) | `andara.admin.v1.Admin/SetBuilderPacks` → `session.authenticate`, `accounts.write` (`action=set_builder_packs`, `outcome=ok`). Its parent is the CLI's `cli.command`, through `traceparent`. The denied call's trace has no `accounts.write`, since nothing was written |
+| Audit | `andara.audit.v1` on the compose Redpanda, read to its end | three records, `action=set_builder_packs`, `target` the Builder's Account: `outcome=ok` from the Operator (after `sre.docks`, `sre.town`), `denied` from the Builder, and `invalid` for `andara.core`. Each carries the same `trace_id` as its Loki line and its Tempo trace |
+| CLI exits | — | `0` set, `1` denied and `andara.core`, `2` neither `--pack` nor `--clear` |
+
+**Ruling 5 confirmed:** `accounts.write` spans only a write that reaches the store. The denied
+call's trace has the Gateway span and `session.authenticate`, and no `accounts.write`.
+
+This covers every item on architecture's list for SRE (§8 review above).
+
+**Noted for architecture, not holding the story.** `session_id` is empty on every Admin log line,
+here and on `create_account` and `set_roles` too. An Admin call runs in no Game Session, so the
+field can't be filled, and `trace_id` does the correlating. The Observability sections that list
+`session_id` for Admin paths (this story, `AW-SRV-013`) should say it's empty on Admin, or name
+what fills it.

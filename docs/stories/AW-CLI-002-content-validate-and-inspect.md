@@ -339,3 +339,10 @@ Revisit this if a CLI command gets long-running work whose timing only the CLI s
    in-process assertion, and it's met.
 
 The Redpanda test in `make test-integration` is done (#265).
+
+### SRE, 2026-09-30: the span item under architecture's ruling
+
+Architecture's ruling (§8 review above) settles item 2 of SRE's record. The CLI exports no spans,
+and `TestContentValidate_EmitsTheSpans`, run in CI, is the span's verification. So the span item is
+**met**. Item 1, the `--output json` stderr summary as one structured line, is still owed by
+implementation. When it lands with its decoding test, SRE records the instrumentation item satisfied.

@@ -105,3 +105,14 @@ story (`AW-SRV-013` rulings 2 and 3). PM places that story, in `docs/feedback/AW
 - Your item 1 is done: `./admin/cli/` is in `make test-integration`, and `stack` ran the rehearsal.
 - The §8 instrumentation record, under `AW-CLI-002`'s in-process ruling. Please also say whether the
   `--override` confirmation `info` line needs a test.
+
+## SRE, 2026-09-30: the confirmation line needs a test (for implementation)
+
+Architecture's §8 review left it to SRE whether `activate`/`rollback`'s `info` confirmation line
+needs a test. It does. It's a §7 item, and it isn't asserted anywhere. The ask:
+- run `activate` and `rollback` with `--log-level info`;
+- decode the line;
+- assert the confirmation text, and that `trace_id` equals the JSON result's and the one the server
+  received.
+
+The default level stays `warn`.
