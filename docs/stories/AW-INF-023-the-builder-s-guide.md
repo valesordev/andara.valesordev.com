@@ -67,7 +67,9 @@ The guide, at `docs/builders/` (decided 2026-09-28, item 5 in
    per row. *Until `AW-INF-028` lands,* section 7 is a short hand-written page,
    `docs/builders/07-reference.md`. It links to the glossary's Direction entry, `semantics.md`,
    `content/core/` and `errors.md` §3, and says the generated tables are coming. It's never
-   `reference.md`, which only the target writes.
+   `reference.md`, which only the target writes. When `AW-INF-028` lands, architecture deletes
+   `07-reference.md` and points the README at `reference.md` in one PR, as `AW-INF-028`'s
+   Definition of done requires.
    *(Amended 2026-09-30; see the contract amendment below.)*
 8. **Building on `dev`.** Covers:
    - the fixture pack `town` and the Zone IDs it reserves;
@@ -108,6 +110,10 @@ written.
 6. **Given** a Builder working alone on `dev` **when** they read section 4 **then** it shows the
    Operator approving their own build (`docs/feedback/AW-SRV-013-operator-self-approval.md`),
    labeled as how `dev` works while one person builds, not as the process for a team.
+7. **Given** `docs/builders/` **when** this story closes **then** exactly one reference page
+   exists, and `README.md`'s section 7 links to it. That's `07-reference.md` if `reference.md`
+   doesn't exist yet, and `reference.md` if it does, with `07-reference.md` deleted. *(Added
+   2026-09-30. The switch after this story closes is `AW-INF-028`'s Definition of done.)*
 
 ## Interface contract
 
@@ -215,9 +221,13 @@ this is recorded here and in the feedback file.
 4. **`builder-reference`'s help line changes** to what it reads: `andara-cli content reference`.
    It's amended in `AW-INF-028`, whose `[ASSUMPTION]` 2 is resolved.
 5. **`zone_removed` and `spawn_room_removed` are in `errors.md` §3.5** now, with why the compiler
-   can't raise them and the usual fix. And `guide-check` checks both directions, for `AW-INF-028`:
-   every `errors.md` code is in the reference, *and* every reference code is in `errors.md`. The
-   second direction is what would have caught these two.
+   can't raise them and the usual fix. And `guide-check` checks both directions: every `errors.md`
+   code is in the reference, *and* every reference code is in `errors.md`. The second direction is
+   what would have caught these two. It's in `AW-INF-028`'s AC-6 and test plan, and its Out of
+   scope no longer says otherwise.
+7. **The interim page's end has an owner.** AC-7 here fixes which reference page exists. Replacing
+   `07-reference.md` with `reference.md` after this story closes is an architecture PR, required by
+   `AW-INF-028`'s Definition of done.
 6. **`--output human|json`** is right, and it's the CLI's existing spelling.
 
 **`Blocked by` is cleared.** Item 1: this session's architecture charter lists `docs/builders/` as

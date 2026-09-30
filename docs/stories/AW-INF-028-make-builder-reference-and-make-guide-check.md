@@ -47,9 +47,12 @@ drift from the `andara-cli` a Builder downloads.
 - The guide's prose, including section 7's introduction and anything around the tables. That's
   architecture's, in `AW-INF-023`.
 - The JSON and the diagnostics table behind it. That's `AW-CLI-009`.
-- Adding `zone_removed` and `spawn_room_removed` to `errors.md`. That's architecture's (see
-  `docs/feedback/AW-INF-023-builders-guide.md`). `guide-check` only checks the direction
-  `AW-INF-023` AC-1 names: every `errors.md` code is in the reference.
+- Adding codes to `errors.md`, which is architecture's. (`zone_removed` and `spawn_room_removed`
+  were added on 2026-09-30, `docs/feedback/AW-INF-023-builders-guide.md` item 5.) `guide-check`
+  finds a code missing from either side (AC-6). It doesn't fix one.
+- Removing the guide's interim `docs/builders/07-reference.md` and pointing the guide at
+  `reference.md`. That's architecture's edit to `docs/builders/`, carried by this story's
+  Definition of done.
 - Checking links to anything outside this repository.
 
 ## Acceptance criteria
@@ -80,7 +83,11 @@ drift from the `andara-cli` a Builder downloads.
    **Given** `andara-cli content approve brian 1` or `andara-cli -o json content validate --path .`
    **then** the path is `content approve` or `content validate` respectively, and the line passes.
 6. **Given** a code in `errors.md` §3 that isn't in `reference.md` **then** `guide-check` prints
-   `guide-check: code <code> is in errors.md but not the reference`.
+   `guide-check: code <code> is in errors.md but not the reference`. **Given** a code in
+   `reference.md`'s Diagnostics table that isn't in `errors.md` §3 **then** it prints
+   `guide-check: code <code> is in the reference but not errors.md`. *(Second direction added
+   2026-09-30 by architecture: without it, a code the CLI raises and the spec omits renders a
+   reference row whose `errors.md` link explains nothing.)*
 7. **Given** a relative link in `docs/builders/**/*.md` whose target file doesn't exist, or whose
    `#anchor` matches no heading in the target **then** `guide-check` prints
    `guide-check: <file>:<line>: broken link <target>`.
@@ -145,9 +152,9 @@ and their `builder-reference:` and `guide-check:` lines, which CI's job log keep
 ## Test plan
 
 - **Unit** (`scripts/tests/`, run by `make scripts-test`), using fixture guides and fixture JSON:
-  - a missing command, a group followed by an unknown word (`content bogus`), a missing `errors.md`
-    code, a missing link target, and a missing anchor each exit `1`, naming the failure (AC-5 to
-    AC-8);
+  - a missing command, a group followed by an unknown word (`content bogus`), a code in
+    `errors.md` but not the reference, a code in the reference but not `errors.md`, a missing link
+    target, and a missing anchor each exit `1`, naming the failure (AC-5 to AC-8);
   - a leaf command with positional arguments, and a line with a global flag before the command,
     both pass (AC-5);
   - three failures at once are all reported (AC-8);
@@ -166,6 +173,12 @@ and their `builder-reference:` and `guide-check:` lines, which CI's job log keep
 
 CLAUDE.md §8, plus: the `.claude/` generated-files list and CLAUDE.md §2 both name
 `docs/builders/reference.md` (Open questions, item 1) before this story merges.
+
+**Carried by architecture (2026-09-30), and checked at this story's §8 review:** before this story
+moves to `done`, an `arch/` PR, merged after this story's, deletes the guide's interim
+`docs/builders/07-reference.md`. It points `docs/builders/README.md`'s section 7 at `reference.md`,
+and `make guide-check` passes on the result. Until then, the guide has two reference pages, and
+nothing links to the generated one.
 
 ## Open questions
 
