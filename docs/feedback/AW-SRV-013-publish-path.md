@@ -1,0 +1,98 @@
+# AW-SRV-013 — building the publish path
+
+Implementation started AW-SRV-013 on 2026-09-29, on `impl/aw-srv-013-publish-path`. It runs as one
+story, unsplit (Brian, 2026-09-29). A survey of the code found things the contract needs that
+aren't there yet. Most are implementation's to add, and are listed at the end so no one else takes
+them. The ones below need another role.
+
+## For SRE
+
+### 1. The blobs topic can't hold an 8 MiB blob (blocks AC-12's upper end)
+
+`content.max_blob_bytes` is 8 MiB (AW-SRV-012), but `andara.content.blobs.v1` declares no
+`max.message.bytes`. So the broker default applies: 1 MiB on Kafka (1048588) and on Redpanda
+(`kafka_batch_max_bytes`). A blob over about 1 MiB would be accepted by `PublishBlob` and then
+refused by the broker with `MESSAGE_TOO_LARGE`.
+
+- **Asked:** `max.message.bytes` on `andara.content.blobs.v1` at `content.max_blob_bytes` plus
+  envelope headroom. The record is a `contentv1.Blob` (hash, media type, body), so 9 MiB
+  (`9437184`) covers it. Apply it in every environment, locally too.
+- **Implementation's side:** the producer's batch limit and the resolver's fetch limit. They're
+  client settings, and this branch sets them.
+
+### 2. `keys.yaml` needs `content.operator_self_approval` before this branch can pass `make check`
+
+`make values-schema-check` fails on an `ANDARA_*` the code reads that `keys.yaml` doesn't list.
+The row, as the contract pins it:
+
+```yaml
+- {key: content.operator_self_approval, env: ANDARA_CONTENT_OPERATOR_SELF_APPROVAL, type: bool, default: true, story: AW-SRV-013}
+```
+
+`content.max_pack_bytes` and `content.core_pack` are already listed.
+
+### 3. Also, from the story body
+
+The image-rollback order, pointer first and then image, still needs its line in
+`docs/runbooks/server-unavailable.md` (Data / state impact).
+
+## For architecture
+
+None of these blocks the start. Each has a working assumption in the code, marked where it's used,
+that changes in one place.
+
+### 1. Admin's read limit and `PublishBlob`'s chunk size
+
+The gateway reads every RPC under `grpc.max_recv_bytes`, 64 KiB by default. At that limit:
+- a `HasBlobs` request at its documented maximum of 10,000 hashes (about 340 KB) is refused;
+- a `PublishVersion` for a pack of a few thousand blobs is refused;
+- the contract doesn't size a `PublishBlob` data chunk, so `AW-CLI-003` can't know what's safe.
+
+**Assumed:** the Admin handler gets its own read limit of 2 MiB, fixed, with no key.
+`grpc.max_recv_bytes` keeps guarding Game. A `PublishBlob` data chunk is at most 1 MiB, the same
+bound `GetBlob` has. Please pin the chunk size, or say otherwise.
+
+### 2. Acting-as on Admin, and the publishing Session's real actor
+
+AC-4 and AC-13 compare the approver with the manifest's `author` *and* the real actor behind the
+Session that published. Two gaps:
+- **Nothing makes an Admin call acting-as today.** `Store.Verify` honours an `act` claim, but no
+  token carries one. The only live acting-as path is `Game.OpenSession.act_as_account_id`. So
+  "operator `O` publishes as `B`" can't happen over Admin yet. How does `andara-cli --as` reach
+  Admin: a token carrying `act`, or a request header?
+- **The real actor isn't on the manifest.** `ContentVersion` has `author` (the acted-as Account)
+  and nothing else. The audit record holds the real actor, but nothing reads the audit topic back.
+  **Assumed:** the server keeps the publishing actor in memory, beside its version index, and
+  rebuilds it at boot from the `andara.audit.v1` publish records. Say if you'd rather it were a
+  `ContentVersion` field.
+
+### 3. What `ActivateVersion` does with findings outside AC-14's three reasons
+
+**Assumed:** activation runs the Loader's own evaluation of `pack@version` against the World in
+effect, so it refuses exactly what the swap would. Two outcomes aren't in the contract:
+- **Findings a later change made fatal:** a version valid at publish can meet findings at activation
+  that aren't one of the three reasons. For example, another pack's activation removed a Zone this
+  one's Exit targets. **Assumed:** `INVALID_ARGUMENT`, reason `validation`, with `PublishFindings`,
+  as at publish.
+- **A pack compiled against a core newer than the active one** (the Loader's `ErrCoreVersion`).
+  **Assumed:** `FAILED_PRECONDITION`, reason `core_version`, with subject
+  `andara.core@<compiled>`. AC-14 names this reason only for the reverse direction.
+
+### 4. The three-way equivalence fixture
+
+The Definition of done asks for "the three-way equivalence fixture from `AW-CLI-002` AC-4". That
+fixture is `AW-CLI-002`'s, and `AW-CLI-002` comes after this story in the sprint. **Assumed:** this
+story ships the server's half, a test that the publish gate's findings equal the Loader's on the
+same content, and `AW-CLI-002` wires the CLI in when it lands. Please move the DoD line, or say how
+it should land here.
+
+## Implementation's own, noted so no one else picks them up
+
+- A content writer and index over `recordlog`: blobs, manifests, and pointer history, with version
+  numbers assigned under one in-process lock. The server is a single replica (ADR-0001), which is
+  the same basis `AW-SRV-008`'s single-writer lock rests on.
+- The audit record's content fields (20–26), and the content actions on
+  `andara_privileged_actions_total{action}`: `publish`, `approve`, `activate`, `rollback`,
+  `reject`, `override`.
+- An exported account lookup for `builder_packs`, read for the effective account.
+- An exported publish check and activation check on the Loader.
