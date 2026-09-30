@@ -38,7 +38,10 @@ COMPOSE = os.path.join(REPO, "deploy", "compose", "docker-compose.yaml")
 # min.compaction.lag.ms is andara.state.v1's (AW-SRV-019). Redpanda accepts it and does
 # not report it, so locally it is skipped like min.insync.replicas; on Kafka a topic created
 # before it was declared reports the broker default, and `topics-diff` names the drift.
-COMPARED = ["cleanup.policy", "retention.ms", "min.insync.replicas", "min.compaction.lag.ms"]
+# max.message.bytes is andara.content.blobs.v1's (AW-SRV-013): the largest blob the broker takes.
+# Raising or lowering it deletes nothing, so it's never a data-loss change.
+COMPARED = ["cleanup.policy", "retention.ms", "min.insync.replicas", "min.compaction.lag.ms",
+            "max.message.bytes"]
 
 
 def die(msg, code=1):

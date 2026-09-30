@@ -80,8 +80,12 @@ topics:
   - name: andara.content.blobs.v1
     partitions: 6
     cleanup.policy: compact
+    max.message.bytes: 9437184    # 9 MiB
     why: |
       Keys are content hashes, so compaction retains every blob ever published (ADR-0004).
+      max.message.bytes is content.max_blob_bytes (8 MiB, AW-SRV-012) plus the Blob envelope's
+      headroom. The broker default is 1 MiB, which refuses a valid blob over it with
+      MESSAGE_TOO_LARGE after PublishBlob has accepted it (AW-SRV-013). Raise both together.
 
   - name: andara.content.versions.v1
     partitions: 6
