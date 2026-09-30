@@ -6,7 +6,7 @@ component: infra
 type: infra
 status: blocked
 size: M
-depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
+depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024, AW-CLI-009, AW-INF-028]
 blocks: []
 lane: architecture
 risk: low
