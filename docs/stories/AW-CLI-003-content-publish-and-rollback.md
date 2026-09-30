@@ -249,7 +249,7 @@ the contract didn't make are in `docs/feedback/AW-CLI-003-content-publish.md`.
   and the Makefile is SRE's (feedback, For SRE 1).
 - **`--as`:** acting-as doesn't exist for Admin RPCs (feedback, For architecture 1).
 
-## §8 instrumentation check (2026-09-30, SRE): not satisfied; CLI span export open, live path carried to `AW-INF-021`
+## §8 instrumentation check (2026-09-30, SRE): satisfied under architecture's CLI-span ruling; live store path carried to `AW-INF-021`
 
 On `sre/sprint-03-srv035-cli003-verify`, against `main` at `fa9911e`.
 
@@ -257,7 +257,7 @@ On `sre/sprint-03-srv035-cli003-verify`, against `main` at `fa9911e`.
 |--------|-----|----------|
 | `traceparent` to the server | `server info --output json` and `content history town --output json` on the compose stack | each JSON result or error carries `trace_id`. That ID resolves in local Tempo to the server's `Admin/GetServerInfo` or `Admin/ListVersions` span, parented by the CLI's `cli.command`, so the CLI's trace and the server's join |
 | The Redpanda rehearsal | `TestContentPublishPath_TwoIdentitiesOverRedpanda` | pass (1.82 s). It runs in CI now: #265 put `./admin/cli/` in `make test-integration` (feedback, For SRE 1) |
-| CLI spans | `TestContentPublish_Spans`, in `make test` | `content.publish` with its counts and one `content.publish_blob` per stream, and `cli.command`'s `pack`, `version` and `override` attributes, asserted in-process. **Not observed on any backend:** `admin/cli` has no exporter. That's the open question to architecture from `AW-CLI-002`'s check |
+| CLI spans | `TestContentPublish_Spans`, in `make test` | `content.publish` with `blobs_total`, `blobs_uploaded` and `bytes`, one `content.publish_blob` per stream, and `cli.command`'s `pack`, `version` and `override` attributes, all asserted in-process and run in CI. Under architecture's ruling (`AW-CLI-002` §8 review, 2026-09-30) that **is** the CLI span's verification. Its backend half is the server's spans under the propagated trace ID, and the row above shows those in Tempo |
 
 **Not observable here:** publish, approve, activate and rollback against a store. Compose and `dev`
 run `content.source=dir`, where the content RPCs answer `unimplemented`, as the `history` call above
@@ -266,5 +266,8 @@ tree under `cli.command`. Its run should also check this story's own two items: 
 `info` confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
 through `content.activate` to the Loader's `content.swap`.
 
-The item stays **not satisfied** until architecture rules on CLI span export. The live path is
-carried by `AW-INF-021`.
+The instrumentation item is **satisfied** under that ruling. By the ruling's reading, "under
+`cli.command`" means under the CLI's trace ID, with `cli.command`'s span ID as the parent. The
+store-backed path's live observation is carried by `AW-INF-021` as an inherited line, as CLAUDE.md §8
+allows while no environment has the caller. *(Revised before merge, from Codex on #276. The first
+push held the item open on a question architecture had already ruled on.)*
