@@ -21,10 +21,10 @@ func TestLoadVerbs(t *testing.T) {
 	if err := rt.LoadVerbs(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if rt.Verbs == nil || len(rt.Verbs.Verbs()) != 14 || rt.Commands == nil {
+	if rt.Verbs == nil || len(rt.Verbs.Verbs()) != 15 || rt.Commands == nil {
 		t.Fatalf("verbs=%v commands=%v", rt.Verbs, rt.Commands)
 	}
-	if got := testutil.CollectAndCount(rt.Commands.Commands, "andara_commands_total"); got != 14 {
+	if got := testutil.CollectAndCount(rt.Commands.Commands, "andara_commands_total"); got != 15 { // look, move, twelve directions, goto
 		t.Fatalf("andara_commands_total series = %d", got)
 	}
 	if !strings.Contains(logs.String(), `"source":"builtin"`) {

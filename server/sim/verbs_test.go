@@ -235,9 +235,14 @@ func TestMove_CrossZone(t *testing.T) {
 	if got == nil || got.Room != "trail" || got.Template != "andara.core.Character" || got.ContentVersion != "core@1" {
 		t.Fatalf("alice in wilds = %+v", got)
 	}
+	// The arrival, then the Room described to the arrival alone: every
+	// Arrive describes where it lands (AW-SRV-036, AW-SRV-038 AC-2).
 	arrived := ofType(res2.Events, sim.EvCharacterArrived)
-	if len(arrived) != 1 || len(res2.Events) != 1 {
+	if len(arrived) != 1 || len(res2.Events) != 2 || res2.Events[0].Type != sim.EvCharacterArrived || res2.Events[1].Type != sim.EvRoomDescribed {
 		t.Fatalf("tick %d events = %v", res2.Tick, res2.Events)
+	}
+	if d := res2.Events[1]; d.Envelope.GetRoomDescribed().GetRoomId() != "trail" || len(d.Scope.Entities) != 1 || d.Scope.Entities[0] != "alice" || d.Scope.Room != (sim.RoomRef{}) {
+		t.Fatalf("the arrival's description = %v", d)
 	}
 	a := arrived[0].Envelope.GetCharacterArrived()
 	if a.GetZoneId() != "wilds" || a.GetRoomId() != "trail" || a.GetFromDirection() != "west" || a.GetCharacterName() != "alice" {

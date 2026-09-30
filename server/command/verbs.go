@@ -5,6 +5,7 @@ package command
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"slices"
@@ -24,7 +25,15 @@ const (
 	// ArgDirection is one of the twelve canonical Directions or a compass
 	// alias (n, ne, ... u, d). Resolved to the canonical name.
 	ArgDirection ArgKind = "direction"
+	// ArgRoomRef is `<zone>/<room>` or `<room>`: Content Language IDs,
+	// lowercase, a letter then letters, digits or _ (AW-SRV-036). A bare
+	// Room is in the actor's Zone, which the pipeline fills from the
+	// Binding before the log.
+	ArgRoomRef ArgKind = "room_ref"
 )
+
+// gotoUsage is the detail of every goto parse refusal (AW-SRV-036 AC-5).
+const gotoUsage = "usage: goto <zone>/<room>"
 
 // ArgSpec is one positional argument a verb binds.
 type ArgSpec struct {
@@ -67,14 +76,18 @@ type VerbTable struct {
 var bindableKinds = map[sim.CommandKind][]ArgSpec{
 	sim.KindLook: {},
 	sim.KindMove: {{Name: "direction", Kind: ArgDirection}},
+	sim.KindGoto: {{Name: "target", Kind: ArgRoomRef}},
 }
 
-// Builtin is the verb table the server ships with: look, move, and the
-// twelve Directions as shorthands with their compass aliases.
+// Builtin is the verb table the server ships with: look, move, the twelve
+// Directions as shorthands with their compass aliases, and a Builder's goto.
+// goto has no abbreviation and no alias, so no prefix of another verb a
+// player types can reach it (AW-SRV-036).
 func Builtin() *VerbTable {
 	verbs := []Verb{
 		{Name: "look", Kind: sim.KindLook, Abbrev: true, Aliases: []string{"l"}},
 		{Name: "move", Kind: sim.KindMove, Abbrev: true, Args: []ArgSpec{{Name: "direction", Kind: ArgDirection}}, Aliases: []string{"go"}},
+		{Name: "goto", Kind: sim.KindGoto, Role: auth.RoleBuilder, Args: []ArgSpec{{Name: "target", Kind: ArgRoomRef}}},
 	}
 	for _, d := range sim.Directions() {
 		v := Verb{Name: string(d), Kind: sim.KindMove, Abbrev: true, Bind: map[string]string{"direction": string(d)}}
@@ -122,7 +135,7 @@ func NewVerbTable(verbs []Verb) (*VerbTable, error) {
 		}
 		need, ok := bindableKinds[v.Kind]
 		if !ok {
-			return nil, fmt.Errorf("verb table: verb %q: kind %q is not one a player may bind (look, move)", v.Name, v.Kind)
+			return nil, fmt.Errorf("verb table: verb %q: kind %q is not one a player may bind (look, move, goto)", v.Name, v.Kind)
 		}
 		if v.Role != "" && !slices.Contains(auth.AllRoles, v.Role) {
 			return nil, fmt.Errorf("verb table: verb %q: unknown role %q", v.Name, v.Role)
@@ -165,6 +178,21 @@ func NewVerbTable(verbs []Verb) (*VerbTable, error) {
 }
 
 func isSpace(r rune) bool { return r == ' ' || r == '\t' || r == '\n' || r == '\r' }
+
+// contentID reports whether s is a Content Language ID (grammar.ebnf
+// LOWER_ID): a lowercase letter, then lowercase letters, digits or _.
+func contentID(s string) bool {
+	if s == "" || s[0] < 'a' || s[0] > 'z' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		c := s[i]
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') && c != '_' {
+			return false
+		}
+	}
+	return true
+}
 
 // verbFile is the on-disk form of command.verb_table_path.
 type verbFile struct {
@@ -262,6 +290,17 @@ func checkArg(spec ArgSpec, val string) (string, error) {
 			}
 		}
 		return "", fmt.Errorf("%s is not a direction; directions are %s", quote(val), sim.DirectionsList())
+	case ArgRoomRef:
+		parts := strings.Split(val, "/")
+		if len(parts) > 2 {
+			return "", errors.New(gotoUsage)
+		}
+		for _, p := range parts {
+			if !contentID(p) {
+				return "", errors.New(gotoUsage)
+			}
+		}
+		return val, nil
 	}
 	return "", fmt.Errorf("argument kind %q is not one the parser knows", spec.Kind)
 }

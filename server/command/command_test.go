@@ -273,8 +273,8 @@ func TestVerbTable_Validation(t *testing.T) {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	if len(command.Builtin().Verbs()) != 14 {
-		t.Fatalf("built-in table has %d verbs, want look, move, and twelve directions", len(command.Builtin().Verbs()))
+	if len(command.Builtin().Verbs()) != 15 {
+		t.Fatalf("built-in table has %d verbs, want look, move, twelve directions, and goto", len(command.Builtin().Verbs()))
 	}
 }
 
