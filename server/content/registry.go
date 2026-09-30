@@ -380,3 +380,28 @@ func BlobHashesDigest(refs []*contentv1.BlobRef) []byte {
 func (r *Registry) Close() error {
 	return errors.Join(r.blobs.Close(), r.versions.Close(), r.active.Close())
 }
+
+// PublishExact writes cv as exactly pack@version, with parent the pack's
+// newest version below it: the server's own core at boot, which the build
+// numbers (AW-SRV-013). An existing pack@version is never overwritten.
+func (r *Registry) PublishExact(ctx context.Context, cv *contentv1.ContentVersion, version uint64, actor string) (*contentv1.ContentVersion, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	pack := cv.GetPackId()
+	if _, ok := r.manifests[pack][version]; ok {
+		return nil, fmt.Errorf("content: %s already exists", ManifestKey(pack, version))
+	}
+	var parent uint64
+	for v := range r.manifests[pack] {
+		if v < version && v > parent {
+			parent = v
+		}
+	}
+	out := proto.Clone(cv).(*contentv1.ContentVersion)
+	out.Version, out.ParentVersion, out.PublishedAtUnixNano = version, parent, r.now().UnixNano()
+	if err := r.writeManifest(ctx, out); err != nil {
+		return nil, err
+	}
+	r.publishedBy[ManifestKey(pack, version)] = actor
+	return proto.Clone(out).(*contentv1.ContentVersion), nil
+}

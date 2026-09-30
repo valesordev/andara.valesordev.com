@@ -445,6 +445,13 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 			slog.String("trace_id", telemetry.TraceID(ctx)))
 		return ExitFail
 	}
+	// AW-SRV-013 rule 5: not ready until the core this boot activated, or
+	// left active, is the core in effect.
+	if err := rt.coreInEffect(); err != nil {
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
+			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+		return ExitFail
+	}
 	rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
 	versions, digest := rt.Content.InEffect()
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect",

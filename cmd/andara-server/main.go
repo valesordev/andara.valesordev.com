@@ -50,6 +50,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
+	rt.BuildVersion = version
 	code := rt.LoadContent(ctx)
 	if rt.ContentMetrics != nil {
 		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)

@@ -45,6 +45,15 @@ type Runtime struct {
 	Content *content.Content
 	// ContentMetrics is the content pipeline's instrumentation.
 	ContentMetrics *content.Metrics
+	// BuildVersion is the running build's version, for the boot's core
+	// audit records (reason "boot <build version>", AW-SRV-013).
+	BuildVersion string
+	// registry is the content store's write side, opened by LoadContent
+	// on a content.source=kafka server so the boot can publish its core,
+	// and reused by the publish path (AW-SRV-013). core is what that did.
+	registry       *content.Registry
+	publishMetrics *content.PublishMetrics
+	core           *content.CoreBoot
 	// Templates is the loaded Template registry (AW-SRV-022); nil until
 	// LoadContent succeeds.
 	Templates *sim.TemplateRegistry
@@ -142,6 +151,15 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	// content cannot load at all still fails here, before anything starts.
 	src, loadErrs := content.Open(ctx, rt.contentOptions())
 	rt.Content = src
+	// The server's own core, before the candidates are read: a store
+	// without andara.core has no Template a Builder pack could extend
+	// (AW-SRV-013 AC-15). --validate-only writes nothing.
+	if src != nil && len(loadErrs) == 0 && src.Loader() != nil && !rt.Cfg.ValidateOnly {
+		if err := rt.bootCore(ctx); err != nil {
+			rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not published", slog.String("detail", err.Error()))
+			return ExitFail
+		}
+	}
 	var (
 		inputs     []sim.Input
 		candidates []sim.TemplateInput
