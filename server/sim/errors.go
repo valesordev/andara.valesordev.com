@@ -60,7 +60,7 @@ const (
 	ErrDuplicateDirection ErrCode = "duplicate_direction"
 )
 
-// AllErrCodes is every ErrCode, the closed set a metric labelled by code is
+// AllErrCodes is every ErrCode, the closed set a metric labeled by code is
 // pre-seeded from (andara_content_validation_failures_total, AW-SRV-013). A
 // new code is added here in the same change that declares it.
 var AllErrCodes = []ErrCode{

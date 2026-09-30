@@ -33,9 +33,9 @@ func (f *fakeContent) HasBlobs(ctx context.Context, req *adminv1.HasBlobsRequest
 	return &adminv1.HasBlobsResponse{Present: make([]bool, len(req.GetHashes()))}, nil
 }
 
-func (f *fakeContent) PublishBlob(_ context.Context, s content.BlobStream) (*adminv1.PublishBlobResponse, error) {
+func (f *fakeContent) PublishBlob(_ context.Context, receive func() (*adminv1.PublishBlobRequest, error)) (*adminv1.PublishBlobResponse, error) {
 	for {
-		m, err := s.Receive()
+		m, err := receive()
 		if errors.Is(err, io.EOF) {
 			return &adminv1.PublishBlobResponse{Deduplicated: true}, nil
 		}

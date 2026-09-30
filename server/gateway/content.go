@@ -11,8 +11,9 @@ import (
 	"connectrpc.com/connect"
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
+	"google.golang.org/protobuf/proto"
+
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
-	"github.com/valesordev/andara/server/content"
 )
 
 // AdminReadMaxBytes is the most one Admin message may be, whatever
@@ -22,11 +23,19 @@ import (
 // grpc.max_recv_bytes keeps guarding Game.
 const AdminReadMaxBytes = 2 << 20
 
+// statusError is a seam's refusal that names its own status: the content
+// publish path's AdminError (AW-SRV-013). Matched by shape, so the gateway
+// doesn't import the package that defines it.
+type statusError interface {
+	error
+	Status() (code uint32, domain, reason string, detail proto.Message)
+}
+
 // ContentAdmin is the content publish half of Admin (AW-SRV-013).
 // content.Admin implements it. The caller's Principal is on ctx.
 type ContentAdmin interface {
 	HasBlobs(context.Context, *adminv1.HasBlobsRequest) (*adminv1.HasBlobsResponse, error)
-	PublishBlob(context.Context, content.BlobStream) (*adminv1.PublishBlobResponse, error)
+	PublishBlob(context.Context, func() (*adminv1.PublishBlobRequest, error)) (*adminv1.PublishBlobResponse, error)
 	PublishVersion(context.Context, *adminv1.PublishVersionRequest) (*adminv1.PublishVersionResponse, error)
 	ApproveVersion(context.Context, *adminv1.ApproveVersionRequest) (*adminv1.ApproveVersionResponse, error)
 	ActivateVersion(context.Context, *adminv1.ActivateVersionRequest) (*adminv1.ActivateVersionResponse, error)
@@ -78,26 +87,25 @@ func (a *adminService) ReloadContent(ctx context.Context, req *connect.Request[a
 	return contentCall(ctx, a, req, ContentAdmin.ReloadContent)
 }
 
-// blobStream adapts connect's client stream to content.BlobStream.
-type blobStream struct {
-	s *connect.ClientStream[adminv1.PublishBlobRequest]
-}
-
-func (b blobStream) Receive() (*adminv1.PublishBlobRequest, error) {
-	if b.s.Receive() {
-		return b.s.Msg(), nil
+// receiver adapts connect's client stream to the publish path's receive
+// func: io.EOF after the last message.
+func receiver(s *connect.ClientStream[adminv1.PublishBlobRequest]) func() (*adminv1.PublishBlobRequest, error) {
+	return func() (*adminv1.PublishBlobRequest, error) {
+		if s.Receive() {
+			return s.Msg(), nil
+		}
+		if err := s.Err(); err != nil {
+			return nil, err
+		}
+		return nil, io.EOF
 	}
-	if err := b.s.Err(); err != nil {
-		return nil, err
-	}
-	return nil, io.EOF
 }
 
 func (a *adminService) PublishBlob(ctx context.Context, stream *connect.ClientStream[adminv1.PublishBlobRequest]) (*connect.Response[adminv1.PublishBlobResponse], error) {
 	if a.s.opts.ContentAdmin == nil {
 		return nil, connect.NewError(connect.CodeUnimplemented, errNoContentAdmin)
 	}
-	resp, err := a.s.opts.ContentAdmin.PublishBlob(ctx, blobStream{stream})
+	resp, err := a.s.opts.ContentAdmin.PublishBlob(ctx, receiver(stream))
 	if err != nil {
 		return nil, contentError(err)
 	}
@@ -112,46 +120,27 @@ func (a *adminService) GetBlob(ctx context.Context, req *connect.Request[adminv1
 }
 
 // contentError puts a publish-path refusal on the wire: its code, an
-// ErrorInfo in the andara.content domain naming the reason, and the status
-// detail it carries. Anything else takes the gateway's usual mapping.
+// ErrorInfo naming its domain and reason, and the status detail it carries.
+// Anything else takes the gateway's usual mapping.
 func contentError(err error) error {
 	if err == nil {
 		return nil
 	}
-	var ae *content.AdminError
-	if !errors.As(err, &ae) {
+	var se statusError
+	if !errors.As(err, &se) {
 		return connectError(err)
 	}
-	ce := connect.NewError(contentCode(ae.Code), ae)
-	if ae.Reason != "" {
-		if d, derr := connect.NewErrorDetail(&errdetails.ErrorInfo{Domain: content.ErrorDomain, Reason: ae.Reason}); derr == nil {
+	code, domain, reason, detail := se.Status()
+	ce := connect.NewError(connect.Code(code), se)
+	if reason != "" {
+		if d, derr := connect.NewErrorDetail(&errdetails.ErrorInfo{Domain: domain, Reason: reason}); derr == nil {
 			ce.AddDetail(d)
 		}
 	}
-	if ae.Detail != nil {
-		if d, derr := connect.NewErrorDetail(ae.Detail); derr == nil {
+	if detail != nil {
+		if d, derr := connect.NewErrorDetail(detail); derr == nil {
 			ce.AddDetail(d)
 		}
 	}
 	return ce
-}
-
-func contentCode(c content.Code) connect.Code {
-	switch c {
-	case content.CodeInvalidArgument:
-		return connect.CodeInvalidArgument
-	case content.CodePermissionDenied:
-		return connect.CodePermissionDenied
-	case content.CodeFailedPrecondition:
-		return connect.CodeFailedPrecondition
-	case content.CodeResourceExhausted:
-		return connect.CodeResourceExhausted
-	case content.CodeNotFound:
-		return connect.CodeNotFound
-	case content.CodeUnauthenticated:
-		return connect.CodeUnauthenticated
-	case content.CodeUnavailable:
-		return connect.CodeUnavailable
-	}
-	return connect.CodeInternal
 }

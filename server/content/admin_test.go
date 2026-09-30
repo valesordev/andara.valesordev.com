@@ -226,7 +226,7 @@ func (h *pubHarness) publish(ctx context.Context, pack string, files map[string]
 	h.t.Helper()
 	var refs []*contentv1.BlobRef
 	for p, body := range files {
-		if _, err := h.admin.PublishBlob(ctx, blobStream(pack, p, body, 1<<20)); err != nil {
+		if _, err := h.admin.PublishBlob(ctx, blobStream(pack, p, body, 1<<20).Receive); err != nil {
 			return nil, err
 		}
 		sum := sha256.Sum256(body)
@@ -301,10 +301,7 @@ func TestPublishVersion_ADanglingExitIsRefusedWithTheLoadersFindings(t *testing.
 	}
 	// The same findings the loader gives the same content (AW-SRV-001).
 	zones, _ := h.loader.Inputs()
-	var in []sim.Input
-	for _, z := range zones {
-		in = append(in, z)
-	}
+	in := append([]sim.Input(nil), zones...)
 	for _, name := range []string{"town", "docks", "wilds", "purgatory"} {
 		var def contentv1.ZoneDefinition
 		if verr := parseInto(files[name+".json"], &def); verr != nil {
@@ -591,7 +588,7 @@ func TestPublishBlob_APresentBlobIsReportedAndDeduplicated(t *testing.T) {
 	body := []byte(`{"formatVersion":1}`)
 	sum := sha256.Sum256(body)
 	other := sha256.Sum256([]byte("absent"))
-	if r, err := h.admin.PublishBlob(builder(alice), blobStream("town", "a.json", body, 4)); err != nil || r.GetDeduplicated() {
+	if r, err := h.admin.PublishBlob(builder(alice), blobStream("town", "a.json", body, 4).Receive); err != nil || r.GetDeduplicated() {
 		t.Fatalf("first %v %v", r, err)
 	}
 	has, err := h.admin.HasBlobs(builder(alice), &adminv1.HasBlobsRequest{PackId: "town", Hashes: [][]byte{sum[:], other[:]}})
@@ -599,7 +596,7 @@ func TestPublishBlob_APresentBlobIsReportedAndDeduplicated(t *testing.T) {
 		t.Fatalf("HasBlobs %v %v", has, err)
 	}
 	n := len(h.blobs.Records())
-	if r, err := h.admin.PublishBlob(builder(bob), blobStream("town", "b.json", body, 1<<20)); err != nil || !r.GetDeduplicated() {
+	if r, err := h.admin.PublishBlob(builder(bob), blobStream("town", "b.json", body, 1<<20).Receive); err != nil || !r.GetDeduplicated() {
 		t.Fatalf("again %v %v", r, err)
 	}
 	if len(h.blobs.Records()) != n {
@@ -614,12 +611,12 @@ func TestPublishBlob_ABlobOverTheLimitIsRefusedBeforeAnythingIsProduced(t *testi
 	h := newPubHarness(t, func(o *AdminOptions, _ *LoaderOptions) { o.MaxBlobBytes = 1024 })
 	n := len(h.blobs.Records())
 	// The header says so.
-	_, err := h.admin.PublishBlob(builder(alice), blobStream("town", "big.json", make([]byte, 2048), 512))
+	_, err := h.admin.PublishBlob(builder(alice), blobStream("town", "big.json", make([]byte, 2048), 512).Receive)
 	adminError(t, err, CodeResourceExhausted, ErrReasonBlobTooLarge)
 	// The header lies, and the bytes say so.
 	s := blobStream("town", "big.json", make([]byte, 2048), 512)
 	s.msgs[0].GetHeader().SizeBytes = 100
-	_, err = h.admin.PublishBlob(builder(alice), s)
+	_, err = h.admin.PublishBlob(builder(alice), s.Receive)
 	adminError(t, err, CodeResourceExhausted, ErrReasonBlobTooLarge)
 	if len(h.blobs.Records()) != n {
 		t.Error("an oversized blob was produced")
@@ -627,7 +624,7 @@ func TestPublishBlob_ABlobOverTheLimitIsRefusedBeforeAnythingIsProduced(t *testi
 	// A body that doesn't hash to its header is refused too.
 	s = blobStream("town", "a.json", []byte("abc"), 1)
 	s.msgs[1].Chunk = &adminv1.PublishBlobRequest_Data{Data: []byte("x")}
-	_, err = h.admin.PublishBlob(builder(alice), s)
+	_, err = h.admin.PublishBlob(builder(alice), s.Receive)
 	adminError(t, err, CodeInvalidArgument, ErrReasonHashMismatch)
 }
 
@@ -644,7 +641,7 @@ func TestCore_NoRPCPublishesItAndOnlyAnOperatorMovesIt(t *testing.T) {
 	h := newPubHarness(t, nil)
 	for _, ctx := range []context.Context{builder(alice), operator()} {
 		before := len(h.auditRecords())
-		_, err := h.admin.PublishBlob(ctx, blobStream(CorePack, "templates/x.json", []byte("{}"), 8))
+		_, err := h.admin.PublishBlob(ctx, blobStream(CorePack, "templates/x.json", []byte("{}"), 8).Receive)
 		adminError(t, err, CodePermissionDenied, ErrReasonCorePublish)
 		_, err = h.admin.PublishVersion(ctx, &adminv1.PublishVersionRequest{PackId: CorePack})
 		adminError(t, err, CodePermissionDenied, ErrReasonCorePublish)

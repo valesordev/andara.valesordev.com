@@ -74,6 +74,25 @@ type AdminError struct {
 func (e *AdminError) Error() string { return e.Err.Error() }
 func (e *AdminError) Unwrap() error { return e.Err }
 
+// Status is how the gateway puts an AdminError on the wire without importing
+// this package: the gRPC status code, the ErrorInfo domain and reason, and
+// the status detail, if any.
+func (e *AdminError) Status() (code uint32, domain, reason string, detail proto.Message) {
+	return grpcCodes[e.Code], ErrorDomain, e.Reason, e.Detail
+}
+
+// grpcCodes are the gRPC status codes (google.golang.org/grpc/codes), which
+// connect's codes equal.
+var grpcCodes = map[Code]uint32{
+	CodeInvalidArgument:    3,
+	CodeNotFound:           5,
+	CodePermissionDenied:   7,
+	CodeResourceExhausted:  8,
+	CodeFailedPrecondition: 9,
+	CodeUnavailable:        14,
+	CodeUnauthenticated:    16,
+}
+
 func adminErr(code Code, reason string, format string, args ...any) *AdminError {
 	return &AdminError{Code: code, Reason: reason, Err: fmt.Errorf(format, args...)}
 }
@@ -189,19 +208,15 @@ func (a *Admin) authorize(ctx context.Context, pack string, read bool) (caller, 
 // --- audit and logs ----------------------------------------------------------
 
 // record writes one audit record under its own audit.write span.
-func (a *Admin) record(ctx context.Context, c caller, action, outcome, pack string, version uint64, ca ContentAudit, detail string) {
+func (a *Admin) record(ctx context.Context, c caller, action, outcome, pack string, version uint64, ca auth.ContentAudit, detail string) {
 	ctx, span := a.tracer.Start(ctx, "audit.write")
 	defer span.End()
 	ca.PackID, ca.Version = pack, version
 	a.o.Auditor.Record(ctx, auth.Entry{
 		Actor: c.p, Action: action, Target: ManifestKey(pack, version),
-		Outcome: outcome, Detail: detail, Content: (*auth.ContentAudit)(&ca),
+		Outcome: outcome, Detail: detail, Content: &ca,
 	})
 }
-
-// ContentAudit is auth.ContentAudit, named here so callers need not import
-// both packages to build one.
-type ContentAudit auth.ContentAudit
 
 // attrs are the fields every publish-path log line carries.
 func attrs(ctx context.Context, c caller, pack string, version uint64, more ...slog.Attr) []slog.Attr {
@@ -240,18 +255,15 @@ func (a *Admin) HasBlobs(ctx context.Context, req *adminv1.HasBlobsRequest) (*ad
 	return out, nil
 }
 
-// BlobStream is PublishBlob's incoming stream: Receive returns io.EOF after
-// the last message.
-type BlobStream interface {
-	Receive() (*adminv1.PublishBlobRequest, error)
-}
-
-// PublishBlob writes one blob: a header, then its body in chunks. The size is
+// PublishBlob writes one blob: a header, then its body in chunks, from
+// receive, which returns io.EOF after the last message. It's a func rather
+// than an interface so the gateway can name the same type without importing
+// this package. The size is
 // checked against the header before anything is read, and against the bytes
 // as they arrive, so nothing over the limit is ever produced (AC-12). The body
 // is hashed before it's written, and a mismatch writes nothing.
-func (a *Admin) PublishBlob(ctx context.Context, stream BlobStream) (*adminv1.PublishBlobResponse, error) {
-	first, err := stream.Receive()
+func (a *Admin) PublishBlob(ctx context.Context, receive func() (*adminv1.PublishBlobRequest, error)) (*adminv1.PublishBlobResponse, error) {
+	first, err := receive()
 	if err != nil {
 		return nil, adminErr(CodeInvalidArgument, ErrReasonValidation, "PublishBlob sent no header: %v", err)
 	}
@@ -276,7 +288,7 @@ func (a *Admin) PublishBlob(ctx context.Context, stream BlobStream) (*adminv1.Pu
 
 	body := make([]byte, 0, hdr.GetSizeBytes())
 	for {
-		msg, err := stream.Receive()
+		msg, err := receive()
 		if errors.Is(err, io.EOF) {
 			break
 		}
@@ -318,7 +330,7 @@ func (a *Admin) PublishBlob(ctx context.Context, stream BlobStream) (*adminv1.Pu
 func (a *Admin) tooLarge(ctx context.Context, c caller, pack, path string, n int64) error {
 	a.m.Publishes.WithLabelValues(PublishTooLarge).Inc()
 	err := adminErr(CodeResourceExhausted, ErrReasonBlobTooLarge, "%s is %d bytes; content.max_blob_bytes is %d", path, n, a.o.MaxBlobBytes)
-	a.record(ctx, c, auth.ActionPublish, "too_large", pack, 0, ContentAudit{}, err.Error())
+	a.record(ctx, c, auth.ActionPublish, "too_large", pack, 0, auth.ContentAudit{}, err.Error())
 	a.log.LogAttrs(ctx, slog.LevelWarn, "content publish refused: too large", attrs(ctx, c, pack, 0, slog.String("detail", err.Error()))...)
 	return err
 }
@@ -337,7 +349,7 @@ func (a *Admin) authorizePublish(ctx context.Context, pack string) (caller, erro
 	c, err := a.authorize(ctx, pack, false)
 	if err != nil {
 		a.m.Publishes.WithLabelValues(PublishDenied).Inc()
-		a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, pack, 0, ContentAudit{}, err.Error())
+		a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, pack, 0, auth.ContentAudit{}, err.Error())
 		a.log.LogAttrs(ctx, slog.LevelWarn, "content publish denied", attrs(ctx, c, pack, 0, slog.String("detail", err.Error()))...)
 		return c, err
 	}
@@ -347,7 +359,7 @@ func (a *Admin) authorizePublish(ctx context.Context, pack string) (caller, erro
 func (a *Admin) corePublishRefused(ctx context.Context, c caller) error {
 	a.m.Publishes.WithLabelValues(PublishDenied).Inc()
 	err := adminErr(CodePermissionDenied, ErrReasonCorePublish, "%s is published by the server at boot; no RPC publishes it", a.o.CorePack)
-	a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, a.o.CorePack, 0, ContentAudit{}, err.Error())
+	a.record(ctx, c, auth.ActionPublish, auth.AuditDenied, a.o.CorePack, 0, auth.ContentAudit{}, err.Error())
 	return err
 }
 
@@ -381,7 +393,7 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	if limit := a.o.MaxPackBytes; limit > 0 && total > limit {
 		a.m.Publishes.WithLabelValues(PublishTooLarge).Inc()
 		err := adminErr(CodeResourceExhausted, ErrReasonPackTooLarge, "%s is %d bytes; content.max_pack_bytes is %d", pack, total, limit)
-		a.record(ctx, c, auth.ActionPublish, "too_large", pack, 0, ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
+		a.record(ctx, c, auth.ActionPublish, "too_large", pack, 0, auth.ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
 		return nil, err
 	}
 	if newest := a.o.Registry.Newest(pack); req.GetParentVersion() != newest {
@@ -416,7 +428,7 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 		return nil, &AdminError{Code: CodeUnavailable, Err: err}
 	}
 	a.m.Publishes.WithLabelValues(PublishOK).Inc()
-	a.record(ctx, c, auth.ActionPublish, auth.AuditOK, pack, out.GetVersion(), ContentAudit{BlobHashesSHA256: digest, Override: override, FindingsCount: uint32(len(warnings))}, "")
+	a.record(ctx, c, auth.ActionPublish, auth.AuditOK, pack, out.GetVersion(), auth.ContentAudit{BlobHashesSHA256: digest, Override: override, FindingsCount: uint32(len(warnings))}, "")
 	a.log.LogAttrs(ctx, slog.LevelInfo, "content published", attrs(ctx, c, pack, out.GetVersion(),
 		slog.Uint64("core_version", out.GetCoreVersion()), slog.Int("warnings", len(warnings)))...)
 	return &adminv1.PublishVersionResponse{Version: out.GetVersion(), CoreVersion: out.GetCoreVersion(), Warnings: Diagnostics(warnings, contentv1.Severity_WARNING)}, nil
@@ -443,7 +455,7 @@ func (a *Admin) checkRefs(refs []*contentv1.BlobRef) error {
 func (a *Admin) staleParent(ctx context.Context, c caller, pack string, parent, newest uint64, digest []byte, override bool) error {
 	a.m.Publishes.WithLabelValues(PublishStaleParent).Inc()
 	err := &AdminError{Code: CodeFailedPrecondition, Reason: ErrReasonStaleParent, Err: &ErrStaleParent{Pack: pack, Parent: parent, Newest: newest}}
-	a.record(ctx, c, auth.ActionPublish, "stale_parent", pack, 0, ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
+	a.record(ctx, c, auth.ActionPublish, "stale_parent", pack, 0, auth.ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
 	a.log.LogAttrs(ctx, slog.LevelWarn, "content publish refused: stale parent", attrs(ctx, c, pack, 0, slog.String("detail", err.Error()))...)
 	return err
 }
@@ -460,7 +472,7 @@ func (a *Admin) rejected(ctx context.Context, c caller, pack string, refusing, w
 		Err:    fmt.Errorf("%s refused: %d findings, the first %s: %s", pack, len(refusing), refusing[0].Code, refusing[0].Detail),
 	}
 	a.record(ctx, c, auth.ActionReject, "rejected", pack, 0,
-		ContentAudit{BlobHashesSHA256: digest, Override: override, FindingsCount: uint32(len(refusing))}, err.Error())
+		auth.ContentAudit{BlobHashesSHA256: digest, Override: override, FindingsCount: uint32(len(refusing))}, err.Error())
 	a.log.LogAttrs(ctx, slog.LevelWarn, "content publish rejected", attrs(ctx, c, pack, 0,
 		slog.Int("findings_count", len(refusing)), slog.String("code", string(refusing[0].Code)))...)
 	return err
@@ -564,7 +576,7 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 	c, err := a.authorize(ctx, pack, false)
 	if err != nil {
 		a.m.Approvals.WithLabelValues(ApprovalDenied).Inc()
-		a.record(ctx, c, auth.ActionApprove, auth.AuditDenied, pack, version, ContentAudit{}, err.Error())
+		a.record(ctx, c, auth.ActionApprove, auth.AuditDenied, pack, version, auth.ContentAudit{}, err.Error())
 		return nil, err
 	}
 	cv, ok := a.o.Registry.Manifest(pack, version)
@@ -574,10 +586,10 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 	digest := BlobHashesDigest(cv.GetBlobs())
 	publisher := []string{cv.GetAuthor(), a.o.Registry.PublishedBy(pack, version)}
 	self := slices.Contains(publisher, c.p.AccountID) || slices.Contains(publisher, c.p.EffectiveAccountID())
-	if self && !(c.operator && a.o.OperatorSelfApproval) {
+	if self && (!c.operator || !a.o.OperatorSelfApproval) {
 		a.m.Approvals.WithLabelValues(ApprovalSelf).Inc()
 		err := adminErr(CodePermissionDenied, ErrReasonSelfApproval, "%s published %s@%d and may not approve it; a second Builder holding %s must", c.p.AccountID, pack, version, pack)
-		a.record(ctx, c, auth.ActionApprove, auth.AuditDenied, pack, version, ContentAudit{BlobHashesSHA256: digest, SelfApproval: true}, err.Error())
+		a.record(ctx, c, auth.ActionApprove, auth.AuditDenied, pack, version, auth.ContentAudit{BlobHashesSHA256: digest, SelfApproval: true}, err.Error())
 		a.log.LogAttrs(ctx, slog.LevelWarn, "content approval refused: self-approval", attrs(ctx, c, pack, version)...)
 		return nil, err
 	}
@@ -601,7 +613,7 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 		a.log.LogAttrs(ctx, slog.LevelInfo, "content approved", attrs(ctx, c, pack, version)...)
 	}
 	a.m.Approvals.WithLabelValues(outcome).Inc()
-	a.record(ctx, c, auth.ActionApprove, auth.AuditOK, pack, version, ContentAudit{BlobHashesSHA256: digest, SelfApproval: self}, "")
+	a.record(ctx, c, auth.ActionApprove, auth.AuditOK, pack, version, auth.ContentAudit{BlobHashesSHA256: digest, SelfApproval: self}, "")
 	return &adminv1.ApproveVersionResponse{ApprovedBy: out.GetApprovedBy(), ApprovedAtUnixNano: out.GetApprovedAtUnixNano(), SelfApproval: self}, nil
 }
 
@@ -624,7 +636,7 @@ func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersio
 		err = adminErr(CodePermissionDenied, ErrReasonOperatorOnly, "only an Operator may override approval")
 	}
 	if err != nil {
-		a.record(ctx, c, auth.ActionActivate, auth.AuditDenied, pack, version, ContentAudit{Override: req.GetOverride(), Reason: req.GetReason()}, err.Error())
+		a.record(ctx, c, auth.ActionActivate, auth.AuditDenied, pack, version, auth.ContentAudit{Override: req.GetOverride(), Reason: req.GetReason()}, err.Error())
 		return nil, err
 	}
 	if req.GetOverride() && strings.TrimSpace(req.GetReason()) == "" {
@@ -640,7 +652,7 @@ func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersio
 	if !approved && !overridden {
 		a.m.ActivationsRefused.WithLabelValues(RefusedUnapproved).Inc()
 		err := adminErr(CodeFailedPrecondition, ErrReasonUnapproved, "%s@%d has no approval: a second Builder holding %s, or an Operator, must approve it first", pack, version, pack)
-		a.record(ctx, c, auth.ActionActivate, "refused", pack, version, ContentAudit{BlobHashesSHA256: digest}, err.Error())
+		a.record(ctx, c, auth.ActionActivate, "refused", pack, version, auth.ContentAudit{BlobHashesSHA256: digest}, err.Error())
 		a.log.LogAttrs(ctx, slog.LevelWarn, "content activation refused", attrs(ctx, c, pack, version, slog.String("reason", RefusedUnapproved))...)
 		return nil, err
 	}
@@ -677,7 +689,7 @@ func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersio
 	case rollback:
 		action = auth.ActionRollback
 	}
-	a.record(ctx, c, action, auth.AuditOK, pack, version, ContentAudit{BlobHashesSHA256: digest, Override: overridden, Reason: req.GetReason()}, "")
+	a.record(ctx, c, action, auth.AuditOK, pack, version, auth.ContentAudit{BlobHashesSHA256: digest, Override: overridden, Reason: req.GetReason()}, "")
 	if overridden {
 		a.log.LogAttrs(ctx, slog.LevelWarn, "content activated by override", attrs(ctx, c, pack, version,
 			slog.String("reason", req.GetReason()), slog.Uint64("previous_version", previous))...)
@@ -689,7 +701,7 @@ func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersio
 }
 
 func (a *Admin) refused(ctx context.Context, c caller, pack string, version uint64, r *Refusal, digest []byte, override bool, reason string) error {
-	ca := ContentAudit{BlobHashesSHA256: digest, Override: override, Reason: reason, FindingsCount: uint32(len(r.Findings))}
+	ca := auth.ContentAudit{BlobHashesSHA256: digest, Override: override, Reason: reason, FindingsCount: uint32(len(r.Findings))}
 	if r.Reason == RefusalValidation {
 		err := &AdminError{Code: CodeInvalidArgument, Reason: ErrReasonValidation,
 			Detail: &adminv1.PublishFindings{Findings: Diagnostics(r.Findings, contentv1.Severity_ERROR)}, Err: r.Err}
