@@ -21,3 +21,19 @@ the provenance a finding quotes, not a path the loader opens.
 | `andara.core.Item` | item | root | — |
 
 `Item` is its own root: a chain has one kind, and an Item is not an Entity.
+
+## `VERSION` and `VERSIONS` (AW-SRV-013)
+
+This directory is a Go package (`core.go`) that embeds `templates/`, `VERSION` and `VERSIONS`. The
+server publishes the embedded pack at boot as `andara.core@<VERSION>`, author `server`. `andara-cli`
+embeds the same (`AW-CLI-002`).
+
+- `VERSION` is the core version this build ships.
+- `VERSIONS` is one line per core ever shipped, `<N> <digest>`. The digest is the sha256 of the
+  sorted list of the blobs' sha256 hashes. It is **append-only**: rewriting a line would let two
+  builds publish different bytes as the same `andara.core@N`, which a server refuses at boot only
+  after one of them has shipped.
+
+Changing anything under `templates/` means a new `VERSION` and a new last line in `VERSIONS`.
+`TestEmbeddedCoreIsTheOneVERSIONSRecords` fails `make check` otherwise, naming the digest the build
+embeds.

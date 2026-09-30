@@ -28,7 +28,10 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `content.path` | `ANDARA_CONTENT_PATH` | `./content` | Directory of Zone Definition JSON files. Used only when `content.source=dir`. |
 | `content.packs` | `ANDARA_CONTENT_PACKS` | `andara.core` | Packs to follow, comma-separated; `*` follows every Active Pointer. Kafka only. |
 | `content.cache_dir` | `ANDARA_CONTENT_CACHE_DIR` | `/var/cache/andara/blobs` | On-disk blob cache, keyed by hash; blobs are immutable. Kafka only. |
-| `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` | Largest blob read; a larger one refuses its version `blob_too_large`. Kafka only. |
+| `content.max_blob_bytes` | `ANDARA_CONTENT_MAX_BLOB_BYTES` | `8388608` | Largest blob read or published; a larger one refuses its version `blob_too_large`, and a larger `PublishBlob` is refused before anything is produced. Kafka only. |
+| `content.max_pack_bytes` | `ANDARA_CONTENT_MAX_PACK_BYTES` | `268435456` | Largest version accepted by `PublishVersion`, all its blobs together (`pack_too_large`). Kafka only. |
+| `content.core_pack` | `ANDARA_CONTENT_CORE_PACK` | `andara.core` | The pack the server publishes at boot and no RPC may. It must name the core this build embeds. Kafka only. |
+| `content.operator_self_approval` | `ANDARA_CONTENT_OPERATOR_SELF_APPROVAL` | `true` | An Operator may approve a version they published, flagged `self_approval` (ADR-0004, amended 2026-09-26). Off, it's refused like a Builder's. Kafka only. |
 | `content.reload_debounce` | `ANDARA_CONTENT_RELOAD_DEBOUNCE` | `2s` | How long a burst of pointer moves is coalesced before it is applied. Kafka only. |
 | `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. |
 | `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/readyz`, `/metrics`. Plaintext, operator surface. |
@@ -40,7 +43,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `grpc.listen` | `ANDARA_GRPC_LISTEN` | `:8443` | The Protocol endpoint: `Game` and `Admin`, gRPC, gRPC-Web, and Connect, TLS only. Flag `--grpc-listen`. |
 | `grpc.tls_cert_file` | `ANDARA_TLS_CERT_FILE` | — | **Required.** PEM server certificate. Flag `--tls-cert-file`. |
 | `grpc.tls_key_file` | `ANDARA_TLS_KEY_FILE` | — | **Required.** PEM private key. Flag `--tls-key-file`. |
-| `grpc.max_recv_bytes` | `ANDARA_GRPC_MAX_RECV_BYTES` | `65536` | Largest request message accepted; over it is `RESOURCE_EXHAUSTED` before any handler runs. |
+| `grpc.max_recv_bytes` | `ANDARA_GRPC_MAX_RECV_BYTES` | `65536` | Largest request message accepted; over it is `RESOURCE_EXHAUSTED` before any handler runs. `Admin` reads up to 2 MiB, or this if larger, for the publish path's messages (AW-SRV-013). |
 | `grpc.max_request_timeout` | `ANDARA_GRPC_MAX_REQUEST_TIMEOUT` | `30s` | Deadline applied to a unary RPC that carries none, and the cap on one that carries a longer one. Streams are bounded by the Session, not by this. |
 | `grpc.drain_timeout` | `ANDARA_GRPC_DRAIN_TIMEOUT` | `15s` | How long shutdown waits for in-flight RPCs after refusing new ones. Past it, remaining connections are closed. |
 | `protocol.min_version` | `ANDARA_PROTOCOL_MIN` | `1` | Lowest Protocol version `OpenSession` accepts. Must be at least 1: `0` is what proto3 sends for an unset field. |
@@ -1064,3 +1067,51 @@ reason. The swap `LoggedCommand` carries the load's W3C traceparent in `trace_id
 `content.swap` is a child of `content.load` and carries a link to the `sim.tick` that applied it.
 A refusal is logged at `error`, ending "the previous version keeps serving". The runbook's query
 matches that suffix, so a rewording keeps it.
+
+### Publishing content (AW-SRV-013)
+
+A `content.source=kafka` server is also the content store's writer, over `Admin`. `HasBlobs` and
+`PublishBlob` (client-streaming, chunks of at most 1 MiB) write blobs keyed by their sha256.
+`PublishVersion` validates a version from blobs already written and writes its manifest. The
+validator is the Loader's, against the packs in effect other than the version's own, so the
+findings are the ones a load would give. Then `ApproveVersion`, `ActivateVersion` (which moves
+the Active Pointer the Loader follows), `ListVersions`, `GetVersion`, `GetBlob`
+(server-streaming, 1 MiB chunks), and `ReloadContent`. On a `dir` server they're `UNIMPLEMENTED`.
+
+- **Who may.** A `builder` holding the pack in `Account.builder_packs`, or an `operator`.
+  `andara.core` is readable by any Builder and published by no RPC. The matrix is in the story.
+- **Two people.** A version is activated once someone other than its publisher approves it. The
+  publisher is the manifest's `author` and the real actor behind an acting-as publish. An Operator
+  may approve their own while `content.operator_self_approval` is on, and may activate unapproved
+  with `override` and a `reason`. Rolling back to an approved version needs no fresh approval.
+- **Refused before the pointer moves.** `ActivateVersion` runs the Loader's own evaluation against
+  the World in effect: `zone_removed`, `spawn_room_removed` and `core_version` are
+  `FAILED_PRECONDITION` with an `ActivationRefusal` naming the subjects. `override` doesn't skip them.
+- **Errors** carry `ErrorInfo{domain: "andara.content", reason}`, plus `PublishFindings` on
+  `validation`.
+- **The server's own core.** At boot, before it reads the content, the server publishes the
+  `andara.core` it embeds (`content/core/`) as `andara.core@<content/core/VERSION>`, author
+  `server`. It activates that over nothing, or over its own older pointer. It leaves an Account's
+  pointer or a newer core, saying so at `warn` or `info`. A store holding the same version with
+  other bytes exits the boot `1`, writing nothing. Readiness waits for the active core to be in
+  effect. `content/core/VERSIONS` is append-only, and `make check` holds the embedded digest to it.
+- **History** is read back at boot from `andara.audit.v1`, the only history compaction leaves: who
+  really published each version, and every pointer move.
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_content_publishes_total` | counter | `outcome` | `ok`, `rejected`, `denied`, `too_large`, `stale_parent` |
+| `andara_content_approvals_total` | counter | `outcome` | `ok`, `self` (refused), `denied`, `self_operator` |
+| `andara_content_pointer_moves_total` | counter | `direction`, `override` | `forward`, `rollback` × `true`, `false`; the boot's core activation counts `forward`, `false` |
+| `andara_content_activations_refused_total` | counter | `reason` | `unapproved`, `zone_removed`, `spawn_room_removed`, `core_version` |
+| `andara_content_blob_bytes_total` | counter | — | 1; bytes accepted after deduplication |
+| `andara_content_validation_failures_total` | counter | `code` | `sim.AllErrCodes` |
+
+Pack ID is not a label on any of them; the audit topic answers "which pack". RED per RPC is the
+Gateway's `andara_grpc_requests_total{method,code}`. Every line carries `actor_account_id`,
+`acting_as_account_id`, `pack_id`, `version`, `session_id` and `trace_id`. Publish, approve and
+activate log at `info`. A rejection, an override, a self-approval, or a refused activation logs at
+`warn`, and the core boot logs one `content core: …` line. Spans: `content.publish_blob` →
+`content.write_blob`; `content.publish` → `content.validate`, `content.write_manifest`;
+`content.approve` → `content.write_manifest`; `content.activate` → `content.write_pointer`;
+`content.get_blob`; `audit.write` under each; and `content.core_boot`, a root span, at boot.

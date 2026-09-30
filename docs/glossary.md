@@ -206,9 +206,10 @@ never repeat, so compaction never removes one.
 before that version can be activated (decided 2026-09-07). Publishing is one person's act; activating
 is two. An Operator may override, loudly audited, with a reason. Rollback to a previously-approved
 version needs no fresh approval (`AW-SRV-013`). **Operator self-approval** (decided 2026-09-26, Brian, temporary while one
-person builds): an Operator may approve a version they published as a Builder, audited as a
-self-approval. A Builder still can't. Pending contract review in
-`docs/feedback/AW-SRV-013-operator-self-approval.md`.
+person builds): an Operator may approve a version they published, directly or acting as a Builder,
+flagged `self_approval` on the audit record and counted apart. A Builder still can't. Switched by
+`content.operator_self_approval`, so turning it off when others build is a values change
+(`AW-SRV-013`).
 
 **Content Language** — The purpose-built, text-based language Builders author content in, compiled by
 `andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
@@ -222,6 +223,12 @@ are Templates) that the server loads as a set, published with the Content Langua
 compiled from. Authored outside the repository by Builders and published through `andara-cli`
 (ADR-0004). A pack names the `andara.core` version it was written against with `requires`
 (`ContentVersion.core_version`, ADR-0010 decision 8).
+
+**Core Pack** — `andara.core`: the base Templates every Builder pack extends and names in `requires`.
+It ships in the server build (`content/core/`, numbered by `content/core/VERSION`, with every core
+ever shipped in the append-only `content/core/VERSIONS`), and the server publishes and activates it
+itself at boot, as the reserved principal `server` (`AW-SRV-013`). No RPC publishes it, and only an
+Operator moves its pointer.
 
 **Content Version** — An immutable manifest on `andara.content.versions.v1`, keyed by `packID@version`,
 naming its Content Blobs, its parent version, its author, and its timestamp. The linked history a
