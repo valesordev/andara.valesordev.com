@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@15da291",
+  "source": "automate.bashburn.com@7b604fd",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "87e02d7171b1cbb7c2b98aba8919d544ddb43adf0ad3c83404fdd86a65fed916",
@@ -9,15 +9,16 @@
     ".claude/skills/pm-start-sprint/references/plan-sprint.md": "af728062f961dddecbf76ab7daeb52eb73ef76760bdc97a13c1e3e1a363cb8ce",
     ".claude/skills/role/SKILL.md": "73c33b3e7b9395756ebb7d0af584decab6296f620096fecd143405854b8c0c5b",
     ".claude/skills/sre-start-sprint/SKILL.md": "3deae519bd8cc07e2f8f41d79a58f85b1cd1e1e27731747a142b1e559a949aa2",
-    ".claude/bin/role": "dcfb079eb6a4398f8125882fd060e582aecf9984a892e0967c140c012b08866a",
+    ".claude/bin/role": "8360f99e0acb5b7a7f81587a00206093e15d8bacbb80b2e8af48730f6ed55765",
     ".claude/bin/sprint-state": "4bb031caf8b49bdb3461741453249fb0ee9927284dcb0d23e9c250b568e34513",
-    ".claude/roles/_repo.md": "4031cd838672d82ff79647b74af194c26e4b930f287468e1f1810491bbbc082d",
-    ".claude/roles/architecture.md": "2b02ed595b6cdc36ab7845e5f69343fa6937dfa7db0b4b264d085a394bd49092",
-    ".claude/roles/implementation.md": "624ae54b4226e708e3daad46fc343dd47383f949771c29c118386231c55c4da0",
-    ".claude/roles/pm.md": "94766d7266823f408cad41514dd0a64a8fd6d24e8721426bd0fc88f80c0a3aed",
-    ".claude/roles/sre.md": "5eb760428e4a65a5f4ac2373895766f5f9a4848b034dc2777268bc0303ceedf5"
+    ".claude/roles/_repo.md": "7193de04e03a88957db35cb582ad6e8765f62f09589c3650d939fc06988df9d4",
+    ".claude/roles/architecture.md": "b62d9f6d7746457f1daf453b2159042f0db4c82ff1a766f561aa43bd0147805c",
+    ".claude/roles/implementation.md": "44c81cc6e8e74362c986f4ab8f62cadfffdc715fc1d91c8d2251a005478d7986",
+    ".claude/roles/pm.md": "65d290643d53a6e9b4fca41cac234ff830f68fb3c0afca551f43d82be85d1474",
+    ".claude/roles/sre.md": "18766dcff1eb88e67320f8467b25669be6c506eebde9780d02580f0f700df0cf"
   },
   "hook_commands": [
+    "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-tool-use",
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-session-start"
   ]

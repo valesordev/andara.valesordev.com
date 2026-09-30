@@ -19,7 +19,11 @@ Commands:
   role require <role> <session_id>
   role clear <session_id>
   role hook-session-start      (stdin: SessionStart hook JSON)
-  role hook-pre-tool-use       (stdin: PreToolUse hook JSON)
+  role hook-pre-tool-use       (stdin: PreToolUse hook JSON; file tools)
+  role hook-pre-bash           (stdin: PreToolUse hook JSON; Bash)
+
+Every PR a role opens carries the label `role:<role>`; hook-pre-bash denies a
+`gh pr create` without it.
 """
 from __future__ import annotations
 
@@ -32,6 +36,8 @@ import sys
 from pathlib import Path
 
 UNRESTRICTED = "none"
+PR_CREATE_RE = re.compile(r"\bgh\s+pr\s+create\b")
+LABEL_RE = re.compile(r"(?:--label|-l)(?:=|\s+)(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
 SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 
 
@@ -156,6 +162,18 @@ def put_role(root: Path, sid: str, role: str | None) -> None:
     f.write_text(role + "\n")
 
 
+def pr_label(role: str) -> str:
+    return f"role:{role}"
+
+
+def pr_labels(command: str) -> set[str]:
+    """Labels passed to --label/-l anywhere in a shell command (comma lists split)."""
+    out = set()
+    for m in LABEL_RE.finditer(command):
+        out.update(x.strip() for x in next(g for g in m.groups() if g is not None).split(","))
+    return out - {""}
+
+
 def charter(roles: Roles, role: str) -> str:
     if role == UNRESTRICTED:
         return (
@@ -168,6 +186,7 @@ def charter(roles: Roles, role: str) -> str:
         [
             f"Active role: {role}",
             f"Branch prefix: {meta.get('branch_prefix', '(unset)')}",
+            f"PR label: {pr_label(role)} (every PR you open: gh pr create --label {pr_label(role)})",
             f"Writable paths: {', '.join(meta.get('writes', [])) or '(none)'}",
             f"Role skills: {skills}",
             "Edits outside the writable paths are blocked or require Brian's approval.",
@@ -321,6 +340,36 @@ def hook_pre_tool_use(_: list[str]) -> int:
                             "explicit approval to edit it.")
 
 
+def hook_pre_bash(_: list[str]) -> int:
+    data = _hook_input()
+    command = (data.get("tool_input") or {}).get("command") or ""
+    if not PR_CREATE_RE.search(command):
+        return 0
+    root = repo_root(Path(data.get("cwd") or os.getcwd()))
+    if root is None:
+        return 0
+    roles = Roles(root)
+    if not roles.roles:
+        return 0
+    role = get_role(root, data.get("session_id", ""))
+    if role is None:
+        return _decision("deny", f"No role set for this session. Ask Brian to run "
+                                 f"/role <{roles.names()}> before opening a PR.")
+    if role == UNRESTRICTED:
+        return 0
+    want = pr_label(role)
+    labels = pr_labels(command)
+    wrong = sorted(l for l in labels if l.startswith("role:") and l != want)
+    if wrong:
+        return _decision("deny", f"This session's role is {role}; label the PR {want}, "
+                                 f"not {', '.join(wrong)}.")
+    if want not in labels:
+        return _decision("deny", f"PRs from the {role} role carry the {want} label. "
+                                 f"Re-run with `--label {want}`. If GitHub says the label "
+                                 f"doesn't exist, ask Brian to create it (gh label create {want}).")
+    return 0
+
+
 COMMANDS = {
     "list": cmd_list,
     "set": cmd_set,
@@ -329,6 +378,7 @@ COMMANDS = {
     "clear": cmd_clear,
     "hook-session-start": hook_session_start,
     "hook-pre-tool-use": hook_pre_tool_use,
+    "hook-pre-bash": hook_pre_bash,
 }
 
 

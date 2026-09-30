@@ -71,5 +71,6 @@ and simulation lag are first-class from the first server story onward.
 
 ### Also
 - If a diff touches a path your role doesn't own, stop and flag it before
-  opening the PR.
+  opening the PR. Generated files (`generated` in `_repo.md`) that your change's
+  `make` target rebuilt don't count: commit them with the source change.
 - Bugs go to GitHub issues. PM triages them at the sprint boundary.
