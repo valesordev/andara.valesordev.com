@@ -286,7 +286,10 @@ a single process; in between, a Command on either Zone is `actor_not_found`. `Ar
 only a tick produces one, and the verb table cannot bind it. An `Arrive` whose Room is gone
 (content moved under the log) lands at the target Zone's fallback Room with
 `EntityRelocated{room_removed}` (`AW-SRV-012`). Every `Arrive` then describes the Room it landed in
-to the arrival alone, since it can't tell a `move` from a `goto` (`AW-SRV-036`).
+to the arrival alone, since it can't tell a `move` from a `goto` (`AW-SRV-036`), and an in-Zone
+`move` describes its destination the same way, after its `CharacterArrived` (`AW-SRV-038`): every
+way a Character walks or jumps into a Room shows it the Room. Bystanders read only the departure and
+the arrival.
 
 **`goto <zone>/<room>`** (or `goto <room>`, in the actor's Zone) is a Builder's jump, gated to
 `builder` in the verb table, with no abbreviation and no alias. The pipeline fills a bare Room's
