@@ -86,7 +86,7 @@ Two habits enforce it in practice:
 | Role | Branch prefix | Owns | Status moves |
 |------|---------------|------|--------------|
 | PM | `pm/` | `docs/sprints/`, `docs/roadmap.md`, `docs/epics/`, new stories in full (contract included), GitHub milestones and triage | creates stories at `draft` |
-| Architecture | `arch/` | Contract review; `docs/adr/`, `docs/specs/` (except `docs/specs/slo/`), `buf.gen.yaml`; `lane: architecture` stories; the §8 review for every lane | `draft` → `ready` / `blocked`; `review` → `done` |
+| Architecture | `arch/` | Contract review; `docs/adr/`, `docs/specs/` (except `docs/specs/slo/`), `docs/builders/`, `buf.gen.yaml`; `lane: architecture` stories; the §8 review for every lane | `draft` → `ready` / `blocked`; `review` → `done` |
 | SRE | `sre/` | Observability review of drafts; `deploy/`, `.github/`, `Makefile`, `scripts/`, `docs/runbooks/`, `docs/specs/slo/`; `lane: sre` stories; the §8 instrumentation check | its own stories: `ready` → `in-progress` → `review` |
 | Implementation | `impl/` | `server/`, `internal/`, `cmd/`, `admin/`, `content/`, `agents/`, `client/`, `testdata/`; `lane: implementation` stories | its own stories: `ready` → `in-progress` → `review` |
 
@@ -145,6 +145,7 @@ docs/
     protocol/             # wire protocol, versioned
     schema/               # persistence schemas, migrations plan
     slo/                  # service level objectives
+  builders/               # the Builder's Guide (AW-INF-023): README.md, one file per section
   runbooks/
   sprints/
     SPRINT-01.md          # plan and close-out; exactly one is `Status: active`

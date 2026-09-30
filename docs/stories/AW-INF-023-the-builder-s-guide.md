@@ -160,6 +160,8 @@ Three things, none of them another story's code:
 
 1. **Brian: `docs/builders/` isn't writable by any role yet.** CLAUDE.md §2's architecture row and
    the architecture charter's writable paths (installed from automate.bashburn.com) both need it.
+   *(2026-09-29: CLAUDE.md §2 and §3 now name it. The charter's writable paths are upstream, so
+   this item clears when `make install` brings a charter that lists `docs/builders/`.)*
 2. **PM: `make builder-reference` and `make guide-check` are SRE's,** since they live in
    `Makefile` and `scripts/`. Architecture can't write either, and can't commit to an SRE branch.
 3. **PM: the Component table has no source outside the code.** Section 7's Component types come

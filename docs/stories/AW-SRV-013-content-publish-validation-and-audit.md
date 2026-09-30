@@ -387,3 +387,9 @@ conditional additions are now unconditional.
    parsing messages.
 7. **This story grew.** PM: see `docs/feedback/AW-SRV-013-operator-self-approval.md`, *For PM*, for the
    split architecture recommends.
+   *(Decided 2026-09-29, Brian: **one story, not split.** Implementation delivers AC-1 to AC-19 as
+   `AW-SRV-013`. It's larger than `M` in practice. The frontmatter stays `M` because
+   `validate-stories` refuses an `L` at `ready` (CLAUDE.md §6), and the split an `L` would force is
+   what Brian decided against. The *`andara.core` at boot* section stays
+   self-contained, so implementation may still land it as a second PR on this story. Nothing in the
+   contract changes.)*
