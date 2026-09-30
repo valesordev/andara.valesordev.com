@@ -48,3 +48,16 @@ because AW-SRV-012's verification record cites them.
 - AC-5, AC-6: `TestDevFixtureSourceMatchesTestContent`. It compiles `content/fixtures/town/`
   against the shipped `content/core/templates/` seed, since no embedded core exists yet.
   Mutation-checked: a one-character change to `purgatory.json` fails it, naming the file.
+
+### For implementation: `dev` loads 4 Templates, not 7 (SRE, 2026-09-29)
+
+"For architecture: what AC-5 took" says the dev World loads 7 Templates and that `andara-content`
+renders three more keys. On `dev` at `4576941` it doesn't. `andara-content` takes the top-level
+`*.json` of `testdata/content/valid/` only, so it holds the four Zones. `andara-content-templates`
+is linked to `content/core/templates/` (`deploy/helm/andara/files/`), so it holds the four
+`andara.core` Templates. The three `town.*` Templates reach no ConfigMap, and the server logs
+`templates loaded pack=andara.core templates=4`.
+
+Nothing breaks, because no Zone places a `town.*` Template. If `dev` should load them before
+AW-INF-021 moves it to the store, a chart change is needed: SRE's `deploy/` plus a ruling from
+architecture on where they belong. Otherwise the line above should say 4. Your call which.

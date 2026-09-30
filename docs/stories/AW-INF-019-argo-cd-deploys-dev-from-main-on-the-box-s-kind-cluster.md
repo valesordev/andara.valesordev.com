@@ -543,3 +543,32 @@ emit. Any alert on a stuck sync is `AW-INF-009`'s.
 **What closes it:** `AW-SRV-037` merging (SPRINT-03 implementation item 1), then SRE observing the
 `andara-content` ConfigMap and the roll within 10 minutes of that merge's `publish`, recorded here.
 Architecture then moves it to `done` without another full pass.
+
+## §8 AC-4 observed (SRE, 2026-09-29)
+
+The carrier is #157 (`AW-SRV-037`), merged as `3593d46` at 23:35:43Z. #148 ruled that its merge
+supplies AC-4, although it also changes tests and `content/fixtures/`.
+
+| Time (Z) | Event |
+|----------|-------|
+| 23:35:43 | #157 merges |
+| 23:35:46 | `publish` run for `3593d46` starts (it finished at 23:43:24) |
+| 23:38:37 | Argo CD sync `id 19` at `3593d46`. `andara-content`'s last write is 23:38:37, and StatefulSet revision 27 (`andara-596f4b8ffc`) is created at 23:38:37, with the pod template's `checksum/content` changed |
+| 23:41:41 | revision 28, Image Updater's new digest (the build of `7f403f2`, #162, which merged 25 s before #157) |
+
+- **AC-4: pass.** The ConfigMap matched `main` 2 min 54 s after the merge, well inside the
+  10-minute deadline, and before `publish` finished. That's Argo CD's git poll, as AC-5 describes.
+  The StatefulSet rolled for it. Against `main` at `4576941`, all four keys (`docks.json`,
+  `purgatory.json`, `town.json`, `wilds.json`) are byte-equal to `testdata/content/valid/`.
+- **What the roll ran into isn't this story's.** The new pod crash-looped on replay (`content
+  digest mismatch at tick 3`). That's because `dev`'s log was recorded under the old fixture. The
+  delivery path worked: it delivered new content to a World whose log predates it. The recovery
+  is recorded in `AW-INF-021` (`make world-reset`, 23:52Z).
+- **Found along the way:** `andara-content-templates` carries the four `andara.core` Templates
+  and none of the three `town.*` Templates that `AW-SRV-037` added to
+  `testdata/content/valid/templates/`. The chart links that ConfigMap to `content/core/templates`,
+  and `andara-content` takes top-level `*.json` only. No Zone uses the `town.*` Templates, so
+  `dev` boots, logging `templates loaded … 4`. It's recorded for implementation in
+  `docs/feedback/AW-SRV-037-purgatory.md`. It doesn't touch AC-4, which is about the Zone files.
+
+Every AC now passes. Architecture moves the story to `done`, per its 2026-09-29 §8 review.
