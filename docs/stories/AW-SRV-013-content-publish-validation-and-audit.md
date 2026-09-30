@@ -428,8 +428,9 @@ The wire is `server/gateway`'s `TestContentAdmin_*`: `ErrorInfo` in the `andara.
 Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the stream test fails.
 
 **Not done here, and why:**
-- **`make check` fails at `values-schema-check`** until SRE adds `content.operator_self_approval` to
-  `deploy/helm/andara/keys.yaml` (feedback, For SRE 2). Everything before it passes.
+- **`values-schema-check`:** SRE added the `keys.yaml` row in #174. The chart's generated
+  `values.schema.json` and `_env.tpl` change once this code reads the key, so they're regenerated on
+  this branch with `make values-schema` (SRE on #173).
   `TestSnapshotCopyStaysInsideTheStallBudget` fails intermittently under full-suite load, on `main`
   too (#172).
 - **Blobs over about 1 MiB fail on the real topics** until `andara.content.blobs.v1` declares
@@ -438,6 +439,11 @@ Mutation-checked: with Admin's read limit back at `grpc.max_recv_bytes`, the str
   with a Builder pack, which `dev` gets with `AW-INF-021`. That story carries them.
 - **The three-way equivalence fixture:** this story has the server's half (AC-1 above). The CLI's
   half is `AW-CLI-002`'s (feedback, For architecture 4).
+- **The Data section's image-rollback order is incomplete** (Codex and SRE on #174). A core rollback
+  is refused `core_version` while any active pack pins the newer core. That's AC-14, and the code
+  does refuse it, naming each pack in the `ActivationRefusal`. So the order is every pack the refusal
+  names, then `andara.core`, then the image. `docs/runbooks/server-unavailable.md` says so now. The
+  Data section is architecture's to amend (feedback, For architecture 5).
 - **The boot's core audit records** go to `andara.audit.v1` before the account store opens, through
   an Auditor with no registry, so they aren't counted on `andara_privileged_actions_total`. The log
   line, the `content.core_boot` trace, and `pointer_moves_total` carry them.

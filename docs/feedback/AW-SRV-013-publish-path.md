@@ -120,3 +120,17 @@ Also decided in building, for your review:
 ### For SRE
 Items 1 and 2 above still stand: `make check` stays red at `values-schema-check` until the
 `keys.yaml` row lands.
+
+## For architecture: 5. The Data section's rollback order (2026-09-29)
+
+From Codex's review of #174 and SRE's comment on #173. The story's Data / state impact says "pointer
+first, then image". A core rollback is refused `core_version` while any active pack pins the newer
+core (AC-14; `ErrCoreRollback`), so that first step fails. The order is every pack the refusal names
+(`andara-cli content rollback <pack>`), then `andara.core`, then the image, all while the newer build
+still serves. `docs/runbooks/server-unavailable.md` has it right now. The code needs no change: the
+refusal already names every stranded `pack@version`. The story line is yours to amend.
+
+## SRE, 2026-09-29: done in #174
+
+`max.message.bytes: 9437184` on `andara.content.blobs.v1` (applied locally and on `dev`), the
+`content.operator_self_approval` row, and the rollback order in the runbook.
