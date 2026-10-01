@@ -24,6 +24,10 @@ and `spawn_room_removed`, also Builder reasons under `validation`, can't be caug
 because they depend on what is in effect. The `error` line names them. What remains is the store,
 the binary, or the activation order.
 
+**On `dev`** (`AW-INF-021`): a pending `town` is the dev fixture, which `make content-seed ENV=dev`
+publishes and activates. A pending Builder pack is that Builder's version. The diagnosis below is
+the same for both.
+
 ## How to confirm
 
 ```

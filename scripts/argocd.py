@@ -22,6 +22,7 @@ Synced/Healthy · 2 bad usage · 3 a tool is missing.
 """
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -287,6 +288,55 @@ def stalled(ns):
     return (causes or reasons or ["andara-0 not Ready"])[0]
 
 
+ACTIVE_VERSION = re.compile(r'^andara_content_active_version\{(?:[^}]*,)?pack="([^"]+)"[^}]*\} ([0-9.e+]+)$')
+
+
+def pod_metrics(ns):
+    """andara-0's /metrics, through a short-lived `kubectl port-forward`. The pod proxy can't be
+    used: the namespace's NetworkPolicy admits no traffic from the API server. Returns the text,
+    or raises RuntimeError naming why."""
+    import socket
+    import urllib.request
+    with socket.socket() as sk:
+        sk.bind(("127.0.0.1", 0))
+        port = sk.getsockname()[1]
+    pf = subprocess.Popen(["kubectl", "-n", ns, "port-forward", "pod/andara-0", "%d:8080" % port],
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        end = time.monotonic() + 15
+        while True:
+            try:
+                return urllib.request.urlopen("http://127.0.0.1:%d/metrics" % port, timeout=5).read().decode()
+            except OSError as e:
+                if pf.poll() is not None:
+                    raise RuntimeError((pf.stderr.read() or "port-forward exited").strip().splitlines()[-1])
+                if time.monotonic() > end:
+                    raise RuntimeError("no /metrics within 15s: %s" % e)
+                time.sleep(0.5)
+    finally:
+        pf.terminate()
+        try:
+            pf.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            pf.kill()
+
+
+def active_packs(ns, metrics=None):
+    """The packs in effect on andara-0, from andara_content_active_version{pack} (AW-INF-021):
+    [(pack, version)] sorted, or a reason string when the pod can't be read."""
+    if metrics is None:
+        try:
+            metrics = pod_metrics(ns)
+        except RuntimeError as e:
+            return "? (%s)" % str(e)[:80]
+    packs = []
+    for line in metrics.splitlines():
+        m = ACTIVE_VERSION.match(line)
+        if m:
+            packs.append((m.group(1), int(float(m.group(2)))))
+    return sorted(packs) or "? (no andara_content_active_version series)"
+
+
 def status(env):
     ns = env_ns("status", env or "dev")
     name = ns
@@ -304,6 +354,12 @@ def status(env):
     print("health       %s" % health)
     print("image        %s" % image)
     print("built from   %s" % built)
+    packs = active_packs(ns)
+    if isinstance(packs, str):
+        print("content      %s" % packs)
+    else:
+        for pack, version in packs:
+            print("content      %s@%d" % (pack, version))
     stuck = stalled(ns)
     if stuck:
         print("stalled      %s — once a good build has synced, `make argocd-recover ENV=dev` replaces the pod" % stuck)

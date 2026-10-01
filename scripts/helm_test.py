@@ -141,11 +141,12 @@ def test_snapshot_keys_render(env):
 
 
 def test_probes(env):
-    """Probe contract: /readyz for startup and readiness, /livez for liveness, http port."""
+    """Probe contract: /startedz for startup (AW-INF-021: a server waiting for its seed is started
+    but not ready), /readyz for readiness, /livez for liveness, http port."""
     code, out, err = render(env)
     sts = find(docs(out), "StatefulSet", "andara")
     c = next(c for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "server")
-    want = {"startupProbe": "/readyz", "readinessProbe": "/readyz", "livenessProbe": "/livez"}
+    want = {"startupProbe": "/startedz", "readinessProbe": "/readyz", "livenessProbe": "/livez"}
     for probe, path in want.items():
         got = c.get(probe, {}).get("httpGet", {})
         if got.get("path") != path or got.get("port") != "http":
@@ -604,44 +605,74 @@ def content_files(d):
     return out
 
 
+def content_mounts(d):
+    """The content ConfigMap mounts of a workload: (mountPath, ConfigMap) pairs."""
+    vols = {v["name"]: (v.get("configMap") or {}).get("name") for v in d["spec"]["template"]["spec"]["volumes"]}
+    return sorted((m["mountPath"], vols.get(m["name"])) for m in d["spec"]["template"]["spec"]["containers"][0].get("volumeMounts", [])
+                  if m["name"] in ("content", "content-templates"))
+
+
 def test_content_configmaps():
-    """AW-INF-019: with contentVolume.render, the chart's two ConfigMaps hold exactly the
-    files under testdata/content/valid and content/core/templates, key for key and byte
-    for byte (trailing newline included); without it, prod renders neither."""
-    for env in ("local", "dev"):
+    """AW-INF-019: with contentVolume.render, local's two ConfigMaps hold exactly the files under
+    testdata/content/valid and content/core/templates, key for key and byte for byte. AW-INF-021
+    AC-8: dev reads the content store, so dev and prod render neither ConfigMap and mount nothing
+    at /content, and dev's server follows every pack from the store."""
+    rc, out, err = render("local")
+    if rc:
+        return fail("local: render failed: %s" % err.strip())
+    ds = docs(out)
+    for name, src in (("andara-content", "testdata/content/valid"),
+                      ("andara-content-templates", "content/core/templates")):
+        cm = find(ds, "ConfigMap", name)
+        if cm is None:
+            fail("local: ConfigMap %s not rendered" % name)
+            continue
+        want = content_files(os.path.join(REPO, src))
+        if cm.get("data") != want:
+            fail("local: ConfigMap %s differs from %s: keys %s vs %s"
+                 % (name, src, sorted(cm.get("data") or {}), sorted(want)))
+    if not content_mounts(find(ds, "StatefulSet", "andara")):
+        fail("local: the server mounts no content")
+    for env in ("dev", "prod"):
         rc, out, err = render(env)
         if rc:
             fail("%s: render failed: %s" % (env, err.strip()))
             continue
         ds = docs(out)
-        for name, src in (("andara-content", "testdata/content/valid"),
-                          ("andara-content-templates", "content/core/templates")):
-            cm = find(ds, "ConfigMap", name)
-            if cm is None:
-                fail("%s: ConfigMap %s not rendered" % (env, name))
-                continue
-            want = content_files(os.path.join(REPO, src))
-            if cm.get("data") != want:
-                fail("%s: ConfigMap %s differs from %s: keys %s vs %s"
-                     % (env, name, src, sorted(cm.get("data") or {}), sorted(want)))
-    rc, out, err = render("prod")
-    for name in ("andara-content", "andara-content-templates"):
-        if find(docs(out), "ConfigMap", name) is not None:
-            fail("prod: ConfigMap %s rendered; prod's content comes from the store" % name)
+        for name in ("andara-content", "andara-content-templates"):
+            if find(ds, "ConfigMap", name) is not None:
+                fail("%s: ConfigMap %s rendered; %s's content comes from the store" % (env, name, env))
+        for d in [find(ds, "StatefulSet", "andara"), find(ds, "Deployment", "andara-projector-state")]:
+            if d is not None and content_mounts(d):
+                fail("%s: %s mounts content %r" % (env, d["metadata"]["name"], content_mounts(d)))
+            if d is not None and "checksum/content" in (d["spec"]["template"]["metadata"].get("annotations") or {}):
+                fail("%s: %s still carries checksum/content" % (env, d["metadata"]["name"]))
+    cfg = find(docs(render("dev")[1]), "ConfigMap", "andara-config")["data"]
+    # One trace per operator action on dev; prod never trusts a client's traceparent.
+    if cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT") != "true":
+        fail("dev: ANDARA_TRUST_INBOUND_TRACEPARENT is %r, want true" % cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT"))
+    prod = find(docs(render("prod")[1]), "ConfigMap", "andara-config")["data"]
+    if prod.get("ANDARA_TRUST_INBOUND_TRACEPARENT", "false") != "false":
+        fail("prod: ANDARA_TRUST_INBOUND_TRACEPARENT is %r; prod never trusts a client's traceparent"
+             % prod["ANDARA_TRUST_INBOUND_TRACEPARENT"])
+    if cfg.get("ANDARA_CONTENT_SOURCE") != "kafka" or cfg.get("ANDARA_CONTENT_PACKS") != "*":
+        fail("dev: content source %r packs %r, want kafka and *"
+             % (cfg.get("ANDARA_CONTENT_SOURCE"), cfg.get("ANDARA_CONTENT_PACKS")))
 
 
 def checksum_content(chart):
     p = subprocess.run(["helm", "template", "andara", chart, "--kube-version", KUBE_VERSION,
-                        "--values", os.path.join(VALUES, "dev.yaml")], capture_output=True, text=True)
+                        "--values", os.path.join(VALUES, "local.yaml")], capture_output=True, text=True)
     sts = find(docs(p.stdout), "StatefulSet")
     return (sts or {}).get("spec", {}).get("template", {}).get("metadata", {}).get("annotations", {}).get("checksum/content")
 
 
 def test_content_checksum():
-    """AW-INF-019 AC-4: a fixture byte changed on main rolls the pod: checksum/content moves."""
+    """AW-INF-019 AC-4: a fixture byte changed on main rolls the pod: checksum/content moves.
+    Asserted on local, the one environment that still renders content (AW-INF-021)."""
     base = checksum_content(CHART)
     if not base:
-        fail("dev: no checksum/content annotation on the pod template")
+        fail("local: no checksum/content annotation on the pod template")
         return
     with tempfile.TemporaryDirectory() as d:
         copy = os.path.join(d, "andara")
@@ -650,7 +681,7 @@ def test_content_checksum():
         with open(os.path.join(copy, "files", "content", target), "a") as f:
             f.write(" ")
         if checksum_content(copy) == base:
-            fail("dev: checksum/content did not change when files/content/%s changed" % target)
+            fail("local: checksum/content did not change when files/content/%s changed" % target)
 
 
 def container(d):
@@ -687,17 +718,8 @@ def test_snapshot_s3_and_projector_creds():
     if [m for m in container(proj).get("volumeMounts", []) if m["name"] == "kafka-creds"]:
         fail("dev: projector mounts kafka-creds with projectors.state.kafkaCreds.secretName empty")
 
-    # The replica loads the server's content (Codex on #171): the same ConfigMaps at the same
-    # paths, and the same checksum/content, so a fixture change rolls both.
-    def content_mounts(d):
-        vols = {v["name"]: (v.get("configMap") or {}).get("name") for v in d["spec"]["template"]["spec"]["volumes"]}
-        return sorted((m["mountPath"], vols.get(m["name"])) for m in container(d).get("volumeMounts", [])
-                      if m["name"] in ("content", "content-templates"))
-    if not content_mounts(sts) or content_mounts(proj) != content_mounts(sts):
-        fail("dev: projector content mounts %r differ from the server's %r" % (content_mounts(proj), content_mounts(sts)))
-    ann = lambda d: d["spec"]["template"]["metadata"].get("annotations", {}).get("checksum/content")
-    if not ann(sts) or ann(proj) != ann(sts):
-        fail("dev: projector checksum/content %r differs from the server's %r" % (ann(proj), ann(sts)))
+    # The replica loads the server's content (Codex on #171). Since AW-INF-021 both read it from
+    # the store, so neither mounts content; test_content_configmaps holds that.
 
     # Its own Secret when set; nothing, never the server's, when only the server's is set.
     code, out, err = render("dev", "--set", "projectors.state.kafkaCreds.secretName=andara-projector-kafka",

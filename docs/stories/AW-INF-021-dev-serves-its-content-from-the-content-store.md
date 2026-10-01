@@ -4,7 +4,7 @@ title: dev serves its content from the content store
 epic: EPIC-05
 component: infra
 type: infra
-status: ready
+status: review
 size: M
 depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019, AW-SRV-037, AW-SRV-042]
 blocks: [AW-INF-022, AW-INF-023]
@@ -207,6 +207,15 @@ on `dev`, and the core carrier's signals added.)*
   - Evaluation in Grafana Cloud waits on `AW-INF-009`, as in `AW-INF-025`. The §8 record says
     whether the rule was evaluated or only the series was observed.
 
+- *(SRE, 2026-10-01, on architecture's ruling for the empty-store deadlock.)* **No explicit
+  waiting gauge.** A fresh environment waiting for its seed is identified by what already exists:
+  `andara_content_zones_loaded` `0` on a started pod, `/readyz` failing, and the server's `warn`
+  line on entering the wait. `AndaraServerUnavailable` fires while it waits, which is true, and
+  `server-unavailable.md`'s row for that case names `make content-seed ENV=<env>` as the first
+  fix. A gauge would only restate `zones_loaded == 0` for one case.
+- The chart's `startupProbe` moves to `/startedz` (ruling), with the 600 s budget unchanged. A
+  waiting server is started, so the probe doesn't restart it. Readiness stays on `/readyz`.
+
 ## Test plan
 
 - **Unit:** none; the seed is exercised by running it.
@@ -344,3 +353,73 @@ pack lines) is untouched. **Status stays `ready`**, and this part ships ahead on
   `andara-config` before any change. On `s3` it exits 1 with nothing changed, because emptying the
   bucket is AW-INF-025's to add. Test: `FailsClosed.test_an_s3_snapshot_store_stops_before_any_change`.
   On `dev` today, read-only: the Application is readable and the store is `fs`.
+
+## Build record (SRE, 2026-10-01): held for architecture's ruling
+
+On `sre/aw-inf-021-dev-content-store`, a **draft** PR. It can't merge until architecture rules on
+the empty-store deadlock (`docs/feedback/AW-INF-021-dev-content-store.md`, "an empty store can't be
+seeded"). Merging the values change alone would crash `dev`, because its store is empty. Built so
+far, all independent of that ruling:
+
+| Part | What | Verified |
+|------|------|----------|
+| `values/dev.yaml` | `content.source: kafka`, `content.packs: "*"`, `contentVolume.render: false` | `make k8s-dry ENV=dev` |
+| AC-8 | `helm_test.test_content_configmaps`: `dev` and `prod` render neither content ConfigMap, mount nothing at `/content` (server or projector), and carry no `checksum/content`. `dev` follows `kafka` and `*`. `local` still renders and mounts both. `test_content_checksum` now runs on `local` | mutation-checked: putting `dev`'s render back fails it four ways, and `source: dir` fails it once |
+| `make content-seed ENV=<env>` | `scripts/content_seed.sh`, product commands only. An already-active `town` publishes nothing (AC-3). An earlier run's unactivated version is activated, not published again. `server info` is polled to a deadline | `scripts/tests/test_content_seed.py`, 8 cases against a fake `andara-cli`: the refusals and AC-9 make no call; AC-3; a fresh seed; a resumed one; a Builder's unactivated version left alone; a deadline. Mutation-checked: without AC-3's early exit, its test fails |
+| `argocd-status` | one `content <pack>@<version>` line per pack, from `andara_content_active_version` on `andara-0`. It reads them through a short `kubectl port-forward`, because the namespace's NetworkPolicy admits nothing from the API server, so the pod proxy times out | 3 unit cases. Live on `dev` today: `content      dir@0`, which is right before the switch |
+| Runbooks and SLO | `content-freshness.md`'s `dir` gap names `local` and compose only. `content-load-failing.md` gets the `dev` line. `server-unavailable.md` gets two rows: the boot core's exit, and the "no content in effect" exit (the open deadlock) | — |
+
+**Still to build, once ruled:** the bootstrap route the ruling picks (in `content-seed` and,
+if option 1, the startup probe), and then the rollout: merge, `world-reset`, seed, and the
+verification record (ACs 1–7, 11, and the inherited observations).
+
+**For the rollout, not yet checked:** `dev`'s `admin.allowedCIDRs` is the chart default,
+`10.0.0.0/8` and `192.168.0.0/16`. On the box, `local` needed `172.16.0.0/12` because traffic reaches
+Traefik from the docker bridge. If `dev` sees the same source, the seed's Admin calls are refused
+at the edge. The first `content-seed` run will show it.
+
+### Ruling applied (SRE, 2026-10-01)
+
+Architecture ruled option 1, with route (a) and `/startedz` (#289). SRE's half is on this branch:
+- **`startupProbe` → `/startedz`**, with the budget unchanged. `helm_test.test_probes` asserts the
+  three paths.
+- **`content-seed` dials a port-forward to `andara-0`'s gRPC port.** It verifies
+  `andara-0.andara.andara-<env>.svc` (`server.tls_server_name` in its private CLI config) against
+  the `ca.crt` of `andara-server-tls`, reading only that key. The edge isn't used, so the Admin CIDR
+  risk noted above no longer applies to the seed. A new unit case checks the config the CLI gets.
+- **`server-unavailable.md`:** a fresh environment waiting for content is its own row (true page,
+  first fix `make content-seed`). The exit-1 row is now only for a World that lost its content.
+- **Observability:** no waiting gauge (the section above says why).
+
+**Still held.** This branch now needs the implementation story architecture asked PM to place:
+the server's unready wait and `/startedz`, and the CLI's `server.tls_server_name`. Until it merges,
+`local`'s pods would never pass `/startedz`, and the CLI would reject the config key. AW-INF-021
+then depends on that story, and its rollout follows its merge.
+
+### `dev` trusts the inbound `traceparent` (SRE, 2026-10-01)
+
+Architecture's §8 pass (#296) left it to SRE whether `dev` sets
+`telemetry.trust_inbound_traceparent`. **It does; `prod` stays `false`.** With it on, the CLI's
+`cli.command` parents the server's RPC span, so the inherited observation reads **parented**: one
+trace from the Builder's command through `content.activate` to the World's `content.swap`, and the
+audit record's `trace_id` is the CLI's. Off, the server's span would be a root linked to the CLI's
+trace, and the audit record would carry the server's own ID. That reading is allowed, but it's two
+traces to join by hand. A client choosing its own sampling costs nothing on `dev`, which is reached
+only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `prod` unset or
+`false` (mutation-checked). The verification record uses the parented reading.
+
+### Review of #288 (Codex, 2026-10-01)
+
+- **Fixed, P1: `world-reset` would time out on the first switch.** It waited up to 600 s for Ready,
+  but with an empty store the restarted server waits, unready, for the seed that follows the
+  reset. `wait_up` now accepts either Ready, or the server container started, not Ready, and
+  `waiting for content` logged since it started. In that case it says
+  `andara-0 is started and waiting for content … Next: make content-seed ENV=dev` and ends with
+  AC-11's line. Anything else still fails at the deadline. 4 unit cases (`WaitUp`).
+- **Fixed, P2: the seed resumed on author alone.** An unactivated `town` version by the operator is
+  now resumed only if `content fetch` gives back the fixture's sources byte for byte. An operator's
+  own draft stays inactive, and the fixture is published on top. Mutation-checked: without the
+  comparison, the new case fails.
+- **Fixed, P2: `CONTENT_SEED_TIMEOUT=1m` aborted the seed after activation.** It's parsed as a
+  duration (`Ns`, `Nm`, `Nh`, or plain seconds) before any RPC, and a bad value is usage, exit 2.
+  Two new cases.

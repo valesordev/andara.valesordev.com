@@ -53,7 +53,8 @@ ARGO_NS = "argocd"
 TOPIC_DELETE_DEADLINE = 120
 STOP_DEADLINE = 120
 CONFIG_MAP = "andara-config"
-READY_DEADLINE = "600s"
+READY_DEADLINE = 600
+WAITING_LINE = "waiting for content"
 
 
 def say(msg):
@@ -215,9 +216,36 @@ def reset(env, ns):
 
         scale(ns, SERVER, server_n)
         say("scaled %s to %d; waiting for Ready" % (SERVER, server_n))
-        kubectl(ns, "rollout", "status", SERVER, "--timeout=" + READY_DEADLINE)
+        if wait_up(ns) == "waiting":
+            say("%s is started and waiting for content: the store holds no pack with Zones "
+                "(AW-SRV-042). Next: make content-seed ENV=%s" % (SERVER_POD, env))
     finally:
         restore_argo(app, policy)
+
+
+def wait_up(ns, deadline=READY_DEADLINE, sleep=time.sleep, clock=time.monotonic):
+    """Wait for andara-0 to be Ready, or to be started and waiting for content: "ready" or
+    "waiting". A store-backed server whose World has never had content stays started and
+    unready until a pack with Zones is activated (AW-SRV-042). On dev's first switch the store
+    is empty, so Ready would never come before the seed that this reset precedes."""
+    end = clock() + deadline
+    while True:
+        pod = kubectl(ns, "get", "pod", SERVER_POD, "-o", "json", check=False)
+        if pod.returncode == 0 and pod.stdout.strip():
+            st = json.loads(pod.stdout).get("status", {})
+            ready = [c for c in st.get("conditions", []) if c.get("type") == "Ready"]
+            if ready and ready[0].get("status") == "True":
+                return "ready"
+            server = [c for c in st.get("containerStatuses", []) if c.get("name") == "server"]
+            if server and server[0].get("started"):
+                since = (server[0].get("state", {}).get("running") or {}).get("startedAt")
+                logs = kubectl(ns, "logs", SERVER_POD, "-c", "server",
+                               *(["--since-time=" + since] if since else []), check=False)
+                if WAITING_LINE in logs.stdout:
+                    return "waiting"
+        if clock() > end:
+            raise StepFailed("%s neither Ready nor waiting for content within %ds" % (SERVER_POD, deadline))
+        sleep(5)
 
 
 def main(argv):

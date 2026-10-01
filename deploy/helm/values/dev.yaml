@@ -13,6 +13,12 @@ server:
     # traces to Tempo and log records to Loki. Plaintext gRPC inside the cluster, as the
     # server's exporter dials it.
     otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
+    # One trace per operator action (AW-INF-021, SRE's call on architecture's §8 question): the
+    # CLI's cli.command parents the RPC span, so an activation is one trace from the Builder's
+    # command to the World's content.swap, and its audit record carries the CLI's trace_id. dev is
+    # reached only over the tailnet or a port-forward, so a client choosing its own sampling costs
+    # nothing here. prod keeps the default, false.
+    trust_inbound_traceparent: true
   character:
     # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
     # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local
@@ -22,11 +28,12 @@ server:
   # command log and the Account store live there, as sim.source and auth.store default to.
   kafka:
     brokers: andara-log-kafka-bootstrap:9092
-  # Content is still a directory, as in compose: Zone Definitions and the core Templates from
-  # the ConfigMaps `make helm-install` builds, until AW-SRV-012 serves content from the store.
+  # Content comes from the namespace's content store (AW-INF-021): every pack with an Active
+  # Pointer, the server's own andara.core (published at boot, AW-SRV-013) and the dev fixture
+  # pack `town` (`make content-seed ENV=dev`). Nothing is mounted from git any more.
   content:
-    source: dir
-    path: /content
+    source: kafka
+    packs: "*"
   auth:
     token_key_file: /etc/andara/secrets/token-key/token.keys
   # Snapshots in the namespace's object store (AW-INF-025, `make objectstore-install ENV=dev`),
@@ -64,7 +71,6 @@ secrets:
   snapshotS3:
     secretName: andara-snapshot-s3
 
+# No content ConfigMaps: dev reads the content store (AW-INF-021). local still renders them.
 contentVolume:
-  render: true
-  configMapName: andara-content
-  templatesConfigMapName: andara-content-templates
+  render: false
