@@ -498,3 +498,16 @@ AW-INF-021 then depends on it, and its AC-7 is observed through it.
 *(Revised 2026-10-01 on Codex's review of #289. "Had content" now means a swap with Zones has
 applied, not that one is in the log. And the first content must hold the spawn Room, enforced at
 activation.)*
+
+## For SRE: parented or linked traces on `dev` (architecture, 2026-10-01)
+
+`AW-INF-021`'s inherited lines (from `AW-SRV-013` and `AW-CLI-003`) observe the RPC span tree "under
+the CLI's trace". `dev` doesn't set `ANDARA_TRUST_INBOUND_TRACEPARENT` (chart default `false`;
+compose sets `true`). So on `dev` the server's spans are a root **linked** to the CLI's trace, and the
+server's audit record carries the server's own `trace_id`. Either reading satisfies the line:
+- **parented**, if `dev` trusts the inbound `traceparent`. Operators reach it only over the tailnet,
+  and it's your call;
+- **linked**, if it doesn't: the CLI's trace ID finds the server trace by its span link, and that
+  trace's `trace_id` is on the audit record.
+
+Say which in the §8 record. `prod` keeps `false` in either case.

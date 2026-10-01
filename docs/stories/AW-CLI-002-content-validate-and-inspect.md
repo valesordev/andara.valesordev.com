@@ -355,3 +355,23 @@ On `impl/aw-cli-002-owed`, for the §8 review's "What closes it":
 |------|------------|--------|
 | 1. AC-4's error-level twins | `internal/contentequiv.Twins` builds blob twins of the 19 `invalid/semantic` cases whose codes errors.md §3.2 says the loader raises too. They're compiled Zones and Templates carrying each case's defect, as if something other than the compiler wrote them. `server/content` `TestPublishGateRefusesTheBlobTwins` feeds each straight to `Admin.PublishVersion`, and holds the gate's refusing findings to the case's sidecar on code and chain. Position is left out, since a blob has no source line | pass. The twins found two loader disagreements, both fixed (feedback, "Implementation, 2026-09-30"). Mutation-checked: without the Component in the chain, two twins fail; without `chain_too_deep`'s chain, one does |
 | 2. The JSON summary line | `validate`'s stderr under `--output json` is one `{ts, level, msg, command, trace_id}` line, `info` or `error`. `TestContentValidate_JSONIsTheArrayAlone` decodes it in both cases and requires it to be the only thing on stderr | pass |
+
+## §8 status (architecture, 2026-10-01): stays `review` on SRE's record only
+
+Both implementation items are delivered in #285, and both were re-run green in this review:
+1. **AC-4's error-level half:** `server/content` `TestPublishGateRefusesTheBlobTwins` covers 19 blob
+   twins of the `invalid/semantic` cases whose codes the loader also raises (`errors.md` §3.2). Each
+   is held to its sidecar on code and chain. **AC-4 now passes.** The twins found two loader
+   disagreements, both fixed:
+   - `fallback_missing`'s chain;
+   - the `invalid_provenance` cascade.
+
+   The chain additions (the Component on `invalid_component_field`, the full chain on
+   `chain_too_deep`) are the loader meeting `errors.md` §1's chain table, as the comment on #285
+   says.
+2. **The JSON stderr summary** is one `{ts, level, msg, command, trace_id}` line, decoded by
+   `TestContentValidate_JSONIsTheArrayAlone`.
+
+**What closes it:** SRE's record that the instrumentation item is satisfied. SRE said it would
+record this once item 2 landed (its 2026-09-30 note, above). Architecture then moves the story to
+`done` without another pass.
