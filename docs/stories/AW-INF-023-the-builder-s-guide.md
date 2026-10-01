@@ -281,3 +281,30 @@ page `07-reference.md`. Written against `main` at `0bee3cc`, after `AW-CLI-003`,
 **Not covered, and why.** Joining the tailnet has no documented procedure, so section 2 says "ask
 Brian". Windows is covered as far as the archive, the checksum and the config path. Nothing in the
 repository tests it further.
+
+## §8 instrumentation check (SRE, 2026-10-01): nothing to emit; §9 commands checked
+
+**Instrumentation: not applicable to this story.** Its Observability section names only
+`guide-check`'s and `builder-reference`'s lines, and both targets moved to `AW-INF-028` (2026-09-30),
+which is still `draft`. The guide itself emits nothing. `AW-INF-028` carries those lines when it's
+built.
+
+**AC-4's §9 half, the commands exist** (SRE's to check, since §9 is SRE's). Every invocation sections
+2–9 name was run with `andara-cli` built from `main` at `2427e8c`. Server
+calls went against an unreachable address, and local ones against a scratch `glade` pack:
+- `config show`, `version`, `content fmt`, `content validate`, `content inspect room` and `content
+  inspect zone`, all with `--path content/glade`: exit 0;
+- `account create` and `auth login`: exit 2 with `stdin is not a terminal; pass --password-stdin`,
+  because a Builder runs them at a terminal and is prompted;
+- `account set-packs`, `account set-roles`, `character create`, `content activate`, `approve`,
+  `diff`, `fetch`, `history`, `publish`, `rollback`, `play` and `server info`: exit 2 with
+  `no credential for …; run andara-cli auth login`, the guide's order of steps.
+
+None is `unknown command` or `unknown flag`: every command and flag the guide names parses. The
+`make` targets it names, `make tools` and `make check` in the Content Repository, exist and pass on
+its `main` (`AW-INF-022`'s record). `git` steps are git's. Whether each step shows its *expected
+output* is AC-4's other half, and architecture's §8 judges it.
+
+**AC-3** is Brian's walk-through on `dev`. Everything it needs is in place: `dev` serves from the
+store with `town@1` (`AW-INF-021`), Admin is reachable over the tailnet (#305), and the Content
+Repository's `check` validates (`AW-INF-022`).
