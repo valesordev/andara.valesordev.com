@@ -4,7 +4,7 @@ title: The content repository — where Builders keep their source
 epic: EPIC-05
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-CLI-002, AW-INF-020, AW-INF-021]
 blocks: [AW-INF-023]
@@ -184,3 +184,36 @@ one point Brian decided.
    `check-lore` stays in it.
 
 No acceptance criterion's intent changed. AC-2, AC-5, and AC-7 name the new paths and commands.
+
+## Verification record (SRE, 2026-10-01)
+
+Built in `valesordev/andara.solo7.media`. Brian approved the `Makefile`, the `TODO(brian)` starter
+pack, `@solo-seven` as its owner, and the pushes:
+- [#6](https://github.com/valesordev/andara.solo7.media/pull/6), merged: `check` validates every
+  pack, with annotations; `PACKS_ONLY` from the PR's diff; the starter pack; `CODEOWNERS`; the
+  README linking the Builder's Guide.
+- [#10](https://github.com/valesordev/andara.solo7.media/pull/10), merged: `validate` runs before
+  `compile`. The AC-1 throwaway found that `compile` failed first and emitted no annotation.
+
+The CLI is `cli-dev` at `b7162dd`, embedding `andara.core@1`.
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1 | Throwaway [#7](https://github.com/valesordev/andara.solo7.media/pull/7), an Exit `east -> nowhere`. On `main` with #10: `check` fails, with an annotation at `content/example/example.aw:7:18` titled `unknown_room`, and the PR is `BLOCKED`. (Before #10 it failed at `compile` with no annotation.) | pass |
+| 2 | Throwaway [#8](https://github.com/valesordev/andara.solo7.media/pull/8), unformatted spacing: `check` fails with `content/example/example.aw` named and `1 file(s) are not formatted`. `make fmt` restores it, verified locally | pass |
+| 3 | `check` on `main` (`c15620d`) is green, and prints `1 zones, 2 rooms, 0 templates, core andara.core@1` for `content/example` | pass |
+| 4 | Throwaway [#9](https://github.com/valesordev/andara.solo7.media/pull/9), a third Room with a one-way Exit: `check` passes, with `warning` annotations `missing_reverse_exit` at `:16` and `orphan_room` at `:14` | pass |
+| 5 | All three throwaways log `checking only: content/example`. A PR touching anything outside `content/` checks every pack (README) | pass |
+| 6 | From the box, on the tailnet, with the `cli-dev` binary: `andara-cli version` gives `commit b7162dd`, `core andara.core@1`. `server info` against `dev` gives `commit b7162dd`, `content andara.core@1` | pass |
+| 7 | A fresh clone with a `go` that fails if called first on `PATH`: `make tools check` downloads `andara-cli` (`sha256 ok`) and the spec, and passes, with `go` never called. "Without access to this code repository" isn't simulated. The download is anonymous from a public release, and `make tools` reads nothing else from it | pass |
+| 8 | `requires andara.core@2`: `content/example/pack.aw:1:35: core_version_mismatch … this andara-cli embeds andara.core@1; use the andara-cli release that embeds andara.core@2`, exit 1 | pass |
+
+The throwaway PRs were closed unmerged, each with a comment recording its result.
+
+**Beyond the contract:**
+- `make tools` no longer seeds `andara.core` from the server source, since the binary embeds it
+  (`AW-CLI-002`). It still fetches the spec, which the content role reads.
+- The README says a Zone clash with the fixture is refused at publish (`duplicate_zone`), matching
+  the Builder's Guide (#310). Architecture checked section 4 of the guide against this repository.
+- On `dev`, a publish shows other packs' findings as the Builder's own (#312). It doesn't affect
+  `check`, but a Builder sees it on every publish.
