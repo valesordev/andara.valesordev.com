@@ -84,6 +84,13 @@ that I can seed it over Admin instead of being locked out by a server that exits
 hold: the World log holds no Content Swap with Zones, and no followed pack's Active Pointer loads
 Zones. Every other no-content case keeps today's exit `1`.
 
+**Open: how the server knows a swap had Zones** (Open questions, item 1). `ContentSwap` in the log
+carries only `pack_id`, `version`, `world_digest` and `base_digest`. When the store can't resolve a
+logged version, which is exactly AC-3's case, the server can't tell a swap that brought Zones from
+one that brought only Templates, and `andara.core`'s swap is always Templates-only. AC-3 (exit) and
+AC-6 (wait again) need a discriminator that's readable during a failed recovery. Architecture
+decides it before this story reaches `ready`.
+
 **While it waits:**
 - Recovery has finished, `andara.core` is in effect (`AW-SRV-013` AC-15), and the gRPC listener serves.
 - Admin is fully served: the content RPCs, accounts, and `server info` (no Zone content listed).
@@ -114,22 +121,29 @@ after a restart, because a swap with Zones is now in the log.
 
 ## Data / state impact
 
-None. No schema or log change. Waiting is derived at boot from the log and the store, and nothing
+No schema change. If architecture picks option (a) in Open questions, item 1, `ContentSwap`
+gains an additive field, and older swaps read it as its zero value. Otherwise the log is unchanged.
+Waiting is derived at boot from the log and the store, and nothing
 persists it. A rollout to an existing `dev` that already holds a swap with Zones behaves as it does
 today.
 
 ## Observability requirements
 
-- **Metrics:** none new (architecture's ruling). `andara_content_zones_loaded` is 0 while the server
-  waits. SRE decides in `AW-INF-021` whether an explicit `andara_content_waiting` gauge is wanted, and
-  if so, it's added here at SRE's review.
+- **Metrics:** `andara_sessions_total{outcome}` gains `rejected_no_content`, for an `OpenSession`
+  refused while the server waits. The closed set becomes `closed`, `dropped`, `rejected_version`,
+  `rejected_auth`, `revoked` and `rejected_no_content`, so the cardinality is 6, and the new outcome is
+  pre-seeded at 0 like the others (`server/gateway/metrics.go`). `andara_grpc_requests_total` also
+  counts the call as `UNAVAILABLE`, but it can't say why, which is why the outcome is needed.
+  `andara_content_zones_loaded` is already 0 while the server waits. SRE decides in `AW-INF-021`
+  whether an explicit `andara_content_waiting` gauge is wanted too, and if so, it's added here at
+  SRE's review. *(Revised after review of #292: the first draft pointed at a refusal metric with a
+  `reason` label, which doesn't exist.)*
 - **Logs:**
   - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering the
     wait. Fields: `content_source`, `packs`, `core_version`.
   - `info` `content in effect: leaving the wait`, once. Fields: `zones` and the triggering
     `pack@version`.
-  - A refused `OpenSession` logs at `debug` with `trace_id` and `reason=no_content_in_effect`. The
-    gateway's existing refusal metric counts it under its reason label.
+  - A refused `OpenSession` logs at `debug` with `trace_id` and `reason=no_content_in_effect`.
 - **Traces:** none new. The leaving `ReconcileContent` keeps its existing span.
 - **Alerts:** none new. `AndaraServerUnavailable` fires while a fresh environment waits, which is true.
   Its runbook line is SRE's, in `AW-INF-021`.
@@ -157,10 +171,26 @@ CLAUDE.md §8, plus: `server/README.md` documents `/startedz` and the probe guid
 
 ## Open questions
 
-- **For architecture: the dependency edge.** `AW-INF-021` must depend on this story. `make
-  validate-stories` refuses a `ready` story that depends on a `draft`, so PM can't add the edge
-  now. Add `AW-SRV-042` to `AW-INF-021`'s `depends_on` (and `AW-INF-021` to this story's `blocks`)
-  in the same commit that moves this story to `ready`.
+1. **For architecture (affects the contract): a discriminator for "this World has had Zones".**
+   The ruling makes AC-3 exit and AC-6 wait. Both turn on whether a logged swap brought Zones, and
+   nothing in the log records that (see the Interface contract). Found by Codex on #292. The
+   options PM sees:
+   - **(a) An additive `ContentSwap` field.** For example, `uint32 zone_count = 5`, the Zones in the
+     World after the swap, written by the Loader. An older swap without it reads as 0, so an old log
+     with a refusing store would wait rather than exit. That's the less harmful direction, but it
+     weakens AC-3 for logs written before the field. This changes `log.proto`.
+   - **(b) Any swap for a pack other than `andara.core`** counts as "had content". It's readable
+     from `pack_id` alone, with no protocol change. But a Builder pack of Templates only would then
+     count as content, and its server would exit rather than wait.
+   - **(c) Zones in the last snapshot round.** Recovery restores from a round before it replays.
+     That doesn't help a World whose only Zone-bearing swap came after its last round.
 
-Nothing else is open. The contract is architecture's ruling of 2026-09-30, lifted as written, plus AC-7, which makes
-the ruling's drain clause testable.
+   PM leans to (a), since it's the only one that's exact for every new log. It's your call, and the
+   story stays `draft` until it's made.
+2. **For architecture: the dependency edge.** `AW-INF-021` must depend on this story. `make
+   validate-stories` refuses a `ready` story that depends on a `draft`, so PM can't add the edge
+   now. Add `AW-SRV-042` to `AW-INF-021`'s `depends_on` (and `AW-INF-021` to this story's `blocks`)
+   in the same commit that moves this story to `ready`.
+
+Apart from item 1, the contract is architecture's ruling of 2026-09-30, lifted as written, plus
+AC-7, which makes the ruling's drain clause testable.
