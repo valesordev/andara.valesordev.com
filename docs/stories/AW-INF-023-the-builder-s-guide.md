@@ -4,7 +4,7 @@ title: The Builder's Guide — from no access to a live Zone on dev
 epic: EPIC-06
 component: infra
 type: infra
-status: in-progress
+status: review
 size: M
 depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
@@ -234,3 +234,50 @@ this is recorded here and in the feedback file.
 writable (2026-09-30). Items 2 and 3: PM's split into `AW-CLI-009` and `AW-INF-028`. The story is
 `ready`. It stays last in architecture's list, held by its `depends_on`, so that it describes what
 was built.
+
+## Implementation record (architecture, 2026-10-01)
+
+The guide is in `docs/builders/`: `README.md`, sections 1–9 one file each, and the interim reference
+page `07-reference.md`. Written against `main` at `0bee3cc`, after `AW-CLI-003`, `AW-SRV-035`,
+`AW-SRV-036`, `AW-INF-020` and `AW-INF-024` reached `done`, and `AW-INF-021` reached `review`.
+
+**How it was checked.**
+- Every output string the guide shows comes from a help golden, a test, or a live run of the
+  `cli-dev` binary built from `0bee3cc`.
+- Section 4's pack (`glade`) was run through `content fmt`, `validate` and `inspect` with a binary
+  built from `main`, and the outputs are copied from that run. That covers `2 files, 0 rewritten`,
+  the counts line, the `unknown_room` finding and its chain, and the one-way warnings.
+- The steps that reach `dev` (publish, approve, activate, `server info`, `play`, `goto`, rollback)
+  are copied from `AW-CLI-003`'s and `AW-SRV-036`'s pinned strings. They're observed on `dev` by
+  AC-3.
+- Every relative link and `#anchor` in `docs/builders/` resolves, checked by a script that applies
+  GitHub's anchor rule. That's `AW-INF-028`'s `guide-check` job, done by hand until it exists.
+
+| AC | Result |
+|----|--------|
+| 1, 2 | moved to `AW-INF-028` (2026-09-30) |
+| 3 | **owed.** Brian's walk-through on `dev` |
+| 4 | section 4 is `git`, `make` and `andara-cli` steps, each with its output. One step is a GitHub action, opening and merging the pull request from the link `git push` prints. It's on the Content Repository, as AC-4's `git …` clause allows, but it isn't a command. The §8 review rules on it |
+| 5 | every rule the guide names links to `semantics.md`, `errors.md` or `formatting.md`. For the §8 review to check |
+| 6 | section 4's "Approve it" shows the Operator's self-approval, labelled as how `dev` works for one person |
+| 7 | one reference page, `07-reference.md`, linked from the README. No `reference.md` exists |
+
+**What AC-3 waits on:**
+1. **#305 (SRE, `AW-INF-021`).** `dev`'s Admin edge refuses tailnet callers with 403 until
+   `admin.allowedCIDRs` includes 100.64.0.0/10. Without it, sections 2 and 4's Admin steps all fail,
+   for Builders and Operators alike.
+2. **`AW-INF-022` (SRE, `ready`, not started).** Section 4 clones the Content Repository and runs
+   `make tools` and `make check`, which that story builds. The guide follows its contract:
+   `content/example`, `andara.ref`, and the `check` workflow. AC-3 is where that's confirmed.
+3. **`dev` seeded** with `town` (`AW-INF-021`, rolled out after #305).
+
+**Found while writing, and routed:**
+- **#308:** `core_version_mismatch`'s remedy is backwards for the usual core bump. `errors.md` §3.1
+  is amended to state the remedy by the direction of the skew, and section 9 gives both cases until
+  the message is fixed.
+- **The glossary's Component entry** named `andara.core.Wieldable` and `pets.Aggro`, which no server
+  defines. Corrected.
+
+**Not covered, and why.** Joining the tailnet has no documented procedure, so section 2 says "ask
+Brian". Windows is covered as far as the archive, the checksum and the config path. Nothing in the
+repository tests it further.

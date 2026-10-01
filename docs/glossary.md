@@ -385,7 +385,9 @@ Operator, with `andara-cli account set-packs` (`AW-SRV-035`). Stored independent
 **Developer** — Writes and ships `andara-server`, `andara-cli`, and `andara-client` code.
 
 **Component** — A named, namespaced unit of data attached to a Template, a Room, or a Zone:
-`andara.core.Wieldable`, `andara.core.Dark`, `pets.Aggro`. Components hold data and never logic —
+`andara.core.Dark`, `andara.core.Behavior`. Only the server defines Component types; the ones that
+exist today are listed in the Builder's Guide (`docs/builders/07-reference.md`). *(Examples corrected
+2026-10-01: this named `andara.core.Wieldable` and `pets.Aggro`, which no server defines.)* Components hold data and never logic —
 logic is a Go system inside the tick or a Python Behavior outside it (ADR-0005, ADR-0010). Components
 are the composition axis of the type system, so "flaming" attaches to a sword and a dragon alike
 without either being related to the other. A Template, Room, or Zone holds at most one Component of a
