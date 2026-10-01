@@ -56,6 +56,15 @@ func RestoreEngine(w *World, templates *TemplateRegistry, cfg Config, r RoundSta
 		parts = append(parts, po.Partition)
 	}
 	cfg.Partitions = parts
+	// The seed is in the State Hash and not in the round, so a restore must
+	// arrive at the one the World started with. A configured seed is that
+	// seed. The default is derived from the topology an Engine starts with,
+	// which is the empty World (AW-SRV-012), never w: NewEngine would derive
+	// it from w, and every tick after the round would hash differently
+	// (#143).
+	if cfg.Seed == 0 {
+		cfg.Seed = DeriveSeed(EmptyWorld())
+	}
 	e := NewEngine(w, templates, cfg)
 	if len(r.Content) > 0 {
 		e.versions, e.digest = copyVersions(r.Content), digest
