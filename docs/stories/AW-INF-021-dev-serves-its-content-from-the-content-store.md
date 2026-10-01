@@ -446,7 +446,7 @@ only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `p
 | 1 | `server info` (port-forward route): `content andara.core@1`, `content town@1`. No `dir`. `make argocd-status` lists the same | pass |
 | 2 | New Account `sre-player` and Character `Verifier`: `Verifier  dormant  purgatory/start`. `andara-cli play` through the edge opens on `Purgatory` | pass |
 | 3 | A second `make content-seed ENV=dev`: `town@1 is already active; nothing published` | pass |
-| 4 | **owed.** Admin through the edge is 403 at Traefik (`ClientHost 100.79.240.98`, the tailnet), because `dev`'s allow-list didn't admit the tailnet. The fix is #305. AC-4 and the inherited publish sequence run after it merges |
+| 4 | After #305 (Admin through the edge, from the box on the tailnet): Builder `sre-builder`, granted pack `sre.verify`, published it, the Operator approved it, and the Builder activated it at 17:55:55Z. `server info` listed `sre.verify@1` within 2 s. `andara_content_active_version{pack="sre.verify"}` is `1` in Grafana Cloud. The pack is a scratch pack, not `brian`, so Brian's namespace stays empty for the demo | pass |
 | 5 | `kubectl rollout restart statefulset/andara`: Ready again, `recovered from the log` (1,794 ticks), `andara.core@1 present`, `town@1` still active. Nothing re-seeded | pass (by restart; a merge roll is the same path) |
 | 6 | **owed to the first core bump**, as the AC allows. `content/core/VERSION` is still 1 |
 | 7 | Partly observed: `world-reset` gave this rollout an empty World and a store with no Zone pack. Then the seed, with no other hand step, gave AC-1 and AC-2. A full `argocd-uninstall` rebuild wasn't run | partial |
@@ -475,10 +475,43 @@ only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `p
   Loader's `content.load`, and on to the tick's `content.swap`" can't hold without a contract
   change. That's routed to architecture (feedback file). Today the two halves join on
   `pack@version` and time.
-- **Still owed with AC-4:** `andara_content_pending_seconds{pack}` rising then clearing on a slow
-  apply, a refused version on `andara_content_load_failures_total{reason}`,
-  `andara_content_relocations_total` (its carrier is named in the story), and `AW-SRV-013`'s
-  publish-path sequence and series.
+- **`AW-SRV-013`'s publish-path sequence**, run at 17:55 to 17:56Z through the edge, as the inherited
+  line asks:
+  1. a publish refused by validation (a Zone named `town`: `duplicate_zone`);
+  2. a Builder's valid publish (`sre.verify@1`);
+  3. an activation refused, `unapproved`;
+  4. the Operator's approval;
+  5. activate;
+  6. an Operator publish (`@2`) and its self-approval;
+  7. activate `@2`, then `rollback` to `@1`.
 
-**Left on `dev`:** Account `sre-player` and Character `Verifier`, from AC-2. The projector stays at 0
-replicas (#143).
+  Grafana Cloud then read, matching the server's own `/metrics`:
+  - `publishes_total` `ok` 2, `rejected` 1;
+  - `approvals_total` `ok` 1, `self_operator` 1;
+  - `pointer_moves_total` `forward,false` 2, `rollback,false` 1;
+  - `activations_refused_total{unapproved}` 1;
+  - `blob_bytes_total` 1,255;
+  - `validation_failures_total` `duplicate_zone` 1, plus `unknown_room` 3 (see #312).
+
+  Loki has `content published`, `content approved`, `content approved by its own publisher`
+  (`self_approval=true`), `content activated` (`direction` forward or rollback),
+  `content publish rejected` (`findings_count=4`, `code=duplicate_zone`) and
+  `content activation refused` (`reason=unapproved`). Each carries `actor_account_id`, `pack_id`,
+  `version` and `trace_id`. `session_id` is empty, as on every Admin line (noted at `AW-SRV-035`).
+  Tempo has the `content.publish`, `content.publish_blob` and `content.approve` traces.
+- **`AW-CLI-003`'s items:** the Builder's `activate --log-level info --output json` logged the
+  confirmation at `info` with `trace_id eabb657a…`, the same ID as its JSON result. That's the join
+  to the server's audit record.
+- **Found: #312.** A publish shows other packs' findings as the Builder's own. The refused publish
+  listed three cascade `unknown_room` from the fixture's Zones, labelled `sre.verify/docks.json:0:0`
+  and so on. Every valid publish shows the fixture's Purgatory `missing_reverse_exit` the same way.
+  It's noise in the demo, so it's filed for implementation.
+- **Still owed:** `andara_content_pending_seconds{pack}` rising then clearing on a slow apply. Every
+  apply here took under a second. Also a refused *load* on `andara_content_load_failures_total{reason}`,
+  and `andara_content_relocations_total`. Their carrier is a version that removes an occupied Room,
+  which a fixture seed can't make. That's named in the story, and AW-INF-023's walk-through or a
+  later content change can observe it.
+
+**Left on `dev`:** Accounts `sre-player` (Character `Verifier`, from AC-2) and `sre-builder` (`builder`,
+pack `sre.verify`), and pack `sre.verify@1` active: Zone `sreverify`, two Rooms. There's no deactivate,
+and the store keeps every version. The projector stays at 0 replicas until #143's fix rolls out.
