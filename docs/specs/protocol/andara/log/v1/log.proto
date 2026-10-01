@@ -259,6 +259,15 @@ message ContentSwap {
   // Zone the content in effect has. Removing a Zone is refused at the Loader
   // (finding `zone_removed`), and this is the Engine's backstop.
   bytes base_digest = 4;
+
+  // How many Zones the whole World holds after this swap: the same scope as
+  // world_digest, not this pack's. The Loader sets it. Recovery reads it to
+  // tell a World that has had Zones (some *applied* swap with zone_count > 0)
+  // from one that never has, which waits for its first content instead of
+  // exiting (AW-SRV-042, decided 2026-10-01). Zones are never removed, so it
+  // never decreases across applied swaps. A swap written before this field
+  // reads 0.
+  uint32 zone_count = 5;
 }
 
 // An Entity in transit between Zones: the same shape server/sim holds, so the

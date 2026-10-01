@@ -483,6 +483,19 @@ export declare type ContentSwap = Message<"andara.log.v1.ContentSwap"> & {
    * @generated from field: bytes base_digest = 4;
    */
   baseDigest: Uint8Array;
+
+  /**
+   * How many Zones the whole World holds after this swap: the same scope as
+   * world_digest, not this pack's. The Loader sets it. Recovery reads it to
+   * tell a World that has had Zones (some *applied* swap with zone_count > 0)
+   * from one that never has, which waits for its first content instead of
+   * exiting (AW-SRV-042, decided 2026-10-01). Zones are never removed, so it
+   * never decreases across applied swaps. A swap written before this field
+   * reads 0.
+   *
+   * @generated from field: uint32 zone_count = 5;
+   */
+  zoneCount: number;
 };
 
 /**
