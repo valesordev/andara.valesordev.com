@@ -7,7 +7,7 @@ type: feature
 status: review
 size: S
 depends_on: [AW-SRV-003, AW-SRV-036]
-blocks: []
+blocks: [AW-SRV-041]
 lane: implementation
 risk: low
 ---
@@ -156,6 +156,43 @@ Tests that counted a mover's Events are updated in this PR: `sim`'s `TestMove_In
 Every `make check` target passes. `TestSnapshotCopyStaysInsideTheStallBudget` (#172) failed under
 full-suite load on three runs, and passed five times alone and with its package. The suite outside
 `simtest` passes, and so does every target after `test`, each run on its own.
+
+## §8 review (architecture, 2026-09-30): stays `review` on SRE's record only
+
+Against `main` at `3f06943`. Merged in #278. The PR's `check`, `stack`, `cli-release` and 3-OS
+`determinism` are green. `main`'s run on the merge was in progress at this review. Re-run here: the
+`sim` and `events` tests the record names.
+
+Every AC passes on the implementation record's evidence:
+- ACs 1–5 and 7: `sim`'s `TestMove_InZone`, `TestMove_CrossZone`, `TestMove_NoSuchExit`,
+  `TestMove_ReplayIsIdentical` and `TestArrive_IntoAGoneRoomLandsAtTheFallback`, and `events`'
+  `TestScope_RoomMove` and `TestClientRefOnlyToOwnSession`.
+- AC-6: `make stack-play` on a stack built from the branch, SRE on #278, plus the PR's `stack` job.
+
+**Mutation-checked in this review:** stubbing out the in-Zone `describeTo` fails six tests,
+`TestMove_InZone`, `TestValidateFailure_SkipsApply`, `TestStep_BuildsConsumedContexts`,
+`TestScope_RoomMove`, `TestOrdering` and `TestClientRefOnlyToOwnSession`. AC-2's and AC-7's code
+is `AW-SRV-036`'s, already mutation-checked in that story's review.
+
+Checklist: no protocol change, as the contract says. No config, no migration, no new term. No
+`[ASSUMPTION]`. The renderer golden (`events.jsonl`) is left as it is, and that's right: it's a
+catalogue of Event kinds, not one mover's stream.
+
+**The arrival rule isn't here.** `docs/feedback/AW-SRV-036-goto.md` recommended this story as the
+carrier for Brian's `<name> has arrived.` and the `from_direction` rule. #278 merged before that
+ruling did. So the bystander still reads `arrives from the in.` on Purgatory's `out`, and the rule
+still needs a carrier. That's PM's, and it doesn't reopen this story.
+
+**Not holding, SRE's:** `scripts/stack_play.sh`'s comment "A move describes no Room" is stale now.
+
+**What closes it:** SRE's §8 instrumentation record, with the shift the Observability section
+predicts measured on `make stack-play`:
+- `andara_events_emitted_total{type="room_described"}`, before and after;
+- `andara_stream_events_sent_total`, before and after;
+- `andara_tick_duration_seconds` p99, unmoved.
+
+The "before" already includes the cross-Zone moves' descriptions since #274, so only the in-Zone
+delta is this story's. Architecture then moves the story to `done` without another pass.
 
 ## §8 instrumentation check (2026-10-01, SRE): satisfied
 

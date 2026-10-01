@@ -7,7 +7,7 @@ type: feature
 status: review
 size: M
 depends_on: [AW-CLI-001, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-021]
-blocks: [AW-INF-021, AW-INF-023]
+blocks: [AW-INF-021, AW-INF-023, AW-SRV-039]
 lane: implementation
 risk: medium
 ---
@@ -366,3 +366,11 @@ confirmation line's test lands. By the ruling's reading, "under
 store-backed path's live observation is carried by `AW-INF-021` as an inherited line, as CLAUDE.md §8
 allows while no environment has the caller. *(Revised before merge, from Codex on #276. The first
 push held the item open on a question architecture had already ruled on.)*
+
+## Implementation record, addendum (2026-09-30): §8 item 4
+
+`TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld` (on
+`impl/aw-srv-035-pack-not-held-cli`, AW-SRV-035's AC-2) covers this story's item 4. A Builder's
+`content publish` to a pack they don't hold exits 1 with `error.code` `pack_not_held`, the
+server's reason passed through by `contentError`. Mutation-checked: without the passthrough, it's
+`permission_denied`, and the test fails.
