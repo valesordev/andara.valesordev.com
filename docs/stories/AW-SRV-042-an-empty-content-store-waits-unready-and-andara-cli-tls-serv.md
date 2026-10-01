@@ -192,11 +192,13 @@ trace_id on the wait lines.)*
   - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering
     the wait. Fields: `content_source`, `packs`, `core_version`, `trace_id`.
   - `info` `content in effect: leaving the wait`, once. Fields: `zones`, the triggering
-    `pack@version`, `trace_id` (the swap's).
+    `pack@version`, `trace_id` (the swap record's, `content.load`'s trace).
   - A refused `OpenSession` logs at `debug` with `trace_id`, `reason=no_content_in_effect`, and the
     `session_id` if assigned, else the remote address, as the other `OpenSession` refusals do.
-- **Traces:** none new. The leaving `ReconcileContent` keeps its existing span, and the leaving
-  line's `trace_id` is that span's.
+- **Traces:** none new. The leaving line's `trace_id` comes from the swap record that ends the wait
+  (`SwapApplied.TraceParent`), meaning the Loader's `content.load` trace, which links to the
+  activation once `AW-SRV-045` ships. *(Amended 2026-10-01: this said "the leaving
+  `ReconcileContent`'s span". The wait ends on a `FollowContent` swap, as built.)*
 - **Alerts:** none new. `AndaraServerUnavailable` fires while a fresh environment waits, which is
   true. Its runbook row (`server-unavailable.md`, first fix `make content-seed ENV=<env>`) and the
   startup probe's move to `/startedz` are SRE's, in `AW-INF-021`.

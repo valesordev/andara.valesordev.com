@@ -191,8 +191,11 @@ on `dev`, and the core carrier's signals added.)*
   `content.build`, and `content.swap` spans, now emitted from `dev`. This is `AW-SRV-012`'s §8 line
   "not emittable from the compose server, because `content.source=dir` has no Active Pointer". This
   story carries that live observation, recorded in its verification record. AC-4's activation shows
-  as one trace, from the CLI's `cli.command` through `ActivateVersion`, to the Loader's
-  `content.load`, and on to the tick's `content.swap`.
+  as **two traces joined by a span link**. The first runs from the CLI's `cli.command` through
+  `ActivateVersion`. The second is the Loader's `content.load` → the tick's `content.swap`, and it
+  links to the first through `ActiveVersion.trace_parent` (`AW-SRV-045`). Until that field ships,
+  the two join on `pack@version` and time. *(Amended 2026-10-01: this said one trace, which can't
+  hold: one debounced load can serve several activations. See the feedback file.)*
 - **Alerts:** none new. **`ContentLoadFailing` goes live on `dev` with this story.** It was silent
   there, because `content.source=dir` exports no `andara_content_pending_seconds`
   (`content-freshness.md`, *Known gaps*). This story changes, in the same PR:
@@ -271,8 +274,10 @@ names the carrier for each series it can't produce:
   - the boot-time `content.core_boot` root span. It's already observed on the local stack, so
     re-observe it on `dev`.
 - `AW-CLI-003`'s own items (its §8 instrumentation check, 2026-09-30): run with `--log-level info`,
-  the activation's `info` confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
-  through `content.activate` to the Loader's `content.swap`.
+  the activation's `info` confirmation line carries the `trace_id` the CLI sent, and the trace from
+  `cli.command` through `content.activate` is joined to the Loader's `content.load` → `content.swap`
+  trace by a span link (`AW-SRV-045`), or, until that ships, by `pack@version` and time. *(Amended
+  2026-10-01, as above.)*
 
 ## Open questions
 
