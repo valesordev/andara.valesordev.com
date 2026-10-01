@@ -71,7 +71,13 @@ message CharacterArrived {
   string zone_id = 1;
   string room_id = 2;
   string character_name = 3;
-  string from_direction = 4;          // empty when it did not come through an Exit
+  // The Direction the arrival came from, as the destination Room sees it:
+  // set only when that Room has an Exit in this Direction leading back to
+  // the Room the mover left. Empty otherwise: a goto, a first bind, or a
+  // one-way Exit such as Purgatory's `out` (Brian, 2026-09-30; renders as
+  // "<name> has arrived."). Decided when the event is emitted, from the
+  // World at that tick. Arrive.from_direction in the log is unchanged.
+  string from_direction = 4;
 }
 
 message CharacterLeft {

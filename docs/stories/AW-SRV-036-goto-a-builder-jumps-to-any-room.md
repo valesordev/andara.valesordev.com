@@ -111,7 +111,7 @@ so that I can test a Zone I just activated without walking to it, or before anyt
 ```protobuf
 // Pinned in andara/log/v1/log.proto (contract review, 2026-09-28).
 message Goto {
-  string target_zone_id = 1;   // resolved at parse from "<zone>/<room>" or the current Zone
+  string target_zone_id = 1;   // resolved before logging from "<zone>/<room>" or the current Zone
   string target_room_id = 2;
 }
 // LoggedCommand.command gains:  Goto goto = 19;
@@ -207,8 +207,11 @@ CLAUDE.md §8.
 - **Settled at contract review (2026-09-28):** a Builder can `goto` any Room in the World, not
   only Rooms in packs they hold. Pack scoping (`AW-SRV-013`) governs writes to the content store.
   Standing in a Room isn't one, and testing a link into someone else's Zone needs it.
-- `[ASSUMPTION]` Bystanders see the ordinary `<name> leaves.` and `<name> arrives.`, with no special
-  wording for a jump. The wording is Brian's to change, and it doesn't affect the wire.
+- **Resolved 2026-09-30 (Brian, relayed on #273):** a bystander reads `<name> has arrived.` for any
+  arrival that didn't come through an Exit leading back, a `goto` among them. This story ships the
+  old `<name> arrives.`, per its contract. The new text, and the rule for when `from_direction` is
+  empty (`event.proto`, amended 2026-09-30), are a carrier story's, whose AC supersedes AC-1's
+  bystander text. See `docs/feedback/AW-SRV-036-goto.md`.
 
 ## Contract review (architecture, 2026-09-28)
 
@@ -280,3 +283,64 @@ full-suite load, and passed alone on this branch and on `main`.
 **The arrival text.** The Open questions `[ASSUMPTION]` about bystander wording is answered by Brian
 (2026-09-30, recorded on #273): a bystander reads `<name> has arrived.` for a `goto`. This branch
 still renders `<name> arrives.`, per the contract as written, until architecture amends it.
+
+## §8 review (architecture, 2026-09-30): stays `review` on SRE's record only
+
+Against `main` at `d996066`. Merged in #274 (`81c9e60`). The PR's `check`, `stack`, `cli-release` and
+3-OS `determinism` are green. `TestLive_Goto` passed in `main`'s `stack` run 36789975363, and again
+in this review against the compose stack at `d996066` (1.96 s). Every named test re-ran green.
+
+| AC | Evidence | Result |
+|----|----------|--------|
+| 1 | `sim/goto_test.go` `TestGoto_CrossZone`; `TestLive_Goto`: bystanders get empty `to_direction` and `from_direction`, the jumper `RoomDescribed`, the roster `docks/pier` after quit | pass, as written (the wording moves, see Open questions) |
+| 2 | `command/goto_test.go` `TestGoto_ParsesBothFormsAndFillsTheZone`; `TestGoto_InZone`; smoke | pass |
+| 3 | `TestGoto_NeedsBuilder`: `not_authorized`, one audit record, nothing logged; `PERMISSION_DENIED` live | pass |
+| 4, 5, 6 | `TestGoto_UnknownTarget`; `TestGoto_ParseRefusals` (six malformed forms, no abbreviation); `TestGoto_SameRoomIsALook` | pass |
+| 7 | `TestGoto_ReplayMatchesTheStateHash`, two Engines in lockstep, on the 3-OS determinism matrix | pass. Recovery doesn't depend on the verb, so lockstep equality stands in for a recovered replay, and the test plan's Redpanda replay isn't required |
+| 8 | `sim/content_test.go` `TestGoto_SeesAZoneOnceItsSwapHasApplied`, with a real swap | pass |
+| 9 | `TestGoto_NeedsBuilder`, with a Principal shaped as `auth.Store.ActAs` returns it. The real actor in the audit trail is `AW-SRV-008`'s `act_as` record, and a successful `goto` isn't audited (contract review, item 6) | pass |
+| 10 | `TestGoto_IntoAGoneRoomLandsAtTheFallback`, with the `Arrive`'s Room rewritten in place of a swap | pass. It gives the same state at apply, and the swap path is `AW-SRV-012`'s |
+
+Mutation-checked, and all nine caught:
+- the builder role dropped, or changed to `operator`;
+- `Abbrev: true`;
+- the pipeline's Zone fill removed;
+- a cross-Zone goto relocated in-Zone;
+- `Arrive` no longer describing;
+- a goto `Arrive` given a direction;
+- the `unknown_zone` check removed;
+- `Jump` not copied.
+
+The wire matches: `LoggedCommand.goto = 19`, and `Goto` fields 1–2 in `gen/`. The sim imports no clock,
+network or OS, and `Jump` rides only on `Outcome`, so it's not state and not hashed.
+
+**Implementation's decisions** (`docs/feedback/AW-SRV-036-goto.md`), all accepted:
+- The bare Room's Zone is filled after authorize, before logging. The log still carries both fields.
+  The `log.proto` comment and the contract sketch said "the parser", and now say the Gateway,
+  before the log.
+- Lowercasing predates this story and applies to every verb.
+- Every `Arrive` describes where it lands, as contract-review item 5 said. That delivers
+  `AW-SRV-038`'s cross-Zone half (below).
+- `sim.Outcome.Jump` is internal. On a cross-Zone jump that falls back, the source Zone's line
+  names the intended Room, not the fallback. That's accepted, and the README could say so.
+
+**For `AW-SRV-038`** (PM and implementation):
+- Its AC-2, a cross-Zone `move` describes, is already true on `main` (`TestMove_CrossZone`).
+- AC-7's code is in place, but no `move`-specific test exists.
+- What's left is the in-Zone `applyMove` description (AC-1) and AC-3 to AC-6.
+- SRE's before-and-after `room_described` rate on `stack-play` already includes the cross-Zone
+  moves, so only the in-Zone delta is 038's.
+
+**Not holding** (implementation's file): `andara-cli sim` renders an empty `to_direction` as
+`X leaves .` (`admin/cli/simcmd.go`), and goto's events reach it now.
+
+**What closes it:** SRE's §8 instrumentation record:
+- `andara_commands_total{verb="goto"}` and `andara_command_duration_seconds{verb="goto"}`;
+- `andara_command_rejected_total`'s `not_authorized` and `unknown_zone` series;
+- `andara_privileged_actions_total{action="authorize"}` for the denial;
+- the `command applied` line's `from_room` and `to_room`. It logs at `debug`, and compose runs at
+  `info`, so SRE observes it with the level raised or rules the unit assertion enough;
+- the `command.apply` span's `from_room` and `to_room`, with the cross-Zone `Arrive`'s
+  `command.apply` under the same trace.
+
+Architecture then moves the story to `done` without another pass.

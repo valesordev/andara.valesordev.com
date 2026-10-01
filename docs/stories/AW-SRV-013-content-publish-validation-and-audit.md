@@ -284,7 +284,9 @@ metric names are unchanged.)*
 ### Logs
 - Every line carries `actor_account_id`, `acting_as_account_id` (empty unless acting as),
   `pack_id`, `version`, `session_id`, and `trace_id`. The Admin path is a command path
-  (CLAUDE.md §7).
+  (CLAUDE.md §7). `session_id` is empty on Admin, which runs in no Game Session. `trace_id` is the
+  correlation ID there, and the key stays so one query covers both paths. *(Ruled 2026-09-30, on
+  SRE's §8 finding in `AW-SRV-035`.)*
 - `info` per publish, approve, and activate.
 - `warn` per rejection, with `findings_count` and the first finding's code. The findings
   themselves go in the RPC's status details and the audit record, not the log.

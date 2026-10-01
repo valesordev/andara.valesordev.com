@@ -4,7 +4,7 @@ title: Every environment spawns new Characters in Purgatory
 epic: EPIC-01
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-037]
 blocks: [AW-INF-023]
@@ -155,3 +155,32 @@ either side of that change.
 
 **Contract gap:** the scope missed `internal/smoke/m1_test.go`, which asserts the spawn Room too.
 Implementation made it spawn-agnostic in #272, merged ahead of this PR.
+
+## §8 review (architecture, 2026-09-30): `done`
+
+Against `main` at `d996066`. Merged in #269 (`c815d1e`).
+
+| AC | Evidence on `main` | Result |
+|----|----------|--------|
+| 1 | `helm_test.py` `test_spawn_room_is_purgatory`, in `make check`, re-run green. `helm template` gives `purgatory/start` for local, dev and prod. Mutation-checked: `town/plaza` in `prod.yaml`, the compose line, and a missing `purgatory.json` each fail, naming the environment | pass |
+| 2, 3, 4 | `stack` runs 36787899822 (`c815d1e`) and 36789975363 (`81c9e60`), each on a fresh stack. `stack-play`'s ordered transcript shows Purgatory, then the plaza, then the hall. B sees A arrive before `leaves north.` `stack-linkdead` ends reconnected into the plaza | pass |
+| 5 | compose: the `stack` runs. `local`: the `kind` workflow's `helm-install ENV=local` then `/readyz` Ready (36787899786). **`dev`, observed in this review:** Argo CD `andara-dev` Synced/Healthy at `d996066`; `cm/andara-config` `ANDARA_CHARACTER_SPAWN_ROOM=purgatory/start`; `andara-0` Ready at 23:34:04Z, logging `character roster configured spawn_room=purgatory/start` | pass. `dev`'s half, "owed after merge" in SRE's record, is now observed |
+
+**The instrumentation item holds vacuously.** The Observability section specifies none, and SRE's
+review said a values and script change adds no signal. It's the same case as `AW-INF-026`.
+
+Checklist: tests run in CI (`make check`, `stack`, `kind`). No new config key: the values schema's
+`character.spawn_room` entry is unchanged. No migration. The glossary's Purgatory cites this story.
+Start Location's `[NEEDS BRIAN]` is out of scope here. No `[ASSUMPTION]` is open.
+
+**Accepted as they stand:**
+- The test plan said `helm-test` asserts a Ready `local` pod. `kind.yaml` does that, and SRE's
+  record says so.
+- The contract missed `internal/smoke`, and #272 closed that before the merge. The lesson for later
+  contracts that move a spawn or a fixture: grep `internal/smoke` as well as `scripts/`.
+- The gates' arrival pattern accepts `arrives.`, `arrives from the <dir>.` and `has arrived.`, so
+  Brian's 2026-09-30 wording can land without touching them. Tightening it once `has arrived.` ships
+  is SRE's option.
+
+**Not holding** (implementation's file): `server/README.md`'s `character.spawn_room` row still says
+only non-`local` values files set it. `local` sets it too now.

@@ -107,3 +107,39 @@ Gateway, the Command through Redpanda, two Zones' ticks, and the roster after qu
 asks for exactly that. The shared compose stack runs a server built from your checkout, so I
 haven't run it against this code. It works with either spawn Room, as `TestLive_M1Gate` does. Could
 you run `make stack-smoke` (or `stack-play`) against this branch, as you did for #272?
+
+## Architecture (2026-09-30): the arrival contract, and where it's built
+
+**Contract, ruled on SRE's "For architecture" items.** `CharacterArrived.from_direction` is set
+only when the destination Room has an Exit in that Direction leading back to the Room the mover
+left. Otherwise it's empty: a `goto`, a first bind, or Purgatory's one-way `out`. It's pinned in
+`event.proto`'s comment (amended in this review, `gen/` regenerated). The rule is decided where the
+event is emitted, from the World at that tick:
+- in-Zone `applyMove`: the destination Room's own Exits;
+- cross-Zone `applyArrive`: the destination Room's Exits against `Arrive.origin_zone_id` and
+  `origin_room_id`, which the logged `Arrive` already carries.
+
+The log doesn't change. `Arrive.from_direction` keeps the reverse Direction, meaning "the Direction
+it came through". Events aren't in the State Hash, so replaying an old log is unaffected, apart from
+the text a bystander would read. `andara-cli play` and `sim` render an empty `from_direction` as
+`<name> has arrived.`.
+
+**`AW-SRV-036` doesn't carry it.** The rule changes `move`, first bind and `out`, which is beyond
+`goto`. `AW-SRV-036` ships `<name> arrives.` as its contract said. Its `[ASSUMPTION]` is resolved,
+pointing here, and the carrier's AC supersedes AC-1's bystander text.
+
+### For PM: the carrier
+**Recommended: `AW-SRV-038`** (in the sprint, `ready`, not started). It already changes what a
+mover sees on arrival, and #274 did its cross-Zone half. Adding scope is PM's call. The ACs
+architecture asks the carrier to hold:
+1. A `move` through an Exit whose destination has the reverse Exit back: the bystander reads
+   `<name> arrives from the <dir>.` (unchanged).
+2. A `move` through a one-way Exit (Purgatory's `out` into the plaza): `from_direction` is empty, and
+   the bystander reads `<name> has arrived.`.
+3. A `goto`, and a first bind into Purgatory: `<name> has arrived.`.
+4. The same rule for a cross-Zone `move`, decided by the destination Zone at `Arrive`.
+5. `make stack-play` and `make stack-linkdead` pass with the new text. The gates already accept it
+   (#269), and SRE may tighten them afterwards.
+
+Not on the demo's path. The Builder's Guide (`AW-INF-023`) shows whichever text is live when it's
+written.

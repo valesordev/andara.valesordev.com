@@ -214,7 +214,12 @@ export declare type CharacterArrived = Message<"andara.game.v1.CharacterArrived"
   characterName: string;
 
   /**
-   * empty when it did not come through an Exit
+   * The Direction the arrival came from, as the destination Room sees it:
+   * set only when that Room has an Exit in this Direction leading back to
+   * the Room the mover left. Empty otherwise: a goto, a first bind, or a
+   * one-way Exit such as Purgatory's `out` (Brian, 2026-09-30; renders as
+   * "<name> has arrived."). Decided when the event is emitted, from the
+   * World at that tick. Arrive.from_direction in the log is unchanged.
    *
    * @generated from field: string from_direction = 4;
    */
