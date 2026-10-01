@@ -344,3 +344,15 @@ works across both paths. The Observability sections here and in `AW-SRV-013` now
 **What closes it:** AC-2's CLI half, a test in which `content publish` by a Builder without the pack
 exits 1 with `error.code` `pack_not_held`. It's the only item left, and architecture then moves the
 story to `done`.
+
+## Implementation record, addendum (2026-09-30): AC-2's CLI half
+
+On `impl/aw-srv-035-pack-not-held-cli`, for the §8 review's "What closes it":
+`admin/cli` `TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld`.
+- An Operator grants `town` and `docks` with `andara-cli account set-packs`.
+- The Builder's `content publish` of a `wilds` pack exits 1, with `error.code` `pack_not_held`
+  under `--output json` and the server's `does not hold pack wilds` in human output.
+- No `wilds` version is written, and their publish of `town` goes through.
+
+Mutation-checked: with `contentError` dropping the server's reason, `error.code` falls back to
+`permission_denied` and the test fails.
