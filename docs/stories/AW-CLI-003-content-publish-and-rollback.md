@@ -324,7 +324,7 @@ enough to test it.
    hint.
 4. **`AW-SRV-035` AC-2's CLI half** (implementation): `content publish` by a Builder without the pack
    exits 1 with `error.code` `pack_not_held`. It's that story's AC, and the test lives in
-   `admin/cli`. It closes both stories.
+   `admin/cli`. It closes both stories. *(Delivered in #281: `TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld`.)*
 5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
    (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.
    *(SRE's record, #276: the spans are satisfied. What's still owed is the confirmation line's test,
@@ -399,14 +399,14 @@ Every item in "What closes it" is delivered, and each was re-run green in this r
 5. **SRE's confirmation line:** `TestContentActivate_ConfirmationLineJoinsTheServersRecord`. SRE's
    record made the instrumentation item satisfied once this test landed.
 
-**One reading, for `AW-INF-021`'s inherited observation.** The confirmation-line test runs with the
-server trusting the inbound `traceparent`, as compose does (`ANDARA_TRUST_INBOUND_TRACEPARENT=true`).
-The chart's default is `false`, and `dev`'s values don't set it. So on `dev`:
-- the server's spans are their own trace's root, **linked** to the CLI's trace rather than parented
-  under it;
-- the server's audit record carries the server's own `trace_id`.
-
-The join from the CLI to the server goes through that span link. The `AW-CLI-002` ruling ("under
-the CLI's trace ID") reads as *parented where the environment trusts the inbound `traceparent`, and
-linked where it doesn't*. Whether `dev` should trust it (operators only reach it over the tailnet)
-is SRE's call, in `docs/feedback/AW-INF-021-dev-content-store.md`. It doesn't hold this story.
+**For `AW-INF-021`'s inherited observation: the trace must be parented.** The confirmation-line
+test runs with the server trusting the inbound `traceparent`, as compose does. That's the contract:
+one trace from `cli.command` through the server's RPC, with the CLI's `trace_id` on the server's
+audit record (Observability, and the `AW-CLI-002` ruling). A server that doesn't trust the header
+starts its own root trace, and a span link to the CLI's trace is **not** equivalent. The CLI's
+`trace_id` would then match neither the audit record nor a server trace in Tempo. SRE has set `dev`
+to trust it (`telemetry.trust_inbound_traceparent: true` in `values/dev.yaml`, #288, asserted by
+`helm-test`), and `prod` stays `false`. So `AW-INF-021`'s §8 record observes the parented trace on
+`dev`. An environment that doesn't trust the header can't make this observation, and a story that
+wants it there has to revise this contract first. *(Revised on review of #296: the first push called
+a linked trace equivalent.)*
