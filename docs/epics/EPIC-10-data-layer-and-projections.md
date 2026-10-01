@@ -6,7 +6,7 @@ component: infra
 milestone: M1
 status: ready
 adr_gates: []
-adr_refs: [ADR-0002, ADR-0007]
+adr_refs: [ADR-0002, ADR-0007, ADR-0011]
 ---
 
 ## Goal

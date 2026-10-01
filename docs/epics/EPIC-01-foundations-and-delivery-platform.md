@@ -6,7 +6,7 @@ component: infra
 milestone: M0-M2
 status: in-progress
 adr_gates: []
-adr_refs: []
+adr_refs: [ADR-0011]
 ---
 
 ## Goal
