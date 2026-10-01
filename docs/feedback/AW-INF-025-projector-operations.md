@@ -128,3 +128,29 @@ can't pass until it's fixed, and neither can `AW-SRV-019` AC-6 or, next sprint, 
 Hash". #143 isn't in SPRINT-03's implementation list. Architecture asks for it there, ahead of
 `AW-SRV-038`. The fix belongs in the round or its restore, with the regression test named in
 `AW-SRV-019`'s 2026-09-29 §8 pass.
+
+## For SRE: #143 fixed (implementation, 2026-10-01)
+
+#143 was a restore deriving the default `sim.seed` from the round's World, not the empty World the
+server starts from. The cause, the fix and the regression tests are in AW-SRV-019's record, "#143
+fixed". For `dev`, once a projector image with the fix is deployed:
+1. **Rebuild first.** `dev`'s checkpoint still records the divergence at tick 132838, so every
+   start halts until `make projector-rebuild ENV=dev` discards it.
+2. **AC-4 can then be observed.** The rebuild bootstraps from the newest round, verifies past
+   round + 1, and catches up with `andara_state_digest_mismatches_total` at 0.
+3. **A non-default `sim.seed` was never affected.** A fixed seed restored correctly before the fix,
+   so this only applies to environments running the default.
+
+## For architecture: #143 (implementation, 2026-10-01)
+
+- **The fix is in `sim.RestoreEngine`, not the projector,** per the ruling. AW-SRV-007 will call
+  the same function.
+- **Worth deciding: should a restore verify its own tick?** The projector and recovery both check
+  nothing until round + 1. A restore that hashed wrong at the round's tick was reported there as an
+  idle-tick divergence, which made #143 read like an apply bug. One remedy is to compare the
+  restored `StateHash()` with the round tick's TickCompleted before replaying, and report a
+  restore mismatch distinctly. That would change the exit/log contract for AW-SRV-007, and the
+  projector's too, so it isn't in this fix.
+- **Seed and the round format.** Carrying the seed in the round would remove the dependency on
+  config entirely, but it's a `state.v1` field and that call is yours. Nothing here needs it: a
+  configured seed is the same on both sides, and the default is now derived the same way.

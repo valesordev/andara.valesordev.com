@@ -636,6 +636,83 @@ func TestSnapshot_CarriesAndRestoresTheContentInEffect(t *testing.T) {
 	}
 }
 
+// #143: a round restored with sim.seed at its default, 0, hashes as the
+// World that wrote it, at the round's tick and on the idle tick after it.
+//
+// The server's Engine starts with no content, so a default seed is derived
+// from the empty World. A restore builds its Engine over the round's
+// content, and derived the seed from that World instead. The seed is in the
+// State Hash and not in the round, so every restore with the default seed
+// diverged at round tick + 1, idle or not, while a replay from zero, which
+// starts empty as the server does, verified. Every earlier round test pinned
+// a seed.
+func TestRestore_DefaultSeedIsTheOneTheWorldStartedWith(t *testing.T) {
+	c := newContent(t)
+	// As boot.StartTickLoop builds it: no content, sim.seed 0.
+	live := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: c})
+	mustStep(t, live, c.swap(t, live, nil, "town", 3))
+	mustStep(t, live, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	mustStep(t, live, simtest.Bind("docks", "ch-2", "Bryn", "pier"))
+	mustStep(t, live)
+
+	// The round, through the codec a store holds it in.
+	versions, digest := live.Content()
+	round := sim.RoundState{Tick: live.Tick(), StateVersion: sim.StateVersion, Content: versions, ContentDigest: digest[:]}
+	for _, s := range live.SnapshotAll(1) {
+		raw, err := s.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		var env statev1.SnapshotEnvelope
+		var body statev1.ZoneState
+		if err := proto.Unmarshal(raw, &env); err != nil {
+			t.Fatal(err)
+		}
+		if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
+			t.Fatal(err)
+		}
+		prng, err := sim.DecodePRNG(body.GetPrngState())
+		if err != nil {
+			t.Fatal(err)
+		}
+		round.PRNG, round.NextEventID, round.Offsets = prng, body.GetNextEventId(), nil
+		for _, po := range env.GetOffsets() {
+			round.Offsets = append(round.Offsets, sim.PartitionOffset{Partition: po.GetPartition(), Offset: po.GetOffset()})
+		}
+		round.Zones = append(round.Zones, sim.ZoneStateFromProto(&body))
+	}
+
+	// As the projector restores it (and AW-SRV-007 will): the round's
+	// content, sim.seed 0.
+	topo, err := sim.PrepareContent(c, versions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := sim.RestoreEngine(topo.World, topo.Templates, sim.Config{Handlers: sim.Handlers(), Content: c}, round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := restored.State().Seed, live.State().Seed; got != want {
+		t.Errorf("restored seed %d, the World started with %d", got, want)
+	}
+	if restored.StateHash() != live.StateHash() {
+		t.Fatalf("at the round's tick %d: restored %x, live %x", live.Tick(), restored.StateHash(), live.StateHash())
+	}
+	// Round tick + 1 applies nothing, as #143's first divergent tick did.
+	a, b := mustStep(t, live), mustStep(t, restored)
+	if a.Completed.StateHash != b.Completed.StateHash {
+		t.Fatalf("idle tick %d: live %x, restored %x", a.Tick, a.Completed.StateHash, b.Completed.StateHash)
+	}
+	// And a configured seed is still the configured seed.
+	pinned, err := sim.RestoreEngine(topo.World, topo.Templates, sim.Config{Seed: 7, Handlers: sim.Handlers(), Content: c}, round)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pinned.State().Seed != 7 {
+		t.Errorf("sim.seed 7 restored as %d", pinned.State().Seed)
+	}
+}
+
 // A bound Character records the pack@version its Template came from, as the
 // log has it in effect: andara.core's when that pack is in effect, and the
 // one pack in effect when a single pack supplies everything (review of #91;

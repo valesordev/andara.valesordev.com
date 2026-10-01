@@ -561,3 +561,35 @@ accepted on 2026-09-29. AC-9's carrier is now PM's to groom (the SRE authenticat
 as its inherited Definition-of-done line; `docs/feedback/AW-SRV-019-state-projector.md`). Once that
 story is written, AC-9 stops holding this story, per CLAUDE.md §8. From then on, #143 is the only
 thing keeping it in `review`.
+
+### #143 fixed (2026-10-01, implementation)
+
+On `impl/aw-srv-019-restore-default-seed`. The ruling's terms (§8 pass, 2026-09-29): the fix is in
+the round's restore, and a regression test fails on the code before it.
+
+**Cause.** The seed is in the State Hash. The round doesn't carry it, so a restore takes it from
+`sim.seed`. With `sim.seed` at its default of 0, `NewEngine` derives the seed from the World it's
+given:
+- The server's Engine starts from `EmptyWorld()` (AW-SRV-012), so its seed is
+  `DeriveSeed(EmptyWorld)`.
+- `RestoreEngine` passes the round's content World, so it derived a different seed.
+
+Every bootstrapped restore therefore hashed differently from the round's tick onward. The
+projector verifies nothing before round + 1, so that's where it showed, idle or not. A from-zero
+replay starts from `EmptyWorld()` as the server does, so it verified. Every round test pinned a
+seed, which is the "state the fixture lacks".
+
+**Fix.** `sim.RestoreEngine`: with `cfg.Seed == 0`, it uses `DeriveSeed(EmptyWorld())`, the seed
+the World started with. A configured seed is unchanged. The fix is in the restore, so AW-SRV-007's
+recovery gets it too: it's the same function.
+
+| Test | What it shows | Without the fix |
+|------|---------------|-----------------|
+| `sim` `TestRestore_DefaultSeedIsTheOneTheWorldStartedWith` | An Engine built as the server builds it (empty, seed 0, content by swap, two Characters bound). Its round goes through the snapshot codec, and `RestoreEngine` restores it as the projector does. The restored seed and hash equal the live World's at the round's tick, and at the idle tick after it. A pinned seed restores as itself | fails: restored seed `16673930416586794289`, the World's `16406829232824261652`, and the hashes differ at the round's tick |
+| `projector` suite, `seed` now 0 (sim.seed's default, as `dev` runs) | `TestRun_RebuildFromTheRoundEqualsIncremental` (Redpanda) bootstraps `--rebuild` from a round over a log truncated before it, verifies every tick after the round, and reaches the incremental projector's records | `TestRun_RebuildFromTheRoundEqualsIncremental` fails |
+
+`make check` passes. #172's stall-budget flake failed once under load and passed on the rerun.
+
+**Still owed:** AW-INF-025 AC-4 on `dev`, the in-cluster observation, is SRE's. `dev`'s
+checkpoint still records the divergence at tick 132838. Once a projector with this fix is
+deployed, it needs `make projector-rebuild ENV=dev` before it starts.

@@ -36,7 +36,10 @@ type world struct {
 	events     map[sim.Tick][]sim.Event
 }
 
-const seed = 5
+// seed is sim.seed's default, as the live server and the projector run it: a
+// pinned seed hid #143, a restore that derived the default from the wrong
+// World.
+const seed = 0
 
 // newWorld is the crossing World brought into effect the way a live log
 // does it: an Engine with no content, and a genesis ContentSwap as its first
