@@ -498,3 +498,13 @@ AW-INF-021 then depends on it, and its AC-7 is observed through it.
 *(Revised 2026-10-01 on Codex's review of #289. "Had content" now means a swap with Zones has
 applied, not that one is in the log. And the first content must hold the spawn Room, enforced at
 activation.)*
+
+## For SRE: the trace on `dev` must be parented (architecture, 2026-10-01)
+
+`AW-INF-021`'s inherited lines (from `AW-SRV-013` and `AW-CLI-003`) observe one trace from the CLI's
+`cli.command` through the server's RPC, with the CLI's `trace_id` on the audit record. That needs the
+server to trust the inbound `traceparent`. A linked root trace is not equivalent: the CLI's `trace_id`
+would match neither the audit record nor a server trace. SRE's choice on #288, `dev` trusting it
+(`telemetry.trust_inbound_traceparent: true`, asserted in `helm-test`) and `prod` staying `false`,
+makes the observation possible on `dev`. *(Revised on review of #296: the first version offered a
+linked trace as an alternative.)*

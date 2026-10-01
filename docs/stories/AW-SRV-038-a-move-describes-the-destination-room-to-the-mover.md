@@ -4,7 +4,7 @@ title: A move describes the destination Room to the mover
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-003, AW-SRV-036]
 blocks: [AW-SRV-041]
@@ -221,3 +221,12 @@ written before `AW-SRV-036` existed. Measured against a pre-036 build it would b
 stale comment is replaced. Between `<A> leaves north.` and the `west` rejection, the walk requires
 two `Town Hall` lines: the move's own description, then the `look`'s. Mutation-checked: on the
 `447559e` build it fails with `Town Hall described 1 time(s) … want 2`, and on `main` it passes.
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's instrumentation record (2026-10-01, above) is accepted. The shift is +3 `room_described` and +3
+stream Events over `stack-play`'s walk, one per successful in-Zone move, with tick p99 unmoved. The
+four cross-Zone `out`s were already described by `AW-SRV-036`'s `Arrive`, as this story's contract
+says. The Observability section's "one per successful `move`" predates `AW-SRV-036`. It reads, from
+here on, as "one per successful in-Zone `move`". `stack_play.sh` now proves the move's own
+description (mutation-checked by SRE).

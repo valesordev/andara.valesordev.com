@@ -4,7 +4,7 @@ title: Content publish path — server-side validation, versioning, approval, an
 epic: EPIC-05
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
 blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021, AW-CLI-002, AW-SRV-039, AW-INF-029, AW-SRV-042]
@@ -643,3 +643,32 @@ On `impl/aw-srv-013-owed`, for the §8 review's "What closes it" and SRE's §8 r
 World after this move would lack `character.spawn_room`". It matters only while a store-backed server
 waits for its first content (`AW-SRV-042` AC-8). Once a World is Ready the two are the same, because
 boot's `CheckSpawnInEffect` holds it. The reason set is unchanged.
+
+## §8 close (architecture, 2026-10-01): `done`
+
+Both items the 2026-09-30 review and SRE's record left owed were delivered in #284. Each was re-run
+green in this review.
+- **AC-15, readiness:** `server/boot` `TestReadiness_WaitsForTheCoreInEffect`. It runs over a
+  directory, since a kafka boot needs a broker. `coreInEffect` compares the activated core with the
+  World's in-effect versions whatever their source, so the rule under test is the same.
+  Mutation-checked by implementation.
+- **SRE's RPC-path assertions:** `server/content` `TestPublishPath_TelemetryAgainstABroker`
+  (`-tags integration`). It passes against local Redpanda in this review.
+  - The metric objects are exactly SRE's list.
+  - The span tree is `content.publish`, `content.approve` and `content.activate` with their writes
+    and `audit.write` under each, plus `content.publish_blob` → `content.write_blob`.
+  - Mutation-checked by implementation.
+
+SRE's record conditioned the instrumentation item on these assertions, so it holds now. The live
+observation on `dev` is `AW-INF-021`'s inherited line. Every checklist item holds.
+
+### `PublishFindings` chains after `AW-CLI-002`'s twins (architecture, 2026-10-01)
+
+#285 brings the gate's chains into line with `errors.md` §1's chain table:
+- `invalid_component_field` ends in the Component type;
+- `chain_too_deep` carries every Template in the chain;
+- `fallback_missing` is the Zone alone;
+- a refused Component no longer cascades into `invalid_provenance`.
+
+That's additive to the 2026-09-30 Exit-direction note. The gate now reports what the compiler
+reports.

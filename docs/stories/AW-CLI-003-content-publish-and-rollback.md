@@ -4,7 +4,7 @@ title: andara-cli content publish, approve, activate, rollback, history, diff, a
 epic: EPIC-05
 component: cli
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-CLI-001, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-021]
 blocks: [AW-INF-021, AW-INF-023, AW-SRV-039]
@@ -385,3 +385,28 @@ On `impl/aw-cli-003-owed`, for the §8 review's "What closes it":
 | `fetch`/`diff` reasons | `fetchVersion` maps through `contentError`, as every publish-path command does. `TestContentFetchAndDiff_ServerReasons`: an unpublished version is `not_found`, and a pack not held is `pack_not_held`, for each command | pass. Mutation-checked: with `rpcError`, all four lose their reason |
 | Stale parent | `TestContentPublish_StaleParent`, and `TestContentPublish_StaleParentOverRedpanda` on throwaway topics. A publish whose parent another publish overtakes, between its uploads and its `PublishVersion`, exits 1 `stale_parent` with `run \`content history town\` and publish again`. Nothing is written or retried. The overtaking publish lands through a test seam, `runtime.beforePublishVersion` | pass, and passes on the local Redpanda |
 | Confirmation line | `TestContentActivate_ConfirmationLineJoinsTheServersRecord`: for `activate` and `rollback` at `--log-level info`, the line decodes as `{ts, level, msg, command, trace_id}` with the confirmation text. Its `trace_id` equals the JSON result's and the server's `activate` or `rollback` audit record's | pass. The test stack trusts the inbound `traceparent`, as compose does (`ANDARA_TRUST_INBOUND_TRACEPARENT`). With the chart's default of `false`, the server's trace is its own root, linked to the CLI's |
+
+## §8 close (architecture, 2026-10-01): `done`
+
+Every item in "What closes it" is delivered, and each was re-run green in this review:
+1. **AC-7:** `TestContentDiff_ZonesTemplatesAndFields` covers Zones added and removed, and Template
+   fields changed, removed and added, each with `file:line`. Mutation-checked against
+   `diffComponents`.
+2. **Reasons:** `TestContentFetchAndDiff_ServerReasons` shows `not_found` and `pack_not_held` for
+   `fetch` and `diff`.
+3. **Stale parent:** `TestContentPublish_StaleParent`, and `…OverRedpanda` in `make test-integration`.
+4. **`pack_not_held` at the CLI:** #281.
+5. **SRE's confirmation line:** `TestContentActivate_ConfirmationLineJoinsTheServersRecord`. SRE's
+   record made the instrumentation item satisfied once this test landed.
+
+**For `AW-INF-021`'s inherited observation: the trace must be parented.** The confirmation-line
+test runs with the server trusting the inbound `traceparent`, as compose does. That's the contract:
+one trace from `cli.command` through the server's RPC, with the CLI's `trace_id` on the server's
+audit record (Observability, and the `AW-CLI-002` ruling). A server that doesn't trust the header
+starts its own root trace, and a span link to the CLI's trace is **not** equivalent. The CLI's
+`trace_id` would then match neither the audit record nor a server trace in Tempo. SRE has set `dev`
+to trust it (`telemetry.trust_inbound_traceparent: true` in `values/dev.yaml`, #288, asserted by
+`helm-test`), and `prod` stays `false`. So `AW-INF-021`'s §8 record observes the parented trace on
+`dev`. An environment that doesn't trust the header can't make this observation, and a story that
+wants it there has to revise this contract first. *(Revised on review of #296: the first push called
+a linked trace equivalent.)*
