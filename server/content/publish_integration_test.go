@@ -17,6 +17,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/valesordev/andara/content/core"
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
@@ -86,6 +87,10 @@ type brokerPublish struct {
 	// holder is the Account store the publish path authorizes on; nil is
 	// the fixed alice/bob map.
 	holder PackHolder
+	// pm and tracer, when set, are the publish path's metrics and tracer, for
+	// a test that asserts them.
+	pm     *PublishMetrics
+	tracer trace.Tracer
 }
 
 func (b *brokerPublish) open(topic string, maxRecord int32) recordlog.Log {
@@ -113,7 +118,7 @@ func (b *brokerPublish) start() {
 	if err != nil {
 		b.t.Fatal(err)
 	}
-	b.loader = NewLoader(LoaderOptions{Store: b.resolver, Packs: []string{CorePack, "town"}, Metrics: NewMetrics(nil)})
+	b.loader = NewLoader(LoaderOptions{Store: b.resolver, Packs: []string{CorePack, "town"}, Metrics: NewMetrics(nil), Tracer: b.tracer})
 	attachEngine(b.loader)
 	auditor := auth.NewAuditor(audit, slog.New(slog.DiscardHandler), nil, nil)
 	var holder PackHolder = packHolders{alice: {"town"}, bob: {"town"}}
@@ -122,8 +127,8 @@ func (b *brokerPublish) start() {
 	}
 	b.admin, err = NewAdmin(AdminOptions{
 		Registry: b.reg, Loader: b.loader, Blobs: b.resolver,
-		Accounts: holder,
-		Auditor:  auditor, MaxBlobBytes: 8 << 20, MaxPackBytes: 256 << 20, OperatorSelfApproval: true,
+		Accounts: holder, Metrics: b.pm, Tracer: b.tracer,
+		Auditor: auditor, MaxBlobBytes: 8 << 20, MaxPackBytes: 256 << 20, OperatorSelfApproval: true,
 	})
 	if err != nil {
 		b.t.Fatal(err)
