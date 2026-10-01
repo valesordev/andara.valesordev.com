@@ -4,7 +4,7 @@ title: goto — a Builder jumps to any Room
 epic: EPIC-03
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-003, AW-SRV-014]
 blocks: [AW-INF-023, AW-SRV-038, AW-SRV-041]
@@ -366,3 +366,11 @@ trace holds the bind, the `look` and all three `goto`s. It's `play`'s behavior, 
 and §7's per-Command parentage still holds within it. And `goto pier` from `docks/pier` named the
 Room the Builder was already in, so this run didn't observe a true in-Zone jump between two
 Rooms. The unit and smoke tests cover that (`TestLive_Goto`).
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's instrumentation record (2026-10-01, above) is accepted. Every series, the `debug` line with
+`from_room` and `to_room`, and one trace holding both halves of a cross-Zone jump were observed on
+the compose stack. That was the only item the 2026-09-30 review left owed. SRE's two notes don't
+hold the story: `play` sharing one trace ID across a session is `play`'s behaviour, and the true
+in-Zone jump is covered by `TestLive_Goto`.

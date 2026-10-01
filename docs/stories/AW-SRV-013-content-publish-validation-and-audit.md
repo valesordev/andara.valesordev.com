@@ -4,7 +4,7 @@ title: Content publish path — server-side validation, versioning, approval, an
 epic: EPIC-05
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-008, AW-SRV-012]
 blocks: [AW-CLI-003, AW-SRV-009, AW-SRV-035, AW-INF-021, AW-CLI-002, AW-SRV-039, AW-INF-029, AW-SRV-042]
@@ -636,3 +636,39 @@ On `impl/aw-srv-013-owed`, for the §8 review's "What closes it" and SRE's §8 r
 |------|------------|--------|
 | AC-15, readiness | `server/boot` `TestReadiness_WaitsForTheCoreInEffect`. A `content.source=kafka` boot needs a broker, so it runs over a directory and names its pack (`dir@0`) as the core the boot activated. `coreInEffect` compares `rt.core` with the World's in-effect versions, whatever their source. Before the World has content the core isn't in effect, and the process isn't ready. `ReconcileContent` brings it in. A boot whose active core the World doesn't hold (`dir@1`) fails reconcile with `content core not in effect` and never becomes ready | pass. Mutation-checked: with the `coreInEffect` gate dropped from `ReconcileContent`, reconcile succeeds and the test fails |
 | SRE: the RPC path against a broker | `server/content` `TestPublishPath_TelemetryAgainstABroker` (`-tags integration`, throwaway Redpanda topics). It runs a publish refused for `unknown_room`, a valid publish, an unapproved activation refused, a Builder's approval, an Operator's self-approval, two activations and a rollback. **Metric objects:** `publishes_total{ok}`=2 and `{rejected}`=1, `approvals_total{ok}`=1 and `{self_operator}`=1, `pointer_moves_total{forward,false}`=2 and `{rollback,false}`=1, `activations_refused_total{unapproved}`=1, `validation_failures_total{unknown_room}`=1, and `blob_bytes_total` equal to the bytes `PublishBlob` reported as not deduplicated. **Span tree,** on a recording tracer: `content.publish` → `content.validate`, `content.write_manifest`, `audit.write`; `content.approve` → `content.write_manifest`, `audit.write`; `content.activate` → `content.write_pointer` (with `direction`), `audit.write`; and `content.publish_blob` → `content.write_blob`. The harness's Loader shares the Admin's tracer, as the server's does | pass against the local Redpanda. Mutation-checked: without the unapproved-refusal counter, and with `content.write_pointer` detached from `content.activate`, it fails |
+
+### Contract change from `AW-SRV-042` (architecture, 2026-10-01)
+
+`spawn_room_removed`'s meaning widens from "removes the spawn Room the World in effect has" to "the
+World after this move would lack `character.spawn_room`". It matters only while a store-backed server
+waits for its first content (`AW-SRV-042` AC-8). Once a World is Ready the two are the same, because
+boot's `CheckSpawnInEffect` holds it. The reason set is unchanged.
+
+## §8 close (architecture, 2026-10-01): `done`
+
+Both items the 2026-09-30 review and SRE's record left owed were delivered in #284. Each was re-run
+green in this review.
+- **AC-15, readiness:** `server/boot` `TestReadiness_WaitsForTheCoreInEffect`. It runs over a
+  directory, since a kafka boot needs a broker. `coreInEffect` compares the activated core with the
+  World's in-effect versions whatever their source, so the rule under test is the same.
+  Mutation-checked by implementation.
+- **SRE's RPC-path assertions:** `server/content` `TestPublishPath_TelemetryAgainstABroker`
+  (`-tags integration`). It passes against local Redpanda in this review.
+  - The metric objects are exactly SRE's list.
+  - The span tree is `content.publish`, `content.approve` and `content.activate` with their writes
+    and `audit.write` under each, plus `content.publish_blob` → `content.write_blob`.
+  - Mutation-checked by implementation.
+
+SRE's record conditioned the instrumentation item on these assertions, so it holds now. The live
+observation on `dev` is `AW-INF-021`'s inherited line. Every checklist item holds.
+
+### `PublishFindings` chains after `AW-CLI-002`'s twins (architecture, 2026-10-01)
+
+#285 brings the gate's chains into line with `errors.md` §1's chain table:
+- `invalid_component_field` ends in the Component type;
+- `chain_too_deep` carries every Template in the chain;
+- `fallback_missing` is the Zone alone;
+- a refused Component no longer cascades into `invalid_provenance`.
+
+That's additive to the 2026-09-30 Exit-direction note. The gate now reports what the compiler
+reports.

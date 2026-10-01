@@ -4,10 +4,10 @@ title: An empty content store waits, unready — and andara-cli --tls-server-nam
 epic: EPIC-05
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-012, AW-SRV-013, AW-CLI-001]
-blocks: []
+blocks: [AW-INF-021]
 lane: implementation
 risk: medium
 ---
@@ -65,31 +65,70 @@ that I can seed it over Admin instead of being locked out by a server that exits
 2. **Given** that waiting server **when** a Zone-bearing pack is published, approved and activated over
    Admin **then** `/readyz` returns 200 with no restart, the `info` line `content in effect: leaving the
    wait` appears with `zones` and `pack@version`, and `OpenSession` succeeds.
-3. **Given** a World log holding a Content Swap with Zones, whose store now refuses every version **when**
-   the server boots **then** it exits `1` with "no content in effect", unchanged (`AW-SRV-012`).
+3. **Given** a World log in which a Content Swap with `zone_count > 0` has *applied*, whose store now
+   refuses every version **when** the server boots **then** it exits `1` with "no content in effect",
+   unchanged (`AW-SRV-012`). **Given** a log whose only swap with `zone_count > 0` was *refused* by a
+   record-decidable reason (`stale_base` or `misrouted`) **then** the server waits, live and after a
+   restart, with the classification made from the records alone (no store read).
 4. **Given** `content.source=dir` with no Zones **when** the server boots **then** it exits `1`,
    unchanged (`AW-SRV-001` AC-9).
 5. **Given** a port-forward to a pod whose certificate names `andara-0.andara.<ns>.svc` **when**
    `andara-cli --tls-server-name andara-0.andara.<ns>.svc` dials it through `localhost` **then** the TLS
    handshake verifies against `server.tls_ca` and the call succeeds. **Given** the same dial without the
-   flag **then** verification fails, and the CLI exits with its connection error.
+   flag **then** verification fails, and the CLI exits `3` (server unreachable, `AW-CLI-001`).
 6. **Given** a waiting server **when** it restarts **then** it waits again, with no exit loop. **Given** a
    server restarted after its first swap with Zones **then** it recovers Ready.
 7. **Given** a waiting server draining on SIGTERM **then** `/readyz` reports drain as today, and
    `/startedz` stays 200 until exit.
+8. **Given** a waiting server **when** a Zone-bearing version whose World lacks `character.spawn_room`
+   is activated **then** `ActivateVersion` fails `FAILED_PRECONDITION`, reason `spawn_room_removed`,
+   naming the Room, the pointer doesn't move, and the server still waits. **Given** a version that
+   holds the spawn Room **then** the wait ends (AC-2).
+9. **Given** any swap the Loader produces **then** its `zone_count` equals the number of Zones in the
+   World after it (0 for `andara.core`'s Templates-only swap), and replay of the log reproduces it.
 
 ## Interface contract
 
 **When the server waits.** With `content.source=kafka`, the server waits for content when two things
-hold: the World log holds no Content Swap with Zones, and no followed pack's Active Pointer loads
-Zones. Every other no-content case keeps today's exit `1`.
+hold: no Content Swap with `zone_count > 0` has *applied* in the recovered World log, and no followed
+pack's Active Pointer loads Zones. A refused swap (a deterministic no-op) doesn't count. Every other
+no-content case keeps today's exit `1`.
 
-**Open: how the server knows a swap had Zones** (Open questions, item 1). `ContentSwap` in the log
-carries only `pack_id`, `version`, `world_digest` and `base_digest`. When the store can't resolve a
-logged version, which is exactly AC-3's case, the server can't tell a swap that brought Zones from
-one that brought only Templates, and `andara.core`'s swap is always Templates-only. AC-3 (exit) and
-AC-6 (wait again) need a discriminator that's readable during a failed recovery. Architecture
-decides it before this story reaches `ready`.
+**What's decidable without the content, and why it's enough** *(added 2026-10-01 on Codex's P1 on
+#295)*. The Engine refuses a swap for one of four reasons (`server/sim/content.go`, `prepareSwaps`).
+Two are decided from the record alone: `misrouted` (partition and `zone_id`) and `stale_base`
+(`base_digest` against the digest in effect). Two are decided only after `Content.Prepare` rebuilds
+the topology: `zone_removed` and `fallback_missing`. For a World that has never had Zones, which is
+the only case the wait rule needs to classify, those two can't refuse a well-formed swap:
+- `zone_removed` needs a Zone in effect to remove. Against a World with no Zones it never fires. If
+  it has fired, an earlier swap with Zones applied, and the World has had content.
+- `fallback_missing` is the Engine's backstop. The Loader refuses the same finding before it produces
+  a swap: `ActivateVersion` runs the Loader's evaluation (`AW-SRV-013` AC-14), and so does
+  `FollowContent`. A produced swap refused for it means the Loader and the Engine disagree. That's a
+  defect, not a state to wait in.
+
+So the server classifies by the record alone, walking the swaps in log order. The digest in effect
+starts empty. A swap whose record passes routing and whose `base_digest` matches counts as applied,
+and the digest in effect becomes its `world_digest`. Otherwise it's refused, and the digest in effect
+is unchanged. The World has had Zones if any swap counted as applied has `zone_count > 0`. **The
+guarantee is exact for every log a correct Loader can write.** In the defect case, a
+`fallback_missing` refusal of a produced first swap, the classification says "had content", and the
+server exits `1`. That's a loud failure for a defect, which is the outcome wanted, not a silent
+wait.
+
+**How the server knows a swap had Zones** (decided 2026-10-01, Open questions item 1, option (a)).
+`ContentSwap` gains `uint32 zone_count = 5` (`log.proto`, pinned in this review):
+
+```
+// CONTRACT SKETCH — not an implementation (the field is pinned in log.proto)
+message ContentSwap {
+  ...
+  uint32 zone_count = 5;   // Zones in the whole World after this swap; the Loader sets it
+}
+```
+
+It has the same scope as `world_digest`, the whole World and not this pack. Zones are never removed
+(`zone_removed`), so across applied swaps it never decreases. A swap written before the field reads 0.
 
 **While it waits:**
 - Recovery has finished, `andara.core` is in effect (`AW-SRV-013` AC-15), and the gRPC listener serves.
@@ -98,9 +137,17 @@ decides it before this story reaches `ready`.
   "no_content_in_effect"}`. Clients may retry it.
 - No Zone ticks, because there's no Zone.
 
-**It leaves the wait** on the first Active Pointer move that brings Zones, through the existing
-`FollowContent` → `ReconcileContent` path, unchanged. It never re-enters the wait in that process or
-after a restart, because a swap with Zones is now in the log.
+**It leaves the wait** when the first swap with `zone_count > 0` applies, after an Active Pointer
+move, through the existing `FollowContent` → `ReconcileContent` path, unchanged. It never re-enters
+the wait in that process or after a restart, because an applied swap with Zones is now in the log.
+If that swap is refused, it still waits.
+
+**The first content must hold the spawn Room.** While waiting, `ActivateVersion` refuses a version
+whose resulting World lacks `character.spawn_room`: `FAILED_PRECONDITION`, reason
+`spawn_room_removed`, with the Room as its subject (AC-8). The reason's meaning widens from "removes
+the spawn Room the World in effect has" to "the World after this move would lack
+`character.spawn_room`" (`AW-SRV-013` AC-14). Once Ready, the two are the same, because boot's
+`CheckSpawnInEffect` holds it, so `AW-SRV-013`'s reason set doesn't change.
 
 | Path (on `http.port`) | 200 when |
 |---|---|
@@ -121,38 +168,47 @@ after a restart, because a swap with Zones is now in the log.
 
 ## Data / state impact
 
-No schema change. If architecture picks option (a) in Open questions, item 1, `ContentSwap`
-gains an additive field, and older swaps read it as its zero value. Otherwise the log is unchanged.
+`ContentSwap` gains `zone_count = 5`. It's additive, and older swaps read it as 0, so a log written
+before the field, with a refusing store, waits rather than exits. That's the safe direction. `dev`'s
+switch runs `make world-reset` in the same roll (`AW-INF-021`), so its log carries the field from
+genesis. `prod` runs nothing. Compose and kind stacks are disposable. Rollback: an older binary ignores
+the field. A log the new binary wrote replays under the old one, which reads only fields 1–4.
 Waiting is derived at boot from the log and the store, and nothing
 persists it. A rollout to an existing `dev` that already holds a swap with Zones behaves as it does
 today.
 
 ## Observability requirements
 
-- **Metrics:** `andara_sessions_total{outcome}` gains `rejected_no_content`, for an `OpenSession`
-  refused while the server waits. The closed set becomes `closed`, `dropped`, `rejected_version`,
-  `rejected_auth`, `revoked` and `rejected_no_content`, so the cardinality is 6, and the new outcome is
-  pre-seeded at 0 like the others (`server/gateway/metrics.go`). `andara_grpc_requests_total` also
-  counts the call as `UNAVAILABLE`, but it can't say why, which is why the outcome is needed.
-  `andara_content_zones_loaded` is already 0 while the server waits. SRE decides in `AW-INF-021`
-  whether an explicit `andara_content_waiting` gauge is wanted too, and if so, it's added here at
-  SRE's review. *(Revised after review of #292: the first draft pointed at a refusal metric with a
-  `reason` label, which doesn't exist.)*
+*(SRE observability review, 2026-10-01: the refused-OpenSession counter named, no waiting gauge,
+trace_id on the wait lines.)*
+
+- **Metrics:**
+  - `andara_sessions_total{outcome}` gains `rejected_no_content`, a bounded value pre-seeded at 0
+    beside `rejected_auth` and `rejected_version`. It counts each `OpenSession` refused
+    `no_content_in_effect`.
+  - No waiting gauge. While the server waits, `andara_content_zones_loaded` is `0` on a started pod
+    (`/startedz` 200, `/readyz` 503). That and the `warn` line identify the wait.
 - **Logs:**
-  - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering the
-    wait. Fields: `content_source`, `packs`, `core_version`.
-  - `info` `content in effect: leaving the wait`, once. Fields: `zones` and the triggering
-    `pack@version`.
-  - A refused `OpenSession` logs at `debug` with `trace_id` and `reason=no_content_in_effect`.
-- **Traces:** none new. The leaving `ReconcileContent` keeps its existing span.
-- **Alerts:** none new. `AndaraServerUnavailable` fires while a fresh environment waits, which is true.
-  Its runbook line is SRE's, in `AW-INF-021`.
+  - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering
+    the wait. Fields: `content_source`, `packs`, `core_version`, `trace_id`.
+  - `info` `content in effect: leaving the wait`, once. Fields: `zones`, the triggering
+    `pack@version`, `trace_id` (the swap's).
+  - A refused `OpenSession` logs at `debug` with `trace_id`, `reason=no_content_in_effect`, and the
+    `session_id` if assigned, else the remote address, as the other `OpenSession` refusals do.
+- **Traces:** none new. The leaving `ReconcileContent` keeps its existing span, and the leaving
+  line's `trace_id` is that span's.
+- **Alerts:** none new. `AndaraServerUnavailable` fires while a fresh environment waits, which is
+  true. Its runbook row (`server-unavailable.md`, first fix `make content-seed ENV=<env>`) and the
+  startup probe's move to `/startedz` are SRE's, in `AW-INF-021`.
 
 ## Test plan
 
 - **Unit:**
-  - the boot decision table: kafka with an empty log; kafka with a swap in the log and a refusing
-    store; dir with no Zones (ACs 1, 3, 4);
+  - the boot decision table: kafka with an empty log; kafka with an applied swap with Zones and a
+    refusing store; kafka whose only Zone-bearing swap was refused; dir with no Zones (ACs 1, 3, 4);
+  - the AC-1 test asserts `andara_sessions_total{outcome="rejected_no_content"}` present at 0, then
+    rising by one for the refused `OpenSession` (SRE review);
+  - the spawn-Room refusal while waiting (AC-8), and `zone_count` on produced swaps (AC-9);
   - the health endpoints in each state, including drain (AC-7);
   - the `OpenSession` refusal's `ErrorInfo`;
   - the CLI's flag, env and config precedence, and `config show`.
@@ -171,26 +227,24 @@ CLAUDE.md §8, plus: `server/README.md` documents `/startedz` and the probe guid
 
 ## Open questions
 
-1. **For architecture (affects the contract): a discriminator for "this World has had Zones".**
-   The ruling makes AC-3 exit and AC-6 wait. Both turn on whether a logged swap brought Zones, and
-   nothing in the log records that (see the Interface contract). Found by Codex on #292. The
-   options PM sees:
-   - **(a) An additive `ContentSwap` field.** For example, `uint32 zone_count = 5`, the Zones in the
-     World after the swap, written by the Loader. An older swap without it reads as 0, so an old log
-     with a refusing store would wait rather than exit. That's the less harmful direction, but it
-     weakens AC-3 for logs written before the field. This changes `log.proto`.
-   - **(b) Any swap for a pack other than `andara.core`** counts as "had content". It's readable
-     from `pack_id` alone, with no protocol change. But a Builder pack of Templates only would then
-     count as content, and its server would exit rather than wait.
-   - **(c) Zones in the last snapshot round.** Recovery restores from a round before it replays.
-     That doesn't help a World whose only Zone-bearing swap came after its last round.
+1. **Resolved 2026-10-01 (architecture): option (a), `ContentSwap.zone_count = 5`.** Option (b)
+   would count a Templates-only Builder pack as content, and a restart would then exit with no Zones,
+   which is the same deadlock. Option (c) misses every swap after the last round.
+2. **Resolved 2026-10-01:** `AW-INF-021` depends on this story, as of this review's commit.
 
-   PM leans to (a), since it's the only one that's exact for every new log. It's your call, and the
-   story stays `draft` until it's made.
-2. **For architecture: the dependency edge.** `AW-INF-021` must depend on this story. `make
-   validate-stories` refuses a `ready` story that depends on a `draft`, so PM can't add the edge
-   now. Add `AW-SRV-042` to `AW-INF-021`'s `depends_on` (and `AW-INF-021` to this story's `blocks`)
-   in the same commit that moves this story to `ready`.
+## Contract review (architecture, 2026-10-01)
 
-Apart from item 1, the contract is architecture's ruling of 2026-09-30, lifted as written, plus
-AC-7, which makes the ruling's drain clause testable.
+SRE's observability review is in `docs/feedback/AW-SRV-042-empty-store-waits.md`, and its replacement
+section is pasted as written. Amended here:
+1. **`zone_count` pinned** in `log.proto`, and `gen/` regenerated. The wait condition, AC-3 and the
+   leaving rule now read *applied* swaps with `zone_count > 0` (Codex on #289 and #292).
+2. **AC-8, the spawn Room,** from Codex's review of #289. It's numbered after PM's AC-7 (drain).
+3. **AC-9:** `zone_count` is set and replays.
+4. **AC-5's failure is exit `3`**, per `AW-CLI-001`, not "its connection error".
+5. **Data / state impact** states the field's migration and rollback, as CLAUDE.md §6 requires.
+6. **Decidability** (Codex on #295): the classification walks the records alone. That's exact for
+   every log a correct Loader writes, because `zone_removed` can't fire on a World without Zones,
+   and `fallback_missing` on a produced swap is a Loader/Engine defect that exits loudly. Stated in
+   the Interface contract. AC-3 names the record-decidable refusals.
+
+The story is `ready`. It's SPRINT-03 implementation item 11, the last code on the M3 demo's path.
