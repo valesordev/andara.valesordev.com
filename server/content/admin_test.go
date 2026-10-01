@@ -990,3 +990,56 @@ func TestApproveVersion_RacingApprovalsWriteOne(t *testing.T) {
 		t.Errorf("audit %v, want one record by %s", recs, a.GetApprovedBy())
 	}
 }
+
+// #267: a manifest path that leaves the pack is refused validation, naming
+// the path, audited as a reject, and no manifest is written. `content fetch`
+// writes blobs by these paths on every Builder's machine that fetches.
+func TestPublishVersion_APathThatLeavesThePackIsRefused(t *testing.T) {
+	h := newPubHarness(t, nil)
+	clean := h.putBlobs(townFiles(t))
+	var rejected float64
+	for _, bad := range []string{
+		"../town.json", "src/../../town.json", "src/../town.json", "/etc/town.json", "..",
+		`src\town.json`, "src//town.json", "src/town.json/", "./town.json", "src/./town.json",
+	} {
+		refs := make([]*contentv1.BlobRef, len(clean))
+		for i, r := range clean {
+			refs[i] = proto.Clone(r).(*contentv1.BlobRef)
+		}
+		refs[0].Path = bad
+		before := len(h.auditRecords())
+		_, err := h.admin.PublishVersion(builder(alice), &adminv1.PublishVersionRequest{PackId: "town", Blobs: refs})
+		ae := adminError(t, err, CodeInvalidArgument, ErrReasonValidation)
+		if !strings.Contains(ae.Error(), strconv.Quote(bad)) || !strings.Contains(ae.Error(), "leaves the pack") {
+			t.Errorf("%q: the refusal %q does not name the path", bad, ae.Error())
+		}
+		if h.reg.Newest("town") != 0 {
+			t.Fatalf("%q: a manifest was written", bad)
+		}
+		recs := h.auditSince(before)
+		if len(recs) != 1 || recs[0].GetAction() != auth.ActionReject || recs[0].GetOutcome() != "rejected" || !strings.Contains(recs[0].GetDetail(), strconv.Quote(bad)) {
+			t.Errorf("%q: audit %v", bad, recs)
+		}
+		rejected++
+		if got := testutil.ToFloat64(h.m.Publishes.WithLabelValues(PublishRejected)); got != rejected {
+			t.Errorf("%q: publishes_total{rejected} = %v, want %v", bad, got, rejected)
+		}
+	}
+	// The same blobs at paths inside the pack publish.
+	if _, err := h.admin.PublishVersion(builder(alice), &adminv1.PublishVersionRequest{PackId: "town", Blobs: clean}); err != nil {
+		t.Fatalf("the clean manifest: %v", err)
+	}
+}
+
+func TestUnsafeBlobPath(t *testing.T) {
+	for p, unsafe := range map[string]bool{
+		"town.json": false, "src/pack.aw": false, "src/zones/town.aw": false, "templates/andara.core.Npc.json": false,
+		"src/..aw": false, "src/a..b.aw": false, ".": false, // clean, relative, no ".." element: the contract's rule, and the CLI's IsLocal, accept it
+		"": true, "/abs": true, "..": true, "../x": true, "src/../x": true, "src/..": true,
+		`src\x.aw`: true, "src//x.aw": true, "src/": true, "./x": true, "src/./x": true,
+	} {
+		if got := UnsafeBlobPath(p); got != unsafe {
+			t.Errorf("UnsafeBlobPath(%q) = %v, want %v", p, got, unsafe)
+		}
+	}
+}

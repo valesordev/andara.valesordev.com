@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -383,6 +384,11 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	if err := a.checkRefs(refs); err != nil {
 		return nil, err
 	}
+	for _, ref := range refs {
+		if UnsafeBlobPath(ref.GetPath()) {
+			return nil, a.unsafePath(ctx, c, pack, ref.GetPath(), digest, override)
+		}
+	}
 	// The limits are checked against the store's sizes, not the caller's:
 	// a manifest declaring 0 bytes for a large blob would otherwise pass
 	// content.max_pack_bytes. A declared size the store disagrees with is
@@ -462,6 +468,35 @@ func (a *Admin) checkRefs(refs []*contentv1.BlobRef) error {
 		seen[ref.GetPath()] = true
 	}
 	return nil
+}
+
+// UnsafeBlobPath reports whether a manifest path could leave the pack it is
+// published in (#267): absolute, holding a backslash, a ".." or an empty
+// element, or not clean under path.Clean. The rule is the CLI's
+// unsafe_source_path. `content fetch` writes blobs to disk by these paths on
+// every Builder's machine that fetches the version, so the gate refuses
+// them rather than trusting each client's guard.
+func UnsafeBlobPath(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.Contains(p, `\`) || path.Clean(p) != p {
+		return true
+	}
+	for _, el := range strings.Split(p, "/") {
+		if el == "" || el == ".." {
+			return true
+		}
+	}
+	return false
+}
+
+// unsafePath refuses a manifest naming a path that leaves the pack: reason
+// validation, audited as a reject, before any blob is read or manifest
+// written.
+func (a *Admin) unsafePath(ctx context.Context, c caller, pack, p string, digest []byte, override bool) error {
+	a.m.Publishes.WithLabelValues(PublishRejected).Inc()
+	err := adminErr(CodeInvalidArgument, ErrReasonValidation, "%s: the path %q leaves the pack", pack, p)
+	a.record(ctx, c, auth.ActionReject, "rejected", pack, 0, auth.ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
+	a.log.LogAttrs(ctx, slog.LevelWarn, "content publish rejected: unsafe path", attrs(ctx, c, pack, 0, slog.String("path", p), slog.String("detail", err.Error()))...)
+	return err
 }
 
 func (a *Admin) staleParent(ctx context.Context, c caller, pack string, parent, newest uint64, digest []byte, override bool) error {

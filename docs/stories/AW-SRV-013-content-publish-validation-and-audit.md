@@ -672,3 +672,26 @@ observation on `dev` is `AW-INF-021`'s inherited line. Every checklist item hold
 
 That's additive to the 2026-09-30 Exit-direction note. The gate now reports what the compiler
 reports.
+
+## #267: the publish gate refuses a path that leaves the pack (implementation, 2026-10-01)
+
+On `impl/aw-srv-013-blobref-path-refusal`, to the contract in #267. `PublishVersion` checks
+every `BlobRef.path` with `content.UnsafeBlobPath`. A path that is absolute, holds a backslash, a
+`..` or an empty element, or isn't clean under `path.Clean` is refused before any blob is read:
+- `INVALID_ARGUMENT` `validation`, naming the quoted path ("leaves the pack");
+- audited `reject` / `rejected` with the blob digest;
+- `andara_content_publishes_total{outcome="rejected"}`;
+- a `warn` line, `content publish rejected: unsafe path`, with `path`;
+- no manifest written.
+
+The check runs after `checkRefs`, so an empty path is still "a blob has no path". The refusal
+carries no `PublishFindings`: no ErrCode is added, so `validation_failures_total`'s label set is
+unchanged. `server/README.md` documents it.
+
+| Test | Covers | Mutation-checked |
+|------|--------|------------------|
+| `content` `TestPublishVersion_APathThatLeavesThePackIsRefused` | `../town.json`, `src/../../town.json`, `src/../town.json`, `/etc/town.json`, `..`, a backslash, `src//`, a trailing `/`, `./`, `src/./`: each refused, named, audited `reject`, counted, no manifest. The same blobs at clean paths then publish | without the gate check, without the audit |
+| `content` `TestUnsafeBlobPath` | The rule on its own, including `src/..aw` and `src/a..b.aw` (not `..` elements) and `.` (clean, relative, no `..` element; the contract's rule and the CLI's `IsLocal` both accept it) | without the backslash rule, the element rule, or the clean rule |
+
+The absolute-path rule is implied by the empty-element rule (`/abs` begins with an empty element),
+so removing it alone fails nothing. It stays because the contract names it. `make check` passes.
