@@ -35,7 +35,8 @@ own workload's principal, so that the broker can hold each one to its ACLs.
 ## Scope
 
 ### In scope
-- One constructor that every `kgo.NewClient` in `server/`, `cmd/` and `internal/` goes through. It
+- One constructor that every `kgo.NewClient` in the repository goes through, in `server/`, `cmd/`,
+  `internal/` and `admin/`, test files included. It
   supplies the seed brokers, the client ID, and the SASL mechanism.
 - SASL/SCRAM-SHA-512 when a username is configured, with the password read from a file on each new
   connection.
@@ -51,9 +52,14 @@ own workload's principal, so that the broker can hold each one to its ACLs.
 
 ## Acceptance criteria
 
-1. **Given** the source tree **when** `make check` runs **then** a test fails if any non-test
-   `.go` file outside the constructor's package calls `kgo.NewClient` directly. Test files go through
-   the constructor too, except a test that names itself as exercising raw franz-go.
+1. **Given** the source tree **when** `make check` runs **then** a test fails if any `.go` file
+   outside the constructor's package calls `kgo.NewClient` directly. That includes `*_test.go`
+   files, in every directory. The only exemptions are test files on an explicit allowlist kept in
+   the guard, each with a comment saying why it needs raw franz-go. The allowlist starts empty.
+   Today 18 call sites in 10 test files, across 7 packages (`admin/cli`, `internal/smoke`, `server/content`,
+   `server/ingress`, `server/projector`, `server/recordlog`, `server/tickloop`) move onto the
+   constructor. *(Revised after review of #316: the first draft exempted test files, which is where
+   an overlooked fixture would bypass SASL.)*
 2. **Given** `ANDARA_KAFKA_SASL_USERNAME=u` and `ANDARA_KAFKA_SASL_PASSWORD_FILE=/f` **when** a
    client connects **then** it authenticates with SCRAM-SHA-512 as `u`, with the password read from
    `/f`.

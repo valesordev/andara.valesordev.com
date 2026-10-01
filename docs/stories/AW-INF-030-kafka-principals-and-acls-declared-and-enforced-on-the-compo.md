@@ -66,9 +66,12 @@ proves it.
 
 1. **Given** `make up` **then** the compose Redpanda refuses an unauthenticated client at its first
    request, and the server and the projector run Ready, each authenticated as its own principal.
-2. **Given** the compose stack **when** `andara-server`'s credentials produce to `andara.state.v1`
-   **then** the broker rejects it with an authorization error. Only `andara-projector-state`
-   succeeds. *(This is `AW-SRV-019` AC-9, asserted in CI.)*
+2. **Given** the compose stack **when** each principal declared in `topics.yaml` other than
+   `andara-projector-state` and the superuser produces to `andara.state.v1` **then** the broker
+   rejects it with an authorization error, and `andara-projector-state` succeeds. The test reads the
+   principals from `topics.yaml`, so a principal declared later is covered without editing the
+   test. *(This is `AW-SRV-019` AC-9, asserted in CI, with the superuser exemption in Open
+   questions, item 1.)*
 3. **Given** `andara-projector-state`'s credentials **when** they produce to the commands or events
    topic **then** the broker rejects it.
 4. **Given** `make topics-apply` on the compose stack **then** every principal and ACL in
@@ -80,6 +83,9 @@ proves it.
 7. **Given** `make world-reset`, `make topics-apply` or any other target that runs `rpk` **then** it
    authenticates as `andara-operator` without the developer passing credentials.
 8. **Given** CI's `stack` job **then** ACs 1–3 run there on every change.
+9. **Given** `topics.yaml` **then** exactly one principal is a superuser, `andara-operator`, and no
+   workload's chart values reference its Secret. A test asserts both, so the exemption in AC-2 can't
+   grow silently.
 
 ## Interface contract
 
@@ -135,10 +141,23 @@ No topic, offset or record changes. `dev` is untouched until `AW-INF-031`.
 ## Definition of done
 
 CLAUDE.md §8, plus:
-- **Inherited from `AW-SRV-019` AC-9:** a principal other than `andara-projector-state` is refused
-  when it produces to `andara.state.v1`, asserted in CI on the compose stack (AC-2, AC-8).
+- **Inherited from `AW-SRV-019` AC-9:** every declared principal other than `andara-projector-state`
+  and the operator superuser is refused when it produces to `andara.state.v1`, asserted in CI on the
+  compose stack (AC-2, AC-8, AC-9). The superuser exemption is pending architecture's amendment of
+  AC-9 (Open questions, item 1).
 
 ## Open questions
 
-- `[ASSUMPTION]` `KafkaUser` manifests are rendered and validated here (`k8s-dry`), but first
+1. **For architecture: AC-9 and the superuser.** ADR-0011 makes `andara-operator` a superuser, and
+   a superuser bypasses ACLs. So `AW-SRV-019` AC-9, "any Kafka principal other than
+   `andara-projector-state` … is rejected", can't hold literally. Found by Codex on #316. PM's
+   proposal follows ADR-0011, which keeps the superuser and names the audit gap in its
+   *Consequences*:
+   - narrow AC-9 to "any principal other than `andara-projector-state` and the operator superuser";
+   - hold the superuser to exactly one, never mounted by a workload (AC-9 above).
+
+   The alternative is to replace the superuser with scoped administrative ACLs. That reverses
+   ADR-0011 decision 3, and so it needs an ADR amendment. `AW-SRV-019` is at `review`, so its AC
+   wording is yours to amend.
+2. `[ASSUMPTION]` `KafkaUser` manifests are rendered and validated here (`k8s-dry`), but first
   applied by `AW-INF-031`, because the User Operator isn't enabled before then.

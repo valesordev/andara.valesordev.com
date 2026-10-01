@@ -36,8 +36,15 @@ that "I activated it, why isn't it live?" is one trace hop rather than a search 
 
 ### In scope
 - `ActivateVersion` writes `trace_parent` on the `ActiveVersion` record it produces.
-- The Loader's `content.load` span adds one span link per coalesced pointer move whose record has
-  a non-empty `trace_parent`.
+- The pointer watch carries each record's `trace_parent` through to `Follow`.
+- `Follow`'s debounce keeps, per pack, the `trace_parent` of every move it coalesces, not only the
+  newest. Today `pending` keeps only the newest version per pack, so a superseded move's context
+  would be lost.
+- Each per-pack `content.load` (`loadOnce`) adds one span link per move of *that pack* coalesced into
+  it, provided the move's `trace_parent` is non-empty. A burst across several packs still produces
+  one load per pack, as today, each linking its own pack's moves. No batch-level span is added.
+  *(Revised after review of #316: the first draft described one load linking moves across packs,
+  which the Loader doesn't do.)*
 
 ### Out of scope
 - Parenting `content.load` when exactly one move was coalesced. That's option 2, which architecture
@@ -51,8 +58,10 @@ that "I activated it, why isn't it live?" is one trace hop rather than a search 
    **then** its `trace_parent` is the W3C traceparent of the `ActivateVersion` server span.
 2. **Given** the Loader applying that one move **then** its `content.load` span has exactly one link,
    whose trace ID and span ID equal AC-1's `trace_parent`.
-3. **Given** three pointer moves coalesced by the debounce into one load **then** `content.load`
-   has three links, one per move, and no parent from any of them.
+3. **Given** three moves of one pack inside one debounce window (v1 → v2 → v3) **then** that pack's
+   single `content.load` (for v3) has three links, one per move, and no parent from any of them.
+   **Given** moves of two packs in one window **then** there are two `content.load` spans, as today,
+   each linking only its own pack's moves.
 4. **Given** the boot's core activation **then** `trace_parent` is empty, and its load has no link
    for it.
 5. **Given** a pointer record written before this story (field absent) **then** the load adds no link
@@ -62,6 +71,8 @@ that "I activated it, why isn't it live?" is one trace hop rather than a search 
 7. **Given** `dev` with a trace backend **when** an activation is made **then** Tempo shows the
    `content.load` trace with a link to the `ActivateVersion` trace. This closes `AW-INF-021`'s and
    `AW-CLI-003`'s one-link observation.
+8. **Given** a retry of a refused load (the existing backoff) **then** the retry's `content.load`
+   carries the same links as the attempt it retries.
 
 ## Interface contract
 
