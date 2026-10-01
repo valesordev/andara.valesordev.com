@@ -430,3 +430,20 @@ lag is exported. Restarting it before #143 is fixed only reproduces the crash lo
 fix, `make projector-rebuild ENV=dev` is AC-2 and AC-4.
 
 The story stays `review`, owing AC-2 and AC-4 (#143) and the Grafana Cloud observations above.
+
+## §8 instrumentation check, Grafana Cloud half (2026-10-01, SRE)
+
+Read from Grafana Cloud with the read token from `.local/box.env` (Brian, this session), against the
+2026-09-30 run recorded above. `make observe-check ENV=dev` reports the server's `up` and
+`andara_sessions_active` present.
+
+| Owed item (architecture's "What closes it", item 3) | Observed |
+|---|---|
+| `kube_deployment_spec_replicas{deployment="andara-projector-state"}` kept by kube-state-metrics | **yes.** `andara-dev` `0` (scaled down since the run), so `StateProjectorDown`'s left operand exists |
+| The rebuild Job's lines in Loki | **yes**, from pod `andara-projector-state-rebuild-6bgbw`: `consumer group wiped for a rebuild` (`group=andara-projector-state-dev`), `bootstrap from snapshot round` (`tick=657893`), `state projector started` (`round_tick=657893`, `from_zero=false`, `rebuild=true`), `state projector diverged` (`tick=657894`), `state projector stopped` |
+| The Job's `state.replay` → `state.verify` spans in Tempo | **`state.replay` yes** (trace `73603b44…`). **`state.verify`, none.** `server/projector/run.go` opens and closes `state.verify` only inside the callback for a tick that verified, so the diverging tick gets no span, and none has a duration. Filed as **#290** for `AW-SRV-019`, as this story's Observability section routes missing Job spans. It doesn't hold this story |
+| `up{job="andara-projector-state"}` with the lag and budget gauges | **owed.** The projector is at 0 replicas until #143's fix (`observe-check`: absent) |
+| `AW-SRV-019`'s inherited production digest line | **owed**, with the above, on the first Ready projector after #143 |
+
+The instrumentation item now owes only what a Ready projector can show. AC-2 and AC-4 are still
+owed on #143.
