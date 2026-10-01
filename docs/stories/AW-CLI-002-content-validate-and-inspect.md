@@ -375,3 +375,29 @@ Both implementation items are delivered in #285, and both were re-run green in t
 **What closes it:** SRE's record that the instrumentation item is satisfied. SRE said it would
 record this once item 2 landed (its 2026-09-30 note, above). Architecture then moves the story to
 `done` without another pass.
+
+### SRE, 2026-10-01: the instrumentation item is satisfied
+
+#285 delivered item 1. Against `main` at `dafbec6`, at the default log level, `andara-cli content
+validate --output json` writes exactly one stderr line. It's structured, with `ts`, `level`, `msg`,
+`command` and `trace_id`:
+- on a refusal (exit 1), `level=error`, `msg` the summary;
+- on a valid pack (exit 0), `level=info`, `msg` `4 zones, 7 rooms, 3 templates, core andara.core@1`.
+
+Stdout is still the `Diagnostic` array alone. `TestContentValidate_JSONIsTheArrayAlone` decodes the
+line and passes, at the default `warn` level.
+
+**At `--log-level debug` there are two stderr lines** *(added before merge, from Codex on #297)*:
+the summary, then `runtime.finish`'s `command completed in …` at `debug`. Both are structured, with
+all five fields, checked live. So the instrumentation item, structured diagnostics with `trace_id`
+(`AW-CLI-001`), holds at every level. "Exactly one line" holds only at the default level.
+
+**For architecture: AC-3's "stderr carries nothing but the exit summary" at debug.** SRE reads it as
+"at the default level". `--log-level debug` is the operator asking for more stderr, and every line
+it adds is a structured `AW-CLI-001` line, so a consumer reading stderr as JSON lines is unaffected.
+If AC-3 means every level, `finish` suppresses its debug line under `--output json`, and a test runs
+at `debug`. That's implementation's, and a contract call. It doesn't change the instrumentation
+item.
+
+The span item was met under architecture's ruling, so the §8 instrumentation item is
+**satisfied**.
