@@ -166,8 +166,10 @@ refs="$(grep -o 'client_ref=[0-9a-f]\{8\}-[0-9]\+ raw=' "$OUT" | sort | uniq -d)
 PLAYER="$WORK/player.txt"
 grep -v '^  [»«]' "$OUT" > "$PLAYER" || true
 # The M1 gate in play's own transcript: Purgatory, out to the plaza, the move,
-# a different Room. A move describes no Room, so each Room after a move is the
-# answer to the `look` after it (AW-CLI-007 feedback §3).
+# a different Room. A move describes the Room it arrives in (AW-SRV-038; a
+# cross-Zone arrival since AW-SRV-036), and the typed `look` after it describes
+# it again. So between the move and the next command's answer there are two
+# descriptions: the move's own, then the look's.
 python3 - "$PLAYER" "$CHAR_A" <<'PY' || fail "the walk is not in the transcript in order"
 import sys
 lines = [l.rstrip("\n") for l in open(sys.argv[1])]
@@ -180,8 +182,11 @@ def at(pred, start, what):
 i = at(lambda l: l == "Purgatory", 0, "Purgatory")
 i = at(lambda l: l == "Market Plaza", i + 1, "Market Plaza after out")
 i = at(lambda l: l == a + " leaves north.", i + 1, a + " leaves north.")
-i = at(lambda l: l == "Town Hall", i + 1, "Town Hall after the move")
+moved = i
 i = at(lambda l: l.lower().rstrip(".") == "there is no exit west", i + 1, "the no-exit rejection")
+halls = lines[moved + 1:i].count("Town Hall")
+if halls < 2:
+  sys.exit("Town Hall described %d time(s) between the move and the next rejection; want 2 (the move's own, then the look's)" % halls)
 at(lambda l: l.startswith("unknown verb"), i + 1, "the unknown-verb rejection")
 PY
 ! grep -q '^you are not in the world$' "$PLAYER" || fail "a bound Character was told it is not in the world"

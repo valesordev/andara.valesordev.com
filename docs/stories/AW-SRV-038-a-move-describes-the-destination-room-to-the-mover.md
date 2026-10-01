@@ -193,3 +193,31 @@ predicts measured on `make stack-play`:
 
 The "before" already includes the cross-Zone moves' descriptions since #274, so only the in-Zone
 delta is this story's. Architecture then moves the story to `done` without another pass.
+
+## §8 instrumentation check (2026-10-01, SRE): satisfied
+
+On `sre/sprint-03-srv036-srv038-verify`. The rates the Observability section asks for come from
+`make stack-play`'s walk (the script up to its server-restart step, so that no counter resets), read
+exactly from the server's `/metrics` before and after. Two builds were compared, each on fresh
+compose volumes: `447559e`, the commit before #278 merged, and `main` at `b9cc8e6`.
+
+| | before #278 | after #278 |
+|---|---:|---:|
+| `andara_events_emitted_total{type="room_described"}` | +15 | **+18** |
+| `andara_stream_events_sent_total` | +44 | **+47** |
+| move verbs submitted (`out` 4, `north` 2, `south` 1, `west` 2) | 9 | 9 |
+| `no_such_exit` refusals | 2 | 2 |
+| `andara_tick_duration_seconds` p99 over the walk | ≤ 1 ms (first bucket) | ≤ 1 ms (first bucket) |
+
+**+3, not +7, and that's the contract.** Seven moves succeeded, but four were cross-Zone `out`s
+from Purgatory. A cross-Zone arrival was already described by `AW-SRV-036`'s `Arrive`, which
+`447559e` contains, and this story's Interface contract says it changes no `Arrive` code. What it adds
+is the in-Zone description, and the walk had exactly three successful in-Zone moves (`north` ×2,
+`south` ×1). So the shift is one `room_described`, and one stream Event to the mover, per successful
+in-Zone move. Tick p99 didn't move. *(The Observability section's "one per successful `move`" was
+written before `AW-SRV-036` existed. Measured against a pre-036 build it would be one per move.)*
+
+**`stack_play.sh` now proves the move's own description** (the contract review's "For SRE"). The
+stale comment is replaced. Between `<A> leaves north.` and the `west` rejection, the walk requires
+two `Town Hall` lines: the move's own description, then the `look`'s. Mutation-checked: on the
+`447559e` build it fails with `Town Hall described 1 time(s) … want 2`, and on `main` it passes.
