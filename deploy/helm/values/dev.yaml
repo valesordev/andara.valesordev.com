@@ -63,6 +63,13 @@ tls:
 # What `make helm-install ENV=dev` creates in the namespace for the content and auth above.
 # The bootstrap operator's credential comes from ANDARA_BOOTSTRAP_OPERATOR, which the install
 # requires here: this edge is a public hostname.
+# The tailnet (Tailscale's 100.64.0.0/10, CGNAT, unroutable from the internet). dev's edge resolves
+# only there, and Traefik sees each device's own tailnet address (the box's is 100.79.240.98), so
+# without this every Admin call, a Builder's `content publish` included, is 403 at the edge
+# (AW-INF-021, found on the rollout). The chart's private ranges stay.
+admin:
+  allowedCIDRs: ["10.0.0.0/8", "192.168.0.0/16", "100.64.0.0/10"]
+
 secrets:
   tokenKey:
     secretName: andara-server-token-key
