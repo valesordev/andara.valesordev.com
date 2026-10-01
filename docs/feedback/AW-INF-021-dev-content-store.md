@@ -390,3 +390,111 @@ broker would make two writers of one World log.
 alone would crash `dev`. SRE can build the parts that don't depend on it (the chart change and AC-8's
 test, `content-seed`, `argocd-status`'s pack lines, and the runbook lines) and hold them on a branch.
 The sprint's demo (M3) waits on this decision, and so does AW-INF-022 after it.
+
+## Architecture's ruling: an empty store waits, unready (2026-09-30)
+
+**Option 1, with route (a) and a separate startup path.** A store-backed World that has never had
+content is a normal first state, not a configuration error. Every new environment is in it once, and
+so is AC-7's rebuild from nothing. So the server waits for its first content instead of exiting.
+Option 2 costs two rolls and a larger change to `AW-SRV-013`'s wiring, to reach the same end state.
+Option 3 couples the binary to test content, which is what SRE said. The contract follows.
+Implementation builds the server and CLI halves, and SRE builds the chart and `content-seed` halves.
+
+### Server (implementation)
+- **When it waits.** With `content.source=kafka`, the server is **waiting for content** when both of
+  these hold:
+  - the World recovered from the log has never had Zones in effect: no Content Swap with Zones has
+    *applied*;
+  - no followed pack's Active Pointer loads Zones.
+
+  A swap the sim refused (`stale_base` and the rest) is a deterministic no-op, so it doesn't count,
+  even though it's in the log. **How recovery knows** (decided 2026-10-01 on Codex's P1 on #292): `ContentSwap`
+  gains `uint32 zone_count = 5`, the number of Zones in the whole World after the swap, the same
+  scope as `world_digest`. The Loader sets it. "Has had Zones" means some swap in the recovered log
+  that *applied* has `zone_count > 0`. Whether a swap applied is decided from its digests alone,
+  so this is readable even when the store refuses the version's content. A swap written before the
+  field reads 0. `dev`'s switch runs `world-reset` in the same roll, so its log carries the field
+  from genesis. It's pinned in `log.proto` at `AW-SRV-042`'s contract review. Today's exit stays for every other case:
+  - a World in which a swap with Zones has applied, and whose store now refuses its content, still
+    exits `1` with "no content in effect" (`AW-SRV-012`);
+  - `content.source=dir` with no Zones still exits `1` (`AW-SRV-001` AC-9). An empty directory is a
+    configuration error.
+- **While waiting:**
+  - Recovery has finished, `andara.core` is in effect (`AW-SRV-013` AC-15), and the gRPC listener
+    serves.
+  - **Admin is fully served**: the content RPCs, accounts, and `server info` (which lists no Zone
+    content).
+  - **Game refuses `OpenSession`** with `UNAVAILABLE`, `ErrorInfo` domain `andara.game`, reason
+    `no_content_in_effect`. It's retryable.
+  - No Zone ticks, because there's no Zone.
+- **It leaves waiting** when the first swap with Zones applies, after an Active Pointer move.
+  That goes through today's `FollowContent` → `ReconcileContent` path, unchanged, and the server
+  becomes Ready. It never goes back to waiting: once a swap with Zones has applied, the World has
+  had content, after a restart too. If that swap is refused, the server is still waiting, live and
+  after a restart.
+- **The first content must hold the spawn Room.** While the server waits, `ActivateVersion` refuses
+  a version whose resulting World lacks `character.spawn_room`, with `FAILED_PRECONDITION` and
+  reason `spawn_room_removed`, naming the Room (`AW-SRV-013` AC-14). That reason's meaning widens
+  from "removes the spawn Room the World in effect has" to "the World after this move would lack
+  `character.spawn_room`". Once the World is Ready the two are the same, because boot's
+  `CheckSpawnInEffect` already holds it. The reason set doesn't change. Without this, the first
+  content could make the server Ready with nowhere to create a Character, and the next boot's
+  `CheckSpawnInEffect` would exit `1` in a loop. When the spawn Room is in another pack, the Builder
+  activates that pack first. On `dev`, the fixture pack `town` holds `purgatory/start`.
+- **Health endpoints**, on `http.port`:
+
+  | Path | 200 when |
+  |------|----------|
+  | `/livez` | unchanged |
+  | `/startedz` | **new.** Recovery has finished and the gRPC listener is serving, waiting or not. It stays 200 until exit. Only `/readyz` reflects drain |
+  | `/readyz` | unchanged in meaning, plus: 503 while waiting for content |
+
+- **Logs:**
+  - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering
+    the state, with `content_source`, `packs` and `core_version`;
+  - `info` `content in effect: leaving the wait` when the first Zones apply, with `zones` and the
+    triggering `pack@version`.
+- **Metrics:** none new by architecture. `andara_content_zones_loaded` is already 0 while waiting.
+  SRE says in AW-INF-021's Observability section whether it wants an explicit gauge.
+
+### CLI (implementation)
+- **`server.tls_server_name`**: flag `--tls-server-name`, env `ANDARA_TLS_SERVER_NAME`, config key
+  `server.tls_server_name`. The default is empty, and empty means "from `server.address`" (today's
+  behaviour). The precedence is `AW-CLI-001`'s, the same as `server.tls_ca`.
+- It sets only the TLS verification name, and it's verified against `server.tls_ca` as usual. It
+  doesn't change where the CLI dials, or the key credentials are stored under (`server.address`).
+- `andara-cli config show` lists it with its source.
+
+### Chart and seed (SRE, AW-INF-021)
+- The `startupProbe` moves to `/startedz`, with today's budget. Readiness stays on `/readyz`, and
+  liveness on `/livez`.
+- `make content-seed` dials a `kubectl port-forward` to `andara-0` with
+  `--tls-server-name andara-0.andara.<ns>.svc`. It stays product commands only.
+- `AndaraServerUnavailable` fires while a fresh `dev` waits. That's true, and the runbook line says
+  the first fix is `make content-seed ENV=<env>`.
+
+### Placement (PM)
+The server and CLI halves are one implementation story, size S–M, **on SPRINT-03's critical path**,
+ahead of AW-INF-021's merge. Its ACs:
+1. A kafka server with an empty store and an empty log stays up. `/startedz` returns 200,
+   `/readyz` 503, `OpenSession` gets `UNAVAILABLE` `no_content_in_effect`, Admin's `ListVersions`
+   succeeds, and the `warn` line appears once.
+2. Publish, approve and activate a Zone-bearing pack over Admin, and the server becomes Ready with
+   no restart, logging the `info` line. `OpenSession` then succeeds.
+3. A World in which a swap with Zones has applied, whose store now refuses every version, still
+   exits `1` (unchanged). A log whose only swap with Zones was *refused* (e.g. `stale_base`) waits,
+   live and after a restart.
+4. `dir` mode with no Zones still exits `1` (unchanged).
+5. `--tls-server-name` verifies against the named host. A port-forward to a pod whose certificate
+   names `andara-0.andara.<ns>.svc` succeeds with it, and fails verification without it.
+6. Restarting a waiting server waits again, with no exit loop. Restarting after the first swap
+   recovers Ready.
+7. While waiting, activating a Zone-bearing version that lacks `character.spawn_room` is refused
+   `spawn_room_removed`, naming the Room, and the server stays waiting. Activating one that holds
+   it ends the wait.
+
+AW-INF-021 then depends on it, and its AC-7 is observed through it.
+
+*(Revised 2026-10-01 on Codex's review of #289. "Had content" now means a swap with Zones has
+applied, not that one is in the log. And the first content must hold the spawn Room, enforced at
+activation.)*
