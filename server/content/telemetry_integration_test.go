@@ -145,6 +145,7 @@ func TestPublishPath_TelemetryAgainstABroker(t *testing.T) {
 		"content.publish_blob": {"content.write_blob"},
 	}
 	seen := map[string]bool{}
+	var refusedPublish, refusedActivate bool
 	for _, s := range spans {
 		need, ok := want[s.Name()]
 		if !ok {
@@ -156,11 +157,22 @@ func TestPublishPath_TelemetryAgainstABroker(t *testing.T) {
 			// so every stream has its write.
 			t.Errorf("content.publish_blob without content.write_blob: %v", got)
 		}
+		// A refused operation writes nothing to the store, but is audited
+		// all the same: its audit.write is asserted before the write checks
+		// are skipped (Codex on #284).
 		if s.Name() == "content.publish" && slices.Contains(got, "content.validate") && !slices.Contains(got, "content.write_manifest") {
-			continue // the refused publish: validated, nothing written
+			if !slices.Contains(got, "audit.write") {
+				t.Errorf("the refused publish has no audit.write: %v", got)
+			}
+			refusedPublish = true
+			continue
 		}
 		if s.Name() == "content.activate" && !slices.Contains(got, "content.write_pointer") {
-			continue // the refused activation
+			if !slices.Contains(got, "audit.write") {
+				t.Errorf("the refused activation has no audit.write: %v", got)
+			}
+			refusedActivate = true
+			continue
 		}
 		for _, n := range need {
 			if !slices.Contains(got, n) {
@@ -188,5 +200,8 @@ func TestPublishPath_TelemetryAgainstABroker(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("no complete %s span", name)
 		}
+	}
+	if !refusedPublish || !refusedActivate {
+		t.Errorf("the refused publish (%t) and the refused activation (%t) each need a span", refusedPublish, refusedActivate)
 	}
 }
