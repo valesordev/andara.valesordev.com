@@ -873,7 +873,15 @@ type ContentSwap struct {
 	// Also a deterministic no-op, reported refused: a swap whose World lacks a
 	// Zone the content in effect has. Removing a Zone is refused at the Loader
 	// (finding `zone_removed`), and this is the Engine's backstop.
-	BaseDigest    []byte `protobuf:"bytes,4,opt,name=base_digest,json=baseDigest,proto3" json:"base_digest,omitempty"`
+	BaseDigest []byte `protobuf:"bytes,4,opt,name=base_digest,json=baseDigest,proto3" json:"base_digest,omitempty"`
+	// How many Zones the whole World holds after this swap: the same scope as
+	// world_digest, not this pack's. The Loader sets it. Recovery reads it to
+	// tell a World that has had Zones (some *applied* swap with zone_count > 0)
+	// from one that never has, which waits for its first content instead of
+	// exiting (AW-SRV-042, decided 2026-10-01). Zones are never removed, so it
+	// never decreases across applied swaps. A swap written before this field
+	// reads 0.
+	ZoneCount     uint32 `protobuf:"varint,5,opt,name=zone_count,json=zoneCount,proto3" json:"zone_count,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -934,6 +942,13 @@ func (x *ContentSwap) GetBaseDigest() []byte {
 		return x.BaseDigest
 	}
 	return nil
+}
+
+func (x *ContentSwap) GetZoneCount() uint32 {
+	if x != nil {
+		return x.ZoneCount
+	}
+	return 0
 }
 
 // An Entity in transit between Zones: the same shape server/sim holds, so the
@@ -1494,13 +1509,15 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\vgrace_ticks\x18\x02 \x01(\x04R\n" +
 	"graceTicks\x12'\n" +
 	"\x0fextension_ticks\x18\x03 \x01(\x04R\x0eextensionTicks\x12\x1b\n" +
-	"\tmax_ticks\x18\x04 \x01(\x04R\bmaxTicks\"\x84\x01\n" +
+	"\tmax_ticks\x18\x04 \x01(\x04R\bmaxTicks\"\xa3\x01\n" +
 	"\vContentSwap\x12\x17\n" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12!\n" +
 	"\fworld_digest\x18\x03 \x01(\fR\vworldDigest\x12\x1f\n" +
 	"\vbase_digest\x18\x04 \x01(\fR\n" +
-	"baseDigest\"\xb4\x01\n" +
+	"baseDigest\x12\x1d\n" +
+	"\n" +
+	"zone_count\x18\x05 \x01(\rR\tzoneCount\"\xb4\x01\n" +
 	"\x06Entity\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x1a\n" +
 	"\btemplate\x18\x02 \x01(\tR\btemplate\x12'\n" +
