@@ -24,8 +24,8 @@ make check
 ```
 
 `make tools` installs the `andara-cli` release the repository is pinned to, into `.tools/bin/`, and
-`make check` runs the same check the pull requests run. For the starter pack, `content/example`, it
-prints:
+`make check` runs the same check the pull requests run. For the starter pack, `content/example`, its
+`validate` line reads:
 
 ```
 1 zones, 2 rooms, 0 templates, core andara.core@1
@@ -124,7 +124,8 @@ git push -u origin glade-first-zone
 ```
 
 Open the pull request from the link `git push` prints. The repository's `check` runs `fmt --check`
-and `validate` on the packs you changed, and shows any finding on the line it's about. When it's
+and `validate` on the packs you changed, and shows any finding on the line it's about. A pull request
+that changes anything outside `content/` checks every pack. When it's
 green, merge it, then bring your clone up to date:
 
 ```
