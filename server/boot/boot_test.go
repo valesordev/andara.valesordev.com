@@ -327,6 +327,18 @@ func fmtString(v any) string {
 // loop is stopped at cleanup.
 func serveMemory(t *testing.T, rt *Runtime) {
 	t.Helper()
+	startMemoryLoop(t, rt)
+	if code := rt.ReconcileContent(context.Background()); code != ExitOK {
+		t.Fatalf("reconcile: exit %d", code)
+	}
+	// main marks ready once the Gateway serves; there is none here.
+	rt.MarkReady()
+}
+
+// startMemoryLoop is serveMemory short of ReconcileContent: the ingress and
+// the tick loop running, for a test that reconciles itself.
+func startMemoryLoop(t *testing.T, rt *Runtime) {
+	t.Helper()
 	rt.Cfg.SimSource = "memory"
 	rt.Cfg.SimTickRate = 50
 	rt.Cfg.SimTickBudget = 10 * time.Millisecond
@@ -358,9 +370,4 @@ func serveMemory(t *testing.T, rt *Runtime) {
 	done := make(chan error, 1)
 	go func() { done <- loop.Run(loopCtx) }()
 	t.Cleanup(func() { stop(); <-done })
-	if code := rt.ReconcileContent(ctx); code != ExitOK {
-		t.Fatalf("reconcile: exit %d", code)
-	}
-	// main marks ready once the Gateway serves; there is none here.
-	rt.MarkReady()
 }
