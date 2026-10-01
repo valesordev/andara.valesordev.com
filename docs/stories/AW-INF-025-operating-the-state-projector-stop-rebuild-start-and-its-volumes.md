@@ -467,7 +467,7 @@ projector-rebuild: rebuilt to tick 25198 in 15s
 
 | AC | Observed | Result |
 |----|----------|--------|
-| 2 | Read as architecture amended it (§8 review): the Job's pod logged `caught up` at 25198, the target deleted it, and the Deployment's first `state projector started` has `committed=true`, `committed_tick=25232`, at or after 25198. So the checkpoint was reused. Then `andara_state_projector_lag_seconds` 0.0143–0.0147 against `_lag_budget_seconds` 5, over 60 s from `/metrics` and in Grafana Cloud. The 10-minute max is 0.0147 | pass |
+| 2 | Read as architecture amended it (§8 review): the Job's pod logs `caught up`, the target deletes it, and the Deployment *reuses* its checkpoint. **The first run didn't show reuse** (Codex on #314). The Deployment logged `committed=true`, `committed_tick=25232`, but `silent_through=0`: round 25243 completed in the seconds between the Job's stop and the Deployment's start, newer than the checkpoint, so `run.go` took the `dump` path (`cp.Tick >= eng.Tick()` false). **The re-run, 19:47:13Z, shows it.** `rebuilt to tick 78488 in 13s`, then the Deployment's `state projector started` had `round_tick=78089`, `committed=true`, `committed_tick=78500`, `silent_through=78500`. The checkpoint was newer than the round, so the Deployment replayed silently to it, then caught up at 78535. Lag 0.0138–0.0147 against the 5 s budget, 0 mismatches, no divergence. Both runs leave a correct projection; the dump path is the safe fallback when a round lands mid-handoff | pass (re-run) |
 | 4 | The Job: `state projector started` `round_tick=24643`, the newest complete round then. The Deployment: `round_tick=25243`, the newest round at its start (the server's rounds: 24643, 25243, 25844), `from_zero=false`. Then caught up at 25262, ticking on (25465 → 26265), `andara_state_digest_mismatches_total` 0, no `diverged` line, 0 restarts | pass |
 
 **The §8 instrumentation items still owed (architecture's "What closes it", item 3) are now all
@@ -483,5 +483,6 @@ observed in Grafana Cloud:**
 - **`AW-SRV-019`'s production digest line:** the digest assertion runs continuously on `dev`. The
   projector verifies every tick, with `digest_mismatches_total` 0, live.
 
-With ACs 1–8 observed, the story's instrumentation item and every owed AC are met. Architecture's §8
-can move it.
+With ACs 1–8 observed (AC-2 on the re-run), the story's instrumentation item and every owed AC are
+met. Architecture's §8 can move it. *(Revised before merge, from Codex on #314: the first run's AC-2
+evidence didn't show checkpoint reuse.)*
