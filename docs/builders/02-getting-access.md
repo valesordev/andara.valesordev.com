@@ -29,7 +29,7 @@ created account <account-id> (<you>)
 
 The Operator keeps `<account-id>`, because the commands below take it.
 
-Usernames are 3 to 32 characters of `a-z`, `0-9`, `_` and `-`. Passwords are at least 8
+Usernames are 3 to 32 characters of `a-z`, `0-9`, `_` and `-`, starting with a letter or a digit. Passwords are at least 8
 characters. You can't change your own password. Ask an Operator, who runs
 `andara-cli account reset-password <account-id>`.
 

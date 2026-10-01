@@ -90,6 +90,17 @@ if they want to, and `content approve glade 4`. Either of you can then activate 
 
 ## Scripting
 
-Every command takes `--output json`, which prints one JSON value on stdout, with a `trace_id`. The
-commands that change the live World (`activate` and `rollback`) ask first. With no terminal to ask
-at, they need `--yes`.
+Every command takes `--output json`. Script on the exit code first ([section 9](09-when-something-fails.md#exit-codes)),
+then read stdout:
+- **Most commands** print one JSON value on success. On failure they print
+  `{"error":{"code":…,"message":…,"detail":…}}` instead. Commands that talk to `dev` include a
+  `trace_id`, and offline ones (`inspect` on a `--path`, `fmt`, `validate --path`) don't.
+- **Commands whose answer is a list of findings** (`validate`, and `publish` when the server refuses
+  your pack) print the findings array alone on stdout. The summary, with its code, goes to stderr as
+  one JSON line.
+- **`fmt --check`** prints `{"checked":…,"changed":[…]}`. When files need formatting it then also
+  fails with `would_reformat`, so stdout holds two values. Read the first, and take the exit code as
+  the answer.
+
+The commands that change the live World (`activate` and `rollback`) ask first. With no terminal to
+ask at, they need `--yes`.

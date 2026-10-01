@@ -14,7 +14,9 @@ Every `andara-cli` command exits with one of these:
 | 3 | couldn't reach the server, or it doesn't know you | off the tailnet, a wrong `server.address`, an expired login |
 | 4 | the server didn't answer in time | `--timeout`, 30 s by default |
 
-With `--output json`, the reason is `error.code`, and that's the word in the table below.
+With `--output json`, the reason is `error.code`, and that's the word in the tables below. Findings
+are different. `validate`, and `publish` refused by the server, print the findings array on stdout,
+with each finding's own code, and the summary's code on stderr ([section 5](05-the-everyday-loop.md#scripting)).
 
 ## The errors you'll meet
 
