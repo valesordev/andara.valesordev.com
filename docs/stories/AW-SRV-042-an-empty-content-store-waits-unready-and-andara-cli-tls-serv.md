@@ -192,11 +192,13 @@ trace_id on the wait lines.)*
   - `warn` `waiting for content: no Zones in effect; publish and activate a pack`, once on entering
     the wait. Fields: `content_source`, `packs`, `core_version`, `trace_id`.
   - `info` `content in effect: leaving the wait`, once. Fields: `zones`, the triggering
-    `pack@version`, `trace_id` (the swap's).
+    `pack@version`, `trace_id` (the swap record's, `content.load`'s trace).
   - A refused `OpenSession` logs at `debug` with `trace_id`, `reason=no_content_in_effect`, and the
     `session_id` if assigned, else the remote address, as the other `OpenSession` refusals do.
-- **Traces:** none new. The leaving `ReconcileContent` keeps its existing span, and the leaving
-  line's `trace_id` is that span's.
+- **Traces:** none new. The leaving line's `trace_id` comes from the swap record that ends the wait
+  (`SwapApplied.TraceParent`), meaning the Loader's `content.load` trace, which links to the
+  activation once `AW-SRV-045` ships. *(Amended 2026-10-01: this said "the leaving
+  `ReconcileContent`'s span". The wait ends on a `FollowContent` swap, as built.)*
 - **Alerts:** none new. `AndaraServerUnavailable` fires while a fresh environment waits, which is
   true. Its runbook row (`server-unavailable.md`, first fix `make content-seed ENV=<env>`) and the
   startup probe's move to `/startedz` are SRE's, in `AW-INF-021`.
@@ -280,6 +282,39 @@ Decisions are in `docs/feedback/AW-SRV-042-empty-store-waits.md`, "Implementatio
 - **The stack run of AC-1, AC-2 and AC-6** needs SRE's kafka-content compose (#288), since topic
   names are constants (feedback, For SRE). The smoke test for it is in this PR.
 
+## §8 review (architecture, 2026-10-01): stays `review` on SRE's record
+
+Against `main` after #298. #298's checks are all green. Every test in the implementation record
+re-ran green in this review: `boot`, `gateway`, `content` and `admin/cli`. Each AC is covered as the
+record states, and the mutation checks are implementation's: the leave hook, the stale-base rule,
+the old spawn rule, and `ServerName`.
+
+**Observed live on `dev`** (`AW-INF-021`'s rollout record, 2026-10-01).
+- `world-reset` left an empty World and a store with no Zone pack. The server reported
+  `started and waiting for content`, so AC-1's wait happened, on a real kafka-content environment.
+- `make content-seed` published and activated `town@1` through a port-forward verified as
+  `andara-0.andara.andara-dev.svc`. That's AC-5's `--tls-server-name`, in use.
+- `andara-0` went from started-not-ready to Ready with 0 restarts. That's AC-2's "no restart".
+
+**The contract decisions made in building are accepted** (comment on #298), and the story text
+changes in two places:
+- The leaving line's `trace_id` comes from the swap record (`SwapApplied.TraceParent`), meaning
+  `content.load`'s trace, not "the leaving `ReconcileContent`'s span". Per the 2026-10-01 ruling in
+  `AW-INF-021`'s feedback, that trace *links* to the activation once
+  `ActiveVersion.trace_parent` ships. It isn't the activation's trace. The Observability text reads
+  that way from here on.
+- The publish gate keeps its spawn rule (`moving=false`), and a move to a World with no Zones is
+  exempt from AC-8.
+
+**What closes it:** SRE's §8 instrumentation record:
+- `andara_sessions_total{outcome="rejected_no_content"}` from 0 to 1 on a refused `OpenSession`;
+- the `warn` and `info` wait lines with their fields and `trace_id`;
+- the refusal's `debug` line;
+- and SRE's stack run of `TestLive_EmptyStoreWaits` (AC-1, AC-2 and AC-6 end to end), on the
+  kafka-content compose stack, as the feedback file asks.
+
+Architecture then moves the story to `done` without another pass.
+
 ## §8 instrumentation check (SRE, 2026-10-01): satisfied
 
 On the compose stack built from `main` at `0cb713c`, with `ANDARA_LOG_LEVEL=debug` and fresh
@@ -296,8 +331,11 @@ volumes. The World topics were recreated, and the server ran on `ANDARA_CONTENT_
 
 **On a real cluster:** the wait → seed → Ready path ran on `dev` in `AW-INF-021`'s rollout. That's
 `world-reset`'s `started and waiting for content`, then `content-seed`, then Ready in about 4 s with
-0 restarts, and the server's lines in Grafana Cloud. Pre-merge, the same ACs (1, 2, 6) ran live on
-#298 (SRE's comment there).
+0 restarts, and the server's lines in Grafana Cloud. AC-6, a restart while waiting (waits again,
+no exit loop) and a restart after the first swap (recovers Ready), ran on the same kafka-content
+compose stack against #298's build, together with AC-1 and AC-2 end to end (SRE's comment on #298).
+The leaving line's `trace_id` is the swap record's, `content.load`'s trace, as architecture's review
+above reads it.
 
 The instrumentation item is **satisfied**. #299 (the Loader's `no_zones_found` `error` beside the
 wait line) is separate, and doesn't touch these signals.

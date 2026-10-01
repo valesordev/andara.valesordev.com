@@ -447,3 +447,42 @@ Read from Grafana Cloud with the read token from `.local/box.env` (Brian, this s
 
 The instrumentation item now owes only what a Ready projector can show. AC-2 and AC-4 are still
 owed on #143.
+
+## AC-2, AC-4 and the rest of §8 on `dev` (SRE, 2026-10-01): #143 fixed
+
+#307 fixed #143: with the default `sim.seed` 0, a restore derived the seed from the round's World.
+`dev` ran an image with the fix from `0cb713c`, on both the server and the projector, after the
+publish runs for `26f6e97` and `8d816ab` were superseded in the queue. A rebuild at 18:12Z on the
+old image (`b7162dd`) diverged again, as expected, and its Job was deleted. The projector stayed at
+0 replicas.
+
+`make projector-rebuild ENV=dev`, 18:18:24Z to 18:18:39Z, exit 0:
+```
+projector-stop: stopped (group andara-projector-state-dev empty) in 1s
+projector-rebuild: Job andara-projector-state-rebuild created; waiting for `state projector caught up`
+projector-rebuild: caught up at tick 25198; stopping the Job
+projector-start: ready in 7s
+projector-rebuild: rebuilt to tick 25198 in 15s
+```
+
+| AC | Observed | Result |
+|----|----------|--------|
+| 2 | Read as architecture amended it (§8 review): the Job's pod logs `caught up`, the target deletes it, and the Deployment *reuses* its checkpoint. **The first run didn't show reuse** (Codex on #314). The Deployment logged `committed=true`, `committed_tick=25232`, but `silent_through=0`: round 25243 completed in the seconds between the Job's stop and the Deployment's start, newer than the checkpoint, so `run.go` took the `dump` path (`cp.Tick >= eng.Tick()` false). **The re-run, 19:47:13Z, shows it.** `rebuilt to tick 78488 in 13s`, then the Deployment's `state projector started` had `round_tick=78089`, `committed=true`, `committed_tick=78500`, `silent_through=78500`. The checkpoint was newer than the round, so the Deployment replayed silently to it, then caught up at 78535. Lag 0.0138–0.0147 against the 5 s budget, 0 mismatches, no divergence. Both runs leave a correct projection; the dump path is the safe fallback when a round lands mid-handoff | pass (re-run) |
+| 4 | The Job: `state projector started` `round_tick=24643`, the newest complete round then. The Deployment: `round_tick=25243`, the newest round at its start (the server's rounds: 24643, 25243, 25844), `from_zero=false`. Then caught up at 25262, ticking on (25465 → 26265), `andara_state_digest_mismatches_total` 0, no `diverged` line, 0 restarts | pass |
+
+**The §8 instrumentation items still owed (architecture's "What closes it", item 3) are now all
+observed in Grafana Cloud:**
+- `up{job="andara-projector-state", namespace="andara-dev"} == 1`. `make observe-check ENV=dev`
+  reports every signal present, with `StateProjectorDown`, `StateProjectorDiverged` and
+  `ProjectionStale` silent;
+- the lag and budget gauges, as above;
+- `kube_deployment_spec_replicas{deployment="andara-projector-state"}` `1` (it was `0` at the
+  earlier check);
+- the rebuild Job's `state.replay` traces, with 10 `state.verify` children each. #290, no span for
+  a *diverging* tick, is a separate case and still open;
+- **`AW-SRV-019`'s production digest line:** the digest assertion runs continuously on `dev`. The
+  projector verifies every tick, with `digest_mismatches_total` 0, live.
+
+With ACs 1–8 observed (AC-2 on the re-run), the story's instrumentation item and every owed AC are
+met. Architecture's §8 can move it. *(Revised before merge, from Codex on #314: the first run's AC-2
+evidence didn't show checkpoint reuse.)*
