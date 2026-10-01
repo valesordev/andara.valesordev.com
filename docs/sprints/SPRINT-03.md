@@ -48,6 +48,9 @@ so that the guide ships this sprint. That's a contract change, so it's architect
 SRE reviews each draft's Observability requirements (§7) first. Architecture's contract review
 follows, and moves each draft to `ready` or `blocked`.
 
+- AW-SRV-042 — an empty content store waits, unready (added 2026-09-30). **Review it first.** It's
+  on the demo's critical path, ahead of AW-INF-021's merge. Its contract is architecture's ruling in
+  `docs/feedback/AW-INF-021-dev-content-store.md`, lifted as written, plus AC-7 for drain.
 - AW-INF-027 — the story tooling knows the SRE lane (new, SRE). Review it first, because SRE can't
   move its own stories until it merges. Architecture confirms its re-lane table, which moves
   AW-INF-019 and AW-INF-008 to `sre` while they're at `review`.
@@ -130,13 +133,19 @@ AW-SRV-035 to AW-SRV-038 are new; the rest are `ready` or carried over.
 9. AW-SRV-036 — `goto` — depends on AW-SRV-003, AW-SRV-014 (both `done`)
 10. AW-SRV-038 — a move describes the destination Room — depends on AW-SRV-003 (`done`). Last,
     because the demo doesn't need it.
-11. #143 — the state projector diverges one tick after bootstrapping from a snapshot round
+11. AW-SRV-042 — an empty content store waits, unready, plus `andara-cli --tls-server-name` (added
+    2026-09-30). It depends on AW-SRV-012 (`done`), AW-SRV-013 and AW-CLI-001. **On the demo's
+    critical path:** AW-INF-021 depends on it (architecture adds the edge when it moves this story to
+    `ready`), and AW-INF-022 and AW-INF-023 come after that. Without
+    it, `dev` can't be seeded, because a kafka server with an empty store exits before it serves
+    Admin. It's architecture's ruling in #289, and SRE's chart and seed halves are in #288.
+12. #143 — the state projector diverges one tick after bootstrapping from a snapshot round
     (added 2026-09-30). The fix belongs in round capture or restore (AW-SRV-006 code), not in the
     projector. It comes with the regression test named in AW-SRV-019's 2026-09-29 §8 pass. It holds
     AW-INF-025 ACs 2 and 4, AW-INF-008 AC-2 and AW-SRV-019 AC-6, and in SPRINT-04 it holds M2's
     "matching State Hash". `dev`'s projector is at 0 replicas until it's fixed.
     Source: `docs/feedback/AW-INF-025-projector-operations.md`, "For PM".
-12. #267 — the publish gate accepts `BlobRef.path` values that escape the pack (added 2026-09-30).
+13. #267 — the publish gate accepts `BlobRef.path` values that escape the pack (added 2026-09-30).
     The contract is in the issue: refuse `INVALID_ARGUMENT` `validation`, audited as `reject`, with
     `unsafe_source_path`'s rule. It's server-side hardening under AW-SRV-013, and `fetch` keeps its
     own guard.

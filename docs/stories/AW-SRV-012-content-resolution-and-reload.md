@@ -7,7 +7,7 @@ type: feature
 status: done
 size: M
 depends_on: [AW-SRV-001, AW-SRV-021, AW-SRV-022]
-blocks: [AW-SRV-013]
+blocks: [AW-SRV-013, AW-SRV-042]
 lane: implementation
 risk: high
 ---
