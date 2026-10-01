@@ -70,7 +70,7 @@ proves it.
    `andara-projector-state` and the superuser produces to `andara.state.v1` **then** the broker
    rejects it with an authorization error, and `andara-projector-state` succeeds. The test reads the
    principals from `topics.yaml`, so a principal declared later is covered without editing the
-   test. *(This is `AW-SRV-019` AC-9, as amended on #315, asserted in CI.)*
+   test. *(This is `AW-SRV-019` AC-9 as #315 amends it, asserted in CI.)*
 3. **Given** `andara-projector-state`'s credentials **when** they produce to the commands or events
    topic **then** the broker rejects it.
 4. **Given** `make topics-apply` on the compose stack **then** every principal and ACL in
@@ -142,17 +142,19 @@ No topic, offset or record changes. `dev` is untouched until `AW-INF-031`.
 CLAUDE.md §8, plus:
 - **Inherited from `AW-SRV-019` AC-9:** every declared principal other than `andara-projector-state`
   and the operator superuser is refused when it produces to `andara.state.v1`, asserted in CI on the
-  compose stack (AC-2, AC-8, AC-9). This is AC-9 as amended on #315, which exempts the operator
+  compose stack (AC-2, AC-8, AC-9). This is AC-9 as #315 amends it, exempting the operator
   superuser.
 
 ## Open questions
 
-1. **Resolved 2026-10-01 (architecture): AC-9 and the superuser.** Option (a). `AW-SRV-019` AC-9 is
-   amended (#315) to "any Kafka principal declared in `deploy/kafka/topics.yaml` other than
+1. **Ruled 2026-10-01 (architecture); resolved when #315 merges: AC-9 and the superuser.** Option
+   (a). #315 amends `AW-SRV-019` AC-9 to "any Kafka principal declared in `deploy/kafka/topics.yaml` other than
    `andara-projector-state` and the operator superuser `andara-operator` … is rejected".
    ADR-0011 decision 3 accepts the superuser's audit gap, and bounds it: one superuser, used by the
    `rpk` toolbox only, with no workload mounting its Secret. AC-2 asserts the amended criterion, and
    AC-9 asserts the bound. Scoped admin ACLs (option (b)) weren't taken, since they would reopen an
-   accepted ADR for a gap it already names.
+   accepted ADR for a gap it already names. **Until #315 is on `main`,** `AW-SRV-019` AC-9 still
+   reads "any principal other than `andara-projector-state`", and this story's AC-2 is narrower than
+   it. This story can't reach `ready` until then.
 2. `[ASSUMPTION]` `KafkaUser` manifests are rendered and validated here (`k8s-dry`), but first
   applied by `AW-INF-031`, because the User Operator isn't enabled before then.
