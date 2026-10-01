@@ -67,8 +67,9 @@ that I can seed it over Admin instead of being locked out by a server that exits
    wait` appears with `zones` and `pack@version`, and `OpenSession` succeeds.
 3. **Given** a World log in which a Content Swap with `zone_count > 0` has *applied*, whose store now
    refuses every version **when** the server boots **then** it exits `1` with "no content in effect",
-   unchanged (`AW-SRV-012`). **Given** a log whose only swap with `zone_count > 0` was *refused*
-   (`stale_base`) **then** the server waits, live and after a restart.
+   unchanged (`AW-SRV-012`). **Given** a log whose only swap with `zone_count > 0` was *refused* by a
+   record-decidable reason (`stale_base` or `misrouted`) **then** the server waits, live and after a
+   restart, with the classification made from the records alone (no store read).
 4. **Given** `content.source=dir` with no Zones **when** the server boots **then** it exits `1`,
    unchanged (`AW-SRV-001` AC-9).
 5. **Given** a port-forward to a pod whose certificate names `andara-0.andara.<ns>.svc` **when**
@@ -90,10 +91,30 @@ that I can seed it over Admin instead of being locked out by a server that exits
 
 **When the server waits.** With `content.source=kafka`, the server waits for content when two things
 hold: no Content Swap with `zone_count > 0` has *applied* in the recovered World log, and no followed
-pack's Active Pointer loads Zones. A refused swap (a deterministic no-op, `stale_base` and the rest)
-doesn't count. Whether a swap applied is decided from its digests (`base_digest` against the
-digest in effect), so it's readable without the version's content. Every other no-content case keeps
-today's exit `1`.
+pack's Active Pointer loads Zones. A refused swap (a deterministic no-op) doesn't count. Every other
+no-content case keeps today's exit `1`.
+
+**What's decidable without the content, and why it's enough** *(added 2026-10-01 on Codex's P1 on
+#295)*. The Engine refuses a swap for one of four reasons (`server/sim/content.go`, `prepareSwaps`).
+Two are decided from the record alone: `misrouted` (partition and `zone_id`) and `stale_base`
+(`base_digest` against the digest in effect). Two are decided only after `Content.Prepare` rebuilds
+the topology: `zone_removed` and `fallback_missing`. For a World that has never had Zones, which is
+the only case the wait rule needs to classify, those two can't refuse a well-formed swap:
+- `zone_removed` needs a Zone in effect to remove. Against a World with no Zones it never fires. If
+  it has fired, an earlier swap with Zones applied, and the World has had content.
+- `fallback_missing` is the Engine's backstop. The Loader refuses the same finding before it produces
+  a swap: `ActivateVersion` runs the Loader's evaluation (`AW-SRV-013` AC-14), and so does
+  `FollowContent`. A produced swap refused for it means the Loader and the Engine disagree. That's a
+  defect, not a state to wait in.
+
+So the server classifies by the record alone, walking the swaps in log order. The digest in effect
+starts empty. A swap whose record passes routing and whose `base_digest` matches counts as applied,
+and the digest in effect becomes its `world_digest`. Otherwise it's refused, and the digest in effect
+is unchanged. The World has had Zones if any swap counted as applied has `zone_count > 0`. **The
+guarantee is exact for every log a correct Loader can write.** In the defect case, a
+`fallback_missing` refusal of a produced first swap, the classification says "had content", and the
+server exits `1`. That's a loud failure for a defect, which is the outcome wanted, not a silent
+wait.
 
 **How the server knows a swap had Zones** (decided 2026-10-01, Open questions item 1, option (a)).
 `ContentSwap` gains `uint32 zone_count = 5` (`log.proto`, pinned in this review):
@@ -221,5 +242,9 @@ section is pasted as written. Amended here:
 3. **AC-9:** `zone_count` is set and replays.
 4. **AC-5's failure is exit `3`**, per `AW-CLI-001`, not "its connection error".
 5. **Data / state impact** states the field's migration and rollback, as CLAUDE.md §6 requires.
+6. **Decidability** (Codex on #295): the classification walks the records alone. That's exact for
+   every log a correct Loader writes, because `zone_removed` can't fire on a World without Zones,
+   and `fallback_missing` on a produced swap is a Loader/Engine defect that exits loudly. Stated in
+   the Interface contract. AC-3 names the record-decidable refusals.
 
 The story is `ready`. It's SPRINT-03 implementation item 11, the last code on the M3 demo's path.
