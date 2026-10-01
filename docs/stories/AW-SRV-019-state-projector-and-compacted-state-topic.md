@@ -101,8 +101,13 @@ projection schema change is routine.
    active when the aggregate was last written, so a runtime object traces to authored source.
 8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
    server are unchanged and no player-visible behavior differs.
-9. **Given** any Kafka principal other than `andara-projector-state` **when** it produces to
+9. **Given** any Kafka principal declared in `deploy/kafka/topics.yaml` other than
+   `andara-projector-state` and the operator superuser `andara-operator` **when** it produces to
    `andara.state.v1` **then** the broker rejects it with an authorization error (`AW-INF-004` ACLs).
+   *(Amended 2026-10-01: `ADR-0011` decision 3 makes `andara-operator` a superuser, and a superuser
+   bypasses ACLs by design, so "any principal" couldn't hold. The ADR accepts that audit gap and
+   bounds it: one superuser, used only by the `rpk` toolbox, with no workload mounting its Secret.
+   `AW-INF-030` asserts that bound.)*
    *(Note 2026-09-24:)* `AW-INF-004` shipped no ACLs, and the local Redpanda runs without SASL, so
    nothing enforces this yet. This story authenticates as the principal and declares the ACL
    in `deploy/kafka/topics.yaml`. Enforcing it, and this criterion's assertion, belongs to the
