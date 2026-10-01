@@ -4,7 +4,7 @@ title: Cluster observability wiring — the chart's metrics, logs, and traces re
 epic: EPIC-07
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-INF-003, AW-INF-006]
 blocks: [AW-INF-009]
@@ -489,3 +489,11 @@ expected while `andara-prod` isn't installed (`AW-INF-007` makes it Ready). The 
 (`StateProjectorDown`, `StateProjectorDiverged`, `ProjectionStale`) return nothing. **AC-2 passes**, so
 nothing in this story is owed now. *(Corrected before merge, from Codex on #314: this first said no
 rule would fire, but the output was filtered to the projector rules.)*
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's observation (above) is accepted. `up{job="andara-projector-state", namespace="andara-dev"} == 1`
+is in Grafana Cloud under its own job, beside `andara-server`, on the projector's first Ready after
+#143's fix. That's AC-2, as the 2026-09-30 re-ruling said, unamended. The standing
+`AndaraServerUnavailable` result for `andara-prod` is expected while `prod` isn't installed
+(`AW-INF-007`). Every AC now passes.

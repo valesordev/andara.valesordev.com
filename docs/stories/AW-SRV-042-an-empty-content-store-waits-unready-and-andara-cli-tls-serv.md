@@ -4,7 +4,7 @@ title: An empty content store waits, unready — and andara-cli --tls-server-nam
 epic: EPIC-05
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-012, AW-SRV-013, AW-CLI-001]
 blocks: [AW-INF-021]
@@ -339,3 +339,15 @@ above reads it.
 
 The instrumentation item is **satisfied**. #299 (the Loader's `no_zones_found` `error` beside the
 wait line) is separate, and doesn't touch these signals.
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's instrumentation record (above) is accepted. It was observed on an empty-store, kafka-content
+compose stack:
+- `rejected_no_content` went from 0 to 1;
+- the `warn` and `info` wait lines carried their fields and `trace_id`;
+- the refusal's `debug` line carried `reason`, `remote_addr` and `trace_id`, with no `session_id`,
+  because it's refused before one exists, as the story allows;
+- `TestLive_EmptyStoreWaits` passes, which covers AC-1, AC-2 and AC-6 end to end.
+
+`dev`'s own wait, seed and Ready path is in `AW-INF-021`'s record. Every checklist item holds.
