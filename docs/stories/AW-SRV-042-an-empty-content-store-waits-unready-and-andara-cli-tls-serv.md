@@ -4,7 +4,7 @@ title: An empty content store waits, unready — and andara-cli --tls-server-nam
 epic: EPIC-05
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-012, AW-SRV-013, AW-CLI-001]
 blocks: [AW-INF-021]
