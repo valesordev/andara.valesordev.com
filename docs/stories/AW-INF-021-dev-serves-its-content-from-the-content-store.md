@@ -423,3 +423,95 @@ only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `p
 - **Fixed, P2: `CONTENT_SEED_TIMEOUT=1m` aborted the seed after activation.** It's parsed as a
   duration (`Ns`, `Nm`, `Nh`, or plain seconds) before any RPC, and a bad value is usage, exit 2.
   Two new cases.
+
+## Verification record (SRE, 2026-10-01): the rollout on `dev`
+
+`main` at `0bee3cc` (#288). Argo CD synced, and `andara-config` showed `ANDARA_CONTENT_SOURCE=kafka`.
+`andara-0` then crash-looped as the Data section predicts:
+`recovery: replay: tick 2: prepare dir@0: no manifest for dir@0`. The boot had already published
+`andara.core@1` to the store.
+
+**The switch, 17:35:27Z to 17:36:25Z:**
+1. `make world-reset ENV=dev CONFIRM=andara-dev`, 43 s, exit 0. Its steps: Argo sync suspended, the
+   projector stopped, the four World topics recreated, the bucket emptied, the group deleted, the
+   server scaled up. Then `andara-0 is started and waiting for content … Next: make content-seed
+   ENV=dev`, Argo restored, and AC-11's final line.
+2. `make content-seed ENV=dev`, 4 s, with the operator from `.local/box.env` (Brian, this session):
+   `town@1 published (14 of 14 blobs uploaded)`, activated with `--override`, then
+   `published and active`, through the port-forward with `andara-0.andara.andara-dev.svc` verified.
+   `andara-0` went from started, not ready, to Ready, with 0 restarts.
+
+| AC | Observed | Result |
+|----|----------|--------|
+| 1 | `server info` (port-forward route): `content andara.core@1`, `content town@1`. No `dir`. `make argocd-status` lists the same | pass |
+| 2 | New Account `sre-player` and Character `Verifier`: `Verifier  dormant  purgatory/start`. `andara-cli play` through the edge opens on `Purgatory` | pass |
+| 3 | A second `make content-seed ENV=dev`: `town@1 is already active; nothing published` | pass |
+| 4 | After #305 (Admin through the edge, from the box on the tailnet): Builder `sre-builder`, granted pack `sre.verify`, published it, the Operator approved it, and the Builder activated it at 17:55:55Z. `server info` listed `sre.verify@1` within 2 s. `andara_content_active_version{pack="sre.verify"}` is `1` in Grafana Cloud. The pack is a scratch pack, not `brian`, so Brian's namespace stays empty for the demo | pass |
+| 5 | `kubectl rollout restart statefulset/andara`: Ready again, `recovered from the log` (1,794 ticks), `andara.core@1 present`, `town@1` still active. Nothing re-seeded | pass (by restart; a merge roll is the same path) |
+| 6 | **owed to the first core bump**, as the AC allows. `content/core/VERSION` is still 1 |
+| 7 | Partly observed: `world-reset` gave this rollout an empty World and a store with no Zone pack. Then the seed, with no other hand step, gave AC-1 and AC-2. A full `argocd-uninstall` rebuild wasn't run | partial |
+| 8 | `helm_test.test_content_configmaps`, in CI | pass |
+| 9 | `scripts/tests/test_content_seed.py`, no call without the credential | pass |
+| 10 | `scripts/tests/test_world_reset.py` | pass |
+| 11 | The final line and exit 0. The operator logs in. The old Accounts are gone (`andara.accounts.v1` recreated). `andara.audit.v1`'s summed high-water mark went 4 → 8, not lower. Packs: none had Zones before, and `andara.core@1` is kept | pass |
+
+**Inherited observations, from Grafana Cloud** (`namespace="andara-dev"`):
+- `andara_content_active_version{pack}`: `andara.core` 1, `town` 1. `andara_content_pending_seconds`:
+  0 for both. `andara_build_info{pack,content_version}`: both at `content_version="1"`, `version="0bee3cc"`.
+- `andara_content_load_phase_duration_seconds{phase}` counts: `resolve` 5, `validate` 4, `build` 5,
+  `swap` 2. `andara_content_cache_hits_total`: `hit` 28, `miss` 4.
+  `andara_content_reload_stall_seconds_count` 2. `andara_content_zones_loaded` 4.
+- Tempo: `content.core_boot` from the boot. `content.reconcile` → `content.load` (`andara.core@1`) →
+  `content.swap`. The seed's `town@1` load: `content.load` → `content.resolve`, `content.validate` →
+  `content.build`, `log.produce`, `content.swap`.
+- **The CLI half is parented** (`trust_inbound_traceparent`): the seed's trace `871ca65d…` has
+  `Admin/GetVersion`, `Admin/ListVersions` and `Admin/ActivateVersion` under the CLI's remote
+  `cli.command`, and `content.activate` → `content.resolve`, `content.validate`,
+  `content.write_pointer` (`direction=forward`), `audit.write`.
+- **Not one trace to the swap.** The Loader's `content.load` for `town@1` is a separate root
+  (`18a49934…`). It doesn't continue the activation's trace, because `Loader.Follow` starts it from
+  its own context, and `content.v1.ActiveVersion` carries no trace context to continue. The
+  Observability section's "one trace, from the CLI's `cli.command` through `ActivateVersion`, to the
+  Loader's `content.load`, and on to the tick's `content.swap`" can't hold without a contract
+  change. That's routed to architecture (feedback file). Today the two halves join on
+  `pack@version` and time.
+- **`AW-SRV-013`'s publish-path sequence**, run at 17:55 to 17:56Z through the edge, as the inherited
+  line asks:
+  1. a publish refused by validation (a Zone named `town`: `duplicate_zone`);
+  2. a Builder's valid publish (`sre.verify@1`);
+  3. an activation refused, `unapproved`;
+  4. the Operator's approval;
+  5. activate;
+  6. an Operator publish (`@2`) and its self-approval;
+  7. activate `@2`, then `rollback` to `@1`.
+
+  Grafana Cloud then read, matching the server's own `/metrics`:
+  - `publishes_total` `ok` 2, `rejected` 1;
+  - `approvals_total` `ok` 1, `self_operator` 1;
+  - `pointer_moves_total` `forward,false` 2, `rollback,false` 1;
+  - `activations_refused_total{unapproved}` 1;
+  - `blob_bytes_total` 1,255;
+  - `validation_failures_total` `duplicate_zone` 1, plus `unknown_room` 3 (see #312).
+
+  Loki has `content published`, `content approved`, `content approved by its own publisher`
+  (`self_approval=true`), `content activated` (`direction` forward or rollback),
+  `content publish rejected` (`findings_count=4`, `code=duplicate_zone`) and
+  `content activation refused` (`reason=unapproved`). Each carries `actor_account_id`, `pack_id`,
+  `version` and `trace_id`. `session_id` is empty, as on every Admin line (noted at `AW-SRV-035`).
+  Tempo has the `content.publish`, `content.publish_blob` and `content.approve` traces.
+- **`AW-CLI-003`'s items:** the Builder's `activate --log-level info --output json` logged the
+  confirmation at `info` with `trace_id eabb657a…`, the same ID as its JSON result. That's the join
+  to the server's audit record.
+- **Found: #312.** A publish shows other packs' findings as the Builder's own. The refused publish
+  listed three cascade `unknown_room` from the fixture's Zones, labelled `sre.verify/docks.json:0:0`
+  and so on. Every valid publish shows the fixture's Purgatory `missing_reverse_exit` the same way.
+  It's noise in the demo, so it's filed for implementation.
+- **Still owed:** `andara_content_pending_seconds{pack}` rising then clearing on a slow apply. Every
+  apply here took under a second. Also a refused *load* on `andara_content_load_failures_total{reason}`,
+  and `andara_content_relocations_total`. Their carrier is a version that removes an occupied Room,
+  which a fixture seed can't make. That's named in the story, and AW-INF-023's walk-through or a
+  later content change can observe it.
+
+**Left on `dev`:** Accounts `sre-player` (Character `Verifier`, from AC-2) and `sre-builder` (`builder`,
+pack `sre.verify`), and pack `sre.verify@1` active: Zone `sreverify`, two Rooms. There's no deactivate,
+and the store keeps every version. The projector stays at 0 replicas until #143's fix rolls out.
