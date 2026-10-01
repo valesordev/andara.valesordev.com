@@ -149,6 +149,12 @@ AW-SRV-035 to AW-SRV-038 are new; the rest are `ready` or carried over.
     The contract is in the issue: refuse `INVALID_ARGUMENT` `validation`, audited as `reject`, with
     `unsafe_source_path`'s rule. It's server-side hardening under AW-SRV-013, and `fetch` keeps its
     own guard.
+14. #308 — `core_version_mismatch` tells a Builder to downgrade `andara-cli` after a core bump
+    (added 2026-10-01). The contract is in the issue and in `errors.md` §3.1: the remedy follows the
+    direction of the skew, with a test for each direction. It's small, in `content/lang`. It's not on
+    the demo path, since `dev`'s core is still `andara.core@1`. But the first core bump turns every
+    Builder's `check` red with backwards advice (AW-INF-022 AC-8). Last on the list, and the first to
+    carry over if implementation runs short.
 
 **Risk:** implementation has ten items, and AW-SRV-013 and AW-CLI-003 are the size of the sprint.
 If it runs short, AW-SRV-038 carries first, then #128. The demo needs items 1 and 4–9. SRE's items
