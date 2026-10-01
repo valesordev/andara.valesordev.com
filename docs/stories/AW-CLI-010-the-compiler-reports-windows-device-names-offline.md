@@ -1,6 +1,6 @@
 ---
 id: AW-CLI-010
-title: The compiler reports Windows device names offline
+title: The compiler reports unportable names offline
 epic: EPIC-05
 component: cli
 type: feature
@@ -29,7 +29,8 @@ The compiler builds blob paths from three sources:
 - source paths, giving `src/<path>`.
 
 This story makes the compiler report the same rule offline, with a position, using the gate's
-predicate rather than a copy of it. Architecture asked for it after #322. Until it ships, the
+predicate rather than a copy of it. A source file name containing `:` (legal on Linux and macOS,
+refused by the gate) is covered too, by the same predicate (architecture, 2026-10-01). Architecture asked for it after #322. Until it ships, the
 Builder's Guide section 9 documents the gap (#323). It isn't on the demo path.
 
 ## User story
@@ -40,24 +41,23 @@ so that I find out at my desk rather than at publish.
 ## Scope
 
 ### In scope
-- One shared predicate for "this blob path element is a Windows device name", used by both the
-  publish gate (`server/content.UnsafeBlobPath`) and the compiler. Placement is implementation's
+- One shared predicate for "some supported platform can't write this blob path element" (a Windows
+  device name, a colon, or a NUL), used by both the publish gate (`server/content.UnsafeBlobPath`)
+  and the compiler. Placement is implementation's
   choice, but it must be one function, not two copies.
-- A compile error for each declaration or file whose blob path would contain a device name, in
-  three cases:
+- A compile error, `unportable_name`, for each declaration or file whose blob path would contain an
+  unportable element, in three cases:
   - a Zone ID;
   - a pack name, when the pack declares a Template;
   - a source file or directory name under `--path`.
-- The diagnostic code that architecture adds to `errors.md` §3.1 at contract review.
+- The code `unportable_name`, whose `errors.md` §3.1 row architecture adds at contract review.
 
 ### Out of scope
 - Changing what the gate refuses. The gate's rule from #322 is the contract, and this story only
   moves it earlier.
-- Other path checks the gate makes (absolute, `..`, colon, NUL). Zone IDs and pack names can't
-  produce them, because the identifier grammar is `[a-z][a-z0-9_]*`. Source paths are relative to
-  `--path` by construction. A source **file name containing `:`** (legal on Linux and macOS) would
-  still pass offline and be refused at publish. That's the same gap as this story's, and it's Open
-  question 3. (`unsafe_source_path` is `AW-CLI-003`'s guard on blobs it fetches, not a compile
+- The gate's absolute-path and `..` checks. Zone IDs and pack names can't produce them, because
+  the identifier grammar is `[a-z][a-z0-9_]*`, and source paths are relative to `--path` by
+  construction. (`unsafe_source_path` is `AW-CLI-003`'s guard on blobs it fetches, not a compile
   check.)
 
 ## Acceptance criteria
@@ -73,21 +73,32 @@ so that I find out at my desk rather than at publish.
    **then** there's no diagnostic.
 5. **Given** a case or extension variant (`Aux`, `COM¹`, `con.aw`, `nul.v2`) **then** it's reported,
    as the gate would refuse it.
-6. **Given** a table of names **then** a test holds the compiler's verdict equal to
-   `UnsafeBlobPath`'s for the same blob path, for every name. That proves one rule.
-7. **Given** the conformance corpus **then** it has a case for each of ACs 1–3, with a `.errors`
+6. **Given** a source file `src/zones/a:b.aw` **then** the compile fails with `unportable_name` at
+   `file:1:1`, naming the element and the colon rule.
+7. **Given** a table of names, covering every form the gate refuses for an element (each device name and
+   variant, a colon, a NUL) **then** a test holds the compiler's verdict equal to `UnsafeBlobPath`'s
+   for the same blob path, for every name. That proves one rule.
+8. **Given** the conformance corpus **then** it has a case for each of ACs 1–3 and 6, with a `.errors`
    sidecar, and `make content-conformance` passes.
 
 ## Interface contract
 
-- **Diagnostic code:** architecture names it and adds it to `errors.md` §3.1 (raised only by the
-  compiler) at contract review. PM's placeholder is `reserved_name`. Its severity is `error`, and it
-  refuses the compile, because the gate would refuse the publish.
-- **Message:** `<name> is a name Windows reserves for a device, so <blob path> can't be published;
-  rename it`.
-- **Position:** the Zone ID token (AC-1), the pack name token (AC-2), or `file:1:1` (AC-3).
-- **Shared predicate:** something like `ReservedDeviceName(element string) bool`, with the exact
-  semantics of #322's `windowsDevice`. Both the gate and the compiler call it.
+- **Diagnostic code: `unportable_name`** (architecture, 2026-10-01), in `errors.md` §3.1, raised
+  only by the compiler. Its row is architecture's:
+  - **trigger:** a Zone ID, a pack name with Templates, or a source path whose blob path some
+    supported platform can't write. That's a Windows device name in any case with any extension, a
+    colon, or a NUL.
+  - **severity:** `error`. It refuses the compile, because the gate would refuse the publish.
+- **Message:** names the offending name and the platform rule it breaks. For example: `aux is a
+  Windows device name, so aux.json can't be published; rename it`, or `a:b.aw contains ':', which
+  Windows can't write; rename it`.
+- **Positions:**
+  - a Zone ID: the `zone` declaration's ID (AC-1);
+  - a pack name: the `pack` line, once per pack (AC-2);
+  - a source path: the file, at line 1, column 1 (AC-3, AC-6).
+- **Chain:** the existing carrier table. The Zone for a Zone ID, and empty for a pack name or a file.
+- **Shared predicate:** something like `UnportableElement(element string) bool`, covering #322's
+  `windowsDevice` plus `:` and NUL. Both the gate and the compiler call it.
 
 ## Data / state impact
 
@@ -116,9 +127,9 @@ the new `errors.md` row. That edit is architecture's, in `docs/builders/`.
 
 ## Open questions
 
-1. **For architecture: the code's name and its `errors.md` row** (§3.1). `reserved_name` is a
-   placeholder.
+1. **Resolved 2026-10-01 (architecture):** the code is `unportable_name`, with the row, positions and
+   chain in the Interface contract. Architecture adds the `errors.md` row at contract review.
 2. `[ASSUMPTION]` One diagnostic per pack for AC-2, rather than one per Template, because the pack
    name is the one thing to rename.
-3. **For architecture: a colon in a source file name.** The gate refuses it, and the compiler
-   doesn't report it. Fold it into this story's code, or rule it out of scope.
+3. **Resolved 2026-10-01 (architecture): a colon in a source file name** is folded in, under the same
+   code (AC-6).
