@@ -4,7 +4,7 @@ title: An Operator grants a Builder their packs
 epic: EPIC-06
 component: server
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-013]
 blocks: [AW-INF-021, AW-INF-023, AW-SRV-040]
@@ -253,7 +253,7 @@ this review: `server/auth` `SetBuilderPacks` (with `-race`), `admin/cli` `Accoun
 | AC | Evidence | Result |
 |----|----------|--------|
 | 1 | `setpacks_test.go` `TestAccountSetPacks_GrantReplaceClear`; `grant_test.go` `TestPackGrant_IsWhatThePublishPathAuthorizesOn`; the broker test | pass (text amended, ruling 1) |
-| 2 | `grant_test.go`: `pack_not_held`, `PERMISSION_DENIED`; the broker test | **server half passes. The CLI half is untested** (ruling 2) |
+| 2 | `grant_test.go`: `pack_not_held`, `PERMISSION_DENIED`; the broker test | pass. The server half is in `grant_test.go` and the broker test; the CLI half is `TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld` (#281) |
 | 3, 4 | `packs_test.go` `TestSetBuilderPacks_ReplacesSortsAndAudits`; CLI grant, replace and clear | pass |
 | 5 | `TestSetBuilderPacks_OperatorOnly`: reason, Account unchanged, one `denied` record, `warn` line; CLI as the Builder: exit 1 | pass |
 | 6, 7, 11 | `packs_test.go` refusal cases (exact messages; uppercase, `..`, leading digit, comma, empty; `andara.core`); CLI refusals | pass |
@@ -356,3 +356,15 @@ On `impl/aw-srv-035-pack-not-held-cli`, for the §8 review's "What closes it":
 
 Mutation-checked: with `contentError` dropping the server's reason, `error.code` falls back to
 `permission_denied` and the test fails.
+
+## §8 close (architecture, 2026-09-30): `done`
+
+Against `main` at `d9dc613`. #281 delivers AC-2's CLI half: `admin/cli`
+`TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld`. A Builder publishing a pack they don't
+hold exits 1 with `error.code` `pack_not_held`, writes no version, and can still publish a pack they
+do hold. Re-run green in this review. The mutation check (`contentError` dropping the reason) is
+the implementation's, and it's the same one this review's 2026-09-30 pass ran on the server half.
+#281's checks are all green. SRE's instrumentation record is accepted (2026-09-30, above). Every
+checklist item now holds.
+
+The same test closes `AW-CLI-003`'s item 4.

@@ -324,7 +324,7 @@ enough to test it.
    hint.
 4. **`AW-SRV-035` AC-2's CLI half** (implementation): `content publish` by a Builder without the pack
    exits 1 with `error.code` `pack_not_held`. It's that story's AC, and the test lives in
-   `admin/cli`. It closes both stories.
+   `admin/cli`. It closes both stories. *(Delivered in #281: `TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld`.)*
 5. SRE's §8 instrumentation record, under `AW-CLI-002`'s ruling: CLI spans are verified in-process
    (`TestContentPublish_Spans`), and the backend join is `AW-INF-021`'s.
    *(SRE's record, #276: the spans are satisfied. What's still owed is the confirmation line's test,
