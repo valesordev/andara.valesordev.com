@@ -344,3 +344,25 @@ network or OS, and `Jump` rides only on `Outcome`, so it's not state and not has
   `command.apply` under the same trace.
 
 Architecture then moves the story to `done` without another pass.
+
+## §8 instrumentation check (2026-10-01, SRE): satisfied
+
+On `sre/sprint-03-srv036-srv038-verify`, against the compose stack built from `main` at `b9cc8e6`
+with `ANDARA_LOG_LEVEL=debug` and fresh volumes. A Builder (`set-roles --role builder`) played
+`goto docks/pier` from Purgatory, then `goto pier`, `goto nowhere/x` and a bare `goto`. A player
+with no role played `goto docks/pier`.
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `andara_commands_total{verb="goto"}` | local Prometheus | `0` before (pre-seeded), `4` after |
+| `andara_command_duration_seconds{verb="goto"}` | local Prometheus | `pre_log` and `post_log` counts of 3 each (the parse refusal never reaches either) |
+| `andara_command_rejected_total` | local Prometheus | `{parse, missing_argument}` 1, `{authorize, not_authorized}` 1, and `{validate, unknown_zone}` 1. The last is the new pair the contract pre-seeds |
+| `andara_privileged_actions_total{action="authorize"}` | local Prometheus | `0` → `1`, the player's refusal |
+| `debug` `command applied` | local Loki | `verb=goto` with `actor`, `session_id`, `trace_id`. `from_room=purgatory/start`, `to_room=docks/pier` on the jump. The refusal carries `stage=validate`, `code=unknown_zone`. The player's refusal is the `info` `command rejected` line with `code=not_authorized` |
+| Trace | local Tempo (`95284008…`) | `command.execute` (`verb=goto`) → `command.parse`, `command.authorize`, then `command.apply` (`verb=goto`, Partition 32, `from_room`, `to_room`), and the target Zone's `command.apply` (`verb=arrive`, Partition 11). All are under the same parent: one trace for both halves of the jump, by parentage. The in-Zone `goto pier` applies on Partition 11 only |
+
+**Noted, not holding the story.** All of a `play` session's Commands share one trace ID, so this
+trace holds the bind, the `look` and all three `goto`s. It's `play`'s behavior, not this story's,
+and §7's per-Command parentage still holds within it. And `goto pier` from `docks/pier` named the
+Room the Builder was already in, so this run didn't observe a true in-Zone jump between two
+Rooms. The unit and smoke tests cover that (`TestLive_Goto`).
