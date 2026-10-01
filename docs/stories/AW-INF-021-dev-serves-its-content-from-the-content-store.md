@@ -7,7 +7,7 @@ type: infra
 status: review
 size: M
 depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019, AW-SRV-037, AW-SRV-042]
-blocks: [AW-INF-022, AW-INF-023]
+blocks: [AW-INF-022, AW-INF-023, AW-SRV-045]
 lane: sre
 risk: medium
 ---

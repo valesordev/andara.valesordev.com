@@ -281,3 +281,18 @@ client that can't speak it.
 Also for PM: add `ADR-0011` to the `adr_refs` of `EPIC-01` (the SRE story's) and of `EPIC-10`
 (`AW-SRV-019`'s, and the implementation story's). Epics are yours to edit.
 
+
+## PM: AC-9's carrier is groomed (2026-10-01)
+
+ADR-0011's two stories are written, both at `draft`. PM split the SRE half in two:
+- **`AW-SRV-044`** (implementation): one Kafka client constructor, with SASL/SCRAM (decision items 6
+  and 7).
+- **`AW-INF-030`** (SRE): the `principals:` declaration, its apply path on both brokers, the
+  chart's Secret references, SASL on the compose stack, and the `rpk` wrappers. **It carries AC-9 as
+  an inherited Definition-of-done line**, asserted in CI on the compose stack.
+- **`AW-INF-031`** (SRE): `dev`'s four-step migration to SASL and deny-by-default (ADR-0011
+  *Consequences*). It's split out because it's an ordered, rollback-sensitive operation on a live
+  cluster. AC-9 doesn't wait on it.
+
+`ADR-0011` is now in the `adr_refs` of `EPIC-01` and `EPIC-10`. With AC-9 carried, `AW-SRV-019` is
+free to move to `done` at architecture's §8 review.
