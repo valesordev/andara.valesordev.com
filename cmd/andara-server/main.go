@@ -168,8 +168,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return boot.ExitOK
 	}
 
-	// A spawn Room the content in effect lacks fails the boot.
-	if err := rt.CheckSpawnInEffect(); err != nil {
+	// A spawn Room the content in effect lacks fails the boot. A World
+	// waiting for its first content has no Rooms yet; the Loader holds the
+	// first version to the spawn Room instead (AW-SRV-042 AC-8).
+	if err := rt.CheckSpawnInEffect(); err != nil && !rt.Waiting() {
 		tel.Log.Error("roster", "detail", err.Error())
 		halt()
 		_ = srv.Shutdown(context.Background())
@@ -201,6 +203,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		Egress:                  rt.Egress,
 		Roster:                  rt.Roster,
 		Content:                 rt.Content.InEffect,
+		ContentWaiting:          rt.Waiting,
 		TrustInboundTraceparent: cfg.TrustInboundTraceparent,
 		OnDrain:                 func() { rt.Egress.Drain(); rt.Drain() },
 		Log:                     tel.Log,
@@ -219,8 +222,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
-	// Ready once the Gateway serves with content in effect (AW-SRV-012).
-	rt.MarkReady()
+	// Started once the Gateway serves: ready with content in effect
+	// (AW-SRV-012), or, waiting for its first content, ready when it arrives
+	// (AW-SRV-042).
+	rt.MarkStarted()
 
 	// Active Pointer moves, applied through the log for as long as the
 	// process runs (AW-SRV-012). A no-op for the dir source.

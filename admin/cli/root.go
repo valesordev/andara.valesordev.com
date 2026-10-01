@@ -63,6 +63,7 @@ type globalFlags struct {
 	config        string
 	serverAddress string
 	tlsCA         string
+	tlsServerName string
 	output        string
 	logLevel      string
 	timeout       time.Duration
@@ -126,6 +127,7 @@ func newRoot(rt *runtime) *cobra.Command {
 	fs.StringVar(&rt.gf.config, "config", "", "config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)")
 	fs.StringVar(&rt.gf.serverAddress, "server-address", defaultServerAddress, "server endpoint (gRPC/Connect over TLS)")
 	fs.StringVar(&rt.gf.tlsCA, "tls-ca", "", "CA bundle to trust (empty uses the system trust store)")
+	fs.StringVar(&rt.gf.tlsServerName, "tls-server-name", "", "verify the server's certificate against this name, not the dialed host (a port-forward)")
 	fs.StringVarP(&rt.gf.output, "output", "o", outputHuman, "output format: human or json")
 	fs.StringVar(&rt.gf.logLevel, "log-level", defaultLogLevel, "CLI diagnostic level")
 	fs.DurationVar(&rt.gf.timeout, "timeout", defaultTimeout, "per-command deadline")
@@ -197,6 +199,8 @@ func (rt *runtime) readChangedFlags(cmd *cobra.Command) changedFlags {
 		serverAddressChanged: changed("server-address"),
 		tlsCA:                rt.gf.tlsCA,
 		tlsCAChanged:         changed("tls-ca"),
+		tlsServerName:        rt.gf.tlsServerName,
+		tlsServerNameChanged: changed("tls-server-name"),
 		output:               rt.gf.output,
 		outputChanged:        changed("output"),
 		logLevel:             rt.gf.logLevel,

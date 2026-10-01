@@ -9,11 +9,19 @@ import (
 	"log/slog"
 
 	"connectrpc.com/connect"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	"github.com/valesordev/andara/gen/go/andara/game/v1/gamev1connect"
 	"github.com/valesordev/andara/server/auth"
 )
+
+// GameErrorDomain is ErrorInfo.domain on a Game refusal that carries a reason.
+const GameErrorDomain = "andara.game"
+
+// ReasonNoContentInEffect: OpenSession refused while the World waits for
+// its first content (AW-SRV-042).
+const ReasonNoContentInEffect = "no_content_in_effect"
 
 // gameService implements andara.game.v1.Game from the generated interface.
 // Only Session establishment and teardown have behavior here; Submit and
@@ -73,6 +81,24 @@ func (g *gameService) OpenSession(ctx context.Context, req *connect.Request[game
 			)
 			return nil, connectError(ErrPermissionDenied)
 		}
+	}
+
+	// A World waiting for its first content has nowhere to stand
+	// (AW-SRV-042): UNAVAILABLE, which a client may retry, after the token,
+	// so that an unauthenticated caller learns nothing about the World.
+	if w := g.s.opts.ContentWaiting; w != nil && w() {
+		g.s.metrics.SessionsTotal.WithLabelValues(OutcomeRejectedNoContent).Inc()
+		g.s.log.LogAttrs(ctx, slog.LevelDebug, "session rejected: no content in effect",
+			slog.String("reason", ReasonNoContentInEffect),
+			slog.String("client_name", msg.GetClientName()),
+			slog.String("remote_addr", req.Peer().Addr),
+			slog.String("trace_id", traceID(ctx)),
+		)
+		ce := connect.NewError(connect.CodeUnavailable, errors.New("the World is waiting for its first content; try again once a pack is activated"))
+		if d, derr := connect.NewErrorDetail(&errdetails.ErrorInfo{Domain: GameErrorDomain, Reason: ReasonNoContentInEffect}); derr == nil {
+			ce.AddDetail(d)
+		}
+		return nil, ce
 	}
 
 	sess, err := g.s.sessions.open(ctx, connIDFrom(ctx), msg.GetClientName(), negotiated, req.Peer().Addr, principal)

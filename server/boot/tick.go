@@ -383,6 +383,57 @@ func hasContentSwap(ctx context.Context, log replayLog) (bool, error) {
 	return false, nil
 }
 
+// worldHadZones reports whether a Content Swap with Zones has applied in the
+// World log (AW-SRV-042). It reads the records alone: it never prepares a
+// swap and never reads the content store, so it answers when the store
+// refuses every version.
+//
+// It walks the World Partition's swaps in log order, deciding each as the
+// Engine's prepareSwaps does on the two refusals a record decides by itself:
+// a swap on the wrong Partition, or with a zone_id, is misrouted; one whose
+// base_digest isn't the digest in effect is stale_base. Every other swap
+// applied, and its world_digest is then the digest in effect. The two
+// refusals only Prepare can decide can't refuse a well-formed swap on a World
+// that has never had Zones: zone_removed needs a Zone to remove, and
+// fallback_missing is refused by the Loader before it ever produces the swap.
+// So this is exact for every log a correct Loader writes; in the defect case
+// it reads "had content", and the boot exits loudly rather than waiting.
+func worldHadZones(ctx context.Context, log replayLog) (bool, error) {
+	end, err := log.End(ctx, sim.WorldPartition)
+	if err != nil {
+		return false, err
+	}
+	var (
+		digest  []byte
+		applied bool // any swap applied: base_digest is then compared, not required empty
+	)
+	const chunk = 1000
+	for from := int64(0); from < end; from += chunk {
+		recs, err := log.Fetch(sim.WorldPartition, from, min(from+chunk, end))
+		if err != nil {
+			return false, err
+		}
+		for _, r := range recs {
+			cs := r.Command.GetContentSwap()
+			if cs == nil {
+				continue
+			}
+			if r.Partition != sim.WorldPartition || r.Command.GetZoneId() != "" {
+				continue // misrouted
+			}
+			base := cs.GetBaseDigest()
+			if (!applied && len(base) != 0) || (applied && string(base) != string(digest)) {
+				continue // stale_base
+			}
+			if cs.GetZoneCount() > 0 {
+				return true, nil
+			}
+			digest, applied = cs.GetWorldDigest(), true
+		}
+	}
+	return false, nil
+}
+
 // contentApplied tells the content source what a tick applied, and keeps the
 // AW-SRV-001 topology gauges on the content in effect. On the loop's
 // goroutine, or recovery's before the loop starts.
@@ -394,6 +445,7 @@ func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
 		return
 	}
 	w := rt.Engine.World()
+	rt.leaveWait(w, rt.Engine.Templates(), swaps)
 	rt.Tel.Metrics.ZonesLoaded.Set(float64(len(w.Zones)))
 	// Only the Zones in effect: a label from content no longer in effect
 	// would report Rooms nobody can stand in.
@@ -435,6 +487,28 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content could not be brought into effect",
 			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
 		return ExitFail
+	}
+	if len(rt.Engine.World().Zones) == 0 && rt.Cfg.ContentSource == content.SourceKafka {
+		// A store-backed World that has never had Zones waits for its first
+		// content, unready, rather than exiting before it can be published
+		// (AW-SRV-042). One that has had them, and whose store now refuses
+		// every version, exits as it always has.
+		had, err := worldHadZones(ctx, rt.recoveryLog())
+		if err != nil {
+			rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content: the World log could not be read to tell a first start from a lost World",
+				slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+			return ExitFail
+		}
+		if !had {
+			if err := rt.coreInEffect(); err != nil {
+				rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
+					slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+				return ExitFail
+			}
+			rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
+			rt.enterWait(ctx)
+			return ExitOK
+		}
 	}
 	if len(rt.Engine.World().Zones) == 0 {
 		for _, r := range rejects {

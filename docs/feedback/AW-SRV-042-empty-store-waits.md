@@ -70,3 +70,47 @@ trace_id on the wait lines.)*
 Test-plan addition that follows from 1: the AC-1 test asserts
 `andara_sessions_total{outcome="rejected_no_content"}` rises by one for the refused `OpenSession`, and
 is present at `0` before it.
+
+## Implementation, 2026-10-01: built
+
+Built on `impl/aw-srv-042-empty-store-waits`. The story is at `review`, and the record is in the
+story.
+
+### For architecture: decided in building
+- **The publish gate keeps its rule.** The Loader's spawn check widened to "a World with Zones
+  after this move lacks `character.spawn_room`" (AC-8). That applies to a pointer move: a load,
+  and `ActivateVersion`'s check that mirrors it. The publish gate shares the build, but judges a
+  version alone, so it now passes `moving=false` and skips the spawn rule, as it always did in
+  effect. Without that, the town fixture's second version, the one that removes the spawn Room,
+  would be refused at publish rather than at activation (`AW-SRV-013` AC-14's test).
+- **A move with no Zones is exempt.** `andara.core`'s Templates-only swap leaves a waiting World
+  without Zones, and the spawn rule has nothing to say about it. Otherwise core couldn't load on
+  an empty store.
+- **Leaving the wait checks the spawn Room against the Engine's World.** It uses
+  `checkSpawnIn(world, templates)`, not `rt.World`, which reconcile set once and the follow path
+  never updates. If the check fails, which AC-8 makes a defect, the server stays unready, logging
+  `error`, rather than going ready with nowhere to spawn.
+- **The leaving line's `trace_id` is the swap record's.** `sim.SwapApplied` gains `TraceParent`,
+  copied from the record, so the line joins the `content.load` span that produced the swap. The
+  story's text says "the leaving `ReconcileContent`'s span", but the swap that ends the wait comes
+  from `FollowContent`'s Loader, not from a reconcile, and this is the span that carries it.
+- **`OpenSession`'s refusal comes after the token.** Version, then the token, then content, so an
+  unauthenticated caller learns nothing about the World. The debug line carries `remote_addr`,
+  since no Session is assigned yet.
+- **`content.OverLoader`** is a store-backed `Content` over a given Loader, with no Active Pointer
+  watch. Boot's tests use it to drive the real `ReconcileContent` decision with no broker.
+
+### For SRE
+- **AC-1, AC-2 and AC-6 end to end need a `content.source=kafka` stack.** The topic names are
+  constants, so an in-process server against the shared Redpanda would write into the stack's real
+  topics. The in-process tests cover every AC's logic, including leaving the wait through the tick
+  loop. On a fresh kafka-content stack (#288):
+  1. `ANDARA_SMOKE_EXPECT_EMPTY_STORE=1 go test -tags smoke -run TestLive_EmptyStoreWaits
+     ./internal/smoke/` (AC-1: `/startedz` 200, `/readyz` 503, `OpenSession` refused
+     `no_content_in_effect`, Admin served);
+  2. `make content-seed` (AC-2, no restart);
+  3. the rest of the smoke suite (Ready, `OpenSession` succeeds);
+  4. a restart before step 2 and after it (AC-6).
+- **The `/startedz` probe** is yours in `AW-INF-021`. The server half is here: 200 from the
+  Gateway's start to exit, through the drain.
+- **`andara_sessions_total{outcome="rejected_no_content"}`** is pre-seeded at 0.

@@ -77,16 +77,21 @@ func (rt *Runtime) spawnRoom() sim.RoomRef {
 // checkSpawn refuses content a Character cannot be made in: no
 // character.spawn_room, or no andara.core.Character — against the content in
 // effect, which is what the roster spawns into.
-func (rt *Runtime) checkSpawn() error {
+func (rt *Runtime) checkSpawn() error { return rt.checkSpawnIn(rt.World, rt.Templates) }
+
+// checkSpawnIn is checkSpawn against a given World and Templates: the
+// Engine's in effect, when a waiting server's first content arrives
+// (AW-SRV-042).
+func (rt *Runtime) checkSpawnIn(world *sim.World, templates *sim.TemplateRegistry) error {
 	zone, room, err := rt.Cfg.SpawnRoom()
 	if err != nil {
 		return err
 	}
 	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
-	if _, ok := rt.World.Resolve(spawn); !ok {
+	if _, ok := world.Resolve(spawn); !ok {
 		return fmt.Errorf("character.spawn_room %q does not resolve against the loaded content", rt.Cfg.CharacterSpawnRoom)
 	}
-	if _, ok := rt.Templates.Get(sim.CharacterTemplate); !ok {
+	if _, ok := templates.Get(sim.CharacterTemplate); !ok {
 		return fmt.Errorf("the loaded content has no %s template; a Character cannot be made from it", sim.CharacterTemplate)
 	}
 	return nil

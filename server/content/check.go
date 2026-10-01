@@ -55,7 +55,7 @@ func (l *Loader) CheckPublish(ctx context.Context, candidate *Resolved) (refusin
 	delete(base, candidate.Pack)
 	vctx, span := l.tracer.Start(ctx, "content.validate")
 	defer span.End()
-	_, refusing, warnings = l.build(vctx, base, candidate)
+	_, refusing, warnings = l.build(vctx, base, candidate, false)
 	span.SetAttributes(attribute.Int("error_count", len(refusing)), attribute.Int("warning_count", len(warnings)))
 	return refusing, warnings
 }

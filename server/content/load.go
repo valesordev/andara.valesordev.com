@@ -122,6 +122,15 @@ func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError)
 	return c, nil
 }
 
+// OverLoader is a store-backed Content over a Loader whose store isn't a
+// broker: everything a content.source=kafka Content does except follow the
+// Active Pointer topic, which it has none of. The boot's tests use it to
+// decide what a store-backed boot does without a broker (AW-SRV-042).
+func OverLoader(o Options, l *Loader) *Content {
+	o.Source = SourceKafka
+	return &Content{opts: o, loader: l}
+}
+
 // Loader is the kafka source's Loader, nil for dir: the publish path runs
 // its checks (AW-SRV-013).
 func (c *Content) Loader() *Loader { return c.loader }
@@ -450,6 +459,7 @@ func (d *dirContent) Reconcile(ctx context.Context) error {
 	}
 	digest := sim.ContentDigest(topo)
 	swap.WorldDigest = digest[:]
+	swap.ZoneCount = zoneCount(topo)
 	if producer == nil {
 		return fmt.Errorf("content: no producer for the genesis swap")
 	}

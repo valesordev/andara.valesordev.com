@@ -64,6 +64,10 @@ func (c *VersionedContent) Prepare(inEffect map[string]uint64, swap *logv1.Conte
 			inputs = append(inputs, sim.Input{File: d.GetId() + ".json", Def: d})
 		}
 	}
+	if len(inputs) == 0 {
+		// Packs with no Zones, as andara.core's Templates alone are.
+		return sim.Topology{World: sim.EmptyWorld(), Templates: c.Templates}, nil
+	}
 	w, errs := sim.BuildWorld(inputs, sim.Options{})
 	if w == nil {
 		return sim.Topology{}, fmt.Errorf("simtest: build: %v", errs)

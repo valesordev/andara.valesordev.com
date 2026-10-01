@@ -35,6 +35,9 @@ type fileConfig struct {
 	Server *struct {
 		Address *string `yaml:"address"`
 		TLSCA   *string `yaml:"tls_ca"`
+		// TLSServerName is the name the server's certificate is verified
+		// against, when it isn't the dialed host (AW-SRV-042).
+		TLSServerName *string `yaml:"tls_server_name"`
 	} `yaml:"server"`
 	Output      *string `yaml:"output"`
 	LogLevel    *string `yaml:"log_level"`
@@ -50,6 +53,8 @@ type resolved struct {
 	ServerAddressSrc Source
 	TLSCA            string
 	TLSCASrc         Source
+	TLSServerName    string
+	TLSServerNameSrc Source
 	Output           string
 	OutputSrc        Source
 	LogLevel         string
@@ -67,6 +72,7 @@ func (r *resolved) list() []Setting {
 		{Key: "config", Value: r.ConfigPath, Source: r.ConfigSource},
 		{Key: "server.address", Value: r.ServerAddress, Source: r.ServerAddressSrc},
 		{Key: "server.tls_ca", Value: r.TLSCA, Source: r.TLSCASrc},
+		{Key: "server.tls_server_name", Value: r.TLSServerName, Source: r.TLSServerNameSrc},
 		{Key: "output", Value: r.Output, Source: r.OutputSrc},
 		{Key: "log_level", Value: r.LogLevel, Source: r.LogLevelSrc},
 		{Key: "timeout", Value: r.Timeout.String(), Source: r.TimeoutSrc},
@@ -76,14 +82,15 @@ func (r *resolved) list() []Setting {
 }
 
 var knownConfigKeys = map[string]bool{
-	"server":         true,
-	"server.address": true,
-	"server.tls_ca":  true,
-	"output":         true,
-	"log_level":      true,
-	"timeout":        true,
-	"no_color":       true,
-	"credentials":    true,
+	"server":                 true,
+	"server.address":         true,
+	"server.tls_ca":          true,
+	"server.tls_server_name": true,
+	"output":                 true,
+	"log_level":              true,
+	"timeout":                true,
+	"no_color":               true,
+	"credentials":            true,
 }
 
 func loadConfigFile(path string) (*fileConfig, error) {
@@ -188,12 +195,13 @@ func (rt *runtime) resolveSettings(cmdFlags changedFlags, file *fileConfig) (*re
 	configEnv, configEnvSet := rt.lookupEnv("ANDARA_CONFIG")
 	r.ConfigPath, r.ConfigSource = resolveString(cmdFlags.configChanged, cmdFlags.config, configEnvSet, configEnv, nil, rt.defaultConfigPath())
 
-	var fileServerAddr, fileTLSCA, fileOutput, fileLogLevel, fileTimeout, fileCreds *string
+	var fileServerAddr, fileTLSCA, fileTLSServerName, fileOutput, fileLogLevel, fileTimeout, fileCreds *string
 	var fileNoColor *bool
 	if file != nil {
 		if file.Server != nil {
 			fileServerAddr = file.Server.Address
 			fileTLSCA = file.Server.TLSCA
+			fileTLSServerName = file.Server.TLSServerName
 		}
 		fileOutput = file.Output
 		fileLogLevel = file.LogLevel
@@ -207,6 +215,9 @@ func (rt *runtime) resolveSettings(cmdFlags changedFlags, file *fileConfig) (*re
 
 	tlsEnv, tlsEnvSet := rt.lookupEnv("ANDARA_TLS_CA_FILE")
 	r.TLSCA, r.TLSCASrc = resolveString(cmdFlags.tlsCAChanged, cmdFlags.tlsCA, tlsEnvSet, tlsEnv, fileTLSCA, "")
+
+	snEnv, snEnvSet := rt.lookupEnv("ANDARA_TLS_SERVER_NAME")
+	r.TLSServerName, r.TLSServerNameSrc = resolveString(cmdFlags.tlsServerNameChanged, cmdFlags.tlsServerName, snEnvSet, snEnv, fileTLSServerName, "")
 
 	outEnv, outEnvSet := rt.lookupEnv("ANDARA_OUTPUT")
 	r.Output, r.OutputSrc = resolveString(cmdFlags.outputChanged, cmdFlags.output, outEnvSet, outEnv, fileOutput, outputHuman)
@@ -327,6 +338,8 @@ type changedFlags struct {
 	serverAddressChanged bool
 	tlsCA                string
 	tlsCAChanged         bool
+	tlsServerName        string
+	tlsServerNameChanged bool
 	output               string
 	outputChanged        bool
 	logLevel             string

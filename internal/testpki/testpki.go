@@ -34,8 +34,22 @@ type PKI struct {
 	Cache tls.ClientSessionCache
 }
 
-// New writes ca.pem, server.pem, and server-key.pem into a temp dir.
+// New writes ca.pem, server.pem, and server-key.pem into a temp dir, the
+// server's certificate naming localhost and the loopback addresses.
 func New(t *testing.T) *PKI {
+	t.Helper()
+	return issue(t, []string{"localhost"}, []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback})
+}
+
+// NewFor is New with a server certificate naming only names: a pod reached
+// through a port-forward, whose certificate names its Service, not the
+// loopback address it's dialed at (AW-SRV-042).
+func NewFor(t *testing.T, names ...string) *PKI {
+	t.Helper()
+	return issue(t, names, nil)
+}
+
+func issue(t *testing.T, dnsNames []string, ips []net.IP) *PKI {
 	t.Helper()
 	dir := t.TempDir()
 
@@ -72,8 +86,8 @@ func New(t *testing.T) *PKI {
 		NotAfter:     time.Now().Add(24 * time.Hour),
 		KeyUsage:     x509.KeyUsageDigitalSignature,
 		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		DNSNames:     []string{"localhost"},
-		IPAddresses:  []net.IP{net.IPv4(127, 0, 0, 1), net.IPv6loopback},
+		DNSNames:     dnsNames,
+		IPAddresses:  ips,
 	}
 	leafDER, err := x509.CreateCertificate(rand.Reader, leafTmpl, caCert, &leafKey.PublicKey, caKey)
 	if err != nil {

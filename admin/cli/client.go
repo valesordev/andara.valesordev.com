@@ -47,7 +47,11 @@ var propagator = propagation.NewCompositeTextMapPropagator(propagation.TraceCont
 
 // httpClient builds the TLS transport for the configured server.
 func (rt *runtime) httpClient() (*http.Client, error) {
-	cfg := &tls.Config{MinVersion: tls.VersionTLS12}
+	// server.tls_server_name sets only the name the certificate is verified
+	// against: the dial is still server.address, and so is the key the
+	// credential is stored under (AW-SRV-042), as through a port-forward to
+	// a pod whose certificate names its Service.
+	cfg := &tls.Config{MinVersion: tls.VersionTLS12, ServerName: rt.settings.TLSServerName}
 	if ca := rt.settings.TLSCA; ca != "" {
 		pem, err := os.ReadFile(ca)
 		if err != nil {

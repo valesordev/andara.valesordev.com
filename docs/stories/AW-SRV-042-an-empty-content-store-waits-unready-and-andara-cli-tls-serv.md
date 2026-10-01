@@ -4,7 +4,7 @@ title: An empty content store waits, unready — and andara-cli --tls-server-nam
 epic: EPIC-05
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-012, AW-SRV-013, AW-CLI-001]
 blocks: [AW-INF-021]
@@ -248,3 +248,34 @@ section is pasted as written. Amended here:
    the Interface contract. AC-3 names the record-decidable refusals.
 
 The story is `ready`. It's SPRINT-03 implementation item 11, the last code on the M3 demo's path.
+
+## Implementation record (2026-10-01)
+
+On `impl/aw-srv-042-empty-store-waits`.
+- **The decision:** `boot.worldHadZones` walks the World Partition's swap records alone and
+  decides each as `prepareSwaps` does for `misrouted` and `stale_base`.
+- **Entering:** `ReconcileContent` waits when a store-backed World has never had Zones.
+- **Leaving:** `contentApplied` ends the wait on the first swap with Zones that holds the spawn
+  Room. `MarkStarted` and `/startedz` separate started from ready.
+- **Elsewhere:** the Gateway refuses `OpenSession`; the Loader sets `zone_count` and widens the
+  spawn rule; the CLI resolves `server.tls_server_name`.
+
+Decisions are in `docs/feedback/AW-SRV-042-empty-store-waits.md`, "Implementation, 2026-10-01".
+
+| AC | Covered by | Result |
+|----|------------|--------|
+| 1 | `boot` `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` (the real `ReconcileContent` over an empty in-memory store, through `content.OverLoader`: exit 0, waiting, unready, the `warn` line once). `TestWait_StartedUnreadyThenReady` (`/startedz` 200 and `/readyz` 503 while waiting). `gateway` `TestOpenSession_RefusedWhileWaitingForContent` (`UNAVAILABLE`, `andara.game` / `no_content_in_effect`, `rejected_no_content` 0 → 1, the debug line, Admin served). `smoke` `TestLive_EmptyStoreWaits` on a fresh kafka stack | pass in process; the stack run is SRE's (feedback, For SRE) |
+| 2 | `boot` `TestReconcileContent_TheFirstZonesThroughTheLoopEndTheWait`: the store gains `andara.core` and a town holding the spawn Room, and a reconcile brings them in through the tick loop. Its `contentApplied` ends the wait, ready with no restart, and the `info` line carries `zones`. `TestWait_StartedUnreadyThenReady` checks the line's `pack@version` and `trace_id`. Mutation-checked: without the hook in `contentApplied`, it never leaves | pass |
+| 3 | `boot` `TestWorldHadZones_FromTheRecordsAlone` (ten cases, including a stale-only log, a misrouted-only log, and a refused swap then a good one). `TestWorldHadZones_AgreesWithTheEngine`: a real Engine over applied, stale, misrouted and good swaps, with the walk agreeing after every record. `TestReconcileContent_…`: an applied Zone swap exits 1 with "no content in effect", and a refused-only one waits. Mutation-checked: without the stale-base rule, four cases fail | pass |
+| 4 | `TestReconcileContent_…` "a directory with no Zones: exits" | pass |
+| 5 | `admin/cli` `TestTLSServerName_VerifiesAgainstTheNamedHost`: a gateway whose certificate names only `andara-0.andara.test.svc` (`testpki.NewFor`), dialed at `127.0.0.1`. With the name, by flag, env or config, login succeeds, and the credential is keyed by the dialed address. Without it, exit 3. `config show` reports flag over env over file. Mutation-checked: without `ServerName`, it fails | pass |
+| 6 | `TestReconcileContent_…`: two boots over the same empty log both wait. One over a log with an applied Zone swap doesn't wait; with Zones in the store it recovers Ready, the ordinary path | pass |
+| 7 | `TestWait_StartedUnreadyThenReady` and `TestWait_LeavingBeforeStartAndDuringDrain`: draining, `/readyz` 503 and `/startedz` 200, and content arriving mid-drain doesn't make it ready | pass |
+| 8 | `content` `TestActivateVersion_TheFirstZonesMustHoldTheSpawnRoom`: with only `andara.core` in effect, a first town without `purgatory/start` is refused `FAILED_PRECONDITION` `spawn_room_removed` (`purgatory/start`), and the pointer and World are unchanged. One that holds it activates. Mutation-checked: with the old "had it" rule, it fails | pass |
+| 9 | `content` `TestLoader_SwapsCarryTheWorldsZoneCount`: core, docks, town produce `zone_count` 0, 1, 2, and a fresh Engine replaying the records holds exactly that many Zones after each | pass |
+
+`make check` passes.
+
+**Not done here, and why:**
+- **The stack run of AC-1, AC-2 and AC-6** needs SRE's kafka-content compose (#288), since topic
+  names are constants (feedback, For SRE). The smoke test for it is in this PR.

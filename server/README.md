@@ -12,7 +12,7 @@ server/sim/        simulation core — types, BuildWorld, PartitionFor, Canonica
 server/content/    ZoneDefinition source adapters (dir now; Kafka in AW-SRV-012)
 server/gateway/    the Protocol endpoint — TLS, Sessions, version negotiation, interceptors, drain
 server/canonical/  deterministic protobuf encoding for anything that feeds the State Hash
-server/boot/       load orchestration, /livez /readyz /metrics
+server/boot/       load orchestration, /livez /startedz /readyz /metrics
 server/config/     flag > env > file > default
 server/telemetry/  JSON logs, Prometheus registry, boot traces
 ```
@@ -34,7 +34,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `content.operator_self_approval` | `ANDARA_CONTENT_OPERATOR_SELF_APPROVAL` | `true` | An Operator may approve a version they published, flagged `self_approval` (ADR-0004, amended 2026-09-26). Off, it's refused like a Builder's. Kafka only. |
 | `content.reload_debounce` | `ANDARA_CONTENT_RELOAD_DEBOUNCE` | `2s` | How long a burst of pointer moves is coalesced before it is applied. Kafka only. |
 | `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. |
-| `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/readyz`, `/metrics`. Plaintext, operator surface. |
+| `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/startedz`, `/readyz`, `/metrics`. Plaintext, operator surface. |
 | `telemetry.otlp_endpoint` | `ANDARA_OTLP_ENDPOINT` | `localhost:4317` | Traces and logs go to this collector over OTLP/gRPC (AW-SRV-024). Empty disables both exporters; an endpoint the exporter cannot be built for is fatal. |
 | `telemetry.service_name` | `ANDARA_SERVICE_NAME` | `andara-server` | |
 | `telemetry.environment` | `ANDARA_ENV` | `local` | |
@@ -123,8 +123,16 @@ a key this binary would ignore.
 
 `ANDARA_SIM_PARTITIONS` is the one variable the chart sets that is not a value: the `partitions`
 init container derives it from the pod ordinal (`p mod replicaCount == ordinal`, over 0–63) and
-the server container sources it before exec. Probes: startup and readiness on `/readyz`, liveness
-on `/livez`, all on `http.port`. `/livez` must never depend on Kafka or a datastore.
+the server container sources it before exec. Probes, all on `http.port`:
+
+| Path | 200 when | Probe |
+|------|----------|-------|
+| `/livez` | always, while the process runs. It must never depend on Kafka or a datastore | liveness |
+| `/startedz` | recovery has finished and the gRPC listener serves, whether or not the World waits for content. It stays 200 until exit, through the drain (`AW-SRV-042`) | startup |
+| `/readyz` | content is in effect and the server isn't draining. 503 while it waits for content | readiness |
+
+Start-up is judged on `/startedz`, not `/readyz`. A fresh environment waits for its
+first content indefinitely, and a startup probe on `/readyz` would restart it forever.
 
 Dir-mode files are protobuf JSON (`formatVersion`, one Zone per `.json` file). That is the test
 and CLI surface, not the Builder language (ADR-0009).
@@ -1012,9 +1020,29 @@ for apply. If it runs out, as with a Partition 0 frozen by a Zone fault, every p
 `store_unavailable` and deferred to `Follow`'s retry, and the boot carries on with what the log
 recorded. On an empty log that's
 **genesis**: one swap per followed pack, `andara.core` first, then by `pack_id`. After a restart
-it's whatever moved while the process was down. A boot that ends with no Zones in effect exits 1.
-The roster's spawn Room is checked against that content, the Gateway starts, and only then is the
-process ready (`/readyz` 200). `FollowContent` then applies Active Pointer moves for as long as the
+it's whatever moved while the process was down. A boot that ends with no Zones in effect exits 1,
+with one exception.
+
+**Waiting for content** (`AW-SRV-042`). With `content.source=kafka`, a World that has never had
+Zones (no swap with `zone_count > 0` has applied in its log) is a fresh environment, and it waits:
+- The Gateway serves, Admin is served in full, and `/startedz` is 200.
+- `/readyz` is 503.
+- `OpenSession` is refused `UNAVAILABLE`, with `ErrorInfo{andara.game, no_content_in_effect}`,
+  counted `andara_sessions_total{outcome="rejected_no_content"}`.
+- A `warn` line, `waiting for content: …`, is written once.
+
+The decision reads the World Partition's swap records alone, never the store, deciding each as the
+Engine does on the two refusals a record settles (`misrouted`, `stale_base`). So it holds when the
+store refuses every version. A World that has had Zones, and a directory with none, still exit 1.
+
+The wait ends when the first swap with Zones applies through the tick loop, after an Active Pointer
+move. The server logs `content in effect: leaving the wait` with `zones` and `pack@version`, and
+becomes ready with no restart. While it waits, the Loader refuses an activation whose World would
+have Zones but lack `character.spawn_room` (`spawn_room_removed`). Every swap the Loader produces
+carries `zone_count`, the Zones in the World after it.
+
+Otherwise the roster's spawn Room is checked against that content, the Gateway starts, and only
+then is the process ready (`/readyz` 200). `FollowContent` then applies Active Pointer moves for as long as the
 process runs, starting with a retry of anything reconcile could not load for the store's sake. A
 pack in effect that `content.packs` no longer names is logged at `warn`.
 
