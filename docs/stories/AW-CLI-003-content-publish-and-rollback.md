@@ -366,3 +366,14 @@ confirmation line's test lands. By the ruling's reading, "under
 store-backed path's live observation is carried by `AW-INF-021` as an inherited line, as CLAUDE.md §8
 allows while no environment has the caller. *(Revised before merge, from Codex on #276. The first
 push held the item open on a question architecture had already ruled on.)*
+
+## Implementation record, addendum (2026-09-30): §8 items owed
+
+On `impl/aw-cli-003-owed`, for the §8 review's "What closes it":
+
+| Item | Covered by | Result |
+|------|------------|--------|
+| AC-7 | `TestContentDiff_ZonesTemplatesAndFields`: `town@1` → `town@2` diffs to a Zone removed (`(town@1 purgatory.aw:1)`), a Zone added (`garden.aw:1`), and on Templates a field changed (`town.Merchant` `npcs.aw:12`), removed (`town.Guard` `npcs.aw:30`) and added (`town.Lantern` `items.aw:3`). Under `--output json` every change has `file` and `line` | pass. Mutation-checked: with `diffComponents` emptied, three lines go missing and the test fails |
+| `fetch`/`diff` reasons | `fetchVersion` maps through `contentError`, as every publish-path command does. `TestContentFetchAndDiff_ServerReasons`: an unpublished version is `not_found`, and a pack not held is `pack_not_held`, for each command | pass. Mutation-checked: with `rpcError`, all four lose their reason |
+| Stale parent | `TestContentPublish_StaleParent`, and `TestContentPublish_StaleParentOverRedpanda` on throwaway topics. A publish whose parent another publish overtakes, between its uploads and its `PublishVersion`, exits 1 `stale_parent` with `run \`content history town\` and publish again`. Nothing is written or retried. The overtaking publish lands through a test seam, `runtime.beforePublishVersion` | pass, and passes on the local Redpanda |
+| Confirmation line | `TestContentActivate_ConfirmationLineJoinsTheServersRecord`: for `activate` and `rollback` at `--log-level info`, the line decodes as `{ts, level, msg, command, trace_id}` with the confirmation text. Its `trace_id` equals the JSON result's and the server's `activate` or `rollback` audit record's | pass. The test stack trusts the inbound `traceparent`, as compose does (`ANDARA_TRUST_INBOUND_TRACEPARENT`). With the chart's default of `false`, the server's trace is its own root, linked to the CLI's |

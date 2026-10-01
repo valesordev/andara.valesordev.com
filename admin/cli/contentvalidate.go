@@ -341,21 +341,21 @@ func (rt *runtime) fetchVersion(pack string, version uint64) (*contentv1.Content
 	defer cancel()
 	resp, err := client.GetVersion(ctx, connect.NewRequest(&adminv1.GetVersionRequest{PackId: pack, Version: version}))
 	if err != nil {
-		return nil, nil, rpcError(err)
+		return nil, nil, rt.contentError(err)
 	}
 	cv := resp.Msg.GetVersion()
 	bodies := make(map[string][]byte, len(cv.GetBlobs()))
 	for _, ref := range cv.GetBlobs() {
 		stream, err := client.GetBlob(ctx, connect.NewRequest(&adminv1.GetBlobRequest{PackId: pack, Version: version, Hash: ref.GetHash()}))
 		if err != nil {
-			return nil, nil, rpcError(err)
+			return nil, nil, rt.contentError(err)
 		}
 		var buf bytes.Buffer
 		for stream.Receive() {
 			buf.Write(stream.Msg().GetData())
 		}
 		if err := stream.Err(); err != nil && !errors.Is(err, io.EOF) {
-			return nil, nil, rpcError(err)
+			return nil, nil, rt.contentError(err)
 		}
 		if sum := sha256.Sum256(buf.Bytes()); !bytes.Equal(sum[:], ref.GetHash()) {
 			return nil, nil, &AppError{Exit: ExitFail, Code: "blob_hash_mismatch",
