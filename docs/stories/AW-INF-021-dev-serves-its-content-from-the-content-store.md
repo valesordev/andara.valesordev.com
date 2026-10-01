@@ -4,7 +4,7 @@ title: dev serves its content from the content store
 epic: EPIC-05
 component: infra
 type: infra
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019, AW-SRV-037, AW-SRV-042]
 blocks: [AW-INF-022, AW-INF-023]
