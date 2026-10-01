@@ -401,10 +401,15 @@ Option 3 couples the binary to test content, which is what SRE said. The contrac
 Implementation builds the server and CLI halves, and SRE builds the chart and `content-seed` halves.
 
 ### Server (implementation)
-- **When it waits.** With `content.source=kafka`, a World log that holds no Content Swap with Zones,
-  and no followed pack whose Active Pointer loads Zones, the server is **waiting for content**.
-  Today's exit stays for every other case:
-  - a World that *had* content (the log holds a swap with Zones) whose store now refuses it still
+- **When it waits.** With `content.source=kafka`, the server is **waiting for content** when both of
+  these hold:
+  - the World recovered from the log has never had Zones in effect: no Content Swap with Zones has
+    *applied*;
+  - no followed pack's Active Pointer loads Zones.
+
+  A swap the sim refused (`stale_base` and the rest) is a deterministic no-op, so it doesn't count,
+  even though it's in the log. Today's exit stays for every other case:
+  - a World in which a swap with Zones has applied, and whose store now refuses its content, still
     exits `1` with "no content in effect" (`AW-SRV-012`);
   - `content.source=dir` with no Zones still exits `1` (`AW-SRV-001` AC-9). An empty directory is a
     configuration error.
@@ -416,9 +421,20 @@ Implementation builds the server and CLI halves, and SRE builds the chart and `c
   - **Game refuses `OpenSession`** with `UNAVAILABLE`, `ErrorInfo` domain `andara.game`, reason
     `no_content_in_effect`. It's retryable.
   - No Zone ticks, because there's no Zone.
-- **It leaves waiting** on the first Active Pointer move that brings Zones. That move goes through
-  today's `FollowContent` → `ReconcileContent` path, unchanged, and the server becomes Ready. It
-  never goes back to waiting: once a swap with Zones is in the log, the World has had content.
+- **It leaves waiting** when the first swap with Zones applies, after an Active Pointer move.
+  That goes through today's `FollowContent` → `ReconcileContent` path, unchanged, and the server
+  becomes Ready. It never goes back to waiting: once a swap with Zones has applied, the World has
+  had content, after a restart too. If that swap is refused, the server is still waiting, live and
+  after a restart.
+- **The first content must hold the spawn Room.** While the server waits, `ActivateVersion` refuses
+  a version whose resulting World lacks `character.spawn_room`, with `FAILED_PRECONDITION` and
+  reason `spawn_room_removed`, naming the Room (`AW-SRV-013` AC-14). That reason's meaning widens
+  from "removes the spawn Room the World in effect has" to "the World after this move would lack
+  `character.spawn_room`". Once the World is Ready the two are the same, because boot's
+  `CheckSpawnInEffect` already holds it. The reason set doesn't change. Without this, the first
+  content could make the server Ready with nowhere to create a Character, and the next boot's
+  `CheckSpawnInEffect` would exit `1` in a loop. When the spawn Room is in another pack, the Builder
+  activates that pack first. On `dev`, the fixture pack `town` holds `purgatory/start`.
 - **Health endpoints**, on `http.port`:
 
   | Path | 200 when |
@@ -459,12 +475,20 @@ ahead of AW-INF-021's merge. Its ACs:
    succeeds, and the `warn` line appears once.
 2. Publish, approve and activate a Zone-bearing pack over Admin, and the server becomes Ready with
    no restart, logging the `info` line. `OpenSession` then succeeds.
-3. A log holding a swap with Zones, whose store now refuses every version, still exits `1`
-   (unchanged).
+3. A World in which a swap with Zones has applied, whose store now refuses every version, still
+   exits `1` (unchanged). A log whose only swap with Zones was *refused* (e.g. `stale_base`) waits,
+   live and after a restart.
 4. `dir` mode with no Zones still exits `1` (unchanged).
 5. `--tls-server-name` verifies against the named host. A port-forward to a pod whose certificate
    names `andara-0.andara.<ns>.svc` succeeds with it, and fails verification without it.
 6. Restarting a waiting server waits again, with no exit loop. Restarting after the first swap
    recovers Ready.
+7. While waiting, activating a Zone-bearing version that lacks `character.spawn_room` is refused
+   `spawn_room_removed`, naming the Room, and the server stays waiting. Activating one that holds
+   it ends the wait.
 
 AW-INF-021 then depends on it, and its AC-7 is observed through it.
+
+*(Revised 2026-10-01 on Codex's review of #289. "Had content" now means a swap with Zones has
+applied, not that one is in the log. And the first content must hold the spawn Room, enforced at
+activation.)*
