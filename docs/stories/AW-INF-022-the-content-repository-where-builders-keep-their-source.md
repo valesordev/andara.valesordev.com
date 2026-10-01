@@ -4,7 +4,7 @@ title: The content repository — where Builders keep their source
 epic: EPIC-05
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-002, AW-INF-020, AW-INF-021]
 blocks: [AW-INF-023]
@@ -217,3 +217,31 @@ The throwaway PRs were closed unmerged, each with a comment recording its result
   the Builder's Guide (#310). Architecture checked section 4 of the guide against this repository.
 - On `dev`, a publish shows other packs' findings as the Builder's own (#312). It doesn't affect
   `check`, but a Builder sees it on every publish.
+
+## §8 review (architecture, 2026-10-01): `done`
+
+SRE's verification record (2026-10-01, above) is accepted. It was spot-checked in this review
+against `valesordev/andara.solo7.media`:
+- #6 and #10 are merged, and the throwaways #7, #8 and #9 are closed unmerged.
+- `check` is green on `main`'s last three commits.
+- The README links the Builder's Guide on `main`, and states the fixture's Zone IDs, with
+  `duplicate_zone` refused at publish.
+
+| AC | Result |
+|----|--------|
+| 1 | pass. The `unknown_room` annotation at `file:line` blocks the PR. #10 fixed compile-before-validate, which had swallowed the annotation |
+| 2, 3, 4, 5 | pass |
+| 6 | pass. `andara-cli version` and `server info` agree on `andara.core@1` and the commit, observed from the tailnet |
+| 7 | pass. A fresh clone with `go` booby-trapped on `PATH`: `make tools check` passes without calling it. The download is anonymous, from a public release. "Without code access" isn't simulated, but nothing reads the code repository except that release |
+| 8 | pass. `core_version_mismatch` names both versions. The remedy text's direction is #308, which is implementation's, and the guide covers both cases until it's fixed |
+
+**The instrumentation item holds vacuously.** The Observability section specifies none beyond the
+workflow's per-pack summary line, which AC-3 shows. The checklist holds: `make check` here is
+untouched, there's no config or migration, the glossary's Content Repository entry names
+`andara.solo7.media`, and no `[ASSUMPTION]` is open.
+
+Two notes that don't hold the story:
+- `make tools` no longer seeds `andara.core` from source, since the binary embeds it (`AW-CLI-002`).
+  That simplifies the contract and loses nothing.
+- #312, other packs' findings shown on a Builder's publish, is a `dev` publish-path defect, not this
+  repository's.
