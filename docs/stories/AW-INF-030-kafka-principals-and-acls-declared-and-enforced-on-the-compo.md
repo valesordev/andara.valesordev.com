@@ -70,8 +70,7 @@ proves it.
    `andara-projector-state` and the superuser produces to `andara.state.v1` **then** the broker
    rejects it with an authorization error, and `andara-projector-state` succeeds. The test reads the
    principals from `topics.yaml`, so a principal declared later is covered without editing the
-   test. *(This is `AW-SRV-019` AC-9, asserted in CI, with the superuser exemption in Open
-   questions, item 1.)*
+   test. *(This is `AW-SRV-019` AC-9 as #315 amends it, asserted in CI.)*
 3. **Given** `andara-projector-state`'s credentials **when** they produce to the commands or events
    topic **then** the broker rejects it.
 4. **Given** `make topics-apply` on the compose stack **then** every principal and ACL in
@@ -143,21 +142,19 @@ No topic, offset or record changes. `dev` is untouched until `AW-INF-031`.
 CLAUDE.md §8, plus:
 - **Inherited from `AW-SRV-019` AC-9:** every declared principal other than `andara-projector-state`
   and the operator superuser is refused when it produces to `andara.state.v1`, asserted in CI on the
-  compose stack (AC-2, AC-8, AC-9). The superuser exemption is pending architecture's amendment of
-  AC-9 (Open questions, item 1).
+  compose stack (AC-2, AC-8, AC-9). This is AC-9 as #315 amends it, exempting the operator
+  superuser.
 
 ## Open questions
 
-1. **For architecture: AC-9 and the superuser.** ADR-0011 makes `andara-operator` a superuser, and
-   a superuser bypasses ACLs. So `AW-SRV-019` AC-9, "any Kafka principal other than
-   `andara-projector-state` … is rejected", can't hold literally. Found by Codex on #316. PM's
-   proposal follows ADR-0011, which keeps the superuser and names the audit gap in its
-   *Consequences*:
-   - narrow AC-9 to "any principal other than `andara-projector-state` and the operator superuser";
-   - hold the superuser to exactly one, never mounted by a workload (AC-9 above).
-
-   The alternative is to replace the superuser with scoped administrative ACLs. That reverses
-   ADR-0011 decision 3, and so it needs an ADR amendment. `AW-SRV-019` is at `review`, so its AC
-   wording is yours to amend.
+1. **Ruled 2026-10-01 (architecture); resolved when #315 merges: AC-9 and the superuser.** Option
+   (a). #315 amends `AW-SRV-019` AC-9 to "any Kafka principal declared in `deploy/kafka/topics.yaml` other than
+   `andara-projector-state` and the operator superuser `andara-operator` … is rejected".
+   ADR-0011 decision 3 accepts the superuser's audit gap, and bounds it: one superuser, used by the
+   `rpk` toolbox only, with no workload mounting its Secret. AC-2 asserts the amended criterion, and
+   AC-9 asserts the bound. Scoped admin ACLs (option (b)) weren't taken, since they would reopen an
+   accepted ADR for a gap it already names. **Until #315 is on `main`,** `AW-SRV-019` AC-9 still
+   reads "any principal other than `andara-projector-state`", and this story's AC-2 is narrower than
+   it. This story can't reach `ready` until then.
 2. `[ASSUMPTION]` `KafkaUser` manifests are rendered and validated here (`k8s-dry`), but first
   applied by `AW-INF-031`, because the User Operator isn't enabled before then.
