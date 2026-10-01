@@ -14,6 +14,9 @@ const (
 	OutcomeRejectedVersion = "rejected_version" // never established: version outside the range
 	OutcomeRejectedAuth    = "rejected_auth"    // never established: token rejected
 	OutcomeRevoked         = "revoked"          // closed by the recheck loop: Account disabled or roles changed
+	// OutcomeRejectedNoContent: never established, the World waiting for
+	// its first content (AW-SRV-042).
+	OutcomeRejectedNoContent = "rejected_no_content"
 )
 
 // Metrics is the AW-SRV-005 instrument set. Method labels are bounded by the
@@ -61,7 +64,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	// Every outcome is present from the first scrape, so a rate() over one
 	// that has not happened yet is zero rather than absent.
-	for _, o := range []string{OutcomeClosed, OutcomeDropped, OutcomeRejectedVersion, OutcomeRejectedAuth, OutcomeRevoked} {
+	for _, o := range []string{OutcomeClosed, OutcomeDropped, OutcomeRejectedVersion, OutcomeRejectedAuth, OutcomeRevoked, OutcomeRejectedNoContent} {
 		m.SessionsTotal.WithLabelValues(o)
 	}
 	if reg != nil {

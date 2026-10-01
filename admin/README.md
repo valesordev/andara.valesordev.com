@@ -50,11 +50,18 @@ Every command accepts these. Precedence is **flag > environment variable > confi
 | `--config` | `ANDARA_CONFIG` | `$XDG_CONFIG_HOME/andara/cli.yaml` | config file path |
 | `--server-address` | `ANDARA_SERVER_ADDRESS` | `localhost:8443` | gRPC/Connect endpoint over TLS |
 | `--tls-ca` | `ANDARA_TLS_CA_FILE` | empty (system trust store) | CA bundle to trust |
+| `--tls-server-name` | `ANDARA_TLS_SERVER_NAME` | empty (the host in `server.address`) | the name the server's certificate is verified against (`AW-SRV-042`) |
 | `--output` / `-o` | `ANDARA_OUTPUT` | `human` | `human` or `json` |
 | `--log-level` | `ANDARA_LOG_LEVEL` | `warn` | CLI diagnostics, to stderr |
 | `--timeout` | `ANDARA_TIMEOUT` | `30s` | per-command deadline |
 | `--no-color` | `NO_COLOR` | unset | disable ANSI output |
 | `--credentials` | `ANDARA_CREDENTIALS` | `$XDG_CONFIG_HOME/andara/credentials.yaml` | credential file path |
+
+`--tls-server-name` is for a port-forward: the CLI dials `localhost` while the
+pod's certificate names its Service (`andara-0.andara.<ns>.svc`). It sets only the
+name TLS verifies against. The dial target is still `server.address`, and so is the
+key the credential is stored under. Without it, such a dial fails verification and
+exits 3.
 
 There is no `--insecure` and no `--tls-skip-verify`. Passing either exits 2 and
 points at `--tls-ca`. TLS is unconditional (ADR-0003).
@@ -71,6 +78,7 @@ YAML. Unknown keys are a usage error — they are never silently ignored.
 server:
   address: localhost:8443
   tls_ca: /path/to/ca.pem
+  tls_server_name: andara-0.andara.dev.svc   # optional; see --tls-server-name
 output: human
 log_level: warn
 timeout: 30s

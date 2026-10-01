@@ -469,6 +469,10 @@ func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*si
 
 	cmd := &logv1.LoggedCommand{TraceId: traceParent, Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: &logv1.ContentSwap{
 		PackId: pack, Version: version, WorldDigest: digest[:], BaseDigest: base,
+		// The Zones in the whole World after this swap, as world_digest is
+		// the whole World's: what a boot reads to tell a World that has had
+		// content from one still waiting for its first (AW-SRV-042).
+		ZoneCount: zoneCount(topo),
 	}}}
 	var perr error
 	if producer == nil {
@@ -578,7 +582,7 @@ func (l *Loader) evaluate(ctx context.Context, pack string, version uint64, base
 
 	vctx, vspan := l.tracer.Start(ctx, "content.validate")
 	vstart := time.Now()
-	topo, findings, _ := l.build(vctx, base, res)
+	topo, findings, _ := l.build(vctx, base, res, true)
 	l.metrics.LoadDuration.WithLabelValues(PhaseValidate).Observe(time.Since(vstart).Seconds())
 	vspan.SetAttributes(attribute.Int("error_count", len(findings)))
 	vspan.End()
@@ -603,7 +607,10 @@ func refusal(findings []sim.ValidationError) error {
 // it with the findings that refuse it and the warnings that don't. A pack is
 // not validated alone: an Exit from town into a Zone that only core declares
 // is valid only in the whole.
-func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate *Resolved) (sim.Topology, []sim.ValidationError, []sim.ValidationError) {
+// moving is true for a pointer move (a load, or the activation check that
+// mirrors it), and false for the publish gate, which judges a version alone:
+// the spawn Room is a property of the World after a move (AW-SRV-042 AC-8).
+func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate *Resolved, moving bool) (sim.Topology, []sim.ValidationError, []sim.ValidationError) {
 	with := make(map[string]*Resolved, len(base)+1)
 	for p, r := range base {
 		with[p] = r
@@ -661,8 +668,15 @@ func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate
 	if built.World != nil {
 		topo.World = built.World
 	}
-	if candidate != nil && l.spawn.Zone != "" && len(findings) == 0 {
-		if _, had := spawnIn(base, l.spawn); had {
+	if candidate != nil && moving && l.spawn.Zone != "" && len(findings) == 0 {
+		// The World after this move must hold character.spawn_room: if it
+		// had it, or if the move brings Zones (AW-SRV-042 AC-8). The first
+		// content a waiting server takes is checked here too, or it would go
+		// Ready with nowhere to spawn and the next boot would exit. A move
+		// that leaves the World without Zones (andara.core's Templates) is
+		// one the spawn rule has nothing to say about.
+		_, had := spawnIn(base, l.spawn)
+		if had || zoneCount(topo) > 0 {
 			if _, ok := topo.World.Resolve(l.spawn); !ok {
 				findings = append(findings, sim.ValidationError{Zone: l.spawn.Zone, Room: l.spawn.Room, Code: sim.ErrSpawnRoomRemoved,
 					Detail: fmt.Sprintf("%s@%d has no Room %s/%s, which character.spawn_room names", candidate.Pack, candidate.Version, l.spawn.Zone, l.spawn.Room)})
@@ -782,7 +796,7 @@ func (l *Loader) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap) (s
 		}
 		base[p] = res
 	}
-	topo, findings, _ := l.build(ctx, base, nil)
+	topo, findings, _ := l.build(ctx, base, nil, false)
 	if len(findings) > 0 {
 		// A version the log says was applied no longer builds: a binary whose
 		// validator has changed under it. Halt rather than serve something
@@ -1147,6 +1161,14 @@ func servingVersions(serving map[string]*Resolved) map[string]uint64 {
 		out[p] = r.Version
 	}
 	return out
+}
+
+// zoneCount is the number of Zones in a topology's World.
+func zoneCount(t sim.Topology) uint32 {
+	if t.World == nil {
+		return 0
+	}
+	return uint32(len(t.World.Zones))
 }
 
 // stageKey names a set of versions: pack@version, sorted, comma-joined.

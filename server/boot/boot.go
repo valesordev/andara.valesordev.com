@@ -93,6 +93,11 @@ type Runtime struct {
 	// roster produces its BindCharacter and UnbindCharacter through it.
 	commandLog command.Producer
 	ready      atomic.Bool
+	// started, waiting and draining are AW-SRV-042's: the Gateway serves;
+	// the World is waiting for its first Zones; SIGTERM has begun the drain.
+	started  atomic.Bool
+	waiting  atomic.Bool
+	draining atomic.Bool
 	// worldNext is the tick loop's next-to-read offset on the World
 	// Partition, for worldBarrier; written on the loop's goroutine.
 	worldNext atomic.Int64
@@ -326,10 +331,21 @@ func (rt *Runtime) countComponents(set []sim.Component) int {
 	return len(set)
 }
 
-// Handler serves /livez, /readyz, and /metrics.
+// Handler serves /livez, /startedz, /readyz, and /metrics.
 func (rt *Runtime) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/livez", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ok\n"))
+	})
+	// /startedz: recovery has finished and the gRPC listener serves, whether
+	// or not the World waits for content. It stays 200 until exit, through
+	// the drain (AW-SRV-042): the probe a slow first start is judged by.
+	mux.HandleFunc("/startedz", func(w http.ResponseWriter, _ *http.Request) {
+		if !rt.started.Load() {
+			http.Error(w, "not started\n", http.StatusServiceUnavailable)
+			return
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok\n"))
 	})
@@ -355,6 +371,7 @@ func (rt *Runtime) Ready() bool {
 // a load balancer stops routing here while in-flight work finishes
 // (AW-SRV-005 AC-8).
 func (rt *Runtime) Drain() {
+	rt.draining.Store(true)
 	rt.ready.Store(false)
 }
 

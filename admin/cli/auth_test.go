@@ -57,7 +57,12 @@ func startServerWith(t *testing.T, base *liveServer, adjust func(*gateway.Option
 		}
 		return serve(t, opts, base.pki, base.store)
 	}
-	pki := testpki.New(t)
+	return startServerPKI(t, testpki.New(t), adjust)
+}
+
+// startServerPKI is startServerWith's first start, serving pki's certificate.
+func startServerPKI(t *testing.T, pki *testpki.PKI, adjust func(*gateway.Options)) *liveServer {
+	t.Helper()
 	kr, err := auth.ParseKeyring(strings.NewReader("k1: " + base64.StdEncoding.EncodeToString(bytes.Repeat([]byte{9}, 32)) + "\n"))
 	if err != nil {
 		t.Fatal(err)

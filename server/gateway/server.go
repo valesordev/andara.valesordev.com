@@ -80,6 +80,10 @@ type Options struct {
 	// Content reports the content in effect for GetServerInfo (AW-SRV-012):
 	// pack versions and their world_digest. Nil leaves the fields empty.
 	Content func() (map[string]uint64, [32]byte)
+	// ContentWaiting reports whether the World is waiting for its first
+	// content (AW-SRV-042): OpenSession is refused no_content_in_effect, and
+	// Admin is served as ever. Nil never waits.
+	ContentWaiting func() bool
 
 	// Seams. Nil selects the stub for each.
 	Ingress Ingress

@@ -144,6 +144,9 @@ type SwapApplied struct {
 	Version     uint64
 	Digest      [32]byte
 	Relocations []Relocation
+	// TraceParent is the swap record's trace (LoggedCommand.trace_id), for a
+	// log line about the swap to carry (AW-SRV-042).
+	TraceParent string
 }
 
 // Why a ContentSwap was refused: a deterministic no-op that consumes its
@@ -290,7 +293,7 @@ func fallbackless(w *World) ZoneID {
 // the second removes that Room too — and emits an EntityRelocated for each.
 func (e *Engine) applySwap(p preparedSwap, emit func(ZoneID, string, string, Scope, *gamev1.EventEnvelope)) SwapApplied {
 	s := e.state
-	out := SwapApplied{Pack: p.swap.GetPackId(), Version: p.swap.GetVersion(), Digest: p.digest}
+	out := SwapApplied{Pack: p.swap.GetPackId(), Version: p.swap.GetVersion(), Digest: p.digest, TraceParent: p.rec.Command.GetTraceId()}
 	w := p.topo.World
 
 	zids := make([]string, 0, len(s.Zones))
