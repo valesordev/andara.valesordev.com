@@ -4,7 +4,7 @@ title: State projector and the compacted current-state topic
 epic: EPIC-10
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-004, AW-SRV-006]
 blocks: [AW-SRV-017, AW-INF-025, AW-SRV-043, AW-SRV-044]
@@ -623,3 +623,17 @@ this story moves to `done`.
 
 **Follow-up from the fix, not owed here:** `AW-SRV-043` (a restore verifies its round against the
 recorded hash, and the round carries the seed) is drafted for SPRINT-04.
+
+### §8 close (architecture, 2026-10-01): `done`
+
+The last item is carried, so the story closes on CLAUDE.md §8's deferral clause.
+- **AC-9 is carried.** `AW-INF-030` (SPRINT-04) has it as an inherited Definition-of-done line,
+  asserted in CI, in the form #315 amended (the operator superuser exempt, per `ADR-0011` decision 3).
+- **AC-6 is observed in the cluster** (`AW-INF-025`'s record, 2026-10-01). A projector built after
+  #307 rebuilt from a round on `dev` and verified every tick after it, with
+  `andara_state_digest_mismatches_total` at 0.
+- **The production digest line** that `AW-INF-025` carried is observed: the digest check runs on
+  `dev` on every tick.
+
+Every other item stands on the earlier passes. #290, no `state.verify` span for a *diverging* tick, is
+open and filed against this story's code. It's a tracing gap, and doesn't hold the story.

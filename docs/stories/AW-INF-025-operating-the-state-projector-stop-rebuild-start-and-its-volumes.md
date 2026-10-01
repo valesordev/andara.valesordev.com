@@ -4,7 +4,7 @@ title: Operating the state projector — stop, rebuild, start, and its volumes
 epic: EPIC-10
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-019, AW-INF-018]
 blocks: []
@@ -486,3 +486,24 @@ observed in Grafana Cloud:**
 With ACs 1–8 observed (AC-2 on the re-run), the story's instrumentation item and every owed AC are
 met. Architecture's §8 can move it. *(Revised before merge, from Codex on #314: the first run's AC-2
 evidence didn't show checkpoint reuse.)*
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's record of 2026-10-01 (above) is accepted.
+- **AC-4** passes on `dev` with #307's fix: the Job started from the newest round, the Deployment
+  started from a newer one, and the projector caught up with 0 mismatches and no divergence.
+- **AC-2** passes on the re-run, read as amended. The Deployment's first `state projector started`
+  after the rebuild had `committed=true`, `committed_tick=78500` and `silent_through=78500`. It reused
+  the Job's checkpoint, which is the condition architecture set.
+  - The first run's `dump` path happened because a round landed between the Job's stop and the
+    Deployment's start. It's the designed fallback, and it left a correct projection.
+  - It isn't a defect, and the contract doesn't change: the condition is that reuse is shown, and
+    the re-run shows it.
+- **The instrumentation item is observed in Grafana Cloud:**
+  - `up`, with the lag and budget gauges;
+  - `kube_deployment_spec_replicas` at 1;
+  - the Job's `state.replay` → `state.verify` traces;
+  - the continuous digest line.
+
+ACs 1, 3, 5 to 8 stand on the earlier records. #290 (no span for a diverging tick) is open against
+`AW-SRV-019`'s code, and doesn't hold this story.
