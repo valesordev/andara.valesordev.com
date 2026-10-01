@@ -408,7 +408,13 @@ Implementation builds the server and CLI halves, and SRE builds the chart and `c
   - no followed pack's Active Pointer loads Zones.
 
   A swap the sim refused (`stale_base` and the rest) is a deterministic no-op, so it doesn't count,
-  even though it's in the log. Today's exit stays for every other case:
+  even though it's in the log. **How recovery knows** (decided 2026-10-01 on Codex's P1 on #292): `ContentSwap`
+  gains `uint32 zone_count = 5`, the number of Zones in the whole World after the swap, the same
+  scope as `world_digest`. The Loader sets it. "Has had Zones" means some swap in the recovered log
+  that *applied* has `zone_count > 0`. Whether a swap applied is decided from its digests alone,
+  so this is readable even when the store refuses the version's content. A swap written before the
+  field reads 0. `dev`'s switch runs `world-reset` in the same roll, so its log carries the field
+  from genesis. It's pinned in `log.proto` at `AW-SRV-042`'s contract review. Today's exit stays for every other case:
   - a World in which a swap with Zones has applied, and whose store now refuses its content, still
     exits `1` with "no content in effect" (`AW-SRV-012`);
   - `content.source=dir` with no Zones still exits `1` (`AW-SRV-001` AC-9). An empty directory is a
