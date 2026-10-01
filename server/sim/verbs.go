@@ -157,9 +157,9 @@ func validateMove(a *ApplyContext, cmd *logv1.LoggedCommand) (moveView, error) {
 	return moveView{}, &RejectError{Code: CodeNoSuchExit, Stage: StageValidate, Message: "there is no exit " + string(dir)}
 }
 
-// applyMove takes the Exit. In-Zone: the actor's Room changes and
+// applyMove takes the Exit. In-Zone: the actor's Room changes,
 // CharacterLeft and CharacterArrived are emitted for source and target
-// (AC-2). Cross-Zone: the actor leaves this Zone's state and an Arrive is
+// (AC-2), and the new Room is described to the mover alone (AW-SRV-038). Cross-Zone: the actor leaves this Zone's state and an Arrive is
 // produced to the target Zone's Partition, where it resolves on a later
 // tick — never as a call, whichever process owns the target (AC-9,
 // ADR-0001 rule 4).
@@ -185,6 +185,11 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		a.Emit(ScopeRoom(a.Zone.ID, v.exit.To.Room).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
 			ZoneId: string(a.Zone.ID), RoomId: string(v.exit.To.Room), CharacterName: name, FromDirection: string(from),
 		}}})
+		// The mover sees where they walked in (AW-SRV-038); a cross-Zone
+		// move's Arrive does the same in the target Zone.
+		if to, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: v.exit.To.Room}); ok {
+			describeTo(a, to, v.actor.ID)
+		}
 		return nil
 	}
 	delete(a.Zone.Entities, v.actor.ID)

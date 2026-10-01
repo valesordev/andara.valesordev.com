@@ -117,7 +117,7 @@ func TestScope_RoomMove(t *testing.T) {
 	world := f.sub(events.Observer{World: true}, gm)
 
 	f.step(simtest.Move("town", "alice", "north"))
-	if got := types(drain(world)); len(got) != 2 {
+	if got := types(drain(world)); len(got) != 3 {
 		t.Fatalf("GM saw %v, want every Event (AC-8)", got)
 	}
 	if got := types(drain(inA)); len(got) != 1 || got[0] != sim.EvCharacterLeft {
@@ -129,7 +129,9 @@ func TestScope_RoomMove(t *testing.T) {
 	if got := drain(inC); len(got) != 0 {
 		t.Fatalf("C saw %v", types(got))
 	}
-	if got := types(drain(mover)); len(got) != 2 || got[0] != sim.EvCharacterLeft || got[1] != sim.EvCharacterArrived {
+	// The mover alone is shown the Room it walked into (AW-SRV-038); the
+	// bystanders above read what they read before.
+	if got := types(drain(mover)); len(got) != 3 || got[0] != sim.EvCharacterLeft || got[1] != sim.EvCharacterArrived || got[2] != sim.EvRoomDescribed {
 		t.Fatalf("the mover saw %v", got)
 	}
 }
@@ -232,7 +234,7 @@ func TestOrdering(t *testing.T) {
 	}
 	f.step(simtest.Move("town", "alice", "south"))
 	got := drain(mover)
-	if len(got) != 6 {
+	if len(got) != 8 { // look, move (left, arrived, described), look, move (the same three)
 		t.Fatalf("deliveries = %v", types(got))
 	}
 	for i := 1; i < len(got); i++ {
@@ -474,13 +476,13 @@ func TestClientRefOnlyToOwnSession(t *testing.T) {
 	if res.Events[0].Envelope.GetClientRef() != "ref-42" {
 		t.Fatal("the sim's envelope lost its client_ref")
 	}
-	if got := drain(bob); len(got) != 2 || got[0].Envelope.GetClientRef() != "ref-42" {
+	if got := drain(bob); len(got) != 3 || got[0].Envelope.GetClientRef() != "ref-42" || got[2].Envelope.GetClientRef() != "ref-42" {
 		t.Fatalf("bob got %v", got)
 	}
 	if got := drain(alice); len(got) != 1 || got[0].Envelope.GetClientRef() != "" {
 		t.Fatalf("alice got another Session's client_ref: %v", got)
 	}
-	if got := drain(world); len(got) != 2 || got[0].Envelope.GetClientRef() != "" {
+	if got := drain(world); len(got) != 3 || got[0].Envelope.GetClientRef() != "" || got[2].Envelope.GetClientRef() != "" {
 		t.Fatalf("GM got another Session's client_ref: %v", got)
 	}
 }

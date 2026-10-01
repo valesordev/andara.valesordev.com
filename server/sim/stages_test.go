@@ -104,7 +104,7 @@ func TestValidateFailure_SkipsApply(t *testing.T) {
 	if err := applyMove(a, move("north")); err != nil {
 		t.Fatal(err)
 	}
-	if a.Zone.Entities["p"].Room != "b" || len(*emitted) != 2 || (*emitted)[0].GetCharacterLeft() == nil || (*emitted)[1].GetCharacterArrived() == nil {
+	if a.Zone.Entities["p"].Room != "b" || len(*emitted) != 3 || (*emitted)[0].GetCharacterLeft() == nil || (*emitted)[1].GetCharacterArrived() == nil || (*emitted)[2].GetRoomDescribed() == nil {
 		t.Fatalf("apply: room=%s emitted=%v", a.Zone.Entities["p"].Room, *emitted)
 	}
 }
@@ -140,7 +140,7 @@ func TestStep_BuildsConsumedContexts(t *testing.T) {
 	if err != nil || !seen {
 		t.Fatalf("err=%v consumed=%v", err, seen)
 	}
-	if len(res.Events) != 2 || e.State().Zones["z"].Entities["p"].Room != "b" {
+	if len(res.Events) != 3 || e.State().Zones["z"].Entities["p"].Room != "b" {
 		t.Fatalf("events=%v", res.Events)
 	}
 	// The Observer saw the outcome with its stage.

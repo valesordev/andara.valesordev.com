@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"google.golang.org/protobuf/proto"
+
 	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
@@ -113,9 +115,21 @@ func TestMove_InZone(t *testing.T) {
 	if e.State().Zones["town"].Entities["bob"].Room != "plaza" {
 		t.Fatal("bob moved")
 	}
+	// AW-SRV-038 AC-1: left, arrived, then the Room described to the
+	// mover alone, all on the same Tick.
 	left, arrived := ofType(res.Events, sim.EvCharacterLeft), ofType(res.Events, sim.EvCharacterArrived)
-	if len(left) != 1 || len(arrived) != 1 || len(res.Events) != 2 {
+	if len(left) != 1 || len(arrived) != 1 || len(res.Events) != 3 || res.Events[2].Type != sim.EvRoomDescribed {
 		t.Fatalf("events = %v", res.Events)
+	}
+	if d := res.Events[2]; d.Tick != res.Tick || d.Envelope.GetRoomDescribed().GetRoomId() != "hall" ||
+		d.Envelope.GetRoomDescribed().GetTitle() != "Town Hall" || len(d.Scope.Entities) != 1 || d.Scope.Entities[0] != "alice" || d.Scope.Room != (sim.RoomRef{}) {
+		t.Fatalf("the mover's description = %v", d)
+	}
+	// With the fields a look produces: the same RoomDescribed alice gets by
+	// looking from where she now stands.
+	look := step(t, e, simtest.Look("town", "alice")).Events[0].Envelope.GetRoomDescribed()
+	if !proto.Equal(look, res.Events[2].Envelope.GetRoomDescribed()) {
+		t.Fatalf("move described %v; look describes %v", res.Events[2].Envelope.GetRoomDescribed(), look)
 	}
 	l, a := left[0].Envelope.GetCharacterLeft(), arrived[0].Envelope.GetCharacterArrived()
 	if l.GetRoomId() != "plaza" || l.GetToDirection() != "north" || l.GetCharacterName() != "alice" || l.GetZoneId() != "town" {
@@ -311,6 +325,49 @@ func TestArrive_IntoAGoneRoomLandsAtTheFallback(t *testing.T) {
 	}
 	if got := e.State().Zones["wilds"].Entities["alice"]; got == nil || got.Room != fallback {
 		t.Fatalf("alice = %+v, want her in %s", got, fallback)
+	}
+	// AW-SRV-038 AC-7: the mover reads the relocation, then the fallback
+	// Room described.
+	if got := types(res.Events); len(got) != 2 || got[0] != sim.EvEntityRelocated || got[1] != sim.EvRoomDescribed ||
+		res.Events[1].Envelope.GetRoomDescribed().GetRoomId() != string(fallback) {
+		t.Fatalf("events = %v", res.Events)
+	}
+}
+
+// AW-SRV-038 AC-5: the description is an Event, not state. Two Engines
+// applying the same log of moves, in-Zone and across, emit the same Events
+// and agree on the State Hash at every tick.
+func TestMove_ReplayIsIdentical(t *testing.T) {
+	a, b := verbEngine(t), verbEngine(t)
+	log := []*logv1.LoggedCommand{
+		simtest.Move("town", "alice", "north"),
+		simtest.Move("town", "alice", "south"),
+		simtest.Move("town", "bob", "east"),
+	}
+	var pending []*logv1.LoggedCommand
+	apply := func(cmd *logv1.LoggedCommand) {
+		t.Helper()
+		ra, rb := step(t, a, cmd), step(t, b, cmd)
+		if ra.Completed.StateHash != rb.Completed.StateHash || len(ra.Events) != len(rb.Events) {
+			t.Fatalf("diverged after %v", cmd)
+		}
+		for i := range ra.Events {
+			if !proto.Equal(ra.Events[i].Envelope, rb.Events[i].Envelope) || ra.Events[i].Type != rb.Events[i].Type {
+				t.Fatalf("event %d differs: %v vs %v", i, ra.Events[i], rb.Events[i])
+			}
+		}
+		pending = append(pending, ra.Outbound...)
+	}
+	for _, cmd := range log {
+		apply(cmd)
+	}
+	for len(pending) > 0 {
+		cmd := pending[0]
+		pending = pending[1:]
+		apply(cmd)
+	}
+	if got := a.State().Zones["wilds"].Entities["bob"]; got == nil || got.Room != "trail" {
+		t.Fatalf("bob = %+v", got)
 	}
 }
 
