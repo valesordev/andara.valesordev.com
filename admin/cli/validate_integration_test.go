@@ -110,3 +110,13 @@ func TestContentPublishPath_TwoIdentitiesOverRedpanda(t *testing.T) {
 	res := r.resolver(t)
 	testTwoIdentities(t, startContentStack(t, r.open(t), res, res))
 }
+
+// TestContentPublish_StaleParentOverRedpanda is AW-CLI-003's stale-parent
+// case on the broker: another publish lands on the same parent between this
+// one's uploads and its PublishVersion, and the second exits 1 stale_parent
+// with its hint.
+func TestContentPublish_StaleParentOverRedpanda(t *testing.T) {
+	r := throwawayRedpanda(t)
+	res := r.resolver(t)
+	testStaleParent(t, startContentStack(t, r.open(t), res, res))
+}

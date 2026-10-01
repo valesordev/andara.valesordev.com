@@ -50,6 +50,10 @@ type runtime struct {
 	// nil means stdin and stdout are both terminals. A test sets it, with
 	// stdin, to answer confirmations (AW-CLI-003).
 	tty func() bool
+	// beforePublishVersion, when set, runs between a publish's uploads and
+	// its PublishVersion: where a test lands someone else's publish to make
+	// the parent stale (AW-CLI-003).
+	beforePublishVersion func()
 	// tpOptions configures the tracer provider. Empty in a real process;
 	// a test passes a recorder so the spans a story promises are assertable.
 	tpOptions []sdktrace.TracerProviderOption

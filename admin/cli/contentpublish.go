@@ -295,6 +295,9 @@ func (rt *runtime) publish(dir, pack, cacheFlag string) error {
 		attribute.Int64("bytes", uploadedBytes),
 	)
 
+	if rt.beforePublishVersion != nil {
+		rt.beforePublishVersion()
+	}
 	resp, err := client.PublishVersion(pctx, connect.NewRequest(&adminv1.PublishVersionRequest{PackId: pack, Blobs: refs, ParentVersion: parent}))
 	if err != nil {
 		return rt.publishRefused(err, v, pack, parent)

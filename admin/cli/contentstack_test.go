@@ -27,9 +27,12 @@ import (
 // `server info` reports what the Engine applied, not what a test set.
 type contentStack struct {
 	*liveServer
-	reg      *content.Registry
-	loader   *content.Loader
-	auditor  *auth.Auditor
+	reg     *content.Registry
+	loader  *content.Loader
+	auditor *auth.Auditor
+	// audit is the audit topic, read back to join the CLI's trace_id to
+	// the server's record.
+	audit    recordlog.Log
 	debounce time.Duration
 }
 
@@ -83,8 +86,12 @@ func startContentStack(t *testing.T, logs func(name string) recordlog.Log, store
 		}
 		o.ContentAdmin = admin
 		o.Content = loader.InEffect
+		// As the compose stack runs (ANDARA_TRUST_INBOUND_TRACEPARENT): the
+		// CLI's traceparent parents the RPC, so one trace joins the
+		// command to the server's audit record.
+		o.TrustInboundTraceparent = true
 	})
-	return &contentStack{liveServer: s, reg: reg, loader: loader, auditor: auditor, debounce: stackDebounce}
+	return &contentStack{liveServer: s, reg: reg, loader: loader, auditor: auditor, audit: logs("audit"), debounce: stackDebounce}
 }
 
 // bootCore is a newer server's boot: it publishes andara.core@version, the
