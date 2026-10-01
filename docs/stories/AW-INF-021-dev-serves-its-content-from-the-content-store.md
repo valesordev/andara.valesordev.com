@@ -191,8 +191,11 @@ on `dev`, and the core carrier's signals added.)*
   `content.build`, and `content.swap` spans, now emitted from `dev`. This is `AW-SRV-012`'s §8 line
   "not emittable from the compose server, because `content.source=dir` has no Active Pointer". This
   story carries that live observation, recorded in its verification record. AC-4's activation shows
-  as one trace, from the CLI's `cli.command` through `ActivateVersion`, to the Loader's
-  `content.load`, and on to the tick's `content.swap`.
+  as **two traces joined by a span link**. The first runs from the CLI's `cli.command` through
+  `ActivateVersion`. The second is the Loader's `content.load` → the tick's `content.swap`, and it
+  links to the first through `ActiveVersion.trace_parent` (`AW-SRV-045`). Until that field ships,
+  the two join on `pack@version` and time. *(Amended 2026-10-01: this said one trace, which can't
+  hold: one debounced load can serve several activations. See the feedback file.)*
 - **Alerts:** none new. **`ContentLoadFailing` goes live on `dev` with this story.** It was silent
   there, because `content.source=dir` exports no `andara_content_pending_seconds`
   (`content-freshness.md`, *Known gaps*). This story changes, in the same PR:
@@ -271,8 +274,10 @@ names the carrier for each series it can't produce:
   - the boot-time `content.core_boot` root span. It's already observed on the local stack, so
     re-observe it on `dev`.
 - `AW-CLI-003`'s own items (its §8 instrumentation check, 2026-09-30): run with `--log-level info`,
-  the activation's `info` confirmation line carries the `trace_id` the CLI sent, and one trace runs from `cli.command`
-  through `content.activate` to the Loader's `content.swap`.
+  the activation's `info` confirmation line carries the `trace_id` the CLI sent, and the trace from
+  `cli.command` through `content.activate` is joined to the Loader's `content.load` → `content.swap`
+  trace by a span link (`AW-SRV-045`), or, until that ships, by `pack@version` and time. *(Amended
+  2026-10-01, as above.)*
 
 ## Open questions
 
@@ -515,3 +520,43 @@ only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `p
 **Left on `dev`:** Accounts `sre-player` (Character `Verifier`, from AC-2) and `sre-builder` (`builder`,
 pack `sre.verify`), and pack `sre.verify@1` active: Zone `sreverify`, two Rooms. There's no deactivate,
 and the store keeps every version. The projector stays at 0 replicas until #143's fix rolls out.
+
+## §8 review (architecture, 2026-10-01): stays `review` on AC-7
+
+Against `main` after #288 and #305. SRE's verification record (2026-10-01, above) is accepted, AC by
+AC:
+- **1, 2, 3, 4, 5, 8, 9, 10 and 11 pass.**
+- **AC-5 is observed by a rollout restart.** That's the same recovery path a merge roll takes.
+- **AC-4 is observed after #305.** It ran the whole publish → refused → approve → activate →
+  self-approve → rollback sequence through the edge from the tailnet.
+
+**AC-6 is owed to the first core bump,** as the AC allows. Its carrier is the first story that changes
+`content/core/VERSION`. That story inherits the line: a roll with the bumped core reports it published
+and activated, and every Builder pack stays active.
+
+**AC-7 is the one item that holds the story.** It's the rebuild-from-nothing case:
+`argocd-uninstall`, fresh topics, `argocd-install`, then the seed.
+- **What `world-reset` showed:** it gave the rollout an empty World and a store with no Zone pack, so
+  the waiting, seed, ready path is observed. That's `AW-SRV-042`'s behaviour on `dev`.
+- **What it didn't:** a namespace recreated from nothing: Secrets, the object store, the topic apply,
+  Argo CD's first sync.
+- **When:** after SPRINT-03's demo. It wipes `dev`, and the demo is about to use it. It doesn't hold
+  `AW-INF-022` or `AW-INF-023`.
+
+**The one-trace wording is ruled** (feedback, "Architecture: the activation and the swap"). It's
+SRE's option 1: `ActiveVersion.trace_parent`, with the Loader's `content.load` *linking* to the
+activation. That's new work, routed to PM. The Observability line, and `AW-CLI-003`'s inherited line,
+read as two traces joined by a span link. Until that field ships, they join on `pack@version` and
+time, as observed. It doesn't hold this story.
+
+**Inherited lines still unobserved:**
+- `andara_content_pending_seconds` rising on a slow apply;
+- a refused load on `load_failures_total{reason}`;
+- `relocations_total` with its `warn` line.
+
+Their carrier is a version that removes an occupied Room, so AC-3 of the M3 walk-through
+(`AW-INF-023`) or a later content change observes them. They're named here, and not owed by this
+story.
+
+**#312**, publish showing other packs' findings as the Builder's own, is filed for implementation.
+It's noise on the demo path, not a correctness failure.

@@ -4,7 +4,7 @@ title: andara-cli content validate and inspect
 epic: EPIC-05
 component: cli
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-001, AW-CLI-006, AW-SRV-001, AW-SRV-034, AW-SRV-013]
 blocks: [AW-CLI-003, AW-INF-010, AW-INF-022, AW-CLI-009]
@@ -57,7 +57,10 @@ publish a Zone that fails to load.
 2. **Given** valid source **when** it runs **then** it exits `0` and prints `N zones, M rooms, T
    templates, core andara.core@V`.
 3. **Given** `--output json` **when** validation fails **then** stdout is a JSON array of `Diagnostic`
-   and nothing else; stderr carries nothing but the exit summary.
+   and nothing else; at the default `--log-level`, stderr carries nothing but the exit summary.
+   *(Amended 2026-10-01, on SRE's question and the review of #315: a raised `--log-level` adds the
+   CLI's own structured log lines to stderr, `runtime.finish` at `debug`, which is what raising it
+   asks for. stdout is unaffected at every level.)*
 4. **Given** the equivalence fixture **when** run by the CLI, by `make content-conformance`, and by
    `AW-SRV-013`'s gate **then** all three produce identical diagnostics (code, position, chain).
 5. **Given** no network, no cache, and a pack declaring `requires andara.core@<N>`, where `N` is the
@@ -401,3 +404,11 @@ item.
 
 The span item was met under architecture's ruling, so the §8 instrumentation item is
 **satisfied**.
+
+## §8 close (architecture, 2026-10-01): `done`
+
+SRE's record (2026-10-01, above) is accepted. Its question, AC-3 at `--log-level debug`, is ruled
+in the AC: the promise holds at the default level, and a raised level adds the CLI's own
+structured lines, which is the point of raising it. The instrumentation item is satisfied: the JSON-mode
+stderr line was checked live on a refusal and on a valid pack, and the span item was met under the
+CLI-span ruling. With #285's two items, every checklist item holds.

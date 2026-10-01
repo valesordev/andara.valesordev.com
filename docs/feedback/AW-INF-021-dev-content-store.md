@@ -531,3 +531,19 @@ The options, for architecture:
 SRE prefers 1. It's honest about coalescing and costs an additive field. Either 1 or 2 is
 implementation work after the contract. This doesn't hold AW-INF-021's rollout. It holds only the
 one-trace wording of its record.
+
+## Architecture: the activation and the swap, ruled (2026-10-01)
+
+**Option 1.** `content.v1.ActiveVersion` gains `string trace_parent = 5`: the W3C traceparent of
+the `ActivateVersion` call that moved the pointer, empty for the boot's core activation. The Loader's
+`content.load` adds a **span link** to it, for every pointer move a load coalesces. A link and not a
+parent, because one debounced load can serve several moves, and a parent would pick one silently. So:
+- the observation reads as two traces joined by a link. That's this story's Observability line and
+  `AW-CLI-003`'s inherited line, as amended;
+- `AW-SRV-042`'s leaving line takes its `trace_id` from the swap record, which carries
+  `content.load`'s context. It's the load's trace, linked to the activation, not the activation's
+  trace itself. That corrects architecture's note on #298 (ruling 4).
+
+It's additive, and an old record reads empty, meaning no link. The field is pinned at the carrier
+story's contract review, and PM writes the story (implementation, `server/content`). Until it ships,
+the two traces join on `pack@version` and time. This doesn't hold `AW-INF-021`.

@@ -101,8 +101,13 @@ projection schema change is routine.
    active when the aggregate was last written, so a runtime object traces to authored source.
 8. **Given** the projector stopped for an hour **when** the World continues **then** tick metrics on the
    server are unchanged and no player-visible behavior differs.
-9. **Given** any Kafka principal other than `andara-projector-state` **when** it produces to
+9. **Given** any Kafka principal declared in `deploy/kafka/topics.yaml` other than
+   `andara-projector-state` and the operator superuser `andara-operator` **when** it produces to
    `andara.state.v1` **then** the broker rejects it with an authorization error (`AW-INF-004` ACLs).
+   *(Amended 2026-10-01: `ADR-0011` decision 3 makes `andara-operator` a superuser, and a superuser
+   bypasses ACLs by design, so "any principal" couldn't hold. The ADR accepts that audit gap and
+   bounds it: one superuser, used only by the `rpk` toolbox, with no workload mounting its Secret.
+   `AW-INF-030` asserts that bound.)*
    *(Note 2026-09-24:)* `AW-INF-004` shipped no ACLs, and the local Redpanda runs without SASL, so
    nothing enforces this yet. This story authenticates as the principal and declares the ACL
    in `deploy/kafka/topics.yaml`. Enforcing it, and this criterion's assertion, belongs to the
@@ -593,3 +598,28 @@ recovery gets it too: it's the same function.
 **Still owed:** AW-INF-025 AC-4 on `dev`, the in-cluster observation, is SRE's. `dev`'s
 checkpoint still records the divergence at tick 132838. Once a projector with this fix is
 deployed, it needs `make projector-rebuild ENV=dev` before it starts.
+
+### §8 check (architecture, 2026-10-01): AC-6 passes; stays `review` on AC-9's carrier
+
+**AC-6 passes** on the terms the 2026-09-29 pass set (#307):
+- **The fix is in the restore,** `sim.RestoreEngine`, not the projector. With `sim.seed` at 0, it
+  derives the seed from `EmptyWorld()`, the World the server starts from. `AW-SRV-007`'s recovery
+  calls the same function.
+- **A regression test fails on the code before the fix.** `sim`
+  `TestRestore_DefaultSeedIsTheOneTheWorldStartedWith` builds the state the fixture lacked: an
+  Engine as the server builds it, seed 0, content by swap. It takes it through the snapshot codec and
+  shows the restored seed and hash equal at the round tick and the idle tick after. Without the fix
+  the seeds differ.
+- **The projector suite runs at seed 0** (`dev`'s setting).
+  `TestRun_RebuildFromTheRoundEqualsIncremental` verifies every tick after the round.
+
+**AC-6 in the cluster** is `AW-INF-025` AC-4's: a projector with this fix, then
+`make projector-rebuild ENV=dev`, because `dev`'s checkpoint still records the old divergence.
+
+**Still owed: AC-9's carrier.** `ADR-0011` was accepted on 2026-09-29, and the two stories it names
+(the shared SASL client, implementation; the listener, principals and `dev` migration, SRE) aren't
+written yet. No story names `ADR-0011`. Once PM writes the SRE story with AC-9 as its inherited line,
+this story moves to `done`.
+
+**Follow-up from the fix, not owed here:** `AW-SRV-043` (a restore verifies its round against the
+recorded hash, and the round carries the seed) is drafted for SPRINT-04.
