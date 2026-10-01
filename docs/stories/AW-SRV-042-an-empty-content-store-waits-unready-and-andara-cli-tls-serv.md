@@ -314,3 +314,28 @@ changes in two places:
   kafka-content compose stack, as the feedback file asks.
 
 Architecture then moves the story to `done` without another pass.
+
+## §8 instrumentation check (SRE, 2026-10-01): satisfied
+
+On the compose stack built from `main` at `0cb713c`, with `ANDARA_LOG_LEVEL=debug` and fresh
+volumes. The World topics were recreated, and the server ran on `ANDARA_CONTENT_SOURCE=kafka`,
+`ANDARA_CONTENT_PACKS=*`, with an empty store and log.
+
+| Signal | Backend | Observed |
+|--------|---------|----------|
+| `andara_sessions_total{outcome="rejected_no_content"}` | the server's `/metrics` | `0` while waiting (pre-seeded), `1` after `TestLive_EmptyStoreWaits` (`ANDARA_SMOKE_EXPECT_EMPTY_STORE=1`), which passes |
+| `andara_content_zones_loaded` | `/metrics` | `0` while started (`/startedz` 200, `/readyz` 503) |
+| `warn` `waiting for content: no Zones in effect; publish and activate a pack` | local Loki | once, with `content_source=kafka`, `packs=*`, `core_version=1`, `trace_id` |
+| `debug` `session rejected: no content in effect` | local Loki | `reason=no_content_in_effect`, `remote_addr`, `client_name=stack-smoke/empty-store`, `trace_id`. It carries no `session_id`, because it's refused before one is assigned, so `remote_addr` stands in, as SRE's review specified |
+| `info` `content in effect: leaving the wait` | local Loki | after `make content-seed` (address mode): `zones=4`, `pack=town@1`, `trace_id`, and `/readyz` 200 with no restart |
+
+**On a real cluster:** the wait → seed → Ready path ran on `dev` in `AW-INF-021`'s rollout. That's
+`world-reset`'s `started and waiting for content`, then `content-seed`, then Ready in about 4 s with
+0 restarts, and the server's lines in Grafana Cloud. AC-6, a restart while waiting (waits again,
+no exit loop) and a restart after the first swap (recovers Ready), ran on the same kafka-content
+compose stack against #298's build, together with AC-1 and AC-2 end to end (SRE's comment on #298).
+The leaving line's `trace_id` is the swap record's, `content.load`'s trace, as architecture's review
+above reads it.
+
+The instrumentation item is **satisfied**. #299 (the Loader's `no_zones_found` `error` beside the
+wait line) is separate, and doesn't touch these signals.
