@@ -475,3 +475,12 @@ telemetry wiring, but a Ready projector is the only way to observe it, and #143 
 `up{job="andara-projector-state", namespace="andara-dev"} == 1` and records it here, and
 architecture moves the story to `done` without another pass. *(Revised 2026-09-30 on review of
 #176, which first amended AC-2 to "a running container".)*
+
+## AC-2 observed on `dev` (SRE, 2026-10-01)
+
+The state projector's first Ready on `dev` came after #143's fix (#307) and
+`make projector-rebuild ENV=dev` (`AW-INF-025`'s record, the same day). `make observe-check ENV=dev`
+reports
+`up{job="andara-projector-state", container="projector", namespace="andara-dev", cluster="solo7-local"} 1`
+from Grafana Cloud, under its own `job`, beside the server's `andara-server`. Every other signal is
+present, and no rule would fire. **AC-2 passes**, so nothing in this story is owed now.
