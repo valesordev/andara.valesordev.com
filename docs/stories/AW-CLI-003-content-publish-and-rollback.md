@@ -7,7 +7,7 @@ type: feature
 status: review
 size: M
 depends_on: [AW-CLI-001, AW-CLI-002, AW-CLI-006, AW-SRV-013, AW-SRV-021]
-blocks: [AW-INF-021, AW-INF-023]
+blocks: [AW-INF-021, AW-INF-023, AW-SRV-039]
 lane: implementation
 risk: medium
 ---
