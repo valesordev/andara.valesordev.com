@@ -355,3 +355,15 @@ On `impl/aw-cli-002-owed`, for the §8 review's "What closes it":
 |------|------------|--------|
 | 1. AC-4's error-level twins | `internal/contentequiv.Twins` builds blob twins of the 19 `invalid/semantic` cases whose codes errors.md §3.2 says the loader raises too. They're compiled Zones and Templates carrying each case's defect, as if something other than the compiler wrote them. `server/content` `TestPublishGateRefusesTheBlobTwins` feeds each straight to `Admin.PublishVersion`, and holds the gate's refusing findings to the case's sidecar on code and chain. Position is left out, since a blob has no source line | pass. The twins found two loader disagreements, both fixed (feedback, "Implementation, 2026-09-30"). Mutation-checked: without the Component in the chain, two twins fail; without `chain_too_deep`'s chain, one does |
 | 2. The JSON summary line | `validate`'s stderr under `--output json` is one `{ts, level, msg, command, trace_id}` line, `info` or `error`. `TestContentValidate_JSONIsTheArrayAlone` decodes it in both cases and requires it to be the only thing on stderr | pass |
+
+### SRE, 2026-10-01: the instrumentation item is satisfied
+
+#285 delivered item 1. Against `main` at `dafbec6`, `andara-cli content validate --output json`
+writes exactly one stderr line. It's structured, with `ts`, `level`, `msg`, `command` and
+`trace_id`:
+- on a refusal (exit 1), `level=error`, `msg` the summary;
+- on a valid pack (exit 0), `level=info`, `msg` `4 zones, 7 rooms, 3 templates, core andara.core@1`.
+
+Stdout is still the `Diagnostic` array alone. `TestContentValidate_JSONIsTheArrayAlone` decodes the
+line and passes. The span item was met under architecture's ruling, so the §8 instrumentation item
+is **satisfied**.
