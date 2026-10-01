@@ -81,7 +81,8 @@ This SLO replaces it.
 ## Known gaps
 
 - **A `dir` source exports no gauge.** `content.source=dir` has no Active Pointer, so there is no
-  move to be pending on (the compose stack). The SLO applies to the `kafka` source.
+  move to be pending on. That's `local` and the compose stack only. Since `AW-INF-021`, `dev` reads
+  the store, and `ContentLoadFailing` is live there. The SLO applies to the `kafka` source.
   *(Corrected 2026-09-25 at AW-SRV-012's §8: the first bullet here said `Follow` was not yet
   wired. It is now.)*
 - **Rejections for a Builder reason alert nobody here.** The Builder learns at publish

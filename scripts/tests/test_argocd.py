@@ -197,6 +197,38 @@ class Stalled(unittest.TestCase):
         }), "andara-0 not Ready")
 
 
+class ContentLines(unittest.TestCase):
+    """AW-INF-021: argocd-status adds one `content <pack>@<version>` line per active pack."""
+
+    def packs(self, rc, out, err=""):
+        mod = load_argocd()
+
+        def metrics(ns):
+            if rc:
+                raise RuntimeError(err)
+            return out
+        mod.pod_metrics = metrics
+        return mod.active_packs("andara-dev")
+
+    def test_one_entry_per_pack_sorted(self):
+        metrics = "\n".join([
+            "# TYPE andara_content_active_version gauge",
+            'andara_content_active_version{pack="town"} 3',
+            'andara_content_active_version{pack="andara.core"} 1',
+            'andara_content_active_version{pack="brian"} 1',
+            'andara_content_pending_seconds{pack="town"} 0',
+        ])
+        self.assertEqual(self.packs(0, metrics), [("andara.core", 1), ("brian", 1), ("town", 3)])
+
+    def test_an_unreadable_pod_is_a_status_line_not_a_failure(self):
+        got = self.packs(1, "", "Error from server (NotFound): pods \"andara-0\" not found")
+        self.assertTrue(got.startswith("? ("), got)
+        self.assertIn("not found", got)
+
+    def test_no_series_says_so(self):
+        self.assertEqual(self.packs(0, "andara_build_info 1\n"), "? (no andara_content_active_version series)")
+
+
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 

@@ -344,3 +344,27 @@ pack lines) is untouched. **Status stays `ready`**, and this part ships ahead on
   `andara-config` before any change. On `s3` it exits 1 with nothing changed, because emptying the
   bucket is AW-INF-025's to add. Test: `FailsClosed.test_an_s3_snapshot_store_stops_before_any_change`.
   On `dev` today, read-only: the Application is readable and the store is `fs`.
+
+## Build record (SRE, 2026-10-01): held for architecture's ruling
+
+On `sre/aw-inf-021-dev-content-store`, a **draft** PR. It can't merge until architecture rules on
+the empty-store deadlock (`docs/feedback/AW-INF-021-dev-content-store.md`, "an empty store can't be
+seeded"). Merging the values change alone would crash `dev`, because its store is empty. Built so
+far, all independent of that ruling:
+
+| Part | What | Verified |
+|------|------|----------|
+| `values/dev.yaml` | `content.source: kafka`, `content.packs: "*"`, `contentVolume.render: false` | `make k8s-dry ENV=dev` |
+| AC-8 | `helm_test.test_content_configmaps`: `dev` and `prod` render neither content ConfigMap, mount nothing at `/content` (server or projector), and carry no `checksum/content`. `dev` follows `kafka` and `*`. `local` still renders and mounts both. `test_content_checksum` now runs on `local` | mutation-checked: putting `dev`'s render back fails it four ways, and `source: dir` fails it once |
+| `make content-seed ENV=<env>` | `scripts/content_seed.sh`, product commands only. An already-active `town` publishes nothing (AC-3). An earlier run's unactivated version is activated, not published again. `server info` is polled to a deadline | `scripts/tests/test_content_seed.py`, 8 cases against a fake `andara-cli`: the refusals and AC-9 make no call; AC-3; a fresh seed; a resumed one; a Builder's unactivated version left alone; a deadline. Mutation-checked: without AC-3's early exit, its test fails |
+| `argocd-status` | one `content <pack>@<version>` line per pack, from `andara_content_active_version` on `andara-0`. It reads them through a short `kubectl port-forward`, because the namespace's NetworkPolicy admits nothing from the API server, so the pod proxy times out | 3 unit cases. Live on `dev` today: `content      dir@0`, which is right before the switch |
+| Runbooks and SLO | `content-freshness.md`'s `dir` gap names `local` and compose only. `content-load-failing.md` gets the `dev` line. `server-unavailable.md` gets two rows: the boot core's exit, and the "no content in effect" exit (the open deadlock) | — |
+
+**Still to build, once ruled:** the bootstrap route the ruling picks (in `content-seed` and,
+if option 1, the startup probe), and then the rollout: merge, `world-reset`, seed, and the
+verification record (ACs 1–7, 11, and the inherited observations).
+
+**For the rollout, not yet checked:** `dev`'s `admin.allowedCIDRs` is the chart default,
+`10.0.0.0/8` and `192.168.0.0/16`. On the box, `local` needed `172.16.0.0/12` because traffic reaches
+Traefik from the docker bridge. If `dev` sees the same source, the seed's Admin calls are refused
+at the edge. The first `content-seed` run will show it.

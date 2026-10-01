@@ -22,11 +22,12 @@ server:
   # command log and the Account store live there, as sim.source and auth.store default to.
   kafka:
     brokers: andara-log-kafka-bootstrap:9092
-  # Content is still a directory, as in compose: Zone Definitions and the core Templates from
-  # the ConfigMaps `make helm-install` builds, until AW-SRV-012 serves content from the store.
+  # Content comes from the namespace's content store (AW-INF-021): every pack with an Active
+  # Pointer, the server's own andara.core (published at boot, AW-SRV-013) and the dev fixture
+  # pack `town` (`make content-seed ENV=dev`). Nothing is mounted from git any more.
   content:
-    source: dir
-    path: /content
+    source: kafka
+    packs: "*"
   auth:
     token_key_file: /etc/andara/secrets/token-key/token.keys
   # Snapshots in the namespace's object store (AW-INF-025, `make objectstore-install ENV=dev`),
@@ -64,7 +65,6 @@ secrets:
   snapshotS3:
     secretName: andara-snapshot-s3
 
+# No content ConfigMaps: dev reads the content store (AW-INF-021). local still renders them.
 contentVolume:
-  render: true
-  configMapName: andara-content
-  templatesConfigMapName: andara-content-templates
+  render: false
