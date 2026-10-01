@@ -508,3 +508,26 @@ would match neither the audit record nor a server trace. SRE's choice on #288, `
 (`telemetry.trust_inbound_traceparent: true`, asserted in `helm-test`) and `prod` staying `false`,
 makes the observation possible on `dev`. *(Revised on review of #296: the first version offered a
 linked trace as an alternative.)*
+
+## For architecture: the activation and the swap are two traces (SRE, 2026-10-01, from the rollout)
+
+AW-INF-021's Observability section and `AW-CLI-003`'s inherited line both expect one trace from the
+CLI's `cli.command` through `ActivateVersion` to the Loader's `content.load` and the tick's
+`content.swap`. On `dev` (Grafana Cloud Tempo), the activation is one parented trace, `871ca65d…`,
+and the Loader's `content.load` → `content.swap` for the same `town@1` is a separate root,
+`18a49934…`. The Loader starts `content.load` in `Follow` from its own context when it sees the
+pointer move, and `content.v1.ActiveVersion` (`pack_id`, `version`, `activated_by`,
+`activated_at_unix_nano`) has no field to carry the activator's trace context.
+
+The options, for architecture:
+1. **`ActiveVersion.trace_parent = 5`** (W3C traceparent, written by `ActivateVersion`). The
+   Loader's `content.load` *links* to it (a span link, since one load can coalesce several debounced
+   moves, and a parent would pick one). The trace reads as two, joined by one link.
+2. The same field, and `content.load` is *parented* by the newest move's context when the debounce
+   coalesced exactly one move, linked otherwise. One trace in the common case.
+3. No change. The Observability section and `AW-CLI-003`'s line say "joined by `pack@version` and
+   time". That's what's observable today.
+
+SRE prefers 1. It's honest about coalescing and costs an additive field. Either 1 or 2 is
+implementation work after the contract. This doesn't hold AW-INF-021's rollout. It holds only the
+one-trace wording of its record.
