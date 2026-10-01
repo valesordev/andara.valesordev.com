@@ -1130,7 +1130,7 @@ the Active Pointer the Loader follows), `ListVersions`, `GetVersion`, `GetBlob`
   the World in effect: `zone_removed`, `spawn_room_removed` and `core_version` are
   `FAILED_PRECONDITION` with an `ActivationRefusal` naming the subjects. `override` doesn't skip them.
 - **Paths stay in the pack.** `PublishVersion` refuses a manifest naming a blob path that is
-  absolute, or holds a backslash, a `..` or an empty element, or isn't clean under `path.Clean`. That's
+  absolute, or holds a backslash, a `.`, `..` or empty element, or isn't clean under `path.Clean`. That's
   `INVALID_ARGUMENT` `validation`, naming the path, audited as a `reject`, and no manifest is written.
   `content fetch` writes blobs by these paths, so the gate doesn't rely on each client's guard. The
   rule is the CLI's `unsafe_source_path` (#267).

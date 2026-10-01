@@ -471,8 +471,9 @@ func (a *Admin) checkRefs(refs []*contentv1.BlobRef) error {
 }
 
 // UnsafeBlobPath reports whether a manifest path could leave the pack it is
-// published in (#267): absolute, holding a backslash, a ".." or an empty
-// element, or not clean under path.Clean. The rule is the CLI's
+// published in (#267): absolute, holding a backslash, a ".", ".." or empty
+// element, or not clean under path.Clean. "." alone names no file, and a
+// fetch would write onto its output directory (contract amended on #267). The rule is the CLI's
 // unsafe_source_path. `content fetch` writes blobs to disk by these paths on
 // every Builder's machine that fetches the version, so the gate refuses
 // them rather than trusting each client's guard.
@@ -481,7 +482,7 @@ func UnsafeBlobPath(p string) bool {
 		return true
 	}
 	for _, el := range strings.Split(p, "/") {
-		if el == "" || el == ".." {
+		if el == "" || el == "." || el == ".." {
 			return true
 		}
 	}

@@ -1000,7 +1000,7 @@ func TestPublishVersion_APathThatLeavesThePackIsRefused(t *testing.T) {
 	var rejected float64
 	for _, bad := range []string{
 		"../town.json", "src/../../town.json", "src/../town.json", "/etc/town.json", "..",
-		`src\town.json`, "src//town.json", "src/town.json/", "./town.json", "src/./town.json",
+		`src\town.json`, "src//town.json", "src/town.json/", "./town.json", "src/./town.json", ".",
 	} {
 		refs := make([]*contentv1.BlobRef, len(clean))
 		for i, r := range clean {
@@ -1034,7 +1034,7 @@ func TestPublishVersion_APathThatLeavesThePackIsRefused(t *testing.T) {
 func TestUnsafeBlobPath(t *testing.T) {
 	for p, unsafe := range map[string]bool{
 		"town.json": false, "src/pack.aw": false, "src/zones/town.aw": false, "templates/andara.core.Npc.json": false,
-		"src/..aw": false, "src/a..b.aw": false, ".": false, // clean, relative, no ".." element: the contract's rule, and the CLI's IsLocal, accept it
+		"src/..aw": false, "src/a..b.aw": false, ".": true,
 		"": true, "/abs": true, "..": true, "../x": true, "src/../x": true, "src/..": true,
 		`src\x.aw`: true, "src//x.aw": true, "src/": true, "./x": true, "src/./x": true,
 	} {
