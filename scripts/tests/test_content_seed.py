@@ -25,6 +25,8 @@ FAKE = textwrap.dedent("""\
     args = [a for a in sys.argv[1:]]
     with open(os.path.join(d, "calls"), "a") as f:
         f.write(" ".join(args) + "\\n")
+    with open(os.environ["ANDARA_CONFIG"]) as src, open(os.path.join(d, "config"), "w") as dst:
+        dst.write(src.read())
     sc = json.load(open(os.path.join(d, "scenario.json")))
     rest = list(args)
     if rest[:2] == ["--output", "json"]:
@@ -63,7 +65,9 @@ class Seed(unittest.TestCase):
     def run_seed(self, scenario, env_name="dev", operator="operator:pw"):
         with open(os.path.join(self.dir, "scenario.json"), "w") as f:
             json.dump(scenario, f)
-        env = dict(os.environ, FAKE_DIR=self.dir, ANDARA_CLI=self.cli, CONTENT_SEED_TIMEOUT="3s")
+        # ANDARA_SEED_ADDRESS skips the port-forward: there's no cluster here.
+        env = dict(os.environ, FAKE_DIR=self.dir, ANDARA_CLI=self.cli, CONTENT_SEED_TIMEOUT="3s",
+                   ANDARA_SEED_ADDRESS="127.0.0.1:1")
         env.pop("ANDARA_BOOTSTRAP_OPERATOR", None)
         if operator is not None:
             env["ANDARA_BOOTSTRAP_OPERATOR"] = operator
@@ -112,6 +116,14 @@ class Seed(unittest.TestCase):
         self.assertEqual(len(activate), 1, self.calls())
         for flag in ("--override", "--yes", "--reason dev fixture"):
             self.assertIn(flag, activate[0])
+
+    def test_the_cli_verifies_the_pods_in_cluster_name(self):  # architecture's ruling, route (a)
+        r = self.run_seed({"active": 1})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        with open(os.path.join(self.dir, "config")) as f:
+            cfg = f.read()
+        self.assertIn("address: 127.0.0.1:1", cfg)
+        self.assertIn("tls_server_name: andara-0.andara.andara-dev.svc", cfg)
 
     def test_an_earlier_runs_unactivated_version_is_activated_not_republished(self):
         r = self.run_seed({"operator": "op1", "versions": [{"version": 2, "author": "op1"}]})

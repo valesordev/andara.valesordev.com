@@ -207,6 +207,15 @@ on `dev`, and the core carrier's signals added.)*
   - Evaluation in Grafana Cloud waits on `AW-INF-009`, as in `AW-INF-025`. The §8 record says
     whether the rule was evaluated or only the series was observed.
 
+- *(SRE, 2026-10-01, on architecture's ruling for the empty-store deadlock.)* **No explicit
+  waiting gauge.** A fresh environment waiting for its seed is identified by what already exists:
+  `andara_content_zones_loaded` `0` on a started pod, `/readyz` failing, and the server's `warn`
+  line on entering the wait. `AndaraServerUnavailable` fires while it waits, which is true, and
+  `server-unavailable.md`'s row for that case names `make content-seed ENV=<env>` as the first
+  fix. A gauge would only restate `zones_loaded == 0` for one case.
+- The chart's `startupProbe` moves to `/startedz` (ruling), with the 600 s budget unchanged. A
+  waiting server is started, so the probe doesn't restart it. Readiness stays on `/readyz`.
+
 ## Test plan
 
 - **Unit:** none; the seed is exercised by running it.
@@ -368,3 +377,21 @@ verification record (ACs 1–7, 11, and the inherited observations).
 `10.0.0.0/8` and `192.168.0.0/16`. On the box, `local` needed `172.16.0.0/12` because traffic reaches
 Traefik from the docker bridge. If `dev` sees the same source, the seed's Admin calls are refused
 at the edge. The first `content-seed` run will show it.
+
+### Ruling applied (SRE, 2026-10-01)
+
+Architecture ruled option 1, with route (a) and `/startedz` (#289). SRE's half is on this branch:
+- **`startupProbe` → `/startedz`**, with the budget unchanged. `helm_test.test_probes` asserts the
+  three paths.
+- **`content-seed` dials a port-forward to `andara-0`'s gRPC port.** It verifies
+  `andara-0.andara.andara-<env>.svc` (`server.tls_server_name` in its private CLI config) against
+  the `ca.crt` of `andara-server-tls`, reading only that key. The edge isn't used, so the Admin CIDR
+  risk noted above no longer applies to the seed. A new unit case checks the config the CLI gets.
+- **`server-unavailable.md`:** a fresh environment waiting for content is its own row (true page,
+  first fix `make content-seed`). The exit-1 row is now only for a World that lost its content.
+- **Observability:** no waiting gauge (the section above says why).
+
+**Still held.** This branch now needs the implementation story architecture asked PM to place:
+the server's unready wait and `/startedz`, and the CLI's `server.tls_server_name`. Until it merges,
+`local`'s pods would never pass `/startedz`, and the CLI would reject the config key. AW-INF-021
+then depends on that story, and its rollout follows its merge.

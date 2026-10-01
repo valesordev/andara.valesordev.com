@@ -141,11 +141,12 @@ def test_snapshot_keys_render(env):
 
 
 def test_probes(env):
-    """Probe contract: /readyz for startup and readiness, /livez for liveness, http port."""
+    """Probe contract: /startedz for startup (AW-INF-021: a server waiting for its seed is started
+    but not ready), /readyz for readiness, /livez for liveness, http port."""
     code, out, err = render(env)
     sts = find(docs(out), "StatefulSet", "andara")
     c = next(c for c in sts["spec"]["template"]["spec"]["containers"] if c["name"] == "server")
-    want = {"startupProbe": "/readyz", "readinessProbe": "/readyz", "livenessProbe": "/livez"}
+    want = {"startupProbe": "/startedz", "readinessProbe": "/readyz", "livenessProbe": "/livez"}
     for probe, path in want.items():
         got = c.get(probe, {}).get("httpGet", {})
         if got.get("path") != path or got.get("port") != "http":

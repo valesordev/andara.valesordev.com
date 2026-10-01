@@ -132,8 +132,12 @@ spec:
           # Readiness: 200 only when the World is loaded and ticking (AW-SRV-007 sets it).
           # Liveness: process alive and the tick loop not wedged — never Kafka, never a
           # datastore (AW-SRV-010: a broker outage is a read-only World, not a restart).
+          # Started, not ready (AW-INF-021, architecture's ruling): /startedz is true once recovery
+          # has finished and Admin is listening. A server whose World has never had content waits
+          # there, unready, for its seed, and the startup budget mustn't restart it. Readiness
+          # stays on /readyz.
           startupProbe:
-            httpGet: {path: /readyz, port: http}
+            httpGet: {path: /startedz, port: http}
             periodSeconds: {{ .Values.probes.startup.periodSeconds }}
             failureThreshold: {{ .Values.probes.startup.failureThreshold }}
             timeoutSeconds: {{ .Values.probes.startup.timeoutSeconds | default 3 }}

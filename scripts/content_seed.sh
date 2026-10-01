@@ -18,10 +18,18 @@
 # A version published by an earlier run that stopped before activating isn't published again:
 # when `town` has versions but none active, and the newest is the operator's, it's activated.
 #
+# The route (architecture's ruling on the empty-store deadlock, docs/feedback/
+# AW-INF-021-dev-content-store.md): a server whose World has never had content stays up and
+# unready, serving Admin, and the Service and the edge route only to Ready pods. So the seed
+# dials andara-0 itself through a `kubectl port-forward` to its gRPC port. It verifies the pod's
+# certificate under its in-cluster name with `--tls-server-name andara-0.andara.<ns>.svc`,
+# against the CA in the server's TLS Secret (its `ca.crt` only). The same route works for a
+# Ready server, so there's one path.
+#
 # Environment: ANDARA_BOOTSTRAP_OPERATOR (user:password), required. CONTENT_SEED_TIMEOUT
 # (default 30s), the deadline for `server info` to show the activated version, polled per
-# docs/specs/testing/live-assertions.md. ANDARA_SEED_ADDRESS overrides the server address
-# (default <host from values/ENV.yaml>:443).
+# docs/specs/testing/live-assertions.md. ANDARA_SEED_ADDRESS skips the port-forward and dials
+# that address instead, with ANDARA_SEED_CA and ANDARA_SEED_SERVER_NAME (tests).
 #
 # Exit: 0 seeded or already seeded · 1 a precondition or a command failed · 2 usage.
 
@@ -56,21 +64,46 @@ CLI="${ANDARA_CLI:-bin/andara-cli}"
 command -v jq >/dev/null 2>&1 || fail "jq not found"
 [[ -d "$FIXTURE" ]] || fail "no $FIXTURE"
 
-VALUES="deploy/helm/values/$ENVNAME.yaml"
-HOST="$(awk '/^host:/{print $2}' "$VALUES")"
-[[ -n "$HOST" ]] || fail "no host in $VALUES"
-ADDRESS="${ANDARA_SEED_ADDRESS:-$HOST:443}"
+NS="andara-$ENVNAME"
+SERVER_NAME="${ANDARA_SEED_SERVER_NAME:-andara-0.andara.$NS.svc}"
 
 # An isolated home: the operator's credential must not land in the developer's.
 WORK="$(mktemp -d -t content-seed.XXXXXX)"
-trap 'rm -rf "$WORK"' EXIT
+PF=""
+cleanup() { [[ -z "$PF" ]] || kill "$PF" 2>/dev/null || true; rm -rf "$WORK"; }
+trap cleanup EXIT
 export XDG_CONFIG_HOME="$WORK/config" XDG_STATE_HOME="$WORK/state"
 mkdir -p "$XDG_CONFIG_HOME/andara"
-printf 'server:\n  address: %s\n' "$ADDRESS" > "$WORK/cli.yaml"
+
+if [[ -n "${ANDARA_SEED_ADDRESS:-}" ]]; then
+  ADDRESS="$ANDARA_SEED_ADDRESS"
+  CA="${ANDARA_SEED_CA:-}"
+else
+  command -v kubectl >/dev/null 2>&1 || fail "kubectl not found"
+  say "reading the server CA from $NS/andara-server-tls"
+  CA="$WORK/ca.pem"
+  kubectl -n "$NS" get secret andara-server-tls -o jsonpath='{.data.ca\.crt}' | base64 -d > "$CA" 2>/dev/null \
+    && [[ -s "$CA" ]] || fail "no ca.crt in $NS/andara-server-tls"
+  PORT="$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])')"
+  say "port-forwarding 127.0.0.1:$PORT to $NS/andara-0 (gRPC)"
+  kubectl -n "$NS" port-forward pod/andara-0 "$PORT:grpc" >"$WORK/pf.log" 2>&1 &
+  PF=$!
+  for _ in $(seq 1 30); do
+    grep -q '^Forwarding from' "$WORK/pf.log" && break
+    kill -0 "$PF" 2>/dev/null || fail "port-forward to $NS/andara-0 failed: $(tail -1 "$WORK/pf.log")"
+    sleep 0.5
+  done
+  grep -q '^Forwarding from' "$WORK/pf.log" || fail "port-forward to $NS/andara-0 never became ready"
+  ADDRESS="127.0.0.1:$PORT"
+fi
+{
+  printf 'server:\n  address: %s\n  tls_server_name: %s\n' "$ADDRESS" "$SERVER_NAME"
+  [[ -z "$CA" ]] || printf '  tls_ca: %s\n' "$CA"
+} > "$WORK/cli.yaml"
 export ANDARA_CONFIG="$WORK/cli.yaml"
 cli() { "$CLI" --output json "$@"; }
 
-say "logging in to $ADDRESS as $OP_USER"
+say "logging in to $ADDRESS (verifying $SERVER_NAME) as $OP_USER"
 printf '%s\n' "$OP_PASS" | "$CLI" auth login --username "$OP_USER" --password-stdin >/dev/null \
   || fail "login as $OP_USER at $ADDRESS failed"
 
