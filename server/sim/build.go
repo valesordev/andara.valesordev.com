@@ -620,6 +620,10 @@ func validateComponents(defs []*contentv1.ComponentValue, site componentSite) ([
 		seen[ct] = struct{}{}
 
 		fields, fieldErrs := validateComponentFields(cd, spec, site, i)
+		for k := range fieldErrs {
+			// A field finding's chain ends in its Component (AW-CLI-002).
+			fieldErrs[k].Component = ct
+		}
 		errs = append(errs, fieldErrs...)
 		if len(fieldErrs) > 0 {
 			continue

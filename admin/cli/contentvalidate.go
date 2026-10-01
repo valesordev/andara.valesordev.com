@@ -449,7 +449,7 @@ func (rt *runtime) reportValidated(v *validated) error {
 		if v.failed() {
 			return &AppError{Exit: ExitFail, Code: "validation_failed", Message: summary, Rendered: true}
 		}
-		fmt.Fprintln(rt.stderr, summary)
+		rt.writeSummary("info", summary)
 		return nil
 	}
 

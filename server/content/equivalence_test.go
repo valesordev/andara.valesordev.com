@@ -6,6 +6,7 @@ package content
 import (
 	"errors"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/valesordev/andara/content/core"
@@ -92,5 +93,47 @@ func TestPublishGateAgreesWithTheEquivalenceFixture(t *testing.T) {
 	}
 	if ran < 15 {
 		t.Errorf("the gate ran %d cases; the corpus's valid cases alone are more", ran)
+	}
+}
+
+// TestPublishGateRefusesTheBlobTwins is AW-CLI-002 AC-4's error-level half:
+// each invalid/semantic case whose codes the loader raises too (errors.md
+// §3.2), as blobs something other than the compiler wrote, fed straight to
+// Admin.PublishVersion. The gate refuses it with the case's sidecar findings,
+// on code and chain.
+func TestPublishGateRefusesTheBlobTwins(t *testing.T) {
+	twins, err := contentequiv.Twins(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(twins) != 19 {
+		t.Fatalf("%d twins, want the 19 cases errors.md §3.2's codes cover", len(twins))
+	}
+	for _, tw := range twins {
+		t.Run(tw.Case, func(t *testing.T) {
+			h := newPubHarness(t, func(ao *AdminOptions, _ *LoaderOptions) {
+				ao.Accounts = packHolders{alice: {tw.Pack}}
+			})
+			files := map[string][]byte{}
+			for p, b := range tw.Blobs {
+				files[p] = b
+			}
+			_, err := h.admin.PublishVersion(builder(alice), &adminv1.PublishVersionRequest{PackId: tw.Pack, Blobs: h.putBlobs(files)})
+			var ae *AdminError
+			if !errors.As(err, &ae) || ae.Reason != ErrReasonValidation {
+				t.Fatalf("not refused for validation: %v", err)
+			}
+			pf, _ := ae.Detail.(*adminv1.PublishFindings)
+			var got []string
+			for _, f := range pf.GetFindings() {
+				if f.GetSeverity() == contentv1.Severity_ERROR {
+					got = append(got, contentequiv.CodeChain(f.GetCode(), f.GetChain()))
+				}
+			}
+			slices.Sort(got)
+			for _, d := range contentequiv.Diff(tw.Want, got) {
+				t.Error(d)
+			}
+		})
 	}
 }

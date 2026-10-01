@@ -69,13 +69,28 @@ func (m *SourceMap) Place(code, message string, chain []string, sev Severity) (D
 	if !ok {
 		return Diagnostic{}, false
 	}
+	reported := o.chain
+	if code == string(sim.ErrInvalidComponentField) || code == string(sim.ErrChainTooDeep) {
+		// The finding's chain names more than a declaration does (the
+		// Component, or every ancestor), and it's the compiler's chain too.
+		reported = chain
+	}
 	return Diagnostic{
 		File: o.file, Line: o.line, Col: o.col,
-		Code: code, Message: message, Chain: append([]string(nil), o.chain...), Severity: sev,
+		Code: code, Message: message, Chain: append([]string(nil), reported...), Severity: sev,
 	}, true
 }
 
 func (m *SourceMap) lookup(code string, chain []string) (origin, bool) {
+	switch {
+	case code == string(sim.ErrChainTooDeep) && len(chain) > 0:
+		// The chain is every ancestor; the finding is the last one's.
+		o, ok := m.templates[chain[len(chain)-1]]
+		return o, ok
+	case code == string(sim.ErrInvalidComponentField) && len(chain) > 1:
+		// The chain ends in the Component; the carrier is everything before.
+		return m.lookup("", chain[:len(chain)-1])
+	}
 	if len(chain) == 1 {
 		if o, ok := m.templates[chain[0]]; ok {
 			return o, true

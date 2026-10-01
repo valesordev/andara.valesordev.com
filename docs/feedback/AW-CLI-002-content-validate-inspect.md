@@ -174,3 +174,24 @@ their verification. The backend observation of a CLI command is the server's spa
 the trace ID the CLI propagates. The full ruling is in the story's §8 review. Your item 1 is done
 (#265). Once implementation's structured-stderr fix lands, record the instrumentation item as
 satisfied.
+
+## Implementation, 2026-09-30: the §8 items owed
+
+On `impl/aw-cli-002-owed`. The twins found two places where the loader disagreed with the
+compiler. Both are fixed in the loader, and the contract changes architecture should see are the
+first three bullets:
+
+- **`sim.ValidationError` gains `Component` and `Chain`**, additive like `Exit`.
+  `invalid_component_field` carries its Component type, and `chain_too_deep` carries every
+  ancestor. `content.FindingChain` composes them, so `PublishFindings`' chains now end in the
+  Component (`[z, r, andara.core.Dark]`, `[p.T, andara.core.Behavior]`), and a deep chain's is the
+  whole chain. Both are as the compiler reports them.
+- **`fallback_missing`'s chain is the Zone alone.** The loader sets `Room` to the missing fallback.
+  That's a reference, not a declaration, and the compiler's chain is `[market]`.
+- **No `invalid_provenance` cascade.** A Template Component refused as invalid isn't carried, and
+  the loader used to also report its provenance as `invalid_provenance`. One defect, two findings.
+  The compiler raises one. Provenance for a refused Component is now skipped.
+- **The `--output json` summary** on stderr, for `validate` and any command whose stdout is already
+  its answer, is one JSON line: `{ts, level, msg, command, trace_id}`. Its level is `info` on
+  success and `error` on failure, and it's written whatever `--log-level` is, since it's the exit
+  summary rather than a log.

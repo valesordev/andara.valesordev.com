@@ -94,9 +94,9 @@ func TestContentValidate_JSONIsTheArrayAlone(t *testing.T) {
 	if len(got) != 3 || got[0].Code != "unknown_direction" || got[0].File != "a.aw" || got[0].Line != 3 || got[0].Col != 10 || got[0].Severity != "error" {
 		t.Errorf("diagnostics = %+v", got)
 	}
-	if want := dir + ": 3 finding(s) refuse the pack\n"; res.stderr != want {
-		t.Errorf("stderr = %q, want only the summary %q", res.stderr, want)
-	}
+	// stderr is the exit summary alone: one JSON line, as the CLI's log
+	// lines are (SRE's §8 item 1).
+	assertSummaryLine(t, res.stderr, "error", dir+": 3 finding(s) refuse the pack", "content validate")
 
 	// Valid, it is still the array — of warnings — and the summary on stderr.
 	res = runCLI(t, []string{"content", "validate", "--path", devFixture, "-o", "json"}, offlineEnv(t))
@@ -106,6 +106,27 @@ func TestContentValidate_JSONIsTheArrayAlone(t *testing.T) {
 	got = nil
 	if err := json.Unmarshal([]byte(res.stdout), &got); err != nil || len(got) != 1 || got[0].Severity != "warning" {
 		t.Errorf("stdout = %q (%v)", res.stdout, err)
+	}
+	assertSummaryLine(t, res.stderr, "info", "4 zones, 7 rooms, 3 templates, core andara.core@1", "content validate")
+}
+
+// assertSummaryLine decodes stderr as exactly one JSON line carrying ts,
+// level, msg, command and trace_id.
+func assertSummaryLine(t *testing.T, stderr, level, msg, command string) {
+	t.Helper()
+	dec := json.NewDecoder(strings.NewReader(stderr))
+	var line map[string]string
+	if err := dec.Decode(&line); err != nil {
+		t.Fatalf("stderr is not a JSON line: %v\n%s", err, stderr)
+	}
+	if dec.More() {
+		t.Errorf("stderr carries more than the summary:\n%s", stderr)
+	}
+	if _, err := time.Parse(time.RFC3339Nano, line["ts"]); err != nil {
+		t.Errorf("ts = %q: %v", line["ts"], err)
+	}
+	if line["level"] != level || line["msg"] != msg || line["command"] != command || len(line["trace_id"]) != 32 {
+		t.Errorf("summary = %v", line)
 	}
 }
 
