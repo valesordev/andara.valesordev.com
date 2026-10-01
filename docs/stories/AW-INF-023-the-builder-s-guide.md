@@ -4,7 +4,7 @@ title: The Builder's Guide — from no access to a live Zone on dev
 epic: EPIC-06
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
