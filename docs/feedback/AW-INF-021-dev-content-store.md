@@ -354,11 +354,32 @@ broker would make two writers of one World log.
 1. **(SRE's recommendation) A store-backed server with no content in effect stays up, unready.**
    It serves Admin (the content RPCs), refuses Game (`OpenSession`), keeps `/readyz` failing, and
    waits for the first swap that brings Zones, which then goes through today's `ReconcileContent`
-   path. `content-seed` reaches the pod directly with `kubectl port-forward` to the gRPC port, since
-   the Service routes only to Ready pods. `AndaraServerUnavailable` fires while `dev` waits, which
-   is true. The "no content in effect" exit stays for a World that *had* content, where the log
-   holds a swap and the store now refuses it. That's implementation work in `server/boot`, with
-   a test, and a line in `server-unavailable.md`.
+   path. `AndaraServerUnavailable` fires while `dev` waits, which is true. The "no content in effect"
+   exit stays for a World that *had* content: the log holds a swap, and the store now refuses it. The
+   server change is implementation's, in `server/boot`, with a test. Two more pieces are needed
+   *(added before merge, from Codex on #277)*:
+   - **A TLS-valid route to an unready pod.** The Service and the edge route only to Ready pods. The
+     pod's certificate names only `andara-0.andara.<ns>.svc` and `andara.<ns>.svc`. And the CLI takes
+     its TLS server name from `server.address`, with no override. So a `kubectl port-forward` to
+     `localhost` fails verification before any RPC. The routes:
+     - (a) **A CLI server-name override** (implementation, a CLI contract change): a config key and
+       flag, e.g. `server.tls_server_name`, so `content-seed` dials the port-forward and verifies
+       `andara-0.andara.<ns>.svc`. The credential is then stored under the port-forward's address,
+       so the seed logs in there as the operator, which it does anyway. SRE prefers this one. It's
+       small, and the seed stays on the operator's box like every other target.
+     - (b) **An in-cluster seed pod**, dialing `andara-0.andara.<ns>.svc`. That needs the headless
+       Service to publish not-ready addresses. Today it's `publishNotReadyAddresses: false`, so the
+       chart would get a second headless Service with `true`, keeping the first's semantics. It
+       also needs an image with `andara-cli`, which the server image doesn't carry. It's all SRE's
+       to build, but it's more moving parts.
+   - **A startup probe the waiting state survives** (SRE, the chart). The StatefulSet's
+     `startupProbe` polls `/readyz`, with a budget of 60 × 10 s. A server waiting for its seed would
+     be restarted after about ten minutes, and again after every ten minutes, cutting off Admin each
+     time. So startup has to mean "serving Admin", not "ready". The server would expose that as a
+     path of its own, such as `/startedz`, true once recovery has finished and Admin is listening
+     (implementation), and the startup probe moves to it (SRE). Readiness stays on `/readyz`.
+     Liveness stays on `/livez`. Recovery's slow-start allowance moves with the startup probe,
+     unchanged.
 2. **Seed through a `dir`-mode publish:** the content RPCs work in `dir` mode too, publishing to the
    store without serving from it. `dev` switches only after the seed. That's a larger change to
    `AW-SRV-013`'s wiring, and the switch becomes two rolls.
