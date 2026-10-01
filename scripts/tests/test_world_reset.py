@@ -2,6 +2,7 @@
 # Copyright 2026 Valesor Development
 
 """`make world-reset` refuses before touching the cluster (AW-INF-021, AC-10)."""
+import json
 import os
 import subprocess
 import sys
@@ -89,6 +90,53 @@ class FailsClosed(unittest.TestCase):
         _, kubectl = self.fake(argo_err='Error from server (NotFound): applications "andara-dev" not found')
         with mock.patch.object(world_reset, "kubectl", kubectl):
             self.assertEqual(world_reset.argo_policy("andara-dev"), (False, None))
+
+
+class WaitUp(unittest.TestCase):
+    """After scaling back up: Ready, or started and waiting for content (AW-SRV-042), counts."""
+
+    def pod(self, ready=False, started=False):
+        return json.dumps({"status": {
+            "conditions": [{"type": "Ready", "status": "True" if ready else "False"}],
+            "containerStatuses": [{"name": "server", "started": started,
+                                   "state": {"running": {"startedAt": "2026-10-01T00:00:00Z"}}}]}})
+
+    def wait(self, pods, logs="", deadline=30):
+        seq = list(pods)
+        calls = []
+
+        def kubectl(ns, *args, check=True):
+            calls.append(args)
+            if args[:2] == ("get", "pod"):
+                return types.SimpleNamespace(returncode=0, stdout=seq.pop(0) if len(seq) > 1 else seq[0], stderr="")
+            if args[:1] == ("logs",):
+                return types.SimpleNamespace(returncode=0, stdout=logs, stderr="")
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+        t = [0.0]
+        with mock.patch.object(world_reset, "kubectl", kubectl):
+            got = world_reset.wait_up("andara-dev", deadline=deadline,
+                                      sleep=lambda n: t.__setitem__(0, t[0] + n), clock=lambda: t[0])
+        return got, calls
+
+    def test_ready_is_ready(self):
+        got, _ = self.wait([self.pod(), self.pod(started=True), self.pod(ready=True, started=True)])
+        self.assertEqual(got, "ready")
+
+    def test_started_and_waiting_for_content_counts(self):
+        line = '{"level":"WARN","msg":"waiting for content: no Zones in effect; publish and activate a pack"}'
+        got, calls = self.wait([self.pod(started=True)], logs=line)
+        self.assertEqual(got, "waiting")
+        logs = [c for c in calls if c[:1] == ("logs",)][0]
+        self.assertIn("--since-time=2026-10-01T00:00:00Z", logs)
+
+    def test_started_unready_without_the_wait_line_keeps_waiting_then_fails(self):
+        with self.assertRaises(world_reset.StepFailed) as e:
+            self.wait([self.pod(started=True)], logs="recovering from the log", deadline=20)
+        self.assertIn("neither Ready nor waiting for content within 20s", str(e.exception))
+
+    def test_not_started_fails_at_the_deadline(self):
+        with self.assertRaises(world_reset.StepFailed):
+            self.wait([self.pod()], deadline=10)
 
 
 class Scope(unittest.TestCase):

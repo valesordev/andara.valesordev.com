@@ -407,3 +407,19 @@ trace, and the audit record would carry the server's own ID. That reading is all
 traces to join by hand. A client choosing its own sampling costs nothing on `dev`, which is reached
 only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `prod` unset or
 `false` (mutation-checked). The verification record uses the parented reading.
+
+### Review of #288 (Codex, 2026-10-01)
+
+- **Fixed, P1: `world-reset` would time out on the first switch.** It waited up to 600 s for Ready,
+  but with an empty store the restarted server waits, unready, for the seed that follows the
+  reset. `wait_up` now accepts either Ready, or the server container started, not Ready, and
+  `waiting for content` logged since it started. In that case it says
+  `andara-0 is started and waiting for content … Next: make content-seed ENV=dev` and ends with
+  AC-11's line. Anything else still fails at the deadline. 4 unit cases (`WaitUp`).
+- **Fixed, P2: the seed resumed on author alone.** An unactivated `town` version by the operator is
+  now resumed only if `content fetch` gives back the fixture's sources byte for byte. An operator's
+  own draft stays inactive, and the fixture is published on top. Mutation-checked: without the
+  comparison, the new case fails.
+- **Fixed, P2: `CONTENT_SEED_TIMEOUT=1m` aborted the seed after activation.** It's parsed as a
+  duration (`Ns`, `Nm`, `Nh`, or plain seconds) before any RPC, and a bad value is usage, exit 2.
+  Two new cases.

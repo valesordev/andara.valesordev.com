@@ -53,6 +53,15 @@ case "$ENVNAME" in
   *) usage "unknown ENV '$ENVNAME'; want dev" ;;
 esac
 
+# CONTENT_SEED_TIMEOUT is a duration (30s, 2m, or plain seconds), checked before any RPC so a
+# bad value can't fail the run after the content is already live (Codex on #288).
+TIMEOUT_TEXT="${CONTENT_SEED_TIMEOUT:-30s}"
+if [[ "$TIMEOUT_TEXT" =~ ^([0-9]+)(s|m|h)?$ ]]; then
+  case "${BASH_REMATCH[2]}" in m) TIMEOUT_SECS=$(( BASH_REMATCH[1] * 60 )) ;; h) TIMEOUT_SECS=$(( BASH_REMATCH[1] * 3600 )) ;; *) TIMEOUT_SECS=${BASH_REMATCH[1]} ;; esac
+else
+  usage "CONTENT_SEED_TIMEOUT='$TIMEOUT_TEXT' isn't a duration; use e.g. 30s, 2m or 1h"
+fi
+
 # AC-9: no credential, no RPC.
 [[ -n "${ANDARA_BOOTSTRAP_OPERATOR:-}" ]] || fail "ANDARA_BOOTSTRAP_OPERATOR is not set"
 [[ "$ANDARA_BOOTSTRAP_OPERATOR" == *:* ]] || fail "ANDARA_BOOTSTRAP_OPERATOR must be user:password"
@@ -119,9 +128,23 @@ newest="$(jq -r '[.versions[]?] | max_by(.version) // {} | .version // 0' <<<"$h
 newest_author="$(jq -r '[.versions[]?] | max_by(.version) // {} | .author // ""' <<<"$hist")"
 operator_id="$(cli auth whoami | jq -r '.account_id // empty' 2>/dev/null || true)"
 
+# An earlier run that stopped before activating left its version behind. It's resumed only if
+# its sources are the fixture, byte for byte: the operator's own draft of `town` is never put
+# into effect by the seed (Codex on #288). Anything else gets the fixture published on top.
+resume=""
 if [[ "$newest" != "0" && -n "$operator_id" && "$newest_author" == "$operator_id" ]]; then
+  say "$PACK@$newest is the operator's and was never activated; comparing its sources with $FIXTURE"
+  if cli content fetch "$PACK" "$newest" --out "$WORK/fetched" >/dev/null 2>&1 \
+      && diff -rq "$FIXTURE" "$WORK/fetched" >/dev/null 2>&1; then
+    resume=1
+  else
+    say "$PACK@$newest isn't the fixture; leaving it inactive"
+  fi
+fi
+
+if [[ -n "$resume" ]]; then
   version="$newest"
-  say "$PACK@$version was published by an earlier run and never activated; activating it"
+  say "$PACK@$version is the fixture from an earlier run that never activated it; activating it"
 else
   say "publishing $FIXTURE as $PACK"
   pub="$(cli content publish --path "$FIXTURE" --pack "$PACK")" || fail "content publish failed: $pub"
@@ -135,13 +158,13 @@ act="$(cli content activate "$PACK" "$version" --override --reason "$REASON" --y
   || fail "content activate $PACK $version failed: $act"
 
 # The swap is applied after content.reload_debounce; poll server info to a deadline.
-deadline=$(( $(date +%s) + $(sed 's/s$//' <<<"${CONTENT_SEED_TIMEOUT:-30s}") ))
+deadline=$(( $(date +%s) + TIMEOUT_SECS ))
 while :; do
   info="$(cli server info 2>/dev/null || true)"
   if jq -e --arg p "$PACK" --argjson v "$version" '.content[]? | select(.pack == $p and .version == $v)' <<<"$info" >/dev/null 2>&1; then
     break
   fi
-  (( $(date +%s) < deadline )) || fail "server info did not list $PACK@$version within ${CONTENT_SEED_TIMEOUT:-30s}"
+  (( $(date +%s) < deadline )) || fail "server info did not list $PACK@$version within $TIMEOUT_TEXT"
   sleep 1
 done
 say "$PACK@$version published and active"

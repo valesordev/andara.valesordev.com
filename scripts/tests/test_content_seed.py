@@ -40,6 +40,18 @@ FAKE = textwrap.dedent("""\
         out({"account_id": sc.get("operator", "op1")})
     if words[:2] == ["content", "history"]:
         out({"pack": "town", "active_version": sc.get("active", 0), "versions": sc.get("versions", [])})
+    if words[:2] == ["content", "fetch"]:
+        out_dir = args[args.index("--out") + 1]
+        os.makedirs(out_dir, exist_ok=True)
+        src = os.path.join(os.environ["REPO"], "content", "fixtures", "town")
+        for n in os.listdir(src):
+            with open(os.path.join(src, n)) as f:
+                body = f.read()
+            if not sc.get("fetch_is_fixture", True) and n == "town.aw":
+                body += "\\n# an operator's edit\\n"
+            with open(os.path.join(out_dir, n), "w") as f:
+                f.write(body)
+        out({"pack": "town", "version": int(words[3])})
     if words[:2] == ["content", "publish"]:
         out({"pack": "town", "version": sc.get("publish_as", 1), "blobs_total": 6, "blobs_uploaded": 6})
     if words[:2] == ["content", "activate"]:
@@ -62,12 +74,13 @@ class Seed(unittest.TestCase):
             f.write(FAKE)
         os.chmod(self.cli, os.stat(self.cli).st_mode | stat.S_IEXEC)
 
-    def run_seed(self, scenario, env_name="dev", operator="operator:pw"):
+    def run_seed(self, scenario, env_name="dev", operator="operator:pw", extra_env=None):
         with open(os.path.join(self.dir, "scenario.json"), "w") as f:
             json.dump(scenario, f)
         # ANDARA_SEED_ADDRESS skips the port-forward: there's no cluster here.
         env = dict(os.environ, FAKE_DIR=self.dir, ANDARA_CLI=self.cli, CONTENT_SEED_TIMEOUT="3s",
-                   ANDARA_SEED_ADDRESS="127.0.0.1:1")
+                   ANDARA_SEED_ADDRESS="127.0.0.1:1", REPO=REPO)
+        env.update(extra_env or {})
         env.pop("ANDARA_BOOTSTRAP_OPERATOR", None)
         if operator is not None:
             env["ANDARA_BOOTSTRAP_OPERATOR"] = operator
@@ -130,6 +143,26 @@ class Seed(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("content-seed: town@2 published and active", r.stdout)
         self.assertFalse([c for c in self.calls() if "publish" in c.split()], self.calls())
+
+    def test_an_operators_draft_that_isnt_the_fixture_is_left_inactive(self):  # Codex on #288
+        r = self.run_seed({"operator": "op1", "publish_as": 3, "fetch_is_fixture": False,
+                           "versions": [{"version": 2, "author": "op1"}]})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("town@2 isn't the fixture; leaving it inactive", r.stdout)
+        self.assertIn("content-seed: town@3 published and active", r.stdout)
+        activate = [c for c in self.calls() if c.split()[2:4] == ["content", "activate"]]
+        self.assertEqual(len(activate), 1)
+        self.assertIn("activate town 3", activate[0])
+
+    def test_a_minute_timeout_is_a_duration(self):  # Codex on #288
+        r = self.run_seed({"publish_as": 1}, extra_env={"CONTENT_SEED_TIMEOUT": "2m"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("content-seed: town@1 published and active", r.stdout)
+
+    def test_a_bad_timeout_is_refused_before_any_rpc(self):
+        r = self.run_seed({"publish_as": 1}, extra_env={"CONTENT_SEED_TIMEOUT": "soon"})
+        self.assertIn("CONTENT_SEED_TIMEOUT='soon' isn't a duration", r.stderr)
+        self.assertEqual(self.calls(), [])
 
     def test_a_builders_unactivated_version_is_not_activated_by_the_seed(self):
         r = self.run_seed({"operator": "op1", "publish_as": 3, "versions": [{"version": 2, "author": "builder9"}]})
