@@ -61,9 +61,14 @@ from. With `--pack glade --version 2` in place of `--path`, it reads a published
 ## Roll back, or forward
 
 `andara-cli content rollback glade` goes back to the version active before this one.
-`--to N` names one. Any version that was approved can be activated again, with no new approval. A
-version activated only with `--override` was never approved, so going back to it needs `--override`
-again.
+`--to N` names one. Any version that was approved can be activated again, with no new approval.
+
+A version activated only with `--override` was never approved, so `rollback` refuses to go back to
+it. An Operator who must return to it activates it directly, with an override:
+
+```
+andara-cli content activate glade 3 --override --reason "back to the pre-fix version"
+```
 
 ## Sharing a pack
 
