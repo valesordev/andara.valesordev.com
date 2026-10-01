@@ -132,8 +132,11 @@ None.
 
 ## Observability requirements
 
-- **Metrics / Traces / Alerts:** none; documentation and a check target.
-- **Logs:** `guide-check: <what failed>` lines. `builder-reference` names the files it wrote.
+- **Metrics / Traces / Alerts:** none; documentation.
+- **Logs:** none of its own. *(Amended 2026-10-01, SRE: the `guide-check: <what failed>` and
+  `builder-reference` lines moved to `AW-INF-028` with the targets on 2026-09-30, and that story's
+  Observability section names them: `builder-reference:` and `guide-check:` lines, plus each target's
+  exit code, kept in CI's job log. They're verified at its §8, not here.)*
 
 ## Test plan
 
@@ -282,27 +285,45 @@ page `07-reference.md`. Written against `main` at `0bee3cc`, after `AW-CLI-003`,
 Brian". Windows is covered as far as the archive, the checksum and the config path. Nothing in the
 repository tests it further.
 
-## §8 instrumentation check (SRE, 2026-10-01): nothing to emit; §9 commands checked
+## §8 instrumentation check (SRE, 2026-10-01): nothing to emit; §9 commands checked, one defect
 
-**Instrumentation: not applicable to this story.** Its Observability section names only
-`guide-check`'s and `builder-reference`'s lines, and both targets moved to `AW-INF-028` (2026-09-30),
-which is still `draft`. The guide itself emits nothing. `AW-INF-028` carries those lines when it's
-built.
+**Instrumentation: none left in this story.** The `guide-check` and `builder-reference` lines moved
+to `AW-INF-028` with the targets on 2026-09-30. `AW-INF-028`'s Observability section names them, and
+this story's section now says so (amended above). They're verified at `AW-INF-028`'s §8. The guide
+emits nothing. *(Revised before merge, from Codex on #321. The first push called them "not
+applicable" while this story still named them.)* **For architecture:** this story's Test plan still
+lists AC-1's and AC-2's tests (`guide-check` against fixtures, `make check` running it in CI), which
+moved with those ACs. The Test plan is yours to amend.
 
-**AC-4's §9 half, the commands exist** (SRE's to check, since §9 is SRE's). Every invocation sections
-2–9 name was run with `andara-cli` built from `main` at `2427e8c`. Server
-calls went against an unreachable address, and local ones against a scratch `glade` pack:
-- `config show`, `version`, `content fmt`, `content validate`, `content inspect room` and `content
-  inspect zone`, all with `--path content/glade`: exit 0;
-- `account create` and `auth login`: exit 2 with `stdin is not a terminal; pass --password-stdin`,
-  because a Builder runs them at a terminal and is prompted;
-- `account set-packs`, `account set-roles`, `character create`, `content activate`, `approve`,
-  `diff`, `fetch`, `history`, `publish`, `rollback`, `play` and `server info`: exit 2 with
-  `no credential for …; run andara-cli auth login`, the guide's order of steps.
+**AC-4's §9 half, the commands exist** (SRE's, since §9 is SRE's). This is every distinct
+`andara-cli` invocation in `docs/builders/`, fenced or inline: 28 forms, extracted by pattern, so
+they include `account reset-password`, `auth whoami`, `auth refresh`, bare `auth login`, bare
+`content fmt` and `content inspect template`. On top of those, a form for every flag the guide
+documents with the command it belongs to:
+- `history --limit`, `fetch --out`;
+- `activate --override --reason … --yes`, `approve --yes`, `rollback --to … --yes`,
+  `rollback --override`;
+- `set-packs --pack … --pack …`;
+- the globals `--output json` and `--timeout`.
 
-None is `unknown command` or `unknown flag`: every command and flag the guide names parses. The
-`make` targets it names, `make tools` and `make check` in the Content Repository, exist and pass on
-its `main` (`AW-INF-022`'s record). `git` steps are git's. Whether each step shows its *expected
+That's 37 forms. They ran with `andara-cli` built from `main` at `2427e8c`, server calls against an
+unreachable address, and local ones on a scratch `glade` pack. A form counts as a defect only if
+the CLI rejects the command, a flag or the argument count:
+- **36 pass.**
+  - Local forms run: exit 0. `inspect template glade.Hermit` exits 1 with
+    `no Template glade.Hermit in this pack`, since the scratch pack has none.
+  - The rest stop at a precondition the guide's order covers. With no terminal, it's
+    `pass --password-stdin` (`account create`, `reset-password`, `auth login`). With no login, it's
+    `no credential …; run andara-cli auth login`. Bare `auth login` gives `--username is required`.
+- **1 defect: `content rollback --override` doesn't exist** (`unknown flag: --override`, exit 2).
+  Section 5 says going back to a version activated only with `--override` "needs `--override`
+  again", and `rollback`'s flags are only `--to` and `--yes`. `content activate glade <N> --override
+  --reason …` does it. Either the guide says that, or `rollback` gains `--override`/`--reason`, as
+  `AW-SRV-013` ruling 5 implies. That's architecture's call (the guide and the CLI contract), and it's
+  routed to them. AC-4 holds once it's resolved.
+
+The `make` targets it names, `make tools` and `make check` in the Content Repository, exist and pass
+on its `main` (`AW-INF-022`'s record). `git` steps are git's. Whether each step shows its *expected
 output* is AC-4's other half, and architecture's §8 judges it.
 
 **AC-3** is Brian's walk-through on `dev`. Everything it needs is in place: `dev` serves from the
