@@ -1001,6 +1001,7 @@ func TestPublishVersion_APathThatLeavesThePackIsRefused(t *testing.T) {
 	for _, bad := range []string{
 		"../town.json", "src/../../town.json", "src/../town.json", "/etc/town.json", "..",
 		`src\town.json`, "src//town.json", "src/town.json/", "./town.json", "src/./town.json", ".",
+		"src/C:/town.json", "C:town.json", "town.json:stream", "src/nul", "CON.json", "src/com1.aw", "lpt9", "conout$", "aux .aw", "src/to\x00wn.json",
 	} {
 		refs := make([]*contentv1.BlobRef, len(clean))
 		for i, r := range clean {
@@ -1035,6 +1036,13 @@ func TestUnsafeBlobPath(t *testing.T) {
 	for p, unsafe := range map[string]bool{
 		"town.json": false, "src/pack.aw": false, "src/zones/town.aw": false, "templates/andara.core.Npc.json": false,
 		"src/..aw": false, "src/a..b.aw": false, ".": true,
+		// Windows-nonlocal forms, refused whatever OS the server runs on
+		// (review of #322): filepath.IsLocal refuses them on a Windows
+		// Builder's machine.
+		"src/C:/escape.aw": true, "C:x": true, "x.aw:stream": true, "a\x00b": true,
+		"nul": true, "NUL": true, "src/Con": true, "prn.aw": true, "aux .aw": true, "com1": true, "LPT9.json": true,
+		"com\u00b9": true, "conin$": true, "CONOUT$": true,
+		"console.aw": false, "com10": false, "com0": false, "lpt": false, "nullable.aw": false, "src/conx/a.aw": false,
 		"": true, "/abs": true, "..": true, "../x": true, "src/../x": true, "src/..": true,
 		`src\x.aw`: true, "src//x.aw": true, "src/": true, "./x": true, "src/./x": true,
 	} {

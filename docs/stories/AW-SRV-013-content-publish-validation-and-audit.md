@@ -695,3 +695,17 @@ unchanged. `server/README.md` documents it.
 
 The absolute-path rule is implied by the empty-element rule (`/abs` begins with an empty element),
 so removing it alone fails nothing. It stays because the contract names it. `make check` passes.
+
+**Windows-nonlocal forms (review of #322, Codex P2).** "The same rule as the CLI's
+`unsafe_source_path`" is `filepath.IsLocal` on the fetching Builder's machine. On Windows that also
+refuses a colon and a device name. `src/C:/escape.aw` passed the gate, and a Windows Builder's
+`fetch` then refused it. The gate now applies Go's Windows rules whatever OS it runs on. It
+refuses:
+- a path holding `:` (a drive or a stream) or a NUL byte;
+- an element that is a device name: `CON`, `PRN`, `AUX`, `NUL`, `COM1`–`9`, `LPT1`–`9` (with
+  `¹`, `²` and `³` as digits), `CONIN$` or `CONOUT$`, in any case, ignoring trailing spaces.
+
+The rule is conservative about an extension. `con.aw` is refused: Windows 10 reserves it, and
+Windows 11 doesn't. Both tests carry the cases, and the negatives (`console.aw`, `com10`, `com0`,
+`nullable.aw`) publish. Mutation-checked: without the colon rule, the NUL rule, the device rule,
+the superscript digits, the trailing-space trim, or `CONIN$`/`CONOUT$`, a test fails.
