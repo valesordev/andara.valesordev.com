@@ -13,6 +13,12 @@ server:
     # traces to Tempo and log records to Loki. Plaintext gRPC inside the cluster, as the
     # server's exporter dials it.
     otlp_endpoint: k8s-monitoring-alloy-receiver.observability.svc:4317
+    # One trace per operator action (AW-INF-021, SRE's call on architecture's §8 question): the
+    # CLI's cli.command parents the RPC span, so an activation is one trace from the Builder's
+    # command to the World's content.swap, and its audit record carries the CLI's trace_id. dev is
+    # reached only over the tailnet or a port-forward, so a client choosing its own sampling costs
+    # nothing here. prod keeps the default, false.
+    trust_inbound_traceparent: true
   character:
     # Where a new Character enters the World (AW-SRV-014): Purgatory, in every environment
     # (Brian, 2026-09-26; AW-INF-024). Required outside local, and set explicitly in local

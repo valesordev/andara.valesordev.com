@@ -648,6 +648,13 @@ def test_content_configmaps():
             if d is not None and "checksum/content" in (d["spec"]["template"]["metadata"].get("annotations") or {}):
                 fail("%s: %s still carries checksum/content" % (env, d["metadata"]["name"]))
     cfg = find(docs(render("dev")[1]), "ConfigMap", "andara-config")["data"]
+    # One trace per operator action on dev; prod never trusts a client's traceparent.
+    if cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT") != "true":
+        fail("dev: ANDARA_TRUST_INBOUND_TRACEPARENT is %r, want true" % cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT"))
+    prod = find(docs(render("prod")[1]), "ConfigMap", "andara-config")["data"]
+    if prod.get("ANDARA_TRUST_INBOUND_TRACEPARENT", "false") != "false":
+        fail("prod: ANDARA_TRUST_INBOUND_TRACEPARENT is %r; prod never trusts a client's traceparent"
+             % prod["ANDARA_TRUST_INBOUND_TRACEPARENT"])
     if cfg.get("ANDARA_CONTENT_SOURCE") != "kafka" or cfg.get("ANDARA_CONTENT_PACKS") != "*":
         fail("dev: content source %r packs %r, want kafka and *"
              % (cfg.get("ANDARA_CONTENT_SOURCE"), cfg.get("ANDARA_CONTENT_PACKS")))

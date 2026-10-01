@@ -395,3 +395,15 @@ Architecture ruled option 1, with route (a) and `/startedz` (#289). SRE's half i
 the server's unready wait and `/startedz`, and the CLI's `server.tls_server_name`. Until it merges,
 `local`'s pods would never pass `/startedz`, and the CLI would reject the config key. AW-INF-021
 then depends on that story, and its rollout follows its merge.
+
+### `dev` trusts the inbound `traceparent` (SRE, 2026-10-01)
+
+Architecture's §8 pass (#296) left it to SRE whether `dev` sets
+`telemetry.trust_inbound_traceparent`. **It does; `prod` stays `false`.** With it on, the CLI's
+`cli.command` parents the server's RPC span, so the inherited observation reads **parented**: one
+trace from the Builder's command through `content.activate` to the World's `content.swap`, and the
+audit record's `trace_id` is the CLI's. Off, the server's span would be a root linked to the CLI's
+trace, and the audit record would carry the server's own ID. That reading is allowed, but it's two
+traces to join by hand. A client choosing its own sampling costs nothing on `dev`, which is reached
+only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `prod` unset or
+`false` (mutation-checked). The verification record uses the parented reading.
