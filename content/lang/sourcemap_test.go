@@ -64,6 +64,16 @@ func TestSourceMapPlacesLoaderFindings(t *testing.T) {
 		}
 	}
 
+	// A field finding's chain ends in its Component, and chain_too_deep's is
+	// every ancestor: placed on the carrier, keeping the finding's chain.
+	if d, ok := m.Place("invalid_component_field", "m", []string{"z", "a", "andara.core.Dark"}, SeverityError); !ok ||
+		d.Line != 4 || d.Col != 3 || len(d.Chain) != 3 || d.Chain[2] != "andara.core.Dark" {
+		t.Errorf("a Room field finding: %+v %v", d, ok)
+	}
+	if d, ok := m.Place("chain_too_deep", "m", []string{"p.Root", "p.T"}, SeverityError); !ok || d.File != "t.aw" || d.Line != 1 || len(d.Chain) != 2 {
+		t.Errorf("a chain finding: %+v %v", d, ok)
+	}
+
 	for _, chain := range [][]string{nil, {"elsewhere"}, {"z", "nowhere"}, {"z", "a", "south"}} {
 		if d, ok := m.Place("unknown_room", "m", chain, SeverityError); ok {
 			t.Errorf("%v placed as %+v; a declaration the compile did not produce has no position", chain, d)

@@ -106,7 +106,15 @@ type ValidationError struct {
 	// one: the third link of the declaration chain the compiler reports
 	// (errors.md §1), which is what lets a finding on compiled content be
 	// placed back on the `exit` line that produced it (AW-CLI-002).
-	Exit     Direction
+	Exit Direction
+	// Component is the Component type a field finding is about
+	// (invalid_component_field): the last link of its declaration chain,
+	// as the compiler reports it (AW-CLI-002 AC-4).
+	Component ComponentType
+	// Chain is the whole inheritance chain, root first, for a finding about
+	// the chain itself (chain_too_deep), which the compiler reports as its
+	// declaration chain.
+	Chain    []TemplateRef
 	Template TemplateRef // set for Template findings (AW-SRV-022)
 	Code     ErrCode
 	Detail   string

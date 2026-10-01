@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 )
 
 const (
@@ -37,13 +38,33 @@ func (rt *runtime) writeJSON(v any) error {
 	return enc.Encode(v)
 }
 
+// writeSummary writes a command's one-line summary to stderr. Under
+// --output json, where stdout is the command's data alone, it's one JSON line
+// as the CLI's log lines are (`ts`, `level`, `msg`, `command`, `trace_id`), so
+// a consumer can parse stderr too (AW-CLI-002, SRE's §8 item 1).
+func (rt *runtime) writeSummary(level, msg string) {
+	if rt.settings != nil && rt.settings.Output == outputJSON {
+		_ = json.NewEncoder(rt.stderr).Encode(logLine{
+			TS: time.Now().UTC().Format(time.RFC3339Nano), Level: level, Msg: msg,
+			Command: rt.command, TraceID: rt.traceID(),
+		})
+		return
+	}
+	fmt.Fprintln(rt.stderr, msg)
+}
+
 func (rt *runtime) writeError(err error) int {
 	ae := classify(err)
 	output := rt.peekedOutput
 	if rt.settings != nil {
 		output = rt.settings.Output
 	}
-	if output == outputJSON && !ae.Rendered {
+	if ae.Rendered {
+		// stdout already has the answer; the summary is the error.
+		rt.writeSummary("error", ae.Message)
+		return ae.Exit
+	}
+	if output == outputJSON {
 		if err := json.NewEncoder(rt.stdout).Encode(jsonErrorEnvelope{Error: jsonErrorBody{
 			Code:    ae.Code,
 			Message: ae.Message,

@@ -346,3 +346,12 @@ Architecture's ruling (§8 review above) settles item 2 of SRE's record. The CLI
 and `TestContentValidate_EmitsTheSpans`, run in CI, is the span's verification. So the span item is
 **met**. Item 1, the `--output json` stderr summary as one structured line, is still owed by
 implementation. When it lands with its decoding test, SRE records the instrumentation item satisfied.
+
+## Implementation record, addendum (2026-09-30): §8 items owed
+
+On `impl/aw-cli-002-owed`, for the §8 review's "What closes it":
+
+| Item | Covered by | Result |
+|------|------------|--------|
+| 1. AC-4's error-level twins | `internal/contentequiv.Twins` builds blob twins of the 19 `invalid/semantic` cases whose codes errors.md §3.2 says the loader raises too. They're compiled Zones and Templates carrying each case's defect, as if something other than the compiler wrote them. `server/content` `TestPublishGateRefusesTheBlobTwins` feeds each straight to `Admin.PublishVersion`, and holds the gate's refusing findings to the case's sidecar on code and chain. Position is left out, since a blob has no source line | pass. The twins found two loader disagreements, both fixed (feedback, "Implementation, 2026-09-30"). Mutation-checked: without the Component in the chain, two twins fail; without `chain_too_deep`'s chain, one does |
+| 2. The JSON summary line | `validate`'s stderr under `--output json` is one `{ts, level, msg, command, trace_id}` line, `info` or `error`. `TestContentValidate_JSONIsTheArrayAlone` decodes it in both cases and requires it to be the only thing on stderr | pass |

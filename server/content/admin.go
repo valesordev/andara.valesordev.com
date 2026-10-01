@@ -572,21 +572,39 @@ func Diagnostics(fs []sim.ValidationError, sev contentv1.Severity) []*contentv1.
 	return out
 }
 
-// FindingChain is a loader finding's declaration chain: the Template, or the
-// Zone, Room and Exit direction as far as the finding names them.
+// FindingChain is a loader finding's declaration chain, as the compiler
+// reports the same finding (errors.md §1, AW-CLI-002 AC-4): the whole
+// inheritance chain for a finding about the chain; otherwise the Template, or
+// the Zone and Room, then the Exit direction or the Component type it's about.
 func FindingChain(f sim.ValidationError) []string {
+	if len(f.Chain) > 0 {
+		out := make([]string, len(f.Chain))
+		for i, c := range f.Chain {
+			out[i] = string(c)
+		}
+		return out
+	}
+	var chain []string
 	switch {
 	case f.Template != "":
-		return []string{string(f.Template)}
+		chain = []string{string(f.Template)}
 	case f.Zone == "":
 		return nil
-	}
-	chain := []string{string(f.Zone)}
-	if f.Room != "" {
-		chain = append(chain, string(f.Room))
-		if f.Exit != "" {
-			chain = append(chain, string(f.Exit))
+	case f.Code == sim.ErrFallbackMissing:
+		// The Room it names is the missing one: a reference, not a
+		// declaration. The finding is about the Zone.
+		return []string{string(f.Zone)}
+	default:
+		chain = []string{string(f.Zone)}
+		if f.Room != "" {
+			chain = append(chain, string(f.Room))
+			if f.Exit != "" {
+				chain = append(chain, string(f.Exit))
+			}
 		}
+	}
+	if f.Component != "" {
+		chain = append(chain, string(f.Component))
 	}
 	return chain
 }

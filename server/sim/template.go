@@ -284,8 +284,10 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 		errs = append(errs, templateFinding(in.File, source, ref, ErrChainMismatch,
 			fmt.Sprintf("Template %q has a chain ending in %q; the chain ends in the Template itself", ref, chain[len(chain)-1])))
 	case len(chain) > MaxChainDepth:
-		errs = append(errs, templateFinding(in.File, source, ref, ErrChainTooDeep,
-			fmt.Sprintf("Template %q has an inheritance chain of depth %d; the bound is %d", ref, len(chain), MaxChainDepth)))
+		f := templateFinding(in.File, source, ref, ErrChainTooDeep,
+			fmt.Sprintf("Template %q has an inheritance chain of depth %d; the bound is %d", ref, len(chain), MaxChainDepth))
+		f.Chain = chain
+		errs = append(errs, f)
 	}
 	seenInChain := map[TemplateRef]bool{}
 	for _, c := range chain {
@@ -317,7 +319,18 @@ func validateTemplate(in TemplateInput) (*Template, []ValidationError) {
 		}
 		return prov[i].Field < prov[j].Field
 	})
+	// A Component already refused above isn't carried, and its provenance
+	// would only say so again: one finding per defect (errors.md rule 4).
+	refused := map[ComponentType]bool{}
+	for _, cd := range def.GetComponents() {
+		if _, ok := findComponent(comps, ComponentType(cd.GetType())); !ok {
+			refused[ComponentType(cd.GetType())] = true
+		}
+	}
 	for _, p := range prov {
+		if refused[p.Component] {
+			continue
+		}
 		c, ok := findComponent(comps, p.Component)
 		if !ok {
 			errs = append(errs, templateFinding(in.File, source, ref, ErrInvalidProvenance,
