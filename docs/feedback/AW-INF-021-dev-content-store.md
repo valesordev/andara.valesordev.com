@@ -320,3 +320,73 @@ The CLAUDE.md §7 review of the four stories this file covers. Only Observabilit
 2. **Approving your own work: an Operator may approve a build they published as a Builder.** It's
    temporary, until others build. That changes `AW-SRV-013` and `AW-CLI-003`, which are `ready`, so
    it's written up for architecture in `docs/feedback/AW-SRV-013-operator-self-approval.md`.
+
+## For architecture: an empty store can't be seeded (SRE, 2026-09-30, blocks AW-INF-021)
+
+**Found while starting the story, before any change to `dev`.** A `content.source=kafka` server
+with an empty store and an empty World log exits before it can serve the RPC that would fill the
+store. So `make content-seed` has nothing to publish through, both on `dev`'s first switch (its
+store is empty, since `dev` has been `dir` all along) and in AC-7's rebuild from nothing.
+
+**Rehearsed on the compose stack**, `main` at `d996066`, fresh volumes, the World topics recreated,
+server run with `ANDARA_CONTENT_SOURCE=kafka`, `ANDARA_CONTENT_PACKS=*`:
+1. `content core: andara.core@1 published; activated`: the boot core works (`AW-SRV-013`).
+2. `error` `no Zones were found in kafka: no followed pack has a loadable Active Pointer`. The core
+   has Templates, not Zones.
+3. `warn` `the content the Active Pointers name does not load; recovering what the log recorded`.
+   The log is empty.
+4. `tick loop started`, then `error` `no content in effect: the World has no Zones and there is no
+   previous version to retain` (`server/boot/tick.go`, `ReconcileContent`), and exit `1`. It was
+   never Ready and never served Admin.
+
+That exit is `AW-SRV-012`'s rule, and it's right for a World that has lost its content. But AW-INF-021's
+contract assumes the server comes up with nothing to serve and waits for the seed (AC-7: "the
+Application syncs and `make content-seed ENV=dev` runs"). The two can't both hold. `world-reset`
+alone is fine: it keeps the content topics, so a store that has `town` recovers. Only a store with
+no Zone-bearing pack deadlocks.
+
+**What SRE can't do inside the contract.** `content-seed` must use product commands only (the
+Interface contract; CLAUDE.md §10), so no direct topic write. And a second, `dir`-source server
+can't publish: its content RPCs answer `unimplemented`. Pointing any other server at `dev`'s
+broker would make two writers of one World log.
+
+**Options, for architecture to decide:**
+1. **(SRE's recommendation) A store-backed server with no content in effect stays up, unready.**
+   It serves Admin (the content RPCs), refuses Game (`OpenSession`), keeps `/readyz` failing, and
+   waits for the first swap that brings Zones, which then goes through today's `ReconcileContent`
+   path. `AndaraServerUnavailable` fires while `dev` waits, which is true. The "no content in effect"
+   exit stays for a World that *had* content: the log holds a swap, and the store now refuses it. The
+   server change is implementation's, in `server/boot`, with a test. Two more pieces are needed
+   *(added before merge, from Codex on #277)*:
+   - **A TLS-valid route to an unready pod.** The Service and the edge route only to Ready pods. The
+     pod's certificate names only `andara-0.andara.<ns>.svc` and `andara.<ns>.svc`. And the CLI takes
+     its TLS server name from `server.address`, with no override. So a `kubectl port-forward` to
+     `localhost` fails verification before any RPC. The routes:
+     - (a) **A CLI server-name override** (implementation, a CLI contract change): a config key and
+       flag, e.g. `server.tls_server_name`, so `content-seed` dials the port-forward and verifies
+       `andara-0.andara.<ns>.svc`. The credential is then stored under the port-forward's address,
+       so the seed logs in there as the operator, which it does anyway. SRE prefers this one. It's
+       small, and the seed stays on the operator's box like every other target.
+     - (b) **An in-cluster seed pod**, dialing `andara-0.andara.<ns>.svc`. That needs the headless
+       Service to publish not-ready addresses. Today it's `publishNotReadyAddresses: false`, so the
+       chart would get a second headless Service with `true`, keeping the first's semantics. It
+       also needs an image with `andara-cli`, which the server image doesn't carry. It's all SRE's
+       to build, but it's more moving parts.
+   - **A startup probe the waiting state survives** (SRE, the chart). The StatefulSet's
+     `startupProbe` polls `/readyz`, with a budget of 60 × 10 s. A server waiting for its seed would
+     be restarted after about ten minutes, and again after every ten minutes, cutting off Admin each
+     time. So startup has to mean "serving Admin", not "ready". The server would expose that as a
+     path of its own, such as `/startedz`, true once recovery has finished and Admin is listening
+     (implementation), and the startup probe moves to it (SRE). Readiness stays on `/readyz`.
+     Liveness stays on `/livez`. Recovery's slow-start allowance moves with the startup probe,
+     unchanged.
+2. **Seed through a `dir`-mode publish:** the content RPCs work in `dir` mode too, publishing to the
+   store without serving from it. `dev` switches only after the seed. That's a larger change to
+   `AW-SRV-013`'s wiring, and the switch becomes two rolls.
+3. **The fixture in the server's boot**, like `andara.core`. It couples the server binary to test
+   content. SRE recommends against it.
+
+**Until it's decided, AW-INF-021 stays `ready`, with nothing merged,** because the values change
+alone would crash `dev`. SRE can build the parts that don't depend on it (the chart change and AC-8's
+test, `content-seed`, `argocd-status`'s pack lines, and the runbook lines) and hold them on a branch.
+The sprint's demo (M3) waits on this decision, and so does AW-INF-022 after it.

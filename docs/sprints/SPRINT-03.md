@@ -130,10 +130,36 @@ AW-SRV-035 to AW-SRV-038 are new; the rest are `ready` or carried over.
 9. AW-SRV-036 — `goto` — depends on AW-SRV-003, AW-SRV-014 (both `done`)
 10. AW-SRV-038 — a move describes the destination Room — depends on AW-SRV-003 (`done`). Last,
     because the demo doesn't need it.
+11. #143 — the state projector diverges one tick after bootstrapping from a snapshot round
+    (added 2026-09-30). The fix belongs in round capture or restore (AW-SRV-006 code), not in the
+    projector. It comes with the regression test named in AW-SRV-019's 2026-09-29 §8 pass. It holds
+    AW-INF-025 ACs 2 and 4, AW-INF-008 AC-2 and AW-SRV-019 AC-6, and in SPRINT-04 it holds M2's
+    "matching State Hash". `dev`'s projector is at 0 replicas until it's fixed.
+    Source: `docs/feedback/AW-INF-025-projector-operations.md`, "For PM".
+12. #267 — the publish gate accepts `BlobRef.path` values that escape the pack (added 2026-09-30).
+    The contract is in the issue: refuse `INVALID_ARGUMENT` `validation`, audited as `reject`, with
+    `unsafe_source_path`'s rule. It's server-side hardening under AW-SRV-013, and `fetch` keeps its
+    own guard.
 
 **Risk:** implementation has ten items, and AW-SRV-013 and AW-CLI-003 are the size of the sprint.
 If it runs short, AW-SRV-038 carries first, then #128. The demo needs items 1 and 4–9. SRE's items
 8 and 9 wait on implementation's items 4, 7 and 8, so SRE's early items (1–7) are the slack.
+
+## Re-planned 2026-09-30: architecture's asks
+Every item in implementation's original list is at `review` or `done`, so implementation takes on
+#143 and #267 (items 11 and 12). Neither needs a contract review. Both are defects against stories
+whose contracts already hold. #143 comes first because it holds four ACs in this sprint and M2 in
+the next.
+
+PM groomed four more stories from architecture's reviews, all at `draft`. They are **not in this
+sprint**. None is on the demo path, and SRE, which would review their observability, holds the
+demo's real risk: AW-INF-021 and AW-INF-022 haven't started, and the Builder's Guide (AW-INF-023,
+now `ready`) and Brian's walk-through come after them. They go to SPRINT-04's contract review:
+- AW-SRV-039 — Admin acting-as: `andara-act-as` metadata and `ContentVersion.publisher`. It
+  includes AW-CLI-003's deferred `--as`.
+- AW-SRV-040 — every Admin account write audits outside the Account write lock
+- AW-SRV-041 — a bystander reads `<name> has arrived.` when there's no Exit back (Brian, 2026-09-30)
+- AW-INF-029 — `content/core/VERSIONS` is append-only, enforced by `make check`
 
 ## Carryover from SPRINT-02
 Three stories, all at `review`. The reasons are in SPRINT-02's close-out:

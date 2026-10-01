@@ -6,6 +6,8 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -140,5 +142,38 @@ func TestAccountSetPacks_Usage(t *testing.T) {
 		if res := runCLI(t, append([]string{"account", "set-packs"}, args...), env); res.exit != ExitUsage {
 			t.Errorf("%v: exit=%d, want %d", args, res.exit, ExitUsage)
 		}
+	}
+}
+
+// AC-2's CLI half (AW-SRV-035 §8, AW-CLI-003 §8 item 4): granted town and
+// docks by `account set-packs`, a Builder's `content publish` of wilds
+// exits 1 with error.code pack_not_held, and nothing is published. Their
+// publish of town goes through.
+func TestAccountSetPacks_PublishToAnUngrantedPackIsPackNotHeld(t *testing.T) {
+	s := memoryStack(t)
+	oper := s.identity(t, "oper", "operator-password")
+	id, alice := s.builder(t, "alice") // builder, no packs
+	mustRun(t, oper, "account", "set-packs", id, "--pack", "town", "--pack", "docks")
+
+	wilds := filepath.Join(t.TempDir(), "wilds")
+	if err := os.MkdirAll(wilds, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeAW(t, wilds, "pack.aw", "pack wilds requires andara.core@1\n")
+	writeAW(t, wilds, "z.aw", "zone wilds \"Wilds\" {\n  fallback trail\n\n  room trail \"Trail\" {}\n}\n")
+
+	res := runCLI(t, []string{"content", "publish", "--path", wilds, "-o", "json"}, alice)
+	if res.exit != ExitFail || jsonErrorCode(t, res.stdout) != "pack_not_held" {
+		t.Fatalf("publish wilds: exit=%d stdout=%q stderr=%q", res.exit, res.stdout, res.stderr)
+	}
+	res = runCLI(t, []string{"content", "publish", "--path", wilds}, alice)
+	if res.exit != ExitFail || !strings.Contains(res.stderr, "does not hold pack wilds") {
+		t.Errorf("human: exit=%d stderr=%q", res.exit, res.stderr)
+	}
+	if v := s.reg.Newest("wilds"); v != 0 {
+		t.Errorf("wilds@%d was published", v)
+	}
+	if res := mustRun(t, alice, "content", "publish", "--path", devFixture); !strings.HasPrefix(res.stdout, "town@1 published") {
+		t.Errorf("publish town: %q", res.stdout)
 	}
 }
