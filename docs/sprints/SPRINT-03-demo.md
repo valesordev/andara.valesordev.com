@@ -70,7 +70,7 @@ Builder's Guide's.
    - **Expect:** `git log --show-signature -1` reads `Good "git" signature for <your email>`.
    - **Run:** Brian's first commit went up unsigned. He then ran the sequence by hand, and re-signed
      the branch four times: the first commit had gone up unsigned, `ssh-add` was first given the
-     `.pub` (so each signature asked for the passphrase), the per-repo name and email were missing,
+     `.pub` (so the first re-sign asked for the passphrase), the per-repo name and email were missing,
      and the author needed `--reset-author`. The transcript doesn't show a verification;
      `git log --show-signature -1` printed nothing. The guide now covers each of those. `make bootstrap` in
      the Content Repository replaces the sequence (`AW-INF-033`, from `andara.solo7.media` #14).

@@ -16,8 +16,8 @@ risk: low
 
 The Content Repository (`valesordev/andara.solo7.media`, `AW-INF-022`) requires signed commits on
 `main`, and nothing sets signing up. In SPRINT-03's demo (the M3 gate), Brian configured SSH signing
-by hand, with `git config` lines, `ssh-add`, and a branch re-signed four times. #14 adds that a
-local allowed-signers file is needed to check signatures locally. The
+by hand, with `git config` lines, `ssh-add`, and a branch re-signed four times. #14 also lists a
+GitHub Signing Key and an allowed-signers file, which the transcript doesn't show. The
 Builder's Guide now documents those steps by hand (section 4, "Sign your commits"; #330). A
 documented sequence with no target is a §9 defect, so the demo marks it `§9 defect → AW-INF-033`.
 
@@ -52,7 +52,9 @@ hand-typed `git config`.
 1. **Given** a fresh clone with `user.name` and `user.email` unset **when** `make bootstrap` runs
    **then** it exits 1 and prints the two `git config --local` lines, plus "verified on GitHub
    (Settings > Emails)".
-2. **Given** a name, an email and an SSH key the agent holds **when** `make bootstrap` runs **then**
+2. **Given** a name, an email, an SSH key the agent holds, that key's `<email> <key>` line in
+   `.github/allowed_signers`, and either no `gh` login or the key registered as a Signing Key
+   **when** `make bootstrap` runs **then**
    `git config --local` has `gpg.format ssh`, `user.signingkey <key>`, `commit.gpgsign true`,
    `tag.gpgsign true` and `gpg.ssh.allowedSignersFile .github/allowed_signers`. A following
    `git commit` is signed and trusted: `git log --show-signature -1` reads
@@ -103,8 +105,9 @@ None in the code repository. `.github/allowed_signers` is new and tracked in the
 
 - **Unit:** none.
 - **Integration:** the Content Repository's macOS CI job, as AC-7.
-- **Manual/operator:** in a fresh clone, run `make bootstrap`, then `git commit --allow-empty -m t`,
-  then `git log --show-signature -1`, which reads `Good "git" signature for <your email>`.
+- **Manual/operator:** in a fresh clone, with your key's line in `.github/allowed_signers` (AC-4
+  prints it if not), run `make bootstrap`, then `git commit --allow-empty -m t`, then
+  `git log --show-signature -1`, which reads `Good "git" signature for <your email>`.
 
 ## Definition of done
 

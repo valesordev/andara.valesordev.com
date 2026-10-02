@@ -60,7 +60,8 @@ so that the tests assert what the contracts say and the READMEs describe what sh
    - `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock` waits on `stall.entered` in a `select`
      with a deadline;
    - the log fields the implementation record lists (`acting_as_account_id`, `session_id`,
-     `trace_id`) are asserted, or the record is corrected;
+     `trace_id`) are asserted as `AW-SRV-035` rules them (AC-6), and the record is corrected where it
+     differs;
    - `server/README.md`'s Accounts section names `accounts.write` and the `andara.accounts` domain.
 8. **The dev fixture test uses the embedded core** (`docs/feedback/AW-SRV-037-purgatory.md`, "a
    follow-up that doesn't hold the story"). `TestDevFixtureSourceMatchesTestContent` compiles
@@ -88,11 +89,12 @@ so that the tests assert what the contracts say and the READMEs describe what sh
 5. **Given** `admin/README.md` and `server/README.md` **when** read **then** they contain each row
    that items 3, 6 and 7 name.
 6. **Given** the Account grant path (item 7) **when** its test runs a refused and an accepted
-   `set-packs` **then** it asserts that the log line carries `acting_as_account_id`, `session_id` and
-   `trace_id`. `session_id` and `trace_id` aren't optional: CLAUDE.md §7 makes the correlation ID
-   mandatory on a command path, so if either is missing, the code adds it. Only for
-   `acting_as_account_id` may the record be corrected instead (through `AW-SRV-035`'s feedback file),
-   if that field doesn't apply to the line.
+   `set-packs` **then** it asserts the log line's fields as `AW-SRV-035`'s Observability section
+   rules them (2026-09-30): `trace_id` is non-empty, since it's the correlation ID on Admin; the
+   `session_id` key is present and empty, since an Admin call runs in no Game Session; and
+   `acting_as_account_id` is present, and empty without `--as`. If the record says otherwise, it's
+   corrected through `AW-SRV-035`'s feedback file. The code emits all three keys today
+   (`server/auth/packs.go`), so no code change is expected.
 7. **Given** `AW-CLI-003`'s implementation record **when** this story merges **then** it says the
    rehearsal runs in CI (#265) and that the confirmation line isn't asserted.
 8. **Given** each source feedback file **when** this story merges **then** that file records the

@@ -78,7 +78,8 @@ cite it.
 4. **Given** the server ready **when** the script reads its metrics, polled to a deadline **then**:
    - `andara_recovery_state_hash_match` is `1`;
    - `andara_recovery_round_tick` equals `R`, so the recovery used that snapshot, and Room 2 can
-     only have come from the tail;
+     only have come from the tail. If it's greater than `R` (a round completed between AC-3's re-read
+     and the kill), the run is inconclusive, and the script exits as AC-3's rerun case;
    - `andara_acknowledged_commands_lost_total` is `0`.
 5. **Given** the recovery **when** A's and B's `play` clients reconnect on their own (`AW-CLI-007`'s
    reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows Room 2:
@@ -101,8 +102,9 @@ cite it.
   `ANDARA_BOOTSTRAP_OPERATOR`, `ANDARA_TLS_CA_FILE`. One added: `STACK_RECOVER_RTO` (seconds,
   default `120`), the AC-3 deadline. The default lives in the Makefile, and Phase 1 exit lowers it
   to 60 there.
-- Exit codes: `0` all assertions held; `1` an assertion failed or a precondition is missing
-  (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`).
+- Exit codes: `0` all assertions held; `1` an assertion failed, a precondition is missing
+  (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`), or the run
+  was inconclusive (AC-3 and AC-4's rerun case). AC-7's dump and cleanup apply to all three.
 - Output: `stack-recover: <step>` progress lines as in `stack_linkdead.sh`, including
   `stack-recover: ready <N>s after the kill (RTO 120s), round <tick>, hash match`, and ending
   `stack-recover: M2 gate — killed, recovered from a snapshot, hash matched, both rebound — passes`.

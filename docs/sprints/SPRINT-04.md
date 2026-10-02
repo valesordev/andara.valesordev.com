@@ -96,7 +96,7 @@ each story at `review`.
    `done`). M. After its contract review.
 4. **AW-SRV-007** — recovery from snapshot and log tail, verified in CI — depends on AW-SRV-006 and
    AW-SRV-015 (`done`), items 1 and 2, and item 3 once architecture adds the edge. M. **On the demo's
-   critical path:** SRE's item 5 waits on it.
+   critical path:** SRE's item 6 waits on it.
 5. **#319**: `TestReadiness_WaitsForTheCoreInEffect` races on its log buffer. It's test-only, XS.
 6. **#172**: the stall-budget test, as architecture's item 1 rules.
 7. **AW-CLI-009** — `andara-cli content reference` — depends on AW-CLI-002 (`done`). S. SRE's item 4
