@@ -243,11 +243,24 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
 - **`RecoveryStateMismatch` can't fire as written.** `andara_recovery_state_hash_match` is set to
   `0` by a process that exits `2` at once. The restart sets nothing until its own recovery ends,
   so no scrape ever reads the `0`, and the one alert that pages is dead configuration.
-  - **Compose:** a linger fixes it. On a boot recovery's exit `2`, the server keeps `/metrics`
-    and `/livez` served and `/readyz` unready for 60 s, as the projector does with `haltLinger`
-    (`cmd/andara-projector/main.go`). It logs one `error` line,
-    `holding /metrics for the hash mismatch to be scraped`, with `for`. Compose scrapes its static
+  - **Compose: a linger fixes it.** Today the server serves nothing until recovery has finished
+    (`cmd/andara-server/main.go`: the tick loop starts before `ListenAndServe`). So on a boot
+    recovery's exit `2`, the server **starts** serving for 60 s before it exits:
+    - `/metrics` and `/livez` answer `200`;
+    - `/readyz` and `/startedz` answer `503`;
+    - one `error` line, `holding /metrics for the hash mismatch to be scraped`, with `for`.
+
+    That's the projector's `haltLinger` (`cmd/andara-projector/main.go`). Compose scrapes its static
     target every 5 s whether or not the server is Ready.
+  - **The gauge is never pre-seeded.** `andara_recovery_state_hash_match` has no sample until
+    `recovery.verify` sets it. If HTTP comes up earlier for any reason, a pre-seeded `0` would fire
+    `RecoveryStateMismatch` on every normal boot.
+  - **The linger is a config key, off by default.** `recovery.mismatch_linger`
+    (`ANDARA_RECOVERY_MISMATCH_LINGER`) defaults to `0s`, and compose sets `60s`.
+    - On the cluster the linger buys nothing (next bullet). There it would add 60 s to every
+      crash-loop cycle and delay `AndaraServerCrashLooping`, which pages, so the chart leaves it
+      at `0s`.
+    - The key is a contract addition, for architecture to confirm or rule otherwise.
   - **The linger is for boot recovery only.** `andara-server recover --verify` (AC-10) also exits
     `2` on a mismatch. It's a one-shot that nothing scrapes, so it exits at once.
   - **The cluster: the linger doesn't reach it.** The annotation scrape keeps only Ready pods
@@ -259,13 +272,18 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
       `recovery-state-mismatch.md`.
     - `RecoveryStateMismatch` on the cluster needs a signal that outlives the process and doesn't
       depend on readiness. Two candidates: kube-state-metrics' last-terminated exit code for the
-      `server` container, or a Loki rule on the `error` line. That's for SRE to settle with the
-      cluster's rule delivery (`AW-INF-009`) and record in that story. It doesn't hold this one.
-  - **The rule.** It fires with `for: 0m`. A crash loop's backoff can leave several minutes between
-    lingers, so it also carries `keep_firing_for: 15m` and doesn't resolve between them.
-  - **§8.** `RecoveryStateMismatch` is observed **firing** in the local stack's Prometheus, against
-    a compose server recovering from a deliberately corrupted round. The §8 record says plainly
-    that this is the compose path only, and that the cluster path is `AW-INF-009`'s.
+      `server` container, or a Loki rule on the `error` line.
+    - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`,
+      to carry in `AW-INF-009` or a new `lane: sre` story. It doesn't hold this one.
+  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. Compose has no restart
+    policy, so after the 60 s linger the target goes stale and the gauge's last `0` stops being
+    scraped. `keep_firing_for` keeps the alert visible after the process has gone.
+  - **§8.** `RecoveryStateMismatch` is observed in the local stack's Prometheus:
+    - **firing**, against a compose server recovering from a deliberately corrupted round;
+    - **inactive, never pending**, through a normal compose recovery (`make stack-recover`).
+
+    The §8 record says plainly that this is the compose path only, and it names the story that
+    carries the cluster path.
 - **If `AW-SRV-043` joins `depends_on`:**
   - `andara_recovery_failures_total{reason}` gains `restore`, which covers its hash and seed
     mismatches.

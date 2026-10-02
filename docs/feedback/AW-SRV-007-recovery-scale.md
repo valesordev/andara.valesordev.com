@@ -38,18 +38,22 @@ contract review. Two more, from the SPRINT-03 close-out:
 5. **`RecoveryStateMismatch` can't fire as the story is written.**
    - `andara_recovery_state_hash_match` is set to `0` by a process that exits `2` at once. The
      restart sets nothing until its own recovery ends, so no scrape ever reads the `0`.
-   - **In compose,** the projector's `haltLinger` fixes it: keep `/metrics` up, unready, for 60 s
-     before exiting. Compose scrapes a static target every 5 s.
+   - **In compose,** a linger like the projector's `haltLinger` fixes it. The server starts
+     serving `/metrics` for 60 s before it exits, and compose scrapes a static target every 5 s.
+     The gauge is never pre-seeded, so a normal boot never fires the alert.
    - **On the cluster, it doesn't.** The annotation scrape keeps only Ready pods, and a refused
-     recovery is never Ready. There, `AndaraServerUnavailable` pages on the symptom, and
-     `RecoveryStateMismatch` needs a signal that doesn't depend on readiness: kube-state-metrics'
-     last-terminated exit code, or a Loki rule. SRE settles that with `AW-INF-009`.
+     recovery is never Ready. There, `AndaraServerUnavailable` pages on the symptom.
+     `RecoveryStateMismatch` needs a signal that doesn't depend on readiness, and that work is
+     routed to PM (`docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`).
    - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires:
-     - the linger, on boot recovery's exit `2` only, and not on the one-shot `recover --verify`;
+     - the linger, behind a new key, `recovery.mismatch_linger`, which defaults to `0s` and which
+       compose sets to `60s`. It applies on boot recovery's exit `2` only, not to the one-shot
+       `recover --verify`;
      - `for: 0m` and `keep_firing_for: 15m` on the rule;
-     - an §8 observation of the alert firing in local Prometheus, recorded as compose-only.
-   - **Confirm the exit timing as a contract change, or rule otherwise.** It's operator-visible: a
-     refused boot recovery now takes 60 s to exit.
+     - an §8 observation, compose-only, of the alert firing on a corrupt round and staying
+       inactive on a normal recovery.
+   - **Confirm the new config key and the exit timing as contract changes, or rule otherwise.**
+     With the linger on, a refused boot recovery takes 60 s to exit.
 
    The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
    - a `restore` reason on `andara_recovery_failures_total`;
