@@ -290,14 +290,17 @@ Each case runs the real path through `LoadContent` on the local stack's Redpanda
     exactly one "recovering what the log recorded".
   - **Exits in reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a count of
     `1`.
-  - **A pointer naming a version with no manifest:** logs and counts at load as today. That's
-    exactly two lines with `code=no_zones_found`: the rejection's own, and the one carrying
-    `loadFindings`' detail, "no Zones were found in kafka…". The count reads `2`. A held appended
-    finding would show as `1`.
+  - **A pointer naming a version with no manifest:** logs and counts at load as today. Between
+    `LoadContent`'s start and its return, there are exactly two lines with `code=no_zones_found`:
+    the rejection's own, and the one carrying `loadFindings`' detail, "no Zones were found in
+    kafka…". A held appended finding would show as one. Reconcile's Loader then logs the rejection
+    again as `content finding`, unchanged, which counts `LoadFailures`, not this series. The count
+    reads `2` over the whole boot.
 - **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended, asserts at least one reload
-  (the core pointer move). Between the wait line and the reload that leaves the wait, there are only
-  reload `debug` lines, with no `warn`, no `error`, and no `no_zones_found`, and the count is `0`.
-  The leaving reload builds a World, so it logs `templates loaded` at `info` as today. A separate test with a short `waitRetry` asserts two or more reload `debug`
+  (the core pointer move). From the wait line through the last `content reload: no Zones in effect
+  yet` line, there are only those `debug` lines. From there to `content in effect: leaving the
+  wait`, there's no `warn`, no `error`, and no `no_zones_found`. The leaving reload builds a World,
+  so it logs `templates loaded` at `info` as today. The count is `0` throughout. A separate test with a short `waitRetry` asserts two or more reload `debug`
   lines carrying `next_retry` and `trace_id`. It doesn't assert the leaving line's `pack`, which a
   timer reload can race.
 
