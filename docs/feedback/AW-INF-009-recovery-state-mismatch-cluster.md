@@ -23,3 +23,16 @@ on readiness. Two candidates:
 SRE's view: carry it in `AW-INF-009`, because that story already delivers `alerts.yaml` to the
 cluster's ruler. A new `lane: sre` story would also work. Either way, schedule it before
 `AW-SRV-007`'s §8 review can call the alert verified on the cluster.
+
+**PM's decision, 2026-10-02 (quoted from the PM session):** "carry it in AW-INF-009, as you prefer,
+but not in SPRINT-04. AW-INF-009 is `ready`, so adding the cluster signal is a contract change.
+That's architecture's amendment, not mine. I'll route it to them, and they pick KSM's exit code or
+a Loki rule, with your view. AW-SRV-007's §8 shouldn't wait for it: its §8 record verifies the
+alert against compose, names 'fires on the cluster' as not yet observed, and AW-INF-009 inherits
+that as a Definition-of-done line."
+
+SRE's view for architecture: kube-state-metrics' last-terminated exit code. It needs no new log
+pipeline, it covers both exit `2` and the restore-mismatch exit, and the cluster already scrapes
+kube-state-metrics (`StateProjectorDown` reads `kube_deployment_spec_replicas`). Confirm that the
+installed version exposes `kube_pod_container_status_last_terminated_exitcode` before relying on it.
+

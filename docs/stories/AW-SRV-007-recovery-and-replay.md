@@ -285,8 +285,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     - `RecoveryStateMismatch` on the cluster needs a signal that outlives the process and doesn't
       depend on readiness. Two candidates: kube-state-metrics' last-terminated exit code for the
       `server` container, or a Loki rule on the `error` line.
-    - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`,
-      to carry in `AW-INF-009` or a new `lane: sre` story. It doesn't hold this one.
+    - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`.
+      PM's decision (2026-10-02): `AW-INF-009` carries it in SPRINT-05, and architecture amends
+      that story's contract. It doesn't hold this one.
   - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. Compose has no restart
     policy, so after the 60 s linger the target goes stale and the gauge's last `0` stops being
     scraped. `keep_firing_for` keeps the alert visible after the process has gone.
@@ -295,8 +296,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     - **never in `ALERTS`**, at neither `alertstate`, through a normal compose recovery
       (`make stack-recover`).
 
-    The §8 record says plainly that this is the compose path only, and it names the story that
-    carries the cluster path.
+    The §8 record verifies the alert against compose. It names "fires on the cluster" as **not
+    yet observed**, under CLAUDE.md §8's deferral rule, and `AW-INF-009` inherits that observation
+    as a Definition-of-done line (PM, 2026-10-02).
     - **Ordering.** This story's §8 follows `AW-INF-032`, which depends on this story and supplies
       `make stack-recover`.
     - **The corrupt-round run has no target yet.** It's a §9 gap, and SRE adds a target for it
