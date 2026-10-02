@@ -208,46 +208,71 @@ trace_id on the wait lines.)*
 Recorded after `done`. Implementation makes the code change (SPRINT-04, implementation item 9).
 Recorded in `docs/feedback/AW-SRV-042-empty-store-waits.md`.
 
-**What happens today.** A store-backed source (`content.source=kafka`) with no Zones in effect logs
-the Loader's finding `no_zones_found` at `error` and counts it in
-`andara_content_validation_errors_total{code="no_zones_found"}`.
-- The server logs it once per boot, before `ReconcileContent` decides between waiting and exiting
-  `1`.
-- The projector logs it again on every reload in `WaitForContent`'s backoff, from 1 s up to 60 s
-  (`server/boot/wait.go`). That was 10 lines in 44 s in `AW-INF-021`'s AC-7 run.
+**What happens today.** On a store-backed source (`content.source=kafka`) with no Zones in effect,
+every `LoadContent` logs two lines (`server/boot/boot.go`, `server/content/load.go`):
+- the finding `no_zones_found` at `error`, counted in
+  `andara_content_validation_errors_total{code="no_zones_found"}`;
+- a `warn`, `the content the Active Pointers name does not load; recovering what the log recorded`.
 
-The state is the expected one on every fresh environment. An `error` line that's expected trains
-operators to ignore that level.
+The server does this once per boot, before `ReconcileContent` decides. The projector's
+`WaitForContent` reloads through `LoadContent` on a backoff from 1 s up to 60 s, so it repeats
+both lines, plus an `info` `templates loaded` per pack, on every reload. That was 10 `error` lines
+in 44 s in `AW-INF-021`'s AC-7 run. The state is the expected one on every fresh environment, and
+expected `error` and `warn` lines train operators to ignore those levels.
 
-**The contract, from this amendment:**
-- **Deferred to the decision.** On a store-backed source, `no_zones_found` is held until the
-  process decides.
-  - **It waits:** the finding is dropped. No `error` line, and no increment of
-    `andara_content_validation_errors_total{code="no_zones_found"}`. The `warn` wait line above
-    stands alone.
-  - **It exits `1`:** the store's log had Zones that the pointers no longer name. The finding is
-    logged at `error` once, with its existing fields, and counted once.
-- **Reloads during a wait.** A reload that still finds no Zones logs one `debug` line,
-  `content reload: no Zones in effect yet`, with `attempt`, `next_retry`, and `trace_id` (the
-  `content.wait` span's). It doesn't count. Any **other** finding on a reload, such as an
-  activated pack that fails validation, is logged at `error` and counted as today. Only
-  `no_zones_found` is deferred.
-- **The directory source is unchanged.** It has no pointers to wait on, so `no_zones_found` is
-  still logged at `error`, counted, and exits `1`.
+**The case this amendment covers: an empty store.** On a store-backed source, outside
+`--validate-only`, `no_zones_found` is the **only** finding: no rejected version, and no
+`malformed` from an unreadable store. Any other combination is unchanged, because a refused
+version or an unreachable store is a real fault and is reported at load as today.
+
+**The contract, for the empty-store case:**
+- **`LoadContent` holds the finding.** It logs neither the `error` line nor the "recovering
+  what the log recorded" `warn`, and it doesn't count. `content.validate`'s `error_count` excludes
+  the held finding.
+- **The decision settles it**, whichever way it goes:
+  - **Waits:** the finding is dropped. The `warn` wait line is the boot's only content line at
+    `warn` or above.
+  - **Serves**, because `ReconcileContent` finds content in effect from the World log: dropped.
+    The World is serving, and `content in effect` says so.
+  - **Exits `1` on any path after the finding is held**, including AC-3's "a World log in which
+    a Content Swap with `zone_count > 0` has applied", a failed log read, a failed reconcile, or a
+    tick-loop start failure: the finding is logged at `error` once, with its existing fields, and
+    counted once, before the process exits. Its `trace_id` is the active span's at that moment
+    (`content.reconcile` for the server's reconcile exits), not `content.load`'s.
+- **Reloads during a wait** (the projector's `WaitForContent`; the server waits on swaps, not
+  reloads): a reload in the empty-store case logs one line, at `debug`, `content reload: no Zones in effect
+  yet`, with `next_retry` (the backoff before the next reload) and `trace_id` (`content.wait`'s).
+  It logs nothing else: no `warn`, no `error`, and `templates loaded` drops to `debug`. A reload
+  that finds anything else, such as an activated pack that fails validation or an unreachable
+  store, logs and counts as today.
+- **Unchanged:** the directory source, which has no pointers to wait on, and `--validate-only`,
+  which exits inside `LoadContent`. Both still log `no_zones_found` at `error`, count it, and
+  exit `1`.
 - **Cardinality is unchanged.** `code` keeps its value set, and only when the series moves changes.
-- **Nothing keys on it.** No rule, dashboard, runbook, SLO doc, script, or workflow references
-  `content_validation_errors_total`, `no_zones_found`, or the `no Zones were found` line. That was
-  checked across `deploy/`, `docs/runbooks/`, `docs/specs/slo/`, `scripts/`, and `.github/` on
-  2026-10-02. `ContentLoadFailing` doesn't read it.
+- **Nothing keys on it.** No rule, dashboard, runbook, SLO doc, script, workflow, or smoke test
+  references `content_validation_errors_total`, `no_zones_found`, or either line. That was checked
+  across `deploy/`, `docs/runbooks/`, `docs/specs/slo/`, `scripts/`, `.github/`, and `internal/`
+  on 2026-10-02. `ContentLoadFailing` reads `andara_content_pending_seconds`.
 
-**Verified at the code change's §8 check** (SRE), on a fresh `content.source=kafka` local stack
-before `make content-seed`:
-- the server's and the projector's logs hold no `error` line naming `no_zones_found`;
-- each holds exactly one `warn` wait line;
-- `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0` on both
-  `/metrics`.
+**Verification at item 9's §8.** The local stack runs the directory source and no projector
+(`deploy/compose/docker-compose.yaml`), so it can't show the empty-store case. The check has two
+parts:
+1. **Tests (CLAUDE.md §8's no-caller clause), item 9's.** In
+   `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` and
+   `TestProjectorBoot_ReadOnlyAndWaitsForZones`, a wait on an empty store logs no line at `warn` or
+   above other than the wait line, and
+   `testutil.ToFloat64(ValidationErrors.WithLabelValues("no_zones_found"))` is `0`. One case each
+   for "serves" and for an exit after reconcile asserts exactly one `error` line and a count of 1.
+   A multi-reload projector case asserts only `debug` lines between the wait line and the seed.
+2. **Live, inherited.** The next rebuild of `dev` from nothing, through `AW-INF-021`'s targets
+   (`make env-destroy ENV=dev CONFIRM=andara-dev`, then the install targets through `make argocd-install ENV=dev`),
+   is observed before `make content-seed ENV=dev`:
+   - the `andara-server` and `andara-projector-state` logs hold no `no_zones_found` and no
+     "recovering what the log recorded";
+   - each holds one wait line;
+   - `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0` on both.
 
-After the seed, both leave the wait as they do today.
+   SRE records it in this story's §8 record when that rebuild happens. It doesn't hold item 9.
 
 ## Test plan
 
