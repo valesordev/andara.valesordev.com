@@ -146,7 +146,11 @@ amendment with its own AC, say so here, and implementation's item 9 waits on it.
 
 ## For PM: a carrier for #299's live observation
 
-The amendment's live check needs `dev` to start on an empty store after item 9 deploys, and nothing
-in SPRINT-04 schedules that. `AW-INF-021`'s AC-7 rebuild from nothing is the natural one, and it's
-marked partial. Either give that rebuild a carrier with this as an inherited Definition-of-done line,
-or accept that the integration tests alone close #299's §8.
+The amendment's live check needs `dev` to start on an empty store after item 9 deploys. Nothing in
+SPRINT-04 schedules that. `AW-INF-021` is `done`, and its AC-7 rebuild already ran before item 9,
+so a carrier would need a new, destructive `make env-destroy ENV=dev CONFIRM=andara-dev` rebuild.
+
+**PM's decision, 2026-10-02 (quoted from the PM session):** "accept item 9's Redpanda integration
+tests alone as #299's §8. I won't schedule a destructive `env-destroy` of `dev` to watch a log
+level. The live line is recorded as not yet observed, and whoever next rebuilds `dev` from an empty
+store checks it." The amendment says so.

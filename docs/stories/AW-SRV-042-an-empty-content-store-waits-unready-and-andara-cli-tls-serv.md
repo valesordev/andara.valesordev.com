@@ -220,11 +220,17 @@ both lines, plus an `info` `templates loaded` per pack, on every reload. That wa
 in 44 s in `AW-INF-021`'s AC-7 run. The state is the expected one on every fresh environment, and
 expected `error` and `warn` lines train operators to ignore those levels.
 
-**The case this amendment covers: an empty store.** On a store-backed source, outside
-`--validate-only`, `no_zones_found` is the **only fatal finding** of the load. It's computed once,
-after the load, build and template findings have all been collected, not per finding. Advisory
-warnings don't count. There's no rejected version, and no `malformed` from an unreadable store. Any
-other combination is unchanged: a refused version or an unreachable store is a real fault and is
+**The case this amendment covers: an empty store.** All four hold, on a store-backed source:
+1. not `--validate-only`;
+2. the store was read: no `malformed` from an unreadable store;
+3. **no rejections**. `Candidates` returned none. A pointer naming a version with no manifest is a
+   rejection whose own finding is also coded `no_zones_found` (`server/content/errors.go`), and it
+   is **not** this case;
+4. the only fatal finding is the one `loadFindings` appends for zero Zones. That's computed once,
+   after the load, build and template findings are all collected, and advisory warnings don't
+   count.
+
+Anything else is unchanged: a refused version or an unreachable store is a real fault and is
 reported at load as today.
 
 **The contract, for the empty-store case:**
@@ -235,16 +241,18 @@ reported at load as today.
   - **Waits:** dropped, with no line and no count. Of the lines this amendment governs, the wait
     line is the only one. Other existing Loader `warn`s, such as `configured content pack has no
     Active Pointer` for an explicit `content.packs` list, are unchanged.
-  - **Serves** (`ReconcileContent` finds Zones in effect from the World log): the finding isn't
-    logged or counted, but the "recovering what the log recorded" `warn` is logged once. The log
-    holds Zones that no followed pack's pointer names, which happens when the pointer topics were
-    lost and the World log was kept. That's a store fault, and this line is its only signal.
+  - **Serves** (`ReconcileContent` returns `0` with Zones in effect from the World log): the
+    finding isn't logged or counted, but the "recovering what the log recorded" `warn` is logged
+    once, with `content.reconcile`'s `trace_id`. The log holds Zones that no followed pack's
+    pointer names. That's usually a store fault (lost pointer topics), so the line is kept.
   - **Exits `1` before the decision settles it**, by any path: AC-3's "a World log in which a
     Content Swap with `zone_count > 0` has applied", a failed log read, a failed reconcile, or a
     tick-loop start failure. The finding is logged once, with its existing fields, and counted
     once, before the process exits. Its `trace_id` is the active span's (`content.reconcile` for
     reconcile's exits), or `content.load`'s where the exit runs outside any span.
   - **Ends on a signal before the decision** (exit `0`): dropped.
+  - **The projector's decision** is `WaitForContent` entering the wait. An exit before that, such
+    as a failed pointer watch (exit `1`), logs the finding as an exit does.
   - Once the decision has settled it (dropped on a wait or a serve), a later exit doesn't revive
     it.
 - **Reloads during a wait** (the projector's `WaitForContent`; the server waits on swaps, not
@@ -262,31 +270,36 @@ reported at load as today.
   across `deploy/`, `docs/runbooks/`, `docs/specs/slo/`, `scripts/`, `.github/`, and `internal/`
   on 2026-10-02. `ContentLoadFailing` reads `andara_content_pending_seconds`.
 
-**Verification at item 9's §8.** The assertions are on the finding's code, not on log level, since
-an exit logs `error` lines of its own.
-1. **Integration, against the local stack's Redpanda.** Each case runs the real path, `LoadContent`
-   → (`StartTickLoop`) → `ReconcileContent` or `WaitForContent`, on one Runtime over the content
-   topics. Use `storeRuntime`'s setup in `server/boot/projector_wait_integration_test.go`, not the
-   `OverLoader` shortcut, which skips `LoadContent`. Item 9 names the tests.
-   - **Server waits:** no line with `code=no_zones_found`, no "recovering what the log recorded",
-     and `ValidationErrors.WithLabelValues("no_zones_found")` reads `0`.
-   - **Server serves from the log, with no pointer:** no `no_zones_found` line and a count of `0`;
-     exactly one "recovering what the log recorded".
-   - **Server exits after reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a
-     count of `1`.
-   - **Projector, several reloads before the seed:** between the wait line and leaving the wait,
-     only the reload `debug` lines, and a count of `0`. That's
-     `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended.
-2. **Live on `dev`, once.** After item 9 deploys, observe the next time `dev` starts on an empty
-   store, before `make content-seed ENV=dev`. It's a one-off §8 observation, not a procedure, so
-   it needs no target.
-   - The `andara-server` and `andara-projector-state` logs hold no `no_zones_found` and no
-     "recovering what the log recorded", and each holds one wait line.
-   - Positive control, on both jobs: `up` is `1`, and `andara_content_zones_loaded` is present
-     at `0`.
-   - Then `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0`.
+**Verification at item 9's §8: the integration tests alone** (PM's decision, 2026-10-02). The
+assertions are on the finding's code, not on log level, since an exit logs `error` lines of its own.
+Each case runs the real path through `LoadContent` on the local stack's Redpanda, not the
+`OverLoader` shortcut, which skips it. Item 9 names the tests.
+- **Server, hermetic setup:** `storeRuntime` (`server/boot/projector_wait_integration_test.go`), plus
+  `rt.replay = worldLog(...)` and `startMemoryLoop`, as
+  `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` does. Not `sim.source=kafka`, which
+  reads the shared `andara.commands.v1`.
+  - **Waits:** no line with `code=no_zones_found`, no "recovering what the log recorded", and
+    `ValidationErrors.WithLabelValues("no_zones_found")` reads `0`.
+  - **Serves from the log, with no pointer:** use a fresh Active Pointer topic over the same blobs
+    and versions, with town published but not activated, and a Zone-bearing swap for town@1 pushed
+    onto `rt.memSource` before `ReconcileContent`. No `no_zones_found` line and a count of `0`;
+    exactly one "recovering what the log recorded".
+  - **Exits after reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a count of
+    `1`.
+  - **A pointer naming a version with no manifest:** logs and counts at load as today.
+- **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended, asserts at least one reload
+  (the core pointer move): between the wait line and leaving the wait, only reload `debug` lines,
+  and a count of `0`. A separate test with a short `waitRetry` asserts two or more reload `debug`
+  lines carrying `next_retry` and `trace_id`. It doesn't assert the leaving line's `pack`, which a
+  timer reload can race.
 
-   Nothing in SPRINT-04 schedules such a start. PM is asked for a carrier in the feedback file.
+**Live: not yet observed.** No `dev` start on an empty store is scheduled after item 9. Whoever next
+starts `dev` from an empty store checks these, and records it in this story's §8 record:
+- the `andara-server` and `andara-projector-state` logs hold no `no_zones_found` and no "recovering
+  what the log recorded";
+- `up` is `1` and `andara_content_zones_loaded` is present at `0` on both jobs (the positive
+  control);
+- then `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0`.
 
 ## Test plan
 
