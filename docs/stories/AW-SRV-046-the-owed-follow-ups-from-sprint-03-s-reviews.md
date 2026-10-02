@@ -89,8 +89,10 @@ so that the tests assert what the contracts say and the READMEs describe what sh
    that items 3, 6 and 7 name.
 6. **Given** the Account grant path (item 7) **when** its test runs a refused and an accepted
    `set-packs` **then** it asserts that the log line carries `acting_as_account_id`, `session_id` and
-   `trace_id`. If the code doesn't emit one of them, the test asserts what it does emit, and the
-   implementation record in `AW-SRV-035` is corrected through its feedback file.
+   `trace_id`. `session_id` and `trace_id` aren't optional: CLAUDE.md §7 makes the correlation ID
+   mandatory on a command path, so if either is missing, the code adds it. Only for
+   `acting_as_account_id` may the record be corrected instead (through `AW-SRV-035`'s feedback file),
+   if that field doesn't apply to the line.
 7. **Given** `AW-CLI-003`'s implementation record **when** this story merges **then** it says the
    rehearsal runs in CI (#265) and that the confirmation line isn't asserted.
 8. **Given** each source feedback file **when** this story merges **then** that file records the

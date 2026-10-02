@@ -69,11 +69,16 @@ cite it.
    strictly greater than AC-1's recorded tick is listed, and the script records it as `R`. If none
    is, the script exits 1 naming the newest round it saw.
 3. **Given** round `R` **when** A moves through a second Exit (Room 2, which isn't the spawn Room or
-   Room 1) and the script sends `SIGKILL` to `andara-server` and starts it again **then** `/readyz`
-   returns 200 within 120 s of the kill. The script prints the measured kill-to-ready seconds.
+   Room 1), and A's transcript shows Room 2's title, so the move was applied and acknowledged **then**
+   the script reads `snapshot list` once more. If its newest complete round isn't `R` (a round
+   completed after the second move), it exits 1 with `stack-recover: a round completed after the
+   tail move; the run proves nothing, rerun`. Otherwise it sends `SIGKILL` to `andara-server` at
+   once and starts it again, and `/readyz` returns 200 within 120 s of the kill. The script prints the
+   measured kill-to-ready seconds.
 4. **Given** the server ready **when** the script reads its metrics, polled to a deadline **then**:
    - `andara_recovery_state_hash_match` is `1`;
-   - `andara_recovery_round_tick` is at or after `R`, so the recovery used a snapshot;
+   - `andara_recovery_round_tick` equals `R`, so the recovery used that snapshot, and Room 2 can
+     only have come from the tail;
    - `andara_acknowledged_commands_lost_total` is `0`.
 5. **Given** the recovery **when** A's and B's `play` clients reconnect on their own (`AW-CLI-007`'s
    reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows Room 2:

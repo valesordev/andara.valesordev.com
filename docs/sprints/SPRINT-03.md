@@ -237,7 +237,10 @@ clone of the code repository:
 - `play` with `goto`;
 - change, then roll back.
 
-`server info` named the content in effect at each step, and there was no deploy. The defect is step
+`server info` named the content in effect at each step, and there was no deploy. The goal's item 4
+planned an Operator self-approval. That path (`AW-SRV-013` AC-13) wasn't exercised: Brian's two
+Accounts meant the publisher and the approver differed, which the gate accepts without the switch.
+The defect is step
 3: signing commits for the Content Repository is a hand-typed `git config` sequence, marked
 `§9 defect → AW-INF-033` and planned in SPRINT-04. PM re-ran the local steps at the close-out against
 `andara-cli ba7e4a4`. PM couldn't re-run the `dev` steps without Brian's logins. Brian waived that
@@ -310,8 +313,9 @@ None in the story frontmatter. The board's mirror issues for six stories that we
 - `AW-SRV-007-recovery-scale.md`'s items 1 and 2 are still open, now with items 3 and 4 (the
   `AW-SRV-043` edge, and `make stack-recover`). They're in SPRINT-04's contract review.
 - `AW-INF-027-status-sprint-scope.md`: Brian chose (c). `make status` stays a backlog view.
-- The roadmap's "two identities" note for Phase 1 exit criterion 4 now records Operator
-  self-approval (`AW-SRV-013-operator-self-approval.md`).
+- The roadmap's "two identities" note for Phase 1 exit criterion 4 now says what
+  `content.operator_self_approval` does and doesn't cover, and how SPRINT-03's demo ran it
+  (`AW-SRV-013-operator-self-approval.md`).
 - The AW-INF-005 and AW-INF-007 split is routed to architecture in
   `docs/feedback/AW-INF-005-007-split.md`. Both are `ready`, which PM can't rewrite, and neither is
   pickable in SPRINT-04.

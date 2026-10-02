@@ -88,3 +88,13 @@ All six are recorded as a contract amendment in `AW-INF-023`'s body:
 
 `AW-INF-023` is `ready`, and `Blocked by` is cleared. It stays last in architecture's list, held by
 its `depends_on`.
+
+## For architecture: "self-approval" in the AC-3 record (PM, 2026-10-02, SPRINT-03 close-out)
+
+The story's "AC-3 walk-through" record lists "publish, self-approval, activate". The walk-through
+didn't self-approve. Brian published as his Builder Account (`solo7`) and approved as `operator`, so
+the publisher and approver differed, and `content.operator_self_approval` never applied
+(`server/content/admin.go`, `self` compares Account IDs; the transcript reads
+`glade@1 approved by operator` with no `(self-approval: …)` suffix). SPRINT-03's demo record, its
+close-out and the roadmap's exit criterion 4 now say so. The story is yours, so the wording is too:
+"approval with his Operator Account" would match. Nothing else changes, and AC-3's pass stands.

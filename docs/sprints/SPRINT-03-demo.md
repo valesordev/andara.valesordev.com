@@ -9,11 +9,11 @@ deploy. This is `docs/roadmap.md`'s **M3 gate**, and Phase 1 exit criterion 4.
 
 **Result: passed, with one §9 defect.** Step 3, signing commits for the Content Repository, is a
 hand-typed `git config` sequence: `§9 defect → AW-INF-033`, in SPRINT-04.
-- **Steps 1 and 3–11:** run by Brian on 2026-10-01 and 2026-10-02, as `AW-INF-023`'s AC-3
+- **Steps 1–11:** run by Brian on 2026-10-01 and 2026-10-02, as `AW-INF-023`'s AC-3
   walk-through. The run was on `dev` rebuilt from a deleted namespace, with `andara-cli 1a99cfc` on
   macOS. The transcript, redacted, is `docs/feedback/AW-INF-023-walkthrough-transcript.md`. It
-  starts after step 2, so step 1 is recorded by `AW-INF-023`'s "AC-3 walk-through" section, not the
-  transcript.
+  starts partway through step 2 (after `git clone` and `make tools`), so step 1 is recorded by
+  `AW-INF-023`'s "AC-3 walk-through" section, not the transcript.
 - **Steps 2 and 4's validation:** re-run by PM at the close-out on 2026-10-02, on a fresh clone of
   the Content Repository with `andara-cli ba7e4a4` (`origin/main`).
 - **PM didn't re-run steps 1, 3 and 5–11**, against the PM charter's "run every step". Each needs a
@@ -69,8 +69,10 @@ Builder's Guide's.
    `ssh-add` for a key with a passphrase. No target does them.
    - **Expect:** `git log --show-signature -1` reads `Good "git" signature for <your email>`.
    - **Run:** Brian's first commit went up unsigned. He then ran the sequence by hand, and re-signed
-     the branch four times before it verified: the key wasn't in the agent (`ssh-add` was first given
-     the `.pub`), the per-repo name and email were missing, and the author needed `--reset-author`. The guide now covers each of those. `make bootstrap` in
+     the branch four times: the first commit had gone up unsigned, `ssh-add` was first given the
+     `.pub` (so each signature asked for the passphrase), the per-repo name and email were missing,
+     and the author needed `--reset-author`. The transcript doesn't show a verification;
+     `git log --show-signature -1` printed nothing. The guide now covers each of those. `make bootstrap` in
      the Content Repository replaces the sequence (`AW-INF-033`, from `andara.solo7.media` #14).
 
 4. **Write the Zone, then format and validate it** (section 4, "Write the pack", "Format and
@@ -112,6 +114,7 @@ Builder's Guide's.
    - **Expect:** `Purgatory` first. Then `A Clearing` after `goto`, and `By the Stream` after `north`.
    - **Run:**
      ```
+     -- Connected to andara-dev.solo7.valesordev.com:443 as solo7, playing Wren (session …, protocol 1).
      Wren arrives.
      Purgatory
      Placeholder: Purgatory's description is Brian's to write.
