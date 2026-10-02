@@ -46,7 +46,7 @@ the number with the `core:` line of `andara-cli version`:
 - **Your `requires` is higher:** your `andara-cli` is old. Download the current one
   ([section 3](03-installing-andara-cli.md#download)), or `make tools` in the Content Repository.
 
-The message's remedy is right in the second case and wrong in the first. That's #308.
+The message says which of the two applies.
 
 ### Publishing and activating
 
