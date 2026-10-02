@@ -129,6 +129,25 @@ class WaitUp(unittest.TestCase):
         logs = [c for c in calls if c[:1] == ("logs",)][0]
         self.assertIn("--since-time=2026-10-01T00:00:00Z", logs)
 
+    def test_a_wait_the_container_already_left_does_not_count(self):
+        # Seeded, then unready again (a drain or a rollout) in the same container: the old
+        # wait line is still in its logs, followed by the leave line (Codex on #353).
+        lines = "\n".join([
+            '{"level":"WARN","msg":"waiting for content: no Zones in effect; publish and activate a pack"}',
+            '{"level":"INFO","msg":"content in effect: leaving the wait","zones":4}',
+        ])
+        with self.assertRaises(world_reset.StepFailed):
+            self.wait([self.pod(started=True)], logs=lines, deadline=10)
+
+    def test_a_wait_entered_again_after_leaving_counts(self):
+        lines = "\n".join([
+            '{"level":"WARN","msg":"waiting for content: no Zones in effect; publish and activate a pack"}',
+            '{"level":"INFO","msg":"content in effect: leaving the wait","zones":4}',
+            '{"level":"WARN","msg":"waiting for content: no Zones in effect; publish and activate a pack"}',
+        ])
+        got, _ = self.wait([self.pod(started=True)], logs=lines)
+        self.assertEqual(got, "waiting")
+
     def test_started_unready_without_the_wait_line_keeps_waiting_then_fails(self):
         with self.assertRaises(world_reset.StepFailed) as e:
             self.wait([self.pod(started=True)], logs="recovering from the log", deadline=20)
