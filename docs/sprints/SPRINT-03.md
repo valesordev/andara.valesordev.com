@@ -153,9 +153,10 @@ AW-SRV-035 to AW-SRV-038 are new; the rest are `ready` or carried over.
     (added 2026-10-02, found by AC-7's first run). The projector loads content read-only: no
     `bootCore`, and no write to `andara.content.*` or `andara.audit.v1`. A test asserts that a
     projector boot on an empty store writes nothing there. It holds AW-INF-021 AC-7, which needs the
-    server to win the core publish, and it would fail under ADR-0011's ACLs (AW-INF-030). Whether the
-    projector waits on an empty store (as AW-SRV-042) instead of crash-looping is a contract question
-    for architecture, and it's on the issue. It's ahead of #308.
+    server to win the core publish, and it would fail under ADR-0011's ACLs (AW-INF-030). Ruled by architecture on the issue: on a
+    store without Zone-bearing content, the projector waits, unready, as AW-SRV-042's server does,
+    instead of crash-looping. It's tested by a high-water-mark assertion of no writes, and by Ready
+    after the seed with no restart. It's ahead of #308.
 15. #308 — `core_version_mismatch` tells a Builder to downgrade `andara-cli` after a core bump
     (added 2026-10-01). The contract is in the issue and in `errors.md` §3.1: the remedy follows the
     direction of the skew, with a test for each direction. It's small, in `content/lang`. It's not on

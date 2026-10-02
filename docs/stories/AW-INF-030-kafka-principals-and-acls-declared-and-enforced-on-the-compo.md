@@ -85,6 +85,10 @@ proves it.
 9. **Given** `topics.yaml` **then** exactly one principal is a superuser, `andara-operator`, and no
    workload's chart values reference its Secret. A test asserts both, so the exemption in AC-2 can't
    grow silently.
+10. **Given** `andara-projector-state`'s credentials **when** they produce to any
+   `andara.content.*` topic or to `andara.audit.v1`, or read `andara.audit.v1` **then** the broker
+   rejects it with an authorization error. It may read `andara.content.*`. So a regression of #326,
+   the projector publishing `andara.core`, fails at the broker (architecture, 2026-10-02).
 
 ## Interface contract
 
