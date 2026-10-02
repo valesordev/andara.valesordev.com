@@ -149,7 +149,14 @@ AW-SRV-035 to AW-SRV-038 are new; the rest are `ready` or carried over.
     The contract is in the issue: refuse `INVALID_ARGUMENT` `validation`, audited as `reject`, with
     `unsafe_source_path`'s rule. It's server-side hardening under AW-SRV-013, and `fetch` keeps its
     own guard.
-14. #308 — `core_version_mismatch` tells a Builder to downgrade `andara-cli` after a core bump
+14. #326 — the state projector publishes and activates `andara.core` at boot, racing the server
+    (added 2026-10-02, found by AC-7's first run). The projector loads content read-only: no
+    `bootCore`, and no write to `andara.content.*` or `andara.audit.v1`. A test asserts that a
+    projector boot on an empty store writes nothing there. It holds AW-INF-021 AC-7, which needs the
+    server to win the core publish, and it would fail under ADR-0011's ACLs (AW-INF-030). Whether the
+    projector waits on an empty store (as AW-SRV-042) instead of crash-looping is a contract question
+    for architecture, and it's on the issue. It's ahead of #308.
+15. #308 — `core_version_mismatch` tells a Builder to downgrade `andara-cli` after a core bump
     (added 2026-10-01). The contract is in the issue and in `errors.md` §3.1: the remedy follows the
     direction of the skew, with a test for each direction. It's small, in `content/lang`. It's not on
     the demo path, since `dev`'s core is still `andara.core@1`. But the first core bump turns every
@@ -185,10 +192,22 @@ demo rather than after it. The rebuild clears Brian's Builder Account and grants
 re-creates them, and the walk-through exercises that. If AC-7 finds a defect, the walk-through waits
 for its fix.
 
-Order to close:
-1. SRE runs AC-7, and architecture moves AW-INF-021 to `done`.
-2. Brian walks through the guide on the rebuilt `dev`, and architecture moves AW-INF-023 to `done`.
-3. PM closes the sprint.
+**Update 2026-10-02: AC-7's first run.** SRE rebuilt `dev` from a deleted namespace and seeded it.
+`dev` is healthy, with `andara.core@1` and `town@1`, and AC-1 and AC-2 hold. AC-7 itself didn't
+pass. It needed hand steps, and it found three defects:
+1. `kafka-operator` skipped Strimzi's RoleBindings after the namespace delete. SRE's fix is on
+   `sre/kafka-operator-rebinds-namespaces`.
+2. `argocd-install` waits for Healthy, which an empty store can't reach before the seed. SRE's to
+   fix.
+3. #326, the projector racing the server to publish the core. Implementation's, item 14 above.
+
+A clean pass needs all three fixed and a second full rebuild, which would erase the walk-through's
+work. So the rebuild that confirms AC-7 runs **after** the demo. The order to close is now:
+1. Brian walks through the guide on the rebuilt `dev`, and architecture moves AW-INF-023 to `done`.
+2. SRE's two fixes and #326 merge. Then SRE re-runs AC-7, and architecture moves AW-INF-021 to
+   `done`.
+3. PM closes the sprint. If step 2 isn't done by then, AW-INF-021 carries over to SPRINT-04 on AC-7
+   alone, with #326 beside it.
 
 ## Carryover from SPRINT-02
 Three stories, all at `review`. The reasons are in SPRINT-02's close-out:
