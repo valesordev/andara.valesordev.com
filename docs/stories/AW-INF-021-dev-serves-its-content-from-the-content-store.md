@@ -86,10 +86,15 @@ running server minutes after I write it, without a deploy.
    core, so none is refused. Observing this needs a core bump on `main`. If none lands before
    §8, the verification record observes the first-install case (AC-7) and names this AC as owed
    to the first core bump.
-7. **Given** a `dev` namespace rebuilt from nothing (`make argocd-uninstall`, fresh topics, then
-   `make argocd-install ENV=dev`) **when** the Application syncs and `make content-seed ENV=dev`
+7. **Given** a `dev` namespace rebuilt from nothing, by these targets in order and no other step:
+   `make env-destroy ENV=dev CONFIRM=andara-dev` (deletes `andara-dev` with its Secrets and topics),
+   `make kafka-install ENV=dev`, `make objectstore-install ENV=dev`, then
+   `make argocd-install ENV=dev`, **when** the Application syncs and `make content-seed ENV=dev`
    runs **then** AC-1 and AC-2 hold without another hand step. The first pod's boot line reports
-   `andara.core` published and activated, into an empty store.
+   `andara.core` published and activated, into an empty store. *(Amended 2026-10-02, from Codex on
+   #325: the procedure said `make argocd-uninstall` and fresh topics. That doesn't cascade, and it
+   keeps the Secrets, so it never exercised a fresh namespace or Secret provisioning. Deleting the
+   namespace is what found the RoleBinding defect.)*
 8. **Given** the rendered `dev` manifests (`make k8s-dry ENV=dev`) **when** they're read **then**
    there's no `andara-content` or `andara-content-templates` ConfigMap and no `/content` mount.
    `local`'s render still has both.
@@ -454,7 +459,7 @@ only over the tailnet or a port-forward. `helm_test` asserts `dev` `true` and `p
 | 4 | After #305 (Admin through the edge, from the box on the tailnet): Builder `sre-builder`, granted pack `sre.verify`, published it, the Operator approved it, and the Builder activated it at 17:55:55Z. `server info` listed `sre.verify@1` within 2 s. `andara_content_active_version{pack="sre.verify"}` is `1` in Grafana Cloud. The pack is a scratch pack, not `brian`, so Brian's namespace stays empty for the demo | pass |
 | 5 | `kubectl rollout restart statefulset/andara`: Ready again, `recovered from the log` (1,794 ticks), `andara.core@1 present`, `town@1` still active. Nothing re-seeded | pass (by restart; a merge roll is the same path) |
 | 6 | **owed to the first core bump**, as the AC allows. `content/core/VERSION` is still 1 |
-| 7 | Partly observed: `world-reset` gave this rollout an empty World and a store with no Zone pack. Then the seed, with no other hand step, gave AC-1 and AC-2. A full `argocd-uninstall` rebuild wasn't run | partial |
+| 7 | Partly observed: `world-reset` gave this rollout an empty World and a store with no Zone pack. Then the seed, with no other hand step, gave AC-1 and AC-2. A full rebuild from a deleted namespace wasn't run (the AC-7 procedure is now `env-destroy` onward, 2026-10-02) | partial |
 | 8 | `helm_test.test_content_configmaps`, in CI | pass |
 | 9 | `scripts/tests/test_content_seed.py`, no call without the credential | pass |
 | 10 | `scripts/tests/test_world_reset.py` | pass |
@@ -534,8 +539,11 @@ AC:
 `content/core/VERSION`. That story inherits the line: a roll with the bumped core reports it published
 and activated, and every Builder pack stays active.
 
-**AC-7 is the one item that holds the story.** It's the rebuild-from-nothing case:
-`argocd-uninstall`, fresh topics, `argocd-install`, then the seed.
+**AC-7 is the one item that holds the story.** It's the rebuild-from-nothing case, run as AC-7 now
+reads: `env-destroy`, `kafka-install`, `objectstore-install`, `argocd-install`, then the seed.
+*(Amended 2026-10-02: this said `argocd-uninstall`, fresh topics, and `argocd-install`, which keeps
+the namespace and its Secrets. That procedure is superseded, and a run of it doesn't satisfy AC-7.
+See the contract amendment below.)*
 - **What `world-reset` showed:** it gave the rollout an empty World and a store with no Zone pack, so
   the waiting, seed, ready path is observed. That's `AW-SRV-042`'s behaviour on `dev`.
 - **What it didn't:** a namespace recreated from nothing: Secrets, the object store, the topic apply,
@@ -617,3 +625,28 @@ only the tailnet. `dev` is reachable by name only on the tailnet. A tighter fix 
 address on every path, by turning off the userland proxy, or by binding kind's port to the tailnet
 address only. That's a box-level change, noted here for `AW-INF-012`, which forwards the client
 address.
+
+## Contract amendment (architecture, 2026-10-02): AC-7 starts from a deleted namespace
+
+AC-7 is amended above. The confirming run starts by deleting `andara-dev`, as SRE's first run did
+and SPRINT-03's plan says.
+
+**The target is SRE's, and it's new:** `make env-destroy ENV=<env> CONFIRM=andara-<env>`.
+- It deletes the namespace and waits until it's gone, including the Secrets and Strimzi's resources
+  in it.
+- It refuses `ENV=prod`, and any `CONFIRM` that isn't the namespace, with exit 2, as `world-reset`
+  does.
+- It leaves the cluster-wide operators installed. `make kafka-install`, `make objectstore-install`
+  and `make argocd-install`, in that order, recreate everything else, and `kafka-install` re-binds the
+  namespace (the RoleBinding fix). *(Revised 2026-10-02, on SRE's finding: `argocd-install` needs a
+  Ready `andara-log` and doesn't install the object store that `dev`'s values need, so AC-7 names both
+  targets before it. Each step stays one target with one failure, rather than folding provisioning
+  into `argocd-install`.)*
+- It removes the Argo CD Application without cascading before the delete, and fails closed if it
+  can't read it, because self-heal would otherwise recreate objects mid-delete (SRE, as built).
+- Its last line is `env-destroy: andara-<env> deleted`, and it's idempotent: a missing namespace is
+  exit 0.
+
+Without the target, the step is a hand-written `kubectl delete namespace`, a CLAUDE.md §9 defect. So
+the confirming run waits for it, for the RoleBinding fix, for SRE's `argocd-install` fix (accepting
+"waiting for content"), and for #326.
