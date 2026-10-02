@@ -86,10 +86,14 @@ running server minutes after I write it, without a deploy.
    core, so none is refused. Observing this needs a core bump on `main`. If none lands before
    §8, the verification record observes the first-install case (AC-7) and names this AC as owed
    to the first core bump.
-7. **Given** a `dev` namespace rebuilt from nothing (`make argocd-uninstall`, fresh topics, then
+7. **Given** a `dev` namespace rebuilt from nothing (`make env-destroy ENV=dev CONFIRM=andara-dev`,
+   which deletes the `andara-dev` namespace with its Secrets and topics, then
    `make argocd-install ENV=dev`) **when** the Application syncs and `make content-seed ENV=dev`
    runs **then** AC-1 and AC-2 hold without another hand step. The first pod's boot line reports
-   `andara.core` published and activated, into an empty store.
+   `andara.core` published and activated, into an empty store. *(Amended 2026-10-02, from Codex on
+   #325: the procedure said `make argocd-uninstall` and fresh topics. That doesn't cascade, and it
+   keeps the Secrets, so it never exercised a fresh namespace or Secret provisioning. Deleting the
+   namespace is what found the RoleBinding defect.)*
 8. **Given** the rendered `dev` manifests (`make k8s-dry ENV=dev`) **when** they're read **then**
    there's no `andara-content` or `andara-content-templates` ConfigMap and no `/content` mount.
    `local`'s render still has both.
@@ -579,3 +583,22 @@ only the tailnet. `dev` is reachable by name only on the tailnet. A tighter fix 
 address on every path, by turning off the userland proxy, or by binding kind's port to the tailnet
 address only. That's a box-level change, noted here for `AW-INF-012`, which forwards the client
 address.
+
+## Contract amendment (architecture, 2026-10-02): AC-7 starts from a deleted namespace
+
+AC-7 is amended above. The confirming run starts by deleting `andara-dev`, as SRE's first run did
+and SPRINT-03's plan says.
+
+**The target is SRE's, and it's new:** `make env-destroy ENV=<env> CONFIRM=andara-<env>`.
+- It deletes the namespace and waits until it's gone, including the Secrets and Strimzi's resources
+  in it.
+- It refuses `ENV=prod`, and any `CONFIRM` that isn't the namespace, with exit 2, as `world-reset`
+  does.
+- It leaves the cluster-wide operators installed, so `make argocd-install ENV=<env>` recreates
+  everything else, re-binding the namespace (the #kafka-operator-rebinds fix).
+- Its last line is `env-destroy: andara-<env> deleted`, and it's idempotent: a missing namespace is
+  exit 0.
+
+Without the target, the step is a hand-written `kubectl delete namespace`, a CLAUDE.md §9 defect. So
+the confirming run waits for it, for the RoleBinding fix, for SRE's `argocd-install` fix (accepting
+"waiting for content"), and for #326.
