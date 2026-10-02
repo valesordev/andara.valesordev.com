@@ -381,9 +381,10 @@ def status(env, waiting_ok=False):
         for pack, version in packs:
             print("content      %s@%d" % (pack, version))
     # A server waiting for its first content (AW-SRV-042) isn't Ready either, and stalled()
-    # can't tell the two apart; argocd-recover would refuse it (AW-INF-021's §8 close).
+    # can't tell the two apart; argocd-recover would refuse it (AW-INF-021's §8 close). A pod
+    # that looks stuck is asked now: install's waiting_ok was decided before it may have rolled.
     stuck = stalled(ns)
-    waiting = waiting_ok or bool(stuck and content_waiting(ns))
+    waiting = content_waiting(ns) if stuck else waiting_ok
     if stuck and not waiting:
         print("stalled      %s — once a good build has synced, `make argocd-recover ENV=dev` replaces the pod" % stuck)
     if waiting:

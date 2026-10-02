@@ -283,7 +283,6 @@ class StatusWaitingOk(unittest.TestCase):
         self.assertEqual(self.run_status(True, sync="OutOfSync")[0], 1)
 
 
-
 class StatusStalledOrWaiting(unittest.TestCase):
     """A server waiting for its first content is not Ready, which stalled() alone can't tell
     from a stuck rollout. The closing status printed `stalled … argocd-recover` beside
@@ -317,6 +316,28 @@ class StatusStalledOrWaiting(unittest.TestCase):
         self.assertIn("stalled      server: CrashLoopBackOff", out)
         self.assertNotIn("waiting      ", out)
 
+    def test_install_that_stalls_after_its_wait_still_says_stalled(self):
+        # waiting_ok was decided before the closing status; the pod may have rolled since.
+        code, out, _ = self.run_status(True, "init: ImagePullBackOff", False)
+        self.assertEqual(code, 0)
+        self.assertIn("stalled      init: ImagePullBackOff", out)
+        self.assertNotIn("waiting      ", out)
+
+    def test_content_waiting_asks_world_reset_for_the_namespace(self):
+        mod = load_argocd()
+        asked = []
+        fake = SimpleNamespace(waiting_for_content=lambda ns: asked.append(ns) or True)
+        saved = sys.modules.get("world_reset")
+        sys.modules["world_reset"] = fake
+        try:
+            self.assertIs(mod.content_waiting("andara-dev"), True)
+        finally:
+            if saved is None:
+                sys.modules.pop("world_reset", None)
+            else:
+                sys.modules["world_reset"] = saved
+        self.assertEqual(asked, ["andara-dev"])
+
     def test_ready_asks_nothing_about_content(self):
         asked = []
         mod = load_argocd()
@@ -328,6 +349,7 @@ class StatusStalledOrWaiting(unittest.TestCase):
         code, out, _ = quiet(mod.status, "dev", False)
         self.assertEqual((code, asked), (0, []))
         self.assertNotIn("stalled", out)
+
 
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
