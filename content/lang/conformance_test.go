@@ -4,6 +4,7 @@
 package lang
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -680,5 +681,43 @@ func TestDecompileSubtractsTheCoreParent(t *testing.T) {
 				t.Errorf("%s does not round-trip:\n--- got ---\n%s\n--- want ---\n%s", tmpl.GetName(), got, want)
 			}
 		}
+	}
+}
+
+// #308: core_version_mismatch's remedy follows the direction of the skew
+// (errors.md §3.1). A pack newer than the binary is told the release to use.
+// A pack older than it, the usual case after a core bump, is told to change
+// its requires clause, never to go back to an old andara-cli.
+func TestCoreVersionMismatch_TheRemedyFollowsTheSkew(t *testing.T) {
+	pack := t.TempDir()
+	for _, tc := range []struct {
+		name               string
+		required, embedded uint32
+		want, never        string
+	}{
+		{"the pack is newer", 3, 2,
+			"this pack requires andara.core@3, and neither the embedded core nor the cache holds it; this andara-cli embeds andara.core@2; use the andara-cli release that embeds andara.core@3",
+			"change requires"},
+		{"the pack is older, after a core bump", 1, 2,
+			"this pack requires andara.core@1, and neither the embedded core nor the cache holds it; this andara-cli embeds andara.core@2; change requires to andara.core@2 in pack.aw",
+			"use the andara-cli release"},
+	} {
+		write(t, filepath.Join(pack, "pack.aw"), fmt.Sprintf("pack p requires andara.core@%d\n", tc.required))
+		_, ds := CompileOpts(pack, nil, nil, Options{EmbeddedCore: tc.embedded})
+		if len(ds) != 1 || ds[0].Code != CodeCoreVersionMismatch {
+			t.Fatalf("%s: want one core_version_mismatch, got %v", tc.name, ds)
+		}
+		if ds[0].Message != tc.want || strings.Contains(ds[0].Message, tc.never) {
+			t.Errorf("%s:\n got %q\nwant %q", tc.name, ds[0].Message, tc.want)
+		}
+	}
+
+	// The remedy names the file that declares the pack, which needn't be
+	// pack.aw (review of #335).
+	other := t.TempDir()
+	write(t, filepath.Join(other, "main.aw"), "pack p requires andara.core@1\n")
+	_, ds := CompileOpts(other, nil, nil, Options{EmbeddedCore: 2})
+	if len(ds) != 1 || ds[0].File != "main.aw" || !strings.HasSuffix(ds[0].Message, "change requires to andara.core@2 in main.aw") {
+		t.Errorf("declared in main.aw: %v", ds)
 	}
 }
