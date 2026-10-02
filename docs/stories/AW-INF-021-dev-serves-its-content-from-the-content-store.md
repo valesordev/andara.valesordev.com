@@ -86,9 +86,10 @@ running server minutes after I write it, without a deploy.
    core, so none is refused. Observing this needs a core bump on `main`. If none lands before
    §8, the verification record observes the first-install case (AC-7) and names this AC as owed
    to the first core bump.
-7. **Given** a `dev` namespace rebuilt from nothing (`make env-destroy ENV=dev CONFIRM=andara-dev`,
-   which deletes the `andara-dev` namespace with its Secrets and topics, then
-   `make argocd-install ENV=dev`) **when** the Application syncs and `make content-seed ENV=dev`
+7. **Given** a `dev` namespace rebuilt from nothing, by these targets in order and no other step:
+   `make env-destroy ENV=dev CONFIRM=andara-dev` (deletes `andara-dev` with its Secrets and topics),
+   `make kafka-install ENV=dev`, `make objectstore-install ENV=dev`, then
+   `make argocd-install ENV=dev`, **when** the Application syncs and `make content-seed ENV=dev`
    runs **then** AC-1 and AC-2 hold without another hand step. The first pod's boot line reports
    `andara.core` published and activated, into an empty store. *(Amended 2026-10-02, from Codex on
    #325: the procedure said `make argocd-uninstall` and fresh topics. That doesn't cascade, and it
@@ -594,8 +595,14 @@ and SPRINT-03's plan says.
   in it.
 - It refuses `ENV=prod`, and any `CONFIRM` that isn't the namespace, with exit 2, as `world-reset`
   does.
-- It leaves the cluster-wide operators installed, so `make argocd-install ENV=<env>` recreates
-  everything else, re-binding the namespace (the #kafka-operator-rebinds fix).
+- It leaves the cluster-wide operators installed. `make kafka-install`, `make objectstore-install`
+  and `make argocd-install`, in that order, recreate everything else, and `kafka-install` re-binds the
+  namespace (the RoleBinding fix). *(Revised 2026-10-02, on SRE's finding: `argocd-install` needs a
+  Ready `andara-log` and doesn't install the object store that `dev`'s values need, so AC-7 names both
+  targets before it. Each step stays one target with one failure, rather than folding provisioning
+  into `argocd-install`.)*
+- It removes the Argo CD Application without cascading before the delete, and fails closed if it
+  can't read it, because self-heal would otherwise recreate objects mid-delete (SRE, as built).
 - Its last line is `env-destroy: andara-<env> deleted`, and it's idempotent: a missing namespace is
   exit 0.
 
