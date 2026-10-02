@@ -297,10 +297,12 @@ Each case runs the real path through `LoadContent` on the local stack's Redpanda
     again as `content finding`, unchanged, which counts `LoadFailures`, not this series. The count
     reads `2` over the whole boot.
 - **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended, asserts at least one reload
-  (the core pointer move). From the wait line through the last `content reload: no Zones in effect
-  yet` line, there are only those `debug` lines. From there to `content in effect: leaving the
-  wait`, there's no `warn`, no `error`, and no `no_zones_found`. The leaving reload builds a World,
-  so it logs `templates loaded` at `info` as today. The count is `0` throughout. A separate test with a short `waitRetry` asserts two or more reload `debug`
+  (the core pointer move). From the wait line to `content in effect: leaving the wait`, there's no
+  line at `warn` or above and no `no_zones_found`, and the count is `0`. Lines at `debug` and
+  `info` are allowed: an empty reload's `templates loaded` at `debug`, and the leaving reload's at
+  `info`. When a reload before the leaving one ran, at least one `content reload: no Zones in
+  effect yet` line is present. If the core move's reload already sees town and leaves, there is
+  none, and the test doesn't require one. A separate test with a short `waitRetry` asserts two or more reload `debug`
   lines carrying `next_retry` and `trace_id`. It doesn't assert the leaving line's `pack`, which a
   timer reload can race.
 
