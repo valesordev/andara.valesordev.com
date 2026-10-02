@@ -34,6 +34,38 @@ make check
 `content/example` is the shape to copy: a directory named for the pack, a `pack.aw`, and a file per
 Zone.
 
+## Sign your commits
+
+The Content Repository's `main` accepts only signed commits, so set signing up once, before your
+first commit. These steps use an SSH key: the one you clone with is fine.
+
+1. On GitHub, under **Settings → SSH and GPG keys → New SSH key**, add your public key again with
+   **Key type: Signing Key**. A key added for authentication doesn't sign.
+2. In the clone, tell `git` who you are and how to sign. The email must be one GitHub has verified
+   for your account, or GitHub shows the commit as unverified:
+
+   ```
+   git config user.name "<your name>"
+   git config user.email "<a verified GitHub email>"
+   git config gpg.format ssh
+   git config user.signingkey ~/.ssh/id_ed25519.pub
+   git config commit.gpgsign true
+   ```
+
+   Use your own public key's path.
+3. To check signatures locally, tell `git` which keys to trust. Create a file listing yours, then:
+
+   ```
+   git config gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+   ```
+
+   The file has one line per key: `<your email> <the contents of your .pub file>`.
+
+Check a commit with `git log --show-signature -1`. It reads `Good "git" signature for <your email>`.
+
+If you committed before setting this up, re-sign the branch's commits with
+`git rebase --exec 'git commit --amend --no-edit -S' main`, then `git push --force-with-lease`.
+
 ## Write the pack
 
 Make a branch:
