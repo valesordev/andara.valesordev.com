@@ -2,7 +2,7 @@
 name: pm-start-sprint
 description: Plan and start the next sprint when no sprint is active. Works for SPRINT-01 (no sprint files yet), after a sprint was closed without a successor, or to activate a sprint left at planned. If a sprint is still active, it stops and points to /pm-close-sprint, which closes it and plans the next in one PR.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/project-mirror:*)
 ---
 
 # PM: start the next sprint
@@ -25,6 +25,10 @@ allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
 3. Check for an open PM PR (`gh pr list --state open --json headRefName,url --jq '.[] | select(.headRefName | startswith("pm/"))'`). If
    one already plans `next`, stop and report its URL rather than planning twice.
 4. Read the session-start documents in the order repo §11 gives them.
+5. Run the Sync steps of `.claude/skills/project-sync/SKILL.md` so the board
+   matches `origin/main` before planning. Brian started this skill, so apply
+   without asking again. If the repo isn't configured for a Project, skip this
+   step.
 
 ## First sprint (`state: first`)
 
@@ -67,4 +71,5 @@ with NEXT = `next`, CARRYOVER, and DEFECTS from above.
 
 On one `pm/<next-lower>-<slug>` branch (e.g. `pm/sprint-02-combat-loop`),
 commit with the `Sprint: <NEXT>` trailer, push, and open the PR. Report the PR
-URL. The other roles don't start until it merges.
+URL. The other roles don't start until it merges. Tell Brian to run
+`/project-sync` once it merges, so the board shows the new sprint.

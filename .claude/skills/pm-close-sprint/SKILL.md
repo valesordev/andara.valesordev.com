@@ -2,7 +2,7 @@
 name: pm-close-sprint
 description: Close out the active sprint, whatever its number, and plan the next one in the same PR. Records final story status, writes and runs the demo, triages issues and feedback, then plans SPRINT-NN+1 with the shared planning procedure. Run it once the architecture, SRE, and implementation roles have stopped and reported. If no sprint is active, it stops and points to /pm-start-sprint.
 disable-model-invocation: true
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*)
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/project-mirror:*)
 ---
 
 # PM: close out the active sprint and plan the next
@@ -32,6 +32,11 @@ architecture, SRE, and implementation roles have stopped and reported.
    or `review` with no blocker explaining it, the working roles may not be
    finished. Tell Brian which stories, and ask whether to proceed before
    closing anything.
+6. **Sync NN's board.** Run the Sync steps of
+   `.claude/skills/project-sync/SKILL.md`. Brian started this skill, so apply
+   without asking again. Then run `.claude/bin/project-mirror --offline` and
+   put its `Current (NN): …` progress line in the close-out. If the repo isn't
+   configured for a Project, skip this step.
 
 ## Close
 
@@ -71,4 +76,6 @@ one PR:
 Run `make backlog status check`. Commit with the `Sprint: <NEXT>` trailer,
 then confirm `.claude/bin/sprint-state --ref HEAD` reports `state: active` and
 `current: <NEXT>`. Push and open the PR. Report the PR URL. The other
-roles don't start until it merges.
+roles don't start until it merges. Tell Brian to run `/project-sync` once it
+merges. That is NN's final sync: it records the close-out and shows NEXT as
+Current.
