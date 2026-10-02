@@ -1,5 +1,9 @@
 ---
 generated: [BACKLOG.md, docs/status.md, gen/, docs/builders/reference.md]
+check: make check
+project: Andara's World
+story_prefix: AW
+github_repo: valesordev/andara.valesordev.com
 ---
 Repo-wide role config for Andara's World. `generated` paths are never edited by
 hand in any role; they're rebuilt by `make backlog status`, `make proto`, and

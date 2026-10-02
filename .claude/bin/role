@@ -18,12 +18,21 @@ Commands:
   role show <session_id>
   role require <role> <session_id>
   role clear <session_id>
+  role check-cmd               print the repo's check command (_repo.md `check:`)
+  role reviewed                record HEAD as reviewed by /pre-pr
+  role reviewed --show         report whether HEAD has been reviewed
   role hook-session-start      (stdin: SessionStart hook JSON)
   role hook-pre-tool-use       (stdin: PreToolUse hook JSON; file tools)
   role hook-pre-bash           (stdin: PreToolUse hook JSON; Bash)
 
 Every PR a role opens carries the label `role:<role>`; hook-pre-bash denies a
 `gh pr create` without it.
+
+Review gate: in a role session, hook-pre-bash denies `git push` unless every
+commit it sends was recorded by `role reviewed` (the last step of /pre-pr) or is
+already on origin/main, and denies `gh pr create` unless HEAD was. `--all`,
+`--mirror`, and `--tags` are denied; deletes are allowed. Under /role none it
+asks instead. Markers live in <git-common-dir>/claude-roles/.reviewed/<sha>.
 """
 from __future__ import annotations
 
@@ -31,14 +40,43 @@ import fnmatch
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
 
 UNRESTRICTED = "none"
-PR_CREATE_RE = re.compile(r"\bgh\s+pr\s+create\b")
-LABEL_RE = re.compile(r"(?:--label|-l)(?:=|\s+)(?:\"([^\"]*)\"|'([^']*)'|(\S+))")
+PUNCT = ";&|()\n<>"
+# Words that can precede a command in the same simple command or compound.
+PREFIX_WORDS = {"then", "do", "else", "elif", "if", "while", "until", "{", "!", "time",
+                "exec", "nohup", "builtin"}
+# Commands that run another command given later in their arguments.
+WRAPPERS = {"sudo", "doas", "xargs", "timeout", "nice", "ionice", "stdbuf", "command",
+            "env", "chronic", "unbuffer", "flock", "setsid", "caffeinate"}
+SHELLS = {"sh", "bash", "zsh", "dash", "ksh"}
+SHELL_C_RE = re.compile(r"^-[A-Za-z]*c[A-Za-z]*$")
+GIT_OPTS_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                       "--exec-path", "--super-prefix", "--config-env"}
+# Builtins can't be shadowed by aliases, so these never need an alias lookup.
+GIT_BUILTINS = set("""add am apply archive bisect blame branch bundle cat-file check-ignore
+    checkout cherry cherry-pick clean clone commit config count-objects describe diff
+    diff-tree fetch for-each-ref format-patch fsck gc grep hash-object help init log
+    ls-files ls-remote ls-tree merge merge-base mv notes pull push range-diff rebase
+    reflog remote repack replace reset restore rev-list rev-parse revert rm shortlog
+    show show-ref sparse-checkout stash status submodule switch symbolic-ref tag
+    update-index update-ref var verify-commit version worktree""".split())
+PUSH_OPTS_WITH_VALUE = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
+GH_OPTS_WITH_VALUE = {"-R", "--repo"}
+GH_PR_CREATE_OPTS_WITH_VALUE = {"-R", "--repo", "-H", "--head", "-B", "--base", "-t", "--title",
+                                "-b", "--body", "-F", "--body-file", "-l", "--label", "-a",
+                                "--assignee", "-r", "--reviewer", "-m", "--milestone", "-p",
+                                "--project", "-T", "--template", "--recover"}
+HEREDOC_RE = re.compile(
+    r"(?<![<])<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1[^\n]*\n.*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)", re.S)
+VAR_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
 SESSION_RE = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
+REVIEWED = ".reviewed"
+DEFAULT_CHECK = "make check"
 
 
 # --------------------------------------------------------------------------- repo
@@ -162,16 +200,23 @@ def put_role(root: Path, sid: str, role: str | None) -> None:
     f.write_text(role + "\n")
 
 
+def head_sha(root: Path) -> str | None:
+    try:
+        return _git(root, "rev-parse", "HEAD")
+    except subprocess.CalledProcessError:
+        return None  # no commits yet
+
+
+def is_reviewed(root: Path, sha: str | None) -> bool:
+    return bool(sha) and (state_dir(root) / REVIEWED / sha).is_file()
+
+
+def check_command(roles: Roles) -> str:
+    return roles.repo.get("check", DEFAULT_CHECK)
+
+
 def pr_label(role: str) -> str:
     return f"role:{role}"
-
-
-def pr_labels(command: str) -> set[str]:
-    """Labels passed to --label/-l anywhere in a shell command (comma lists split)."""
-    out = set()
-    for m in LABEL_RE.finditer(command):
-        out.update(x.strip() for x in next(g for g in m.groups() if g is not None).split(","))
-    return out - {""}
 
 
 def charter(roles: Roles, role: str) -> str:
@@ -189,6 +234,8 @@ def charter(roles: Roles, role: str) -> str:
             f"PR label: {pr_label(role)} (every PR you open: gh pr create --label {pr_label(role)})",
             f"Writable paths: {', '.join(meta.get('writes', [])) or '(none)'}",
             f"Role skills: {skills}",
+            f"Review gate: run /pre-pr before any git push or gh pr create "
+            f"(check command: {check_command(roles)}).",
             "Edits outside the writable paths are blocked or require Brian's approval.",
             "",
             body.rstrip(),
@@ -261,6 +308,35 @@ def cmd_clear(args: list[str]) -> int:
         return 2
     put_role(_root_or_die(), args[0], None)
     print("role cleared")
+    return 0
+
+
+def cmd_check_cmd(_: list[str]) -> int:
+    print(check_command(Roles(_root_or_die())))
+    return 0
+
+
+def cmd_reviewed(args: list[str]) -> int:
+    root = _root_or_die()
+    sha = head_sha(root)
+    if sha is None:
+        print("role: no commits yet; nothing to review", file=sys.stderr)
+        return 1
+    if args == ["--show"]:
+        ok = is_reviewed(root, sha)
+        print(f"{sha[:12]} {'reviewed' if ok else 'not reviewed'}")
+        return 0 if ok else 1
+    if args:
+        print("usage: role reviewed [--show]", file=sys.stderr)
+        return 2
+    if _git(root, "status", "--porcelain", "--untracked-files=no"):
+        print("role: uncommitted changes to tracked files; commit them and review again",
+              file=sys.stderr)
+        return 1
+    d = state_dir(root) / REVIEWED
+    d.mkdir(parents=True, exist_ok=True)
+    (d / sha).write_text(sha + "\n")
+    print(f"{sha[:12]} recorded as reviewed")
     return 0
 
 
@@ -340,33 +416,365 @@ def hook_pre_tool_use(_: list[str]) -> int:
                             "explicit approval to edit it.")
 
 
+# ------------------------------------------------------------ bash gate parsing
+#
+# Quote-aware, not a shell. It errs toward finding a push: an over-match costs a
+# rephrase, an under-match lets unreviewed code out. Known gaps are listed in
+# the valesor-dev README.
+
+def _close_paren(text: str, i: int) -> int:
+    depth = 1
+    while i < len(text):
+        if text[i] == "(":
+            depth += 1
+        elif text[i] == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+        i += 1
+    return len(text)
+
+
+def _strip_heredocs(command: str) -> str:
+    def keep_header(m: re.Match) -> str:
+        line_start = command.rfind("\n", 0, m.start()) + 1
+        before = command[line_start:m.start()]
+        if before.count("$((") > before.count("))"):
+            return m.group(0)  # a shift inside $(( )), not a heredoc
+        return m.group(0).split("\n", 1)[0] + "\n"
+    return HEREDOC_RE.sub(keep_header, command)
+
+
+def _prescan(command: str) -> tuple[str, list[str]]:
+    """Unquoted: drop `#` comments, turn backticks into newlines and `$(` into `(`.
+    Also return the command substitutions found inside double quotes, which the
+    shell runs too."""
+    out: list[str] = []
+    nested: list[str] = []
+    quote, i, n = None, 0, len(command)
+    while i < n:
+        c = command[i]
+        if c == "\\" and quote != "'" and i + 1 < n:
+            out.append(command[i:i + 2]); i += 2; continue
+        if quote == "'":
+            quote = None if c == "'" else quote
+            out.append(c); i += 1; continue
+        subst = command.startswith("$(", i) and not command.startswith("$((", i)
+        if quote == '"':
+            if c == '"':
+                quote = None
+            elif subst or c == "`":
+                j = _close_paren(command, i + 2) if subst else command.find("`", i + 1)
+                j = n if j < 0 else j
+                nested.append(command[i + (2 if subst else 1):j])
+                out.append(command[i:j + 1]); i = j + 1; continue
+            out.append(c); i += 1; continue
+        if c in "'\"":
+            quote = c; out.append(c)
+        elif c == "`":
+            out.append("\n")
+        elif subst:
+            out.append(" ( "); i += 2; continue
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()"):
+            j = command.find("\n", i)
+            i = n if j < 0 else j
+            continue
+        else:
+            out.append(c)
+        i += 1
+    return "".join(out), nested
+
+
+def _tokens(text: str) -> list[str]:
+    lex = shlex.shlex(text, posix=True, punctuation_chars=PUNCT)
+    lex.whitespace = " \t\r"
+    lex.whitespace_split = True
+    lex.commenters = ""  # _prescan already dropped comments, keeping their newline
+    try:
+        return list(lex)
+    except ValueError:  # unbalanced quotes: fall back to a plain split
+        return [t for t in re.split(r"[ \t\r]+|([;&|()\n<>]+)", text) if t]
+
+
+OPEN, CLOSE = ["\0("], ["\0)"]  # subshell boundaries, kept as sentinel segments
+
+
+def _segments(tokens: list[str]) -> list[list[str]]:
+    """Simple commands, with redirections (and their targets) removed."""
+    segs: list[list[str]] = []
+    cur: list[str] = []
+    skip = False
+    for t in tokens:
+        if skip:
+            skip = False
+            continue
+        if t and all(ch in PUNCT for ch in t):
+            if "<" in t or ">" in t:
+                if cur and cur[-1].isdigit():
+                    cur.pop()  # the fd in `2>`
+                skip = True  # the redirection target
+                continue
+            if cur:
+                segs.append(cur)
+            cur = []
+            segs.extend(OPEN if ch == "(" else CLOSE for ch in t if ch in "()")
+        else:
+            cur.append(t)
+    if cur:
+        segs.append(cur)
+    return segs
+
+
+def _split_opts(args: list[str], with_value: set[str]) -> tuple[list[tuple[str, str]], list[str]]:
+    """Options (name, value) and positionals; `--opt=v` and `--` handled."""
+    opts, pos, i = [], [], 0
+    while i < len(args):
+        a = args[i]
+        if a == "--":
+            pos.extend(args[i + 1:]); break
+        if a.startswith("-") and a != "-":
+            if not a.startswith("--") and len(a) > 2 and a[:2] in with_value:
+                name, val = a[:2], a[2:].removeprefix("=")  # attached: -Hbranch, -l=x
+            else:
+                name, eq, val = a.partition("=")
+                if not eq and name in with_value and i + 1 < len(args):
+                    val = args[i + 1]; i += 1
+            opts.append((name, val))
+        else:
+            pos.append(a)
+        i += 1
+    return opts, pos
+
+
+class Gated:
+    def __init__(self, kind: str, where: Path, args: list[str]):
+        self.kind, self.where, self.args = kind, where, args
+
+
+def _path(base: Path, p: str) -> Path:
+    d = Path(os.path.expanduser(p))
+    return d if d.is_absolute() else base / d
+
+
+def _git_dir_worktree(p: Path) -> Path:
+    return p.parent if p.name == ".git" else p
+
+
+def _git_alias(where: Path, inline: dict[str, str], sub: str) -> str | None:
+    if sub in inline:
+        return inline[sub]
+    root = repo_root(where) if where.exists() else None
+    if root is None:
+        return None
+    r = subprocess.run(["git", "-C", str(root), "config", "--get", f"alias.{sub}"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or None
+
+
+def _gated_git(rest: list[str], where: Path, depth: int) -> list[Gated]:
+    inline: dict[str, str] = {}
+    i = 0
+    while i < len(rest) and rest[i].startswith("-"):
+        name, eq, val = rest[i].partition("=")
+        if not eq and name in GIT_OPTS_WITH_VALUE and i + 1 < len(rest):
+            val = rest[i + 1]; i += 1
+        if name == "-C":
+            where = _path(where, val)
+        elif name == "--git-dir":
+            where = _git_dir_worktree(_path(where, val))
+        elif name == "-c" and val.startswith("alias.") and "=" in val:
+            k, _, v = val[len("alias."):].partition("=")
+            inline[k] = v
+        i += 1
+    if i >= len(rest):
+        return []
+    sub, args = rest[i], rest[i + 1:]
+    if sub == "push":
+        return [Gated("git push", where, args)]
+    if sub in GIT_BUILTINS or depth >= 3:
+        return []
+    alias = _git_alias(where, inline, sub)
+    if not alias:
+        return []
+    if alias.startswith("!"):
+        return gated_commands(alias[1:] + " " + " ".join(shlex.quote(a) for a in args),
+                              where, depth + 1)
+    try:
+        words = shlex.split(alias)
+    except ValueError:
+        words = alias.split()
+    return _gated_git(words + args, where, depth + 1)
+
+
+def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
+    """Every `git push` and `gh pr create` in a shell command, with the dir it runs in."""
+    found: list[Gated] = []
+    text, nested = _prescan(_strip_heredocs(command))
+    if depth < 3:
+        for sub in nested:
+            found += gated_commands(sub, cwd, depth + 1)
+    scopes: list[Path] = []  # cwd at each open subshell
+    dirstack: list[Path] = []
+    oldpwd = cwd
+    for seg in _segments(_tokens(text)):
+        if seg is OPEN:
+            scopes.append(cwd)
+            continue
+        if seg is CLOSE:
+            cwd = scopes.pop() if scopes else cwd
+            continue
+        where = cwd
+        while seg:
+            m = VAR_RE.match(seg[0])
+            if m:
+                if m.group(1) == "GIT_DIR":
+                    where = _git_dir_worktree(_path(cwd, m.group(2)))
+                seg = seg[1:]
+            elif seg[0] in PREFIX_WORDS:
+                seg = seg[1:]
+            elif os.path.basename(seg[0]) in WRAPPERS:
+                # skip to the command it runs: the first git/gh/shell/eval word
+                nxt = next((k for k, t in enumerate(seg[1:], 1)
+                            if os.path.basename(t) in {"git", "gh", "eval", *SHELLS}), None)
+                seg = seg[nxt:] if nxt else []
+            else:
+                break
+        if not seg:
+            continue
+        head, rest = os.path.basename(seg[0]), seg[1:]
+        if head in ("cd", "pushd"):
+            dirs = [t for t in rest if t == "-" or not t.startswith("-")]
+            target = oldpwd if dirs[:1] == ["-"] else _path(cwd, dirs[0]) if dirs else None
+            if target is not None:
+                if head == "pushd":
+                    dirstack.append(cwd)
+                oldpwd, cwd = cwd, target
+        elif head == "popd":
+            if dirstack:
+                oldpwd, cwd = cwd, dirstack.pop()
+        elif head in SHELLS and depth < 3:
+            flag = next((k for k, t in enumerate(rest) if SHELL_C_RE.match(t)), None)
+            if flag is not None:
+                body = next((t for t in rest[flag + 1:] if not t.startswith("-")), None)
+                if body:
+                    found += gated_commands(body, where, depth + 1)
+        elif head in ("eval", "watch") and depth < 3:
+            found += gated_commands(" ".join(t for t in rest if not t.startswith("-")),
+                                    where, depth + 1)
+        elif head == "git":
+            found += _gated_git(rest, where, depth)
+        elif head == "gh":
+            _, pos = _split_opts(rest, GH_OPTS_WITH_VALUE)
+            if len(pos) >= 2 and pos[0] == "pr" and pos[1] in ("create", "new"):
+                found.append(Gated("gh pr create", where, rest))
+    return found
+
+
+def pr_labels(args: list[str]) -> set[str]:
+    """Labels from `gh pr create` options; other options' values aren't read as flags."""
+    opts, _ = _split_opts(args, GH_PR_CREATE_OPTS_WITH_VALUE)
+    return {x.strip() for n, v in opts if n in ("-l", "--label") for x in v.split(",")} - {""}
+
+
+def pr_head(args: list[str]) -> str | None:
+    opts, _ = _split_opts(args, GH_PR_CREATE_OPTS_WITH_VALUE)
+    heads = [v for n, v in opts if n in ("-H", "--head") and v]
+    return heads[-1].split(":", 1)[-1] if heads else None
+
+
+def _commit(root: Path, rev: str) -> str | None:
+    try:
+        return _git(root, "rev-parse", "--verify", "--quiet", f"{rev}^{{commit}}")
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _cleared(root: Path, sha: str) -> bool:
+    """Reviewed by /pre-pr, or already on origin/main (merged, so reviewed there)."""
+    if is_reviewed(root, sha):
+        return True
+    return subprocess.run(["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "origin/main"],
+                          capture_output=True).returncode == 0
+
+
+def push_problem(root: Path, args: list[str]) -> str | None:
+    """Why this push may not go out, or None."""
+    opts, pos = _split_opts(args, PUSH_OPTS_WITH_VALUE)
+    names = {n for n, _ in opts}
+    if names & {"--delete", "-d"}:
+        return None
+    if names & {"--all", "--mirror", "--tags", "--branches"}:
+        return "push branches and tags by name in a role session, not with --all/--mirror/--tags"
+    refspecs: list[str] = []
+    words = pos[1:]  # the first positional is the repository, even with --repo (git push.c)
+    while words:
+        w = words.pop(0)
+        if w == "tag" and words:
+            w = f"refs/tags/{words.pop(0)}"
+        refspecs.append(w)
+    for spec in refspecs or ["HEAD"]:  # no refspec: the current branch
+        src = spec.lstrip("+").split(":", 1)[0]
+        if not src and ":" in spec:
+            continue  # `:branch` deletes
+        if "$" in src or "`" in src:
+            src = "HEAD"  # a shell expansion (e.g. "$(git branch --show-current)"): the current branch
+        sha = _commit(root, src or "HEAD")
+        if sha is None:
+            return f"can't resolve {src!r} to a commit"
+        if not _cleared(root, sha):
+            return f"{src or 'HEAD'} ({sha[:12]}) hasn't passed /pre-pr"
+    return None
+
+
+def _label_problem(args: list[str], role: str) -> str | None:
+    want = pr_label(role)
+    labels = pr_labels(args)
+    wrong = sorted(l for l in labels if l.startswith("role:") and l != want)
+    if wrong:
+        return f"This session's role is {role}; label the PR {want}, not {', '.join(wrong)}."
+    if want not in labels:
+        return (f"PRs from the {role} role carry the {want} label. Re-run with `--label {want}`. "
+                f"If GitHub says the label doesn't exist, ask Brian to create it "
+                f"(gh label create {want}).")
+    return None
+
+
 def hook_pre_bash(_: list[str]) -> int:
     data = _hook_input()
     command = (data.get("tool_input") or {}).get("command") or ""
-    if not PR_CREATE_RE.search(command):
-        return 0
-    root = repo_root(Path(data.get("cwd") or os.getcwd()))
-    if root is None:
-        return 0
-    roles = Roles(root)
-    if not roles.roles:
-        return 0
-    role = get_role(root, data.get("session_id", ""))
-    if role is None:
-        return _decision("deny", f"No role set for this session. Ask Brian to run "
-                                 f"/role <{roles.names()}> before opening a PR.")
-    if role == UNRESTRICTED:
-        return 0
-    want = pr_label(role)
-    labels = pr_labels(command)
-    wrong = sorted(l for l in labels if l.startswith("role:") and l != want)
-    if wrong:
-        return _decision("deny", f"This session's role is {role}; label the PR {want}, "
-                                 f"not {', '.join(wrong)}.")
-    if want not in labels:
-        return _decision("deny", f"PRs from the {role} role carry the {want} label. "
-                                 f"Re-run with `--label {want}`. If GitHub says the label "
-                                 f"doesn't exist, ask Brian to create it (gh label create {want}).")
+    cwd = Path(data.get("cwd") or os.getcwd())
+    asks: list[str] = []
+    for g in gated_commands(command, cwd):
+        root = repo_root(g.where)
+        if root is None:
+            continue
+        roles = Roles(root)
+        if not roles.roles:
+            continue
+        role = get_role(root, data.get("session_id", ""))
+        if role is None:
+            return _decision("deny", f"No role set for this session. Ask Brian to run "
+                                     f"/role <{roles.names()}> before running {g.kind}.")
+        if g.kind == "gh pr create":
+            if role != UNRESTRICTED:
+                label = _label_problem(g.args, role)
+                if label:
+                    return _decision("deny", label)
+            ref = pr_head(g.args) or "HEAD"
+            sha = _commit(root, ref) or (head_sha(root) if ref != "HEAD" else None)
+            problem = None if sha and _cleared(root, sha) else \
+                f"{ref} {sha[:12] if sha else '(no commits)'} hasn't passed /pre-pr"
+        else:
+            problem = push_problem(root, g.args)
+        if problem is None:
+            continue
+        reason = (f"{g.kind}: {problem}. Run /pre-pr (checks plus the adversarial review) "
+                  f"first; any new commit needs a fresh review.")
+        if role != UNRESTRICTED:
+            return _decision("deny", reason)
+        asks.append(reason)
+    if asks:
+        return _decision("ask", " ".join(asks))
     return 0
 
 
@@ -376,6 +784,8 @@ COMMANDS = {
     "show": cmd_show,
     "require": cmd_require,
     "clear": cmd_clear,
+    "check-cmd": cmd_check_cmd,
+    "reviewed": cmd_reviewed,
     "hook-session-start": hook_session_start,
     "hook-pre-tool-use": hook_pre_tool_use,
     "hook-pre-bash": hook_pre_bash,

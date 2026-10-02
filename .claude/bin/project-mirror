@@ -1,0 +1,708 @@
+#!/usr/bin/env python3
+"""Mirror a Valesor repo's story files into an org GitHub Project (one way).
+
+Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/project-mirror.
+Vendored into target repos as .claude/bin/project-mirror by `make install`.
+
+    project-mirror [<repo-dir>] [--ref origin/main] [--repo owner/name]
+                   [--project TITLE] [--prefix AW] [--config FILE]
+                   [--apply | --offline]
+
+Files stay the source of truth: every run makes GitHub match them, and
+GitHub-side edits to mirrored issues and fields are overwritten. Without
+--apply it only prints what it would change. --offline prints the sprint
+board (Current and Next, by rank) without calling GitHub.
+
+Settings come from <repo-dir>/.claude/roles/_repo.md frontmatter (or --config),
+and flags override them:
+
+    project: Andara's World    the org Project's title (no `project:` = not mirrored)
+    story_prefix: AW           story IDs look like AW-CLI-003
+    github_repo: owner/name    default: the `origin` remote
+
+What it reads on <ref> (never the working tree):
+
+    docs/stories/*.md    frontmatter + body       -> one issue per story
+    docs/epics/*.md      frontmatter + body       -> one issue per epic (parent of its stories)
+    docs/roadmap.md      `#### M<n> — <name> *(gate: …)*` -> repo milestones
+    docs/sprints/SPRINT-<n>.md  list items in the backlog, contract-review and
+                         carryover sections       -> Sprint, Plan, Rank fields
+
+What it writes:
+
+    issues        title `<ID> — <title>`, body = file body under a mirror notice,
+                  closed when `status: done`, issue type from `type:`,
+                  milestone, parent epic (sub-issue), blocked-by from `depends_on`
+    project       Status (the built-in field, options replaced with story statuses),
+                  Lane, Size, Risk, Component, Sprint, Plan, Rank, Story ID
+
+Sprint is the newest sprint file that lists the story. Plan is `Current` for a
+story in the active sprint that isn't done, `Next` for one in a planned sprint.
+Rank is the story's position in that sprint's lists (views sort by it).
+
+Only issues the mirror created (an `<ID> — ` title and the mirror notice) are
+ever changed; bugs and other issues that mention a story are left alone.
+Needs `gh` with the `project` scope (`gh auth refresh -s project`).
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from pathlib import Path
+
+PREFIX = r"[A-Z]{2,}"  # story ID prefix; set_prefix() narrows it to the repo's
+STORY_ID = re.compile(rf"\b{PREFIX}-[A-Z]+-\d{{3}}\b")
+TITLE_ID = re.compile(rf"^({PREFIX}-[A-Z]+-\d{{3}}|EPIC-\d{{2}})\b")
+
+
+def set_prefix(prefix: str) -> None:
+    global PREFIX, STORY_ID, TITLE_ID
+    PREFIX = re.escape(prefix)
+    STORY_ID = re.compile(rf"\b{PREFIX}-[A-Z]+-\d{{3}}\b")
+    TITLE_ID = re.compile(rf"^({PREFIX}-[A-Z]+-\d{{3}}|EPIC-\d{{2}})\b")
+SPRINT_FILE = re.compile(r"(?:^|/)(SPRINT-\d+)\.md$")
+MILESTONE_HEAD = re.compile(r"^#### (M\d+) — (.+?)(?:\s+\*\(gate: (.+)\)\*)?\s*$")
+BODY_LIMIT = 65000  # GitHub caps issue bodies at 65536 characters
+
+STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
+PLANS = ["Current", "Next", "Later"]
+SELECT_FIELDS = {  # project field -> (frontmatter key, known values in display order)
+    "Lane": ("lane", ["architecture", "sre", "implementation"]),
+    "Size": ("size", ["S", "M", "L"]),
+    "Risk": ("risk", ["low", "medium", "high"]),
+    "Component": ("component", ["server", "cli", "infra"]),
+}
+ISSUE_TYPE = {"feature": "Feature", "bug": "Bug", "chore": "Task", "infra": "Task", "epic": "Epic"}
+COLORS = ["GRAY", "BLUE", "YELLOW", "ORANGE", "GREEN", "RED", "PURPLE", "PINK"]
+STATUS_COLOR = {"draft": "GRAY", "ready": "BLUE", "in-progress": "YELLOW",
+                "review": "ORANGE", "done": "GREEN", "blocked": "RED"}
+
+
+# ---------------------------------------------------------------- read files
+
+def git(repo: str, *args: str) -> str:
+    return subprocess.run(["git", "-C", repo, *args], capture_output=True,
+                          text=True, check=True).stdout
+
+
+def read_tree(repo: str, ref: str) -> dict[str, str]:
+    """Every docs/ file the mirror reads, as {path: text}, from `ref`."""
+    paths = git(repo, "ls-tree", "-r", "--name-only", ref, "--",
+                "docs/stories", "docs/epics", "docs/sprints", "docs/roadmap.md").split()
+    return {p: git(repo, "show", f"{ref}:{p}") for p in paths if p.endswith(".md")}
+
+
+def frontmatter(text: str) -> tuple[dict, str]:
+    """Flat YAML frontmatter (scalars and [a, b] lists) and the body after it."""
+    if not text.startswith("---\n"):
+        return {}, text
+    end = text.index("\n---\n", 4)
+    meta: dict = {}
+    for line in text[4:end].splitlines():
+        m = re.match(r"^([A-Za-z_]+):\s*(.*?)\s*(?:#.*)?$", line)
+        if not m:
+            continue
+        k, v = m.groups()
+        if v.startswith("[") and v.endswith("]"):
+            meta[k] = [x.strip() for x in v[1:-1].split(",") if x.strip()]
+        else:
+            meta[k] = v.strip("'\"")
+    return meta, text[end + 5:].lstrip("\n")
+
+
+def milestones(roadmap: str) -> dict[str, dict]:
+    """{"M3": {"title": "M3 — Authored world", "gate": …, "text": section}}."""
+    out: dict[str, dict] = {}
+    cur = None
+    for line in roadmap.splitlines():
+        m = MILESTONE_HEAD.match(line)
+        if m:
+            key, name, gate = m.groups()
+            cur = out[key] = {"title": f"{key} — {name}", "gate": gate or "", "text": ""}
+        elif line.startswith("#"):
+            cur = None
+        elif cur is not None:
+            cur["text"] += line + "\n"
+    return out
+
+
+def milestone_range(value: str) -> list[str]:
+    """"M1–M3" / "M0-M2" / "M3" -> ["M1", "M2", "M3"]; anything else -> []."""
+    m = re.fullmatch(r"M(\d+)(?:\s*[–-]\s*M(\d+))?", value or "")
+    if not m:
+        return []
+    a, b = int(m.group(1)), int(m.group(2) or m.group(1))
+    return [f"M{n}" for n in range(a, b + 1)]
+
+
+def sprint_lists(text: str) -> list[str]:
+    """Story IDs a sprint plan lists, in order, deduplicated.
+
+    Only list items in "Contract review", "* backlog", and "Carryover" sections
+    count, only items that open with a story ID, and only the IDs before the
+    item's first " — " or ":" (the rest is prose that mentions other stories)."""
+    ids: list[str] = []
+    section = ""
+    for line in text.splitlines():
+        if line.startswith("## "):
+            section = line[3:].lower()
+            continue
+        if not re.match(r"(contract review|.*backlog|carryover)", section):
+            continue
+        m = re.match(rf"^(?:\d+\.|-)\s+[*`]*({PREFIX}-.*)$", line)
+        if not m:
+            continue  # items that don't open with a story ID are prose
+        head = re.split(r" — |:", m.group(1), maxsplit=1)[0]
+        for sid in STORY_ID.findall(head):
+            if sid not in ids:
+                ids.append(sid)
+    return ids
+
+
+# ---------------------------------------------------------------- the model
+
+@dataclass
+class Want:
+    key: str                  # AW-CLI-003 / EPIC-05
+    title: str
+    body: str
+    closed: bool
+    issue_type: str | None
+    milestone: str | None     # "M3"
+    parent: str | None = None
+    blocked_by: list[str] = field(default_factory=list)
+    fields: dict = field(default_factory=dict)  # project field name -> value (None clears)
+
+
+def notice(path: str, sha: str) -> str:
+    return (f"> [!NOTE]\n> Mirrored from `{path}` at `{sha[:7]}`. Edit the file; "
+            f"this issue is overwritten on every sync.\n\n")
+
+
+def fit(body: str, path: str) -> str:
+    if len(body) <= BODY_LIMIT:
+        return body
+    return body[:BODY_LIMIT] + f"\n\n… truncated; the full story is `{path}`.\n"
+
+
+def sprint_files(files: dict[str, str]) -> list[tuple[int, str, str, list[str]]]:
+    """(number, name, status, listed IDs) for each sprint file, oldest first."""
+    sprints = []
+    for p, t in files.items():
+        m = SPRINT_FILE.search(p)
+        if m:
+            st = re.search(r"^Status:\s*(\w+)", t, re.M)
+            sprints.append((int(m.group(1).split("-")[1]), m.group(1),
+                            st.group(1).lower() if st else "", sprint_lists(t)))
+    return sorted(sprints)
+
+
+def build(files: dict[str, str], sha: str) -> tuple[dict[str, Want], dict[str, dict], list[str]]:
+    """Desired issues keyed by ID, the milestones, and warnings."""
+    warn: list[str] = []
+    ms = milestones(files.get("docs/roadmap.md", ""))
+
+    # Sprints: newest listing wins for Sprint; the active or planned one sets Plan and Rank.
+    sprints = sprint_files(files)
+    sprint_of: dict[str, str] = {}
+    plan_of: dict[str, tuple[str, int]] = {}
+    for _, name, status, ids in sprints:
+        for rank, sid in enumerate(ids, 1):
+            sprint_of[sid] = name
+            if status in ("active", "planned"):
+                plan_of[sid] = ("Current" if status == "active" else "Next", rank)
+
+    want: dict[str, Want] = {}
+    epic_ms: dict[str, list[str]] = {}
+    for p, t in sorted(files.items()):
+        if not p.startswith("docs/epics/"):
+            continue
+        meta, body = frontmatter(t)
+        eid = meta.get("id")
+        if not eid:
+            warn.append(f"{p}: no id")
+            continue
+        epic_ms[eid] = milestone_range(meta.get("milestone", ""))
+        want[eid] = Want(eid, f"{eid} — {meta.get('title', '')}", notice(p, sha) + fit(body, p),
+                         meta.get("status") == "done", "Epic",
+                         epic_ms[eid][0] if len(epic_ms[eid]) == 1 else None)
+
+    for p, t in sorted(files.items()):
+        if not p.startswith("docs/stories/"):
+            continue
+        meta, body = frontmatter(t)
+        sid = meta.get("id")
+        if not sid:
+            warn.append(f"{p}: no id")
+            continue
+        status = meta.get("status", "")
+        if status not in STATUSES:
+            warn.append(f"{sid}: unknown status {status!r}")
+        epic = meta.get("epic")
+        if epic and epic not in want:
+            warn.append(f"{sid}: epic {epic} has no file")
+            epic = None
+        # Milestone: the epic's, when it has exactly one; else the roadmap section naming the story.
+        span = epic_ms.get(epic or "", [])
+        named = [k for k in span if sid in ms.get(k, {}).get("text", "")]
+        mstone = span[0] if len(span) == 1 else (named[0] if len(named) == 1 else None)
+        if mstone is None and status != "done":
+            warn.append(f"{sid}: no milestone (epic {epic} spans {'–'.join(span) or 'none'})")
+        plan, rank = plan_of.get(sid, (None, None))
+        if status == "done":
+            plan, rank = None, None
+        f = {"Status": status or None, "Story ID": sid, "Sprint": sprint_of.get(sid),
+             "Plan": plan, "Rank": rank}
+        for name, (key, _) in SELECT_FIELDS.items():
+            f[name] = meta.get(key) or None
+        typ = ISSUE_TYPE.get(meta.get("type", ""))
+        want[sid] = Want(sid, f"{sid} — {meta.get('title', '')}", notice(p, sha) + fit(body, p),
+                         status == "done", typ, mstone, epic, list(meta.get("depends_on", [])), f)
+
+    for w in want.values():
+        missing = [d for d in w.blocked_by if d not in want]
+        if missing:
+            warn.append(f"{w.key}: depends_on names unknown {', '.join(missing)}")
+            w.blocked_by = [d for d in w.blocked_by if d in want]
+    return want, ms, warn
+
+
+def comparable(body: str) -> str:
+    """The body minus the notice's commit, which changes every run; its path stays."""
+    return re.sub(r"(> Mirrored from `[^`]*` at `)[0-9a-f]+`", r"\1`", body or "")
+
+
+def strip_notice(body: str) -> str:
+    return re.sub(r"\A> \[!NOTE\]\n> Mirrored from .*?\n\n", "", body or "", flags=re.S)
+
+
+def managed(title: str, body: str | None) -> str | None:
+    """The story or epic ID of an issue this mirror created, else None.
+
+    Both the `<ID> — ` title and the mirror notice are required, so an issue
+    that is only about a story (`AW-INF-013: helm-install …`) is never touched."""
+    m = TITLE_ID.match(title)
+    if not m or not title[m.end():].startswith(" — ") or strip_notice(body or "") == (body or ""):
+        return None
+    return m.group(1)
+
+
+# ---------------------------------------------------------------- GitHub
+
+class GitHub:
+    def __init__(self, repo: str, apply: bool):
+        self.owner, self.name = repo.split("/")
+        self.apply = apply
+        self.writes = 0
+        self.ops: dict[str, int] = {}
+
+    def gql(self, query: str, **vars) -> dict:
+        cmd = ["gh", "api", "graphql", "-f", f"query={query}"]
+        for k, v in vars.items():
+            cmd += ["-F" if isinstance(v, (int, bool)) else "-f", f"{k}={v}"]
+        r = subprocess.run(cmd, capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"gh api graphql failed: {r.stderr.strip() or r.stdout.strip()}")
+        return json.loads(r.stdout)["data"]
+
+    def mutate(self, what: str, query: str, **vars) -> dict | None:
+        print(f"  {what}")
+        verb = what.split(" ")[0].rstrip(":")
+        if TITLE_ID.match(verb):
+            verb = "blocked-by" if " blocked by " in what else "set field"
+        self.ops[verb] = self.ops.get(verb, 0) + 1
+        if not self.apply:
+            return None
+        self.writes += 1
+        if self.writes % 50 == 0:
+            time.sleep(2)  # stay under GitHub's secondary rate limits
+        body = json.dumps({"query": query, "variables": vars})
+        for attempt in range(4):  # GitHub answers "Something went wrong" transiently
+            r = subprocess.run(["gh", "api", "graphql", "--input", "-"], input=body,
+                               capture_output=True, text=True)
+            out = json.loads(r.stdout or "{}")
+            if not (r.returncode or out.get("errors")):
+                return out["data"]
+            if "Something went wrong" not in r.stderr + str(out.get("errors")) or attempt == 3:
+                sys.exit(f"failed: {what}\n{r.stderr.strip()} {out.get('errors')}")
+            time.sleep(2 ** attempt * 5)
+
+    def rest(self, *args: str) -> list | dict:
+        r = subprocess.run(["gh", "api", *args], capture_output=True, text=True)
+        if r.returncode:
+            sys.exit(f"gh api {' '.join(args)} failed: {r.stderr.strip()}")
+        return json.loads(r.stdout or "null")
+
+
+def load_state(gh: GitHub, project_title: str) -> dict:
+    q = """query($o:String!,$n:String!,$t:String!){
+      organization(login:$o){ id
+        issueTypes(first:50){nodes{id name}}
+        projectsV2(first:20, query:$t){nodes{id number title url}}}
+      repository(owner:$o,name:$n){ id }}"""
+    d = gh.gql(q, o=gh.owner, n=gh.name, t=project_title)
+    org = d["organization"]
+    project = next((p for p in org["projectsV2"]["nodes"] if p["title"] == project_title), None)
+    st = {"org_id": org["id"], "repo_id": d["repository"]["id"],
+          "types": {t["name"]: t["id"] for t in org["issueTypes"]["nodes"]},
+          "project": project, "fields": {}, "items": {}, "issues": {}}
+
+    after = None
+    while True:
+        q = """query($o:String!,$n:String!,$a:String){repository(owner:$o,name:$n){
+          issues(first:50, after:$a){pageInfo{hasNextPage endCursor} nodes{
+            id number title body state milestone{title} issueType{name} parent{id number}
+            blockedBy(first:50){nodes{number}}}}}}"""
+        page = gh.gql(q, o=gh.owner, n=gh.name, **({"a": after} if after else {}))
+        conn = page["repository"]["issues"]
+        for i in conn["nodes"]:
+            key = managed(i["title"], i["body"])
+            if key:
+                st["issues"][key] = i
+        if not conn["pageInfo"]["hasNextPage"]:
+            break
+        after = conn["pageInfo"]["endCursor"]
+
+    if project:
+        load_project(gh, st)
+    return st
+
+
+def load_project(gh: GitHub, st: dict) -> None:
+    pid = st["project"]["id"]
+    q = """query($p:ID!){node(id:$p){... on ProjectV2{fields(first:50){nodes{
+      ... on ProjectV2FieldCommon{id name dataType}
+      ... on ProjectV2SingleSelectField{options{id name color description}}}}}}}"""
+    for f in gh.gql(q, p=pid)["node"]["fields"]["nodes"]:
+        st["fields"][f["name"]] = f
+    after = None
+    while True:
+        q = """query($p:ID!,$a:String){node(id:$p){... on ProjectV2{
+          items(first:100, after:$a){pageInfo{hasNextPage endCursor} nodes{id
+            content{... on Issue{number repository{nameWithOwner}}}
+            fieldValues(first:30){nodes{
+              ... on ProjectV2ItemFieldSingleSelectValue{name field{... on ProjectV2FieldCommon{name}}}
+              ... on ProjectV2ItemFieldTextValue{text field{... on ProjectV2FieldCommon{name}}}
+              ... on ProjectV2ItemFieldNumberValue{number field{... on ProjectV2FieldCommon{name}}}}}}}}}}"""
+        page = gh.gql(q, p=pid, **({"a": after} if after else {}))["node"]["items"]
+        for it in page["nodes"]:
+            c = it["content"] or {}
+            if c.get("repository", {}).get("nameWithOwner") != f"{gh.owner}/{gh.name}":
+                continue
+            vals = {}
+            for v in it["fieldValues"]["nodes"]:
+                if v and "field" in v:
+                    vals[v["field"]["name"]] = v.get("name", v.get("text", v.get("number")))
+            st["items"][c["number"]] = {"id": it["id"], "values": vals}
+        if not page["pageInfo"]["hasNextPage"]:
+            break
+        after = page["pageInfo"]["endCursor"]
+
+
+# ---------------------------------------------------------------- sync
+
+def option_list(known: list[str], seen: set[str]) -> list[str]:
+    return known + sorted(v for v in seen if v not in known)
+
+
+def sync(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], title: str) -> None:
+    st = load_state(gh, title)
+    placeholder = iter(range(1, 10**6))
+
+    def pid() -> str:
+        return st["project"]["id"] if st["project"] else f"<new project>"
+
+    # Project
+    print(f"project {title!r}")
+    if not st["project"]:
+        d = gh.mutate("create project", """mutation($o:ID!,$t:String!){
+          createProjectV2(input:{ownerId:$o,title:$t}){projectV2{id number title url}}}""",
+                      o=st["org_id"], t=title)
+        if d:
+            st["project"] = d["createProjectV2"]["projectV2"]
+            gh.mutate("link project to repo", """mutation($p:ID!,$r:ID!){
+              linkProjectV2ToRepository(input:{projectId:$p,repositoryId:$r}){clientMutationId}}""",
+                      p=pid(), r=st["repo_id"])
+            load_project(gh, st)
+
+    # Fields: create missing ones; make single-select options a superset, keeping option ids.
+    selects = {"Status": STATUSES, "Plan": PLANS,
+               "Sprint": sorted({w.fields.get("Sprint") for w in want.values()} - {None})}
+    for name, (_, known) in SELECT_FIELDS.items():
+        seen = {w.fields.get(name) for w in want.values()} - {None}
+        selects[name] = option_list(known, seen)
+    for name, opts in selects.items():
+        f = st["fields"].get(name)
+        if not f and name == "Status" and not st["project"]:
+            print(f"  replace built-in Status options with {', '.join(opts)}")
+            continue
+        colors = {o: STATUS_COLOR.get(o, COLORS[i % len(COLORS)]) for i, o in enumerate(opts)}
+        if not f:
+            d = gh.mutate(f"create field {name}: {', '.join(opts)}", """mutation($p:ID!,$n:String!,$o:[ProjectV2SingleSelectFieldOptionInput!]){
+              createProjectV2Field(input:{projectId:$p,dataType:SINGLE_SELECT,name:$n,singleSelectOptions:$o}){
+                projectV2Field{... on ProjectV2SingleSelectField{id name options{id name}}}}}""",
+                          p=pid(), n=name, o=[{"name": o, "color": colors[o], "description": ""} for o in opts])
+            if d:
+                st["fields"][name] = d["createProjectV2Field"]["projectV2Field"]
+            continue
+        have = {o["name"]: o for o in f["options"]}
+        extra = [o for o in have if o not in opts]
+        if name == "Status" and extra:  # the built-in Todo / In Progress / Done
+            new = [{"name": o, "color": colors[o], "description": ""} for o in opts]
+            what = f"replace Status options {', '.join(have)} with {', '.join(opts)}"
+        elif [o for o in opts if o not in have]:
+            new = [{"id": o["id"], "name": o["name"], "color": o["color"], "description": o["description"]}
+                   for o in f["options"]] + [{"name": o, "color": colors[o], "description": ""}
+                                             for o in opts if o not in have]
+            what = f"add {name} options {', '.join(o for o in opts if o not in have)}"
+        else:
+            continue
+        d = gh.mutate(what, """mutation($f:ID!,$o:[ProjectV2SingleSelectFieldOptionInput!]){
+          updateProjectV2Field(input:{fieldId:$f,singleSelectOptions:$o}){
+            projectV2Field{... on ProjectV2SingleSelectField{id name options{id name}}}}}""",
+                      f=f["id"], o=new)
+        if d:
+            st["fields"][name] = d["updateProjectV2Field"]["projectV2Field"]
+    for name, dtype in (("Rank", "NUMBER"), ("Story ID", "TEXT")):
+        if name not in st["fields"]:
+            d = gh.mutate(f"create field {name}", """mutation($p:ID!,$n:String!,$t:ProjectV2CustomFieldType!){
+              createProjectV2Field(input:{projectId:$p,dataType:$t,name:$n}){
+                projectV2Field{... on ProjectV2FieldCommon{id name}}}}""", p=pid(), n=name, t=dtype)
+            if d:
+                st["fields"][name] = d["createProjectV2Field"]["projectV2Field"]
+
+    # Milestones
+    print("milestones")
+    have_ms = {m["title"].split(" ")[0]: m for m in
+               gh.rest(f"repos/{gh.owner}/{gh.name}/milestones?state=all&per_page=100")}
+    ms_id: dict[str, str] = {}
+    for key, m in ms.items():
+        cur = have_ms.get(key)
+        desc = f"Gate: {m['gate']}" if m["gate"] else ""
+        if not cur:
+            print(f"  create milestone {m['title']}")
+            if gh.apply:
+                cur = gh.rest(f"repos/{gh.owner}/{gh.name}/milestones", "-f", f"title={m['title']}",
+                              "-f", f"description={desc}")
+        elif cur["title"] != m["title"] or (cur["description"] or "") != desc:
+            print(f"  update milestone {m['title']}")
+            if gh.apply:
+                gh.rest("-X", "PATCH", f"repos/{gh.owner}/{gh.name}/milestones/{cur['number']}",
+                        "-f", f"title={m['title']}", "-f", f"description={desc}")
+        if cur:
+            ms_id[key] = cur["node_id"]
+
+    # Issues: epics first so stories can name their parent.
+    print("issues")
+    missing_types = sorted({w.issue_type for w in want.values()} - set(st["types"]) - {None})
+    if missing_types:
+        print(f"  (no org issue type {', '.join(missing_types)}; those issues get none)")
+    node: dict[str, str] = {k: i["id"] for k, i in st["issues"].items()}
+    number: dict[str, int] = {k: i["number"] for k, i in st["issues"].items()}
+    order = sorted(want.values(), key=lambda w: (not w.key.startswith("EPIC"), w.key))
+    for w in order:
+        cur = st["issues"].get(w.key)
+        type_id = st["types"].get(w.issue_type or "")
+        m_id = ms_id.get(w.milestone or "")
+        if not cur:
+            d = gh.mutate(f"create {w.key}{' (closed)' if w.closed else ''}", """mutation(
+              $r:ID!,$t:String!,$b:String!,$ty:ID,$m:ID,$par:ID){
+              createIssue(input:{repositoryId:$r,title:$t,body:$b,issueTypeId:$ty,milestoneId:$m,parentIssueId:$par}){
+                issue{id number}}}""", r=st["repo_id"], t=w.title, b=w.body, ty=type_id, m=m_id,
+                          par=node.get(w.parent or ""))
+            if d:
+                node[w.key] = d["createIssue"]["issue"]["id"]
+                number[w.key] = d["createIssue"]["issue"]["number"]
+            else:
+                node[w.key], number[w.key] = f"<new {w.key}>", -next(placeholder)
+            if w.closed:
+                gh.mutate(f"close {w.key}", """mutation($i:ID!){closeIssue(input:{issueId:$i,stateReason:COMPLETED}){clientMutationId}}""",
+                          i=node[w.key])
+            continue
+        diff = []
+        if cur["title"] != w.title:
+            diff.append("title")
+        if comparable(cur["body"]) != comparable(w.body):
+            diff.append("body")
+        if (cur["milestone"] or {}).get("title", "").split(" ")[0] != (w.milestone or "") and (m_id or not w.milestone):
+            diff.append("milestone")
+        if (cur["issueType"] or {}).get("name") != (w.issue_type if type_id else None):
+            diff.append("type")
+        if diff:
+            gh.mutate(f"update {w.key} #{cur['number']}: {', '.join(diff)}", """mutation(
+              $i:ID!,$t:String!,$b:String!,$ty:ID,$m:ID){
+              updateIssue(input:{id:$i,title:$t,body:$b,issueTypeId:$ty,milestoneId:$m}){clientMutationId}}""",
+                      i=cur["id"], t=w.title, b=w.body, ty=type_id, m=m_id)
+        if w.closed and cur["state"] == "OPEN":
+            gh.mutate(f"close {w.key} #{cur['number']}", """mutation($i:ID!){closeIssue(input:{issueId:$i,stateReason:COMPLETED}){clientMutationId}}""",
+                      i=cur["id"])
+        elif not w.closed and cur["state"] == "CLOSED":
+            gh.mutate(f"reopen {w.key} #{cur['number']}", """mutation($i:ID!){reopenIssue(input:{issueId:$i}){clientMutationId}}""",
+                      i=cur["id"])
+        have_parent = (cur["parent"] or {}).get("number")
+        if not w.parent and have_parent:
+            gh.mutate(f"unset {w.key} parent #{have_parent}", """mutation($p:ID!,$c:ID!){
+              removeSubIssue(input:{issueId:$p,subIssueId:$c}){clientMutationId}}""",
+                      p=cur["parent"]["id"], c=cur["id"])
+        elif w.parent and have_parent != number.get(w.parent):
+            gh.mutate(f"set {w.key} parent {w.parent}", """mutation($p:ID!,$c:ID!){
+              addSubIssue(input:{issueId:$p,subIssueId:$c,replaceParent:true}){clientMutationId}}""",
+                      p=node[w.parent], c=cur["id"])
+
+    # Dependencies: blocked-by between mirrored issues matches depends_on exactly.
+    print("dependencies")
+    by_number = {n: k for k, n in number.items()}
+    for w in order:
+        cur = st["issues"].get(w.key)
+        have = {by_number[i["number"]] for i in (cur["blockedBy"]["nodes"] if cur else [])
+                if i["number"] in by_number}
+        for dep in sorted(set(w.blocked_by) - have):
+            gh.mutate(f"{w.key} blocked by {dep}", """mutation($i:ID!,$b:ID!){
+              addBlockedBy(input:{issueId:$i,blockingIssueId:$b}){clientMutationId}}""",
+                      i=node[w.key], b=node[dep])
+        for dep in sorted(have - set(w.blocked_by)):
+            gh.mutate(f"{w.key} no longer blocked by {dep}", """mutation($i:ID!,$b:ID!){
+              removeBlockedBy(input:{issueId:$i,blockingIssueId:$b}){clientMutationId}}""",
+                      i=node[w.key], b=node[dep])
+
+    # Project items and field values
+    print("project items")
+    for w in order:
+        n = number[w.key]
+        item = st["items"].get(n)
+        if not item:
+            d = gh.mutate(f"add {w.key} to project", """mutation($p:ID!,$c:ID!){
+              addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}""", p=pid(), c=node[w.key])
+            item = {"id": d["addProjectV2ItemById"]["item"]["id"] if d else f"<item {w.key}>", "values": {}}
+        for fname, value in w.fields.items():
+            if item["values"].get(fname) == value or (value is None and fname not in item["values"]):
+                continue
+            f = st["fields"].get(fname) or {"id": f"<field {fname}>", "options": []}
+            if value is None:
+                gh.mutate(f"{w.key}: clear {fname}", """mutation($p:ID!,$i:ID!,$f:ID!){
+                  clearProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f}){clientMutationId}}""",
+                          p=pid(), i=item["id"], f=f["id"])
+                continue
+            if fname == "Rank":
+                v = {"number": float(value)}
+            elif fname == "Story ID":
+                v = {"text": value}
+            else:
+                opt = next((o["id"] for o in f.get("options", []) if o["name"] == value), f"<{value}>")
+                v = {"singleSelectOptionId": opt}
+            gh.mutate(f"{w.key}: {fname} = {value}", """mutation($p:ID!,$i:ID!,$f:ID!,$v:ProjectV2FieldValue!){
+              updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:$v}){clientMutationId}}""",
+                      p=pid(), i=item["id"], f=f["id"], v=v)
+
+    print("\n" + (", ".join(f"{n} {k}" for k, n in sorted(gh.ops.items())) or "in sync"))
+    if st["project"] and st["project"].get("url"):
+        print(f"\n{st['project']['url']}")
+
+
+def board(files: dict[str, str], want: dict[str, Want]) -> list[str]:
+    """The active and planned sprints, each counted from its own file: a progress
+    line, then the stories that aren't done, in rank order."""
+    lines: list[str] = []
+    for _, name, status, ids in sprint_files(files):
+        if status not in ("active", "planned"):
+            continue
+        stat = {sid: want[sid].fields["Status"] if sid in want else None for sid in ids}
+        counts = {st: sum(v == st for v in stat.values()) for st in STATUSES}
+        summary = ", ".join(f"{n} {st}" for st, n in counts.items() if n) or "nothing listed"
+        plan = "Current" if status == "active" else "Next"
+        lines.append(f"\n{plan} ({name}): {counts['done']}/{len(ids)} done — {summary}")
+        for rank, sid in enumerate(ids, 1):
+            if stat[sid] != "done":
+                lane = want[sid].fields["Lane"] if sid in want else None
+                lines.append(f"  {rank:>3}  {sid}  {lane or '-':15} {stat[sid] or 'no story file'}")
+    return lines
+
+
+def read_config(path: Path) -> dict[str, str]:
+    """`key: value` lines of a _repo.md frontmatter block."""
+    if not path.is_file():
+        return {}
+    text = path.read_text()
+    if not text.startswith("---\n") or "\n---" not in text[4:]:
+        return {}
+    out = {}
+    for line in text[4:text.index("\n---", 4)].splitlines():
+        key, sep, val = line.partition(":")
+        if sep and key.strip() and not line.startswith(" "):
+            out[key.strip()] = val.split(" #", 1)[0].strip().strip("'\"")
+    return out
+
+
+def origin_repo(repo_dir: str) -> str | None:
+    """owner/name from the origin remote: github.com in any URL form, an SSH host
+    alias containing "github", or a local git proxy (127.0.0.1/localhost) path
+    ending in /git/<owner>/<name>."""
+    try:
+        url = git(repo_dir, "remote", "get-url", "origin").strip()
+    except subprocess.CalledProcessError:
+        return None
+    host = re.sub(r"^[a-z+]+://", "", url).split("@", 1)[-1]
+    host = re.split(r"[:/]", host, maxsplit=1)[0].lower()
+    proxy = host in ("127.0.0.1", "localhost") and "/git/" in url
+    if "github" not in host and not proxy:
+        return None
+    m = re.search(r"([^/:]+)/([^/:]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def main(argv: list[str]) -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("repo_dir", nargs="?", default=".")
+    ap.add_argument("--ref", default="origin/main")
+    ap.add_argument("--repo", help="owner/name (default: github_repo, then the origin remote)")
+    ap.add_argument("--project", help="org Project title (default: project in _repo.md)")
+    ap.add_argument("--prefix", help="story ID prefix (default: story_prefix in _repo.md)")
+    ap.add_argument("--config", help="frontmatter file to read settings from "
+                                     "(default: <repo-dir>/.claude/roles/_repo.md)")
+    ap.add_argument("--apply", action="store_true", help="make the changes (default: print them)")
+    ap.add_argument("--offline", action="store_true", help="print the sprint board; no GitHub calls")
+    a = ap.parse_args(argv)
+    try:
+        a.repo_dir = git(a.repo_dir, "rev-parse", "--show-toplevel").strip()
+    except subprocess.CalledProcessError:
+        print(f"project-mirror: {a.repo_dir} is not inside a git repository", file=sys.stderr)
+        return 2
+
+    cfg = read_config(Path(a.config) if a.config else Path(a.repo_dir) / ".claude/roles/_repo.md")
+    project = a.project or cfg.get("project")
+    if a.prefix or cfg.get("story_prefix"):
+        set_prefix(a.prefix or cfg["story_prefix"])
+    repo = a.repo or cfg.get("github_repo") or origin_repo(a.repo_dir)
+    if not a.offline and not project:
+        print("project-mirror: not configured for this repo (no `project:` in "
+              ".claude/roles/_repo.md and no --project). Nothing to do.")
+        return 0
+    if not a.offline and not repo:
+        print("project-mirror: can't tell the GitHub repo (no github_repo, no GitHub "
+              "origin remote); pass --repo owner/name", file=sys.stderr)
+        return 2
+
+    sha = git(a.repo_dir, "rev-parse", a.ref).strip()
+    files = read_tree(a.repo_dir, a.ref)
+    want, ms, warn = build(files, sha)
+    stories = [w for w in want.values() if not w.key.startswith("EPIC")]
+    print(f"{a.ref} @ {sha[:7]}: {len(want) - len(stories)} epics, {len(stories)} stories, "
+          f"{len(ms)} milestones")
+    for w in warn:
+        print(f"warning: {w}")
+    if a.offline:
+        print("\n".join(board(files, want)))
+        return 0
+    if not a.apply:
+        print("dry run: nothing is written (--apply to make these changes)\n")
+    sync(GitHub(repo, a.apply), want, ms, project)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
