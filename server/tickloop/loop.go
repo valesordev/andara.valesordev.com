@@ -167,8 +167,14 @@ func (l *Loop) Interval() time.Duration { return l.interval }
 
 // BoundaryAcked records that tick's boundary as delivered, releasing the
 // checkpoints held for it. Safe from any goroutine: the Kafka publisher calls
-// it from its delivery callback.
+// it from its delivery callback. Once a boundary is lost, an acknowledgement
+// for it or a later one is ignored: the publisher hands over no boundary past
+// an unresolved one (boundarySeq), so one would mean a gap on the topic, and
+// nothing past the loss may be committed.
 func (l *Loop) BoundaryAcked(tick sim.Tick) {
+	if lost := l.lost.Load(); lost != nil && tick >= lost.Lost {
+		return
+	}
 	for {
 		cur := l.acked.Load()
 		if uint64(tick) <= cur || l.acked.CompareAndSwap(cur, uint64(tick)) {
@@ -431,10 +437,14 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 }
 
 // commitAcked checkpoints the newest held boundary that has been delivered
-// and drops every older one. Held boundaries are bounded by the delivery
-// timeout: past it, the boundary is lost and the loop stops.
+// and drops every older one. What is held grows while the broker is away,
+// one per sim.checkpoint_every_ticks; the producer's buffer, which fills at
+// a record per tick and more, is the tighter bound.
 func (l *Loop) commitAcked(ctx context.Context) {
 	acked := sim.Tick(l.acked.Load())
+	if lost := l.lost.Load(); lost != nil && acked >= lost.Lost {
+		acked = lost.Lost - 1
+	}
 	n := 0
 	for n < len(l.pending) && l.pending[n].Tick <= acked {
 		n++
@@ -462,7 +472,7 @@ func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
 // the loss, drains, and returns it for the process to exit 5.
 func (l *Loop) stopLost(e *sim.Engine, lost *BoundaryLostError) error {
 	ctx := context.Background()
-	lost.LastDelivered = sim.Tick(l.acked.Load())
+	lost.LastDelivered = min(sim.Tick(l.acked.Load()), lost.Lost-1)
 	l.metrics.BoundaryLost.Inc()
 	l.log.LogAttrs(ctx, slog.LevelError, "tick boundary lost; exiting into recovery",
 		slog.Uint64("lost_tick", uint64(lost.Lost)),

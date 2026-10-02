@@ -23,8 +23,8 @@ import (
 )
 
 // startLossyLoop recovers from the events topic and builds a loop whose
-// publisher reaches the broker through pubBrokers, wired as the server wires
-// it (boot.StartTickLoop): acknowledgements release checkpoints, and a lost
+// publisher reaches the broker through pubBrokers, wired by WireBoundaries as
+// the server is: acknowledgements release checkpoints, and a lost
 // boundary stops the loop.
 func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []string, commands, events, group string, deliveryTimeout time.Duration) (*Loop, *sim.Engine) {
 	t.Helper()
@@ -53,8 +53,7 @@ func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []str
 	if err != nil {
 		t.Fatal(err)
 	}
-	pub.OnBoundaryLost = loop.BoundaryLost
-	pub.OnBoundaryAcked = func(tick sim.Tick, _ time.Duration) { loop.BoundaryAcked(tick) }
+	WireBoundaries(pub, loop, nil, nil)
 	e.SetObserver(loop)
 	return loop, e
 }
@@ -62,15 +61,15 @@ func startLossyLoop(ctx context.Context, t *testing.T, brokers, pubBrokers []str
 // AW-SRV-026 AC-1, AC-2, AC-3 on the broker. The publisher's broker takes no
 // writes for longer than its delivery timeout: the loop stops with the
 // boundary after the last delivered one lost, and commits nothing past the
-// last delivered one.
+// last delivered one. A second process recovers to exactly that boundary,
+// with its hash, and its next boundary is the one after it: the topic stays
+// gapless.
 //
-// The outage is a broker answering every Produce with a retriable error
-// rather than a severed connection: with the idempotent producer, franz-go
-// never fails a batch that was sent and not answered (RecordDeliveryTimeout's
-// documentation), so a cut that lands while a boundary is in flight holds it
-// in retries until the broker returns — no loss, and nothing for this test to
-// observe. The compose stack's stopped broker is AC-4's. A second process recovers to exactly that boundary, with its
-// hash, and its next boundary is the one after it: the topic stays gapless.
+// The outage is a broker answering every Produce with a retriable error, so
+// nothing is written and the topic ends exactly at the last acknowledged
+// boundary. A stopped broker is AC-4's, on the compose stack: there the
+// boundary in flight may land unacknowledged, and the topic then ends at the
+// lost one, which recovery replays to just the same.
 func TestKafka_BoundaryLostExitsIntoRecovery(t *testing.T) {
 	bk := brokers(t)
 	commands, events := topics(t, bk)

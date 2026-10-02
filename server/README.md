@@ -229,10 +229,11 @@ are derived (ADR-0002 §3) and a broker stall must not be a tick stall; a lost b
 tick, counted, never a crash. A lost **boundary** is the exception (`AW-SRV-026`): a World whose
 recent history can't be replayed is one whose State Hash nobody can check, so the loop finishes the
 tick that learned of it, drains with `SimulationStopped{reason: boundary_lost}`, and the process
-exits `5` into exact recovery. Offsets are committed only for a boundary the broker has
-acknowledged, so a restart re-applies from the last delivered one. franz-go reports the loss only
-when the delivery timeout passes *and* it next writes or hears from the broker, so an unreachable
-broker's restart comes when it returns, not while it is down. A handler panic is contained at the Zone: the Zone is marked faulted
+exits `5` into exact recovery. A boundary goes to the producer only once every earlier one is
+acknowledged, so a loss can never leave a later one on the topic. One unacknowledged past the
+delivery timeout is lost even if the producer is still retrying it, which is what makes a stopped
+broker a loss a minute in rather than never. Offsets are committed only for an acknowledged
+boundary, so a restart re-applies from the last delivered one. A handler panic is contained at the Zone: the Zone is marked faulted
 with a `ZoneFaulted` Event, its Partition freezes at the panicking record, and the other Zones keep
 ticking. Verb handlers register on `sim.Config.Handlers` (`AW-SRV-003`); a Command with none is
 rejected `unsupported_command` and its offset advances.

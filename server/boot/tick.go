@@ -118,18 +118,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			if loop != nil {
 				// A lost boundary stops the loop, and the process exits 5
 				// into exact recovery (AW-SRV-026); the loop logs it.
-				kp.OnBoundaryLost = func(tick sim.Tick, err error) {
-					snapshotter.OnBoundaryLost(tick, err)
-					loop.Metrics().PublishFailures.WithLabelValues("boundary").Inc()
-					loop.BoundaryLost(tick, err)
-				}
-				kp.OnBoundaryAcked = func(tick sim.Tick, lag time.Duration) {
-					// A snapshot round waits on this (AW-SRV-006 AC-8), and
-					// so does the checkpoint of its offsets (AW-SRV-026).
-					snapshotter.OnBoundaryAcked(tick)
-					loop.BoundaryAcked(tick)
+				tickloop.WireBoundaries(kp, loop, snapshotter, func(lag time.Duration) {
 					rt.Events.Metrics().PublishLag.Set(lag.Seconds())
-				}
+				})
 				kp.OnFailure = func(topic string, err error) {
 					kind := "events"
 					if topic == tickloop.CommandsTopic {

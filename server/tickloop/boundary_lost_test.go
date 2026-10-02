@@ -232,11 +232,24 @@ func TestLoop_CheckpointWaitsForDelivery(t *testing.T) {
 // counter stays 0, and the drain commits the last tick's offsets.
 func TestLoop_MemoryPublisherUnchanged(t *testing.T) {
 	h := newHarness(t, func(o *Options) { o.MaxPerTick = 1 })
-	for range 5 {
+	for range 7 {
 		h.source.Push(simtest.Look("town", "a"))
 	}
-	if err := h.runFor(time.Second); err != nil {
+	// Stopped after tick 7, which is not a checkpoint tick (every 5): only
+	// the drain's own checkpoint can commit 7.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.loop.opts.OnTick = func(res sim.StepResult, _ time.Duration) {
+		if res.Tick == 7 {
+			cancel()
+		}
+	}
+	h.clock.OnSleep = func(time.Time) bool { return ctx.Err() == nil }
+	if err := h.loop.Run(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if got := h.engine.Tick(); got != 7 {
+		t.Fatalf("stopped at tick %d, want 7", got)
 	}
 	if got := counter(h.loop.Metrics().BoundaryLost); got != 0 {
 		t.Fatalf("andara_tick_boundary_lost_total %v", got)
@@ -248,7 +261,32 @@ func TestLoop_MemoryPublisherUnchanged(t *testing.T) {
 	// The drain's own record is the zero TickCompleted, which is not written.
 	last := cs[len(cs)-2]
 	committed, _ := h.source.Committed()
-	if got, want := committed[sim.PartitionFor("town")], last.Offsets[sim.PartitionFor("town")]; got != want || got != 5 || cs[len(cs)-1].Tick != 0 {
-		t.Fatalf("drain committed town at %d, last boundary at %d", got, want)
+	if got, want := committed[sim.PartitionFor("town")], last.Offsets[sim.PartitionFor("town")]; got != want || got != 7 || last.Tick != 7 || cs[len(cs)-1].Tick != 0 {
+		t.Fatalf("drain committed town at %d, tick %d's boundary at %d", got, last.Tick, want)
+	}
+}
+
+// Defense in depth behind boundarySeq: an acknowledgement for the lost tick
+// or a later one, which the publisher should never report, moves neither
+// what the stop calls delivered nor what is committed.
+func TestLoop_AckAtOrPastTheLossIsIgnored(t *testing.T) {
+	h, pub := newLossyHarness(t, 0, 0)
+	h.loop.opts.OnTick = func(res sim.StepResult, _ time.Duration) {
+		if res.Tick == 10 {
+			// Tick 10's boundary is acknowledged by the stub. Then 11 is
+			// lost, and a stray acknowledgement for 12 arrives.
+			pub.lost = true
+			h.loop.BoundaryLost(11, errBrokerGone)
+			h.loop.BoundaryAcked(12)
+		}
+	}
+	err := h.runFor(10 * time.Second)
+	var lost *BoundaryLostError
+	if !errors.As(err, &lost) || lost.Lost != 11 || lost.LastDelivered != 10 {
+		t.Fatalf("Run returned %v, want boundary 11 lost after 10", err)
+	}
+	committed, _ := h.source.Committed()
+	if got := committed[sim.PartitionFor("town")]; got != 10 {
+		t.Fatalf("committed town at %d, want 10", got)
 	}
 }

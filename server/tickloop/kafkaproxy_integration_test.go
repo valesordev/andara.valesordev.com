@@ -39,10 +39,9 @@ type leaderProxy struct {
 
 	// Refuse, while set, answers every Produce itself with the retriable
 	// NOT_ENOUGH_REPLICAS and forwards nothing: a broker that takes no
-	// writes, on every Partition. Unlike a severed connection, every batch
-	// gets an answer, so the idempotent producer may fail it once its
-	// delivery timeout passes (AW-SRV-026); and nothing is written, so the
-	// topic ends exactly at the last boundary acknowledged.
+	// writes, on every Partition (AW-SRV-026). Every batch gets an answer,
+	// and nothing is written, so the topic ends exactly at the last boundary
+	// acknowledged.
 	Refuse atomic.Bool
 	// Refused counts the Produce requests answered that way.
 	Refused atomic.Int64
