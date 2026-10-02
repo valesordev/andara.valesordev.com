@@ -121,15 +121,19 @@ The story's §7 now carries "SRE amendment, 2026-10-02: the waiting state's `no_
 (#299)". It's the observability contract for SPRINT-04's implementation item 9.
 
 It covers the **empty-store case** only: a store-backed source, not `--validate-only`, where
-`no_zones_found` is the only finding.
-- `LoadContent` holds the finding and doesn't log the "recovering what the log recorded" `warn`.
-- A wait, or serving from the log, drops the finding.
-- Any exit `1` after the finding is held logs it once and counts it once.
-- Reloads during a wait log one `debug` line, and `templates loaded` drops to `debug`.
+`no_zones_found` is the only fatal finding once the load, build and template findings are all in.
+- `LoadContent` holds the finding, and the "recovering what the log recorded" `warn`.
+- **A wait** drops both.
+- **Serving from the log** drops the finding but logs that `warn` once, because Zones in the log
+  that no pointer names is a store fault.
+- **Any exit `1` before the decision** logs the finding once and counts it once. A signal drops it.
+- **Reloads during a wait** log one `debug` line, and `templates loaded` drops to `debug`.
 - A rejected version, an unreachable store, the directory source, and `--validate-only` are
   unchanged.
 
-The tests the §8 check reads are listed in the amendment.
+The verification needs integration tests through `LoadContent` on Redpanda, using
+`storeRuntime`'s setup. `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` uses
+`OverLoader` and never calls `LoadContent`, so it passes on today's code and can't verify this.
 
 The issue names the counter `validation_errors_total`. Its full name is
 `andara_content_validation_errors_total` (`server/telemetry/telemetry.go`).
@@ -139,3 +143,10 @@ The issue names the counter `validation_errors_total`. Its full name is
 This is a §7-only change to a `done` story. It changes when a finding and the reload `warn` are
 logged and counted, not the finding, its code, or any AC. If you'd rather it be a contract
 amendment with its own AC, say so here, and implementation's item 9 waits on it.
+
+## For PM: a carrier for #299's live observation
+
+The amendment's live check needs `dev` to start on an empty store after item 9 deploys, and nothing
+in SPRINT-04 schedules that. `AW-INF-021`'s AC-7 rebuild from nothing is the natural one, and it's
+marked partial. Either give that rebuild a carrier with this as an inherited Definition-of-done line,
+or accept that the integration tests alone close #299's §8.
