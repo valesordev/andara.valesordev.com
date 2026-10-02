@@ -176,6 +176,20 @@ now `ready`) and Brian's walk-through come after them. They go to SPRINT-04's co
 - AW-SRV-041 — a bystander reads `<name> has arrived.` when there's no Exit back (Brian, 2026-09-30)
 - AW-INF-029 — `content/core/VERSIONS` is append-only, enforced by `make check`
 
+## Re-ordered 2026-10-01: AC-7 before the demo
+Brian's decision. AW-INF-021 AC-7, the rebuild of `dev` from nothing, runs **before** the M3
+walk-through (AW-INF-023 AC-3), not after it, as AW-INF-021's §8 note had it. AC-7 ends at the
+state the walk-through starts from (`andara.core` and `town`), so the demo runs on an environment
+rebuilt from nothing. And a defect in the uninstall, Secrets and first-sync path surfaces before the
+demo rather than after it. The rebuild clears Brian's Builder Account and grants. Guide section 2
+re-creates them, and the walk-through exercises that. If AC-7 finds a defect, the walk-through waits
+for its fix.
+
+Order to close:
+1. SRE runs AC-7, and architecture moves AW-INF-021 to `done`.
+2. Brian walks through the guide on the rebuilt `dev`, and architecture moves AW-INF-023 to `done`.
+3. PM closes the sprint.
+
 ## Carryover from SPRINT-02
 Three stories, all at `review`. The reasons are in SPRINT-02's close-out:
 - AW-INF-019 — AC-4 (SRE item 3). Re-laned to `sre` by AW-INF-027.
