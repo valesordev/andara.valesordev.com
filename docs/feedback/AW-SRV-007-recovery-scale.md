@@ -44,7 +44,9 @@ contract review. Two more, from the SPRINT-03 close-out:
    - **On the cluster, it doesn't.** The annotation scrape keeps only Ready pods, and a refused
      recovery is never Ready. There, `AndaraServerUnavailable` pages on the symptom.
      `RecoveryStateMismatch` needs a signal that doesn't depend on readiness, and that work is
-     routed to PM (`docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`).
+     routed to PM (`docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`). PM decided
+     on 2026-10-02: `AW-INF-009` carries it in SPRINT-05, and you amend that story's contract and
+     add the inherited Definition-of-done line. That file's "For architecture" section has both.
    - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires:
      - the linger, behind a new key, `recovery.mismatch_linger`, which defaults to `0s` and which
        compose sets to `60s`. It applies on boot recovery only: exit `2`, and the

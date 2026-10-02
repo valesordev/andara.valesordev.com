@@ -297,8 +297,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
       (`make stack-recover`).
 
     The §8 record verifies the alert against compose. It names "fires on the cluster" as **not
-    yet observed**, under CLAUDE.md §8's deferral rule, and `AW-INF-009` inherits that observation
-    as a Definition-of-done line (PM, 2026-10-02).
+    yet observed** (PM's decision, 2026-10-02). On the cluster this rule's expression can't fire.
+    The cluster signal is a new expression that `AW-INF-009` delivers and observes, and that's
+    the Definition-of-done line architecture adds there.
     - **Ordering.** This story's §8 follows `AW-INF-032`, which depends on this story and supplies
       `make stack-recover`.
     - **The corrupt-round run has no target yet.** It's a §9 gap, and SRE adds a target for it
