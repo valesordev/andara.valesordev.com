@@ -58,6 +58,9 @@ type Runtime struct {
 	// into the stack's. The zero values are the real ones.
 	ContentTopics  content.Topics
 	AuditTopicName string
+	// waitRetry is WaitForContent's first retry interval; zero is
+	// waitRetryMin. A test shortens it.
+	waitRetry time.Duration
 	// registry is the content store's write side, opened by LoadContent
 	// on a content.source=kafka server so the boot can publish its core,
 	// and reused by the publish path (AW-SRV-013). core is what that did.

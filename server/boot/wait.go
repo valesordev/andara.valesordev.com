@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
@@ -110,9 +111,13 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 	defer span.End()
 	// The watch is the first Content's, from the position it pinned before
 	// reading the pointers, so no move between that read and this is missed.
-	// Each reload opens a Content of its own, pinned afresh.
+	// Each reload opens a Content of its own, pinned afresh. The watch lives
+	// only as long as the wait: Close doesn't stop it, its context does
+	// (review of #334).
 	watcher := rt.Content
-	moves, err := watcher.Resolver().Watch(ctx)
+	wctx, stop := context.WithCancel(ctx)
+	defer stop()
+	moves, err := watcher.Resolver().Watch(wctx)
 	if err != nil {
 		return err
 	}
@@ -122,8 +127,42 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 		}
 	}()
 	rt.enterWait(ctx)
+	return rt.waitLoop(ctx, moves, func() (bool, error) {
+		prev := rt.Content
+		if code := rt.LoadContent(ctx); code != ExitOK {
+			return false, fmt.Errorf("content: reloading while waiting failed")
+		}
+		if prev != watcher && prev != rt.Content {
+			_ = prev.Close()
+		}
+		return rt.World != nil, nil
+	}, func() int { return len(rt.World.Zones) })
+}
+
+// The wait's retry: a reload with no pointer move, after waitRetryMin,
+// doubling to waitRetryMax, and back to waitRetryMin on a move.
+const (
+	waitRetryMin = time.Second
+	waitRetryMax = time.Minute
+)
+
+// waitLoop reloads on every pointer move, and on a backoff between them,
+// until reload reports a World. The backoff is what recovers from a load
+// that failed transiently: a non-validation store-backed load that can't
+// read the store returns no World and no error, and the pointer move that
+// triggered it is already consumed. Without the retry, the projector would
+// wait for a move that may never come (review of #334). The leaving line
+// names the last move seen, if any.
+func (rt *Runtime) waitLoop(ctx context.Context, moves <-chan content.PointerMove, reload func() (bool, error), zones func() int) error {
+	first := rt.waitRetry
+	if first == 0 {
+		first = waitRetryMin
+	}
+	retry := first
+	timer := time.NewTimer(retry)
+	defer timer.Stop()
+	var trigger string
 	for {
-		var mv content.PointerMove
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
@@ -134,21 +173,22 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 				}
 				return fmt.Errorf("content: the Active Pointer watch ended")
 			}
-			mv = m
+			trigger = fmt.Sprintf("%s@%d", m.Pack, m.Version)
+			retry = first
+		case <-timer.C:
+			retry = min(retry*2, max(waitRetryMax, first))
 		}
-		prev := rt.Content
-		if code := rt.LoadContent(ctx); code != ExitOK {
-			return fmt.Errorf("content: reloading after %s@%d failed", mv.Pack, mv.Version)
+		done, err := reload()
+		if err != nil {
+			return err
 		}
-		if prev != watcher && prev != rt.Content {
-			_ = prev.Close()
-		}
-		if rt.World == nil {
+		if !done {
+			timer.Reset(retry)
 			continue
 		}
 		rt.waiting.Store(false)
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect: leaving the wait",
-			slog.Int("zones", len(rt.World.Zones)), slog.String("pack", fmt.Sprintf("%s@%d", mv.Pack, mv.Version)),
+			slog.Int("zones", zones()), slog.String("pack", trigger),
 			slog.String("trace_id", telemetry.TraceID(ctx)))
 		return nil
 	}

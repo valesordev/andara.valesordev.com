@@ -98,6 +98,9 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 
 	proj, plogs := storeRuntime(t, tp, audit, brokers)
 	proj.ContentReadOnly = true
+	// Only pointer moves end this wait, so the leaving line names the
+	// town's; the retry between moves is TestWaitLoop_RetriesWithoutAMove's.
+	proj.waitRetry = time.Hour
 	if code := proj.LoadContent(ctx); code != ExitOK || proj.World != nil {
 		t.Fatalf("an empty store: exit %d, World %v\n%s", code, proj.World, plogs.String())
 	}

@@ -39,7 +39,9 @@ exiting. That's the state every new environment starts in, and the server waits 
 (AW-SRV-042):
 - **Up, unready, logged once.** `/livez` 200 and `/readyz` 503, with the server's `warn` line
   once: `waiting for content: no Zones in effect; publish and activate a pack`, with `trace_id`.
-- **Reloads on every pointer move.** Each Active Pointer move reloads the content. The first that
+- **Reloads on every pointer move, and retries between them.** Each Active Pointer move reloads the
+  content. So does a backoff from 1 s, doubling to a minute: a load that couldn't read the store
+  returns no World and no error, and the move that triggered it is already used up. The first that
   builds a World with Zones logs `content in effect: leaving the wait` at `info`, with `zones` and
   `pack` (`pack@version`), and the projector goes on to bootstrap. It's Ready once caught up, with
   no restart.

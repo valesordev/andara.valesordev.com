@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -468,5 +469,40 @@ func TestWaitForContent_ADirectoryHasNothingToWaitOn(t *testing.T) {
 	}
 	if rt.Waiting() {
 		t.Error("waiting on a directory")
+	}
+}
+
+// Review of #334: a reload that finds no World retries on a backoff, not
+// only on the next pointer move. A store-backed load that can't read the
+// store returns no World and no error, and the move that triggered it is
+// consumed, so without the retry a transient failure on the move that
+// brought the Zones would leave the projector waiting for a move that may
+// never come.
+func TestWaitLoop_RetriesWithoutAMove(t *testing.T) {
+	rt, _ := runtime(t, t.TempDir(), false)
+	logs := liveLogs(rt)
+	rt.waitRetry = 5 * time.Millisecond
+	rt.waiting.Store(true)
+	moves := make(chan content.PointerMove, 1)
+	moves <- content.PointerMove{Pack: "town", Version: 1}
+	var loads int
+	// The move's own load fails transiently; the retries after it find the
+	// World. No second move comes.
+	reload := func() (bool, error) { loads++; return loads >= 3, nil }
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := rt.waitLoop(ctx, moves, reload, func() int { return 1 }); err != nil {
+		t.Fatalf("the wait didn't end with no second move: %v (%d loads)", err, loads)
+	}
+	if rt.Waiting() || loads != 3 {
+		t.Errorf("waiting %t after %d loads", rt.Waiting(), loads)
+	}
+	if got := logLines(t, logs, "content in effect: leaving the wait"); len(got) != 1 || got[0]["pack"] != "town@1" {
+		t.Errorf("the leaving line: %v", got)
+	}
+	// A reload error ends the wait with it.
+	failing := func() (bool, error) { return false, errors.New("boom") }
+	if err := rt.waitLoop(ctx, make(chan content.PointerMove), failing, func() int { return 0 }); err == nil || err.Error() != "boom" {
+		t.Errorf("a failed reload: %v", err)
 	}
 }
