@@ -28,7 +28,8 @@ Amended. The cardinality bound and "no alert" are accepted. Six changes to §7:
 5. **Runbooks.** The projector's exit `5` surfaces as `StateProjectorDown`.
    `state-projector-down.md`'s exit table gains a `5` row, which SRE writes at this story's §8
    check. Recovery's exit `6` goes in `server-unavailable.md` with `AW-SRV-007`'s runbook. SRE
-   proposes that exit `6` also sets `andara_recovery_state_hash_match` to `0`. The reasoning is
+   proposes that exit `6` also sets `andara_recovery_state_hash_match` to `0`, and lingers under
+   `recovery.mismatch_linger` as exit `2` does. The reasoning is
    in `AW-SRV-007`'s amendment. If you number the exit, decide that with it.
 6. **`andara_recovery_failures_total{reason}` gains `restore`** when you number recovery's exit.
    It's noted in `AW-SRV-007`'s amendment.

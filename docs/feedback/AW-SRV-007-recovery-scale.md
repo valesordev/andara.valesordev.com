@@ -47,13 +47,17 @@ contract review. Two more, from the SPRINT-03 close-out:
      routed to PM (`docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`).
    - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires:
      - the linger, behind a new key, `recovery.mismatch_linger`, which defaults to `0s` and which
-       compose sets to `60s`. It applies on boot recovery's exit `2` only, not to the one-shot
-       `recover --verify`;
+       compose sets to `60s`. It applies on boot recovery only: exit `2`, and the
+       restore-mismatch exit if accepted. It doesn't apply to the one-shot `recover --verify`;
      - `for: 0m` and `keep_firing_for: 15m` on the rule;
-     - an §8 observation, compose-only, of the alert firing on a corrupt round and staying
-       inactive on a normal recovery.
+     - an §8 observation, compose-only, of the alert firing on a corrupt round and never in
+       `ALERTS`, at neither `alertstate`, through a normal recovery.
    - **Confirm the new config key and the exit timing as contract changes, or rule otherwise.**
      With the linger on, a refused boot recovery takes 60 s to exit.
+   - **AC-5 conflicts with the linger.** AC-5 says a server that exits `2` "never accepts a
+     connection", but the linger serves `/metrics` and `/livez`. SRE proposes scoping AC-5 to
+     Protocol connections on `grpc.listen`, as AC-10 already words it, and allowing operator HTTP
+     while `recovery.mismatch_linger` is above `0s`.
 
    The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
    - a `restore` reason on `andara_recovery_failures_total`;
