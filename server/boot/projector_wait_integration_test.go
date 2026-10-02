@@ -141,6 +141,9 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 	if _, err := srv.registry.MovePointer(ctx, "town", 1, "acct-operator"); err != nil {
 		t.Fatal(err)
 	}
+	// The server's writes are done. From here the topics hold only what
+	// the projector writes, which must be nothing.
+	seeded := endOffsets(ctx, t, adm, tp, audit)
 
 	select {
 	case err := <-waited:
@@ -160,4 +163,28 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 	if n := len(logLines(t, plogs, waitLine)); n != 1 {
 		t.Errorf("%d wait lines; the warn is once", n)
 	}
+	// Leaving the wait wrote nothing either: WaitForContent returned after
+	// its last reload, so its window is closed (review of #334).
+	for tp, end := range endOffsets(ctx, t, adm, tp, audit) {
+		if end != seeded[tp] {
+			t.Errorf("leaving the wait wrote to %s: high-water mark %d, %d after the seed", tp, end, seeded[tp])
+		}
+	}
+}
+
+// endOffsets is each topic's high-water mark, summed over its Partitions.
+func endOffsets(ctx context.Context, t *testing.T, adm *kadm.Client, tp content.Topics, audit string) map[string]int64 {
+	t.Helper()
+	ends, err := adm.ListEndOffsets(ctx, tp.Blobs, tp.Versions, tp.Active, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int64{}
+	ends.Each(func(o kadm.ListedOffset) {
+		if o.Err != nil {
+			t.Fatalf("%s[%d]: %v", o.Topic, o.Partition, o.Err)
+		}
+		out[o.Topic] += o.Offset
+	})
+	return out
 }
