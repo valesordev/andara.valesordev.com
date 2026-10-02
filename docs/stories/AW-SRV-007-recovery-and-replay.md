@@ -253,10 +253,17 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     That's the projector's `haltLinger` (`cmd/andara-projector/main.go`). Compose scrapes its static
     target every 5 s whether or not the server is Ready.
   - **The gauge is never pre-seeded.** `andara_recovery_state_hash_match` has no sample until
-    `recovery.verify` sets it. If HTTP comes up earlier for any reason, a pre-seeded `0` would fire
+    recovery sets it. If HTTP comes up earlier for any reason, a pre-seeded `0` would fire
     `RecoveryStateMismatch` on every normal boot.
+    - The repo registers gauges at construction (`server/telemetry/telemetry.go`), and a
+      registered `Gauge` exposes `0` at once. So this gauge is registered on first set.
+    - SRE proposes one Test-plan line: `testutil.CollectAndCount(reg,
+      "andara_recovery_state_hash_match")` is `0` before recovery sets it and `1` after. The Test
+      plan is architecture's to amend.
   - **The linger is a config key, off by default.** `recovery.mismatch_linger`
-    (`ANDARA_RECOVERY_MISMATCH_LINGER`) defaults to `0s`, and compose sets `60s`.
+    (`ANDARA_RECOVERY_MISMATCH_LINGER`) defaults to `0s`, and compose sets `60s`. It applies on
+    exit `2`, and on `AW-SRV-043`'s restore-mismatch exit if architecture accepts the proposal
+    below.
     - On the cluster the linger buys nothing (next bullet). There it would add 60 s to every
       crash-loop cycle and delay `AndaraServerCrashLooping`, which pages, so the chart leaves it
       at `0s`.
@@ -280,10 +287,19 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     scraped. `keep_firing_for` keeps the alert visible after the process has gone.
   - **§8.** `RecoveryStateMismatch` is observed in the local stack's Prometheus:
     - **firing**, against a compose server recovering from a deliberately corrupted round;
-    - **inactive, never pending**, through a normal compose recovery (`make stack-recover`).
+    - **never in `ALERTS`**, at neither `alertstate`, through a normal compose recovery
+      (`make stack-recover`).
 
     The §8 record says plainly that this is the compose path only, and it names the story that
     carries the cluster path.
+    - **Ordering.** This story's §8 follows `AW-INF-032`, which depends on this story and supplies
+      `make stack-recover`.
+    - **The corrupt-round run has no target yet.** It's a §9 gap, and SRE adds a target for it
+      (for example `make stack-recover CORRUPT=1`) in its §8 ops commit. Until then, no §8 record
+      cites it.
+  - **SRE's files.** The compose `60s`, the chart default and values schema, and the rule's
+    `for`/`keep_firing_for` are in `deploy/`. SRE ships them in its ops commit at §8, as it did for
+    `AW-SRV-019`. Implementation doesn't edit `deploy/`.
 - **If `AW-SRV-043` joins `depends_on`:**
   - `andara_recovery_failures_total{reason}` gains `restore`, which covers its hash and seed
     mismatches.

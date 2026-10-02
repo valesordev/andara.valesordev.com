@@ -164,7 +164,8 @@ records the outcome it gets back.
     the same check (AC-4). SRE writes the row at this story's §8 instrumentation check.
   - Recovery's exit `6`, under `AW-SRV-007`, leaves no ready server. That's
     `AndaraServerUnavailable` (page). SRE proposes that it also sets
-    `andara_recovery_state_hash_match` to `0`, so that `RecoveryStateMismatch` names the cause
+    `andara_recovery_state_hash_match` to `0`, and lingers under `recovery.mismatch_linger`
+    as exit `2` does, so that `RecoveryStateMismatch` names the cause
     wherever that alert can see it. See `AW-SRV-007`'s SRE amendment. The row in
     `server-unavailable.md`'s symptom table ships with `AW-SRV-007`'s
     `recovery-state-mismatch.md`.

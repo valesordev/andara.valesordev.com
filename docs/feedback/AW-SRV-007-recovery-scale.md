@@ -61,7 +61,8 @@ contract review. Two more, from the SPRINT-03 close-out:
    - `andara_restore_total{caller="recovery"|"verify"}`, wired and pre-seeded here.
 
    SRE proposes that `AW-SRV-043`'s restore-mismatch exit also sets the hash-match gauge to `0`
-   and lingers. The operator's response is the same as for exit `2`: choose an older round.
+   and lingers under `recovery.mismatch_linger`. The operator's response is the same as for exit
+   `2`: choose an older round.
 
    On item 4: `AW-INF-032`'s run is the right live observation for this story's series and trace,
    and SRE will record it in both §8 records.
