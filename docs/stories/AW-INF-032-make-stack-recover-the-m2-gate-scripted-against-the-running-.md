@@ -40,10 +40,11 @@ cite it.
 - `scripts/stack_recover.sh` and `make stack-recover`, needing `make up` and `make build`.
 - Two throwaway player Accounts made as `stack_linkdead.sh` makes them: A (the player who's moved)
   and B (the bystander), each with a Character.
-- A moves out of its spawn Room before the kill, so that "as they left it" is a position, not the
-  spawn.
-- The script waits for a complete Snapshot Round newer than A's move (`andara-cli snapshot list`),
-  so that the recovery under test is from a snapshot plus log tail, not a replay from offset zero.
+- A moves out of its spawn Room, and the script waits for a complete Snapshot Round newer than that
+  move (`andara-cli snapshot list`), so that recovery starts from a snapshot, not a replay from
+  offset zero.
+- A then moves a second time, after that round and before the kill. The second move exists only in
+  the log tail, so A's final Room proves the tail was replayed, not just the snapshot loaded.
 - The kill is `SIGKILL` to the compose `andara-server` container, then a start, both by the script.
 - A step in `.github/workflows/stack.yaml` after `stack-linkdead`.
 
@@ -58,22 +59,25 @@ cite it.
 
 ## Acceptance criteria
 
-1. **Given** the stack up **when** `make stack-recover` runs **then** A and B both enter play with
-   `play --character`. A then moves one Exit away from the spawn Room, and B stays in the spawn Room.
-   A's transcript shows the destination Room's title.
-2. **Given** A's move **when** the script polls `andara-cli snapshot list` to a deadline of
-   `snapshot.interval` + 30 s, per `live-assertions.md` **then** a round with `complete=true` and a
-   tick after A's move is listed. If none is, the script exits 1 naming the newest round it saw.
-3. **Given** that round **when** the script sends `SIGKILL` to `andara-server` and starts it again
-   **then** `/readyz` returns 200 within 120 s of the kill. The script prints the measured kill-to-ready
-   seconds.
+1. **Given** the stack up **when** `make stack-recover` runs **then** the script records the tick
+   of the newest round whose `complete` column is `true` in `andara-cli snapshot list`'s table
+   (`AW-SRV-007`'s CLI contract), or none. A and B then both enter play with `play --character`. A
+   moves one Exit away from the spawn Room (Room 1), and B stays in the spawn Room. A's transcript
+   shows Room 1's title.
+2. **Given** A in Room 1 **when** the script polls `andara-cli snapshot list` to a deadline of
+   `snapshot.interval` + 30 s, per `live-assertions.md` **then** a round complete with a tick
+   strictly greater than AC-1's recorded tick is listed, and the script records it as `R`. If none
+   is, the script exits 1 naming the newest round it saw.
+3. **Given** round `R` **when** A moves through a second Exit (Room 2, which isn't the spawn Room or
+   Room 1) and the script sends `SIGKILL` to `andara-server` and starts it again **then** `/readyz`
+   returns 200 within 120 s of the kill. The script prints the measured kill-to-ready seconds.
 4. **Given** the server ready **when** the script reads its metrics, polled to a deadline **then**:
    - `andara_recovery_state_hash_match` is `1`;
-   - `andara_recovery_round_tick` is at or after the round from AC-2, so the recovery used a snapshot;
+   - `andara_recovery_round_tick` is at or after `R`, so the recovery used a snapshot;
    - `andara_acknowledged_commands_lost_total` is `0`.
 5. **Given** the recovery **when** A's and B's `play` clients reconnect on their own (`AW-CLI-007`'s
-   reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows the Room A
-   moved to in AC-1, not the spawn Room. B's `look` shows B still in the spawn Room. Neither
+   reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows Room 2:
+   the move that only the log tail held was replayed. B's `look` shows B still in the spawn Room. Neither
    transcript has a `leaves the world` or `fades from the world` line for either Character between
    the kill and the reconnect. The bodies rebound; they didn't despawn.
 6. **Given** both back **when** A and B quit cleanly **then** `character list` shows each `dormant`
@@ -90,8 +94,8 @@ cite it.
   make up and make build`.
 - Environment it reads, all existing: `ANDARA_HTTP_PORT`, `ANDARA_GRPC_PORT`,
   `ANDARA_BOOTSTRAP_OPERATOR`, `ANDARA_TLS_CA_FILE`. One added: `STACK_RECOVER_RTO` (seconds,
-  default `120`), the AC-3 deadline. Phase 1 exit lowers it to 60 by changing the default, not the
-  script.
+  default `120`), the AC-3 deadline. The default lives in the Makefile, and Phase 1 exit lowers it
+  to 60 there.
 - Exit codes: `0` all assertions held; `1` an assertion failed or a precondition is missing
   (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`).
 - Output: `stack-recover: <step>` progress lines as in `stack_linkdead.sh`, including
@@ -128,8 +132,13 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
 
 ## Definition of done
 
-CLAUDE.md §8, plus: `AW-SRV-007`'s "live, from the running server" §8 line, and its
-`andara_recovery_*` series, are recorded against this target's run.
+CLAUDE.md §8, plus: the §8 record shows `andara_recovery_state_hash_match`,
+`andara_recovery_duration_seconds{phase}`, `andara_recovery_round_tick` and
+`andara_acknowledged_commands_lost_total` read from the running server's `/metrics` after this
+target's kill, and the `recovery.run` trace resolved in Tempo by its printed `trace_id`. This is the
+first in-cluster caller of `AW-SRV-007`'s instruments (CLAUDE.md §8, "verified against a real
+backend"). Architecture decides whether `AW-SRV-007` inherits that observation as a Definition-of-done
+line (`docs/feedback/AW-SRV-007-recovery-scale.md`, item 4).
 
 ## Open questions
 
@@ -138,6 +147,9 @@ CLAUDE.md §8, plus: `AW-SRV-007`'s "live, from the running server" §8 line, an
   A, but AC-5 doesn't assert it: whether a bystander's own reconnect races A's announcement is
   `AW-SRV-007`'s behaviour, not this target's. Architecture adds it to AC-5 at contract review if
   `AW-SRV-007` makes it deterministic.
+- `[ASSUMPTION]` `snapshot list`'s round table, with a `complete` column, is `AW-SRV-007`'s contract.
+  Today the command needs `--zone` and lists per-Zone objects (`admin/cli/snapshotcmd.go`). The
+  script uses the table `AW-SRV-007` ships, which is why that story is a hard dependency.
 - `[ASSUMPTION]` `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
   run. If that's too slow for the `stack` workflow, the script may set a shorter interval on the
   compose server only. That's SRE's call when building, and it's recorded in the story.

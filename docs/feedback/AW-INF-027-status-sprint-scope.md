@@ -24,7 +24,7 @@ The options, for you to groom, or to leave:
 SRE has no preference between (a) and (b). (c) is what happens now, and each role's start-sprint
 skill already follows the sprint's order.
 
-## PM's decision: (c) (Brian, 2026-10-02, at the SPRINT-03 close-out)
+## Brian's decision: (c) (2026-10-02, at the SPRINT-03 close-out)
 
 `next` stays a backlog-wide view, and `docs/status.md` stays a backlog view. Each role's
 start-sprint skill reads the active sprint file and follows its pickup order, as it does now.

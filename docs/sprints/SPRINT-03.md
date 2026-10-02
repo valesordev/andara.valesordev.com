@@ -231,11 +231,17 @@ Three stories, all at `review`. The reasons are in SPRINT-02's close-out:
 ## Close-out
 Closed 2026-10-02 by PM, against `origin/main` at `ba7e4a4`.
 
-**Demo goal: met.** The M3 gate passed on `dev` with no §9 defects (`SPRINT-03-demo.md`). Brian ran
-it from no clone of the code repository: publish, self-approve, activate, `play` with `goto`, change,
-and roll back, with `server info` naming the content at each step and no deploy. PM re-ran the local
-steps at close-out against `andara-cli ba7e4a4`. PM couldn't re-run the `dev` steps without Brian's
-logins, and Brian accepted his walk-through as the run.
+**Demo goal: met, with one §9 defect** (`SPRINT-03-demo.md`). Brian ran the M3 gate on `dev` from no
+clone of the code repository:
+- publish as his Builder Account, approve with his Operator Account, and activate;
+- `play` with `goto`;
+- change, then roll back.
+
+`server info` named the content in effect at each step, and there was no deploy. The defect is step
+3: signing commits for the Content Repository is a hand-typed `git config` sequence, marked
+`§9 defect → AW-INF-033` and planned in SPRINT-04. PM re-ran the local steps at the close-out against
+`andara-cli ba7e4a4`. PM couldn't re-run the `dev` steps without Brian's logins. Brian waived that
+re-run in the close-out session (2026-10-02) and accepted his walk-through as the run.
 
 **Stories: 20 of 20 done.** All 15 implementation items are closed, including the five issues (#128,
 #143, #267, #326 and #308). The board reads `Current (SPRINT-03): 20/20 done — 20 done`.
@@ -286,8 +292,9 @@ None in the story frontmatter. The board's mirror issues for six stories that we
 - Planned in SPRINT-04:
   - #312, publish showing other packs' findings (architecture rules on the wording, then
     implementation);
-  - #172, the snapshot stall-budget test that fails under load, now 4 of 5 local `make check` runs
-    (architecture and SRE decide how it measures, then implementation);
+  - #172, the snapshot stall-budget test that fails under load (4 of 5 local `make check` runs on
+    two branches, at load average 4–11, per the issue). Architecture and SRE decide how it measures,
+    then implementation fixes it;
   - #319, a test-only race (implementation);
   - #287 and #290 (implementation; the contracts hold);
   - #299, the wait's `no_zones_found` line, now repeated about once a second by the waiting
@@ -298,7 +305,8 @@ None in the story frontmatter. The board's mirror issues for six stories that we
 
 **Feedback items:**
 - Follow-ups that didn't hold their stories, from seven §8 reviews, are gathered into
-  `AW-SRV-046` (draft, SPRINT-04). Each source feedback file says so.
+  `AW-SRV-046` (draft, SPRINT-04). The six source feedback files say so. `AW-SRV-036`'s item comes
+  from its story's §8 record, which has no feedback file.
 - `AW-SRV-007-recovery-scale.md`'s items 1 and 2 are still open, now with items 3 and 4 (the
   `AW-SRV-043` edge, and `make stack-recover`). They're in SPRINT-04's contract review.
 - `AW-INF-027-status-sprint-scope.md`: Brian chose (c). `make status` stays a backlog view.
@@ -307,6 +315,9 @@ None in the story frontmatter. The board's mirror issues for six stories that we
 - The AW-INF-005 and AW-INF-007 split is routed to architecture in
   `docs/feedback/AW-INF-005-007-split.md`. Both are `ready`, which PM can't rewrite, and neither is
   pickable in SPRINT-04.
+
+- **§9 defect from the demo:** commit signing in the Content Repository, `AW-INF-033` (new, SRE,
+  SPRINT-04). It carries `andara.solo7.media` #14, which Brian had deferred earlier on 2026-10-02.
 
 ### Other findings
 - **The demo found what the tests couldn't.** The walk-through found nine points the guide didn't

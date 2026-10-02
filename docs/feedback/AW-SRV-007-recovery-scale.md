@@ -29,4 +29,6 @@ contract review. Two more, from the SPRINT-03 close-out:
 4. **The operator test is now a target.** The Test plan's "Manual/operator" block is a hand-typed
    `andara-server &` and `kill -9 %1`, a §9 defect in a demo. `AW-INF-032` (`make stack-recover`,
    draft) scripts the M2 gate on the running stack, with a hard dependency on this story. When it
-   reaches `ready`, the block can point to it.
+   reaches `ready`, the block can point to it. `AW-INF-032` is also the first in-cluster caller of
+   this story's `andara_recovery_*` series and `recovery.run` trace. Decide whether this story
+   inherits that live observation as a Definition-of-done line, as CLAUDE.md §8 allows.

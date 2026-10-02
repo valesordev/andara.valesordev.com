@@ -36,7 +36,7 @@ so that the tests assert what the contracts say and the READMEs describe what sh
    server's own line does.
 2. **`content validate`'s failure summary counts warnings**
    (`docs/feedback/AW-CLI-002-content-validate-inspect.md`, "For implementation, not holding the
-   story"). The summary's finding count counts errors only.
+   story"). The summary's finding count must count errors only. Today it counts warnings too.
 3. **`admin/README.md`'s command table** (same source). The `version` row says that it prints the
    embedded `andara.core`.
 4. **Four missing `content` tests** (`docs/feedback/AW-CLI-003-content-publish.md`, "not holding"):
@@ -44,6 +44,9 @@ so that the tests assert what the contracts say and the READMEs describe what sh
    - `previousActive` over three or more moves;
    - AC-2 activating as the approver;
    - a blob over 1 MiB, to exercise chunking.
+
+   Also `AW-CLI-003`'s implementation record: the rehearsal is in CI (#265), and the confirmation
+   `info` line isn't asserted. Correct the record to say both.
 5. **One audit record per refusal** (`docs/feedback/AW-SRV-013-publish-path.md`, "not holding").
    `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse` asserts exactly one record per refusal.
 6. **`server/README.md` and one test line** (`docs/feedback/AW-SRV-034-loader-compiler-agree.md`,
@@ -84,8 +87,14 @@ so that the tests assert what the contracts say and the READMEs describe what sh
    instead of hanging.
 5. **Given** `admin/README.md` and `server/README.md` **when** read **then** they contain each row
    that items 3, 6 and 7 name.
-6. **Given** each source feedback file **when** this story merges **then** that file records the
-   item as done, citing this story.
+6. **Given** the Account grant path (item 7) **when** its test runs a refused and an accepted
+   `set-packs` **then** it asserts that the log line carries `acting_as_account_id`, `session_id` and
+   `trace_id`. If the code doesn't emit one of them, the test asserts what it does emit, and the
+   implementation record in `AW-SRV-035` is corrected through its feedback file.
+7. **Given** `AW-CLI-003`'s implementation record **when** this story merges **then** it says the
+   rehearsal runs in CI (#265) and that the confirmation line isn't asserted.
+8. **Given** each source feedback file **when** this story merges **then** that file records the
+   item as done, citing this story. For item 1, `AW-SRV-036`'s story records it.
 
 ## Interface contract
 

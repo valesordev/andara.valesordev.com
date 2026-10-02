@@ -53,12 +53,15 @@ moves each draft to `ready` or `blocked`.
 - **AW-INF-029** — `content/core/VERSIONS` is append-only, enforced by `make check`.
 - **AW-SRV-046** — the owed follow-ups from SPRINT-03's reviews (new). It needs no decision, and
   each item cites the ruling it comes from.
+- **AW-INF-033** — the Content Repository's `make bootstrap` sets up commit signing (new, SRE). It's
+  SPRINT-03's demo §9 defect. Its contract is SRE's own spec on `andara.solo7.media` #14.
 
 ## Architecture backlog (pickup order)
 After the contract review above:
 
 1. **#172**: decide how the snapshot stall-budget test measures, either run alone or on CPU time,
-   with SRE's view on CI. It now fails 4 of 5 local `make check` runs, which taxes every lane.
+   with SRE's view on CI. Under load it fails most local `make check` runs (4 of 5 at load average
+   4–11, per the issue), which taxes every lane.
    Implementation's item 6 waits on this.
 2. **#312**: rule on how `duplicate_zone` names the two packs, and how findings are placed on the
    publisher's own source. "Root finding only" already holds (`errors.md` §1 rule 7). Implementation's
@@ -79,7 +82,10 @@ each story at `review`.
 3. **AW-INF-029** — `content/core/VERSIONS` append-only — depends on AW-SRV-013 (`done`).
 4. **AW-INF-028** — `make builder-reference` and `make guide-check` — depends on AW-CLI-009
    (implementation item 7).
-5. **AW-INF-032** — `make stack-recover` — depends on AW-SRV-007 (implementation item 4) and
+5. **AW-INF-033** — the Content Repository's `make bootstrap` signs commits — depends on
+   AW-INF-022 and AW-INF-023 (both `done`). It's SPRINT-03's §9 defect, and the work is in
+   `andara.solo7.media`.
+6. **AW-INF-032** — `make stack-recover` — depends on AW-SRV-007 (implementation item 4) and
    AW-INF-017 (`done`). Last, because it waits on the sprint's largest story, and it's the demo.
 
 ## Implementation backlog (pickup order)
@@ -104,7 +110,7 @@ each story at `review`.
 
 **Risk:** AW-SRV-028 and AW-SRV-007 are each M, and together they're most of the sprint. The demo
 needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then
-item 9. SRE's items 1–4 are the slack while it waits on item 4.
+item 9. SRE's items 1–5 are the slack while it waits on item 4.
 
 ## Carryover from SPRINT-03
 None. Every SPRINT-03 story is `done` (see its close-out). The stories that moved here on
