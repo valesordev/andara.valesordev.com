@@ -309,8 +309,8 @@ func (r *resolver) resolvePack() (CoreRef, bool) {
 	switch {
 	case r.core == nil && r.embedded != 0:
 		r.report(decls[0].file, pd.Requires.VersionPos, CodeCoreVersionMismatch,
-			fmt.Sprintf("this pack requires %s@%d, and neither the embedded core nor the cache holds it; this andara-cli embeds %s@%d; use the andara-cli release that embeds %s@%d",
-				ref.Pack, ref.Version, CorePack, r.embedded, ref.Pack, ref.Version))
+			fmt.Sprintf("this pack requires %s@%d, and neither the embedded core nor the cache holds it; %s",
+				ref.Pack, ref.Version, CoreRemedy(ref, r.embedded)))
 		return ref, false
 	case r.core == nil:
 		r.report(decls[0].file, pd.Requires.VersionPos, CodeCoreVersionMismatch,
@@ -324,6 +324,18 @@ func (r *resolver) resolvePack() (CoreRef, bool) {
 		return ref, false
 	}
 	return ref, true
+}
+
+// CoreRemedy is core_version_mismatch's remedy when neither the embedded core
+// nor the cache holds the core a pack requires (errors.md §3.1, #308). It
+// follows the direction of the skew. A pack newer than the binary needs the
+// andara-cli release that embeds its core. A pack older than it, the usual
+// case after a core bump, needs its requires clause moved to the embedded core.
+func CoreRemedy(required CoreRef, embedded uint32) string {
+	if required.Pack == CorePack && required.Version < embedded {
+		return fmt.Sprintf("this andara-cli embeds %s@%d; change requires to %s@%d in pack.aw", CorePack, embedded, CorePack, embedded)
+	}
+	return fmt.Sprintf("this andara-cli embeds %s@%d; use the andara-cli release that embeds %s@%d", CorePack, embedded, required.Pack, required.Version)
 }
 
 // blobs assembles what a ContentVersion manifests, sorted by path: one blob per

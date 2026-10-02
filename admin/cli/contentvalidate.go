@@ -324,8 +324,8 @@ func (rt *runtime) manifestCore(v *validated, cv *contentv1.ContentVersion, cach
 // supply and has no source line to report it at.
 func coreMissing(ref lang.CoreRef) error {
 	return &AppError{Exit: ExitFail, Code: lang.CodeCoreVersionMismatch,
-		Message: fmt.Sprintf("this version requires %s@%d, and neither the embedded core nor the cache holds it; this andara-cli embeds %s@%d; use the andara-cli release that embeds %s@%d",
-			ref.Pack, ref.Version, core.Pack, embeddedCoreVersion(), ref.Pack, ref.Version),
+		Message: fmt.Sprintf("this version requires %s@%d, and neither the embedded core nor the cache holds it; %s",
+			ref.Pack, ref.Version, lang.CoreRemedy(ref, embeddedCoreVersion())),
 		Detail: map[string]any{"required": ref.Version, "embedded": embeddedCoreVersion()}}
 }
 
