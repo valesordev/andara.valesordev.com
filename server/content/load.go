@@ -47,9 +47,12 @@ type Options struct {
 	// SpawnRoom is character.spawn_room: a version whose World lacks it,
 	// when the World in effect has it, is refused (spawn_room_removed).
 	SpawnRoom sim.RoomRef
-	Metrics   *Metrics
-	Log       *slog.Logger
-	Tracer    trace.Tracer
+	// Topics overrides the content store's topic names, for a test against a
+	// live broker (KafkaOptions.Topics). The zero value is the real ones.
+	Topics  Topics
+	Metrics *Metrics
+	Log     *slog.Logger
+	Tracer  trace.Tracer
 }
 
 // Content is the content source, whichever it is: what the World would run on
@@ -91,6 +94,7 @@ func Open(ctx context.Context, o Options) (*Content, []sim.ValidationError) {
 func openKafka(ctx context.Context, o Options) (*Content, []sim.ValidationError) {
 	resolver, err := NewKafkaResolver(KafkaOptions{
 		Brokers:      o.Brokers,
+		Topics:       o.Topics,
 		Cache:        BlobCache{Dir: o.CacheDir},
 		MaxBlobBytes: o.MaxBlobBytes,
 		Metrics:      o.Metrics,

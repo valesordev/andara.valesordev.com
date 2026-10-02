@@ -454,3 +454,19 @@ func TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones(t *testing.T) {
 		}
 	})
 }
+
+// #326: a source with no Active Pointers has nothing to wait on, so a
+// read-only consumer without a World still fails, as it did before.
+func TestWaitForContent_ADirectoryHasNothingToWaitOn(t *testing.T) {
+	rt, _ := runtime(t, t.TempDir(), false)
+	if err := rt.WaitForContent(context.Background()); err == nil || !strings.Contains(err.Error(), "no Active Pointers to wait on") {
+		t.Fatalf("no content: %v", err)
+	}
+	rt.Content, _ = content.Open(context.Background(), rt.contentOptions())
+	if err := rt.WaitForContent(context.Background()); err == nil {
+		t.Fatal("a directory waited")
+	}
+	if rt.Waiting() {
+		t.Error("waiting on a directory")
+	}
+}

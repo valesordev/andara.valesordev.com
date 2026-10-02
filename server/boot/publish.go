@@ -40,15 +40,16 @@ func (rt *Runtime) openRegistry(ctx context.Context) (recordlog.Log, error) {
 		}
 		return nil, err
 	}
-	blobs, err := open(content.TopicBlobs, cfg.ContentMaxBlobBytes+blobRecordHeadroom)
+	topics := rt.ContentTopics.OrDefault()
+	blobs, err := open(topics.Blobs, cfg.ContentMaxBlobBytes+blobRecordHeadroom)
 	if err != nil {
 		return fail(err)
 	}
-	versions, err := open(content.TopicVersions, 0)
+	versions, err := open(topics.Versions, 0)
 	if err != nil {
 		return fail(err)
 	}
-	active, err := open(content.TopicActive, 0)
+	active, err := open(topics.Active, 0)
 	if err != nil {
 		return fail(err)
 	}
@@ -59,7 +60,11 @@ func (rt *Runtime) openRegistry(ctx context.Context) (recordlog.Log, error) {
 		// boot's records go to a log nothing will read back.
 		audit = recordlog.NewMemory()
 	default:
-		audit, err = open(AuditTopic, 0)
+		auditTopic := rt.AuditTopicName
+		if auditTopic == "" {
+			auditTopic = AuditTopic
+		}
+		audit, err = open(auditTopic, 0)
 		if err != nil {
 			return fail(err)
 		}

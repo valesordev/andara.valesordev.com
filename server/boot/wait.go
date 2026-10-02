@@ -12,6 +12,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 )
@@ -89,5 +90,66 @@ func (rt *Runtime) leaveWait(w *sim.World, templates *sim.TemplateRegistry, swap
 		slog.Int("zones", len(w.Zones)), slog.String("pack", trigger), slog.String("trace_id", traceID))
 	if rt.started.Load() && !rt.draining.Load() {
 		rt.MarkReady()
+	}
+}
+
+// WaitForContent is a read-only consumer's wait (#326). The state projector
+// can't scope a snapshot round until the Active Pointers name Zones, so on a
+// store without them it waits, as the server does (AW-SRV-042), rather than
+// exiting: the same warn line once, then a reload of the content on every
+// Active Pointer move, until one builds a World. It writes nothing, and
+// returns nil once rt.World is set, or ctx's error when ctx ends first.
+func (rt *Runtime) WaitForContent(ctx context.Context) error {
+	if rt.World != nil {
+		return nil
+	}
+	if rt.Content == nil || rt.Content.Resolver() == nil {
+		return fmt.Errorf("content: what the source names does not load, and it has no Active Pointers to wait on")
+	}
+	ctx, span := rt.Tel.Tracer.Start(ctx, "content.wait")
+	defer span.End()
+	// The watch is the first Content's, from the position it pinned before
+	// reading the pointers, so no move between that read and this is missed.
+	// Each reload opens a Content of its own, pinned afresh.
+	watcher := rt.Content
+	moves, err := watcher.Resolver().Watch(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if rt.Content != watcher {
+			_ = watcher.Close()
+		}
+	}()
+	rt.enterWait(ctx)
+	for {
+		var mv content.PointerMove
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case m, ok := <-moves:
+			if !ok {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return fmt.Errorf("content: the Active Pointer watch ended")
+			}
+			mv = m
+		}
+		prev := rt.Content
+		if code := rt.LoadContent(ctx); code != ExitOK {
+			return fmt.Errorf("content: reloading after %s@%d failed", mv.Pack, mv.Version)
+		}
+		if prev != watcher && prev != rt.Content {
+			_ = prev.Close()
+		}
+		if rt.World == nil {
+			continue
+		}
+		rt.waiting.Store(false)
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect: leaving the wait",
+			slog.Int("zones", len(rt.World.Zones)), slog.String("pack", fmt.Sprintf("%s@%d", mv.Pack, mv.Version)),
+			slog.String("trace_id", telemetry.TraceID(ctx)))
+		return nil
 	}
 }

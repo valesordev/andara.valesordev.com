@@ -28,6 +28,23 @@ ANDARA_KAFKA_BROKERS=localhost:9092 ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PAT
 It must load the same content as the server and use the same `sim.seed` (0 derives it from the
 World, as the server does). In the chart it reads the server's ConfigMap for exactly that reason.
 
+### Content: read-only, and a wait
+
+The projector reads content exactly as the server does, and writes none of it (#326). It runs no
+core boot: only the server publishes and activates `andara.core`. Nothing it does writes to
+`andara.content.*` or `andara.audit.v1`. It reads the core the store holds, like any Builder pack.
+
+On a store whose Active Pointers name no Zones yet, including an empty one, it waits rather than
+exiting. That's the state every new environment starts in, and the server waits in it too
+(AW-SRV-042):
+- **Up, unready, logged once.** `/livez` 200 and `/readyz` 503, with the server's `warn` line
+  once: `waiting for content: no Zones in effect; publish and activate a pack`, with `trace_id`.
+- **Reloads on every pointer move.** Each Active Pointer move reloads the content. The first that
+  builds a World with Zones logs `content in effect: leaving the wait` at `info`, with `zones` and
+  `pack` (`pack@version`), and the projector goes on to bootstrap. It's Ready once caught up, with
+  no restart.
+- **A `dir` source has nothing to wait on.** One that builds no World still exits `1`.
+
 ### Bootstrap
 
 | Situation | What it does |
@@ -57,7 +74,7 @@ divergence commits T−1 with the divergence in the same metadata
 | Code | Condition |
 |-----:|-----------|
 | `0` | clean stop on `SIGTERM`/`SIGINT` |
-| `1` | configuration, content, snapshot store, or broker |
+| `1` | configuration, content, snapshot store, or broker. A store whose pointers name no Zones is a wait, not an exit |
 | `2` | digest divergence. The replica's State Hash differs from the recorded one, now or at a tick an earlier run halted on and nobody has cleared with `--rebuild`. `/metrics` stays up for 60 s first, so `StateProjectorDiverged` is scraped. Runbook: `docs/runbooks/state-projector-diverged.md` |
 | `3` | log gap: the log no longer holds history the replica needs |
 | `4` | a snapshot round or boundary written by a newer `state_version` |
