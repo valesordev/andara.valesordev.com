@@ -135,7 +135,10 @@ records the outcome it gets back.
   - The projector exits `5` on a mismatch, so its `hash_mismatch` series restarts at 0 before any
     scrape reaches it. That's acceptable, because no alert reads it. Exit `5` is the projector's
     signal on a real backend. The live observation is `outcome="ok"` after each bootstrap. The
-    mismatch series is verified on the metric object in the integration test (CLAUDE.md §8).
+    mismatch series is verified on the metric object in the integration test (CLAUDE.md §8). That
+    means the projector's in-process registry, read with `testutil` after `Run` returns, not a
+    scrape of the stack after the process exits. The Test plan's Integration line still reads as a
+    scrape, and the feedback file asks architecture to reword it.
 - **Logs:**
   - `error` `state projector restore mismatch`, with `round_tick`, `reason` (`hash` or `seed`),
     and `trace_id`.

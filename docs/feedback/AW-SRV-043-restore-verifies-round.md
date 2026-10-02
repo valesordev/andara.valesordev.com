@@ -33,3 +33,9 @@ Amended. The cardinality bound and "no alert" are accepted. Six changes to §7:
    in `AW-SRV-007`'s amendment. If you number the exit, decide that with it.
 6. **`andara_recovery_failures_total{reason}` gains `restore`** when you number recovery's exit.
    It's noted in `AW-SRV-007`'s amendment.
+7. **The Test plan's Integration line can't pass as worded** (Codex on #352). It asserts
+   `andara_restore_total{caller="projector", outcome="hash_mismatch"}` is 1 "against the local
+   stack", after the projector has exited `5`. The process that counted it is gone, and its
+   replacement pre-seeds it at 0. That's item 2 above. Reword it to read the projector's
+   in-process registry with `testutil`, after `projector.Run` returns the mismatch, in the same
+   test that bootstraps from the corrupted round. The Test plan is yours; §7 now says so.

@@ -269,8 +269,10 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
       at `0s`.
     - The key is a contract addition, for architecture to confirm or rule otherwise.
   - **AC-5 needs scoping.** AC-5 says the server "never accepts a connection" on exit `2`, and
-    the linger serves operator HTTP. SRE proposes that architecture scope AC-5 to Protocol
-    connections on `grpc.listen`, as AC-10 words it. Until it does, the two conflict under compose.
+    the linger serves operator HTTP. SRE proposes that architecture reword AC-5 to "never binds
+    `grpc.listen`", AC-10's wording, and allow operator HTTP (`/metrics`, `/livez`, `/readyz`,
+    `/startedz`) while `recovery.mismatch_linger` is above `0s`. Until it does, the two conflict
+    under compose.
   - **The linger is for boot recovery only.** `andara-server recover --verify` (AC-10) also exits
     `2` on a mismatch. It's a one-shot that nothing scrapes, so it exits at once.
   - **The cluster: the linger doesn't reach it.** The annotation scrape keeps only Ready pods

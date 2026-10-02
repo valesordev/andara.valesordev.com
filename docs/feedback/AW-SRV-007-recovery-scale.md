@@ -55,9 +55,10 @@ contract review. Two more, from the SPRINT-03 close-out:
    - **Confirm the new config key and the exit timing as contract changes, or rule otherwise.**
      With the linger on, a refused boot recovery takes 60 s to exit.
    - **AC-5 conflicts with the linger.** AC-5 says a server that exits `2` "never accepts a
-     connection", but the linger serves `/metrics` and `/livez`. SRE proposes scoping AC-5 to
-     Protocol connections on `grpc.listen`, as AC-10 already words it, and allowing operator HTTP
-     while `recovery.mismatch_linger` is above `0s`.
+     connection", but the linger serves `/metrics` and `/livez`. SRE proposes rewording AC-5 to
+     "never binds `grpc.listen`", which is AC-10's wording and checkable by binding the port in a
+     test. Operator HTTP would be allowed while `recovery.mismatch_linger` is above `0s` (raised
+     again by Codex on #352).
 
    The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
    - a `restore` reason on `andara_recovery_failures_total`;
