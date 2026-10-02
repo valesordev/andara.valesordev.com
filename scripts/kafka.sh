@@ -63,10 +63,20 @@ operator() {
   # time out waiting for it.
   watching="$(helm get values strimzi -n strimzi -o json 2>/dev/null \
     | "$PY" -c 'import json,sys; v=json.load(sys.stdin) or {}; print(",".join(v.get("watchNamespaces") or []))' 2>/dev/null || true)"
-  if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" && "$watching" == "$csv" ]]; then
+  # The chart's RoleBindings live in each watched namespace, so deleting and recreating one
+  # (a rebuild of andara-dev from nothing, AW-INF-021 AC-7) removes them while the release
+  # still matches. The operator then gets 403 on every watch there, and kafka-install waits
+  # forever. So a no-op also needs every watched namespace's bindings to be present.
+  local missing=""
+  for wns in "${WATCHED[@]}"; do
+    kubectl -n "$wns" get rolebinding strimzi-cluster-operator strimzi-cluster-operator-watched \
+      strimzi-cluster-operator-entity-operator-delegation >/dev/null 2>&1 || missing+=" $wns"
+  done
+  if [[ "$have" == "strimzi-kafka-operator-$STRIMZI_VERSION" && "$watching" == "$csv" && -z "$missing" ]]; then
     echo "kafka-operator: strimzi $STRIMZI_VERSION already installed (watching ${WATCHED[*]})"
     return
   fi
+  [[ -z "$missing" ]] || echo "kafka-operator: the operator's RoleBindings are missing in$missing; re-applying the chart"
   helm upgrade --install strimzi strimzi-kafka-operator \
     --repo "$STRIMZI_REPO" --version "$STRIMZI_VERSION" \
     --namespace strimzi --create-namespace \

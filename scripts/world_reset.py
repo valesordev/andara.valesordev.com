@@ -223,11 +223,31 @@ def reset(env, ns):
         restore_argo(app, policy)
 
 
+def waiting_for_content(ns, kubectl=None):
+    """True when andara-0's server container is started, not Ready, and has logged that it's
+    waiting for content since it started: a store-backed server whose World has never had
+    content, which stays up unready until a pack with Zones is activated (AW-SRV-042)."""
+    kubectl = kubectl or globals()["kubectl"]
+    pod = kubectl(ns, "get", "pod", SERVER_POD, "-o", "json", check=False)
+    if pod.returncode != 0 or not pod.stdout.strip():
+        return False
+    st = json.loads(pod.stdout).get("status", {})
+    ready = [c for c in st.get("conditions", []) if c.get("type") == "Ready"]
+    if ready and ready[0].get("status") == "True":
+        return False
+    server = [c for c in st.get("containerStatuses", []) if c.get("name") == "server"]
+    if not server or not server[0].get("started"):
+        return False
+    since = (server[0].get("state", {}).get("running") or {}).get("startedAt")
+    logs = kubectl(ns, "logs", SERVER_POD, "-c", "server",
+                   *(["--since-time=" + since] if since else []), check=False)
+    return WAITING_LINE in logs.stdout
+
+
 def wait_up(ns, deadline=READY_DEADLINE, sleep=time.sleep, clock=time.monotonic):
     """Wait for andara-0 to be Ready, or to be started and waiting for content: "ready" or
-    "waiting". A store-backed server whose World has never had content stays started and
-    unready until a pack with Zones is activated (AW-SRV-042). On dev's first switch the store
-    is empty, so Ready would never come before the seed that this reset precedes."""
+    "waiting". On dev's first switch, or a rebuild from nothing, the store has no pack with
+    Zones, so Ready can't come before the seed that follows."""
     end = clock() + deadline
     while True:
         pod = kubectl(ns, "get", "pod", SERVER_POD, "-o", "json", check=False)
@@ -236,13 +256,8 @@ def wait_up(ns, deadline=READY_DEADLINE, sleep=time.sleep, clock=time.monotonic)
             ready = [c for c in st.get("conditions", []) if c.get("type") == "Ready"]
             if ready and ready[0].get("status") == "True":
                 return "ready"
-            server = [c for c in st.get("containerStatuses", []) if c.get("name") == "server"]
-            if server and server[0].get("started"):
-                since = (server[0].get("state", {}).get("running") or {}).get("startedAt")
-                logs = kubectl(ns, "logs", SERVER_POD, "-c", "server",
-                               *(["--since-time=" + since] if since else []), check=False)
-                if WAITING_LINE in logs.stdout:
-                    return "waiting"
+        if waiting_for_content(ns, kubectl):
+            return "waiting"
         if clock() > end:
             raise StepFailed("%s neither Ready nor waiting for content within %ds" % (SERVER_POD, deadline))
         sleep(5)

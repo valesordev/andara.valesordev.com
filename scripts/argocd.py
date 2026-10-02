@@ -207,7 +207,11 @@ def app_state(name):
             st.get("sync", {}).get("revision", ""), app)
 
 
-def wait_synced_healthy(name):
+def wait_synced_healthy(name, waiting=lambda: False):
+    """True once the Application is Synced and Healthy. "waiting" when it's Synced and the
+    server is up but waiting for its first content (AW-SRV-042): a store with no pack with
+    Zones, on a rebuild from nothing, can't be Healthy before `make content-seed`, which
+    needs this install to have finished (AW-INF-021 AC-7). False at the deadline."""
     end = time.monotonic() + SYNC_DEADLINE
     last = None
     while time.monotonic() < end:
@@ -217,6 +221,8 @@ def wait_synced_healthy(name):
             last = (sync, health)
         if sync == "Synced" and health == "Healthy":
             return True
+        if sync == "Synced" and waiting():
+            return "waiting"
         time.sleep(5)
     return False
 
@@ -230,8 +236,13 @@ def install(env):
     preconditions(ns)
     secrets(ns)
     name = application(ns)
-    if not wait_synced_healthy(name):
+    import world_reset  # noqa: E402  (scripts/, beside this file)
+    up = wait_synced_healthy(name, waiting=lambda: world_reset.waiting_for_content(ns))
+    if not up:
         die("install", "application %s not Synced/Healthy within %ds; see make argocd-status" % (name, SYNC_DEADLINE))
+    if up == "waiting":
+        say("application %s is Synced, and andara-0 is waiting for content: the store holds no pack "
+            "with Zones (AW-SRV-042). Next: make content-seed ENV=%s" % (name, env))
     # The Helm release's history, now that Argo CD owns its objects. Never `helm uninstall`,
     # which would delete what the Application just adopted.
     p = run(["kubectl", "-n", ns, "delete", "secret", "-l", "owner=helm,name=andara"], check=False)

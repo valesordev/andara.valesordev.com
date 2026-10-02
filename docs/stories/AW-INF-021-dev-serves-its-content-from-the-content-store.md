@@ -560,3 +560,41 @@ story.
 
 **#312**, publish showing other packs' findings as the Builder's own, is filed for implementation.
 It's noise on the demo path, not a correctness failure.
+
+## AC-7, first run (SRE, 2026-10-02): defects found, not a pass
+
+Brian chose a real rebuild from nothing, deleting the namespace (this session, 2026-10-02), and PM
+moved it ahead of the M3 walk-through. Architecture's reading: a run with hand steps is evidence of
+the defects it finds. AC-7 passes on a later run with the fixes merged and no hand step.
+
+| Time (UTC) | Step | Outcome |
+|---|---|---|
+| 03:22:45 | `make argocd-uninstall ENV=dev` | Application removed without cascading. 36 resources given Helm metadata |
+| 03:23:04 | `kubectl delete namespace andara-dev` | Kafka (Strimzi), versitygw, every Secret, PVC, the server and the projector, gone |
+| 03:23:58 | `make kafka-install ENV=dev` | **Defect 1.** `kafka-operator: strimzi 1.2.0 already installed` returned without checking the operator's RoleBindings, which went with the namespace. The operator got `403` on every watch in `andara-dev`, `kafka/andara-log` never formed, and the install timed out |
+| ~03:34 | **hand step:** `make kafka-operator` with the fix | `RoleBindings are missing in andara-dev; re-applying the chart`. The three bindings came back, and the brokers were Ready at 03:35:35 |
+| 03:35:43 | `make objectstore-install ENV=dev` | Secret `andara-snapshot-s3` created, versitygw Ready, bucket `andara-snapshots-dev`. **Not part of AC-7's sequence as written.** A rebuild that deletes the namespace needs it before `argocd-install`, which doesn't check for it |
+| 03:36:05 | **hand step:** `make kafka-install ENV=dev` again | The first had timed out before the topics. `topics-apply: 8 topic(s)`, brokers Ready |
+| ~03:36:10 | `make argocd-install ENV=dev` | Secrets `andara-server-token-key` (from `.local/auth`) and `andara-server-bootstrap` (from `ANDARA_BOOTSTRAP_OPERATOR`) created, Application created and Synced. **Defect 2:** it waited 600 s for `Healthy`, which a store with no Zone pack can't reach before the seed (AW-SRV-042), and exited 1 |
+| 03:36:21–27 | the first pods | **Defect 3, #326.** The projector logged `content core: andara.core@1 published; activated` at 03:36:25 as `server`. Then `andara-0` logged `andara.core@1 present` at 03:36:27, and `waiting for content`. The projector crash-looped (`cannot scope a snapshot round`) until the seed |
+| 03:47:19 | `make content-seed ENV=dev` | `town@1 published (14 of 14 blobs uploaded)`, activated. Server and projector Ready, Argo `Synced/Healthy` |
+
+After the seed, **AC-1 holds**: `server info` through the edge lists `andara.core@1` and `town@1`.
+**AC-2 holds**: a new Character's first Room is `Purgatory`. **AC-7's boot-line clause fails**: the
+server's line said `present`, because the projector published first (#326).
+
+**Fixes:**
+- Defects 1 and 2 are SRE's, on `sre/kafka-operator-rebinds-namespaces`. `kafka-operator` treats
+  the release as current only if every watched namespace has the operator's RoleBindings
+  (`test_kafka_operator.py`, mutation-checked). `argocd-install` accepts an Application that's Synced
+  with `andara-0` waiting for content, sharing `world_reset.waiting_for_content`
+  (`test_argocd.WaitSyncedHealthy`).
+- Defect 3, #326, is implementation's (SPRINT-03 item 14). Architecture ruled the projector a
+  read-only content consumer that waits, unready.
+- `objectstore-install` before `argocd-install`: AC-7's sequence should name it, or `argocd-install`
+  should check for `andara-snapshot-s3`, as it checks for `kafka/andara-log`. That's for
+  architecture, on the second run's record.
+
+**Next (PM, 2026-10-02):** Brian's walk-through on this `dev`, then the fixes and #326 merge, then a
+second rebuild with no hand step. That run is AC-7's pass. If the sprint closes first, AC-7 carries
+over to SPRINT-04.

@@ -229,6 +229,36 @@ class ContentLines(unittest.TestCase):
         self.assertEqual(self.packs(0, "andara_build_info 1\n"), "? (no andara_content_active_version series)")
 
 
+class WaitSyncedHealthy(unittest.TestCase):
+    """AW-INF-021 AC-7: on a rebuild from nothing the store has no pack with Zones, so the
+    Application is Synced but can't be Healthy before the seed; that counts as done."""
+
+    def run_wait(self, states, waiting):
+        mod = load_argocd()
+        seq = list(states)
+        mod.app_state = lambda name: (*(seq.pop(0) if len(seq) > 1 else seq[0]), "rev", {"x": 1})
+        mod.time = SimpleNamespace(monotonic=iter(range(0, 10**6, 5)).__next__, sleep=lambda n: None)
+        mod.SYNC_DEADLINE = 60
+        out = io.StringIO()
+        with redirect_stdout(out):
+            return mod.wait_synced_healthy("andara-dev", waiting=waiting)
+
+    def test_healthy_is_done(self):
+        self.assertIs(self.run_wait([("OutOfSync", "Missing"), ("Synced", "Healthy")], lambda: False), True)
+
+    def test_synced_and_waiting_for_content_is_done(self):
+        self.assertEqual(self.run_wait([("Synced", "Progressing")], lambda: True), "waiting")
+
+    def test_waiting_doesnt_count_before_the_sync(self):
+        calls = []
+        got = self.run_wait([("OutOfSync", "Progressing")], lambda: calls.append(1) or True)
+        self.assertIs(got, False)
+        self.assertEqual(calls, [])
+
+    def test_progressing_without_the_wait_times_out(self):
+        self.assertIs(self.run_wait([("Synced", "Progressing")], lambda: False), False)
+
+
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 
