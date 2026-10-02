@@ -296,15 +296,21 @@ Each case runs the real path through `LoadContent` on the local stack's Redpanda
     kafka…". A held appended finding would show as one. Reconcile's Loader then logs the rejection
     again as `content finding`, unchanged, which counts `LoadFailures`, not this series. The count
     reads `2` over the whole boot.
-- **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended, asserts at least one reload
-  (the core pointer move). From the wait line to `content in effect: leaving the wait`, there's no
-  line at `warn` or above and no `no_zones_found`, and the count is `0`. Lines at `debug` and
-  `info` are allowed: an empty reload's `templates loaded` at `debug`, and the leaving reload's at
-  `info`. When a reload before the leaving one ran, at least one `content reload: no Zones in
-  effect yet` line is present. If the core move's reload already sees town and leaves, there is
-  none, and the test doesn't require one. A separate test with a short `waitRetry` asserts two or more reload `debug`
-  lines carrying `next_retry` and `trace_id`. It doesn't assert the leaving line's `pack`, which a
-  timer reload can race.
+- **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended. Over the projector's whole
+  log, from its first line (its boot `LoadContent` included) to `content in effect: leaving the
+  wait`:
+  - no line with `code=no_zones_found`, and no "recovering what the log recorded";
+  - exactly one wait line;
+  - at least one `content reload: no Zones in effect yet`. That's unconditional: the test already
+    asserts the leaving line's `pack` is `town@1`, so the core move's reload ran and didn't leave.
+    That assertion's existing race with town's `MovePointer` is known, and this one shares it;
+  - the count is `0`.
+
+  It asserts nothing else by level. Other lines, such as `templates loaded` or a transient
+  `content pointer watch: fetch failed, retrying`, aren't this amendment's.
+- **Projector, timer reloads:** a separate test with a short `waitRetry` asserts two or more
+  `content reload: no Zones in effect yet` lines carrying `next_retry` and `trace_id`. It doesn't
+  assert the leaving line's `pack`, which a timer reload can race.
 
 **Live: not yet observed.** No `dev` start on an empty store is scheduled after item 9. Whoever next
 starts `dev` from an empty store checks these, and records it in this story's §8 record:
