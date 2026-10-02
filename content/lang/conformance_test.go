@@ -711,4 +711,13 @@ func TestCoreVersionMismatch_TheRemedyFollowsTheSkew(t *testing.T) {
 			t.Errorf("%s:\n got %q\nwant %q", tc.name, ds[0].Message, tc.want)
 		}
 	}
+
+	// The remedy names the file that declares the pack, which needn't be
+	// pack.aw (review of #335).
+	other := t.TempDir()
+	write(t, filepath.Join(other, "main.aw"), "pack p requires andara.core@1\n")
+	_, ds := CompileOpts(other, nil, nil, Options{EmbeddedCore: 2})
+	if len(ds) != 1 || ds[0].File != "main.aw" || !strings.HasSuffix(ds[0].Message, "change requires to andara.core@2 in main.aw") {
+		t.Errorf("declared in main.aw: %v", ds)
+	}
 }

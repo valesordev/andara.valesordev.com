@@ -244,7 +244,9 @@ Component. Core Templates can be inspected too.
 Otherwise the compile fails with `core_version_mismatch`, naming both versions and
 the remedy for the direction of the skew. If `M` is above the embedded core, it names the
 `andara-cli` release that embeds `andara.core@M`. If `M` is below it (the usual case after a core
-bump), it says to change `requires` in `pack.aw` to the embedded version. `fetch-core`
+bump), it says to change `requires` to the embedded version in the file that declares the pack.
+Validating a published version (`--pack`/`--version`) always names the release, since that
+version's `requires` can't be edited. `fetch-core`
 never fetches over Admin: without `--from` it exits 3 with `core_fetch_unavailable`,
 naming the embedded core. `decompile` has no `--pack`/`--version`: a published
 version's source is `content fetch`'s.

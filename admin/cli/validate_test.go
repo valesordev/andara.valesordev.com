@@ -8,6 +8,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path"
@@ -601,3 +603,20 @@ func TestContentValidate_PublishedVersion(t *testing.T) {
 }
 
 func itoa(v uint64) string { return strconv.FormatUint(v, 10) }
+
+// Review of #335: a published version's missing core is remedied by a CLI
+// that embeds it, whichever way the versions differ. Its requires clause is
+// in an immutable version, so "change requires" would be no remedy at all.
+func TestCoreMissing_APublishedVersionIsNeverToldToEditIt(t *testing.T) {
+	for _, v := range []uint32{0, embeddedCoreVersion() + 1} {
+		err := coreMissing(lang.CoreRef{Pack: core.Pack, Version: v})
+		var ae *AppError
+		if !errors.As(err, &ae) || ae.Code != lang.CodeCoreVersionMismatch {
+			t.Fatalf("@%d: %v", v, err)
+		}
+		want := fmt.Sprintf("use the andara-cli release that embeds %s@%d", core.Pack, v)
+		if !strings.HasSuffix(ae.Message, want) || strings.Contains(ae.Message, "change requires") {
+			t.Errorf("@%d: %q", v, ae.Message)
+		}
+	}
+}

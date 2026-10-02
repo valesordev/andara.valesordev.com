@@ -321,11 +321,15 @@ func (rt *runtime) manifestCore(v *validated, cv *contentv1.ContentVersion, cach
 }
 
 // coreMissing is AC-5's finding for a version whose core this binary can't
-// supply and has no source line to report it at.
+// supply and has no source line to report it at. Its remedy doesn't follow the
+// skew as the compiler's does (#308): the version is published and immutable,
+// and its sources are a temporary copy, so editing its requires changes
+// nothing. A CLI that embeds the core it needs is the remedy either way
+// (review of #335).
 func coreMissing(ref lang.CoreRef) error {
 	return &AppError{Exit: ExitFail, Code: lang.CodeCoreVersionMismatch,
-		Message: fmt.Sprintf("this version requires %s@%d, and neither the embedded core nor the cache holds it; %s",
-			ref.Pack, ref.Version, lang.CoreRemedy(ref, embeddedCoreVersion())),
+		Message: fmt.Sprintf("this version requires %s@%d, and neither the embedded core nor the cache holds it; this andara-cli embeds %s@%d; use the andara-cli release that embeds %s@%d",
+			ref.Pack, ref.Version, core.Pack, embeddedCoreVersion(), ref.Pack, ref.Version),
 		Detail: map[string]any{"required": ref.Version, "embedded": embeddedCoreVersion()}}
 }
 
