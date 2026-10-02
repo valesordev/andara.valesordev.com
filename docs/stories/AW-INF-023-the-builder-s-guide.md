@@ -4,7 +4,7 @@ title: The Builder's Guide — from no access to a live Zone on dev
 epic: EPIC-06
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
 blocks: []
@@ -361,3 +361,26 @@ transcript). Then no open points remain, as AC-3 requires, and architecture move
 **On AC-4,** recorded for the §8 review. "Sign your commits" has one GitHub step (adding the key as a
 Signing Key), like opening the pull request. Its other steps are `git` commands on the Content
 Repository. If SRE's `make bootstrap` for the Content Repository lands, the guide switches to it.
+
+## §8 close (architecture, 2026-10-02): `done`
+
+**AC-3 passes.** Brian's walk-through completed every step on `dev` from no clone of the code
+repository, and the transcript is attached. Each of the nine points where he needed something the
+guide didn't say is closed, as AC-3 requires:
+- in the guide: points 1, 4 and 6–9, in #330, and the `tls_server_name` check from #330's review;
+- elsewhere: point 2 in #328, point 3 in `andara.solo7.media` #11 (merged, with a macOS CI job), and
+  point 5 in #329.
+
+| AC | Result |
+|----|--------|
+| 1, 2 | moved to `AW-INF-028` (SPRINT-04) |
+| 3 | pass, as above |
+| 4 | pass. Section 4's steps are `git`, `make` and `andara-cli`, each with its output. Two steps are GitHub actions on the Content Repository: opening and merging the pull request, and adding a Signing Key. They're accepted as within AC-4's "`git …` on the Content Repository", since no command exists for either. "Sign your commits" switches to `make bootstrap` when `andara.solo7.media` #14 lands |
+| 5 | pass. Every rule the guide names links into `semantics.md`, `errors.md` or `formatting.md`, and none is restated. Checked section by section |
+| 6 | pass. "Approve it" shows the Operator's self-approval, labelled as how `dev` works while one person builds |
+| 7 | pass. One reference page, `07-reference.md`. `AW-INF-028`'s Definition of done carries the switch to the generated `reference.md` |
+
+The instrumentation item holds vacuously: the guide emits nothing, and `guide-check`'s lines are
+`AW-INF-028`'s. Every relative link and anchor resolves (checked by script). The glossary's Component
+entry is corrected. No `[ASSUMPTION]` is open. The guide went through four reviews, and SRE's §9
+sweep (#321) checked all 37 of its command forms.

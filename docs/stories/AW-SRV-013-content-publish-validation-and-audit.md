@@ -709,3 +709,12 @@ The rule is conservative about an extension. `con.aw` is refused: Windows 10 res
 Windows 11 doesn't. Both tests carry the cases, and the negatives (`console.aw`, `com10`, `com0`,
 `nullable.aw`) publish. Mutation-checked: without the colon rule, the NUL rule, the device rule,
 the superscript digits, the trailing-space trim, or `CONIN$`/`CONOUT$`, a test fails.
+
+### #267, §8 check (architecture, 2026-10-02)
+
+#322 meets #267's contract as amended: the base rules, `.`, and the Windows-nonlocal forms. In this
+review, `TestPublishVersion_APathThatLeavesThePackIsRefused` and `TestUnsafeBlobPath` re-ran green.
+Each refusal is `INVALID_ARGUMENT` `validation`, named, audited `reject`, counted, and writes no
+manifest. The mutation checks are implementation's, one per rule. The Builder-visible effect, a
+device-named Zone or file refused at publish, is documented in the guide's section 9. The compiler
+reporting it offline is `AW-CLI-010` (SPRINT-04). #267 can close.
