@@ -120,8 +120,15 @@ story.
 The story's §7 now carries "SRE amendment, 2026-10-02: the waiting state's `no_zones_found`
 (#299)". It's the observability contract for SPRINT-04's implementation item 9.
 
-It covers the **empty-store case** only: a store-backed source, not `--validate-only`, where
-`no_zones_found` is the only fatal finding once the load, build and template findings are all in.
+It covers the **empty-store case** only. That's the story's four-part definition, and all four
+must hold:
+1. a store-backed source, not `--validate-only`;
+2. the store was read: no `malformed`;
+3. **no rejections** from `Candidates`. A missing-manifest rejection is also coded
+   `no_zones_found`, and it isn't this case. Item 9 needs the rejection count, which
+   `content.Candidates` folds into findings today;
+4. the only fatal finding is the one `loadFindings` appends, computed after the load, build and
+   template findings are all in.
 - `LoadContent` holds the finding, and the "recovering what the log recorded" `warn`.
 - **A wait** drops both.
 - **Serving from the log** drops the finding but logs that `warn` once, because Zones in the log

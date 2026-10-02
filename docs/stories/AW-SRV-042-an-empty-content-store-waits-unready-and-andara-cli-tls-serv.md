@@ -243,7 +243,8 @@ reported at load as today.
     Active Pointer` for an explicit `content.packs` list, are unchanged.
   - **Serves** (`ReconcileContent` returns `0` with Zones in effect from the World log): the
     finding isn't logged or counted, but the "recovering what the log recorded" `warn` is logged
-    once, with `content.reconcile`'s `trace_id`. The log holds Zones that no followed pack's
+    once, with `content.reconcile`'s `trace_id` and `error_count` excluding the held finding (`0`
+    in the empty-store case). The log holds Zones that no followed pack's
     pointer names. That's usually a store fault (lost pointer topics), so the line is kept.
   - **Exits `1` before the decision settles it**, by any path: AC-3's "a World log in which a
     Content Swap with `zone_count > 0` has applied", a failed log read, a failed reconcile, or a
@@ -282,14 +283,21 @@ Each case runs the real path through `LoadContent` on the local stack's Redpanda
     `ValidationErrors.WithLabelValues("no_zones_found")` reads `0`.
   - **Serves from the log, with no pointer:** use a fresh Active Pointer topic over the same blobs
     and versions, with town published but not activated, and a Zone-bearing swap for town@1 pushed
-    onto `rt.memSource` before `ReconcileContent`. No `no_zones_found` line and a count of `0`;
+    onto `rt.memSource` before `ReconcileContent`. The swap has an empty base and no `zone_id`, and
+    its `world_digest` comes from `rt.Content.Prepare` and `sim.ContentDigest`, as
+    `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` builds it. A wrong digest halts
+    the tick instead of being refused. No `no_zones_found` line and a count of `0`;
     exactly one "recovering what the log recorded".
-  - **Exits after reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a count of
+  - **Exits in reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a count of
     `1`.
-  - **A pointer naming a version with no manifest:** logs and counts at load as today.
+  - **A pointer naming a version with no manifest:** logs and counts at load as today. That's
+    exactly two lines with `code=no_zones_found`: the rejection's own, and the one carrying
+    `loadFindings`' detail, "no Zones were found in kafka…". The count reads `2`. A held appended
+    finding would show as `1`.
 - **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended, asserts at least one reload
-  (the core pointer move): between the wait line and leaving the wait, only reload `debug` lines,
-  and a count of `0`. A separate test with a short `waitRetry` asserts two or more reload `debug`
+  (the core pointer move). Between the wait line and the reload that leaves the wait, there are only
+  reload `debug` lines, with no `warn`, no `error`, and no `no_zones_found`, and the count is `0`.
+  The leaving reload builds a World, so it logs `templates loaded` at `info` as today. A separate test with a short `waitRetry` asserts two or more reload `debug`
   lines carrying `next_retry` and `trace_id`. It doesn't assert the leaving line's `pack`, which a
   timer reload can race.
 
