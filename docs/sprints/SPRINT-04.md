@@ -116,12 +116,12 @@ item 9. SRE's items 1–5 are the slack while it waits on item 4.
 None. Every SPRINT-03 story is `done` (see its close-out). The stories that moved here on
 2026-09-27 are AW-SRV-026, AW-SRV-028 and AW-SRV-007, at implementation items 1, 2 and 4.
 
-**Groomed, not in this sprint:**
-- AW-SRV-039, AW-SRV-040, AW-SRV-041, AW-SRV-044 and AW-SRV-045;
-- AW-CLI-010 and AW-CLI-011;
-- AW-INF-030 and AW-INF-031.
-
-They're for SPRINT-05. None is on M2's path, and implementation's list is full.
+## Groomed, not in this sprint
+These drafts are for SPRINT-05: AW-SRV-039, AW-SRV-040, AW-SRV-041, AW-SRV-044, AW-SRV-045,
+AW-CLI-010, AW-CLI-011, AW-INF-030 and AW-INF-031. None is on M2's path, and implementation's list
+is full. They're in prose under their own heading because `project-mirror` counts a list item that
+opens with a story ID in a Carryover or backlog section as sprint work. (Fixed 2026-10-02: the first
+version listed them under Carryover, and the board showed 19 stories in SPRINT-04.)
 
 ## Close-out
 (filled in by the next PM session)
