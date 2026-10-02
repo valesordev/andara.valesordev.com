@@ -650,3 +650,46 @@ and SPRINT-03's plan says.
 Without the target, the step is a hand-written `kubectl delete namespace`, a CLAUDE.md §9 defect. So
 the confirming run waits for it, for the RoleBinding fix, for SRE's `argocd-install` fix (accepting
 "waiting for content"), and for #326.
+
+## AC-7, confirming run (SRE, 2026-10-02): pass
+
+Brian confirmed it (this session, after the M3 walk-through), on `main` at `87e310c`. The deployed
+image was built from `8a6d82e`, which includes #326's fix. The prerequisites were all merged: #327
+(RoleBindings, `argocd-install`'s wait), #332 (the procedure), #333 (`env-destroy`) and #334 (#326).
+The procedure is #332's, one target per step, **and no other step was needed**:
+
+| Time (UTC) | Target | Outcome |
+|---|---|---|
+| 18:46:47 | `make env-destroy ENV=dev CONFIRM=andara-dev` | `removed the Argo CD application andara-dev without cascading`, then `andara-dev deleted`. Exit 0 |
+| 18:47:43 | `make kafka-install ENV=dev` | `kafka-operator: the operator's RoleBindings are missing in andara-dev; re-applying the chart`. Brokers 0–2 Ready, and all 8 topics created fresh, including `andara.content.*`. Exit 0 |
+| 18:48:33 | `make objectstore-install ENV=dev` | Secret `andara-snapshot-s3` created, versitygw Ready, bucket `andara-snapshots-dev`. Exit 0 |
+| 18:48:46 | `make argocd-install ENV=dev` | Secrets created, Application Synced. `andara-dev is Synced, and andara-0 is waiting for content … Next: make content-seed ENV=dev`. Exit 0 |
+| 18:49:36 | `make content-seed ENV=dev` | `town@1 published (14 of 14 blobs uploaded)` and activated. Exit 0 |
+| 18:49:44 | — | `andara-0`, the projector and versitygw all Ready, **0 restarts each**. Argo `Synced/Healthy` |
+
+**Observed, against AC-7 and PM's list:**
+- **The first pod's boot line reports `andara.core` published and activated, into an empty store:**
+  `andara-0` at 18:49:00, `content core: andara.core@1 published; activated`. The store's topics
+  were created at 18:47.
+- **The projector wrote nothing to `andara.content.*` or `andara.audit.v1`.** It logged no
+  `content core` line. Before the seed, the audit topic held exactly the server's `publish` and
+  `activate`, and `andara.content.active.v1` held one pointer, `andara.core`. After the seed it held
+  only the server's and the seed's records.
+- **The projector waited unready on the empty store**, with AW-SRV-042's
+  `waiting for content: no Zones in effect` at 18:48:52. Then `content in effect: leaving the wait`
+  (`zones=4`, `pack=town@1`) at 18:49:37, `state projector started` and `caught up`. **No restart.**
+- **AC-1:** `server info` through the edge lists `andara.core@1` and `town@1`, at commit `8a6d82e`.
+  **AC-2:** a new Character's first Room is `Purgatory`.
+
+**AC-7 passes.** With it, every AC of the story is met except AC-6, which is owed to the first core
+bump as an inherited line, as the AC allows.
+
+**Two small follow-ups, not holding the story:**
+- While waiting, the projector repeats the Loader's `error` `no_zones_found` about once a second
+  (10 lines in 44 s). It's #299's line, now on a loop, so it's noted there.
+- `make argocd-install`'s closing status prints `stalled … argocd-recover` beside the `waiting`
+  line. That hint is wrong for a server that's waiting for its seed. It's SRE's, a one-line
+  follow-up.
+
+**Left on `dev`:** `andara.core@1` and `town@1` active. Accounts: the bootstrap operator, plus
+`sre-ac7` with Character `Confirmed`. Brian's walk-through state is erased, as agreed.
