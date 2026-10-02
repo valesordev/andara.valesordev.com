@@ -129,6 +129,9 @@ records the outcome it gets back.
   - `outcome` is one of `ok`, `hash_mismatch`, or `seed_mismatch`.
   - A process pre-seeds at 0 only the callers it hosts: 3 series in `andara-projector`, 6 in
     `andara-server`, and 9 in total. Zone ID and tick are never labels.
+  - This story wires and pre-seeds the projector's 3. The server's 6 are wired by `AW-SRV-007`,
+    which owns both server callers. `andara-server recover --verify`, the one-shot, also counts as
+    `verify`. This story's §8 check observes only the projector's series.
   - The projector exits `5` on a mismatch, so its `hash_mismatch` series restarts at 0 before any
     scrape reaches it. That's acceptable, because no alert reads it. Exit `5` is the projector's
     signal on a real backend. The live observation is `outcome="ok"` after each bootstrap. The
@@ -136,8 +139,9 @@ records the outcome it gets back.
 - **Logs:**
   - `error` `state projector restore mismatch`, with `round_tick`, `reason` (`hash` or `seed`),
     and `trace_id`.
-    - For `hash`: `recorded_hash` and `restored_hash`, in hex, named as the existing
-      `state projector diverged` line names its pair.
+    - For `hash`: `recorded_hash` and `restored_hash`, in hex. That follows the
+      `<role>_hash` convention of the existing `state projector diverged` line, whose pair is
+      `recorded_hash` and `replayed_hash`.
     - For `seed`: `recorded_seed` and `configured_seed`.
   - `info` `state projector restore verified`, with `round_tick`, `zones`, `restored_hash`, and
     `trace_id`, once per bootstrap.
@@ -159,8 +163,11 @@ records the outcome it gets back.
     row: capture the round tick and both hashes, and don't `--rebuild`, because a rebuild hits
     the same check (AC-4). SRE writes the row at this story's §8 instrumentation check.
   - Recovery's exit `6`, under `AW-SRV-007`, leaves no ready server. That's
-    `AndaraServerUnavailable` (page). The row in `server-unavailable.md`'s symptom table ships with
-    `AW-SRV-007`'s `recovery-state-mismatch.md`.
+    `AndaraServerUnavailable` (page). SRE proposes that it also sets
+    `andara_recovery_state_hash_match` to `0`, so that `RecoveryStateMismatch` names the cause
+    wherever that alert can see it. See `AW-SRV-007`'s SRE amendment. The row in
+    `server-unavailable.md`'s symptom table ships with `AW-SRV-007`'s
+    `recovery-state-mismatch.md`.
   - `andara_recovery_failures_total{reason}` (`AW-SRV-007`) gains `restore`, for exit `6`. That's
     architecture's amendment, together with the exit code (Open questions, item 1).
 - **Dashboard:** no panel. One outcome per bootstrap isn't a time series anyone watches.

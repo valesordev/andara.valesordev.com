@@ -242,24 +242,43 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
 
 - **`RecoveryStateMismatch` can't fire as written.** `andara_recovery_state_hash_match` is set to
   `0` by a process that exits `2` at once. The restart sets nothing until its own recovery ends,
-  so no scrape ever reads the `0`, and the one alert that pages is dead configuration. This is the
-  same trap AW-SRV-019 hit with `andara_state_digest_mismatches_total`, and the fix is the same:
-  - On exit `2`, the server keeps `/metrics` and `/livez` served and `/readyz` unready for 60 s,
-    longer than any scrape interval the chart configures. Only then does it exit. That's the
-    projector's `haltLinger` (`cmd/andara-projector/main.go`). It logs one `error` line,
-    `holding /metrics for the hash mismatch to be scraped`, with `for`.
-  - The same applies to `AW-SRV-043`'s restore-mismatch exit if architecture accepts it.
-  - The rule fires with `for: 0m`. A crash loop's backoff can leave several minutes between
+  so no scrape ever reads the `0`, and the one alert that pages is dead configuration.
+  - **Compose:** a linger fixes it. On a boot recovery's exit `2`, the server keeps `/metrics`
+    and `/livez` served and `/readyz` unready for 60 s, as the projector does with `haltLinger`
+    (`cmd/andara-projector/main.go`). It logs one `error` line,
+    `holding /metrics for the hash mismatch to be scraped`, with `for`. Compose scrapes its static
+    target every 5 s whether or not the server is Ready.
+  - **The linger is for boot recovery only.** `andara-server recover --verify` (AC-10) also exits
+    `2` on a mismatch. It's a one-shot that nothing scrapes, so it exits at once.
+  - **The cluster: the linger doesn't reach it.** The annotation scrape keeps only Ready pods
+    (`deploy/helm/andara/files/alerts.yaml`, `AndaraServerUnavailable`'s comment). A refused
+    recovery was never Ready. So on `dev` and `prod` the gauge's `0` is never scraped, linger or
+    not.
+    - What pages there today is `AndaraServerUnavailable` (`for: 2m`): the refusal leaves no
+      Ready server, and that's the player's symptom. `server-unavailable.md` sends exit `2` to
+      `recovery-state-mismatch.md`.
+    - `RecoveryStateMismatch` on the cluster needs a signal that outlives the process and doesn't
+      depend on readiness. Two candidates: kube-state-metrics' last-terminated exit code for the
+      `server` container, or a Loki rule on the `error` line. That's for SRE to settle with the
+      cluster's rule delivery (`AW-INF-009`) and record in that story. It doesn't hold this one.
+  - **The rule.** It fires with `for: 0m`. A crash loop's backoff can leave several minutes between
     lingers, so it also carries `keep_firing_for: 15m` and doesn't resolve between them.
-  - At §8, `RecoveryStateMismatch` is observed **firing** in the local stack's Prometheus, against
-    a compose server recovering from a deliberately corrupted round. Registering the rule isn't
-    enough.
+  - **§8.** `RecoveryStateMismatch` is observed **firing** in the local stack's Prometheus, against
+    a compose server recovering from a deliberately corrupted round. The §8 record says plainly
+    that this is the compose path only, and that the cluster path is `AW-INF-009`'s.
 - **If `AW-SRV-043` joins `depends_on`:**
   - `andara_recovery_failures_total{reason}` gains `restore`, which covers its hash and seed
     mismatches.
+  - SRE proposes that the restore-mismatch exit also sets `andara_recovery_state_hash_match` to
+    `0` and lingers like exit `2`. A round that doesn't reproduce its own hash is a World that
+    can't recover to the right state, and the operator's response is the same:
+    `recovery-state-mismatch.md`, choose an older round. Without that, nothing alerts on it but
+    `AndaraServerUnavailable`. It's architecture's to accept.
   - `recovery.run` gains the child `restore.verify`, after `recovery.load_snapshot`.
-  - `andara_restore_total{caller="recovery"}` and `{caller="verify"}` (`Admin.VerifySnapshotRound`)
-    are `AW-SRV-043`'s instruments, wired here.
+  - `andara_restore_total{caller="recovery"}` and `{caller="verify"}` are `AW-SRV-043`'s
+    instruments, but this story wires and pre-seeds them, since it owns both callers.
+    `Admin.VerifySnapshotRound` and the one-shot `andara-server recover --verify` both count as
+    `verify`.
 - **The local live observation is `AW-INF-032`'s.** `make stack-recover` reads
   `andara_recovery_state_hash_match`, `andara_recovery_duration_seconds{phase}`,
   `andara_recovery_round_tick`, and `andara_acknowledged_commands_lost_total` from the running

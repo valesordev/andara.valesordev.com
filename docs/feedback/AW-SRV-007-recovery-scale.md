@@ -38,19 +38,36 @@ contract review. Two more, from the SPRINT-03 close-out:
 5. **`RecoveryStateMismatch` can't fire as the story is written.**
    - `andara_recovery_state_hash_match` is set to `0` by a process that exits `2` at once. The
      restart sets nothing until its own recovery ends, so no scrape ever reads the `0`.
-   - AW-SRV-019 hit the same trap with `andara_state_digest_mismatches_total` and fixed it in the
-     projector with `haltLinger`: on exit `2` it keeps `/metrics` up, unready, for 60 s.
-   - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires the same linger
-     on exit `2`, and on `AW-SRV-043`'s exit if you accept it. It also requires `for: 0m` and
-     `keep_firing_for: 15m` on the rule, so the alert survives a crash loop's backoff, and an §8
-     observation of the alert firing in local Prometheus.
-   - The exit **timing** is operator-visible: a refused recovery now takes 60 s to exit. Confirm
-     it as a contract change, or rule otherwise.
+   - **In compose,** the projector's `haltLinger` fixes it: keep `/metrics` up, unready, for 60 s
+     before exiting. Compose scrapes a static target every 5 s.
+   - **On the cluster, it doesn't.** The annotation scrape keeps only Ready pods, and a refused
+     recovery is never Ready. There, `AndaraServerUnavailable` pages on the symptom, and
+     `RecoveryStateMismatch` needs a signal that doesn't depend on readiness: kube-state-metrics'
+     last-terminated exit code, or a Loki rule. SRE settles that with `AW-INF-009`.
+   - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires:
+     - the linger, on boot recovery's exit `2` only, and not on the one-shot `recover --verify`;
+     - `for: 0m` and `keep_firing_for: 15m` on the rule;
+     - an §8 observation of the alert firing in local Prometheus, recorded as compose-only.
+   - **Confirm the exit timing as a contract change, or rule otherwise.** It's operator-visible: a
+     refused boot recovery now takes 60 s to exit.
 
    The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
    - a `restore` reason on `andara_recovery_failures_total`;
    - the span `restore.verify` under `recovery.run`;
-   - `andara_restore_total{caller="recovery"|"verify"}`.
+   - `andara_restore_total{caller="recovery"|"verify"}`, wired and pre-seeded here.
+
+   SRE proposes that `AW-SRV-043`'s restore-mismatch exit also sets the hash-match gauge to `0`
+   and lingers. The operator's response is the same as for exit `2`: choose an older round.
 
    On item 4: `AW-INF-032`'s run is the right live observation for this story's series and trace,
    and SRE will record it in both §8 records.
+
+6. **What increments `andara_acknowledged_commands_lost_total` after a restart?**
+   - `recovery.md` says recovery increments it when an acknowledged Command is missing from the
+     log. The acks, though, lived in the killed process's memory. The contract lists the counter
+     (Metrics) and AC-8 says it stays `0`, but it never says what a fresh process compares the log
+     against.
+   - If nothing, the counter is `0` by construction after every restart, and both AC-8 and
+     `AW-INF-032`'s AC-4 pass vacuously.
+   - Name the source, for instance acked offsets recorded somewhere that outlives the process. Or
+     say that the SLI is measured elsewhere, such as a client-side comparison in the test harness.

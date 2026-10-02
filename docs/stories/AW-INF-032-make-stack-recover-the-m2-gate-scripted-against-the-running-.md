@@ -128,9 +128,11 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
     prints its wall-clock kill-to-ready, which is the AC-3 assertion, next to
     `andara_recovery_duration_seconds_sum{phase="total"}`. The difference is the restart term,
     and the SLO says that term dominates. Printing both shows where a regression lives.
-  - **`andara_acknowledged_commands_lost_total` is 0 in any fresh process.** AC-4 proves something
-    only because `AW-SRV-007` increments it during recovery, before `/readyz` turns 200. The script
-    reads it only after ready, never before.
+  - **`andara_acknowledged_commands_lost_total` is 0 in any fresh process.** The acks lived in the
+    killed process's memory. `AW-SRV-007` lists the counter but doesn't say what a fresh process
+    increments it from (`docs/feedback/AW-SRV-007-recovery-scale.md`, item 6). Until it does,
+    AC-4's counter line shows that the series exists, and nothing more. The RPO evidence is AC-5:
+    A's `look` shows Room 2, which only the log tail held.
 - **Logs:**
   - The script's `stack-recover:` progress lines.
   - On failure, the server's last 50 lines, through `make logs SVC=andara-server`.
