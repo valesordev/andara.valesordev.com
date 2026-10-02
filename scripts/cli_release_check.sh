@@ -43,7 +43,7 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
-fetch() { curl -fsSL --retry 3 -o "$work/$1" "$BASE/$1" || die "could not download $BASE/$1"; }
+fetch() { curl -fsSL --retry 4 --retry-delay 2 --retry-all-errors -o "$work/$1" "$BASE/$1" || die "could not download $BASE/$1"; }
 
 fetch SHA256SUMS
 line="$(grep -E "  andara-cli_[^ ]+_${os}_${arch}\.(tar\.gz|zip)$" "$work/SHA256SUMS" || true)"
