@@ -1,6 +1,6 @@
 # SPRINT-03 — Builder content on dev
-Status: active
-Dates: 2026-09-27 →
+Status: closed
+Dates: 2026-09-27 → 2026-10-02
 
 ## Demo goal
 **Builder content on dev: the M3 gate, on the box.** Brian starts with no clone of the code
@@ -229,4 +229,91 @@ Three stories, all at `review`. The reasons are in SPRINT-02's close-out:
 - AW-INF-008 — AC-2 (SRE item 5), after AW-INF-025. Re-laned to `sre` by AW-INF-027.
 
 ## Close-out
-(filled in by the next PM session)
+Closed 2026-10-02 by PM, against `origin/main` at `ba7e4a4`.
+
+**Demo goal: met.** The M3 gate passed on `dev` with no §9 defects (`SPRINT-03-demo.md`). Brian ran
+it from no clone of the code repository: publish, self-approve, activate, `play` with `goto`, change,
+and roll back, with `server info` naming the content at each step and no deploy. PM re-ran the local
+steps at close-out against `andara-cli ba7e4a4`. PM couldn't re-run the `dev` steps without Brian's
+logins, and Brian accepted his walk-through as the run.
+
+**Stories: 20 of 20 done.** All 15 implementation items are closed, including the five issues (#128,
+#143, #267, #326 and #308). The board reads `Current (SPRINT-03): 20/20 done — 20 done`.
+
+### Final status on `origin/main`
+
+| Story | Status | Built in | §8 record (moved to `done`) |
+|-------|--------|----------|-----------------------------|
+| AW-SRV-037 | **done** | #157 | #268 |
+| AW-SRV-019 | **done** | #147, #307 | #320 |
+| AW-SRV-013 | **done** | #173, #284, #322 | #296 |
+| AW-SRV-034 | **done** | #162 | #268 |
+| AW-CLI-002 | **done** | #178, #285, #335 | #315 |
+| AW-SRV-035 | **done** | #266, #281 | #293 |
+| AW-CLI-003 | **done** | #271, #283 | #296 |
+| AW-SRV-036 | **done** | #274 | #296 |
+| AW-SRV-038 | **done** | #278 | #296 |
+| AW-SRV-042 | **done** | #298 | #320 |
+| AW-INF-027 | **done** | #146 | #154 |
+| AW-INF-026 | **done** | #160 | #167 |
+| AW-INF-019 | **done** | #157 (AC-4's fixture) | #176 |
+| AW-INF-025 | **done** | #171 | #320 |
+| AW-INF-008 | **done** | — (AC-2 on `dev`; verified in #314) | #320 |
+| AW-INF-020 | **done** | #158 | #167 |
+| AW-INF-024 | **done** | #269 | #279 |
+| AW-INF-021 | **done** | #165, #288, #327, #328, #337 | #338 |
+| AW-INF-022 | **done** | #313, `andara.solo7.media` #11 | #320 |
+| AW-INF-023 | **done** | #310, #323, #330 | #338 |
+
+| Issue | Fixed in |
+|-------|----------|
+| #128 | #166 |
+| #143 | #307 |
+| #267 | #322 |
+| #326 | #334 |
+| #308 | #335, #336 |
+
+### Carryover to SPRINT-04
+None. SPRINT-04 takes on the M2 server-kill stories that were moved there on 2026-09-27
+(AW-SRV-026, AW-SRV-028 and AW-SRV-007), and the drafts groomed during this sprint.
+
+### Status defects (reported, not fixed)
+None in the story frontmatter. The board's mirror issues for six stories that were already `done`
+(#219–#221, #223, #245, #304) were still open. The close-out sync closed them.
+
+### Triage
+**Issues opened during SPRINT-03:**
+- Planned in SPRINT-04:
+  - #312, publish showing other packs' findings (architecture rules on the wording, then
+    implementation);
+  - #172, the snapshot stall-budget test that fails under load, now 4 of 5 local `make check` runs
+    (architecture and SRE decide how it measures, then implementation);
+  - #319, a test-only race (implementation);
+  - #287 and #290 (implementation; the contracts hold);
+  - #299, the wait's `no_zones_found` line, now repeated about once a second by the waiting
+    projector (SRE amends `AW-SRV-042`'s §7, then implementation).
+- **#152 (`content-gap`) is closed as resolved by AW-CLI-002.** `andara-cli` embeds `andara.core`, so a pack
+  compiles offline with no cache, and `fetch-core --help` no longer names `content/core` as a
+  source.
+
+**Feedback items:**
+- Follow-ups that didn't hold their stories, from seven §8 reviews, are gathered into
+  `AW-SRV-046` (draft, SPRINT-04). Each source feedback file says so.
+- `AW-SRV-007-recovery-scale.md`'s items 1 and 2 are still open, now with items 3 and 4 (the
+  `AW-SRV-043` edge, and `make stack-recover`). They're in SPRINT-04's contract review.
+- `AW-INF-027-status-sprint-scope.md`: Brian chose (c). `make status` stays a backlog view.
+- The roadmap's "two identities" note for Phase 1 exit criterion 4 now records Operator
+  self-approval (`AW-SRV-013-operator-self-approval.md`).
+- The AW-INF-005 and AW-INF-007 split is routed to architecture in
+  `docs/feedback/AW-INF-005-007-split.md`. Both are `ready`, which PM can't rewrite, and neither is
+  pickable in SPRINT-04.
+
+### Other findings
+- **The demo found what the tests couldn't.** The walk-through found nine points the guide didn't
+  cover. AC-7's first rebuild found three defects in the uninstall and first-sync path. All twelve
+  were closed inside the sprint. Running the gate on the real environment, from the user's
+  position, earns its cost.
+- **The plan changed four times mid-sprint** (the "Re-planned" and "Re-ordered" sections above).
+  None of the changes moved the demo goal. Implementation finished its original list early, and took
+  on items 11–15, which architecture's and SRE's reviews had found.
+- **Still Brian's:** Purgatory's description is a placeholder that every new Character reads first.

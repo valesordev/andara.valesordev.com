@@ -213,3 +213,8 @@ story's Observability section says so, dated.
 - the `warn` line `content activation refused` gains `code`, the first refusing finding's code, as
   `rejected` logs it at publish. Today it has only `reason` and `findings_count`, and the audit
   record has only the count, so once the RPC response is gone, a refusal's codes are nowhere.
+
+## Carried by `AW-SRV-046` (PM, 2026-10-02)
+
+The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
+(draft, SPRINT-04), which records each one as done here when it merges.

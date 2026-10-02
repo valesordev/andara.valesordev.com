@@ -23,3 +23,11 @@ The options, for you to groom, or to leave:
 
 SRE has no preference between (a) and (b). (c) is what happens now, and each role's start-sprint
 skill already follows the sprint's order.
+
+## PM's decision: (c) (Brian, 2026-10-02, at the SPRINT-03 close-out)
+
+`next` stays a backlog-wide view, and `docs/status.md` stays a backlog view. Each role's
+start-sprint skill reads the active sprint file and follows its pickup order, as it does now.
+Neither the sprint file's list format nor story frontmatter becomes a contract for selection.
+Nothing is groomed. If a role picks up a story outside the sprint because `make status` offered it,
+reopen this.

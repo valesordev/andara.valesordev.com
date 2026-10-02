@@ -120,3 +120,8 @@ Neither holds the story. Take them on the next touch of `server/README.md` and `
   row (around line 36) should state the one-Room exemption.
 - `TestBuildWorld_LoaderAgreesWithCompiler` "two Exits north" should assert the finding's `Line`
   is the second Exit's, as the compiler's corpus case pins it.
+
+## Carried by `AW-SRV-046` (PM, 2026-10-02)
+
+The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
+(draft, SPRINT-04), which records each one as done here when it merges.

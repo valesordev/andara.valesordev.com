@@ -7,7 +7,7 @@ type: bug
 status: done
 size: S
 depends_on: [AW-SRV-001, AW-CLI-006]
-blocks: [AW-CLI-002, AW-SRV-037]
+blocks: [AW-CLI-002, AW-SRV-037, AW-SRV-046]
 lane: implementation
 risk: low
 ---

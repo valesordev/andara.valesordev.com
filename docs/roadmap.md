@@ -28,7 +28,12 @@ the art-content cost; building it against an unstable protocol pays that cost tw
    a deploy. **As of 2026-09-07 activation requires a second approver**, so demonstrating this
    criterion needs two identities — one publishing, one approving. That is a change to how the
    criterion is exercised, not a weakening of it; it is called out here because a single-person
-   rehearsal will now fail, and it should.
+   rehearsal will now fail, and it should. **Amended 2026-09-26 (ADR-0004's dated note; `AW-SRV-013`
+   AC-13):** while Brian is the only Builder, an Operator may approve a version they published as a
+   Builder (`content.operator_self_approval`, default `true`). It's still two identities, a Builder
+   Account that publishes and an Operator Account that approves, held by one person. SPRINT-03's
+   demo exercised it that way. The switch goes to `false`, and this criterion needs two people,
+   when a second Builder joins.
 5. An Operator can run the full lifecycle — deploy, inspect, intervene, roll back — through
    `andara-cli`, with no direct datastore or Kafka access.
 6. Tick duration, tick overrun, and simulation lag SLOs exist, are measured, and have runbooks.
