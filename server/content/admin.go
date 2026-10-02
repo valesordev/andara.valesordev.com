@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path"
 	"slices"
 	"sort"
 	"strings"
@@ -383,6 +384,11 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	if err := a.checkRefs(refs); err != nil {
 		return nil, err
 	}
+	for _, ref := range refs {
+		if UnsafeBlobPath(ref.GetPath()) {
+			return nil, a.unsafePath(ctx, c, pack, ref.GetPath(), digest, override)
+		}
+	}
 	// The limits are checked against the store's sizes, not the caller's:
 	// a manifest declaring 0 bytes for a large blob would otherwise pass
 	// content.max_pack_bytes. A declared size the store disagrees with is
@@ -462,6 +468,71 @@ func (a *Admin) checkRefs(refs []*contentv1.BlobRef) error {
 		seen[ref.GetPath()] = true
 	}
 	return nil
+}
+
+// UnsafeBlobPath reports whether a manifest path could leave the pack it is
+// published in, or can't be written inside it (#267). The rule is the CLI's
+// unsafe_source_path. That is filepath.IsLocal on the fetching Builder's
+// machine, so the gate applies it as every OS would, whatever OS the server
+// runs on. It refuses a path that:
+//   - is absolute, or holds a backslash, a ".", ".." or empty element, or
+//     isn't clean under path.Clean. "." alone names no file, and a fetch
+//     would write onto its output directory (contract amended on #267).
+//   - holds a colon or a NUL byte: a Windows drive ("C:/x") or stream, and
+//     a name no OS writes (review of #322).
+//   - has an element that is a Windows device name (windowsDevice).
+//
+// `content fetch` writes blobs to disk by these paths on every Builder's
+// machine that fetches the version, so the gate refuses them rather than
+// trusting each client's guard.
+func UnsafeBlobPath(p string) bool {
+	if strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\:\x00") || path.Clean(p) != p {
+		return true
+	}
+	for _, el := range strings.Split(p, "/") {
+		if el == "" || el == "." || el == ".." || windowsDevice(el) {
+			return true
+		}
+	}
+	return false
+}
+
+// windowsDevice reports whether a path element names a Windows device, as
+// filepath.IsLocal's reserved-name check on Windows does: CON, PRN, AUX, NUL,
+// COM1-9 and LPT1-9 (with ¹, ² and ³ as digits), CONIN$ and CONOUT$, in any
+// case, ignoring trailing spaces. It's conservative about an extension:
+// "con.aw" is refused, as Windows 10 reserves it, though Windows 11 doesn't.
+func windowsDevice(el string) bool {
+	if i := strings.IndexByte(el, '.'); i >= 0 {
+		el = el[:i]
+	}
+	el = strings.ToUpper(strings.TrimRight(el, " "))
+	switch el {
+	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
+		return true
+	}
+	if rest, ok := strings.CutPrefix(el, "COM"); ok {
+		return isDeviceDigit(rest)
+	}
+	if rest, ok := strings.CutPrefix(el, "LPT"); ok {
+		return isDeviceDigit(rest)
+	}
+	return false
+}
+
+func isDeviceDigit(s string) bool {
+	return len(s) == 1 && '1' <= s[0] && s[0] <= '9' || s == "\u00b9" || s == "\u00b2" || s == "\u00b3"
+}
+
+// unsafePath refuses a manifest naming a path that leaves the pack: reason
+// validation, audited as a reject, before any blob is read or manifest
+// written.
+func (a *Admin) unsafePath(ctx context.Context, c caller, pack, p string, digest []byte, override bool) error {
+	a.m.Publishes.WithLabelValues(PublishRejected).Inc()
+	err := adminErr(CodeInvalidArgument, ErrReasonValidation, "%s: the path %q leaves the pack", pack, p)
+	a.record(ctx, c, auth.ActionReject, "rejected", pack, 0, auth.ContentAudit{BlobHashesSHA256: digest, Override: override}, err.Error())
+	a.log.LogAttrs(ctx, slog.LevelWarn, "content publish rejected: unsafe path", attrs(ctx, c, pack, 0, slog.String("path", p), slog.String("detail", err.Error()))...)
+	return err
 }
 
 func (a *Admin) staleParent(ctx context.Context, c caller, pack string, parent, newest uint64, digest []byte, override bool) error {

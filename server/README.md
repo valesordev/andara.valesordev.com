@@ -1129,8 +1129,18 @@ the Active Pointer the Loader follows), `ListVersions`, `GetVersion`, `GetBlob`
 - **Refused before the pointer moves.** `ActivateVersion` runs the Loader's own evaluation against
   the World in effect: `zone_removed`, `spawn_room_removed` and `core_version` are
   `FAILED_PRECONDITION` with an `ActivationRefusal` naming the subjects. `override` doesn't skip them.
+- **Paths stay in the pack.** `PublishVersion` refuses a manifest naming a blob path that is
+  absolute, or holds a backslash, a `.`, `..` or empty element, or isn't clean under `path.Clean`. That's
+  `INVALID_ARGUMENT` `validation`, naming the path, audited as a `reject`, and no manifest is written.
+  `content fetch` writes blobs by these paths, so the gate doesn't rely on each client's guard. The
+  rule is the CLI's `unsafe_source_path` (#267), which is `filepath.IsLocal` on the fetching
+  machine. So the gate also refuses, whatever OS the server runs on, the forms Windows can't
+  write locally: a colon (a drive or a stream), a NUL byte, and a device name as an element (`CON`,
+  `PRN`, `AUX`, `NUL`, `COM1`–`9`, `LPT1`–`9`, `CONIN$`, `CONOUT$`, any case, with or without an
+  extension).
 - **Errors** carry `ErrorInfo{domain: "andara.content", reason}`, plus `PublishFindings` on
-  `validation`.
+  `validation` from the Loader. A manifest the gate refuses before validating (no path, a bad hash,
+  a path twice, a path that leaves the pack) carries none.
 - **The server's own core.** At boot, before it reads the content, the server publishes the
   `andara.core` it embeds (`content/core/`) as `andara.core@<content/core/VERSION>`, author
   `server`. It activates that over nothing, or over its own older pointer. It leaves an Account's
