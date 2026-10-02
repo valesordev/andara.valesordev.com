@@ -438,8 +438,9 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 
 // commitAcked checkpoints the newest held boundary that has been delivered
 // and drops every older one. What is held grows while the broker is away,
-// one per sim.checkpoint_every_ticks; the producer's buffer, which fills at
-// a record per tick and more, is the tighter bound.
+// one per sim.checkpoint_every_ticks, and is bounded by the delivery
+// timeout: past it the outstanding boundary is declared lost and the loop
+// stops.
 func (l *Loop) commitAcked(ctx context.Context) {
 	acked := sim.Tick(l.acked.Load())
 	if lost := l.lost.Load(); lost != nil && acked >= lost.Lost {

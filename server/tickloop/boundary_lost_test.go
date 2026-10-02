@@ -268,7 +268,10 @@ func TestLoop_MemoryPublisherUnchanged(t *testing.T) {
 
 // Defense in depth behind boundarySeq: an acknowledgement for the lost tick
 // or a later one, which the publisher should never report, moves neither
-// what the stop calls delivered nor what is committed.
+// what the stop calls delivered nor what is committed. Three layers hold
+// this (BoundaryAcked's guard, commitAcked's cap, stopLost's min); the
+// assertions observe the outcome, and only removing the commit cap alone
+// fails them.
 func TestLoop_AckAtOrPastTheLossIsIgnored(t *testing.T) {
 	h, pub := newLossyHarness(t, 0, 0)
 	h.loop.opts.OnTick = func(res sim.StepResult, _ time.Duration) {
