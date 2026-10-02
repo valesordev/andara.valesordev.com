@@ -283,6 +283,52 @@ class StatusWaitingOk(unittest.TestCase):
         self.assertEqual(self.run_status(True, sync="OutOfSync")[0], 1)
 
 
+
+class StatusStalledOrWaiting(unittest.TestCase):
+    """A server waiting for its first content is not Ready, which stalled() alone can't tell
+    from a stuck rollout. The closing status printed `stalled … argocd-recover` beside
+    `waiting` on an empty store (AW-INF-021's §8 close); argocd-recover would refuse there."""
+
+    def run_status(self, waiting_ok, stuck, content_waiting):
+        mod = load_argocd()
+        mod.app_state = lambda name: ("Synced", "Progressing", "abc123", {"x": 1})
+        mod.kubectl_json = lambda *a: {}
+        mod.active_packs = lambda ns: [("andara.core", 1)]
+        mod.stalled = lambda ns: stuck
+        mod.content_waiting = lambda ns: content_waiting
+        return quiet(mod.status, "dev", waiting_ok)
+
+    def test_install_on_an_empty_store_says_waiting_not_stalled(self):
+        code, out, _ = self.run_status(True, "andara-0 not Ready", True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("stalled", out)
+        self.assertNotIn("argocd-recover", out)
+        self.assertIn("waiting      andara-0 is up and waiting for content", out)
+
+    def test_plain_status_on_an_empty_store_says_waiting_and_stays_strict(self):
+        code, out, _ = self.run_status(False, "andara-0 not Ready", True)
+        self.assertEqual(code, 1)
+        self.assertNotIn("stalled", out)
+        self.assertIn("next: make content-seed ENV=dev", out)
+
+    def test_a_stuck_rollout_still_says_stalled(self):
+        code, out, _ = self.run_status(False, "server: CrashLoopBackOff", False)
+        self.assertEqual(code, 1)
+        self.assertIn("stalled      server: CrashLoopBackOff", out)
+        self.assertNotIn("waiting      ", out)
+
+    def test_ready_asks_nothing_about_content(self):
+        asked = []
+        mod = load_argocd()
+        mod.app_state = lambda name: ("Synced", "Healthy", "abc123", {"x": 1})
+        mod.kubectl_json = lambda *a: {}
+        mod.active_packs = lambda ns: [("andara.core", 1)]
+        mod.stalled = lambda ns: None
+        mod.content_waiting = lambda ns: asked.append(ns) or False
+        code, out, _ = quiet(mod.status, "dev", False)
+        self.assertEqual((code, asked), (0, []))
+        self.assertNotIn("stalled", out)
+
 class HelmInstallRefusal(unittest.TestCase):
     """AC-7: once the Application exists, helm-install exits 1, naming it, and changes nothing."""
 
