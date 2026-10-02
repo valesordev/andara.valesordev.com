@@ -203,6 +203,52 @@ trace_id on the wait lines.)*
   true. Its runbook row (`server-unavailable.md`, first fix `make content-seed ENV=<env>`) and the
   startup probe's move to `/startedz` are SRE's, in `AW-INF-021`.
 
+### SRE amendment, 2026-10-02: the waiting state's `no_zones_found` (#299)
+
+Recorded after `done`. Implementation makes the code change (SPRINT-04, implementation item 9).
+Recorded in `docs/feedback/AW-SRV-042-empty-store-waits.md`.
+
+**What happens today.** A store-backed source (`content.source=kafka`) with no Zones in effect logs
+the Loader's finding `no_zones_found` at `error` and counts it in
+`andara_content_validation_errors_total{code="no_zones_found"}`.
+- The server logs it once per boot, before `ReconcileContent` decides between waiting and exiting
+  `1`.
+- The projector logs it again on every reload in `WaitForContent`'s backoff, from 1 s up to 60 s
+  (`server/boot/wait.go`). That was 10 lines in 44 s in `AW-INF-021`'s AC-7 run.
+
+The state is the expected one on every fresh environment. An `error` line that's expected trains
+operators to ignore that level.
+
+**The contract, from this amendment:**
+- **Deferred to the decision.** On a store-backed source, `no_zones_found` is held until the
+  process decides.
+  - **It waits:** the finding is dropped. No `error` line, and no increment of
+    `andara_content_validation_errors_total{code="no_zones_found"}`. The `warn` wait line above
+    stands alone.
+  - **It exits `1`:** the store's log had Zones that the pointers no longer name. The finding is
+    logged at `error` once, with its existing fields, and counted once.
+- **Reloads during a wait.** A reload that still finds no Zones logs one `debug` line,
+  `content reload: no Zones in effect yet`, with `attempt`, `next_retry`, and `trace_id` (the
+  `content.wait` span's). It doesn't count. Any **other** finding on a reload, such as an
+  activated pack that fails validation, is logged at `error` and counted as today. Only
+  `no_zones_found` is deferred.
+- **The directory source is unchanged.** It has no pointers to wait on, so `no_zones_found` is
+  still logged at `error`, counted, and exits `1`.
+- **Cardinality is unchanged.** `code` keeps its value set, and only when the series moves changes.
+- **Nothing keys on it.** No rule, dashboard, runbook, SLO doc, script, or workflow references
+  `content_validation_errors_total`, `no_zones_found`, or the `no Zones were found` line. That was
+  checked across `deploy/`, `docs/runbooks/`, `docs/specs/slo/`, `scripts/`, and `.github/` on
+  2026-10-02. `ContentLoadFailing` doesn't read it.
+
+**Verified at the code change's §8 check** (SRE), on a fresh `content.source=kafka` local stack
+before `make content-seed`:
+- the server's and the projector's logs hold no `error` line naming `no_zones_found`;
+- each holds exactly one `warn` wait line;
+- `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0` on both
+  `/metrics`.
+
+After the seed, both leave the wait as they do today.
+
 ## Test plan
 
 - **Unit:**

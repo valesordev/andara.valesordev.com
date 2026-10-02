@@ -114,3 +114,22 @@ story.
 - **The `/startedz` probe** is yours in `AW-INF-021`. The server half is here: 200 from the
   Gateway's start to exit, through the drain.
 - **`andara_sessions_total{outcome="rejected_no_content"}`** is pre-seeded at 0.
+
+## For implementation: #299, SRE amendment, 2026-10-02
+
+The story's §7 now carries "SRE amendment, 2026-10-02: the waiting state's `no_zones_found`
+(#299)". It's the observability contract for SPRINT-04's implementation item 9:
+- on a store-backed source, `no_zones_found` is held until the process decides;
+- a wait drops it, with no `error` line and no count;
+- an exit `1` logs it once and counts it once;
+- reloads during a wait log one `debug` line and don't count;
+- other findings, and the directory source, are unchanged.
+
+The issue names the counter `validation_errors_total`. Its full name is
+`andara_content_validation_errors_total` (`server/telemetry/telemetry.go`).
+
+## For architecture: #299
+
+This is a §7-only change to a `done` story. It changes when a finding is logged and counted, not
+the finding or its code. If you'd rather it be a contract amendment with its own AC, say so here,
+and implementation's item 9 waits on it.
