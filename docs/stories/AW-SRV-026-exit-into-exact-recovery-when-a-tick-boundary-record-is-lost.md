@@ -4,7 +4,7 @@ title: Exit into exact recovery when a Tick Boundary Record is lost
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-002]
 blocks: [AW-SRV-007]
