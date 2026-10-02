@@ -591,10 +591,29 @@ server's line said `present`, because the projector published first (#326).
   (`test_argocd.WaitSyncedHealthy`).
 - Defect 3, #326, is implementation's (SPRINT-03 item 14). Architecture ruled the projector a
   read-only content consumer that waits, unready.
-- `objectstore-install` before `argocd-install`: AC-7's sequence should name it, or `argocd-install`
-  should check for `andara-snapshot-s3`, as it checks for `kafka/andara-log`. That's for
-  architecture, on the second run's record.
+- `objectstore-install` before `argocd-install`: ruled by architecture (#332, option (a)). AC-7's
+  sequence names every step as a target: `env-destroy` (#333), `kafka-install`, `objectstore-install`,
+  `argocd-install`, then the sync and `content-seed`.
 
 **Next (PM, 2026-10-02):** Brian's walk-through on this `dev`, then the fixes and #326 merge, then a
 second rebuild with no hand step. That run is AC-7's pass. If the sprint closes first, AC-7 carries
 over to SPRINT-04.
+
+### `dev`'s Admin edge admits the box's docker bridge too (SRE, 2026-10-02)
+
+Brian's M3 walk-through got `403` on `Admin/CreateAccount` at 14:53:30Z, with Traefik's
+`ClientHost 172.19.0.1`, the kind network's gateway (`172.19.0.0/16`). Two minutes later the same
+box's `Admin/GetServerInfo` arrived as `100.79.240.98` and passed (14:55:46Z), as #305's evidence did.
+Both used `andara-dev.solo7.valesordev.com:443`. The difference is the path into kind's published
+port. `docker-proxy` holds `0.0.0.0:443`:
+- a connection Docker's iptables DNAT carries keeps its source, which is the tailnet's IPv4 address;
+- one the userland proxy carries is re-originated from the bridge gateway. That's loopback, and
+  plausibly the tailnet's IPv6 address, which MagicDNS can return, and Go may race v4 against v6.
+
+Which path Brian's client took isn't confirmed. `admin.allowedCIDRs` now adds `172.16.0.0/12`, as
+`values/local.yaml` has it, so either path is admitted. `helm_test` asserts it (mutation-checked).
+**The cost:** anything that reaches the box's port 443 through Docker's proxy is admitted too, not
+only the tailnet. `dev` is reachable by name only on the tailnet. A tighter fix keeps the source
+address on every path, by turning off the userland proxy, or by binding kind's port to the tailnet
+address only. That's a box-level change, noted here for `AW-INF-012`, which forwards the client
+address.

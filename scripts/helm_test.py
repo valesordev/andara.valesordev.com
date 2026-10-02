@@ -650,8 +650,10 @@ def test_content_configmaps():
     # dev's Admin edge admits the tailnet, where its Builders and operators are (AW-INF-021).
     mw = [d for d in docs(render("dev")[1]) if d.get("kind") == "Middleware" and "ipAllowList" in d.get("spec", {})]
     ranges = mw[0]["spec"]["ipAllowList"]["sourceRange"] if mw else []
-    if "100.64.0.0/10" not in ranges:
-        fail("dev: the Admin allow-list %r doesn't admit the tailnet (100.64.0.0/10)" % ranges)
+    for cidr, what in (("100.64.0.0/10", "the tailnet"),
+                       ("172.16.0.0/12", "the box's docker bridge (docker-proxy's source)")):
+        if cidr not in ranges:
+            fail("dev: the Admin allow-list %r doesn't admit %s (%s)" % (ranges, what, cidr))
     cfg = find(docs(render("dev")[1]), "ConfigMap", "andara-config")["data"]
     # One trace per operator action on dev; prod never trusts a client's traceparent.
     if cfg.get("ANDARA_TRUST_INBOUND_TRACEPARENT") != "true":
