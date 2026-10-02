@@ -160,7 +160,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		}
 		tel.Log.Error("tick loop", "detail", err.Error())
 		_ = srv.Shutdown(context.Background())
-		return boot.ExitFail
+		return boot.LoopExit(err)
 	case <-ctx.Done():
 		stopReconcile()
 		halt()
@@ -260,20 +260,23 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		// SimulationStopped has reached every subscriber; end them.
 		rt.Events.Close()
 		if loopDrain != nil {
+			// Past sim.drain_timeout_ms, 1; a boundary lost as the drain
+			// began, 5 (AW-SRV-026).
 			tel.Log.Error("tick loop drain", "detail", loopDrain.Error())
-			return boot.ExitFail
+			return boot.LoopExit(loopDrain)
 		}
 		return boot.ExitOK
 	case err := <-loopErr:
 		// The loop stopped on its own: an offset gap, or a source the
-		// process cannot continue past. Exit 1 rather than serve a World
-		// that has stopped moving.
+		// process cannot continue past, exits 1 rather than serve a World
+		// that has stopped moving. A lost boundary exits 5, into exact
+		// recovery (AW-SRV-026).
 		if err == nil {
 			err = errors.New("tick loop exited")
 		}
 		tel.Log.Error("tick loop", "detail", err.Error())
 		_ = gw.Shutdown(context.Background())
-		return boot.ExitFail
+		return boot.LoopExit(err)
 	case err := <-gwErr:
 		halt()
 		if err != nil {

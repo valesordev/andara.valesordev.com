@@ -4,7 +4,7 @@ title: Exit into exact recovery when a Tick Boundary Record is lost
 epic: EPIC-04
 component: server
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-002]
 blocks: [AW-SRV-007]
@@ -116,3 +116,31 @@ point here as resolved; the runbook paragraph exists.
 
 - **Resolved 2026-09-18 (Brian): exit into exact recovery.** The seventy-second outage restarts the
   sim once; a ten-minute outage restarts it until the broker returns, and pages.
+
+## Verification record — 2026-10-02 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-srv-026-exit-on-boundary-lost`. Questions and the hand-offs to SRE are in
+`docs/feedback/AW-SRV-026-boundary-lost-exit.md`.
+
+| AC | Test | What it asserts |
+|----|------|-----------------|
+| 1 | `TestLoop_BoundaryLostStopsIntoRecovery`, `TestLoop_BoundaryLostBetweenTicks` (unit, stepped clock); `TestKafka_BoundaryLostExitsIntoRecovery` (Redpanda); `TestLoopExit` (boot) | The loop stops after the tick that learned of the loss, which is within one interval when the loss lands between ticks. `SimulationStopped.reason` is `boundary_lost`. The `error` line names `lost_tick` and `last_delivered_tick` and comes before `draining` and `stopped`. The counter reads 1. The `sim.tick` span is marked and kept. A `BoundaryLostError` maps to exit `5`, and the drain timeout still maps to `1` |
+| 2 | `TestKafka_BoundaryLostExitsIntoRecovery` | The topic ends at `last_delivered_tick`. The restart recovers to it with its recorded hash and resumes at its offsets. The next boundary is that tick + 1, and the topic reads back gapless from tick 1 and replays whole |
+| 3 | `TestLoop_BoundaryLostStopsIntoRecovery`, `TestLoop_CheckpointWaitsForDelivery` (unit); `TestKafka_BoundaryLostExitsIntoRecovery` | The committed offsets are those of a delivered boundary, never past the last one. With two ticks of delivery lag, the commit is tick 10's, not tick 13's |
+| 4 | SRE's items 1 and 2 above | — |
+| 5 | `TestLoop_MemoryPublisherUnchanged` | The memory loop drains with `draining` and returns nil. The counter reads 0, and the drain commits the last tick's offsets |
+
+**Changed beyond the contract's surface, for AC-3.** A checkpoint now waits for its boundary's
+acknowledgement (`tickloop.Options.AwaitBoundaryAck`, on for `sim.source=kafka`). The drain now
+flushes the publisher before it commits. Both are recorded for architecture in the feedback file.
+
+**Measured, not asserted:** against a stopped Redpanda, franz-go reports the loss when the broker
+returns, not while it is down (five rounds, in the feedback file). AC-4's step must expect the
+exit at the broker's return.
+
+**Outstanding before `done`:**
+- AC-4. It needs SRE's compose `restart:` policy and the `stack` workflow step (feedback items 1
+  and 2).
+- The runbook paragraph (feedback item 3).
+- SRE's §8 instrumentation check: `andara_tick_boundary_lost_total` is registered on the server's
+  registry and reads 0 until a loss, and its first live 1 is AC-4's.

@@ -20,5 +20,7 @@ make tls && ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=./testdata/content/val
 ```
 
 Exit codes: `0` on a clean drain after `SIGTERM`/`SIGINT`; `1` on a configuration error
-(including missing or unloadable TLS material), a fatal content finding, or a listener failure.
+(including missing or unloadable TLS material), a fatal content finding, or a listener failure;
+`5` when a Tick Boundary Record was not delivered, so the restart recovers exactly to the last
+delivered one (`AW-SRV-026`).
 Configuration keys are in `server/README.md`.

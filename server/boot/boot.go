@@ -5,6 +5,7 @@ package boot
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"net/http"
 	"sync/atomic"
@@ -29,7 +30,21 @@ import (
 const (
 	ExitOK   = 0
 	ExitFail = 1
+	// ExitBoundaryLost: a Tick Boundary Record was not delivered, and the
+	// process exits so its restart recovers exactly to the last delivered
+	// one (AW-SRV-026). Distinct from 1, the drain timeout.
+	ExitBoundaryLost = 5
 )
+
+// LoopExit is the exit code for a tick loop that stopped on its own: 5 for a
+// lost boundary, 1 for anything else.
+func LoopExit(err error) int {
+	var lost *tickloop.BoundaryLostError
+	if errors.As(err, &lost) {
+		return ExitBoundaryLost
+	}
+	return ExitFail
+}
 
 // Runtime is one boot of andara-server.
 type Runtime struct {

@@ -36,6 +36,57 @@ type leaderProxy struct {
 	Partition int32
 	// Injected counts the Produce responses rewritten.
 	Injected atomic.Int64
+
+	// Refuse, while set, answers every Produce itself with the retriable
+	// NOT_ENOUGH_REPLICAS and forwards nothing: a broker that takes no
+	// writes, on every Partition. Unlike a severed connection, every batch
+	// gets an answer, so the idempotent producer may fail it once its
+	// delivery timeout passes (AW-SRV-026); and nothing is written, so the
+	// topic ends exactly at the last boundary acknowledged.
+	Refuse atomic.Bool
+	// Refused counts the Produce requests answered that way.
+	Refused atomic.Int64
+}
+
+// refuse is the NOT_ENOUGH_REPLICAS answer to a Produce request frame, or nil
+// if the frame is not one it can read.
+func (p *leaderProxy) refuse(frame []byte) []byte {
+	if len(frame) < 10 || int16(binary.BigEndian.Uint16(frame)) != 0 {
+		return nil
+	}
+	req := kmsg.NewPtrProduceRequest()
+	req.SetVersion(int16(binary.BigEndian.Uint16(frame[2:])))
+	off := 10 // key, version, correlation ID, client ID length
+	if n := int16(binary.BigEndian.Uint16(frame[8:])); n > 0 {
+		off += int(n)
+	}
+	if req.IsFlexible() {
+		if len(frame) <= off || frame[off] != 0 {
+			return nil // request header tags: not ours to read
+		}
+		off++
+	}
+	if err := req.ReadFrom(frame[off:]); err != nil {
+		p.t.Logf("proxy: cannot read produce v%d: %v", req.GetVersion(), err)
+		return nil
+	}
+	resp := req.ResponseKind().(*kmsg.ProduceResponse)
+	for _, t := range req.Topics {
+		rt := kmsg.NewProduceResponseTopic()
+		rt.Topic, rt.TopicID = t.Topic, t.TopicID
+		for _, part := range t.Partitions {
+			rp := kmsg.NewProduceResponseTopicPartition()
+			rp.Partition, rp.ErrorCode, rp.BaseOffset = part.Partition, kerr.NotEnoughReplicas.Code, -1
+			rt.Partitions = append(rt.Partitions, rp)
+		}
+		resp.Topics = append(resp.Topics, rt)
+	}
+	out := append([]byte(nil), frame[4:8]...) // the correlation ID
+	if resp.IsFlexible() {
+		out = append(out, 0)
+	}
+	p.Refused.Add(1)
+	return resp.AppendTo(out)
 }
 
 func newLeaderProxy(t *testing.T, upstream string, partition int32) *leaderProxy {
@@ -63,6 +114,14 @@ func (p *leaderProxy) accept() {
 			_ = c.Close()
 			continue
 		}
+		// Both directions write to the client once Refuse answers for
+		// the broker.
+		var toClient sync.Mutex
+		writeClient := func(frame []byte) error {
+			toClient.Lock()
+			defer toClient.Unlock()
+			return writeFrame(c, frame)
+		}
 		var inflight sync.Map // correlation ID -> [2]int16{key, version}
 		go func() {
 			defer u.Close()
@@ -70,6 +129,14 @@ func (p *leaderProxy) accept() {
 				frame, err := readFrame(c)
 				if err != nil {
 					return
+				}
+				if p.Refuse.Load() {
+					if resp := p.refuse(frame); resp != nil {
+						if writeClient(resp) != nil {
+							return
+						}
+						continue
+					}
 				}
 				if len(frame) >= 8 {
 					key := int16(binary.BigEndian.Uint16(frame[0:]))
@@ -93,7 +160,7 @@ func (p *leaderProxy) accept() {
 						frame = p.rewrite(kv.([2]int16), frame)
 					}
 				}
-				if writeFrame(c, frame) != nil {
+				if writeClient(frame) != nil {
 					return
 				}
 			}

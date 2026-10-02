@@ -116,15 +116,18 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			// Delivery failures arrive after Publish returned; count them
 			// against the loop's metric by topic.
 			if loop != nil {
+				// A lost boundary stops the loop, and the process exits 5
+				// into exact recovery (AW-SRV-026); the loop logs it.
 				kp.OnBoundaryLost = func(tick sim.Tick, err error) {
 					snapshotter.OnBoundaryLost(tick, err)
 					loop.Metrics().PublishFailures.WithLabelValues("boundary").Inc()
-					rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "tick boundary lost: this process publishes no more boundaries; the next restart recovers exactly to the last delivered one and re-batches after it",
-						slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()))
+					loop.BoundaryLost(tick, err)
 				}
 				kp.OnBoundaryAcked = func(tick sim.Tick, lag time.Duration) {
-					// A snapshot round waits on this (AW-SRV-006 AC-8).
+					// A snapshot round waits on this (AW-SRV-006 AC-8), and
+					// so does the checkpoint of its offsets (AW-SRV-026).
 					snapshotter.OnBoundaryAcked(tick)
+					loop.BoundaryAcked(tick)
 					rt.Events.Metrics().PublishLag.Set(lag.Seconds())
 				}
 				kp.OnFailure = func(topic string, err error) {
@@ -175,12 +178,15 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		MaxPerTick:      cfg.SimMaxPerTick,
 		DrainTimeout:    cfg.SimDrainTimeout,
 		CheckpointEvery: cfg.SimCheckpointEveryTicks,
-		Log:             rt.Tel.Log,
-		Tracer:          rt.Tel.Tracer,
-		Registry:        rt.Tel.Reg,
-		Commands:        rt.Commands,
-		OnTick:          rt.onTick(),
-		OnSwap:          rt.onSwap(),
+		// The Kafka publisher reports a boundary's delivery after Publish
+		// returns; the memory publisher's Publish is the delivery.
+		AwaitBoundaryAck: cfg.SimSource == "kafka",
+		Log:              rt.Tel.Log,
+		Tracer:           rt.Tel.Tracer,
+		Registry:         rt.Tel.Reg,
+		Commands:         rt.Commands,
+		OnTick:           rt.onTick(),
+		OnSwap:           rt.onSwap(),
 	})
 	if err != nil {
 		_ = source.Close()

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -39,6 +40,12 @@ type Options struct {
 	MaxPerTick      int           // sim.max_per_tick
 	DrainTimeout    time.Duration // sim.drain_timeout_ms
 	CheckpointEvery int           // sim.checkpoint_every_ticks
+	// AwaitBoundaryAck holds each checkpoint until its tick's boundary is
+	// acknowledged (BoundaryAcked), for a publisher that enqueues and reports
+	// delivery later: offsets committed never pass the last delivered
+	// boundary (AW-SRV-026). False treats a Publish that returned nil as the
+	// delivery, which is the memory publisher.
+	AwaitBoundaryAck bool
 
 	Log      *slog.Logger
 	Tracer   trace.Tracer
@@ -70,6 +77,17 @@ type Loop struct {
 	inflight      sim.Tick
 	lastCommitted sim.Tick
 
+	// Boundary delivery (AW-SRV-026). acked is the newest tick whose
+	// boundary is known delivered, and lost, once set, stops the loop; both
+	// are written from the publisher's goroutine. pending is the checkpoints
+	// waiting on their boundary's acknowledgement, and published the newest
+	// tick whose boundary was handed to the publisher; the loop's goroutine
+	// only.
+	acked     atomic.Uint64
+	lost      atomic.Pointer[BoundaryLostError]
+	pending   []sim.TickCompleted
+	published sim.TickCompleted
+
 	zoneTimes map[sim.ZoneID]time.Duration
 	// tickCtx is the running tick's span context, the parent for
 	// command.apply spans; set for the duration of tick().
@@ -87,6 +105,27 @@ type DrainTimeoutError struct {
 func (e *DrainTimeoutError) Error() string {
 	return fmt.Sprintf("tickloop: drain exceeded %s; tick %d did not complete", e.Timeout, e.Tick)
 }
+
+// BoundaryLostError is what Run returns when a Tick Boundary Record was not
+// delivered (AW-SRV-026): the in-flight tick completed, the loop drained with
+// SimulationStopped{reason: boundary_lost}, nothing past LastDelivered was
+// committed, and the process exits 5 so the next boot recovers exactly to
+// LastDelivered.
+type BoundaryLostError struct {
+	Lost          sim.Tick // the boundary that was not delivered
+	LastDelivered sim.Tick // the newest boundary acknowledged before it
+	Err           error    // the delivery failure
+}
+
+func (e *BoundaryLostError) Error() string {
+	return fmt.Sprintf("tickloop: tick boundary %d lost, last delivered %d: %v", e.Lost, e.LastDelivered, e.Err)
+}
+
+func (e *BoundaryLostError) Unwrap() []error { return []error{ErrBoundaryLost, e.Err} }
+
+// StopReasonBoundaryLost is SimulationStopped.reason when a lost boundary
+// stopped the loop; a requested drain's is "draining".
+const StopReasonBoundaryLost = "boundary_lost"
 
 // New validates the options and builds a Loop.
 func New(o Options) (*Loop, error) {
@@ -126,12 +165,32 @@ func (l *Loop) Metrics() *Metrics { return l.metrics }
 // Interval is the tick interval.
 func (l *Loop) Interval() time.Duration { return l.interval }
 
+// BoundaryAcked records that tick's boundary as delivered, releasing the
+// checkpoints held for it. Safe from any goroutine: the Kafka publisher calls
+// it from its delivery callback.
+func (l *Loop) BoundaryAcked(tick sim.Tick) {
+	for {
+		cur := l.acked.Load()
+		if uint64(tick) <= cur || l.acked.CompareAndSwap(cur, uint64(tick)) {
+			return
+		}
+	}
+}
+
+// BoundaryLost stops the loop into exact recovery (AW-SRV-026): the tick in
+// flight, or the next one if none is, completes, and Run drains and returns a
+// *BoundaryLostError. Safe from any goroutine; only the first call counts.
+func (l *Loop) BoundaryLost(tick sim.Tick, err error) {
+	l.lost.CompareAndSwap(nil, &BoundaryLostError{Lost: tick, Err: err})
+}
+
 // Run ticks until ctx is done, then drains: the in-flight tick completes,
 // offsets are checkpointed, SimulationStopped is emitted, and Run returns
 // nil (AC-15). If that outlasts DrainTimeout, Run returns a
 // DrainTimeoutError naming the tick; the loop goroutine is abandoned, since
-// the process exits 1 behind it. A record-source error the loop cannot
-// continue past — an offset gap — is returned as is.
+// the process exits 1 behind it. A lost boundary drains the same way and
+// returns a *BoundaryLostError (AW-SRV-026). A record-source error the loop
+// cannot continue past — an offset gap — is returned as is.
 func (l *Loop) Run(ctx context.Context) error {
 	done := make(chan error, 1)
 	go func() { done <- l.run(ctx) }()
@@ -190,6 +249,10 @@ func (l *Loop) run(ctx context.Context) error {
 		l.inflight = tick
 		l.mu.Unlock()
 		if err := l.tick(ctx, tick, lag); err != nil {
+			var lost *BoundaryLostError
+			if errors.As(err, &lost) {
+				return l.stopLost(e, lost)
+			}
 			return err
 		}
 
@@ -287,7 +350,10 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// A tick that expired a linkdead body is that expiry's trace, and its
 	// despawn line names it: kept, as a content swap is, so the line
 	// resolves (AW-SRV-015).
-	keep := overrun || tick%TraceEveryTicks == 0 || expired(res.Linkdead)
+	// A lost boundary stops the loop after this tick, which is the one its
+	// trace shows (AW-SRV-026): always kept.
+	lost := l.lost.Load()
+	keep := overrun || tick%TraceEveryTicks == 0 || expired(res.Linkdead) || lost != nil
 	if overrun {
 		l.metrics.Overruns.Inc()
 		l.log.LogAttrs(tctx, slog.LevelWarn, "tick overran its budget",
@@ -306,10 +372,25 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 		attribute.Float64("lag_seconds", lag.Seconds()),
 		attribute.Bool("andara.keep", keep),
 	)
-
-	if tick%sim.Tick(l.opts.CheckpointEvery) == 0 {
-		l.checkpoint(tctx, res.Completed)
+	if lost != nil {
+		span.SetAttributes(attribute.Bool("boundary_lost", true))
 	}
+
+	// A checkpoint is a boundary's offsets, committed once that boundary
+	// is delivered and never before: a restart re-applies from the last
+	// delivered boundary, and a commit past it would claim records that
+	// no recorded boundary applied (AW-SRV-026 AC-3). A tick whose
+	// boundary was not published has nothing to checkpoint.
+	if publishErr == nil {
+		l.published = res.Completed
+		if !l.opts.AwaitBoundaryAck {
+			l.BoundaryAcked(tick)
+		}
+		if tick%sim.Tick(l.opts.CheckpointEvery) == 0 {
+			l.pending = append(l.pending, res.Completed)
+		}
+	}
+	l.commitAcked(tctx)
 	// On the boundary rather than mid-tick, because this is the only place
 	// the loop is between ticks — and only when the boundary was actually
 	// published. AC-8 requires the envelope's tick to be one a TickCompleted
@@ -343,7 +424,27 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 		}
 		l.opts.OnTick(res, duration)
 	}
+	if lost != nil {
+		return lost
+	}
 	return nil
+}
+
+// commitAcked checkpoints the newest held boundary that has been delivered
+// and drops every older one. Held boundaries are bounded by the delivery
+// timeout: past it, the boundary is lost and the loop stops.
+func (l *Loop) commitAcked(ctx context.Context) {
+	acked := sim.Tick(l.acked.Load())
+	n := 0
+	for n < len(l.pending) && l.pending[n].Tick <= acked {
+		n++
+	}
+	if n == 0 {
+		return
+	}
+	tc := l.pending[n-1]
+	l.pending = append(l.pending[:0], l.pending[n:]...)
+	l.checkpoint(ctx, tc)
 }
 
 func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
@@ -357,9 +458,28 @@ func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
 	l.mu.Unlock()
 }
 
-// drain finishes the loop: checkpoint what the last tick left, emit
-// SimulationStopped, close the seams.
+// stopLost is the drain a lost boundary triggers (AW-SRV-026): it names
+// the loss, drains, and returns it for the process to exit 5.
+func (l *Loop) stopLost(e *sim.Engine, lost *BoundaryLostError) error {
+	ctx := context.Background()
+	lost.LastDelivered = sim.Tick(l.acked.Load())
+	l.metrics.BoundaryLost.Inc()
+	l.log.LogAttrs(ctx, slog.LevelError, "tick boundary lost; exiting into recovery",
+		slog.Uint64("lost_tick", uint64(lost.Lost)),
+		slog.Uint64("last_delivered_tick", uint64(lost.LastDelivered)),
+		slog.String("err", lost.Err.Error()))
+	l.drainAs(e, StopReasonBoundaryLost)
+	return lost
+}
+
+// drain finishes the loop on request: emit SimulationStopped, flush, then
+// checkpoint what was delivered, and close the seams.
 func (l *Loop) drain(e *sim.Engine) error {
+	l.drainAs(e, "draining")
+	return nil
+}
+
+func (l *Loop) drainAs(e *sim.Engine, reason string) {
 	ctx := context.Background()
 	l.log.LogAttrs(ctx, slog.LevelInfo, "tick loop draining", slog.Uint64("tick", uint64(e.Tick())))
 	// A round in flight owns an immutable body and a deadline of its own, so
@@ -368,28 +488,28 @@ func (l *Loop) drain(e *sim.Engine) error {
 	// the previous complete one is still newest, but a puzzle for whoever
 	// listed the store next.
 	l.opts.Snapshotter.Wait()
-	l.checkpoint(ctx, sim.TickCompleted{Tick: e.Tick(), Offsets: copyOffsets(e.State().Offsets)})
-	ev := e.Stop("draining")
+	ev := e.Stop(reason)
 	if err := l.opts.Publisher.Publish(ctx, []sim.Event{ev}, sim.TickCompleted{}); err != nil {
 		l.metrics.PublishFailures.WithLabelValues("events").Inc()
 	}
 	// Close flushes what the asynchronous publisher still holds — the last
-	// ticks' boundaries among it — within its own bound.
+	// ticks' boundaries among it — within its own bound, so the final
+	// checkpoint follows it: the newest boundary that flush delivered. After
+	// a loss nothing past the last delivered boundary is acknowledged, so
+	// nothing past it is committed.
 	if err := l.opts.Publisher.Close(); err != nil {
 		l.metrics.PublishFailures.WithLabelValues("events").Inc()
 		l.log.LogAttrs(ctx, slog.LevelWarn, "publisher did not flush", slog.String("detail", err.Error()))
 	}
+	if n := len(l.pending); l.published.Tick > 0 && (n == 0 || l.pending[n-1].Tick < l.published.Tick) {
+		l.pending = append(l.pending, l.published)
+	}
+	l.commitAcked(ctx)
+	l.mu.Lock()
+	l.metrics.CheckpointAge.Set(float64(e.Tick() - l.lastCommitted))
+	l.mu.Unlock()
 	_ = l.opts.Source.Close()
 	l.log.LogAttrs(ctx, slog.LevelInfo, "tick loop stopped", slog.Uint64("tick", uint64(e.Tick())))
-	return nil
-}
-
-func copyOffsets(in map[int32]int64) map[int32]int64 {
-	out := make(map[int32]int64, len(in))
-	for p, o := range in {
-		out[p] = o
-	}
-	return out
 }
 
 // summary is the once-per-second info line.

@@ -381,9 +381,19 @@ func EventRecord(ev sim.Event) (*logv1.Event, error) {
 // one will be published by this process — see Publish.
 var ErrBoundaryLost = errors.New("tick boundary lost; boundaries are no longer published by this process")
 
+// DeliveryTimeout is how long a record is retried before it is given up on:
+// franz-go's default, and not a configuration key (AW-SRV-026).
+const DeliveryTimeout = time.Minute
+
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
 // producer on.
 func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (*KafkaPublisher, error) {
+	return newKafkaPublisher(ctx, brokers, clientID, DeliveryTimeout)
+}
+
+// newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
+// shortens, so a lost boundary costs it seconds rather than a minute.
+func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
 	if clientID == "" {
 		clientID = "andara-server"
 	}
@@ -393,8 +403,13 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		// A record is retried for a minute before it is given up on, so an
-		// outage shorter than that loses nothing; a longer one is counted.
-		kgo.RecordDeliveryTimeout(time.Minute),
+		// outage shorter than that loses nothing; a longer one loses the
+		// boundary and stops the loop (AW-SRV-026). franz-go evaluates the
+		// timeout only before writing a request or after a response, and
+		// never fails a batch it sent and got no answer for: an unreachable
+		// broker's loss is reported when the broker returns, not while it is
+		// down (measured against a stopped Redpanda, 2026-10-02).
+		kgo.RecordDeliveryTimeout(deliveryTimeout),
 		// And only the delivery timeout: by default franz-go fails a record
 		// after five consecutive UNKNOWN_TOPIC_OR_PARTITION answers, which a
 		// broker gives while a restart is still loading its partitions. With
@@ -451,11 +466,11 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 // buffered behind a failed record on the same Partition, so an outage
 // longer than the delivery timeout would leave `…, N, [gap], M, …` and a
 // World that cannot boot. So: once one boundary is lost, this process
-// publishes no more. It keeps ticking and Events keep flowing (AC-9); the
-// next restart recovers exactly to the last delivered boundary and
-// re-batches after it, which is the policy AW-SRV-007 inherits. A full
-// buffer counts as a loss for the same reason — the boundary was not
-// enqueued, and the next one must not be either.
+// publishes no more, and OnBoundaryLost stops the loop; the process exits 5
+// and its restart recovers exactly to the last delivered boundary and
+// re-batches after it (AW-SRV-026). A full buffer counts as a loss for the
+// same reason — the boundary was not enqueued, and the next one must not be
+// either.
 func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim.TickCompleted) error {
 	recs := make([]*kgo.Record, 0, len(events)+1)
 	for _, ev := range events {
