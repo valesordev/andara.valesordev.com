@@ -9,7 +9,12 @@
 #
 # cli-dev is one rolling pre-release. Its tag is moved to HEAD, the new archives are
 # uploaded over the old, and archives no longer in SHA256SUMS (the previous version's names)
-# are deleted last, so a download never meets an empty release. The tag moves only when HEAD
+# are deleted last, so a download almost never meets an empty release. One gap remains:
+# `gh release upload --clobber` replaces SHA256SUMS with a delete and then an upload, so for a
+# second or two (15:16:33Z on 2026-10-02) the release has no index, and GitHub has no atomic asset
+# replace. Clients retry briefly: the Content Repository's `make tools` (curl --retry-all-errors)
+# and `make cli-release-check`. A release's `created_at` is its tag commit's date, so it moves on
+# every publish without the release being recreated. The tag moves only when HEAD
 # is still origin/main's head: GitHub serializes runs in a concurrency group but doesn't
 # order them, so an older run admitted after a newer one would otherwise move cli-dev
 # backwards (AC-2). That is the guard image_publish.sh applies to :dev.
