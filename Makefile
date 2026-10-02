@@ -59,7 +59,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         graph k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
-        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed \
+        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild
 
 ## help: print this target list
@@ -374,6 +374,10 @@ projector-rebuild:
 ## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> (AW-INF-021)
 world-reset:
 	@$(PY) $(SCRIPTS)/world_reset.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
+
+## env-destroy: delete ENV's namespace and wait until it's gone — Argo CD's Application (non-cascading), Kafka, the object store, every Secret and PVC; the cluster-wide operators stay — ENV=<env> CONFIRM=andara-<env> (AW-INF-021 AC-7)
+env-destroy:
+	@$(PY) $(SCRIPTS)/env_destroy.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 
 ## content-seed: publish and activate the dev fixture as pack town in ENV's content store — idempotent — needs the operator credential (ANDARA_BOOTSTRAP_OPERATOR) — ENV=<env> (AW-INF-021)
 content-seed:
