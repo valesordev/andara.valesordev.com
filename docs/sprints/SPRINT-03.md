@@ -184,9 +184,14 @@ now `ready`) and Brian's walk-through come after them. They go to SPRINT-04's co
 - AW-SRV-041 — a bystander reads `<name> has arrived.` when there's no Exit back (Brian, 2026-09-30)
 - AW-INF-029 — `content/core/VERSIONS` is append-only, enforced by `make check`
 
-## Re-ordered 2026-10-01: AC-7 before the demo
-Brian's decision. AW-INF-021 AC-7, the rebuild of `dev` from nothing, runs **before** the M3
-walk-through (AW-INF-023 AC-3), not after it, as AW-INF-021's §8 note had it. AC-7 ends at the
+## Re-ordered 2026-10-01: AC-7's first run before the demo; the confirming run after
+**The order in force** (2026-10-02, the update below): the walk-through ran first, and AC-7's
+*confirming* rebuild runs after it. That's the order AW-INF-021's §8 record already states ("after
+SPRINT-03's demo… it doesn't hold AW-INF-023"), so the story record and this plan agree. What
+follows is the history.
+
+Brian's decision on 2026-10-01 was that a *first* run of AW-INF-021 AC-7, the rebuild of `dev` from
+nothing, would go before the M3 walk-through (AW-INF-023 AC-3). AC-7 ends at the
 state the walk-through starts from (`andara.core` and `town`), so the demo runs on an environment
 rebuilt from nothing. And a defect in the uninstall, Secrets and first-sync path surfaces before the
 demo rather than after it. The rebuild clears Brian's Builder Account and grants. Guide section 2
@@ -201,6 +206,13 @@ pass. It needed hand steps, and it found three defects:
 2. `argocd-install` waits for Healthy, which an empty store can't reach before the seed. SRE's to
    fix.
 3. #326, the projector racing the server to publish the core. Implementation's, item 14 above.
+
+**The procedure must delete the namespace.** AC-7 as written (`argocd-uninstall`, fresh topics,
+`argocd-install`) keeps the namespace: `argocd-uninstall` doesn't cascade, and `argocd-install`
+leaves existing Secrets as they are (`scripts/argocd.py`). So that procedure never recreates the
+Secrets or the namespace. The first run deleted `andara-dev` outright (Brian, in SRE's session),
+which is what found defect 1. The confirming run deletes it too. Making AC-7's text say so is
+architecture's, in `docs/feedback/AW-INF-021-dev-content-store.md` (found by Codex on #325).
 
 A clean pass needs all three fixed and a second full rebuild, which would erase the walk-through's
 work. So the rebuild that confirms AC-7 runs **after** the demo. The order to close is now:
