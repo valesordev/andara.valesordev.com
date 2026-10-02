@@ -269,9 +269,9 @@ func TestLoop_MemoryPublisherUnchanged(t *testing.T) {
 // Defense in depth behind boundarySeq: an acknowledgement for the lost tick
 // or a later one, which the publisher should never report, moves neither
 // what the stop calls delivered nor what is committed. Three layers hold
-// this (BoundaryAcked's guard, commitAcked's cap, stopLost's min); the
-// assertions observe the outcome, and only removing the commit cap alone
-// fails them.
+// this: BoundaryAcked's guard, stopLost's min, and commitAcked's cap. This
+// test fails only with both of the first two removed; the cap has its own
+// test below.
 func TestLoop_AckAtOrPastTheLossIsIgnored(t *testing.T) {
 	h, pub := newLossyHarness(t, 0, 0)
 	h.loop.opts.OnTick = func(res sim.StepResult, _ time.Duration) {
@@ -291,5 +291,21 @@ func TestLoop_AckAtOrPastTheLossIsIgnored(t *testing.T) {
 	committed, _ := h.source.Committed()
 	if got := committed[sim.PartitionFor("town")]; got != 10 {
 		t.Fatalf("committed town at %d, want 10", got)
+	}
+}
+
+// commitAcked's cap on its own: with the acknowledged tick already past the
+// loss, which BoundaryAcked's guard otherwise prevents, nothing past the
+// last tick before the loss is committed.
+func TestLoop_CommitNeverPassesTheLoss(t *testing.T) {
+	h := newHarness(t, nil)
+	offsets := func(n int64) map[int32]int64 { return map[int32]int64{sim.PartitionFor("town"): n} }
+	h.loop.pending = []sim.TickCompleted{{Tick: 10, Offsets: offsets(10)}, {Tick: 12, Offsets: offsets(12)}}
+	h.loop.BoundaryLost(11, errBrokerGone)
+	h.loop.acked.Store(12)
+	h.loop.commitAcked(context.Background())
+	committed, _ := h.source.Committed()
+	if got := committed[sim.PartitionFor("town")]; got != 10 {
+		t.Fatalf("committed town at %d, want 10: tick 12 is past the lost 11", got)
 	}
 }
