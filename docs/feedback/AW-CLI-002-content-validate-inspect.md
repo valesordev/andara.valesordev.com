@@ -195,3 +195,8 @@ first three bullets:
   its answer, is one JSON line: `{ts, level, msg, command, trace_id}`. Its level is `info` on
   success and `error` on failure, and it's written whatever `--log-level` is, since it's the exit
   summary rather than a log.
+
+## Carried by `AW-SRV-046` (PM, 2026-10-02)
+
+The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
+(draft, SPRINT-04), which records each one as done here when it merges.

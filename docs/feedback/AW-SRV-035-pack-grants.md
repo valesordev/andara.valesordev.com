@@ -83,3 +83,8 @@ With that and SRE's record, the story closes.
 ### For PM
 - **Audit outside the Account write lock for every Admin write** (`SetRoles` and the rest), as
   `SetBuilderPacks` now does (5bebac0). Implementation, `server`. Not on the demo's path.
+
+## Carried by `AW-SRV-046` (PM, 2026-10-02)
+
+The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
+(draft, SPRINT-04), which records each one as done here when it merges.

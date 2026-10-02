@@ -116,3 +116,8 @@ needs a test. It does. It's a §7 item, and it isn't asserted anywhere. The ask:
   received.
 
 The default level stays `warn`.
+
+## Carried by `AW-SRV-046` (PM, 2026-10-02)
+
+The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
+(draft, SPRINT-04), which records each one as done here when it merges.

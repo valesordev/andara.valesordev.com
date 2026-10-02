@@ -7,7 +7,7 @@ type: infra
 status: done
 size: M
 depends_on: [AW-CLI-003, AW-SRV-035, AW-SRV-036, AW-INF-020, AW-INF-021, AW-INF-022, AW-INF-024]
-blocks: []
+blocks: [AW-INF-033]
 lane: architecture
 risk: low
 ---
