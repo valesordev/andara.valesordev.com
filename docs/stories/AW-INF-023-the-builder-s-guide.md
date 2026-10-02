@@ -331,3 +331,33 @@ output* is AC-4's other half, and architecture's §8 judges it.
 **AC-3** is Brian's walk-through on `dev`. Everything it needs is in place: `dev` serves from the
 store with `town@1` (`AW-INF-021`), Admin is reachable over the tailnet (#305), and the Content
 Repository's `check` validates (`AW-INF-022`).
+
+## AC-3 walk-through (Brian, 2026-10-01 to 2026-10-02)
+
+Brian followed sections 2–4 on `dev`, rebuilt from a deleted namespace (`AW-INF-021`'s AC-7 run),
+from no clone of the code repository. **Every step completed:** access, install, login, the
+Content Repository, a pack, `check`, publish, self-approval, activate, `server info`, `play`,
+`goto`, change, and rollback. The transcript is attached, redacted, at
+`docs/feedback/AW-INF-023-walkthrough-transcript.md`.
+
+The points where he needed something the guide didn't say, and where each is closed:
+
+| # | Point | Closed by |
+|---|-------|-----------|
+| 1 | The Operator's login failed with `x509: certificate signed by unknown authority`. His `andara-cli` had a private CA pinned from local-stack work, and a pinned CA replaces the system trust store. A clean CLI verifies `dev`'s certificate (PM reproduced it). Section 2 also never said how the Operator logs in | **the guide** (this record's PR): section 3 says no CA may be set, and how to find and remove one with `config show`'s source column. Section 2 says the Operator logs in as themselves, from the box or the tailnet |
+| 2 | Admin `CreateAccount` got 403 at Traefik from the box itself, which arrives as the docker bridge address | **#328** (SRE, merged). Section 2 says Admin works from the box and from tailnet devices |
+| 3 | `make tools` 404'd on macOS: Make 3.81 has no `$(file)`, so `ANDARA_REF` was empty, and the recipe didn't stop on the failed download | **`andara.solo7.media` #11** (SRE), with a macOS CI job. No guide change: `make tools` is the documented step, and it now works |
+| 4 | The Content Repository requires signed commits, and nothing said how to set signing up | **the guide**: section 4's new "Sign your commits" covers the GitHub signing key, the per-repo `git config`, `allowed_signers`, the check, and re-signing a branch |
+| 5 | Not hit in the end: `cli-dev`'s `SHA256SUMS` is briefly absent during a publish | **#329**, and `andara.solo7.media` #11 (retries) |
+| 6 | `andara-cli` wasn't on his `PATH`, so he used the Content Repository's pinned `./.tools/bin/andara-cli` (transcript) | **the guide**: section 4 says either works |
+| 7 | His Operator and Builder are separate Accounts, and `andara-cli` keeps one login per address, so he ran `auth login` again at every switch (transcript) | **the guide**: section 4's "Two Accounts, one person" shows `--credentials` keeping both logins |
+| 8 | Publish printed the fixture's `purgatory.json` warning as his pack's (transcript) | **the guide**: section 4 says to ignore it, until **#312** is fixed |
+| 9 | Re-signing needed `--reset-author` after fixing the email, and `ssh-add` for a key with a passphrase (transcript) | **the guide**: "Sign your commits" says both |
+
+**What closes AC-3:** `andara.solo7.media` #11 merged, and this record's PR merged (with the
+transcript). Then no open points remain, as AC-3 requires, and architecture moves the story to
+`done`.
+
+**On AC-4,** recorded for the §8 review. "Sign your commits" has one GitHub step (adding the key as a
+Signing Key), like opening the pull request. Its other steps are `git` commands on the Content
+Repository. If SRE's `make bootstrap` for the Content Repository lands, the guide switches to it.

@@ -12,7 +12,9 @@ Before you start, you need:
 - a pack grant, and the `builder` role.
 
 Every step is an `andara-cli` command, a `git` command on the Content Repository, or a `make` target,
-with what it prints.
+with what it prints. `andara-cli` means the one you installed in [section 3](03-installing-andara-cli.md),
+on your `PATH`. Inside the Content Repository, `make tools` also puts the version the repository is
+pinned to at `.tools/bin/andara-cli`, and `./.tools/bin/andara-cli` works for every step too.
 
 ## Get the Content Repository
 
@@ -33,6 +35,43 @@ make check
 
 `content/example` is the shape to copy: a directory named for the pack, a `pack.aw`, and a file per
 Zone.
+
+## Sign your commits
+
+The Content Repository's `main` accepts only signed commits, so set signing up once, before your
+first commit. These steps use an SSH key: the one you clone with is fine.
+
+1. On GitHub, under **Settings → SSH and GPG keys → New SSH key**, add your public key again with
+   **Key type: Signing Key**. A key added for authentication doesn't sign.
+2. In the clone, tell `git` who you are and how to sign. The email must be one GitHub has verified
+   for your account, or GitHub shows the commit as unverified:
+
+   ```
+   git config user.name "<your name>"
+   git config user.email "<a verified GitHub email>"
+   git config gpg.format ssh
+   git config user.signingkey ~/.ssh/id_ed25519.pub
+   git config commit.gpgsign true
+   ```
+
+   Use your own public key's path.
+3. To check signatures locally, tell `git` which keys to trust. Create a file listing yours, then:
+
+   ```
+   git config gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+   ```
+
+   The file has one line per key: `<your email> <the contents of your .pub file>`.
+
+Check a commit with `git log --show-signature -1`. It reads `Good "git" signature for <your email>`.
+
+If your key has a passphrase, `git` asks for it on every commit. Add the key to your agent once
+per session with `ssh-add`, naming the private key, not the `.pub`.
+
+If you committed before setting this up, re-sign the branch's commits with
+`git rebase --exec 'git commit --amend --no-edit -S' main`, then `git push --force-with-lease`.
+If the commits also carry the wrong author email, use `--reset-author` in that command, so they take
+the email you just set.
 
 ## Write the pack
 
@@ -148,6 +187,10 @@ glade@1 published (first version), awaiting approval
 Your sources go up with it, and the server checks them against everything else on `dev`. Nothing
 in the World changes yet.
 
+Publish may also print a `missing_reverse_exit` warning labelled as your pack's `purgatory.json`.
+It's the town's one-way Exit out of Purgatory, not your pack's, and it's a known defect (#312).
+Ignore it.
+
 ## Approve it
 
 A second Builder who holds `glade`, or an Operator, approves the version:
@@ -171,6 +214,18 @@ glade@1 approved by <you> (self-approval: you published it)
 
 If you're a Builder without the Operator role, you can't approve your own version. The server
 refuses it with `self_approval`.
+
+**Two Accounts, one person.** If your Operator and Builder are separate Accounts (publish as one,
+approve as the other), note that `andara-cli` keeps one login per server address. `auth login
+--username <other>` switches, and replaces the stored login. To keep both, give the second its own
+credentials file and name it on each command:
+
+```
+andara-cli --credentials ~/.config/andara/operator.yaml auth login --username <operator>
+andara-cli --credentials ~/.config/andara/operator.yaml content approve glade 1
+```
+
+Without `--credentials`, commands use your usual login.
 
 ## Activate it
 

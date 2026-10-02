@@ -12,6 +12,12 @@ Operator runs.
 | The Content Repository | where your sources live and get checked |
 | A place on the tailnet | `dev` is reachable only from inside it |
 
+**For the Operator:** run these commands logged in as yourself, an Account with the `operator`
+role. That's the same login a Builder does, from the box or any device on the tailnet
+([section 3](03-installing-andara-cli.md#point-it-at-dev), then
+[log in](03-installing-andara-cli.md#log-in-to-dev)). `dev`'s Admin commands are open to both, and
+to nothing outside the tailnet.
+
 ## An Account
 
 There's no self-registration. The Operator creates your Account, sets your first password, and

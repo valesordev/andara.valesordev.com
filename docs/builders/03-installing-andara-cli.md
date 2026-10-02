@@ -76,7 +76,9 @@ server:
 
 Write the address exactly like that, with `:443`. Your login is stored under the address as
 written, and a different spelling is a different login. `dev`'s certificate is a public one, so you
-need no CA file.
+need no CA file, and **you must not have one set**. A CA file replaces the system's trust store
+instead of adding to it, so a CA left over from a local stack makes every call to `dev` fail with
+`x509: certificate signed by unknown authority`.
 
 Check what `andara-cli` will use:
 
@@ -84,7 +86,16 @@ Check what `andara-cli` will use:
 andara-cli config show
 ```
 
-The `server.address` line should read `andara-dev.solo7.valesordev.com:443`, with source `file`.
+Three lines matter:
+- `server.address` should read `andara-dev.solo7.valesordev.com:443`, with source `file`.
+- `server.tls_ca` should be **empty**. If it isn't, its source column says where it's set: remove
+  `tls_ca` from that config file, unset `ANDARA_TLS_CA_FILE`, or drop `--tls-ca`.
+- `server.tls_server_name` should be **empty**, too. A name left over from dialing a pod through a
+  port-forward makes every call to `dev` fail on the certificate's hostname. Clear it the same way:
+  remove `tls_server_name` from the config file its source names, unset `ANDARA_TLS_SERVER_NAME`, or
+  drop `--tls-server-name`. If the `config`
+  line names a file other than `~/.config/andara/cli.yaml`, `ANDARA_CONFIG` or `--config` points
+  elsewhere, so unset it for `dev`.
 
 ## Log in to `dev`
 
