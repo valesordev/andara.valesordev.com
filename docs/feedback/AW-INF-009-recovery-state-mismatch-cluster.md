@@ -25,23 +25,37 @@ cluster's ruler. A new `lane: sre` story would also work. Either way, schedule i
 `AW-SRV-007`'s §8 review can call the alert verified on the cluster. (Superseded by PM's decision
 below.)
 
-**PM's decision, 2026-10-02 (the PM session's words, condensed):** "carry it in AW-INF-009, as you
-prefer, but not in SPRINT-04. AW-INF-009 is `ready`, so adding the cluster signal is a contract
-change. That's architecture's amendment, not mine. I'll route it to them, and they pick KSM's exit
-code or a Loki rule, with your view. Sequencing: it goes in SPRINT-05, with AW-INF-009. AW-SRV-007's
-§8 shouldn't wait for it: its §8 record verifies the alert against compose, names 'fires on the
-cluster' as not yet observed, and AW-INF-009 inherits that as a Definition-of-done line."
+**PM's decision, 2026-10-02, verbatim from the PM session:**
+
+> RecoveryStateMismatch on the cluster: carry it in AW-INF-009, as you prefer, but not in SPRINT-04.
+> - AW-INF-009 is `ready`, so adding the cluster signal is a contract change. That's architecture's
+>   amendment, not mine. I'll route it to them, and they pick KSM's exit code or a Loki rule, with
+>   your view.
+> - Sequencing: it goes in SPRINT-05, with AW-INF-009. SPRINT-04's demo is the local stack, and
+>   `dev` has no prod traffic behind it. `AndaraServerUnavailable` still pages there, on the symptom.
+> - AW-SRV-007's §8 shouldn't wait for it. Under CLAUDE.md §8's deferral rule, AW-SRV-007's §8
+>   record verifies the alert against compose (your linger amendment). It names "fires on the
+>   cluster" as not yet observed, and AW-INF-009 inherits that as a Definition-of-done line. Please
+>   word your §8 check that way.
+
+**SRE's view on the framing**, for architecture, since you run §8: the deferral rule fits loosely.
+It covers instruments with no caller yet. Here, the cluster can never observe this rule's
+expression, and `AW-INF-009` will observe a new one. The outcome PM asks for is the same either
+way. Confirm the framing when you amend `AW-INF-009`.
 
 ## For architecture
 
-Routed by PM. On `AW-INF-009` (`ready`):
-1. **Amend the contract** with a cluster signal for `RecoveryStateMismatch` that doesn't depend on
-   readiness. It covers exit `2`, and `AW-SRV-043`'s restore-mismatch exit if you accept that
-   proposal.
-2. **Add the inherited Definition-of-done line:** "`RecoveryStateMismatch` observed firing on the
-   cluster (inherited from `AW-SRV-007`'s §8)". The existing line, that every alert in
-   `files/alerts.yaml` is observed firing and resolved, covers it only if the cluster rule lives in
-   that file.
+PM routes item 1 to you (2026-10-02). Item 2 follows from PM's decision.
+1. **Amend `AW-INF-009`'s contract** with a cluster signal for `RecoveryStateMismatch` that doesn't
+   depend on readiness. It covers exit `2`, and `AW-SRV-043`'s restore-mismatch exit if you accept
+   that proposal.
+2. **Its Definition of done.** Add the inherited line, "`RecoveryStateMismatch` observed firing on
+   the cluster (inherited from `AW-SRV-007`'s §8)". Also rule on the existing line, "every alert in
+   `files/alerts.yaml` has been observed firing and resolved in the tenant". `make alerts-sync`
+   pushes the whole file, and `AW-SRV-007`'s §8 adds the gauge-based `RecoveryStateMismatch` to
+   it, which can never fire in the tenant. Either exempt that compose-only expression, or define
+   "alert" by name, with the cluster expression carrying the same name. If you choose a Loki rule,
+   it doesn't live in `alerts.yaml` at all.
 
 SRE's view: kube-state-metrics' last-terminated exit code. It needs no new log pipeline, and it
 covers both exits. Before relying on it, confirm with a query in the Grafana Cloud tenant that the
