@@ -6,7 +6,7 @@ component: cli
 type: feature
 status: draft
 size: S
-depends_on: [AW-CLI-001]
+depends_on: [AW-CLI-001, AW-SRV-042]
 blocks: []
 lane: implementation
 risk: low
@@ -49,29 +49,36 @@ that setting came from, so that I can fix a stale CA pin without a support conve
    `; trusted only the CA in <path> (server.tls_ca, from config file <config path>)`.
 2. **Given** the CA from `ANDARA_TLS_CA_FILE` **then** the source reads `from ANDARA_TLS_CA_FILE`.
    **Given** it from `--tls-ca` **then** the source reads `from --tls-ca`.
-3. **Given** the config file was chosen by `ANDARA_CONFIG` **then** AC-1's `<config path>` is that
-   file, followed by `(ANDARA_CONFIG)`.
+3. **Given** the config file was chosen by `ANDARA_CONFIG` or by `--config` **then** AC-1's
+   `<config path>` is that file, followed by `(ANDARA_CONFIG)` or `(--config)`. The default path has
+   no suffix.
 4. **Given** no CA set, and a certificate the system trust store rejects **then** the message ends
    with `; trusted the system trust store`.
 5. **Given** a failure that isn't certificate verification (refused, DNS, timeout) **then** the message
    is unchanged.
 6. **Given** `--output json` **then** the error envelope's `detail` carries `tls_ca` (path or empty),
-   `tls_ca_source` (`flag`, `env`, `file` or `default`) and `config_path`, for ACs 1–4.
+   `tls_ca_source` (`flag`, `env`, `file` or `default`), `config_path`, and `config_path_source`
+   (`flag` for `--config`, `env` for `ANDARA_CONFIG`, `default`), for ACs 1–4. A JSON consumer can
+   tell everything the human message says, including AC-3's distinction.
 7. **Given** a `--tls-server-name` mismatch (the certificate is valid but for another name) **then** the
    message names the expected name and its source in the same form. That's the port-forward case
    (`AW-SRV-042`).
 
 ## Interface contract
 
-- **Exit:** `3`, code `connect`, as today (`AW-CLI-001`).
+- **Exit:** `3`, code `connect_failed` (`CodeConnect` in `admin/cli/client.go`), as today
+  (`AW-CLI-001`). The code doesn't change. Only the message and `detail` gain the suffix and fields,
+  so scripts that branch on `connect_failed` keep working.
 - **Message suffix forms:**
   - `; trusted only the CA in <path> (server.tls_ca, from <source>)`
   - `; trusted the system trust store`
   - `; expected the name <name> (server.tls_server_name, from <source>)` (AC-7)
-- **`<source>`:** `--tls-ca`, `ANDARA_TLS_CA_FILE`, or `config file <path>`, plus ` (ANDARA_CONFIG)`
-  when that variable chose the file. These are the sources `config show` already reports.
-- **JSON `detail` keys:** `tls_ca`, `tls_ca_source`, `config_path` and, for AC-7, `tls_server_name`
-  and `tls_server_name_source`.
+- **`<source>`:** `--tls-ca`, `ANDARA_TLS_CA_FILE`, or `config file <path>`, plus ` (ANDARA_CONFIG)` or
+  ` (--config)` when one of those chose the file. These are the sources `config show` already
+  reports.
+- **JSON `detail` keys:** `tls_ca`, `tls_ca_source`, `config_path`, `config_path_source` and, for AC-7,
+  `tls_server_name` and `tls_server_name_source`. Source values are `config show`'s: `flag`, `env`,
+  `file`, `default`.
 - **Classifying the failure:** the error unwraps to `x509.UnknownAuthorityError`,
   `x509.CertificateInvalidError` or `x509.HostnameError`. Nothing else gets the suffix.
 
@@ -103,4 +110,8 @@ CLAUDE.md §8.
 
 ## Open questions
 
-None. Architecture agreed the scope on 2026-10-02.
+`depends_on` includes `AW-SRV-042` (`done`), which introduced `server.tls_server_name` for AC-7.
+Revised after review of #331: the error code is `connect_failed`, the JSON names the config file's
+selector, and `--config` is a selector too.
+
+Nothing else is open. Architecture agreed the scope on 2026-10-02.
