@@ -32,3 +32,25 @@ contract review. Two more, from the SPRINT-03 close-out:
    reaches `ready`, the block can point to it. `AW-INF-032` is also the first in-cluster caller of
    this story's `andara_recovery_*` series and `recovery.run` trace. Decide whether this story
    inherits that live observation as a Definition-of-done line, as CLAUDE.md §8 allows.
+
+## For architecture: SRE observability review, 2026-10-02
+
+5. **`RecoveryStateMismatch` can't fire as the story is written.**
+   - `andara_recovery_state_hash_match` is set to `0` by a process that exits `2` at once. The
+     restart sets nothing until its own recovery ends, so no scrape ever reads the `0`.
+   - AW-SRV-019 hit the same trap with `andara_state_digest_mismatches_total` and fixed it in the
+     projector with `haltLinger`: on exit `2` it keeps `/metrics` up, unready, for 60 s.
+   - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires the same linger
+     on exit `2`, and on `AW-SRV-043`'s exit if you accept it. It also requires `for: 0m` and
+     `keep_firing_for: 15m` on the rule, so the alert survives a crash loop's backoff, and an §8
+     observation of the alert firing in local Prometheus.
+   - The exit **timing** is operator-visible: a refused recovery now takes 60 s to exit. Confirm
+     it as a contract change, or rule otherwise.
+
+   The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
+   - a `restore` reason on `andara_recovery_failures_total`;
+   - the span `restore.verify` under `recovery.run`;
+   - `andara_restore_total{caller="recovery"|"verify"}`.
+
+   On item 4: `AW-INF-032`'s run is the right live observation for this story's series and trace,
+   and SRE will record it in both §8 records.
