@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"time"
 
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 )
@@ -89,5 +91,105 @@ func (rt *Runtime) leaveWait(w *sim.World, templates *sim.TemplateRegistry, swap
 		slog.Int("zones", len(w.Zones)), slog.String("pack", trigger), slog.String("trace_id", traceID))
 	if rt.started.Load() && !rt.draining.Load() {
 		rt.MarkReady()
+	}
+}
+
+// WaitForContent is a read-only consumer's wait (#326). The state projector
+// can't scope a snapshot round until the Active Pointers name Zones, so on a
+// store without them it waits, as the server does (AW-SRV-042), rather than
+// exiting: the same warn line once, then a reload of the content on every
+// Active Pointer move, until one builds a World. It writes nothing, and
+// returns nil once rt.World is set, or ctx's error when ctx ends first.
+func (rt *Runtime) WaitForContent(ctx context.Context) error {
+	if rt.World != nil {
+		return nil
+	}
+	if rt.Content == nil || rt.Content.Resolver() == nil {
+		return fmt.Errorf("content: what the source names does not load, and it has no Active Pointers to wait on")
+	}
+	ctx, span := rt.Tel.Tracer.Start(ctx, "content.wait")
+	defer span.End()
+	// The watch is the first Content's, from the position it pinned before
+	// reading the pointers, so no move between that read and this is missed.
+	// Each reload opens a Content of its own, pinned afresh. The watch lives
+	// only as long as the wait: Close doesn't stop it, its context does
+	// (review of #334).
+	watcher := rt.Content
+	wctx, stop := context.WithCancel(ctx)
+	defer stop()
+	moves, err := watcher.Resolver().Watch(wctx)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if rt.Content != watcher {
+			_ = watcher.Close()
+		}
+	}()
+	rt.enterWait(ctx)
+	return rt.waitLoop(ctx, moves, func() (bool, error) {
+		prev := rt.Content
+		if code := rt.LoadContent(ctx); code != ExitOK {
+			return false, fmt.Errorf("content: reloading while waiting failed")
+		}
+		if prev != watcher && prev != rt.Content {
+			_ = prev.Close()
+		}
+		return rt.World != nil, nil
+	}, func() int { return len(rt.World.Zones) })
+}
+
+// The wait's retry: a reload with no pointer move, after waitRetryMin,
+// doubling to waitRetryMax, and back to waitRetryMin on a move.
+const (
+	waitRetryMin = time.Second
+	waitRetryMax = time.Minute
+)
+
+// waitLoop reloads on every pointer move, and on a backoff between them,
+// until reload reports a World. The backoff is what recovers from a load
+// that failed transiently: a non-validation store-backed load that can't
+// read the store returns no World and no error, and the pointer move that
+// triggered it is already consumed. Without the retry, the projector would
+// wait for a move that may never come (review of #334). The leaving line
+// names the last move seen, if any.
+func (rt *Runtime) waitLoop(ctx context.Context, moves <-chan content.PointerMove, reload func() (bool, error), zones func() int) error {
+	first := rt.waitRetry
+	if first == 0 {
+		first = waitRetryMin
+	}
+	retry := first
+	timer := time.NewTimer(retry)
+	defer timer.Stop()
+	var trigger string
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case m, ok := <-moves:
+			if !ok {
+				if err := ctx.Err(); err != nil {
+					return err
+				}
+				return fmt.Errorf("content: the Active Pointer watch ended")
+			}
+			trigger = fmt.Sprintf("%s@%d", m.Pack, m.Version)
+			retry = first
+		case <-timer.C:
+			retry = min(retry*2, max(waitRetryMax, first))
+		}
+		done, err := reload()
+		if err != nil {
+			return err
+		}
+		if !done {
+			timer.Reset(retry)
+			continue
+		}
+		rt.waiting.Store(false)
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect: leaving the wait",
+			slog.Int("zones", zones()), slog.String("pack", trigger),
+			slog.String("trace_id", telemetry.TraceID(ctx)))
+		return nil
 	}
 }

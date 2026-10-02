@@ -48,6 +48,19 @@ type Runtime struct {
 	// BuildVersion is the running build's version, for the boot's core
 	// audit records (reason "boot <build version>", AW-SRV-013).
 	BuildVersion string
+	// ContentReadOnly marks a content consumer that isn't the server: the
+	// state projector (#326). Only the server writes andara.core, so
+	// LoadContent runs no core boot, and nothing here opens the content
+	// store's write side or the audit topic.
+	ContentReadOnly bool
+	// ContentTopics and AuditTopicName override the content store's topics and
+	// the audit topic, for a test against a live broker that must not write
+	// into the stack's. The zero values are the real ones.
+	ContentTopics  content.Topics
+	AuditTopicName string
+	// waitRetry is WaitForContent's first retry interval; zero is
+	// waitRetryMin. A test shortens it.
+	waitRetry time.Duration
 	// registry is the content store's write side, opened by LoadContent
 	// on a content.source=kafka server so the boot can publish its core,
 	// and reused by the publish path (AW-SRV-013). core is what that did.
@@ -158,8 +171,9 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	rt.Content = src
 	// The server's own core, before the candidates are read: a store
 	// without andara.core has no Template a Builder pack could extend
-	// (AW-SRV-013 AC-15). --validate-only writes nothing.
-	if src != nil && len(loadErrs) == 0 && src.Loader() != nil && !rt.Cfg.ValidateOnly {
+	// (AW-SRV-013 AC-15). --validate-only writes nothing, and neither does a
+	// read-only consumer (#326).
+	if src != nil && len(loadErrs) == 0 && src.Loader() != nil && !rt.Cfg.ValidateOnly && !rt.ContentReadOnly {
 		if err := rt.bootCore(ctx); err != nil {
 			rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not published", slog.String("detail", err.Error()))
 			return ExitFail
@@ -388,6 +402,7 @@ func (rt *Runtime) contentOptions() content.Options {
 		Debounce:      rt.Cfg.ContentReloadDebounce,
 		StrictOrphans: rt.Cfg.StrictOrphans,
 		SpawnRoom:     rt.spawnRoom(),
+		Topics:        rt.ContentTopics,
 		Metrics:       rt.ContentMetrics,
 		Log:           rt.Tel.Log,
 		Tracer:        rt.Tel.Tracer,

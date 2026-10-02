@@ -88,7 +88,8 @@ type Topics struct {
 	Blobs, Versions, Active string
 }
 
-func (t Topics) orDefault() Topics {
+// OrDefault fills an unset name with the real topic.
+func (t Topics) OrDefault() Topics {
 	if t.Blobs == "" {
 		t.Blobs = TopicBlobs
 	}
@@ -125,7 +126,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		cache:    o.Cache,
 		maxBlob:  o.MaxBlobBytes,
 		metrics:  m,
-		topics:   o.Topics.orDefault(),
+		topics:   o.Topics.OrDefault(),
 		log:      lg,
 	}, nil
 }

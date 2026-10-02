@@ -76,38 +76,8 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 	tel.Log.Info("andara-projector state starting", "version", version, "commit", commit,
 		"group", config.ProjectorGroup(cfg.Environment), "batch_ticks", cfg.BatchTicks)
 
-	// Content is opened exactly as the server opens it — the same adapter,
-	// validator, and Template registry. The replica's content in effect is
-	// what the log's ContentSwaps name (AW-SRV-012), prepared through this
-	// source, so a replica can never run on other content than the World
-	// it replicates without the digest saying so.
-	rt := boot.New(cfg.Config, tel)
-	if code := rt.LoadContent(ctx); code != boot.ExitOK {
-		return projector.ExitConfig
-	}
-	if rt.World == nil {
-		// The server tolerates this before recovery, because its reconcile
-		// still exits with nothing in effect. The projector would instead
-		// scope no snapshot round and replay from zero, so it stays fatal
-		// here (review of #91).
-		tel.Log.Error("content: what the Active Pointers name does not load; the projector cannot scope a snapshot round")
-		return projector.ExitConfig
-	}
-	if rt.ContentMetrics != nil {
-		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
-	}
-
-	ws, err := store.Open(store.Options{
-		Kind:       cfg.SnapshotStore,
-		FSPath:     cfg.SnapshotFSPath,
-		S3Bucket:   cfg.SnapshotS3Bucket,
-		S3Endpoint: cfg.SnapshotS3Endpoint,
-	})
-	if err != nil {
-		tel.Log.Error("snapshot store", "detail", err.Error())
-		return projector.ExitConfig
-	}
-
+	// /readyz is served from the start, unready, so a projector waiting for
+	// content is up and visibly not Ready rather than restarting (#326).
 	metrics := projector.NewMetrics(tel.Reg)
 	metrics.LagBudgetSeconds.Set(cfg.LagBudget.Seconds())
 	var ready atomic.Bool
@@ -124,6 +94,44 @@ func runState(cfg config.Projector, stderr io.Writer) int {
 		defer shcancel()
 		_ = srv.Shutdown(shctx)
 	}()
+
+	// Content is opened exactly as the server opens it — the same adapter,
+	// validator, and Template registry. The replica's content in effect is
+	// what the log's ContentSwaps name (AW-SRV-012), prepared through this
+	// source, so a replica can never run on other content than the World
+	// it replicates without the digest saying so. It is read-only: only the
+	// server writes andara.core, or anything else to the content store or
+	// the audit topic (#326).
+	rt := boot.New(cfg.Config, tel)
+	rt.ContentReadOnly = true
+	if code := rt.LoadContent(ctx); code != boot.ExitOK {
+		return projector.ExitConfig
+	}
+	// Without a World the projector can scope no snapshot round, and would
+	// replay from zero (review of #91). On a store whose Active Pointers
+	// name no Zones yet it waits for them, unready, as the server does
+	// (AW-SRV-042). A directory has nothing to wait on, and stays fatal.
+	if err := rt.WaitForContent(ctx); err != nil {
+		if ctx.Err() != nil {
+			return projector.ExitOK
+		}
+		tel.Log.Error("content: what the Active Pointers name does not load; the projector cannot scope a snapshot round", "detail", err.Error())
+		return projector.ExitConfig
+	}
+	if rt.ContentMetrics != nil {
+		rt.ContentMetrics.SetBuild(version, commit, cfg.Environment)
+	}
+
+	ws, err := store.Open(store.Options{
+		Kind:       cfg.SnapshotStore,
+		FSPath:     cfg.SnapshotFSPath,
+		S3Bucket:   cfg.SnapshotS3Bucket,
+		S3Endpoint: cfg.SnapshotS3Endpoint,
+	})
+	if err != nil {
+		tel.Log.Error("snapshot store", "detail", err.Error())
+		return projector.ExitConfig
+	}
 	go topicBytes(ctx, cfg.KafkaBrokers, metrics, tel.Log)
 
 	err = projector.Run(ctx, projector.RunOptions{
