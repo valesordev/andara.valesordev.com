@@ -196,7 +196,7 @@ has no occasion to raise it.
 | `pack_missing` | no `pack` declaration in the pack | that one file must declare the pack |
 | `duplicate_pack` | more than one `pack` declaration | both files |
 | `pack_mismatch` | the declared pack is not the pack being compiled | both names |
-| `core_version_mismatch` | `requires andara.core@N` when neither the embedded core nor the cache holds `N` | both versions, and the remedy for the direction of the skew: with `N` above the embedded core, the `andara-cli` release that embeds `andara.core@N`; with `N` below it, the usual case after a core bump, changing `requires` to the embedded number (amended 2026-09-28; direction added 2026-10-01, #308) |
+| `core_version_mismatch` | `requires andara.core@N` when neither the embedded core nor the cache holds `N` | both versions, and the remedy for the direction of the skew: with `N` above the embedded core, the `andara-cli` release that embeds `andara.core@N`; with `N` below it, the usual case after a core bump, changing `requires` to the embedded number in the file that declares the pack (`pack.aw` in the canonical layout). For a *published* version (`validate --pack --version`), which can't be edited, the remedy is the release that embeds `N` in either direction (amended 2026-09-28; direction added 2026-10-01, #308; the declaring file and the published case 2026-10-02, #335) |
 | `template_head` | a Template declares both `kind` and `extends`, or neither | that a root states its kind and a subtype inherits it |
 | `extends_cycle` | `extends` forms a cycle | every Template in the cycle, in order |
 | `removed_by_subtype` | a `remove` form | the ancestor that defined it, the substitutability rule, and `enabled: false` |
