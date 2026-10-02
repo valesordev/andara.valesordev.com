@@ -248,7 +248,7 @@ def install(env):
     p = run(["kubectl", "-n", ns, "delete", "secret", "-l", "owner=helm,name=andara"], check=False)
     gone = [l for l in p.stdout.splitlines() if "deleted" in l]
     say("helm release history in %s: %s" % (ns, "%d record(s) removed" % len(gone) if gone else "none"))
-    status(env)
+    status(env, waiting_ok=(up == "waiting"))
 
 
 # --- status ------------------------------------------------------------------------------
@@ -348,7 +348,10 @@ def active_packs(ns, metrics=None):
     return sorted(packs) or "? (no andara_content_active_version series)"
 
 
-def status(env):
+def status(env, waiting_ok=False):
+    """Print the Application's state; exit 1 unless Synced and Healthy. With waiting_ok (an
+    install whose server is waiting for its first content, AW-SRV-042), Synced is enough: the
+    seed that makes it Healthy can only run after the install returns (Codex on #327)."""
     ns = env_ns("status", env or "dev")
     name = ns
     sync, health, rev, app = app_state(name)
@@ -374,6 +377,9 @@ def status(env):
     stuck = stalled(ns)
     if stuck:
         print("stalled      %s — once a good build has synced, `make argocd-recover ENV=dev` replaces the pod" % stuck)
+    if waiting_ok and sync == "Synced":
+        print("waiting      andara-0 is up and waiting for content — next: make content-seed ENV=%s" % (env or "dev"))
+        return
     if sync != "Synced" or health != "Healthy":
         sys.exit(1)
 
