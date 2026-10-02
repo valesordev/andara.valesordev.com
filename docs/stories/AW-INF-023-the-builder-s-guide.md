@@ -337,7 +337,8 @@ Repository's `check` validates (`AW-INF-022`).
 Brian followed sections 2–4 on `dev`, rebuilt from a deleted namespace (`AW-INF-021`'s AC-7 run),
 from no clone of the code repository. **Every step completed:** access, install, login, the
 Content Repository, a pack, `check`, publish, self-approval, activate, `server info`, `play`,
-`goto`, change, and rollback. The transcript is Brian's to attach here.
+`goto`, change, and rollback. The transcript is attached, redacted, at
+`docs/feedback/AW-INF-023-walkthrough-transcript.md`.
 
 The points where he needed something the guide didn't say, and where each is closed:
 
@@ -348,10 +349,14 @@ The points where he needed something the guide didn't say, and where each is clo
 | 3 | `make tools` 404'd on macOS: Make 3.81 has no `$(file)`, so `ANDARA_REF` was empty, and the recipe didn't stop on the failed download | **`andara.solo7.media` #11** (SRE), with a macOS CI job. No guide change: `make tools` is the documented step, and it now works |
 | 4 | The Content Repository requires signed commits, and nothing said how to set signing up | **the guide**: section 4's new "Sign your commits" covers the GitHub signing key, the per-repo `git config`, `allowed_signers`, the check, and re-signing a branch |
 | 5 | Not hit in the end: `cli-dev`'s `SHA256SUMS` is briefly absent during a publish | **#329**, and `andara.solo7.media` #11 (retries) |
+| 6 | `andara-cli` wasn't on his `PATH`, so he used the Content Repository's pinned `./.tools/bin/andara-cli` (transcript) | **the guide**: section 4 says either works |
+| 7 | His Operator and Builder are separate Accounts, and `andara-cli` keeps one login per address, so he ran `auth login` again at every switch (transcript) | **the guide**: section 4's "Two Accounts, one person" shows `--credentials` keeping both logins |
+| 8 | Publish printed the fixture's `purgatory.json` warning as his pack's (transcript) | **the guide**: section 4 says to ignore it, until **#312** is fixed |
+| 9 | Re-signing needed `--reset-author` after fixing the email, and `ssh-add` for a key with a passphrase (transcript) | **the guide**: "Sign your commits" says both |
 
-**What closes AC-3:** `andara.solo7.media` #11 merged, this record's PR merged, and Brian's
-transcript attached. Then no open points remain, as AC-3 requires, and architecture moves the story
-to `done`.
+**What closes AC-3:** `andara.solo7.media` #11 merged, and this record's PR merged (with the
+transcript). Then no open points remain, as AC-3 requires, and architecture moves the story to
+`done`.
 
 **On AC-4,** recorded for the §8 review. "Sign your commits" has one GitHub step (adding the key as a
 Signing Key), like opening the pull request. Its other steps are `git` commands on the Content
