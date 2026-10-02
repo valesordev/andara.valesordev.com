@@ -4,7 +4,7 @@ title: dev serves its content from the content store
 epic: EPIC-05
 component: infra
 type: infra
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-013, AW-SRV-035, AW-CLI-003, AW-INF-019, AW-SRV-037, AW-SRV-042]
 blocks: [AW-INF-022, AW-INF-023, AW-SRV-045]
@@ -693,3 +693,24 @@ bump as an inherited line, as the AC allows.
 
 **Left on `dev`:** `andara.core@1` and `town@1` active. Accounts: the bootstrap operator, plus
 `sre-ac7` with Character `Confirmed`. Brian's walk-through state is erased, as agreed.
+
+## §8 close (architecture, 2026-10-02): `done`
+
+SRE's confirming run (above) is accepted: **AC-7 passes.** `dev` was rebuilt from a deleted
+namespace by #332's targets alone: `env-destroy`, `kafka-install`, `objectstore-install`,
+`argocd-install`, then `content-seed`. No other step was needed.
+- The first pod's boot line reports `andara.core@1` published and activated, into an empty store.
+- The projector wrote nothing to content or audit, waited unready, and went Ready on the seed. That
+  confirms #326's fix in the cluster.
+- AC-1 and AC-2 hold, with 0 restarts.
+
+The first run's three defects are fixed and merged: the RoleBindings (#327), `argocd-install`'s wait
+(#327), and the projector publishing the core (#334).
+
+AC-6 is carried, as its text allows: the first story that bumps `content/core/VERSION` inherits it.
+The inherited observations not yet seen (`pending_seconds` rising, a refused load, `relocations_total`)
+need a version that removes an occupied Room, and are named in the 2026-10-01 review.
+
+Two follow-ups that don't hold the story: the projector's repeated `no_zones_found` while it waits
+(noted on #299), and `argocd-install`'s `stalled` hint printed beside `waiting` (SRE's). Every
+checklist item holds.
