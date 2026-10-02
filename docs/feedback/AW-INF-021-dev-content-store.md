@@ -547,3 +547,20 @@ parent, because one debounced load can serve several moves, and a parent would p
 It's additive, and an old record reads empty, meaning no link. The field is pinned at the carrier
 story's contract review, and PM writes the story (implementation, `server/content`). Until it ships,
 the two traces join on `pack@version` and time. This doesn't hold `AW-INF-021`.
+
+## For architecture: AC-7's procedure doesn't rebuild from nothing (PM, 2026-10-02)
+
+Found by Codex on #325. AC-7's steps (`make argocd-uninstall`, fresh topics, `make argocd-install
+ENV=dev`) keep the namespace and its Secrets:
+- `argocd-uninstall` removes the Application without cascading, so the namespace's resources stay;
+- `argocd-install`'s `secrets()` creates `andara-server-token-key` and `andara-server-bootstrap` only
+  when they're absent (`scripts/argocd.py`).
+
+So a run that follows the text never exercises Secret provisioning or a namespace created from
+nothing, which are the parts your §8 record says `world-reset` didn't show. SRE's first run
+(2026-10-02) deleted `andara-dev` outright, with Brian's approval, and that's what found the Strimzi
+RoleBinding defect (#327).
+
+**Ask:** amend AC-7 so the procedure starts by deleting the namespace (by a `make` target, per §9, if
+SRE adds one), so the confirming run and the AC agree. The story is at `review`, so the wording is
+yours.
