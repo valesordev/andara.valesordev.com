@@ -140,9 +140,11 @@ None.
 
 ## Test plan
 
-- **Unit:** `guide-check` against fixtures: a missing command, a missing code, and a broken link each
-  fail (AC-1).
-- **Integration:** `make check` in CI runs `guide-check` and the staleness check (AC-2).
+- **Unit and integration:** none here. `guide-check`'s fixtures and the reference staleness check
+  moved to `AW-INF-028` with AC-1 and AC-2 (2026-09-30).
+- **Before review (by hand, until `AW-INF-028`):** every relative link and anchor resolves, and every
+  `andara-cli` command form in the guide parses. SRE's §9 sweep (#321) found one that didn't,
+  `rollback --override`, fixed 2026-10-01.
 - **Manual/operator:** AC-3's walk-through on `dev`, by someone other than the guide's author. Brian
   is the intended first reader.
 
