@@ -14,6 +14,9 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"go.opentelemetry.io/otel/attribute"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/valesordev/andara/content/core"
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
@@ -75,7 +78,8 @@ func TestHeldNoZones_TheWaitDropsIt(t *testing.T) {
 	if code := rt.ReconcileContent(ctx); code != ExitOK || !rt.Waiting() {
 		t.Fatalf("exit %d, waiting %t\n%s", code, rt.Waiting(), logs.String())
 	}
-	rt.SettleHeld(ExitOK) // main's, on a later clean exit: nothing to revive
+	// The wait itself settled it: a later exit 1 doesn't revive it.
+	rt.SettleHeld(ExitFail)
 	if n := noZonesLines(logs); n != 0 {
 		t.Errorf("%d no_zones_found lines on a wait\n%s", n, logs.String())
 	}
@@ -96,13 +100,36 @@ func TestHeldNoZones_AnExitReportsItOnce(t *testing.T) {
 	if code := rt.ReconcileContent(ctx); code != ExitFail {
 		t.Fatalf("exit %d, want %d\n%s", code, ExitFail, logs.String())
 	}
+	// Reported by reconcile itself, under content.reconcile's trace: the
+	// trace of reconcile's own exit line.
+	check := func(when string) {
+		t.Helper()
+		if n := noZonesLines(logs); n != 1 {
+			t.Errorf("%s: %d no_zones_found lines on an exit, want 1\n%s", when, n, logs.String())
+		}
+		if c := noZonesCount(rt); c != 1 {
+			t.Errorf("%s: andara_content_validation_errors_total{code=no_zones_found} = %v, want 1", when, c)
+		}
+	}
+	check("after reconcile")
+	var finding, exitLine map[string]any
+	for l := range strings.SplitSeq(logs.String(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) != nil {
+			continue
+		}
+		if m["code"] == string(sim.ErrEmptyContent) {
+			finding = m
+		}
+		if msg, _ := m["msg"].(string); strings.HasPrefix(msg, "no content in effect") {
+			exitLine = m
+		}
+	}
+	if finding == nil || exitLine == nil || finding["trace_id"] == "" || finding["trace_id"] != exitLine["trace_id"] {
+		t.Errorf("the finding's trace_id %v, reconcile's exit line's %v", finding["trace_id"], exitLine["trace_id"])
+	}
 	rt.SettleHeld(ExitFail) // main's, on the way out: already settled
-	if n := noZonesLines(logs); n != 1 {
-		t.Errorf("%d no_zones_found lines on an exit, want 1\n%s", n, logs.String())
-	}
-	if c := noZonesCount(rt); c != 1 {
-		t.Errorf("andara_content_validation_errors_total{code=no_zones_found} = %v, want 1", c)
-	}
+	check("after main settles")
 }
 
 // An exit 1 elsewhere before the decision, as main's deferred SettleHeld
@@ -210,5 +237,44 @@ func TestHeldNoZones_AMissingManifestIsReportedAtLoad(t *testing.T) {
 	rt.SettleHeld(ExitOK)
 	if c := noZonesCount(rt); c != 2 {
 		t.Errorf("over the whole boot: count %v, want 2", c)
+	}
+}
+
+// A signal before the decision drops it: reconcile, cancelled, fails and
+// leaves it to main, whose exit is 0 (review of item 9).
+func TestHeldNoZones_ASignalDropsIt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	rt, logs := heldServer(t, ctx, newStore(t), worldLog())
+	rctx, stop := context.WithCancel(ctx)
+	stop()
+	_ = rt.ReconcileContent(rctx)
+	rt.SettleHeld(ExitOK)
+	if n := noZonesLines(logs); n != 0 {
+		t.Errorf("%d no_zones_found lines on a signal, want 0\n%s", n, logs.String())
+	}
+	if c := noZonesCount(rt); c != 0 {
+		t.Errorf("count %v on a signal, want 0", c)
+	}
+}
+
+// content.validate's error_count excludes the held finding (#299 amendment):
+// an empty store's load reports 0 errors.
+func TestHeldNoZones_ValidateSpanExcludesIt(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	st := newStore(t)
+	rt, logs := storeRuntime(t, st.tp, st.audit, st.brokers)
+	rec := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec))
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	rt.Tel.Tracer = tp.Tracer("andara-server")
+	if code := rt.LoadContent(ctx); code != ExitOK {
+		t.Fatalf("load: exit %d\n%s", code, logs.String())
+	}
+	v := spanByName(t, rec, "content.validate")
+	attrs := attribute.NewSet(v.Attributes()...)
+	if n, _ := attrs.Value("error_count"); n.AsInt64() != 0 {
+		t.Fatalf("content.validate error_count %d on an empty store, want 0", n.AsInt64())
 	}
 }

@@ -511,7 +511,7 @@ func (rt *Runtime) onSwap() func(time.Duration) {
 func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if rt.Content == nil || rt.Engine == nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content: the tick loop must be started first")
-		rt.reportHeld(ctx)
+		rt.exitHeld(ctx)
 		return ExitFail
 	}
 	ctx, span := rt.Tel.Tracer.Start(ctx, "content.reconcile")
@@ -522,7 +522,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if err != nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content could not be brought into effect",
 			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
-		rt.reportHeld(ctx)
+		rt.exitHeld(ctx)
 		return ExitFail
 	}
 	if len(rt.Engine.World().Zones) == 0 && rt.Cfg.ContentSource == content.SourceKafka {
@@ -534,14 +534,14 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		if err != nil {
 			rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content: the World log could not be read to tell a first start from a lost World",
 				slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
-			rt.reportHeld(ctx)
+			rt.exitHeld(ctx)
 			return ExitFail
 		}
 		if !had {
 			if err := rt.coreInEffect(); err != nil {
 				rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
 					slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
-				rt.reportHeld(ctx)
+				rt.exitHeld(ctx)
 				return ExitFail
 			}
 			rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
@@ -557,7 +557,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		}
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "no content in effect: the World has no Zones and there is no previous version to retain",
 			slog.String("trace_id", telemetry.TraceID(ctx)))
-		rt.reportHeld(ctx)
+		rt.exitHeld(ctx)
 		return ExitFail
 	}
 	// AW-SRV-013 rule 5: not ready until the core this boot activated, or
@@ -565,7 +565,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if err := rt.coreInEffect(); err != nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
 			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
-		rt.reportHeld(ctx)
+		rt.exitHeld(ctx)
 		return ExitFail
 	}
 	rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()

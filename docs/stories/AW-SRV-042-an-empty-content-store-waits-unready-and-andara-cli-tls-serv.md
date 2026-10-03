@@ -487,12 +487,16 @@ SPRINT-04 implementation item 9, on `impl/299-no-zones-found-held`, and the §7 
 - Reloads during the wait log `content reload: no Zones in effect yet` at `debug`, with
   `next_retry` and `trace_id`. `templates loaded` drops to `debug` for them.
 
-The tests, all on Redpanda through `LoadContent` (`make test-integration`):
+The tests, all on Redpanda through `LoadContent`, run as `ANDARA_KAFKA_BROKERS=… go test -tags
+integration ./server/boot/`. `make test-integration` doesn't list `./server/boot/` yet: the feedback
+file asks SRE to add it.
 
 | Case | Test | Asserts |
 |------|------|---------|
-| Server waits | `TestHeldNoZones_TheWaitDropsIt` | No `code=no_zones_found` line and no recovery warn; the count is `0` |
-| Server exits in reconcile (AC-3) | `TestHeldNoZones_AnExitReportsItOnce` | Exactly one line, and a count of `1` |
+| Server waits | `TestHeldNoZones_TheWaitDropsIt` | No `code=no_zones_found` line and no recovery warn, and a count of `0`, even after a later `SettleHeld(1)`: the wait settled it |
+| Server exits in reconcile (AC-3) | `TestHeldNoZones_AnExitReportsItOnce` | Exactly one line and a count of `1`, from reconcile itself, before `main` settles, with `content.reconcile`'s trace (that of reconcile's exit line) |
+| Signal during reconcile | `TestHeldNoZones_ASignalDropsIt` | A canceled reconcile leaves it to `main`, and `SettleHeld(0)` drops it: no line and a count of `0` |
+| `content.validate` | `TestHeldNoZones_ValidateSpanExcludesIt` | `error_count` is `0` on an empty store's load |
 | Exit or signal elsewhere | `TestHeldNoZones_MainSettlesIt` | `SettleHeld(1)` gives one line and a count of `1`. `SettleHeld(0)` gives none. Settling twice does nothing more |
 | Serve from the log, no pointer | `TestHeldNoZones_AServeFromTheLogWarnsOnce` | No finding line, a count of `0`, and exactly one recovery warn, with `error_count` `0` and a `trace_id` |
 | A pointer naming a version with no manifest | `TestHeldNoZones_AMissingManifestIsReportedAtLoad` | Two lines from `LoadContent`, the rejection's and the appended one, and a count of `2` over the whole boot |
@@ -504,6 +508,14 @@ The tests, all on Redpanda through `LoadContent` (`make test-integration`):
 - The exit and missing-manifest tests pass either way, as they should, because those behaviours
   are unchanged.
 - Leaving `templates loaded` at `info` during reloads fails the timer test.
+
+**Pre-PR review fixes.**
+- A reconcile failing because its context was canceled no longer reports the finding: a signal
+  drops it, and exit codes other than 1 (a lost boundary's 5) drop it.
+- An exit 1 elsewhere is still reported, by `main`'s `SettleHeld`.
+
+**Edge, not covered.** A reload that refuses a Template still logs `templates loaded` at `debug`.
+The registry is usually nil on a refusal, so no such line is written.
 
 **Live: not yet observed,** as the amendment records. Whoever next starts `dev` from an empty store
 checks it.

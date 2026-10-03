@@ -43,7 +43,7 @@ func (rt *Runtime) takeHeld() (*sim.ValidationError, context.Context) {
 }
 
 // dropHeld settles it unreported: a wait, or a signal.
-func (rt *Runtime) dropHeld() { rt.takeHeld() }
+func (rt *Runtime) dropHeld() { _, _ = rt.takeHeld() }
 
 // reportHeld settles it as an exit 1 does: logged once with its fields, and
 // counted. The trace is ctx's span's, or content.load's where the exit runs
@@ -53,10 +53,21 @@ func (rt *Runtime) reportHeld(ctx context.Context) {
 	if f == nil {
 		return
 	}
-	if ctx == nil || !trace.SpanContextFromContext(ctx).IsValid() {
+	if !trace.SpanContextFromContext(ctx).IsValid() {
 		ctx = loadCtx
 	}
 	rt.recordFinding(ctx, *f)
+}
+
+// exitHeld is reconcile's, on an exit 1: it reports the held finding, unless
+// reconcile failed because its context was canceled. That's a signal or the
+// loop stopping, and main's SettleHeld then decides by the process's real
+// exit code: 1 reports it, anything else drops it.
+func (rt *Runtime) exitHeld(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
+	rt.reportHeld(ctx)
 }
 
 // serveHeld settles it when the World is served from the log with no Zones
@@ -71,10 +82,11 @@ func (rt *Runtime) serveHeld(ctx context.Context) {
 }
 
 // SettleHeld is main's, on its way out: an exit 1 before the decision
-// reports the held finding, and any other exit drops it.
+// reports the held finding, and any other exit (0 on a signal, 5 on a lost
+// boundary) drops it.
 func (rt *Runtime) SettleHeld(code int) {
 	if code == ExitFail {
-		rt.reportHeld(nil)
+		rt.reportHeld(context.Background())
 		return
 	}
 	rt.dropHeld()
