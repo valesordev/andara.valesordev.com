@@ -4,7 +4,7 @@ title: content/core/VERSIONS is append-only, enforced by make check
 epic: EPIC-05
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-013]
 blocks: []
