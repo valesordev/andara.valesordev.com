@@ -256,8 +256,8 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 - **`sim.EffectiveSeed`** is the configured-or-derived seed.
 
 **Outstanding before `done`:**
-- SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap. That check also
-  adds the exit `5` row to `docs/runbooks/state-projector-down.md`.
+- ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
+  row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
 - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
   build deployed to `dev`.
 
@@ -266,7 +266,11 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 **The projector's §7 instrumentation passes on the local stack.** The local compose has no
 projector service, so the check ran the built `andara-projector state --rebuild` on the host against
 the stack's Redpanda, the server's real snapshot rounds (`.local/data/snapshots`, the `fs` store)
-and its OTLP collector. At `main` 37e3a1b:
+and its OTLP collector. The compose has no projector writer, so the host run is the only one on the
+consumer group, which is what makes `--rebuild` safe here (`projection-stale.md` forbids it beside a
+live projector). The invocation: `ANDARA_KAFKA_BROKERS=localhost:9092 ANDARA_OTLP_ENDPOINT=localhost:4317
+ANDARA_SNAPSHOT_FS_PATH=.local/data/snapshots ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=testdata/content/valid
+andara-projector state --rebuild`. It isn't a make target; a stack target for it is SRE's to propose. At `main` 37e3a1b:
 
 - **Metric, scraped from the projector's own `/metrics`:**
   ```
@@ -287,8 +291,9 @@ and its OTLP collector. At `main` 37e3a1b:
 
 **Not yet emitted by a running process:**
 - `andara_restore_total` for `caller="recovery"` and `caller="verify"` (6 series in
-  `andara-server`). `AW-SRV-007` wires them and inherits the live observation as a
-  Definition-of-done line.
+  `andara-server`). `AW-SRV-007` wires them. Its Definition-of-done line carries the live
+  observation for `recovery` only; `verify` (`Admin.VerifySnapshotRound`, `recover --verify`) has no
+  DoD line, which goes to PM and architecture in `docs/feedback/AW-SRV-043-restore-verifies-round.md`.
 - The mismatch series and the `error` line from a running projector: it exits `5` before a scrape.
   The integration tests cover them.
 - The operator step, `make projector-rebuild ENV=dev`, needs this build on `dev`, which is

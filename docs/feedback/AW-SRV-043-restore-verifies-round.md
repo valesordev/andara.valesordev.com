@@ -85,3 +85,11 @@ below.
   distinct `make` exit codes (`AW-INF-007`'s `make deploy` table, for one) can't be asserted at the
   `make` level. `AW-INF-029` now says its codes are the script's. `AW-INF-007` needs the same
   wording when it's split (`docs/feedback/AW-INF-005-007-split.md`).
+
+## For PM and architecture: SRE §8 instrumentation check, 2026-10-03
+
+- **`andara_restore_total{caller="verify"}` has no Definition-of-done line.** `AW-SRV-007` wires
+  both server callers, but its DoD names only `caller="recovery"` and the `recovery.run` trace.
+  `Admin.VerifySnapshotRound` and `andara-server recover --verify` therefore have nothing that makes
+  their series get observed live (CLAUDE.md §8, deferred observations). Add a `caller="verify"`
+  line to `AW-SRV-007`'s DoD. It's a story-body change, so PM or architecture's to make.
