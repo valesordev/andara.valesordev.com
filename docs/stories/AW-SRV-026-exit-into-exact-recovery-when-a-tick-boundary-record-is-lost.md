@@ -173,10 +173,14 @@ stack-boundary-lost: AW-SRV-026 AC-4 — exited 5 on the lost boundary, recovere
 - **"Resumes from the recovered tick"**: the `recovered from the log` tick equals the loss line's
   `last_delivered_tick`, and `andara_ticks_total` moves again.
 - **"Gapless, read back"**: today's recovery replays every boundary and refuses a gap
-  (`sim.ErrBoundaryGap`), so the target restarts the server once more and requires a recovery
-  past the loss with no `tick boundary gap`. The read-back is the product's own reader.
-- **AW-SRV-002's eight-second outage** runs in the same workflow, before this step, and still
-  sees no exit.
+  (`sim.ErrBoundaryGap`), so the target restarts the server once more. It requires a recovery
+  past the loss that replayed the whole log (`ticks_replayed == tick`; the live read-back was
+  `1636795 == 1636795`). The read-back is the product's own reader. Once AW-SRV-007 recovers
+  from a snapshot, the full-replay check fails loudly and the read-back needs replacing.
+- **AW-SRV-002's eight-second outage** runs earlier in the same workflow and still passes. Its
+  "no exit" is indirect: a restart would reset `andara_ticks_total` and fail its `td - tb >= 40`,
+  and its health check reads `healthy`. This step runs just before the M1 gate, which restarts
+  the server anyway, so its restarts reset nothing a later step reads.
 
 **Instruments, each seen on a real backend:**
 

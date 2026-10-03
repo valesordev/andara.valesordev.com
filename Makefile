@@ -337,7 +337,7 @@ stack-smoke:
 stack-play: build
 	@$(SCRIPTS)/stack_play.sh
 
-## stack-boundary-lost: AW-SRV-026 AC-4 — stop Redpanda past the delivery timeout; the server exits 5 once, recovers to the last delivered boundary, gapless — needs make up (about 2 minutes)
+## stack-boundary-lost: AW-SRV-026 AC-4 — stop Redpanda past the delivery timeout; the server exits 5 once, recovers to the last delivered boundary, gapless — needs make up (about 3–4 minutes)
 stack-boundary-lost:
 	@$(SCRIPTS)/stack_boundary_lost.sh
 

@@ -14,12 +14,15 @@
 #     `recovered from the log` tick is the loss line's `last_delivered_tick`, and
 #     `andara_ticks_total` moves again.
 #   - The topic is gapless. Today's recovery replays every boundary from tick 1 and refuses a
-#     gap (sim.ErrBoundaryGap), so one more restart that recovers past the loss is the
-#     read-back. It also covers the boundaries published after the first recovery.
+#     gap (sim.ErrBoundaryGap), so one more restart that recovers past the loss, replaying the
+#     whole log, is the read-back. It also covers the boundaries published after the first
+#     recovery. The read-back requires `ticks_replayed == tick`, a full replay: once AW-SRV-007
+#     recovers from a snapshot, this step fails loudly instead of proving nothing, and needs a
+#     read-back of its own.
 #
-# The loss is a process's 0-or-1 counter, and the process exits seconds after it, so
-# andara_tick_boundary_lost_total is read from the log line here rather than scraped (the
-# §8 record says so).
+# The script asserts the loss through its log line, not andara_tick_boundary_lost_total: the
+# counter is 0 or 1 in a process that exits seconds later. The §8 record checked the counter
+# in Prometheus separately.
 #
 # Requires a stack: `make up` first. CI runs it as a step of the `stack` workflow, after
 # AW-SRV-002's eight-second outage, which must still see no exit.
@@ -144,18 +147,24 @@ say "lost tick ${lost_tick}; recovered to ${last_delivered}; ${#exits[@]} exit(s
 # recovery, and refuses a gap. It must land past the loss.
 before_restart="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "${COMPOSE[@]}" restart andara-server >/dev/null
+SINCE="$before_restart"
 deadline=$(( SECONDS + 180 ))
 until ready; do
-  (( SECONDS < deadline )) || fail "the server didn't come back from the read-back restart within 180s"
+  if (( SECONDS >= deadline )); then
+    # A gap fails the boot (exit 1, then the restart loop), so name it when it's the cause.
+    if logs_since | grep -q 'tick boundary gap'; then
+      fail "the read-back found a gap in the boundaries"
+    fi
+    fail "the server didn't come back from the read-back restart within 180s"
+  fi
   sleep 2
 done
-SINCE="$before_restart"
 again="$(field "$RECOVERED_LINE" tick | tail -1)"
-[[ -n "$again" ]] || fail "the read-back restart logged no \`${RECOVERED_LINE}\` line"
+replayed="$(field "$RECOVERED_LINE" ticks_replayed | tail -1)"
+[[ -n "$again" && -n "$replayed" ]] || fail "the read-back restart logged no \`${RECOVERED_LINE}\` line"
+[[ "$replayed" == "$again" ]] \
+  || fail "the read-back replayed ${replayed} ticks to reach ${again}: not a full replay, so it doesn't read the topic back (has AW-SRV-007's snapshot recovery landed?)"
 awk -v a="$again" -v b="$last_delivered" 'BEGIN { exit !(a > b) }' \
   || fail "the read-back recovered to tick ${again}, not past the loss at ${last_delivered}"
-if logs_since | grep -q 'tick boundary gap'; then
-  fail "the read-back found a gap in the boundaries"
-fi
 say "read-back recovered to tick ${again}: the boundaries are gapless across the loss"
 say "AW-SRV-026 AC-4 — exited 5 on the lost boundary, recovered to it, gapless — passes"
