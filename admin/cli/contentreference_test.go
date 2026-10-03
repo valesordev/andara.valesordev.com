@@ -5,9 +5,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
+	"go/build"
 	"go/constant"
-	"go/importer"
 	"go/parser"
 	"go/token"
 	"go/types"
@@ -17,6 +18,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/valesordev/andara/content/core"
@@ -191,51 +193,82 @@ func TestContentReference_Core(t *testing.T) {
 // sim.ErrCode in sim, and every package-level Code* of string type in lang,
 // each with the value the type checker folds. One whose value isn't a
 // constant string fails the test rather than being skipped.
+//
+// Only sim and lang are checked, once per test binary: lang is given the sim
+// just checked, and every other import an empty package. The type errors that
+// leaves (a selector on an empty package) are collected and ignored, since no
+// code depends on them, and a code that did would fail to fold and fail the
+// test.
 func parsedCodes(t *testing.T) (simCodes, langCodes map[string]string) {
 	t.Helper()
-	simCodes = map[string]string{} // value -> declared name
-	langCodes = map[string]string{}
-	codeCheck(t, filepath.Join("..", "..", "server", "sim"), "github.com/valesordev/andara/server/sim",
-		func(name string, typ types.Type) bool {
-			n, ok := types.Unalias(typ).(*types.Named)
-			return ok && n.Obj().Name() == "ErrCode" && n.Obj().Pkg().Path() == "github.com/valesordev/andara/server/sim"
-		}, simCodes)
-	codeCheck(t, filepath.Join("..", "..", "content", "lang"), "github.com/valesordev/andara/content/lang",
-		func(name string, typ types.Type) bool {
-			b, ok := typ.Underlying().(*types.Basic)
-			return strings.HasPrefix(name, "Code") && ok && b.Info()&types.IsString != 0
-		}, langCodes)
-	if len(simCodes) == 0 || len(langCodes) == 0 {
-		t.Fatalf("found %d sim codes and %d lang codes", len(simCodes), len(langCodes))
+	codesOnce.Do(func() {
+		codesSim, codesLang = map[string]string{}, map[string]string{}
+		const simPath = "github.com/valesordev/andara/server/sim"
+		simPkg, err := codeCheck(filepath.Join("..", "..", "server", "sim"), simPath, nil,
+			func(name string, typ types.Type) bool {
+				n, ok := types.Unalias(typ).(*types.Named)
+				return ok && n.Obj().Name() == "ErrCode" && n.Obj().Pkg().Path() == simPath
+			}, codesSim)
+		if err == nil {
+			_, err = codeCheck(filepath.Join("..", "..", "content", "lang"), "github.com/valesordev/andara/content/lang", simPkg,
+				func(name string, typ types.Type) bool {
+					// A Code* whose type couldn't be determined (it
+					// calls into a stubbed import) counts too: it folds to
+					// no constant and fails, rather than being skipped.
+					b, ok := typ.Underlying().(*types.Basic)
+					return strings.HasPrefix(name, "Code") && ok && (b.Info()&types.IsString != 0 || b.Kind() == types.Invalid)
+				}, codesLang)
+		}
+		codesErr = err
+	})
+	if codesErr != nil {
+		t.Fatal(codesErr)
 	}
-	return simCodes, langCodes
+	if len(codesSim) == 0 || len(codesLang) == 0 {
+		t.Fatalf("found %d sim codes and %d lang codes", len(codesSim), len(codesLang))
+	}
+	return codesSim, codesLang
 }
 
-// codeCheck type-checks the package in dir and records, for every
-// package-level const or var that isCode accepts, its folded string value.
-func codeCheck(t *testing.T, dir, path string, isCode func(string, types.Type) bool, into map[string]string) {
-	t.Helper()
-	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
-	if err != nil || len(files) == 0 {
-		t.Fatalf("no Go source in %s: %v", dir, err)
+var (
+	codesOnce           sync.Once
+	codesSim, codesLang map[string]string
+	codesErr            error
+)
+
+// stubImporter gives the package being checked sim, when it imports it, and
+// an empty package for anything else.
+type stubImporter struct{ sim *types.Package }
+
+func (s stubImporter) Import(path string) (*types.Package, error) {
+	if s.sim != nil && path == s.sim.Path() {
+		return s.sim, nil
+	}
+	pkg := types.NewPackage(path, filepath.Base(path))
+	pkg.MarkComplete()
+	return pkg, nil
+}
+
+// codeCheck type-checks the package in dir (its non-test files, as go/build
+// selects them) and records, for every package-level const or var that
+// isCode accepts, its folded string value.
+func codeCheck(dir, path string, sim *types.Package, isCode func(string, types.Type) bool, into map[string]string) (*types.Package, error) {
+	bp, err := build.Default.ImportDir(dir, 0)
+	if err != nil {
+		return nil, err
 	}
 	fset := token.NewFileSet()
 	var parsed []*ast.File
-	for _, f := range files {
-		if strings.HasSuffix(f, "_test.go") {
-			continue
-		}
-		af, err := parser.ParseFile(fset, f, nil, 0)
+	for _, name := range bp.GoFiles {
+		af, err := parser.ParseFile(fset, filepath.Join(dir, name), nil, 0)
 		if err != nil {
-			t.Fatal(err)
+			return nil, err
 		}
 		parsed = append(parsed, af)
 	}
 	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}}
-	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
-	if _, err := conf.Check(path, fset, parsed, info); err != nil {
-		t.Fatalf("type-check %s: %v", path, err)
-	}
+	conf := types.Config{Importer: stubImporter{sim: sim}, Error: func(error) {}}
+	pkg, _ := conf.Check(path, fset, parsed, info)
 	for _, f := range parsed {
 		for _, d := range f.Decls {
 			g, ok := d.(*ast.GenDecl)
@@ -259,13 +292,14 @@ func codeCheck(t *testing.T, dir, path string, isCode func(string, types.Type) b
 						}
 					}
 					if val == nil || val.Kind() != constant.String {
-						t.Fatalf("%s.%s is a code whose value isn't a constant string", path, id.Name)
+						return nil, fmt.Errorf("%s.%s is a code whose value isn't a constant string", path, id.Name)
 					}
 					into[constant.StringVal(val)] = id.Name
 				}
 			}
 		}
 	}
+	return pkg, nil
 }
 
 // AC-5, AC-7: the diagnostics table holds exactly the codes the source
