@@ -252,3 +252,32 @@ output, and only the golden flags it.
 - AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
   an empty `HOME` and no config.
 - AW-INF-028 consumes the JSON.
+
+## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-cli-009-verify`)
+
+**The story's §7 passes.** It asks for no metric and no alert, and for the inherited
+`cli.command` root span and `command completed` debug line. The check ran the built binary
+(`main` d663984 plus this branch):
+
+- **Debug line, with `--log-level debug`:**
+  `{"level":"debug","msg":"command completed in 360.921µs","command":"content reference","trace_id":"546a280c…"}`.
+  It's on stderr only. With `--output json`, stdout is one JSON object and nothing else.
+- **Root span:** the CLI exports nowhere by default (`admin/cli/telemetry.go`), so there is no
+  backend to read it from. The unit tests' exporter asserts it. The `trace_id` above is the span's.
+- **No child span, no metric:** none in the output or the source, as §7 says.
+
+**AC-1 now runs in CI, which was SRE's to wire.** `make cli-offline-check`
+(`scripts/cli_offline_check.sh`) unpacks the `make cli-release` linux/amd64 archive and runs
+`andara-cli content reference --output json` in `busybox` with `--network none`, `HOME=/nonexistent`
+and no config. It fails unless the exit is `0`, stderr is empty, and stdout is one JSON object with
+the four sections. The `cli-release` job in `ci.yaml` runs it after the existing busybox step. A
+mutant that passes an unknown flag fails it (exit `2` from the CLI, `1` from the target).
+
+```
+cli-offline-check: content reference ran with no network and no HOME: exit 0, empty stderr, one JSON object — passes
+```
+
+**Also observed on the binary:** 12 Directions, 6 Component types, `core` at `andara.core@1`
+(which `andara-cli version` prints) with 4 Templates, and 37 diagnostics. The warnings are
+`missing_reverse_exit` and `orphan_room`. Two runs are byte-identical, and an extra argument exits
+`2`. The human output has the four headings, with `Core (andara.core@1)`.
