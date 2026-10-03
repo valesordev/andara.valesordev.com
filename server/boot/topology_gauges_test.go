@@ -20,15 +20,22 @@ import (
 // andara_content_rooms_loaded for every Zone in effect.
 //
 // One read, deliberately (live-assertions.md rule 2's exception): the claim
-// is an ordering inside contentApplied — the gauges are set before
-// Content.Applied, which is what lets ReconcileContent return — so a poll
-// would let the broken order pass. Shown by widening the window: a sleep
-// between Applied and the refill, on the old order, fails this every run.
+// is an ordering inside contentApplied — the gauges are set on the loop's
+// goroutine before Content.Applied, which is what lets ReconcileContent
+// return — so a poll would let the broken order pass.
+//
+// LoadContent sets the same series for the World it validated, so they are
+// cleared first: otherwise they are already there when ReconcileContent
+// returns, whatever the order (pre-PR review of #287). Shown by widening
+// the window: Applied first, then a 50 ms sleep, then the gauges, fails
+// this every run.
 func TestReconcileContent_GaugesBeforeInEffect(t *testing.T) {
 	rt, logs := runtime(t, fixture(t, "valid"), false)
 	if code := rt.LoadContent(context.Background()); code != ExitOK {
 		t.Fatalf("load: %s", logs.String())
 	}
+	rt.Tel.Metrics.RoomsLoaded.Reset()
+	rt.roomsLabeled = nil
 	serveMemory(t, rt)
 	n := testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded")
 	if n != len(rt.Engine.World().Zones) || n == 0 {

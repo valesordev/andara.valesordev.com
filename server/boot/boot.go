@@ -127,8 +127,10 @@ type Runtime struct {
 	started atomic.Bool
 	waiting atomic.Bool
 	// roomsLabeled is the Zones andara_content_rooms_loaded has a series for,
-	// so setTopologyGauges deletes only departed ones (#287). gaugeMu guards
-	// it: the boot's load and the loop's swaps both set the gauges.
+	// so setTopologyGauges deletes only departed ones (#287). The boot's load
+	// and the loop's swaps both set the gauges, one after the other today;
+	// gaugeMu is defensive, so a later caller on another goroutine can't
+	// race the map.
 	gaugeMu      sync.Mutex
 	roomsLabeled map[sim.ZoneID]struct{}
 	draining     atomic.Bool
