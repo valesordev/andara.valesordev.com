@@ -542,6 +542,19 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
 	defer func() { _ = tp.Shutdown(context.Background()) }()
 	o.Tracer = tp.Tracer("test")
+	// Render asks ContentVersion while a tick is replayed, so each call is a
+	// moment inside some tick's verification: a state.verify span that
+	// times the verification contains it (#290).
+	var (
+		renderMu sync.Mutex
+		renders  []time.Time
+	)
+	o.ContentVersion = func(sim.ZoneID) string {
+		renderMu.Lock()
+		renders = append(renders, time.Now())
+		renderMu.Unlock()
+		return "fixture@1"
+	}
 	err := projector.Run(context.Background(), o)
 	var d *projector.Divergence
 	if !errors.As(err, &d) || d.Tick != bad || projector.ExitCode(err) != projector.ExitDivergence {
@@ -555,9 +568,11 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 	}
 
 	// #290: a state.verify span for every tick up to and including the one
-	// that diverged, each under a state.replay. Only the diverging one has
-	// an error status, and it carries both hashes.
+	// that diverged, in order, each under a state.replay, and each timing
+	// its tick's verification. Only the diverging one has an error status,
+	// and it carries both hashes.
 	var verified []int64
+	var windows [][2]time.Time
 	for _, s := range spans.Ended() {
 		if s.Name() != "state.verify" {
 			continue
@@ -565,6 +580,7 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 		attrs := attribute.NewSet(s.Attributes()...)
 		tick, _ := attrs.Value("tick")
 		verified = append(verified, tick.AsInt64())
+		windows = append(windows, [2]time.Time{s.StartTime(), s.EndTime()})
 		if s.Parent().SpanID() == (trace.SpanID{}) {
 			t.Errorf("state.verify for tick %d has no parent", tick.AsInt64())
 		}
@@ -580,8 +596,29 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 			t.Errorf("the diverging tick's state.verify: status %v, recorded %q, replayed %q", s.Status(), recorded.AsString(), replayed.AsString())
 		}
 	}
-	if !slices.Contains(verified, int64(bad)) || !slices.Contains(verified, int64(bad-1)) {
-		t.Fatalf("state.verify spans for ticks %v, want every tick through %d", verified, bad)
+	var want []int64
+	for tick := int64(1); tick <= bad; tick++ {
+		want = append(want, tick)
+	}
+	if !slices.Equal(verified, want) {
+		t.Fatalf("state.verify spans for ticks %v, want %v", verified, want)
+	}
+	renderMu.Lock()
+	defer renderMu.Unlock()
+	if len(renders) == 0 {
+		t.Fatal("nothing was rendered, so nothing shows when the verification ran")
+	}
+	for _, at := range renders {
+		inside := false
+		for _, w := range windows {
+			if !at.Before(w[0]) && !at.After(w[1]) {
+				inside = true
+				break
+			}
+		}
+		if !inside {
+			t.Fatalf("a tick was rendered at %v, outside every state.verify span: the spans don't time the verification", at)
+		}
 	}
 }
 
