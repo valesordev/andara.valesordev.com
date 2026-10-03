@@ -432,19 +432,27 @@ func worldHadZones(ctx context.Context, log replayLog) (bool, error) {
 }
 
 // contentApplied keeps the AW-SRV-001 topology gauges on the content in
-// effect, then tells the content source what a tick applied. On the loop's
-// goroutine, or recovery's before the loop starts.
+// effect, tells the content source what a tick applied, and then ends the
+// wait for a first World. On the loop's goroutine, or recovery's before the
+// loop starts.
 //
-// The gauges come first: Applied is what lets ReconcileContent return and a
-// reload report success, and content must never be reported in effect ahead
-// of its gauges (#287).
+// The order is what each observer is promised:
+//   - the gauges first: Applied is what lets ReconcileContent return and a
+//     reload report success, and content must never be reported in effect
+//     ahead of its gauges (#287);
+//   - Applied before the wait ends: leaving the wait opens OpenSession and
+//     turns /readyz 200, and GetServerInfo reports the content source's
+//     InEffect, so a request let in must already see the content it was let
+//     in for (review of #359).
 func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
-	if rt.Engine != nil {
-		w := rt.Engine.World()
-		rt.setTopologyGauges(w)
-		rt.leaveWait(w, rt.Engine.Templates(), swaps)
+	if rt.Engine == nil {
+		rt.reportApplied(swaps)
+		return
 	}
+	w := rt.Engine.World()
+	rt.setTopologyGauges(w)
 	rt.reportApplied(swaps)
+	rt.leaveWait(w, rt.Engine.Templates(), swaps)
 }
 
 // reportApplied tells the content source what a tick applied, through the
