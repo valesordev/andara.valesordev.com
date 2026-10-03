@@ -29,7 +29,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
 }
 
-func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
+func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit int) {
 	cfg, err := config.Parse(args, env, stderr)
 	if err != nil {
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
@@ -47,6 +47,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 
 	rt := boot.New(cfg, tel)
+	// An empty store's no_zones_found, held by LoadContent, is reported if
+	// the process exits 1 before the boot decides, by any path, and dropped
+	// otherwise (AW-SRV-042, #299).
+	defer func() { rt.SettleHeld(exit) }()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
@@ -155,9 +159,26 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	rctx, stopReconcile := context.WithCancel(ctx)
 	reconciled := make(chan int, 1)
 	go func() { reconciled <- rt.ReconcileContent(rctx) }()
+	// A signal during reconcile: the drain's exit, 0, or 5 for a boundary
+	// lost before it (AW-SRV-026).
+	signaled := func() int {
+		err := halt()
+		_ = srv.Shutdown(context.Background())
+		if err != nil {
+			tel.Log.Error("tick loop", "detail", err.Error())
+			return boot.LoopExit(err)
+		}
+		return boot.ExitOK
+	}
 	select {
 	case code := <-reconciled:
 		stopReconcile()
+		if code != boot.ExitOK && ctx.Err() != nil {
+			// Reconcile failed because the signal canceled it, and its
+			// result won the select over ctx.Done: still a signal, not an
+			// exit 1, so the held no_zones_found is dropped (Codex on #369).
+			return signaled()
+		}
 		if code != boot.ExitOK {
 			_ = halt()
 			_ = srv.Shutdown(context.Background())
@@ -173,14 +194,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		return boot.LoopExit(err)
 	case <-ctx.Done():
 		stopReconcile()
-		// A boundary lost before the signal still exits 5 (AW-SRV-026).
-		err := halt()
-		_ = srv.Shutdown(context.Background())
-		if err != nil {
-			tel.Log.Error("tick loop", "detail", err.Error())
-			return boot.LoopExit(err)
-		}
-		return boot.ExitOK
+		return signaled()
 	}
 
 	// A spawn Room the content in effect lacks fails the boot. A World

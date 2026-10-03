@@ -139,6 +139,17 @@ type Runtime struct {
 	// (#287). Nil outside tests.
 	applied  func([]sim.SwapApplied)
 	draining atomic.Bool
+	// held is an empty store's no_zones_found finding, held by LoadContent
+	// until the boot's decision settles it (AW-SRV-042, #299 amendment):
+	// dropped on a wait, the recovery warn logged once on a serve, logged
+	// and counted on an exit 1. heldCtx carries content.load's trace for an
+	// exit outside any span. Nil once settled.
+	heldMu  sync.Mutex
+	held    *sim.ValidationError
+	heldCtx context.Context
+	// nextRetry is the wait's backoff before the next reload, for the
+	// reload's debug line.
+	nextRetry time.Duration
 	// worldNext is the tick loop's next-to-read offset on the World
 	// Partition, for worldBarrier; written on the loop's goroutine.
 	worldNext atomic.Int64
@@ -216,10 +227,25 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		inputs, candidates = zones, templates
 		loadErrs = append(loadErrs, cerrs...)
 	}
+	// AW-SRV-042's #299 amendment: an empty store's no_zones_found is the
+	// expected first state of every fresh environment, not a fault, so on a
+	// store-backed source it's held until the boot's decision settles it,
+	// unless another finding refuses the load after all. The directory
+	// source and --validate-only report it as before.
+	emptyStore := rt.Cfg.ContentSource == content.SourceKafka && !rt.Cfg.ValidateOnly && src != nil && content.IsEmptyStore(loadErrs)
+	// A reload during the projector's wait, in the same state: one debug
+	// line and nothing else.
+	reloading := emptyStore && rt.waiting.Load()
+	var heldFinding *sim.ValidationError
 	loadFatal := false
 	errorCount := 0
 	warnCount := 0
 	for _, e := range loadErrs {
+		if emptyStore {
+			heldFinding = &e
+			loadFatal = true
+			continue
+		}
 		if rt.recordFinding(ctx, e) {
 			warnCount++
 			continue
@@ -300,12 +326,24 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 		for _, pack := range templates.Packs() {
 			n := len(templates.Pack(pack))
 			rt.Tel.Metrics.TemplatesLoaded.WithLabelValues(pack).Set(float64(n))
-			rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "templates loaded",
+			level := slog.LevelInfo
+			if reloading {
+				level = slog.LevelDebug
+			}
+			rt.Tel.Log.LogAttrs(ctx, level, "templates loaded",
 				slog.String("pack", pack),
 				slog.Int("templates", n),
 				slog.String("trace_id", telemetry.TraceID(ctx)),
 			)
 		}
+	}
+
+	if heldFinding != nil && errorCount > 0 {
+		// Another finding refuses the load: not the empty-store case after
+		// all. Reported now, as it always was.
+		rt.recordFinding(ctx, *heldFinding)
+		errorCount++
+		heldFinding = nil
 	}
 
 	zoneCount, roomCount, componentCount := 0, 0, 0
@@ -336,8 +374,18 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 			// survive a restart as an outage: recovery brings back what the
 			// log recorded, reconcile refuses the candidate, and only a boot
 			// that ends with nothing in effect exits (ReconcileContent).
-			rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "the content the Active Pointers name does not load; recovering what the log recorded",
-				slog.Int("error_count", errorCount), slog.String("trace_id", telemetry.TraceID(ctx)))
+			switch {
+			case heldFinding != nil && reloading:
+				rt.Tel.Log.LogAttrs(ctx, slog.LevelDebug, "content reload: no Zones in effect yet",
+					slog.String("next_retry", rt.nextRetry.String()), slog.String("trace_id", telemetry.TraceID(ctx)))
+			case heldFinding != nil:
+				// The recovery warn is held with the finding: a wait drops
+				// both, and a serve logs the warn (serveHeld).
+				rt.hold(ctx, *heldFinding)
+			default:
+				rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, recoveringLine,
+					slog.Int("error_count", errorCount), slog.String("trace_id", telemetry.TraceID(ctx)))
+			}
 			return ExitOK
 		}
 		return ExitFail

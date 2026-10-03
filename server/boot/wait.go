@@ -105,6 +105,7 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 		return nil
 	}
 	if rt.Content == nil || rt.Content.Resolver() == nil {
+		rt.reportHeld(ctx)
 		return fmt.Errorf("content: what the source names does not load, and it has no Active Pointers to wait on")
 	}
 	ctx, span := rt.Tel.Tracer.Start(ctx, "content.wait")
@@ -119,6 +120,13 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 	defer stop()
 	moves, err := watcher.Resolver().Watch(wctx)
 	if err != nil {
+		// An exit before the wait reports the held finding, as the
+		// server's does (AW-SRV-042, #299); a signal drops it.
+		if ctx.Err() != nil {
+			rt.dropHeld()
+		} else {
+			rt.reportHeld(ctx)
+		}
 		return err
 	}
 	defer func() {
@@ -127,6 +135,11 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 		}
 	}()
 	rt.enterWait(ctx)
+	// The projector's decision: waiting. Nothing reports a held finding
+	// after this (the projector's main has no SettleHeld, and reloads only
+	// log their debug line), so dropping it is hygiene: the Runtime holds no
+	// stale finding through the wait (AW-SRV-042, #299).
+	rt.dropHeld()
 	return rt.waitLoop(ctx, moves, func() (bool, error) {
 		prev := rt.Content
 		if code := rt.LoadContent(ctx); code != ExitOK {
@@ -178,6 +191,8 @@ func (rt *Runtime) waitLoop(ctx context.Context, moves <-chan content.PointerMov
 		case <-timer.C:
 			retry = min(retry*2, max(waitRetryMax, first))
 		}
+		// The reload's debug line names the backoff before the next one.
+		rt.nextRetry = retry
 		done, err := reload()
 		if err != nil {
 			return err

@@ -8,6 +8,7 @@ package boot
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -166,6 +167,21 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 	if n := len(logLines(t, plogs, waitLine)); n != 1 {
 		t.Errorf("%d wait lines; the warn is once", n)
 	}
+	// AW-SRV-042's #299 amendment, over the projector's whole log from its
+	// boot LoadContent to the leaving line: no no_zones_found and no
+	// recovery warn, at least one reload line, and nothing counted.
+	if n := noZonesLines(plogs); n != 0 {
+		t.Errorf("%d no_zones_found lines in the projector's log\n%s", n, plogs.String())
+	}
+	if n := len(logLines(t, plogs, recoveringLine)); n != 0 {
+		t.Errorf("%d recovery warns in the projector's log", n)
+	}
+	if n := len(logLines(t, plogs, "content reload: no Zones in effect yet")); n < 1 {
+		t.Errorf("no reload line while waiting\n%s", plogs.String())
+	}
+	if c := noZonesCount(proj); c != 0 {
+		t.Errorf("andara_content_validation_errors_total{code=no_zones_found} = %v, want 0", c)
+	}
 	// Leaving the wait wrote nothing either: WaitForContent returned after
 	// its last reload, so its window is closed (review of #334).
 	for tp, end := range endOffsets(ctx, t, adm, tp, audit) {
@@ -190,4 +206,70 @@ func endOffsets(ctx context.Context, t *testing.T, adm *kadm.Client, tp content.
 		out[o.Topic] += o.Offset
 	})
 	return out
+}
+
+// AW-SRV-042's #299 amendment, the timer's reloads: each logs one debug line
+// with the backoff before the next and content.wait's trace, and nothing
+// else is logged or counted for the empty store.
+func TestProjectorWait_TimerReloadsLogOneDebugLine(t *testing.T) {
+	tp, audit, _, brokers := storeTopics(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	srv, slogs := storeRuntime(t, tp, audit, brokers)
+	if code := srv.LoadContent(ctx); code != ExitOK {
+		t.Fatalf("the server's boot: exit %d\n%s", code, slogs.String())
+	}
+	proj, plogs := storeRuntime(t, tp, audit, brokers)
+	proj.ContentReadOnly = true
+	proj.waitRetry = 50 * time.Millisecond
+	if code := proj.LoadContent(ctx); code != ExitOK || proj.World != nil {
+		t.Fatalf("an empty store: exit %d\n%s", code, plogs.String())
+	}
+	wctx, stop := context.WithCancel(ctx)
+	done := make(chan error, 1)
+	go func() { done <- proj.WaitForContent(wctx) }()
+	const reloadLine = "content reload: no Zones in effect yet"
+	eventually.Observed(t, 30*time.Second, "two reload lines", func() (bool, string) {
+		n := len(logLines(t, plogs, reloadLine))
+		return n >= 2, fmt.Sprintf("%d reload lines", n)
+	})
+	stop()
+	<-done
+	for _, l := range logLines(t, plogs, reloadLine) {
+		if l["level"] != "DEBUG" || l["next_retry"] == "" || l["next_retry"] == nil || l["trace_id"] == "" || l["trace_id"] == nil {
+			t.Errorf("a reload line: %v", l)
+		}
+	}
+	if n := noZonesLines(plogs); n != 0 {
+		t.Errorf("%d no_zones_found lines\n%s", n, plogs.String())
+	}
+	if n := len(logLines(t, plogs, recoveringLine)); n != 0 {
+		t.Errorf("%d recovery warns", n)
+	}
+	// The boot's own LoadContent logs templates loaded at info; every
+	// reload after the wait began logs it at debug.
+	waiting, reloaded := false, 0
+	for l := range strings.SplitSeq(plogs.String(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) != nil {
+			continue
+		}
+		switch m["msg"] {
+		case "waiting for content: no Zones in effect; publish and activate a pack":
+			waiting = true
+		case "templates loaded":
+			if waiting {
+				reloaded++
+				if m["level"] != "DEBUG" {
+					t.Errorf("templates loaded at %v during the wait", m["level"])
+				}
+			}
+		}
+	}
+	if reloaded == 0 {
+		t.Error("no templates loaded line during the wait")
+	}
+	if c := noZonesCount(proj); c != 0 {
+		t.Errorf("andara_content_validation_errors_total{code=no_zones_found} = %v, want 0", c)
+	}
 }
