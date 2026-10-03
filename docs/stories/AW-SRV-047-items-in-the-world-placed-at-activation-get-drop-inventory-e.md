@@ -78,7 +78,7 @@ them closely, so that the World has things in it and not only places.
    the actor reads its description.
 6. **Given** no Item matching the word **when** the actor sends `get`, `drop` or `examine` with it
    **then** the command is rejected with `item_not_here` (`get`, `examine`) or `item_not_carried`
-   (`drop`). The rejection names the word the actor typed, and state doesn't change. **Given** no
+   (`drop`). The rejection names the word the actor typed, lowercased, and state doesn't change. **Given** no
    argument **then** it's the existing `missing_argument`.
 7. **Given** two Items whose keywords match the word **when** the actor sends `get <word>` **then**
    the Item with the lowest Item Instance ID is taken, the same result on every replay.

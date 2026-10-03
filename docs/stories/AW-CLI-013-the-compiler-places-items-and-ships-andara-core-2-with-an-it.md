@@ -42,10 +42,11 @@ with its Items in it.
   - `testdata/content/valid`, with `TestDevFixtureSourceMatchesTestContent` (which hard-codes core
     `Version: 1`) and `TestCoreSeedMatchesFixture`;
   - `TestContentFetchCoreHasNoServerToFetchFrom` ("embeds andara.core@1");
-  - every other test that pins `andara.core@1` (17 files on `main` today), each moved to `@2` or kept
-    at `@1` on purpose.
-- **A frozen `andara.core@1` source** in implementation's test data: a copy of today's corpus
-  `valid/core`, so that AC-3 has a `@1` core to cache after the corpus moves to `@2`.
+  - every other Go file that pins core version 1, either as the string `andara.core@1` or as
+    `Pack{Name: CorePack, Version: 1}` (for example `content/lang/loader_test.go`,
+    `server/content/lang_test.go`), each moved to `@2` or kept at `@1` on purpose. Find them by
+    search, not by a count.
+- **A frozen `andara.core@1` source** at `testdata/core/v1/`: a copy of today's corpus `valid/core`, so that AC-3 has a `@1` core to cache after the corpus moves to `@2`.
 - **The `RoomDefinition` round-trip test** (a v1 Room with no placements is byte-identical after a
   round trip), which `AW-CLI-012` can't write.
 - `content/core/` at version 2: the compiled `andara.core.Item` carrying the names Component,
@@ -68,16 +69,14 @@ with its Items in it.
    passes, `andara-cli version` names `andara.core@2`, and both anchor tests pass.
 3. **Given** a pack that `requires andara.core@1` and places no Items **when** the `@2` binary
    validates it **then**:
-   - with `andara.core@1` in the cache (`andara-cli content fetch-core --from <the frozen @1 source>
+   - with `andara.core@1` in the cache (`andara-cli content fetch-core --from testdata/core/v1
      --version 1`), it validates;
    - with it not cached, it's `core_version_mismatch`, whose remedy is to change `requires` to `2`
      (`errors.md` §3.1).
 
-   **Given** a pack built against `@2` **when** an `@1` `andara-cli` validates it **then**
-   `core_version_mismatch` tells the Builder to upgrade `andara-cli` (#308's direction rule).
-4. **Given** the `town` fixture with its placed `Lantern` **when** `make stack-play` runs **then** it
-   passes. The fixture loads and the server ignores the placement, since the server parses the field
-   but doesn't act on it until `AW-SRV-047`.
+   **Given** a pack that `requires andara.core@3` **when** the `@2` binary validates it **then**
+   `core_version_mismatch` names the release that embeds `@3` (#308's direction rule). That's
+   `TestContentValidate_EmbeddedCoreThenCache`, moved up one version.
 
 ## Interface contract
 

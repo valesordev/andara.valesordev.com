@@ -23,13 +23,16 @@ Brian wants these stories ready for SPRINT-05, but not in it unless content need
      - `content/core/templates`, `testdata/` and their anchor tests (implementation's, listed in
        `AW-CLI-013`'s Scope);
      - `scripts/content_grammar_check.py`'s `KEY_ORDER` for the new `RoomDefinition` key (SRE's).
+   - `content-grammar-check` requires every code declared in `errors.md` §3.1–3.4 to be raised by a
+     corpus case, so the new codes' rows land with their cases.
    - `perceives` set a precedent: an implementation prerequisite parsed the syntax and dropped it, so
      its pending cases could land.
 
    Decide the sequence and the PR split. `semantics.md` §9's wording on pending cases ("the story
    that landed it") may need amending for compiler-gated cases.
 2. **The names Component:** its name, its fields, its defaults on `andara.core.Item`, and whether
-   keywords are one string or a list. A list needs a field kind ADR-0010's model doesn't have.
+   keywords are one string or a list. A list needs a field kind `ComponentField` (`AW-SRV-021`)
+   doesn't have.
 3. **The placement declaration:** its keyword and its canonical form.
 4. **Per-Room overrides on a placement** (a "rusty" lantern in one Room). PM proposes none in v1.
 

@@ -20,7 +20,7 @@ Item Definition today, `template Lantern extends andara.core.Item {}`, but nothi
 stop a Builder from authoring a usable Item:
 - **Names.** `andara.core.Item` is an empty root. No core Component gives an Item what a player
   sees in a Room or an inventory, the words a player types to name it, or what `examine` shows. `AW-SRV-022` left
-  Components to arrive with the mechanic that reads them, and Items are that mechanic.
+  the systems that read Components to arrive with their mechanics, and Items are one.
 - **Placement.** A `room` holds `desc`, `exit` and `component` only (`grammar.ebnf`). There's no way
   to say "this Room starts with a lantern in it".
 
@@ -46,16 +46,18 @@ place Items in my Rooms, so that the Items I design show up in the World where I
 
   Component *types* are defined on the server, and Builders compose them (ADR-0010 decision 7). So
   this story specifies the type: its name, field names, field kinds and defaults, within ADR-0010's
-  Component model (fields are `string`, `int` or `bool`). `AW-CLI-013` registers it in the server's
+  Component model, with the field kinds `ComponentField` allows (`string`, `int` or `bool`;
+  `andara/content/v1/zone.proto`, `AW-SRV-021`). `AW-CLI-013` registers it in the server's
   component registry and ships it in `andara.core@2`.
 - **A placement declaration inside `room`**: it names an Item Definition and places one Item
   Instance. Placing two means writing two declarations, since there's no stacking (Brian,
   2026-10-03). The reference follows `semantics.md` §4: a Template in the same pack, or in
   `andara.core`, and no other pack. A pack is the unit of publication and activation (§10).
-- **The compiled form**: the field placements take in `RoomDefinition` (`content/v1/zone.proto`).
+- **The compiled form**: the field placements take in `RoomDefinition` (`andara/content/v1/zone.proto`).
   It must be additive, so a v1 Room without placements decodes unchanged. This story's PR runs
   `make proto` and commits `gen/`, so the server parses the new field from then on.
-- **Errors in `errors.md`**:
+- **Errors in `errors.md`**, landing in the same PR as the corpus cases that raise them, because
+  `content-grammar-check` fails on a declared code no case raises (question 1):
   - a placement whose Template doesn't resolve, including another pack's Template;
   - a placement naming a Template whose kind isn't `item`;
   - a placed Item Definition whose resolved names have an empty short name or no keyword.
@@ -84,16 +86,16 @@ place Items in my Rooms, so that the Items I design show up in the World where I
 
 ## Acceptance criteria
 
-1. **Given** the updated `grammar.ebnf`, `semantics.md`, `errors.md` and `formatting.md` **when**
-   `make check` runs **then** it passes with the corpus unchanged. `content-grammar-check` accepts the
-   new production against the existing cases.
-2. **Given** `content/v1/zone.proto` **when** `make proto-check` runs **then** the change is additive
+1. **Given** the updated `grammar.ebnf`, `semantics.md` and `formatting.md` **when** `make check`
+   runs **then** it passes with the corpus unchanged. `content-grammar-check` accepts the new
+   production against the existing cases. The new `errors.md` rows aren't in this PR. They land with
+   their cases (question 1).
+2. **Given** `andara/content/v1/zone.proto` **when** `make proto-check` runs **then** the change is additive
    (`buf breaking` passes against `main`), and `gen/` is regenerated in the same PR.
 3. **Given** the spec's documents **when** read **then**:
    - `semantics.md` states how many Item Instances one placement yields (one), what the names
      Component's fields mean, that keywords match case-insensitively, which references a placement
      may name, and that the names rule applies at a placement;
-   - `errors.md` gives each new code a row with its story;
    - `formatting.md` gives the placement's canonical form.
 4. **Given** question 1's answer **when** this story moves to `ready` **then** the story says which
    PR lands each corpus case in Scope, and in which directory.
@@ -151,6 +153,9 @@ For architecture, in `docs/feedback/AW-SRV-047-items.md`:
    - the corpus anchors (`valid/core`, `valid/town`: architecture's);
    - `content/core/templates`, `testdata/` and their tests (implementation's);
    - `scripts/content_grammar_check.py`'s `KEY_ORDER` for the new `RoomDefinition` key (SRE's).
+
+   `content-grammar-check` also requires every code declared in `errors.md` §3.1–3.4 to be raised by
+   a corpus case, so each new code's row lands with its case.
 
    `perceives` set a precedent: an implementation prerequisite parsed the syntax and dropped it, so
    the pending cases could land. Decide the sequence and the PR split. `semantics.md` §9's wording on
