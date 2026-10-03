@@ -159,9 +159,26 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	rctx, stopReconcile := context.WithCancel(ctx)
 	reconciled := make(chan int, 1)
 	go func() { reconciled <- rt.ReconcileContent(rctx) }()
+	// A signal during reconcile: the drain's exit, 0, or 5 for a boundary
+	// lost before it (AW-SRV-026).
+	signaled := func() int {
+		err := halt()
+		_ = srv.Shutdown(context.Background())
+		if err != nil {
+			tel.Log.Error("tick loop", "detail", err.Error())
+			return boot.LoopExit(err)
+		}
+		return boot.ExitOK
+	}
 	select {
 	case code := <-reconciled:
 		stopReconcile()
+		if code != boot.ExitOK && ctx.Err() != nil {
+			// Reconcile failed because the signal canceled it, and its
+			// result won the select over ctx.Done: still a signal, not an
+			// exit 1, so the held no_zones_found is dropped (Codex on #369).
+			return signaled()
+		}
 		if code != boot.ExitOK {
 			_ = halt()
 			_ = srv.Shutdown(context.Background())
@@ -177,14 +194,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		return boot.LoopExit(err)
 	case <-ctx.Done():
 		stopReconcile()
-		// A boundary lost before the signal still exits 5 (AW-SRV-026).
-		err := halt()
-		_ = srv.Shutdown(context.Background())
-		if err != nil {
-			tel.Log.Error("tick loop", "detail", err.Error())
-			return boot.LoopExit(err)
-		}
-		return boot.ExitOK
+		return signaled()
 	}
 
 	// A spawn Room the content in effect lacks fails the boot. A World
