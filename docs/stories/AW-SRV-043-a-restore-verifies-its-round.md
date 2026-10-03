@@ -4,10 +4,10 @@ title: A restore verifies its round
 epic: EPIC-04
 component: server
 type: feature
-status: draft
+status: ready
 size: M
 depends_on: [AW-SRV-006, AW-SRV-019]
-blocks: []
+blocks: [AW-SRV-007]
 lane: implementation
 risk: medium
 ---
@@ -49,7 +49,7 @@ bad restore rather than as a divergence one tick later.
 
 ### Out of scope
 - Server recovery's own wiring. `AW-SRV-007` calls `RestoreEngine` and inherits the refusal. Its
-  exit table gains the new code by architecture's amendment (Open questions, item 2), not here.
+  exit table gains the new code by architecture's amendment (Open questions, item 1), not here.
 - Falling back to an older round, or to replay from zero, on a mismatch. That's refused by design:
   an operator decides.
 - Any change to how rounds are written, beyond recording the seed.
@@ -63,14 +63,20 @@ bad restore rather than as a divergence one tick later.
    recorded and restored hashes. No Engine is returned. The fixture re-signs the altered Zone's
    envelope hash, so that the existing per-object check passes and only the new check can catch it.
 3. **Given** that round **when** the state projector bootstraps from it **then** it exits with the
-   `restore_mismatch` code and logs one `error` line, `state projector restore mismatch`, with
-   `round_tick`, `recorded` and `restored`. It writes no checkpoint, and it doesn't fall
-   back to another round or to replay from zero.
+   `restore_mismatch` code (`5`) and logs one `error` line, `state projector restore mismatch`,
+   with `round_tick`, `reason=hash`, `recorded_hash` and `restored_hash` (hex). It writes no
+   checkpoint, and it doesn't fall back to another round or to replay from zero.
+   *(Field names aligned with §7 at contract review, 2026-10-02.)*
 4. **Given** the same round under `--rebuild` **then** the outcome is the same as AC-3. A rebuild
    doesn't bypass the check.
-5. **Given** a round written with `sim_seed = S` and a configured seed `S' ≠ S` (both non-zero)
-   **when** it's restored **then** `RestoreEngine` returns `ErrSeedMismatch` naming both, and the
-   projector exits with the `restore_mismatch` code and logs the same line with `reason=seed`.
+5. **Given** a round written with `sim_seed = S` (non-zero) and an effective seed `S' ≠ S`
+   **when** it's restored **then** `RestoreEngine` returns `ErrSeedMismatch` naming both, before
+   any hash comparison, and the projector exits `5` and logs the same line with `reason=seed`,
+   `recorded_seed` and `configured_seed`. The effective seed is `sim.seed` when it's set, and the
+   derived default when it isn't, so AC-5 holds for a configured `S'` and for a derived one.
+   *(Amended at contract review, 2026-10-02: "both non-zero" read as though an unset `sim.seed`
+   skipped the check. The seed is in the State Hash, so without this check a seed mismatch would
+   still fail AC-2, but as `reason=hash`, which names the wrong fault.)*
 6. **Given** a round written before the field (`sim_seed` absent, so `0`) **then** the restore
    derives the seed as #307 does, and AC-1 or AC-2 applies.
 7. **Given** a server with the default seed (derived) **when** it writes a round **then** the round
@@ -97,15 +103,25 @@ type RestoreMismatch struct {
 ```
 
 - **Protocol:** `SnapshotEnvelope` gains `uint64 sim_seed = 10;`. `0` means a round written before
-  the field, for which the seed is derived. Architecture pins it in `state.v1` at contract review,
-  and the implementing PR regenerates `gen/` with `make proto`. `state_version` doesn't change,
-  because the field is additive.
+  the field, for which the seed is derived. **Pinned** in
+  `docs/specs/protocol/andara/state/v1/snapshot.proto` at contract review (2026-10-02), with `gen/`
+  regenerated in the same PR. `state_version` doesn't change, because the field is additive.
 - **Projector exit codes (`AW-SRV-019`):** add `5` `ExitRestoreMismatch`, which covers both
-  `ErrRestoreMismatch` and `ErrSeedMismatch`. Codes `0`–`4` are unchanged. *(PM's proposal. The number
-  is architecture's to confirm.)*
-- **Server recovery (`AW-SRV-007`):** its exit table gains `ErrRestoreMismatch`, distinct from `2`
-  `ErrHashMismatch` (a mismatch after replay). Architecture amends `AW-SRV-007`. PM proposes `6`, since
-  `5` is taken.
+  `ErrRestoreMismatch` and `ErrSeedMismatch`. Codes `0`–`4` are unchanged. **Confirmed** by
+  architecture, 2026-10-02.
+- **Server recovery (`AW-SRV-007`):** its exit table gains `6` `ErrRestoreMismatch`, covering both
+  errors, distinct from `8` `ErrHashMismatch` (a mismatch after replay). **Confirmed** by
+  architecture, 2026-10-02, and amended into `AW-SRV-007` in the same PR. The server's `5` is
+  `AW-SRV-026`'s `ExitBoundaryLost`, so `AW-SRV-007`'s incomplete-round exit moves from `5` to `7`.
+  Exit `6` sets `andara_recovery_state_hash_match` to `0` and lingers under
+  `recovery.mismatch_linger` as the hash mismatch does (SRE's proposal, accepted). The hash mismatch
+  itself moved from `2` to `8` in the same review, because Go exits `2` on a panic.
+- **Order inside `RestoreEngine`:** state version, content digest, seed, build, hash. The seed check
+  comes before the build, so a seed mismatch never reports as `reason=hash`.
+- **Where the round tick's boundary is read:** the caller positions its boundary reader at the
+  round's tick, not after it, reads that `TickCompleted` for `RecordedHash`, and replays from
+  tick + 1. For the projector that's `BoundaryReader.SeekAfter(round − 1)`; for recovery it's
+  `AW-SRV-007`'s shared seek.
 - **Where the recorded hash comes from:** `TickCompleted.state_hash` (field 3) for the round's
   tick. A round whose tick has no readable `TickCompleted` is `ErrLogGap`, as today.
 
@@ -137,8 +153,8 @@ records the outcome it gets back.
     signal on a real backend. The live observation is `outcome="ok"` after each bootstrap. The
     mismatch series is verified on the metric object in the integration test (CLAUDE.md §8). That
     means the projector's in-process registry, read with `testutil` after `Run` returns, not a
-    scrape of the stack after the process exits. The Test plan's Integration line still reads as a
-    scrape, and the feedback file asks architecture to reword it.
+    scrape of the stack after the process exits. *(The Test plan's Integration line was reworded
+    to match at contract review, 2026-10-02.)*
 - **Logs:**
   - `error` `state projector restore mismatch`, with `round_tick`, `reason` (`hash` or `seed`),
     and `trace_id`.
@@ -165,6 +181,8 @@ records the outcome it gets back.
     `docs/runbooks/state-projector-down.md`'s "Respond, by the last exit code" table gains a `5`
     row: capture the round tick and both hashes, and don't `--rebuild`, because a rebuild hits
     the same check (AC-4). SRE writes the row at this story's §8 instrumentation check.
+  - *(Decided at contract review, 2026-10-02: exit `6` sets the gauge to `0` and lingers, and
+    `restore` is a `reason`. Recovery's hash mismatch, "exit `2`" below, is now `8`.)*
   - Recovery's exit `6`, under `AW-SRV-007`, leaves no ready server. That's
     `AndaraServerUnavailable` (page). SRE proposes that it also sets
     `andara_recovery_state_hash_match` to `0`, and lingers under `recovery.mismatch_linger`
@@ -182,9 +200,12 @@ records the outcome it gets back.
   round, a recorded default seed, and #143's fault reintroduced.
 - **Unit (`projector`):** ACs 3 and 4, covering the exit code, the log line, no checkpoint and no
   fallback.
-- **Integration:** against the local stack, a projector bootstrapped from a deliberately corrupted
-  round in the snapshot store exits `5`, and `andara_restore_total{caller="projector",
-  outcome="hash_mismatch"}` is 1.
+- **Integration:** against the local stack's Redpanda and a filesystem snapshot store, a projector
+  bootstrapped from a deliberately corrupted round: `projector.Run` returns the mismatch, mapped to
+  exit `5`, and in the same test the projector's in-process registry, read with `testutil` after
+  `Run` returns, has `andara_restore_total{caller="projector", outcome="hash_mismatch"}` at `1` and
+  `outcome="ok"` at `0`. No scrape: the process that counted it would have exited (SRE item 7,
+  reworded at contract review 2026-10-02). A second case does the same for a seed mismatch.
 - **Manual/operator:** `make projector-rebuild ENV=dev` on a healthy `dev` logs `restore verified`.
 
 ## Definition of done
@@ -193,10 +214,9 @@ CLAUDE.md §8.
 
 ## Open questions
 
-1. **For architecture: the exit codes.** Projector `5` and recovery `6` are PM's proposal. Confirm
-   them or renumber, and amend `AW-SRV-007`'s exit table, which is `ready`, so it's yours to change.
-2. **For architecture: the `AW-SRV-007` edge.** `AW-SRV-007` should depend on this story, so that
-   recovery is built on a verifying restore. `make validate-stories` refuses a `ready` story that
-   depends on a `draft`, so add `AW-SRV-043` to its `depends_on` (and `AW-SRV-007` to this story's
-   `blocks`) in the commit that moves this story to `ready`.
+1. **Resolved 2026-10-02 (architecture): the exit codes.** Projector `5` and recovery `6`, as
+   proposed. `AW-SRV-007`'s incomplete-round exit moves from `5` to `7`, because `AW-SRV-026` holds
+   the server's `5`. Recorded in `AW-SRV-007`'s body.
+2. **Resolved 2026-10-02 (architecture): the `AW-SRV-007` edge.** Added in the commit that moves
+   this story to `ready`.
 3. `[ASSUMPTION]` Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01).

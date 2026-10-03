@@ -47,7 +47,7 @@ message SnapshotEnvelope {
   // process-wide values a Zone restored alone still needs. Hashing only the
   // Zone's section would leave them unprotected, and a corrupted prng_state
   // would stay hash-valid: AW-SRV-007 would not fall back to an older round,
-  // it would restore a World whose replay diverges and exit 2 at AC-5.
+  // it would refuse at the round's own tick (AW-SRV-043, recovery exit 6).
   //
   // So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
   // carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is
@@ -84,9 +84,22 @@ message SnapshotEnvelope {
   repeated PackVersion content = 8;
   bytes content_digest = 9;
 
+  // The sim seed the World was started with (AW-SRV-043, 2026-10-02). The seed
+  // is in the State Hash, so a restore must arrive at the same one; before this
+  // field, each side derived the default again, and nothing in the round said
+  // which seed it was (#307). A writer records the effective seed, the derived
+  // value when sim.seed is unset, never 0. A restore refuses a round whose seed
+  // differs from its own effective seed, as a seed mismatch, before comparing
+  // hashes.
+  //
+  // 0 means a round written before this field. Its seed is derived, as #307
+  // derives it. Every Zone's envelope in a round carries the same value. Not a
+  // state_version change: the field is additive, and an older binary ignores it.
+  uint64 sim_seed = 10;
+
   // Compression, chunking, and content addressing of the body are all plausible
   // additions for AW-SRV-006 and AW-SRV-007, and none are decided. They take
-  // numbers from 10 upward when they arrive; nothing is reserved, because a
+  // numbers from 11 upward when they arrive; nothing is reserved, because a
   // reserved range has to shrink to be used and buf counts that as breaking.
 }
 

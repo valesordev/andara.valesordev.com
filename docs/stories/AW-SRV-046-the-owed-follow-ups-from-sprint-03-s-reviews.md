@@ -4,7 +4,7 @@ title: The owed follow-ups from SPRINT-03's reviews
 epic: EPIC-05
 component: server
 type: chore
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-013, AW-SRV-034, AW-SRV-035, AW-SRV-036, AW-SRV-037, AW-CLI-002, AW-CLI-003]
 blocks: []

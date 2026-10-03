@@ -6,8 +6,8 @@ component: server
 type: feature
 status: ready
 size: M
-depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015]
-blocks: [AW-INF-007, AW-SRV-032, AW-INF-011, AW-INF-032]
+depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015, AW-SRV-043]
+blocks: [AW-INF-007, AW-SRV-032, AW-INF-011, AW-INF-032, AW-INF-009]
 lane: implementation
 risk: high
 ---
@@ -22,6 +22,23 @@ The determinism guarantees from `AW-SRV-002` are what make this possible, and th
 being a design principle and become a production dependency. ADR-0002 §4's Tick Boundary Records are
 what make replay *exact* rather than approximately exact — replay reads the recorded offset ranges
 rather than re-deciding them.
+
+**Amended at SPRINT-04's contract review (architecture, 2026-10-02), after `ready` and before
+implementation started.** The changes, each answered in `docs/feedback/AW-SRV-007-recovery-scale.md`:
+- `AW-SRV-043` joins `depends_on`; its restore mismatch is exit `6`.
+- The incomplete-round exit moves from `5` to `7`, because `AW-SRV-026` holds the server's `5`.
+- The hash mismatch moves from `2` to `8`. Go exits `2` on an unrecovered panic or a runtime fatal
+  error, so on the cluster, where only the exit code outlives the process, `2` can't name a hash
+  mismatch. `2` is never assigned.
+- AC-5 is scoped to `grpc.listen`, with SRE's linger as AC-14 and `recovery.mismatch_linger` as a key.
+- AC-7 states its scale and a bound that the measured replay rate can meet.
+- AC-8 measures the RPO where the ack is held, and `andara_acknowledged_commands_lost_total` is
+  withdrawn.
+- AC-11 also covers `sim_seed`.
+- AC-12 adds the seek.
+- AC-13 covers exit `6`.
+- The Admin RPCs are pinned in `admin.proto`.
+- The operator test is `make stack-recover`.
 
 **Decided 2026-09-11 (Brian): on a State Hash mismatch the server refuses to start.** It does not
 search backwards for a round that verifies. A server that picks its own history is a server that can
@@ -67,24 +84,46 @@ match, so that a crash is an interruption rather than an incident.
    than the original **then** the boundaries are taken from the records and the State Hash sequence is
    identical at every boundary.
 4. **Given** a round with a missing or hash-invalid Zone object **when** rounds are listed **then** it
-   is `incomplete` and recovery selects the newest `complete` one instead.
+   is `incomplete` and recovery selects the newest `complete` one instead, when no round is named.
+   A named one exits `7` (AC-15).
 5. **Given** the recovered hash differs from the `TickCompleted` hash at the same tick **when**
-   recovery finishes replay **then** the server exits `2`, `andara_recovery_state_hash_match` is `0`,
-   and the `error` line names the tick, both hashes, and the round used. It never accepts a connection.
+   replay reaches a boundary whose hash differs (the first such boundary; replay stops there)
+   **then** the server exits `8`, `andara_recovery_state_hash_match` is `0`,
+   and the `error` line names the tick, both hashes, and the round used. It never binds
+   `grpc.listen`, so no player or Admin connection is ever accepted. With
+   `recovery.mismatch_linger` above `0s`, operator HTTP serves for that long first (AC-14).
+   *(Reworded 2026-10-02: "never accepts a connection" also forbade the operator HTTP that AC-14
+   needs. The checkable property is the port: while the process runs, including any linger, a
+   dial to `grpc.listen` is refused.)*
 6. **Given** any change to `server/sim` or `server/store` **when** CI runs **then** the
    kill-and-recover integration test executes and gates the merge.
-7. **Given** the sizing fixture and a 60 s tail **when** recovery runs in CI **then**
-   `recovery-timing.json` is published with per-phase durations, and the `replay` phase is under 5 s.
-8. **Given** a Command acknowledged to a client with a partition and offset **when** recovery completes
-   **then** that offset is at or below the replayed head. `andara_acknowledged_commands_lost_total`
-   stays `0`.
+7. **Given** the sizing fixture (`server/simtest/sizing.go`: 25,000 Entities, 2,000 Rooms,
+   16 Zones, 500 Characters) and a tail of 600 ticks, one `snapshot.interval` at the 100 ms tick
+   (ADR-0008) **when** recovery runs in CI **then** `recovery-timing.json` is published with
+   per-phase durations, the tail length in ticks, the Entity count, and peak RSS. The `total`
+   phase is under 90 s, which leaves 30 s of M2's 120 s for detection and process start.
+   *(Amended 2026-10-02. The old bound, `replay` under 5 s on a 60 s tail, was set before anything
+   was measured. `AW-SRV-019` measured tail replay at about 65 ms per tick at this scale, so about
+   39 s for 600 ticks. A World can't replay faster than its ticks cost to apply.)*
+8. **Given** the kill-and-recover test's clients, which record the `SubmitResponse` partition and
+   `accepted_offset` of every Command acknowledged to them before the kill **when** recovery
+   completes **then** every recorded offset is below the replayed head of its Partition, and the
+   record at that offset on `andara.commands.v1` is the Command that was acknowledged.
+   *(Amended 2026-10-02. The ack lives in the client, not in the killed process, so a counter in
+   the restarted server has nothing to compare with. It would read `0` by construction, and an AC
+   on it couldn't fail. `andara_acknowledged_commands_lost_total` is withdrawn. The RPO is
+   asserted here and by `AW-INF-032`, whose tail move is an acknowledged Command that only the log
+   holds.)*
 9. **Given** no snapshot round exists **when** recovery runs **then** it replays from offset zero on
    every Partition and reaches ready with a hash matching the last `TickCompleted`.
-10. **Given** `recover --verify --round 4200` **when** it runs **then** it loads that round, replays to
-    head, prints `match` or `mismatch` with both hashes, exits `0` or `2`, and never binds `grpc.listen`.
+10. **Given** `recover --verify --round 4200`, naming a complete round, **when** it runs **then** it loads that round, replays to
+    head, prints `match` or `mismatch` with both hashes, exits `0` or `8`, and never binds `grpc.listen`.
+    *(`2` became `8` on 2026-10-02; see the exit table.)*
 11. **Given** a round whose Zone objects carry disagreeing `prng_state` or `next_event_id` **when** the
     round is loaded **then** it is refused, naming the Zones and both values; the round is not
-    selectable and recovery falls back to the newest round that agrees.
+    selectable and, when no round is named, recovery falls back to the newest round that agrees (a
+    named one exits `7`, AC-15). The same holds for
+    disagreeing `sim_seed` (`AW-SRV-043`, added 2026-10-02).
     **Added 2026-09-22, from `AW-SRV-006`'s implementation (feedback §4).** `sim.WorldState` holds one
     PRNG and one `NextEventID` for the World, not one per Zone, but `ZoneState` carries both — so every
     object in a round repeats the same two values. A round is one cut at one tick, so they agree by
@@ -93,6 +132,48 @@ match, so that a crash is an interruption rather than an incident.
     restoring it would seed replay with a generator that never produced the recorded history. This
     criterion also fixes which copy wins when they agree: any of them, because they are equal — the
     check is the contract, not a tie-break.
+12. **Given** 864,000 ticks of history ahead of the round, which is `AW-SRV-019` AC-6's 24 h
+    fixture, and a 10-tick tail **when** recovery runs **then** the round's own `TickCompleted` is
+    found by binary search over the boundary Partition, not by reading the history. The run's
+    `load` + `seek` + `replay` time is within 1 s of the same run with no history, and its peak
+    RSS is within 10% of that run's. *(Added 2026-10-02, feedback item 2.)*
+13. **Given** a round that `AW-SRV-043`'s `RestoreEngine` refuses, as `ErrRestoreMismatch` or
+    `ErrSeedMismatch`, or one that doesn't restore onto the content in effect
+    (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below) **when** boot recovery runs
+    **then** the server exits `6`. Nothing is
+    replayed and no other round is tried. `andara_recovery_state_hash_match` is `0`,
+    `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
+    `recovery restore mismatch` carries `round_tick`, `reason` (`hash`, `seed` or `content`), and
+    `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`,
+    `pack`, `recorded_digest` and `built_digest` for a digest mismatch and `zone_id` for an unknown
+    Zone. It never binds
+    `grpc.listen`, and AC-14's linger applies. *(Added 2026-10-02, feedback item 3.)*
+14. **Given** `recovery.mismatch_linger` of `60s` **when** boot recovery ends in exit `8` or `6`
+    **then**, for 60 s before exiting, the server serves `/metrics` and `/livez` with `200` and
+    `/readyz` and `/startedz` with `503`, logs one `error` line
+    `holding /metrics for the hash mismatch to be scraped` with `for`, and never binds
+    `grpc.listen`. A `SIGTERM` or `SIGINT` during the linger ends it at once with the same exit
+    code. **Given** `0s`, the default, it exits at once. `recover --verify` never lingers.
+    *(Added 2026-10-02, SRE's amendment, feedback item 5.)*
+15. **Given** a named round that isn't complete, named by `recover --verify --round T` or by
+    `recovery.pin_round=T` at boot **when** recovery runs **then** it exits `7`, restores nothing,
+    and tries no other round. `andara_recovery_failures_total{reason="round"}` is `1`, and one
+    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons:
+    - `missing`: no object for a Zone, or one that vanished after listing; a tick with no object
+      at all is `missing` with every owned Zone;
+    - `duplicate`: two objects for one Zone;
+    - `hash`: an object that's hash-invalid, undecodable (including its PRNG), unmigratable (no
+      migration step, or `state_version` 0), or whose envelope names another Zone or tick;
+    - `disagree`: objects whose PRNG, EventID, `sim_seed`, content in effect, or Partition offsets
+      differ.
+
+    **A named tick resolves to one round.** After a rollback, the same tick can hold a group at a
+    newer `state_version` and one at an older version (the key format above). The name resolves to
+    the highest `state_version` at `T` that this binary can read. AC-15 then applies to that group.
+    Exit `4` happens only when every group at `T` is newer than the binary. Exit `7` doesn't set `andara_recovery_state_hash_match` and doesn't linger. **Given** the same round through
+    `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
+    object exists at the tick), and `andara-cli snapshot verify` exits `1`.
+    *(Added in PR #356 review, 2026-10-03.)*
 
 ## Interface contract
 
@@ -104,7 +185,7 @@ type Round struct {
     Tick         sim.Tick
     StateVersion uint32
     Zones        []ZoneSnapshotRef       // one per owned Zone; sorted
-    Complete     bool                    // every owned Zone present and hash-valid
+    Complete     bool                    // exactly one hash-valid object per owned Zone; PRNG, EventID, seed agree
 }
 
 // ListRounds groups WorldStore keys by tick and marks completeness against the
@@ -141,7 +222,15 @@ type Report struct {
 select round ─▶ load Zones ─▶ migrate state_version ─▶ seek Partitions ─▶ replay boundaries ─▶ verify ─▶ ready
      │              │                │                       │                  │               │
   none: offset 0  ErrRound       ErrStateVersion         ErrLogGap        ErrOffsetGap    ErrHashMismatch
+                  ErrRestoreMismatch, ErrSeedMismatch (AW-SRV-043, at the round's tick)
 ```
+
+**Seek (added 2026-10-02).** The projector's `BoundaryReader.SeekAfter` (`AW-SRV-019`) moves to a
+package both share (`server/tickloop`), unchanged in behavior. Recovery positions the boundary
+reader at the round's own tick (`SeekAfter(round − 1)`), reads that `TickCompleted` as
+`AW-SRV-043`'s `RecordedHash`, and replays from tick + 1. `Recover` streams boundaries as it
+replays and never loads the topic. That settles the open question inherited from PR #32. A
+cold start with no round reads from offset 0, as AC-9 says.
 
 Ready means: hash verified, consumer lag under `sim.tick_budget_ms × 10`, and the first live tick
 completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
@@ -152,10 +241,43 @@ completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 |-----:|-----------|
 | `0` | recovered and serving, or `--verify` matched |
 | `1` | configuration or store error before recovery began |
-| `2` | `ErrHashMismatch` — the alerting condition |
+| `2` | *never assigned:* Go's own exit for an unrecovered panic or a runtime fatal error |
 | `3` | `ErrLogGap` — retention shorter than the snapshot age |
 | `4` | `ErrStateVersion` — binary older than the snapshot |
-| `5` | `ErrRoundIncomplete` with no complete round and `recovery.require_snapshot=true` |
+| `5` | *not recovery's:* `AW-SRV-026`'s `ExitBoundaryLost`, a running server that lost a Tick Boundary Record |
+| `6` | `ErrRestoreMismatch` or `ErrSeedMismatch` (`AW-SRV-043`): the round doesn't reproduce its own tick |
+| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete *(was `5` until 2026-10-02)* |
+| `8` | `ErrHashMismatch` — the alerting condition *(was `2` until 2026-10-02)* |
+
+Exit `6` also covers the round refusing to restore onto the content in effect:
+`sim.ContentDigestError`, or a round carrying a Zone the content doesn't have (`sim.RestoreEngine`).
+That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and it logs
+`reason=content`, counted under `andara_recovery_failures_total{reason="restore"}`.
+`andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
+
+A round holding one Zone twice is not a content disagreement. It's a malformed round, so `ListRounds`
+marks it `incomplete`, as AC-4 does for a missing Zone, and recovery never selects it on its own.
+
+**A named round that isn't complete** (a duplicate Zone, a missing or hash-invalid Zone, or
+disagreeing PRNG, EventID or seed) is refused as `ErrRoundIncomplete`. It's never restored, and no
+other round is substituted for it. A round is named in three ways:
+- `recover --verify --round T`, the one-shot, exits `7`;
+- `recovery.pin_round` (`AW-INF-007`'s one-boot override for `make rollback ROUND=T`) makes boot
+  recovery exit `7`;
+- `snapshot verify --round T` gets `FAILED_PRECONDITION` from `Admin.VerifySnapshotRound`, and
+  `andara-cli` exits `1`.
+
+Each server exit counts `andara_recovery_failures_total{reason="round"}`, with one `error` line
+naming the round's tick and why it's incomplete. *(Amended in PR #356 review, 2026-10-03. The
+earlier text said "named with `--round` … boot recovery exits `1`". Boot recovery takes no
+`--round`, and the one-shot's exit was unstated.)*
+
+Exits `8` and `6` set `andara_recovery_state_hash_match` to `0` and linger under
+`recovery.mismatch_linger` (AC-14). A one-shot `recover --verify` exits `8` for every mismatch, as
+its output is `match` or `mismatch`, and it prints which with `reason`.
+
+**References to "exit `2`" elsewhere.** The SRE amendment below, the runbooks, and the feedback file
+were written before the renumbering. Read their recovery "exit `2`" as `8`.
 
 ### CLI
 
@@ -163,7 +285,13 @@ completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 |---------|-----|--------|
 | `andara-server recover --verify [--round T]` | — | `match`/`mismatch`, both hashes, phase timings; exit per table |
 | `andara-cli snapshot list [--zone Z] [--local]` | `Admin.ListSnapshotRounds`, or none with `--local` | table: tick, state_version, zones, complete, age |
-| `andara-cli snapshot verify --round T` | `Admin.VerifySnapshotRound` | `match`/`mismatch`; runs server-side against a scratch Engine, never the live one |
+| `andara-cli snapshot verify --round T` | `Admin.VerifySnapshotRound` | `match`/`mismatch` with `outcome`, the compared tick and both hashes (or seeds); runs server-side against a scratch Engine, never the live one. Exits per `AW-CLI-001`: `0` match; `1` a mismatch or a server refusal (`NOT_FOUND`, `FAILED_PRECONDITION`), told apart by `outcome` on stdout for a mismatch and by the error envelope's `code` for a refusal; `3` connect; `4` timeout, including `DEADLINE_EXCEEDED` |
+
+Both Admin RPCs are OPERATOR only. **Pinned 2026-10-02** in
+`docs/specs/protocol/andara/admin/v1/admin.proto`. The pinned form adds `VerifyOutcome`,
+`compared_tick`, and the two seeds to the sketch below, so that `AW-SRV-043`'s refusals are
+distinguishable, and it states the gRPC status for each refusal. The file wins where it and the
+sketch differ.
 
 **`--local` reads the configured store directly and issues no RPC. Added 2026-09-22, from
 `AW-SRV-006`'s implementation (feedback §9).** That story's test plan called `andara-cli snapshot
@@ -192,11 +320,22 @@ message VerifySnapshotRoundResponse { bool match = 1; bytes expected_hash = 2; b
 | `recovery.require_snapshot` | `ANDARA_RECOVERY_REQUIRE_SNAPSHOT` | `false` | `true` in prod once M2 lands: a cold replay is a retention bug, not a boot |
 | `recovery.replay_batch` | `ANDARA_RECOVERY_REPLAY_BATCH` | `4096` | fetch size during replay; AC-3 proves it does not matter |
 | `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | bounds `--verify` |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` means unset: recover from the newest complete round. `T > 0` names round `T` (AC-15). Read on every boot; the server never clears it. Setting and clearing it is `AW-INF-007`'s `make rollback`. Already declared in the chart's `keys.yaml` as `int`, default `0`, min `0` *(contract stated here in PR #356's review, 2026-10-03)* |
+| `recovery.mismatch_linger` | `ANDARA_RECOVERY_MISMATCH_LINGER` | `0s` | AC-14. Boot recovery only. Compose sets `60s`; the chart leaves `0s`, where it would only slow `AndaraServerCrashLooping` *(added 2026-10-02)* |
 
 ### Error taxonomy
 
-`ErrHashMismatch{Tick, Expected, Actual, Round}`, `ErrLogGap{Partition, Need, Have}`,
-`ErrStateVersion` (from `AW-SRV-006`), `ErrRoundIncomplete{Tick, Missing}`, `ErrOffsetGap` (from
+`ErrHashMismatch{Tick, Expected, Actual, Round}`, `ErrRestoreMismatch` and `ErrSeedMismatch`
+(`AW-SRV-043`), `sim.ContentDigestError` (exists), `sim.ErrRoundZoneUnknown{Tick, Zone}` and
+`sim.ErrRoundZoneDuplicate{Tick, Zone}` (new typed errors for `RestoreEngine`'s two untyped
+round-Zone refusals, added by this story in `server/sim/restore.go`; `ErrRoundZoneUnknown` exits
+`6` with `reason=content`, and `ErrRoundZoneDuplicate` is the incomplete round above, exit `7` with
+`cause=duplicate`, a backstop
+behind `ListRounds`), `ErrLogGap{Partition, Need, Have}`,
+`ErrStateVersion` (from `AW-SRV-006`), `sim.ErrRoundIncomplete{Tick, Cause, Zones}` (`AW-SRV-006`'s `{Tick, Missing}`, widened in PR
+#356's review so that it names AC-15's causes and the Zones involved; for `disagree`, AC-11's two
+values ride on the log line; the snapshot writer in `tickloop` and `store.ListRounds`' existing
+callers set `cause=missing` where they set `Missing` today), `ErrOffsetGap` (from
 `AW-SRV-002`, re-raised during replay).
 
 ## Data / state impact
@@ -216,9 +355,11 @@ rather than a quietly wrong World.
   `total`). Bounded enum.
 - `andara_recovery_replayed_ticks` — gauge.
 - `andara_recovery_state_hash_match` — gauge, 0 or 1. Set once per recovery.
-- `andara_recovery_failures_total` — counter, label `reason` (`hash`, `gap`, `version`, `round`,
-  `store`).
-- `andara_acknowledged_commands_lost_total` — counter; the RPO SLI, must stay 0.
+- `andara_recovery_failures_total` — counter, label `reason` (`hash`, `restore`, `gap`, `version`,
+  `round`, `store`). `restore` is exit `6` (added 2026-10-02).
+- ~~`andara_acknowledged_commands_lost_total`~~ — **withdrawn 2026-10-02** (AC-8). A restarted
+  process holds no acks to compare with the log, so it would read `0` by construction.
+  `docs/specs/slo/recovery.md`'s SLI line names it, and SRE amends that SLO doc (feedback item 6).
 - `andara_recovery_round_tick` — gauge, the round used.
 
 ### Logs
@@ -322,33 +463,62 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     instruments, but this story wires and pre-seeds them, since it owns both callers.
     `Admin.VerifySnapshotRound` and the one-shot `andara-server recover --verify` both count as
     `verify`.
-- **The local live observation is `AW-INF-032`'s.** `make stack-recover` reads
-  `andara_recovery_state_hash_match`, `andara_recovery_duration_seconds{phase}`,
-  `andara_recovery_round_tick`, and `andara_acknowledged_commands_lost_total` from the running
-  server after a real `SIGKILL`. It also resolves `recovery.run` in Tempo. This story's §8 record
-  may cite that run rather than repeating it (CLAUDE.md §8). Item 4 of the feedback file leaves the
-  inheritance decision to architecture.
+- **The local live observation is `AW-INF-032`'s.** *(Superseded 2026-10-02 by the Definition of
+  done's first line, which decides the inheritance and drops the withdrawn counter.)*
 
 ## Test plan
 
 - **Unit:** `ListRounds` grouping and completeness against fixtures with a missing Zone and a
-  hash-invalid Zone; exit-code mapping per error; `Report` phase accounting.
+  hash-invalid Zone; exit-code mapping per error, including `6` and `7`; `Report` phase accounting.
+  `testutil.CollectAndCount(reg, "andara_recovery_state_hash_match")` is `0` before recovery sets
+  the gauge and `1` after (SRE's line, added 2026-10-02). The linger (AC-14) on a stepped clock:
+  the HTTP answers during it, the exit code after it, and a signal ending it.
 - **Integration (CI, gates merges):** kill-and-recover against a throwaway Redpanda and the filesystem
   store — run the sizing fixture 90 s, `SIGKILL`, restart, assert AC-1; vary `recovery.replay_batch`
   across three values asserting AC-3; truncate the log below the round's offset asserting exit `3`;
-  corrupt one Zone object asserting AC-4; flip one byte in `prng_state` asserting exit `2`; no-snapshot
-  cold start asserting AC-9. Publish `recovery-timing.json` (AC-7).
-- **Manual/operator:**
+  corrupt one Zone object asserting AC-4; flip one byte in `prng_state` on every object of a round
+  and re-sign each envelope, asserting exit `6` (AC-13); rewrite one tail `TickCompleted.state_hash`
+  after the round, asserting exit `8` (AC-5) with the error line's `tick` naming that tick, and, in
+  a separate case, `snapshot verify`'s `compared_tick` naming it; a round with one Zone twice,
+  listed `incomplete`; that round and a hash-invalid one each named with `recover --verify --round`
+  and with `recovery.pin_round`, asserting exit `7`, `failures_total{reason="round"}` at `1`, its
+  `cause`, and no `recovery.load_snapshot` span for any other tick, then the same through
+  `Admin.VerifySnapshotRound`, asserting `FAILED_PRECONDITION` (AC-15); `--round` and `pin_round`
+  at a tick with no objects, asserting exit `7`, `cause=missing` with every owned Zone, and
+  `NOT_FOUND` from the RPC; AC-11's disagreeing round named with `--round`, asserting
+  `cause=disagree`; a newer-`state_version` round named with `--round`, asserting exit `4`; a tick
+  holding a partial group at `state_version` v+1 and a complete one at v, named with `--round`,
+  asserting the v round loads; a round restored
+  onto content with a different `content_digest`, asserting exit `6` with `reason=content` (AC-13)
+  and `snapshot verify` returning `VERIFY_OUTCOME_CONTENT_MISMATCH`; no-snapshot cold start
+  asserting AC-9. Publish
+  `recovery-timing.json` (AC-7). The AC-7 run kills just before the next round would complete, or
+  sets a longer `snapshot.interval` on the fixture, so that the tail is 600 ticks. The assertion
+  reads `tail_ticks` from the JSON and fails below 600.
+  *(Amended 2026-10-02. A `prng_state` flip is caught at the round's tick now, by `AW-SRV-043`, so
+  it can't reach exit `8`.)* Its clients record their acks
+  and check them after recovery (AC-8). A re-signed corrupt Zone body asserts exit `6` (AC-13). The
+  24 h history run (AC-12) is skipped unless its variable is set, as `AW-SRV-019`'s AC-6 run is,
+  and its result is recorded in the implementation record. Every mismatch exit test dials
+  `grpc.listen` while the process runs and is refused (AC-5).
+- **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play
+  and asserts the M2 gate. Then, on the recovered stack:
   ```
-  make up && andara-server &
-  kill -9 %1 && andara-server            # expect: "recovery complete match=true" then ready
-  andara-cli snapshot list               # expect: rounds newest first, complete=true
-  andara-server recover --verify --round <tick>   # expect: match, exit 0
+  andara-cli snapshot list                         # expect: rounds newest first, complete=true
+  andara-server recover --verify --round <tick>    # expect: match, exit 0
   ```
+  *(Replaced 2026-10-02: the hand-typed `andara-server &` and `kill -9 %1` were a §9 defect.)*
 
 ## Definition of done
 
 CLAUDE.md §8, plus:
+- **The live observation is `AW-INF-032`'s run (added 2026-10-02, feedback item 4).** This story's
+  §8 record cites `make stack-recover`'s reads of `andara_recovery_state_hash_match`,
+  `andara_recovery_duration_seconds{phase}`, `andara_recovery_round_tick`,
+  `andara_restore_total{caller="recovery"}`, and the `recovery.run` trace resolved in Tempo. So
+  this story's §8 follows `AW-INF-032`'s merge. `RecoveryStateMismatch` is verified against compose
+  only: firing on a corrupt round, and never in `ALERTS` through a normal recovery. "Fires on the
+  cluster" is not yet observed, and `AW-INF-009` inherits it.
 - The kill-and-recover test gates merges on every `server/sim` and `server/store` change.
 - `docs/runbooks/recovery-state-mismatch.md` exists and resolves its alert with `andara-cli` commands
   only.
@@ -383,6 +553,11 @@ CLAUDE.md §8, plus:
   implementing either turns up a defect in the sketch above, the fix is an amendment here, not a
   divergence there.
 
+- **Resolved 2026-10-02 (architecture), feedback items 1 and 2.** The 120 s is measured at the
+  sizing fixture's 25,000 Entities (AC-7), and recovery takes the seek (AC-12, "Seek" above).
+  **Not resolved here:** at about 65 ms per tick, a 600-tick tail replays in about 39 s. That fits
+  M2's 120 s. It doesn't leave room for Phase 1's 60 s once restart is counted. That's a replay-cost
+  question for the story that lowers the RTO, sent to PM in the feedback file.
 - **Inherited from the review of PR #32 (2026-09-19), measured by implementation:** `tickloop.Recover`
   reads every `TickCompleted` on the topic into memory before replaying — on a local log of ~180k
   ticks, RSS sat at ~4 GB for the first 40 s after boot before settling at 270 MB. Recovery memory is

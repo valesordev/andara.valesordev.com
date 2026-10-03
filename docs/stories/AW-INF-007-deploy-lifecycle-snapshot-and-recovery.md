@@ -84,8 +84,10 @@ not an event.
 4. **Given** `make rollback` to a binary that cannot read the current `state_version` **when** the old
    pod starts **then** it exits `4` naming both versions; **given** `make rollback --round T` with a
    round the old binary can read **then** it recovers from `T`, replays the newer binary's tail, and
-   reaches `serving` with a hash equal to the newer binary's `TickCompleted` at head — or exits `2` if
+   reaches `serving` with a hash equal to the newer binary's `TickCompleted` at head — or exits `8` if
    the newer binary's semantics changed, which is the honest signal that a rollback needs a fix-forward.
+   *(2026-10-02: `AW-SRV-007`'s hash-mismatch exit moved from `2` to `8`. `make deploy`'s own exit `2`
+   in AC-3 is this story's, and unchanged.)*
 5. **Given** a deploy **when** it completes **then** `andara_deploy_interruption_seconds` is recorded, and
    the CI job summary shows it against the milestone RTO (120 s at M2, 60 s at Phase 1 exit).
 6. **Given** connected players **when** pre-stop begins **then** each receives `ServerStopping` at least
@@ -201,6 +203,12 @@ the expected interruption as a number from the last CI run, and every step is a 
   the first to make `prod` Ready. Until it does, `absent(…andara-prod…)` is a standing result.
 
 ## Open questions
+
+- **Open since PR #356 (2026-10-03), for the SPRINT-05 split:** who clears `recovery.pin_round`, whether
+  retention keeps the pinned round, what `make rollback` itself exits, and `ROUND=T` vs `--round T`.
+  See `docs/feedback/AW-INF-005-007-split.md`, "From PR #356's review". These affect this story's
+  Interface contract, so its deploy half doesn't start before the split answers them. The server
+  side of the key is `AW-SRV-007`'s (its Configuration table and AC-15).
 
 - `[NEEDS BRIAN]` The `message` in `ServerStopping` — countdown, in-world notice, or nothing. The
   field and the lead time exist either way; the words do not affect this contract.

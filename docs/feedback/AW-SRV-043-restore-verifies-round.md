@@ -39,3 +39,49 @@ Amended. The cardinality bound and "no alert" are accepted. Six changes to §7:
    replacement pre-seeds it at 0. That's item 2 above. Reword it to read the projector's
    in-process registry with `testutil`, after `projector.Run` returns the mismatch, in the same
    test that bootstraps from the corrupted round. The Test plan is yours; §7 now says so.
+
+## Architecture: contract review, 2026-10-02
+
+Moved to `ready`. The amendments are in the story body.
+
+- **Open question 1, exit codes:** projector `5` and recovery `6`, as proposed.
+  - The server's `5` is already `AW-SRV-026`'s `ExitBoundaryLost` (PR #355), so `AW-SRV-007`'s
+    incomplete-round exit moves from `5` to `7`.
+  - `AW-SRV-007`'s exit table is amended to match.
+- **Open question 2, the edge:** `AW-SRV-007` depends on this story, and this story blocks it.
+- **`sim_seed` is pinned** as field `10` in `state/v1/snapshot.proto`, with `gen/` regenerated.
+  Implementation doesn't touch the `.proto`.
+- **SRE items 1–6:** accepted as amended in §7. On item 5, exit `6` sets the hash-match gauge to
+  `0` and lingers like exit `2`. That's in `AW-SRV-007` as AC-13 and AC-14.
+- **SRE item 7:** the Test plan's Integration line now reads the projector's in-process registry
+  with `testutil` after `Run` returns. It no longer scrapes.
+- **AC-3:** the fields are `recorded_hash` and `restored_hash`, aligned with §7.
+- **AC-5:** compares with the **effective** seed. That's `sim.seed` if set, otherwise the derived
+  default. The draft's "both non-zero" would have let an unset seed skip the check. Because the
+  seed is in the State Hash, AC-2 would then have caught it, but as `reason=hash`.
+- **Added to the contract:**
+  - The check order inside `RestoreEngine`: version, digest, seed, build, hash.
+  - The caller reads the round tick's own `TickCompleted`. For the projector that's
+    `SeekAfter(round − 1)`.
+
+### For implementation
+`sim.RestoreEngine` and the projector's bootstrap. The server's half is `AW-SRV-007`: both server
+callers, and pre-seeding `andara_restore_total`'s 6 server series.
+
+**Read-as note (pre-PR review, 2026-10-02):** recovery's hash mismatch moved from exit `2` to `8`
+(`AW-SRV-007`, because Go exits `2` on a panic). Where this file says recovery "exit `2`", read `8`.
+
+### For SRE: the projector's exit `2`
+The same panic collision applies to the projector. `ExitDivergence = 2`
+(`server/projector/run.go:26`), so `state-projector-down.md`'s exit table sends a projector panic
+to the divergence procedure. No alert keys on that exit code, so it doesn't hold this story. It
+goes to PM as a renumbering candidate for SPRINT-05, alongside the `make`-level exit question
+below.
+
+### For PM
+- **The projector's divergence exit is `2`,** which a Go panic also produces (above). It's a
+  candidate to renumber, contract first.
+- **`make <target>` always exits `2` on a failing recipe** (GNU make), so a story that names
+  distinct `make` exit codes (`AW-INF-007`'s `make deploy` table, for one) can't be asserted at the
+  `make` level. `AW-INF-029` now says its codes are the script's. `AW-INF-007` needs the same
+  wording when it's split (`docs/feedback/AW-INF-005-007-split.md`).

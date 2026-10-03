@@ -11,7 +11,7 @@
 //
 // WHAT BELONGS HERE. Exactly what sim.WorldState.CanonicalBytes covers for one
 // Zone, and nothing else. A field the hash covers but the body omits cannot be
-// reproduced on restore, and AW-SRV-007 AC-5 exits 2 on that mismatch: the
+// reproduced on restore, and recovery exits 6 on that mismatch (AW-SRV-043): the
 // omission surfaces as a World that will not boot, long after the snapshot was
 // written. Topology is not here — it is content-versioned and hashed by
 // AW-SRV-012's ContentSwap record, not by state.

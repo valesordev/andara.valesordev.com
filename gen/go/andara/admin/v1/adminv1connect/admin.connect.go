@@ -87,6 +87,12 @@ const (
 	AdminGetBlobProcedure = "/andara.admin.v1.Admin/GetBlob"
 	// AdminReloadContentProcedure is the fully-qualified name of the Admin's ReloadContent RPC.
 	AdminReloadContentProcedure = "/andara.admin.v1.Admin/ReloadContent"
+	// AdminListSnapshotRoundsProcedure is the fully-qualified name of the Admin's ListSnapshotRounds
+	// RPC.
+	AdminListSnapshotRoundsProcedure = "/andara.admin.v1.Admin/ListSnapshotRounds"
+	// AdminVerifySnapshotRoundProcedure is the fully-qualified name of the Admin's VerifySnapshotRound
+	// RPC.
+	AdminVerifySnapshotRoundProcedure = "/andara.admin.v1.Admin/VerifySnapshotRound"
 )
 
 // AdminClient is a client for the andara.admin.v1.Admin service.
@@ -151,6 +157,19 @@ type AdminClient interface {
 	GetBlob(context.Context, *connect.Request[v1.GetBlobRequest]) (*connect.ServerStreamForClient[v1.GetBlobResponse], error)
 	// Re-resolve the active versions without a pointer move. OPERATOR only.
 	ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error)
+	// Snapshot Rounds (AW-SRV-007). OPERATOR only. Both read the store the
+	// server is configured with, and neither touches the live Engine.
+	//
+	// Rounds the server sees, newest first, with completeness against the Zones
+	// this process owns (store.ListRounds).
+	ListSnapshotRounds(context.Context, *connect.Request[v1.ListSnapshotRoundsRequest]) (*connect.Response[v1.ListSnapshotRoundsResponse], error)
+	// Restore one round into a scratch Engine, verify it at its own tick
+	// (AW-SRV-043), replay it to the log head, and compare with the head's
+	// TickCompleted. A mismatch is a response, not an error: the RPC worked.
+	// NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for an incomplete
+	// round, a log gap, or a state_version this binary can't read;
+	// DEADLINE_EXCEEDED past recovery.verify_timeout.
+	VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error)
 }
 
 // NewAdminClient constructs a client for the andara.admin.v1.Admin service. By default, it uses the
@@ -278,6 +297,18 @@ func NewAdminClient(httpClient connect.HTTPClient, baseURL string, opts ...conne
 			connect.WithSchema(adminMethods.ByName("ReloadContent")),
 			connect.WithClientOptions(opts...),
 		),
+		listSnapshotRounds: connect.NewClient[v1.ListSnapshotRoundsRequest, v1.ListSnapshotRoundsResponse](
+			httpClient,
+			baseURL+AdminListSnapshotRoundsProcedure,
+			connect.WithSchema(adminMethods.ByName("ListSnapshotRounds")),
+			connect.WithClientOptions(opts...),
+		),
+		verifySnapshotRound: connect.NewClient[v1.VerifySnapshotRoundRequest, v1.VerifySnapshotRoundResponse](
+			httpClient,
+			baseURL+AdminVerifySnapshotRoundProcedure,
+			connect.WithSchema(adminMethods.ByName("VerifySnapshotRound")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -302,6 +333,8 @@ type adminClient struct {
 	getVersion          *connect.Client[v1.GetVersionRequest, v1.GetVersionResponse]
 	getBlob             *connect.Client[v1.GetBlobRequest, v1.GetBlobResponse]
 	reloadContent       *connect.Client[v1.ReloadContentRequest, v1.ReloadContentResponse]
+	listSnapshotRounds  *connect.Client[v1.ListSnapshotRoundsRequest, v1.ListSnapshotRoundsResponse]
+	verifySnapshotRound *connect.Client[v1.VerifySnapshotRoundRequest, v1.VerifySnapshotRoundResponse]
 }
 
 // GetServerInfo calls andara.admin.v1.Admin.GetServerInfo.
@@ -399,6 +432,16 @@ func (c *adminClient) ReloadContent(ctx context.Context, req *connect.Request[v1
 	return c.reloadContent.CallUnary(ctx, req)
 }
 
+// ListSnapshotRounds calls andara.admin.v1.Admin.ListSnapshotRounds.
+func (c *adminClient) ListSnapshotRounds(ctx context.Context, req *connect.Request[v1.ListSnapshotRoundsRequest]) (*connect.Response[v1.ListSnapshotRoundsResponse], error) {
+	return c.listSnapshotRounds.CallUnary(ctx, req)
+}
+
+// VerifySnapshotRound calls andara.admin.v1.Admin.VerifySnapshotRound.
+func (c *adminClient) VerifySnapshotRound(ctx context.Context, req *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error) {
+	return c.verifySnapshotRound.CallUnary(ctx, req)
+}
+
 // AdminHandler is an implementation of the andara.admin.v1.Admin service.
 type AdminHandler interface {
 	// Build and content identity of the running server. ADR-0004 decoupled
@@ -461,6 +504,19 @@ type AdminHandler interface {
 	GetBlob(context.Context, *connect.Request[v1.GetBlobRequest], *connect.ServerStream[v1.GetBlobResponse]) error
 	// Re-resolve the active versions without a pointer move. OPERATOR only.
 	ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error)
+	// Snapshot Rounds (AW-SRV-007). OPERATOR only. Both read the store the
+	// server is configured with, and neither touches the live Engine.
+	//
+	// Rounds the server sees, newest first, with completeness against the Zones
+	// this process owns (store.ListRounds).
+	ListSnapshotRounds(context.Context, *connect.Request[v1.ListSnapshotRoundsRequest]) (*connect.Response[v1.ListSnapshotRoundsResponse], error)
+	// Restore one round into a scratch Engine, verify it at its own tick
+	// (AW-SRV-043), replay it to the log head, and compare with the head's
+	// TickCompleted. A mismatch is a response, not an error: the RPC worked.
+	// NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for an incomplete
+	// round, a log gap, or a state_version this binary can't read;
+	// DEADLINE_EXCEEDED past recovery.verify_timeout.
+	VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error)
 }
 
 // NewAdminHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -584,6 +640,18 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 		connect.WithSchema(adminMethods.ByName("ReloadContent")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminListSnapshotRoundsHandler := connect.NewUnaryHandler(
+		AdminListSnapshotRoundsProcedure,
+		svc.ListSnapshotRounds,
+		connect.WithSchema(adminMethods.ByName("ListSnapshotRounds")),
+		connect.WithHandlerOptions(opts...),
+	)
+	adminVerifySnapshotRoundHandler := connect.NewUnaryHandler(
+		AdminVerifySnapshotRoundProcedure,
+		svc.VerifySnapshotRound,
+		connect.WithSchema(adminMethods.ByName("VerifySnapshotRound")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/andara.admin.v1.Admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminGetServerInfoProcedure:
@@ -624,6 +692,10 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 			adminGetBlobHandler.ServeHTTP(w, r)
 		case AdminReloadContentProcedure:
 			adminReloadContentHandler.ServeHTTP(w, r)
+		case AdminListSnapshotRoundsProcedure:
+			adminListSnapshotRoundsHandler.ServeHTTP(w, r)
+		case AdminVerifySnapshotRoundProcedure:
+			adminVerifySnapshotRoundHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -707,4 +779,12 @@ func (UnimplementedAdminHandler) GetBlob(context.Context, *connect.Request[v1.Ge
 
 func (UnimplementedAdminHandler) ReloadContent(context.Context, *connect.Request[v1.ReloadContentRequest]) (*connect.Response[v1.ReloadContentResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ReloadContent is not implemented"))
+}
+
+func (UnimplementedAdminHandler) ListSnapshotRounds(context.Context, *connect.Request[v1.ListSnapshotRoundsRequest]) (*connect.Response[v1.ListSnapshotRoundsResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.ListSnapshotRounds is not implemented"))
+}
+
+func (UnimplementedAdminHandler) VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.VerifySnapshotRound is not implemented"))
 }

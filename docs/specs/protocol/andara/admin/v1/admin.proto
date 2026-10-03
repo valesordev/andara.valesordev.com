@@ -98,6 +98,87 @@ service Admin {
   rpc GetBlob(GetBlobRequest) returns (stream GetBlobResponse);
   // Re-resolve the active versions without a pointer move. OPERATOR only.
   rpc ReloadContent(ReloadContentRequest) returns (ReloadContentResponse);
+
+  // Snapshot Rounds (AW-SRV-007). OPERATOR only. Both read the store the
+  // server is configured with, and neither touches the live Engine.
+  //
+  // Rounds the server sees, newest first, with completeness against the Zones
+  // this process owns (store.ListRounds).
+  rpc ListSnapshotRounds(ListSnapshotRoundsRequest) returns (ListSnapshotRoundsResponse);
+  // Restore one round into a scratch Engine, verify it at its own tick
+  // (AW-SRV-043), replay it to the log head, and compare with the head's
+  // TickCompleted. A mismatch is a response, not an error: the RPC worked.
+  // NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for an incomplete
+  // round, a log gap, or a state_version this binary can't read;
+  // DEADLINE_EXCEEDED past recovery.verify_timeout.
+  rpc VerifySnapshotRound(VerifySnapshotRoundRequest) returns (VerifySnapshotRoundResponse);
+}
+
+message ListSnapshotRoundsRequest {
+  // Empty: every Zone. Otherwise only rounds holding this Zone, with
+  // `complete` still judged against every owned Zone.
+  string zone_id = 1;
+  // 0 means all.
+  uint32 limit = 2;
+}
+
+message SnapshotRound {
+  uint64 tick = 1;
+  uint32 state_version = 2;
+  // Sorted. The Zones the round holds an object for.
+  repeated string zone_ids = 3;
+  // Exactly one object for every owned Zone, each hash-valid, and every
+  // object's prng_state, next_event_id and sim_seed agreeing (AW-SRV-007 AC-4
+  // and AC-11). A round holding one Zone twice is incomplete.
+  bool complete = 4;
+  // The newest taken_at_unix_nano among the round's objects. Diagnostic only.
+  int64 taken_at_unix_nano = 5;
+}
+
+message ListSnapshotRoundsResponse {
+  // Newest first.
+  repeated SnapshotRound rounds = 1;
+}
+
+message VerifySnapshotRoundRequest {
+  uint64 tick = 1;
+}
+
+enum VerifyOutcome {
+  VERIFY_OUTCOME_UNSPECIFIED = 0;
+  // The round restored to its recorded hash, and replay to head matched.
+  VERIFY_OUTCOME_MATCH = 1;
+  // The round restored, and replay reached a boundary whose TickCompleted
+  // differs from the Engine's hash: the first such boundary, which is the
+  // head's only if every earlier one matched (recovery's exit 8).
+  VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
+  // The restored round differs from its own tick's TickCompleted (AW-SRV-043,
+  // recovery's exit 6). Nothing was replayed.
+  VERIFY_OUTCOME_RESTORE_MISMATCH = 3;
+  // The round's sim_seed differs from the server's effective seed
+  // (AW-SRV-043, recovery's exit 6). Nothing was restored.
+  VERIFY_OUTCOME_SEED_MISMATCH = 4;
+  // The round doesn't restore onto the content in effect: a content_digest
+  // mismatch, or a Zone the content doesn't have (recovery's exit 6). Nothing
+  // was restored.
+  VERIFY_OUTCOME_CONTENT_MISMATCH = 5;
+}
+
+message VerifySnapshotRoundResponse {
+  // True only for VERIFY_OUTCOME_MATCH.
+  bool match = 1;
+  // The recorded TickCompleted.state_hash at `compared_tick`, and the
+  // Engine's. Empty for a seed or content mismatch.
+  bytes expected_hash = 2;
+  bytes actual_hash = 3;
+  VerifyOutcome outcome = 4;
+  // The round's tick for a restore mismatch; the first mismatching
+  // boundary's tick for a replay mismatch; the head's tick for a match. 0 for
+  // a seed or content mismatch.
+  uint64 compared_tick = 5;
+  // Set only for a seed mismatch.
+  uint64 recorded_seed = 6;
+  uint64 configured_seed = 7;
 }
 
 message CreateAccountRequest {

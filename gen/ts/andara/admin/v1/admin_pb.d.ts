@@ -17,7 +17,7 @@
 // @generated from file andara/admin/v1/admin.proto (package andara.admin.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
+import type { GenEnum, GenFile, GenMessage, GenService } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { AccountStatus, CredentialKind, RegistrationMode, Role } from "../../accounts/v1/account_pb";
 import type { PackVersion } from "../../state/v1/snapshot_pb";
@@ -27,6 +27,167 @@ import type { ActiveVersion, BlobRef, ContentVersion, Diagnostic } from "../../c
  * Describes the file andara/admin/v1/admin.proto.
  */
 export declare const file_andara_admin_v1_admin: GenFile;
+
+/**
+ * @generated from message andara.admin.v1.ListSnapshotRoundsRequest
+ */
+export declare type ListSnapshotRoundsRequest = Message<"andara.admin.v1.ListSnapshotRoundsRequest"> & {
+  /**
+   * Empty: every Zone. Otherwise only rounds holding this Zone, with
+   * `complete` still judged against every owned Zone.
+   *
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * 0 means all.
+   *
+   * @generated from field: uint32 limit = 2;
+   */
+  limit: number;
+};
+
+/**
+ * Describes the message andara.admin.v1.ListSnapshotRoundsRequest.
+ * Use `create(ListSnapshotRoundsRequestSchema)` to create a new message.
+ */
+export declare const ListSnapshotRoundsRequestSchema: GenMessage<ListSnapshotRoundsRequest>;
+
+/**
+ * @generated from message andara.admin.v1.SnapshotRound
+ */
+export declare type SnapshotRound = Message<"andara.admin.v1.SnapshotRound"> & {
+  /**
+   * @generated from field: uint64 tick = 1;
+   */
+  tick: bigint;
+
+  /**
+   * @generated from field: uint32 state_version = 2;
+   */
+  stateVersion: number;
+
+  /**
+   * Sorted. The Zones the round holds an object for.
+   *
+   * @generated from field: repeated string zone_ids = 3;
+   */
+  zoneIds: string[];
+
+  /**
+   * Exactly one object for every owned Zone, each hash-valid, and every
+   * object's prng_state, next_event_id and sim_seed agreeing (AW-SRV-007 AC-4
+   * and AC-11). A round holding one Zone twice is incomplete.
+   *
+   * @generated from field: bool complete = 4;
+   */
+  complete: boolean;
+
+  /**
+   * The newest taken_at_unix_nano among the round's objects. Diagnostic only.
+   *
+   * @generated from field: int64 taken_at_unix_nano = 5;
+   */
+  takenAtUnixNano: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.SnapshotRound.
+ * Use `create(SnapshotRoundSchema)` to create a new message.
+ */
+export declare const SnapshotRoundSchema: GenMessage<SnapshotRound>;
+
+/**
+ * @generated from message andara.admin.v1.ListSnapshotRoundsResponse
+ */
+export declare type ListSnapshotRoundsResponse = Message<"andara.admin.v1.ListSnapshotRoundsResponse"> & {
+  /**
+   * Newest first.
+   *
+   * @generated from field: repeated andara.admin.v1.SnapshotRound rounds = 1;
+   */
+  rounds: SnapshotRound[];
+};
+
+/**
+ * Describes the message andara.admin.v1.ListSnapshotRoundsResponse.
+ * Use `create(ListSnapshotRoundsResponseSchema)` to create a new message.
+ */
+export declare const ListSnapshotRoundsResponseSchema: GenMessage<ListSnapshotRoundsResponse>;
+
+/**
+ * @generated from message andara.admin.v1.VerifySnapshotRoundRequest
+ */
+export declare type VerifySnapshotRoundRequest = Message<"andara.admin.v1.VerifySnapshotRoundRequest"> & {
+  /**
+   * @generated from field: uint64 tick = 1;
+   */
+  tick: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.VerifySnapshotRoundRequest.
+ * Use `create(VerifySnapshotRoundRequestSchema)` to create a new message.
+ */
+export declare const VerifySnapshotRoundRequestSchema: GenMessage<VerifySnapshotRoundRequest>;
+
+/**
+ * @generated from message andara.admin.v1.VerifySnapshotRoundResponse
+ */
+export declare type VerifySnapshotRoundResponse = Message<"andara.admin.v1.VerifySnapshotRoundResponse"> & {
+  /**
+   * True only for VERIFY_OUTCOME_MATCH.
+   *
+   * @generated from field: bool match = 1;
+   */
+  match: boolean;
+
+  /**
+   * The recorded TickCompleted.state_hash at `compared_tick`, and the
+   * Engine's. Empty for a seed or content mismatch.
+   *
+   * @generated from field: bytes expected_hash = 2;
+   */
+  expectedHash: Uint8Array;
+
+  /**
+   * @generated from field: bytes actual_hash = 3;
+   */
+  actualHash: Uint8Array;
+
+  /**
+   * @generated from field: andara.admin.v1.VerifyOutcome outcome = 4;
+   */
+  outcome: VerifyOutcome;
+
+  /**
+   * The round's tick for a restore mismatch; the first mismatching
+   * boundary's tick for a replay mismatch; the head's tick for a match. 0 for
+   * a seed or content mismatch.
+   *
+   * @generated from field: uint64 compared_tick = 5;
+   */
+  comparedTick: bigint;
+
+  /**
+   * Set only for a seed mismatch.
+   *
+   * @generated from field: uint64 recorded_seed = 6;
+   */
+  recordedSeed: bigint;
+
+  /**
+   * @generated from field: uint64 configured_seed = 7;
+   */
+  configuredSeed: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.VerifySnapshotRoundResponse.
+ * Use `create(VerifySnapshotRoundResponseSchema)` to create a new message.
+ */
+export declare const VerifySnapshotRoundResponseSchema: GenMessage<VerifySnapshotRoundResponse>;
 
 /**
  * @generated from message andara.admin.v1.CreateAccountRequest
@@ -1029,6 +1190,62 @@ export declare type ReloadContentResponse = Message<"andara.admin.v1.ReloadConte
 export declare const ReloadContentResponseSchema: GenMessage<ReloadContentResponse>;
 
 /**
+ * @generated from enum andara.admin.v1.VerifyOutcome
+ */
+export enum VerifyOutcome {
+  /**
+   * @generated from enum value: VERIFY_OUTCOME_UNSPECIFIED = 0;
+   */
+  UNSPECIFIED = 0,
+
+  /**
+   * The round restored to its recorded hash, and replay to head matched.
+   *
+   * @generated from enum value: VERIFY_OUTCOME_MATCH = 1;
+   */
+  MATCH = 1,
+
+  /**
+   * The round restored, and replay reached a boundary whose TickCompleted
+   * differs from the Engine's hash: the first such boundary, which is the
+   * head's only if every earlier one matched (recovery's exit 8).
+   *
+   * @generated from enum value: VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
+   */
+  REPLAY_MISMATCH = 2,
+
+  /**
+   * The restored round differs from its own tick's TickCompleted (AW-SRV-043,
+   * recovery's exit 6). Nothing was replayed.
+   *
+   * @generated from enum value: VERIFY_OUTCOME_RESTORE_MISMATCH = 3;
+   */
+  RESTORE_MISMATCH = 3,
+
+  /**
+   * The round's sim_seed differs from the server's effective seed
+   * (AW-SRV-043, recovery's exit 6). Nothing was restored.
+   *
+   * @generated from enum value: VERIFY_OUTCOME_SEED_MISMATCH = 4;
+   */
+  SEED_MISMATCH = 4,
+
+  /**
+   * The round doesn't restore onto the content in effect: a content_digest
+   * mismatch, or a Zone the content doesn't have (recovery's exit 6). Nothing
+   * was restored.
+   *
+   * @generated from enum value: VERIFY_OUTCOME_CONTENT_MISMATCH = 5;
+   */
+  CONTENT_MISMATCH = 5,
+}
+
+/**
+ * Describes the enum andara.admin.v1.VerifyOutcome.
+ */
+export declare const VerifyOutcomeSchema: GenEnum<VerifyOutcome>;
+
+/**
  * @generated from service andara.admin.v1.Admin
  */
 export declare const Admin: GenService<{
@@ -1240,6 +1457,35 @@ export declare const Admin: GenService<{
     methodKind: "unary";
     input: typeof ReloadContentRequestSchema;
     output: typeof ReloadContentResponseSchema;
+  },
+  /**
+   * Snapshot Rounds (AW-SRV-007). OPERATOR only. Both read the store the
+   * server is configured with, and neither touches the live Engine.
+   *
+   * Rounds the server sees, newest first, with completeness against the Zones
+   * this process owns (store.ListRounds).
+   *
+   * @generated from rpc andara.admin.v1.Admin.ListSnapshotRounds
+   */
+  listSnapshotRounds: {
+    methodKind: "unary";
+    input: typeof ListSnapshotRoundsRequestSchema;
+    output: typeof ListSnapshotRoundsResponseSchema;
+  },
+  /**
+   * Restore one round into a scratch Engine, verify it at its own tick
+   * (AW-SRV-043), replay it to the log head, and compare with the head's
+   * TickCompleted. A mismatch is a response, not an error: the RPC worked.
+   * NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for an incomplete
+   * round, a log gap, or a state_version this binary can't read;
+   * DEADLINE_EXCEEDED past recovery.verify_timeout.
+   *
+   * @generated from rpc andara.admin.v1.Admin.VerifySnapshotRound
+   */
+  verifySnapshotRound: {
+    methodKind: "unary";
+    input: typeof VerifySnapshotRoundRequestSchema;
+    output: typeof VerifySnapshotRoundResponseSchema;
   },
 }>;
 

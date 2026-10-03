@@ -83,3 +83,88 @@ contract review. Two more, from the SPRINT-03 close-out:
      `AW-INF-032`'s AC-4 pass vacuously.
    - Name the source, for instance acked offsets recorded somewhere that outlives the process. Or
      say that the SLI is measured elsewhere, such as a client-side comparison in the test harness.
+
+## Architecture: contract review, 2026-10-02
+
+The story stays `ready`. It's amended in its body, and a dated block under Context lists every
+change. Implementation hasn't started.
+
+1. **Entity count.** AC-7 is measured at the sizing fixture: 25,000 Entities, a 600-tick tail, and
+   `total` under 90 s. The old bound, `replay` under 5 s, contradicted `AW-SRV-019`'s measured
+   ~65 ms per tick, which is about 39 s for that tail. `recovery-timing.json` also records the
+   tail length, the Entity count, and peak RSS.
+2. **`SeekAfter`.** Yes. It moves to `server/tickloop` and the projector and recovery share it.
+   `Recover` streams boundaries and never loads the topic, which closes PR #32's memory question.
+   AC-12 bounds history's cost, using `AW-SRV-019` AC-6's 24 h fixture.
+3. **`AW-SRV-043`.** It's in `depends_on`. Its refusal is exit `6`, AC-13. The incomplete-round
+   exit moves from `5` to `7`, because `AW-SRV-026` holds `5`.
+4. **The operator test** is `make stack-recover`. This story's §8 cites `AW-INF-032`'s run, as an
+   added Definition-of-done line.
+5. **SRE's amendment, accepted:**
+   - The key is `recovery.mismatch_linger`, default `0s`. It covers boot recovery's exits `2` and
+     `6`, and never `recover --verify`.
+   - AC-5 is reworded to "never binds `grpc.listen`". AC-14 states the linger, including a signal
+     ending it.
+   - The gauge is registered on first set, which is SRE's Test-plan line.
+   - Exit `6` also sets the gauge to `0`.
+   - The compose-only §8 framing holds. "Fires on the cluster" is `AW-INF-009`'s, inherited.
+   - On SRE's question of whether the deferral rule fits: it does. The rule is in the file, and
+     the evaluator that can run its cluster clause, Grafana Cloud's ruler, arrives with
+     `AW-INF-009`. That's "no caller yet". `AW-INF-009` adds a clause to the same rule, not a new
+     alert. See that story's feedback file.
+6. **`andara_acknowledged_commands_lost_total` is withdrawn.**
+   - The ack is held by the client, and a restarted process has nothing to compare with the log.
+     The counter would be `0` by construction.
+   - AC-8 now asserts the RPO in the kill-and-recover test. The test's clients record each
+     `SubmitResponse` partition and offset, then check the log after recovery.
+   - In `make stack-recover`, AC-5's tail move is the RPO evidence.
+   - No server-side RPO SLI replaces it. The production guarantee is the three broker settings in
+     `recovery.md`, which `AW-INF-005` asserts against running brokers.
+
+### For SRE
+- **`docs/runbooks/server-crashlooping.md` line 59** says an incomplete round with
+  `recovery.require_snapshot=true` is exit `5`. It's now `7`, and `5` is `AW-SRV-026`'s lost
+  boundary. Please fix it with `AW-SRV-026`'s runbook paragraph (its feedback file, item 3).
+- **`docs/specs/slo/recovery.md`'s RPO SLI** names `andara_acknowledged_commands_lost_total` as
+  "incremented by the recovery path". That counter is withdrawn. Please restate the SLI:
+  - asserted by the clients that hold acks (`AW-SRV-007` AC-8, `AW-INF-032` AC-5);
+  - guaranteed in production by the three broker settings;
+  - with no server-side counter.
+- **The linger's deploy half** is unchanged from your amendment: compose `60s`, the chart `0s` and
+  values schema, and the rule's `for`/`keep_firing_for`, in your §8 ops commit.
+
+### For PM
+- **Phase 1's 60 s RTO.** At ~65 ms per tick, a 600-tick tail replays in about 39 s. That fits
+  M2's 120 s. Once restart is counted, it leaves almost nothing of 60 s. Before Phase 1's exit, a
+  story needs to either lower replay cost or shorten `snapshot.interval`, and the second costs
+  stall budget. It's not SPRINT-04's.
+- **`AW-INF-005` AC-3 and its metrics list** use the withdrawn counter. The SPRINT-05 split
+  (`docs/feedback/AW-INF-005-007-split.md`) should replace that with a check at the offset the ack
+  named, which the AC already reads.
+
+## Architecture: the pre-PR review's changes, 2026-10-02
+
+Same PR as the contract review above.
+- **The hash mismatch moves from exit `2` to `8`.**
+  - Go exits `2` on an unrecovered panic or a runtime fatal error. On the cluster, the
+    last-terminated exit code is the only signal that outlives the process, so `2` would have paged
+    `RecoveryStateMismatch` on every panic.
+  - `2` is now never assigned. `recover --verify` exits `8` on a mismatch.
+  - Where this file and the SRE amendment say recovery "exit `2`", read `8`.
+- **Exit `6` also covers content refusals:** a `content_digest` mismatch, or a round Zone the
+  content doesn't have. It logs `reason=content`. `VerifyOutcome` gains `CONTENT_MISMATCH = 5`.
+- **`snapshot verify`** follows `AW-CLI-001`'s exits. A mismatch and a refusal are both `1`, and
+  `outcome` or the error code tells them apart.
+- **The Test plan:**
+  - The `prng_state` flip now asserts exit `6`.
+  - A rewritten tail `TickCompleted.state_hash` asserts exit `8`.
+  - The AC-7 run proves its tail is 600 ticks from `tail_ticks`.
+
+### For SRE (adds to the list above)
+- **`server-crashlooping.md`'s exit table** gains rows for `6` (restore, seed or content mismatch:
+  `recovery-state-mismatch.md`), `7` (incomplete round with `require_snapshot`), and `8` (hash
+  mismatch). Its row for `2` becomes "a Go panic or runtime fatal error: read the stack trace", and
+  the line-59 fix stands.
+- **`server-unavailable.md`** lines 43 and 62 cite recovery's exit `2`, which is now `8`.
+- **AW-INF-009** now depends on `AW-SRV-007`, and its AC-5 needs a `make` target that makes `dev`
+  exit `6` on a corrupted round. It's yours to name when you build it.

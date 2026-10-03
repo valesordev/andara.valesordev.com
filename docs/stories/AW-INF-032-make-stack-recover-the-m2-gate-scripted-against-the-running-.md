@@ -4,7 +4,7 @@ title: make stack-recover — the M2 gate scripted against the running stack
 epic: EPIC-04
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-007, AW-INF-017]
 blocks: []
@@ -24,7 +24,7 @@ made M1 one and `make stack-linkdead` (`AW-INF-017`) made the linkdead half of M
 
 The target also carries `AW-SRV-007`'s instruments into a live observation from the running server
 (`andara_recovery_state_hash_match`, `andara_recovery_duration_seconds`,
-`andara_acknowledged_commands_lost_total`). CLAUDE.md §8's "verified against a real backend" needs
+`andara_recovery_round_tick`). CLAUDE.md §8's "verified against a real backend" needs
 that once a caller exists, and the RTO in `docs/specs/slo/recovery.md` is measured the way that SLO
 defines it: from `SIGKILL` to accepting connections with a verified State Hash.
 
@@ -79,8 +79,12 @@ cite it.
    - `andara_recovery_state_hash_match` is `1`;
    - `andara_recovery_round_tick` equals `R`, so the recovery used that snapshot, and Room 2 can
      only have come from the tail. If it's greater than `R` (a round completed between AC-3's re-read
-     and the kill), the run is inconclusive, and the script exits as AC-3's rerun case;
-   - `andara_acknowledged_commands_lost_total` is `0`.
+     and the kill), the run is inconclusive, and the script exits as AC-3's rerun case.
+
+   *(Amended at contract review, 2026-10-02: the line asserting
+   `andara_acknowledged_commands_lost_total` is `0` is removed. `AW-SRV-007` withdrew that counter,
+   because a restarted process reads `0` by construction. The RPO evidence is AC-5: A's second move
+   was acknowledged before the kill, and only the log tail holds it.)*
 5. **Given** the recovery **when** A's and B's `play` clients reconnect on their own (`AW-CLI-007`'s
    reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows Room 2:
    the move that only the log tail held was replayed. B's `look` shows B still in the spawn Room. Neither
@@ -105,6 +109,10 @@ cite it.
 - Exit codes: `0` all assertions held; `1` an assertion failed, a precondition is missing
   (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`), or the run
   was inconclusive (AC-3 and AC-4's rerun case). AC-7's dump and cleanup apply to all three.
+- Job summary: when `$GITHUB_STEP_SUMMARY` is set, one appended table row with kill-to-ready
+  seconds, `andara_recovery_duration_seconds_sum{phase="total"}`, `andara_recovery_replayed_ticks`,
+  and the round tick. With it unset, nothing is appended. *(Named in the contract 2026-10-02, from
+  SRE's §7 item 3.)*
 - Output: `stack-recover: <step>` progress lines as in `stack_linkdead.sh`, including
   `stack-recover: ready <N>s after the kill (RTO 120s), round <tick>, hash match`, and ending
   `stack-recover: M2 gate — killed, recovered from a snapshot, hash matched, both rebound — passes`.
@@ -128,11 +136,9 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
     prints its wall-clock kill-to-ready, which is the AC-3 assertion, next to
     `andara_recovery_duration_seconds_sum{phase="total"}`. The difference is the restart term,
     and the SLO says that term dominates. Printing both shows where a regression lives.
-  - **`andara_acknowledged_commands_lost_total` is 0 in any fresh process.** The acks lived in the
-    killed process's memory. `AW-SRV-007` lists the counter but doesn't say what a fresh process
-    increments it from (`docs/feedback/AW-SRV-007-recovery-scale.md`, item 6). Until it does,
-    AC-4's counter line shows that the series exists, and nothing more. The RPO evidence is AC-5:
-    A's `look` shows Room 2, which only the log tail held.
+  - **`andara_acknowledged_commands_lost_total` is withdrawn** (`AW-SRV-007`, 2026-10-02, feedback
+    item 6). A fresh process has no acks to compare with. The RPO evidence is AC-5: A's `look`
+    shows Room 2, which only the log tail held.
 - **Logs:**
   - The script's `stack-recover:` progress lines.
   - On failure, the server's last 50 lines, through `make logs SVC=andara-server`.
@@ -165,11 +171,11 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
 
 CLAUDE.md §8, plus: the §8 record shows `andara_recovery_state_hash_match`,
 `andara_recovery_duration_seconds{phase}`, `andara_recovery_round_tick` and
-`andara_acknowledged_commands_lost_total` read from the running server's `/metrics` after this
+`andara_restore_total{caller="recovery"}` read from the running server's `/metrics` after this
 target's kill, and the `recovery.run` trace resolved in Tempo by its printed `trace_id`. This is the
-first in-cluster caller of `AW-SRV-007`'s instruments (CLAUDE.md §8, "verified against a real
-backend"). Architecture decides whether `AW-SRV-007` inherits that observation as a Definition-of-done
-line (`docs/feedback/AW-SRV-007-recovery-scale.md`, item 4).
+first running-server caller of `AW-SRV-007`'s instruments (CLAUDE.md §8, "verified against a real
+backend"). **Decided 2026-10-02 (architecture):** `AW-SRV-007`'s §8 record cites this run, and its
+Definition of done says so.
 
 ## Open questions
 

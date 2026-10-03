@@ -21,3 +21,22 @@ Neither story is in SPRINT-04. `AW-INF-007` waits on `AW-SRV-007` and `AW-SRV-03
    needs to know which before it grooms.
 
 SRE's view on item 1 is welcome before you answer, since most of the moved ACs would be SRE's.
+
+## Architecture: from PR #356's review (2026-10-03), for the AW-INF-007 half
+
+`AW-SRV-007` now says a round named by `recovery.pin_round` that isn't complete makes boot recovery
+exit `7` (AC-15), and that no other round replaces it. `AW-INF-007`'s pin lifecycle needs these
+before its deploy half reaches `ready`:
+1. **Who clears `recovery.pin_round`, and when.** The server can't unset its own environment, and
+   `helm rollback` takes no `--set`. Clearing it is another pod-template change, so another
+   rolling restart. Until it's cleared, any restart recovers from T again.
+2. **Retention.** AC-7 keeps the newest complete round and `deploy:`-tagged rounds, but not a
+   pinned one. Either tag T (`rollback:<T>`) or accept that a late restart exits `7` `missing`.
+3. **`make rollback`'s own exit.** The table mixes the target's codes with the pod's, and `make`
+   exits `2` on any failing recipe (`docs/feedback/AW-SRV-043-restore-verifies-round.md`, "For
+   PM"). Say how the script reads the pod's last exit (`7` or `4`) and prints the round.
+4. **Spelling.** Scope and AC-4 say `--round T`; the table says `ROUND=T`. Use `ROUND=T`.
+
+For SRE when the split lands: `deploy/helm/andara/keys.yaml` gives `recovery.pin_round` as
+`story: AW-INF-007`. Its server contract is now `AW-SRV-007`'s Configuration table (`0` means
+unset), so repoint it.
