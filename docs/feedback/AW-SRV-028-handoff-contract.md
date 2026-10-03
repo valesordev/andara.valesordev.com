@@ -14,8 +14,7 @@ with this one was never written down:
 
 ### 1. The wire and snapshot fields: one collides, and the snapshot's are missing
 
-**`log.v1`.** 
-The contract sketch adds `uint64 handoff_seq = 5` to `andara.log.v1.Entity`. Field 5 has been
+**`log.v1`.** The contract sketch adds `uint64 handoff_seq = 5` to `andara.log.v1.Entity`. Field 5 has been
 `string name` since `AW-SRV-014` (`docs/specs/protocol/andara/log/v1/log.proto`, `message Entity`).
 `Arrive.handoff_seq = 6` is free, and so are 13 and 14 in the `LoggedCommand` oneof, which the
 proto holds for this story in a comment.
@@ -135,46 +134,69 @@ AC that a Bind during transit never creates a second body.
   it. The proto keeps `reserved` for numbers that were used and then retired
   (`log.proto:72-77`).
 
-### 5. The `Departures` window can expire while retries continue
+### 5. The `Departures` window can expire before a retry arrives
 
-The story prunes a `Departures` entry `2 × sim.handoff_retry_ticks + 1` ticks after the departure.
-Its `[ASSUMPTION]` reasons that "a stale copy can only come from a retry issued before the ack
-landed, and the ack is one hop". But the source keeps retrying until it **applies** the
-`HandoffAck`, and nothing bounds how long that takes. Applying it can be held up by:
-- a source Partition that is frozen today, or a source Zone faulted under `AW-SRV-027` (item 2);
-- a source Partition lagging behind a backlog, or a broker slow to deliver the ack (the retry
-  is produced on the source's own ticks, so it doesn't wait on the broker);
-- a source process restarting between the ack being produced and being applied.
+The story prunes a `Departures` entry `2 × sim.handoff_retry_ticks + 1` of the target's ticks
+after the departure. Its `[ASSUMPTION]` reasons that "a stale copy can only come from a retry
+issued before the ack landed, and the ack is one hop". But a retry can reach the target later
+than that window, for reasons on either side:
+- **The source applies its ack late, so it keeps producing retries.** That happens when:
+  - its Partition is frozen today, or its Zone is faulted under `AW-SRV-027` (item 2);
+  - its Partition lags behind a backlog;
+  - the broker is slow to deliver the ack, since the retry is produced on the source's own
+    ticks and doesn't wait on the broker;
+  - its process restarts while the target's keeps ticking. That one needs multi-process: in
+    today's single process the World's tick stops for both, and the first live tick polls the
+    queued ack before the retry phase.
+- **The target applies a retry late, though it was produced in time.** B's Partition lags
+  behind a backlog (`Source.Poll` takes at most `sim.max_per_tick`, `server/tickloop/loop.go:289`),
+  or the broker delivers the retry late. Meanwhile B's ticks keep advancing and pruning. An ack
+  that arrives promptly at a healthy A doesn't help: the retry was already produced.
 
-Any one of them lets a retry outlive the target's record:
-1. A→B with `handoff_seq` k. B places the Entity and acks, and A doesn't apply the ack yet.
+Either way, a retry can outlive the target's record:
+1. A→B with `handoff_seq` k. B places the Entity and acks. A produces a retry before it applies
+   the ack, or B is slow to read one.
 2. B moves the Entity on to C and records `Departures[e] = k+1`.
-3. `2 × retry_ticks + 1` ticks later, B prunes that entry.
-4. A's next retry of `Arrive(seq k)` finds neither the Entity nor a departure in B. B places a
-   second copy, while the real Entity stands in C.
+3. `2 × retry_ticks + 1` of B's ticks later, B prunes that entry.
+4. The retry of `Arrive(seq k)` reaches B and finds neither the Entity nor a departure. B places
+   a second copy, while the real Entity stands in C.
 
-That is two Entities with one ID, the failure this story exists to prevent. Pointed out by Codex
-on #357.
+That is two Entities with one ID, the failure this story exists to prevent. Nothing in the story
+already prevents it:
+- AC-8's check against the Entity's stored `handoff_seq` applies only "when it is present", and
+  the Entity isn't in B;
+- the re-ack applies only while B holds the Entity.
 
-**Ask:** a deduplication rule that doesn't depend on the source applying its ack in time. Some
-options, each with a cost:
-- **(a) A high-watermark per Entity that outlives the visit.** Each Zone keeps the highest
-  `handoff_seq` it has seen for an Entity, pruned only by something that proves no retry can
-  still come, rather than by time. That state is hashed and grows with every Entity that has
-  ever passed through.
-- **(b) Bounded retries, with the window sized to match.** The source stops after N attempts,
-  skips a faulted Zone (item 2 (c)), and the `Departures` window is at least
-  `(N + 1) × retry_ticks`. The open question then becomes what happens to an Entity whose `Arrive`
-  never landed after N attempts.
+Pointed out by Codex on #357.
+
+**Ask:** a deduplication rule that doesn't depend on timing on either side. Some options, each
+with a cost:
+- **(a) A high-watermark per Entity, pruned by proof rather than time.** Each Zone keeps the
+  highest `handoff_seq` it has seen for an Entity until something proves no retry can still come.
+  One such proof is a third leg: when A applies the `HandoffAck`, it produces
+  `HandoffClosed{entity_id, handoff_seq}` to B's Partition. That record is ordered after every
+  retry A produced there, and B prunes its entry when the record arrives. State is then bounded
+  by open handoffs. The costs:
+  - one more record kind (field 14, if `HandoffRejected` is dropped);
+  - the close is tick-produced, so replay must re-derive it as it does the retries;
+  - a close that is lost only keeps an entry longer, and never causes a duplicate.
+
+  Without a proof like this, the watermark grows with every Entity that has ever passed through.
+- **(b) Bounded retries, with the window sized to match.** The source stops after N attempts and
+  skips a faulted Zone (item 2 (c)), and the `Departures` window is at least `(N + 1) ×
+  retry_ticks`. This bounds when retries are *produced*, not when B *applies* them, so a lagging
+  target still defeats it. On its own it only narrows the window. It also leaves open what
+  happens to an Entity whose `Arrive` never landed after N attempts.
 - **(c) The Entity's sequence travels with it.** B rejects an `Arrive` whose `handoff_seq` is
-  lower than one the World has already seen for that Entity. That needs a World-scoped record
-  of each Entity's current sequence, which crosses Partitions.
+  lower than one the World has already seen for that Entity. That needs a World-scoped record of
+  each Entity's current sequence, which crosses Partitions.
 
 ## What isn't blocked
 
-With item 5, less of the story stands as written than this file first said. `Transit`, the
-retry and `Departures` all wait on its answer. Two parts stand as written:
-- `in_transit` for verbs;
-- the round-trip test (AC-9).
-
-Both need `handoff_seq` on the wire, so neither can start before item 1.
+With item 5, less of the story stands as written than this file first said:
+- **Waiting on item 5:** `Transit`, the retry and `Departures`.
+- **Settled as contract but not buildable yet:** the `in_transit` rejection for verbs. It's only
+  reachable with an Entity in `Transit`, so it waits on `Transit` and on item 1's `state.v1`
+  fields.
+- **Can start before the rest:** the round-trip test (AC-9). It can land over today's fields.
+  It needs `handoff_seq` only once `EntityState` gains that field (item 1).
