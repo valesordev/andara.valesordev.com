@@ -13,8 +13,9 @@ Terms are grouped by layer. Within a group they are alphabetical.
 
 ## Simulation
 
-**Entity** — Anything the simulation tracks with identity and state: a Character, an NPC, an Item
-instance, a Container. Entities have an `EntityID` (opaque, stable for the entity's lifetime).
+**Entity** — Anything the simulation tracks with identity and state: a Character, an NPC, a
+Container. Entities have an `EntityID` (opaque, stable for the entity's lifetime). Whether an Item
+Instance is an Entity is open (`docs/feedback/AW-SRV-047-items.md`, question 1).
 
 **Event** — An immutable, past-tense fact emitted by the simulation after a Command is applied
 (`RoomEntered`, `ItemPickedUp`, `CharacterDespawned`). Events are the only legitimate output of the
@@ -120,7 +121,9 @@ stops acting, visibly (`AW-SRV-009`).
 **Attended / Unattended** — Whether an NPC currently has a Behavior Agent holding its Lease. World state,
 set by a Command, so replay and players agree on it.
 
-**Container** — An Entity that can hold Item instances. A backpack, a chest, a corpse.
+**Container** — Something that can hold Item Instances: a backpack, a chest, a corpse. Whether a
+Container is an Entity or an Item depends on `docs/feedback/AW-SRV-047-items.md` question 1.
+Containers aren't built yet.
 
 **Direction** — The label on an Exit. **The canonical set is closed** (decided 2026-09-10), and the
 loader rejects anything outside it, naming the file and line — which is what turns `norht` into a boot
@@ -157,7 +160,15 @@ one-directional in the data model; a two-way passage is two Exits. Exit conditio
 skill checks) are `[NEEDS BRIAN]`.
 
 **Item** — A thing that can be held, worn, used, or stored. Distinguish **Item Definition** (the
-authored template) from **Item Instance** (a specific Entity in the World with its own ID and state).
+authored template) from **Item Instance** (a specific Item in the World with its own ID and state).
+An Item Definition is a Template of kind `item`, a different root from Templates of kind `entity`
+(`AW-SRV-022`).
+Whether an Item Instance is an Entity in world state is open
+(`docs/feedback/AW-SRV-047-items.md`, question 1).
+
+**Item Placement** — A declaration in a Room that puts one Item Instance of a named Item Definition
+there when its pack version is activated (Brian, 2026-10-03; `AW-CLI-012`). A taken Item doesn't
+come back until the pack's next activation. There are no timed resets yet.
 
 **NPC** — A non-player Character controlled by a Behavior Agent rather than by a player Session.
 
