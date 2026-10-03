@@ -175,3 +175,16 @@ Accepted as a §7 amendment to a `done` story, and no AC is needed.
 Item 9 is on `impl/299-no-zones-found-held`. The story's "Implementation record, #299 amendment"
 names the tests for each case in the amendment's verification list. The live observation stays
 outstanding, as PM decided.
+
+### For SRE: `./server/boot/` isn't in `make test-integration`
+
+The amendment's verification tests live in `server/boot` under the `integration` tag:
+- `held_integration_test.go`;
+- `projector_wait_integration_test.go`.
+
+`make test-integration`'s package list (Makefile, `test-integration`) doesn't include
+`./server/boot/`, so CI never runs them. That includes the existing
+`TestProjectorBoot_ReadOnlyAndWaitsForZones`. They pass locally against the stack's Redpanda
+(`ANDARA_KAFKA_BROKERS=localhost:9092 go test -tags integration ./server/boot/`), on throwaway
+topics only. **Ask:** add `./server/boot/` to the target, so that the §8 record's "the
+integration tests" means tests CI runs.
