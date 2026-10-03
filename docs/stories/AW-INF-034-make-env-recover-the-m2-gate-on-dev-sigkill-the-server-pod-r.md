@@ -46,12 +46,17 @@ not only on compose.
 - **The kill comes from outside the container's PID namespace.** The chart `exec`s
   `andara-server` from `/bin/sh`, so it's PID 1 in its container, and the kernel ignores a SIGKILL
   sent to a PID namespace's init from inside that namespace. That rules out `kubectl exec … kill -9 1`
-  and an ephemeral debug container targeting `server`. The script sends SIGKILL from the kind node's
-  PID namespace (through `docker exec` on the node container), to the `andara-server` process in
-  `andara-0`'s `server` container. So the target runs **on the box**, where the node is. Deleting
+  and an ephemeral debug container targeting `server`. The script sends SIGKILL from the node's PID
+  namespace instead:
+  - the node is `andara-0`'s `spec.nodeName`, one of the box's kind node containers;
+  - the PID comes from `crictl inspect` of the `server` container's `containerID` (from
+    `containerStatuses`), run through `docker exec` on that node, never from a process-name match.
+    Another environment's server can share the node.
+
+  So the target runs **on the box**, where the nodes are. Deleting
   the pod isn't the kill either: that's a reschedule with SIGTERM.
 - Two throwaway player Accounts made through Admin with the operator credential
-  (`ANDARA_BOOTSTRAP_OPERATOR`), as `content-seed` does. Admin is reached through `dev`'s edge,
+  (`ANDARA_BOOTSTRAP_OPERATOR`, the one `content-seed` uses). Admin is reached through `dev`'s edge,
   which admits the box and the tailnet (`admin.allowedCIDRs` in `deploy/helm/values/dev.yaml`).
   Players play through the same edge. A port-forward to `andara-0` doesn't survive the restart, so
   it isn't used. At the end, each Account is set `disabled` with `andara-cli account set-status`.
@@ -73,13 +78,15 @@ not only on compose.
    `env-recover: <the reason>`. The reasons are `refusing without CONFIRM=andara-dev; this kills
    dev's server`, `prod is not enabled`, and `local is make stack-recover`.
 2. **Given** `dev` Ready **when** the target runs **then**:
-   - it first reads `ALERTS{alertname="RecoveryStateMismatch",namespace="andara-dev"}`. If the alert
-     is firing already, the run is inconclusive (AC-8).
+   - it first confirms that `RecoveryStateMismatch` is loaded in the tenant's ruler (namespace
+     `andara`), through `AW-INF-009`'s ruler credentials. A missing rule makes the run inconclusive,
+     because AC-7 would pass without checking anything.
+   - It reads `ALERTS{alertname="RecoveryStateMismatch",namespace="andara-dev"}`. If the alert is
+     firing already, the run is inconclusive (AC-8).
    - Players A and B enter play through the edge, and A moves to Room 1.
    - The script waits for a complete round newer than the one it recorded before play, records it
      as `R`, then moves A to Room 2. It confirms that `snapshot list`'s newest complete round is
-     still `R`, as `AW-INF-032` AC-1 to AC-3 do, and records the server's
-     `process_start_time_seconds`.
+     still `R`, as `AW-INF-032` AC-1 to AC-3 do.
 3. **Given** round `R` **when** the script sends SIGKILL from the node **then**, within 10 s,
    `andara-0`'s `server` container `restartCount` rises by exactly 1, the pod's UID is unchanged (a
    restart, not a reschedule), and `lastState.terminated.exitCode` is `137`. If `restartCount` hasn't
@@ -88,22 +95,29 @@ not only on compose.
    120 s) from the kill, per `live-assertions.md` **then** `andara-0` is Ready, with no further
    restart in that window. The script prints the measured kill-to-Ready seconds.
 5. **Given** the pod Ready **when** the script queries Grafana Cloud's metrics, polled to a
-   deadline, the way `observe_check.py` (`AW-INF-008`) reads them **then** one query, scoped to the
-   new process, holds: `andara_recovery_state_hash_match == 1`, `andara_recovery_round_tick == R`,
-   and `process_start_time_seconds` later than the time recorded in AC-2, all on the same
-   `namespace` and `pod`. A sample left by the killed process can't satisfy it.
-6. **Given** the recovery **when** A's and B's `play` clients reconnect through the edge **then**:
+   deadline, the way `observe_check.py` (`AW-INF-008`) reads them **then** these hold on the same
+   `namespace="andara-dev"` series:
+   - `andara_recovery_round_tick == R`. The killed process recovered at its own boot, before `R`
+     existed, so its last sample holds an older round and can't satisfy this.
+   - `andara_recovery_state_hash_match == 1`, with the sample's `timestamp()` later than the kill
+     time recorded in AC-3.
+
+   A restart keeps the pod's name, so `pod` alone doesn't tell the two processes apart.
+6. **Given** the recovery **when** A's and B's `play` clients, both run with `--show-protocol` as
+   `stack_play.sh` runs them, reconnect through the edge **then**:
    - A's `look` shows Room 2, the move only the log tail held;
    - B's `look` shows the spawn Room;
-   - neither transcript has `already_live`, `leaves the world` or `fades from the world` for either
-     Character between the kill and the reconnect.
+   - neither transcript has `reason=already_live`, `Waiting for your previous session to end.`,
+     `leaves the world` or `fades from the world` for either Character between the kill and the
+     reconnect. (`play` waits out `already_live` silently, so the reason shows only in the protocol
+     view.)
 7. **Given** the run complete **when** the script queries
    `ALERTS{alertname="RecoveryStateMismatch",namespace="andara-dev"}` over the window from AC-2's
    start to the end, through the same Prometheus API and read token **then** it has no sample with
    `alertstate="firing"`. `AndaraServerUnavailable` is printed as observed (pending, firing or
    inactive), not asserted, since a recovery inside its `for` never fires it.
-8. **Given** any failure, or an inconclusive run (an alert already firing at the start, or a round
-   newer than `R`) **when** the script exits **then** it exits 1 with `env-recover: <what failed>`,
+8. **Given** any failure, or an inconclusive run (the rule isn't loaded, the alert is already firing
+   at the start, or a round is newer than `R`) **when** the script exits **then** it exits 1 with `env-recover: <what failed>`,
    prints both transcripts and the `server` container's previous and current logs (last 50 lines
    each), attempts to disable both Accounts, naming any it couldn't reach, and leaves no
    `andara-cli` child running.
@@ -117,10 +131,11 @@ not only on compose.
   - `ANDARA_BOOTSTRAP_OPERATOR` (existing, as `content-seed`);
   - `ENV_RECOVER_RTO` (seconds, default `120`, in the Makefile);
   - the Grafana Cloud read credentials `observe_check.py` already uses (`GRAFANA_CLOUD_READ_TOKEN`
-    and the endpoints beside it) for AC-2, AC-5 and AC-7.
+    and the endpoints beside it), for the `ALERTS` and metric queries in AC-2, AC-5 and AC-7;
+  - `AW-INF-009`'s ruler credentials (`MIMIR_ADDRESS`, `MIMIR_TENANT_ID`, `MIMIR_API_KEY`), only for
+    AC-2's check that the rule is loaded.
 
-  It adds no credentials. The ruler's own API (`AW-INF-009`'s `MIMIR_*`) isn't needed, because
-  `ALERTS` is read as a series.
+  It adds no new credentials.
 - Exit codes: `0` all assertions held; `1` an assertion failed, a precondition is missing, or the
   run was inconclusive; `2` usage or refusal (AC-1), as `world_reset.py`.
 - Output: `env-recover: <step>` lines, including
@@ -146,9 +161,12 @@ is the test, and the `CONFIRM` guard is why it exists.
 
 ## Test plan
 
-- **Unit:** `scripts/tests`: the guard (AC-1, each of its four cases), the
-  restart-versus-reschedule check and the unlanded-kill message (AC-3) against fake pod JSON, and
-  both inconclusive paths.
+- **Unit:** `scripts/tests`:
+  - the guard (AC-1, each of its four cases);
+  - the PID resolved from the `server` container's ID on `spec.nodeName`, never a name match, against
+    fake pod and `crictl` JSON;
+  - the restart-versus-reschedule check and the unlanded-kill message (AC-3);
+  - all three inconclusive paths (the rule isn't loaded, the alert is already firing, a newer round).
 - **Integration:** none in CI. The target is destructive and runs against `dev`.
 - **Manual/operator:** `make env-recover ENV=dev CONFIRM=andara-dev` ends with "M2 gate on dev …
   passes". It's run at SPRINT-05's demo, and the run is recorded in the §8 record.

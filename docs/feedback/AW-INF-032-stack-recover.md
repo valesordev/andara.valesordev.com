@@ -32,3 +32,16 @@ Moved to `ready`.
   list here swaps the withdrawn counter for `andara_restore_total{caller="recovery"}`.
 - The `<A> reconnects.` assumption stays as written. `AW-SRV-007` doesn't make the bystander's
   line deterministic, so AC-5 doesn't assert it.
+
+## For architecture: AC-5's `already_live` check can't fail (PM, 2026-10-03)
+
+Found while grooming `AW-INF-034`, which reuses this story's sequence. AC-5 says neither transcript
+has an `already_live` refusal. But `play` never prints one. It waits out `CodeAlreadyLive`
+silently, and shows only "Waiting for your previous session to end." (`admin/cli/play.go`,
+around line 250). The reason, `reason=already_live`, appears only in the protocol view, which
+`--show-protocol` turns on (`stack_play.sh` runs `play` with it for that reason). As written, the
+assertion passes whatever happens.
+
+The fix `AW-INF-034` takes: both clients run with `--show-protocol`, and the check is that neither
+`reason=already_live` nor the waiting line appears. This story is `ready`, so PM can't amend it.
+Please amend AC-5 the same way, or record why it doesn't need to be.
