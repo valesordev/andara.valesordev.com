@@ -7,7 +7,7 @@ type: infra
 status: review
 size: S
 depends_on: [AW-SRV-013]
-blocks: []
+blocks: [AW-CLI-013]
 lane: sre
 risk: low
 ---

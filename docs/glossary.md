@@ -157,7 +157,14 @@ one-directional in the data model; a two-way passage is two Exits. Exit conditio
 skill checks) are `[NEEDS BRIAN]`.
 
 **Item** — A thing that can be held, worn, used, or stored. Distinguish **Item Definition** (the
-authored template) from **Item Instance** (a specific Entity in the World with its own ID and state).
+authored template) from **Item Instance** (a specific Item in the World with its own ID and state).
+An Item Definition is a Template of kind `item`, which isn't an Entity Template (`AW-SRV-022`).
+Whether an Item Instance is an Entity in world state is open
+(`docs/feedback/AW-SRV-047-items.md`, question 1).
+
+**Item Placement** — A declaration in a Room that puts one Item Instance of a named Item Definition
+there when its pack version is activated (Brian, 2026-10-03; `AW-CLI-012`). A taken Item doesn't
+come back until the pack's next activation. There are no timed resets yet.
 
 **NPC** — A non-player Character controlled by a Behavior Agent rather than by a player Session.
 
