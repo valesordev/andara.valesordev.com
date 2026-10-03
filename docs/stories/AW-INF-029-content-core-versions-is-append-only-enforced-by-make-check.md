@@ -4,7 +4,7 @@ title: content/core/VERSIONS is append-only, enforced by make check
 epic: EPIC-05
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-013]
 blocks: []
@@ -89,3 +89,37 @@ CLAUDE.md §8.
 
 - `[ASSUMPTION]` The next version is the previous one plus one. `VERSION` is monotonic (ADR-0004,
   amended 2026-09-28), so no gap is legitimate.
+
+## Implementation record (SRE, 2026-10-03)
+
+On `sre/aw-inf-029-core-versions-append-only`.
+
+- `scripts/core_versions_check.sh` compares the working tree's `content/core/VERSIONS` with
+  `git merge-base $BASE_REF HEAD`, where `BASE_REF` defaults to `origin/main`. Because it reads the
+  working tree, an uncommitted edit is caught too. When HEAD is the merge base (a push to `main`,
+  or a branch with nothing committed yet), it compares with `HEAD^1`, which covers HEAD's own
+  commit (AC-5). A root commit compares with HEAD. On success it prints one line,
+  `core-versions-check: ok: …`.
+- `make core-versions-check` is in `CHECK_TARGETS`, and `ci.yaml` gains the step
+  `core VERSIONS append-only` (the parity guard requires it). CI already checks out with
+  `fetch-depth: 0`. On a pull request HEAD is the merge commit, whose first parent is `main`'s
+  tip, so the merge base is `main`.
+- An inserted line counts as a change to the line it displaces. Deletions are named at the first
+  missing line.
+
+**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 16 tests, run by
+`make scripts-test`; fixture repositories with a bare `origin`):
+
+| AC | Tests |
+|---|---|
+| 1 | `test_appending_the_next_version_passes`, `test_appending_two_in_sequence_passes` |
+| 2 | edit, delete last, delete middle, reorder, insert-before-end: each exits `1` naming the line |
+| 3 | skipped, repeated, and a bad second appended version: `line <n> is version <v>; expected <e>` |
+| 4 | `test_no_change_passes` |
+| 5 | `test_on_main_itself_it_compares_with_the_first_parent` (a bad edit pushed to `main` fails), `test_on_main_with_a_good_append_passes` |
+| 6 | `test_no_base_exits_2`; `test_base_ref_overrides_origin_main` (also: an unknown `BASE_REF` exits `2`) |
+
+Also: `test_an_uncommitted_edit_is_caught`. Manual: `make core-versions-check` on this branch
+prints `core-versions-check: ok: unchanged against 897786a42e60` and exits `0`.
+
+§8 instrumentation: the story has no instruments (Observability requirements: none).
