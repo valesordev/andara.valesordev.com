@@ -41,10 +41,18 @@ running processes rather than trusting a values file.
 
 ### SLI
 
-`andara_acknowledged_commands_lost_total` — a counter that must remain 0. It is incremented by the
-recovery path when a Command that was acknowledged to a client is absent from the log after recovery
-(detectable because `Submit` returns the assigned partition and offset, so the client's ack references a
-specific log position).
+**Acknowledged Commands present in the log after recovery**, asserted by the clients that hold the
+acks. `Submit` returns the assigned partition and `accepted_offset`, so every ack names a log
+position. The ack lives in the client, not in the server, so a restarted server has nothing to
+compare the log against, and there is no server-side counter.
+(`andara_acknowledged_commands_lost_total` was withdrawn on 2026-10-02 for that reason.)
+
+- **Measured:** by clients that record each acknowledged `SubmitResponse` and, after recovery, read
+  the record at that offset on `andara.commands.v1`. `AW-SRV-007` AC-8 does this in its
+  kill-and-recover test, and `AW-INF-032` AC-5 does it on the running stack (the tail-only move
+  is replayed).
+- **Guaranteed in production** by the three broker settings above, which `AW-INF-005` asserts
+  against running processes.
 
 **Any non-zero value is an incident, not a budget burn.** There is no error budget for this SLI.
 
