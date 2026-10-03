@@ -44,6 +44,7 @@ func newContentCmd(rt *runtime) *cobra.Command {
 	cmd.AddCommand(newContentFmtCmd(rt))
 	cmd.AddCommand(newContentDecompileCmd(rt))
 	cmd.AddCommand(newContentFetchCoreCmd(rt))
+	cmd.AddCommand(newContentReferenceCmd(rt))
 	return cmd
 }
 

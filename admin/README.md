@@ -40,6 +40,7 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | `andara-cli content history` / `diff` / `fetch` | a pack's versions, what changed between two, and a version's source (`AW-CLI-003`, builder) |
 | `andara-cli server info` | the server's build, protocol range, and content in effect (`AW-CLI-003`) |
 | `andara-cli content fetch-core` | cache an `andara.core` this binary does not embed, from a pack directory (`AW-CLI-006`, builder) |
+| `andara-cli content reference` | print the Directions, Component types, embedded core Templates and diagnostic codes this binary enforces, offline (`AW-CLI-009`, builder) |
 
 ## Global flags
 
