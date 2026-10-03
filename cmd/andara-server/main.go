@@ -124,8 +124,18 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	loopDone := make(chan struct{})
 	go func() { loopErr <- loop.Run(loopCtx); close(loopDone) }()
 	// halt stops the loop and waits for it, for every return below that is
-	// not the drain.
-	halt := func() { stopLoop(); <-loopDone }
+	// not the drain. It returns what the loop returned, unless a select
+	// below already took it.
+	halt := func() error {
+		stopLoop()
+		<-loopDone
+		select {
+		case err := <-loopErr:
+			return err
+		default:
+			return nil
+		}
+	}
 
 	// The operator surface, so /readyz answers 503 while content comes into
 	// effect and until the Gateway serves.
@@ -149,7 +159,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	case code := <-reconciled:
 		stopReconcile()
 		if code != boot.ExitOK {
-			halt()
+			_ = halt()
 			_ = srv.Shutdown(context.Background())
 			return code
 		}
@@ -160,11 +170,16 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		}
 		tel.Log.Error("tick loop", "detail", err.Error())
 		_ = srv.Shutdown(context.Background())
-		return boot.ExitFail
+		return boot.LoopExit(err)
 	case <-ctx.Done():
 		stopReconcile()
-		halt()
+		// A boundary lost before the signal still exits 5 (AW-SRV-026).
+		err := halt()
 		_ = srv.Shutdown(context.Background())
+		if err != nil {
+			tel.Log.Error("tick loop", "detail", err.Error())
+			return boot.LoopExit(err)
+		}
 		return boot.ExitOK
 	}
 
@@ -173,7 +188,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	// first version to the spawn Room instead (AW-SRV-042 AC-8).
 	if err := rt.CheckSpawnInEffect(); err != nil && !rt.Waiting() {
 		tel.Log.Error("roster", "detail", err.Error())
-		halt()
+		_ = halt()
 		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
@@ -212,13 +227,13 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	})
 	if err != nil {
 		tel.Log.Error("gateway", "detail", err.Error())
-		halt()
+		_ = halt()
 		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
 	if err := gw.Start(); err != nil {
 		tel.Log.Error("gateway", "detail", err.Error())
-		halt()
+		_ = halt()
 		_ = srv.Shutdown(context.Background())
 		return boot.ExitFail
 	}
@@ -260,22 +275,25 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		// SimulationStopped has reached every subscriber; end them.
 		rt.Events.Close()
 		if loopDrain != nil {
+			// Past sim.drain_timeout_ms, 1; a boundary lost as the drain
+			// began, 5 (AW-SRV-026).
 			tel.Log.Error("tick loop drain", "detail", loopDrain.Error())
-			return boot.ExitFail
+			return boot.LoopExit(loopDrain)
 		}
 		return boot.ExitOK
 	case err := <-loopErr:
 		// The loop stopped on its own: an offset gap, or a source the
-		// process cannot continue past. Exit 1 rather than serve a World
-		// that has stopped moving.
+		// process cannot continue past, exits 1 rather than serve a World
+		// that has stopped moving. A lost boundary exits 5, into exact
+		// recovery (AW-SRV-026).
 		if err == nil {
 			err = errors.New("tick loop exited")
 		}
 		tel.Log.Error("tick loop", "detail", err.Error())
 		_ = gw.Shutdown(context.Background())
-		return boot.ExitFail
+		return boot.LoopExit(err)
 	case err := <-gwErr:
-		halt()
+		_ = halt()
 		if err != nil {
 			tel.Log.Error("gateway", "detail", err.Error())
 			return boot.ExitFail
@@ -285,10 +303,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 		if err != nil && err != http.ErrServerClosed {
 			tel.Log.Error("http server", "detail", err.Error())
 			_ = gw.Shutdown(context.Background())
-			halt()
+			_ = halt()
 			return boot.ExitFail
 		}
-		halt()
+		_ = halt()
 		return boot.ExitOK
 	}
 }

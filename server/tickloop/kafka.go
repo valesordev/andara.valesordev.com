@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"sort"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
@@ -339,8 +338,8 @@ func (s *KafkaSource) Close() error {
 // Produce is asynchronous: records go into the client's bounded buffer and
 // the tick continues, because Events are derived and a broker stall must
 // not be a tick stall (ADR-0002 §3). A delivery that fails after the
-// client's retries is counted through OnFailure; a full buffer refuses the
-// tick's records outright rather than blocking. The drain flushes.
+// client's retries is counted through OnFailure, and so is a record a full
+// buffer refused rather than block on. The drain flushes.
 type KafkaPublisher struct {
 	client *kgo.Client
 	// Commands and Events override the topic names; tests use throwaway
@@ -358,8 +357,8 @@ type KafkaPublisher struct {
 	// producer's lag behind the tick (andara_event_publish_lag_seconds).
 	OnBoundaryAcked func(tick sim.Tick, lag time.Duration)
 
-	boundaryLost atomic.Bool
-	lostAtTick   atomic.Uint64
+	// boundaries orders Tick Boundary Records onto the topic (AW-SRV-026).
+	boundaries *boundarySeq
 }
 
 // canonical is the one marshal every log record goes through: deterministic,
@@ -381,9 +380,22 @@ func EventRecord(ev sim.Event) (*logv1.Event, error) {
 // one will be published by this process — see Publish.
 var ErrBoundaryLost = errors.New("tick boundary lost; boundaries are no longer published by this process")
 
+// DeliveryTimeout is how long a record is retried before it is given up on:
+// franz-go's default, and not a configuration key (AW-SRV-026).
+const DeliveryTimeout = time.Minute
+
+// maxBuffered is the producer's buffer, in records.
+const maxBuffered = 1 << 16
+
 // NewKafkaPublisher connects a producer with acks=all and the idempotent
 // producer on.
 func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (*KafkaPublisher, error) {
+	return newKafkaPublisher(ctx, brokers, clientID, DeliveryTimeout)
+}
+
+// newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
+// shortens, so a lost boundary costs it seconds rather than a minute.
+func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
 	if clientID == "" {
 		clientID = "andara-server"
 	}
@@ -393,8 +405,12 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
 		// A record is retried for a minute before it is given up on, so an
-		// outage shorter than that loses nothing; a longer one is counted.
-		kgo.RecordDeliveryTimeout(time.Minute),
+		// outage shorter than that loses nothing; a longer one loses the
+		// boundary and stops the loop (AW-SRV-026). franz-go never fails a
+		// batch it sent and got no answer for, so boundarySeq applies the
+		// same timeout to the boundary it handed over and declares the loss
+		// itself, while the broker is still away.
+		kgo.RecordDeliveryTimeout(deliveryTimeout),
 		// And only the delivery timeout: by default franz-go fails a record
 		// after five consecutive UNKNOWN_TOPIC_OR_PARTITION answers, which a
 		// broker gives while a restart is still loading its partitions. With
@@ -404,7 +420,7 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		// (deploy/kafka/topics.yaml), so a missing one is an outage like any
 		// other, and a minute of it is still a loss.
 		kgo.UnknownTopicRetries(-1),
-		kgo.MaxBufferedRecords(1<<16),
+		kgo.MaxBufferedRecords(maxBuffered),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: producer: %w", err)
@@ -413,31 +429,45 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 		client.Close()
 		return nil, fmt.Errorf("tickloop: ping brokers: %w", err)
 	}
-	return &KafkaPublisher{client: client, Commands: CommandsTopic, Events: EventsTopic}, nil
+	k := &KafkaPublisher{client: client, Commands: CommandsTopic, Events: EventsTopic}
+	k.boundaries = &boundarySeq{
+		// The record's own context is never canceled: franz-go fails a
+		// record whose context ends before delivery.
+		produce: func(b pendingBoundary) {
+			rec := &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: b.body}
+			k.client.TryProduce(context.Background(), rec, func(_ *kgo.Record, err error) {
+				k.boundaries.resolve(b.tick, err)
+			})
+		},
+		onAcked: func(b pendingBoundary) {
+			if k.OnBoundaryAcked != nil {
+				k.OnBoundaryAcked(b.tick, time.Since(b.published))
+			}
+		},
+		onLost: func(tick sim.Tick, err error) {
+			if k.OnBoundaryLost != nil {
+				k.OnBoundaryLost(tick, err)
+			}
+		},
+		room:    func(n int) bool { return k.client.BufferedProduceRecords()+int64(n) <= maxBuffered },
+		timeout: deliveryTimeout,
+	}
+	return k, nil
 }
 
-// send buffers records without blocking. ErrMaxBuffered — the buffer is
-// full — is returned; delivery failures arrive later through OnFailure.
+// send buffers records without blocking. Every failure — a full buffer
+// (kgo.ErrMaxBuffered) or a delivery the broker never acknowledged — arrives
+// later, on franz-go's promise goroutine, through OnFailure: a promise never
+// runs inline, so a full buffer can't be returned here (pre-PR review of
+// AW-SRV-026).
 func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
-	var full error
 	ctx = context.WithoutCancel(ctx)
 	for _, r := range recs {
 		k.client.TryProduce(ctx, r, func(r *kgo.Record, err error) {
-			if err == nil {
-				return
-			}
-			if errors.Is(err, kgo.ErrMaxBuffered) {
-				// Refused now, synchronously: the promise runs inline.
-				full = fmt.Errorf("tickloop: produce to %s: %w", r.Topic, err)
-				return
-			}
-			if k.OnFailure != nil {
+			if err != nil && k.OnFailure != nil {
 				k.OnFailure(r.Topic, err)
 			}
 		})
-		if full != nil {
-			return full
-		}
 	}
 	return nil
 }
@@ -450,12 +480,13 @@ func (k *KafkaPublisher) send(ctx context.Context, recs []*kgo.Record) error {
 // batching decision, sim.ErrBoundaryGap). franz-go fails everything
 // buffered behind a failed record on the same Partition, so an outage
 // longer than the delivery timeout would leave `…, N, [gap], M, …` and a
-// World that cannot boot. So: once one boundary is lost, this process
-// publishes no more. It keeps ticking and Events keep flowing (AC-9); the
-// next restart recovers exactly to the last delivered boundary and
-// re-batches after it, which is the policy AW-SRV-007 inherits. A full
-// buffer counts as a loss for the same reason — the boundary was not
-// enqueued, and the next one must not be either.
+// World that cannot boot. So a boundary is handed to the producer only once
+// every earlier one is acknowledged (boundarySeq), and once one is lost this
+// process publishes no more: OnBoundaryLost stops the loop, the process exits
+// 5, and its restart recovers exactly to the last delivered boundary and
+// re-batches after it (AW-SRV-026). A full buffer counts as a loss for the
+// same reason — the boundary was not enqueued, and the next one must not be
+// either.
 func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim.TickCompleted) error {
 	recs := make([]*kgo.Record, 0, len(events)+1)
 	for _, ev := range events {
@@ -479,39 +510,11 @@ func (k *KafkaPublisher) Publish(ctx context.Context, events []sim.Event, tc sim
 	if tc.Tick == 0 {
 		return nil
 	}
-	if k.boundaryLost.Load() {
-		return fmt.Errorf("%w (since tick %d)", ErrBoundaryLost, k.lostAtTick.Load())
-	}
 	body, err := canonical.Marshal(tc.Proto())
 	if err != nil {
 		return err
 	}
-	published := time.Now()
-	// The record's own context is never canceled: franz-go fails a record
-	// whose context ends before delivery, and the tick's context ends with
-	// the tick.
-	tick := tc.Tick
-	lost := func(err error) {
-		if k.boundaryLost.CompareAndSwap(false, true) {
-			k.lostAtTick.Store(uint64(tick))
-			if k.OnBoundaryLost != nil {
-				k.OnBoundaryLost(tick, err)
-			}
-		}
-	}
-	k.client.TryProduce(context.WithoutCancel(ctx), &kgo.Record{Topic: k.Events, Partition: BoundaryPartition, Key: []byte(BoundaryKey), Value: body}, func(_ *kgo.Record, err error) {
-		if err != nil {
-			lost(err)
-			return
-		}
-		if k.OnBoundaryAcked != nil {
-			k.OnBoundaryAcked(tick, time.Since(published))
-		}
-	})
-	if k.boundaryLost.Load() {
-		return fmt.Errorf("%w (since tick %d)", ErrBoundaryLost, k.lostAtTick.Load())
-	}
-	return nil
+	return k.boundaries.publish(pendingBoundary{tick: tc.Tick, body: body, published: time.Now()})
 }
 
 // Produce implements Publisher.

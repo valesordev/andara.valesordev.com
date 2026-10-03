@@ -226,14 +226,22 @@ honest under overload rather than something the loop resets by falling behind. R
 round-robin across Partitions up to `sim.max_per_tick`; the rest wait and show as
 `andara_tick_deferred_records`. Publishing is asynchronous with a minute of retries, because Events
 are derived (ADR-0002 §3) and a broker stall must not be a tick stall; a lost broker is a starved
-tick, counted, never a crash. A handler panic is contained at the Zone: the Zone is marked faulted
+tick, counted, never a crash. A lost **boundary** is the exception (`AW-SRV-026`): a World whose
+recent history can't be replayed is one whose State Hash nobody can check, so the loop finishes the
+tick that learned of it, drains with `SimulationStopped{reason: boundary_lost}`, and the process
+exits `5` into exact recovery. A boundary goes to the producer only once every earlier one is
+acknowledged, so a loss can never leave a later one on the topic. One unacknowledged past the
+delivery timeout is lost even if the producer is still retrying it, which is what makes a stopped
+broker a loss a minute in rather than never. Offsets are committed only for an acknowledged
+boundary, so a restart re-applies from the last delivered one. A handler panic is contained at the Zone: the Zone is marked faulted
 with a `ZoneFaulted` Event, its Partition freezes at the panicking record, and the other Zones keep
 ticking. Verb handlers register on `sim.Config.Handlers` (`AW-SRV-003`); a Command with none is
 rejected `unsupported_command` and its offset advances.
 
 **Drain.** On `SIGTERM` the gateway drains first, then the loop finishes its in-flight tick,
-checkpoints, emits `SimulationStopped` (event_id 0 — a notification, not World history), flushes the
-publisher, and exits 0; past `sim.drain_timeout_ms` it exits 1 naming the tick.
+emits `SimulationStopped` (event_id 0 — a notification, not World history), flushes the publisher,
+checkpoints the newest boundary the flush delivered, and exits 0; past `sim.drain_timeout_ms` it
+exits 1 naming the tick.
 
 ### Tick metrics, logs, and traces
 
@@ -249,14 +257,17 @@ publisher, and exits 0; past `sim.drain_timeout_ms` it exits 1 naming the tick.
 | `andara_consumer_lag` | gauge | `partition` | 64 |
 | `andara_checkpoint_age_ticks` | gauge | — | 1 |
 | `andara_tick_zone_faults_total` | counter | `zone` | Zones |
-| `andara_tick_publish_failures_total` | counter | `kind` | `events`, `commands`, `checkpoint` |
+| `andara_tick_publish_failures_total` | counter | `kind` | `events`, `commands`, `checkpoint`, `boundary` |
+| `andara_tick_boundary_lost_total` | counter | — | 1; 0 or 1 per process (`AW-SRV-026`) |
 
 Logs: `tick` at `info` once a second with `tick`, `lag_ms`, `consumer_lag`, `deferred`,
 `checkpoint_age_ticks`, `applied_offsets`; `tick overran its budget` at `warn` with `tick`,
 `duration_ms`, `budget_ms`, and the slowest `zone`; `tick input starved` at `warn`; `zone faulted` at
-`error` with `tick`, `zone`, `partition`, `offset`, `panic`. Spans: `sim.tick` per tick with
+`error` with `tick`, `zone`, `partition`, `offset`, `panic`; `tick boundary lost; exiting into
+recovery` at `error` with `lost_tick`, `last_delivered_tick`, `err`. Spans: `sim.tick` per tick with
 `record_count`, `event_count`, `overrun`, `starved`, `lag_seconds`, and `sim.zone_tick` per Zone —
-always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`). Per-Entity
+always started, exported one in a hundred plus every overrun (`telemetry.TickSampler`) and the tick
+that stopped on a lost boundary (`boundary_lost=true`). Per-Entity
 spans are not emitted. The dashboard is `andara-tick-health`; the SLO is
 `docs/specs/slo/tick-health.md`.
 ## The command pipeline (AW-SRV-003)
