@@ -268,9 +268,9 @@ projector service, so the check ran the built `andara-projector state --rebuild`
 the stack's Redpanda, the server's real snapshot rounds (`.local/data/snapshots`, the `fs` store)
 and its OTLP collector. The compose has no projector writer, so the host run is the only one on the
 consumer group, which is what makes `--rebuild` safe here (`projection-stale.md` forbids it beside a
-live projector). The invocation: `ANDARA_KAFKA_BROKERS=localhost:9092 ANDARA_OTLP_ENDPOINT=localhost:4317
-ANDARA_SNAPSHOT_FS_PATH=.local/data/snapshots ANDARA_CONTENT_SOURCE=dir ANDARA_CONTENT_PATH=testdata/content/valid
-andara-projector state --rebuild`. It isn't a make target; a stack target for it is SRE's to propose. At `main` 37e3a1b:
+live projector). It is `make stack-projector-check` (`scripts/stack_projector_check.sh`), needing
+`make up` and `make build`. It fails unless the metric, the log line and the Tempo spans below are
+all observed, and the `stack` workflow runs it after `stack-linkdead`. At `main` 37e3a1b:
 
 - **Metric, scraped from the projector's own `/metrics`:**
   ```

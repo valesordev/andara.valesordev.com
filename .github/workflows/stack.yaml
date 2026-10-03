@@ -402,6 +402,13 @@ jobs:
       - name: the linkdead gate against the stack — drop, linkdead, reconnect, quit
         run: make stack-linkdead
 
+      # AW-SRV-043 §7: the projector's restore series, log line and spans, on the stack's own
+      # snapshot rounds. The compose has no projector, so the host binary is the only writer
+      # on its consumer group and `--rebuild` is safe. After the linkdead gate, which leaves
+      # the server running and rounds written.
+      - name: the projector's restore instrumentation against the stack
+        run: make stack-projector-check
+
       # AW-INF-008 AC-5, the compose half. The rule file the chart ships is the one this
       # Prometheus mounts, and it was rewritten per namespace; here it must still load with
       # every rule healthy, and AndaraServerUnavailable must still follow the server — the
