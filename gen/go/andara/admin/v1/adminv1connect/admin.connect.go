@@ -140,7 +140,9 @@ type AdminClient interface {
 	PublishBlob(context.Context) *connect.ClientStreamForClient[v1.PublishBlobRequest, v1.PublishBlobResponse]
 	// Validate the blobs as one pack and write its version manifest. Findings
 	// that refuse the publish are INVALID_ARGUMENT, carried in the status
-	// details as PublishFindings. Warnings return in the response.
+	// details as PublishFindings. Warnings return in the response. Both are
+	// limited to the publisher's own blobs, and a cross-pack clash is reported
+	// once, at the publisher's declaration (errors.md §1 rule 10).
 	PublishVersion(context.Context, *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error)
 	// Record an approval on the manifest. Never moves the pointer.
 	ApproveVersion(context.Context, *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error)
@@ -487,7 +489,9 @@ type AdminHandler interface {
 	PublishBlob(context.Context, *connect.ClientStream[v1.PublishBlobRequest]) (*connect.Response[v1.PublishBlobResponse], error)
 	// Validate the blobs as one pack and write its version manifest. Findings
 	// that refuse the publish are INVALID_ARGUMENT, carried in the status
-	// details as PublishFindings. Warnings return in the response.
+	// details as PublishFindings. Warnings return in the response. Both are
+	// limited to the publisher's own blobs, and a cross-pack clash is reported
+	// once, at the publisher's declaration (errors.md §1 rule 10).
 	PublishVersion(context.Context, *connect.Request[v1.PublishVersionRequest]) (*connect.Response[v1.PublishVersionResponse], error)
 	// Record an approval on the manifest. Never moves the pointer.
 	ApproveVersion(context.Context, *connect.Request[v1.ApproveVersionRequest]) (*connect.Response[v1.ApproveVersionResponse], error)

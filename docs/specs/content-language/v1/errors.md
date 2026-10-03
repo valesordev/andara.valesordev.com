@@ -86,6 +86,32 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
    was kept. `duplicate_pack` is pack-level (its chain is empty), so it is reported once, at the
    **first** `pack` declaration in sorted file order, with both files in the message.
 9. **A cycle is one finding**, positioned at its lowest-named member, whichever file that is in.
+10. **The publish gate reports what the publisher can fix** (`AW-SRV-013`, ruled 2026-10-03, #312).
+    The gate builds one World from every active pack's blobs and the publisher's, and refuses on any
+    error in it. What it **reports** is narrower:
+    1. **Incumbents first.** The active packs' blobs are inputs before the publisher's, so in a
+       cross-pack clash rule 8's "the one that lost" is the publisher's declaration. The active
+       pack's Zone is kept whole, and a publish never breaks a pack that is already active.
+    2. **Only the publisher's own blobs.** A finding, a warning included, whose `file` isn't in the
+       version being published is not reported. Another pack's warning is shown when that pack
+       publishes, and not at every publish after it.
+    3. **Root only, across packs.** A cross-pack `duplicate_zone` drops the whole losing Zone and
+       reports once. Its Rooms aren't reported as `duplicate_room`, and an Exit that targets the
+       dropped Zone's id isn't reported as `unknown_zone` or `unknown_room`. They show after the
+       clash is fixed. Two files of one pack declaring the same Zone keep rule 4: `duplicate_room`
+       is reported too, because the Builder fixes both in the same files.
+    4. **The message names both packs.** A cross-pack `duplicate_zone` reads
+       `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
+       the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
+    5. **An error the publish causes in another pack's blobs** (a new version that removes a Zone
+       another pack exits into) still refuses the publish. Its `file` is kept, its message begins
+       `in pack <other>:`, and its `line` and `col` are `0`, the pack-level case. It is never printed
+       as the publisher's file. No instance is known. If one is seen, it goes to architecture.
+
+    The counts follow the report: `validation_failures_total{code}` and the audit record's
+    `findings_count` count reported findings, and the refusal's `warn` line carries the first
+    reported finding's code. Rule 1's "a finding with `line: 0` is a defect" has this one exception,
+    and the corpus is unaffected, since it compiles one pack at a time.
 
 ### Where the position lands
 

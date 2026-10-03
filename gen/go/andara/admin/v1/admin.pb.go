@@ -1907,8 +1907,8 @@ type PublishVersionResponse struct {
 	// The andara.core version the pack requires (`requires andara.core@N`),
 	// read from the compiled source, not trusted from the caller.
 	CoreVersion uint64 `protobuf:"varint,2,opt,name=core_version,json=coreVersion,proto3" json:"core_version,omitempty"`
-	// Warnings only (missing_reverse_exit, orphan_room). Errors refuse the
-	// publish and are in the status details.
+	// Warnings only (missing_reverse_exit, orphan_room), in this version's own
+	// blobs. Errors refuse the publish and are in the status details.
 	Warnings      []*v12.Diagnostic `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
