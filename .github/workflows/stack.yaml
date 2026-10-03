@@ -371,13 +371,13 @@ jobs:
           print(d['title'], '-', len(d['panels']), 'panels')
           "
 
-      # AW-SRV-026 AC-4: an outage past the 60 s delivery timeout loses a Tick Boundary
-      # Record. The server exits 5 once, compose's `restart: on-failure` brings it back, it
-      # recovers to the last delivered boundary, and a second, full recovery reads the topic
-      # back gapless. The short broker outage above (under 30 s, inside the delivery
-      # timeout) must still see no exit. Here, just before the M1 gate (which restarts the server anyway), so the
-      # restarts leave no fresh heap under the collector-outage step's RSS comparison and no
-      # reset counter under any step that reads one.
+      # AW-SRV-026 AC-4: an outage past the 60 s delivery timeout loses a Tick Boundary Record.
+      # The server exits 5 once, compose's `restart: on-failure` brings it back, it recovers to
+      # the last delivered boundary, and a second, full recovery reads the topic back gapless.
+      # The short broker outage above (about 30 s at most, well inside the 60 s delivery
+      # timeout) must still see no exit. Here, just before the M1 gate (which restarts the
+      # server anyway), so the restarts leave no fresh heap under the collector-outage step's
+      # RSS comparison and no reset counter under any step that reads one.
       - name: a lost tick boundary exits into exact recovery
         run: make stack-boundary-lost
 

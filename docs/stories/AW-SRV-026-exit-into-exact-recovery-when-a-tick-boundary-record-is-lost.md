@@ -177,7 +177,7 @@ stack-boundary-lost: AW-SRV-026 AC-4 — exited 5 on the lost boundary, recovere
   past the loss that replayed the whole log (`ticks_replayed == tick`; the live read-back was
   `1636795 == 1636795`). The read-back is the product's own reader. Once AW-SRV-007 recovers
   from a snapshot, the full-replay check fails loudly and the read-back needs replacing.
-- **AW-SRV-002's short broker outage** (under 30 s, inside the delivery timeout) runs earlier in the same workflow and still passes. Its
+- **AW-SRV-002's short broker outage** (about 30 s at most, well inside the 60 s delivery timeout) runs earlier in the same workflow and still passes. Its
   "no exit" is indirect: a restart would reset `andara_ticks_total` and fail its `td - tb >= 40`,
   and its health check reads `healthy`. This step runs just before the M1 gate, which restarts
   the server anyway, so its restarts reset nothing a later step reads.

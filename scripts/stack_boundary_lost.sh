@@ -25,8 +25,8 @@
 # in Prometheus separately.
 #
 # Requires a stack: `make up` first. CI runs it as a step of the `stack` workflow, after
-# AW-SRV-002's short broker outage (under 30 s, inside the delivery timeout), which must
-# still see no exit.
+# AW-SRV-002's short broker outage (about 30 s at most, well inside the 60 s delivery
+# timeout), which must still see no exit.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -119,11 +119,13 @@ say "redpanda started after $(( SECONDS - stopped_at ))s"
 
 # Recovery: ready again, ticking, within a deadline.
 deadline=$(( SECONDS + 180 ))
-until ready && [[ -n "$(ticks)" ]]; do
+# t1 is the reading that ended the poll, so it's never empty: `ticks` can't fail, and an
+# empty t1 would make any later reading count as "moved".
+t1=""
+until ready && t1="$(ticks)" && [[ -n "$t1" ]]; do
   (( SECONDS < deadline )) || fail "the server didn't recover within 180s of the broker returning"
   sleep 2
 done
-t1="$(ticks)"
 deadline=$(( SECONDS + 30 ))
 until t2="$(ticks)" && [[ -n "$t2" ]] && awk -v a="$t2" -v b="$t1" 'BEGIN { exit !(a > b) }'; do
   (( SECONDS < deadline )) || fail "andara_ticks_total didn't move after recovery (${t1})"
@@ -153,8 +155,8 @@ deadline=$(( SECONDS + 180 ))
 until ready; do
   if (( SECONDS >= deadline )); then
     # A gap fails the boot (exit 1, then the restart loop), so name it when it's the cause.
-    # Not `grep -q`: it closes the pipe on the first match, compose dies on EPIPE, and
-    # pipefail turns the match into a miss.
+    # `logs_since` can't fail (it ends in `|| true`), so a compose EPIPE can't turn this match
+    # into a miss under pipefail; grepping to EOF is a second guard.
     if logs_since | grep 'tick boundary gap' >/dev/null; then
       fail "the read-back found a gap in the boundaries"
     fi
