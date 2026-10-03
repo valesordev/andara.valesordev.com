@@ -147,8 +147,9 @@ enum VerifyOutcome {
   VERIFY_OUTCOME_UNSPECIFIED = 0;
   // The round restored to its recorded hash, and replay to head matched.
   VERIFY_OUTCOME_MATCH = 1;
-  // The round restored, and the World after replay differs from the head's
-  // TickCompleted (recovery's exit 8).
+  // The round restored, and replay reached a boundary whose TickCompleted
+  // differs from the Engine's hash: the first such boundary, which is the
+  // head's only if every earlier one matched (recovery's exit 8).
   VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
   // The restored round differs from its own tick's TickCompleted (AW-SRV-043,
   // recovery's exit 6). Nothing was replayed.
@@ -170,7 +171,8 @@ message VerifySnapshotRoundResponse {
   bytes expected_hash = 2;
   bytes actual_hash = 3;
   VerifyOutcome outcome = 4;
-  // The round's tick for a restore mismatch, the head's tick otherwise. 0 for
+  // The round's tick for a restore mismatch; the first mismatching
+  // boundary's tick for a replay mismatch; the head's tick for a match. 0 for
   // a seed or content mismatch.
   uint64 compared_tick = 5;
   // Set only for a seed mismatch.

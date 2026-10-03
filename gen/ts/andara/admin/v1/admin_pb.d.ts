@@ -161,7 +161,8 @@ export declare type VerifySnapshotRoundResponse = Message<"andara.admin.v1.Verif
   outcome: VerifyOutcome;
 
   /**
-   * The round's tick for a restore mismatch, the head's tick otherwise. 0 for
+   * The round's tick for a restore mismatch; the first mismatching
+   * boundary's tick for a replay mismatch; the head's tick for a match. 0 for
    * a seed or content mismatch.
    *
    * @generated from field: uint64 compared_tick = 5;
@@ -1204,8 +1205,9 @@ export enum VerifyOutcome {
   MATCH = 1,
 
   /**
-   * The round restored, and the World after replay differs from the head's
-   * TickCompleted (recovery's exit 8).
+   * The round restored, and replay reached a boundary whose TickCompleted
+   * differs from the Engine's hash: the first such boundary, which is the
+   * head's only if every earlier one matched (recovery's exit 8).
    *
    * @generated from enum value: VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
    */

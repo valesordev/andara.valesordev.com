@@ -56,7 +56,10 @@ As a developer, I want `make check` to refuse a change to any existing line of
 
 - `## core-versions-check: fail if content/core/VERSIONS changes other than by appending the next version`
 - The base is `BASE_REF`, defaulting to `origin/main`, and the merge base is computed against `HEAD`.
-- Exits: `0` ok; `1` a violation, named; `2` no base.
+- Exits: `0` ok; `1` a violation, named; `2` no base. These are the script's exits
+  (`scripts/`), which the Unit tests assert directly. Through `make`, GNU make exits `2` for any
+  failing recipe, so the ACs' distinguishing evidence at the `make` level is the
+  `core-versions-check:` line, not the code. *(Clarified 2026-10-02, pre-PR review.)*
 
 ## Data / state impact
 

@@ -110,7 +110,7 @@ type RestoreMismatch struct {
   `ErrRestoreMismatch` and `ErrSeedMismatch`. Codes `0`–`4` are unchanged. **Confirmed** by
   architecture, 2026-10-02.
 - **Server recovery (`AW-SRV-007`):** its exit table gains `6` `ErrRestoreMismatch`, covering both
-  errors, distinct from `2` `ErrHashMismatch` (a mismatch after replay). **Confirmed** by
+  errors, distinct from `8` `ErrHashMismatch` (a mismatch after replay). **Confirmed** by
   architecture, 2026-10-02, and amended into `AW-SRV-007` in the same PR. The server's `5` is
   `AW-SRV-026`'s `ExitBoundaryLost`, so `AW-SRV-007`'s incomplete-round exit moves from `5` to `7`.
   Exit `6` sets `andara_recovery_state_hash_match` to `0` and lingers under

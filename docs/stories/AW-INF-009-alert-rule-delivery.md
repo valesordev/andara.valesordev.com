@@ -147,7 +147,10 @@ whose alerts this story makes real.
 
 ## Test plan
 
-- **Unit:** none — the file is already `promtool`-checked by `AW-INF-003`.
+- **Unit:** `promtool test rules` cases in `deploy/helm/tests/alerts_test.yaml` for AC-5's
+  cluster clause. Fires on `last_terminated_exitcode` `8` and on `6`, each with `ready == 0`. Doesn't
+  fire on `1`, `5`, or `2` with `ready == 0`. Resolves after `keep_firing_for` once `ready == 1`.
+  *(Added 2026-10-02. The rest of the file is already `promtool`-checked by `AW-INF-003`.)*
 - **Integration (CI):** AC-1 on `main` (sync twice, second is a no-op); AC-2 on a pull request with a
   deliberately edited rule, once, recorded.
 - **Manual/operator (recorded in the verification table):** AC-3 — scale `andara-dev` to zero, watch

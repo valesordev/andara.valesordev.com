@@ -45,8 +45,9 @@ const (
 	VerifyOutcome_VERIFY_OUTCOME_UNSPECIFIED VerifyOutcome = 0
 	// The round restored to its recorded hash, and replay to head matched.
 	VerifyOutcome_VERIFY_OUTCOME_MATCH VerifyOutcome = 1
-	// The round restored, and the World after replay differs from the head's
-	// TickCompleted (recovery's exit 8).
+	// The round restored, and replay reached a boundary whose TickCompleted
+	// differs from the Engine's hash: the first such boundary, which is the
+	// head's only if every earlier one matched (recovery's exit 8).
 	VerifyOutcome_VERIFY_OUTCOME_REPLAY_MISMATCH VerifyOutcome = 2
 	// The restored round differs from its own tick's TickCompleted (AW-SRV-043,
 	// recovery's exit 6). Nothing was replayed.
@@ -340,7 +341,8 @@ type VerifySnapshotRoundResponse struct {
 	ExpectedHash []byte        `protobuf:"bytes,2,opt,name=expected_hash,json=expectedHash,proto3" json:"expected_hash,omitempty"`
 	ActualHash   []byte        `protobuf:"bytes,3,opt,name=actual_hash,json=actualHash,proto3" json:"actual_hash,omitempty"`
 	Outcome      VerifyOutcome `protobuf:"varint,4,opt,name=outcome,proto3,enum=andara.admin.v1.VerifyOutcome" json:"outcome,omitempty"`
-	// The round's tick for a restore mismatch, the head's tick otherwise. 0 for
+	// The round's tick for a restore mismatch; the first mismatching
+	// boundary's tick for a replay mismatch; the head's tick for a match. 0 for
 	// a seed or content mismatch.
 	ComparedTick uint64 `protobuf:"varint,5,opt,name=compared_tick,json=comparedTick,proto3" json:"compared_tick,omitempty"`
 	// Set only for a seed mismatch.

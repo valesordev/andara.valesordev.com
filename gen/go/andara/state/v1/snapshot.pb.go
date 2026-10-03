@@ -63,7 +63,8 @@ type SnapshotEnvelope struct {
 	// process-wide values a Zone restored alone still needs. Hashing only the
 	// Zone's section would leave them unprotected, and a corrupted prng_state
 	// would stay hash-valid: AW-SRV-007 would not fall back to an older round,
-	// it would restore a World whose replay diverges and exit 2 at AC-5.
+	// it would restore a World that fails AW-SRV-043's check at its own tick
+	// (recovery exit 6), rather than one that never existed.
 	//
 	// So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
 	// carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is

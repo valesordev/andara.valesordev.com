@@ -67,3 +67,21 @@ Moved to `ready`. The amendments are in the story body.
 ### For implementation
 `sim.RestoreEngine` and the projector's bootstrap. The server's half is `AW-SRV-007`: both server
 callers, and pre-seeding `andara_restore_total`'s 6 server series.
+
+**Read-as note (pre-PR review, 2026-10-02):** recovery's hash mismatch moved from exit `2` to `8`
+(`AW-SRV-007`, because Go exits `2` on a panic). Where this file says recovery "exit `2`", read `8`.
+
+### For SRE: the projector's exit `2`
+The same panic collision applies to the projector. `ExitDivergence = 2`
+(`server/projector/run.go:26`), so `state-projector-down.md`'s exit table sends a projector panic
+to the divergence procedure. No alert keys on that exit code, so it doesn't hold this story. It
+goes to PM as a renumbering candidate for SPRINT-05, alongside the `make`-level exit question
+below.
+
+### For PM
+- **The projector's divergence exit is `2`,** which a Go panic also produces (above). It's a
+  candidate to renumber, contract first.
+- **`make <target>` always exits `2` on a failing recipe** (GNU make), so a story that names
+  distinct `make` exit codes (`AW-INF-007`'s `make deploy` table, for one) can't be asserted at the
+  `make` level. `AW-INF-029` now says its codes are the script's. `AW-INF-007` needs the same
+  wording when it's split (`docs/feedback/AW-INF-005-007-split.md`).
