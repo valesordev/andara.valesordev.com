@@ -108,17 +108,25 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
        is reported once. Findings that only exist because the Zone was dropped are not reported:
        its Rooms are not `duplicate_room`, and an Exit, in any of the publisher's Zones, that targets
        the dropped Zone's id is not `unknown_zone` or `unknown_room`. Ordering doesn't do this. It's a
-       filter over the dropped Zone's id. Those findings show after the clash is fixed, at the cost of
+       filter over the dropped Zone's id. The finding's `Zone`, `Room` and `Exit` name the *source*
+       Exit, and its target is only in the message, so the gate finds the target by looking the Exit up
+       in the publisher's resolved Zone definitions (or a `Target` field is added to
+       `sim.ValidationError`). It never parses `Detail`. Those findings show after the clash is fixed, at the cost of
        one more publish round (rule 4's "every finding is printed" yields to this). Two files of one
        pack declaring the same Zone keep rule 4: `duplicate_room` is reported too.
     5. **The message names both packs.** A cross-pack `duplicate_zone` reads
        `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
        the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
-    6. **An error the publish causes in another pack's blobs** (a new version that removes a Zone
-       another pack exits into) still refuses the publish. It is reported with its `file` as the blob
-       path, its message beginning `in pack <other>:`, and `line` and `col` `0`, the pack-level case.
-       `andara-cli` prints it as `<file>: <code> <message>`, with no `<pack>/` prefix and no
-       position, and never as the publisher's file. No instance is known. If one is seen, it goes to
+    6. **An error in another pack's blobs** (for example a new version that removes a Zone another pack
+       exits into, or `content.strict_orphans` making a pack's `orphan_room` an error) still refuses
+       the publish, whatever its cause, since the gate can't tell a caused error from one already
+       there. It is reported with its `file` as the blob path, an **empty chain**, its message
+       beginning `in pack <other>:`, and `line` and `col` `0`, the pack-level case. `andara-cli` takes
+       `line` `0` from the server as the mark of a foreign finding: it doesn't place it by chain, and
+       prints `<file>: <code> <message>`, with no `<pack>/` prefix and no position. `--output json`
+       carries the finding unchanged. The gate refuses if and only if the build has an error, and a
+       refusal never has zero findings: every error not removed by rule 10.4 is reported, under this
+       rule when it is another pack's. No instance of a caused one is known. If one is seen, it goes to
        architecture.
 
     The counts follow the report: `validation_failures_total{code}` and the audit record's

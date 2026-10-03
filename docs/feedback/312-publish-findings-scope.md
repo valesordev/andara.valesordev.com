@@ -14,7 +14,15 @@ SPRINT-04 item 8.
   boot, load, activation and `content validate` too, and they keep sorted-by-name order. The
   incumbents-first order is the gate's alone.
 - **Tag each input with its pack** when the gate builds them; `sim.Input.File` stays the path.
-- **The filter (10.4)** needs the set of Zone ids dropped as cross-pack duplicates.
+- **The filter (10.4)** needs the set of Zone ids dropped as cross-pack duplicates, and each Exit's
+  target from the publisher's `Resolved` Zone definitions (or a `Target` field on `ValidationError`).
+  It must not parse `Detail`.
+- **The message (10.5):** `sim` words `duplicate_zone` from two file names, so the gate rewrites its
+  `Detail` after `BuildWorld`, from the pack tags and `Resolved.Version`.
+- **No empty refusal:** `Admin.rejected` indexes `refusing[0]`. Rule 10.6 guarantees a refusal always
+  has a finding. Keep it that way, and test it (test 9).
+- **Only at the gate:** `build` is also called with `moving=false` and a nil candidate
+  (`loader.go`). The new order applies where `candidate != nil && !moving`.
 - **`andara-cli`:** `content publish` prints a finding from another pack as rule 10.6 says
   (`placeAll` falls back to the blob path, and `writeDiagnostics` prefixes the publisher's pack
   label today, which is the mislabel in the issue).
@@ -43,10 +51,13 @@ Fixtures. The incumbent is pack `town` with Zone `town` (Rooms `plaza`, `shop`),
 7. **Given** pack `acme@1` declares Zone `glade` and active pack `town` has an Exit into `glade.x` **when**
    `acme@2` publishes without `glade` **then** the publish is refused and `town`'s finding is reported
    with message `in pack town: …`, `line` and `col` `0`, printed `<file>: unknown_zone in pack town: …`,
-   with no `acme/` prefix.
-8. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
+   with no `acme/` prefix. `--output json` carries it unchanged, with an empty chain and `line` `0`.
+9. **Given** `content.strict_orphans` is on and active pack `town` has an `orphan_room` **when** `acme`
+   publishes a valid pack **then** the publish is refused with that finding reported as
+   `in pack town: …` (rule 10.6), not with an empty refusal and no panic.
+10. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
    the dropped-Zone filter makes 2 and 3 fail; filtering by path alone makes 5 fail; leaving the
-   `<pack>/` prefix on foreign findings makes 7 fail.
+   `<pack>/` prefix on foreign findings makes 7 fail; dropping the 10.6 report makes 9 fail.
 
 On merge, `docs/builders/04-your-first-zone.md` loses its "ignore it" paragraph about the
 `purgatory.json` warning. That edit is architecture's (a `docs/builders` path), so say so on the PR.
