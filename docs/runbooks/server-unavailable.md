@@ -59,5 +59,6 @@ The fastest safe action depends on what `describe` says:
 
 - `/readyz` has shown `replay` for longer than the startup budget: the log tail is larger than the
   RTO assumes — page the implementation lane; this is an `AW-SRV-007` regression, not an ops fix.
-- Recovery exits `8` twice in a row: the World is non-deterministic. Stop restarting; escalate as a
+- A recovery hash mismatch twice in a row (today exit `1` with `state hash mismatch`; exit `8` once
+  `AW-SRV-007` ships): the World is non-deterministic. Stop restarting; escalate as a
   sim bug with both hashes from the log line.
