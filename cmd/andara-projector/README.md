@@ -52,7 +52,7 @@ exiting. That's the state every new environment starts in, and the server waits 
 | Situation | What it does |
 |-----------|--------------|
 | A committed checkpoint at tick C, and the newest complete round is at or before C | Restores the round and replays to C silently: the topic already holds it. Then produces from C+1. |
-| No checkpoint (first start, or `--rebuild`), or the round is newer than C | Restores the newest round (tick 0 with no round) and starts reading boundaries after the round's tick, found by binary search over the boundary Partition rather than by reading the history before it. Writes every aggregate, tombstones every key the topic holds that the state does not, commits, and follows. |
+| No checkpoint (first start, or `--rebuild`), or the round is newer than C | Restores the newest round (tick 0 with no round) and verifies it against its tick's boundary, which a binary search over the boundary Partition finds rather than reading the history before it. Replays from the tick after. Writes every aggregate, tombstones every key the topic holds that the state does not, commits, and follows. |
 | A checkpoint that records an unresolved divergence at T | Exits `2` at once, naming T and both hashes, **whatever rounds exist**. Bootstrapping from a newer round would replay past T and erase the evidence. `--rebuild` clears it, and its `info` line says it discarded the divergence at T. `--rebuild` also clears a checkpoint that doesn't parse, with a `warn` line, without reading it first. |
 
 ### Configuration
@@ -80,3 +80,26 @@ divergence commits T−1 with the divergence in the same metadata
 | `2` | digest divergence. The replica's State Hash differs from the recorded one, now or at a tick an earlier run halted on and nobody has cleared with `--rebuild`. `/metrics` stays up for 60 s first, so `StateProjectorDiverged` is scraped. Runbook: `docs/runbooks/state-projector-diverged.md` |
 | `3` | log gap: the log no longer holds history the replica needs |
 | `4` | a snapshot round or boundary written by a newer `state_version` |
+| `5` | restore mismatch: the newest complete round doesn't restore to its own tick's recorded State Hash, or was written with another `sim.seed` (`AW-SRV-043`). No checkpoint is written, and nothing falls back to an older round or to replay from zero, under `--rebuild` too |
+
+### Restore verification
+
+A round is restored only if it reproduces its own tick's State Hash. The projector reads the Tick
+Boundary Record for the round's tick and compares the restored Engine's State Hash with the one
+that record holds. The comparison happens before anything replays, and replay then starts at the
+tick after the round's. The seed is checked first: a round records the seed its World ran with
+(`sim_seed`, the derived default included). A round written before that field records `0`, and is
+restored on the derived seed.
+
+- **Metric:** `andara_restore_total{caller="projector", outcome}`, counter, with `outcome` one of
+  `ok`, `hash_mismatch` or `seed_mismatch`. All three are pre-seeded at 0. The projector exits `5`
+  on a mismatch, so only `ok` is ever scraped.
+- **Logs:**
+  - On success, `info` `state projector restore verified`, with `round_tick`, `zones`,
+    `restored_hash` and `trace_id`.
+  - On a mismatch, `error` `state projector restore mismatch`, with `round_tick`, `reason`
+    (`hash` or `seed`) and `trace_id`. A `hash` mismatch adds `recorded_hash` and `restored_hash`
+    (hex); a `seed` mismatch adds `recorded_seed` and `configured_seed`.
+- **Traces:** `state.bootstrap` is the root, with `round_tick`, `rebuild` and `outcome`, around
+  round selection, the restore and the dump. Under it, `restore.verify` wraps the restore, with
+  `round_tick`, `zones` and `outcome`. It has `Error` status on a mismatch.

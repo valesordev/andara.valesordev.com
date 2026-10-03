@@ -64,7 +64,10 @@ type Snapshot struct {
 	// content and contentDigest are the content in effect at Tick
 	// (AW-SRV-012), the same for every Snapshot in a round: what a restore
 	// rebuilds the topology from, and checks, before loading any body.
-	content       map[string]uint64
+	content map[string]uint64
+	// simSeed is the seed the World runs with, the derived default included
+	// and never 0, so a restore compares like for like (AW-SRV-043 AC-7).
+	simSeed       uint64
 	contentDigest [32]byte
 }
 
@@ -234,6 +237,7 @@ func (e *Engine) SnapshotAll(takenAtUnixNano int64) []Snapshot {
 			nextEventID:     s.NextEventID,
 			content:         content,
 			contentDigest:   e.digest,
+			simSeed:         s.Seed,
 		})
 	}
 	return out

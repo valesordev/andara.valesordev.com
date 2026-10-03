@@ -42,6 +42,7 @@ func (s *Snapshot) Encode() ([]byte, error) {
 		ZoneId:          string(s.Zone),
 		TakenAtUnixNano: s.TakenAtUnixNano,
 		Body:            body,
+		SimSeed:         s.simSeed,
 	}
 	for _, po := range s.Offsets {
 		env.Offsets = append(env.Offsets, &logv1.PartitionOffset{Partition: po.Partition, Offset: po.Offset})

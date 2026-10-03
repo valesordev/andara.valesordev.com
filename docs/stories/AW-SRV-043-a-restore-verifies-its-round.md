@@ -4,7 +4,7 @@ title: A restore verifies its round
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-SRV-006, AW-SRV-019]
 blocks: [AW-SRV-007]
@@ -220,3 +220,43 @@ CLAUDE.md §8.
 2. **Resolved 2026-10-02 (architecture): the `AW-SRV-007` edge.** Added in the commit that moves
    this story to `ready`.
 3. `[ASSUMPTION]` Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01).
+
+## Verification record — 2026-10-03 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-srv-043-restore-verifies-round`.
+
+| AC | Test | What it asserts |
+|----|------|-----------------|
+| 1 | `TestRestore_VerifiesItsRound` (sim, on the derived and a configured seed); `TestRun_ASoundRoundVerifies` (Redpanda) | The round restores, and the tick after it hashes as the live World's. The projector counts `ok`, logs `state projector restore verified` with the round tick and the recorded hash, and catches up |
+| 2 | `TestRestore_AlteredBodyIsARestoreMismatch` (sim); `TestRun_ACorruptedRoundExitsFive` (Redpanda, the body altered and its envelope re-signed so the per-object check passes) | `*RestoreMismatch` naming the round tick and both hashes, and no Engine |
+| 3 | `TestRun_ACorruptedRoundExitsFive/rebuild=false` | Exit `5`. One `error` line with `round_tick`, `reason=hash`, `recorded_hash`, `restored_hash` and `trace_id`. `andara_restore_total{caller="projector",outcome="hash_mismatch"}` reads 1 and `ok` reads 0 on the in-process registry. No checkpoint, and nothing on the state topic |
+| 4 | `TestRun_ACorruptedRoundExitsFive/rebuild=true` | The same under `--rebuild` |
+| 5 | `TestRestore_SeedMismatch` (sim: configured against configured, derived against configured, configured against derived, with the recorded hash also spoiled); `TestRun_ARoundFromAnotherSeedExitsFive` (Redpanda) | `*SeedMismatch` naming both seeds, before any hash comparison. Exit `5`, `reason=seed` with `recorded_seed` and `configured_seed`, and `seed_mismatch` counted |
+| 6 | `TestRestore_PreFieldRound` | A round with `sim_seed` 0 restores on the derived seed. One written on another seed is then a hash mismatch, not a seed mismatch |
+| 7 | `TestRestore_RoundRecordsTheDerivedSeed`; `TestRestore_DefaultSeedIsTheOneTheWorldStartedWith`; `TestRestoredEngineContinuesTheWorld` (store) | A default-seed server records the derived value, never 0, and a configured one records its own. The store decodes it, and every Zone in a round must agree |
+| 8 | `TestRestore_Issue143IsNamedAtTheRoundTick` | The pre-#307 derivation, from the round's World, is a `*RestoreMismatch` at the round's tick |
+
+**§7, tested:** `state.bootstrap`, with `round_tick`, `rebuild` and `outcome`, has `restore.verify`
+as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mismatch.
+`TestRun_ACorruptedRoundExitsFive` asserts both.
+
+**Mutations, each caught:**
+- dropping the hash comparison;
+- dropping the seed check;
+- writing `sim_seed` as 0;
+- not counting restores;
+- renaming the mismatch line.
+
+**Changed beyond the story's surface:**
+- **The recorded hash is mandatory.** A `RoundState` with no `RecordedHash` is refused, so a
+  caller that never read the round tick's boundary can't skip the check. `AW-SRV-007`'s callers
+  must supply it.
+- **`sim.RestoreOutcome`** maps `RestoreEngine`'s error to the outcome label, so `AW-SRV-007`'s
+  callers count the same way.
+- **`sim.EffectiveSeed`** is the configured-or-derived seed.
+
+**Outstanding before `done`:**
+- SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap. That check also
+  adds the exit `5` row to `docs/runbooks/state-projector-down.md`.
+- The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
+  build deployed to `dev`.

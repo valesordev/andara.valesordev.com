@@ -610,8 +610,9 @@ func TestSnapshot_CarriesAndRestoresTheContentInEffect(t *testing.T) {
 		t.Fatalf("envelope content %v digest %x", env.GetContent(), env.GetContentDigest())
 	}
 
+	recorded := e.StateHash()
 	round := sim.RoundState{Tick: e.Tick(), StateVersion: sim.StateVersion, PRNG: e.State().RNG.State(), NextEventID: e.State().NextEventID,
-		Content: versions, ContentDigest: digest[:]}
+		Content: versions, ContentDigest: digest[:], RecordedHash: recorded[:]}
 	for p, o := range e.State().Offsets {
 		round.Offsets = append(round.Offsets, sim.PartitionOffset{Partition: p, Offset: o})
 	}
@@ -657,7 +658,8 @@ func TestRestore_DefaultSeedIsTheOneTheWorldStartedWith(t *testing.T) {
 
 	// The round, through the codec a store holds it in.
 	versions, digest := live.Content()
-	round := sim.RoundState{Tick: live.Tick(), StateVersion: sim.StateVersion, Content: versions, ContentDigest: digest[:]}
+	recorded := live.StateHash()
+	round := sim.RoundState{Tick: live.Tick(), StateVersion: sim.StateVersion, Content: versions, ContentDigest: digest[:], RecordedHash: recorded[:]}
 	for _, s := range live.SnapshotAll(1) {
 		raw, err := s.Encode()
 		if err != nil {
@@ -675,7 +677,7 @@ func TestRestore_DefaultSeedIsTheOneTheWorldStartedWith(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		round.PRNG, round.NextEventID, round.Offsets = prng, body.GetNextEventId(), nil
+		round.PRNG, round.NextEventID, round.Offsets, round.SimSeed = prng, body.GetNextEventId(), nil, env.GetSimSeed()
 		for _, po := range env.GetOffsets() {
 			round.Offsets = append(round.Offsets, sim.PartitionOffset{Partition: po.GetPartition(), Offset: po.GetOffset()})
 		}
@@ -703,13 +705,13 @@ func TestRestore_DefaultSeedIsTheOneTheWorldStartedWith(t *testing.T) {
 	if a.Completed.StateHash != b.Completed.StateHash {
 		t.Fatalf("idle tick %d: live %x, restored %x", a.Tick, a.Completed.StateHash, b.Completed.StateHash)
 	}
-	// And a configured seed is still the configured seed.
-	pinned, err := sim.RestoreEngine(topo.World, topo.Templates, sim.Config{Seed: 7, Handlers: sim.Handlers(), Content: c}, round)
-	if err != nil {
-		t.Fatal(err)
+	// The round records the derived seed, not 0 (AW-SRV-043 AC-7), so a
+	// process configured with another seed is refused by name.
+	if round.SimSeed != live.State().Seed || round.SimSeed == 0 {
+		t.Fatalf("the round records sim_seed %d; the World ran with the derived %d", round.SimSeed, live.State().Seed)
 	}
-	if pinned.State().Seed != 7 {
-		t.Errorf("sim.seed 7 restored as %d", pinned.State().Seed)
+	if _, err := sim.RestoreEngine(topo.World, topo.Templates, sim.Config{Seed: 7, Handlers: sim.Handlers(), Content: c}, round); !errors.Is(err, sim.ErrSeedMismatch) {
+		t.Fatalf("sim.seed 7 against a round written with the derived seed: %v", err)
 	}
 }
 
