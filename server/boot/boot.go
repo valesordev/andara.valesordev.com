@@ -133,7 +133,11 @@ type Runtime struct {
 	// race the map.
 	gaugeMu      sync.Mutex
 	roomsLabeled map[sim.ZoneID]struct{}
-	draining     atomic.Bool
+	// beforeApplied, if set, runs in contentApplied at the moment the
+	// content source is told: a test checks the gauges are already set
+	// there, with no timing involved (#287). Nil outside tests.
+	beforeApplied func()
+	draining      atomic.Bool
 	// worldNext is the tick loop's next-to-read offset on the World
 	// Partition, for worldBarrier; written on the loop's goroutine.
 	worldNext atomic.Int64

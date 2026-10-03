@@ -444,6 +444,9 @@ func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
 		rt.setTopologyGauges(w)
 		rt.leaveWait(w, rt.Engine.Templates(), swaps)
 	}
+	if rt.beforeApplied != nil {
+		rt.beforeApplied()
+	}
 	if rt.Content != nil {
 		rt.Content.Applied(swaps)
 	}

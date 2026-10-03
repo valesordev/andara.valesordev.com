@@ -9,6 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
@@ -36,10 +37,30 @@ func TestReconcileContent_GaugesBeforeInEffect(t *testing.T) {
 	}
 	rt.Tel.Metrics.RoomsLoaded.Reset()
 	rt.roomsLabeled = nil
+	// At the moment the content source is told, on the loop's goroutine:
+	// a plain reorder fails this with no window to widen.
+	// Each call records the series and the Zones in effect: the World is
+	// the loop goroutine's to read, and this runs on it.
+	var atApplied [][2]int
+	rt.beforeApplied = func() {
+		atApplied = append(atApplied, [2]int{
+			testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded"),
+			len(rt.Engine.World().Zones),
+		})
+	}
 	serveMemory(t, rt)
 	n := testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded")
 	if n != len(rt.Engine.World().Zones) || n == 0 {
 		t.Fatalf("rooms_loaded has %d series when ReconcileContent returns; %d Zones are in effect", n, len(rt.Engine.World().Zones))
+	}
+	// Read after ReconcileContent returned, which Applied's report ordered.
+	if len(atApplied) == 0 {
+		t.Fatal("the content source was never told")
+	}
+	for i, got := range atApplied {
+		if got[0] != got[1] {
+			t.Fatalf("swap %d: %d rooms_loaded series when the content source was told, with %d Zones in effect", i, got[0], got[1])
+		}
 	}
 }
 
@@ -97,13 +118,17 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 			}
 		}
 	}()
-	for i := range 200 {
+	// Update until the scraper has looked at least 50 times, so a loaded
+	// runner can't finish every update before it has run at all.
+	deadline := time.Now().Add(10 * time.Second)
+	for i := 0; scrapes.Load() < 50 && time.Now().Before(deadline); i++ {
 		w := a
 		if i%2 == 0 {
 			w = b
 		}
 		rt.setTopologyGauges(w)
 	}
+	rt.setTopologyGauges(a)
 	stop.Store(true)
 	wg.Wait()
 	select {
@@ -111,8 +136,8 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 		t.Fatal(f)
 	default:
 	}
-	if scrapes.Load() == 0 {
-		t.Fatal("no scrape ran")
+	if n := scrapes.Load(); n < 50 {
+		t.Fatalf("%d scrapes in 10 s, want 50", n)
 	}
 	// The last update was a: docks departed.
 	if n := testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded"); n != 2 {
