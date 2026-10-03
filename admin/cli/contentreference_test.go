@@ -6,8 +6,11 @@ package cli
 import (
 	"encoding/json"
 	"go/ast"
+	"go/constant"
+	"go/importer"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"slices"
@@ -183,91 +186,86 @@ func TestContentReference_Core(t *testing.T) {
 }
 
 // parsedCodes reads the diagnostic codes from source, not from a list kept by
-// hand: every sim.ErrCode constant, and every lang Code* constant or variable,
-// each resolved to its string value (AC-5, AC-7).
+// hand (AC-5, AC-7). Each package is type-checked, so a code is found however
+// it is spelled: every package-level constant or variable of type
+// sim.ErrCode in sim, and every package-level Code* of string type in lang,
+// each with the value the type checker folds. One whose value isn't a
+// constant string fails the test rather than being skipped.
 func parsedCodes(t *testing.T) (simCodes, langCodes map[string]string) {
 	t.Helper()
-	simCodes = map[string]string{} // value -> constant name
-	simByName := map[string]string{}
-	for _, spec := range valueSpecs(t, filepath.Join("..", "..", "server", "sim")) {
-		id, ok := spec.Type.(*ast.Ident)
-		if !ok || id.Name != "ErrCode" {
-			continue
-		}
-		for i, n := range spec.Names {
-			v := stringLit(t, spec.Values[i])
-			simCodes[v] = n.Name
-			simByName[n.Name] = v
-		}
-	}
+	simCodes = map[string]string{} // value -> declared name
 	langCodes = map[string]string{}
-	for _, spec := range valueSpecs(t, filepath.Join("..", "..", "content", "lang")) {
-		for i, n := range spec.Names {
-			if !strings.HasPrefix(n.Name, "Code") || i >= len(spec.Values) {
-				continue
-			}
-			switch v := spec.Values[i].(type) {
-			case *ast.BasicLit:
-				langCodes[stringLit(t, v)] = n.Name
-			case *ast.CallExpr: // string(sim.ErrX)
-				sel, ok := v.Args[0].(*ast.SelectorExpr)
-				if !ok {
-					t.Fatalf("lang %s: unexpected value", n.Name)
-				}
-				val, ok := simByName[sel.Sel.Name]
-				if !ok {
-					t.Fatalf("lang %s quotes sim.%s, which is no sim.ErrCode", n.Name, sel.Sel.Name)
-				}
-				langCodes[val] = n.Name
-			}
-		}
-	}
+	codeCheck(t, filepath.Join("..", "..", "server", "sim"), "github.com/valesordev/andara/server/sim",
+		func(name string, typ types.Type) bool {
+			n, ok := types.Unalias(typ).(*types.Named)
+			return ok && n.Obj().Name() == "ErrCode" && n.Obj().Pkg().Path() == "github.com/valesordev/andara/server/sim"
+		}, simCodes)
+	codeCheck(t, filepath.Join("..", "..", "content", "lang"), "github.com/valesordev/andara/content/lang",
+		func(name string, typ types.Type) bool {
+			b, ok := typ.Underlying().(*types.Basic)
+			return strings.HasPrefix(name, "Code") && ok && b.Info()&types.IsString != 0
+		}, langCodes)
 	if len(simCodes) == 0 || len(langCodes) == 0 {
-		t.Fatalf("parsed %d sim codes and %d lang codes", len(simCodes), len(langCodes))
+		t.Fatalf("found %d sim codes and %d lang codes", len(simCodes), len(langCodes))
 	}
 	return simCodes, langCodes
 }
 
-func valueSpecs(t *testing.T, dir string) []*ast.ValueSpec {
+// codeCheck type-checks the package in dir and records, for every
+// package-level const or var that isCode accepts, its folded string value.
+func codeCheck(t *testing.T, dir, path string, isCode func(string, types.Type) bool, into map[string]string) {
 	t.Helper()
 	files, err := filepath.Glob(filepath.Join(dir, "*.go"))
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no Go source in %s: %v", dir, err)
 	}
 	fset := token.NewFileSet()
-	var out []*ast.ValueSpec
-	for _, path := range files {
-		if strings.HasSuffix(path, "_test.go") {
+	var parsed []*ast.File
+	for _, f := range files {
+		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		f, err := parser.ParseFile(fset, path, nil, 0)
+		af, err := parser.ParseFile(fset, f, nil, 0)
 		if err != nil {
 			t.Fatal(err)
 		}
+		parsed = append(parsed, af)
+	}
+	info := &types.Info{Types: map[ast.Expr]types.TypeAndValue{}, Defs: map[*ast.Ident]types.Object{}}
+	conf := types.Config{Importer: importer.ForCompiler(fset, "source", nil)}
+	if _, err := conf.Check(path, fset, parsed, info); err != nil {
+		t.Fatalf("type-check %s: %v", path, err)
+	}
+	for _, f := range parsed {
 		for _, d := range f.Decls {
 			g, ok := d.(*ast.GenDecl)
 			if !ok || (g.Tok != token.CONST && g.Tok != token.VAR) {
 				continue
 			}
-			for _, s := range g.Specs {
-				out = append(out, s.(*ast.ValueSpec))
+			for _, sp := range g.Specs {
+				spec := sp.(*ast.ValueSpec)
+				for i, id := range spec.Names {
+					obj := info.Defs[id]
+					if obj == nil || !isCode(id.Name, obj.Type()) {
+						continue
+					}
+					var val constant.Value
+					switch o := obj.(type) {
+					case *types.Const:
+						val = o.Val()
+					case *types.Var:
+						if i < len(spec.Values) {
+							val = info.Types[spec.Values[i]].Value
+						}
+					}
+					if val == nil || val.Kind() != constant.String {
+						t.Fatalf("%s.%s is a code whose value isn't a constant string", path, id.Name)
+					}
+					into[constant.StringVal(val)] = id.Name
+				}
 			}
 		}
 	}
-	return out
-}
-
-func stringLit(t *testing.T, e ast.Expr) string {
-	t.Helper()
-	lit, ok := e.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		t.Fatalf("not a string literal: %T", e)
-	}
-	v, err := strconv.Unquote(lit.Value)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return v
 }
 
 // AC-5, AC-7: the diagnostics table holds exactly the codes the source
@@ -356,6 +354,28 @@ func TestContentReference_UsageErrors(t *testing.T) {
 		}
 		if res.stdout != "" {
 			t.Errorf("%v: stdout %q", args, res.stdout)
+		}
+	}
+}
+
+// failingWriter refuses every write, as a full disk or a closed pipe does.
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, os.ErrClosed }
+
+// The contract's exit 2: writing to stdout failed, in either output.
+func TestContentReference_StdoutFailureExitsTwo(t *testing.T) {
+	t.Parallel()
+	for _, out := range []string{"json", "human"} {
+		var stderr strings.Builder
+		exit := execute(&runtime{
+			args:      []string{"content", "reference", "--output", out},
+			stdout:    failingWriter{},
+			stderr:    &stderr,
+			lookupEnv: lookupFrom(isolatedEnv(t, nil)),
+		})
+		if exit != ExitUsage {
+			t.Errorf("--output %s to a failing stdout: exit %d, want %d; stderr %q", out, exit, ExitUsage, stderr.String())
 		}
 	}
 }
