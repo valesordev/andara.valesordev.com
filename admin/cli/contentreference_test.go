@@ -205,13 +205,21 @@ func parsedCodes(t *testing.T) (simCodes, langCodes map[string]string) {
 		codesSim, codesLang = map[string]string{}, map[string]string{}
 		const simPath = "github.com/valesordev/andara/server/sim"
 		simPkg, err := codeCheck(filepath.Join("..", "..", "server", "sim"), simPath, nil,
-			func(name string, typ types.Type) bool {
-				n, ok := types.Unalias(typ).(*types.Named)
-				return ok && n.Obj().Name() == "ErrCode" && n.Obj().Pkg().Path() == simPath
+			func(name string, typ types.Type, init ast.Expr) bool {
+				if n, ok := types.Unalias(typ).(*types.Named); ok {
+					return n.Obj().Name() == "ErrCode" && n.Obj().Pkg().Path() == simPath
+				}
+				// Untyped in the source and unresolved under a stubbed
+				// import (var ErrX = ErrCode(fmt.Sprint(...))): a code if its
+				// initializer names ErrCode, so it fails rather than being
+				// skipped. Other unresolved objects (errors.New values)
+				// don't name it.
+				b, ok := typ.Underlying().(*types.Basic)
+				return ok && b.Kind() == types.Invalid && mentions(init, "ErrCode")
 			}, codesSim)
 		if err == nil {
 			_, err = codeCheck(filepath.Join("..", "..", "content", "lang"), "github.com/valesordev/andara/content/lang", simPkg,
-				func(name string, typ types.Type) bool {
+				func(name string, typ types.Type, _ ast.Expr) bool {
 					// A Code* whose type couldn't be determined (it
 					// calls into a stubbed import) counts too: it folds to
 					// no constant and fails, rather than being skipped.
@@ -236,6 +244,20 @@ var (
 	codesErr            error
 )
 
+// mentions reports whether e names the identifier name anywhere.
+func mentions(e ast.Expr, name string) bool {
+	found := false
+	if e != nil {
+		ast.Inspect(e, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == name {
+				found = true
+			}
+			return !found
+		})
+	}
+	return found
+}
+
 // stubImporter gives the package being checked sim, when it imports it, and
 // an empty package for anything else.
 type stubImporter struct{ sim *types.Package }
@@ -252,7 +274,7 @@ func (s stubImporter) Import(path string) (*types.Package, error) {
 // codeCheck type-checks the package in dir (its non-test files, as go/build
 // selects them) and records, for every package-level const or var that
 // isCode accepts, its folded string value.
-func codeCheck(dir, path string, sim *types.Package, isCode func(string, types.Type) bool, into map[string]string) (*types.Package, error) {
+func codeCheck(dir, path string, sim *types.Package, isCode func(string, types.Type, ast.Expr) bool, into map[string]string) (*types.Package, error) {
 	bp, err := build.Default.ImportDir(dir, 0)
 	if err != nil {
 		return nil, err
@@ -279,7 +301,11 @@ func codeCheck(dir, path string, sim *types.Package, isCode func(string, types.T
 				spec := sp.(*ast.ValueSpec)
 				for i, id := range spec.Names {
 					obj := info.Defs[id]
-					if obj == nil || !isCode(id.Name, obj.Type()) {
+					var init ast.Expr
+					if i < len(spec.Values) {
+						init = spec.Values[i]
+					}
+					if obj == nil || !isCode(id.Name, obj.Type(), init) {
 						continue
 					}
 					var val constant.Value
@@ -292,7 +318,7 @@ func codeCheck(dir, path string, sim *types.Package, isCode func(string, types.T
 						}
 					}
 					if val == nil || val.Kind() != constant.String {
-						return nil, fmt.Errorf("%s.%s is a code whose value isn't a constant string", path, id.Name)
+						return nil, fmt.Errorf("%s.%s looks like a diagnostic code, but the checker could not resolve it to a constant string", path, id.Name)
 					}
 					into[constant.StringVal(val)] = id.Name
 				}
