@@ -134,6 +134,8 @@ reverted.
 - **`TestContentPublish_ABlobOverOneMiBIsChunked`:** a source over 1 MiB publishes in chunks and
   fetches back whole.
 
-The implementation record now says the rehearsal runs in CI (#265), and that the confirmation
-`info` line isn't asserted. SRE's request for a test of that line (2026-09-30) remains open, and
-isn't one of `AW-SRV-046`'s items.
+The implementation record now says the rehearsal runs in CI (#265). The confirmation `info` line
+is asserted: `TestContentActivate_ConfirmationLineJoinsTheServersRecord` (7592bd5, the §8 items)
+runs `activate` and `rollback` at `info` and checks the line's level, text, command and trace ID.
+So SRE's request of 2026-09-30 is met. The "isn't asserted" wording that `AW-SRV-046` carried was
+stale by then (corrected on Codex's comment on #368).

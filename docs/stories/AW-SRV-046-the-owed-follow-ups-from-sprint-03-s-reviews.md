@@ -148,7 +148,7 @@ once. The mutation column names the reversion that makes it fail.
 | 4 | 7 | `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`: a `select` with a deadline on `stall.entered` | A refusal that never reaches its audit used to hang the test. Taking the write lock twice is one way to cause it. It now fails at the 5 s deadline. Holding the lock through the audit was already caught by the second `select`, in about 1 s |
 | 5 | 3, 6, 7 | `admin/README.md`: the `version` row. `server/README.md`: `duplicate_direction` and the errors-only rule, the one-Room exemption, and a "Builder pack grants" subsection naming `andara.accounts` and `accounts.write` | — |
 | 6 | 7 | `TestSetBuilderPacks_LogFields`: on a refused and an accepted grant, `trace_id` equals the RPC span's, and `session_id` and `acting_as_account_id` are present and empty | Dropping `session_id` from the refusal line. The record already listed the three fields, so it needed no correction |
-| 7 | 4 | `AW-CLI-003`'s implementation record: the rehearsal runs in CI (#265), and the confirmation line isn't asserted | — |
+| 7 | 4 | `AW-CLI-003`'s implementation record: the rehearsal runs in CI (#265). On the confirmation line, AC-7's "isn't asserted" was already stale: `TestContentActivate_ConfirmationLineJoinsTheServersRecord` (7592bd5) asserts it, so the record says that instead (Codex on #368) | — |
 | 8 | all | Each source feedback file has a "Done in `AW-SRV-046`" section, and `AW-SRV-036`'s §8 note records item 1 | — |
 
 No contract changed, and no item needed a decision.

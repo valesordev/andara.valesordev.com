@@ -240,8 +240,10 @@ the contract didn't make are in `docs/feedback/AW-CLI-003-content-publish.md`.
   `content.publish_blob` child per stream.
 - `cli.command` carries `pack` and `version`, and, for `--override`, `override`, `reason` and the
   confirmation text.
-- The confirmation is logged at `info` with the trace ID. *(Corrected 2026-10-03, `AW-SRV-046`: no
-  test asserts this line. SRE asked for one in the feedback file.)*
+- The confirmation is logged at `info` with the trace ID. *(Checked 2026-10-03, `AW-SRV-046`:
+  `TestContentActivate_ConfirmationLineJoinsTheServersRecord`, added at the §8 items (7592bd5),
+  asserts it for `activate` and `rollback`. It checks the level, the text, the command and the
+  trace ID, so SRE's request for a test is met.)*
 - `trace_id` is in every JSON result and error. `TestContentActivate_RefusalReasonAndSubjects`
   checks it on a refusal.
 
