@@ -129,7 +129,7 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 | Target | Does | Exit |
 |--------|------|-----:|
 | `make deploy ENV=<env> TAG=<tag>` | publish+activate `andara.core@<tag>`; `helm upgrade --install --set image.tag`; `kubectl rollout status --timeout`; reads `andara_deploy_interruption_seconds`, prints it against RTO | `0` ok · `2` hash mismatch · `1` rollout timeout · `6` core pack rejected |
-| `make rollback ENV=<env> [ROUND=T]` | `helm rollback` to previous revision; with `ROUND`, sets `recovery.pin_round=T` for one boot | as above · `4` state_version · the pod's exit `7` (pinned round not complete), named with the round *(PR #356)* |
+| `make rollback ENV=<env> [ROUND=T]` | `helm rollback` to previous revision; with `ROUND`, sets `recovery.pin_round=T` for one boot | as above · `4` state_version |
 | `make snapshot-tag ENV=<env> TAG=<t>` | tags the newest round (used by `prestop`) | |
 
 ### Configuration
@@ -138,7 +138,7 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | AC-6 |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping` |
-| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | — | one-boot override used by `rollback`. Cleared only after a boot with it reaches ready, so a restart after `AW-SRV-007`'s exit `7` (the pinned round isn't complete) refuses again rather than recovering from a different round *(PR #356, 2026-10-03)* |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | — | one-boot override used by `rollback` |
 | `snapshot.keep_rounds` | `ANDARA_SNAPSHOT_KEEP_ROUNDS` | `120` | |
 | `snapshot.keep_deploy_rounds` | `ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS` | `30` | |
 

@@ -158,8 +158,17 @@ match, so that a crash is an interruption rather than an incident.
 15. **Given** a named round that isn't complete, named by `recover --verify --round T` or by
     `recovery.pin_round=T` at boot **when** recovery runs **then** it exits `7`, restores nothing,
     and tries no other round. `andara_recovery_failures_total{reason="round"}` is `1`, and one
-    `error` line carries `round_tick` and `cause`: `missing`, `duplicate`, `hash` or `disagree`. A
-    tick with no object at all is `missing`, with every owned Zone. **Given** the same round through
+    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons:
+    - `missing`: no object for a Zone, or one that vanished after listing; a tick with no object
+      at all is `missing` with every owned Zone;
+    - `duplicate`: two objects for one Zone;
+    - `hash`: an object that's hash-invalid, undecodable (including its PRNG), or whose envelope
+      names another Zone or tick;
+    - `disagree`: objects whose PRNG, EventID, `sim_seed`, content in effect, or Partition offsets
+      differ.
+
+    The `state_version` check runs first, so a named round written by a newer binary exits `4`, not
+    `7`. Exit `7` doesn't set `andara_recovery_state_hash_match` and doesn't linger. **Given** the same round through
     `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
     object exists at the tick), and `andara-cli snapshot verify` exits `1`.
     *(Added in PR #356 review, 2026-10-03.)*
@@ -320,9 +329,10 @@ round-Zone refusals, added by this story in `server/sim/restore.go`; `ErrRoundZo
 `6` with `reason=content`, and `ErrRoundZoneDuplicate` is the incomplete round above, exit `7` with
 `cause=duplicate`, a backstop
 behind `ListRounds`), `ErrLogGap{Partition, Need, Have}`,
-`ErrStateVersion` (from `AW-SRV-006`), `ErrRoundIncomplete{Tick, Cause, Zones}` (`AW-SRV-006`'s `{Tick, Missing}`, widened in PR #356's
-review so that it names every cause: `missing`, `duplicate`, `hash`, `disagree`, and the Zones
-involved; for `disagree`, AC-11's two values ride on the log line), `ErrOffsetGap` (from
+`ErrStateVersion` (from `AW-SRV-006`), `sim.ErrRoundIncomplete{Tick, Cause, Zones}` (`AW-SRV-006`'s `{Tick, Missing}`, widened in PR
+#356's review so that it names AC-15's causes and the Zones involved; for `disagree`, AC-11's two
+values ride on the log line; the snapshot writer in `tickloop` and `store.ListRounds`' existing
+callers set `cause=missing` where they set `Missing` today), `ErrOffsetGap` (from
 `AW-SRV-002`, re-raised during replay).
 
 ## Data / state impact
@@ -470,7 +480,10 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   listed `incomplete`; that round and a hash-invalid one each named with `recover --verify --round`
   and with `recovery.pin_round`, asserting exit `7`, `failures_total{reason="round"}` at `1`, its
   `cause`, and no `recovery.load_snapshot` span for any other tick, then the same through
-  `Admin.VerifySnapshotRound`, asserting `FAILED_PRECONDITION` (AC-15); a round restored
+  `Admin.VerifySnapshotRound`, asserting `FAILED_PRECONDITION` (AC-15); `--round` and `pin_round`
+  at a tick with no objects, asserting exit `7`, `cause=missing` with every owned Zone, and
+  `NOT_FOUND` from the RPC; AC-11's disagreeing round named with `--round`, asserting
+  `cause=disagree`; a newer-`state_version` round named with `--round`, asserting exit `4`; a round restored
   onto content with a different `content_digest`, asserting exit `6` with `reason=content` (AC-13)
   and `snapshot verify` returning `VERIFY_OUTCOME_CONTENT_MISMATCH`; no-snapshot cold start
   asserting AC-9. Publish
