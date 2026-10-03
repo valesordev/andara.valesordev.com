@@ -249,3 +249,30 @@ func TestRun_ASoundRoundVerifies(t *testing.T) {
 		t.Fatalf("the verified line: %v", verified)
 	}
 }
+
+// A round whose own boundary the log no longer has, with nothing after it,
+// is a log gap (exit 3), not an indefinitely quiet log: the round was
+// written after its boundary was acknowledged, so no later read brings it
+// (Codex on #365).
+func TestRun_ARoundWhoseBoundaryIsGoneIsALogGap(t *testing.T) {
+	b := newBroker(t)
+	w := script(t)
+	b.mirror(w, 0) // the log through the tick before the round
+	w.tick()
+	ws, round := roundStore(t, w, "")
+	if got := w.boundaries[len(w.boundaries)-1].Tick; got != round {
+		t.Fatalf("fixture: the round is at tick %d, the World at %d", round, got)
+	}
+	o := b.options(w)
+	o.Store = ws
+	o.Metrics = projector.NewMetrics(nil)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	err := projector.Run(ctx, o)
+	if ctx.Err() != nil {
+		t.Fatal("Run waited for a boundary the log can't bring")
+	}
+	if !errors.Is(err, projector.ErrLogGap) || projector.ExitCode(err) != projector.ExitLogGap {
+		t.Fatalf("Run: %v (exit %d), want a log gap, exit 3", err, projector.ExitCode(err))
+	}
+}

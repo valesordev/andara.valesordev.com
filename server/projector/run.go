@@ -340,6 +340,12 @@ func (o RunOptions) roundBoundary(ctx context.Context, boundaries *BoundaryReade
 		return sim.TickCompleted{}, fmt.Errorf("boundaries: %w", err)
 	}
 	o.Log.Info("boundary reader positioned at the round", "round_tick", uint64(round), "offset", at)
+	if at >= boundaries.seekEnd {
+		// No boundary at or after the round's tick is on the log. The round
+		// was written after its boundary was acknowledged, so a later read
+		// can't bring it: the log no longer has it (Codex on #365).
+		return sim.TickCompleted{}, fmt.Errorf("%w: the snapshot round is at tick %d, and the log holds no boundary at or after it", ErrLogGap, round)
+	}
 	for {
 		b, err := boundaries.Next(ctx, 1, o.Poll)
 		if err != nil {
