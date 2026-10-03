@@ -17,13 +17,24 @@ or the gateway. The issues describe its two halves:
   at `attach` (`history.go`), and an Event published before then is never sent.
 
 ## For architecture
-The outcome SPRINT-04 wants: **a client that waits for the Subscribe response's headers can't send a
-command whose Events its stream then misses.** In other words, headers mean the stream is attached,
-the point the `Streams` gauge counts.
+**The outcome, against the contract that already exists:** `play`'s automatic `look` gets its
+answer, the Room, on its stream every time (`AW-CLI-007` AC-4), and the test asserts the order
+deterministically (#117). No spec says what a Subscribe's response headers guarantee today. The only
+statements are code comments, and both are wrong: `play.go` ("the headers are back, so the gateway
+has the stream") and `game.go` ("a client's Subscribe call does not return until they arrive").
 
-The gateway half changes `AW-SRV-011`'s Egress seam (`type Egress interface { Subscribe(...) error }`,
-including `HoldingEgress` and the test fakes). Either the seam splits into register and run, or the
-egress flushes the headers itself after `attach`. Rule which, or rule that the CLI half alone is enough
-and record why. Implementation's item 13 waits on this. #116 offers a third option, documenting that
-the ordering holds only per tick. That would change `AW-CLI-007`'s verified order, so it's a contract
-change too.
+**Rule what a client may rely on before its first command.** The options the issues and the code
+offer:
+1. Split the Egress seam into register and run, so the gateway flushes headers after the stream
+   attaches. This changes the seam's signature.
+2. The egress flushes the headers itself after `attach`. The signature stays, but the seam's
+   contract changes (every implementer flushes), and `SubscribeWith`'s `Sender` needs a headers-only
+   send.
+3. The gateway sends a first frame on subscribe, and the client waits for it (#117).
+4. Ordering is guaranteed only per tick, and the test or the fake records `Subscribe` from the
+   gateway's side (#116's options). This changes `AW-CLI-007`'s verified order.
+
+A CLI-only fix (waiting for headers) narrows the window but doesn't close it. The flaking test uses
+the real gateway with a fake Egress (`admin/cli/play_test.go`), which records `Subscribe` only when
+`Egress.Subscribe` is entered, after the headers flush. So any ruling also needs the test or the fake
+made deterministic. Implementation's item 13 waits on this ruling.
