@@ -204,6 +204,12 @@ the expected interruption as a number from the last CI run, and every step is a 
 
 ## Open questions
 
+- **Open since PR #356 (2026-10-03), for the SPRINT-05 split:** who clears `recovery.pin_round`, whether
+  retention keeps the pinned round, what `make rollback` itself exits, and `ROUND=T` vs `--round T`.
+  See `docs/feedback/AW-INF-005-007-split.md`, "From PR #356's review". These affect this story's
+  Interface contract, so its deploy half doesn't start before the split answers them. The server
+  side of the key is `AW-SRV-007`'s (its Configuration table and AC-15).
+
 - `[NEEDS BRIAN]` The `message` in `ServerStopping` — countdown, in-world notice, or nothing. The
   field and the lead time exist either way; the words do not affect this contract.
 - `[ASSUMPTION]` Deploy cadence is bounded by the write-availability budget (~40/28 d at 99.9%,

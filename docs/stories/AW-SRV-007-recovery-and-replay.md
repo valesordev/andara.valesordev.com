@@ -162,13 +162,15 @@ match, so that a crash is an interruption rather than an incident.
     - `missing`: no object for a Zone, or one that vanished after listing; a tick with no object
       at all is `missing` with every owned Zone;
     - `duplicate`: two objects for one Zone;
-    - `hash`: an object that's hash-invalid, undecodable (including its PRNG), or whose envelope
-      names another Zone or tick;
+    - `hash`: an object that's hash-invalid, undecodable (including its PRNG), unmigratable (no
+      migration step, or `state_version` 0), or whose envelope names another Zone or tick;
     - `disagree`: objects whose PRNG, EventID, `sim_seed`, content in effect, or Partition offsets
       differ.
 
-    The `state_version` check runs first, so a named round written by a newer binary exits `4`, not
-    `7`. Exit `7` doesn't set `andara_recovery_state_hash_match` and doesn't linger. **Given** the same round through
+    **A named tick resolves to one round.** After a rollback, the same tick can hold a group at a
+    newer `state_version` and one at an older version (the key format above). The name resolves to
+    the highest `state_version` at `T` that this binary can read. AC-15 then applies to that group.
+    Exit `4` happens only when every group at `T` is newer than the binary. Exit `7` doesn't set `andara_recovery_state_hash_match` and doesn't linger. **Given** the same round through
     `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
     object exists at the tick), and `andara-cli snapshot verify` exits `1`.
     *(Added in PR #356 review, 2026-10-03.)*
@@ -318,6 +320,7 @@ message VerifySnapshotRoundResponse { bool match = 1; bytes expected_hash = 2; b
 | `recovery.require_snapshot` | `ANDARA_RECOVERY_REQUIRE_SNAPSHOT` | `false` | `true` in prod once M2 lands: a cold replay is a retention bug, not a boot |
 | `recovery.replay_batch` | `ANDARA_RECOVERY_REPLAY_BATCH` | `4096` | fetch size during replay; AC-3 proves it does not matter |
 | `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | bounds `--verify` |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` means unset: recover from the newest complete round. `T > 0` names round `T` (AC-15). Read on every boot; the server never clears it. Setting and clearing it is `AW-INF-007`'s `make rollback`. Already declared in the chart's `keys.yaml` as `int`, default `0`, min `0` *(contract stated here in PR #356's review, 2026-10-03)* |
 | `recovery.mismatch_linger` | `ANDARA_RECOVERY_MISMATCH_LINGER` | `0s` | AC-14. Boot recovery only. Compose sets `60s`; the chart leaves `0s`, where it would only slow `AndaraServerCrashLooping` *(added 2026-10-02)* |
 
 ### Error taxonomy
@@ -483,7 +486,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   `Admin.VerifySnapshotRound`, asserting `FAILED_PRECONDITION` (AC-15); `--round` and `pin_round`
   at a tick with no objects, asserting exit `7`, `cause=missing` with every owned Zone, and
   `NOT_FOUND` from the RPC; AC-11's disagreeing round named with `--round`, asserting
-  `cause=disagree`; a newer-`state_version` round named with `--round`, asserting exit `4`; a round restored
+  `cause=disagree`; a newer-`state_version` round named with `--round`, asserting exit `4`; a tick
+  holding a partial group at `state_version` v+1 and a complete one at v, named with `--round`,
+  asserting the v round loads; a round restored
   onto content with a different `content_digest`, asserting exit `6` with `reason=content` (AC-13)
   and `snapshot verify` returning `VERIFY_OUTCOME_CONTENT_MISMATCH`; no-snapshot cold start
   asserting AC-9. Publish

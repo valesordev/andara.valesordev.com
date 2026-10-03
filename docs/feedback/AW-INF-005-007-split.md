@@ -36,3 +36,7 @@ before its deploy half reaches `ready`:
    exits `2` on any failing recipe (`docs/feedback/AW-SRV-043-restore-verifies-round.md`, "For
    PM"). Say how the script reads the pod's last exit (`7` or `4`) and prints the round.
 4. **Spelling.** Scope and AC-4 say `--round T`; the table says `ROUND=T`. Use `ROUND=T`.
+
+For SRE when the split lands: `deploy/helm/andara/keys.yaml` gives `recovery.pin_round` as
+`story: AW-INF-007`. Its server contract is now `AW-SRV-007`'s Configuration table (`0` means
+unset), so repoint it.
