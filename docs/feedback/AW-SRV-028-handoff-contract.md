@@ -30,7 +30,8 @@ make them:
 **`state.v1`.** `Transit`, `Departures` and `EntityState.HandoffSeq` are hashed Zone state (the
 story's Data/state impact). The snapshot body has to carry them, or a restore can't reproduce the
 hash. `zone_state.proto` says so itself: "A field the hash covers but the body omits cannot be
-reproduced on restore, and AW-SRV-007 AC-5 exits 2" (`docs/specs/protocol/andara/state/v1/zone_state.proto:12-17`).
+reproduced on restore, and recovery exits 6 on that mismatch (AW-SRV-043)"
+(`docs/specs/protocol/andara/state/v1/zone_state.proto:12-17`).
 Today `ZoneState` has fields 1-8 with no transit or departures, and `EntityState` has 1-12 with no
 handoff sequence. AC-2 recovers `Transit` "at the recovered hash", so this is on the AC's path.
 
@@ -59,7 +60,7 @@ rejection either, because a swap that removes a Zone is refused (`zone_removed`)
 rejection can carry `unknown_room`.
 
 **`zone_faulted`.** Under today's rule (`AW-SRV-002`), a faulted Zone's Partition is frozen.
-Its records are never polled (`server/tickloop/loop.go:220`), and `Step` refuses them
+Its records are never polled (`server/tickloop/loop.go:289`), and `Step` refuses them
 (`server/sim/engine.go:403-412`). B never applies the `Arrive` and never answers.
 
 `AW-SRV-027` (`ready`, in no sprint) replaces the freeze. A faulted Zone's records are "consumed
