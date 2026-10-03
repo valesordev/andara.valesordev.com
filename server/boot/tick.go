@@ -431,24 +431,45 @@ func worldHadZones(ctx context.Context, log replayLog) (bool, error) {
 	return false, nil
 }
 
-// contentApplied tells the content source what a tick applied, and keeps the
-// AW-SRV-001 topology gauges on the content in effect. On the loop's
+// contentApplied keeps the AW-SRV-001 topology gauges on the content in
+// effect, then tells the content source what a tick applied. On the loop's
 // goroutine, or recovery's before the loop starts.
+//
+// The gauges come first: Applied is what lets ReconcileContent return and a
+// reload report success, and content must never be reported in effect ahead
+// of its gauges (#287).
 func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
+	if rt.Engine != nil {
+		w := rt.Engine.World()
+		rt.setTopologyGauges(w)
+		rt.leaveWait(w, rt.Engine.Templates(), swaps)
+	}
 	if rt.Content != nil {
 		rt.Content.Applied(swaps)
 	}
-	if rt.Engine == nil {
-		return
-	}
-	w := rt.Engine.World()
-	rt.leaveWait(w, rt.Engine.Templates(), swaps)
+}
+
+// setTopologyGauges moves andara_content_zones_loaded and
+// andara_content_rooms_loaded{zone} to the Zones in w. Each Zone's series is
+// set first, and only then are the series of Zones no longer in effect
+// deleted, which would otherwise report Rooms nobody can stand in. It never
+// resets the family: a scrape between a reset and the refill sees it empty,
+// which an absent() rule or a dashboard reads as every Zone gone (#287).
+func (rt *Runtime) setTopologyGauges(w *sim.World) {
+	rt.gaugeMu.Lock()
+	defer rt.gaugeMu.Unlock()
 	rt.Tel.Metrics.ZonesLoaded.Set(float64(len(w.Zones)))
-	// Only the Zones in effect: a label from content no longer in effect
-	// would report Rooms nobody can stand in.
-	rt.Tel.Metrics.RoomsLoaded.Reset()
 	for id, z := range w.Zones {
 		rt.Tel.Metrics.RoomsLoaded.WithLabelValues(string(id)).Set(float64(len(z.Rooms)))
+	}
+	for id := range rt.roomsLabeled {
+		if _, ok := w.Zones[id]; !ok {
+			rt.Tel.Metrics.RoomsLoaded.DeleteLabelValues(string(id))
+		}
+	}
+	rt.roomsLabeled = make(map[sim.ZoneID]struct{}, len(w.Zones))
+	for id := range w.Zones {
+		rt.roomsLabeled[id] = struct{}{}
 	}
 }
 
