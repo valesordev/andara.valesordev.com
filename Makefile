@@ -60,7 +60,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
-        objectstore-install projector-stop projector-start projector-rebuild
+        objectstore-install projector-stop projector-start projector-rebuild core-versions-check
 
 ## help: print this target list
 help:
@@ -128,7 +128,8 @@ schemas-check:
 # they had, silently, before `status-check` existed.
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
                  backlog-check status-check values-schema-check k8s-dry helm-test \
-                 license-check content-grammar-check content-conformance scripts-test
+                 license-check content-grammar-check content-conformance scripts-test \
+                 core-versions-check
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -232,6 +233,10 @@ validate-stories:
 ## scripts-test: unit tests for the Python tooling under scripts/ (scripts/tests)
 scripts-test:
 	@$(PY) -m unittest discover -s $(SCRIPTS)/tests
+
+## core-versions-check: fail if content/core/VERSIONS changes other than by appending the next version (AW-INF-029)
+core-versions-check:
+	@$(SCRIPTS)/core_versions_check.sh
 
 ## content-grammar-check: parse the Content Language corpus against grammar.ebnf (AW-CLI-005 AC-1)
 content-grammar-check:

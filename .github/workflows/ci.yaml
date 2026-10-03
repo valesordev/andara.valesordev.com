@@ -11,8 +11,11 @@ on:
     branches: [main]
   pull_request:
 
+# A pull request's newer push cancels its older run. A push to main never cancels or replaces
+# another: each gets its own group, so every merge to main is checked, and
+# core-versions-check's `before` chain covers all of main (AW-INF-029).
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'push' && github.sha || github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -92,6 +95,17 @@ jobs:
         run: make content-conformance
       - name: scripts unit tests
         run: make scripts-test
+      # AW-INF-029. On a pull request the merge base with origin/main comes from
+      # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
+      # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the
+      # concurrency group above). It needs only git, so it runs even when an earlier step failed:
+      # a skipped step would leave that push unchecked too. A force-push whose `before` is gone
+      # exits 2, loudly. A run cancelled by hand breaks the chain; re-run it.
+      - name: core VERSIONS append-only
+        if: ${{ !cancelled() }}
+        run: make core-versions-check
+        env:
+          BASE_REF: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
       # The views as of this commit, since neither is committed (AW-INF-026, AC-4).
       - name: status and backlog in the summary
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'

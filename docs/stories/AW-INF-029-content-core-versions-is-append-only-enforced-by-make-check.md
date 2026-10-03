@@ -4,7 +4,7 @@ title: content/core/VERSIONS is append-only, enforced by make check
 epic: EPIC-05
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-013]
 blocks: []
@@ -89,3 +89,54 @@ CLAUDE.md §8.
 
 - `[ASSUMPTION]` The next version is the previous one plus one. `VERSION` is monotonic (ADR-0004,
   amended 2026-09-28), so no gap is legitimate.
+
+## Implementation record (SRE, 2026-10-03)
+
+On `sre/aw-inf-029-core-versions-append-only`.
+
+- `scripts/core_versions_check.sh` compares the working tree's `content/core/VERSIONS` with
+  `git merge-base $BASE_REF HEAD`, where `BASE_REF` defaults to `origin/main`. Because it reads the
+  working tree, an uncommitted edit is caught too. When HEAD is the merge base (a push to `main`,
+  or a branch with nothing committed yet), it checks twice: HEAD's commit against `HEAD^1`
+  (AC-5), then the working tree against HEAD, so an uncommitted edit of a line HEAD appended is
+  caught (Codex on #361). A root commit has no parent, so only the second check runs. On success it prints one line,
+  `core-versions-check: ok: …`.
+- `make core-versions-check` is in `CHECK_TARGETS`, and `ci.yaml` gains the step
+  `core VERSIONS append-only` (the parity guard requires it). CI already checks out with
+  `fetch-depth: 0`. On a pull request HEAD is the merge commit, whose first parent is `main`'s
+  tip, so the merge base is `main`.
+- An inserted line counts as a change to the line it displaces. Deletions are named at the first
+  missing line.
+- From the pre-PR review:
+  - **A shallow clone exits `2`**, with
+    `core-versions-check: shallow clone; run git fetch --unshallow`.
+    It can't tell a root commit from a parent that wasn't fetched, and comparing HEAD with itself
+    would pass a bad edit.
+  - **On a push to `main`, CI sets `BASE_REF` to the push's `before` commit**, so a multi-commit
+    push is checked whole, not only its last commit. For that chain to cover all of `main`, every
+    push's step must run. So `ci.yaml`'s concurrency group is the commit SHA for a push (no run
+    on `main` is cancelled or replaced), and the step runs `if: !cancelled()`, even after an
+    earlier step fails. A run cancelled by hand breaks the chain, and re-running it restores
+    it. AC-5's first-parent rule remains the default without `BASE_REF`.
+  - **Fields split on whitespace and parse as decimal**, as `content/core` reads them
+    (`strings.Fields`, base 10). A base version `08` isn't octal, and an appended `02` is refused.
+  - The fixture's git calls drop `GIT_*` and an inherited `BASE_REF`.
+
+**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 24 tests, run by
+`make scripts-test`; fixture repositories with a bare `origin`):
+
+| AC | Tests |
+|---|---|
+| 1 | `test_appending_the_next_version_passes`, `test_appending_two_in_sequence_passes` |
+| 2 | edit, delete last, delete middle, reorder, insert-before-end: each exits `1` naming the line |
+| 3 | skipped, repeated, and a bad second appended version: `line <n> is version <v>; expected <e>` |
+| 4 | `test_no_change_passes` |
+| 5 | `test_on_main_itself_it_compares_with_the_first_parent` (a bad edit pushed to `main` fails), `test_on_main_with_a_good_append_passes` |
+| 6 | `test_no_base_exits_2`; `test_base_ref_overrides_origin_main` (also: an unknown `BASE_REF` exits `2`) |
+
+Also: `test_an_uncommitted_edit_is_caught`, introducing the file (at `1`, and refused at `2`), a
+leading-zero base version, an appended leading-zero version, a tab-separated line, and
+`test_a_shallow_clone_refuses_rather_than_passing`. Manual: `make core-versions-check` on this
+branch prints `core-versions-check: ok: unchanged against 897786a42e60` and exits `0`.
+
+§8 instrumentation: the story has no instruments (Observability requirements: none).
