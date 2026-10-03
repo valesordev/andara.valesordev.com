@@ -21,7 +21,7 @@ export ANDARA_CONFIG=/path/to/repo/.local/cli.yaml   # written by make up
 | Command | Purpose |
 |---------|---------|
 | `andara-cli` | print the command tree |
-| `andara-cli version` | version, commit, and build date |
+| `andara-cli version` | version, commit, build date, and the `andara.core` it embeds (`AW-CLI-002`) |
 | `andara-cli config show` | effective settings and the source of each |
 | `andara-cli completion zsh` | shell completion script (`bash`/`fish`/`powershell` also) |
 | `andara-cli auth login` / `logout` / `refresh` / `whoami` | the stored credential (`AW-SRV-008`) |
