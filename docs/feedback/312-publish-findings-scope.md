@@ -1,38 +1,57 @@
 # #312: what the publish gate reports
 
-Ruling: `docs/specs/content-language/v1/errors.md` §1 rule 10 (architecture, 2026-10-03). The cause of
-the cascade was ordering: the gate treated the *incumbent's* Zone as the duplicate, dropped it, and
-every Exit into it then failed. With the publisher's Zone losing, there is no cascade to filter. The
-`admin.proto` comments are updated and `gen/` regenerated (comments only; no wire change).
+Ruling: `docs/specs/content-language/v1/errors.md` §1 rule 10 (architecture, 2026-10-03; revised after
+the pre-PR review). The cascade's cause is ordering. `inputsOf` (`server/content/loader.go`) sorts
+every pack by name, and `sim.BuildWorld` keeps the first Zone it sees. The issue's publisher
+`sre.verify` sorts before the fixture's `town`, so the **fixture's** Zone was the one dropped and its
+Exits failed. Ordering alone doesn't fix everything, so the rule also has a filter (10.4) and an
+attribution (10.2). The `admin.proto` comments are updated and `gen/` regenerated (comments only).
 
 ## For implementation
 
-SPRINT-04 item 8. Server side (`server/sim/build.go` input order, the gate's filtering and message,
-the counter) and the CLI's printing. The tests, each Given/When/Then:
+SPRINT-04 item 8.
+- **Where:** `CheckPublish` → `Loader.build` (`server/content/check.go`, `loader.go`). `inputsOf` serves
+  boot, load, activation and `content validate` too, and they keep sorted-by-name order. The
+  incumbents-first order is the gate's alone.
+- **Tag each input with its pack** when the gate builds them; `sim.Input.File` stays the path.
+- **The filter (10.4)** needs the set of Zone ids dropped as cross-pack duplicates.
+- **`andara-cli`:** `content publish` prints a finding from another pack as rule 10.6 says
+  (`placeAll` falls back to the blob path, and `writeDiagnostics` prefixes the publisher's pack
+  label today, which is the mislabel in the issue).
 
-1. **Given** active pack `A` with Zone `town` (Rooms `plaza`, …) **when** pack `B` publishes a Zone
-   `town` **then** the refusal carries exactly one finding: `duplicate_zone`, in `B`'s blob, with
-   message `ZoneID town declared in pack B and in active pack A@N`. `content publish` prints it on
-   `B`'s source (`z.aw:1:1` form) and exits `1`. `validation_failures_total{duplicate_zone}` is `1`,
-   every other code is `0`, and the audit `findings_count` is `1`.
-2. **Given** (1), with another Zone of `A`'s that has an Exit into `town.plaza` **then** it is still
-   one finding.
-3. **Given** (1), with another Zone of `B`'s that has an Exit into `town.plaza` **then** it is still
-   one finding, and **given** `B` renames its `town` **then** that Exit's own finding, if any,
-   appears.
-4. **Given** `B`'s two files declaring the same Zone and a Room twice **then** `duplicate_zone` and
-   `duplicate_room` are both reported, as today (rule 10.3).
-5. **Given** `A` has a `missing_reverse_exit` warning (the dev fixture's `purgatory`) **when** `B`
-   publishes a valid pack **then** `warnings` is empty and `content publish` prints no line from `A`.
-6. **Given** `B` has its own `orphan_room` **then** that warning is still printed, on `B`'s source.
-7. **Given** a new version of `B` that removes a Zone another pack `C` exits into **then** the
-   publish is refused, the finding's message begins `in pack C:`, its `line` and `col` are `0`, and it
-   isn't printed as `B`'s file.
-8. Mutation check: with the incumbent-first ordering reverted, test 2 fails; with the file filter
-   removed, test 5 fails.
+Fixtures. The incumbent is pack `town` with Zone `town` (Rooms `plaza`, `shop`), and Zones `docks` and
+`wilds` with Exits into `town.plaza`. The publisher is pack `acme`, which **sorts before `town`**, as
+`sre.verify` does. Without that, the fixture passes before the fix.
+
+1. **Given** `acme` declares a Zone `town` with one Room `market` **when** it publishes **then** the
+   refusal carries exactly one finding: `duplicate_zone`, attributed to `acme`'s blob, with message
+   `ZoneID town declared in pack acme and in active pack town@N`. `content publish` prints it on `acme`'s
+   source (the `z.aw:1:1` form) and exits `1`. `validation_failures_total{duplicate_zone}` is `1`, every
+   other code `0`, and the audit `findings_count` `1`.
+2. **Given** (1) with `acme`'s `town` also declaring a Room `plaza` **when** it publishes **then** still
+   exactly one finding, with no `duplicate_room`.
+3. **Given** (1) with another `acme` Zone `glade` whose Exit targets `town.market` **when** it publishes
+   **then** still one finding. **When** `acme` then renames its `town` **and** publishes **then** the
+   Exit's own `unknown_room` is reported, because `town.market` doesn't exist in the World.
+4. **Given** one pack with two files declaring Zone `x` and a Room twice **when** it publishes **then**
+   `duplicate_zone` and `duplicate_room` are both reported, as today (rule 10.4).
+5. **Given** `town` and `acme` both have a blob `town.json`, `town`'s holding a `missing_reverse_exit`
+   warning, and `acme`'s Zone is valid **when** `acme` publishes **then** `warnings` is empty and
+   `content publish` prints no line from `town`. A path filter would get this wrong.
+6. **Given** `acme` has its own `orphan_room` **when** it publishes **then** that warning is printed on
+   `acme`'s source.
+7. **Given** pack `acme@1` declares Zone `glade` and active pack `town` has an Exit into `glade.x` **when**
+   `acme@2` publishes without `glade` **then** the publish is refused and `town`'s finding is reported
+   with message `in pack town: …`, `line` and `col` `0`, printed `<file>: unknown_zone in pack town: …`,
+   with no `acme/` prefix.
+8. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
+   the dropped-Zone filter makes 2 and 3 fail; filtering by path alone makes 5 fail; leaving the
+   `<pack>/` prefix on foreign findings makes 7 fail.
 
 On merge, `docs/builders/04-your-first-zone.md` loses its "ignore it" paragraph about the
-`purgatory.json` warning. That edit is architecture's (a docs/builders path), so say so on the PR.
+`purgatory.json` warning. That edit is architecture's (a `docs/builders` path), so say so on the PR.
+Boot, load and activation are out of scope. Activation of a version that clashed with a rival that
+wasn't yet active when it passed the gate can show the old cascade. File it as its own issue if seen.
 
 ## For SRE
 

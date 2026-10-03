@@ -1389,8 +1389,9 @@ export declare const Admin: GenService<{
    * Validate the blobs as one pack and write its version manifest. Findings
    * that refuse the publish are INVALID_ARGUMENT, carried in the status
    * details as PublishFindings. Warnings return in the response. Both are
-   * limited to the publisher's own blobs, and a cross-pack clash is reported
-   * once, at the publisher's declaration (errors.md §1 rule 10).
+   * the publisher's own, apart from an error the publish causes in another
+   * pack's blobs. A cross-pack Zone clash is reported once, at the
+   * publisher's declaration (errors.md §1 rule 10).
    *
    * @generated from rpc andara.admin.v1.Admin.PublishVersion
    */

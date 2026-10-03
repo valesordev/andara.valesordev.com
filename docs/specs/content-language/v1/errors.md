@@ -57,7 +57,7 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
 3. **End of input is the position one past the final character.** A file that ends mid-declaration
    reports at end-of-file rather than at the opening brace; `scripts/content_grammar_check.py`
    computes it the same way and the syntax sidecars say so.
-4. **Every finding is printed, not just the first.** A Builder fixing ten broken exits should need
+4. **Every finding is printed, not just the first** (rule 10.4 is the one place the publish gate holds back). A Builder fixing ten broken exits should need
    one compile, not ten — the rule `AW-SRV-001` already set for boot. Parsing is the exception: a
    syntax error stops the parse of that file, so a file produces at most one `syntax_error`. Other
    files in the pack are still parsed and still report. Encoding is the other exception, and a
@@ -87,31 +87,46 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
    **first** `pack` declaration in sorted file order, with both files in the message.
 9. **A cycle is one finding**, positioned at its lowest-named member, whichever file that is in.
 10. **The publish gate reports what the publisher can fix** (`AW-SRV-013`, ruled 2026-10-03, #312).
-    The gate builds one World from every active pack's blobs and the publisher's, and refuses on any
-    error in it. What it **reports** is narrower:
-    1. **Incumbents first.** The active packs' blobs are inputs before the publisher's, so in a
-       cross-pack clash rule 8's "the one that lost" is the publisher's declaration. The active
-       pack's Zone is kept whole, and a publish never breaks a pack that is already active.
-    2. **Only the publisher's own blobs.** A finding, a warning included, whose `file` isn't in the
-       version being published is not reported. Another pack's warning is shown when that pack
-       publishes, and not at every publish after it.
-    3. **Root only, across packs.** A cross-pack `duplicate_zone` drops the whole losing Zone and
-       reports once. Its Rooms aren't reported as `duplicate_room`, and an Exit that targets the
-       dropped Zone's id isn't reported as `unknown_zone` or `unknown_room`. They show after the
-       clash is fixed. Two files of one pack declaring the same Zone keep rule 4: `duplicate_room`
-       is reported too, because the Builder fixes both in the same files.
-    4. **The message names both packs.** A cross-pack `duplicate_zone` reads
+    `CheckPublish` builds one World from every active pack's blobs and the publisher's, and refuses on
+    any error in it. This rule is about **Zones**, the one name that is shared across packs.
+    Templates are named under their pack (`ErrPackMismatch`), so they can't clash across packs. What
+    the gate **reports** is narrower than what it refuses:
+    1. **Incumbents first, at the gate only.** The gate's inputs are the active packs' Zones in
+       sorted pack order, then the publisher's. `inputsOf` sorts every pack by name today, so a
+       publisher whose name sorts first (`sre.verify` before `town`) keeps its Zone and the
+       incumbent's is the one dropped. That is the cascade in #312. With the publisher last, rule 8's
+       "the one that lost" is always the publisher's, and the incumbent stays whole. Boot, load,
+       activation and `content validate` keep sorted-by-name order. A publish never breaks a pack
+       that is already active.
+    2. **Attribution is by (pack, path).** Two packs can both have a `town.json`, and
+       `sim.Input.File` is the path alone. The gate tags every input with its pack when it builds
+       them, and attributes each finding and warning through that tag. A path filter is wrong.
+    3. **Only the publisher's own.** A warning, or an error, attributed to another pack is not
+       reported, except as rule 10.6 says. Another pack's warning is shown when that pack publishes,
+       not at every publish after it.
+    4. **Root only, across packs.** A cross-pack `duplicate_zone` drops the publisher's whole Zone and
+       is reported once. Findings that only exist because the Zone was dropped are not reported:
+       its Rooms are not `duplicate_room`, and an Exit, in any of the publisher's Zones, that targets
+       the dropped Zone's id is not `unknown_zone` or `unknown_room`. Ordering doesn't do this. It's a
+       filter over the dropped Zone's id. Those findings show after the clash is fixed, at the cost of
+       one more publish round (rule 4's "every finding is printed" yields to this). Two files of one
+       pack declaring the same Zone keep rule 4: `duplicate_room` is reported too.
+    5. **The message names both packs.** A cross-pack `duplicate_zone` reads
        `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
        the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
-    5. **An error the publish causes in another pack's blobs** (a new version that removes a Zone
-       another pack exits into) still refuses the publish. Its `file` is kept, its message begins
-       `in pack <other>:`, and its `line` and `col` are `0`, the pack-level case. It is never printed
-       as the publisher's file. No instance is known. If one is seen, it goes to architecture.
+    6. **An error the publish causes in another pack's blobs** (a new version that removes a Zone
+       another pack exits into) still refuses the publish. It is reported with its `file` as the blob
+       path, its message beginning `in pack <other>:`, and `line` and `col` `0`, the pack-level case.
+       `andara-cli` prints it as `<file>: <code> <message>`, with no `<pack>/` prefix and no
+       position, and never as the publisher's file. No instance is known. If one is seen, it goes to
+       architecture.
 
     The counts follow the report: `validation_failures_total{code}` and the audit record's
     `findings_count` count reported findings, and the refusal's `warn` line carries the first
-    reported finding's code. Rule 1's "a finding with `line: 0` is a defect" has this one exception,
-    and the corpus is unaffected, since it compiles one pack at a time.
+    reported finding's `code`. Rule 1's "a finding with `line: 0` is a defect" has rule 10.6 as its
+    one exception, and the corpus is unaffected, since it compiles one pack at a time. Rule 10 doesn't
+    reach activation: a version published beside a rival that was not yet active when it passed the
+    gate can still show the old cascade when the second is activated.
 
 ### Where the position lands
 
