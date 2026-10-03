@@ -117,18 +117,64 @@ next round any server writes carries it.
 
 ## Observability requirements
 
-- **Metrics:** `andara_restore_total{caller, outcome}` (counter). `caller` is one of `projector` or
-  `recovery`. `outcome` is one of `ok`, `hash_mismatch` or `seed_mismatch`. That's a cardinality of
-  2 × 3 = 6, pre-seeded at 0. Zone ID is never a label. *(PM's proposal, for SRE's review.)*
+*SRE review, 2026-10-02: amended. The changes are recorded in
+`docs/feedback/AW-SRV-043-restore-verifies-round.md`.*
+
+`sim` stays dependency-free (CLAUDE.md §10), so it emits nothing. Each caller of `RestoreEngine`
+records the outcome it gets back.
+
+- **Metrics:** `andara_restore_total{caller, outcome}` (counter).
+  - `caller` is one of `projector`, `recovery`, or `verify`. `verify` is `AW-SRV-007`'s
+    `Admin.VerifySnapshotRound`, which restores a scratch Engine in the server process.
+  - `outcome` is one of `ok`, `hash_mismatch`, or `seed_mismatch`.
+  - A process pre-seeds at 0 only the callers it hosts: 3 series in `andara-projector`, 6 in
+    `andara-server`, and 9 in total. Zone ID and tick are never labels.
+  - This story wires and pre-seeds the projector's 3. The server's 6 are wired by `AW-SRV-007`,
+    which owns both server callers. `andara-server recover --verify`, the one-shot, also counts as
+    `verify`. This story's §8 check observes only the projector's series.
+  - The projector exits `5` on a mismatch, so its `hash_mismatch` series restarts at 0 before any
+    scrape reaches it. That's acceptable, because no alert reads it. Exit `5` is the projector's
+    signal on a real backend. The live observation is `outcome="ok"` after each bootstrap. The
+    mismatch series is verified on the metric object in the integration test (CLAUDE.md §8). That
+    means the projector's in-process registry, read with `testutil` after `Run` returns, not a
+    scrape of the stack after the process exits. The Test plan's Integration line still reads as a
+    scrape, and the feedback file asks architecture to reword it.
 - **Logs:**
-  - `error` `state projector restore mismatch`, with `round_tick`, `recorded`, `restored`, `reason`
-    (`hash` or `seed`) and `trace_id`;
-  - `info` `restore verified`, with `round_tick` and `zones`, on success.
-  - `AW-SRV-007`'s recovery gets the same pair under its own prefix when it wires the call.
-- **Traces:** the existing restore span (bootstrap / `recovery.restore`) gains a child,
-  `restore.verify`, with attributes `round_tick`, `zones` and `outcome`.
-- **Alerts:** none new. A projector exit already pages through its existing availability signal, and
-  recovery's through `AW-SRV-007`'s. If SRE wants the outcome on the dashboard, it says so at review.
+  - `error` `state projector restore mismatch`, with `round_tick`, `reason` (`hash` or `seed`),
+    and `trace_id`.
+    - For `hash`: `recorded_hash` and `restored_hash`, in hex. That follows the
+      `<role>_hash` convention of the existing `state projector diverged` line, whose pair is
+      `recorded_hash` and `replayed_hash`.
+    - For `seed`: `recorded_seed` and `configured_seed`.
+  - `info` `state projector restore verified`, with `round_tick`, `zones`, `restored_hash`, and
+    `trace_id`, once per bootstrap.
+  - Recovery's pair is `AW-SRV-007`'s, `recovery restore mismatch` and `recovery restore verified`,
+    with the same fields and that story's required fields.
+- **Traces:**
+  - The projector has no bootstrap span today. Its bootstrap only opens `state.replay` and
+    `state.verify`. This story adds `state.bootstrap`, a root around round selection, restore,
+    and the dump, with `round_tick`, `rebuild`, and `outcome` as attributes.
+  - Under it sits `restore.verify`, which wraps the `RestoreEngine` call: build, then compare. It
+    carries `round_tick`, `zones`, and `outcome`, with span status `Error` on a mismatch. In
+    recovery it's a child of `recovery.run`, after `recovery.load_snapshot`. In `verify` it's a
+    child of the `Admin.VerifySnapshotRound` server span.
+  - Every one of these roots is always sampled, since only `Game/Submit` is ratio-sampled
+    (`server/telemetry/sampling.go`).
+- **Alerts:** none new. Each failure reaches an existing symptom alert:
+  - The projector's exit `5` restarts it in a loop. That's `StateProjectorDown` (ticket, 10 min).
+    `docs/runbooks/state-projector-down.md`'s "Respond, by the last exit code" table gains a `5`
+    row: capture the round tick and both hashes, and don't `--rebuild`, because a rebuild hits
+    the same check (AC-4). SRE writes the row at this story's §8 instrumentation check.
+  - Recovery's exit `6`, under `AW-SRV-007`, leaves no ready server. That's
+    `AndaraServerUnavailable` (page). SRE proposes that it also sets
+    `andara_recovery_state_hash_match` to `0`, and lingers under `recovery.mismatch_linger`
+    as exit `2` does, so that `RecoveryStateMismatch` names the cause
+    wherever that alert can see it. See `AW-SRV-007`'s SRE amendment. The row in
+    `server-unavailable.md`'s symptom table ships with `AW-SRV-007`'s
+    `recovery-state-mismatch.md`.
+  - `andara_recovery_failures_total{reason}` (`AW-SRV-007`) gains `restore`, for exit `6`. That's
+    architecture's amendment, together with the exit code (Open questions, item 1).
+- **Dashboard:** no panel. One outcome per bootstrap isn't a time series anyone watches.
 
 ## Test plan
 

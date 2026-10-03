@@ -119,12 +119,36 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
 
 ## Observability requirements
 
+*SRE review, 2026-10-02: amended. The changes are recorded in
+`docs/feedback/AW-INF-032-stack-recover.md`.*
+
 - **Metrics:** none added. AC-4 reads `AW-SRV-007`'s series from the running server.
-- **Logs:** the script's progress lines, and on failure the server's last 50 lines through
-  `make logs SVC=andara-server`.
-- **Traces:** none added. The run produces one `recovery.run` trace (`AW-SRV-007`). The script
-  prints its `trace_id` from the server's ready line, so the §8 check can resolve it in Tempo.
-- **Alerts:** none.
+  - **Two RTO numbers, both printed.** `docs/specs/slo/recovery.md` measures RTO from `SIGKILL`
+    to ready. `andara_recovery_duration_seconds` measures from process start to ready. The script
+    prints its wall-clock kill-to-ready, which is the AC-3 assertion, next to
+    `andara_recovery_duration_seconds_sum{phase="total"}`. The difference is the restart term,
+    and the SLO says that term dominates. Printing both shows where a regression lives.
+  - **`andara_acknowledged_commands_lost_total` is 0 in any fresh process.** The acks lived in the
+    killed process's memory. `AW-SRV-007` lists the counter but doesn't say what a fresh process
+    increments it from (`docs/feedback/AW-SRV-007-recovery-scale.md`, item 6). Until it does,
+    AC-4's counter line shows that the series exists, and nothing more. The RPO evidence is AC-5:
+    A's `look` shows Room 2, which only the log tail held.
+- **Logs:**
+  - The script's `stack-recover:` progress lines.
+  - On failure, the server's last 50 lines, through `make logs SVC=andara-server`.
+  - When `$GITHUB_STEP_SUMMARY` is set, the script appends one table row: kill-to-ready seconds,
+    phase `total`, `andara_recovery_replayed_ticks`, and the round tick. The SLO's exhaustion
+    policy wants recovery-time regressions visible per run, and this puts one on every `stack`
+    workflow run. With the variable unset, the script appends nothing.
+- **Traces:** none added. The run produces one `recovery.run` trace (`AW-SRV-007`). That root is
+  always sampled (`server/telemetry/sampling.go` ratio-samples only `Game/Submit`). The script
+  prints the `trace_id` from the server's ready line, so the §8 check can resolve the trace in
+  local Tempo. Spans the killed process had buffered are lost with it, and nothing asserts on them.
+- **Alerts:** none added, and the target asserts on no alert state.
+  - The local Prometheus evaluates the chart's rules (`deploy/compose/docker-compose.yaml`).
+    `AndaraServerUnavailable` (`for: 2m`) can go pending during the kill, and that's expected.
+  - The script reads `andara_recovery_state_hash_match` from the server's `/metrics` directly.
+    Whether `RecoveryStateMismatch` can see a `0` is `AW-SRV-007`'s (see its feedback file).
 
 ## Test plan
 

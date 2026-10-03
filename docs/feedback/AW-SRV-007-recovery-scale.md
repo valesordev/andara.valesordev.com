@@ -32,3 +32,54 @@ contract review. Two more, from the SPRINT-03 close-out:
    reaches `ready`, the block can point to it. `AW-INF-032` is also the first in-cluster caller of
    this story's `andara_recovery_*` series and `recovery.run` trace. Decide whether this story
    inherits that live observation as a Definition-of-done line, as CLAUDE.md §8 allows.
+
+## For architecture: SRE observability review, 2026-10-02
+
+5. **`RecoveryStateMismatch` can't fire as the story is written.**
+   - `andara_recovery_state_hash_match` is set to `0` by a process that exits `2` at once. The
+     restart sets nothing until its own recovery ends, so no scrape ever reads the `0`.
+   - **In compose,** a linger like the projector's `haltLinger` fixes it. The server starts
+     serving `/metrics` for 60 s before it exits, and compose scrapes a static target every 5 s.
+     The gauge is never pre-seeded, so a normal boot never fires the alert.
+   - **On the cluster, it doesn't.** The annotation scrape keeps only Ready pods, and a refused
+     recovery is never Ready. There, `AndaraServerUnavailable` pages on the symptom.
+     `RecoveryStateMismatch` needs a signal that doesn't depend on readiness, and that work is
+     routed to PM (`docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`). PM decided
+     on 2026-10-02: `AW-INF-009` carries it in SPRINT-05, and you amend that story's contract and
+     add the inherited Definition-of-done line. That file's "For architecture" section has both.
+   - The story's §7 now carries an "SRE amendment, 2026-10-02" block. It requires:
+     - the linger, behind a new key, `recovery.mismatch_linger`, which defaults to `0s` and which
+       compose sets to `60s`. It applies on boot recovery only: exit `2`, and the
+       restore-mismatch exit if accepted. It doesn't apply to the one-shot `recover --verify`;
+     - `for: 0m` and `keep_firing_for: 15m` on the rule;
+     - an §8 observation, compose-only, of the alert firing on a corrupt round and never in
+       `ALERTS`, at neither `alertstate`, through a normal recovery.
+   - **Confirm the new config key and the exit timing as contract changes, or rule otherwise.**
+     With the linger on, a refused boot recovery takes 60 s to exit.
+   - **AC-5 conflicts with the linger.** AC-5 says a server that exits `2` "never accepts a
+     connection", but the linger serves `/metrics` and `/livez`. SRE proposes rewording AC-5 to
+     "never binds `grpc.listen`", which is AC-10's wording and checkable by binding the port in a
+     test. Operator HTTP would be allowed while `recovery.mismatch_linger` is above `0s` (raised
+     again by Codex on #352).
+
+   The amendment also lists what `AW-SRV-043` adds here if it joins `depends_on`:
+   - a `restore` reason on `andara_recovery_failures_total`;
+   - the span `restore.verify` under `recovery.run`;
+   - `andara_restore_total{caller="recovery"|"verify"}`, wired and pre-seeded here.
+
+   SRE proposes that `AW-SRV-043`'s restore-mismatch exit also sets the hash-match gauge to `0`
+   and lingers under `recovery.mismatch_linger`. The operator's response is the same as for exit
+   `2`: choose an older round.
+
+   On item 4: `AW-INF-032`'s run is the right live observation for this story's series and trace,
+   and SRE will record it in both §8 records.
+
+6. **What increments `andara_acknowledged_commands_lost_total` after a restart?**
+   - `recovery.md` says recovery increments it when an acknowledged Command is missing from the
+     log. The acks, though, lived in the killed process's memory. The contract lists the counter
+     (Metrics) and AC-8 says it stays `0`, but it never says what a fresh process compares the log
+     against.
+   - If nothing, the counter is `0` by construction after every restart, and both AC-8 and
+     `AW-INF-032`'s AC-4 pass vacuously.
+   - Name the source, for instance acked offsets recorded somewhere that outlives the process. Or
+     say that the SLI is measured elsewhere, such as a client-side comparison in the test harness.

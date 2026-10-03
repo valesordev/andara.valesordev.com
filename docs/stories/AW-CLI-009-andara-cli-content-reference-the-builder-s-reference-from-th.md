@@ -153,10 +153,18 @@ None. It's read-only and uses no storage.
 
 ## Observability requirements
 
-None. It's a local, offline command. It dials nothing, serves nothing and runs for milliseconds, so
-there's no request path to measure and no trace to correlate. It doesn't open `AW-CLI-001`'s
-`cli.command` root span, because there's no collector it could reach that would matter. A usage
-error goes to stderr in `AW-CLI-001`'s error envelope, like every other command's.
+*SRE review, 2026-10-02: amended. The change is recorded in
+`docs/feedback/AW-CLI-009-content-reference.md`.*
+
+- **Metrics / Alerts:** none. It's a local, offline command. It dials nothing and serves nothing.
+- **Traces:** `AW-CLI-001`'s `cli.command` root, opened for every command in the root pre-run
+  (`admin/cli/root.go`, `admin/cli/telemetry.go`), with `command`, `outcome`, and `exit_code`.
+  This command inherits it, as `content validate` does, and adds no child span. It doesn't opt out:
+  an exemption in the pre-run would be new code that makes one command differ from the rest of
+  the tree, and a span that exports nowhere by default costs nothing.
+- **Logs:** `AW-CLI-001`'s `debug` `command completed in <d>` line, as every command emits. It carries
+  `trace_id` under `--output json`. A usage error goes to stderr in `AW-CLI-001`'s error envelope, like every other
+  command's.
 
 ## Test plan
 

@@ -236,6 +236,99 @@ rather than a quietly wrong World.
   `andara-cli snapshot list` → `andara-server recover --verify --round` → deploy pinned to that round
   via `AW-INF-007`.
 
+### SRE amendment, 2026-10-02 (after `ready`; implementation hasn't started)
+
+Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
+
+- **`RecoveryStateMismatch` can't fire as written.** `andara_recovery_state_hash_match` is set to
+  `0` by a process that exits `2` at once. The restart sets nothing until its own recovery ends,
+  so no scrape ever reads the `0`, and the one alert that pages is dead configuration.
+  - **Compose: a linger fixes it.** Today the server serves nothing until recovery has finished
+    (`cmd/andara-server/main.go`: the tick loop starts before `ListenAndServe`). So on a boot
+    recovery's exit `2`, the server **starts** serving for 60 s before it exits:
+    - `/metrics` and `/livez` answer `200`;
+    - `/readyz` and `/startedz` answer `503`;
+    - one `error` line, `holding /metrics for the hash mismatch to be scraped`, with `for`.
+
+    That's the projector's `haltLinger` (`cmd/andara-projector/main.go`). Compose scrapes its static
+    target every 5 s whether or not the server is Ready.
+  - **The gauge is never pre-seeded.** `andara_recovery_state_hash_match` has no sample until
+    recovery sets it. If HTTP comes up earlier for any reason, a pre-seeded `0` would fire
+    `RecoveryStateMismatch` on every normal boot.
+    - The repo registers gauges at construction (`server/telemetry/telemetry.go`), and a
+      registered `Gauge` exposes `0` at once. So this gauge is registered on first set.
+    - SRE proposes one Test-plan line: `testutil.CollectAndCount(reg,
+      "andara_recovery_state_hash_match")` is `0` before recovery sets it and `1` after. The Test
+      plan is architecture's to amend.
+  - **The linger is a config key, off by default.** `recovery.mismatch_linger`
+    (`ANDARA_RECOVERY_MISMATCH_LINGER`) defaults to `0s`, and compose sets `60s`. It applies on
+    exit `2`, and on `AW-SRV-043`'s restore-mismatch exit if architecture accepts the proposal
+    below.
+    - On the cluster the linger buys nothing (next bullet). There it would add 60 s to every
+      crash-loop cycle and delay `AndaraServerCrashLooping`, which pages, so the chart leaves it
+      at `0s`.
+    - The key is a contract addition, for architecture to confirm or rule otherwise.
+  - **AC-5 needs scoping.** AC-5 says the server "never accepts a connection" on exit `2`, and
+    the linger serves operator HTTP. SRE proposes that architecture reword AC-5 to "never binds
+    `grpc.listen`", AC-10's wording, and allow operator HTTP (`/metrics`, `/livez`, `/readyz`,
+    `/startedz`) while `recovery.mismatch_linger` is above `0s`. Until it does, the two conflict
+    under compose.
+  - **The linger is for boot recovery only.** `andara-server recover --verify` (AC-10) also exits
+    `2` on a mismatch. It's a one-shot that nothing scrapes, so it exits at once.
+  - **The cluster: the linger doesn't reach it.** The annotation scrape keeps only Ready pods
+    (`deploy/helm/andara/files/alerts.yaml`, `AndaraServerUnavailable`'s comment). A refused
+    recovery was never Ready. So on `dev` and `prod` the gauge's `0` is never scraped, linger or
+    not.
+    - What pages there today is `AndaraServerUnavailable` (`for: 2m`): the refusal leaves no
+      Ready server, and that's the player's symptom. `server-unavailable.md` sends exit `2` to
+      `recovery-state-mismatch.md`.
+    - `RecoveryStateMismatch` on the cluster needs a signal that outlives the process and doesn't
+      depend on readiness. Two candidates: kube-state-metrics' last-terminated exit code for the
+      `server` container, or a Loki rule on the `error` line.
+    - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`.
+      PM's decision (2026-10-02): `AW-INF-009` carries it in SPRINT-05, and architecture amends
+      that story's contract. It doesn't hold this one.
+  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. Compose has no restart
+    policy, so after the 60 s linger the target goes stale and the gauge's last `0` stops being
+    scraped. `keep_firing_for` keeps the alert visible after the process has gone.
+  - **§8.** `RecoveryStateMismatch` is observed in the local stack's Prometheus:
+    - **firing**, against a compose server recovering from a deliberately corrupted round;
+    - **never in `ALERTS`**, at neither `alertstate`, through a normal compose recovery
+      (`make stack-recover`).
+
+    The §8 record verifies the alert against compose. It names "fires on the cluster" as **not
+    yet observed**, and `AW-INF-009` inherits that as a Definition-of-done line. That's PM's
+    decision of 2026-10-02, under CLAUDE.md §8's deferral rule.
+    - SRE's note: this rule's expression can't fire on the cluster, so `AW-INF-009` observes a new
+      expression. Architecture confirms the framing (see the `AW-INF-009` feedback file).
+    - **Ordering.** This story's §8 follows `AW-INF-032`, which depends on this story and supplies
+      `make stack-recover`.
+    - **The corrupt-round run has no target yet.** It's a §9 gap, and SRE adds a target for it
+      (for example `make stack-recover CORRUPT=1`) in its §8 ops commit. Until then, no §8 record
+      cites it.
+  - **SRE's files.** The compose `60s`, the chart default and values schema, and the rule's
+    `for`/`keep_firing_for` are in `deploy/`. SRE ships them in its ops commit at §8, as it did for
+    `AW-SRV-019`. Implementation doesn't edit `deploy/`.
+- **If `AW-SRV-043` joins `depends_on`:**
+  - `andara_recovery_failures_total{reason}` gains `restore`, which covers its hash and seed
+    mismatches.
+  - SRE proposes that the restore-mismatch exit also sets `andara_recovery_state_hash_match` to
+    `0` and lingers like exit `2`. A round that doesn't reproduce its own hash is a World that
+    can't recover to the right state, and the operator's response is the same:
+    `recovery-state-mismatch.md`, choose an older round. Without that, nothing alerts on it but
+    `AndaraServerUnavailable`. It's architecture's to accept.
+  - `recovery.run` gains the child `restore.verify`, after `recovery.load_snapshot`.
+  - `andara_restore_total{caller="recovery"}` and `{caller="verify"}` are `AW-SRV-043`'s
+    instruments, but this story wires and pre-seeds them, since it owns both callers.
+    `Admin.VerifySnapshotRound` and the one-shot `andara-server recover --verify` both count as
+    `verify`.
+- **The local live observation is `AW-INF-032`'s.** `make stack-recover` reads
+  `andara_recovery_state_hash_match`, `andara_recovery_duration_seconds{phase}`,
+  `andara_recovery_round_tick`, and `andara_acknowledged_commands_lost_total` from the running
+  server after a real `SIGKILL`. It also resolves `recovery.run` in Tempo. This story's §8 record
+  may cite that run rather than repeating it (CLAUDE.md §8). Item 4 of the feedback file leaves the
+  inheritance decision to architecture.
+
 ## Test plan
 
 - **Unit:** `ListRounds` grouping and completeness against fixtures with a missing Zone and a
