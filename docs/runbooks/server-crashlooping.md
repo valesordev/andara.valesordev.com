@@ -23,7 +23,8 @@ The last log line before exit names the reason; the exit code is in
 ## How to mitigate
 
 **Stop the loop before diagnosing.** A restarting server re-runs recovery each time, and each
-recovery is a full read of the snapshot round and the log tail — the loop itself is load.
+recovery replays the whole log today (a snapshot round and the log tail once `AW-SRV-007` ships), so
+the loop itself is load.
 
 ```
 kubectl -n andara-<env> scale statefulset andara --replicas=0
@@ -44,7 +45,7 @@ its own. It exits `1`, with a `tick loop` `error` line.
 
 | Exit | Meaning | Action |
 |-----:|---------|--------|
-| `1` | the boot failed. The last `error` line names which step: content load, `accounts`, `tick loop`, or another | **By the line's `detail`.** (a) **A dial, ping or timeout against the brokers**, on any step: it's the broker, not the values file. A broker outage fails each boot at its first broker call, which is usually content load or `accounts`. `world-read-only.md` covers the broker; `andara_tick_boundary_lost_total` rising first means it began as a lost boundary (the `5` row). (b) **`tick loop` with `recovery: state hash mismatch at tick …`**: today's refused recovery, which replays the whole log. Compare `sim.seed` with the last good deploy's; a changed seed is a values fix. Otherwise keep the World down and escalate to implementation with both hashes. Never delete topics or the snapshot volume. (c) **`tick loop` with `the command log predates AW-SRV-012`**: the log can't be recovered, and only a fresh log fixes it (`make world-reset ENV=<env>` on `dev`). That discards the World, so confirm with Brian first. (d) **Anything else** is configuration: `make k8s-dry ENV=<env>` would have caught a schema error, so it's usually a missing Secret or a bad `content.*` path |
+| `1` | the boot failed. The last `error` line names the step: `content core not published`, a content finding `content store unavailable during …`, `accounts`, `tick loop`, or another | **By the line and its `detail`, in this order.** (a) **A dial, ping or timeout against the brokers, on any step**: it's the broker, not the values file. A broker outage fails each boot at its first broker call, usually content or `accounts`, not the tick loop. `world-read-only.md` covers the broker. If it began as a lost boundary, the first crash's log has `tick boundary lost; exiting into recovery` (the `5` row; the log backend, since `--previous` keeps only the last). A `tick loop` detail saying the log `could not be read to tell whether` it predates AW-SRV-012 is this case too. (b) **`tick loop` with `the command log predates AW-SRV-012`**: the log can't be recovered, and only a fresh log fixes it, `make world-reset ENV=<env> CONFIRM=andara-<env>`. That discards the World **and every Account**, so confirm with Brian first. This wins over (c) when both phrases appear. (c) **`tick loop` with `recovery: state hash mismatch at tick …`**: today's refused recovery, which replays the whole log. Compare `sim.seed` with the last good deploy's; a changed seed is a values fix. Then check for a deploy before the loop (diagnose step 4): a new build that replays the old log differently is the likeliest cause on `dev`, and reverting it is the fix. Otherwise keep the World down (on `dev`, leave the loop running, as above) and escalate to implementation with both hashes. Never delete topics or the snapshot volume. (d) **`tick loop` with `tick boundary gap` or `offset gap`**: the log itself is inconsistent (`server/README.md`). Escalate to implementation; today's only fix is an empty log, as in (b). (e) **`no content in effect: the World has no Zones…`**: `server-unavailable.md`'s row of that name: escalate, don't reset. (f) **A line naming a config key, a Secret, or a path** is configuration: `make k8s-dry ENV=<env>` would have caught a schema error, so it's usually a missing Secret or a bad `content.*` path |
 | `2` | a Go panic or runtime fatal error. No recovery path exits `2` | read the stack trace: `kubectl -n andara-<env> logs andara-0 -c server --previous`. Escalate to implementation with it |
 | `5` | a Tick Boundary Record was lost (`AW-SRV-026`), and the running server exited into exact recovery. The log line is `tick boundary lost; exiting into recovery`, with `lost_tick` and `last_delivered_tick`. The counter is `andara_tick_boundary_lost_total` | look at the broker, not the server: the boundary's produce failed. Each restart while the broker is down fails at boot with exit `1`. Once the broker is healthy, the next boot recovers and ticks. `world-read-only.md` covers the broker |
 | `137` / OOMKilled | memory below the World's footprint | raise `resources.requests.memory` (or re-run `make measure-tick`). A projector replica has the same footprint as the server (`AW-SRV-019`) |
@@ -82,7 +83,9 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status
    ENV=dev` names the synced revision and image. If a deploy is the cause, revert it on `main`.
    Argo CD syncs the good build, and `make argocd-recover ENV=dev` replaces a pod stuck on the bad
-   one. `make rollback` is `AW-INF-007`'s, and it isn't shipped yet.
+   one. On a Helm-installed environment (kind, `prod`), `make helm-install ENV=<env>
+   TAG=<previous>` reinstalls the previous build. `make rollback` is `AW-INF-007`'s, and it isn't
+   shipped yet.
 
 ## When to escalate
 
