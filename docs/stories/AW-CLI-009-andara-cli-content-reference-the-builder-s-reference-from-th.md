@@ -4,7 +4,7 @@ title: andara-cli content reference — the Builder's reference from the binary
 epic: EPIC-06
 component: cli
 type: feature
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-CLI-002]
 blocks: [AW-INF-028]
