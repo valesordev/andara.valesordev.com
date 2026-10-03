@@ -240,21 +240,31 @@ func TestHeldNoZones_AMissingManifestIsReportedAtLoad(t *testing.T) {
 	}
 }
 
-// A signal before the decision drops it: reconcile, cancelled, fails and
-// leaves it to main, whose exit is 0 (review of item 9).
-func TestHeldNoZones_ASignalDropsIt(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+// A canceled reconcile (a signal, or the loop stopping) leaves it to main,
+// which decides by the code it exits with: 1 reports it once, anything else
+// (0 on a signal, 5 on a lost boundary) drops it (review of item 9).
+func TestHeldNoZones_ACanceledReconcileLeavesItToMain(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	rt, logs := heldServer(t, ctx, newStore(t), worldLog())
-	rctx, stop := context.WithCancel(ctx)
-	stop()
-	_ = rt.ReconcileContent(rctx)
-	rt.SettleHeld(ExitOK)
-	if n := noZonesLines(logs); n != 0 {
-		t.Errorf("%d no_zones_found lines on a signal, want 0\n%s", n, logs.String())
-	}
-	if c := noZonesCount(rt); c != 0 {
-		t.Errorf("count %v on a signal, want 0", c)
+	st := newStore(t)
+	for _, tc := range []struct {
+		exit      int
+		wantLines int
+	}{{ExitOK, 0}, {ExitBoundaryLost, 0}, {ExitFail, 1}} {
+		rt, logs := heldServer(t, ctx, st, worldLog())
+		rctx, stop := context.WithCancel(ctx)
+		stop()
+		_ = rt.ReconcileContent(rctx)
+		if n := noZonesLines(logs); n != 0 {
+			t.Fatalf("exit %d: a canceled reconcile reported it (%d lines)\n%s", tc.exit, n, logs.String())
+		}
+		rt.SettleHeld(tc.exit)
+		if n := noZonesLines(logs); n != tc.wantLines {
+			t.Errorf("exit %d: %d no_zones_found lines, want %d\n%s", tc.exit, n, tc.wantLines, logs.String())
+		}
+		if c := noZonesCount(rt); c != float64(tc.wantLines) {
+			t.Errorf("exit %d: count %v, want %d", tc.exit, c, tc.wantLines)
+		}
 	}
 }
 

@@ -495,7 +495,7 @@ file asks SRE to add it.
 |------|------|---------|
 | Server waits | `TestHeldNoZones_TheWaitDropsIt` | No `code=no_zones_found` line and no recovery warn, and a count of `0`, even after a later `SettleHeld(1)`: the wait settled it |
 | Server exits in reconcile (AC-3) | `TestHeldNoZones_AnExitReportsItOnce` | Exactly one line and a count of `1`, from reconcile itself, before `main` settles, with `content.reconcile`'s trace (that of reconcile's exit line) |
-| Signal during reconcile | `TestHeldNoZones_ASignalDropsIt` | A canceled reconcile leaves it to `main`, and `SettleHeld(0)` drops it: no line and a count of `0` |
+| A canceled reconcile (a signal, or the loop stopping) | `TestHeldNoZones_ACanceledReconcileLeavesItToMain` | Nothing is reported before `main` settles. Then `SettleHeld(1)` gives one line and a count of `1`, and `SettleHeld(0)` and `SettleHeld(5)` give none |
 | `content.validate` | `TestHeldNoZones_ValidateSpanExcludesIt` | `error_count` is `0` on an empty store's load |
 | Exit or signal elsewhere | `TestHeldNoZones_MainSettlesIt` | `SettleHeld(1)` gives one line and a count of `1`. `SettleHeld(0)` gives none. Settling twice does nothing more |
 | Serve from the log, no pointer | `TestHeldNoZones_AServeFromTheLogWarnsOnce` | No finding line, a count of `0`, and exactly one recovery warn, with `error_count` `0` and a `trace_id` |

@@ -135,8 +135,10 @@ func (rt *Runtime) WaitForContent(ctx context.Context) error {
 		}
 	}()
 	rt.enterWait(ctx)
-	// The projector's decision: waiting, so the boot's held finding is
-	// dropped (AW-SRV-042, #299).
+	// The projector's decision: waiting. Nothing reports a held finding
+	// after this (the projector's main has no SettleHeld, and reloads only
+	// log their debug line), so dropping it is hygiene: the Runtime holds no
+	// stale finding through the wait (AW-SRV-042, #299).
 	rt.dropHeld()
 	return rt.waitLoop(ctx, moves, func() (bool, error) {
 		prev := rt.Content
