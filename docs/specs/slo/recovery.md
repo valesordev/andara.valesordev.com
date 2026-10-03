@@ -47,14 +47,15 @@ position. The ack lives in the client, not in the server, so a restarted server 
 compare the log against, and there is no server-side counter.
 (`andara_acknowledged_commands_lost_total` was withdrawn on 2026-10-02 for that reason.)
 
-- **Measured:** by clients that record each acknowledged `SubmitResponse` and, after recovery, read
-  the record at that offset on `andara.commands.v1`. `AW-SRV-007` AC-8 does this in its
-  kill-and-recover test, and `AW-INF-032` AC-5 does it on the running stack (the tail-only move
-  is replayed).
+- **Measured:** by offset in `AW-SRV-007` AC-8. Its kill-and-recover test's clients record each
+  acknowledged `SubmitResponse` and, after recovery, read the record at that offset on
+  `andara.commands.v1`. `AW-INF-032` AC-5 shows it end to end on the running stack: a move that
+  only the log tail held is replayed.
 - **Guaranteed in production** by the three broker settings above, which `AW-INF-005` asserts
   against running processes.
 
-**Any non-zero value is an incident, not a budget burn.** There is no error budget for this SLI.
+**Any acknowledged Command missing from the log is an incident, not a budget burn.** There is no
+error budget for this SLI.
 
 ---
 

@@ -32,21 +32,31 @@ kubectl -n andara-<env> scale statefulset andara --replicas=0
 Scaling to zero retains the snapshot claim (`whenScaled: Retain`). The World is now cleanly down
 instead of flapping; `AndaraServerUnavailable` will fire, which is correct.
 
-Then, by exit code. `AW-SRV-007` numbers recovery's, and `5` is `AW-SRV-026`'s. Exits `6`, `7` and `8`
-ship with `AW-SRV-007` and `AW-SRV-043`. Until then, a refused recovery has no distinct code.
+Then, by exit code. Until `AW-SRV-007` and `AW-SRV-043` ship, a refused recovery has no code of
+its own. It exits `1`, with a `tick loop` `error` line.
+
+**Exits the server has today:**
 
 | Exit | Meaning | Action |
 |-----:|---------|--------|
-| `1` | configuration or store error before recovery | fix the values file; `make k8s-dry ENV=<env>` would have caught a schema error, so this is usually a Secret missing or a bad `content.*` path |
+| `1` | the boot failed: configuration, the store, or the broker. The last `error` line names which | **If the line is `tick loop` with a broker error, it's the broker, not the values file**: a run of exit `1` after one exit `5` is a broker outage (the `5` row). Otherwise fix the values file. `make k8s-dry ENV=<env>` would have caught a schema error, so this is usually a missing Secret or a bad `content.*` path |
 | `2` | a Go panic or runtime fatal error. No recovery path exits `2` | read the stack trace: `kubectl -n andara-<env> logs andara-0 -c server --previous`. Escalate to implementation with it |
-| `3` | log gap: retention shorter than the round's age | `andara-cli snapshot list`, pick a newer complete round, `ROUND=` it; then fix retention (`AW-INF-005`) |
-| `4` | binary older than the snapshot's `state_version` | this is a rollback that cannot read forward state; `make rollback ENV=<env> ROUND=<tick the old binary wrote>` |
-| `5` | a Tick Boundary Record was lost (`AW-SRV-026`): the running server exits into exact recovery. The log line is `tick boundary lost; exiting into recovery`, with `lost_tick` and `last_delivered_tick`; the counter is `andara_tick_boundary_lost_total` | look at the broker, not the server: the produce of the boundary failed. Each restart while the broker is down fails at boot with exit `1`; once the broker is healthy the next boot recovers and ticks. `world-read-only.md` covers the broker |
-| `6` | the restored round doesn't reproduce its own tick: a restore, seed, or content mismatch (`AW-SRV-043`) | `recovery-state-mismatch.md`; pin an older round |
-| `7` | no complete snapshot round with `recovery.require_snapshot=true`, or a named round that isn't complete | `andara-cli snapshot list`; `SnapshotStale` and `snapshot-stale.md` for why rounds stopped completing |
-| `8` | State Hash mismatch after replay: the alerting condition | `recovery-state-mismatch.md`; pin an older round with `make rollback ENV=<env> ROUND=<tick>` |
-| `137` / OOMKilled | memory below the World's footprint | raise `resources.requests.memory` (or re-run `make measure-tick`); a projector replica has the same footprint as the server (`AW-SRV-019`) |
-| liveness restart, no exit line | tick loop wedged for `tick_budget × 100` | `AW-SRV-002`'s `SimulationLagging` runbook; this is the liveness probe doing its job |
+| `5` | a Tick Boundary Record was lost (`AW-SRV-026`), and the running server exited into exact recovery. The log line is `tick boundary lost; exiting into recovery`, with `lost_tick` and `last_delivered_tick`. The counter is `andara_tick_boundary_lost_total` | look at the broker, not the server: the boundary's produce failed. Each restart while the broker is down fails at boot with exit `1`. Once the broker is healthy, the next boot recovers and ticks. `world-read-only.md` covers the broker |
+| `137` / OOMKilled | memory below the World's footprint | raise `resources.requests.memory` (or re-run `make measure-tick`). A projector replica has the same footprint as the server (`AW-SRV-019`) |
+| liveness restart, no exit line | tick loop wedged for `tick_budget × 100` | `AW-SRV-002`'s `SimulationLagging` runbook. This is the liveness probe doing its job |
+
+**Exits that ship with `AW-SRV-007` and `AW-SRV-043`** (`AW-SRV-007`'s exit table). Pinning a round
+is `make rollback ENV=<env> ROUND=<tick>` (`AW-INF-007`), which sets `recovery.pin_round`. **Neither
+exists yet.** Until they do, a row that says "pin an older round" means: keep the World scaled to
+zero and escalate to implementation with the `error` line.
+
+| Exit | Meaning | Action |
+|-----:|---------|--------|
+| `3` | log gap: retention shorter than the round's age | pin a newer complete round, then fix retention (`AW-INF-005`) |
+| `4` | binary older than the round's `state_version` | a rollback that can't read forward state: roll the image forward, or pin a round the old binary wrote |
+| `6` | the round doesn't reproduce its own tick. The `error` line `recovery restore mismatch` has `reason` | by `reason`. `hash`: a corrupt round, so `recovery-state-mismatch.md` and pin an older round. `seed`: the configured `sim.seed` differs from the round's `recorded_seed`, so restore the seed value; an older round has the same seed. `content`: this binary builds different content bytes than the round recorded (`recorded_digest`, `built_digest`), so roll the image back to the build that wrote the round, or escalate to implementation; an older round fails the same way |
+| `7` | no complete snapshot round with `recovery.require_snapshot=true`, or a pinned round that isn't complete | `SnapshotStale` and `snapshot-stale.md`, for why rounds stopped completing |
+| `8` | State Hash mismatch after replay: the alerting condition | `recovery-state-mismatch.md`. Pin an older round |
 
 Scale back to one replica once the cause is addressed:
 
@@ -57,13 +67,17 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 
 ## How to diagnose
 
-1. Exit code and last log line, as above. Every refusal in `AW-SRV-007` is one `error` line with the
-   fields the exit-code table names.
+1. Exit code and last log line, as above. Once `AW-SRV-007` ships, every refusal is one `error`
+   line with the fields its exit-code table names.
 2. `kubectl -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
-3. `andara-cli snapshot list` — is the newest round complete? An incomplete newest round with
-   `recovery.require_snapshot=true` is exit `7`.
-4. Was there a deploy in the last ten minutes? `helm -n andara-<env> history andara`. If so,
-   `make rollback ENV=<env>` is the mitigation and the deploy is the cause.
+3. Is the newest snapshot round complete? Until `AW-SRV-007`'s round listing ships,
+   `andara-cli snapshot list --zone <zone>` lists one Zone's snapshot objects, so run it per Zone and
+   compare the newest tick. An incomplete newest round with `recovery.require_snapshot=true` is exit
+   `7` once `AW-SRV-007` ships.
+4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status
+   ENV=dev` names the synced revision and image. If a deploy is the cause, revert it on `main`.
+   Argo CD syncs the good build, and `make argocd-recover ENV=dev` replaces a pod stuck on the bad
+   one. `make rollback` is `AW-INF-007`'s, and it isn't shipped yet.
 
 ## When to escalate
 
