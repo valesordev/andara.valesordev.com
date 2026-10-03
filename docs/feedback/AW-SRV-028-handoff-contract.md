@@ -134,13 +134,46 @@ AC that a Bind during transit never creates a second body.
   it. The proto keeps `reserved` for numbers that were used and then retired
   (`log.proto:72-77`).
 
+### 5. The `Departures` window can expire while retries continue
+
+The story prunes a `Departures` entry `2 × sim.handoff_retry_ticks + 1` ticks after the departure.
+Its `[ASSUMPTION]` reasons that "a stale copy can only come from a retry issued before the ack
+landed, and the ack is one hop". But the source keeps retrying until it **applies** the
+`HandoffAck`, and nothing bounds how long that takes. Applying it can be held up by:
+- a source Partition that is frozen today, or a source Zone faulted under `AW-SRV-027` (item 2);
+- a source Partition lagging behind a backlog, or a broker slow to deliver the ack (the retry
+  is produced on the source's own ticks, so it doesn't wait on the broker);
+- a source process restarting between the ack being produced and being applied.
+
+Any one of them lets a retry outlive the target's record:
+1. A→B with `handoff_seq` k. B places the Entity and acks, and A doesn't apply the ack yet.
+2. B moves the Entity on to C and records `Departures[e] = k+1`.
+3. `2 × retry_ticks + 1` ticks later, B prunes that entry.
+4. A's next retry of `Arrive(seq k)` finds neither the Entity nor a departure in B. B places a
+   second copy, while the real Entity stands in C.
+
+That is two Entities with one ID, the failure this story exists to prevent. Pointed out by Codex
+on #357.
+
+**Ask:** a deduplication rule that doesn't depend on the source applying its ack in time. Some
+options, each with a cost:
+- **(a) A high-watermark per Entity that outlives the visit.** Each Zone keeps the highest
+  `handoff_seq` it has seen for an Entity, pruned only by something that proves no retry can
+  still come, rather than by time. That state is hashed and grows with every Entity that has
+  ever passed through.
+- **(b) Bounded retries, with the window sized to match.** The source stops after N attempts,
+  skips a faulted Zone (item 2 (c)), and the `Departures` window is at least
+  `(N + 1) × retry_ticks`. The open question then becomes what happens to an Entity whose `Arrive`
+  never landed after N attempts.
+- **(c) The Entity's sequence travels with it.** B rejects an `Arrive` whose `handoff_seq` is
+  lower than one the World has already seen for that Entity. That needs a World-scoped record
+  of each Entity's current sequence, which crosses Partitions.
+
 ## What isn't blocked
 
-The answers above leave four parts of the story as they are:
-- `Transit` and `Departures`;
-- the retry;
+With item 5, less of the story stands as written than this file first said. `Transit`, the
+retry and `Departures` all wait on its answer. Two parts stand as written:
 - `in_transit` for verbs;
 - the round-trip test (AC-9).
 
-All four need `handoff_seq` on the wire and the transit state in the snapshot body, though, so
-the work can't start before item 1.
+Both need `handoff_seq` on the wire, so neither can start before item 1.
