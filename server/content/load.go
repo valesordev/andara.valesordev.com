@@ -186,8 +186,21 @@ func loadFindings(rejects []Rejection, zones int) []sim.ValidationError {
 	}
 	return append(findings, sim.ValidationError{
 		Code:   sim.ErrEmptyContent,
-		Detail: "no Zones were found in kafka: no followed pack has a loadable Active Pointer",
+		Detail: EmptyStoreDetail,
 	})
+}
+
+// EmptyStoreDetail is the detail of the no_zones_found finding loadFindings
+// appends when a store-backed source has no Zones.
+const EmptyStoreDetail = "no Zones were found in kafka: no followed pack has a loadable Active Pointer"
+
+// IsEmptyStore reports whether a store-backed load's findings are an empty
+// store's, AW-SRV-042's #299 amendment: exactly the finding loadFindings
+// appends, so the store was read (no malformed) and Candidates rejected
+// nothing (a rejection brings its own findings, also coded no_zones_found
+// for a missing manifest).
+func IsEmptyStore(findings []sim.ValidationError) bool {
+	return len(findings) == 1 && findings[0].Code == sim.ErrEmptyContent && findings[0].Detail == EmptyStoreDetail && findings[0].File == ""
 }
 
 // SetProducer sets where ContentSwaps are written: the Gateway's producer.
