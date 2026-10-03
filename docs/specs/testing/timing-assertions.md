@@ -21,14 +21,23 @@ A wall-clock assertion inside `make check` is neither. It judges the machine's l
 code, and a loaded machine is the normal state of a developer box that runs `kind` and other
 sessions, and of a shared CI runner.
 
-## 1. A guard measures the CPU time of its own thread
+## 1. A guard measures CPU time, not wall-clock
 
-Pin the goroutine (`runtime.LockOSThread`), read `getrusage(RUSAGE_THREAD)` user + system time before
+**Code that does all its work on the calling goroutine** (the case #172 is) is measured on its own
+thread. Pin the goroutine (`runtime.LockOSThread`), read `getrusage(RUSAGE_THREAD)` user + system time before
 and after, and assert on the difference. Time the thread spent descheduled is not charged to it, and
 descheduling is what other processes' load does.
 
 Use the standard library (`syscall.Getrusage`, `syscall.RUSAGE_THREAD`); it needs no new `go.mod`
 dependency.
+
+**Code that hands work to other goroutines** isn't measured that way: the locked thread's time would
+miss the workers', and arbitrarily expensive off-thread work could be added with the guard still
+passing. Such a guard reads the **process's** CPU time (`syscall.RUSAGE_SELF`) instead. That still
+excludes other processes' load, and it also counts any other test running in the package at the time,
+so the guard isn't `t.Parallel()` and a package's parallel tests finish before it runs. The test
+says which of the two it uses and why, in its comment. A test can't tell the two cases apart by
+looking, so the author states which one the code under test is.
 
 The thread's CPU time doesn't include Go's background GC workers, which run on other threads. That's
 right for a copy that spawns no goroutines (`SnapshotAll` spawns none), and it means the regression
