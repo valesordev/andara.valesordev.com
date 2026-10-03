@@ -6,7 +6,7 @@ component: server
 type: feature
 status: draft
 size: M
-depends_on: [AW-CLI-013, AW-SRV-012, AW-SRV-014, AW-SRV-007]
+depends_on: [AW-CLI-013, AW-SRV-012, AW-SRV-014, AW-SRV-007, AW-SRV-028]
 blocks: []
 lane: implementation
 risk: medium
@@ -63,8 +63,9 @@ them closely, so that the World has things in it and not only places.
 ## Acceptance criteria
 
 1. **Given** a pack version placing a `Lantern` in `town/plaza` **when** it's activated **then**,
-   from the tick that applies the swap, `look` in `town/plaza` lists the Lantern's short name, and
-   `snapshot list`'s next round contains its Item Instance.
+   from the tick that applies the swap, `look` in `town/plaza` lists the Lantern's short name. A
+   sim-level test decodes the next snapshot round's Zone body and finds the Item Instance in
+   `town/plaza`.
 2. **Given** a Lantern in the actor's Room **when** the actor sends `get lantern` **then** the actor
    carries it, the Room no longer lists it, the actor reads `You take a brass lantern.`, and every
    other Character in the Room reads `<name> takes a brass lantern.`.
@@ -90,6 +91,14 @@ them closely, so that the World has things in it and not only places.
 10. **Given** a recovery from a snapshot round taken while Items were carried and lying in Rooms
     **when** recovery completes **then** the State Hash matches. Every Item is where it was, carried
     or in its Room (`AW-SRV-007`'s check covers the new state).
+11. **Given** a snapshot round taken by the previous binary, whose content in effect already has
+    placements (`AW-CLI-013` puts one in the `dev` fixture first) **when** this story's binary
+    recovers from it **then** there's no `ContentDigestError`, and replaying the logged `ContentSwap`s'
+    `world_digest`s matches. Placements must not change the digest of content activated before this
+    story (question 5).
+12. **Given** the actor carries the Lantern **when** they move or `goto` into another Zone, including
+    across a partition handoff **then** `inventory` there lists the Lantern, and the State Hash holds in
+    both Zones.
 
 ## Interface contract
 
@@ -113,8 +122,16 @@ message ItemDescribed   { string item_name = 1; string description = 2; } // sco
 - **Matching:** the target word matches an Item when it equals one of the Item's keywords,
   case-insensitively. `get` looks in the Room, `drop` among carried Items, and `examine` in carried
   Items first, then the Room. Ties go to the lowest Item Instance ID (AC-7).
-- **Rejection codes** (`CommandRejected.code`): `item_not_here` and `item_not_carried`. Both are
-  applied in the sim, not at parse, because what's present is world state.
+- **Numbers and names:** `LoggedCommand` oneof members `get = 20`, `drop = 21`, `inventory = 22`,
+  `examine = 23`. `EventEnvelope.payload` members `item_taken = 23`, `item_dropped = 24`,
+  `inventory_listed = 25`, `item_described = 26`. `EventType` strings `item_taken`, `item_dropped`,
+  `inventory_listed`, `item_described`. All are the next free numbers on `main`. Architecture confirms
+  them, or reassigns them if another story takes them first.
+- **Parsing:** the target is free text: one new `ArgSpec` kind, `ArgWord` (a single token, lowercased).
+  The four verbs aren't `Abbrev`, so they claim only their names and aliases, and no prefix of an
+  existing verb or Direction changes meaning.
+- **Rejection codes** (`CommandRejected.code`): `item_not_here` and `item_not_carried`, at stage
+  `validate`. They're applied in the sim, not at parse, because what's present is world state.
 - **Scope:** `ItemTaken` and `ItemDropped` go to the Room. `InventoryListed` and `ItemDescribed` go to
   the actor's Entity only.
 - **`andara-cli play` lines:** as AC-2 to AC-5. `look` adds `Items: <short names>` after `Exits:`.
@@ -124,9 +141,15 @@ message ItemDescribed   { string item_name = 1; string description = 2; } // sco
 - Zone state gains Item Instances, in the representation question 1 decides, so the snapshot's
   `state_version` rises with an up-migration from the previous version (no Items). A snapshot round
   taken before this story still restores.
-- **Rollback:** a binary older than the `state_version` exits `4` (`AW-SRV-007`). Rolling the server
-  back after Items exist means recovering from a round taken before the upgrade, or a world reset.
-  That's stated in the runbook line this story adds to `docs/runbooks/` (SRE's, at §8).
+- **Rollback:**
+  - A binary older than the `state_version` exits `4` (`AW-SRV-007`).
+  - The log will also hold `Get`, `Drop`, `Inventory` and `Examine`, which an older binary replays as
+    `unsupported_command`. So a pre-upgrade round followed by post-upgrade log doesn't help: the
+    replay diverges at the first Item command.
+  - Rolling back after Items exist therefore needs a world reset (`make world-reset`), or a
+    pre-upgrade round with nothing logged after it.
+
+  SRE's runbook line at §8 states this.
 - Live Sessions: no effect at rollout. Items appear only when a pack placing them is activated.
 
 ## Observability requirements
@@ -155,7 +178,8 @@ message ItemDescribed   { string item_name = 1; string description = 2; } // sco
 
 ## Definition of done
 
-CLAUDE.md §8, plus the glossary's **Item Instance** entry says where an Instance lives (question 1).
+CLAUDE.md §8, plus the glossary's **Item**, **Entity** and **Container** entries say where an Item
+Instance lives (question 1).
 
 ## Open questions
 
@@ -163,15 +187,26 @@ For architecture, in `docs/feedback/AW-SRV-047-items.md`. They affect the contra
 `draft` until they're answered:
 1. **Is an Item Instance an Entity in world state?** The glossary says an Item Instance is "a specific
    Entity in the World". `AW-SRV-022` rules "an Item is not an Entity" for Template kinds. Is an
-   Item Instance an `EntityState` with an ITEM Template, or a separate `ItemState`, and how is a
-   carried Item's holder represented?
+   Item Instance an `EntityState` with an ITEM Template, or a separate `ItemState`? How is a carried
+   Item's holder represented? How do carried Items travel with their holder in `Arrive` and across a
+   partition handoff (AC-12)? `Arrive` carries only `Entity entity = 3` today.
 2. **What a new activation does to the previous version's placed Items.** Brian decided a taken Item
-   comes back only at the next activation. PM proposes: untaken Item Instances from the pack's
-   previous placements are removed, and the new version's placements are placed. Carried Instances
-   stay, keeping their `content_version`, even if the new version drops their Template.
+   comes back only at the next activation. PM proposes:
+   - untaken Item Instances from the pack's previous placements are removed, and the new version's
+     placements are placed;
+   - carried Instances stay, keeping their `content_version`, even if the new version drops their
+     Template.
+
+   Still open: does a placed Item that was taken and then dropped count as "untaken" (if not, the
+   next activation duplicates it)? And what happens to Items lying in a Room the new content removes
+   (`EntityRelocated`'s fallback Room, or removed)?
 3. **Item Instance IDs:** they must be deterministic, so the same placement in the same activation
    gives the same ID on replay.
 4. **A deleted Character's carried Items:** route to `AW-SRV-032`, or decide here.
+5. **Placements and `ContentDigest`.** Restore rebuilds the digest from the content in effect and
+   compares it with the round's (`server/sim/restore.go`), and replay checks each logged swap's
+   `world_digest`. Do placements enter `CanonicalBytes`? If they do, what's the migration that keeps
+   rounds and swaps from before this story verifying (AC-11)?
 - `[ASSUMPTION]` The player-facing lines in AC-2 to AC-5 are placeholders in the same register as
   `<name> leaves the world.` Brian may reword them, and that's not a contract change, since the
   Events carry names, not sentences.

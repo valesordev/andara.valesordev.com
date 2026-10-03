@@ -29,30 +29,46 @@ with its Items in it.
 ## Scope
 
 ### In scope
-- The parser, resolver and emitter in `content/lang` for `AW-CLI-012`'s placement and names
-  Component, with its error codes.
+- **The names Component type, registered on the server**: in `server/sim/component.go`'s component
+  registry, with `AW-CLI-012`'s field kinds. Component types are defined on the server (ADR-0010
+  decision 7). The compiler (`sim.KnownComponentType`) and the server's loader both reject a type
+  the registry doesn't hold, so this comes first.
+- The parser, resolver and emitter in `content/lang` for `AW-CLI-012`'s placement and names rule,
+  with its error codes.
+- `AW-CLI-012`'s pending corpus cases move to `valid/` and `invalid/`. The anchors they change move
+  with them:
+  - `content/core/templates` (`TestCoreSeedIsReproducible`);
+  - `testdata/templates` (`TestTownAnchorMatchesLoaderFixtures`).
 - `content/core/` at version 2: the compiled `andara.core.Item` carrying the names Component,
   `VERSION` set to `2`, and a new line in `VERSIONS`. `andara-cli`'s embedded core becomes `@2`.
-- `content/fixtures/town/`, the `dev` fixture, gains one placed Item, so `dev` and `make stack-play`
-  have an Item to find.
+- `content/fixtures/town/`, the `dev` fixture, moves to `requires andara.core@2`: its `Lantern` gains
+  names, and one `Lantern` is placed in `town/plaza`. So `dev` and `make stack-play` have an Item to
+  find.
 
 ### Out of scope
-- The server: `AW-SRV-047`.
+- Item Instances, verbs and state in the server: `AW-SRV-047`. Until it lands, the server parses
+  placements (the field is in `gen/` from `AW-CLI-012`) and doesn't instantiate them.
 - The Content Repository's packs. Builders author those once `andara-cli` ships `@2`.
 
 ## Acceptance criteria
 
-1. **Given** the `AW-CLI-012` corpus **when** `make check` runs **then** `content-conformance` passes
-   with every new case, each error at its expected file, line and code.
-2. **Given** `content/core/VERSION` at `2` **when** `make check` runs **then** `AW-INF-029`'s
-   append-only check passes, and `andara-cli version` names `andara.core@2`.
-3. **Given** a pack built against `andara.core@1` **when** `andara-cli content validate` runs with
-   the `@2` binary **then** it validates. **Given** a pack built against `@2` **when** an `@1`
-   `andara-cli` validates it **then** `core_version_mismatch` tells the Builder to upgrade
-   `andara-cli` (#308's direction rule).
-4. **Given** the `town` fixture with its placed Item **when** `make stack-play` runs **then** it
-   passes. The server ignores placements until `AW-SRV-047`, which is why this criterion asserts
-   only that the fixture still loads.
+1. **Given** the corpus with `AW-CLI-012`'s cases moved out of `pending/` **when** `make check` runs
+   **then** `content-conformance` passes with every new case, each error at its expected file, line
+   and code, and no case is left pending on `AW-CLI-013`.
+2. **Given** `content/core/VERSION` at `2` **when** `make check` runs **then** `core-versions-check`
+   passes, `andara-cli version` names `andara.core@2`, and both anchor tests pass.
+3. **Given** a pack that `requires andara.core@1` and places no Items **when** the `@2` binary
+   validates it **then**:
+   - with `andara.core@1` in the cache (`andara-cli content fetch-core --from <an @1 core>`), it
+     validates;
+   - with it not cached, it's `core_version_mismatch`, whose remedy is to change `requires` to `2`
+     (`errors.md` §3.1).
+
+   **Given** a pack built against `@2` **when** an `@1` `andara-cli` validates it **then**
+   `core_version_mismatch` tells the Builder to upgrade `andara-cli` (#308's direction rule).
+4. **Given** the `town` fixture with its placed `Lantern` **when** `make stack-play` runs **then** it
+   passes. The fixture loads and the server ignores the placement, since the server parses the field
+   but doesn't act on it until `AW-SRV-047`.
 
 ## Interface contract
 

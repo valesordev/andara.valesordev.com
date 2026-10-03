@@ -44,3 +44,22 @@ Brian wants these stories ready for SPRINT-05, but not in it unless content need
 ## For SRE
 `AW-SRV-047`'s Observability section proposes `andara_items{location}` (two series) and reuses the
 command metrics. `AW-CLI-013` is the first `andara.core` bump, and inherits `AW-INF-021` AC-6.
+
+## Revised after PM's pre-PR review (2026-10-03)
+The review found places where the first draft contradicted decided specs. These are now fixed in the
+stories:
+- **Placements follow `semantics.md` §4.** A placement names a Template in its own pack or in
+  `andara.core`, no other pack (`AW-CLI-012`).
+- **The names Component's type is registered on the server** (ADR-0010 decision 7). That's in
+  `AW-CLI-013`'s scope, since both the compiler and the loader reject unregistered types.
+- **`AW-CLI-012`'s corpus cases go in `corpus/pending/`**, gated on `AW-CLI-013`, which moves them and
+  updates the anchors.
+- **The names rule applies at a placement.** An unplaced base and `andara.core.Item` aren't checked.
+
+New questions for architecture on `AW-SRV-047`, added there as questions 1 (extended), 2
+(extended) and 5:
+- how carried Items travel in `Arrive` and across a partition handoff;
+- whether a taken-then-dropped placed Item counts as untaken, and what happens to Items lying in a
+  Room that new content removes;
+- whether placements enter `ContentDigest`, and the migration if they do, so rounds and swaps from
+  before `AW-SRV-047` still verify.
