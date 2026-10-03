@@ -8,6 +8,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -123,8 +124,20 @@ type Runtime struct {
 	ready      atomic.Bool
 	// started, waiting and draining are AW-SRV-042's: the Gateway serves;
 	// the World is waiting for its first Zones; SIGTERM has begun the drain.
-	started  atomic.Bool
-	waiting  atomic.Bool
+	started atomic.Bool
+	waiting atomic.Bool
+	// roomsLabeled is the Zones andara_content_rooms_loaded has a series for,
+	// so setTopologyGauges deletes only departed ones (#287). The boot's load
+	// and the loop's swaps both set the gauges, one after the other today;
+	// gaugeMu is defensive, so a later caller on another goroutine can't
+	// race the map.
+	gaugeMu      sync.Mutex
+	roomsLabeled map[sim.ZoneID]struct{}
+	// applied, if set, is called in place of Content.Applied: a test wraps
+	// the call itself, so wherever contentApplied makes it, the test checks
+	// the gauges are already set at that moment, with no timing involved
+	// (#287). Nil outside tests.
+	applied  func([]sim.SwapApplied)
 	draining atomic.Bool
 	// worldNext is the tick loop's next-to-read offset on the World
 	// Partition, for worldBarrier; written on the loop's goroutine.
@@ -299,11 +312,9 @@ func (rt *Runtime) LoadContent(ctx context.Context) int {
 	ok := world != nil && !loadFatal && !buildFatal && !templateFatal
 	if ok {
 		zoneCount = len(world.Zones)
-		rt.Tel.Metrics.ZonesLoaded.Set(float64(zoneCount))
-		for id, z := range world.Zones {
-			n := len(z.Rooms)
-			roomCount += n
-			rt.Tel.Metrics.RoomsLoaded.WithLabelValues(string(id)).Set(float64(n))
+		rt.setTopologyGauges(world)
+		for _, z := range world.Zones {
+			roomCount += len(z.Rooms)
 			componentCount += rt.countComponents(z.Components)
 			for _, r := range z.Rooms {
 				componentCount += rt.countComponents(r.Components)

@@ -382,6 +382,21 @@ func TestReconcileContent_TheFirstZonesThroughTheLoopEndTheWait(t *testing.T) {
 		Store: store, Packs: rt.Cfg.ContentPacks, SpawnRoom: sim.RoomRef{Zone: "town", Room: "plaza"},
 	}))
 	rt.replay = worldLog()
+	// What a request could see when the content source is told: the swap
+	// that brings the first Zones must reach the content source (and
+	// GetServerInfo) before the wait ends and /readyz turns 200 (review of
+	// #359). Set before the loop starts, which reads it.
+	type atApplied struct{ zones, waiting, ready bool }
+	var (
+		seenMu sync.Mutex
+		seen   []atApplied
+	)
+	rt.applied = func(swaps []sim.SwapApplied) {
+		seenMu.Lock()
+		seen = append(seen, atApplied{len(rt.Engine.World().Zones) > 0, rt.Waiting(), rt.Ready()})
+		seenMu.Unlock()
+		rt.Content.Applied(swaps)
+	}
 	startMemoryLoop(t, rt)
 	if code := rt.ReconcileContent(context.Background()); code != ExitOK || !rt.Waiting() {
 		t.Fatalf("an empty store: exit %d, waiting %t\n%s", code, rt.Waiting(), logs.String())
@@ -400,6 +415,21 @@ func TestReconcileContent_TheFirstZonesThroughTheLoopEndTheWait(t *testing.T) {
 	eventually.True(t, 5*time.Second, "the wait to end", func() bool { return !rt.Waiting() && rt.Ready() })
 	if got := logLines(t, logs, "content in effect: leaving the wait"); len(got) != 1 || got[0]["zones"] != float64(1) {
 		t.Fatalf("the leaving line: %v", got)
+	}
+	seenMu.Lock()
+	defer seenMu.Unlock()
+	first := -1
+	for i, a := range seen {
+		if a.zones {
+			first = i
+			break
+		}
+	}
+	if first < 0 {
+		t.Fatalf("no swap with Zones reached the content source: %+v", seen)
+	}
+	if a := seen[first]; !a.waiting || a.ready {
+		t.Fatalf("when the first Zones' swap reached the content source the wait had already ended (waiting %t, ready %t)", a.waiting, a.ready)
 	}
 }
 
