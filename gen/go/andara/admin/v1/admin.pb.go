@@ -46,7 +46,7 @@ const (
 	// The round restored to its recorded hash, and replay to head matched.
 	VerifyOutcome_VERIFY_OUTCOME_MATCH VerifyOutcome = 1
 	// The round restored, and the World after replay differs from the head's
-	// TickCompleted (recovery's exit 2).
+	// TickCompleted (recovery's exit 8).
 	VerifyOutcome_VERIFY_OUTCOME_REPLAY_MISMATCH VerifyOutcome = 2
 	// The restored round differs from its own tick's TickCompleted (AW-SRV-043,
 	// recovery's exit 6). Nothing was replayed.
@@ -54,6 +54,10 @@ const (
 	// The round's sim_seed differs from the server's effective seed
 	// (AW-SRV-043, recovery's exit 6). Nothing was restored.
 	VerifyOutcome_VERIFY_OUTCOME_SEED_MISMATCH VerifyOutcome = 4
+	// The round doesn't restore onto the content in effect: a content_digest
+	// mismatch, or a Zone the content doesn't have (recovery's exit 6). Nothing
+	// was restored.
+	VerifyOutcome_VERIFY_OUTCOME_CONTENT_MISMATCH VerifyOutcome = 5
 )
 
 // Enum value maps for VerifyOutcome.
@@ -64,6 +68,7 @@ var (
 		2: "VERIFY_OUTCOME_REPLAY_MISMATCH",
 		3: "VERIFY_OUTCOME_RESTORE_MISMATCH",
 		4: "VERIFY_OUTCOME_SEED_MISMATCH",
+		5: "VERIFY_OUTCOME_CONTENT_MISMATCH",
 	}
 	VerifyOutcome_value = map[string]int32{
 		"VERIFY_OUTCOME_UNSPECIFIED":      0,
@@ -71,6 +76,7 @@ var (
 		"VERIFY_OUTCOME_REPLAY_MISMATCH":  2,
 		"VERIFY_OUTCOME_RESTORE_MISMATCH": 3,
 		"VERIFY_OUTCOME_SEED_MISMATCH":    4,
+		"VERIFY_OUTCOME_CONTENT_MISMATCH": 5,
 	}
 )
 
@@ -330,12 +336,12 @@ type VerifySnapshotRoundResponse struct {
 	// True only for VERIFY_OUTCOME_MATCH.
 	Match bool `protobuf:"varint,1,opt,name=match,proto3" json:"match,omitempty"`
 	// The recorded TickCompleted.state_hash at `compared_tick`, and the
-	// Engine's. Empty for a seed mismatch.
+	// Engine's. Empty for a seed or content mismatch.
 	ExpectedHash []byte        `protobuf:"bytes,2,opt,name=expected_hash,json=expectedHash,proto3" json:"expected_hash,omitempty"`
 	ActualHash   []byte        `protobuf:"bytes,3,opt,name=actual_hash,json=actualHash,proto3" json:"actual_hash,omitempty"`
 	Outcome      VerifyOutcome `protobuf:"varint,4,opt,name=outcome,proto3,enum=andara.admin.v1.VerifyOutcome" json:"outcome,omitempty"`
 	// The round's tick for a restore mismatch, the head's tick otherwise. 0 for
-	// a seed mismatch.
+	// a seed or content mismatch.
 	ComparedTick uint64 `protobuf:"varint,5,opt,name=compared_tick,json=comparedTick,proto3" json:"compared_tick,omitempty"`
 	// Set only for a seed mismatch.
 	RecordedSeed   uint64 `protobuf:"varint,6,opt,name=recorded_seed,json=recordedSeed,proto3" json:"recorded_seed,omitempty"`
@@ -2862,13 +2868,14 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\x04data\x18\x01 \x01(\fR\x04data\"\x16\n" +
 	"\x14ReloadContentRequest\"M\n" +
 	"\x15ReloadContentResponse\x124\n" +
-	"\x06active\x18\x01 \x03(\v2\x1c.andara.state.v1.PackVersionR\x06active*\xb4\x01\n" +
+	"\x06active\x18\x01 \x03(\v2\x1c.andara.state.v1.PackVersionR\x06active*\xd9\x01\n" +
 	"\rVerifyOutcome\x12\x1e\n" +
 	"\x1aVERIFY_OUTCOME_UNSPECIFIED\x10\x00\x12\x18\n" +
 	"\x14VERIFY_OUTCOME_MATCH\x10\x01\x12\"\n" +
 	"\x1eVERIFY_OUTCOME_REPLAY_MISMATCH\x10\x02\x12#\n" +
 	"\x1fVERIFY_OUTCOME_RESTORE_MISMATCH\x10\x03\x12 \n" +
-	"\x1cVERIFY_OUTCOME_SEED_MISMATCH\x10\x042\xfd\x0f\n" +
+	"\x1cVERIFY_OUTCOME_SEED_MISMATCH\x10\x04\x12#\n" +
+	"\x1fVERIFY_OUTCOME_CONTENT_MISMATCH\x10\x052\xfd\x0f\n" +
 	"\x05Admin\x12^\n" +
 	"\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n" +
 	"\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n" +

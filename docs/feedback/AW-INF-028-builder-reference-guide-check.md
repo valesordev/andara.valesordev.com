@@ -16,3 +16,6 @@ Moved to `ready`.
   merging PR runs `guide-check` on it. Any finding comes here, for architecture to fix in
   `docs/builders/`.
 - The 07-reference removal stays architecture's, at this story's §8.
+
+**Amended after pre-PR review:** AC-9 is one assertion. `guide-check` exits `0` on `main`'s guide
+at merge. A finding comes here, and this story's PR waits on architecture's fix.

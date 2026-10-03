@@ -83,3 +83,7 @@ to verify that `kube_deployment_spec_replicas` was kept before `StateProjectorDo
    - The inherited line is added.
    - On the framing: the deferral rule fits. The cluster's evaluator is this story's, so
      `AW-SRV-007`'s rule has "no caller yet" there.
+
+**Amended in the same PR, after pre-PR review:** the cluster clause reads exits `8` and `6`, not
+`2`. Go exits `2` on a panic, so `AW-SRV-007` moved its hash mismatch to `8`. `AW-SRV-007` joins
+`depends_on`, and the Test plan names a `make` target for AC-5.

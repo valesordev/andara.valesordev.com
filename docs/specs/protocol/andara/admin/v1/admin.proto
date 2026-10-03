@@ -148,7 +148,7 @@ enum VerifyOutcome {
   // The round restored to its recorded hash, and replay to head matched.
   VERIFY_OUTCOME_MATCH = 1;
   // The round restored, and the World after replay differs from the head's
-  // TickCompleted (recovery's exit 2).
+  // TickCompleted (recovery's exit 8).
   VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
   // The restored round differs from its own tick's TickCompleted (AW-SRV-043,
   // recovery's exit 6). Nothing was replayed.
@@ -156,18 +156,22 @@ enum VerifyOutcome {
   // The round's sim_seed differs from the server's effective seed
   // (AW-SRV-043, recovery's exit 6). Nothing was restored.
   VERIFY_OUTCOME_SEED_MISMATCH = 4;
+  // The round doesn't restore onto the content in effect: a content_digest
+  // mismatch, or a Zone the content doesn't have (recovery's exit 6). Nothing
+  // was restored.
+  VERIFY_OUTCOME_CONTENT_MISMATCH = 5;
 }
 
 message VerifySnapshotRoundResponse {
   // True only for VERIFY_OUTCOME_MATCH.
   bool match = 1;
   // The recorded TickCompleted.state_hash at `compared_tick`, and the
-  // Engine's. Empty for a seed mismatch.
+  // Engine's. Empty for a seed or content mismatch.
   bytes expected_hash = 2;
   bytes actual_hash = 3;
   VerifyOutcome outcome = 4;
   // The round's tick for a restore mismatch, the head's tick otherwise. 0 for
-  // a seed mismatch.
+  // a seed or content mismatch.
   uint64 compared_tick = 5;
   // Set only for a seed mismatch.
   uint64 recorded_seed = 6;

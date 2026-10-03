@@ -144,7 +144,7 @@ export declare type VerifySnapshotRoundResponse = Message<"andara.admin.v1.Verif
 
   /**
    * The recorded TickCompleted.state_hash at `compared_tick`, and the
-   * Engine's. Empty for a seed mismatch.
+   * Engine's. Empty for a seed or content mismatch.
    *
    * @generated from field: bytes expected_hash = 2;
    */
@@ -162,7 +162,7 @@ export declare type VerifySnapshotRoundResponse = Message<"andara.admin.v1.Verif
 
   /**
    * The round's tick for a restore mismatch, the head's tick otherwise. 0 for
-   * a seed mismatch.
+   * a seed or content mismatch.
    *
    * @generated from field: uint64 compared_tick = 5;
    */
@@ -1205,7 +1205,7 @@ export enum VerifyOutcome {
 
   /**
    * The round restored, and the World after replay differs from the head's
-   * TickCompleted (recovery's exit 2).
+   * TickCompleted (recovery's exit 8).
    *
    * @generated from enum value: VERIFY_OUTCOME_REPLAY_MISMATCH = 2;
    */
@@ -1226,6 +1226,15 @@ export enum VerifyOutcome {
    * @generated from enum value: VERIFY_OUTCOME_SEED_MISMATCH = 4;
    */
   SEED_MISMATCH = 4,
+
+  /**
+   * The round doesn't restore onto the content in effect: a content_digest
+   * mismatch, or a Zone the content doesn't have (recovery's exit 6). Nothing
+   * was restored.
+   *
+   * @generated from enum value: VERIFY_OUTCOME_CONTENT_MISMATCH = 5;
+   */
+  CONTENT_MISMATCH = 5,
 }
 
 /**

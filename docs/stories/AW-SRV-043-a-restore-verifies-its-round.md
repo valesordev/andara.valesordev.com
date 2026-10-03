@@ -49,7 +49,7 @@ bad restore rather than as a divergence one tick later.
 
 ### Out of scope
 - Server recovery's own wiring. `AW-SRV-007` calls `RestoreEngine` and inherits the refusal. Its
-  exit table gains the new code by architecture's amendment (Open questions, item 2), not here.
+  exit table gains the new code by architecture's amendment (Open questions, item 1), not here.
 - Falling back to an older round, or to replay from zero, on a mismatch. That's refused by design:
   an operator decides.
 - Any change to how rounds are written, beyond recording the seed.
@@ -114,7 +114,8 @@ type RestoreMismatch struct {
   architecture, 2026-10-02, and amended into `AW-SRV-007` in the same PR. The server's `5` is
   `AW-SRV-026`'s `ExitBoundaryLost`, so `AW-SRV-007`'s incomplete-round exit moves from `5` to `7`.
   Exit `6` sets `andara_recovery_state_hash_match` to `0` and lingers under
-  `recovery.mismatch_linger` as exit `2` does (SRE's proposal, accepted).
+  `recovery.mismatch_linger` as the hash mismatch does (SRE's proposal, accepted). The hash mismatch
+  itself moved from `2` to `8` in the same review, because Go exits `2` on a panic.
 - **Order inside `RestoreEngine`:** state version, content digest, seed, build, hash. The seed check
   comes before the build, so a seed mismatch never reports as `reason=hash`.
 - **Where the round tick's boundary is read:** the caller positions its boundary reader at the
@@ -152,8 +153,8 @@ records the outcome it gets back.
     signal on a real backend. The live observation is `outcome="ok"` after each bootstrap. The
     mismatch series is verified on the metric object in the integration test (CLAUDE.md §8). That
     means the projector's in-process registry, read with `testutil` after `Run` returns, not a
-    scrape of the stack after the process exits. The Test plan's Integration line still reads as a
-    scrape, and the feedback file asks architecture to reword it.
+    scrape of the stack after the process exits. *(The Test plan's Integration line was reworded
+    to match at contract review, 2026-10-02.)*
 - **Logs:**
   - `error` `state projector restore mismatch`, with `round_tick`, `reason` (`hash` or `seed`),
     and `trace_id`.
@@ -180,6 +181,8 @@ records the outcome it gets back.
     `docs/runbooks/state-projector-down.md`'s "Respond, by the last exit code" table gains a `5`
     row: capture the round tick and both hashes, and don't `--rebuild`, because a rebuild hits
     the same check (AC-4). SRE writes the row at this story's §8 instrumentation check.
+  - *(Decided at contract review, 2026-10-02: exit `6` sets the gauge to `0` and lingers, and
+    `restore` is a `reason`. Recovery's hash mismatch, "exit `2`" below, is now `8`.)*
   - Recovery's exit `6`, under `AW-SRV-007`, leaves no ready server. That's
     `AndaraServerUnavailable` (page). SRE proposes that it also sets
     `andara_recovery_state_hash_match` to `0`, and lingers under `recovery.mismatch_linger`

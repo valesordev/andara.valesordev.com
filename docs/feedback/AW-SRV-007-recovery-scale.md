@@ -141,3 +141,30 @@ change. Implementation hasn't started.
 - **`AW-INF-005` AC-3 and its metrics list** use the withdrawn counter. The SPRINT-05 split
   (`docs/feedback/AW-INF-005-007-split.md`) should replace that with a check at the offset the ack
   named, which the AC already reads.
+
+## Architecture: the pre-PR review's changes, 2026-10-02
+
+Same PR as the contract review above.
+- **The hash mismatch moves from exit `2` to `8`.**
+  - Go exits `2` on an unrecovered panic or a runtime fatal error. On the cluster, the
+    last-terminated exit code is the only signal that outlives the process, so `2` would have paged
+    `RecoveryStateMismatch` on every panic.
+  - `2` is now never assigned. `recover --verify` exits `8` on a mismatch.
+  - Where this file and the SRE amendment say recovery "exit `2`", read `8`.
+- **Exit `6` also covers content refusals:** a `content_digest` mismatch, or a round Zone the
+  content doesn't have. It logs `reason=content`. `VerifyOutcome` gains `CONTENT_MISMATCH = 5`.
+- **`snapshot verify`** follows `AW-CLI-001`'s exits. A mismatch and a refusal are both `1`, and
+  `outcome` or the error code tells them apart.
+- **The Test plan:**
+  - The `prng_state` flip now asserts exit `6`.
+  - A rewritten tail `TickCompleted.state_hash` asserts exit `8`.
+  - The AC-7 run proves its tail is 600 ticks from `tail_ticks`.
+
+### For SRE (adds to the list above)
+- **`server-crashlooping.md`'s exit table** gains rows for `6` (restore, seed or content mismatch:
+  `recovery-state-mismatch.md`), `7` (incomplete round with `require_snapshot`), and `8` (hash
+  mismatch). Its row for `2` becomes "a Go panic or runtime fatal error: read the stack trace", and
+  the line-59 fix stands.
+- **`server-unavailable.md`** lines 43 and 62 cite recovery's exit `2`, which is now `8`.
+- **AW-INF-009** now depends on `AW-SRV-007`, and its AC-5 needs a `make` target that makes `dev`
+  exit `6` on a corrupted round. It's yours to name when you build it.

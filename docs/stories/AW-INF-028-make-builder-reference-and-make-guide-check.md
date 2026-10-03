@@ -96,9 +96,10 @@ drift from the `andara-cli` a Builder downloads.
    <k> links ok` and exits `0`. *(This is `AW-INF-023` AC-1.)*
 9. **Given** a fixture `docs/builders/` with only `reference.md` in it **then** `guide-check` runs
    AC-6 and AC-7 over what exists and exits `0` when they pass. An empty guide is not a failure.
-   **Given** the real guide on `main` when this story merges **then** `guide-check` passes on it,
-   or the PR names each failure and sends it to architecture in
-   `docs/feedback/AW-INF-028-builder-reference-guide-check.md`. *(Amended 2026-10-02: `AW-INF-023`
+   **Given** the real guide on `main` when this story merges **then** `guide-check` exits `0` on
+   it. A finding in the guide goes to architecture in
+   `docs/feedback/AW-INF-028-builder-reference-guide-check.md`, and this story's PR waits for the
+   `arch/` fix to merge. *(Amended 2026-10-02: `AW-INF-023`
    wrote the guide in SPRINT-03, so "before the guide exists" no longer happens on `main`.)*
 10. **Given** `make help` **then** it lists `builder-reference`, `builder-reference-check` and
     `guide-check`, the first and last with their help lines exactly as the Interface contract gives
@@ -187,7 +188,7 @@ nothing links to the generated one.
 1. **Resolved before contract review (architecture, 2026-10-02).** `docs/builders/reference.md` is
    in `.claude/roles/_repo.md`'s `generated` list, and CLAUDE.md §2 names it with
    `make builder-reference`. CLAUDE.md's edit is `7edf30c` (#169), and the `_repo.md` list came
-   with the `.claude/` install of `7b604fd`. The history follows.
+   with `fff92b2`, the `.claude/` install of automate `7b604fd`. The history follows.
 
    **Brian: ownership of `docs/builders/reference.md`.** `docs/builders/` is architecture's path
    (#169). But `reference.md` goes stale whenever implementation adds a Component type or a
