@@ -55,6 +55,7 @@ STOP_DEADLINE = 120
 CONFIG_MAP = "andara-config"
 READY_DEADLINE = 600
 WAITING_LINE = "waiting for content"
+LEAVING_LINE = "content in effect: leaving the wait"
 
 
 def say(msg):
@@ -224,9 +225,11 @@ def reset(env, ns):
 
 
 def waiting_for_content(ns, kubectl=None):
-    """True when andara-0's server container is started, not Ready, and has logged that it's
-    waiting for content since it started: a store-backed server whose World has never had
-    content, which stays up unready until a pack with Zones is activated (AW-SRV-042)."""
+    """True when andara-0's server container is started, not Ready, and its last word since it
+    started is that it's waiting for content, not that it left the wait: a store-backed server
+    whose World has never had content, which stays up unready until a pack with Zones is
+    activated (AW-SRV-042). A container that was seeded and is unready again (a drain, a
+    rollout) has the leave line after the wait line, and isn't waiting."""
     kubectl = kubectl or globals()["kubectl"]
     pod = kubectl(ns, "get", "pod", SERVER_POD, "-o", "json", check=False)
     if pod.returncode != 0 or not pod.stdout.strip():
@@ -241,7 +244,7 @@ def waiting_for_content(ns, kubectl=None):
     since = (server[0].get("state", {}).get("running") or {}).get("startedAt")
     logs = kubectl(ns, "logs", SERVER_POD, "-c", "server",
                    *(["--since-time=" + since] if since else []), check=False)
-    return WAITING_LINE in logs.stdout
+    return logs.stdout.rfind(WAITING_LINE) > logs.stdout.rfind(LEAVING_LINE)
 
 
 def wait_up(ns, deadline=READY_DEADLINE, sleep=time.sleep, clock=time.monotonic):

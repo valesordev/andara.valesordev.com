@@ -348,6 +348,12 @@ def active_packs(ns, metrics=None):
     return sorted(packs) or "? (no andara_content_active_version series)"
 
 
+def content_waiting(ns):
+    """andara-0 is started and waiting for its first content (world_reset's check)."""
+    import world_reset  # noqa: E402  (scripts/, beside this file)
+    return world_reset.waiting_for_content(ns)
+
+
 def status(env, waiting_ok=False):
     """Print the Application's state; exit 1 unless Synced and Healthy. With waiting_ok (an
     install whose server is waiting for its first content, AW-SRV-042), Synced is enough: the
@@ -374,11 +380,16 @@ def status(env, waiting_ok=False):
     else:
         for pack, version in packs:
             print("content      %s@%d" % (pack, version))
+    # A server waiting for its first content (AW-SRV-042) isn't Ready either, and stalled()
+    # can't tell the two apart; argocd-recover would refuse it (AW-INF-021's §8 close). A pod
+    # that looks stuck is asked now: install's waiting_ok was decided before it may have rolled.
     stuck = stalled(ns)
-    if stuck:
+    waiting = content_waiting(ns) if stuck else waiting_ok
+    if stuck and not waiting:
         print("stalled      %s — once a good build has synced, `make argocd-recover ENV=dev` replaces the pod" % stuck)
-    if waiting_ok and sync == "Synced":
+    if waiting:
         print("waiting      andara-0 is up and waiting for content — next: make content-seed ENV=%s" % (env or "dev"))
+    if waiting_ok and sync == "Synced":
         return
     if sync != "Synced" or health != "Healthy":
         sys.exit(1)
