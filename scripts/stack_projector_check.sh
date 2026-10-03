@@ -44,6 +44,12 @@ for _ in $(seq 1 60); do
 done
 [[ -n "$(find "$SNAP" -type f -print -quit)" ]] || fail "no snapshot round under $SNAP after 180 s; is the server snapshotting? (snapshot-stale.md)"
 
+# Something already on the port would answer the scrape below, and the metric assertion would
+# pass on its series, not the projector's.
+if (exec 3<>"/dev/tcp/localhost/$PORT") 2>/dev/null; then
+  need "port $PORT is already in use; set ANDARA_PROJECTOR_CHECK_PORT"
+fi
+
 work="$(mktemp -d)"
 pid=""
 trap '[[ -z "$pid" ]] || kill "$pid" 2>/dev/null || true; rm -rf "$work"' EXIT
@@ -85,9 +91,10 @@ PY
 say "log: restore verified, trace_id $TRACE_ID"
 
 found=""
+last=""
 for _ in $(seq 1 20); do
   body="$($COMPOSE exec -T tempo wget -qO- "http://localhost:3200/api/traces/$TRACE_ID" 2>/dev/null || true)"
-  if python3 - "$body" <<'PY' 2>/dev/null
+  if last="$(python3 - "$body" <<'PY' 2>&1
 import json, sys
 spans = {}
 for b in json.loads(sys.argv[1]).get("batches", []):
@@ -101,9 +108,9 @@ assert ver["parent"] == boot["id"] and ver["attrs"]["outcome"] == "ok"
 for k in ("round_tick", "zones"):
     assert k in boot["attrs"] or k in ver["attrs"], k
 PY
-  then found=1; break; fi
+)"; then found=1; break; fi
   sleep 3
 done
-[[ -n "$found" ]] || fail "Tempo has no state.bootstrap > restore.verify trace (outcome=ok) for $TRACE_ID"
+[[ -n "$found" ]] || fail "Tempo has no state.bootstrap > restore.verify trace (outcome=ok) for $TRACE_ID: $(tail -n 1 <<<"$last" | cut -c1-200)"
 say "traces: state.bootstrap (rebuild=true, outcome=ok) > restore.verify (outcome=ok) in Tempo"
 say "AW-SRV-043 projector restore instrumentation — passes"
