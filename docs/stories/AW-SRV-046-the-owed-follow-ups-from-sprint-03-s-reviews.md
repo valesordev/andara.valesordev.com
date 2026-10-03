@@ -4,7 +4,7 @@ title: The owed follow-ups from SPRINT-03's reviews
 epic: EPIC-05
 component: server
 type: chore
-status: ready
+status: review
 size: S
 depends_on: [AW-SRV-013, AW-SRV-034, AW-SRV-035, AW-SRV-036, AW-SRV-037, AW-CLI-002, AW-CLI-003]
 blocks: []
@@ -128,3 +128,37 @@ CLAUDE.md §8.
 ## Open questions
 
 - None. Every item is a ruling already made, and its source is cited.
+
+## Verification record — 2026-10-03 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-srv-046-sprint-03-follow-ups`. Every new or strengthened test was mutation-checked
+once. The mutation column names the reversion that makes it fail.
+
+| AC | Item | Test | Mutation it catches |
+|----|------|------|---------------------|
+| 1 | 1 | `TestSimRendersADepartureWithNoDirection`: `[tick 3] Aldric leaves.`, and with a direction `leaves north.`. `sim` now renders the departure through `play`'s `renderEvent`, so the two can't drift | It failed on the old `"%s leaves %s."` |
+| 2 | 2 | `TestContentValidate_SummaryCountsErrorsOnly`: 2 errors and 3 warnings give `mypack: 2 finding(s) refuse the pack` | It failed on the old count of 5, for hand-built findings only (see "AC-2" below) |
+| 3 | 4 | `TestContentFetch_RefusesADotDotPath` | Removing both `filepath.IsLocal` and the `os.Root` write. Either guard alone still refuses |
+| 3 | 4 | `TestPreviousActive` (three and more moves, including a zero move as the newest before the active one) | Searching the moves oldest-first, and dropping the `v != 0` guard |
+| 3 | 4 | `TestContentActivate_AsTheApprover` | Refusing the approver at activation |
+| 3 | 4 | `TestContentPublish_ABlobOverOneMiBIsChunked` | Sending each blob as one chunk, which the server refuses |
+| 3 | 5 | `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse`: exactly one record per refusal | Recording each refusal twice ("4 audit records for 2 refusals") |
+| 3 | 6 | `TestBuildWorld_LoaderAgreesWithCompiler` "two Exits north": `Line` 5 | Reporting the first Exit's line (4) |
+| 3 | 8 | `TestDevFixtureSourceMatchesTestContent` against the embedded core | Removing `andara.core.Npc` from `content/core` shows that the test is live. It doesn't distinguish the embed from the disk, since `go:embed` serves the same files. The difference that matters is the version, which now comes from `VERSION` rather than a hard-coded 1 |
+| 4 | 7 | `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`: a `select` with a deadline on `stall.entered` | A refusal that never reaches its audit used to hang the test. Taking the write lock twice is one way to cause it. It now fails at the 5 s deadline. Holding the lock through the audit was already caught by the second `select`, in about 1 s |
+| 5 | 3, 6, 7 | `admin/README.md`: the `version` row. `server/README.md`: `duplicate_direction` and the errors-only rule, the one-Room exemption, and a "Builder pack grants" subsection naming `andara.accounts` and `accounts.write` | — |
+| 6 | 7 | `TestSetBuilderPacks_LogFields`: on a refused and an accepted grant, `trace_id` equals the RPC span's, and `session_id` and `acting_as_account_id` are present and empty | Dropping `session_id` from the refusal line. The record already listed the three fields, so it needed no correction |
+| 7 | 4 | `AW-CLI-003`'s implementation record: the rehearsal runs in CI (#265). On the confirmation line, AC-7's "isn't asserted" was already stale: `TestContentActivate_ConfirmationLineJoinsTheServersRecord` (7592bd5) asserts it, so the record says that instead (Codex on #368) | — |
+| 8 | all | Each source feedback file has a "Done in `AW-SRV-046`" section, and `AW-SRV-036`'s §8 note records item 1 | — |
+
+No contract changed, and no item needed a decision.
+
+**AC-2's fixture, and what changed.** No input reaches AC-2's Given.
+- **Why the old count was already right.** `mergeDiagnostics` has dropped every non-error
+  finding whenever there's an error since `AW-CLI-002` (2d5a72f), on `--path` and on
+  `validatePublished` alike. So on every reachable path the old `len(v.diags)` already counted
+  errors only. The review premise behind the item wasn't reachable.
+- **What this branch adds.** The count is now errors-only by construction, not by the merge. A
+  later path that keeps warnings on a refusal can't inflate it.
+- **How it's tested.** The test drives `reportValidated` with 2 errors and 3 warnings directly.
+  Architecture is asked to accept AC-2 as satisfied in substance.

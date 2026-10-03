@@ -528,6 +528,8 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 		orphans []RoomID
 		detail  string // the first finding's, when set
 		fatal   bool
+		pos     *Positions // source lines, when the case places its finding
+		line    int        // the line the first finding must carry
 	}{
 		{
 			// AC-1: loft leaves down a chute to cellar, and nothing enters loft.
@@ -561,6 +563,11 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 			want:   []ErrCode{ErrDuplicateDirection},
 			detail: `duplicate exit direction "north": to hall, and again to yard`,
 			fatal:  true,
+			// The plaza's two Exits on lines 4 and 5: the finding is on
+			// the second, the one that lost, as the compiler's corpus case
+			// pins it (errors.md §1 rule 8; AW-SRV-034 §8).
+			pos:  &Positions{Rooms: []RoomPositions{{Line: 3, Exits: []int{4, 5}}}},
+			line: 5,
 		},
 		{
 			// AC-5: strict mode promotes AC-1's orphan to an error, and the
@@ -575,7 +582,9 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			in := append([]Input{zone("z.json", "z", "Z", tc.rooms...)}, tc.others...)
+			z := zone("z.json", "z", "Z", tc.rooms...)
+			z.Pos = tc.pos
+			in := append([]Input{z}, tc.others...)
 			world, errs := BuildWorld(in, Options{StrictOrphans: tc.strict})
 			var got []ErrCode
 			var orphans []RoomID
@@ -599,6 +608,9 @@ func TestBuildWorld_LoaderAgreesWithCompiler(t *testing.T) {
 			}
 			if (world == nil) != tc.fatal {
 				t.Errorf("world nil = %t, want %t: %v", world == nil, tc.fatal, errs)
+			}
+			if tc.line != 0 && (len(errs) == 0 || errs[0].Line != tc.line) {
+				t.Errorf("the finding's line: %v, want %d", errs, tc.line)
 			}
 		})
 	}

@@ -125,3 +125,13 @@ Neither holds the story. Take them on the next touch of `server/README.md` and `
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+Both items are done:
+- **`server/README.md`:**
+  - the refusal list gains `duplicate_direction`, and says a refused load reports only its errors
+    (`errors.md` §1 rule 7);
+  - the `content.strict_orphans` row states the one-Room exemption.
+- **`TestBuildWorld_LoaderAgreesWithCompiler`, "two Exits north":** the case asserts that the
+  finding's `Line` is the second Exit's (5 of 4 and 5). Reporting the first Exit's line fails it.

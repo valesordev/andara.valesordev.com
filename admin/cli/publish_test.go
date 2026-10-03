@@ -22,6 +22,7 @@ import (
 	"google.golang.org/genproto/googleapis/rpc/errdetails"
 
 	"github.com/valesordev/andara/content/lang"
+	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/recordlog"
 )
@@ -623,5 +624,33 @@ func TestContentFetch_StaysInsideOut(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(victim); string(b) != "mine\n" {
 		t.Errorf("a file outside --out was overwritten: %q", b)
+	}
+}
+
+// previousActive over three and more pointer moves: the newest move to a
+// version other than the active one, skipping moves back to it.
+func TestPreviousActive(t *testing.T) {
+	moves := func(vs ...uint64) []*contentv1.ActiveVersion {
+		out := make([]*contentv1.ActiveVersion, 0, len(vs))
+		for _, v := range vs {
+			out = append(out, &contentv1.ActiveVersion{Version: v})
+		}
+		return out
+	}
+	for _, tc := range []struct {
+		active uint64
+		moves  []uint64
+		want   uint64
+	}{
+		{3, []uint64{1, 2, 3}, 2},
+		{2, []uint64{1, 2, 3, 2}, 3},    // rolled back: the previous is the one rolled back from
+		{3, []uint64{1, 3, 2, 3, 3}, 2}, // repeated moves to the active one are skipped
+		{1, []uint64{1, 1, 1}, 0},       // nothing else was ever active
+		{4, []uint64{2, 0, 4}, 2},       // a zero move, the newest before the active one, is skipped
+		{5, []uint64{5, 4, 3, 2, 1, 5}, 1},
+	} {
+		if got := previousActive(tc.active, moves(tc.moves...)); got != tc.want {
+			t.Errorf("active %d, moves %v: %d, want %d", tc.active, tc.moves, got, tc.want)
+		}
 	}
 }

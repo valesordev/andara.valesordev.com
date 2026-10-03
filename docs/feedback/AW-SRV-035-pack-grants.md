@@ -88,3 +88,19 @@ With that and SRE's record, the story closes.
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+The "not holding the story" items are done:
+- **`TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`** waits on `stall.entered` in a `select`
+  with a deadline. A refusal that never reaches its audit, such as one deadlocked before it, now
+  fails at 5 s, where before it hung the run. A refusal holding the lock through its audit was
+  already caught, in about 1 s.
+- **`TestSetBuilderPacks_LogFields`** asserts AC-6's fields on a refused and an accepted grant:
+  - `trace_id` equals the Admin RPC span's;
+  - `session_id` is present and empty;
+  - `acting_as_account_id` is present and empty.
+
+  The implementation record already listed these three, so it needed no correction.
+- **`server/README.md`** gains a "Builder pack grants" subsection. It names the `andara.accounts`
+  `ErrorInfo` domain with its reasons, and the `accounts.write` span.

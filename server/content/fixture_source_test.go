@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	corepack "github.com/valesordev/andara/content/core"
 	"github.com/valesordev/andara/content/lang"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
@@ -24,13 +25,12 @@ import (
 // `make content-seed` publishes the source (AW-INF-021) and everything else
 // loads the JSON, so a drift here would mean dev serves a World no test ran.
 func TestDevFixtureSourceMatchesTestContent(t *testing.T) {
-	seed, errs := LoadTemplatesDir(filepath.Join("..", "..", "content", "core"))
-	if len(errs) != 0 {
-		t.Fatal(errs)
-	}
-	core := &lang.Pack{Name: lang.CorePack, Version: 1}
-	for _, in := range seed {
-		core.Templates = append(core.Templates, in.Def)
+	// The andara.core every binary embeds, as the server and andara-cli
+	// resolve against it, not content/core/templates/ read from disk
+	// (AW-SRV-037 review; AW-SRV-046).
+	core, err := lang.PackFromBlobs(corepack.Pack, uint32(corepack.Version()), corepack.Blobs())
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	out, ds := lang.Compile(filepath.Join("..", "..", "content", "fixtures", "town"), core, nil)

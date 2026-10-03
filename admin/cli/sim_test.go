@@ -9,6 +9,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	gamev1 "github.com/valesordev/andara/gen/go/andara/game/v1"
+	"github.com/valesordev/andara/server/events"
 )
 
 func runRepl(t *testing.T, stdin string, extra ...string) runResult {
@@ -124,5 +127,24 @@ func TestSimRepl_TapEvents(t *testing.T) {
 	}
 	if res := runRepl(t, "", "--tap-events", "nowhere"); res.exit != ExitUsage {
 		t.Fatalf("bad tap: exit=%d stderr=%s", res.exit, res.stderr)
+	}
+}
+
+// AW-SRV-046 item 1: a departure with no direction, as goto sends it, reads
+// as the server's own line does: "<name> leaves.", not "<name> leaves .".
+func TestSimRendersADepartureWithNoDirection(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	r := &repl{rt: &runtime{stdout: &out, settings: &resolved{Output: outputHuman}}}
+	for _, tc := range []struct{ dir, want string }{
+		{"", "[tick 3] Aldric leaves.\n"},
+		{"north", "[tick 3] Aldric leaves north.\n"},
+	} {
+		out.Reset()
+		r.printDelivery("", events.Delivery{Tick: 3, Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{
+			CharacterLeft: &gamev1.CharacterLeft{CharacterName: "Aldric", ToDirection: tc.dir}}}})
+		if out.String() != tc.want {
+			t.Fatalf("to_direction %q: %q, want %q", tc.dir, out.String(), tc.want)
+		}
 	}
 }

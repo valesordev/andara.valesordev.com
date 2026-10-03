@@ -5,12 +5,15 @@ package auth
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	auditv1 "github.com/valesordev/andara/gen/go/andara/audit/v1"
 	"github.com/valesordev/andara/server/recordlog"
@@ -295,7 +298,13 @@ func TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock(t *testing.T) {
 		ctx := WithPrincipal(context.Background(), Principal{AccountID: id, Roles: []Role{RoleBuilder}})
 		_, _ = f.store.SetBuilderPacks(ctx, id, []string{"town"}, 0)
 	}()
-	<-stall.entered
+	// Bounded, so a regression that never audits the refusal fails here
+	// rather than hanging the run (AW-SRV-035 review; AW-SRV-046).
+	select {
+	case <-stall.entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the refusal was never audited: the stalling audit log was not entered")
+	}
 
 	done := make(chan error, 1)
 	go func() {
@@ -309,5 +318,55 @@ func TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock(t *testing.T) {
 		}
 	case <-time.After(AuditWriteTimeout / 2):
 		t.Fatal("an Operator's grant waited on a non-operator's refusal being audited")
+	}
+}
+
+// AW-SRV-035 AC-6, as its Observability section rules it (2026-09-30), on a
+// refused and an accepted grant (AW-SRV-046 item 7): trace_id is the Admin
+// RPC's, so non-empty; session_id is present and empty, since an Admin call
+// runs in no Game Session; acting_as_account_id is present, and empty with no
+// --as.
+func TestSetBuilderPacks_LogFields(t *testing.T) {
+	f := newFixture(t, nil)
+	id := f.builder("alice")
+	tp := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = tp.Shutdown(context.Background()) })
+	underRPC := func(ctx context.Context) (context.Context, string) {
+		ctx, span := tp.Tracer("test").Start(ctx, "andara.admin.v1.Admin/SetBuilderPacks")
+		t.Cleanup(func() { span.End() })
+		return ctx, span.SpanContext().TraceID().String()
+	}
+
+	refusedCtx, refusedTrace := underRPC(WithPrincipal(context.Background(), Principal{AccountID: id, Roles: []Role{RoleBuilder}}))
+	if _, err := f.store.SetBuilderPacks(refusedCtx, id, []string{"town"}, 0); err == nil {
+		t.Fatal("a builder granted itself packs")
+	}
+	setCtx, setTrace := underRPC(f.operatorCtx())
+	if _, err := f.store.SetBuilderPacks(setCtx, id, []string{"town"}, 0); err != nil {
+		t.Fatal(err)
+	}
+
+	lines := map[string]map[string]any{}
+	for l := range strings.SplitSeq(f.logs.String(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(l), &m) == nil {
+			if msg, _ := m["msg"].(string); msg == "builder packs refused" || msg == "builder packs set" {
+				lines[msg] = m
+			}
+		}
+	}
+	for msg, trace := range map[string]string{"builder packs refused": refusedTrace, "builder packs set": setTrace} {
+		m, ok := lines[msg]
+		if !ok {
+			t.Fatalf("no %q line:\n%s", msg, f.logs.String())
+		}
+		if m["trace_id"] != trace || trace == "" {
+			t.Errorf("%s: trace_id %v, want the RPC's %s", msg, m["trace_id"], trace)
+		}
+		for _, key := range []string{"session_id", "acting_as_account_id"} {
+			if v, ok := m[key]; !ok || v != "" {
+				t.Errorf("%s: %s = %v (present %t), want present and empty", msg, key, v, ok)
+			}
+		}
 	}
 }

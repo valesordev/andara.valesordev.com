@@ -240,15 +240,19 @@ the contract didn't make are in `docs/feedback/AW-CLI-003-content-publish.md`.
   `content.publish_blob` child per stream.
 - `cli.command` carries `pack` and `version`, and, for `--override`, `override`, `reason` and the
   confirmation text.
-- The confirmation is logged at `info` with the trace ID.
+- The confirmation is logged at `info` with the trace ID. *(Checked 2026-10-03, `AW-SRV-046`:
+  `TestContentActivate_ConfirmationLineJoinsTheServersRecord`, added at the §8 items (7592bd5),
+  asserts it for `activate` and `rollback`. It checks the level, the text, the command and the
+  trace ID, so SRE's request for a test is met.)*
 - `trace_id` is in every JSON result and error. `TestContentActivate_RefusalReasonAndSubjects`
   checks it on a refusal.
 
 `make check` passes.
 
 **Not done here, and why:**
-- **The Redpanda rehearsal isn't in CI yet.** `make test-integration` doesn't list `./admin/cli/`,
-  and the Makefile is SRE's (feedback, For SRE 1).
+- ~~**The Redpanda rehearsal isn't in CI yet.**~~ *(Corrected 2026-10-03, `AW-SRV-046`: it runs in
+  CI. `./admin/cli/` has been in `make test-integration` since #265, and `stack` runs
+  `TestContentPublishPath_TwoIdentitiesOverRedpanda`.)*
 - **`--as`:** acting-as doesn't exist for Admin RPCs (feedback, For architecture 1).
 
 ## §8 review (architecture, 2026-09-30): stays `review`
