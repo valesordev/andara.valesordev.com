@@ -309,3 +309,34 @@ func TestLoop_CommitNeverPassesTheLoss(t *testing.T) {
 		t.Fatalf("committed town at %d, want 10: tick 12 is past the lost 11", got)
 	}
 }
+
+// A loss recorded while the loop sleeps, followed by a shutdown before the
+// next tick, still stops as a loss: SimulationStopped says boundary_lost and
+// Run returns the BoundaryLostError, so the process exits 5, not 0 (review of
+// #355).
+func TestLoop_LossThenShutdownBeforeTheNextTick(t *testing.T) {
+	h, pub := newLossyHarness(t, 0, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.clock.OnSleep = func(time.Time) bool {
+		if pub.acked == 7 {
+			pub.lost = true
+			h.loop.BoundaryLost(8, errBrokerGone)
+			cancel()
+			return false
+		}
+		return true
+	}
+	err := h.loop.Run(ctx)
+	var lost *BoundaryLostError
+	if !errors.As(err, &lost) || lost.Lost != 8 || lost.LastDelivered != 7 {
+		t.Fatalf("Run returned %v, want boundary 8 lost after 7", err)
+	}
+	evs, _, _ := pub.Snapshot()
+	if r := evs[len(evs)-1].Envelope.GetSimulationStopped().GetReason(); r != StopReasonBoundaryLost {
+		t.Fatalf("SimulationStopped reason %q", r)
+	}
+	if got := counter(h.loop.Metrics().BoundaryLost); got != 1 {
+		t.Fatalf("andara_tick_boundary_lost_total %v", got)
+	}
+}

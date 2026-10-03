@@ -123,6 +123,17 @@ func (s *boundarySeq) loseLocked(tick sim.Tick, err error) {
 }
 
 // handOver gives a batch to the producer, in order, stopping at a loss.
+//
+// A boundary refused by a full buffer can't be followed by a later one
+// accepted, because a batch of more than one is handed over only from
+// resolve, inside a delivery promise. franz-go (v1.20.0) runs every promise
+// on one goroutine, which drains a single queue (producer.go:597-600), and it
+// frees a record's buffer slot only after that record's promise has
+// returned, on that goroutine (producer.go:674). So no slot frees while a
+// batch is handed over: once one boundary is refused, the rest of the batch
+// is too. Concurrent Event and Command sends can only take slots, never free
+// them. A franz-go upgrade must keep both properties, or this must hand over
+// one boundary at a time (review of #355).
 func (s *boundarySeq) handOver(batch []pendingBoundary) {
 	if s.room != nil && !s.room(len(batch)) {
 		s.resolve(batch[0].tick, errNoRoom)

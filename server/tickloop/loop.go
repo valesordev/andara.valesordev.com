@@ -240,7 +240,7 @@ func (l *Loop) run(ctx context.Context) error {
 	base := e.Tick()
 	for {
 		if ctx.Err() != nil {
-			return l.drain(e)
+			return l.stop(e)
 		}
 		tick := e.Tick() + 1
 		due := start.Add(time.Duration(tick-base-1) * l.interval)
@@ -269,7 +269,7 @@ func (l *Loop) run(ctx context.Context) error {
 		next := start.Add(time.Duration(tick-base) * l.interval)
 		if wait := next.Sub(l.clock.Now()); wait > 0 {
 			if !l.clock.Sleep(ctx, wait) {
-				return l.drain(e)
+				return l.stop(e)
 			}
 		}
 	}
@@ -481,6 +481,17 @@ func (l *Loop) stopLost(e *sim.Engine, lost *BoundaryLostError) error {
 		slog.String("err", lost.Err.Error()))
 	l.drainAs(e, StopReasonBoundaryLost)
 	return lost
+}
+
+// stop is the loop's end on a shutdown: the drain, unless a boundary was
+// already lost, in which case the stop is the loss's and the process still
+// exits 5 (review of #355). A loss reported between ticks is otherwise acted
+// on by the next tick, which a shutdown can pre-empt.
+func (l *Loop) stop(e *sim.Engine) error {
+	if lost := l.lost.Load(); lost != nil {
+		return l.stopLost(e, lost)
+	}
+	return l.drain(e)
 }
 
 // drain finishes the loop on request: emit SimulationStopped, flush, then
