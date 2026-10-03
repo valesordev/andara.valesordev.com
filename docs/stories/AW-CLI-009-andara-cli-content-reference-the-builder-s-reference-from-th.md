@@ -4,7 +4,7 @@ title: andara-cli content reference — the Builder's reference from the binary
 epic: EPIC-06
 component: cli
 type: feature
-status: in-progress
+status: review
 size: S
 depends_on: [AW-CLI-002]
 blocks: [AW-INF-028]
@@ -206,3 +206,41 @@ CLAUDE.md §8, plus: the golden file is committed, and the completeness test run
 - `[ASSUMPTION]` The count of 37 in the manual step is today's count: 24 `sim.ErrCode` values plus
   the 13 `lang.Code*` literals that no `sim.ErrCode` shares. It will drift. The step checks that the command runs,
   not that the count is 37.
+
+## Verification record — 2026-10-03 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-cli-009-content-reference`.
+
+| AC | Test (`admin/cli/contentreference_test.go`) | What it asserts |
+|----|---------------------------------------------|-----------------|
+| 1 | `TestContentReference_JSONIsStableAndGolden` | With an empty `HOME`, no config and no credentials: exit `0`, one JSON object on stdout with no unknown fields, and nothing on stderr |
+| 2 | `TestContentReference_Directions` | The twelve `sim.Directions()`, in order, each with `Direction.Reverse()` |
+| 3 | `TestContentReference_ComponentTypes` | One entry per `sim.ComponentTypes()`, sorted. Fields come from `sim.ComponentFieldNames`, with kinds `string`/`int`/`bool`, and a marker has `[]` |
+| 4 | `TestContentReference_Core` | `core.version` is `content/core/VERSION`. Every embedded Template is listed, sorted, with its kind keyword and a chain ending in itself |
+| 5 | `TestContentReference_DiagnosticsAreComplete` | It parses `server/sim` and `content/lang` with `go/parser`. Every `sim.ErrCode` and `lang.Code*` value is listed once, sorted. Any listed value no constant holds fails |
+| 6 | `TestContentReference_WarningsAreSims` | The warning set equals what `sim.IsWarning` says over the parsed codes: `missing_reverse_exit` and `orphan_room` |
+| 7 | `TestContentReference_DiagnosticsAreComplete` | `raised_by` follows from which package's parsed constants hold the value |
+| 8 | `TestContentReference_JSONIsStableAndGolden` | Two runs are byte-identical, and equal to `admin/cli/testdata/reference/reference.json` |
+| 9 | `TestContentReference_Human` | `--output human` and the default are identical: four headings in order, the JSON's row count, and the golden `reference.txt` |
+| 10 | `TestContentReference_UsageErrors` | An extra argument or an unknown flag exits `2` with nothing on stdout |
+
+**The table:** `lang.Diagnostics` (`content/lang/reference.go`), next to `lang`'s codes and quoting
+`sim`'s. It has 37 rows:
+- 16 `both`;
+- 8 `loader`;
+- 13 `compiler`.
+
+**Mutations, each caught by a test that names the cause:**
+- a new `sim.ErrCode` with no row;
+- a new `lang.Code*` with no row;
+- a row removed;
+- a wrong `raised_by`;
+- an extra warning.
+
+A new Component type needs no row. The command reads `sim`'s registry, so it appears in the
+output, and only the golden flags it.
+
+**Outstanding before `done`:**
+- AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
+  an empty `HOME` and no config.
+- AW-INF-028 consumes the JSON.
