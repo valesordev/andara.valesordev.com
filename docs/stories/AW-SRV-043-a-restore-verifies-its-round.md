@@ -4,7 +4,7 @@ title: A restore verifies its round
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-006, AW-SRV-019]
 blocks: [AW-SRV-007]
