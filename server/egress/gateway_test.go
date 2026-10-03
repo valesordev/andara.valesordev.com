@@ -279,7 +279,7 @@ func TestStalledStream_ResetKeepsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return gauge(t, s.hub.Metrics().Subscribers) == 2 }, "both subscribed")
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 2 }, "both subscribed")
 	first, _ := s.emit(16)
 	if !stalled.Receive() || !healthy.Receive() {
 		t.Fatalf("first event: stalled=%v healthy=%v", stalled.Err(), healthy.Err())
@@ -381,7 +381,7 @@ func TestStalledSocket_EndsStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return gauge(t, s.hub.Metrics().Subscribers) == 2 }, "both subscribed")
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 2 }, "both subscribed")
 	s.emit(16)
 	if !stalled.Receive() || !healthy.Receive() {
 		t.Fatalf("first event: stalled=%v healthy=%v", stalled.Err(), healthy.Err())
@@ -545,7 +545,7 @@ func TestFanout_500Streams(t *testing.T) {
 		}
 		streams[i] = st
 	}
-	waitFor(t, func() bool { return gauge(t, s.hub.Metrics().Subscribers) == n }, "500 subscribed")
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == n }, "500 subscribed")
 
 	const events = 20
 	var worst time.Duration
@@ -607,7 +607,7 @@ func TestWorld_Gateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return gauge(t, s.hub.Metrics().Subscribers) == 1 }, "gm subscribed")
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "gm subscribed")
 	id, _ := s.emit(16)
 	if !world.Receive() || world.Msg().GetEventId() != id {
 		t.Fatalf("gm: %v / %v", world.Msg(), world.Err())
@@ -649,7 +649,7 @@ func TestEventsFlowWhenPublisherFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	waitFor(t, func() bool { return gauge(t, s.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "subscribed")
 	source.Push(simtest.Look("town", "alice"))
 	if !stream.Receive() {
 		t.Fatalf("no event: %v", stream.Err())

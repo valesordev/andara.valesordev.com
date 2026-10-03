@@ -171,7 +171,7 @@ func TestStartEgress_MemoryLoopback(t *testing.T) {
 	go func() {
 		streamDone <- rt.Egress.SubscribeWith(streamCtx, sess, &gamev1.SubscribeRequest{SessionId: "s-1"}, sendFunc(func(env *gamev1.EventEnvelope) error { recv <- env; return nil }))
 	}()
-	waitFor(t, func() bool { return testutil.ToFloat64(rt.Events.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return testutil.ToFloat64(rt.Egress.Metrics().Streams) == 1 }, "subscribed")
 	// Binding after subscribing: the routing table tells the egress, which
 	// re-reads where the Session perceives from.
 	rt.Bindings.Bind("s-1", command.Binding{Actor: "ghost", Zone: "town"})
