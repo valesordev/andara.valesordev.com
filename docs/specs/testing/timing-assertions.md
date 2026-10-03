@@ -35,13 +35,17 @@ dependency.
 miss the workers', and arbitrarily expensive off-thread work could be added with the guard still
 passing. Such a guard reads the **process's** CPU time (`syscall.RUSAGE_SELF`) instead. That still
 excludes other processes' load, and it also counts any other test running in the package at the time,
-so the guard isn't `t.Parallel()` and a package's parallel tests finish before it runs. The test
+so the guard isn't `t.Parallel()`. Go holds a package's parallel tests until its sequential tests
+finish, so none overlaps it, but goroutines that earlier tests leaked are still counted. The test
 says which of the two it uses and why, in its comment. A test can't tell the two cases apart by
 looking, so the author states which one the code under test is.
 
 The thread's CPU time doesn't include Go's background GC workers, which run on other threads. That's
 right for a copy that spawns no goroutines (`SnapshotAll` spawns none), and it means the regression
 injected in acceptance 3 must be mutator CPU (a busy loop), not allocation churn.
+
+Process CPU does include background GC and runtime threads, so a process-CPU guard sees allocation
+churn and carries more noise. Its limit comes from process-CPU measurements, not thread ones.
 
 Keep what #172's test already does right: **worst of several rounds, not the mean.** A stall is felt
 when it happens, so the worst round is the one that matters.
