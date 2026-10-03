@@ -270,6 +270,10 @@ services:
       context: ../..
       dockerfile: deploy/compose/Dockerfile.server
     profiles: [server]
+    # AW-SRV-026: a lost Tick Boundary Record exits 5 into exact recovery, and the restart is
+    # what recovers. on-failure, not always: exit 0 after a SIGTERM drain stays down, and a
+    # `docker compose stop` is never undone (`make stack-boundary-lost` asserts the loop).
+    restart: on-failure
     # The host uid, so the 0600 keyring bind-mounted below is readable; the image's own
     # unprivileged user is what a real deployment runs as (AW-INF-003).
     user: "${ANDARA_UID:-10001}:${ANDARA_GID:-10001}"

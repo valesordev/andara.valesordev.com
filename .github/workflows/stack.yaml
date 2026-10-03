@@ -301,6 +301,13 @@ jobs:
           # that happened rather than about a window nothing was observed in.
           assert ss == sa, "starvation kept rising after the broker returned"
           PY
+      # AW-SRV-026 AC-4: an outage past the 60 s delivery timeout loses a Tick Boundary
+      # Record. The server exits 5 once, compose's `restart: on-failure` brings it back, it
+      # recovers to the last delivered boundary, and a second recovery reads the topic back
+      # gapless. Right after the eight-second outage above, which must still see no exit.
+      - name: a lost tick boundary exits into exact recovery
+        run: make stack-boundary-lost
+
       # AW-SRV-024 AC-4: the collector goes away for sixty seconds while lines are being
       # written. The server keeps serving, stderr keeps every line, the bounded queue
       # counts what it discards (nothing, at this rate), RSS stays within 10%, and when the

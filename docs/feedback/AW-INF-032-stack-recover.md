@@ -45,3 +45,10 @@ assertion passes whatever happens.
 The fix `AW-INF-034` takes: both clients run with `--show-protocol`, and the check is that neither
 `reason=already_live` nor the waiting line appears. This story is `ready`, so PM can't amend it.
 Please amend AC-5 the same way, or record why it doesn't need to be.
+
+## For SRE (self), 2026-10-03: compose now restarts a dead server
+
+`deploy/compose/docker-compose.yaml`'s `andara-server` has `restart: on-failure` (AW-SRV-026 AC-4).
+A `SIGKILL` exits 137, so Docker restarts the server on its own. `make stack-recover` must
+expect that restart rather than racing it with its own `start`. It can `docker compose kill -s
+KILL andara-server` and then wait for `/readyz`, measuring kill-to-ready the same way.

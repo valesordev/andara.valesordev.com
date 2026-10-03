@@ -151,3 +151,46 @@ topic stayed gapless, and the restart recovered and continued.
 - The runbook paragraph (feedback item 3).
 - SRE's §8 instrumentation check: `andara_tick_boundary_lost_total` is registered on the server's
   registry and reads 0 until a loss, and its first live 1 is AC-4's.
+
+## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-026-verify`)
+
+**AC-4 passes on the local stack**, through a new target, `make stack-boundary-lost`, which the
+`stack` workflow now runs. Compose's `andara-server` gained `restart: on-failure` (feedback item 1).
+The live run, at `main` b543aae plus this branch:
+
+```
+stack-boundary-lost: server ready at andara_ticks_total=63; stopping redpanda for 90s
+stack-boundary-lost: first exit 5, 71s into the outage
+stack-boundary-lost: redpanda started after 90s
+stack-boundary-lost: lost tick 1636774; recovered to 1636773; 8 exit(s): 5 1 1 1 1 1 1 1; ticking (8 -> 18)
+stack-boundary-lost: read-back recovered to tick 1636795: the boundaries are gapless across the loss
+stack-boundary-lost: AW-SRV-026 AC-4 — exited 5 on the lost boundary, recovered to it, gapless — passes
+```
+
+- **The exits** come from `docker events`, since `restart:` hides all but the last. There's one `5` at
+  71 s (the 60 s delivery timeout plus the drain), then seven `1`s while the broker was still down.
+  That's the crash loop the story's Context describes.
+- **"Resumes from the recovered tick"**: the `recovered from the log` tick equals the loss line's
+  `last_delivered_tick`, and `andara_ticks_total` moves again.
+- **"Gapless, read back"**: today's recovery replays every boundary and refuses a gap
+  (`sim.ErrBoundaryGap`), so the target restarts the server once more and requires a recovery
+  past the loss with no `tick boundary gap`. The read-back is the product's own reader.
+- **AW-SRV-002's eight-second outage** runs in the same workflow, before this step, and still
+  sees no exit.
+
+**Instruments, each seen on a real backend:**
+
+| §7 instrument | Backend | Observed |
+|---|---|---|
+| `andara_tick_boundary_lost_total` | Prometheus | `max_over_time(…[20m])` = `1`. The scrape caught the dying process during its drain. Reads `0` on the recovered server |
+| `error` `tick boundary lost; exiting into recovery` | Loki, `{service_name="andara-server"}` | `detected_level=error`, `lost_tick=1636774`, `last_delivered_tick=1636773`, `err="tick boundary not acknowledged within the delivery timeout: unanswered for 1m0.099s"` |
+| last `sim.tick` span with `boundary_lost=true` | Tempo, `{span.boundary_lost=true}` | trace `cc276805411e6308e698c8b152cedc98`, root `sim.tick`, kept |
+| the runbook paragraph | `docs/runbooks/server-crashlooping.md` | exit `5` row, shipped in #364 (feedback item 3) |
+
+**One observation, not holding the story:** the loss line carries no `trace_id`. It's logged on
+`context.Background()` (`tickloop.reportLost`). The tick loop isn't a request path, and the `sim.tick`
+span is found by its attribute, so §7's correlation rule isn't breached. It's noted for
+implementation in the feedback file.
+
+The instrumentation item of CLAUDE.md §8 is met. Architecture runs the rest of §8 and moves the
+story.

@@ -80,3 +80,18 @@ The pre-PR review found a race, and closing it changed how a boundary reaches th
 ### How each AC is covered
 
 See the story's verification record.
+
+## SRE §8 check, 2026-10-03
+
+All three feedback items are done:
+- `restart: on-failure` on the compose `andara-server`;
+- `make stack-boundary-lost`, run by the `stack` workflow;
+- the runbook's exit `5` row (#364).
+
+AC-4 passed live, and every §7 instrument was seen on Prometheus, Loki and Tempo. The record is in
+the story.
+
+### For implementation (not holding the story)
+The `tick boundary lost; exiting into recovery` line has no `trace_id`, because `reportLost` logs
+on `context.Background()`. If the last `sim.tick` span's context is to hand, logging under it would
+let an operator jump from the line to the trace. Optional.
