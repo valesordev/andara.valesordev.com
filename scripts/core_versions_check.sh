@@ -31,7 +31,7 @@ say() { echo "core-versions-check: $*"; }
 if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
   # A shallow clone can't tell "HEAD has no parent" from "the parent wasn't fetched", and a
   # merge base past the shallow boundary isn't there either. Refuse rather than pass.
-  say "shallow clone; fetch full history"
+  say "shallow clone; run git fetch --unshallow"
   exit 2
 fi
 if ! base=$(git merge-base "$BASE_REF" HEAD 2>/dev/null); then

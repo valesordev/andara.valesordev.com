@@ -168,6 +168,12 @@ class AppendOnly(unittest.TestCase):
                                ["1 " + "a" * 64, "08 " + "b" * 64, "9 " + "c" * 64])
         self.assertEqual(code, 0, out)
 
+    def test_an_appended_leading_zero_version_fails(self):  # canonical decimal only
+        for v in ("02", "002"):
+            code, out = self.check([D1], [D1, v + " " + "a" * 64])
+            self.assertEqual(code, 1, out)
+            self.assertIn("core-versions-check: line 2 is version %s; expected 2" % v, out)
+
     def test_a_tab_separated_line_is_read_as_go_reads_it(self):  # strings.Fields
         code, out = self.check([D1], [D1, "2\t" + "c" * 64])
         self.assertEqual(code, 0, out)
@@ -205,7 +211,7 @@ class Base(unittest.TestCase):
         git(shallow.tmp.name, "clone", "-q", "--depth", "1", "file://" + fx.origin, shallow.work)
         code, out = shallow.run()
         self.assertEqual(code, 2, out)
-        self.assertIn("core-versions-check: shallow clone; fetch full history", out)
+        self.assertIn("core-versions-check: shallow clone; run git fetch --unshallow", out)
 
     def test_base_ref_overrides_origin_main(self):
         fx = Fixture([D1])
