@@ -149,6 +149,8 @@ and `ci.yaml`. The story has no instruments, so SRE's instrumentation item is va
 The one `[ASSUMPTION]` was settled by AC-3 at contract review and is marked resolved above. There is no
 config, migration or glossary term to carry.
 
-`make check` failed once in `go test` on `TestSnapshotCopyStaysInsideTheStallBudget` (125.8 ms against
-120 ms) while the targets ran in parallel; it passes alone. That is #172, which is on architecture's
-backlog and unrelated to this story.
+`make check`: a full run at `37e3a1b` plus this branch's docs ended `check: all clean`, exit 0
+(2026-10-03). Earlier runs on the same tree were red in `go test` on
+`TestSnapshotCopyStaysInsideTheStallBudget` (125.8 ms against 120 ms), which passes alone. That is #172,
+a load-sensitive test unrelated to this story, and architecture's ruling for it is PR #382. The clean run
+is what the close rests on.

@@ -28,4 +28,10 @@ Moved to `ready`.
 
 ## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
 
-Architecture's §8 review of AW-CLI-009 stops at the instrumentation item. The story's Observability requirements add no instruments, so the check is a record that says so. Until SRE records it in the story, it stays at `review`.
+Architecture's §8 review of AW-CLI-009 stops at two SRE items. The story stays at `review` until both
+are recorded in it.
+1. **The instrumentation record.** The Observability requirements add no instruments, so the check is a
+   record that says so.
+2. **AC-1's run in CI's network-less job** (the story's Test plan, Integration, and its "Outstanding
+   before `done`"). `ci.yaml` has no such invocation today. Wire one: `andara-cli content reference`
+   with `HOME` empty and no config, exit `0`, one JSON object on stdout.

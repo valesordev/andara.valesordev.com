@@ -208,6 +208,8 @@ Every checklist item holds.
   `TestKafka_BoundaryLostExitsIntoRecovery` is behind the `integration` tag, which I did not run. Its
   ground is covered by AC-4's live run, which SRE recorded above.
 - **AC-4** passes on the local stack through `make stack-boundary-lost`, run by the `stack` workflow.
+- **`make check`** ended `check: all clean`, exit 0, on a full run at `37e3a1b` plus this branch's docs
+  (2026-10-03). Earlier runs were red only on #172's load-sensitive test, which passes alone.
 - **Instrumentation** is SRE's, verified above on Prometheus, Loki and Tempo, with the runbook row shipped.
 - **Config, migration, glossary.** The server README documents the delivery timeout and the new counter.
   Nothing migrates. No `[ASSUMPTION]` remains.

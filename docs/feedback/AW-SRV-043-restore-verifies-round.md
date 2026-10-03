@@ -88,4 +88,9 @@ below.
 
 ## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
 
-Architecture's §8 review of AW-SRV-043 stops at the instrumentation item. Its `outcome="ok"` observation after a bootstrap is SRE's per the story's §8 record. Until it's recorded, the story stays at `review`.
+Architecture's §8 review of AW-SRV-043 stops at SRE's items. The story stays at `review` until all
+are recorded in it (its "Outstanding before `done`").
+1. **The instrumentation check:** `outcome="ok"` observed after a bootstrap, on a real backend.
+2. **The exit `5` row** in `docs/runbooks/state-projector-down.md`.
+3. **The operator step:** `make projector-rebuild ENV=dev` on a deployed build, with `restore
+   verified` in its log. It needs this build on `dev`; if that waits on a deploy, say so in the record.
