@@ -86,7 +86,8 @@ match, so that a crash is an interruption rather than an incident.
 4. **Given** a round with a missing or hash-invalid Zone object **when** rounds are listed **then** it
    is `incomplete` and recovery selects the newest `complete` one instead.
 5. **Given** the recovered hash differs from the `TickCompleted` hash at the same tick **when**
-   recovery finishes replay **then** the server exits `8`, `andara_recovery_state_hash_match` is `0`,
+   replay reaches a boundary whose hash differs (the first such boundary; replay stops there)
+   **then** the server exits `8`, `andara_recovery_state_hash_match` is `0`,
    and the `error` line names the tick, both hashes, and the round used. It never binds
    `grpc.listen`, so no player or Admin connection is ever accepted. With
    `recovery.mismatch_linger` above `0s`, operator HTTP serves for that long first (AC-14).
@@ -141,8 +142,9 @@ match, so that a crash is an interruption rather than an incident.
     replayed and no other round is tried. `andara_recovery_state_hash_match` is `0`,
     `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
     `recovery restore mismatch` carries `round_tick`, `reason` (`hash`, `seed` or `content`), and
-    `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`, the
-    error's own fields. It never binds
+    `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`,
+    `pack`, `recorded_digest` and `built_digest` for a digest mismatch and `zone_id` for an unknown
+    Zone. It never binds
     `grpc.listen`, and AC-14's linger applies. *(Added 2026-10-02, feedback item 3.)*
 14. **Given** `recovery.mismatch_linger` of `60s` **when** boot recovery ends in exit `8` or `6`
     **then**, for 60 s before exiting, the server serves `/metrics` and `/livez` with `200` and
@@ -232,6 +234,11 @@ That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and
 `reason=content`, counted under `andara_recovery_failures_total{reason="restore"}`.
 `andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
 
+A round holding one Zone twice is not a content disagreement. It's a malformed round, so `ListRounds`
+marks it `incomplete`, as AC-4 does for a missing Zone, and recovery never selects it. Named with
+`--round`, it's refused like any incomplete round: `snapshot verify` returns `FAILED_PRECONDITION`,
+and boot recovery exits `1`, a store error before recovery began.
+
 Exits `8` and `6` set `andara_recovery_state_hash_match` to `0` and linger under
 `recovery.mismatch_linger` (AC-14). A one-shot `recover --verify` exits `8` for every mismatch, as
 its output is `match` or `mismatch`, and it prints which with `reason`.
@@ -287,7 +294,9 @@ message VerifySnapshotRoundResponse { bool match = 1; bytes expected_hash = 2; b
 `ErrHashMismatch{Tick, Expected, Actual, Round}`, `ErrRestoreMismatch` and `ErrSeedMismatch`
 (`AW-SRV-043`), `sim.ContentDigestError` (exists), `sim.ErrRoundZoneUnknown{Tick, Zone}` and
 `sim.ErrRoundZoneDuplicate{Tick, Zone}` (new typed errors for `RestoreEngine`'s two untyped
-round-Zone refusals; both exit `6`, `reason=content`), `ErrLogGap{Partition, Need, Have}`,
+round-Zone refusals, added by this story in `server/sim/restore.go`; `ErrRoundZoneUnknown` exits
+`6` with `reason=content`, and `ErrRoundZoneDuplicate` is the incomplete round above, a backstop
+behind `ListRounds`), `ErrLogGap{Partition, Need, Have}`,
 `ErrStateVersion` (from `AW-SRV-006`), `ErrRoundIncomplete{Tick, Missing}`, `ErrOffsetGap` (from
 `AW-SRV-002`, re-raised during replay).
 
@@ -431,7 +440,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   across three values asserting AC-3; truncate the log below the round's offset asserting exit `3`;
   corrupt one Zone object asserting AC-4; flip one byte in `prng_state` on every object of a round
   and re-sign each envelope, asserting exit `6` (AC-13); rewrite one tail `TickCompleted.state_hash`
-  after the round, asserting exit `8` (AC-5) and `compared_tick` naming that tick; a round restored
+  after the round, asserting exit `8` (AC-5) with the error line's `tick` naming that tick, and, in
+  a separate case, `snapshot verify`'s `compared_tick` naming it; a round with one Zone twice,
+  listed `incomplete`; a round restored
   onto content with a different `content_digest`, asserting exit `6` with `reason=content` (AC-13)
   and `snapshot verify` returning `VERIFY_OUTCOME_CONTENT_MISMATCH`; no-snapshot cold start
   asserting AC-9. Publish

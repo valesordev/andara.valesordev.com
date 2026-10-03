@@ -39,8 +39,12 @@ As a developer, I want `make check` to refuse a change to any existing line of
 
 ## Acceptance criteria
 
-1. **Given** a change that appends one line `N+1 <digest>` **when** `make core-versions-check` runs
-   **then** it exits `0`.
+*The exit codes below are the check script's, `scripts/core_versions_check.sh`, which the Unit
+tests run directly. Through `make core-versions-check`, every non-zero exit is make's `2`, and the
+`core-versions-check:` line is the evidence (pinned 2026-10-02, pre-PR review).*
+
+1. **Given** a change that appends one line `N+1 <digest>` **when** the check runs **then** it
+   exits `0`, and so does `make core-versions-check`.
 2. **Given** a change that edits, deletes or reorders an existing line **then** it exits `1` with
    `core-versions-check: line <n> changed; VERSIONS is append-only`.
 3. **Given** an appended line whose version isn't the previous last version plus one **then** it
@@ -57,7 +61,7 @@ As a developer, I want `make check` to refuse a change to any existing line of
 - `## core-versions-check: fail if content/core/VERSIONS changes other than by appending the next version`
 - The base is `BASE_REF`, defaulting to `origin/main`, and the merge base is computed against `HEAD`.
 - Exits: `0` ok; `1` a violation, named; `2` no base. These are the script's exits
-  (`scripts/`), which the Unit tests assert directly. Through `make`, GNU make exits `2` for any
+  (`scripts/core_versions_check.sh`), which the Unit tests assert directly. Through `make`, GNU make exits `2` for any
   failing recipe, so the ACs' distinguishing evidence at the `make` level is the
   `core-versions-check:` line, not the code. *(Clarified 2026-10-02, pre-PR review.)*
 

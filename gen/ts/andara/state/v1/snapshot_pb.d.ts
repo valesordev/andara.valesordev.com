@@ -70,8 +70,8 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
    * process-wide values a Zone restored alone still needs. Hashing only the
    * Zone's section would leave them unprotected, and a corrupted prng_state
    * would stay hash-valid: AW-SRV-007 would not fall back to an older round,
-   * it would restore a World that fails AW-SRV-043's check at its own tick
-   * (recovery exit 6), rather than one that never existed.
+   * it would refuse at the round's own tick (AW-SRV-043, recovery exit 6)
+   * instead of falling back to an older round.
    *
    * So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
    * carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is
