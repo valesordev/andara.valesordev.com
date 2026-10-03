@@ -620,3 +620,29 @@ func TestCoreMissing_APublishedVersionIsNeverToldToEditIt(t *testing.T) {
 		}
 	}
 }
+
+// AW-SRV-046 item 2: the failure summary counts the findings that refuse the
+// pack, errors only, not the warnings beside them. Built on the summary
+// itself: a compile or a load that reports an error drops its warnings
+// (errors.md rule 7), so no source pack reaches it with both.
+func TestContentValidate_SummaryCountsErrorsOnly(t *testing.T) {
+	t.Parallel()
+	var stdout, stderr bytes.Buffer
+	rt := &runtime{stdout: &stdout, stderr: &stderr, settings: &resolved{Output: outputHuman}}
+	finding := func(code string, sev lang.Severity) lang.Diagnostic {
+		return lang.Diagnostic{File: "a.aw", Line: 1, Col: 1, Code: code, Message: code, Severity: sev}
+	}
+	v := &validated{label: "mypack", diags: []lang.Diagnostic{
+		finding("unknown_room", lang.SeverityError), finding("unknown_direction", lang.SeverityError),
+		finding("orphan_room", lang.SeverityWarning), finding("orphan_room", lang.SeverityWarning),
+		finding("missing_reverse_exit", lang.SeverityWarning),
+	}}
+	err := rt.reportValidated(v)
+	var ae *AppError
+	if !errors.As(err, &ae) || ae.Exit != ExitFail {
+		t.Fatalf("reportValidated: %v", err)
+	}
+	if want := "mypack: 2 finding(s) refuse the pack"; ae.Message != want {
+		t.Fatalf("summary %q, want %q", ae.Message, want)
+	}
+}
