@@ -36,7 +36,14 @@ type Metrics struct {
 	// TopicBytes is andara.state.v1's size on the broker, summed over
 	// partitions (one replica each), from broker metadata.
 	TopicBytes prometheus.Gauge
+	// Restores counts restores from a Snapshot Round by caller and outcome
+	// (AW-SRV-043): andara_restore_total{caller, outcome}. This process is
+	// the projector caller only; the server's callers are AW-SRV-007's.
+	Restores *prometheus.CounterVec
 }
+
+// RestoreCaller is andara_restore_total's caller label for this process.
+const RestoreCaller = "projector"
 
 // NewMetrics registers the set on reg; nil registers nothing, for tests.
 func NewMetrics(reg prometheus.Registerer) *Metrics {
@@ -74,6 +81,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_state_topic_bytes",
 			Help: "Size of andara.state.v1 on the broker, one replica per partition.",
 		}),
+		Restores: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "andara_restore_total",
+			Help: "Restores from a Snapshot Round, by caller and outcome (ok, hash_mismatch, seed_mismatch). Cardinality: 3 per caller.",
+		}, []string{"caller", "outcome"}),
 	}
 	// Every kind exists from the start, so a rate() over a kind that has not
 	// been written yet reads 0 rather than absent.
@@ -81,10 +92,13 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		statev1.AggregateKind_ITEM, statev1.AggregateKind_ROOM, statev1.AggregateKind_ZONE} {
 		m.RecordsProduced.WithLabelValues(KindLabel(k))
 	}
+	for _, o := range []string{"ok", "hash_mismatch", "seed_mismatch"} {
+		m.Restores.WithLabelValues(RestoreCaller, o)
+	}
 	m.RebuildDuration.WithLabelValues("bootstrap")
 	m.RebuildDuration.WithLabelValues("replay")
 	if reg != nil {
-		reg.MustRegister(m.LagSeconds, m.LagBudgetSeconds, m.Tick, m.RecordsProduced, m.Tombstones, m.DigestMismatches, m.RebuildDuration, m.TopicBytes)
+		reg.MustRegister(m.LagSeconds, m.LagBudgetSeconds, m.Tick, m.RecordsProduced, m.Tombstones, m.DigestMismatches, m.RebuildDuration, m.TopicBytes, m.Restores)
 	}
 	return m
 }

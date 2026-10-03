@@ -68,6 +68,12 @@ func TestRestoredEngineContinuesTheWorld(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The round tick's Tick Boundary Record would carry this.
+	recorded := live.StateHash()
+	state.RecordedHash = recorded[:]
+	if state.SimSeed != 11 {
+		t.Fatalf("the round records sim_seed %d, want 11", state.SimSeed)
+	}
 	restored, err := sim.RestoreEngine(w, reg, sim.Config{Seed: 11, Handlers: simtest.Handlers(reg)}, state)
 	if err != nil {
 		t.Fatal(err)

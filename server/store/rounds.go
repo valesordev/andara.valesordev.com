@@ -163,6 +163,7 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 			continue
 		}
 		next := body.GetNextEventId()
+		seed := env.GetSimSeed()
 		content := map[string]uint64{}
 		for _, pv := range env.GetContent() {
 			content[pv.GetPackId()] = pv.GetVersion()
@@ -174,7 +175,7 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		sort.Slice(offsets, func(i, j int) bool { return offsets[i].Partition < offsets[j].Partition })
 		switch {
 		case first:
-			state.PRNG, state.NextEventID, state.Offsets, first = prng, next, offsets, false
+			state.PRNG, state.NextEventID, state.Offsets, state.SimSeed, first = prng, next, offsets, seed, false
 			if len(content) > 0 {
 				state.Content, state.ContentDigest = content, env.GetContentDigest()
 			}
@@ -186,6 +187,11 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 			// AW-SRV-007 AC-11: a round is one cut at one tick, so these agree
 			// by construction; disagreement means two cuts assembled as one.
 			ref.Reason = fmt.Sprintf("prng %x… / next_event_id %d disagree with the round's %x… / %d", prng[0], next, state.PRNG[0], state.NextEventID)
+			continue
+		case seed != state.SimSeed:
+			// Every Zone's envelope in a round carries the same seed
+			// (AW-SRV-043).
+			ref.Reason = fmt.Sprintf("sim_seed %d disagrees with the round's %d", seed, state.SimSeed)
 			continue
 		case !equalOffsets(offsets, state.Offsets):
 			ref.Reason = "partition offsets disagree with the rest of the round"
