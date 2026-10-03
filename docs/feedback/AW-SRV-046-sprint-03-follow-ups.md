@@ -12,3 +12,7 @@ direction: the record is corrected, not the code. No metrics, traces, or alerts 
 
 Moved to `ready` unchanged. Each item cites a ruling already made, and no contract moves. Items 7
 and 8 write `docs/stories/` and `docs/feedback/`, which implementation can write.
+
+## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
+
+Architecture's §8 review of AW-SRV-046 stops at the instrumentation item. The story's Observability requirements add no instruments, so the check is a record that says so. Until SRE records it in the story, it stays at `review`.

@@ -25,3 +25,7 @@ Moved to `ready`.
   became "sends no credentials". No pre-run exemption: it's the same divergence §7 declined.
   AC-1 already runs with no config and no credential file, so it's unchanged.
 - The manual step's "not that the count is 35" now reads 37.
+
+## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
+
+Architecture's §8 review of AW-CLI-009 stops at the instrumentation item. The story's Observability requirements add no instruments, so the check is a record that says so. Until SRE records it in the story, it stays at `review`.

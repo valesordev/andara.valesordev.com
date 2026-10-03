@@ -85,3 +85,7 @@ below.
   distinct `make` exit codes (`AW-INF-007`'s `make deploy` table, for one) can't be asserted at the
   `make` level. `AW-INF-029` now says its codes are the script's. `AW-INF-007` needs the same
   wording when it's split (`docs/feedback/AW-INF-005-007-split.md`).
+
+## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
+
+Architecture's §8 review of AW-SRV-043 stops at the instrumentation item. Its `outcome="ok"` observation after a bootstrap is SRE's per the story's §8 record. Until it's recorded, the story stays at `review`.
