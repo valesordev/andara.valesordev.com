@@ -112,9 +112,9 @@ Epics: `EPIC-05`, `EPIC-06`, `EPIC-10` (Postgres).
 
 #### M4 — Playable vertical slice *(gate: Phase 1 exit criteria 1–6 all hold)*
 Python Behavior Agents driving NPCs — **written by Builders** (decided 2026-09-11), so Behavior code
-is pack content and one Agent deployment runs one pack. Items. One complete gameplay loop `[NEEDS
-BRIAN — which loop: combat, trade, exploration, social?]`. SLOs with error budgets and runbooks. Protocol
-frozen at v1.
+is pack content and one Agent deployment runs one pack. Items. One complete gameplay loop: **combat**
+(Brian, 2026-10-03). Its mechanics are Brian's to decide and aren't groomed yet. SLOs with error
+budgets and runbooks. Protocol frozen at v1.
 Epics: `EPIC-09`, remainder of `EPIC-07`.
 
 ### Sequencing rationale
@@ -218,11 +218,21 @@ place and the words or values left to Brian.
 - **What players see during a deploy or recovery interruption** — the `ServerStopping` Event and its
   lead time exist (`AW-INF-007`); the message does not.
 - **What players see on relocation** when a Room is removed by a content change (`AW-SRV-012`).
-- **Which gameplay loop M4 delivers** — combat, trade, exploration, or social.
 - **What a Character *is*** beyond name and position (`AW-SRV-014`). The spawn Room is decided:
   `town/plaza` for the dev content (2026-09-21), one values-file line for real content.
 - **What an unattended NPC looks like** to players (`AW-SRV-009`).
 - **The wording of the read-only error** every player will eventually see (`AW-SRV-010`).
+
+### Resolved on 2026-10-03
+
+- **M4's gameplay loop is combat** (Brian): "that gets us into the real meat of gameplay". Trade,
+  exploration and social aren't M4's. Two combat rules are already decided:
+  - combat extends the linkdead timer, but a Character can still time out (ADR-0006, "Combat and the
+    linkdead grace period");
+  - a combat round is a number of Ticks (ADR-0008, "Combat rounds are decoupled from the tick").
+
+  The rest of combat's mechanics are still Brian's: what attacks, damage and death mean, and what an
+  NPC does in a fight. PM batches those questions when M4's stories are groomed.
 
 ### Resolved on 2026-09-23
 
