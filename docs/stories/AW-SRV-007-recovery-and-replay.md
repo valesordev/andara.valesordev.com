@@ -225,7 +225,7 @@ completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 | `4` | `ErrStateVersion` — binary older than the snapshot |
 | `5` | *not recovery's:* `AW-SRV-026`'s `ExitBoundaryLost`, a running server that lost a Tick Boundary Record |
 | `6` | `ErrRestoreMismatch` or `ErrSeedMismatch` (`AW-SRV-043`): the round doesn't reproduce its own tick |
-| `7` | `ErrRoundIncomplete` with no complete round and `recovery.require_snapshot=true` *(was `5` until 2026-10-02)* |
+| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete *(was `5` until 2026-10-02)* |
 | `8` | `ErrHashMismatch` — the alerting condition *(was `2` until 2026-10-02)* |
 
 Exit `6` also covers the round refusing to restore onto the content in effect:
@@ -235,9 +235,21 @@ That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and
 `andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
 
 A round holding one Zone twice is not a content disagreement. It's a malformed round, so `ListRounds`
-marks it `incomplete`, as AC-4 does for a missing Zone, and recovery never selects it. Named with
-`--round`, it's refused like any incomplete round: `snapshot verify` returns `FAILED_PRECONDITION`,
-and boot recovery exits `1`, a store error before recovery began.
+marks it `incomplete`, as AC-4 does for a missing Zone, and recovery never selects it on its own.
+
+**A named round that isn't complete** (a duplicate Zone, a missing or hash-invalid Zone, or
+disagreeing PRNG, EventID or seed) is refused as `ErrRoundIncomplete`. It's never restored, and no
+other round is substituted for it. A round is named in three ways:
+- `recover --verify --round T`, the one-shot, exits `7`;
+- `recovery.pin_round` (`AW-INF-007`'s one-boot override for `make rollback ROUND=T`) makes boot
+  recovery exit `7`;
+- `snapshot verify --round T` gets `FAILED_PRECONDITION` from `Admin.VerifySnapshotRound`, and
+  `andara-cli` exits `1`.
+
+Each server exit counts `andara_recovery_failures_total{reason="round"}`, with one `error` line
+naming the round's tick and why it's incomplete. *(Amended in PR #356 review, 2026-10-03. The
+earlier text said "named with `--round` … boot recovery exits `1`". Boot recovery takes no
+`--round`, and the one-shot's exit was unstated.)*
 
 Exits `8` and `6` set `andara_recovery_state_hash_match` to `0` and linger under
 `recovery.mismatch_linger` (AC-14). A one-shot `recover --verify` exits `8` for every mismatch, as

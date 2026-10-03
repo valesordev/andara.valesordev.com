@@ -127,8 +127,9 @@ message SnapshotRound {
   uint32 state_version = 2;
   // Sorted. The Zones the round holds an object for.
   repeated string zone_ids = 3;
-  // Every owned Zone present and hash-valid, and every object's prng_state,
-  // next_event_id and sim_seed agreeing (AW-SRV-007 AC-4 and AC-11).
+  // Exactly one object for every owned Zone, each hash-valid, and every
+  // object's prng_state, next_event_id and sim_seed agreeing (AW-SRV-007 AC-4
+  // and AC-11). A round holding one Zone twice is incomplete.
   bool complete = 4;
   // The newest taken_at_unix_nano among the round's objects. Diagnostic only.
   int64 taken_at_unix_nano = 5;

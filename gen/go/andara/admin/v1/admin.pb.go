@@ -169,8 +169,9 @@ type SnapshotRound struct {
 	StateVersion uint32                 `protobuf:"varint,2,opt,name=state_version,json=stateVersion,proto3" json:"state_version,omitempty"`
 	// Sorted. The Zones the round holds an object for.
 	ZoneIds []string `protobuf:"bytes,3,rep,name=zone_ids,json=zoneIds,proto3" json:"zone_ids,omitempty"`
-	// Every owned Zone present and hash-valid, and every object's prng_state,
-	// next_event_id and sim_seed agreeing (AW-SRV-007 AC-4 and AC-11).
+	// Exactly one object for every owned Zone, each hash-valid, and every
+	// object's prng_state, next_event_id and sim_seed agreeing (AW-SRV-007 AC-4
+	// and AC-11). A round holding one Zone twice is incomplete.
 	Complete bool `protobuf:"varint,4,opt,name=complete,proto3" json:"complete,omitempty"`
 	// The newest taken_at_unix_nano among the round's objects. Diagnostic only.
 	TakenAtUnixNano int64 `protobuf:"varint,5,opt,name=taken_at_unix_nano,json=takenAtUnixNano,proto3" json:"taken_at_unix_nano,omitempty"`

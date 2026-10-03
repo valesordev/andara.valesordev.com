@@ -76,8 +76,9 @@ export declare type SnapshotRound = Message<"andara.admin.v1.SnapshotRound"> & {
   zoneIds: string[];
 
   /**
-   * Every owned Zone present and hash-valid, and every object's prng_state,
-   * next_event_id and sim_seed agreeing (AW-SRV-007 AC-4 and AC-11).
+   * Exactly one object for every owned Zone, each hash-valid, and every
+   * object's prng_state, next_event_id and sim_seed agreeing (AW-SRV-007 AC-4
+   * and AC-11). A round holding one Zone twice is incomplete.
    *
    * @generated from field: bool complete = 4;
    */

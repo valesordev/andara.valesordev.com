@@ -47,8 +47,7 @@ message SnapshotEnvelope {
   // process-wide values a Zone restored alone still needs. Hashing only the
   // Zone's section would leave them unprotected, and a corrupted prng_state
   // would stay hash-valid: AW-SRV-007 would not fall back to an older round,
-  // it would refuse at the round's own tick (AW-SRV-043, recovery exit 6)
-  // instead of falling back to an older round.
+  // it would refuse at the round's own tick (AW-SRV-043, recovery exit 6).
   //
   // So this is SHA-256 over ZoneCanonicalBytes followed by a snapshot record
   // carrying tick, prng_state and next_event_id. ZoneCanonicalBytes is
