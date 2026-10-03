@@ -260,3 +260,39 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
   adds the exit `5` row to `docs/runbooks/state-projector-down.md`.
 - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
   build deployed to `dev`.
+
+## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
+
+**The projector's §7 instrumentation passes on the local stack.** The local compose has no
+projector service, so the check ran the built `andara-projector state --rebuild` on the host against
+the stack's Redpanda, the server's real snapshot rounds (`.local/data/snapshots`, the `fs` store)
+and its OTLP collector. At `main` 37e3a1b:
+
+- **Metric, scraped from the projector's own `/metrics`:**
+  ```
+  andara_restore_total{caller="projector",outcome="hash_mismatch"} 0
+  andara_restore_total{caller="projector",outcome="ok"} 1
+  andara_restore_total{caller="projector",outcome="seed_mismatch"} 0
+  ```
+  All 3 series are pre-seeded and `ok` counted the bootstrap.
+- **Log:** `info` `state projector restore verified`, with `round_tick` (1733786), `zones` (4),
+  `restored_hash` and `trace_id`.
+- **Traces, read back from Tempo by that `trace_id`:** `state.bootstrap` (root; `rebuild=true`,
+  `round_tick`, `outcome=ok`) with `restore.verify` as its child (`round_tick`, `zones=4`,
+  `outcome=ok`).
+- **Mismatch paths:** `TestRun_ACorruptedRoundExitsFive` (both `--rebuild` settings) and
+  `TestRun_ARoundFromAnotherSeedExitsFive` pass against the stack's Redpanda
+  (`ANDARA_KAFKA_BROKERS=localhost:9092`). The mismatch series is read on the in-process registry,
+  as the Observability section specifies, not scraped.
+
+**Not yet emitted by a running process:**
+- `andara_restore_total` for `caller="recovery"` and `caller="verify"` (6 series in
+  `andara-server`). `AW-SRV-007` wires them and inherits the live observation as a
+  Definition-of-done line.
+- The mismatch series and the `error` line from a running projector: it exits `5` before a scrape.
+  The integration tests cover them.
+- The operator step, `make projector-rebuild ENV=dev`, needs this build on `dev`, which is
+  tailnet-only.
+
+**Runbook:** `docs/runbooks/state-projector-down.md`'s exit `5` row no longer says it ships with
+this story.
