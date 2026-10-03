@@ -646,7 +646,7 @@ func TestPreviousActive(t *testing.T) {
 		{2, []uint64{1, 2, 3, 2}, 3},    // rolled back: the previous is the one rolled back from
 		{3, []uint64{1, 3, 2, 3, 3}, 2}, // repeated moves to the active one are skipped
 		{1, []uint64{1, 1, 1}, 0},       // nothing else was ever active
-		{4, []uint64{2, 0, 3, 4}, 3},    // a zero move is ignored
+		{4, []uint64{2, 0, 4}, 2},       // a zero move, the newest before the active one, is skipped
 		{5, []uint64{5, 4, 3, 2, 1, 5}, 1},
 	} {
 		if got := previousActive(tc.active, moves(tc.moves...)); got != tc.want {

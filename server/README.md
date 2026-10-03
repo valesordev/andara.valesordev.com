@@ -918,7 +918,8 @@ with no `fallback_room`, or one naming a Room it does not contain, AW-SRV-012 AC
 Templates `unresolved_extends`, `unflattened_template`, `duplicate_template`, `chain_mismatch`,
 `chain_too_deep`, `invalid_provenance`. **A refused load reports only its errors** (`errors.md` §1
 rule 7): a warning describes content the loader accepted, and a refused load accepted nothing, so
-no `orphan_room` or `missing_reverse_exit` is reported beside an error.
+no `orphan_room` or `missing_reverse_exit` is reported beside an error, unless
+`content.strict_orphans` makes `orphan_room` an error itself.
 
 **Findings that are advisory** — the World loads and the process serves, and each is logged at
 `warn`: `missing_reverse_exit`, and `orphan_room` unless `content.strict_orphans` is set, which

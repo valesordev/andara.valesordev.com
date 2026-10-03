@@ -404,13 +404,9 @@ func (r *repl) printDelivery(label string, d events.Delivery) {
 		human = strings.TrimRight(b.String(), "\n")
 		j["room"] = map[string]any{"zone": rd.GetZoneId(), "room": rd.GetRoomId(), "title": rd.GetTitle(), "description": rd.GetDescription(), "exits": rd.GetExits(), "occupants": rd.GetOccupants()}
 	case *gamev1.EventEnvelope_CharacterLeft:
-		// goto sends no direction: the line is the server's own departure
-		// line without one (AW-SRV-036 §8).
-		if dir := p.CharacterLeft.GetToDirection(); dir == "" {
-			human = p.CharacterLeft.GetCharacterName() + " leaves."
-		} else {
-			human = fmt.Sprintf("%s leaves %s.", p.CharacterLeft.GetCharacterName(), dir)
-		}
+		// The play renderer's line, so the two can't drift: goto sends no
+		// direction, and the line is then "<name> leaves." (AW-SRV-036 §8).
+		human = renderEvent(env)[0]
 		j["character"], j["room"], j["direction"] = p.CharacterLeft.GetCharacterName(), p.CharacterLeft.GetRoomId(), p.CharacterLeft.GetToDirection()
 	case *gamev1.EventEnvelope_CharacterArrived:
 		from := p.CharacterArrived.GetFromDirection()

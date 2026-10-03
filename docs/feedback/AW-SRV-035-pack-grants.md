@@ -93,8 +93,9 @@ The "not holding the story" follow-ups for implementation above are now items in
 
 The "not holding the story" items are done:
 - **`TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`** waits on `stall.entered` in a `select`
-  with a deadline. A refusal that holds the write lock now fails in about 1 s, where before it
-  would have hung.
+  with a deadline. A refusal that never reaches its audit, such as one deadlocked before it, now
+  fails at 5 s, where before it hung the run. A refusal holding the lock through its audit was
+  already caught, in about 1 s.
 - **`TestSetBuilderPacks_LogFields`** asserts AC-6's fields on a refused and an accepted grant:
   - `trace_id` equals the Admin RPC span's;
   - `session_id` is present and empty;
