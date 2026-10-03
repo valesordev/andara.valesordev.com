@@ -69,6 +69,10 @@ After the contract review above:
 3. **`docs/feedback/AW-INF-005-007-split.md`**: name the split lines. PM grooms the parts at the
    SPRINT-05 boundary.
 4. The §8 review of each story as it reaches `review`.
+5. **`docs/feedback/AW-SRV-011-first-look-before-subscribe.md`** (added 2026-10-03): rule what a
+   client may rely on before its first command (#116, #117). Four options are listed there, and
+   most change `AW-SRV-011`'s Egress seam or `AW-CLI-007`'s verified order. Implementation's item
+   13 waits on this, so take it after item 3 and ahead of item 4.
 
 ## SRE backlog (pickup order)
 Before this list: the observability review of every draft above, then the instrumentation check of
@@ -107,10 +111,32 @@ each story at `review`.
 10. **#287** (`rooms_loaded` has no series during a content swap; ruled 2026-10-01), then **#290**
     (`state.verify` spans). The contracts hold for both.
 11. **AW-SRV-046** — the owed follow-ups from SPRINT-03's reviews. S.
+12. **#69** (added 2026-10-03): seven egress and boot test waits on the Hub's `Subscribers` gauge
+    before an emit, in `egress_test.go`, `gateway_test.go` and `ingress_test.go`. It was latent
+    until 2026-10-03, when `TestScope_RoomDelivery` (`egress_test.go:295`) failed a local
+    `make check` under load. #370 recorded that and is closed as a duplicate. The fix is to wait on
+    the egress's `Streams` gauge wherever an emit follows (`server/README.md`, Event egress).
+    Test-only, S.
+13. **#116 and #117** (added 2026-10-03): `play`'s first `look` can reach the server before its
+    stream attaches, which failed `TestPlay_SelectsBeforeSubscribe` in CI on #107 and #108, two PRs
+    that don't touch that code. The outcome: the automatic `look`'s answer always reaches the
+    stream (`AW-CLI-007` AC-4), and the test asserts the order deterministically. It waits on
+    architecture's item 5. Size after that ruling: S for a CLI and test-side fix, M if the seam
+    changes.
+
+**Added 2026-10-03: CI stability (Brian).** Items 12 and 13 are test flakes that every lane pays
+for: item 13 in CI, and item 12 in `make check` under load. #319 and #172 (items 5 and 6) are the
+others. Pick up item 12 after item 6, or as soon as item 6 is waiting on architecture's ruling,
+ahead of item 7. Item 13 follows once architecture's item 5 rules. Until then, implementation skips
+it. The items aren't renumbered, so the cross-references above still hold. #101
+(`TestKafka_ConcurrentSubmitsOrdered`'s fixture deadline) stays out.
 
 **Risk:** AW-SRV-028 and AW-SRV-007 are each M, and together they're most of the sprint. The demo
 needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then
-item 9. SRE's items 1–5 are the slack while it waits on item 4.
+item 9. Item 12 doesn't carry: it goes ahead of items 7–11. Item 13 carries over only if
+architecture's item 5 hasn't ruled by the sprint's last week, or if the ruling makes it M (a seam
+change to a `done` story), which would be a third M beside AW-SRV-028 and AW-SRV-007. SRE's items
+1–5 are the slack while it waits on item 4.
 
 ## Carryover from SPRINT-03
 None. Every SPRINT-03 story is `done` (see its close-out). The stories that moved here on
