@@ -727,6 +727,7 @@ func TestActivateVersion_RefusesWhatTheLoaderWouldRefuse(t *testing.T) {
 	refused := func(t *testing.T, h *pubHarness, pack string, v uint64, reason string, subjects ...string) {
 		t.Helper()
 		before, pointer := len(h.auditRecords()), h.reg.Pointers()[pack]
+		attempts := 0
 		for _, ctx := range []context.Context{builder(alice), operator()} {
 			req := &adminv1.ActivateVersionRequest{PackId: pack, Version: v}
 			if ctx != nil && pack != CorePack && ctxIsOperator(ctx) {
@@ -735,6 +736,7 @@ func TestActivateVersion_RefusesWhatTheLoaderWouldRefuse(t *testing.T) {
 			if pack == CorePack && !ctxIsOperator(ctx) {
 				continue
 			}
+			attempts++
 			_, err := h.admin.ActivateVersion(ctx, req)
 			ae := adminError(t, err, CodeFailedPrecondition, reason)
 			ar, ok := ae.Detail.(*adminv1.ActivationRefusal)
@@ -745,7 +747,13 @@ func TestActivateVersion_RefusesWhatTheLoaderWouldRefuse(t *testing.T) {
 		if h.reg.Pointers()[pack] != pointer {
 			t.Error("the pointer moved")
 		}
-		for _, r := range h.auditSince(before) {
+		// Exactly one audit record per refusal (AW-SRV-013 review;
+		// AW-SRV-046), each of them refused.
+		records := h.auditSince(before)
+		if len(records) != attempts {
+			t.Errorf("%d audit records for %d refusals", len(records), attempts)
+		}
+		for _, r := range records {
 			if r.GetOutcome() != "refused" {
 				t.Errorf("audit %v", r)
 			}

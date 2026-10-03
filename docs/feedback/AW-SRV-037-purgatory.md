@@ -83,3 +83,9 @@ Switch the test to it on the next touch of `server/content/`.
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+`TestDevFixtureSourceMatchesTestContent` compiles against the embedded `andara.core`
+(`content/core`'s blobs and `VERSION`), not `content/core/templates/` read from disk. Removing a
+Template from the core fails it.

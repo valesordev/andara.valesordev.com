@@ -33,7 +33,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `content.core_pack` | `ANDARA_CONTENT_CORE_PACK` | `andara.core` | The pack the server publishes at boot and no RPC may. It must name the core this build embeds. Kafka only. |
 | `content.operator_self_approval` | `ANDARA_CONTENT_OPERATOR_SELF_APPROVAL` | `true` | An Operator may approve a version they published, flagged `self_approval` (ADR-0004, amended 2026-09-26). Off, it's refused like a Builder's. Kafka only. |
 | `content.reload_debounce` | `ANDARA_CONTENT_RELOAD_DEBOUNCE` | `2s` | How long a burst of pointer moves is coalesced before it is applied. Kafka only. |
-| `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. |
+| `content.strict_orphans` | `ANDARA_STRICT_ORPHANS` | `false` | When `true`, Rooms with no inbound Exit in their Zone are errors. A Zone of one Room has no orphan: its Room is its fallback and entry, and nothing in the Zone could lead into it (`AW-SRV-034`). |
 | `http.port` | `ANDARA_HTTP_PORT` | `8080` | `/livez`, `/startedz`, `/readyz`, `/metrics`. Plaintext, operator surface. |
 | `telemetry.otlp_endpoint` | `ANDARA_OTLP_ENDPOINT` | `localhost:4317` | Traces and logs go to this collector over OTLP/gRPC (AW-SRV-024). Empty disables both exporters; an endpoint the exporter cannot be built for is fatal. |
 | `telemetry.service_name` | `ANDARA_SERVICE_NAME` | `andara-server` | |
@@ -737,6 +737,15 @@ username on a failure, which may be a password typed in the wrong box; `privileg
 `session.authenticate` under the `OpenSession` RPC span (which `session.lifetime` links to);
 `auth.verify_credential` under `Authenticate` with `argon2.memory_kib`.
 
+### Builder pack grants (AW-SRV-035)
+
+`Admin.SetBuilderPacks` (`andara-cli account set-packs`) replaces an Account's
+`builder_packs`, the Content Packs a `builder` may publish to, as `SetRoles` replaces roles. Only
+an Operator may, and no Account holds `andara.core`. A refusal carries `ErrorInfo{domain:
+andara.accounts, reason}`, with reason one of `operator_only`, `account_not_found`,
+`invalid_pack_id`, `core_not_grantable` or `record_version`. The store write is the
+`accounts.write` span, and the audit record is written outside the Account write lock.
+
 ## The roster and the binding (AW-SRV-014)
 
 `server/roster` is the Gateway's side of a Session entering the World. `Game.ListCharacters`,
@@ -903,10 +912,14 @@ broken Exits needs one boot rather than ten.
 **Findings that refuse the load** (the process exits 1 and `/readyz` stays 503):
 `unknown_room`, `unknown_zone`, `duplicate_room`, `duplicate_zone`, `unsupported_format_version`,
 `malformed_file`, `no_zones_found`, `unknown_direction`, `unknown_component_type`,
-`duplicate_component_type`, `invalid_component_field`, `fallback_missing` (a Zone with no
-`fallback_room`, or one naming a Room it does not contain, AW-SRV-012 AC-10); and for Templates `unresolved_extends`,
-`unflattened_template`, `duplicate_template`, `chain_mismatch`, `chain_too_deep`,
-`invalid_provenance`.
+`duplicate_component_type`, `invalid_component_field`, `duplicate_direction` (a second Exit with a
+Direction its Room already uses, reported at the second, `AW-SRV-034`), `fallback_missing` (a Zone
+with no `fallback_room`, or one naming a Room it does not contain, AW-SRV-012 AC-10); and for
+Templates `unresolved_extends`, `unflattened_template`, `duplicate_template`, `chain_mismatch`,
+`chain_too_deep`, `invalid_provenance`. **A refused load reports only its errors** (`errors.md` §1
+rule 7): a warning describes content the loader accepted, and a refused load accepted nothing, so
+no `orphan_room` or `missing_reverse_exit` is reported beside an error, unless
+`content.strict_orphans` makes `orphan_room` an error itself.
 
 **Findings that are advisory** — the World loads and the process serves, and each is logged at
 `warn`: `missing_reverse_exit`, and `orphan_room` unless `content.strict_orphans` is set, which

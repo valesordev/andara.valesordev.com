@@ -214,3 +214,66 @@ func auditTrace(t *testing.T, audit recordlog.Log, action string) string {
 	}
 	return id
 }
+
+// AW-SRV-046 item 4: the tests AW-CLI-003's §8 review owed.
+
+// AC-2: the approver may activate what another Builder published, and the
+// pointer moves to it.
+func TestContentActivate_AsTheApprover(t *testing.T) {
+	s := memoryStack(t)
+	_, alice := s.builder(t, "alice", "town")
+	_, bob := s.builder(t, "bob", "town")
+	mustRun(t, alice, "content", "publish", "--path", devFixture)
+	mustRun(t, bob, "content", "approve", "town", "1")
+	if res := mustRun(t, bob, "content", "activate", "town", "1", "--yes"); !strings.HasPrefix(res.stdout, "town@1 active") {
+		t.Fatalf("bob activates: %q", res.stdout)
+	}
+	s.awaitServing(t, bob, "town@1")
+}
+
+// A blob over the 1 MiB chunk publishes in chunks: the server refuses any
+// chunk larger than content.BlobChunkBytes, so a publish that didn't split it
+// would fail. It fetches back byte for byte.
+func TestContentPublish_ABlobOverOneMiBIsChunked(t *testing.T) {
+	s := memoryStack(t)
+	_, alice := s.builder(t, "alice", "town")
+	_, bob := s.builder(t, "bob", "town")
+	dir := copyPack(t, devFixture, nil)
+	big := "// " + strings.Repeat("x", 1<<20) + "\n"
+	writeAW(t, dir, "padding.aw", big)
+	mustRun(t, alice, "content", "publish", "--path", dir)
+	mustRun(t, bob, "content", "approve", "town", "1")
+
+	out := filepath.Join(t.TempDir(), "town")
+	mustRun(t, alice, "content", "fetch", "town", "1", "--out", out)
+	got, err := os.ReadFile(filepath.Join(out, "padding.aw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(big) <= 1<<20 || !bytes.Equal(got, []byte(big)) {
+		t.Fatalf("fetched %d bytes of a %d-byte source", len(got), len(big))
+	}
+}
+
+// fetch refuses a manifest path that climbs out of src/ (src/../x), and
+// writes nothing outside --out.
+func TestContentFetch_RefusesADotDotPath(t *testing.T) {
+	s := memoryStack(t)
+	_, alice := s.builder(t, "alice", "town")
+	raw := &contentServer{reg: s.reg}
+	v := raw.publish(t, "town", 1, map[string][]byte{
+		"src/pack.aw": []byte("pack town requires andara.core@1\n"),
+		"src/../x.aw": []byte("// outside src\n"),
+	})
+	parent := t.TempDir()
+	out := filepath.Join(parent, "town")
+	res := runCLI(t, []string{"content", "fetch", "town", itoa(v), "--out", out, "-o", "json"}, alice)
+	if res.exit != ExitFail || jsonErrorCode(t, res.stdout) != "unsafe_source_path" {
+		t.Fatalf("exit=%d stdout=%q", res.exit, res.stdout)
+	}
+	for _, p := range []string{filepath.Join(parent, "x.aw"), filepath.Join(out, "..", "x.aw"), filepath.Join(out, "x.aw")} {
+		if _, err := os.Stat(p); err == nil {
+			t.Errorf("fetch wrote %s", p)
+		}
+	}
+}

@@ -200,3 +200,15 @@ first three bullets:
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+Both "not holding the story" items are done:
+- **The `admin/README.md` `version` row** now names the embedded `andara.core`.
+- **The failure summary counts errors only.** `TestContentValidate_SummaryCountsErrorsOnly`
+  asserts `mypack: 2 finding(s) refuse the pack` for 2 errors beside 3 warnings. It drives the
+  summary directly, because no input can reach it with both.
+  - `mergeDiagnostics` has dropped non-errors on every refusal since this story (2d5a72f), so on
+    every reachable path the old count was already errors only, and the review's premise wasn't
+    reachable.
+  - The count is now errors-only by construction rather than by the merge.

@@ -443,7 +443,15 @@ func (rt *runtime) reportValidated(v *validated) error {
 	}
 	summary := fmt.Sprintf("%d zones, %d rooms, %d templates, core %s", len(v.zones()), v.rooms(), len(v.templates()), coreName)
 	if v.failed() {
-		summary = fmt.Sprintf("%s: %d finding(s) refuse the pack", v.label, len(v.diags))
+		// The findings that refuse it: errors, not the warnings beside them
+		// (AW-CLI-002 review; AW-SRV-046).
+		refusing := 0
+		for _, d := range v.diags {
+			if d.Severity == lang.SeverityError {
+				refusing++
+			}
+		}
+		summary = fmt.Sprintf("%s: %d finding(s) refuse the pack", v.label, refusing)
 	}
 
 	if rt.settings.Output == outputJSON {
