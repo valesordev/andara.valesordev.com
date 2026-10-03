@@ -7,7 +7,7 @@ type: infra
 status: ready
 size: S
 depends_on: [AW-INF-008, AW-SRV-007]
-blocks: []
+blocks: [AW-INF-034]
 lane: sre
 risk: medium
 ---

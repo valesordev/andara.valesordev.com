@@ -7,7 +7,7 @@ type: chore
 status: ready
 size: S
 depends_on: [AW-INF-003, AW-SRV-002, AW-SRV-007]
-blocks: []
+blocks: [AW-INF-034]
 lane: sre
 risk: medium
 ---
