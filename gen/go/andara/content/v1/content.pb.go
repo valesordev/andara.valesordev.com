@@ -433,8 +433,11 @@ type Diagnostic struct {
 	Code    string `protobuf:"bytes,4,opt,name=code,proto3" json:"code,omitempty"`
 	Message string `protobuf:"bytes,5,opt,name=message,proto3" json:"message,omitempty"`
 	// The declaration chain, outermost first.
-	Chain         []string `protobuf:"bytes,6,rep,name=chain,proto3" json:"chain,omitempty"`
-	Severity      Severity `protobuf:"varint,7,opt,name=severity,proto3,enum=andara.content.v1.Severity" json:"severity,omitempty"`
+	Chain    []string `protobuf:"bytes,6,rep,name=chain,proto3" json:"chain,omitempty"`
+	Severity Severity `protobuf:"varint,7,opt,name=severity,proto3,enum=andara.content.v1.Severity" json:"severity,omitempty"`
+	// Set only by the publish gate, on a finding in another pack's blobs: that
+	// pack's id (errors.md §1 rule 10.6). Empty means the caller's own pack.
+	Pack          string `protobuf:"bytes,8,opt,name=pack,proto3" json:"pack,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -518,6 +521,13 @@ func (x *Diagnostic) GetSeverity() Severity {
 	return Severity_SEVERITY_UNSPECIFIED
 }
 
+func (x *Diagnostic) GetPack() string {
+	if x != nil {
+		return x.Pack
+	}
+	return ""
+}
+
 var File_andara_content_v1_content_proto protoreflect.FileDescriptor
 
 const file_andara_content_v1_content_proto_rawDesc = "" +
@@ -548,7 +558,7 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12!\n" +
 	"\factivated_by\x18\x03 \x01(\tR\vactivatedBy\x123\n" +
-	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNano\"\xc3\x01\n" +
+	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNano\"\xd7\x01\n" +
 	"\n" +
 	"Diagnostic\x12\x12\n" +
 	"\x04file\x18\x01 \x01(\tR\x04file\x12\x12\n" +
@@ -557,7 +567,8 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\x04code\x18\x04 \x01(\tR\x04code\x12\x18\n" +
 	"\amessage\x18\x05 \x01(\tR\amessage\x12\x14\n" +
 	"\x05chain\x18\x06 \x03(\tR\x05chain\x127\n" +
-	"\bseverity\x18\a \x01(\x0e2\x1b.andara.content.v1.SeverityR\bseverity*<\n" +
+	"\bseverity\x18\a \x01(\x0e2\x1b.andara.content.v1.SeverityR\bseverity\x12\x12\n" +
+	"\x04pack\x18\b \x01(\tR\x04pack*<\n" +
 	"\bSeverity\x12\x18\n" +
 	"\x14SEVERITY_UNSPECIFIED\x10\x00\x12\t\n" +
 	"\x05ERROR\x10\x01\x12\v\n" +
