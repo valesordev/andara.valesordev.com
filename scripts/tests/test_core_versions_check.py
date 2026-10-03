@@ -240,6 +240,30 @@ class Base(unittest.TestCase):
         self.assertEqual(code, 1, out)
         self.assertIn("line 2 changed", out)
 
+    def test_on_main_an_uncommitted_edit_of_heads_append_is_caught(self):
+        # HEAD is origin/main and HEAD's own commit appended version 2. Comparing the working
+        # tree with HEAD^1 alone would read a rewritten version 2 as a fresh append (Codex on
+        # #361); every line HEAD holds is immutable too.
+        fx = Fixture([D1])
+        self.addCleanup(fx.close)
+        fx.change([D1, D2])
+        git(fx.work, "push", "-q", "origin", "HEAD:main")
+        git(fx.work, "fetch", "-q", "origin")
+        fx.change([D1, "2 " + "9" * 64], commit=False)
+        code, out = fx.run()
+        self.assertEqual(code, 1, out)
+        self.assertIn("core-versions-check: line 2 changed; VERSIONS is append-only", out)
+
+    def test_on_main_an_uncommitted_append_after_heads_passes(self):
+        fx = Fixture([D1])
+        self.addCleanup(fx.close)
+        fx.change([D1, D2])
+        git(fx.work, "push", "-q", "origin", "HEAD:main")
+        git(fx.work, "fetch", "-q", "origin")
+        fx.change([D1, D2, D3], commit=False)
+        code, out = fx.run()
+        self.assertEqual(code, 0, out)
+
     def test_on_main_with_a_good_append_passes(self):  # AC-5
         fx = Fixture([D1])
         self.addCleanup(fx.close)

@@ -11,8 +11,9 @@
 # Compares the working tree's VERSIONS with the merge base of BASE_REF (default origin/main)
 # and HEAD. Every base line must be unchanged and in place; each appended line's version must
 # be the previous last version plus one (VERSION is monotonic, ADR-0004). When HEAD is already
-# on the base (a push to main), the merge base is HEAD itself and would compare the file with
-# itself, so it compares with HEAD's first parent instead (HEAD itself for a root commit).
+# on the base (a push to main, or a branch with nothing committed), the merge base is HEAD
+# itself, so it checks HEAD's commit against HEAD's first parent, then the working tree against
+# HEAD.
 #
 # CI sets BASE_REF to the push's `before` commit on main, so a multi-commit push is checked
 # whole. A shallow clone is refused (exit 2): it can't tell a root commit from an unfetched parent.
@@ -38,52 +39,70 @@ if ! base=$(git merge-base "$BASE_REF" HEAD 2>/dev/null); then
   say "no merge base; fetch origin"
   exit 2
 fi
-if [ "$base" = "$(git rev-parse HEAD)" ]; then
-  # HEAD is on the base itself (a push to main, or a branch with nothing committed yet).
-  # Comparing with HEAD's first parent covers both HEAD's own commit and any uncommitted
-  # edit; a root commit has no parent, so it compares with HEAD.
-  base=$(git rev-parse --verify --quiet "HEAD^1") || base=$(git rev-parse HEAD)
-fi
-
-old=()
-if git cat-file -e "$base:$FILE" 2>/dev/null; then
-  mapfile -t old < <(git show "$base:$FILE")
-fi
-new=()
-if [ -f "$FILE" ]; then
-  mapfile -t new < "$FILE"
-fi
-
-# Every base line unchanged and in place. A deletion shows as the first missing line.
-for i in "${!old[@]}"; do
-  if [ "$i" -ge "${#new[@]}" ] || [ "${new[$i]}" != "${old[$i]}" ]; then
-    say "line $((i + 1)) changed; VERSIONS is append-only"
-    exit 1
+# read_lines <array> <rev|-> — VERSIONS at a commit, or the working tree's for `-`.
+read_lines() {
+  local -n out=$1
+  out=()
+  if [ "$2" = - ]; then
+    if [ -f "$FILE" ]; then mapfile -t out < "$FILE"; fi
+  elif git cat-file -e "$2:$FILE" 2>/dev/null; then
+    mapfile -t out < <(git show "$2:$FILE")
   fi
-done
+}
 
-# Each appended line is the next version. Fields split on whitespace, as content/core reads
-# them (strings.Fields), and numbers are decimal: base 10 forced, so `08` isn't octal.
-last=0
-if [ "${#old[@]}" -gt 0 ]; then
-  read -r last _ <<< "${old[-1]}" || true
-  if ! [[ "$last" =~ ^[0-9]+$ ]]; then
-    say "line ${#old[@]} at the base has no version number; fix the base first"
-    exit 1
+# check <old rev> <new rev|-> — exits 1, naming the line, unless new is old plus appended
+# next versions; otherwise prints nothing and returns.
+check() {
+  local old new i last v
+  read_lines old "$1"
+  read_lines new "$2"
+
+  # Every old line unchanged and in place. A deletion shows as the first missing line.
+  for i in "${!old[@]}"; do
+    if [ "$i" -ge "${#new[@]}" ] || [ "${new[$i]}" != "${old[$i]}" ]; then
+      say "line $((i + 1)) changed; VERSIONS is append-only"
+      exit 1
+    fi
+  done
+
+  # Each appended line is the next version. Fields split on whitespace, as content/core reads
+  # them (strings.Fields), and numbers are decimal: base 10 forced, so `08` isn't octal.
+  last=0
+  if [ "${#old[@]}" -gt 0 ]; then
+    read -r last _ <<< "${old[-1]}" || true
+    if ! [[ "$last" =~ ^[0-9]+$ ]]; then
+      say "line ${#old[@]} at the base has no version number; fix the base first"
+      exit 1
+    fi
+    last=$((10#$last))
   fi
-  last=$((10#$last))
+  for ((i = ${#old[@]}; i < ${#new[@]}; i++)); do
+    v=
+    read -r v _ <<< "${new[$i]}" || true
+    # Digits only, no leading zero, and the next number.
+    if ! [[ "$v" =~ ^[0-9]+$ ]] || [ "$v" != "$((10#$v))" ] || [ "$v" -ne "$((last + 1))" ]; then
+      say "line $((i + 1)) is version $v; expected $((last + 1))"
+      exit 1
+    fi
+    last=$((10#$v))
+  done
+}
+
+head=$(git rev-parse HEAD)
+if [ "$base" = "$head" ]; then
+  # HEAD is on the base itself (a push to main, or a branch with nothing committed yet). Check
+  # HEAD's own commit against its first parent, then the working tree against HEAD: every line
+  # HEAD holds is already immutable, so an uncommitted edit of HEAD's appended line is caught.
+  # A root commit has no parent, so only the second check runs.
+  if parent=$(git rev-parse --verify --quiet "HEAD^1"); then
+    check "$parent" "$head"
+  fi
+  base=$head
 fi
-for ((i = ${#old[@]}; i < ${#new[@]}; i++)); do
-  v=
-  read -r v _ <<< "${new[$i]}" || true
-  # Digits only, no leading zero, and the next number.
-  if ! [[ "$v" =~ ^[0-9]+$ ]] || [ "$v" != "$((10#$v))" ] || [ "$v" -ne "$((last + 1))" ]; then
-    say "line $((i + 1)) is version $v; expected $((last + 1))"
-    exit 1
-  fi
-  last=$((10#$v))
-done
+check "$base" -
 
+read_lines old "$base"
+read_lines new -
 if [ "${#new[@]}" -gt "${#old[@]}" ]; then
   say "ok: ${#old[@]} line(s) unchanged, $(( ${#new[@]} - ${#old[@]} )) appended against ${base:0:12}"
 else

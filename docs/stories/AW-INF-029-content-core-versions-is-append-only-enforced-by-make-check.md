@@ -97,8 +97,9 @@ On `sre/aw-inf-029-core-versions-append-only`.
 - `scripts/core_versions_check.sh` compares the working tree's `content/core/VERSIONS` with
   `git merge-base $BASE_REF HEAD`, where `BASE_REF` defaults to `origin/main`. Because it reads the
   working tree, an uncommitted edit is caught too. When HEAD is the merge base (a push to `main`,
-  or a branch with nothing committed yet), it compares with `HEAD^1`, which covers HEAD's own
-  commit (AC-5). A root commit compares with HEAD. On success it prints one line,
+  or a branch with nothing committed yet), it checks twice: HEAD's commit against `HEAD^1`
+  (AC-5), then the working tree against HEAD, so an uncommitted edit of a line HEAD appended is
+  caught (Codex on #361). A root commit has no parent, so only the second check runs. On success it prints one line,
   `core-versions-check: ok: …`.
 - `make core-versions-check` is in `CHECK_TARGETS`, and `ci.yaml` gains the step
   `core VERSIONS append-only` (the parity guard requires it). CI already checks out with
@@ -121,7 +122,7 @@ On `sre/aw-inf-029-core-versions-append-only`.
     (`strings.Fields`, base 10). A base version `08` isn't octal, and an appended `02` is refused.
   - The fixture's git calls drop `GIT_*` and an inherited `BASE_REF`.
 
-**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 22 tests, run by
+**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 24 tests, run by
 `make scripts-test`; fixture repositories with a bare `origin`):
 
 | AC | Tests |
