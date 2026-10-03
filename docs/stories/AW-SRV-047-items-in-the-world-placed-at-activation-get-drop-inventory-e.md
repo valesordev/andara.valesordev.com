@@ -27,7 +27,7 @@ Brian's decisions for the first Items (2026-10-03):
 - **Limits:** none yet. Carrying is unlimited, there's no stacking, and each placed Item is one Item
   Instance.
 
-The contract below is PM's proposal from the decided ADRs. Four questions it needs answered are
+The contract below is PM's proposal from the decided ADRs. Five questions it needs answered are
 architecture's, in `docs/feedback/AW-SRV-047-items.md`, so the story stays `draft` until they are.
 
 ## User story
@@ -45,7 +45,7 @@ them closely, so that the World has things in it and not only places.
 - **Four verbs**, through the explicit pipeline (parse → authorize → validate → apply → emit):
   - `get <item>` (alias `take`) moves an Item from the actor's Room to the actor;
   - `drop <item>` moves an Item the actor carries to the actor's Room;
-  - `inventory` (aliases `inv`, `i`) lists what the actor carries;
+  - `inventory` (alias `inv`) lists what the actor carries;
   - `examine <item>` (alias `x`) shows an Item's description, whether it's carried or in the Room.
 - `look` (`RoomDescribed`) lists the Items in the Room.
 - **Carried Items stay with the body.** They stay on a dormant Character and on a linkdead one, and
@@ -117,19 +117,21 @@ message ItemDescribed   { string item_name = 1; string description = 2; } // sco
 // RoomDescribed: repeated string items = 8;   // short names, sorted
 ```
 
-- **Verb table:** `get` (alias `take`), `drop`, `inventory` (aliases `inv`, `i`), and `examine`
-  (alias `x`). Aliases resolve before prefixes (`verbs.go`), so `i` doesn't collide with `in`.
+- **Verb table:** `get` (alias `take`), `drop`, `inventory` (alias `inv`), and `examine` (alias
+  `x`). There's no `i` alias, because `i` resolves to the Direction `in` today (a unique prefix), and
+  an alias would take it over, since aliases resolve before prefixes (`verbs.go`). Taking `i` for
+  inventory, as MUDs often do, is Brian's call.
 - **Matching:** the target word matches an Item when it equals one of the Item's keywords,
   case-insensitively. `get` looks in the Room, `drop` among carried Items, and `examine` in carried
   Items first, then the Room. Ties go to the lowest Item Instance ID (AC-7).
-- **Numbers and names:** `LoggedCommand` oneof members `get = 20`, `drop = 21`, `inventory = 22`,
-  `examine = 23`. `EventEnvelope.payload` members `item_taken = 23`, `item_dropped = 24`,
-  `inventory_listed = 25`, `item_described = 26`. `EventType` strings `item_taken`, `item_dropped`,
-  `inventory_listed`, `item_described`. All are the next free numbers on `main`. Architecture confirms
-  them, or reassigns them if another story takes them first.
+- **Numbers and names:** four `LoggedCommand` oneof members (`get`, `drop`, `inventory`, `examine`)
+  and four `EventEnvelope.payload` members (`item_taken`, `item_dropped`, `inventory_listed`,
+  `item_described`), with `EventType` strings of the same names. Architecture assigns the numbers at
+  contract review. `AW-SRV-009` (`ready`) already claims `LoggedCommand` 20–22 and two payload
+  Events, so the free numbers on `main` aren't free in the backlog.
 - **Parsing:** the target is free text: one new `ArgSpec` kind, `ArgWord` (a single token, lowercased).
-  The four verbs aren't `Abbrev`, so they claim only their names and aliases, and no prefix of an
-  existing verb or Direction changes meaning.
+  The four verbs aren't `Abbrev`, so they claim only their names and aliases. No existing verb,
+  Direction or prefix changes meaning, and a test asserts that `i` and `in` still move `in`.
 - **Rejection codes** (`CommandRejected.code`): `item_not_here` and `item_not_carried`, at stage
   `validate`. They're applied in the sim, not at parse, because what's present is world state.
 - **Scope:** `ItemTaken` and `ItemDropped` go to the Room. `InventoryListed` and `ItemDescribed` go to
@@ -138,11 +140,14 @@ message ItemDescribed   { string item_name = 1; string description = 2; } // sco
 
 ## Data / state impact
 
-- Zone state gains Item Instances, in the representation question 1 decides, so the snapshot's
-  `state_version` rises with an up-migration from the previous version (no Items). A snapshot round
-  taken before this story still restores.
+- Zone state gains Item Instances, in the representation question 1 decides. **Whether
+  `state_version` moves is part of question 1.** ADR-0007 rule 2 bumps it only for a change protobuf
+  can't absorb, and `AW-SRV-015` added hashed `EntityState` fields at `StateVersion` 1. If it moves,
+  the change adds the `migrations` and `hashers` entries `TestMigrationsCoverEveryVersion` requires
+  (`server/store/migrate.go`). Either way, a snapshot round taken before this story still restores.
 - **Rollback:**
-  - A binary older than the `state_version` exits `4` (`AW-SRV-007`).
+  - If `state_version` moves, a binary older than it exits `4` (`AW-SRV-007`). If it doesn't, an older
+    binary drops the unknown fields, and the round fails its hash check (`ErrHashInvalid`).
   - The log will also hold `Get`, `Drop`, `Inventory` and `Examine`, which an older binary replays as
     `unsupported_command`. So a pre-upgrade round followed by post-upgrade log doesn't help: the
     replay diverges at the first Item command.
@@ -185,11 +190,12 @@ Instance lives (question 1).
 
 For architecture, in `docs/feedback/AW-SRV-047-items.md`. They affect the contract, so the story stays
 `draft` until they're answered:
-1. **Is an Item Instance an Entity in world state?** The glossary says an Item Instance is "a specific
-   Entity in the World". `AW-SRV-022` rules "an Item is not an Entity" for Template kinds. Is an
+1. **Is an Item Instance an Entity in world state?** Before this story, the glossary called an Item
+   Instance "a specific Entity in the World", and its **Entity** entry listed "an Item instance". This
+   story's PR marks both as open. `AW-SRV-022` rules "an Item is not an Entity" for Template kinds. Is an
    Item Instance an `EntityState` with an ITEM Template, or a separate `ItemState`? How is a carried
    Item's holder represented? How do carried Items travel with their holder in `Arrive` and across a
-   partition handoff (AC-12)? `Arrive` carries only `Entity entity = 3` today.
+   partition handoff (AC-12)? `Arrive` carries only `Entity entity = 3` today. Does `state_version` move?
 2. **What a new activation does to the previous version's placed Items.** Brian decided a taken Item
    comes back only at the next activation. PM proposes:
    - untaken Item Instances from the pack's previous placements are removed, and the new version's

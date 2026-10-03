@@ -1,8 +1,8 @@
 # AW-SRV-047, AW-CLI-012, AW-CLI-013: Items
 
-Stories: `AW-CLI-012` (spec, architecture), `AW-CLI-013` (compiler and `andara.core@2`,
-implementation), and `AW-SRV-047` (Items in the World, implementation). All three are `draft`.
-Raised: 2026-10-03, PM, from Brian's request for an Items story to drive upcoming content.
+Stories: `AW-CLI-012` (spec, architecture), `AW-CLI-013` (compiler, the server's component registry,
+and `andara.core@2`, implementation), and `AW-SRV-047` (Items in the World, implementation). All three
+are `draft`. Raised: 2026-10-03, PM, from Brian's request for an Items story to drive upcoming content.
 
 ## Brian's decisions (2026-10-03)
 1. **Verbs:** `get`, `drop`, `inventory`, `examine`. Wear and wield come with combat (M4).
@@ -13,53 +13,65 @@ Raised: 2026-10-03, PM, from Brian's request for an Items story to drive upcomin
 
 Brian wants these stories ready for SPRINT-05, but not in it unless content needs them sooner.
 
-## For architecture: the spec (AW-CLI-012)
-1. **The names Component:** its name, its fields (a short name, keywords, a description), and
-   whether keywords are one string or a list. A list needs a field kind ADR-0010's model doesn't
-   have.
-2. **The placement declaration:** its keyword, its canonical form, and its field in
-   `RoomDefinition`.
-3. **Per-Room overrides on a placement** (a "rusty" lantern in one Room). PM proposes none in v1.
+## For architecture: the spec (`AW-CLI-012`'s Open questions, same numbers)
+1. **When the corpus cases land, and how the anchors move. This blocks the contract.**
+   - Go tests run the formatter over every corpus `.aw` file, `pending/` included
+     (`TestContentFmtCheckIsCleanOverTheCorpus`, `corpusSources`). So a placement case fails
+     `make check` until the parser accepts it.
+   - The first core bump also has to move three roles' files together:
+     - the corpus anchors `valid/core` and `valid/town` (architecture's);
+     - `content/core/templates`, `testdata/` and their anchor tests (implementation's, listed in
+       `AW-CLI-013`'s Scope);
+     - `scripts/content_grammar_check.py`'s `KEY_ORDER` for the new `RoomDefinition` key (SRE's).
+   - `perceives` set a precedent: an implementation prerequisite parsed the syntax and dropped it, so
+     its pending cases could land.
 
-## For architecture: the server (AW-SRV-047)
-1. **Is an Item Instance an Entity in world state?** The glossary's **Item** entry says an Item
-   Instance is "a specific Entity in the World with its own ID and state". `AW-SRV-022` rules that
-   "an Item is not an Entity", for Template kinds: `andara.core.Item` is its own root. Decide
-   whether an Instance is an `EntityState` with an ITEM Template, or a new `ItemState`, and how a
-   carried Item's holder is represented (a Room or a holder Entity ID). PM corrects the glossary to
-   match.
+   Decide the sequence and the PR split. `semantics.md` §9's wording on pending cases ("the story
+   that landed it") may need amending for compiler-gated cases.
+2. **The names Component:** its name, its fields, its defaults on `andara.core.Item`, and whether
+   keywords are one string or a list. A list needs a field kind ADR-0010's model doesn't have.
+3. **The placement declaration:** its keyword and its canonical form.
+4. **Per-Room overrides on a placement** (a "rusty" lantern in one Room). PM proposes none in v1.
+
+## For architecture: the server (`AW-SRV-047`'s Open questions, same numbers)
+1. **Is an Item Instance an Entity in world state?** Before this PR, the glossary called an Item
+   Instance "a specific Entity in the World", and its **Entity** entry listed "an Item instance".
+   `AW-SRV-022` rules "an Item is not an Entity", for Template kinds: `andara.core.Item` is its own
+   root. This PR marks the glossary entries as open. Decide:
+   - whether an Instance is an `EntityState` with an ITEM Template, or a new `ItemState`;
+   - how a carried Item's holder is represented;
+   - how carried Items travel with their holder in `Arrive` and across a partition handoff;
+   - whether `state_version` moves (ADR-0007 rule 2; `AW-SRV-015` added hashed fields without a bump).
+
+   PM corrects the glossary to match.
 2. **A new activation and the previous version's Items.** PM proposes:
    - untaken Instances from the pack's previous placements are removed, and the new version's
      placements are placed;
    - carried Instances stay, with their `content_version`, even if the new version drops their
      Template.
 
-   That's how "taken is gone until the next activation" reads without duplicating untaken Items.
+   Still open: does a placed Item that was taken and then dropped count as untaken? If it doesn't,
+   the next activation duplicates it. And what happens to Items lying in a Room the new content
+   removes?
 3. **Deterministic Item Instance IDs**, so replay gives the same ID to the same placement in the same
    activation.
 4. **A deleted Character's carried Items:** route to `AW-SRV-032` (`ready`), or decide here.
-5. **The contract sketch**: the commands, Events, rejection codes and `RoomDescribed.items` in
-   `AW-SRV-047`'s Interface contract. They're PM's proposal, for your review.
+5. **Placements and `ContentDigest`.** Restore rebuilds the digest from the content in effect, and
+   replay checks each logged swap's `world_digest`. Do placements enter `CanonicalBytes`? If they do,
+   what's the migration that keeps rounds and swaps from before `AW-SRV-047` verifying?
+
+Also: the Interface contract's commands, Events, codes, `ArgWord` and `RoomDescribed.items` are PM's
+proposal, for review. The oneof and payload numbers are yours to assign, because `AW-SRV-009` already
+claims `LoggedCommand` 20–22 and two payload Events.
 
 ## For SRE
-`AW-SRV-047`'s Observability section proposes `andara_items{location}` (two series) and reuses the
-command metrics. `AW-CLI-013` is the first `andara.core` bump, and inherits `AW-INF-021` AC-6.
+- `AW-SRV-047`'s Observability section proposes `andara_items{location}` (two series), and reuses the
+  command metrics.
+- `AW-CLI-013` is the first `andara.core` bump, and inherits `AW-INF-021` AC-6.
+- `scripts/content_grammar_check.py`'s `KEY_ORDER` needs the new `RoomDefinition` key, in whatever
+  sequence spec question 1 sets.
 
-## Revised after PM's pre-PR review (2026-10-03)
-The review found places where the first draft contradicted decided specs. These are now fixed in the
-stories:
-- **Placements follow `semantics.md` §4.** A placement names a Template in its own pack or in
-  `andara.core`, no other pack (`AW-CLI-012`).
-- **The names Component's type is registered on the server** (ADR-0010 decision 7). That's in
-  `AW-CLI-013`'s scope, since both the compiler and the loader reject unregistered types.
-- **`AW-CLI-012`'s corpus cases go in `corpus/pending/`**, gated on `AW-CLI-013`, which moves them and
-  updates the anchors.
-- **The names rule applies at a placement.** An unplaced base and `andara.core.Item` aren't checked.
-
-New questions for architecture on `AW-SRV-047`, added there as questions 1 (extended), 2
-(extended) and 5:
-- how carried Items travel in `Arrive` and across a partition handoff;
-- whether a taken-then-dropped placed Item counts as untaken, and what happens to Items lying in a
-  Room that new content removes;
-- whether placements enter `ContentDigest`, and the migration if they do, so rounds and swaps from
-  before `AW-SRV-047` still verify.
+## For Brian
+- **`i` for `inventory`.** MUDs often use it, but today `i` means `in`, as a unique prefix of the
+  Direction. `AW-SRV-047` leaves it as `in` and gives `inventory` the alias `inv`. Say if you want `i`
+  for inventory. The Direction keeps `in` either way.

@@ -35,10 +35,19 @@ with its Items in it.
   the registry doesn't hold, so this comes first.
 - The parser, resolver and emitter in `content/lang` for `AW-CLI-012`'s placement and names rule,
   with its error codes.
-- `AW-CLI-012`'s pending corpus cases move to `valid/` and `invalid/`. The anchors they change move
-  with them:
+- **The implementation side of the corpus and anchors**, in the sequence `AW-CLI-012` question 1
+  decides. These are the files and tests in implementation's paths that the first core bump moves:
   - `content/core/templates` (`TestCoreSeedIsReproducible`);
-  - `testdata/templates` (`TestTownAnchorMatchesLoaderFixtures`).
+  - `testdata/templates` (`TestTownAnchorMatchesLoaderFixtures`);
+  - `testdata/content/valid`, with `TestDevFixtureSourceMatchesTestContent` (which hard-codes core
+    `Version: 1`) and `TestCoreSeedMatchesFixture`;
+  - `TestContentFetchCoreHasNoServerToFetchFrom` ("embeds andara.core@1");
+  - every other test that pins `andara.core@1` (17 files on `main` today), each moved to `@2` or kept
+    at `@1` on purpose.
+- **A frozen `andara.core@1` source** in implementation's test data: a copy of today's corpus
+  `valid/core`, so that AC-3 has a `@1` core to cache after the corpus moves to `@2`.
+- **The `RoomDefinition` round-trip test** (a v1 Room with no placements is byte-identical after a
+  round trip), which `AW-CLI-012` can't write.
 - `content/core/` at version 2: the compiled `andara.core.Item` carrying the names Component,
   `VERSION` set to `2`, and a new line in `VERSIONS`. `andara-cli`'s embedded core becomes `@2`.
 - `content/fixtures/town/`, the `dev` fixture, moves to `requires andara.core@2`: its `Lantern` gains
@@ -52,15 +61,15 @@ with its Items in it.
 
 ## Acceptance criteria
 
-1. **Given** the corpus with `AW-CLI-012`'s cases moved out of `pending/` **when** `make check` runs
-   **then** `content-conformance` passes with every new case, each error at its expected file, line
-   and code, and no case is left pending on `AW-CLI-013`.
+1. **Given** `AW-CLI-012`'s corpus cases landed as its question 1 sequences them **when**
+   `make check` runs **then** `content-conformance` passes with every case, each error at its
+   expected file, line and code. The formatter tests pass over the whole corpus.
 2. **Given** `content/core/VERSION` at `2` **when** `make check` runs **then** `core-versions-check`
    passes, `andara-cli version` names `andara.core@2`, and both anchor tests pass.
 3. **Given** a pack that `requires andara.core@1` and places no Items **when** the `@2` binary
    validates it **then**:
-   - with `andara.core@1` in the cache (`andara-cli content fetch-core --from <an @1 core>`), it
-     validates;
+   - with `andara.core@1` in the cache (`andara-cli content fetch-core --from <the frozen @1 source>
+     --version 1`), it validates;
    - with it not cached, it's `core_version_mismatch`, whose remedy is to change `requires` to `2`
      (`errors.md` §3.1).
 
