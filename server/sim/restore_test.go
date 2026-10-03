@@ -193,7 +193,12 @@ func TestRestore_NoRecordedHashIsRefused(t *testing.T) {
 	f := newRestoreFixture(t, 7)
 	r := f.round
 	r.RecordedHash = nil
-	if e, err := f.restore(7, r); err == nil || e != nil {
+	e, err := f.restore(7, r)
+	if err == nil || e != nil {
 		t.Fatalf("restore with no recorded hash: engine %v, err %v", e != nil, err)
+	}
+	// A caller's bug, not a bad round: no restore outcome, no exit 5.
+	if errors.Is(err, sim.ErrRestoreMismatch) || errors.Is(err, sim.ErrSeedMismatch) || sim.RestoreOutcome(err) != "" {
+		t.Fatalf("restore with no recorded hash reads as a mismatch: %v", err)
 	}
 }

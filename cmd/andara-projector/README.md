@@ -52,7 +52,7 @@ exiting. That's the state every new environment starts in, and the server waits 
 | Situation | What it does |
 |-----------|--------------|
 | A committed checkpoint at tick C, and the newest complete round is at or before C | Restores the round and replays to C silently: the topic already holds it. Then produces from C+1. |
-| No checkpoint (first start, or `--rebuild`), or the round is newer than C | Restores the newest round (tick 0 with no round), found by binary search over the boundary Partition rather than by reading the history before it. Writes every aggregate, tombstones every key the topic holds that the state does not, commits, and follows. |
+| No checkpoint (first start, or `--rebuild`), or the round is newer than C | Restores the newest round (tick 0 with no round) and verifies it against its tick's boundary, which a binary search over the boundary Partition finds rather than reading the history before it. Replays from the tick after. Writes every aggregate, tombstones every key the topic holds that the state does not, commits, and follows. |
 | A checkpoint that records an unresolved divergence at T | Exits `2` at once, naming T and both hashes, **whatever rounds exist**. Bootstrapping from a newer round would replay past T and erase the evidence. `--rebuild` clears it, and its `info` line says it discarded the divergence at T. `--rebuild` also clears a checkpoint that doesn't parse, with a `warn` line, without reading it first. |
 
 ### Configuration

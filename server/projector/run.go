@@ -178,7 +178,9 @@ func Run(ctx context.Context, o RunOptions) error {
 
 	prod, err := NewProducer(ctx, o.Brokers, o.StateTopic)
 	if err != nil {
-		return fmt.Errorf("producer: %w", err)
+		err = fmt.Errorf("producer: %w", err)
+		endBootstrap(round, "error", err)
+		return err
 	}
 	defer prod.Close()
 
@@ -328,6 +330,11 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 // tick's Tick Boundary Record, leaving the reader at the tick after it. A log
 // that no longer has it is ErrLogGap.
 func (o RunOptions) roundBoundary(ctx context.Context, boundaries *BoundaryReader, round sim.Tick) (sim.TickCompleted, error) {
+	if round == 0 {
+		// A round is cut after a tick is applied, so its tick is at least
+		// 1, and tick 0 has no boundary to verify against.
+		return sim.TickCompleted{}, fmt.Errorf("snapshot round at tick 0: no Tick Boundary Record records a tick 0")
+	}
 	at, err := boundaries.SeekAfter(ctx, round-1)
 	if err != nil {
 		return sim.TickCompleted{}, fmt.Errorf("boundaries: %w", err)
