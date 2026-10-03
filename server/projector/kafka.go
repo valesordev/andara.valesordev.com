@@ -62,6 +62,11 @@ type BoundaryReader struct {
 	// Partition's start, which is what it did before it could seek.
 	expect sim.Tick
 	start  int64
+	// boundaryAfter is whether SeekAfter found a boundary for a tick after
+	// the one it searched for, anywhere from where its search landed to the
+	// Partition's end: records that aren't boundaries (a tick's Events
+	// sent before its boundary) can follow the last one (review of #365).
+	boundaryAfter bool
 }
 
 // NewBoundaryReader starts reading the boundary Partition from its start.
@@ -120,6 +125,14 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 		} else {
 			hi = mid
 		}
+	}
+	r.boundaryAfter = false
+	if lo < eo.Offset {
+		t, _, ok, err := r.probe(ctx, lo, eo.Offset)
+		if err != nil {
+			return 0, err
+		}
+		r.boundaryAfter = ok && t > tick
 	}
 	r.start, r.expect = so.Offset, tick+1
 	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {tickloop.BoundaryPartition: {Epoch: -1, Offset: lo}}})

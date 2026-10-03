@@ -27,6 +27,10 @@ const (
 	ExitDivergence   = 2 // digest divergence
 	ExitLogGap       = 3 // the log no longer has what the replica needs
 	ExitStateVersion = 4 // state written by a newer binary
+	// ExitRestoreMismatch: a Snapshot Round that does not restore to its
+	// own tick's recorded State Hash, or was written with another seed
+	// (AW-SRV-043). Never a fall-back to another round or to replay.
+	ExitRestoreMismatch = 5
 )
 
 // ExitCode maps an error from Run to the process's exit code.
@@ -40,6 +44,8 @@ func ExitCode(err error) int {
 		return ExitDivergence
 	case errors.As(err, &sv):
 		return ExitStateVersion
+	case errors.Is(err, sim.ErrRestoreMismatch), errors.Is(err, sim.ErrSeedMismatch):
+		return ExitRestoreMismatch
 	case errors.Is(err, ErrLogGap), errors.Is(err, sim.ErrBoundaryGap), errors.Is(err, sim.ErrOffsetGap):
 		return ExitLogGap
 	}
@@ -145,27 +151,36 @@ func Run(ctx context.Context, o RunOptions) error {
 	defer boundaries.Close()
 
 	bootStart := o.Now()
-	eng, round, err := o.bootstrapEngine(ctx, boundaries)
+	// state.bootstrap: round selection, the restore and its verification,
+	// and the dump (AW-SRV-043 §7). Always sampled: it is not Game/Submit.
+	bctx, bspan := o.Tracer.Start(ctx, "state.bootstrap", trace.WithAttributes(attribute.Bool("rebuild", o.Rebuild)))
+	endBootstrap := func(round sim.Tick, outcome string, err error) {
+		bspan.SetAttributes(attribute.Int64("round_tick", int64(round)), attribute.String("outcome", outcome))
+		if err != nil {
+			bspan.SetStatus(codes.Error, err.Error())
+		}
+		bspan.End()
+	}
+	eng, round, err := o.bootstrapEngine(bctx, boundaries)
 	if err != nil {
+		outcome := sim.RestoreOutcome(err)
+		if outcome == "" {
+			outcome = "error"
+		}
+		endBootstrap(round, outcome, err)
 		return err
 	}
 	if eng == nil {
+		endBootstrap(round, "canceled", nil)
 		return nil // ctx ended before the World produced a first boundary
-	}
-	if round > 0 {
-		// The boundaries before the round are never replayed; the reader
-		// starts at the round's instead of reading its way there (AC-6).
-		at, err := boundaries.SeekAfter(ctx, round)
-		if err != nil {
-			return fmt.Errorf("boundaries: %w", err)
-		}
-		log.Info("boundary reader positioned after the round", "round_tick", uint64(round), "offset", at)
 	}
 	p := New(eng, Options{ContentVersion: o.ContentVersion, OnSwaps: o.OnSwaps})
 
 	prod, err := NewProducer(ctx, o.Brokers, o.StateTopic)
 	if err != nil {
-		return fmt.Errorf("producer: %w", err)
+		err = fmt.Errorf("producer: %w", err)
+		endBootstrap(round, "error", err)
+		return err
 	}
 	defer prod.Close()
 
@@ -177,10 +192,12 @@ func Run(ctx context.Context, o RunOptions) error {
 	if committed && cp.Tick >= eng.Tick() {
 		silentThrough = cp.Tick
 	} else {
-		if err := o.dump(ctx, p, prod, cm); err != nil {
+		if err := o.dump(bctx, p, prod, cm); err != nil {
+			endBootstrap(round, "error", err)
 			return err
 		}
 	}
+	endBootstrap(round, "ok", nil)
 	o.Metrics.RebuildDuration.WithLabelValues("bootstrap").Observe(o.Now().Sub(bootStart).Seconds())
 	log.Info("state projector started", "round_tick", uint64(round), "tick", uint64(eng.Tick()),
 		"committed", committed, "committed_tick", uint64(cp.Tick), "silent_through", uint64(silentThrough),
@@ -308,6 +325,80 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 	return replayErr
 }
 
+// roundBoundary positions the reader at the round's own tick — the
+// boundaries before it are never replayed (AW-SRV-019 AC-6) — and reads that
+// tick's Tick Boundary Record, leaving the reader at the tick after it. A log
+// that no longer has it is ErrLogGap.
+func (o RunOptions) roundBoundary(ctx context.Context, boundaries *BoundaryReader, round sim.Tick) (sim.TickCompleted, error) {
+	if round == 0 {
+		// A round is cut after a tick is applied, so its tick is at least
+		// 1, and tick 0 has no boundary to verify against.
+		return sim.TickCompleted{}, fmt.Errorf("snapshot round at tick 0: no Tick Boundary Record records a tick 0")
+	}
+	at, err := boundaries.SeekAfter(ctx, round-1)
+	if err != nil {
+		return sim.TickCompleted{}, fmt.Errorf("boundaries: %w", err)
+	}
+	o.Log.Info("boundary reader positioned at the round", "round_tick", uint64(round), "offset", at)
+	if !boundaries.boundaryAfter {
+		// No boundary at or after the round's tick is on the log, whatever
+		// else follows the last one. The round was written after its
+		// boundary was acknowledged, so a later read can't bring it: the
+		// log no longer has it (Codex and review on #365).
+		return sim.TickCompleted{}, fmt.Errorf("%w: the snapshot round is at tick %d, and the log holds no boundary at or after it", ErrLogGap, round)
+	}
+	for {
+		b, err := boundaries.Next(ctx, 1, o.Poll)
+		if err != nil {
+			return sim.TickCompleted{}, err
+		}
+		switch {
+		case len(b) == 0, b[0].Tick < round:
+			// Quiet, or the reader fell back to the start.
+		case b[0].Tick == round:
+			return b[0].TickCompleted, nil
+		default:
+			return sim.TickCompleted{}, fmt.Errorf("%w: the snapshot round is at tick %d, and the log's boundaries resume at tick %d", ErrLogGap, round, b[0].Tick)
+		}
+	}
+}
+
+// restore builds the Engine from the round inside a restore.verify span and
+// reports the outcome: the counter, and the verified or mismatch line
+// (AW-SRV-043). A mismatch is returned as it is: no fall-back to another
+// round or to replay, under --rebuild too.
+func (o RunOptions) restore(ctx context.Context, topo sim.Topology, cfg sim.Config, state sim.RoundState, zones int) (*sim.Engine, error) {
+	ctx, span := o.Tracer.Start(ctx, "restore.verify", trace.WithAttributes(
+		attribute.Int64("round_tick", int64(state.Tick)), attribute.Int("zones", zones)))
+	defer span.End()
+	traceID := span.SpanContext().TraceID().String()
+	eng, err := sim.RestoreEngine(topo.World, topo.Templates, cfg, state)
+	outcome := sim.RestoreOutcome(err)
+	if outcome != "" {
+		o.Metrics.Restores.WithLabelValues(RestoreCaller, outcome).Inc()
+	} else {
+		outcome = "error"
+	}
+	span.SetAttributes(attribute.String("outcome", outcome))
+	var rm *sim.RestoreMismatch
+	var sm *sim.SeedMismatch
+	switch {
+	case err == nil:
+		got := eng.StateHash()
+		o.Log.InfoContext(ctx, "state projector restore verified", "round_tick", uint64(state.Tick), "zones", zones,
+			"restored_hash", fmt.Sprintf("%x", got), "trace_id", traceID)
+		return eng, nil
+	case errors.As(err, &rm):
+		o.Log.ErrorContext(ctx, "state projector restore mismatch", "round_tick", rm.RoundTick, "reason", "hash",
+			"recorded_hash", fmt.Sprintf("%x", rm.Recorded), "restored_hash", fmt.Sprintf("%x", rm.Restored), "trace_id", traceID)
+	case errors.As(err, &sm):
+		o.Log.ErrorContext(ctx, "state projector restore mismatch", "round_tick", sm.RoundTick, "reason", "seed",
+			"recorded_seed", sm.Recorded, "configured_seed", sm.Configured, "trace_id", traceID)
+	}
+	span.SetStatus(codes.Error, err.Error())
+	return nil, err
+}
+
 // bootstrapEngine builds the replica: from the newest complete round unless
 // --from-zero or there is none, else at tick 0 over the Partitions the first
 // boundary names — the server's own set, which the State Hash covers.
@@ -346,9 +437,19 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 			if err != nil {
 				return nil, 0, fmt.Errorf("snapshot round at tick %d: rebuild its content: %w", round.Tick, err)
 			}
-			eng, err := sim.RestoreEngine(topo.World, topo.Templates, cfg, state)
+			// The round's own tick recorded the State Hash the restore must
+			// reproduce (AW-SRV-043), and replay starts after it.
+			tc, err := o.roundBoundary(ctx, boundaries, round.Tick)
+			if ctx.Err() != nil {
+				return nil, 0, nil
+			}
 			if err != nil {
-				return nil, 0, err
+				return nil, round.Tick, err
+			}
+			state.RecordedHash = tc.StateHash[:]
+			eng, err := o.restore(ctx, topo, cfg, state, len(round.Zones))
+			if err != nil {
+				return nil, round.Tick, err
 			}
 			if o.OnSwaps != nil {
 				restored := make([]sim.SwapApplied, 0, len(state.Content))

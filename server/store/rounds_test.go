@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
+	"github.com/valesordev/andara/server/canonical"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
 	"github.com/valesordev/andara/server/store"
@@ -67,6 +69,12 @@ func TestRestoredEngineContinuesTheWorld(t *testing.T) {
 	reg, err := simtest.Templates()
 	if err != nil {
 		t.Fatal(err)
+	}
+	// The round tick's Tick Boundary Record would carry this.
+	recorded := live.StateHash()
+	state.RecordedHash = recorded[:]
+	if state.SimSeed != 11 {
+		t.Fatalf("the round records sim_seed %d, want 11", state.SimSeed)
 	}
 	restored, err := sim.RestoreEngine(w, reg, sim.Config{Seed: 11, Handlers: simtest.Handlers(reg)}, state)
 	if err != nil {
@@ -198,6 +206,50 @@ func TestDisagreeingPRNGMakesTheRoundIncomplete(t *testing.T) {
 	}
 	if rounds[0].Complete {
 		t.Fatalf("a round mixing two engines' cuts was complete: %+v", rounds[0])
+	}
+}
+
+// AW-SRV-043: every Zone's envelope in a round carries the same sim_seed. A
+// round whose objects disagree on it is two cuts, not a round, and the older
+// complete round is the newest one.
+func TestDisagreeingSeedMakesTheRoundIncomplete(t *testing.T) {
+	t.Parallel()
+	live, fs, remaining, owned := roundFixture(t, 1)
+	older := live.Tick()
+	if _, err := live.Step(simtest.Batch(remaining, 2)); err != nil {
+		t.Fatal(err)
+	}
+	writeRound(t, fs, live.SnapshotAll(2))
+	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := rounds[0].Zones[len(rounds[0].Zones)-1]
+	raw, err := fs.Get(context.Background(), last.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	env.SimSeed++
+	if raw, err = canonical.Marshal(&env); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Put(context.Background(), last.Key, raw); err != nil {
+		t.Fatal(err)
+	}
+	rounds, err = store.ListRounds(context.Background(), fs, owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rounds[0].Complete || !strings.Contains(rounds[0].Reason, "sim_seed") {
+		t.Fatalf("a round disagreeing on sim_seed: complete %t, reason %q", rounds[0].Complete, rounds[0].Reason)
+	}
+	round, state, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	if err != nil || !ok || round.Tick != older || state.SimSeed != 11 {
+		t.Fatalf("NewestComplete: tick %d (want %d), seed %d, ok %t, %v", round.Tick, older, state.SimSeed, ok, err)
 	}
 }
 

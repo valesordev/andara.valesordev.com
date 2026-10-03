@@ -7,6 +7,7 @@ package projector_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -131,6 +132,19 @@ func scaleWorld(t *testing.T, at sim.Tick) (*simtest.FixedContent, *world) {
 		t.Fatalf("the genesis round: ok %v, %v", ok, err)
 	}
 	state.Tick = at
+	// The round is fabricated at a tick no boundary recorded, so its own
+	// restored hash is the one it records: restore once to learn it
+	// (AW-SRV-043 requires one).
+	state.RecordedHash = make([]byte, 32)
+	// The sizing Engine started over its World, not empty as a server does,
+	// so it derived another default seed. The fabricated World runs on the
+	// server's instead, as it did before rounds recorded a seed.
+	state.SimSeed = 0
+	var rm *sim.RestoreMismatch
+	if _, err := sim.RestoreEngine(topo, reg, sim.Config{Seed: seed, Handlers: sim.Handlers(), Content: src}, state); !errors.As(err, &rm) {
+		t.Fatalf("learning the fabricated round's hash: %v", err)
+	}
+	state.RecordedHash = rm.Restored
 	live, err := sim.RestoreEngine(topo, reg, sim.Config{Seed: seed, Handlers: sim.Handlers(), Content: src}, state)
 	if err != nil {
 		t.Fatal(err)
@@ -227,6 +241,11 @@ func loadAndReplay(t *testing.T, src *simtest.FixedContent, ws sim.WorldStore, w
 	_, state, ok, err := store.NewestComplete(context.Background(), ws, w.live.State().SortedZoneIDs())
 	if err != nil || !ok {
 		t.Fatalf("the round: ok %v, %v", ok, err)
+	}
+	for _, b := range w.boundaries {
+		if b.Tick == state.Tick {
+			state.RecordedHash = b.StateHash[:]
+		}
 	}
 	eng, err := sim.RestoreEngine(src.Topology.World, src.Topology.Templates, sim.Config{Seed: seed, Handlers: sim.Handlers(), Content: src}, state)
 	if err != nil {
