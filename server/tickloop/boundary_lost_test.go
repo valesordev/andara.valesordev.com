@@ -28,6 +28,15 @@ type lossyPublisher struct {
 	lossAt sim.Tick
 	acked  sim.Tick
 	lost   bool
+	// onClose, if set, runs in Close: a boundary the shutdown's flush fails.
+	onClose func()
+}
+
+func (p *lossyPublisher) Close() error {
+	if p.onClose != nil {
+		p.onClose()
+	}
+	return p.MemoryPublisher.Close()
 }
 
 var errBrokerGone = errors.New("broker gone")
@@ -338,5 +347,58 @@ func TestLoop_LossThenShutdownBeforeTheNextTick(t *testing.T) {
 	}
 	if got := counter(h.loop.Metrics().BoundaryLost); got != 1 {
 		t.Fatalf("andara_tick_boundary_lost_total %v", got)
+	}
+}
+
+// The same through the top of the loop: a tick that overran skips the sleep,
+// so a loss and a shutdown during it reach the loop's own context check.
+func TestLoop_LossThenShutdownDuringAnOverrunTick(t *testing.T) {
+	h, pub := newLossyHarness(t, 0, 0)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	h.clock.OnSleep = func(time.Time) bool { return true }
+	h.loop.opts.OnTick = func(res sim.StepResult, _ time.Duration) {
+		if res.Tick == 7 {
+			h.clock.Advance(2 * h.loop.Interval()) // overrun: no sleep follows
+			pub.lost = true
+			h.loop.BoundaryLost(8, errBrokerGone)
+			cancel()
+		}
+	}
+	err := h.loop.Run(ctx)
+	var lost *BoundaryLostError
+	if !errors.As(err, &lost) || lost.Lost != 8 || lost.LastDelivered != 7 {
+		t.Fatalf("Run returned %v, want boundary 8 lost after 7", err)
+	}
+	if got := h.engine.Tick(); got != 7 {
+		t.Fatalf("stopped at tick %d, want 7: the shutdown came before tick 8", got)
+	}
+	evs, _, _ := pub.Snapshot()
+	if r := evs[len(evs)-1].Envelope.GetSimulationStopped().GetReason(); r != StopReasonBoundaryLost {
+		t.Fatalf("SimulationStopped reason %q", r)
+	}
+	if got := counter(h.loop.Metrics().BoundaryLost); got != 1 {
+		t.Fatalf("andara_tick_boundary_lost_total %v", got)
+	}
+}
+
+// A boundary the shutdown's own flush fails is still reported as a loss:
+// the error line, the counter, and Run's BoundaryLostError, so the process
+// exits 5. Nothing past it is committed.
+func TestLoop_LossDuringTheShutdownFlush(t *testing.T) {
+	h, pub := newLossyHarness(t, 2, 0)
+	pub.onClose = func() { h.loop.BoundaryLost(pub.acked+1, errBrokerGone) }
+	err := h.runFor(time.Second)
+	var lost *BoundaryLostError
+	if !errors.As(err, &lost) || lost.Lost != pub.acked+1 || lost.LastDelivered != pub.acked {
+		t.Fatalf("Run returned %v, want boundary %d lost after %d", err, pub.acked+1, pub.acked)
+	}
+	findLog(t, h.logs, "tick boundary lost; exiting into recovery")
+	if got := counter(h.loop.Metrics().BoundaryLost); got != 1 {
+		t.Fatalf("andara_tick_boundary_lost_total %v", got)
+	}
+	committed, _ := h.source.Committed()
+	if got := committed[sim.PartitionFor("town")]; got > int64(lost.LastDelivered) {
+		t.Fatalf("committed town at %d, past the last delivered tick %d", got, lost.LastDelivered)
 	}
 }

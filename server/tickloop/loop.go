@@ -472,15 +472,20 @@ func (l *Loop) checkpoint(ctx context.Context, tc sim.TickCompleted) {
 // stopLost is the drain a lost boundary triggers (AW-SRV-026): it names
 // the loss, drains, and returns it for the process to exit 5.
 func (l *Loop) stopLost(e *sim.Engine, lost *BoundaryLostError) error {
-	ctx := context.Background()
+	l.reportLost(lost)
+	l.drainAs(e, StopReasonBoundaryLost)
+	return lost
+}
+
+// reportLost names the loss: what was delivered before it, the counter, and
+// the error line.
+func (l *Loop) reportLost(lost *BoundaryLostError) {
 	lost.LastDelivered = min(sim.Tick(l.acked.Load()), lost.Lost-1)
 	l.metrics.BoundaryLost.Inc()
-	l.log.LogAttrs(ctx, slog.LevelError, "tick boundary lost; exiting into recovery",
+	l.log.LogAttrs(context.Background(), slog.LevelError, "tick boundary lost; exiting into recovery",
 		slog.Uint64("lost_tick", uint64(lost.Lost)),
 		slog.Uint64("last_delivered_tick", uint64(lost.LastDelivered)),
 		slog.String("err", lost.Err.Error()))
-	l.drainAs(e, StopReasonBoundaryLost)
-	return lost
 }
 
 // stop is the loop's end on a shutdown: the drain, unless a boundary was
@@ -496,8 +501,17 @@ func (l *Loop) stop(e *sim.Engine) error {
 
 // drain finishes the loop on request: emit SimulationStopped, flush, then
 // checkpoint what was delivered, and close the seams.
+//
+// A boundary the drain's own flush fails is a loss too: it is reported and
+// returned, so the process exits 5. The drain already committed nothing past
+// the last delivered boundary, and SimulationStopped, sent before the flush,
+// says draining (review of #355).
 func (l *Loop) drain(e *sim.Engine) error {
 	l.drainAs(e, "draining")
+	if lost := l.lost.Load(); lost != nil {
+		l.reportLost(lost)
+		return lost
+	}
 	return nil
 }
 
