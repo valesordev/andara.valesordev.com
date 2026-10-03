@@ -69,6 +69,10 @@ After the contract review above:
 3. **`docs/feedback/AW-INF-005-007-split.md`**: name the split lines. PM grooms the parts at the
    SPRINT-05 boundary.
 4. The §8 review of each story as it reaches `review`.
+5. **`docs/feedback/AW-SRV-011-first-look-before-subscribe.md`** (added 2026-10-03): rule how
+   Subscribe's headers come to mean "the stream is attached" (#116, #117). Fixing the gateway's half
+   changes `AW-SRV-011`'s Egress seam. Implementation's item 13 waits on this, so take it ahead of
+   item 4.
 
 ## SRE backlog (pickup order)
 Before this list: the observability review of every draft above, then the instrumentation check of
@@ -114,11 +118,12 @@ each story at `review`.
     the egress's `Streams` gauge wherever an emit follows (`server/README.md`, Event egress).
     Test-only, S.
 13. **#116 and #117** (added 2026-10-03): `play`'s first `look` can reach the server before its
-    `Subscribe` registers, which failed `TestPlay_SelectsBeforeSubscribe` in CI on #107 and #108,
-    two PRs that don't touch that code. The issues name the race's two halves, so one change fixes
-    both: `server/gateway/game.go` registers the egress subscription before it flushes the headers,
-    and `admin/cli/play.go` waits for the headers before its first `look`. AW-CLI-007's verified
-    order (`Subscribe` before `Submit look`) stays the contract. S.
+    stream attaches, which failed `TestPlay_SelectsBeforeSubscribe` in CI on #107 and #108, two PRs
+    that don't touch that code. The outcome: a client that waits for Subscribe's headers can't send a
+    command whose Events its stream then misses. The issues name two halves, the CLI not waiting for
+    headers and the gateway flushing them before the stream attaches. The gateway half changes
+    `AW-SRV-011`'s Egress seam, so it waits on architecture's item 5. Size after that ruling: S if
+    the CLI half suffices, M if the seam changes.
 
 **Added 2026-10-03: CI stability (Brian).** Items 12 and 13 are test flakes that every lane pays
 for: item 13 in CI, and item 12 in `make check` under load. #319 and #172 (items 5 and 6) are the
@@ -127,9 +132,9 @@ and ahead of item 7. The items aren't renumbered, so the cross-references above 
 (`TestKafka_ConcurrentSubmitsOrdered`'s fixture deadline) stays out.
 
 **Risk:** AW-SRV-028 and AW-SRV-007 are each M, and together they're most of the sprint. The demo
-needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then item
-9. Items 12 and 13 don't carry: they go ahead of items 7–11. SRE's items 1–5 are the slack while it
-waits on item 4.
+needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then
+item 9. Items 12 and 13 don't carry: they go ahead of items 7–11. SRE's items 1–5 are the slack while
+it waits on item 4.
 
 ## Carryover from SPRINT-03
 None. Every SPRINT-03 story is `done` (see its close-out). The stories that moved here on
