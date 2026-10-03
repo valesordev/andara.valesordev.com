@@ -292,7 +292,7 @@ func TestScope_RoomDelivery(t *testing.T) {
 	c := f.subscribe("c", player, 0, false, nil)
 	defer a.end()
 	defer c.end()
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 2 }, "two subscriptions")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 2 }, "two subscriptions")
 
 	id := f.emit(plaza())
 	if got := a.next(); got.GetEventId() != id {
@@ -696,7 +696,7 @@ func TestDraining(t *testing.T) {
 	f := newFixture(t, nil)
 	f.place("a", "alice", "town", "plaza")
 	a := f.subscribe("a", player, 0, false, nil)
-	waitFor(t, func() bool { return counter(t, f.hub.Metrics().Subscribers) == 1 }, "subscribed")
+	waitFor(t, func() bool { return counter(t, f.e.Metrics().Streams) == 1 }, "subscribed")
 	f.e.Drain()
 	f.hub.Close()
 	if code, reason := reasonOf(t, a.wait()); code != connect.CodeUnavailable || reason != ReasonDraining {
