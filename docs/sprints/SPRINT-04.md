@@ -107,23 +107,29 @@ each story at `review`.
 10. **#287** (`rooms_loaded` has no series during a content swap; ruled 2026-10-01), then **#290**
     (`state.verify` spans). The contracts hold for both.
 11. **AW-SRV-046** — the owed follow-ups from SPRINT-03's reviews. S.
-12. **#370 and #69** (added 2026-10-03): egress and boot tests that wait on the Hub's `Subscribers`
-    gauge before emitting. #370 is `TestScope_RoomDelivery`, which timed out under load on a
-    docs-only PR. #69 is the same race in `gateway_test.go` and `ingress_test.go`. One fix covers
-    both: wait on the egress's `Streams` gauge where an emit follows (`server/README.md`, Event
-    egress). Test-only, S.
+12. **#69** (added 2026-10-03): seven egress and boot test waits on the Hub's `Subscribers` gauge
+    before an emit, in `egress_test.go`, `gateway_test.go` and `ingress_test.go`. It was latent
+    until 2026-10-03, when `TestScope_RoomDelivery` (`egress_test.go:295`) failed a local
+    `make check` under load. #370 recorded that and is closed as a duplicate. The fix is to wait on
+    the egress's `Streams` gauge wherever an emit follows (`server/README.md`, Event egress).
+    Test-only, S.
 13. **#116 and #117** (added 2026-10-03): `play`'s first `look` can reach the server before its
-    `Subscribe` registers, which fails `TestPlay_SelectsBeforeSubscribe` in CI. It's a race in `play`
-    and the gateway, not only in the test, and one fix covers both issues. S.
+    `Subscribe` registers, which failed `TestPlay_SelectsBeforeSubscribe` in CI on #107 and #108,
+    two PRs that don't touch that code. The issues name the race's two halves, so one change fixes
+    both: `server/gateway/game.go` registers the egress subscription before it flushes the headers,
+    and `admin/cli/play.go` waits for the headers before its first `look`. AW-CLI-007's verified
+    order (`Subscribe` before `Submit look`) stays the contract. S.
 
-**Added 2026-10-03: CI stability (Brian).** Items 12 and 13 are flaky tests that fail CI on PRs that
-don't touch the code under test, and every lane pays for them. Pick them up right after item 6,
-ahead of item 7, without renumbering, so the cross-references above still hold. #172 (item 6) is the
-third. #101 (`TestKafka_ConcurrentSubmitsOrdered`'s fixture deadline) stays out.
+**Added 2026-10-03: CI stability (Brian).** Items 12 and 13 are test flakes that every lane pays
+for: item 13 in CI, and item 12 in `make check` under load. #319 and #172 (items 5 and 6) are the
+others. Pick 12 and 13 up after item 6, or as soon as item 6 is waiting on architecture's ruling,
+and ahead of item 7. The items aren't renumbered, so the cross-references above still hold. #101
+(`TestKafka_ConcurrentSubmitsOrdered`'s fixture deadline) stays out.
 
 **Risk:** AW-SRV-028 and AW-SRV-007 are each M, and together they're most of the sprint. The demo
-needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then
-item 9. Items 12 and 13 don't carry: CI stability comes before new Builder work. SRE's items 1–5 are the slack while it waits on item 4.
+needs items 1–4. If implementation runs short, item 11 carries over first, then item 10, then item
+9. Items 12 and 13 don't carry: they go ahead of items 7–11. SRE's items 1–5 are the slack while it
+waits on item 4.
 
 ## Carryover from SPRINT-03
 None. Every SPRINT-03 story is `done` (see its close-out). The stories that moved here on
