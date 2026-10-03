@@ -444,10 +444,16 @@ func (rt *Runtime) contentApplied(swaps []sim.SwapApplied) {
 		rt.setTopologyGauges(w)
 		rt.leaveWait(w, rt.Engine.Templates(), swaps)
 	}
-	if rt.beforeApplied != nil {
-		rt.beforeApplied()
-	}
-	if rt.Content != nil {
+	rt.reportApplied(swaps)
+}
+
+// reportApplied tells the content source what a tick applied, through the
+// applied seam when a test set one.
+func (rt *Runtime) reportApplied(swaps []sim.SwapApplied) {
+	switch {
+	case rt.applied != nil:
+		rt.applied(swaps)
+	case rt.Content != nil:
 		rt.Content.Applied(swaps)
 	}
 }

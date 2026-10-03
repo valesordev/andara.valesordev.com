@@ -42,11 +42,12 @@ func TestReconcileContent_GaugesBeforeInEffect(t *testing.T) {
 	// Each call records the series and the Zones in effect: the World is
 	// the loop goroutine's to read, and this runs on it.
 	var atApplied [][2]int
-	rt.beforeApplied = func() {
+	rt.applied = func(swaps []sim.SwapApplied) {
 		atApplied = append(atApplied, [2]int{
 			testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded"),
 			len(rt.Engine.World().Zones),
 		})
+		rt.Content.Applied(swaps)
 	}
 	serveMemory(t, rt)
 	n := testutil.CollectAndCount(rt.Tel.Metrics.RoomsLoaded, "andara_content_rooms_loaded")
@@ -82,7 +83,7 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 	a, b := world("town", "wilds"), world("wilds", "docks")
 	rt.setTopologyGauges(a)
 
-	var stop atomic.Bool
+	var stop, failed atomic.Bool
 	var wg sync.WaitGroup
 	var scrapes atomic.Int64
 	failure := make(chan string, 1)
@@ -93,6 +94,7 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 			scrapes.Add(1)
 			fams, err := rt.Tel.Reg.Gather()
 			if err != nil {
+				failed.Store(true)
 				failure <- err.Error()
 				return
 			}
@@ -110,6 +112,7 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 				}
 			}
 			if !wilds {
+				failed.Store(true)
 				select {
 				case failure <- fmt.Sprintf("scrape %d: no rooms_loaded{zone=wilds}, which is in effect throughout", scrapes.Load()):
 				default:
@@ -121,7 +124,7 @@ func TestSetTopologyGauges_NeverEmpty(t *testing.T) {
 	// Update until the scraper has looked at least 50 times, so a loaded
 	// runner can't finish every update before it has run at all.
 	deadline := time.Now().Add(10 * time.Second)
-	for i := 0; scrapes.Load() < 50 && time.Now().Before(deadline); i++ {
+	for i := 0; scrapes.Load() < 50 && !failed.Load() && time.Now().Before(deadline); i++ {
 		w := a
 		if i%2 == 0 {
 			w = b
