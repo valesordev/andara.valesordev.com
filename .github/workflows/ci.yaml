@@ -98,8 +98,11 @@ jobs:
       # AW-INF-029. On a pull request the merge base with origin/main comes from
       # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
       # the push, so a multi-commit push is checked whole; main's runs are never cancelled (the
-      # concurrency group above). A force-push whose `before` is gone exits 2, loudly.
+      # concurrency group above). It needs only git, so it runs even when an earlier step failed:
+      # a skipped step would leave that push unchecked too. A force-push whose `before` is gone
+      # exits 2, loudly. A run cancelled by hand breaks the chain; re-run it.
       - name: core VERSIONS append-only
+        if: ${{ !cancelled() }}
         run: make core-versions-check
         env:
           BASE_REF: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}

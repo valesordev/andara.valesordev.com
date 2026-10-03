@@ -112,10 +112,11 @@ On `sre/aw-inf-029-core-versions-append-only`.
     It can't tell a root commit from a parent that wasn't fetched, and comparing HEAD with itself
     would pass a bad edit.
   - **On a push to `main`, CI sets `BASE_REF` to the push's `before` commit**, so a multi-commit
-    push is checked whole, not only its last commit. For that chain to cover all of `main`, no
-    run on `main` may be cancelled or replaced, so `ci.yaml`'s concurrency group is the commit SHA
-    for a push and the ref for a pull request. AC-5's first-parent rule remains the default
-    without `BASE_REF`.
+    push is checked whole, not only its last commit. For that chain to cover all of `main`, every
+    push's step must run. So `ci.yaml`'s concurrency group is the commit SHA for a push (no run
+    on `main` is cancelled or replaced), and the step runs `if: !cancelled()`, even after an
+    earlier step fails. A run cancelled by hand breaks the chain, and re-running it restores
+    it. AC-5's first-parent rule remains the default without `BASE_REF`.
   - **Fields split on whitespace and parse as decimal**, as `content/core` reads them
     (`strings.Fields`, base 10). A base version `08` isn't octal, and an appended `02` is refused.
   - The fixture's git calls drop `GIT_*` and an inherited `BASE_REF`.
