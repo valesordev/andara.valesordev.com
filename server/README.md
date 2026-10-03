@@ -1042,6 +1042,18 @@ Zones (no swap with `zone_count > 0` has applied in its log) is a fresh environm
   counted `andara_sessions_total{outcome="rejected_no_content"}`.
 - A `warn` line, `waiting for content: …`, is written once.
 
+An empty store is this state's expected cause, so its `no_zones_found` isn't reported at load
+(`AW-SRV-042`, #299). `LoadContent` holds it until the boot decides:
+- **A wait** drops it, so the wait line stands alone.
+- **A serve from the log, with Zones no pointer names,** logs `the content the Active Pointers
+  name does not load; recovering what the log recorded` once.
+- **An exit 1 before the decision, by any path,** logs it at `error` and counts it in
+  `andara_content_validation_errors_total{code="no_zones_found"}` once.
+
+The projector decides when it enters the wait. Its reloads during the wait log only `debug`
+`content reload: no Zones in effect yet`, with `next_retry`. A rejected version, an unreachable
+store, the directory source and `--validate-only` report at load as before.
+
 The decision reads the World Partition's swap records alone, never the store, deciding each as the
 Engine does on the two refusals a record settles (`misrouted`, `stale_base`). So it holds when the
 store refuses every version. A World that has had Zones, and a directory with none, still exit 1.

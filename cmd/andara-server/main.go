@@ -29,7 +29,7 @@ func main() {
 	os.Exit(run(os.Args[1:], os.LookupEnv, os.Stdout, os.Stderr))
 }
 
-func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
+func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit int) {
 	cfg, err := config.Parse(args, env, stderr)
 	if err != nil {
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
@@ -47,6 +47,10 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
 	}
 
 	rt := boot.New(cfg, tel)
+	// An empty store's no_zones_found, held by LoadContent, is reported if
+	// the process exits 1 before the boot decides, by any path, and dropped
+	// otherwise (AW-SRV-042, #299).
+	defer func() { rt.SettleHeld(exit) }()
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 

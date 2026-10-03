@@ -511,6 +511,7 @@ func (rt *Runtime) onSwap() func(time.Duration) {
 func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if rt.Content == nil || rt.Engine == nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content: the tick loop must be started first")
+		rt.reportHeld(ctx)
 		return ExitFail
 	}
 	ctx, span := rt.Tel.Tracer.Start(ctx, "content.reconcile")
@@ -521,6 +522,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if err != nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content could not be brought into effect",
 			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+		rt.reportHeld(ctx)
 		return ExitFail
 	}
 	if len(rt.Engine.World().Zones) == 0 && rt.Cfg.ContentSource == content.SourceKafka {
@@ -532,16 +534,19 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		if err != nil {
 			rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content: the World log could not be read to tell a first start from a lost World",
 				slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+			rt.reportHeld(ctx)
 			return ExitFail
 		}
 		if !had {
 			if err := rt.coreInEffect(); err != nil {
 				rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
 					slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+				rt.reportHeld(ctx)
 				return ExitFail
 			}
 			rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
 			rt.enterWait(ctx)
+			rt.dropHeld()
 			return ExitOK
 		}
 	}
@@ -552,6 +557,7 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 		}
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "no content in effect: the World has no Zones and there is no previous version to retain",
 			slog.String("trace_id", telemetry.TraceID(ctx)))
+		rt.reportHeld(ctx)
 		return ExitFail
 	}
 	// AW-SRV-013 rule 5: not ready until the core this boot activated, or
@@ -559,12 +565,15 @@ func (rt *Runtime) ReconcileContent(ctx context.Context) int {
 	if err := rt.coreInEffect(); err != nil {
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelError, "content core not in effect",
 			slog.String("detail", err.Error()), slog.String("trace_id", telemetry.TraceID(ctx)))
+		rt.reportHeld(ctx)
 		return ExitFail
 	}
 	rt.World, rt.Templates = rt.Engine.World(), rt.Engine.Templates()
 	versions, digest := rt.Content.InEffect()
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "content in effect",
 		slog.Any("versions", versions), slog.String("world_digest", fmt.Sprintf("%x", digest[:8])))
+	// Served, with Zones in effect: from the log, if the pointers named none.
+	rt.serveHeld(ctx)
 	return ExitOK
 }
 

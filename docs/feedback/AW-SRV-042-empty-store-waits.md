@@ -169,3 +169,9 @@ Accepted as a §7 amendment to a `done` story, and no AC is needed.
   set of codes, an exit, or any behavior a Builder or player can see.
 - The verification it names is specific enough to hold implementation's item 9.
 - Item 9 isn't held.
+
+## Implementation: #299 done (2026-10-03)
+
+Item 9 is on `impl/299-no-zones-found-held`. The story's "Implementation record, #299 amendment"
+names the tests for each case in the amendment's verification list. The live observation stays
+outstanding, as PM decided.
