@@ -1,0 +1,523 @@
+#!/usr/bin/env python3
+"""Story operations on a repo's GitHub Project, for role sessions.
+
+Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/story.
+Vendored into target repos as .claude/bin/story by `make install`.
+
+Stories are issues titled `<ID> — <title>` in the repo's org Project. The issue
+body is the story text and contract. Status, Lane, Size, Risk, Component,
+Sprint, Plan, Rank and Story ID are Project fields. Comments carry feedback and
+§8 records. Everything here is REST (`gh api`): Claude Code cloud sessions
+block GraphQL.
+
+    story show <ID> [--comments N]
+    story list [--plan P] [--sprint S] [--cycle N] [--status S] [--lane L] [--prefix AW]
+    story create --comp SRV --title T --lane L --size S --risk R --component C
+                 --body-file F [--epic EPIC-NN] [--depends ID,ID]
+    story start <ID>                      ready -> in-progress (the story's lane)
+    story status <ID> <status> [--note TEXT]
+    story set <ID> Field=value [...]      e.g. Sprint=SPRINT-05 Plan=Current Rank=3, or Cycle=2
+    story body <ID> --body-file F         replace the issue body (the contract)
+    story comment <ID> (--to ROLE | --record NAME) (--body TEXT | --body-file F)
+    story merged <PR>                     the story-merge Action: apply a merged PR's
+                                          Story: / Story-Done: lines as its role:<r> label
+
+Who may do what comes from the session's role file (.claude/roles/<role>.md):
+
+    transitions: [new>draft, draft>ready, ready>in-progress@lane, ...]
+        `from>to`, `from>to@lane` for stories whose Lane is this role, or
+        `from>to@<lane>` for stories in that named lane (e.g. @director).
+        `new>draft` allows `story create`.
+    story_edits: [body, Sprint, Cycle, Plan, Rank, Lane, Size, Risk, Component]
+        what `story body` and `story set` may change.
+    on_merge: [in-progress>review@lane]
+        moves only `story merged` makes, when a PR labeled role:<role> merges.
+        A session can't make them, so `review` means the work is on main.
+
+`story merged <PR>` reads the merged PR's body and commit messages. A
+`Story: <ID>` line moves the story in-progress → review when the PR's role is
+the story's lane (other roles' PRs only reference it). `Story-Done: <ID>` moves
+it review → done when the role may. Only merges into the default branch count. It fails, after applying the rest, if a
+lane's own story wasn't in-progress, or the role may not close a story.
+
+`/role none` may do anything. With no role set, every write is refused.
+Settings come from .claude/roles/_repo.md: project, story_prefix, github_repo,
+story_components (the --comp codes; default SRV, CLI, INF, CLT), and
+`stories: github`. Until a repo sets that (its cutover from docs/stories files),
+`story` only reads: project-mirror would overwrite any write from the files.
+The session id comes from --sid, or $CLAUDE_SESSION_ID (set by the
+SessionStart hook).
+
+Several repos can share one Project (Andara's server and content repos do).
+Reads see every story on it, so `--depends` and `show` can name another repo's
+story. Writes touch only this repo's stories: an ID with another prefix, or an
+issue in another repository, is refused.
+"""
+from __future__ import annotations
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+_ROLE = Path(__file__).with_name("role")
+_loader = importlib.machinery.SourceFileLoader("valesor_role", str(_ROLE))
+role = importlib.util.module_from_spec(importlib.util.spec_from_loader("valesor_role", _loader))
+sys.modules["valesor_role"] = role
+sys.dont_write_bytecode = True
+_loader.exec_module(role)
+
+STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
+COMP_CODES = ["SRV", "CLI", "INF", "CLT"]  # default; a repo sets story_components
+SETTABLE = ["Sprint", "Cycle", "Plan", "Rank", "Lane", "Size", "Risk", "Component"]
+HEADING = re.compile(r"^\*\*(For [a-z-]+|§8 \([a-z-]+\)|[A-Za-z0-9 §()-]+ \([a-z-]+\)):\*\*")
+
+
+class StoryError(Exception):
+    pass
+
+
+# ------------------------------------------------------------------ GitHub
+
+class GH:
+    """`gh api` over REST. Tests replace this class."""
+
+    def api(self, method: str, path: str, body: dict | None = None, paginate: bool = False):
+        cmd = ["gh", "api", "-X", method, path, "-H", "Accept: application/vnd.github+json"]
+        if paginate:
+            cmd += ["--paginate", "--slurp"]
+        if body is None:
+            r = subprocess.run(cmd, stdin=subprocess.DEVNULL, capture_output=True, text=True)
+        else:
+            r = subprocess.run(cmd + ["--input", "-"], input=json.dumps(body),
+                               capture_output=True, text=True)
+        if r.returncode != 0:
+            raise StoryError(f"gh api {method} {path}: {(r.stderr or r.stdout).strip()}")
+        out = json.loads(r.stdout) if r.stdout.strip() else None
+        if paginate and isinstance(out, list) and out and isinstance(out[0], list):
+            out = [x for page in out for x in page]
+        return out
+
+
+def _raw(v):
+    """A Project field value as plain text (or number)."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        name = v.get("name", v.get("raw"))
+        if isinstance(name, dict):
+            return name.get("raw")
+        return name if name is not None else v.get("raw")
+    return v
+
+
+class Board:
+    def __init__(self, gh, repo: str, project: str, prefix: str, comps: list[str] | None = None):
+        self.gh, self.repo, self.prefix = gh, repo, prefix
+        self.comps = [c.upper() for c in comps] if comps else COMP_CODES
+        self.org = repo.split("/")[0]
+        projects = gh.api("GET", f"/orgs/{self.org}/projectsV2?per_page=100", paginate=True) or []
+        match = [p for p in projects if p.get("title") == project]
+        if not match:
+            raise StoryError(f"no org Project titled {project!r} in {self.org}")
+        self.number = match[0]["number"]
+        self.base = f"/orgs/{self.org}/projectsV2/{self.number}"
+        self.fields = {f["name"]: f for f in gh.api("GET", f"{self.base}/fields?per_page=100",
+                                                    paginate=True)}
+        self._items = None
+
+    def field_id(self, name: str) -> int:
+        if name not in self.fields:
+            raise StoryError(f"the Project has no field {name!r}")
+        return self.fields[name]["id"]
+
+    def option_id(self, name: str, value: str) -> str:
+        f = self.fields[name]
+        for o in f.get("options") or []:
+            if _raw(o) == value:
+                return o["id"]
+        names = [_raw(o) for o in f.get("options") or []]
+        raise StoryError(f"{name} has no option {value!r} (options: {', '.join(names)})")
+
+    def items(self) -> list[dict]:
+        if self._items is None:
+            ids = ",".join(str(f["id"]) for f in self.fields.values())
+            raw = self.gh.api("GET", f"{self.base}/items?per_page=100&fields={ids}", paginate=True)
+            self._items = []
+            for it in raw or []:
+                c = it.get("content") or {}
+                if it.get("content_type") != "Issue":
+                    continue
+                vals = {f["name"]: _raw(f.get("value")) for f in it.get("fields") or []}
+                # Stories carry a Story ID (story create, project-mirror); epics only a title.
+                epic = re.match(r"^(EPIC-\d{2}) — ", c.get("title") or "")
+                sid = vals.get("Story ID") or (epic.group(1) if epic else "")
+                url = c.get("repository_url") or ""
+                repo = "/".join(url.rstrip("/").split("/")[-2:]) if url else self.repo
+                self._items.append({"item": it["id"], "id": sid, "number": c.get("number"),
+                                    "repo": repo,
+                                    "issue_id": c.get("id"), "title": c.get("title", ""),
+                                    "state": c.get("state"), "fields": vals})
+        return self._items
+
+    def find(self, sid: str) -> dict:
+        hits = [i for i in self.items() if i["id"] == sid]
+        if not hits:
+            raise StoryError(f"no story {sid} on the Project")
+        return min(hits, key=lambda i: i["repo"] != self.repo)  # an EPIC-NN here wins over another repo's
+
+    def own(self, sid: str) -> dict:
+        """A story this repo may change: its prefix and its repository."""
+        it = self.find(sid)
+        mine = sid.startswith(f"{self.prefix}-") or (sid.startswith("EPIC-") and it["repo"] == self.repo)
+        if not mine or it["repo"] != self.repo:
+            raise StoryError(f"{sid} belongs to {it['repo']}; change it from a session there")
+        return it
+
+    def set_fields(self, item: dict, values: dict) -> None:
+        body = []
+        for name, v in values.items():
+            fid = self.field_id(name)
+            dt = self.fields[name].get("data_type")
+            if v is None or v == "":
+                body.append({"id": fid, "value": None})
+            elif dt == "single_select":
+                body.append({"id": fid, "value": self.option_id(name, v)})
+            elif dt == "number":
+                try:
+                    body.append({"id": fid, "value": float(v)})
+                except ValueError:
+                    raise StoryError(f"{name} must be a number, not {v!r}") from None
+            else:
+                body.append({"id": fid, "value": str(v)})
+        self.gh.api("PATCH", f"{self.base}/items/{item['item']}", {"fields": body})
+        item["fields"].update(values)
+
+    def issue(self, number: int, repo: str | None = None) -> dict:
+        return self.gh.api("GET", f"/repos/{repo or self.repo}/issues/{number}")
+
+    def comments(self, number: int, repo: str | None = None) -> list[dict]:
+        return self.gh.api("GET", f"/repos/{repo or self.repo}/issues/{number}/comments?per_page=100",
+                           paginate=True) or []
+
+    def comment(self, number: int, text: str) -> None:
+        self.gh.api("POST", f"/repos/{self.repo}/issues/{number}/comments", {"body": text})
+
+
+# ------------------------------------------------------------- permissions
+
+class Who:
+    def __init__(self, name: str | None, meta: dict):
+        self.name, self.meta = name, meta
+
+    @property
+    def unrestricted(self) -> bool:
+        return self.name == role.UNRESTRICTED
+
+    def can_move(self, frm: str, to: str, lane: str | None, merge: bool = False) -> bool:
+        if self.unrestricted:
+            return True
+        rules = self.meta.get("transitions", []) + (self.meta.get("on_merge", []) if merge else [])
+        for t in rules:
+            rule, _, scope = t.partition("@")
+            a, _, b = rule.partition(">")
+            if (a, b) != (frm, to):
+                continue
+            if not scope or (scope == "lane" and lane == self.name) or (scope != "lane" and lane == scope):
+                return True
+        return False
+
+    def can_edit(self, what: str) -> bool:
+        return self.unrestricted or what in self.meta.get("story_edits", [])
+
+    def require(self) -> None:
+        if self.name is None:
+            raise StoryError("no role set for this session; ask Brian to run /role <name>")
+
+
+def session_role(root: Path, sid: str | None) -> Who:
+    roles = role.Roles(root)
+    name = role.get_role(root, sid) if sid else None
+    if name is None or name == role.UNRESTRICTED:
+        return Who(name, {})
+    return Who(name, roles.roles.get(name, ({}, ""))[0])
+
+
+# ----------------------------------------------------------------- commands
+
+def _text(a) -> str:
+    if getattr(a, "body_file", None):
+        return Path(a.body_file).read_text()
+    if getattr(a, "body", None):
+        return a.body
+    raise StoryError("give --body or --body-file")
+
+
+def cmd_show(b: Board, who: Who, a) -> str:
+    it = b.find(a.id)
+    iss = b.issue(it["number"], it["repo"])
+    f = it["fields"]
+    keys = ["Status", "Lane", "Sprint", "Plan", "Rank", "Size", "Risk", "Component"]
+    if "Cycle" in b.fields:
+        keys.insert(3, "Cycle")
+    lines = [f"{it['title']}  (#{it['number']}, {iss.get('state')})  {iss.get('html_url', '')}",
+             "  ".join(f"{k}: {_num(f.get(k)) if f.get(k) is not None else '-'}" for k in keys),
+             "", (iss.get("body") or "").rstrip()]
+    if a.comments:
+        cs = b.comments(it["number"], it["repo"])[-a.comments:]
+        lines += ["", f"--- last {len(cs)} comment(s) ---"]
+        for c in cs:
+            lines += [f"[{c.get('created_at', '')}] {c.get('user', {}).get('login', '')}:",
+                      (c.get("body") or "").rstrip(), ""]
+    return "\n".join(lines)
+
+
+def _num(v):
+    return int(v) if isinstance(v, float) and v.is_integer() else v
+
+
+def cmd_list(b: Board, who: Who, a) -> str:
+    rows = [i for i in b.items() if i["id"].startswith(f"{a.prefix or b.prefix}-")]
+    for key, want in (("Plan", a.plan), ("Sprint", a.sprint), ("Status", a.status), ("Lane", a.lane)):
+        if want:
+            rows = [i for i in rows if (i["fields"].get(key) or "") == want]
+    if a.cycle:
+        rows = [i for i in rows if str(_num(i["fields"].get("Cycle"))) == a.cycle.lstrip("0")]
+    rows.sort(key=lambda i: (i["fields"].get("Rank") is None, i["fields"].get("Rank") or 0, i["id"]))
+    out = []
+    for i in rows:
+        f = i["fields"]
+        rank = f.get("Rank")
+        out.append(f"{int(rank) if isinstance(rank, (int, float)) else '-':>4}  {i['id']:11}  "
+                   f"{f.get('Status') or '-':11}  {f.get('Lane') or '-':15}  "
+                   f"{i['title'].split(' — ', 1)[-1][:70]}")
+    return "\n".join(out) or "(no stories match)"
+
+
+def cmd_create(b: Board, who: Who, a) -> str:
+    who.require()
+    if not who.can_move("new", "draft", a.lane):
+        raise StoryError(f"role {who.name} can't create stories (needs `new>draft` in transitions)")
+    comp = a.comp.upper()
+    if comp not in b.comps:
+        raise StoryError(f"--comp must be one of {', '.join(b.comps)}")
+    pat = re.compile(rf"^{re.escape(b.prefix)}-{comp}-(\d{{3}})$")
+    nums = [int(m.group(1)) for i in b.items() if (m := pat.match(i["id"]))]
+    sid = f"{b.prefix}-{comp}-{(max(nums) + 1 if nums else 1):03d}"
+    # Validate everything before the first write, so a typo leaves nothing behind.
+    text = _text(a)
+    for name, value in (("Lane", a.lane), ("Size", a.size), ("Risk", a.risk), ("Component", a.component)):
+        b.option_id(name, value)
+    epic = b.own(a.epic) if a.epic else None
+    deps = [b.find(d.strip()) for d in (a.depends or "").split(",") if d.strip()]
+    iss = b.gh.api("POST", f"/repos/{b.repo}/issues", {"title": f"{sid} — {a.title}", "body": text})
+    item = b.gh.api("POST", f"{b.base}/items", {"type": "Issue", "id": iss["id"]})
+    it = {"item": item["id"], "id": sid, "number": iss["number"], "issue_id": iss["id"], "repo": b.repo,
+          "title": iss["title"], "state": "open", "fields": {}}
+    b.items().append(it)
+    b.set_fields(it, {"Story ID": sid, "Status": "draft", "Lane": a.lane, "Size": a.size,
+                      "Risk": a.risk, "Component": a.component})
+    if epic:
+        b.gh.api("POST", f"/repos/{b.repo}/issues/{epic['number']}/sub_issues",
+                 {"sub_issue_id": iss["id"]})
+    for d in deps:
+        b.gh.api("POST", f"/repos/{b.repo}/issues/{iss['number']}/dependencies/blocked_by",
+                 {"issue_id": d["issue_id"]})
+    return f"created {sid} (#{iss['number']}) at draft: {iss.get('html_url', '')}"
+
+
+def _move(b: Board, who: Who, sid: str, to: str, note: str | None, merge: bool = False) -> str:
+    who.require()
+    if to not in STATUSES:
+        raise StoryError(f"status must be one of {', '.join(STATUSES)}")
+    it = b.own(sid)
+    frm = it["fields"].get("Status") or "draft"
+    if frm == to:
+        return f"{sid} is already {to}"
+    if not who.can_move(frm, to, it["fields"].get("Lane"), merge):
+        raise StoryError(f"role {who.name} can't move {sid} {frm} → {to} "
+                         f"(lane {it['fields'].get('Lane') or '-'}); see CLAUDE.md §2")
+    b.set_fields(it, {"Status": to})
+    if to == "done" and it.get("state") != "closed":
+        b.gh.api("PATCH", f"/repos/{b.repo}/issues/{it['number']}", {"state": "closed",
+                                                                    "state_reason": "completed"})
+    elif frm == "done" and it.get("state") == "closed":
+        b.gh.api("PATCH", f"/repos/{b.repo}/issues/{it['number']}", {"state": "open"})
+    b.comment(it["number"], f"**Status ({who.name}):** {frm} → {to}" + (f". {note}" if note else ""))
+    return f"{sid}: {frm} → {to}"
+
+
+def cmd_start(b: Board, who: Who, a) -> str:
+    return _move(b, who, a.id, "in-progress", a.note)
+
+
+def cmd_status(b: Board, who: Who, a) -> str:
+    return _move(b, who, a.id, a.to, a.note)
+
+
+def cmd_set(b: Board, who: Who, a) -> str:
+    who.require()
+    it = b.own(a.id)
+    values = {}
+    for pair in a.pairs:
+        k, sep, v = pair.partition("=")
+        if not sep or k not in SETTABLE:
+            raise StoryError(f"expected Field=value with Field in {', '.join(SETTABLE)}; got {pair!r}")
+        if not who.can_edit(k):
+            raise StoryError(f"role {who.name} can't set {k}")
+        values[k] = v
+    b.set_fields(it, values)
+    return f"{a.id}: " + ", ".join(f"{k}={v or '(cleared)'}" for k, v in values.items())
+
+
+def cmd_body(b: Board, who: Who, a) -> str:
+    who.require()
+    if not who.can_edit("body"):
+        raise StoryError(f"role {who.name} can't edit story bodies")
+    it = b.own(a.id)
+    b.gh.api("PATCH", f"/repos/{b.repo}/issues/{it['number']}", {"body": _text(a)})
+    b.comment(it["number"], f"**Contract ({who.name}):** body updated. {a.note or ''}".rstrip())
+    return f"{a.id}: body updated"
+
+
+def cmd_comment(b: Board, who: Who, a) -> str:
+    who.require()
+    if bool(a.to) == bool(a.record):
+        raise StoryError("give exactly one of --to ROLE or --record NAME")
+    me = who.name if not who.unrestricted else "brian"
+    head = f"**For {a.to}:**" if a.to else f"**{a.record} ({me}):**"
+    text = _text(a).strip()
+    it = b.own(a.id)
+    b.comment(it["number"], f"{head} {text}" if "\n" not in text else f"{head}\n\n{text}")
+    return f"{a.id}: comment posted ({head})"
+
+
+def _refs(text: str, key: str, prefix: str) -> list[str]:
+    pat = re.compile(rf"\b{re.escape(prefix)}-[A-Z]+-\d{{3}}\b")
+    out = []
+    for line in text.splitlines():
+        m = re.match(rf"^\s*{key}:\s*(.+)$", line)
+        if m:
+            out += [x for x in pat.findall(m.group(1)) if x not in out]
+    return out
+
+
+def cmd_merged(b: Board, who: Who, a) -> str:
+    """Apply a merged PR's Story: / Story-Done: lines with the role its label names."""
+    pr = b.gh.api("GET", f"/repos/{b.repo}/pulls/{a.pr}")
+    if not pr.get("merged_at"):
+        return f"PR #{a.pr} isn't merged; nothing to do"
+    base = pr.get("base") or {}
+    default = (base.get("repo") or {}).get("default_branch")
+    if default and base.get("ref") != default:
+        return f"PR #{a.pr} merged into {base.get('ref')}, not {default}; stories move only on {default}"
+    labels = sorted(l["name"][5:] for l in pr.get("labels") or [] if l["name"].startswith("role:"))
+    commits = b.gh.api("GET", f"/repos/{b.repo}/pulls/{a.pr}/commits?per_page=100", paginate=True) or []
+    text = "\n".join([pr.get("body") or ""] + [c.get("commit", {}).get("message", "") for c in commits])
+    review, done = _refs(text, "Story", b.prefix), _refs(text, "Story-Done", b.prefix)
+    if not review and not done:
+        return f"PR #{a.pr} names no {b.prefix}- story"
+    if len(labels) != 1:
+        raise StoryError(f"PR #{a.pr} needs exactly one role:<role> label to move stories, has "
+                         f"{', '.join('role:' + l for l in labels) or 'none'}")
+    name = labels[0]
+    meta = role.Roles(role.repo_root(Path.cwd())).roles.get(name, (None, ""))[0]
+    if meta is None:
+        raise StoryError(f"PR #{a.pr} is labeled role:{name}, which isn't a role here")
+    actor = Who(name, meta)
+    note = f"PR #{a.pr} merged"
+    out, bad = [], []
+    for sid in review:
+        it = b.own(sid)
+        st, lane = it["fields"].get("Status") or "draft", it["fields"].get("Lane")
+        if lane != name or st in ("review", "done"):
+            out.append(f"{sid}: {st}, unchanged ({'lane ' + str(lane) if lane != name else 'already ' + st})")
+        elif st == "in-progress" and actor.can_move(st, "review", lane, merge=True):
+            out.append(_move(b, actor, sid, "review", note, merge=True))
+        else:
+            bad.append(f"{sid} is {st} in lane {lane}; {name} can't move it to review on merge")
+    for sid in done:
+        it = b.own(sid)
+        st = it["fields"].get("Status") or "draft"
+        if st == "done":
+            out.append(f"{sid}: already done")
+        elif st == "review" and actor.can_move("review", "done", it["fields"].get("Lane"), merge=True):
+            out.append(_move(b, actor, sid, "done", note, merge=True))
+        else:
+            bad.append(f"{sid} is {st}; {name} can't close it with Story-Done")
+    if bad:
+        raise StoryError("\n".join(out + bad))
+    return "\n".join(out)
+
+
+READS = {"show", "list"}
+COMMANDS = {"show": cmd_show, "list": cmd_list, "create": cmd_create, "start": cmd_start,
+            "status": cmd_status, "set": cmd_set, "body": cmd_body, "comment": cmd_comment,
+            "merged": cmd_merged}
+
+
+def parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(prog="story", description=__doc__.split("\n\n")[0])
+    ap.add_argument("--sid", default=os.environ.get("CLAUDE_SESSION_ID"))
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    s = sub.add_parser("show"); s.add_argument("id"); s.add_argument("--comments", type=int, default=0)
+    s = sub.add_parser("list")
+    for k in ("plan", "sprint", "cycle", "status", "lane", "prefix"):
+        s.add_argument(f"--{k}")
+    s = sub.add_parser("create")
+    for k in ("comp", "title", "lane", "size", "risk", "component", "body-file"):
+        s.add_argument(f"--{k}", required=True)
+    s.add_argument("--epic"); s.add_argument("--depends")
+    s = sub.add_parser("start"); s.add_argument("id"); s.add_argument("--note")
+    s = sub.add_parser("status"); s.add_argument("id"); s.add_argument("to"); s.add_argument("--note")
+    s = sub.add_parser("set"); s.add_argument("id"); s.add_argument("pairs", nargs="+")
+    s = sub.add_parser("body"); s.add_argument("id"); s.add_argument("--body-file", required=True)
+    s.add_argument("--note")
+    s = sub.add_parser("merged"); s.add_argument("pr", type=int)
+    s = sub.add_parser("comment"); s.add_argument("id")
+    s.add_argument("--to"); s.add_argument("--record")
+    s.add_argument("--body"); s.add_argument("--body-file")
+    return ap
+
+
+def main(argv: list[str], gh=None) -> int:
+    a = parser().parse_args(argv)
+    root = role.repo_root(Path.cwd())
+    if root is None:
+        print("story: not inside a git repository", file=sys.stderr)
+        return 2
+    cfg = role.Roles(root).repo
+    if not cfg.get("project"):
+        print("story: this repo has no `project:` in .claude/roles/_repo.md", file=sys.stderr)
+        return 2
+    repo = cfg.get("github_repo")
+    if not repo:
+        print("story: set github_repo: owner/name in .claude/roles/_repo.md", file=sys.stderr)
+        return 2
+    if a.cmd == "merged" and cfg.get("stories") != "github":
+        print("story: no `stories: github` here yet; the story files are still the source. Skipped.")
+        return 0
+    if a.cmd not in READS and cfg.get("stories") != "github":
+        print("story: stories here still live in docs/stories (no `stories: github` in "
+              ".claude/roles/_repo.md), and project-mirror overwrites the board from them. "
+              "Change the story file instead.", file=sys.stderr)
+        return 2
+    try:
+        who = session_role(root, a.sid)
+        comps = cfg.get("story_components")
+        b = Board(gh or GH(), repo, cfg["project"], cfg.get("story_prefix", ""),
+                  comps if isinstance(comps, list) else None)
+        print(COMMANDS[a.cmd](b, who, a))
+    except StoryError as e:
+        print(f"story: {e}", file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

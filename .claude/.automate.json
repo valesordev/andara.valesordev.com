@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@b61dc07",
+  "source": "automate.bashburn.com@f346cb7",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "87e02d7171b1cbb7c2b98aba8919d544ddb43adf0ad3c83404fdd86a65fed916",
@@ -16,13 +16,15 @@
     ".claude/skills/role/SKILL.md": "73c33b3e7b9395756ebb7d0af584decab6296f620096fecd143405854b8c0c5b",
     ".claude/skills/sre-start-sprint/SKILL.md": "3deae519bd8cc07e2f8f41d79a58f85b1cd1e1e27731747a142b1e559a949aa2",
     ".claude/bin/project-mirror": "b1aaa2e6711d8838e77aa1e74d6a7efac71b924f174136dc29e1e075c2288d44",
-    ".claude/bin/role": "4bc585e50aa4c988bf5101fb592e9ff53424a33e69af6a507a86fd4855987e1b",
-    ".claude/bin/sprint-state": "4bb031caf8b49bdb3461741453249fb0ee9927284dcb0d23e9c250b568e34513",
+    ".claude/bin/role": "b894a44b73c86f2f4a5981184bfbff1894c453302aebce7d05dc5b9b3aecb7a5",
+    ".claude/bin/sprint-state": "0519e30ca81002525e1d9361d7b9b1cce0cc9322daa271f8f14959b39e730f66",
+    ".claude/bin/story": "d9eabce60e8d8c0dec8feabc0a0fa02889ac904fdc6207edecd9221ff8222972",
+    ".github/workflows/story-merge.yml": "553a11ee28529c1c211b9b821925c4b345c0555ba3c8a154e57bee0cace48300",
     ".claude/roles/_repo.md": "46c8a85e292618bdcf5f5307af82f7ea4708154557d51e0ca46c3af0de8f70a8",
-    ".claude/roles/architecture.md": "b62d9f6d7746457f1daf453b2159042f0db4c82ff1a766f561aa43bd0147805c",
-    ".claude/roles/implementation.md": "44c81cc6e8e74362c986f4ab8f62cadfffdc715fc1d91c8d2251a005478d7986",
-    ".claude/roles/pm.md": "65d290643d53a6e9b4fca41cac234ff830f68fb3c0afca551f43d82be85d1474",
-    ".claude/roles/sre.md": "18766dcff1eb88e67320f8467b25669be6c506eebde9780d02580f0f700df0cf"
+    ".claude/roles/architecture.md": "f0b2f6feaa3af2925f3d3d70e649c8f58993042b48d4cb869fe78ea4f802c9b3",
+    ".claude/roles/implementation.md": "3122f349b47b47f17a668a905de0f6b48ad4caa7aabc3fc20cffbe1d481d1d86",
+    ".claude/roles/pm.md": "d6a4703d7850ae4a023572e2aea0e663bce3d481d5a4e65a7ba1dbe43be5344e",
+    ".claude/roles/sre.md": "58b5198595fa6d0504fdabfa8ebc9ef2cbe2865aa34fd747ea01ea2aff021be5"
   },
   "hook_commands": [
     "python3 \"${CLAUDE_PROJECT_DIR}/.claude/bin/role\" hook-pre-bash",

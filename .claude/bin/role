@@ -28,6 +28,12 @@ Commands:
 Every PR a role opens carries the label `role:<role>`; hook-pre-bash denies a
 `gh pr create` without it.
 
+Story guard: in a repo with `project:` in _repo.md, hook-pre-bash denies raw
+`gh issue edit/close/reopen/delete/transfer` on story issues, non-read `gh project`
+commands, and `gh api` writes to Projects, story issues, sub-issues, or
+dependencies, and GraphQL mutations. Stories change through bin/story, which
+applies the role's `transitions:` and `story_edits:`. It asks under /role none.
+
 Review gate: in a role session, hook-pre-bash denies `git push` unless every
 commit it sends was recorded by `role reviewed` (the last step of /pre-pr) or is
 already on origin/main, and denies `gh pr create` unless HEAD was. `--all`,
@@ -71,6 +77,19 @@ GH_PR_CREATE_OPTS_WITH_VALUE = {"-R", "--repo", "-H", "--head", "-B", "--base", 
                                 "-b", "--body", "-F", "--body-file", "-l", "--label", "-a",
                                 "--assignee", "-r", "--reviewer", "-m", "--milestone", "-p",
                                 "--project", "-T", "--template", "--recover"}
+GH_ISSUE_WRITES = {"edit", "close", "reopen", "delete", "transfer"}
+GH_PROJECT_READS = {"list", "view", "item-list", "field-list"}
+GH_ISSUE_OPTS_WITH_VALUE = {"-R", "--repo", "-t", "--title", "-b", "--body", "-F", "--body-file",
+                            "-c", "--comment", "-r", "--reason", "-m", "--milestone", "-a",
+                            "--assignee", "-l", "--label", "-p", "--project", "--add-assignee",
+                            "--remove-assignee", "--add-label", "--remove-label", "--add-project",
+                            "--remove-project", "-T", "--template", "--type", "--duplicate-of",
+                            "-B", "--base", "-n", "--name"}
+GH_API_OPTS_WITH_VALUE = {"-X", "--method", "-f", "--raw-field", "-F", "--field", "-H", "--header",
+                          "--input", "-q", "--jq", "-t", "--template", "--hostname", "--cache",
+                          "-p", "--preview"}
+ISSUE_API_RE = re.compile(r"(?:^|/)issues/(\d+)(?:/(?:sub_issues?|sub_issues/priority|"
+                          r"dependencies/\S*))?/?$")
 HEREDOC_RE = re.compile(
     r"(?<![<])<<(?!<)-?[ \t]*(['\"]?)([A-Za-z_]\w*)\1[^\n]*\n.*?(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)", re.S)
 VAR_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$", re.S)
@@ -185,6 +204,11 @@ def _check_session(sid: str) -> str:
     return sid
 
 
+def hook_role(root: Path, sid: str) -> str | None:
+    """A hook's view of the session role: an invalid session id has none (fails closed)."""
+    return get_role(root, sid) if SESSION_RE.match(sid or "") else None
+
+
 def get_role(root: Path, sid: str) -> str | None:
     f = state_dir(root) / _check_session(sid)
     return f.read_text().strip() if f.is_file() else None
@@ -227,6 +251,20 @@ def charter(roles: Roles, role: str) -> str:
         )
     meta, body = roles.roles[role]
     skills = " ".join(f"/{s}" for s in meta.get("skills", [])) or "(none)"
+    if not meta.get("writes"):  # a role that works outside the repo (e.g. in Notion)
+        return "\n".join(
+            [
+                f"Active role: {role}",
+                "Writable paths: (none). This role works outside the repo: it doesn't "
+                "commit, push, or open PRs.",
+                f"Role skills: {skills}",
+                *([f"Story moves (.claude/bin/story): {', '.join(meta['transitions'])}"]
+                  if meta.get("transitions") else []),
+                "Repo edits are blocked or require Brian's approval.",
+                "",
+                body.rstrip(),
+            ]
+        )
     return "\n".join(
         [
             f"Active role: {role}",
@@ -234,6 +272,10 @@ def charter(roles: Roles, role: str) -> str:
             f"PR label: {pr_label(role)} (every PR you open: gh pr create --label {pr_label(role)})",
             f"Writable paths: {', '.join(meta.get('writes', [])) or '(none)'}",
             f"Role skills: {skills}",
+            *([f"Story moves (.claude/bin/story): {', '.join(meta['transitions'])}"]
+              if meta.get("transitions") else []),
+            *([f"On merge (story-merge Action, from the PR's Story: lines): {', '.join(meta['on_merge'])}"]
+              if meta.get("on_merge") else []),
             f"Review gate: run /pre-pr before any git push or gh pr create "
             f"(check command: {check_command(roles)}).",
             "Edits outside the writable paths are blocked or require Brian's approval.",
@@ -351,13 +393,21 @@ def _hook_input() -> dict:
 
 def hook_session_start(_: list[str]) -> int:
     data = _hook_input()
+    env_file, sid = os.environ.get("CLAUDE_ENV_FILE"), data.get("session_id", "")
+    if env_file and SESSION_RE.match(sid):
+        # bin/story reads the session's role through this; skills pass ${CLAUDE_SESSION_ID}.
+        try:
+            with open(env_file, "a") as f:
+                f.write(f"export CLAUDE_SESSION_ID={sid}\n")
+        except OSError:
+            pass  # never block the charter on the env file
     root = repo_root(Path(data.get("cwd") or os.getcwd()))
     if root is None:
         return 0
     roles = Roles(root)
     if not roles.roles:
         return 0
-    role = get_role(root, data.get("session_id", ""))
+    role = get_role(root, sid) if SESSION_RE.match(sid) else None
     if role:
         # resume / compact / clear with a role already set: re-inject the charter.
         print(charter(roles, role))
@@ -400,7 +450,7 @@ def hook_pre_tool_use(_: list[str]) -> int:
         return _decision("deny", f"{rel} is generated. Regenerate it with the make target "
                                  "(e.g. `make backlog status`); never hand-edit it.")
 
-    role = get_role(root, data.get("session_id", ""))
+    role = hook_role(root, data.get("session_id", ""))
     if role is None:
         return _decision("deny", f"No role set for this session. Ask Brian to run "
                                  f"/role <{roles.names()}> before editing {rel}.")
@@ -547,8 +597,10 @@ def _split_opts(args: list[str], with_value: set[str]) -> tuple[list[tuple[str, 
 
 
 class Gated:
-    def __init__(self, kind: str, where: Path, args: list[str]):
+    def __init__(self, kind: str, where: Path, args: list[str], issue: str | None = None,
+                 repo: str | None = None):
         self.kind, self.where, self.args = kind, where, args
+        self.issue, self.repo = issue, repo
 
 
 def _path(base: Path, p: str) -> Path:
@@ -664,10 +716,58 @@ def gated_commands(command: str, cwd: Path, depth: int = 0) -> list[Gated]:
         elif head == "git":
             found += _gated_git(rest, where, depth)
         elif head == "gh":
-            _, pos = _split_opts(rest, GH_OPTS_WITH_VALUE)
+            opts, pos = _split_opts(rest, GH_OPTS_WITH_VALUE)
+            repo = next((v for n, v in opts if n in ("-R", "--repo")), None)
             if len(pos) >= 2 and pos[0] == "pr" and pos[1] in ("create", "new"):
                 found.append(Gated("gh pr create", where, rest))
+            elif len(pos) >= 2 and pos[0] == "issue":
+                iopts, ipos = _split_opts(rest[rest.index("issue") + 1:], GH_ISSUE_OPTS_WITH_VALUE)
+                repo = next((v for n, v in iopts if n in ("-R", "--repo")), repo)
+                if ipos[:1] == ["edit"] and any(n in ("--add-project", "--remove-project")
+                                                for n, _ in iopts):
+                    found.append(Gated("gh issue edit --project", where, rest))
+                elif ipos[:1] and ipos[0] in GH_ISSUE_WRITES:
+                    refs = ipos[1:2] if ipos[0] == "transfer" else ipos[1:]  # transfer <issue> <repo>
+                    found.append(Gated(f"gh issue {ipos[0]}", where, rest,
+                                       issue=refs or None, repo=repo))
+                elif ipos[:1] == ["create"] and any(n in ("-p", "--project") for n, _ in iopts):
+                    found.append(Gated("gh issue create --project", where, rest))
+            elif len(pos) >= 2 and pos[0] == "project" and pos[1] not in GH_PROJECT_READS:
+                found.append(Gated(f"gh project {pos[1]}", where, rest))
+            elif pos[:1] == ["api"]:
+                g = _gh_api_mutation(rest[rest.index("api") + 1:], where)
+                if g:
+                    found.append(g)
     return found
+
+
+def _gh_api_mutation(args: list[str], where: Path) -> Gated | None:
+    """A `gh api` call that changes a story's issue structure or a Project."""
+    opts, pos = _split_opts(args, GH_API_OPTS_WITH_VALUE)
+    if not pos:
+        return None
+    method = next((v for n, v in opts if n in ("-X", "--method")), None)
+    if method is None:
+        has_body = any(n in ("-f", "--raw-field", "-F", "--field", "--input") for n, _ in opts)
+        method = "POST" if has_body else "GET"
+    if method.upper() == "GET":
+        return None
+    endpoint = pos[0].lstrip("/").split("?", 1)[0]
+    if endpoint == "graphql":
+        fields = [v for n, v in opts if n in ("-f", "--raw-field", "-F", "--field")]
+        if any("mutation" in v for v in fields) or any(n == "--input" for n, _ in opts) \
+                or any(v.startswith("query=@") for v in fields):
+            return Gated("gh api graphql mutation", where, args)
+        return None
+    if "projectsV2" in endpoint:
+        return Gated("gh api projects", where, args)
+    if re.search(r"(?:^|/)issues/\d+/(?:sub_issues?|dependencies)(?:/|$)", endpoint):
+        return Gated("gh api issue links", where, args)
+    m = ISSUE_API_RE.search(endpoint)
+    if m:
+        repo = "/".join(endpoint.split("/")[1:3]) if endpoint.startswith("repos/") else None
+        return Gated("gh api issue", where, args, issue=[m.group(1)], repo=repo)
+    return None
 
 
 def pr_labels(args: list[str]) -> set[str]:
@@ -739,6 +839,68 @@ def _label_problem(args: list[str], role: str) -> str | None:
     return None
 
 
+STORY_TOOL = (".claude/bin/story (start, status, set, body, comment) so the role's "
+              "transition rules apply")
+
+
+def _origin_repo(root: Path) -> str | None:
+    try:
+        url = _git(root, "remote", "get-url", "origin")
+    except subprocess.CalledProcessError:
+        return None
+    m = re.search(r"([^/:]+)/([^/:]+?)(?:\.git)?/?$", url)
+    return f"{m.group(1)}/{m.group(2)}" if m else None
+
+
+def _title_is_story(roles: Roles, root: Path, repo: str | None, ref: str) -> bool | None:
+    """Is issue `ref` (a number or URL) a story or epic? None when it can't be checked."""
+    m = re.search(r"github\.com/([^/]+/[^/]+)/issues/(\d+)", ref)
+    ref = ref.lstrip("#")
+    repo, number = (m.group(1), m.group(2)) if m else (repo, ref if ref.isdigit() else None)
+    if not number or not repo:
+        return None
+    try:
+        r = subprocess.run(["gh", "api", f"repos/{repo}/issues/{number}", "--jq", ".title"],
+                           capture_output=True, text=True, timeout=15, cwd=root)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    prefix = re.escape(roles.repo.get("story_prefix") or "")
+    return bool(re.match(rf"^(?:{prefix}-[A-Z]+-\d{{3}}|EPIC-\d{{2}}) — ", r.stdout.strip()))
+
+
+def _story_issue(roles: Roles, root: Path, g: Gated) -> bool | None:
+    """True if any targeted issue is a story or epic, None if one can't be checked."""
+    repo = g.repo or roles.repo.get("github_repo") or _origin_repo(root)
+    if not g.issue:
+        return None
+    unknown = False
+    for ref in g.issue:
+        hit = _title_is_story(roles, root, repo, ref)
+        if hit:
+            return True
+        unknown = unknown or hit is None
+    return None if unknown else False
+
+
+def story_problem(roles: Roles, root: Path, g: Gated) -> str | None:
+    if not roles.repo.get("project"):
+        return None  # this repo keeps no Project board
+    if g.kind in ("gh issue edit", "gh issue close", "gh issue reopen", "gh issue delete",
+                  "gh issue transfer", "gh api issue"):
+        story = _story_issue(roles, root, g)
+        if story is False:
+            return None
+        what = "is a story" if story else "may be a story (couldn't check its title)"
+        refs = ", ".join(g.issue or []) or "(none given)"
+        return f"{g.kind}: issue {refs} {what}. Change stories with {STORY_TOOL}."
+    if g.kind in ("gh issue create --project", "gh issue edit --project"):
+        return (f"{g.kind} adds an issue to the Project board. Create stories with "
+                f".claude/bin/story create; create other issues without --project.")
+    return f"{g.kind} changes the Project board. Change stories with {STORY_TOOL}."
+
+
 def hook_pre_bash(_: list[str]) -> int:
     data = _hook_input()
     command = (data.get("tool_input") or {}).get("command") or ""
@@ -751,7 +913,17 @@ def hook_pre_bash(_: list[str]) -> int:
         roles = Roles(root)
         if not roles.roles:
             continue
-        role = get_role(root, data.get("session_id", ""))
+        role = hook_role(root, data.get("session_id", ""))
+        if g.kind not in ("gh pr create", "git push"):
+            problem = story_problem(roles, root, g)
+            if problem is None:
+                continue
+            if role is None:
+                return _decision("deny", f"No role set for this session. {problem}")
+            if role != UNRESTRICTED:
+                return _decision("deny", problem)
+            asks.append(problem)
+            continue
         if role is None:
             return _decision("deny", f"No role set for this session. Ask Brian to run "
                                      f"/role <{roles.names()}> before running {g.kind}.")
