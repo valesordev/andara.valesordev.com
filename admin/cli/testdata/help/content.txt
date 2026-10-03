@@ -16,6 +16,7 @@ Available Commands:
   history     List a pack's versions: author, approval, and when each was active
   inspect     Print a resolved Zone, Room, or Template
   publish     Compile, validate, and publish a pack as a new version, awaiting approval
+  reference   Print the Directions, Component types, core Templates and diagnostic codes this binary enforces
   rollback    Move a pack's Active Pointer back to the version active before this one
   validate    Compile and validate a pack as the server would, offline
 

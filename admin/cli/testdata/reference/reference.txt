@@ -1,0 +1,70 @@
+Directions
+  DIRECTION  REVERSE
+  north      south
+  northeast  southwest
+  east       west
+  southeast  northwest
+  south      north
+  southwest  northeast
+  west       east
+  northwest  southeast
+  up         down
+  down       up
+  in         out
+  out        in
+
+Component types
+  TYPE                  FIELDS
+  andara.core.Behavior  name:string
+  andara.core.Dark      (marker)
+  andara.core.Indoors   (marker)
+  andara.core.Memory    (marker)
+  andara.core.NoMagic   (marker)
+  andara.core.NoRecall  (marker)
+
+Core (andara.core@1)
+  TEMPLATE               KIND    CHAIN
+  andara.core.Character  entity  andara.core.Entity > andara.core.Character
+  andara.core.Entity     entity  andara.core.Entity
+  andara.core.Item       item    andara.core.Item
+  andara.core.Npc        entity  andara.core.Entity > andara.core.Npc
+
+Diagnostics
+  CODE                        SEVERITY  RAISED BY
+  chain_mismatch              error     loader
+  chain_too_deep              error     both
+  core_version_mismatch       error     compiler
+  duplicate_component_type    error     both
+  duplicate_declaration       error     compiler
+  duplicate_direction         error     both
+  duplicate_pack              error     compiler
+  duplicate_room              error     both
+  duplicate_template          error     both
+  duplicate_zone              error     both
+  encoding                    error     compiler
+  extends_cycle               error     compiler
+  fallback_missing            error     both
+  float_literal               error     compiler
+  invalid_component_field     error     both
+  invalid_escape              error     compiler
+  invalid_provenance          error     loader
+  malformed_file              error     loader
+  missing_reverse_exit        warning   both
+  no_zones_found              error     loader
+  orphan_room                 warning   both
+  pack_mismatch               error     both
+  pack_missing                error     compiler
+  removed_by_subtype          error     compiler
+  spawn_room_removed          error     loader
+  syntax_error                error     compiler
+  template_head               error     compiler
+  unflattened_template        error     loader
+  unknown_behavior            error     compiler
+  unknown_component_type      error     both
+  unknown_direction           error     both
+  unknown_room                error     both
+  unknown_sense               error     compiler
+  unknown_zone                error     both
+  unresolved_extends          error     both
+  unsupported_format_version  error     loader
+  zone_removed                error     loader
