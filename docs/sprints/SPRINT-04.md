@@ -119,10 +119,13 @@ None. Every SPRINT-03 story is `done` (see its close-out). The stories that move
 ## Groomed, not in this sprint
 These drafts are for later sprints: AW-SRV-039, AW-SRV-040, AW-SRV-041, AW-SRV-044, AW-SRV-045,
 AW-CLI-010, AW-CLI-011, AW-INF-030 and AW-INF-031. None is on this sprint's M2 path on the local
-stack, and implementation's list is full. AW-INF-034, the M2 gate on `dev`, is SPRINT-05's demo
-(Brian, 2026-10-03), and waits on this sprint's AW-INF-032. They're in prose under their own heading because `project-mirror` counts a list item that
-opens with a story ID in a Carryover or backlog section as sprint work. (Fixed 2026-10-02: the first
-version listed them under Carryover, and the board showed 19 stories in SPRINT-04.)
+stack, and implementation's list is full. They're in prose under their own heading because
+`project-mirror` counts a list item that opens with a story ID in a Carryover or backlog section as
+sprint work. (Fixed 2026-10-02: the first version listed them under Carryover, and the board
+showed 19 stories in SPRINT-04.)
+
+AW-INF-034, the M2 gate on `dev`, is SPRINT-05's demo (Brian, 2026-10-03). It waits on this
+sprint's AW-INF-032.
 
 ## Close-out
 (filled in by the next PM session)

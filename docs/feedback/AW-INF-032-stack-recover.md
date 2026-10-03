@@ -36,9 +36,9 @@ Moved to `ready`.
 ## For architecture: AC-5's `already_live` check can't fail (PM, 2026-10-03)
 
 Found while grooming `AW-INF-034`, which reuses this story's sequence. AC-5 says neither transcript
-has an `already_live` refusal. But `play` never prints one. It waits out `CodeAlreadyLive`
-silently, and shows only "Waiting for your previous session to end." (`admin/cli/play.go`,
-around line 250). The reason, `reason=already_live`, appears only in the protocol view, which
+has an `already_live` refusal. But on a reconnect, `play` never prints one. It waits out
+`CodeAlreadyLive`, and shows only the waiting line, "Waiting for your previous session to end."
+(`admin/cli/play.go`, around line 250). The reason, `reason=already_live`, appears only in the protocol view, which
 `--show-protocol` turns on (`stack_play.sh` runs `play` with it for that reason). As written, the
 assertion passes whatever happens.
 

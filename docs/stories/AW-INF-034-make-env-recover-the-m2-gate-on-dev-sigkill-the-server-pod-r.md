@@ -95,22 +95,26 @@ not only on compose.
    120 s) from the kill, per `live-assertions.md` **then** `andara-0` is Ready, with no further
    restart in that window. The script prints the measured kill-to-Ready seconds.
 5. **Given** the pod Ready **when** the script queries Grafana Cloud's metrics, polled to a
-   deadline, the way `observe_check.py` (`AW-INF-008`) reads them **then** these hold on the same
-   `namespace="andara-dev"` series:
+   deadline, the way `observe_check.py` (`AW-INF-008`) reads them **then**, for
+   `namespace="andara-dev"`:
    - `andara_recovery_round_tick == R`. The killed process recovered at its own boot, before `R`
      existed, so its last sample holds an older round and can't satisfy this.
-   - `andara_recovery_state_hash_match == 1`, with the sample's `timestamp()` later than the kill
-     time recorded in AC-3.
+   - `andara_recovery_state_hash_match` is `1`, **and**
+     `timestamp(andara_recovery_state_hash_match{namespace="andara-dev"})` is later than the kill
+     time recorded in AC-3. `timestamp()` takes a bare selector here, because PromQL returns the
+     sample's own time only for a bare selector. Around any other expression it returns the
+     evaluation time, which is always after the kill.
 
-   A restart keeps the pod's name, so `pod` alone doesn't tell the two processes apart.
+   A restart keeps the pod's name and IP, so each metric is one series across both processes, and
+   the labels don't tell them apart.
 6. **Given** the recovery **when** A's and B's `play` clients, both run with `--show-protocol` as
    `stack_play.sh` runs them, reconnect through the edge **then**:
    - A's `look` shows Room 2, the move only the log tail held;
    - B's `look` shows the spawn Room;
    - neither transcript has `reason=already_live`, `Waiting for your previous session to end.`,
      `leaves the world` or `fades from the world` for either Character between the kill and the
-     reconnect. (`play` waits out `already_live` silently, so the reason shows only in the protocol
-     view.)
+     reconnect. (On a reconnect, `play` shows only the waiting line, never the reason. The reason
+     shows only in the protocol view.)
 7. **Given** the run complete **when** the script queries
    `ALERTS{alertname="RecoveryStateMismatch",namespace="andara-dev"}` over the window from AC-2's
    start to the end, through the same Prometheus API and read token **then** it has no sample with
@@ -133,7 +137,9 @@ not only on compose.
   - the Grafana Cloud read credentials `observe_check.py` already uses (`GRAFANA_CLOUD_READ_TOKEN`
     and the endpoints beside it), for the `ALERTS` and metric queries in AC-2, AC-5 and AC-7;
   - `AW-INF-009`'s ruler credentials (`MIMIR_ADDRESS`, `MIMIR_TENANT_ID`, `MIMIR_API_KEY`), only for
-    AC-2's check that the rule is loaded.
+    AC-2's check that the rule is loaded. `AW-INF-009` keeps them as CI secrets, so on the box the
+    operator exports the same three values, from the source `AW-INF-009`'s runbook names. Without
+    them, AC-2 exits 1 naming the missing variable.
 
   It adds no new credentials.
 - Exit codes: `0` all assertions held; `1` an assertion failed, a precondition is missing, or the
@@ -166,6 +172,8 @@ is the test, and the `CONFIRM` guard is why it exists.
   - the PID resolved from the `server` container's ID on `spec.nodeName`, never a name match, against
     fake pod and `crictl` JSON;
   - the restart-versus-reschedule check and the unlanded-kill message (AC-3);
+  - AC-5 against a fake query response: a pre-kill sample (timestamp before the kill, value `1`)
+    fails;
   - all three inconclusive paths (the rule isn't loaded, the alert is already firing, a newer round).
 - **Integration:** none in CI. The target is destructive and runs against `dev`.
 - **Manual/operator:** `make env-recover ENV=dev CONFIRM=andara-dev` ends with "M2 gate on dev …
