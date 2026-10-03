@@ -24,7 +24,10 @@ import (
 //     with dir@0 in effect) fails reconcile and never becomes ready.
 func TestReadiness_WaitsForTheCoreInEffect(t *testing.T) {
 	t.Run("in effect after reconcile", func(t *testing.T) {
-		rt, logs := runtime(t, fixture(t, "valid"), false)
+		rt, _ := runtime(t, fixture(t, "valid"), false)
+		// Before LoadContent, which hands the logger to the content source:
+		// the loop's goroutine writes through it while this test reads (#319).
+		logs := liveLogs(rt)
 		if code := rt.LoadContent(context.Background()); code != ExitOK {
 			t.Fatalf("load: %s", logs.String())
 		}
@@ -45,7 +48,10 @@ func TestReadiness_WaitsForTheCoreInEffect(t *testing.T) {
 		}
 	})
 	t.Run("never in effect", func(t *testing.T) {
-		rt, logs := runtime(t, fixture(t, "valid"), false)
+		rt, _ := runtime(t, fixture(t, "valid"), false)
+		// Before LoadContent, which hands the logger to the content source:
+		// the loop's goroutine writes through it while this test reads (#319).
+		logs := liveLogs(rt)
 		if code := rt.LoadContent(context.Background()); code != ExitOK {
 			t.Fatalf("load: %s", logs.String())
 		}
