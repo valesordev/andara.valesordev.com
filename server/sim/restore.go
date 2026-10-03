@@ -138,8 +138,11 @@ func RestoreEngine(w *World, templates *TemplateRegistry, cfg Config, r RoundSta
 	// World ran with. The default is derived from the topology an Engine
 	// starts with, which is the empty World (AW-SRV-012), never w: NewEngine
 	// would derive it from w, and the restore would hash wrong (#143). A
-	// round that records its seed is held to it; one written before the
-	// field (0) is restored on the derived one, as #307 does.
+	// round that records its seed is held to it. One written before the
+	// field (0) is restored on the effective seed, sim.seed if set and
+	// derived otherwise, as #307 does: the configured seed is the best
+	// evidence of the one it ran with, and the hash check below catches it
+	// if that's wrong.
 	cfg.Seed = EffectiveSeed(cfg.Seed)
 	if r.SimSeed != 0 && r.SimSeed != cfg.Seed {
 		return nil, &SeedMismatch{RoundTick: uint64(r.Tick), Recorded: r.SimSeed, Configured: cfg.Seed}

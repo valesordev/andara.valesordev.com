@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	"github.com/twmb/franz-go/pkg/kgo"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
@@ -28,6 +29,7 @@ import (
 	"github.com/valesordev/andara/server/projector"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
+	"github.com/valesordev/andara/server/tickloop"
 )
 
 // roundStore writes w's round at its current tick to a fresh filesystem
@@ -274,5 +276,31 @@ func TestRun_ARoundWhoseBoundaryIsGoneIsALogGap(t *testing.T) {
 	}
 	if !errors.Is(err, projector.ErrLogGap) || projector.ExitCode(err) != projector.ExitLogGap {
 		t.Fatalf("Run: %v (exit %d), want a log gap, exit 3", err, projector.ExitCode(err))
+	}
+}
+
+// The same with an Event after the last boundary on the boundary Partition,
+// as the publisher leaves when it sends a tick's Events before its held
+// boundary: still a log gap, not a wait (review of #365).
+func TestRun_ARoundWhoseBoundaryIsGoneBehindATrailingEventIsALogGap(t *testing.T) {
+	b := newBroker(t)
+	w := script(t)
+	b.mirror(w, 0)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := b.cl.ProduceSync(ctx, &kgo.Record{Topic: b.events, Partition: tickloop.BoundaryPartition, Key: []byte(""), Value: []byte("an event")}).FirstErr(); err != nil {
+		t.Fatal(err)
+	}
+	w.tick()
+	ws, _ := roundStore(t, w, "")
+	o := b.options(w)
+	o.Store = ws
+	o.Metrics = projector.NewMetrics(nil)
+	err := projector.Run(ctx, o)
+	if ctx.Err() != nil {
+		t.Fatal("Run waited for a boundary the log can't bring")
+	}
+	if !errors.Is(err, projector.ErrLogGap) {
+		t.Fatalf("Run: %v, want a log gap", err)
 	}
 }
