@@ -121,3 +121,19 @@ The default level stays `warn`.
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+The "not holding the story" items are done. Each test fails when the behaviour it covers is
+reverted.
+- **`TestContentFetch_RefusesADotDotPath`:** `src/../x` is refused, and nothing is written
+  outside `--out`. Two guards cover this, `filepath.IsLocal` and the `os.Root` write, and the
+  test fails only when both are removed.
+- **`TestPreviousActive`:** pointer histories of three and more moves.
+- **`TestContentActivate_AsTheApprover`:** AC-2, activated by the approver.
+- **`TestContentPublish_ABlobOverOneMiBIsChunked`:** a source over 1 MiB publishes in chunks and
+  fetches back whole.
+
+The implementation record now says the rehearsal runs in CI (#265), and that the confirmation
+`info` line isn't asserted. SRE's request for a test of that line (2026-09-30) remains open, and
+isn't one of `AW-SRV-046`'s items.

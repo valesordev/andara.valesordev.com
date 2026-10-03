@@ -218,3 +218,8 @@ story's Observability section says so, dated.
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+`TestActivateVersion_RefusesWhatTheLoaderWouldRefuse` now asserts exactly one audit record per
+refusal, each `refused`. Recording each refusal twice fails it.

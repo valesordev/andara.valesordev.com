@@ -200,3 +200,12 @@ first three bullets:
 
 The "not holding the story" follow-ups for implementation above are now items in `AW-SRV-046`
 (draft, SPRINT-04), which records each one as done here when it merges.
+
+## Done in `AW-SRV-046` (implementation, 2026-10-03)
+
+Both "not holding the story" items are done:
+- **The `admin/README.md` `version` row** now names the embedded `andara.core`.
+- **The failure summary counts errors only.** `TestContentValidate_SummaryCountsErrorsOnly`
+  asserts `mypack: 2 finding(s) refuse the pack` for 2 errors beside 3 warnings, and it failed
+  before the fix. It drives the summary directly, because `errors.md` rule 7 means no source pack
+  reaches it with both.

@@ -332,7 +332,8 @@ network or OS, and `Jump` rides only on `Outcome`, so it's not state and not has
   moves, so only the in-Zone delta is 038's.
 
 **Not holding** (implementation's file): `andara-cli sim` renders an empty `to_direction` as
-`X leaves .` (`admin/cli/simcmd.go`), and goto's events reach it now.
+`X leaves .` (`admin/cli/simcmd.go`), and goto's events reach it now. *(Done 2026-10-03, `AW-SRV-046` item 1: it
+renders `X leaves.`, as `TestSimRendersADepartureWithNoDirection` asserts.)*
 
 **What closes it:** SRE's §8 instrumentation record:
 - `andara_commands_total{verb="goto"}` and `andara_command_duration_seconds{verb="goto"}`;
