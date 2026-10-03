@@ -43,6 +43,11 @@ container is recreated. When the tree changed, only `andara-server` is recreated
   and `scripts/stack.sh revision` prints the same.
 - **A tree that doesn't compile fails `make up`** before anything is recreated, and leaves the
   running server as it was.
+- **A server that exits non-zero is restarted** (`restart: on-failure`, `AW-SRV-026`). A lost Tick
+  Boundary Record exits `5` into exact recovery, and the restart is what recovers;
+  `make stack-boundary-lost` drives it. Exit `0` after a drain, and `docker compose stop`, stay
+  down. So `make logs SVC=andara-server` can show several boots: the first exit is the cause, and
+  the rest are the loop.
 
 ## TLS is not optional
 

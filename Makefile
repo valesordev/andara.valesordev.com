@@ -60,7 +60,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
-        objectstore-install projector-stop projector-start projector-rebuild core-versions-check
+        objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
+        stack-boundary-lost
 
 ## help: print this target list
 help:
@@ -335,6 +336,10 @@ stack-smoke:
 ## stack-play: the M1 gate scripted — `andara-cli play` against the running stack — needs `make up` and `make build`
 stack-play: build
 	@$(SCRIPTS)/stack_play.sh
+
+## stack-boundary-lost: AW-SRV-026 AC-4 — stop Redpanda past the delivery timeout; the server exits 5 once, recovers to the last delivered boundary, gapless — needs make up (about 3–4 minutes)
+stack-boundary-lost:
+	@$(SCRIPTS)/stack_boundary_lost.sh
 
 ## stack-linkdead: the linkdead gate scripted — drop a player's stream, reconnect, and a bystander sees both — needs `make up` and `make build`
 stack-linkdead: build
