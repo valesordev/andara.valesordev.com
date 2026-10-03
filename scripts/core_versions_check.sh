@@ -14,10 +14,13 @@
 # on the base (a push to main), the merge base is HEAD itself and would compare the file with
 # itself, so it compares with HEAD's first parent instead (HEAD itself for a root commit).
 #
+# CI sets BASE_REF to the push's `before` commit on main, so a multi-commit push is checked
+# whole. A shallow clone is refused (exit 2): it can't tell a root commit from an unfetched parent.
+#
 # Exits (the script's; through make, any failure is make's 2):
 #   0  unchanged, or only the next versions appended
 #   1  a violation, named on a `core-versions-check:` line
-#   2  no base to compare with
+#   2  no base to compare with, or a shallow clone
 set -euo pipefail
 
 FILE=content/core/VERSIONS
@@ -25,6 +28,12 @@ BASE_REF=${BASE_REF:-origin/main}
 
 say() { echo "core-versions-check: $*"; }
 
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+  # A shallow clone can't tell "HEAD has no parent" from "the parent wasn't fetched", and a
+  # merge base past the shallow boundary isn't there either. Refuse rather than pass.
+  say "shallow clone; fetch full history"
+  exit 2
+fi
 if ! base=$(git merge-base "$BASE_REF" HEAD 2>/dev/null); then
   say "no merge base; fetch origin"
   exit 2
@@ -53,22 +62,26 @@ for i in "${!old[@]}"; do
   fi
 done
 
-# Each appended line is the next version.
+# Each appended line is the next version. Fields split on whitespace, as content/core reads
+# them (strings.Fields), and numbers are decimal: base 10 forced, so `08` isn't octal.
 last=0
 if [ "${#old[@]}" -gt 0 ]; then
-  last=${old[-1]%% *}
-fi
-if ! [[ "$last" =~ ^[0-9]+$ ]]; then
-  say "line ${#old[@]} at the base has no version number; fix the base first"
-  exit 1
+  read -r last _ <<< "${old[-1]}" || true
+  if ! [[ "$last" =~ ^[0-9]+$ ]]; then
+    say "line ${#old[@]} at the base has no version number; fix the base first"
+    exit 1
+  fi
+  last=$((10#$last))
 fi
 for ((i = ${#old[@]}; i < ${#new[@]}; i++)); do
-  v=${new[$i]%% *}
-  if [ "$v" != "$((last + 1))" ]; then
+  v=
+  read -r v _ <<< "${new[$i]}" || true
+  # Digits only, no leading zero, and the next number.
+  if ! [[ "$v" =~ ^[0-9]+$ ]] || [ "$v" != "$((10#$v))" ] || [ "$v" -ne "$((last + 1))" ]; then
     say "line $((i + 1)) is version $v; expected $((last + 1))"
     exit 1
   fi
-  last=$v
+  last=$((10#$v))
 done
 
 if [ "${#new[@]}" -gt "${#old[@]}" ]; then

@@ -106,8 +106,19 @@ On `sre/aw-inf-029-core-versions-append-only`.
   tip, so the merge base is `main`.
 - An inserted line counts as a change to the line it displaces. Deletions are named at the first
   missing line.
+- From the pre-PR review:
+  - **A shallow clone exits `2`** with `core-versions-check: shallow clone; fetch full history`.
+    It can't tell a root commit from a parent that wasn't fetched, and comparing HEAD with itself
+    would pass a bad edit.
+  - **On a push to `main`, CI sets `BASE_REF` to the push's `before` commit.** That way a
+    multi-commit push, or a merge whose own run the concurrency group cancelled, is checked
+    whole, not only its last commit. AC-5's first-parent rule remains the default without
+    `BASE_REF`.
+  - **Fields split on whitespace and parse as decimal**, as `content/core` reads them
+    (`strings.Fields`, base 10). A base version `08` isn't octal, and an appended `02` is refused.
+  - The fixture's git calls drop `GIT_*` and an inherited `BASE_REF`.
 
-**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 16 tests, run by
+**How each AC is covered** (`scripts/tests/test_core_versions_check.py`, 21 tests, run by
 `make scripts-test`; fixture repositories with a bare `origin`):
 
 | AC | Tests |
@@ -119,7 +130,8 @@ On `sre/aw-inf-029-core-versions-append-only`.
 | 5 | `test_on_main_itself_it_compares_with_the_first_parent` (a bad edit pushed to `main` fails), `test_on_main_with_a_good_append_passes` |
 | 6 | `test_no_base_exits_2`; `test_base_ref_overrides_origin_main` (also: an unknown `BASE_REF` exits `2`) |
 
-Also: `test_an_uncommitted_edit_is_caught`. Manual: `make core-versions-check` on this branch
+Also: `test_an_uncommitted_edit_is_caught`, introducing the file (at `1`, and refused at `2`), a
+leading-zero base version, a tab-separated line, and `test_a_shallow_clone_refuses_rather_than_passing`. Manual: `make core-versions-check` on this branch
 prints `core-versions-check: ok: unchanged against 897786a42e60` and exits `0`.
 
 §8 instrumentation: the story has no instruments (Observability requirements: none).

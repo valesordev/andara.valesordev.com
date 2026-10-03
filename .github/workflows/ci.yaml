@@ -92,10 +92,14 @@ jobs:
         run: make content-conformance
       - name: scripts unit tests
         run: make scripts-test
-      # AW-INF-029. The merge base with main comes from fetch-depth: 0 above; on a push to
-      # main, HEAD is the base and the script compares with HEAD's first parent (AC-5).
+      # AW-INF-029. On a pull request the merge base with origin/main comes from
+      # fetch-depth: 0 above. On a push to main it compares with the commit main was at before
+      # the push, so a multi-commit push, or a merge whose own run this group cancelled, is
+      # checked whole. A force-push whose `before` is gone exits 2, loudly.
       - name: core VERSIONS append-only
         run: make core-versions-check
+        env:
+          BASE_REF: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
       # The views as of this commit, since neither is committed (AW-INF-026, AC-4).
       - name: status and backlog in the summary
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
