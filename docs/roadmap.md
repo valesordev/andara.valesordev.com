@@ -226,9 +226,13 @@ place and the words or values left to Brian.
 ### Resolved on 2026-10-03
 
 - **M4's gameplay loop is combat** (Brian): "that gets us into the real meat of gameplay". Trade,
-  exploration and social aren't M4's. Combat's mechanics are still Brian's: what attacks, damage, and
-  death mean, and what an NPC does in a fight. PM batches those questions when M4's stories are
-  groomed.
+  exploration and social aren't M4's. Two combat rules are already decided:
+  - combat extends the linkdead timer, but a Character can still time out (ADR-0006, "Combat and the
+    linkdead grace period");
+  - a combat round is a number of Ticks (ADR-0008, "Combat rounds are decoupled from the tick").
+
+  The rest of combat's mechanics are still Brian's: what attacks, damage and death mean, and what an
+  NPC does in a fight. PM batches those questions when M4's stories are groomed.
 
 ### Resolved on 2026-09-23
 
