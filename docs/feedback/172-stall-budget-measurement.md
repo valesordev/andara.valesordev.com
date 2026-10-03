@@ -17,5 +17,5 @@ ruling. If its command 2 (loaded, 20 of 20) fails, report here rather than loose
 Two questions, neither blocking implementation:
 1. Does the `check` job's runner allow `getrusage(RUSAGE_THREAD)`? It's plain Linux, so I expect so.
 2. Should the wall-clock benchmark have a target of its own (for example `make measure-snapshot`,
-   beside `measure-tick`), so `AW-SRV-006`'s extrapolated 25,000-Entity timings get replaced by a
-   recorded measurement? If so, it's an `lane: sre` story for PM to groom. I haven't written one.
+   beside `measure-tick`), so `AW-SRV-006`'s 2026-09-22 25,000-Entity figures can be repeated and
+   recorded? If so, it's a `lane: sre` story for PM to groom. I haven't written one.

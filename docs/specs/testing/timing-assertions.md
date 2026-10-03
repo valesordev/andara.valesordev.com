@@ -27,6 +27,13 @@ Pin the goroutine (`runtime.LockOSThread`), read `getrusage(RUSAGE_THREAD)` user
 and after, and assert on the difference. Time the thread spent descheduled is not charged to it, and
 descheduling is what other processes' load does.
 
+Use the standard library (`syscall.Getrusage`, `syscall.RUSAGE_THREAD`); it needs no new `go.mod`
+dependency.
+
+The thread's CPU time doesn't include Go's background GC workers, which run on other threads. That's
+right for a copy that spawns no goroutines (`SnapshotAll` spawns none), and it means the regression
+injected in acceptance 3 must be mutator CPU (a busy loop), not allocation churn.
+
 Keep what #172's test already does right: **worst of several rounds, not the mean.** A stall is felt
 when it happens, so the worst round is the one that matters.
 
@@ -37,13 +44,16 @@ under load reruns the test alone.
 **Not retries.** A guard that reruns until it passes asserts that *some* round passed, and it will
 pass the regression it exists to catch.
 
-## 2. The limit comes from a measurement, and the guard is not the SLI
+## 2. The limit stays a multiple of the budget, and the measurement justifies the factor
 
-A guard's limit is a multiple of the quiet-machine CPU time for each build (`-race` and not), recorded
-beside the constant that holds it. `stallFactor` in `server/simtest/stallfactor_*_test.go` is that
-constant. Its comments cite a 5 ms budget and 10,000-Entity figures. Both are stale: the budget is
-15 ms at 25,000 Entities (`snapshot.max_stall_ms`; `AW-SRV-006`). The multiple stays 2× unless the
-measurement says otherwise, and the comment says what was measured, when, and on what.
+`limit = stallFactor × snapshot.max_stall_ms` (15 ms) stays: 30 ms without `-race` and 120 ms with it
+(`stallFactor` 2 and 8, in `server/simtest/stallfactor_*_test.go`). `AW-SRV-006` measured the copy at
+25,000 Entities on 2026-09-22: 7.4–8.7 ms uncontended and 34.7 ms under `-race`. So each limit is
+about 3.5× the quiet figure, and the factor's comment says so, with the date and machine.
+
+Two comments are stale. `stallfactor_norace_test.go` pairs 10,000-Entity timings (2.7 ms, 4.8 ms)
+with a 5 ms budget. The race file's 2.7 ms and 12.6 ms are 10,000-Entity figures too. The "24.7 ms
+against a 5 ms budget" history in the race file and above the test is true as written, and stays.
 
 The guard exists to catch a structural change, such as an encode or a hash moving back inside the
 tick (24.7 ms against a 5 ms budget, once), and a copy that starts walking topology. That is far
@@ -53,11 +63,10 @@ SLI is the server's own `andara_snapshot_tick_stall_seconds`, wall-clock, in the
 ## 3. A service-level measurement runs where it can be trusted
 
 `BenchmarkSnapshotAllAtSizingScale` (`server/simtest/sizing_test.go`) is the wall-clock number for the
-copy. `AW-SRV-006` still carries 25,000-Entity timings extrapolated from one 10,000-Entity run, so
-this is the measurement that replaces them. It runs serially, on a quiet machine, and its result is
-recorded rather than asserted. If it comes in materially off the extrapolation, `max_stall_ms`
-moves to about twice the measured loaded figure, as `AW-SRV-006` already says, and that is an
-architecture decision.
+copy. `AW-SRV-006` has measured 25,000-Entity figures from 2026-09-22 (above), and the extrapolation
+held. The benchmark is how that measurement is repeated: serially, on a quiet machine, recorded
+beside those figures rather than asserted. If it comes in materially off them, `max_stall_ms` moves
+as `AW-SRV-006`'s rule says (twice the uncontended figure), and that is an architecture decision.
 
 ## 4. Why not "run it alone"
 
@@ -79,11 +88,11 @@ Implementation's, in one PR (SPRINT-04 item 6). Each is a command whose output g
 3. **Still catches:** with 150 ms of CPU work added to `SnapshotAll` in a scratch worktree (never
    committed), the same loaded run fails 20 of 20.
 4. **Suite:** `make test` under the same load passes 5 of 5.
-5. The stale comments in `stallfactor_*_test.go` and above the test are corrected to the figures in
-   §2, and the measured quiet-machine CPU times are recorded there.
+5. The stale comments in `stallfactor_norace_test.go` are corrected as §2 says, and the quiet-machine
+   CPU time (per build) is recorded beside each factor, with the date.
 
 If 2 doesn't hold, CPU time isn't enough on that box (memory bandwidth and SMT contention are
-charged to the thread), and the guard moves to an allocation bound as well: report back in
+charged to the thread), and the guard adds an allocation bound (`testing.AllocsPerRun`): report back in
 `docs/feedback/172-stall-budget-measurement.md` rather than loosening the limit.
 
 ## Revisit when
