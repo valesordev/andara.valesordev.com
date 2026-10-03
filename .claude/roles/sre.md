@@ -5,6 +5,8 @@ aliases: [ops, reliability]
 branch_prefix: sre/
 writes: [deploy/, .github/, Makefile, scripts/, docs/runbooks/, docs/specs/slo/, docs/stories/, docs/feedback/, docs/glossary.md]
 skills: [sre-start-sprint]
+transitions: [ready>in-progress@lane]
+on_merge: [in-progress>review@lane]
 ---
 # Role: SITE RELIABILITY ENGINEERING
 

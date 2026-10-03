@@ -4,6 +4,8 @@ aliases: [project-management, project-manager]
 branch_prefix: pm/
 writes: [docs/sprints/, docs/roadmap.md, docs/epics/, docs/stories/, docs/feedback/, docs/glossary.md]
 skills: [pm-start-sprint, pm-close-sprint]
+transitions: [new>draft]
+story_edits: [body, Sprint, Plan, Rank, Lane, Size, Risk, Component]
 ---
 # Role: PROJECT MANAGEMENT
 
@@ -120,3 +122,11 @@ that routes it there.
   Language or runtime gap becomes a story (`lane: architecture` for the spec,
   `lane: implementation` for the compiler or runtime), groomed like any other
   feature.
+- Content runs on its own cycles in the content repo, planned by its
+  `producer` role, on the same "Andara's World" Project (`AWC-*` stories). When
+  a milestone gate in NEXT needs authored content (a real Zone for M3; the
+  combat loop's NPCs, creatures, and items for M4), open a plain issue there:
+  `gh issue create --repo valesordev/andara.solo7.media --label content-need`,
+  naming the gate, the content it needs, and the server stories it waits on.
+  Don't write content stories yourself. Read their state with
+  `.claude/bin/story list --prefix AWC` when a gate depends on them.

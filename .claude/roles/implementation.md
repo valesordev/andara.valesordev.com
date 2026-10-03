@@ -4,6 +4,8 @@ aliases: [impl, dev]
 branch_prefix: impl/
 writes: [server/, internal/, cmd/, admin/, content/, agents/, client/, testdata/, docs/stories/, docs/feedback/, docs/glossary.md]
 skills: [impl-start-sprint]
+transitions: [ready>in-progress@lane]
+on_merge: [in-progress>review@lane]
 ---
 # Role: IMPLEMENTATION
 

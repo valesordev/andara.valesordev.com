@@ -1,0 +1,44 @@
+# INSTALLED from automate.bashburn.com (plugins/valesor-dev/workflows/); don't edit here.
+#
+# When a PR merges, apply its `Story: <ID>` / `Story-Done: <ID>` lines to the
+# Project board as the role its `role:<role>` label names (.claude/bin/story merged).
+# Credentials: the valesordev-story-bot GitHub App (org variable STORY_APP_ID,
+# org secret STORY_APP_PRIVATE_KEY). A repo without `stories: github` in
+# .claude/roles/_repo.md skips, green.
+name: story-merge
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: story-merge
+  cancel-in-progress: false
+
+jobs:
+  story:
+    # Only merges into the default branch: `review` means the work is on main.
+    if: >-
+      github.event.pull_request.merged == true &&
+      github.event.pull_request.base.ref == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.ref }}
+          sparse-checkout: .claude
+      - id: app
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.STORY_APP_ID }}
+          private-key: ${{ secrets.STORY_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+      - name: Move stories
+        env:
+          GH_TOKEN: ${{ steps.app.outputs.token }}
+          PR: ${{ github.event.pull_request.number }}
+        run: python3 .claude/bin/story merged "$PR"

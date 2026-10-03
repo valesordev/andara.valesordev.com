@@ -4,10 +4,11 @@
 Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/sprint-state.
 Vendored into target repos as .claude/bin/sprint-state. Don't edit it there.
 
-    sprint-state [--ref origin/main] [--dir docs/sprints]
+    sprint-state [--ref origin/main] [--dir docs/sprints] [--name SPRINT]
 
-Reads only plan files named SPRINT-<N>.md (not SPRINT-<N>-demo.md) and the
-first `Status:` line of each. Prints one line per sprint, then:
+Reads only plan files named <NAME>-<N>.md (not SPRINT-<N>-demo.md) and the
+first `Status:` line of each. `--name CYCLE --dir docs/planning/cycles` reads
+the content repo's cycles the same way. Prints one line per sprint, then:
 
     state:   first | active | closed | planned
     current: SPRINT-NN        (the sprint that state refers to; absent for first)
@@ -30,7 +31,6 @@ import re
 import subprocess
 import sys
 
-PLAN = re.compile(r"(?:^|/)SPRINT-(\d+)\.md$")
 STATUS = re.compile(r"^Status:\s*([A-Za-z-]+)", re.M)
 VALID = {"planned", "active", "closed"}
 
@@ -39,15 +39,22 @@ def git(*args: str) -> str:
     return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout
 
 
+NAME = "SPRINT"
+
+
 def name(n: int) -> str:
-    return f"SPRINT-{n:02d}"
+    return f"{NAME}-{n:02d}"
 
 
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
     ap.add_argument("--ref", default="origin/main")
     ap.add_argument("--dir", default="docs/sprints")
+    ap.add_argument("--name", default="SPRINT", help="plan file stem (SPRINT, CYCLE)")
     a = ap.parse_args(argv)
+    global NAME
+    NAME = a.name.upper()
+    plan = re.compile(rf"(?:^|/){re.escape(NAME)}-(\d+)\.md$")
 
     try:
         git("rev-parse", "--verify", "--quiet", a.ref)
@@ -61,7 +68,7 @@ def main(argv: list[str]) -> int:
 
     sprints: list[tuple[int, str]] = []
     for f in listing:
-        m = PLAN.search(f)
+        m = plan.search(f)
         if not m:
             continue
         text = git("show", f"{a.ref}:{a.dir}/{f}")
