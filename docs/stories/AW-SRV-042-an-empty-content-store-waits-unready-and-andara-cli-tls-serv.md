@@ -203,6 +203,123 @@ trace_id on the wait lines.)*
   true. Its runbook row (`server-unavailable.md`, first fix `make content-seed ENV=<env>`) and the
   startup probe's move to `/startedz` are SRE's, in `AW-INF-021`.
 
+### SRE amendment, 2026-10-02: the waiting state's `no_zones_found` (#299)
+
+Recorded after `done`. Implementation makes the code change (SPRINT-04, implementation item 9).
+Recorded in `docs/feedback/AW-SRV-042-empty-store-waits.md`.
+
+**What happens today.** On a store-backed source (`content.source=kafka`) with no Zones in effect,
+every `LoadContent` logs two lines (`server/boot/boot.go`, `server/content/load.go`):
+- the finding `no_zones_found` at `error`, counted in
+  `andara_content_validation_errors_total{code="no_zones_found"}`;
+- a `warn`, `the content the Active Pointers name does not load; recovering what the log recorded`.
+
+The server does this once per boot, before `ReconcileContent` decides. The projector's
+`WaitForContent` reloads through `LoadContent` on a backoff from 1 s up to 60 s, so it repeats
+both lines, plus an `info` `templates loaded` per pack, on every reload. That was 10 `error` lines
+in 44 s in `AW-INF-021`'s AC-7 run. The state is the expected one on every fresh environment, and
+expected `error` and `warn` lines train operators to ignore those levels.
+
+**The case this amendment covers: an empty store.** All four hold, on a store-backed source:
+1. not `--validate-only`;
+2. the store was read: no `malformed` from an unreadable store;
+3. **no rejections**. `Candidates` returned none. A pointer naming a version with no manifest is a
+   rejection whose own finding is also coded `no_zones_found` (`server/content/errors.go`), and it
+   is **not** this case;
+4. the only fatal finding is the one `loadFindings` appends for zero Zones. That's computed once,
+   after the load, build and template findings are all collected, and advisory warnings don't
+   count.
+
+Anything else is unchanged: a refused version or an unreachable store is a real fault and is
+reported at load as today.
+
+**The contract, for the empty-store case:**
+- **`LoadContent` holds the finding.** It logs neither the `error` line nor the "recovering what
+  the log recorded" `warn`, and it doesn't count. `content.validate`'s `error_count` excludes the
+  held finding. The finding stays held until the decision settles it.
+- **The decision settles it:**
+  - **Waits:** dropped, with no line and no count. Of the lines this amendment governs, the wait
+    line is the only one. Other existing Loader `warn`s, such as `configured content pack has no
+    Active Pointer` for an explicit `content.packs` list, are unchanged.
+  - **Serves** (`ReconcileContent` returns `0` with Zones in effect from the World log): the
+    finding isn't logged or counted, but the "recovering what the log recorded" `warn` is logged
+    once, with `content.reconcile`'s `trace_id` and `error_count` excluding the held finding (`0`
+    in the empty-store case). The log holds Zones that no followed pack's
+    pointer names. That's usually a store fault (lost pointer topics), so the line is kept.
+  - **Exits `1` before the decision settles it**, by any path: AC-3's "a World log in which a
+    Content Swap with `zone_count > 0` has applied", a failed log read, a failed reconcile, or a
+    tick-loop start failure. The finding is logged once, with its existing fields, and counted
+    once, before the process exits. Its `trace_id` is the active span's (`content.reconcile` for
+    reconcile's exits), or `content.load`'s where the exit runs outside any span.
+  - **Ends on a signal before the decision** (exit `0`): dropped.
+  - **The projector's decision** is `WaitForContent` entering the wait. An exit before that, such
+    as a failed pointer watch (exit `1`), logs the finding as an exit does.
+  - Once the decision has settled it (dropped on a wait or a serve), a later exit doesn't revive
+    it.
+- **Reloads during a wait** (the projector's `WaitForContent`; the server waits on swaps, not
+  reloads): a reload in the empty-store case logs one line, at `debug`, `content reload: no Zones
+  in effect yet`, with `next_retry` (the backoff before the next reload) and `trace_id`
+  (`content.wait`'s). It logs nothing else: no `warn`, no `error`, and `templates loaded` drops to
+  `debug`. A reload that finds anything else, such as an activated pack that fails validation or
+  an unreachable store, logs and counts as today.
+- **Unchanged:** the directory source, which has no pointers to wait on, and `--validate-only`,
+  which exits inside `LoadContent`. Both still log `no_zones_found` at `error`, count it, and
+  exit `1`.
+- **Cardinality is unchanged.** `code` keeps its value set, and only when the series moves changes.
+- **Nothing keys on it.** No rule, dashboard, runbook, SLO doc, script, workflow, or smoke test
+  references `content_validation_errors_total`, `no_zones_found`, or either line. That was checked
+  across `deploy/`, `docs/runbooks/`, `docs/specs/slo/`, `scripts/`, `.github/`, and `internal/`
+  on 2026-10-02. `ContentLoadFailing` reads `andara_content_pending_seconds`.
+
+**Verification at item 9's §8: the integration tests alone** (PM's decision, 2026-10-02). The
+assertions are on the finding's code, not on log level, since an exit logs `error` lines of its own.
+Each case runs the real path through `LoadContent` on the local stack's Redpanda, not the
+`OverLoader` shortcut, which skips it. Item 9 names the tests.
+- **Server, hermetic setup:** `storeRuntime` (`server/boot/projector_wait_integration_test.go`), plus
+  `rt.replay = worldLog(...)` and `startMemoryLoop`, as
+  `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` does. Not `sim.source=kafka`, which
+  reads the shared `andara.commands.v1`.
+  - **Waits:** no line with `code=no_zones_found`, no "recovering what the log recorded", and
+    `ValidationErrors.WithLabelValues("no_zones_found")` reads `0`.
+  - **Serves from the log, with no pointer:** use a fresh Active Pointer topic over the same blobs
+    and versions, with town published but not activated, and a Zone-bearing swap for town@1 pushed
+    onto `rt.memSource` before `ReconcileContent`. The swap has an empty base and no `zone_id`, and
+    its `world_digest` comes from `rt.Content.Prepare` and `sim.ContentDigest`, as
+    `TestStartTickLoop_APostRuleMismatchBeforeGenesisIsNotPreRule` builds it. A wrong digest halts
+    the tick instead of being refused. No `no_zones_found` line and a count of `0`;
+    exactly one "recovering what the log recorded".
+  - **Exits in reconcile (AC-3):** exactly one line with `code=no_zones_found`, and a count of
+    `1`.
+  - **A pointer naming a version with no manifest:** logs and counts at load as today. Between
+    `LoadContent`'s start and its return, there are exactly two lines with `code=no_zones_found`:
+    the rejection's own, and the one carrying `loadFindings`' detail, "no Zones were found in
+    kafka…". A held appended finding would show as one. Reconcile's Loader then logs the rejection
+    again as `content finding`, unchanged, which counts `LoadFailures`, not this series. The count
+    reads `2` over the whole boot.
+- **Projector:** `TestProjectorBoot_ReadOnlyAndWaitsForZones`, extended. Over the projector's whole
+  log, from its first line (its boot `LoadContent` included) to `content in effect: leaving the
+  wait`:
+  - no line with `code=no_zones_found`, and no "recovering what the log recorded";
+  - exactly one wait line;
+  - at least one `content reload: no Zones in effect yet`. That's unconditional: the test already
+    asserts the leaving line's `pack` is `town@1`, so the core move's reload ran and didn't leave.
+    That assertion's existing race with town's `MovePointer` is known, and this one shares it;
+  - the count is `0`.
+
+  It asserts nothing else by level. Other lines, such as `templates loaded` or a transient
+  `content pointer watch: fetch failed, retrying`, aren't this amendment's.
+- **Projector, timer reloads:** a separate test with a short `waitRetry` asserts two or more
+  `content reload: no Zones in effect yet` lines carrying `next_retry` and `trace_id`. It doesn't
+  assert the leaving line's `pack`, which a timer reload can race.
+
+**Live: not yet observed.** No `dev` start on an empty store is scheduled after item 9. Whoever next
+starts `dev` from an empty store checks these, and records it in this story's §8 record:
+- the `andara-server` and `andara-projector-state` logs hold no `no_zones_found` and no "recovering
+  what the log recorded";
+- `up` is `1` and `andara_content_zones_loaded` is present at `0` on both jobs (the positive
+  control);
+- then `andara_content_validation_errors_total{code="no_zones_found"}` is absent or `0`.
+
 ## Test plan
 
 - **Unit:**

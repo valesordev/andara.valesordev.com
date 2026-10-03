@@ -114,3 +114,50 @@ story.
 - **The `/startedz` probe** is yours in `AW-INF-021`. The server half is here: 200 from the
   Gateway's start to exit, through the drain.
 - **`andara_sessions_total{outcome="rejected_no_content"}`** is pre-seeded at 0.
+
+## For implementation: #299, SRE amendment, 2026-10-02
+
+The story's §7 now carries "SRE amendment, 2026-10-02: the waiting state's `no_zones_found`
+(#299)". It's the observability contract for SPRINT-04's implementation item 9.
+
+It covers the **empty-store case** only. That's the story's four-part definition, and all four
+must hold:
+1. a store-backed source, not `--validate-only`;
+2. the store was read: no `malformed`;
+3. **no rejections** from `Candidates`. A missing-manifest rejection is also coded
+   `no_zones_found`, and it isn't this case. Item 9 needs the rejection count, which
+   `content.Candidates` folds into findings today;
+4. the only fatal finding is the one `loadFindings` appends, computed after the load, build and
+   template findings are all in.
+- `LoadContent` holds the finding, and the "recovering what the log recorded" `warn`.
+- **A wait** drops both.
+- **Serving from the log** drops the finding but logs that `warn` once, because Zones in the log
+  that no pointer names is a store fault.
+- **Any exit `1` before the decision** logs the finding once and counts it once. A signal drops it.
+- **Reloads during a wait** log one `debug` line, and `templates loaded` drops to `debug`.
+- A rejected version, an unreachable store, the directory source, and `--validate-only` are
+  unchanged.
+
+The verification needs integration tests through `LoadContent` on Redpanda, using
+`storeRuntime`'s setup. `TestReconcileContent_WaitsOnlyForAWorldThatNeverHadZones` uses
+`OverLoader` and never calls `LoadContent`, so it passes on today's code and can't verify this.
+
+The issue names the counter `validation_errors_total`. Its full name is
+`andara_content_validation_errors_total` (`server/telemetry/telemetry.go`).
+
+## For architecture: #299
+
+This is a §7-only change to a `done` story. It changes when a finding and the reload `warn` are
+logged and counted, not the finding, its code, or any AC. If you'd rather it be a contract
+amendment with its own AC, say so here, and implementation's item 9 waits on it.
+
+## For PM: a carrier for #299's live observation
+
+The amendment's live check needs `dev` to start on an empty store after item 9 deploys. Nothing in
+SPRINT-04 schedules that. `AW-INF-021` is `done`, and its AC-7 rebuild already ran before item 9,
+so a carrier would need a new, destructive `make env-destroy ENV=dev CONFIRM=andara-dev` rebuild.
+
+**PM's decision, 2026-10-02 (quoted from the PM session):** "accept item 9's Redpanda integration
+tests alone as #299's §8. I won't schedule a destructive `env-destroy` of `dev` to watch a log
+level. The live line is recorded as not yet observed, and whoever next rebuilds `dev` from an empty
+store checks it." The amendment says so.
