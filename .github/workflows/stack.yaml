@@ -374,8 +374,8 @@ jobs:
       # AW-SRV-026 AC-4: an outage past the 60 s delivery timeout loses a Tick Boundary
       # Record. The server exits 5 once, compose's `restart: on-failure` brings it back, it
       # recovers to the last delivered boundary, and a second, full recovery reads the topic
-      # back gapless. Its precondition, a server never restarted, is the eight-second outage's
-      # "no exit". Here, just before the M1 gate (which restarts the server anyway), so the
+      # back gapless. The short broker outage above (under 30 s, inside the delivery
+      # timeout) must still see no exit. Here, just before the M1 gate (which restarts the server anyway), so the
       # restarts leave no fresh heap under the collector-outage step's RSS comparison and no
       # reset counter under any step that reads one.
       - name: a lost tick boundary exits into exact recovery
@@ -387,9 +387,9 @@ jobs:
       # The client half (AW-CLI-004): andara-cli play — log in, connect, look, north,
       # west, quit — asserting the transcript; play cannot select a Character until
       # AW-CLI-007, so its Intents are refused before the log and that story joins the
-      # halves. Last, because it restarts andara-server under an open session (AC-7),
-      # which resets the server's counters; the steps above read what earlier steps
-      # counted.
+      # halves. It restarts andara-server under an open session (AC-7), which resets the
+      # server's counters, and it reads only its own before/after deltas, so it can follow
+      # the boundary-lost step's restarts.
       - name: the M1 gate against the stack — the Protocol whole, andara-cli play up to AW-CLI-007
         run: make stack-play
 

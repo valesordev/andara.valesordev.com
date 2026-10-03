@@ -25,7 +25,8 @@
 # in Prometheus separately.
 #
 # Requires a stack: `make up` first. CI runs it as a step of the `stack` workflow, after
-# AW-SRV-002's eight-second outage, which must still see no exit.
+# AW-SRV-002's short broker outage (under 30 s, inside the delivery timeout), which must
+# still see no exit.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -67,9 +68,9 @@ server_id="$("${COMPOSE[@]}" ps -q andara-server)"
   || { echo "stack-boundary-lost: andara-server has no \`restart: on-failure\`; the stack predates AW-SRV-026's compose change, so run \`make up\`" >&2; exit 1; }
 curl -sf "$READYZ" >/dev/null || { echo "stack-boundary-lost: andara-server isn't ready" >&2; exit 1; }
 
-ticks() { curl -sf "$METRICS" 2>/dev/null | awk '$1 == "andara_ticks_total" { print $2 }'; }
+ticks() { { curl -sf "$METRICS" 2>/dev/null || true; } | awk '$1 == "andara_ticks_total" { print $2 }'; }
 ready() { curl -sf "$READYZ" >/dev/null 2>&1; }
-logs_since() { "${COMPOSE[@]}" logs --no-log-prefix --since "$SINCE" andara-server 2>/dev/null; }
+logs_since() { "${COMPOSE[@]}" logs --no-log-prefix --since "$SINCE" andara-server 2>/dev/null || true; }
 # field <line-substring> <json-field>: the field from the matching log lines, one per line.
 field() {
   logs_since | python3 -c '
@@ -152,7 +153,9 @@ deadline=$(( SECONDS + 180 ))
 until ready; do
   if (( SECONDS >= deadline )); then
     # A gap fails the boot (exit 1, then the restart loop), so name it when it's the cause.
-    if logs_since | grep -q 'tick boundary gap'; then
+    # Not `grep -q`: it closes the pipe on the first match, compose dies on EPIPE, and
+    # pipefail turns the match into a miss.
+    if logs_since | grep 'tick boundary gap' >/dev/null; then
       fail "the read-back found a gap in the boundaries"
     fi
     fail "the server didn't come back from the read-back restart within 180s"
