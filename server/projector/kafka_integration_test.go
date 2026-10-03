@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +22,11 @@ import (
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
@@ -532,6 +538,10 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 	o := b.options(w)
 	m := projector.NewMetrics(nil)
 	o.Metrics = m
+	spans := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	defer func() { _ = tp.Shutdown(context.Background()) }()
+	o.Tracer = tp.Tracer("test")
 	err := projector.Run(context.Background(), o)
 	var d *projector.Divergence
 	if !errors.As(err, &d) || d.Tick != bad || projector.ExitCode(err) != projector.ExitDivergence {
@@ -542,6 +552,36 @@ func TestRun_DivergenceExitsTwoAndCommitsNothingPastIt(t *testing.T) {
 	}
 	if testutil.ToFloat64(m.DigestMismatches) != 1 {
 		t.Fatalf("andara_state_digest_mismatches_total = %v", testutil.ToFloat64(m.DigestMismatches))
+	}
+
+	// #290: a state.verify span for every tick up to and including the one
+	// that diverged, each under a state.replay. Only the diverging one has
+	// an error status, and it carries both hashes.
+	var verified []int64
+	for _, s := range spans.Ended() {
+		if s.Name() != "state.verify" {
+			continue
+		}
+		attrs := attribute.NewSet(s.Attributes()...)
+		tick, _ := attrs.Value("tick")
+		verified = append(verified, tick.AsInt64())
+		if s.Parent().SpanID() == (trace.SpanID{}) {
+			t.Errorf("state.verify for tick %d has no parent", tick.AsInt64())
+		}
+		if tick.AsInt64() != bad {
+			if s.Status().Code == codes.Error {
+				t.Errorf("state.verify for tick %d has an error status", tick.AsInt64())
+			}
+			continue
+		}
+		recorded, _ := attrs.Value("recorded_hash")
+		replayed, _ := attrs.Value("replayed_hash")
+		if s.Status().Code != codes.Error || recorded.AsString() != fmt.Sprintf("%x", d.Recorded) || replayed.AsString() != fmt.Sprintf("%x", d.Replayed) {
+			t.Errorf("the diverging tick's state.verify: status %v, recorded %q, replayed %q", s.Status(), recorded.AsString(), replayed.AsString())
+		}
+	}
+	if !slices.Contains(verified, int64(bad)) || !slices.Contains(verified, int64(bad-1)) {
+		t.Fatalf("state.verify spans for ticks %v, want every tick through %d", verified, bad)
 	}
 }
 

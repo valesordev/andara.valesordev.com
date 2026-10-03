@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
@@ -256,9 +257,7 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 		recordsIn uint64
 		i         int
 	)
-	replayErr := p.Replay(tcs, src, func(b sim.TickCompleted, recs []Out) error {
-		_, vspan := o.Tracer.Start(ctx, "state.verify", trace.WithAttributes(attribute.Int64("tick", int64(b.Tick))))
-		vspan.End()
+	sink := func(b sim.TickCompleted, recs []Out) error {
 		bd := batch[i]
 		i++
 		recordsIn += b.CommandsApplied
@@ -270,7 +269,29 @@ func (o RunOptions) step(ctx context.Context, p *Projector, src *CommandSource, 
 		out = append(out, recs...)
 		last = &bd
 		return nil
-	})
+	}
+	// One boundary at a time, each inside its own state.verify span, so the
+	// span times that tick's fetch, apply and hash comparison, and the tick
+	// that diverges has one too, with an error status and both hashes (#290).
+	// The sim core stays free of tracing.
+	var replayErr error
+	for _, tc := range tcs {
+		_, vspan := o.Tracer.Start(ctx, "state.verify", trace.WithAttributes(attribute.Int64("tick", int64(tc.Tick))))
+		replayErr = p.Replay([]sim.TickCompleted{tc}, src, sink)
+		var d *Divergence
+		switch {
+		case errors.As(replayErr, &d):
+			vspan.SetAttributes(attribute.String("recorded_hash", fmt.Sprintf("%x", d.Recorded)),
+				attribute.String("replayed_hash", fmt.Sprintf("%x", d.Replayed)))
+			vspan.SetStatus(codes.Error, "state hash mismatch")
+		case replayErr != nil:
+			vspan.SetStatus(codes.Error, replayErr.Error())
+		}
+		vspan.End()
+		if replayErr != nil {
+			break
+		}
+	}
 	span.SetAttributes(attribute.Int("ticks", i), attribute.Int64("records_in", int64(recordsIn)), attribute.Int("records_out", len(out)))
 	if last != nil {
 		if err := o.produce(ctx, prod, out); err != nil {
