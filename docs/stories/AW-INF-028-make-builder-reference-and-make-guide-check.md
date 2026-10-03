@@ -4,7 +4,7 @@ title: make builder-reference and make guide-check
 epic: EPIC-06
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-CLI-009]
 blocks: []
@@ -24,8 +24,8 @@ for the targets they name.
 The reference's data comes from `andara-cli content reference --output json` (`AW-CLI-009`), and
 from nothing else. The code is the only place the Component types and the full set of diagnostic
 codes exist. So the file `make builder-reference` writes goes stale whenever implementation adds a
-Component type or a code. Implementation can't write architecture's `docs/builders/`. That's the
-ownership constraint in Open questions, and it needs Brian before this story can land cleanly.
+Component type or a code. That file is a generated file, which any role's PR regenerates and
+commits (CLAUDE.md §2, and `generated` in `.claude/roles/_repo.md`). Open question 1 is resolved.
 
 ## User story
 
@@ -94,9 +94,12 @@ drift from the `andara-cli` a Builder downloads.
 8. **Given** any AC-5 to AC-7 failure **then** `guide-check` reports every failure, not only the
    first, and exits `1`. **Given** none **then** it prints `guide-check: <n> commands, <m> codes,
    <k> links ok` and exits `0`. *(This is `AW-INF-023` AC-1.)*
-9. **Given** `docs/builders/` with only `reference.md` in it, before `AW-INF-023` writes the guide
-   **then** `guide-check` runs AC-6 and AC-7 over what exists and exits `0` when they pass. An
-   empty guide is not a failure, so this story can merge first.
+9. **Given** a fixture `docs/builders/` with only `reference.md` in it **then** `guide-check` runs
+   AC-6 and AC-7 over what exists and exits `0` when they pass. An empty guide is not a failure.
+   **Given** the real guide on `main` when this story merges **then** `guide-check` passes on it,
+   or the PR names each failure and sends it to architecture in
+   `docs/feedback/AW-INF-028-builder-reference-guide-check.md`. *(Amended 2026-10-02: `AW-INF-023`
+   wrote the guide in SPRINT-03, so "before the guide exists" no longer happens on `main`.)*
 10. **Given** `make help` **then** it lists `builder-reference`, `builder-reference-check` and
     `guide-check`, the first and last with their help lines exactly as the Interface contract gives
     them.
@@ -171,8 +174,7 @@ and their `builder-reference:` and `guide-check:` lines, which CI's job log keep
 
 ## Definition of done
 
-CLAUDE.md §8, plus: the `.claude/` generated-files list and CLAUDE.md §2 both name
-`docs/builders/reference.md` (Open questions, item 1) before this story merges.
+CLAUDE.md §8.
 
 **Carried by architecture (2026-09-30), and checked at this story's §8 review:** before this story
 moves to `done`, an `arch/` PR, merged after this story's, deletes the guide's interim
@@ -182,7 +184,12 @@ nothing links to the generated one.
 
 ## Open questions
 
-1. **Brian: ownership of `docs/builders/reference.md`.** `docs/builders/` is architecture's path
+1. **Resolved before contract review (architecture, 2026-10-02).** `docs/builders/reference.md` is
+   in `.claude/roles/_repo.md`'s `generated` list, and CLAUDE.md §2 names it with
+   `make builder-reference`. CLAUDE.md's edit is `7edf30c` (#169), and the `_repo.md` list came
+   with the `.claude/` install of `7b604fd`. The history follows.
+
+   **Brian: ownership of `docs/builders/reference.md`.** `docs/builders/` is architecture's path
    (#169). But `reference.md` goes stale whenever implementation adds a Component type or a
    diagnostic code, and implementation can't write there. Under the lanes as they stand,
    implementation's PR would fail `make check`, and could only pass with an architecture commit on an

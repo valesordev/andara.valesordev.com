@@ -129,6 +129,23 @@ export declare type SnapshotEnvelope = Message<"andara.state.v1.SnapshotEnvelope
    * @generated from field: bytes content_digest = 9;
    */
   contentDigest: Uint8Array;
+
+  /**
+   * The sim seed the World was started with (AW-SRV-043, 2026-10-02). The seed
+   * is in the State Hash, so a restore must arrive at the same one; before this
+   * field, each side derived the default again, and nothing in the round said
+   * which seed it was (#307). A writer records the effective seed, the derived
+   * value when sim.seed is unset, never 0. A restore refuses a round whose seed
+   * differs from its own effective seed, as a seed mismatch, before comparing
+   * hashes.
+   *
+   * 0 means a round written before this field. Its seed is derived, as #307
+   * derives it. Every Zone's envelope in a round carries the same value. Not a
+   * state_version change: the field is additive, and an older binary ignores it.
+   *
+   * @generated from field: uint64 sim_seed = 10;
+   */
+  simSeed: bigint;
 };
 
 /**

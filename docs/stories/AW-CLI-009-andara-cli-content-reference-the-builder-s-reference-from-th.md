@@ -4,7 +4,7 @@ title: andara-cli content reference — the Builder's reference from the binary
 epic: EPIC-06
 component: cli
 type: feature
-status: draft
+status: ready
 size: S
 depends_on: [AW-CLI-002]
 blocks: [AW-INF-028]
@@ -99,14 +99,22 @@ andara-cli content reference [--output human|json]
 ```
 
 `--output` is the existing global flag (`human` or `json`), and a config default applies the same
-way it does for every other command. The command reads no credentials, dials nothing, and never
+way it does for every other command. The command dials nothing, sends no credentials, and never
 reads the content cache. It reports only the core it embeds.
+
+It runs `AW-CLI-001`'s root pre-run like every command. That pre-run loads the config file if one
+exists, and inspects the credential file if one exists. A pre-run refusal, such as a malformed
+config or a credential file looser than `0600`, exits `2` with `AW-CLI-001`'s error envelope, as
+it does for `content validate`. With no config file and no credential file, the pre-run reads
+nothing, which is AC-1. *(Amended at contract review, 2026-10-02. The draft said "reads no
+credentials", which the shared pre-run contradicts. Exempting one command from it is the
+divergence §7 already declined.)*
 
 | Exit | Meaning |
 |-----:|---------|
 | `0` | printed |
 | `1` | never raised. There are no diagnostics to report (kept for parity with `AW-CLI-002`) |
-| `2` | usage, or writing to stdout failed |
+| `2` | usage, a pre-run refusal (`AW-CLI-001`), or writing to stdout failed |
 
 It doesn't use exits `3` or `4`, because it never dials anything.
 
@@ -197,4 +205,4 @@ CLAUDE.md §8, plus: the golden file is committed, and the completeness test run
   shows the flattened fields.
 - `[ASSUMPTION]` The count of 37 in the manual step is today's count: 24 `sim.ErrCode` values plus
   the 13 `lang.Code*` literals that no `sim.ErrCode` shares. It will drift. The step checks that the command runs,
-  not that the count is 35.
+  not that the count is 37.

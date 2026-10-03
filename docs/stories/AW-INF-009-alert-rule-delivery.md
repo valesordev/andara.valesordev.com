@@ -45,6 +45,11 @@ by an alert and not by a player.
   notification policy, recorded as a runbook procedure because it is clicked, not applied.
 - Prove it: `AndaraServerUnavailable` fires in Grafana Cloud within `for + 1 evaluation` of scaling
   `andara-dev` to zero, and resolves after scaling back.
+- **`RecoveryStateMismatch` on the cluster** (amended 2026-10-02 by architecture, from
+  `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`). `AW-SRV-007`'s rule reads
+  `andara_recovery_state_hash_match`, which the cluster never scrapes from a refused recovery,
+  because the scrape keeps only Ready pods. This story adds a second clause to the **same rule**,
+  read from kube-state-metrics, so that one alert name covers compose and the cluster.
 
 ### Out of scope
 - Grafana-managed alerting (unified alerting rules in Grafana rather than the Mimir ruler). Rejected
@@ -63,6 +68,12 @@ by an alert and not by a player.
    arrives; scaling back resolves it.
 4. **Given** the compose stack **when** `make up` runs **then** the same file still loads there
    (`AW-INF-003`'s check), unchanged.
+5. **Given** the `server` container in `andara-dev` whose last termination exited `2` or `6`
+   (`AW-SRV-007`'s exit table) and which isn't Ready **when** one evaluation interval passes
+   **then** `RecoveryStateMismatch{namespace="andara-dev"}` is `firing` in the tenant's ruler API,
+   and a page arrives. **Given** the container Ready again **then** it resolves after
+   `keep_firing_for`. A container whose last exit was any other code, such as `1` or `5`, doesn't
+   fire it. *(Added 2026-10-02.)*
 
 ## Interface contract
 
@@ -77,6 +88,36 @@ Both read `MIMIR_ADDRESS`, `MIMIR_TENANT_ID`, `MIMIR_API_KEY` from the environme
 `make bootstrap` pins `mimirtool` (`github.com/grafana/mimir/cmd/mimirtool`) like the other Go tools.
 The ruler namespace is `andara` in every environment: rules are grouped `by (namespace)` (`AW-INF-008`),
 so one rule set serves `dev` and `prod` and there is nothing per-environment to sync.
+
+### `RecoveryStateMismatch`, one rule with two clauses (added 2026-10-02)
+
+```promql
+# CONTRACT SKETCH — not an implementation
+max by (namespace) (andara_recovery_state_hash_match == 0)          # compose: AW-SRV-007's linger
+or
+max by (namespace) (
+    kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 2
+  or
+    kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 6
+) and on (namespace) max by (namespace) (
+    kube_pod_container_status_ready{container="server", pod=~"andara-[0-9]+"} == 0
+)
+```
+
+- It's `AW-SRV-007`'s rule, with `for: 0m` and `keep_firing_for: 15m` unchanged. Each clause is
+  empty where the other applies: compose has no kube-state-metrics, and the cluster never scrapes
+  the gauge from a pod that isn't Ready. The rule stays in `files/alerts.yaml` and keeps one
+  runbook, `recovery-state-mismatch.md`.
+- The `ready == 0` term makes it resolve. A last-terminated exit code stays on the container until
+  its next termination, so without that term a fixed server would keep the alert firing.
+- **Before relying on it:** a query in the tenant shows that kube-state-metrics in `andara-dev`
+  exposes, **and Grafana Cloud's keep-list keeps**,
+  `kube_pod_container_status_last_terminated_exitcode` and `kube_pod_container_status_ready` for the
+  `server` container. If either is dropped, the keep-list change is part of this story, as
+  `AW-INF-025` did for `kube_deployment_spec_replicas`.
+- **Rejected: a Loki rule on recovery's `error` line.** It would put the alert outside
+  `alerts.yaml`, in a second rule system with its own sync, and make it depend on log shipping and
+  on a message string that isn't a contract.
 
 ### CI
 
@@ -113,8 +154,13 @@ whose alerts this story makes real.
 
 ## Definition of done
 
-CLAUDE.md §8, plus: every alert in `files/alerts.yaml` has been observed `firing` and `resolved` in
-the tenant at least once.
+CLAUDE.md §8, plus:
+- Every alert in `files/alerts.yaml` has been observed `firing` and `resolved` in the tenant at
+  least once. **"Alert" means a rule by name** (ruled 2026-10-02). A rule with a compose-only
+  clause meets the line through its cluster clause. `RecoveryStateMismatch` meets it through AC-5.
+- **Inherited from `AW-SRV-007`'s §8:** `RecoveryStateMismatch` observed firing on the cluster.
+  `AW-SRV-007`'s record verifies the rule against compose only and names this as not yet observed
+  (CLAUDE.md §8's deferral rule: the cluster's evaluator, the ruler, is this story's).
 
 ## Open questions
 

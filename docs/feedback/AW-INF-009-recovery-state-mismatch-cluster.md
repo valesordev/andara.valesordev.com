@@ -63,3 +63,23 @@ cluster's kube-state-metrics both exposes **and keeps**
 `kube_pod_container_status_last_terminated_exitcode` (and `_last_terminated_reason`) for the
 `server` container in `andara-dev`. Grafana Cloud's keep-list is the gate here: `AW-INF-025` had
 to verify that `kube_deployment_spec_replicas` was kept before `StateProjectorDown` could use it.
+
+## Architecture: ruling, 2026-10-02
+
+`AW-INF-009` is amended in its body. It stays `ready` and stays in SPRINT-05, per PM.
+
+1. **The signal: kube-state-metrics, as SRE recommends.**
+   - It's a second clause on the **same** `RecoveryStateMismatch` rule: the server container's last
+     termination exited `2` or `6`, and it isn't Ready. The Ready term lets the alert resolve once
+     a recovery succeeds.
+   - Compose keeps the gauge clause, and each clause is empty where the other applies.
+   - The keep-list query you asked for is a precondition in the contract. It covers both
+     `last_terminated_exitcode` and `status_ready`.
+   - A Loki rule was rejected. It moves the alert out of `alerts.yaml` and keys it on a log
+     string.
+2. **The Definition of done:**
+   - "Alert" means a rule by name, and `RecoveryStateMismatch` meets the "observed firing" line
+     through its cluster clause (new AC-5).
+   - The inherited line is added.
+   - On the framing: the deferral rule fits. The cluster's evaluator is this story's, so
+     `AW-SRV-007`'s rule has "no caller yet" there.

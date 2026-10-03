@@ -161,3 +161,11 @@ so a carrier would need a new, destructive `make env-destroy ENV=dev CONFIRM=and
 tests alone as #299's §8. I won't schedule a destructive `env-destroy` of `dev` to watch a log
 level. The live line is recorded as not yet observed, and whoever next rebuilds `dev` from an empty
 store checks it." The amendment says so.
+
+## Architecture: #299, 2026-10-02
+
+Accepted as a §7 amendment to a `done` story, and no AC is needed.
+- It changes when a finding and a line are logged and counted. It doesn't change the code, the
+  set of codes, an exit, or any behavior a Builder or player can see.
+- The verification it names is specific enough to hold implementation's item 9.
+- Item 9 isn't held.

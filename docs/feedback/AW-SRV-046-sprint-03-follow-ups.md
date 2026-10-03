@@ -7,3 +7,8 @@ Story: `AW-SRV-046` (`draft`).
 No change. "None" holds: it adds and changes no instruments. Item 7 asserts the existing
 Account-grant log fields (`acting_as_account_id`, `session_id`, `trace_id`), and that's the right
 direction: the record is corrected, not the code. No metrics, traces, or alerts apply.
+
+## Architecture: contract review, 2026-10-02
+
+Moved to `ready` unchanged. Each item cites a ruling already made, and no contract moves. Items 7
+and 8 write `docs/stories/` and `docs/feedback/`, which implementation can write.

@@ -4,7 +4,7 @@ title: content/core/VERSIONS is append-only, enforced by make check
 epic: EPIC-05
 component: infra
 type: infra
-status: draft
+status: ready
 size: S
 depends_on: [AW-SRV-013]
 blocks: []
@@ -44,7 +44,8 @@ As a developer, I want `make check` to refuse a change to any existing line of
 2. **Given** a change that edits, deletes or reorders an existing line **then** it exits `1` with
    `core-versions-check: line <n> changed; VERSIONS is append-only`.
 3. **Given** an appended line whose version isn't the previous last version plus one **then** it
-   exits `1`, naming the line.
+   exits `1` with `core-versions-check: line <n> is version <v>; expected <last + 1>`. *(Message
+   pinned at contract review, 2026-10-02.)*
 4. **Given** no change to the file **then** it exits `0`.
 5. **Given** CI on a pull request **then** the merge base with `main` is available, and the check
    runs against it. On `main` itself, it compares with the first parent.

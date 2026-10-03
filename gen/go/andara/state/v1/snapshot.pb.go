@@ -95,6 +95,18 @@ type SnapshotEnvelope struct {
 	// Every Zone's envelope in a round carries the same values.
 	Content       []*PackVersion `protobuf:"bytes,8,rep,name=content,proto3" json:"content,omitempty"`
 	ContentDigest []byte         `protobuf:"bytes,9,opt,name=content_digest,json=contentDigest,proto3" json:"content_digest,omitempty"`
+	// The sim seed the World was started with (AW-SRV-043, 2026-10-02). The seed
+	// is in the State Hash, so a restore must arrive at the same one; before this
+	// field, each side derived the default again, and nothing in the round said
+	// which seed it was (#307). A writer records the effective seed, the derived
+	// value when sim.seed is unset, never 0. A restore refuses a round whose seed
+	// differs from its own effective seed, as a seed mismatch, before comparing
+	// hashes.
+	//
+	// 0 means a round written before this field. Its seed is derived, as #307
+	// derives it. Every Zone's envelope in a round carries the same value. Not a
+	// state_version change: the field is additive, and an older binary ignores it.
+	SimSeed       uint64 `protobuf:"varint,10,opt,name=sim_seed,json=simSeed,proto3" json:"sim_seed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -192,6 +204,13 @@ func (x *SnapshotEnvelope) GetContentDigest() []byte {
 	return nil
 }
 
+func (x *SnapshotEnvelope) GetSimSeed() uint64 {
+	if x != nil {
+		return x.SimSeed
+	}
+	return 0
+}
+
 type PackVersion struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	PackId        string                 `protobuf:"bytes,1,opt,name=pack_id,json=packId,proto3" json:"pack_id,omitempty"`
@@ -248,7 +267,7 @@ var File_andara_state_v1_snapshot_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"\n" +
-	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\xdd\x02\n" +
+	"\x1eandara/state/v1/snapshot.proto\x12\x0fandara.state.v1\x1a\x17andara/log/v1/log.proto\"\xf8\x02\n" +
 	"\x10SnapshotEnvelope\x12#\n" +
 	"\rstate_version\x18\x01 \x01(\rR\fstateVersion\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x128\n" +
@@ -259,7 +278,9 @@ const file_andara_state_v1_snapshot_proto_rawDesc = "" +
 	"\x12taken_at_unix_nano\x18\x06 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n" +
 	"\x04body\x18\a \x01(\fR\x04body\x126\n" +
 	"\acontent\x18\b \x03(\v2\x1c.andara.state.v1.PackVersionR\acontent\x12%\n" +
-	"\x0econtent_digest\x18\t \x01(\fR\rcontentDigest\"@\n" +
+	"\x0econtent_digest\x18\t \x01(\fR\rcontentDigest\x12\x19\n" +
+	"\bsim_seed\x18\n" +
+	" \x01(\x04R\asimSeed\"@\n" +
 	"\vPackVersion\x12\x17\n" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversionB\xbf\x01\n" +
