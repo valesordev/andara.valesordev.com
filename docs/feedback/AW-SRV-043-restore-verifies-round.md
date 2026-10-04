@@ -106,3 +106,15 @@ are recorded in it (its "Outstanding before `done`").
   `Admin.VerifySnapshotRound` and `andara-server recover --verify` therefore have nothing that makes
   their series get observed live (CLAUDE.md §8, deferred observations). Add a `caller="verify"`
   line to `AW-SRV-007`'s DoD. It's a story-body change, so PM or architecture's to make.
+
+## SRE: the operator step, 2026-10-04
+
+Item 3 is done and recorded in the story's "§8 operator step". `make projector-rebuild ENV=dev`
+ran at 15:54Z on a Deployment image built from `main@a15f1ec`, rebuilt `dev` to tick 1616234 in
+17 s, and the rebuild Job's own log carries `state projector restore verified`
+(`round_tick=1615987`, `zones=4`, `rebuild=true`). The Job's log was followed while it ran,
+because `projector-rebuild` deletes the Job once caught up. The projector it started afterwards
+reads `andara_restore_total{caller="projector",outcome="ok"} 1`. An earlier run at 15:02Z,
+without the Job's log, is recorded as superseded. `projector-rebuild`'s own gaps (it never reads
+`restore verified`, and its `Failed` message omits exit 5) are issue #396. Nothing else on this
+story is outstanding from SRE.

@@ -258,8 +258,8 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 **Outstanding before `done`:**
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
-- The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
-  build deployed to `dev`. Still to run: SRE records it in this story (§8 review below).
+- ~~The operator step, `make projector-rebuild ENV=dev` logging `restore verified`.~~ Done on
+  2026-10-04: the rebuild Job's own log carries the line. See the §8 operator step below.
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 
@@ -332,3 +332,50 @@ run, since Argo CD deploys `main` to `dev`, so SRE (on the tailnet) runs it and 
 - **Config, migration, glossary.** No config key. The round's `sim_seed` field is additive: a round
   without it reads as `0` and derives the seed (AC-6). The glossary gains **Restore mismatch** in this
   review. The one `[ASSUMPTION]` is marked resolved above.
+
+## §8 operator step — 2026-10-04 (SRE, `sre/aw-srv-043-verify-dev`)
+
+**`make projector-rebuild ENV=dev` ran on `dev`, and the rebuild Job's own log carries `restore
+verified`.** The Job ran at 2026-10-04T15:54Z on the projector Deployment's image
+`ghcr.io/valesordev/andara-server:dev@sha256:c22c5ce5…`, built from `main@a15f1ec` (the Application
+was Synced; the Deployment's ReplicaSet for that image was created at 15:54:29Z, before the run, and the cluster's events show the Job's pod pulling that
+digest at 15:54:57Z).
+That commit contains this story's code. `projector-rebuild` deletes the Job once it has caught up,
+so its log was followed with `kubectl logs -f` while it ran. The run:
+
+```
+projector-stop: stopped (group andara-projector-state-dev empty) in 2s
+projector-rebuild: Job andara-projector-state-rebuild created; waiting for `state projector caught up`
+projector-rebuild: caught up at tick 1616234; stopping the Job
+projector-start: ready in 7s
+projector-rebuild: rebuilt to tick 1616234 in 17s
+```
+
+The Job's log (`andara-projector state --rebuild`, `rebuild=true`), an excerpt with the fields
+trimmed (each line also carries `trace_id`, and `started` also `tick`, `committed`,
+`committed_tick` and `silent_through`); the Job is deleted, so it can't be re-read:
+
+```
+state projector restore verified   round_tick=1615987 zones=4
+  restored_hash=bc421b0a5a39302722042b338fd7127652a9610e92acca60040f6cf1e8d2b516
+state projector started            round_tick=1615987 rebuild=true from_zero=false
+state projector caught up          tick=1616234
+```
+
+The projector that `projector-start` brought up after it (`andara-projector-state-65cc8bd7b8-nqb7m`)
+restored the same round, logged `restore verified` for `round_tick=1615987` again with
+`rebuild=false`, and its own `/metrics` reads `andara_restore_total{caller="projector",outcome="ok"} 1`,
+with `hash_mismatch` and `seed_mismatch` at `0`. The Job's process exited, so its series can't be
+scraped; the log line is the observation for it.
+
+**An earlier run, kept for the record.** The first run, at 15:02Z on `main@b335936`, didn't capture
+the Job's log, which is why this one did. It rebuilt to tick 1584989, and the projector it started
+logged `restore verified` for `round_tick=1584757` with `zones=4`. It's superseded here, not relied on.
+
+**What `projector-rebuild` itself shows.** It waits for `state projector caught up` and never reads
+`restore verified`, and a rebuild that finds no complete round bootstraps from offset zero, runs no
+restore, and also reaches `caught up` (`server/projector/run.go`). Its success alone proves less
+than the Job's log above does. Two follow-ups, neither this story's, filed as issue #396:
+- `projector-rebuild` should require `restore verified` in the Job's log before it deletes the Job.
+- Its `Failed` message lists exits 2, 3 and 4 and omits 5 (`scripts/projector.py`); it should name
+  the restore mismatch.
