@@ -162,3 +162,24 @@ No contract changed, and no item needed a decision.
   later path that keeps warnings on a refusal can't inflate it.
 - **How it's tested.** The test drives `reportValidated` with 2 errors and 3 warnings directly.
   Architecture is asked to accept AC-2 as satisfied in substance.
+
+## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-046-verify`)
+
+**The story's §7 passes.** It adds no metric, trace or alert and no log line. Its one
+instrumentation item (item 7, AC-6) asserts the Account grant path's existing log fields, so the
+check observed those on the running server (`main` bb796bc, local stack). As the operator, a
+`builder` account was granted `town` (accepted) and then `andara.core` (refused):
+
+| Line | Level | `trace_id` | `session_id` | `acting_as_account_id` | Other |
+|------|-------|------------|--------------|------------------------|-------|
+| `builder packs set` | `INFO` | `da18474c…`, non-empty | present, empty | present, empty | `actor_account_id`, `target_account_id` |
+| `builder packs refused` | `WARN` | `6971d110…`, non-empty | present, empty | present, empty | `reason=core_not_grantable` |
+
+That is `AW-SRV-035`'s rule (2026-09-30): the correlation ID is `trace_id`, `session_id` is empty
+because an Admin call runs in no Game Session, and `acting_as_account_id` is empty without `--as`.
+Both `trace_id`s resolve in Tempo to the `andara.admin.v1.Admin/SetBuilderPacks` trace (the accepted
+one with its `accounts.write` child). `TestSetBuilderPacks_LogFields` and
+`TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock` pass.
+
+**Not observed live:** `acting_as_account_id` with a value, because `--as` wasn't used. The unit
+test covers that side. Items 1 to 6 and 8 touch no instrumentation.
