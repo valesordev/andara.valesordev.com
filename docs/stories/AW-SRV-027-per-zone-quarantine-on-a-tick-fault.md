@@ -35,7 +35,9 @@ one bad Behavior cannot take a region of the world down with it.
 - `Engine.Step`: after a fault, records for the faulted Zone are consumed and rejected with
   `zone_faulted` (a `CommandRejected` to the actor), and the Partition's offset advances past them.
   **An `Arrive` is first decided by `AW-SRV-028`'s dedup rule** (see the amendment at the end): only an
-  `Arrive` that would be a new handoff is rejected. A `HandoffAck` addressed to a faulted source Zone is
+  `Arrive` that would be a new handoff is rejected: a faulted Zone applies 028's cases 1, 2 and 3a as
+  written, and the implicit ack of 3b still drops a transit record in a Zone that is also a source; only
+  case 3c becomes `HandoffRejected`. A `HandoffAck` addressed to a faulted source Zone is
   consumed with no Event, and its transit record stays by design (the Zone's state is frozen), which is why
   `AW-SRV-028` produces no retry while its source is faulted.
   Records for other Zones on the same Partition are applied.

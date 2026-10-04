@@ -88,7 +88,8 @@ body can't depart; `Goto` is in scope.*
        reaches it, since sequences only grow and a Zone that held `e` at or above `s` has a mark for it
        unless `e` began there;
      - the Zone holds `e` in its own `Transit` with a lower sequence: the implicit ack below, and then the
-       arrival is decided again from the top;
+       arrival is decided again, once: the second pass can only be a new handoff, since `Entities` and `Transit`
+       are exclusive within a Zone;
      - otherwise a new handoff: place it, set `Placed[e] = {s, rejected: false}`, ack.
   `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark and records the rejection,
   so a retry that follows gets the same `HandoffRejected` and a restore at home can't be undone by one. A
@@ -101,7 +102,8 @@ body can't depart; `Goto` is in scope.*
   Pruning by proof is deferred (below).
 - **Implicit ack.** An `Arrive(e, s)` into a Zone that still holds `e` in its own `Transit` with a lower
   `handoff_seq` proves the target placed `e` and moved it on. The Zone drops that transit record and then
-  decides the arrival by the rule above.
+  decides the arrival by the rule above. It applies only to an `Arrive` above the mark (case 3); at or below
+  the mark the Arrive is stale and no such record can exist.
 - **Retry with backoff, held in memory.** The live tick loop calls `Engine.DueHandoffs(tick)` after `Step`,
   and produces what it returns: the `Arrive` for the transit records that are due, at most
   `sim.handoff_retry_batch` of them per call (default 50), earliest due first (a record with no entry sorts
@@ -248,8 +250,9 @@ body can't depart; `Goto` is in scope.*
    is applied. This holds for a verb, `UnbindCharacter` and `MarkLinkdead`. **And given** a linkdead
    actor **when** a `Move` or `Goto` applies **then** it is rejected `actor_linkdead` and the body stays.
 9. **Given** an `Arrive` for an Entity the Zone holds, with `s` above the Zone's mark for it **then** it is
-   rejected `entity_present`, and so is one for an Entity the Zone holds in its own `Transit` at a sequence
-   at or above `s`; **and given** `s == 0`, an `Arrive.handoff_seq` that differs from its
+   rejected `entity_present`, and so is one with `s` above the mark for an Entity the Zone holds in its own
+   `Transit` at a sequence at or above `s`; **and given** `s` at or below the mark with the Zone holding the
+   Entity in its own `Transit` **then** it is stale-acked, not rejected (AC-4); **and given** `s == 0`, an `Arrive.handoff_seq` that differs from its
    `entity.handoff_seq`, or no `entity` or an empty `entity.id` **then** it is rejected `invalid_arrival`;
    all place nothing.
 10. **Given** `EntityState` gains a field in a later story **when** the round-trip test runs without the
@@ -259,8 +262,9 @@ body can't depart; `Goto` is in scope.*
     source hasn't applied the ack **then** the Bind finds it in `Entities`, where it is. Across the whole
     exchange no Zone pair holds two `Entities` with one ID, asserted by a scan, and the `Transit` and
     `Entities` copies coexist only until the ack is applied.
-12. **Given** an `Arrive(e, s)` at a Zone that holds `e` in its own `Transit` with a lower seq **when**
-    applied **then** the transit record is dropped and the arrival is decided by the dedup rule.
+12. **Given** an `Arrive(e, s)` with `s` above the Zone's mark for `e`, at a Zone that holds `e` in its own
+    `Transit` with a lower seq **when** applied **then** the transit record is dropped and the arrival is
+    decided by the dedup rule, once.
 13. **Given** a Zone with `Transit` records and `Placed` marks **when** it is snapshotted and restored **then**
     `HashZone` is identical, and `BodyStateHash` refuses a body with an unsorted or duplicated `transit` or
     `placed`, a `placed` mark of 0, a `rejected` mark whose Entity is also held at that sequence, an Entity in both `entities` and `transit` of one Zone, or a `transit`
