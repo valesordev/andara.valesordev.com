@@ -187,9 +187,11 @@ glade@1 published (first version), awaiting approval
 Your sources go up with it, and the server checks them against everything else on `dev`. Nothing
 in the World changes yet.
 
-Publish may also print a `missing_reverse_exit` warning labelled as your pack's `purgatory.json`.
-It's the town's one-way Exit out of Purgatory, not your pack's, and it's a known defect (#312).
-Ignore it.
+Publish prints what is in your pack: its findings and its warnings, placed on your source. It doesn't
+print another pack's existing warnings: the town's one-way Exit out of Purgatory is the town's own and
+shows when the town publishes. A Zone ID clash is one `duplicate_zone` on your Zone, naming both
+packs. If publish ever refuses on a finding printed under another pack's name (`town/…`), it isn't one
+of your files and isn't yours to fix: tell an Operator.
 
 ## Approve it
 
