@@ -83,14 +83,14 @@ body can't depart; `Goto` is in scope.*
        (`Transit(e, 2)`), A's late retry of seq 1 is stale and acked, not rejected. The ack is what lets A drop
        its record.
   3. **Above the mark** (`s` is above `Placed[e]`, or `e` has no mark):
-     - the Zone holds `e` in `Entities`, or in its own `Transit` with a sequence at or above `s`: an invariant
+     - **3a.** the Zone holds `e` in `Entities`, or in its own `Transit` with a sequence at or above `s`: an invariant
        violation, rejected `entity_present` (post-log), with an `error` logged. Only a misrouted `Arrive`
        reaches it, since sequences only grow and a Zone that held `e` at or above `s` has a mark for it
        unless `e` began there;
-     - the Zone holds `e` in its own `Transit` with a lower sequence: the implicit ack below, and then the
+     - **3b.** the Zone holds `e` in its own `Transit` with a lower sequence: the implicit ack below, and then the
        arrival is decided again, once: the second pass can only be a new handoff, since `Entities` and `Transit`
        are exclusive within a Zone;
-     - otherwise a new handoff: place it, set `Placed[e] = {s, rejected: false}`, ack.
+     - **3c.** otherwise a new handoff: place it, set `Placed[e] = {s, rejected: false}`, ack.
   `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark and records the rejection,
   so a retry that follows gets the same `HandoffRejected` and a restore at home can't be undone by one. A
   placement sets `Placed[e]` to `{s, rejected: false}`, so the flag always describes the current mark. The mark is kept for good, so a retry produced by a
