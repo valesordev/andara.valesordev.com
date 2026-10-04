@@ -122,14 +122,6 @@ func ackOf(t *testing.T, cmds []*logv1.LoggedCommand) *logv1.LoggedCommand {
 	return nil
 }
 
-func retryCmds(rs []sim.HandoffRetry) []*logv1.LoggedCommand {
-	var out []*logv1.LoggedCommand
-	for _, r := range rs {
-		out = append(out, r.Command)
-	}
-	return out
-}
-
 // cloneArrive is a copy of an Arrive Command, so a test can deliver the same
 // one twice without the first apply's mutation reaching the second.
 func cloneArrive(c *logv1.LoggedCommand) *logv1.LoggedCommand {

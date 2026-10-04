@@ -4,7 +4,7 @@ title: Durable cross-Zone handoff — in-transit state, acknowledgement, and tic
 epic: EPIC-02
 component: server
 type: feature
-status: in-progress
+status: review
 size: M
 depends_on: [AW-SRV-003]
 blocks: [AW-SRV-007, AW-SRV-027, AW-SRV-047]
@@ -381,3 +381,60 @@ golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md`
   is what keeps a well-behaved Gateway from ever reaching that path.
 - **Resolved 2026-10-04 (architecture):** the `Departures` window is gone, replaced by marks that depend on
   no time and no ordering.
+
+## Verification record — 2026-10-04 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-srv-028-durable-handoff`. The contract questions and the hand-offs to SRE are in
+`docs/feedback/AW-SRV-028-handoff-contract.md`.
+
+| AC | Test | What it asserts |
+|----|------|-----------------|
+| 1 | `TestHandoff_ALostArriveIsRetriedAndThenAcknowledged` (`server/sim`); `TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges` | No re-send on the departure tick; `in_transit` answers a Command; the retry comes at departure + `handoff_retry_ticks` with the same `handoff_seq` and Entity bytes, no session, client ref or trace; the record and its schedule entry go on the tick that applies the ack. Through the loop: the retry is counted, the gauge returns to 0, one `warn` per retrying tick and one `debug` per retry |
+| 2 | `TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost` (Redpanda); `TestHandoffLoop_RecoveryRetriesFromTheRecoveredTransit` (through `tickloop.RecoverFrom`) | A real `SIGKILL` after the boundaries and with every `Arrive` lost: `Transit` holds alice at the recovered hash, the recovered process retries within its first ticks, and she lands in wilds once, at sequence 1 |
+| 3 | `TestHandoff_ADuplicateArriveIsReAckedAndChangesNothing` | Re-acked, no Event, the Zone's canonical bytes unchanged, not counted stale |
+| 4 | `TestHandoff_ALateRetryIsStaleHoweverLateItComes` | A retry of seq 1 after the Entity moved on, delivered 1,000 ticks later: stale, acked, nothing placed. The mark is kept |
+| 5 | `TestHandoff_AMarkIsPerEntity` | A→B→C→B: a retry of seq 1 is stale at seq 3. X decided at 5 doesn't stale Y's first arrival at 1 |
+| 6 | `TestHandoff_ReplayMatchesAndTheScheduleIsNotHashed`; `TestHandoff_ARecoveredWorldRetriesEveryRecordWithinTheBatchCap`; `TestHandoffLoop_RecoveryRetriesFromTheRecoveredTransit` | Replay hashes match, also under a retuned config. A restored World with 7 records retries them all within `ceil(7/3)` ticks, at most the batch per tick, once each. Recovery produces and counts no retry |
+| 7 | `TestHandoff_NoRetryWhileTheSourceIsFaulted`; `TestHandoff_TheBackoffDoublesToTheMaximumAndStaysThere`; `TestHandoff_DueRecordsAreOrderedEarliestFirstThenByEntityID` | Nothing while the Zone is faulted, a retry on the first tick it can apply. Gaps 1, 2, 4, 5, 5… and still 5 past attempt 70. Earliest due first, then Entity ID |
+| 8 | `TestHandoff_CommandsForAnEntityInTransitAreRejected`; `TestHandoff_ALinkdeadBodyCannotDepart` | `look`, `move`, `goto`, `UnbindCharacter`, `MarkLinkdead` and `BindCharacter` for an Entity in transit are rejected `in_transit` with the Zone unchanged. A linkdead body's `move` (in or across a Zone) and `goto` are `actor_linkdead` |
+| 9 | `TestHandoff_ImpossibleArrivesAreRejected` | `entity_present` (above the mark with the Entity held; in the Zone's own Transit at the same or a higher sequence); `invalid_arrival` (seq 0, mismatched, no entity, empty id). Nothing placed or produced |
+| 10 | `TestEntityState_SurvivesTheWire` | Every field `log.v1.Entity` carries round-trips; a field that doesn't fails naming it (checked by dropping `handoff_seq` from `Proto`) |
+| 11 | `TestHandoff_ABindNeverMakesASecondBody` | In transit at the source: `in_transit`, no body. Target placed, ack not applied: the Bind finds it in `Entities`. No two Zones hold one ID in `Entities` at any step |
+| 12 | `TestHandoff_AnArriveIsAnImplicitAckOfALowerTransitRecord` | The record and its schedule entry are dropped, then the arrival is placed and marked |
+| 13 | `TestHandoff_SnapshotCarriesTransitAndMarks`; `TestHandoff_BodyStateHashRefusesWhatItWouldReadDifferently` | `HashZone` identical after a restore. `BodyStateHash` refuses an unsorted or duplicated `transit` or `placed`, a mark of 0, an Entity in both `entities` and `transit`, a dormant or a linkdead Entity in transit |
+| 14 | `TestHandoff_AnAckMatchesBySequenceNotJustEntity` | A late `ack(e, 1)` leaves `Transit(e, 3)`; `ack(e, 4)` too; `ack(e, 3)` drops it |
+| 15 | `TestHandoff_AGotoUsesTheSameHandshake` | `Transit` with an empty Direction, the `Arrive`, the `HandoffAck` |
+| 16 | `TestHandoff_AnEntityIDIsNeverReused` | A Bind for an ID some Zone holds a mark for: `id_reused`, nothing created |
+
+Config: `TestParse_HandoffRetryKeys` (defaults, env, flags, file, the three refusals) and
+`TestHandoffRetryOutsideHold` (the startup `warn`).
+
+**Mutation checks**, each run in a scratch worktree and each failing the case the story names: the mark
+check dropped (AC-3, 4, 5); marks pruned by time (AC-4); a per-Zone scalar mark (AC-5); ack by Entity alone
+(AC-14); a Bind that searches only `Entities`, and only `Transit` (AC-11 and the Bind tests); retries while
+faulted (AC-7); no implicit ack (AC-12); the exponent unsaturated (AC-7); the schedule in the hash (AC-6
+changed-config); `Goto` around the handshake (AC-15); no `id_reused` (AC-16); no `actor_linkdead` (AC-8); no
+`in_transit` for `UnbindCharacter` and for `MarkLinkdead` (AC-8); no schedule entry at departure (AC-1); the
+retry pass run during replay (the recovery test, within its first ticks); the entry not deleted with the
+record (AC-1, 12); no batch cap, and ordering by Entity ID alone (AC-6, 7); the proto field dropped (AC-10).
+
+**Changed beyond the contract's surface.** `Engine.HandoffScheduleSize` (read-only, for the schedule-deletion
+assertions), the loop's `error` log on `entity_present`, `invalid_arrival` and `id_reused`, and
+`ingress/bindings.go`'s comment now naming `AW-SRV-027`.
+
+**Not built, as the story says:** the retry doesn't carry the Move's `trace_id` (a retry starts a new trace);
+the roster and Gateway consequence of a rejected teardown (a PM story); `HandoffRejected` (`AW-SRV-027`).
+
+**The golden fixture log holds no cross-Zone move** (`simtest.Script`'s directions are `dir-N` and `nowhere`),
+so `server/tickloop/testdata/golden_hashes.txt` is unchanged. **Deploying this needs `make world-reset
+ENV=dev CONFIRM=andara-dev`** (a log with a cross-Zone move from before doesn't replay; a binary from before
+can't read a `HandoffAck`), and a fresh local stack for `AW-INF-032`.
+
+**Outstanding before `done`:**
+- SRE: the three Helm keys (`keys.yaml`, SRE's PR #404) and the regenerated `values.schema.json` and
+  `_env.tpl`; the runbook step, the dashboard panel and the `andara_handoff_placed_entries` threshold.
+- Architecture: `AW-SRV-003`'s record still says this story retires the one-hop bounce (it's a contract
+  section of another story, not mine to edit).
+- SRE's §8 instrumentation check: `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
+  `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries` are registered and read 0 until a
+  handoff; the retry counter's first live observation is on a stack with a lost `Arrive`.

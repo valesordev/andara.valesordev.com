@@ -323,7 +323,7 @@ func (a *ApplyContext) depart(cmd *logv1.LoggedCommand, actor *EntityState, to R
 
 // arriveFor is the Arrive a transit record produces, the first time and on
 // every retry: the same handoff_seq and the same Entity bytes, which is what
-// makes a retry recognisable. origin is the Zone the record is in; the
+// makes a retry recognizable. origin is the Zone the record is in; the
 // target's HandoffAck goes there.
 func arriveFor(origin ZoneID, rec TransitRecord) *logv1.Arrive {
 	from := ""

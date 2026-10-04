@@ -54,7 +54,7 @@ type EntityState struct {
 	LinkdeadExtension Tick
 	// HandoffSeq is how many handoffs the Entity has been through (AW-SRV-028):
 	// 0 for one that never left its first Zone, incremented by the source each
-	// time it leaves. It is what makes a retried Arrive recognisable, and it
+	// time it leaves. It is what makes a retried Arrive recognizable, and it
 	// only grows along the Entity's life.
 	HandoffSeq uint64
 }
