@@ -216,3 +216,14 @@ For architecture, in `docs/feedback/AW-SRV-047-items.md`. They affect the contra
 - `[ASSUMPTION]` The player-facing lines in AC-2 to AC-5 are placeholders in the same register as
   `<name> leaves the world.` Brian may reword them, and that's not a contract change, since the
   Events carry names, not sentences.
+
+## Constraint from AW-SRV-028 (architecture, 2026-10-04)
+
+`AW-SRV-028`'s placed marks (`ZoneState.placed`) are kept for good, so a Zone that has decided a handoff for
+an Entity ID treats any later arrival of that ID at or below the mark as stale. If an Item Instance is an
+Entity (open question 1), the IDs this story gives instances that are removed at an activation and placed
+again are **never reused**: a re-placed Item with an old ID and a sequence of 0 that is then carried across
+a Zone boundary would be read as stale and lost. `Arrive` carries one `Entity` by value, so open question 1's
+"carried Items travel with their holder" is also a change to that contract and to the handoff's hashed
+`Transit` record; it can't be answered in this story alone.
+

@@ -179,8 +179,8 @@ CLAUDE.md §8, plus: the replay-purge test and the rollback-reservation test.
 ## Constraint from AW-SRV-028 (architecture, 2026-10-04)
 
 `AW-SRV-028`'s placed marks (`ZoneState.placed`) are kept for good, so they assume an Entity ID is never
-reused. `PurgeCharacter` removes a dormant body: either the roster never reissues a `character_id`, which
-`AW-SRV-014`'s ID scheme would have to state, or the purge also clears that Entity's marks in every Zone. Without
-one of the two, a Character created again under a purged Character's ID would have its first cross-Zone move read
-as stale and lose the body.
-
+reused. `PurgeCharacter` removes a dormant body, so **the roster never reissues a `character_id`**, and
+`AW-SRV-014`'s ID scheme says so. Clearing the Entity's marks in every Zone is not an alternative: it would cross
+Partitions and reopen the stale-retry hole `AW-SRV-028` closes. `AW-SRV-028` also refuses (`id_reused`) a
+`BindCharacter` that would create a body for an ID some Zone holds a mark for, so a reissued ID fails loudly
+instead of losing the body.

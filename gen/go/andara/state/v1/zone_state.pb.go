@@ -203,14 +203,9 @@ type TransitRecord struct {
 	RoomId string `protobuf:"bytes,3,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	// The Direction the move went, empty for a Goto. The reverse of it is the
 	// from_direction of a restore at home.
-	Direction string `protobuf:"bytes,4,opt,name=direction,proto3" json:"direction,omitempty"`
-	// The Tick of the last Arrive produced for it, and how many have been
-	// produced. The next retry is due at last_attempt_tick plus
-	// min(sim.handoff_retry_ticks × 2^min(attempts-1, 16), sim.handoff_retry_max_ticks).
-	LastAttemptTick uint64 `protobuf:"varint,5,opt,name=last_attempt_tick,json=lastAttemptTick,proto3" json:"last_attempt_tick,omitempty"`
-	Attempts        uint32 `protobuf:"varint,6,opt,name=attempts,proto3" json:"attempts,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	Direction     string `protobuf:"bytes,4,opt,name=direction,proto3" json:"direction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *TransitRecord) Reset() {
@@ -269,20 +264,6 @@ func (x *TransitRecord) GetDirection() string {
 		return x.Direction
 	}
 	return ""
-}
-
-func (x *TransitRecord) GetLastAttemptTick() uint64 {
-	if x != nil {
-		return x.LastAttemptTick
-	}
-	return 0
-}
-
-func (x *TransitRecord) GetAttempts() uint32 {
-	if x != nil {
-		return x.Attempts
-	}
-	return 0
 }
 
 // The highest handoff_seq placed in this Zone for one Entity.
@@ -535,15 +516,13 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\x128\n" +
 	"\atransit\x18\t \x03(\v2\x1e.andara.state.v1.TransitRecordR\atransit\x126\n" +
 	"\x06placed\x18\n" +
-	" \x03(\v2\x1e.andara.state.v1.PlacedArrivalR\x06placed\"\xe2\x01\n" +
+	" \x03(\v2\x1e.andara.state.v1.PlacedArrivalR\x06placed\"\x9a\x01\n" +
 	"\rTransitRecord\x124\n" +
 	"\x06entity\x18\x01 \x01(\v2\x1c.andara.state.v1.EntityStateR\x06entity\x12\x1c\n" +
 	"\n" +
 	"to_zone_id\x18\x02 \x01(\tR\btoZoneId\x12\x17\n" +
 	"\aroom_id\x18\x03 \x01(\tR\x06roomId\x12\x1c\n" +
-	"\tdirection\x18\x04 \x01(\tR\tdirection\x12*\n" +
-	"\x11last_attempt_tick\x18\x05 \x01(\x04R\x0flastAttemptTick\x12\x1a\n" +
-	"\battempts\x18\x06 \x01(\rR\battempts\"M\n" +
+	"\tdirection\x18\x04 \x01(\tR\tdirection\"M\n" +
 	"\rPlacedArrival\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1f\n" +
 	"\vhandoff_seq\x18\x02 \x01(\x04R\n" +

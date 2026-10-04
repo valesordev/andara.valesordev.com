@@ -6,7 +6,7 @@ component: server
 type: feature
 status: ready
 size: S
-depends_on: [AW-SRV-002]
+depends_on: [AW-SRV-002, AW-SRV-028]
 blocks: []
 lane: implementation
 risk: medium
@@ -135,11 +135,14 @@ story's:
   like any other, never rejected. Rejecting it would make the source restore the Entity at home while the
   frozen Zone still holds it, and a restart would bring it back: two bodies. Only an `Arrive` that would be a
   new handoff is rejected;
-- a new handoff consumed and rejected for a faulted Zone produces
+- a new handoff consumed and rejected for a faulted Zone **also sets the Zone's mark for the Entity to that
+  sequence**, so a retry the source produced before it applied the rejection, or after a restart, is stale
+  and can't place a second body once the Zone is healthy again, and produces
   `HandoffRejected{entity_id, handoff_seq, code: "zone_faulted"}` to the source Zone's Partition
   (`andara.log.v1.LoggedCommand` field 14, held for it), and `andara_handoff_rejected_total{code}` counts it;
 - the source applies it: it drops the transit record and restores the Entity to its origin Room
   (`TransitRecord.entity.room_id`; the Zone's fallback Room with `EntityRelocated{room_removed}` if that Room
-  is gone), emitting `CharacterArrived{from_direction: reverse of the move's direction}`.
+  is gone), emitting `CharacterArrived{from_direction: reverse of the move's direction}`. The restored
+  Entity keeps its incremented `handoff_seq`, so its next departure takes a sequence above the mark.
 It needs an AC for each of those, including the retry-of-a-placed-handoff case, and the size may want
 revisiting.

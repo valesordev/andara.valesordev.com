@@ -96,11 +96,10 @@ message TransitRecord {
   // from_direction of a restore at home.
   string direction = 4;
 
-  // The Tick of the last Arrive produced for it, and how many have been
-  // produced. The next retry is due at last_attempt_tick plus
-  // min(sim.handoff_retry_ticks × 2^min(attempts-1, 16), sim.handoff_retry_max_ticks).
-  uint64 last_attempt_tick = 5;
-  uint32 attempts = 6;
+  // Deliberately no retry schedule: when the next Arrive is due comes from
+  // config (sim.handoff_retry_ticks), and config never enters hashed state. The
+  // engine keeps the schedule in memory, and a record found after a recovery
+  // is due on the first live tick.
 }
 
 // The highest handoff_seq placed in this Zone for one Entity.
@@ -108,6 +107,7 @@ message PlacedArrival {
   string entity_id = 1;
   uint64 handoff_seq = 2;
 }
+
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
 // round-trip test pins the two together.
 //

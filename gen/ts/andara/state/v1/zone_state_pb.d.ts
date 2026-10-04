@@ -168,20 +168,6 @@ export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
    * @generated from field: string direction = 4;
    */
   direction: string;
-
-  /**
-   * The Tick of the last Arrive produced for it, and how many have been
-   * produced. The next retry is due at last_attempt_tick plus
-   * min(sim.handoff_retry_ticks × 2^min(attempts-1, 16), sim.handoff_retry_max_ticks).
-   *
-   * @generated from field: uint64 last_attempt_tick = 5;
-   */
-  lastAttemptTick: bigint;
-
-  /**
-   * @generated from field: uint32 attempts = 6;
-   */
-  attempts: number;
 };
 
 /**

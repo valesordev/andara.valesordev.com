@@ -511,8 +511,9 @@ func (x *Goto) GetTargetRoomId() string {
 }
 
 // The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The
-// source Zone's tick removed the Entity from its own state and produced this
-// to the target Zone's partition; the target's tick places it. It is never a
+// source Zone's tick moved the Entity out of its Entities into its Transit
+// (AW-SRV-028) and produced this to the target Zone's partition; the target's
+// tick places it. It is never a
 // player's verb — the verb table has no entry that binds it, so `parse` cannot
 // produce one — and it is always produced by a tick, so it is already ordered
 // with respect to everything else in the target Zone.
@@ -620,8 +621,9 @@ func (x *Arrive) GetHandoffSeq() uint64 {
 // already placed or as stale (AW-SRV-028). Produced by the target's tick to
 // the source Zone's partition (LoggedCommand.zone_id is the source Zone). The
 // source drops its transit record for (entity_id, handoff_seq). An ack that
-// matches no transit record is a duplicate and is ignored. An Arrive for an Entity the source still holds in transit, with a
-// higher handoff_seq, is an implicit ack of that record. Never a verb.
+// matches no transit record is a duplicate and is ignored. An Arrive for an
+// Entity the source still holds in transit, with a higher handoff_seq, is an
+// implicit ack of that record. Never a verb.
 type HandoffAck struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EntityId      string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
