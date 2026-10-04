@@ -106,6 +106,12 @@ jobs:
         run: make core-versions-check
         env:
           BASE_REF: ${{ github.event_name == 'push' && github.event.before || 'origin/main' }}
+      # AW-INF-028: the Builder's Guide's reference is generated, and nothing in the guide may name
+      # a command, a code or a link that doesn't exist. Each builds andara-cli from this commit.
+      - name: builder reference is current
+        run: make builder-reference-check
+      - name: builder's guide commands, codes and links
+        run: make guide-check
       # The views as of this commit, since neither is committed (AW-INF-026, AC-4).
       - name: status and backlog in the summary
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
