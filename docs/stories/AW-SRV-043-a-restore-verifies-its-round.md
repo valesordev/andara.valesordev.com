@@ -258,8 +258,8 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 **Outstanding before `done`:**
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
-- The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
-  build deployed to `dev`.
+- ~~The operator step, `make projector-rebuild ENV=dev` logging `restore verified`.~~ Done on
+  2026-10-04: see the §8 operator step below.
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 
@@ -301,3 +301,39 @@ all observed, and the `stack` workflow runs it after `stack-linkdead`. At `main`
 
 **Runbook:** `docs/runbooks/state-projector-down.md`'s exit `5` row no longer says it ships with
 this story.
+
+## §8 operator step — 2026-10-04 (SRE, `sre/aw-srv-043-verify-dev`)
+
+**`make projector-rebuild ENV=dev` ran on `dev` and the restore verified.** `dev` was Synced and
+Healthy at `main@b335936` (the Application's current build, which contains this story), and its
+projector runs `ghcr.io/valesordev/andara-server:dev@sha256:8ac96a51…`, built from `b335936`. The
+run, at 2026-10-04T15:02Z:
+
+```
+projector-stop: stopped (group andara-projector-state-dev empty) in 2s
+projector-rebuild: Job andara-projector-state-rebuild created; waiting for `state projector caught up`
+projector-rebuild: caught up at tick 1584989; stopping the Job
+projector-start: ready in 7s
+projector-rebuild: rebuilt to tick 1584989 in 17s
+```
+
+The projector `projector-start` brought up straight after (`andara-projector-state-7d6899b757-2hfjl`)
+bootstrapped from the newest snapshot round on `dev`, and logged:
+
+```
+state projector restore verified   round_tick=1584757 zones=4
+  restored_hash=8a04504a4089d7ec4af61f049016476fe99c69a827e465655f4ae3bb5d13984a
+state projector started            round_tick=1584757 rebuild=false from_zero=false
+state projector caught up          tick=1585066
+```
+
+Its own `/metrics`, read from the pod, has `andara_restore_total{caller="projector",outcome="ok"} 1`
+and `hash_mismatch` and `seed_mismatch` at `0`.
+
+**What this does and doesn't show.** The rebuild Job's own log wasn't kept: `projector-rebuild`
+deletes the Job once it has caught up, so its `--rebuild` bootstrap line isn't in this record. The
+evidence is the Deployment pod's bootstrap (`rebuild=false`) on the same round store, which runs
+the same `RestoreEngine` check, and the rebuild itself finishing means its restore verified too
+(a mismatch exits `5`, and `projector-rebuild` would have reported it instead of catching up).
+Whether `projector-rebuild` should keep the Job's log until the check has read it is a question for
+a follow-up, not for this story.
