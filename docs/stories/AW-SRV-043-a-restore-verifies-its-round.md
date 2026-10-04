@@ -331,9 +331,16 @@ Its own `/metrics`, read from the pod, has `andara_restore_total{caller="project
 and `hash_mismatch` and `seed_mismatch` at `0`.
 
 **What this does and doesn't show.** The rebuild Job's own log wasn't kept: `projector-rebuild`
-deletes the Job once it has caught up, so its `--rebuild` bootstrap line isn't in this record. The
-evidence is the Deployment pod's bootstrap (`rebuild=false`) on the same round store, which runs
-the same `RestoreEngine` check, and the rebuild itself finishing means its restore verified too
-(a mismatch exits `5`, and `projector-rebuild` would have reported it instead of catching up).
-Whether `projector-rebuild` should keep the Job's log until the check has read it is a question for
-a follow-up, not for this story.
+deletes the Job once it has caught up, so its `--rebuild` bootstrap line isn't in this record, and
+which round the Job restored isn't recorded either. The evidence is the Deployment pod's bootstrap
+(`rebuild=false`): it goes through the same `bootstrapEngine` and `RestoreEngine` check as a
+`--rebuild` one, on the newest complete round, and logged `restore verified` for round 1584757.
+
+The Job finishing shows less than that. `projector-rebuild` waits for `state projector caught up`,
+and a Job that hit a mismatch would have exited 5 and failed instead, but a rebuild that finds no
+complete round bootstraps from offset zero, runs no restore, and also reaches `caught up`
+(`server/projector/run.go`). This run had rounds on the store, as the pod's line shows, so it isn't
+that case, but the Job's success doesn't prove it. Two follow-ups, neither this story's, filed as issue #396:
+- `projector-rebuild` should require `restore verified` in the Job's log before it deletes the Job.
+- Its `Failed` message lists exits 2, 3 and 4 and omits 5 (`scripts/projector.py`); it should name
+  the restore mismatch.

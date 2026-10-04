@@ -110,5 +110,6 @@ rebuilt `dev` (at `main@b335936`) to tick 1584989 in 17 s. The projector it star
 `state projector restore verified` with `round_tick=1584757` and `zones=4`, and its
 `andara_restore_total{caller="projector",outcome="ok"}` reads `1`. The record says that the evidence
 is the Deployment pod's bootstrap, since `projector-rebuild` deletes its Job (and so the Job's log)
-once caught up. Nothing else on this story is outstanding from SRE.
-
+once caught up, and that the Job finishing alone doesn't prove a restore ran (a rebuild with no
+complete round bootstraps from zero). It lists two follow-ups for `projector-rebuild`, filed as
+issue #396. Nothing else on this story is outstanding from SRE.
