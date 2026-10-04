@@ -382,43 +382,55 @@ type arriveView struct {
 // validateArrive decides an Arrive by this Zone's own state alone
 // (AW-SRV-028), reading and mutating nothing, so the same record does the
 // same thing on replay and from any process life, in any order records on
-// different Partitions arrive:
+// different Partitions arrive. The first case that matches decides it:
 //
-//   - A malformed Arrive is rejected invalid_arrival.
-//   - If this Zone holds the Entity in its own Transit with a lower sequence,
-//     the target placed it and moved it on: that is an ack, and the record is
-//     dropped before the arrival is decided. A sequence at or above is a
-//     misrouted Arrive, rejected entity_present.
-//   - At the Zone's mark when the mark records a rejection (AW-SRV-027): a
-//     retry of a rejected handoff, which gets the same rejection back and is
-//     never acked. Nothing sets such a mark in this story.
-//   - At or below the Zone's mark for the Entity, it is a retry or stale and
-//     is acked, never placed: untouched if the Zone holds the Entity at that
-//     very sequence, counted as stale otherwise. No Event either way.
-//   - Above the mark with the Entity held, an invariant violation, rejected
-//     entity_present.
-//   - Otherwise a new handoff.
+//  1. Malformed (a sequence of 0 or one that differs from the Entity's, no
+//     Entity, an empty id): rejected invalid_arrival.
+//  2. At or below the Zone's mark for the Entity, whatever else the Zone holds:
+//     at the mark when the mark records a rejection (AW-SRV-027), the same
+//     rejection goes back, never an ack, and nothing sets such a mark in this
+//     story; else if the Zone holds the Entity at that sequence, a retry, acked
+//     and untouched; else stale, acked and counted. No Event in any of them.
+//  3. Above the mark (or no mark): if the Zone holds the Entity in Entities,
+//     or in its own Transit at a sequence at or above this one, rejected
+//     entity_present (only a misrouted Arrive gets here). If it holds it in its
+//     own Transit at a lower sequence, that is an implicit ack: the record is
+//     dropped and the arrival is a new handoff. Otherwise a new handoff.
 func validateArrive(a *ApplyContext, cmd *logv1.LoggedCommand) (arriveView, error) {
 	arr := cmd.GetArrive()
 	if invalidArrival(arr) {
 		return arriveView{}, &RejectError{Code: CodeInvalidArrival, Stage: StageValidate, Message: "the way ahead is gone"}
 	}
 	v := arriveView{id: EntityID(arr.GetEntity().GetId()), seq: arr.GetHandoffSeq()}
+	held := a.Zone.Entities[v.id]
+	// The mark decides first, whatever else the Zone holds for the Entity: a
+	// retry of seq 1 reaching a Zone that has since moved the Entity on (it
+	// holds Transit(e, 2) and its mark is 1) is a retry, and acking it is what
+	// lets the source drop its record when the first ack was lost.
+	if mark := a.Zone.Placed[v.id]; v.seq <= mark.Seq {
+		switch {
+		case v.seq == mark.Seq && mark.Rejected:
+			v.reissue = true
+		case held != nil && held.HandoffSeq == v.seq:
+			v.retry = true
+		default:
+			v.stale = true
+		}
+		return v, nil
+	}
+	// Above the mark: a new handoff, unless the Zone already holds the Entity.
+	if held != nil {
+		return arriveView{}, &RejectError{Code: CodeEntityPresent, Stage: StageValidate, Message: "the way ahead is gone"}
+	}
 	if rec, ok := a.Zone.Transit[v.id]; ok {
 		if rec.Entity.HandoffSeq >= v.seq {
+			// Only a misrouted Arrive gets here.
 			return arriveView{}, &RejectError{Code: CodeEntityPresent, Stage: StageValidate, Message: "the way ahead is gone"}
 		}
+		// A lower sequence: the target placed it and moved it on, which is an
+		// ack. Dropping the record leaves the Zone with no Entity and no
+		// Transit for it, so the arrival is a new handoff.
 		v.drop = true
-	}
-	held := a.Zone.Entities[v.id]
-	switch mark := a.Zone.Placed[v.id]; {
-	case v.seq == mark.Seq && mark.Rejected:
-		v.reissue = true
-	case v.seq <= mark.Seq:
-		v.retry = held != nil && held.HandoffSeq == v.seq
-		v.stale = !v.retry
-	case held != nil:
-		return arriveView{}, &RejectError{Code: CodeEntityPresent, Stage: StageValidate, Message: "the way ahead is gone"}
 	}
 	return v, nil
 }

@@ -973,3 +973,61 @@ func TestHandoff_ARejectedMarkIsCarriedHashedAndNeverAcked(t *testing.T) {
 		t.Fatalf("a retry of a rejected handoff must place nothing and ack nothing: events %v outbound %v", res.Events, res.Outbound)
 	}
 }
+
+// AC-4, the lost-ack window: B placed alice (seq 1) and its ack was lost, then
+// moved her on, so B holds Transit(alice, 2) and its mark for her is 1. A's
+// retry of seq 1 reaches B. The mark decides first: it is a retry, stale-acked
+// with no rejection, no error and no Event, and A drops its record when the
+// ack applies. (Deciding the Transit record first rejected it entity_present.)
+func TestHandoff_ALostAckWindowIsStaleAckedAndTheSourceDropsItsRecord(t *testing.T) {
+	h := newHx(t, nil)
+	simtest.Place(h.e, "alice", "town", "plaza")
+	res, _ := h.tick(simtest.Move("town", "alice", "east"))
+	first := arrivalOf(t, res.Outbound) // seq 1, town → wilds
+	h.tick(cloneArrive(first))          // wilds places her; its ack is lost
+	if h.zone("wilds").Placed["alice"].Seq != 1 || len(h.zone("town").Transit) != 1 {
+		t.Fatal("setup: wilds should have placed alice at seq 1 with town still holding its record")
+	}
+	h.tick(simtest.Move("wilds", "alice", "west")) // wilds → town (seq 2), the Arrive lost too
+	if rec, ok := h.zone("wilds").Transit["alice"]; !ok || rec.Entity.HandoffSeq != 2 {
+		t.Fatalf("setup: wilds should hold Transit(alice, 2): %+v", h.zone("wilds").Transit)
+	}
+
+	res, _ = h.tick(cloneArrive(first)) // A's retry of seq 1 reaches wilds
+	if len(ofType(res.Events, sim.EvCommandRejected)) != 0 || len(res.Events) != 0 {
+		t.Fatalf("the late retry was rejected or emitted: %v", res.Events)
+	}
+	if res.StaleArrivals != 1 {
+		t.Fatalf("stale arrivals = %d, want the late retry counted", res.StaleArrivals)
+	}
+	ack := ackOf(t, res.Outbound)
+	if ack.GetZoneId() != "town" || ack.GetHandoffAck().GetHandoffSeq() != 1 {
+		t.Fatalf("ack = %v", ack)
+	}
+	if rec := h.zone("wilds").Transit["alice"]; rec.Entity.HandoffSeq != 2 {
+		t.Fatal("the stale retry disturbed wilds' own Transit record")
+	}
+	h.tick(ack)
+	if len(h.zone("town").Transit) != 0 {
+		t.Fatal("town kept its seq-1 record after the ack the late retry earned")
+	}
+}
+
+// The implicit ack applies only above the mark: an Arrive at or below it is a
+// retry however the Zone's own Transit stands, so it can't drop a record.
+func TestHandoff_ANotInTheMarkRangeStillImpliesTheAck(t *testing.T) {
+	h := newHx(t, nil)
+	simtest.Place(h.e, "alice", "town", "plaza")
+	h.tick(simtest.Move("town", "alice", "east")) // town holds Transit(alice, 1)
+	h.zone("town").Placed = map[sim.EntityID]sim.PlacedMark{"alice": {Seq: 1}}
+	// An Arrive at seq 1 is at the mark: stale-acked, and town's own Transit(1)
+	// stays (it is not an implicit ack: that needs a sequence above the mark).
+	e := sim.EntityState{ID: "alice", Template: "andara.core.Character", ContentVersion: "core@1", HandoffSeq: 1}
+	res, _ := h.tick(&logv1.LoggedCommand{ZoneId: "town", ActorId: "alice", Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
+		RoomId: "plaza", Entity: e.Proto(), OriginZoneId: "wilds", OriginRoomId: "trail", HandoffSeq: 1,
+	}}})
+	if len(ofType(res.Events, sim.EvCommandRejected)) != 0 || len(h.zone("town").Transit) != 1 {
+		t.Fatalf("an Arrive at the mark dropped or rejected: events %v transit %v", res.Events, h.zone("town").Transit)
+	}
+	ackOf(t, res.Outbound)
+}
