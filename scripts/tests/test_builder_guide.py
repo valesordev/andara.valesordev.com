@@ -644,6 +644,76 @@ class GuideCheckOverall(Fixture):
         self.assertIn("docs/builders doesn't exist", err)
 
 
+class FailureLinesArePrefixedEveryLine(Fixture):
+    """The contract: one finding per line, every line prefixed. A failure that embeds a tool's own
+    multi-line output must not leave its later lines bare (issue #401)."""
+
+    def run_with(self, action, **env):
+        saved = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        try:
+            out, err = io.StringIO(), io.StringIO()
+            with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+                rc = bg.main([action, "--root", str(self.root)] + (["--cli", str(self.cli)] if "GO" not in env else []))
+            return rc, out.getvalue(), err.getvalue()
+        finally:
+            for k, v in saved.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def failing_go(self):
+        go = self.root / "failing-go"
+        go.write_text("#!/bin/sh\necho '# example.com/cmd/andara-cli' >&2\necho 'cmd/andara-cli/x.go:2:14: syntax error' >&2\nexit 1\n")
+        go.chmod(go.stat().st_mode | stat.S_IEXEC)
+        return str(go)
+
+    def assert_every_line_prefixed(self, err, prefix, expect_lines):
+        lines = err.rstrip("\n").split("\n")
+        self.assertEqual(len(lines), expect_lines, err)
+        for line in lines:
+            self.assertTrue(line.startswith(prefix + ": "), "unprefixed line %r in %r" % (line, err))
+
+    def test_a_failing_build_under_reference_check(self):
+        rc, out, err = self.run_with("reference-check", GO=self.failing_go())
+        self.assertEqual((rc, out), (1, ""))
+        self.assert_every_line_prefixed(err, "builder-reference", 2)
+        self.assertIn("go build ./cmd/andara-cli failed: # example.com/cmd/andara-cli", err)
+        self.assertIn("builder-reference: cmd/andara-cli/x.go:2:14: syntax error", err)
+
+    def test_a_failing_build_under_reference(self):
+        rc, out, err = self.run_with("reference", GO=self.failing_go())
+        self.assertEqual((rc, out), (1, ""))
+        self.assert_every_line_prefixed(err, "builder-reference", 2)
+
+    def test_a_failing_build_under_guide_check(self):
+        self.guide("a.md", "# A\n\n```\nandara-cli content approve x\n```\n")
+        rc, out, err = self.run_with("guide-check", GO=self.failing_go())
+        self.assertEqual((rc, out), (1, ""))
+        self.assert_every_line_prefixed(err, "guide-check", 2)
+
+    def test_a_failing_content_reference_under_reference_check(self):
+        self.cli.write_text("#!/bin/sh\necho 'first line of the CLI error' >&2\necho 'second line of it' >&2\nexit 7\n")
+        rc, out, err = self.run_with("reference-check")
+        self.assertEqual((rc, out), (1, ""))
+        self.assert_every_line_prefixed(err, "builder-reference", 2)
+        self.assertIn("exited 7: first line of the CLI error", err)
+        self.assertIn("builder-reference: second line of it", err)
+
+    def test_say_err_prefixes_each_line_and_keeps_an_empty_message_visible(self):
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            bg.say_err("p", "one\ntwo\nthree")
+            bg.say_err("p", "")
+        self.assertEqual(err.getvalue(), "p: one\np: two\np: three\np: \n")
+
+    def test_single_line_findings_are_unchanged(self):
+        self.ref_json.write_text(json.dumps(dict(REF, format_version=2)))
+        rc, _, err = self.run_with("reference")
+        self.assertEqual(err, "builder-reference: unsupported format_version 2\n")
+
+
 class Reference(Fixture):
     def test_writes_the_four_sections_in_order(self):
         rc, out, _ = self.run_bg("reference")
