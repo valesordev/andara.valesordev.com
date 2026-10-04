@@ -46,7 +46,7 @@ rehearsed, so that the first time it happens is not the first time we think abou
 - Alerts `WorldReadOnly` and `SimulationConsumerLagging`, runbooks `world-read-only.md` (completing
   `AW-SRV-010`'s) and `simulation-consumer-lagging.md`.
 - `make kafka-rehearsal ENV=<env>`: the degradation and zero-RPO rehearsal, results written to
-  `docs/specs/kafka/rehearsals/<date>.md`.
+  `docs/specs/slo/rehearsals/<date>.md` *(moved 2026-10-03 from `docs/specs/kafka/`, which is architecture's; the report is SRE's)*.
 - Retention decision recorded: `andara.commands.v1` infinite, `andara.events.v1` 30 d; tiered storage
   when `andara_kafka_log_bytes` says so.
 

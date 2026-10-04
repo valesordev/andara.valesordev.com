@@ -59,8 +59,8 @@ not an event.
     `make deploy` runs.
   - `andara_deploy_interruption_seconds` is recorded on `dev` rolls too. The RTO comparison
     reads `prod`'s series (`namespace="andara-prod"`) and CI's `local` run, never `dev`'s.
-- Retention of snapshot rounds: keep `snapshot.keep_rounds` (default 120 = 2 h) plus every round tagged
-  by a deploy for `snapshot.keep_deploy_rounds` (default 30).
+- Retention of snapshot rounds: keep `snapshot.keep_rounds` (default 120 = 2 h) plus every tagged round
+  (`deploy:` or `rollback:`) for `snapshot.keep_deploy_rounds` (default 30).
 
 ### Out of scope
 - The snapshot and recovery mechanisms — `AW-SRV-006`, `AW-SRV-007`.
@@ -94,7 +94,7 @@ not an event.
    `deploy.notice_lead` before the stream closes, and `andara-cli play` reconnects with backoff and
    rebinds within `session.linkdead_grace` (`AW-SRV-015` AC-9).
 7. **Given** `snapshot.keep_rounds` exceeded **when** the retention sweep runs **then** the oldest
-   untagged rounds are deleted, deploy-tagged rounds are kept, and never the newest complete round.
+   untagged rounds are deleted, tagged rounds (`deploy:` or `rollback:`) are kept, and never the newest complete round.
 8. **Given** a deploy whose image carries `andara.core` version `V` **when** `make deploy` runs
    **then** `andara.core@V` is published and active before the new pod's `/readyz` is polled, the
    activation audit record names the deploy tag, and a Builder pack compiled against `V-1` keeps
@@ -129,8 +129,17 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 | Target | Does | Exit |
 |--------|------|-----:|
 | `make deploy ENV=<env> TAG=<tag>` | publish+activate `andara.core@<tag>`; `helm upgrade --install --set image.tag`; `kubectl rollout status --timeout`; reads `andara_deploy_interruption_seconds`, prints it against RTO | `0` ok · `2` hash mismatch · `1` rollout timeout · `6` core pack rejected |
-| `make rollback ENV=<env> [ROUND=T]` | `helm rollback` to previous revision; with `ROUND`, sets `recovery.pin_round=T` for one boot | as above · `4` state_version |
-| `make snapshot-tag ENV=<env> TAG=<t>` | tags the newest round (used by `prestop`) | |
+| `make rollback ENV=<env> [ROUND=T]` | `helm upgrade --reuse-values --set image.tag=<previous> --set recovery.pin_round=<T or 0>`, **not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is the `image.tag` of the previous revision (`helm get values --revision`). With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: as above · `4` state_version · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
+| `make snapshot-tag ENV=<env> TAG=<t>` | a thin wrapper over `andara-cli snapshot tag`, which tags the newest round (`prestop` tags in-process) | |
+
+The exit codes are the scripts' (`scripts/deploy.sh`, `scripts/rollback.sh`). Through `make` every failure
+is `2`, and the evidence is the script's printed line (`AW-INF-029`'s pattern). A pod's exit code reaches
+the script by `kubectl get pod <the pod the rollout is waiting on> -n andara-<env> -o
+jsonpath={.status.containerStatuses[0].lastState.terminated.exitCode}`, falling back to
+`.state.terminated` before the first restart. Its meanings are `AW-SRV-007`'s: `3` log gap and `6` restore
+mismatch both map to the script's `1` with the pod's code in the printed line, `8` hash mismatch maps to
+`2` for `make deploy` and stays `8` for `make rollback`. `make deploy`'s own `6` is the core pack step
+and isn't the pod's `6`.
 
 ### Configuration
 
@@ -147,8 +156,8 @@ Chart value `terminationGracePeriodSeconds` default `90`, validated by AC-9.
 ### Round tags
 
 A tag is a zero-byte object at `{zone_id}/{tick}/{state_version}/{offset}.tag/{name}`; `ListRounds`
-reports tags. Retention never deletes a tagged round while it is within `keep_deploy_rounds` of the
-newest tag.
+reports tags. Retention never deletes a round carrying **any** tag (`deploy:<tag>` or `rollback:<T>`) while it is
+among the newest `keep_deploy_rounds` tagged rounds. N counts tagged rounds, not minutes.
 
 **Amended 2026-09-22, following `AW-SRV-006`'s key format.** The tag path tracked a key that had no
 tick in it, and a tag is a statement about a *round* — which an offset does not identify, because an

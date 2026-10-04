@@ -683,7 +683,7 @@ an Offset alone does not identify a Snapshot Round.
 
 **Snapshot Round** — Every owned Zone snapshotted at one tick boundary — a single consistent cut, written
 as one Snapshot per Zone. Recovery restores a **complete** round: one with every Zone present and
-hash-valid. An incomplete round is never selectable. Rounds may carry tags (`deploy:<tag>`) that
+hash-valid. An incomplete round is never selectable. Rounds may carry tags (`deploy:<tag>`, `rollback:<T>`) that
 retention keeps longer (`AW-INF-007`).
 
 **Dormant** — A Character body that exists in Zone state but is not present in any Room, because its
