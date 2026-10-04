@@ -11,9 +11,10 @@ package simtest_test
 // race detector instruments every memory access: AW-SRV-006 measured the same
 // copy at 25,000 Entities at 34.7 ms with it against 7.4–8.7 ms without
 // (2026-09-22), so the 120 ms limit is about 3.5x that. Thread CPU time of the
-// guard on 2026-10-03, on a workstation shared with other sessions (load
-// average 7–30, so not quiet): 44.1–56.2 ms over 10 runs; 46–67 ms with
-// 2 x nproc busy processes running, worst 89.8 ms once at load 7.
+// guard on 2026-10-03 at load average 1.3–1.7 (the quietest this shared
+// workstation gets): 36.1–50.7 ms over 10 runs, so the limit is 2.4x the worst
+// quiet reading. At load average 7–30: 44.1–56.2 ms over 10 runs; 46–67 ms
+// with 2 x nproc busy processes running, worst 89.8 ms once at load 7.
 //
 // The alternative was a //go:build !race on the whole test, which is what the
 // numbers first suggested. But CI runs `make check` and nothing else, and
