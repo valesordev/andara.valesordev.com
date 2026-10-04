@@ -152,12 +152,6 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: Goto;
     case: "goto";
-  } | {
-    /**
-     * @generated from field: andara.log.v1.HandoffClosed handoff_closed = 20;
-     */
-    value: HandoffClosed;
-    case: "handoffClosed";
   } | { case: undefined; value?: undefined };
 };
 
@@ -288,7 +282,8 @@ export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
    * The Entity's handoff sequence for this move (AW-SRV-028): the source
    * incremented it when the Entity left, and it equals entity.handoff_seq.
    * The target takes this field as the authority. Retries of one handoff carry
-   * the same value, which is what makes a retry recognisable.
+   * the same value, which is what makes a retry recognisable. The source
+   * increments before it produces, so the first handoff is 1 and 0 is malformed.
    *
    * @generated from field: uint64 handoff_seq = 6;
    */
@@ -305,9 +300,8 @@ export declare const ArriveSchema: GenMessage<Arrive>;
  * The target's answer to an Arrive it has placed, or recognised as one it
  * already placed or as stale (AW-SRV-028). Produced by the target's tick to
  * the source Zone's partition (LoggedCommand.zone_id is the source Zone). The
- * source drops its transit record for (entity_id, handoff_seq) and produces a
- * HandoffClosed. An ack that matches no transit record is a duplicate and is
- * ignored. An Arrive for an Entity the source still holds in transit, with a
+ * source drops its transit record for (entity_id, handoff_seq). An ack that
+ * matches no transit record is a duplicate and is ignored. An Arrive for an Entity the source still holds in transit, with a
  * higher handoff_seq, is an implicit ack of that record. Never a verb.
  *
  * @generated from message andara.log.v1.HandoffAck
@@ -329,34 +323,6 @@ export declare type HandoffAck = Message<"andara.log.v1.HandoffAck"> & {
  * Use `create(HandoffAckSchema)` to create a new message.
  */
 export declare const HandoffAckSchema: GenMessage<HandoffAck>;
-
-/**
- * The source's proof that it has stopped producing Arrives for
- * (entity_id, handoff_seq) (AW-SRV-028). Produced by the source's tick to the
- * target Zone's partition after it applied the HandoffAck, so it is ordered
- * after every Arrive the source produced there: the target applies every
- * retry of that handoff before it applies this. The target then drops the
- * handoff from its open arrivals. Never a verb.
- *
- * @generated from message andara.log.v1.HandoffClosed
- */
-export declare type HandoffClosed = Message<"andara.log.v1.HandoffClosed"> & {
-  /**
-   * @generated from field: string entity_id = 1;
-   */
-  entityId: string;
-
-  /**
-   * @generated from field: uint64 handoff_seq = 2;
-   */
-  handoffSeq: bigint;
-};
-
-/**
- * Describes the message andara.log.v1.HandoffClosed.
- * Use `create(HandoffClosedSchema)` to create a new message.
- */
-export declare const HandoffClosedSchema: GenMessage<HandoffClosed>;
 
 /**
  * A Session enters the World as a Character (AW-SRV-014). Produced by the

@@ -20,7 +20,7 @@
 // @generated from file andara/state/v1/zone_state.proto (package andara.state.v1, syntax proto3)
 /* eslint-disable */
 
-import type { GenEnum, GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
+import type { GenFile, GenMessage } from "@bufbuild/protobuf/codegenv2";
 import type { Message } from "@bufbuild/protobuf";
 import type { LoggedCommand } from "../../log/v1/log_pb";
 import type { ComponentValue } from "../../content/v1/zone_pb";
@@ -116,14 +116,15 @@ export declare type ZoneState = Message<"andara.state.v1.ZoneState"> & {
   transit: TransitRecord[];
 
   /**
-   * Arrive handoffs into this Zone whose HandoffClosed has not been applied
-   * (AW-SRV-028), sorted by entity_id. They are what lets a late retry be
-   * recognised as stale after the Entity has moved on. Hashed; empty adds
-   * nothing.
+   * The highest handoff_seq this Zone has placed for each Entity that arrived
+   * by handoff (AW-SRV-028), sorted by entity_id and kept for good. A handoff
+   * sequence only grows along an Entity's life, so an Arrive at or below this
+   * mark is a retry or stale, however late it comes, and no other Zone or
+   * record is needed to know that. Hashed; empty adds nothing.
    *
-   * @generated from field: repeated andara.state.v1.OpenArrivals arrivals = 10;
+   * @generated from field: repeated andara.state.v1.PlacedArrival placed = 10;
    */
-  arrivals: OpenArrivals[];
+  placed: PlacedArrival[];
 };
 
 /**
@@ -171,7 +172,7 @@ export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
   /**
    * The Tick of the last Arrive produced for it, and how many have been
    * produced. The next retry is due at last_attempt_tick plus
-   * min(sim.handoff_retry_ticks × 2^(attempts-1), sim.handoff_retry_max_ticks).
+   * min(sim.handoff_retry_ticks × 2^min(attempts-1, 16), sim.handoff_retry_max_ticks).
    *
    * @generated from field: uint64 last_attempt_tick = 5;
    */
@@ -181,14 +182,6 @@ export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
    * @generated from field: uint32 attempts = 6;
    */
   attempts: number;
-
-  /**
-   * A Command for the Entity that arrived while it was in transit and is
-   * carried out when the handoff resolves.
-   *
-   * @generated from field: andara.state.v1.TransitPending pending = 7;
-   */
-  pending?: TransitPending | undefined;
 };
 
 /**
@@ -198,95 +191,27 @@ export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
 export declare const TransitRecordSchema: GenMessage<TransitRecord>;
 
 /**
- * @generated from message andara.state.v1.TransitPending
- */
-export declare type TransitPending = Message<"andara.state.v1.TransitPending"> & {
-  /**
-   * @generated from field: andara.state.v1.TransitPending.Kind kind = 1;
-   */
-  kind: TransitPending_Kind;
-
-  /**
-   * UNBIND: the UnbindCharacter's reason, as andara.log.v1.UnbindReason.
-   *
-   * @generated from field: int32 unbind_reason = 2;
-   */
-  unbindReason: number;
-
-  /**
-   * MARK_LINKDEAD: the MarkLinkdead's tick counts, which the producer
-   * converted from seconds, so a replay reads what was produced.
-   *
-   * @generated from field: uint64 grace_ticks = 3;
-   */
-  graceTicks: bigint;
-
-  /**
-   * @generated from field: uint64 extension_ticks = 4;
-   */
-  extensionTicks: bigint;
-
-  /**
-   * @generated from field: uint64 max_ticks = 5;
-   */
-  maxTicks: bigint;
-};
-
-/**
- * Describes the message andara.state.v1.TransitPending.
- * Use `create(TransitPendingSchema)` to create a new message.
- */
-export declare const TransitPendingSchema: GenMessage<TransitPending>;
-
-/**
- * @generated from enum andara.state.v1.TransitPending.Kind
- */
-export enum TransitPending_Kind {
-  /**
-   * @generated from enum value: KIND_UNSPECIFIED = 0;
-   */
-  KIND_UNSPECIFIED = 0,
-
-  /**
-   * @generated from enum value: UNBIND = 1;
-   */
-  UNBIND = 1,
-
-  /**
-   * @generated from enum value: MARK_LINKDEAD = 2;
-   */
-  MARK_LINKDEAD = 2,
-}
-
-/**
- * Describes the enum andara.state.v1.TransitPending.Kind.
- */
-export declare const TransitPending_KindSchema: GenEnum<TransitPending_Kind>;
-
-/**
- * An Entity's handoffs into this Zone that are still open: no HandoffClosed has
- * been applied for them. Sorted by entity_id, and open_seqs ascending. An Arrive
- * whose handoff_seq is in open_seqs is a retry of one already placed.
+ * The highest handoff_seq placed in this Zone for one Entity.
  *
- * @generated from message andara.state.v1.OpenArrivals
+ * @generated from message andara.state.v1.PlacedArrival
  */
-export declare type OpenArrivals = Message<"andara.state.v1.OpenArrivals"> & {
+export declare type PlacedArrival = Message<"andara.state.v1.PlacedArrival"> & {
   /**
    * @generated from field: string entity_id = 1;
    */
   entityId: string;
 
   /**
-   * @generated from field: repeated uint64 open_seqs = 2;
+   * @generated from field: uint64 handoff_seq = 2;
    */
-  openSeqs: bigint[];
+  handoffSeq: bigint;
 };
 
 /**
- * Describes the message andara.state.v1.OpenArrivals.
- * Use `create(OpenArrivalsSchema)` to create a new message.
+ * Describes the message andara.state.v1.PlacedArrival.
+ * Use `create(PlacedArrivalSchema)` to create a new message.
  */
-export declare const OpenArrivalsSchema: GenMessage<OpenArrivals>;
+export declare const PlacedArrivalSchema: GenMessage<PlacedArrival>;
 
 /**
  * One Entity as the simulation holds it. The Go form is sim.EntityState; a

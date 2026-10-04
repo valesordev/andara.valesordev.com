@@ -130,12 +130,16 @@ builds the durable cross-Zone handoff and does **not** add a rejection: under to
 target never answers, and the Entity waits safely in the source's `Transit`. This story's rule, that a
 faulted Zone's records are consumed and rejected, is what lets the target answer, so the rejection is this
 story's:
-- an `Arrive` consumed and rejected for a faulted Zone produces
+- **A faulted Zone decides an `Arrive` by `AW-SRV-028`'s dedup rule first**, from its frozen state: a retry
+  of a handoff it already placed (`handoff_seq` at or below its mark for the Entity) is acked or stale-acked
+  like any other, never rejected. Rejecting it would make the source restore the Entity at home while the
+  frozen Zone still holds it, and a restart would bring it back: two bodies. Only an `Arrive` that would be a
+  new handoff is rejected;
+- a new handoff consumed and rejected for a faulted Zone produces
   `HandoffRejected{entity_id, handoff_seq, code: "zone_faulted"}` to the source Zone's Partition
   (`andara.log.v1.LoggedCommand` field 14, held for it), and `andara_handoff_rejected_total{code}` counts it;
-- the source applies it: it drops the transit record, restores the Entity to its origin Room
+- the source applies it: it drops the transit record and restores the Entity to its origin Room
   (`TransitRecord.entity.room_id`; the Zone's fallback Room with `EntityRelocated{room_removed}` if that Room
-  is gone), emits `CharacterArrived{from_direction: reverse of the move's direction}`, and carries out any
-  pending Unbind or MarkLinkdead the record holds.
-It needs an AC for each of those, and the size may want revisiting.
-
+  is gone), emitting `CharacterArrived{from_direction: reverse of the move's direction}`.
+It needs an AC for each of those, including the retry-of-a-placed-handoff case, and the size may want
+revisiting.

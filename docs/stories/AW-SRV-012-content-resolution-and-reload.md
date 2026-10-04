@@ -112,7 +112,7 @@ func (l *Loader) Apply(r Resolved) error   // validates, builds, produces Conten
 // CONTRACT SKETCH — as landed 2026-09-24 in docs/specs/protocol (the protos are normative)
 // zone.proto ZoneDefinition
 string fallback_room = 6;         // RoomID in this Zone; empty or absent is `fallback_missing`
-// log.proto LoggedCommand oneof — 16 is unbind_character; 13/14 are AW-SRV-028's
+// log.proto LoggedCommand oneof — 16 is unbind_character; 13 is AW-SRV-028's HandoffAck, 14 is held for AW-SRV-027's HandoffRejected
 ContentSwap content_swap = 17;    // pack_id = 1, version = 2, world_digest = 3
 // event.proto EventEnvelope.payload oneof — 18 is Resync
 EntityRelocated entity_relocated = 19;  // zone_id, entity_name, from_room_id, to_room_id, reason
