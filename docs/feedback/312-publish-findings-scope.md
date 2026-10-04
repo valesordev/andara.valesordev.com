@@ -64,9 +64,11 @@ Fixtures. The incumbent is pack `town` with Zone `town` (Rooms `plaza`, `shop`),
    Exit **when** `acme@2` publishes with the reverse Exit removed **then** the publish succeeds and
    `warnings` carries `town`'s `missing_reverse_exit` with `pack` `town`, printed `town/<file>: …`. **And
    when** `acme` publishes with no change to that Exit **then** a `missing_reverse_exit` that `town`
-   already had is not reported.
+   already had is not reported. **And given** the same file already has another one-way Exit **then** the
+   newly caused warning is still reported (the key is the Exit, not the file).
 10. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
-   the dropped-Zone filter makes 2 and 3 fail; filtering by path alone makes 5 fail; leaving the
+   the dropped-Zone filter makes 2 and 3 fail; suppressing every Exit into the dropped Zone's id,
+   whatever its target Room, makes 3 fail; filtering by path alone makes 5 fail; leaving the
    `<pack>/` prefix on foreign findings makes 7 fail; dropping the 10.6 report makes 8 fail; reporting every foreign warning makes 5 fail; dropping the new-warning comparison makes 9 fail; keying the CLI on `line` `0` instead of `pack` makes the `pack_mismatch` half of 7 fail.
 
 On merge, `docs/builders/04-your-first-zone.md` loses its "ignore it" paragraph about the

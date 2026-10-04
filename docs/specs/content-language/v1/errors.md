@@ -104,7 +104,7 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
     3. **Only the publisher's own, and what the publish newly causes.** An error attributed to another
        pack is not reported, except as rule 10.6 says. A warning attributed to another pack is reported
        only if it is **new**: the gate builds the World in effect as well as the World with this
-       version, and a warning in the second and not the first (keyed by pack, file, code and chain)
+       version, and a warning in the second and not the first (keyed by pack, file, code, and the Zone, Room and Exit it names, since the sim's `Chain` is empty for a reverse-exit warning)
        is the publish's doing, such as a removed reverse Exit that leaves an active pack's Exit
        one-way. It is reported in 10.6's form (`pack` set, empty chain, `line` and `col` `0`), in
        `PublishVersionResponse.warnings`. A warning in both is the other pack's own, shown when that
