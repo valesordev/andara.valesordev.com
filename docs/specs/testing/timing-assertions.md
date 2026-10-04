@@ -75,7 +75,10 @@ and the allocation count and bytes at that commit. **The factor changes only by 
 and only after the observed allocation count at that commit is within 1.0× of its recorded value**, so a re-measurement
 on a tree whose copy has crept can't raise the limit and hide it. For the race build that comes to a factor of about 13–14 or more (134.6 ms × 1.5 ≈ 200 ms), and
 implementation sets the figure from its own runs. The same measurement sets the non-race factor.
-`make check` runs the guard in the suite, so the suite is the condition that counts.
+`make check` runs the guard in the suite, so the suite is the condition that counts. **Each guard has
+its own factor constant.** A factor shared between guards moves the limit of every one that reads it
+(`TestContentSwapStaysInsideHalfTheTickBudget` read `stallFactor` too, and implementation was right to
+give the snapshot guard `snapshotStallFactor` and leave the other untouched).
 
 Two comments are stale. `stallfactor_norace_test.go` pairs 10,000-Entity timings (2.7 ms, 4.8 ms)
 with a 5 ms budget. The race file's 2.7 ms and 12.6 ms are 10,000-Entity figures too. The "24.7 ms

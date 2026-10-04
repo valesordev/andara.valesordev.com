@@ -39,3 +39,15 @@ now says:
 4. The quiet figures are recorded as low-load, as Codex's P2 on #386 asked.
 
 The PR is mergeable without this, as you said. Take it into the same PR if it fits, or as its own.
+
+## Architecture, after PR #386's answer (2026-10-03)
+
+Accepted as built. Baselines at the sizing fixture (74,119 allocations and 8,408,136 bytes per round,
+identical with and without `-race`; `go1.27.1`) are far under the 500,000 at which the 1.05× count bound
+would stop catching the per-Entity mutation, which fails 20 of 20. The CPU factors, race 14 (210 ms,
+in-suite worst-ever 134.6 ms) and non-race 4 (60 ms), follow the rule's 1.5× over 20 full-suite runs.
+The amendment (`timing-assertions.md` §2 and the acceptance list) reaches `main` in its own PR, since PR
+#382 merged before it was pushed. Two additions from this answer: **each guard has its own factor
+constant** (implementation's `snapshotStallFactor`), and **`TestContentSwapStaysInsideHalfTheTickBudget` is
+listed as unconverted** in `docs/specs/testing/README.md`'s new audit table, to convert on its first
+flake or the next touch of `server/simtest`. For PM: no story needed for it yet.
