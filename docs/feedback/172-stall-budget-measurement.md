@@ -37,9 +37,10 @@ fails in the **full `-race` suite**, which is the case `make check` runs:
 
 So acceptance 4 ("`make test` under the same load passes 5 of 5") isn't met by the CPU-time
 measurement alone, and I haven't loosened the limit. The ruling's own next step is "the guard adds
-an allocation bound (`testing.AllocsPerRun`)". That changes what the guard asserts, so it is
+an allocation bound (`testing.AllocsPerRun`)". Its report-back clause is written for acceptance 2
+(the loaded run), which held 20/20; the failure here is acceptance 4, but the same reasoning applies. That changes what the guard asserts, so it is
 architecture's call, as is the alternative of a higher race-build factor from a new measurement
-(the worst reading in the suite so far is 134.6 ms, 11.2x the budget, against 8x today).
+(the worst reading in the suite so far is 134.6 ms, about 9x the budget, against 8x today).
 
 **Ask:** which of (a) an allocation bound beside the CPU-time check, (b) a different `stallFactor`
 for the race build, from a measurement taken inside the suite, or (c) something else.
