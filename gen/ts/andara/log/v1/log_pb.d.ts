@@ -115,8 +115,22 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
     case: "arrive";
   } | {
     /**
-     * 13 and 14 are AW-SRV-028's (HandoffAck, HandoffRejected).
+     * @generated from field: andara.log.v1.HandoffAck handoff_ack = 13;
+     */
+    value: HandoffAck;
+    case: "handoffAck";
+  } | {
+    /**
+     * AW-SRV-027's: the answer a faulted target gives to a new handoff.
+     * Pinned here so that story builds to a fixed contract; AW-SRV-028 neither
+     * produces nor applies it.
      *
+     * @generated from field: andara.log.v1.HandoffRejected handoff_rejected = 14;
+     */
+    value: HandoffRejected;
+    case: "handoffRejected";
+  } | {
+    /**
      * @generated from field: andara.log.v1.BindCharacter bind_character = 15;
      */
     value: BindCharacter;
@@ -222,8 +236,9 @@ export declare const GotoSchema: GenMessage<Goto>;
 
 /**
  * The cross-Zone half of a Move (ADR-0001 rule 4, AW-SRV-003 AC-9). The
- * source Zone's tick removed the Entity from its own state and produced this
- * to the target Zone's partition; the target's tick places it. It is never a
+ * source Zone's tick moved the Entity out of its Entities into its Transit
+ * (AW-SRV-028) and produced this to the target Zone's partition; the target's
+ * tick places it. It is never a
  * player's verb — the verb table has no entry that binds it, so `parse` cannot
  * produce one — and it is always produced by a tick, so it is already ordered
  * with respect to everything else in the target Zone.
@@ -257,9 +272,10 @@ export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
   entity?: Entity | undefined;
 
   /**
-   * Where it left from, so a target that no longer has room_id — content
-   * moved under the log — can send it back rather than lose it. Cleared on
-   * the way back, so a bounce is one hop, never a loop.
+   * Where it left from: the source Zone, which the target produces its
+   * HandoffAck to, and the Room it stood in. A move and a Goto both write
+   * them. They are the arrival's origin; nothing bounces on them (AW-SRV-012
+   * places an arrival whose Room is gone in the Zone's fallback Room).
    *
    * @generated from field: string origin_zone_id = 4;
    */
@@ -269,6 +285,17 @@ export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
    * @generated from field: string origin_room_id = 5;
    */
   originRoomId: string;
+
+  /**
+   * The Entity's handoff sequence for this move (AW-SRV-028): the source
+   * incremented it when the Entity left, and it equals entity.handoff_seq.
+   * The target takes this field as the authority. Retries of one handoff carry
+   * the same value, which is what makes a retry recognisable. The source
+   * increments before it produces, so the first handoff is 1 and 0 is malformed.
+   *
+   * @generated from field: uint64 handoff_seq = 6;
+   */
+  handoffSeq: bigint;
 };
 
 /**
@@ -276,6 +303,75 @@ export declare type Arrive = Message<"andara.log.v1.Arrive"> & {
  * Use `create(ArriveSchema)` to create a new message.
  */
 export declare const ArriveSchema: GenMessage<Arrive>;
+
+/**
+ * The target's answer to an Arrive it has placed, or recognised as one it
+ * already placed or as stale (AW-SRV-028). Produced by the target's tick to
+ * the source Zone's partition (LoggedCommand.zone_id is the source Zone). The
+ * source drops its transit record for (entity_id, handoff_seq). An ack that
+ * matches no transit record is a duplicate and is ignored. An Arrive for an
+ * Entity the source still holds in transit, with a higher handoff_seq, is an
+ * implicit ack of that record. Never a verb.
+ *
+ * @generated from message andara.log.v1.HandoffAck
+ */
+export declare type HandoffAck = Message<"andara.log.v1.HandoffAck"> & {
+  /**
+   * @generated from field: string entity_id = 1;
+   */
+  entityId: string;
+
+  /**
+   * @generated from field: uint64 handoff_seq = 2;
+   */
+  handoffSeq: bigint;
+};
+
+/**
+ * Describes the message andara.log.v1.HandoffAck.
+ * Use `create(HandoffAckSchema)` to create a new message.
+ */
+export declare const HandoffAckSchema: GenMessage<HandoffAck>;
+
+/**
+ * A faulted target's refusal of a NEW handoff (AW-SRV-027): the Arrive was
+ * consumed and not placed, the target's placed mark for the Entity is set to
+ * handoff_seq, and the source restores the Entity at home. A retry of a
+ * handoff the target already placed is acked, never rejected, and a retry of
+ * one it already rejected is rejected again, so a lost rejection is repeated
+ * until the source applies one. The source applies a HandoffRejected only when
+ * its Transit[entity_id] has handoff_seq equal to this one; a rejection that
+ * matches no record (none, or another sequence) is a duplicate, consumed with
+ * no Event and no state change, and so is any HandoffRejected a faulted source
+ * receives (its record stays). Produced by the target's tick to the source
+ * Zone's partition (LoggedCommand.zone_id is the source Zone). Never a verb.
+ *
+ * @generated from message andara.log.v1.HandoffRejected
+ */
+export declare type HandoffRejected = Message<"andara.log.v1.HandoffRejected"> & {
+  /**
+   * @generated from field: string entity_id = 1;
+   */
+  entityId: string;
+
+  /**
+   * @generated from field: uint64 handoff_seq = 2;
+   */
+  handoffSeq: bigint;
+
+  /**
+   * `zone_faulted`. A string so a later reason needs no schema change.
+   *
+   * @generated from field: string code = 3;
+   */
+  code: string;
+};
+
+/**
+ * Describes the message andara.log.v1.HandoffRejected.
+ * Use `create(HandoffRejectedSchema)` to create a new message.
+ */
+export declare const HandoffRejectedSchema: GenMessage<HandoffRejected>;
 
 /**
  * A Session enters the World as a Character (AW-SRV-014). Produced by the
@@ -545,6 +641,15 @@ export declare type Entity = Message<"andara.log.v1.Entity"> & {
    * @generated from field: string name = 5;
    */
   name: string;
+
+  /**
+   * How many handoffs the Entity has been through (AW-SRV-028): 0 for one that
+   * never left its first Zone, incremented by the source each time it leaves.
+   * Field 5 is `name` since AW-SRV-014, so this is 6.
+   *
+   * @generated from field: uint64 handoff_seq = 6;
+   */
+  handoffSeq: bigint;
 };
 
 /**

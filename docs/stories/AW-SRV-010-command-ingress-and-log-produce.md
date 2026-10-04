@@ -250,8 +250,8 @@ CLAUDE.md §8, plus:
 
 - **Inherited from `AW-SRV-003` (2026-09-18 review of PR #30), contract-bearing:**
   1. **The Gateway produces only what `command.Parse` returned.** `andara.log.v1.LoggedCommand`
-     now carries `Arrive` with an Entity by value (and `AW-SRV-028` adds `HandoffAck`/
-     `HandoffRejected`); a client-supplied record reaching the log would forge World state. The
+     now carries `Arrive` with an Entity by value (and `AW-SRV-028` adds `HandoffAck`, and
+     `AW-SRV-027` `HandoffRejected`); a client-supplied record reaching the log would forge World state. The
      invariant is security, not hygiene: `Submit` accepts `Intent`, never a `LoggedCommand`, and a
      test asserts the produced record is byte-equal to `Parse`'s output plus the Gateway's own
      correlation fields.

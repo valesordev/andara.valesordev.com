@@ -64,6 +64,58 @@ message ZoneState {
   // same point on replay — so it is hashed, and snapshotted, as it stands.
   bool faulted = 7;
   uint64 faulted_tick = 8;
+
+  // Entities that have left this Zone and are not yet acknowledged
+  // (AW-SRV-028), sorted by entity_id. They are not in `entities`. Hashed, so
+  // a restore must carry them, and recovery retries them from here. Empty adds
+  // nothing to the hash.
+  repeated TransitRecord transit = 9;
+
+  // The highest handoff_seq this Zone has decided for each Entity that arrived
+  // by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+  // and kept for good. A handoff
+  // sequence only grows along an Entity's life, so an Arrive at or below this
+  // mark is a retry or stale, however late it comes, and no other Zone or
+  // record is needed to know that. The entry also says whether that decision
+  // was a rejection, which a retry of the same handoff is answered with again.
+  // Hashed, rejected included when true; empty adds nothing.
+  repeated PlacedArrival placed = 10;
+}
+
+// An Entity in transit out of this Zone: the Entity as it will arrive, and
+// what the retry and a restore at home need.
+message TransitRecord {
+  // The Entity as the target will receive it. entity.room_id is the Room it
+  // left from, which a restore at home would use, and entity.handoff_seq is
+  // the handoff's sequence. Never dormant or linkdead: those bodies never move.
+  EntityState entity = 1;
+
+  string to_zone_id = 2;
+
+  // The Room in to_zone_id the Arrive names.
+  string room_id = 3;
+
+  // The Direction the move went, empty for a Goto. The reverse of it is the
+  // from_direction of a restore at home.
+  string direction = 4;
+
+  // Deliberately no retry schedule: when the next Arrive is due comes from
+  // config (sim.handoff_retry_ticks), and config never enters hashed state. The
+  // engine keeps the schedule in memory, and a record found after a recovery
+  // is due on the first live tick.
+}
+
+// The highest handoff_seq decided in this Zone for one Entity.
+message PlacedArrival {
+  string entity_id = 1;
+  uint64 handoff_seq = 2;
+
+  // True when the Zone's decision for handoff_seq was a rejection
+  // (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+  // same answer back: a placed handoff is acked again, a rejected one is
+  // rejected again. Acking a rejected handoff would make the source drop a
+  // transit record whose Entity was never placed and never restored.
+  bool rejected = 3;
 }
 
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
@@ -126,4 +178,7 @@ message EntityState {
   // AW-SRV-015; see linkdead_since_tick (7).
   uint64 linkdead_ceiling_tick = 11;
   uint64 linkdead_extension_ticks = 12;
+
+  // AW-SRV-028; see andara.log.v1.Entity.handoff_seq. 0 adds nothing to the hash.
+  uint64 handoff_seq = 13;
 }

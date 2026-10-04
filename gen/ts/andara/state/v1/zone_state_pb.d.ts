@@ -104,6 +104,30 @@ export declare type ZoneState = Message<"andara.state.v1.ZoneState"> & {
    * @generated from field: uint64 faulted_tick = 8;
    */
   faultedTick: bigint;
+
+  /**
+   * Entities that have left this Zone and are not yet acknowledged
+   * (AW-SRV-028), sorted by entity_id. They are not in `entities`. Hashed, so
+   * a restore must carry them, and recovery retries them from here. Empty adds
+   * nothing to the hash.
+   *
+   * @generated from field: repeated andara.state.v1.TransitRecord transit = 9;
+   */
+  transit: TransitRecord[];
+
+  /**
+   * The highest handoff_seq this Zone has decided for each Entity that arrived
+   * by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+   * and kept for good. A handoff
+   * sequence only grows along an Entity's life, so an Arrive at or below this
+   * mark is a retry or stale, however late it comes, and no other Zone or
+   * record is needed to know that. The entry also says whether that decision
+   * was a rejection, which a retry of the same handoff is answered with again.
+   * Hashed, rejected included when true; empty adds nothing.
+   *
+   * @generated from field: repeated andara.state.v1.PlacedArrival placed = 10;
+   */
+  placed: PlacedArrival[];
 };
 
 /**
@@ -111,6 +135,83 @@ export declare type ZoneState = Message<"andara.state.v1.ZoneState"> & {
  * Use `create(ZoneStateSchema)` to create a new message.
  */
 export declare const ZoneStateSchema: GenMessage<ZoneState>;
+
+/**
+ * An Entity in transit out of this Zone: the Entity as it will arrive, and
+ * what the retry and a restore at home need.
+ *
+ * @generated from message andara.state.v1.TransitRecord
+ */
+export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
+  /**
+   * The Entity as the target will receive it. entity.room_id is the Room it
+   * left from, which a restore at home would use, and entity.handoff_seq is
+   * the handoff's sequence. Never dormant or linkdead: those bodies never move.
+   *
+   * @generated from field: andara.state.v1.EntityState entity = 1;
+   */
+  entity?: EntityState | undefined;
+
+  /**
+   * @generated from field: string to_zone_id = 2;
+   */
+  toZoneId: string;
+
+  /**
+   * The Room in to_zone_id the Arrive names.
+   *
+   * @generated from field: string room_id = 3;
+   */
+  roomId: string;
+
+  /**
+   * The Direction the move went, empty for a Goto. The reverse of it is the
+   * from_direction of a restore at home.
+   *
+   * @generated from field: string direction = 4;
+   */
+  direction: string;
+};
+
+/**
+ * Describes the message andara.state.v1.TransitRecord.
+ * Use `create(TransitRecordSchema)` to create a new message.
+ */
+export declare const TransitRecordSchema: GenMessage<TransitRecord>;
+
+/**
+ * The highest handoff_seq decided in this Zone for one Entity.
+ *
+ * @generated from message andara.state.v1.PlacedArrival
+ */
+export declare type PlacedArrival = Message<"andara.state.v1.PlacedArrival"> & {
+  /**
+   * @generated from field: string entity_id = 1;
+   */
+  entityId: string;
+
+  /**
+   * @generated from field: uint64 handoff_seq = 2;
+   */
+  handoffSeq: bigint;
+
+  /**
+   * True when the Zone's decision for handoff_seq was a rejection
+   * (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+   * same answer back: a placed handoff is acked again, a rejected one is
+   * rejected again. Acking a rejected handoff would make the source drop a
+   * transit record whose Entity was never placed and never restored.
+   *
+   * @generated from field: bool rejected = 3;
+   */
+  rejected: boolean;
+};
+
+/**
+ * Describes the message andara.state.v1.PlacedArrival.
+ * Use `create(PlacedArrivalSchema)` to create a new message.
+ */
+export declare const PlacedArrivalSchema: GenMessage<PlacedArrival>;
 
 /**
  * One Entity as the simulation holds it. The Go form is sim.EntityState; a
@@ -223,6 +324,13 @@ export declare type EntityState = Message<"andara.state.v1.EntityState"> & {
    * @generated from field: uint64 linkdead_extension_ticks = 12;
    */
   linkdeadExtensionTicks: bigint;
+
+  /**
+   * AW-SRV-028; see andara.log.v1.Entity.handoff_seq. 0 adds nothing to the hash.
+   *
+   * @generated from field: uint64 handoff_seq = 13;
+   */
+  handoffSeq: bigint;
 };
 
 /**

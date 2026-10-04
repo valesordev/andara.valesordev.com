@@ -112,7 +112,7 @@ func (l *Loader) Apply(r Resolved) error   // validates, builds, produces Conten
 // CONTRACT SKETCH — as landed 2026-09-24 in docs/specs/protocol (the protos are normative)
 // zone.proto ZoneDefinition
 string fallback_room = 6;         // RoomID in this Zone; empty or absent is `fallback_missing`
-// log.proto LoggedCommand oneof — 16 is unbind_character; 13/14 are AW-SRV-028's
+// log.proto LoggedCommand oneof — 16 is unbind_character; 13 is AW-SRV-028's HandoffAck, 14 is held for AW-SRV-027's HandoffRejected
 ContentSwap content_swap = 17;    // pack_id = 1, version = 2, world_digest = 3
 // event.proto EventEnvelope.payload oneof — 18 is Resync
 EntityRelocated entity_relocated = 19;  // zone_id, entity_name, from_room_id, to_room_id, reason
@@ -336,7 +336,7 @@ stale comments.
      are architecture's under the lane table.
   3. **Three protocol additions**, all under `docs/specs/protocol/`. `ZoneDefinition.fallback_room`
      at **6**, which is free. `LoggedCommand.content_swap` — the Interface Contract sketch says
-     **16, but 16 is already `unbind_character`** and 13/14 are held for `AW-SRV-028`, so the next
+     **16, but 16 is already `unbind_character`** and 13 is `AW-SRV-028`'s and 14 is `AW-SRV-027`'s, so the next
      free number is **17**. `EntityRelocated` in `event.proto`'s payload oneof at **19**; the sketch
      gives no number and 18 is `Resync`. Until these land, **AC-2, AC-3, AC-9 and AC-10 cannot be
      implemented**: there is no Command to record the swap in the log, no Event to carry the

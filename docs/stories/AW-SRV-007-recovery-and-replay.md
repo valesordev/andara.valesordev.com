@@ -512,6 +512,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
 ## Definition of done
 
 CLAUDE.md §8, plus:
+- **The recovery test includes a handoff in flight** (moved here from `AW-SRV-028`'s Definition of done, since
+  this story depends on it): a `Transit` record at the recovered hash, retried on the first live tick, with the
+  Character arriving exactly once.
 - **The live observation is `AW-INF-032`'s run (added 2026-10-02, feedback item 4).** This story's
   §8 record cites `make stack-recover`'s reads of `andara_recovery_state_hash_match`,
   `andara_recovery_duration_seconds{phase}`, `andara_recovery_round_tick`,

@@ -1,7 +1,7 @@
 {
   "uid": "andara-tick-health",
   "title": "Andara — tick health and log lag",
-  "description": "The four SLIs a simulation operator watches: tick duration against the Tick Budget (ADR-0008), tick overruns, simulation lag, and per-partition consumer lag. Metric names come from AW-SRV-002; do not rename a panel without renaming the metric.",
+  "description": "What a simulation operator watches: tick duration against the Tick Budget (ADR-0008), tick overruns, simulation lag, and per-partition consumer lag, plus the Cross-Zone handoff panels (AW-SRV-028). Metric names come from AW-SRV-002 and AW-SRV-028; do not rename a panel without renaming the metric.",
   "tags": ["andara", "slo"],
   "timezone": "browser",
   "editable": false,
@@ -143,6 +143,59 @@
       "options": { "showHeader": true },
       "targets": [
         { "refId": "A", "expr": "andara_build_info", "instant": true, "format": "table" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Cross-Zone handoffs: in transit, retries, stale arrivals",
+      "description": "Ships with AW-SRV-028, so it has no data before that server runs. Handoffs in transit above 0 is ordinary traffic; above 0 for minutes with retries/s rising is the broker or the target Zone's Partition (docs/runbooks/simulation-lagging.md, Diagnose step 7). Stale arrivals are retries, or older arrivals, that the target consumed and acknowledged without placing anything; a rise alongside the retries means they are not settling.",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 25 },
+      "fieldConfig": {
+        "defaults": { "unit": "short" },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "retries/s" },
+            "properties": [{ "id": "custom.axisPlacement", "value": "right" }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "stale arrivals/s" },
+            "properties": [{ "id": "custom.axisPlacement", "value": "right" }]
+          }
+        ]
+      },
+      "targets": [
+        { "refId": "A", "expr": "andara_handoffs_in_transit", "legendFormat": "in transit" },
+        { "refId": "B", "expr": "rate(andara_handoff_retries_total[5m])", "legendFormat": "retries/s" },
+        { "refId": "C", "expr": "rate(andara_handoff_stale_arrivals_total[5m])", "legendFormat": "stale arrivals/s" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Handoff marks (Placed), against the runbook thresholds",
+      "description": "Ships with AW-SRV-028. One mark per Entity that has arrived in a Zone by handoff, summed over Zones; nothing prunes them, so this only rises while the World runs. The lines are the runbook's two thresholds, both unmeasured: 25,000 is where to start measuring and plan pruning, 100,000 is pruning before the next release (docs/runbooks/simulation-lagging.md, The handoff marks).",
+      "datasource": { "type": "prometheus", "uid": "andara-prometheus" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 25 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "thresholdsStyle": { "mode": "line" } },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "orange", "value": 25000 },
+              { "color": "red", "value": 100000 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "showLegend": false } },
+      "targets": [
+        { "refId": "A", "expr": "andara_handoff_placed_entries", "legendFormat": "marks" }
       ]
     }
   ]
