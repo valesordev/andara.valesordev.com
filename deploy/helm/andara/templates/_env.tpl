@@ -78,6 +78,18 @@ ANDARA_SIM_SEED: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CHECKPOINT_EVERY_TICKS: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "sim" "handoff_retry_ticks" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_HANDOFF_RETRY_TICKS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "handoff_retry_max_ticks" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_HANDOFF_RETRY_MAX_TICKS: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "sim" "handoff_retry_batch" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_HANDOFF_RETRY_BATCH: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "command" "max_intent_bytes" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_MAX_INTENT_BYTES: {{ $v | toString | quote }}
