@@ -44,6 +44,10 @@ type Diagnostic struct {
 	Message  string   // one sentence, no period, names the offending value
 	Chain    []string // the declaration chain, outermost first; empty when not chain-scoped
 	Severity Severity
+	// Pack is set only on a finding the publish gate reported in another
+	// pack's blobs (errors.md §1 rule 10.6): that pack's id. File is then the
+	// blob path in that pack, and there is no position or chain to place it by.
+	Pack string
 }
 
 // Codes the compiler raises that the loader has no occasion to raise, because
@@ -95,6 +99,10 @@ var (
 // String renders a finding the way `content compile` prints it, without the
 // chain: `file:line:col: CODE message` (AC-2).
 func (d Diagnostic) String() string {
+	if d.Pack != "" {
+		// Another pack's finding has no position: `<pack>/<file>: CODE message`.
+		return fmt.Sprintf("%s/%s: %s %s", d.Pack, d.File, d.Code, d.Message)
+	}
 	return fmt.Sprintf("%s:%d:%d: %s %s", d.File, d.Line, d.Col, d.Code, d.Message)
 }
 
@@ -118,6 +126,9 @@ func sortDiagnostics(ds []Diagnostic) {
 	sort.SliceStable(ds, func(i, j int) bool {
 		a, b := ds[i], ds[j]
 		switch {
+		case a.Pack != b.Pack:
+			// The publisher's own findings first, then each other pack's.
+			return a.Pack < b.Pack
 		case a.File != b.File:
 			return a.File < b.File
 		case a.Line != b.Line:

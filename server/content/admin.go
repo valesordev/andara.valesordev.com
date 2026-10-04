@@ -637,7 +637,13 @@ func Diagnostics(fs []sim.ValidationError, sev contentv1.Severity) []*contentv1.
 	out := make([]*contentv1.Diagnostic, 0, len(fs))
 	for _, f := range fs {
 		d := &contentv1.Diagnostic{File: f.File, Line: uint32(max(f.Line, 0)), Code: string(f.Code), Message: f.Detail, Severity: sev}
-		d.Chain = FindingChain(f)
+		if f.Pack != "" {
+			// Another pack's finding (errors.md §1 rule 10.6): its blob path,
+			// no position, no chain. The caller has no source to place it on.
+			d.Pack = f.Pack
+		} else {
+			d.Chain = FindingChain(f)
+		}
 		out = append(out, d)
 	}
 	return out

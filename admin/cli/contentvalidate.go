@@ -213,7 +213,12 @@ func mergeDiagnostics(a, b []lang.Diagnostic) []lang.Diagnostic {
 	seen := map[string]bool{}
 	var out []lang.Diagnostic
 	for _, d := range slices.Concat(a, b) {
-		k := fmt.Sprintf("%s\x00%d\x00%d\x00%s\x00%s", d.File, d.Line, d.Col, d.Code, strings.Join(d.Chain, "\x00"))
+		k := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", d.Pack, d.File, d.Line, d.Col, d.Code, strings.Join(d.Chain, "\x00"))
+		if d.Pack != "" {
+			// Another pack's finding has no position and no chain, so two of
+			// one code in one blob differ only by what they say.
+			k += "\x00" + d.Message
+		}
 		if seen[k] {
 			continue
 		}

@@ -449,12 +449,15 @@ func TestContentPublish_ServerRefusalPrintsLikeLocal(t *testing.T) {
 		t.Errorf("exit=%d stderr=%q", res.exit, res.stderr)
 	}
 	res = runCLI(t, []string{"content", "publish", "--path", annex, "-o", "json"}, alice)
-	// The collision also leaves town's other Zones' Exits unresolved: the
-	// gate's findings about another pack's Zones stay on its blobs, since
-	// this source has no line for them. Its own is placed on z.aw.
+	// The gate puts the incumbent first, so the collision is one finding, on
+	// this source, and none of town's Zones' Exits are reported (#312).
 	var ds []jsonDiagnostic
 	if err := json.Unmarshal([]byte(res.stdout), &ds); err != nil {
 		t.Fatalf("json: %s (%v)", res.stdout, err)
+	}
+	if len(ds) != 1 || ds[0].Code != "duplicate_zone" || ds[0].Pack != "" ||
+		!strings.Contains(ds[0].Message, "declared in pack annex and in active pack town@1") {
+		t.Errorf("findings = %+v, want exactly duplicate_zone worded for both packs", ds)
 	}
 	placed := false
 	for _, d := range ds {
@@ -652,5 +655,62 @@ func TestPreviousActive(t *testing.T) {
 		if got := previousActive(tc.active, moves(tc.moves...)); got != tc.want {
 			t.Errorf("active %d, moves %v: %d, want %d", tc.active, tc.moves, got, tc.want)
 		}
+	}
+}
+
+// errors.md §1 rule 10.6, the CLI's half: a finding the gate reports in
+// another pack's blobs is marked by a non-empty `pack` and nothing else. It is
+// not placed on the publisher's source, and it prints `<pack>/<file>: CODE
+// message`, with no position. The publisher's own pack-level finding, which has
+// line 0 too, has no pack and keeps printing as the publisher's.
+func TestContentPublish_AnotherPacksFindingPrintsUnderItsOwnPack(t *testing.T) {
+	findings := []*contentv1.Diagnostic{
+		{File: "town.json", Code: "unknown_zone", Message: "exit north of town/gate names Zone glade, which no pack declares", Severity: contentv1.Severity_ERROR, Pack: "town"},
+		{File: "src/pack.aw", Code: "pack_mismatch", Message: "src/pack.aw declares pack other, published as acme", Severity: contentv1.Severity_ERROR},
+	}
+	diags := mergeDiagnostics(nil, placeAll(&lang.SourceMap{}, findings))
+
+	var human bytes.Buffer
+	rt := &runtime{stderr: &human, settings: &resolved{}}
+	if err := rt.writeDiagnostics(diags, "acme-src"); err != nil {
+		t.Fatal(err)
+	}
+	out := human.String()
+	if !strings.Contains(out, "town/town.json: unknown_zone exit north of town/gate names Zone glade") {
+		t.Errorf("another pack's finding does not print as <pack>/<file>: CODE message:\n%s", out)
+	}
+	if strings.Contains(out, "acme-src/town.json") || strings.Contains(out, "town.json:0:0") {
+		t.Errorf("another pack's finding was printed under the publisher's source:\n%s", out)
+	}
+	if !strings.Contains(out, "acme-src/src/pack.aw:") {
+		t.Errorf("the publisher's own pack-level finding left the publisher's source:\n%s", out)
+	}
+
+	j := toJSONDiagnostics(diags)
+	var foreign, own int
+	for _, d := range j {
+		switch {
+		case d.Pack == "town" && d.File == "town.json" && d.Line == 0 && d.Col == 0 && len(d.Chain) == 0:
+			foreign++
+		case d.Pack == "" && d.Code == "pack_mismatch":
+			own++
+		}
+	}
+	if foreign != 1 || own != 1 {
+		t.Errorf("--output json: pack=town findings %d, the publisher's pack_mismatch %d: %+v", foreign, own, j)
+	}
+}
+
+// Two findings of one code in another pack's blob have no position or chain to
+// tell them apart, so the dedupe that lists a finding both stages raise once
+// must not merge them (strict_orphans with three orphans in one file).
+func TestContentPublish_TwoFindingsOfOneCodeInAnotherPacksBlobAreBothShown(t *testing.T) {
+	findings := []*contentv1.Diagnostic{
+		{File: "town.json", Code: "orphan_room", Message: "room a is not reachable", Severity: contentv1.Severity_ERROR, Pack: "town"},
+		{File: "town.json", Code: "orphan_room", Message: "room b is not reachable", Severity: contentv1.Severity_ERROR, Pack: "town"},
+	}
+	diags := mergeDiagnostics(nil, placeAll(nil, findings))
+	if len(diags) != 2 {
+		t.Fatalf("got %d findings, want both: %+v", len(diags), diags)
 	}
 }

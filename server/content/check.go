@@ -49,13 +49,12 @@ func (r *Refusal) Error() string { return r.Err.Error() }
 //
 // It returns the findings that refuse the version and the warnings that
 // don't, in the loader's taxonomy, so the same content gets the same
-// findings here, at boot, and at load.
+// findings here, at boot, and at load. What it reports is the publisher's to
+// fix, and what the publish newly causes (errors.md §1 rule 10, buildGate).
 func (l *Loader) CheckPublish(ctx context.Context, candidate *Resolved) (refusing, warnings []sim.ValidationError) {
-	base := l.servingSnapshot()
-	delete(base, candidate.Pack)
 	vctx, span := l.tracer.Start(ctx, "content.validate")
 	defer span.End()
-	_, refusing, warnings = l.build(vctx, base, candidate, false)
+	_, refusing, warnings = l.buildGate(vctx, l.servingSnapshot(), candidate)
 	span.SetAttributes(attribute.Int("error_count", len(refusing)), attribute.Int("warning_count", len(warnings)))
 	return refusing, warnings
 }

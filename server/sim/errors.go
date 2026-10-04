@@ -118,6 +118,10 @@ type ValidationError struct {
 	Template TemplateRef // set for Template findings (AW-SRV-022)
 	Code     ErrCode
 	Detail   string
+	// Pack is set only by the publish gate, on a finding in another pack's
+	// blobs: that pack's id (errors.md §1 rule 10.6). Empty is the caller's
+	// own pack, which is every finding anywhere else.
+	Pack string
 }
 
 func (e ValidationError) Error() string {
