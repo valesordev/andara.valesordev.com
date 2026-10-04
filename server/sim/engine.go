@@ -100,6 +100,10 @@ type StepResult struct {
 	// SwapsRefused is every ContentSwap this tick consumed and refused, a
 	// deterministic no-op each: the content source is told, and re-evaluates.
 	SwapsRefused []SwapRefused
+	// StaleArrivals is how many Arrives this tick acknowledged and placed
+	// nothing for, because the Zone's mark for the Entity was at or above
+	// their sequence (AW-SRV-028): the loop counts them.
+	StaleArrivals int
 	// Linkdead is every step of a body's linkdead lifecycle this tick took
 	// (AW-SRV-015), in the order it took them, for the loop's metrics and
 	// log lines.
@@ -129,6 +133,8 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return "content_swap"
 	case *logv1.LoggedCommand_MarkLinkdead:
 		return KindMarkLinkdead
+	case *logv1.LoggedCommand_HandoffAck:
+		return KindHandoffAck
 	}
 	return ""
 }
@@ -141,8 +147,11 @@ const (
 	KindLook CommandKind = "look"
 	KindMove CommandKind = "move"
 	// KindGoto is a Builder's jump to a Room by ID (AW-SRV-036).
-	KindGoto            CommandKind = "goto"
-	KindArrive          CommandKind = "arrive"
+	KindGoto   CommandKind = "goto"
+	KindArrive CommandKind = "arrive"
+	// KindHandoffAck is the target's acknowledgement of an Arrive (AW-SRV-028).
+	// Like KindArrive it has no verb: only a tick produces one.
+	KindHandoffAck      CommandKind = "handoff_ack"
 	KindBindCharacter   CommandKind = "bind_character"
 	KindUnbindCharacter CommandKind = "unbind_character"
 	// KindContentSwap is World-scoped and has no handler: Step applies it
@@ -203,6 +212,17 @@ func (a *ApplyContext) ContentVersion(t *Template) string {
 
 // Actor is the Command's actor, for scoping an Event to it.
 func (a *ApplyContext) Actor() EntityID { return EntityID(a.Record.Command.GetActorId()) }
+
+// dropTransit removes an Entity's transit record from this Zone, and the
+// schedule entry that went with it.
+func (a *ApplyContext) dropTransit(id EntityID) { a.engine.dropTransit(a.Zone, id) }
+
+// staleArrival counts an Arrive acknowledged and not placed, for the loop.
+func (a *ApplyContext) staleArrival() {
+	if a.engine != nil && a.engine.step != nil {
+		a.engine.step.StaleArrivals++
+	}
+}
 
 // Produce sends a Command to another Zone's Partition. It is applied on a
 // later tick, after the log has ordered it (ADR-0001 §4).
@@ -288,6 +308,13 @@ type Config struct {
 	// Content prepares the topology a ContentSwap moves the World to
 	// (AW-SRV-012). Nil refuses any tick that carries a swap.
 	Content ContentSource
+	// The handoff retry schedule (AW-SRV-028), in ticks: the first interval,
+	// the longest interval, and the most Arrives DueHandoffs returns at once.
+	// Zero is the default. They configure only the retry pass, which is not
+	// part of Step, so no config value reaches hashed state.
+	HandoffRetryTicks    Tick
+	HandoffRetryMaxTicks Tick
+	HandoffRetryBatch    int
 }
 
 // Engine holds one World's mutable state and advances it one tick at a
@@ -307,6 +334,15 @@ type Engine struct {
 	// step is the tick in progress, set for the length of Step: what
 	// OnCombatInteraction and a handler's lifecycle report write to.
 	step *StepResult
+	// handoffs is the retry schedule of every Entity in transit, in memory
+	// and not in the hash: when the next Arrive is due comes from config, and
+	// config never enters hashed state (AW-SRV-028). A record with no entry
+	// is due, which is what a recovery leaves.
+	handoffs map[handoffKey]handoffSched
+	// replaying is set for the length of ReplayEach and cleared by defer, so its
+	// early-error and hash-mismatch returns clear it too: what makes the retry
+	// schedule a property of the live loop alone (AW-SRV-028).
+	replaying bool
 }
 
 // NewEngine builds an Engine at tick 0 with every Zone empty.
@@ -317,7 +353,7 @@ func NewEngine(w *World, templates *TemplateRegistry, cfg Config) *Engine {
 	parts := append([]int32(nil), cfg.Partitions...)
 	sort.Slice(parts, func(i, j int) bool { return parts[i] < parts[j] })
 	cfg.Partitions = parts
-	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts), versions: map[string]uint64{}}
+	return &Engine{world: w, templates: templates, cfg: cfg, state: NewWorldState(w, cfg.Seed, parts), versions: map[string]uint64{}, handoffs: map[handoffKey]handoffSched{}}
 }
 
 // SetObserver attaches the Observer after construction; the loop that
@@ -657,6 +693,8 @@ func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 // the hook — the state projector (AW-SRV-019) — produces nothing for the tick
 // that diverged. An error from after stops the replay and is returned as is.
 func (e *Engine) ReplayEach(boundaries []TickCompleted, src RecordSource, after func(StepResult) error) error {
+	e.replaying = true
+	defer func() { e.replaying = false }()
 	for _, b := range boundaries {
 		if b.Tick != e.state.Tick+1 {
 			// A missing boundary is a tick whose batching decision was

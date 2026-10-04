@@ -107,6 +107,11 @@ type Config struct {
 	SimSeed                 uint64
 	SimPartitions           []int32
 	SimCheckpointEveryTicks int
+	// The cross-Zone handoff retry (AW-SRV-028), in ticks: the first
+	// interval, the longest, and the most Arrive retries produced in one tick.
+	SimHandoffRetryTicks    int
+	SimHandoffRetryMaxTicks int
+	SimHandoffRetryBatch    int
 
 	// The command pipeline (AW-SRV-003). MaxIntentBytes bounds what parse
 	// will read; VerbTablePath replaces the built-in verb table, empty
@@ -226,6 +231,9 @@ const (
 	DefaultSimMaxPerTick           = 1024
 	DefaultSimDrainTimeoutMS       = 5000
 	DefaultSimCheckpointEveryTicks = 100
+	DefaultSimHandoffRetryTicks    = 10
+	DefaultSimHandoffRetryMaxTicks = 100
+	DefaultSimHandoffRetryBatch    = 50
 
 	DefaultMaxIntentBytes = 4096
 
@@ -326,6 +334,9 @@ func defaults() Config {
 		SimDrainTimeout:          DefaultSimDrainTimeoutMS * time.Millisecond,
 		SimPartitions:            allPartitions(),
 		SimCheckpointEveryTicks:  DefaultSimCheckpointEveryTicks,
+		SimHandoffRetryTicks:     DefaultSimHandoffRetryTicks,
+		SimHandoffRetryMaxTicks:  DefaultSimHandoffRetryMaxTicks,
+		SimHandoffRetryBatch:     DefaultSimHandoffRetryBatch,
 		MaxIntentBytes:           DefaultMaxIntentBytes,
 		SubscriberBuffer:         DefaultSubscriberBuffer,
 		MaxSubscribers:           DefaultMaxSubscribers,
@@ -423,6 +434,9 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 		return parseMillis("sim.tick_budget_ms", v, &c.SimTickBudget)
 	})
 	fs.IntVar(&c.SimMaxPerTick, "sim-max-per-tick", c.SimMaxPerTick, "records applied per tick; excess deferred (ANDARA_MAX_PER_TICK)")
+	fs.IntVar(&c.SimHandoffRetryTicks, "sim-handoff-retry-ticks", c.SimHandoffRetryTicks, "ticks before an unacknowledged cross-Zone Arrive is produced again, the first interval (ANDARA_HANDOFF_RETRY_TICKS)")
+	fs.IntVar(&c.SimHandoffRetryMaxTicks, "sim-handoff-retry-max-ticks", c.SimHandoffRetryMaxTicks, "the longest gap in ticks between attempts of one handoff (ANDARA_HANDOFF_RETRY_MAX_TICKS)")
+	fs.IntVar(&c.SimHandoffRetryBatch, "sim-handoff-retry-batch", c.SimHandoffRetryBatch, "the most Arrive retries produced in one tick (ANDARA_HANDOFF_RETRY_BATCH)")
 	fs.Func("sim-drain-timeout-ms", "graceful shutdown budget in milliseconds (ANDARA_DRAIN_TIMEOUT_MS)", func(v string) error {
 		return parseMillis("sim.drain_timeout_ms", v, &c.SimDrainTimeout)
 	})
@@ -657,6 +671,15 @@ func (c Config) validateSim() error {
 	}
 	if c.SimMaxPerTick < 1 || c.SimCheckpointEveryTicks < 1 {
 		return fmt.Errorf("sim.max_per_tick and sim.checkpoint_every_ticks must be positive")
+	}
+	if c.SimHandoffRetryTicks < 1 {
+		return fmt.Errorf("sim.handoff_retry_ticks must be greater than 0, got %d", c.SimHandoffRetryTicks)
+	}
+	if c.SimHandoffRetryMaxTicks < c.SimHandoffRetryTicks {
+		return fmt.Errorf("sim.handoff_retry_max_ticks (%d) must be at least sim.handoff_retry_ticks (%d)", c.SimHandoffRetryMaxTicks, c.SimHandoffRetryTicks)
+	}
+	if c.SimHandoffRetryBatch < 1 {
+		return fmt.Errorf("sim.handoff_retry_batch must be greater than 0, got %d", c.SimHandoffRetryBatch)
 	}
 	if c.SimDrainTimeout < 0 {
 		return fmt.Errorf("sim.drain_timeout_ms must not be negative")
@@ -943,6 +966,9 @@ type fileConfig struct {
 		Seed                 *uint64 `yaml:"seed"`
 		Partitions           *string `yaml:"partitions"`
 		CheckpointEveryTicks *int    `yaml:"checkpoint_every_ticks"`
+		HandoffRetryTicks    *int    `yaml:"handoff_retry_ticks"`
+		HandoffRetryMaxTicks *int    `yaml:"handoff_retry_max_ticks"`
+		HandoffRetryBatch    *int    `yaml:"handoff_retry_batch"`
 	} `yaml:"sim"`
 	Command *struct {
 		MaxIntentBytes *int    `yaml:"max_intent_bytes"`
@@ -1191,6 +1217,15 @@ func applyFile(c *Config, path string) error {
 		}
 		if sm.MaxPerTick != nil {
 			c.SimMaxPerTick = *sm.MaxPerTick
+		}
+		if sm.HandoffRetryTicks != nil {
+			c.SimHandoffRetryTicks = *sm.HandoffRetryTicks
+		}
+		if sm.HandoffRetryMaxTicks != nil {
+			c.SimHandoffRetryMaxTicks = *sm.HandoffRetryMaxTicks
+		}
+		if sm.HandoffRetryBatch != nil {
+			c.SimHandoffRetryBatch = *sm.HandoffRetryBatch
 		}
 		if sm.DrainTimeoutMS != nil {
 			c.SimDrainTimeout = time.Duration(*sm.DrainTimeoutMS) * time.Millisecond
@@ -1488,6 +1523,9 @@ func applyEnv(c *Config, env EnvLookup) error {
 	}{
 		{"ANDARA_TICK_RATE", &c.SimTickRate},
 		{"ANDARA_MAX_PER_TICK", &c.SimMaxPerTick},
+		{"ANDARA_HANDOFF_RETRY_TICKS", &c.SimHandoffRetryTicks},
+		{"ANDARA_HANDOFF_RETRY_MAX_TICKS", &c.SimHandoffRetryMaxTicks},
+		{"ANDARA_HANDOFF_RETRY_BATCH", &c.SimHandoffRetryBatch},
 		{"ANDARA_CHECKPOINT_EVERY_TICKS", &c.SimCheckpointEveryTicks},
 		{"ANDARA_MAX_INTENT_BYTES", &c.MaxIntentBytes},
 		{"ANDARA_SUBSCRIBER_BUFFER", &c.SubscriberBuffer},

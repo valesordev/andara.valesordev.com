@@ -220,3 +220,41 @@ func waitFor(t *testing.T, cond func() bool, what string) {
 	t.Helper()
 	eventually.True(t, 5*time.Second, what, cond)
 }
+
+// AW-SRV-028: the first retry of a lost Arrive should land inside the
+// Gateway's hold for the crossing (ingress.transit_hold). Startup warns, never
+// refuses, when sim.handoff_retry_ticks at sim.tick_rate is not below a
+// non-zero hold.
+func TestHandoffRetryOutsideHold(t *testing.T) {
+	for _, c := range []struct {
+		name        string
+		ticks, rate int
+		hold        time.Duration
+		wantFirst   time.Duration
+		wantOutside bool
+	}{
+		{"the defaults: 10 ticks at 10 Hz is 1 s, inside the 2 s hold", 10, 10, 2 * time.Second, time.Second, false},
+		{"20 ticks at 10 Hz is the hold exactly: not below it", 20, 10, 2 * time.Second, 2 * time.Second, true},
+		{"a faster tick rate shrinks the same ticks", 10, 100, 2 * time.Second, 100 * time.Millisecond, false},
+		{"a slower tick rate stretches them past the hold", 10, 2, 2 * time.Second, 5 * time.Second, true},
+		{"a zero hold holds nothing, so there is nothing to be outside", 100, 1, 0, 0, false},
+	} {
+		first, _, outside := handoffRetryOutsideHold(c.ticks, c.rate, c.hold)
+		if outside != c.wantOutside || (c.hold > 0 && first != c.wantFirst) {
+			t.Errorf("%s: first %s outside %v, want %s %v", c.name, first, outside, c.wantFirst, c.wantOutside)
+		}
+	}
+}
+
+// The three handoff retry keys reach the Engine's config: a key dropped from
+// the wiring would run the defaults silently (AW-SRV-028).
+func TestEngineConfigCarriesTheHandoffRetryKeys(t *testing.T) {
+	cfg := config.Config{SimSeed: 5, SimPartitions: []int32{1, 2}, SimHandoffRetryTicks: 4, SimHandoffRetryMaxTicks: 40, SimHandoffRetryBatch: 9}
+	got := engineConfig(cfg, nil)
+	if got.HandoffRetryTicks != 4 || got.HandoffRetryMaxTicks != 40 || got.HandoffRetryBatch != 9 {
+		t.Fatalf("engine config retry keys = %d %d %d, want 4 40 9", got.HandoffRetryTicks, got.HandoffRetryMaxTicks, got.HandoffRetryBatch)
+	}
+	if got.Seed != 5 || len(got.Partitions) != 2 || got.Handlers == nil {
+		t.Fatalf("the rest of the engine config was lost: %+v", got)
+	}
+}

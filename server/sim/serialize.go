@@ -103,6 +103,12 @@ func EntityCanonicalBytes(e EntityState) []byte {
 			strconv.FormatUint(uint64(e.LinkdeadSince), 10), strconv.FormatUint(uint64(e.LinkdeadDeadline), 10),
 			strconv.FormatUint(uint64(e.LinkdeadCeiling), 10), strconv.FormatUint(uint64(e.LinkdeadExtension), 10))
 	}
+	// Written only for an Entity that has been through a handoff, as the
+	// records above are only for what they describe, so a World with no
+	// handoff history hashes as it did before AW-SRV-028.
+	if e.HandoffSeq != 0 {
+		writeFields(&b, "entity_handoff", string(e.ID), strconv.FormatUint(e.HandoffSeq, 10))
+	}
 	writeComponents(&b, "entity_component", "entity_field", []string{string(e.ID)}, e.Components)
 	return []byte(b.String())
 }

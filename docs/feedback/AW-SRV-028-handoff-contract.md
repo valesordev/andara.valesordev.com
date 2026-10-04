@@ -365,3 +365,29 @@ then `Transit` and the retry, then the Bind handling.
   per-tick summary `warn` in place of one per retry, and the new config keys `sim.handoff_retry_max_ticks`
   and `sim.handoff_retry_batch` for `keys.yaml` and the values schema, beside the default of
   `sim.handoff_retry_ticks`. The runbook step for a stuck handoff goes in `docs/runbooks/simulation-lagging.md`.
+
+## Implementation's hand-off (2026-10-04): what's built, and what waits on SRE
+
+Built on `impl/aw-srv-028-durable-handoff`. The code, the tests, `server/README.md` (config rows, metrics, the
+handoff section) are in the PR. Two things the story's Definition of done asks for are in SRE's paths, so I
+haven't made them:
+
+- **Helm** (`deploy/helm/andara/keys.yaml`, `values.schema.json`, `templates/_env.tpl`): three keys, each an
+  `int`, `story: AW-SRV-028`:
+  - `sim.handoff_retry_ticks`, `ANDARA_HANDOFF_RETRY_TICKS`, default `10`, `min: 1`;
+  - `sim.handoff_retry_max_ticks`, `ANDARA_HANDOFF_RETRY_MAX_TICKS`, default `100`, `min: 1` (the server also
+    refuses a value below `sim.handoff_retry_ticks`);
+  - `sim.handoff_retry_batch`, `ANDARA_HANDOFF_RETRY_BATCH`, default `50`, `min: 1`.
+  The server reads them from the environment, the `--sim-handoff-retry-*` flags and the `sim:` block of its
+  config file, like `sim.max_per_tick`.
+- **Runbook** (`docs/runbooks/simulation-lagging.md`): a step for a stuck handoff. What the PR's code gives it:
+  `andara_handoffs_in_transit` sustained above 0 means the broker or the target Partition is stuck; the `warn`
+  line `handoffs retried: an Arrive was not acknowledged` (`count`, `oldest_attempt`) says how long and how
+  many; `andara_handoff_retries_total` rising confirms the retry is running; a Character in transit to a
+  **faulted** Zone has **no release** until `AW-SRV-027` (its Commands and Binds get `in_transit` until the fault
+  is resolved). And a threshold on `andara_handoff_placed_entries` past which pruning is wanted: the story asks
+  the runbook to set one, and I have no basis for the number. One mark is a few dozen bytes, hashed with its
+  Zone and copied by every in-tick snapshot, so the figure is the one at which the snapshot copy's CPU limit
+  (`stallFactor`, `server/simtest`) is no longer comfortable. **Architecture or SRE to pick it.**
+- A **dashboard panel** for `andara_handoffs_in_transit` (the story's Observability section names it).
+- The deploy needs `make world-reset ENV=dev CONFIRM=andara-dev` (the PR says so too).

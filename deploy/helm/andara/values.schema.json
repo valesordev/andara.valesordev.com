@@ -208,6 +208,21 @@
               "type": "integer",
               "minimum": 1,
               "description": "ANDARA_CHECKPOINT_EVERY_TICKS (AW-SRV-002). Default when unset: 100."
+            },
+            "handoff_retry_ticks": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_HANDOFF_RETRY_TICKS (AW-SRV-028). Default when unset: 10."
+            },
+            "handoff_retry_max_ticks": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_HANDOFF_RETRY_MAX_TICKS (AW-SRV-028). Default when unset: 100."
+            },
+            "handoff_retry_batch": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_HANDOFF_RETRY_BATCH (AW-SRV-028). Default when unset: 50."
             }
           }
         },

@@ -547,3 +547,64 @@ func TestParse_LinkdeadInvariants(t *testing.T) {
 		t.Fatalf("ticks at 10 Hz: grace %d, extension %d, max %d", g, e, m)
 	}
 }
+
+// AW-SRV-028: the cross-Zone handoff retry's three keys, in ticks.
+func TestParse_HandoffRetryKeys(t *testing.T) {
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimHandoffRetryTicks != 10 || c.SimHandoffRetryMaxTicks != 100 || c.SimHandoffRetryBatch != 50 {
+		t.Errorf("defaults: %d %d %d, want 10 100 50", c.SimHandoffRetryTicks, c.SimHandoffRetryMaxTicks, c.SimHandoffRetryBatch)
+	}
+	env := withTLS(func(k string) (string, bool) {
+		switch k {
+		case "ANDARA_HANDOFF_RETRY_TICKS":
+			return "4", true
+		case "ANDARA_HANDOFF_RETRY_MAX_TICKS":
+			return "40", true
+		case "ANDARA_HANDOFF_RETRY_BATCH":
+			return "9", true
+		}
+		return "", false
+	})
+	c, err = Parse(nil, env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimHandoffRetryTicks != 4 || c.SimHandoffRetryMaxTicks != 40 || c.SimHandoffRetryBatch != 9 {
+		t.Errorf("env: %d %d %d", c.SimHandoffRetryTicks, c.SimHandoffRetryMaxTicks, c.SimHandoffRetryBatch)
+	}
+	c, err = Parse([]string{"--sim-handoff-retry-ticks=6", "--sim-handoff-retry-max-ticks=6", "--sim-handoff-retry-batch=1"}, env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimHandoffRetryTicks != 6 || c.SimHandoffRetryMaxTicks != 6 || c.SimHandoffRetryBatch != 1 {
+		t.Errorf("flags beat env: %d %d %d", c.SimHandoffRetryTicks, c.SimHandoffRetryMaxTicks, c.SimHandoffRetryBatch)
+	}
+	path := t.TempDir() + "/server.yaml"
+	if err := os.WriteFile(path, []byte("sim:\n  handoff_retry_ticks: 3\n  handoff_retry_max_ticks: 30\n  handoff_retry_batch: 12\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Parse([]string{"--config", path}, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.SimHandoffRetryTicks != 3 || c.SimHandoffRetryMaxTicks != 30 || c.SimHandoffRetryBatch != 12 {
+		t.Errorf("file: %d %d %d", c.SimHandoffRetryTicks, c.SimHandoffRetryMaxTicks, c.SimHandoffRetryBatch)
+	}
+	for name, bad := range map[string][]string{
+		"zero first interval":          {"--sim-handoff-retry-ticks=0"},
+		"negative first interval":      {"--sim-handoff-retry-ticks=-1"},
+		"max below the first interval": {"--sim-handoff-retry-ticks=20", "--sim-handoff-retry-max-ticks=19"},
+		"zero batch":                   {"--sim-handoff-retry-batch=0"},
+	} {
+		if _, err := Parse(bad, withTLS(nil), nil); err == nil {
+			t.Errorf("%s: %v accepted", name, bad)
+		}
+	}
+	// The maximum may equal the first interval: no backoff, a fixed retry.
+	if _, err := Parse([]string{"--sim-handoff-retry-ticks=7", "--sim-handoff-retry-max-ticks=7"}, withTLS(nil), nil); err != nil {
+		t.Errorf("a max equal to the first interval was refused: %v", err)
+	}
+}

@@ -22,9 +22,29 @@ const (
 	// but the code is part of the contract a client already reads.
 	CodeExitBlocked = "exit_blocked"
 	// CodeActorNotFound: the actor is not in the Zone the Command named
-	// (validate). Between a cross-Zone departure and the arrival that
-	// follows it, this is where the actor is.
+	// (validate).
 	CodeActorNotFound = "actor_not_found"
+	// CodeInTransit: the actor is between Zones: it left this one and the
+	// target's acknowledgement hasn't come back (validate, AW-SRV-028). The
+	// Gateway holds a Session's Commands through a crossing, so a well-behaved
+	// client reaches this only past ingress.transit_hold.
+	CodeInTransit = "in_transit"
+	// CodeActorLinkdead: a Move or Goto by a linkdead body (validate). It
+	// stays where it stands; log.v1.Entity doesn't carry the linkdead fields,
+	// so a body that left would arrive with its despawn timer gone.
+	CodeActorLinkdead = "actor_linkdead"
+	// CodeEntityPresent: an Arrive for an Entity the Zone already holds, with a
+	// sequence its marks don't explain (validate). It can't happen with
+	// sequences that only grow, so it is logged at error.
+	CodeEntityPresent = "entity_present"
+	// CodeInvalidArrival: an Arrive whose handoff_seq is 0 or differs from its
+	// entity's, or with no entity or an empty entity id (validate).
+	CodeInvalidArrival = "invalid_arrival"
+	// CodeIDReused: a BindCharacter that would create a body for an Entity ID
+	// some Zone holds a handoff mark for (validate). An Entity ID is never
+	// reused: marks are kept for good, and a new body at sequence 0 would have
+	// its handoffs read as stale.
+	CodeIDReused = "id_reused"
 	// CodeUnknownRoom: an Arrive names a Room the Zone no longer has
 	// (validate). Content moved under the log; AW-SRV-012 owns that.
 	CodeUnknownRoom = "unknown_room"
@@ -45,7 +65,8 @@ const (
 // RejectCodes is every post-log code, sorted, for metric pre-seeding.
 func RejectCodes() []string {
 	return []string{
-		CodeActorNotFound, CodeExitBlocked, CodeMisrouted, CodeNoSuchExit, CodeRejected,
+		CodeActorLinkdead, CodeActorNotFound, CodeEntityPresent, CodeExitBlocked, CodeIDReused, CodeInTransit,
+		CodeInvalidArrival, CodeMisrouted, CodeNoSuchExit, CodeRejected,
 		CodeTemplateMissing, CodeUnknownRoom, CodeUnknownZone, CodeUnsupportedCommand, CodeZoneFaulted,
 	}
 }
@@ -57,6 +78,8 @@ var (
 	ErrExitBlocked   = &RejectError{Code: CodeExitBlocked, Stage: StageValidate}
 	ErrActorNotFound = &RejectError{Code: CodeActorNotFound, Stage: StageValidate}
 	ErrRoomGone      = &RejectError{Code: CodeUnknownRoom, Stage: StageValidate}
+	ErrInTransit     = &RejectError{Code: CodeInTransit, Stage: StageValidate}
+	ErrActorLinkdead = &RejectError{Code: CodeActorLinkdead, Stage: StageValidate}
 )
 
 // Handlers is the apply column of the verb table: the handler for every
@@ -69,6 +92,7 @@ func Handlers() map[CommandKind]Apply {
 		KindMove:            applyMove,
 		KindGoto:            applyGoto,
 		KindArrive:          applyArrive,
+		KindHandoffAck:      applyHandoffAck,
 		KindBindCharacter:   applyBindCharacter,
 		KindUnbindCharacter: applyUnbindCharacter,
 		KindMarkLinkdead:    applyMarkLinkdead,
@@ -148,6 +172,9 @@ func validateMove(a *ApplyContext, cmd *logv1.LoggedCommand) (moveView, error) {
 	if err != nil {
 		return moveView{}, err
 	}
+	if actor.Linkdead() {
+		return moveView{}, &RejectError{Code: CodeActorLinkdead, Stage: StageValidate, Message: "you can't move right now"}
+	}
 	dir := Direction(cmd.GetMove().GetDirection())
 	for _, e := range room.Exits {
 		if e.Direction == dir {
@@ -159,10 +186,12 @@ func validateMove(a *ApplyContext, cmd *logv1.LoggedCommand) (moveView, error) {
 
 // applyMove takes the Exit. In-Zone: the actor's Room changes,
 // CharacterLeft and CharacterArrived are emitted for source and target
-// (AC-2), and the new Room is described to the mover alone (AW-SRV-038). Cross-Zone: the actor leaves this Zone's state and an Arrive is
-// produced to the target Zone's Partition, where it resolves on a later
-// tick — never as a call, whichever process owns the target (AC-9,
-// ADR-0001 rule 4).
+// (AC-2), and the new Room is described to the mover alone (AW-SRV-038). Cross-Zone: the actor leaves this Zone's Entities for its
+// Transit and an Arrive is produced to the target Zone's Partition, where it
+// resolves on a later tick — never as a call, whichever process owns the
+// target (AC-9, ADR-0001 rule 4). The Entity stays in Transit until the
+// target's HandoffAck, and the Arrive is retried until it comes
+// (AW-SRV-028).
 func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !a.Consumed() {
 		return ErrNotConsumed
@@ -192,21 +221,7 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		}
 		return nil
 	}
-	delete(a.Zone.Entities, v.actor.ID)
-	a.Produce(&logv1.LoggedCommand{
-		ZoneId:    string(v.exit.To.Zone),
-		ActorId:   cmd.GetActorId(),
-		SessionId: cmd.GetSessionId(),
-		ClientRef: cmd.GetClientRef(),
-		TraceId:   cmd.GetTraceId(),
-		Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
-			RoomId:        string(v.exit.To.Room),
-			FromDirection: string(from),
-			Entity:        v.actor.Proto(),
-			OriginZoneId:  string(a.Zone.ID),
-			OriginRoomId:  string(v.from.ID),
-		}},
-	})
+	a.depart(cmd, v.actor, v.exit.To, v.exit.Direction)
 	return nil
 }
 
@@ -228,6 +243,9 @@ func validateGoto(a *ApplyContext, cmd *logv1.LoggedCommand) (gotoView, error) {
 	actor, room, err := locate(a, cmd)
 	if err != nil {
 		return gotoView{}, err
+	}
+	if actor.Linkdead() {
+		return gotoView{}, &RejectError{Code: CodeActorLinkdead, Stage: StageValidate, Message: "you can't move right now"}
 	}
 	g := cmd.GetGoto()
 	target := RoomRef{Zone: ZoneID(g.GetTargetZoneId()), Room: RoomID(g.GetTargetRoomId())}
@@ -274,62 +292,197 @@ func applyGoto(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		describeTo(a, v.to, v.actor.ID)
 		return nil
 	}
-	delete(a.Zone.Entities, v.actor.ID)
-	a.Produce(&logv1.LoggedCommand{
-		ZoneId:    string(v.target.Zone),
-		ActorId:   cmd.GetActorId(),
-		SessionId: cmd.GetSessionId(),
-		ClientRef: cmd.GetClientRef(),
-		TraceId:   cmd.GetTraceId(),
-		Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
-			RoomId:       string(v.target.Room),
-			Entity:       v.actor.Proto(),
-			OriginZoneId: string(a.Zone.ID),
-			OriginRoomId: string(v.from.ID),
-		}},
-	})
+	a.depart(cmd, v.actor, v.target, "")
 	return nil
 }
 
 // --- arrive ------------------------------------------------------------
 
-// validateArrive checks the target Room exists in this Zone.
-func validateArrive(a *ApplyContext, cmd *logv1.LoggedCommand) (*Room, error) {
-	arr := cmd.GetArrive()
-	room, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: RoomID(arr.GetRoomId())})
-	if !ok || arr.GetEntity() == nil {
-		return nil, &RejectError{Code: CodeUnknownRoom, Stage: StageValidate, Message: "the way ahead is gone"}
-	}
-	return room, nil
+// depart takes the actor out of this Zone's Entities into its Transit and
+// produces the Arrive that carries it to to (AW-SRV-028). The Entity as it
+// will arrive keeps the Room it left, which the transit record holds for a
+// restore at home, and its handoff sequence is incremented here, so the first
+// handoff is 1. dir is the Exit the move took, empty for a Goto. The
+// departure is the first attempt, so the schedule has the Arrive as sent this
+// tick and it isn't re-sent on it.
+func (a *ApplyContext) depart(cmd *logv1.LoggedCommand, actor *EntityState, to RoomRef, dir Direction) {
+	actor.HandoffSeq++
+	rec := TransitRecord{Entity: *actor.Clone(), To: to.Zone, Room: to.Room, Direction: dir}
+	delete(a.Zone.Entities, actor.ID)
+	a.Zone.setTransit(rec)
+	a.engine.noteHandoff(actor.ID, actor.HandoffSeq, a.Tick)
+	a.Produce(&logv1.LoggedCommand{
+		ZoneId:    string(to.Zone),
+		ActorId:   cmd.GetActorId(),
+		SessionId: cmd.GetSessionId(),
+		ClientRef: cmd.GetClientRef(),
+		TraceId:   cmd.GetTraceId(),
+		Command:   &logv1.LoggedCommand_Arrive{Arrive: arriveFor(a.Zone.ID, rec)},
+	})
 }
 
-// applyArrive places the Entity and emits CharacterArrived. A target Room
-// the content in effect no longer has — a swap removed it while the Entity
-// was in transit — lands it in this Zone's fallback Room instead, with
-// EntityRelocated{room_removed} (AW-SRV-012): every Zone has a fallback, so
-// an arrival is never bounced and never lost.
+// arriveFor is the Arrive a transit record produces, the first time and on
+// every retry: the same handoff_seq and the same Entity bytes, which is what
+// makes a retry recognizable. origin is the Zone the record is in; the
+// target's HandoffAck goes there.
+func arriveFor(origin ZoneID, rec TransitRecord) *logv1.Arrive {
+	from := ""
+	if rev, ok := rec.Direction.Reverse(); ok {
+		from = string(rev)
+	}
+	return &logv1.Arrive{
+		RoomId:        string(rec.Room),
+		FromDirection: from,
+		Entity:        rec.Entity.Proto(),
+		OriginZoneId:  string(origin),
+		OriginRoomId:  string(rec.Entity.Room),
+		HandoffSeq:    rec.Entity.HandoffSeq,
+	}
+}
+
+// invalidArrival is the Arrive nothing can decide: no Entity or an empty id,
+// a sequence of 0 (the source increments before it produces, so the first is
+// 1), or one that disagrees with the Entity's own.
+func invalidArrival(arr *logv1.Arrive) bool {
+	e := arr.GetEntity()
+	return e == nil || e.GetId() == "" || arr.GetHandoffSeq() == 0 || arr.GetHandoffSeq() != e.GetHandoffSeq()
+}
+
+// ack produces the HandoffAck for an Arrive this Zone decided, to the Zone
+// the Arrive came from. An Arrive that names no origin gets none.
+func (a *ApplyContext) ack(cmd *logv1.LoggedCommand, id EntityID, seq uint64) {
+	origin := cmd.GetArrive().GetOriginZoneId()
+	if origin == "" {
+		return
+	}
+	a.Produce(&logv1.LoggedCommand{
+		ZoneId:  origin,
+		ActorId: string(id),
+		TraceId: cmd.GetTraceId(),
+		Command: &logv1.LoggedCommand_HandoffAck{HandoffAck: &logv1.HandoffAck{EntityId: string(id), HandoffSeq: seq}},
+	})
+}
+
+// arriveView is what validateArrive decided about an Arrive: whose handoff
+// it is, whether it is an implicit ack of a transit record this Zone holds
+// (drop), and whether it is a retry or stale (nothing to place) or new.
+type arriveView struct {
+	id    EntityID
+	seq   uint64
+	drop  bool
+	stale bool // placed nothing; counted
+	retry bool // placed nothing; the Zone already holds it at this sequence
+	// reissue: the retry of a handoff this Zone rejected (AW-SRV-027). The
+	// same HandoffRejected goes back, never an ack: acking it would make the
+	// source drop a record whose Entity was never placed. 027 produces it;
+	// until then nothing sets a rejected mark, so this is the data 028 reads.
+	reissue bool
+}
+
+// validateArrive decides an Arrive by this Zone's own state alone
+// (AW-SRV-028), reading and mutating nothing, so the same record does the
+// same thing on replay and from any process life, in any order records on
+// different Partitions arrive. The first case that matches decides it:
+//
+//  1. Malformed (a sequence of 0 or one that differs from the Entity's, no
+//     Entity, an empty id): rejected invalid_arrival.
+//  2. At or below the Zone's mark for the Entity, whatever else the Zone holds:
+//     at the mark when the mark records a rejection (AW-SRV-027), the same
+//     rejection goes back, never an ack, and nothing sets such a mark in this
+//     story; else if the Zone holds the Entity at that sequence, a retry, acked
+//     and untouched; else stale, acked and counted. No Event in any of them.
+//  3. Above the mark (or no mark): if the Zone holds the Entity in Entities,
+//     or in its own Transit at a sequence at or above this one, rejected
+//     entity_present (only a misrouted Arrive gets here). If it holds it in its
+//     own Transit at a lower sequence, that is an implicit ack: the record is
+//     dropped and the arrival is a new handoff. Otherwise a new handoff.
+func validateArrive(a *ApplyContext, cmd *logv1.LoggedCommand) (arriveView, error) {
+	arr := cmd.GetArrive()
+	if invalidArrival(arr) {
+		return arriveView{}, &RejectError{Code: CodeInvalidArrival, Stage: StageValidate, Message: "the way ahead is gone"}
+	}
+	v := arriveView{id: EntityID(arr.GetEntity().GetId()), seq: arr.GetHandoffSeq()}
+	held := a.Zone.Entities[v.id]
+	// The mark decides first, whatever else the Zone holds for the Entity: a
+	// retry of seq 1 reaching a Zone that has since moved the Entity on (it
+	// holds Transit(e, 2) and its mark is 1) is a retry, and acking it is what
+	// lets the source drop its record when the first ack was lost.
+	if mark := a.Zone.Placed[v.id]; v.seq <= mark.Seq {
+		switch {
+		case v.seq == mark.Seq && mark.Rejected:
+			v.reissue = true
+		case held != nil && held.HandoffSeq == v.seq:
+			v.retry = true
+		default:
+			v.stale = true
+		}
+		return v, nil
+	}
+	// Above the mark: a new handoff, unless the Zone already holds the Entity.
+	if held != nil {
+		return arriveView{}, &RejectError{Code: CodeEntityPresent, Stage: StageValidate, Message: "the way ahead is gone"}
+	}
+	if rec, ok := a.Zone.Transit[v.id]; ok {
+		if rec.Entity.HandoffSeq >= v.seq {
+			// Only a misrouted Arrive gets here.
+			return arriveView{}, &RejectError{Code: CodeEntityPresent, Stage: StageValidate, Message: "the way ahead is gone"}
+		}
+		// A lower sequence: the target placed it and moved it on, which is an
+		// ack. Dropping the record leaves the Zone with no Entity and no
+		// Transit for it, so the arrival is a new handoff.
+		v.drop = true
+	}
+	return v, nil
+}
+
+// applyArrive carries out validateArrive's decision. A new handoff is placed,
+// its mark set, and acked; a retry or a stale Arrive is acked and nothing
+// else. A target Room the content in effect no longer has — a swap removed
+// it while the Entity was in transit — lands it in this Zone's fallback Room
+// instead, with EntityRelocated{room_removed} (AW-SRV-012): every Zone has a
+// fallback, so an arrival is never bounced and never lost.
 func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if !a.Consumed() {
 		return ErrNotConsumed
 	}
-	arr := cmd.GetArrive()
-	room, err := validateArrive(a, cmd)
+	v, err := validateArrive(a, cmd)
 	if err != nil {
+		return err
+	}
+	arr := cmd.GetArrive()
+	if v.drop {
+		a.dropTransit(v.id)
+	}
+	if v.reissue {
+		return nil // AW-SRV-027 reissues the HandoffRejected here
+	}
+	if v.stale || v.retry {
+		if v.stale {
+			a.staleArrival()
+		}
+		a.ack(cmd, v.id, v.seq)
+		return nil
+	}
+	room, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: RoomID(arr.GetRoomId())})
+	if !ok {
 		zone := a.World.Zones[a.Zone.ID]
-		if arr.GetEntity() == nil || zone == nil {
-			return err
+		if zone == nil {
+			return &RejectError{Code: CodeUnknownRoom, Stage: StageValidate, Message: "the way ahead is gone"}
 		}
 		fallback := zone.Rooms[zone.Fallback]
 		ent := EntityFromProto(arr.GetEntity(), fallback.ID)
 		a.Zone.Entities[ent.ID] = &ent
+		a.Zone.markPlaced(v.id, v.seq)
 		a.Emit(ScopeRoom(a.Zone.ID, fallback.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_EntityRelocated{EntityRelocated: &gamev1.EntityRelocated{
 			ZoneId: string(a.Zone.ID), EntityName: ent.DisplayName(), FromRoomId: arr.GetRoomId(), ToRoomId: string(fallback.ID), Reason: ReasonRoomRemoved,
 		}}})
 		describeTo(a, fallback, ent.ID)
+		a.ack(cmd, v.id, v.seq)
 		return nil
 	}
 	ent := EntityFromProto(arr.GetEntity(), room.ID)
 	a.Zone.Entities[ent.ID] = &ent
+	a.Zone.markPlaced(v.id, v.seq)
 	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
 		ZoneId: string(a.Zone.ID), RoomId: string(room.ID), CharacterName: ent.DisplayName(), FromDirection: arr.GetFromDirection(),
 	}}})
@@ -337,6 +490,25 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	// (AW-SRV-036): an Arrive can't tell a goto from a move, and a player
 	// who crossed into another Zone should see where they are.
 	describeTo(a, room, ent.ID)
+	a.ack(cmd, v.id, v.seq)
+	return nil
+}
+
+// applyHandoffAck drops the transit record the target's acknowledgement
+// names. It matches by Entity and sequence: in A→B→C→B a late ack(e, 1) can
+// reach a source holding Transit(e, 3), and matching by Entity alone would
+// drop the record and lose the Entity if Arrive(e, 3) was lost. An ack that
+// matches no record (a duplicate, or one an implicit ack got ahead of) is
+// ignored, deterministically.
+func applyHandoffAck(a *ApplyContext, cmd *logv1.LoggedCommand) error {
+	if !a.Consumed() {
+		return ErrNotConsumed
+	}
+	ack := cmd.GetHandoffAck()
+	id := EntityID(ack.GetEntityId())
+	if rec, ok := a.Zone.Transit[id]; ok && rec.Entity.HandoffSeq == ack.GetHandoffSeq() {
+		a.dropTransit(id)
+	}
 	return nil
 }
 
@@ -347,10 +519,14 @@ func describeTo(a *ApplyContext, room *Room, viewer EntityID) {
 }
 
 // locate finds the Command's actor in this Zone and the Room it stands in.
-// ErrActorNotFound covers an actor the Zone does not hold, one with no
+// ErrInTransit covers an actor this Zone has sent on and not yet had
+// acknowledged. ErrActorNotFound covers an actor the Zone does not hold, one with no
 // position, and a dormant one — a body no Session drives acts for nobody;
 // the message says where the actor is not, never why.
 func locate(a *ApplyContext, cmd *logv1.LoggedCommand) (*EntityState, *Room, error) {
+	if _, between := a.Zone.Transit[EntityID(cmd.GetActorId())]; between {
+		return nil, nil, &RejectError{Code: CodeInTransit, Stage: StageValidate, Message: "you are between places"}
+	}
 	actor, ok := a.Zone.Entities[EntityID(cmd.GetActorId())]
 	if !ok || !actor.Present() {
 		return nil, nil, &RejectError{Code: CodeActorNotFound, Stage: StageValidate, Message: "you are not here"}

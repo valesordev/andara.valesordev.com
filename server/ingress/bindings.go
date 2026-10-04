@@ -198,7 +198,7 @@ func (t *Bindings) expire(sessionID string, tr *transit) {
 // under the lock and nothing else. Only the Events addressed to a bound
 // Character move it — CharacterLeft begins a transit and clears the Room,
 // CharacterArrived ends one on the Zone and Room it names — the same
-// reading the events.Hub gives an Observer. HandoffRejected (AW-SRV-028)
+// reading the events.Hub gives an Observer. HandoffRejected (AW-SRV-027)
 // will end one on the origin.
 func (t *Bindings) Publish(ev sim.Event) {
 	if ev.Type != sim.EvCharacterLeft && ev.Type != sim.EvCharacterArrived && ev.Type != sim.EvEntityRelocated && ev.Type != sim.EvCharacterReconnected {

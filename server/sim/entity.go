@@ -52,6 +52,11 @@ type EntityState struct {
 	LinkdeadDeadline  Tick
 	LinkdeadCeiling   Tick
 	LinkdeadExtension Tick
+	// HandoffSeq is how many handoffs the Entity has been through (AW-SRV-028):
+	// 0 for one that never left its first Zone, incremented by the source each
+	// time it leaves. It is what makes a retried Arrive recognizable, and it
+	// only grows along the Entity's life.
+	HandoffSeq uint64
 }
 
 // Linkdead reports whether the body's Session lost its stream and the body
@@ -104,7 +109,7 @@ func Instantiate(t *Template, id EntityID, contentVersion string) EntityState {
 // Proto renders the Entity for transit across a Zone boundary
 // (logv1.Arrive). Position is not carried: the Arrive names the target Room.
 func (e *EntityState) Proto() *logv1.Entity {
-	out := &logv1.Entity{Id: string(e.ID), Template: string(e.Template), ContentVersion: e.ContentVersion, Name: e.Name}
+	out := &logv1.Entity{Id: string(e.ID), Template: string(e.Template), ContentVersion: e.ContentVersion, Name: e.Name, HandoffSeq: e.HandoffSeq}
 	for _, c := range e.Components {
 		cv := &contentv1.ComponentValue{Type: string(c.Type)}
 		for _, f := range c.Fields {
@@ -128,7 +133,7 @@ func (e *EntityState) Proto() *logv1.Entity {
 // taken as carried — the source Zone validated them when it loaded the
 // Template — and sorted, so a hand-built record cannot break the invariant.
 func EntityFromProto(p *logv1.Entity, room RoomID) EntityState {
-	e := EntityState{ID: EntityID(p.GetId()), Template: TemplateRef(p.GetTemplate()), ContentVersion: p.GetContentVersion(), Room: room, Name: p.GetName()}
+	e := EntityState{ID: EntityID(p.GetId()), Template: TemplateRef(p.GetTemplate()), ContentVersion: p.GetContentVersion(), Room: room, Name: p.GetName(), HandoffSeq: p.GetHandoffSeq()}
 	for _, cv := range p.GetComponents() {
 		c := Component{Type: ComponentType(cv.GetType())}
 		for _, fd := range cv.GetFields() {
