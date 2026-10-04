@@ -245,3 +245,16 @@ func TestHandoffRetryOutsideHold(t *testing.T) {
 		}
 	}
 }
+
+// The three handoff retry keys reach the Engine's config: a key dropped from
+// the wiring would run the defaults silently (AW-SRV-028).
+func TestEngineConfigCarriesTheHandoffRetryKeys(t *testing.T) {
+	cfg := config.Config{SimSeed: 5, SimPartitions: []int32{1, 2}, SimHandoffRetryTicks: 4, SimHandoffRetryMaxTicks: 40, SimHandoffRetryBatch: 9}
+	got := engineConfig(cfg, nil)
+	if got.HandoffRetryTicks != 4 || got.HandoffRetryMaxTicks != 40 || got.HandoffRetryBatch != 9 {
+		t.Fatalf("engine config retry keys = %d %d %d, want 4 40 9", got.HandoffRetryTicks, got.HandoffRetryMaxTicks, got.HandoffRetryBatch)
+	}
+	if got.Seed != 5 || len(got.Partitions) != 2 || got.Handlers == nil {
+		t.Fatalf("the rest of the engine config was lost: %+v", got)
+	}
+}

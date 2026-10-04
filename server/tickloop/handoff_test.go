@@ -257,3 +257,34 @@ func runLoopFor(loop *Loop, d time.Duration) error {
 	}
 	return loop.Run(ctx)
 }
+
+// The loop counts a stale Arrive (andara_handoff_stale_arrivals_total) and
+// logs the Commands no well-formed producer writes, or no sequence of marks
+// explains, at error rather than at the debug line every command gets.
+func TestHandoffLoop_AStaleArriveIsCountedAndAnImpossibleOneIsLoggedAtError(t *testing.T) {
+	vh, _ := lossyHarness(t, nil)
+	vh.engine.State().Zones["wilds"].Placed = map[sim.EntityID]sim.PlacedMark{"zed": {Seq: 5}}
+	arrive := func(seq, entitySeq uint64) *logv1.LoggedCommand {
+		e := sim.EntityState{ID: "zed", Template: "andara.core.Character", ContentVersion: "core@1", HandoffSeq: entitySeq}
+		return &logv1.LoggedCommand{ZoneId: "wilds", ActorId: "zed", Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
+			RoomId: "trail", Entity: e.Proto(), OriginZoneId: "town", OriginRoomId: "plaza", HandoffSeq: seq,
+		}}}
+	}
+	vh.source.Push(arrive(3, 3)) // at or below the mark: stale
+	vh.runTicks(2)
+	if got := counter(vh.loop.metrics.HandoffStaleArrivals); got != 1 {
+		t.Fatalf("andara_handoff_stale_arrivals_total = %v, want 1", got)
+	}
+	if strings.Contains(vh.logs.String(), `"level":"ERROR"`) {
+		t.Fatalf("a stale Arrive is not an error:\n%s", vh.logs.String())
+	}
+	vh.source.Push(arrive(0, 0)) // seq 0: malformed
+	vh.runTicks(2)
+	logs := vh.logs.String()
+	if !strings.Contains(logs, `"level":"ERROR"`) || !strings.Contains(logs, "handoff or bind refused: invalid_arrival") || !strings.Contains(logs, `"entity_id":"zed"`) {
+		t.Fatalf("no error line naming invalid_arrival and the Entity:\n%s", logs)
+	}
+	if got := counter(vh.loop.metrics.HandoffStaleArrivals); got != 1 {
+		t.Fatalf("a malformed Arrive was counted stale: %v", got)
+	}
+}

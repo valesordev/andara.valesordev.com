@@ -37,21 +37,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	if rt.Content == nil {
 		return nil, fmt.Errorf("tick loop: no content source")
 	}
-	engineCfg := sim.Config{
-		Seed:       cfg.SimSeed,
-		Partitions: cfg.SimPartitions,
-		// The verb handlers (AW-SRV-003). A logged arm with no handler is
-		// rejected with unsupported_command and the offsets advance, which
-		// is what keeps the World replayable through a binary behind its
-		// content.
-		Handlers: sim.Handlers(),
-		Content:  rt.Content,
-		// The cross-Zone handoff retry schedule (AW-SRV-028), reaching only
-		// the retry pass, never hashed state.
-		HandoffRetryTicks:    sim.Tick(cfg.SimHandoffRetryTicks),
-		HandoffRetryMaxTicks: sim.Tick(cfg.SimHandoffRetryMaxTicks),
-		HandoffRetryBatch:    cfg.SimHandoffRetryBatch,
-	}
+	engineCfg := engineConfig(cfg, rt.Content)
 	engine := sim.NewEngine(sim.EmptyWorld(), nil, engineCfg)
 	if first, hold, outside := handoffRetryOutsideHold(cfg.SimHandoffRetryTicks, cfg.SimTickRate, cfg.IngressTransitHold); outside {
 		// A warning, not a refusal: the default is fixed in ticks and
@@ -667,4 +653,23 @@ func handoffRetryOutsideHold(retryTicks, tickRate int, hold time.Duration) (firs
 	}
 	first = time.Duration(retryTicks) * time.Second / time.Duration(tickRate)
 	return first, hold, first >= hold
+}
+
+// engineConfig is the sim.Config a server's Engine is built with.
+func engineConfig(cfg config.Config, content sim.ContentSource) sim.Config {
+	return sim.Config{
+		Seed:       cfg.SimSeed,
+		Partitions: cfg.SimPartitions,
+		// The verb handlers (AW-SRV-003). A logged arm with no handler is
+		// rejected with unsupported_command and the offsets advance, which
+		// is what keeps the World replayable through a binary behind its
+		// content.
+		Handlers: sim.Handlers(),
+		Content:  content,
+		// The cross-Zone handoff retry schedule (AW-SRV-028), reaching only
+		// the retry pass, never hashed state.
+		HandoffRetryTicks:    sim.Tick(cfg.SimHandoffRetryTicks),
+		HandoffRetryMaxTicks: sim.Tick(cfg.SimHandoffRetryMaxTicks),
+		HandoffRetryBatch:    cfg.SimHandoffRetryBatch,
+	}
 }

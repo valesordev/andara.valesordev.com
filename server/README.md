@@ -72,7 +72,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `sim.tick_budget_ms` | `ANDARA_TICK_BUDGET_MS` | `50` | Overrun threshold — half the interval, so overruns warn before lag accrues. Must not exceed the interval. |
 | `sim.max_per_tick` | `ANDARA_MAX_PER_TICK` | `1024` | Records applied per tick, taken round-robin across Partitions; the rest wait. |
 | `sim.handoff_retry_ticks` | `ANDARA_HANDOFF_RETRY_TICKS` | `10` | Ticks before an unacknowledged cross-Zone `Arrive` is produced again: the first retry interval (1 s at 10 Hz). Greater than 0. Should exceed the broker round trip and stay below `ingress.transit_hold` once converted by `sim.tick_rate`; startup logs a `warn`, and never refuses, when it doesn't. |
-| `sim.handoff_retry_max_ticks` | `ANDARA_HANDOFF_RETRY_MAX_TICKS` | `100` | The longest gap between attempts of one handoff (10 s at 10 Hz): the interval doubles from `sim.handoff_retry_ticks` up to this. At least `sim.handoff_retry_ticks`. |
+| `sim.handoff_retry_max_ticks` | `ANDARA_HANDOFF_RETRY_MAX_TICKS` | `100` | The longest gap between attempts of one handoff (10 s at 10 Hz): the interval doubles from `sim.handoff_retry_ticks` up to this. At least `sim.handoff_retry_ticks`, so raising the first interval past 100 means raising this too. |
 | `sim.handoff_retry_batch` | `ANDARA_HANDOFF_RETRY_BATCH` | `50` | The most `Arrive` retries produced in one tick, earliest due first, so a restart with many handoffs in flight doesn't fill `sim.max_per_tick` and defer players' Commands. Greater than 0. |
 | `sim.drain_timeout_ms` | `ANDARA_DRAIN_TIMEOUT_MS` | `5000` | Shutdown budget for the in-flight tick, the checkpoint, and `SimulationStopped`; past it, exit 1 naming the tick. |
 | `sim.seed` | `ANDARA_SIM_SEED` | derived | PRNG seed; `0` derives one from the topology the Engine starts with. Every Engine starts with no content (AW-SRV-012), so the derived seed is the same for every World; set it to tell Worlds apart. Overriding is a debugging affordance. |
@@ -291,9 +291,10 @@ holds the Entity in its own Transit at a lower sequence is an implicit ack.
 The retry is the live loop's alone. After `Step` the loop calls `Engine.DueHandoffs(tick)` and
 produces what it returns, at most `sim.handoff_retry_batch` per tick: the first retry after
 `sim.handoff_retry_ticks`, then the interval doubling to `sim.handoff_retry_max_ticks`. The schedule
-is in the engine's memory and not in the State Hash, so replay under any config matches, and replay
-(recovery, the state projector) never calls `DueHandoffs`: a record found in Transit after a recovery
-is due on the first live tick. Nothing is produced for a faulted Zone or a frozen Partition.
+is in the engine's memory and not in the State Hash, so replay under any config matches. Replay
+(recovery, the state projector) never calls `DueHandoffs` and writes no schedule entry, even for a
+departure inside the replayed range: every record found in Transit after a recovery is due on the first
+live tick. Nothing is produced for a faulted Zone or a frozen Partition.
 
 `andara_handoffs_in_transit` sustained above 0 means the broker or the target Partition is stuck.
 `andara_handoff_placed_entries` grows with the Entities that cross Zones. Logs: `handoffs retried: an
@@ -308,6 +309,7 @@ recovery exits `6`. `make world-reset ENV=dev CONFIRM=andara-dev` with the deplo
 `dev`'s Characters and Accounts. A binary from before it can't read a log that has a `HandoffAck`
 either: the same reset. An Entity ID is never reused: a `BindCharacter` for an ID some Zone holds a
 mark for is refused `id_reused`.
+
 ## The command pipeline (AW-SRV-003)
 
 Five stages, with the log in the middle (CLAUDE.md §10, ADR-0002):
