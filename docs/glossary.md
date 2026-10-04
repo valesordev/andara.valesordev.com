@@ -555,6 +555,11 @@ older than the Resume Window (`resume_window_exceeded`) or was never sent to thi
 server (`no_history`). The client's view has a gap it must rebuild — a `look` — and the stream then
 runs live. A Resync is always explicit; a silent gap is never sent (AW-SRV-011).
 
+**Attached** — The first frame of every `Game.Subscribe` stream, sent after the egress has positioned the
+stream's cursor and before a Resync, a Heartbeat or any Event. A client may rely on nothing before it, and
+after it on every Event the Session perceives from the cursor on, until a rebind (`egress.Rebind`: the Session's own bind or unbind re-bases the cursor and sends no new
+Attached) (AW-SRV-011 AC-11).
+
 **Heartbeat** — The stream frame sent when `egress.heartbeat_interval` passes with nothing else to
 send, carrying the last Tick the server has seen. A quiet World and a dead connection look
 different, and an advancing Tick says the simulation is running. Not an Event: `event_id` 0.

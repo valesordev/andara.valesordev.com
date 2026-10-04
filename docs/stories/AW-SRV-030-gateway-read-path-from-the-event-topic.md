@@ -185,3 +185,10 @@ read-path lag as a third cause.
   deployments differ" bug ADR-0001 exists to prevent.
 - `[ASSUMPTION]` `session_id` goes on the Event record. It is already on the Command record the
   Event derives from and on every audit record; nothing new is disclosed to the topic's readers.
+
+## Attached (architecture, 2026-10-03)
+
+The egress this story serves from the event topic is a second implementer of `AW-SRV-011`'s seam, and
+inherits its AC-11: the first frame of every stream is `Attached`, written after the cursor is
+positioned. It needs an AC of its own when this story is next touched; the contract is
+`docs/feedback/AW-SRV-011-first-look-before-subscribe.md`.
