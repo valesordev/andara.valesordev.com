@@ -41,8 +41,9 @@ says which of the two it uses and why, in its comment. A test can't tell the two
 looking, so the author states which one the code under test is.
 
 The thread's CPU time doesn't include Go's background GC workers, which run on other threads. That's
-right for a copy that spawns no goroutines (`SnapshotAll` spawns none), and it means the regression
-injected in acceptance 3 must be mutator CPU (a busy loop), not allocation churn.
+right for a copy that spawns no goroutines (`SnapshotAll` spawns none), and it means the CPU
+mutation in acceptance 4 must be mutator CPU (a busy loop), not allocation churn. Allocation churn is
+gated by the allocation bound (§2), whose mutation is acceptance 5.
 
 Process CPU does include background GC and runtime threads, so a process-CPU guard sees allocation
 churn and carries more noise. Its limit comes from process-CPU measurements, not thread ones.
@@ -59,18 +60,48 @@ pass the regression it exists to catch.
 
 ## 2. The limit stays a multiple of the budget, and the measurement justifies the factor
 
-`limit = stallFactor × snapshot.max_stall_ms` (15 ms) stays: 30 ms without `-race` and 120 ms with it
-(`stallFactor` 2 and 8, in `server/simtest/stallfactor_*_test.go`). `AW-SRV-006` measured the copy at
+Until 2026-10-03 the limit was `stallFactor × snapshot.max_stall_ms` (15 ms): 30 ms without `-race` and
+120 ms with it (`stallFactor` 2 and 8, in `server/simtest/stallfactor_*_test.go`). `AW-SRV-006` measured the copy at
 25,000 Entities on 2026-09-22: 7.4–8.7 ms uncontended and 34.7 ms under `-race`. So each limit is
 about 3.5× the quiet figure, and the factor's comment says so, with the date and machine.
+
+**Amended 2026-10-03, from implementation's measurement on PR #386.** A limit set from a quiet reading
+isn't the limit the guard runs under. Inside the full `-race` suite, with its parallel package binaries,
+the thread's CPU time reads 2.5–3× its low-load figure (36–51 ms alone at load 1.3–1.7, 134.6 ms at worst
+in the suite at load 17), because cache, memory-bandwidth and SMT contention are charged to the thread.
+So the rule is: **a CPU-time limit is at least 1.5× the worst reading inside the full suite**, over at
+least 20 full-suite runs at varied load, and it is recorded beside the factor with the date, the load,
+and the allocation count and bytes at that commit. **The factor changes only by an architecture ruling,
+and only after the observed allocation count at that commit is within 1.0× of its recorded value**, so a re-measurement
+on a tree whose copy has crept can't raise the limit and hide it. For the race build that comes to a factor of about 13–14 or more (134.6 ms × 1.5 ≈ 200 ms), and
+implementation sets the figure from its own runs. The same measurement sets the non-race factor.
+`make check` runs the guard in the suite, so the suite is the condition that counts. **Each guard has
+its own factor constant.** A factor shared between guards moves the limit of every one that reads it
+(`TestContentSwapStaysInsideHalfTheTickBudget` reads `stallFactor` too, so PR #386 gives the snapshot
+guard `snapshotStallFactor` and leaves the other limit where it was).
 
 Two comments are stale. `stallfactor_norace_test.go` pairs 10,000-Entity timings (2.7 ms, 4.8 ms)
 with a 5 ms budget. The race file's 2.7 ms and 12.6 ms are 10,000-Entity figures too. The "24.7 ms
 against a 5 ms budget" history in the race file and above the test is true as written, and stays.
 
 The guard exists to catch a structural change, such as an encode or a hash moving back inside the
-tick (24.7 ms against a 5 ms budget, once), and a copy that starts walking topology. That is far
-outside any limit this measurement yields. It doesn't replace the service-level number. The shipped
+tick (24.7 ms against a 5 ms budget, once), and a copy that starts walking topology. A CPU limit that
+loose catches only the gross cases, so **the structural gate is an allocation bound**, which load
+can't move: the test asserts the allocation count (`testing.AllocsPerRun`, an integer average, called several times) and the bytes
+allocated per round (`runtime`'s `TotalAlloc` before and after) at the sizing fixture. Both counters
+are process-wide, so noise from a stray goroutine only adds, and the test takes the **minimum over
+its calls and rounds**. **Allocations at most 1.05× the recorded value, bytes at most 1.25×.** The count is
+deterministic, so a deeper clone that adds one allocation per Entity (+25,000 on a few hundred
+thousand) fails it, and the bytes headroom is for toolchain drift. **What it catches:** anything that
+allocates per Entity (a deeper clone, a per-Entity encode), and anything that allocates more than about
+2.1 MB in total, which is 25% of the 8.4 MB baseline (a canonical encode of a whole Zone allocates in
+proportion to the world, and is of this kind). **What it misses:** a single allocation, or a few, under
+that, such as one small buffer, and a streaming, non-allocating hash. The gate narrows the gap and
+doesn't close it. The CPU tripwire sees the gross cases of what it misses, and
+`andara_snapshot_tick_stall_seconds` sees the rest in production. The bound is recorded with the Go
+version and the build tag (`-race` allocates differently). A failure prints the recorded Go version and
+tag beside the observed ones and says "re-record with a note", so a toolchain drift is a visible
+re-record and not a silent loosening. It doesn't replace the service-level number. The shipped
 SLI is the server's own `andara_snapshot_tick_stall_seconds`, wall-clock, in the tick.
 
 ## 3. A service-level measurement runs where it can be trusted
@@ -94,22 +125,29 @@ right move for a *measurement* (§3), and the wrong one for a guard.
 
 Implementation's, in one PR (SPRINT-04 item 6). Each is a command whose output goes in the PR:
 
-1. **Quiet:** `go test -race -count=20 -run TestSnapshotCopyStaysInsideTheStallBudget ./server/simtest`
-   passes 20 of 20, and its log line prints the CPU time and the limit.
-2. **Loaded:** with `2 × nproc` CPU-bound processes running, the same command passes 20 of 20. This
-   is the case the test fails today.
-3. **Still catches:** with 150 ms of CPU work added to `SnapshotAll` in a scratch worktree (never
-   committed), the same loaded run fails 20 of 20.
-4. **Suite:** `make test` under the same load passes 5 of 5.
-5. The stale comments in `stallfactor_norace_test.go` are corrected as §2 says, and the quiet-machine
-   CPU time (per build) is recorded beside each factor, with the date.
+1. **Low load:** `go test -race -count=20 -run TestSnapshotCopyStaysInsideTheStallBudget ./server/simtest`
+   passes 20 of 20, and its log line prints the CPU time, the limit, the allocations and the bytes.
+2. **Loaded:** with `2 × nproc` CPU-bound processes running, the same command passes 20 of 20.
+3. **Suite:** `go test -race -count=1 ./server/...` passes 20 of 20 consecutive runs at varied load
+   (load average from the box's idle to 17), and `make test` under the same load passes 5 of 5. This is
+   the case `make check` runs, and it is the binding one.
+4. **Still catches, on CPU:** with mutator CPU of twice the limit added to `SnapshotAll` in a scratch
+   worktree (never committed), the loaded run fails 20 of 20.
+5. **Still catches, on allocation:** with one 64-byte allocation kept per Entity per round in the same
+   scratch worktree (about +25,000 allocations and +1.6 MB), the **allocation-count** bound fails, with the
+   CPU limit untouched, 20 of 20. The log prints the recorded baselines. (A single large buffer, which
+   adds one allocation and a few percent of the bytes, would pass and prove nothing.)
+6. The stale comments in `stallfactor_norace_test.go` are corrected as §2 says, and the worst in-suite
+   CPU time for each build, with the date, the load and the Go version, is recorded beside each factor,
+   next to the allocation bound. The low-load alone figures are recorded as low-load, not idle.
 
-If 2 doesn't hold, CPU time isn't enough on that box (memory bandwidth and SMT contention are
-charged to the thread), and the guard adds an allocation bound (`testing.AllocsPerRun`): report back in
-`docs/feedback/172-stall-budget-measurement.md` rather than loosening the limit.
+If 3 still doesn't hold with the in-suite limit, report back in
+`docs/feedback/172-stall-budget-measurement.md`. It means the allocation bound is the guard and the CPU
+check is only a tripwire, and that is architecture's call to make, not a loosening to make quietly.
 
 ## Revisit when
 
 - CI moves to runners where `RUSAGE_THREAD` isn't available.
-- A second timing guard exists. Two is the point to ask whether `internal/` wants a shared
-  `cputime` helper; one is not.
+- The second timing guard, `TestContentSwapStaysInsideHalfTheTickBudget`, is converted: two CPU-time
+  guards are the point to ask whether `internal/` wants a shared `cputime` helper. It exists today but
+  is still wall-clock (`docs/specs/testing/README.md`'s audit), so the question opens when it converts.
