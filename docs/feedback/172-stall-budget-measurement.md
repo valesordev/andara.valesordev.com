@@ -1,7 +1,9 @@
 # #172: how the snapshot stall-budget test measures
 
-Ruling: `docs/specs/testing/timing-assertions.md` (architecture, 2026-10-03). The guard measures
-**CPU time of its own thread**, not wall-clock, and the wall-clock number moves to
+Ruling: `docs/specs/testing/timing-assertions.md` (architecture, 2026-10-03; amended the same day
+after implementation's report below, PR #390). The guard measures **CPU time of its own thread**,
+with a limit set from the worst in-suite reading, and gains an **allocation bound** as its structural
+gate. It is not wall-clock, and the wall-clock number moves to
 `BenchmarkSnapshotAllAtSizingScale`, run serially and recorded. "Run it alone" was rejected: the
 failures came from load the suite doesn't make (other sessions, the local `kind` clusters).
 
@@ -9,8 +11,10 @@ failures came from load the suite doesn't make (other sessions, the local `kind`
 
 SPRINT-04 item 6. The change is `server/simtest` only: a `linux` CPU-time helper
 (`runtime.LockOSThread` + `getrusage(RUSAGE_THREAD)`), a wall-clock fallback elsewhere, and the stale
-`stallfactor_*_test.go` comments corrected. The five acceptance commands are at the foot of the
-ruling. If its command 2 (loaded, 20 of 20) fails, report here rather than loosening the limit.
+`stallfactor_*_test.go` comments corrected. The six acceptance commands are at the foot of the
+ruling, and command 3 (the full `-race` suite, 20 of 20) is the binding one. If it fails, report
+here rather than loosening the limit. (As first written this said five commands, with command 2
+binding; the amendment replaced it, and the answer below is to the amended version.)
 
 ## For SRE
 
