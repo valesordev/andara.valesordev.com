@@ -71,4 +71,3 @@ amend the wording, not the code:**
 If architecture wants the agent held regardless, that is a change to `scripts/bootstrap.sh` in
 `andara.solo7.media` (a role there, not SRE's session) and to its macOS check, which uses an
 unencrypted key in a started agent and would then need to keep it there.
-
