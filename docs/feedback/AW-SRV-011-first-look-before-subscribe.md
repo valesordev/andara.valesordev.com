@@ -51,7 +51,7 @@ it positions the stream's cursor.** Options 1 and 2 aren't taken, and option 4 i
   Events a Command submitted after the frame arrived causes. The cursor is set before the frame is
   written, so a Command submitted after the frame enters the log after the cursor and its Events are past it.
   This holds on a first Subscribe (`last_event_id` 0) as on a resume. **It lasts until a `Rebind`** (the
-  Session's own bind or unbind, `AW-SRV-014`), which resets the history and re-bases the cursor and sends no
+  Session's own bind or unbind, `egress.Rebind`, `AW-SRV-011`), which resets the history and re-bases the cursor and sends no
   new `Attached`. `play` is safe, since `SelectCharacter` binds before `Subscribe`. A client that selects a
   Character after subscribing can't rely on the Events that bind causes.
 - **Order of frames:** `Attached`, then `Resync` when the resume can't hold, then Heartbeats and Events.
@@ -91,21 +91,26 @@ is one deploy.
 SPRINT-04 item 13. Server and CLI, in one PR if it fits.
 1. **Egress:** write `Attached` from `Subscribe` after `attach` positions the cursor, before `Resync`,
    Heartbeats and Events, on every stream (first Subscribe, resume that holds, resume that can't), exactly
-   one per stream, Event ID 0, leaving `lastSent` and `lastEvent` untouched. Add `TypeAttached` and the
+   one per stream, Event ID 0, leaving `lastSent` and `lastEvent` untouched. `attach` reads the cursor
+   under the session lock, as it does today: after a `reset()` `newest` is 0 while the floor is above 0,
+   and the first Event delivered still has a greater ID only if that holds. Add `TypeAttached` and the
    pre-created `type="attached"` series on `andara_stream_events_sent_total` (`metrics.go`), and the row in
    `server/README.md`. Pin the ordering in `egress_test.go`.
 2. **Existing readers.** Every consumer that assumes the first frame is an Event, or counts frames,
-   changes. Name them all in the PR: the `g.next()` and `ids(...)` helpers in `server/egress/egress_test.go`
-   and `server/gateway/gateway_test.go`, `cmd/andara-server/linkdead_test.go` (`len(got) < 4`) and
+   changes. Name them all in the PR: the `next()` and `ids(...)` helpers in `server/egress/egress_test.go`,
+   `server/egress/gateway_test.go` and `server/egress/linkdead_test.go`, `cmd/andara-server/linkdead_test.go` (`len(got) < 4`) and
    `m1_test.go`, `internal/smoke/m1_test.go` and `soak_test.go`, and the scripts that read the stream:
    `scripts/stack_play.sh`, `scripts/stack_linkdead.sh`, `scripts/stream_soak.sh`. One Attached-first read
    helper is the place that changes.
 3. **Gateway:** `game.go`'s headers-only `stream.Send(nil)` may stay or go. Fix its comment either way.
 4. **CLI:** `play.go` `stream()` waits for `Attached` before its first `look`, and fixes its comment.
    `Receive` isn't context-bounded per call, so a timer cancels the stream's context at `--timeout`, and
-   the failure is exit `4`, `error.code` `timeout`, which `streamLoop` treats as terminal. `render.go`
-   renders `Attached` as nothing in human output, `--output json` carries it, and `admin/README.md`'s and
-   `AW-CLI-004`'s `jq` filter becomes `select(.heartbeat == null and .attached == null)`. The fake Egress
+   the failure is exit `4`, `error.code` `timeout`. `stream()` records that the timer fired, since
+   cancelling the context otherwise ends `Receive` with `CodeCanceled`, and `streamLoop` gains a case before
+   its connection-lost path that sends `AppError{ExitTimeout, CodeTimeout}` to `p.fatal` and doesn't retry
+   (today it would go to `ExitConnect`, or reconnect under `--reconnect`). `render.go`
+   renders `Attached` as nothing in human output, `--output json` carries it, and `admin/README.md` (line 417) and
+   `AW-CLI-004` (line 168) have the `jq` filter, which becomes `select(.heartbeat == null and .attached == null)`. The fake Egress
    in `admin/cli/play_test.go` writes `Attached` after it records `Subscribe`, so
    `TestPlay_SelectsBeforeSubscribe` asserts `Subscribe` < `Attached` < `Submit:look` deterministically.
 5. **Tests, each Given/When/Then:**

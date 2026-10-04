@@ -959,7 +959,7 @@ func (x *Resync) GetReason() string {
 // (AW-SRV-011 AC-11). A client may rely on nothing before it. After it, every
 // Event the Session perceives from the cursor on is delivered, including the
 // Events a Command submitted after this frame arrived causes, until a Rebind
-// re-bases the cursor (AW-SRV-014), which sends no new Attached. It is the
+// re-bases the cursor (egress.Rebind, AW-SRV-011), which sends no new Attached. It is the
 // stream's only open signal: response headers carry no guarantee, and the same
 // handler serves Connect, gRPC and gRPC-Web (ADR-0003), so it can't be one
 // transport's.

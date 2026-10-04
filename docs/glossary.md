@@ -557,7 +557,8 @@ runs live. A Resync is always explicit; a silent gap is never sent (AW-SRV-011).
 
 **Attached** — The first frame of every `Game.Subscribe` stream, sent after the egress has positioned the
 stream's cursor and before a Resync, a Heartbeat or any Event. A client may rely on nothing before it, and
-after it on every Event the Session perceives from the cursor on, until a Rebind (AW-SRV-011 AC-11).
+after it on every Event the Session perceives from the cursor on, until a rebind (`egress.Rebind`: the Session's own bind or unbind re-bases the cursor and sends no new
+Attached) (AW-SRV-011 AC-11).
 
 **Heartbeat** — The stream frame sent when `egress.heartbeat_interval` passes with nothing else to
 send, carrying the last Tick the server has seen. A quiet World and a dead connection look

@@ -82,7 +82,8 @@ connection to cost only me, so that one bad network does not lag everyone in the
     frame the client receives is `Attached{cursor_event_id}` (Event ID 0), before a `Resync`, a
     Heartbeat or any Event. **Given** a client that submits a Command after it has received `Attached`
     **then** the Events that Command causes, and every other Event the Session perceives from the cursor
-    on, are delivered on that stream, on a first Subscribe as on a resume. **Given** a client that has
+    on, are delivered on that stream, on a first Subscribe as on a resume, until a `Rebind` re-bases the
+    cursor (`egress.Rebind`; it sends no new `Attached`). **Given** a client that has
     received no frame yet **then** it may rely on nothing: the response headers carry no guarantee, and a
     client must not treat them as the stream being open. *(Added 2026-10-03, #116 and #117; ruled in
     `docs/feedback/AW-SRV-011-first-look-before-subscribe.md`.)*
