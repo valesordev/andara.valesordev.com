@@ -58,8 +58,9 @@ Built in PR #386 as ruled (both (a) and (b)).
   That is below the 500,000 you asked about, so the 1.05x bound fails the per-Entity mutation: with
   one retained 64-byte allocation per Entity per round it reads 99,119 (+25,000) and fails 20 of 20
   under 48 busy processes with the CPU limit untouched. Recorded in `stallfactor_*_test.go`.
-- **CPU limit.** In the full suite, 20 runs per build at 0–18 busy processes, load average 3.5–48 at
-  start: race 62.9–96.6 ms (and 66–84 ms in the 20 acceptance runs after), non-race 16.4–21.3 ms. The
+- **CPU limit.** In the full suite, 20 runs per build at 0–18 busy processes: race 62.9–96.6 ms at load
+  average 3.5–23.7 at start (and 66–84 ms in the 20 acceptance runs after, at 21–48), non-race
+  16.4–21.3 ms at 20–28. The
   worst reading seen on this change is 134.6 ms (race, `make test`), so the race factor is **14**
   (210 ms, 1.56x that) and the non-race factor is **4** (60 ms, 2.8x its 20-run worst; the race
   build's tail ran 1.39x its 20-run worst, which puts the non-race tail near 30 ms).

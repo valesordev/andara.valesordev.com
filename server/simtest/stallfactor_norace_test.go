@@ -23,13 +23,13 @@ const stallFactor = 2
 //     that day, not an idle machine): 10.7–15.6 ms over 10 runs.
 //   - In the full suite, `go test -count=1 -v ./server/...`, 20 runs on
 //     2026-10-03 cycling 0–18 busy processes, load average 20–28 at start
-//     (Go go1.27.1-X:nodwarf5, 24 cores): 16.4–21.3 ms.
+//     (go1.27.1-X:nodwarf5, 24 cores): 16.4–21.3 ms.
 //
-// The limit is 2.8x the worst of those. The in-suite race build read up to
-// 1.39x its 20-run worst when it was seen at its worst (134.6 ms against
-// 96.6 ms), which puts the same tail near 30 ms here, and a factor of 3 would
-// leave 1.5x on that. CI runs -race, so this is the build only a plain
-// `go test` meets. If it flakes, raise the factor by a new ruling, not retries.
+// The limit is 2.8x the worst of those. The race build's worst-ever reading
+// ran 1.39x its 20-run worst (134.6 ms against 96.6 ms), which puts the same
+// tail here near 30 ms (21.3 ms x 1.39); 60 ms is 2x that tail. CI runs -race,
+// so this is the build only a plain `go test` meets. If it flakes, raise the
+// factor by a new ruling, not retries.
 const snapshotStallFactor = 4
 
 // The allocation bound's recorded values for this build (allocbound_test.go),

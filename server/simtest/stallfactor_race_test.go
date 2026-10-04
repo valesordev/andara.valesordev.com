@@ -25,7 +25,7 @@ const stallFactor = 8
 //     that day, not an idle machine): 36.1–50.7 ms over 10 runs.
 //   - In the full suite, `go test -race -count=1 -v ./server/...`, 20 runs on
 //     2026-10-03 cycling 0–18 busy processes, load average 3.5–23.7 at start
-//     (Go go1.27.1-X:nodwarf5, 24 cores): 62.9–96.6 ms.
+//     (go1.27.1-X:nodwarf5, 24 cores): 62.9–96.6 ms.
 //   - The worst in-suite reading seen on this change, outside those 20 runs, is
 //     134.6 ms (`make test`, load average 17), after 122.6 ms in another run.
 //     The limit is 1.56x that.
