@@ -122,7 +122,11 @@ before this story. Rolling back the binary leaves field 10 unread and harmless.
 
 ## Definition of done
 
-CLAUDE.md §8.
+CLAUDE.md §8, plus:
+- **Inherited from `AW-SRV-046`'s §8 pass (2026-10-04):** `acting_as_account_id` with a value. No
+  Admin call can set it before this story, so its §8 shows `builder packs set` (or the first Admin line
+  to carry it) on the running server with the key non-empty, beside the empty case `AW-SRV-046`
+  observed.
 
 ## Open questions
 

@@ -219,7 +219,7 @@ CLAUDE.md §8.
    the server's `5`. Recorded in `AW-SRV-007`'s body.
 2. **Resolved 2026-10-02 (architecture): the `AW-SRV-007` edge.** Added in the commit that moves
    this story to `ready`.
-3. `[ASSUMPTION]` Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01).
+3. *Resolved 2026-10-04 (architecture, §8):* Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01); it landed in SPRINT-04 and `AW-SRV-007` is still `ready`.
 
 ## Verification record — 2026-10-03 (implementation; `review` until the §8 checklist passes)
 
@@ -259,7 +259,7 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
 - ~~The operator step, `make projector-rebuild ENV=dev` logging `restore verified`.~~ Done on
-  2026-10-04: see the §8 operator step below.
+  2026-10-04: the rebuild Job's own log carries the line. See the §8 operator step below.
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 
@@ -302,45 +302,77 @@ all observed, and the `stack` workflow runs it after `stack-linkdead`. At `main`
 **Runbook:** `docs/runbooks/state-projector-down.md`'s exit `5` row no longer says it ships with
 this story.
 
+## §8 review (architecture, 2026-10-04): stays `review` on the operator step
+
+Every checklist item holds except one, run on `main` ad4ef09 plus this review. The story stays at `review`
+until SRE records the operator step (below), which is the one thing left.
+- **Acceptance criteria.** The sim and store tests the record names (`TestRestore_*`,
+  `TestRestoredEngineContinuesTheWorld`) pass on `main`. AC-3, AC-4 and AC-5's projector half are
+  `TestRun_*` against Redpanda, which SRE ran on the stack (record above), and AC-8's #143 regression
+  is `TestRestore_Issue143IsNamedAtTheRoundTick`, which names the round's tick.
+- **Tests in CI.** The unit tests are in `make test`. The Redpanda tests run in `make test-integration`
+  and in SRE's `make stack-projector-check`, which the `stack` workflow runs.
+- **`make check`** ended `check: all clean`, exit 0.
+- **Instrumentation** is SRE's, recorded above: `andara_restore_total{caller="projector"}` read from the
+  projector's own `/metrics` at `ok` 1 after a bootstrap, the `restore verified` line, and the
+  `state.bootstrap` → `restore.verify` trace in Tempo. The exit `5` row is in the runbook.
+- **Deferred observations, carried and not dropped** (CLAUDE.md §8, "verified against a real backend
+  when no caller exists yet"):
+  - `andara_restore_total{caller="verify"}` gets a Definition-of-done line in `AW-SRV-007`, added in
+    this review. `{caller="recovery"}` was already `AW-SRV-007`'s, through `AW-INF-032`.
+  - The mismatch series and `error` line from a running projector can't be scraped, since it exits `5`
+    first. The integration tests read them on the in-process registry, as the Observability section
+    says.
+
+**Not done, and not carried:** the operator step in the Test plan, `make projector-rebuild ENV=dev` on a
+`dev` running this build, with `state projector restore verified` in its log. The §8 carve-out above is
+for an instrumentation observation that no caller can make yet. This one has a caller and only needs a
+run, since Argo CD deploys `main` to `dev`, so SRE (on the tailnet) runs it and records the line here.
+`AW-SRV-007` depends on this story and counts it as met at `review`, so nothing waits on it.
+- **Config, migration, glossary.** No config key. The round's `sim_seed` field is additive: a round
+  without it reads as `0` and derives the seed (AC-6). The glossary gains **Restore mismatch** in this
+  review. The one `[ASSUMPTION]` is marked resolved above.
+
 ## §8 operator step — 2026-10-04 (SRE, `sre/aw-srv-043-verify-dev`)
 
-**`make projector-rebuild ENV=dev` ran on `dev` and the restore verified.** `dev` was Synced and
-Healthy at `main@b335936` (the Application's current build, which contains this story), and its
-projector runs `ghcr.io/valesordev/andara-server:dev@sha256:8ac96a51…`, built from `b335936`. The
-run, at 2026-10-04T15:02Z:
+**`make projector-rebuild ENV=dev` ran on `dev`, and the rebuild Job's own log carries `restore
+verified`.** The Job ran at 2026-10-04T15:54Z on the projector Deployment's image
+`ghcr.io/valesordev/andara-server:dev@sha256:c22c5ce5…`, built from `main@a15f1ec` (the Application
+was Synced; the Deployment's ReplicaSet for that image was created at 15:54:29Z, before the run).
+That commit contains this story's code. `projector-rebuild` deletes the Job once it has caught up,
+so its log was followed with `kubectl logs -f` while it ran. The run:
 
 ```
 projector-stop: stopped (group andara-projector-state-dev empty) in 2s
 projector-rebuild: Job andara-projector-state-rebuild created; waiting for `state projector caught up`
-projector-rebuild: caught up at tick 1584989; stopping the Job
+projector-rebuild: caught up at tick 1616234; stopping the Job
 projector-start: ready in 7s
-projector-rebuild: rebuilt to tick 1584989 in 17s
+projector-rebuild: rebuilt to tick 1616234 in 17s
 ```
 
-The projector `projector-start` brought up straight after (`andara-projector-state-7d6899b757-2hfjl`)
-bootstrapped from the newest snapshot round on `dev`, and logged:
+The Job's log (`andara-projector state --rebuild`, `rebuild=true`):
 
 ```
-state projector restore verified   round_tick=1584757 zones=4
-  restored_hash=8a04504a4089d7ec4af61f049016476fe99c69a827e465655f4ae3bb5d13984a
-state projector started            round_tick=1584757 rebuild=false from_zero=false
-state projector caught up          tick=1585066
+state projector restore verified   round_tick=1615987 zones=4
+  restored_hash=bc421b0a5a39302722042b338fd7127652a9610e92acca60040f6cf1e8d2b516
+state projector started            round_tick=1615987 rebuild=true from_zero=false
+state projector caught up          tick=1616234
 ```
 
-Its own `/metrics`, read from the pod, has `andara_restore_total{caller="projector",outcome="ok"} 1`
-and `hash_mismatch` and `seed_mismatch` at `0`.
+The projector that `projector-start` brought up after it (`andara-projector-state-65cc8bd7b8-nqb7m`)
+restored the same round, logged `restore verified` for `round_tick=1615987` again with
+`rebuild=false`, and its own `/metrics` reads `andara_restore_total{caller="projector",outcome="ok"} 1`,
+with `hash_mismatch` and `seed_mismatch` at `0`. The Job's process exited, so its series can't be
+scraped; the log line is the observation for it.
 
-**What this does and doesn't show.** The rebuild Job's own log wasn't kept: `projector-rebuild`
-deletes the Job once it has caught up, so its `--rebuild` bootstrap line isn't in this record, and
-which round the Job restored isn't recorded either. The evidence is the Deployment pod's bootstrap
-(`rebuild=false`): it goes through the same `bootstrapEngine` and `RestoreEngine` check as a
-`--rebuild` one, on the newest complete round, and logged `restore verified` for round 1584757.
+**An earlier run, kept for the record.** The first run, at 15:02Z on `main@b335936`, didn't capture
+the Job's log, which is why this one did. It rebuilt to tick 1584989, and the projector it started
+logged `restore verified` for `round_tick=1584757` with `zones=4`. It's superseded here, not relied on.
 
-The Job finishing shows less than that. `projector-rebuild` waits for `state projector caught up`,
-and a Job that hit a mismatch would have exited 5 and failed instead, but a rebuild that finds no
-complete round bootstraps from offset zero, runs no restore, and also reaches `caught up`
-(`server/projector/run.go`). This run had rounds on the store, as the pod's line shows, so it isn't
-that case, but the Job's success doesn't prove it. Two follow-ups, neither this story's, filed as issue #396:
+**What `projector-rebuild` itself shows.** It waits for `state projector caught up` and never reads
+`restore verified`, and a rebuild that finds no complete round bootstraps from offset zero, runs no
+restore, and also reaches `caught up` (`server/projector/run.go`). Its success alone proves less
+than the Job's log above does. Two follow-ups, neither this story's, filed as issue #396:
 - `projector-rebuild` should require `restore verified` in the Job's log before it deletes the Job.
 - Its `Failed` message lists exits 2, 3 and 4 and omits 5 (`scripts/projector.py`); it should name
   the restore mismatch.

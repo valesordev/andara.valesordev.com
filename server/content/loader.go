@@ -608,8 +608,9 @@ func refusal(findings []sim.ValidationError) error {
 // not validated alone: an Exit from town into a Zone that only core declares
 // is valid only in the whole.
 // moving is true for a pointer move (a load, or the activation check that
-// mirrors it), and false for the publish gate, which judges a version alone:
-// the spawn Room is a property of the World after a move (AW-SRV-042 AC-8).
+// mirrors it): the spawn Room is a property of the World after a move
+// (AW-SRV-042 AC-8). The publish gate doesn't come through here: it has its
+// own build (buildGate), which orders the packs and reports as rule 10 says.
 func (l *Loader) build(ctx context.Context, base map[string]*Resolved, candidate *Resolved, moving bool) (sim.Topology, []sim.ValidationError, []sim.ValidationError) {
 	with := make(map[string]*Resolved, len(base)+1)
 	for p, r := range base {

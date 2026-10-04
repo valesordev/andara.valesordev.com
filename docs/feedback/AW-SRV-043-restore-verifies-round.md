@@ -88,6 +88,8 @@ below.
 
 ## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
 
+*Items 1 and 2 are done (SRE's record is in the story). **Item 3 is still wanted:** the operator step, `make projector-rebuild ENV=dev` logging `state projector restore verified` on a `dev` running this build. `AW-SRV-043` stays at `review` until it's recorded in the story (architecture's §8 review, 2026-10-04).*
+
 Architecture's §8 review of AW-SRV-043 stops at SRE's items. The story stays at `review` until all
 are recorded in it (its "Outstanding before `done`").
 1. **The instrumentation check:** `outcome="ok"` observed after a bootstrap, on a real backend.
@@ -96,6 +98,8 @@ are recorded in it (its "Outstanding before `done`").
    verified` in its log. It needs this build on `dev`; if that waits on a deploy, say so in the record.
 
 ## For PM and architecture: SRE §8 instrumentation check, 2026-10-03
+
+*Done in architecture's §8 review, 2026-10-04: `AW-SRV-007`'s Definition of done now has the `caller="verify"` line.*
 
 - **`andara_restore_total{caller="verify"}` has no Definition-of-done line.** `AW-SRV-007` wires
   both server callers, but its DoD names only `caller="recovery"` and the `recovery.run` trace.
@@ -106,10 +110,11 @@ are recorded in it (its "Outstanding before `done`").
 ## SRE: the operator step, 2026-10-04
 
 Item 3 is done and recorded in the story's "§8 operator step". `make projector-rebuild ENV=dev`
-rebuilt `dev` (at `main@b335936`) to tick 1584989 in 17 s. The projector it started logged
-`state projector restore verified` with `round_tick=1584757` and `zones=4`, and its
-`andara_restore_total{caller="projector",outcome="ok"}` reads `1`. The record says that the evidence
-is the Deployment pod's bootstrap, since `projector-rebuild` deletes its Job (and so the Job's log)
-once caught up, and that the Job finishing alone doesn't prove a restore ran (a rebuild with no
-complete round bootstraps from zero). It lists two follow-ups for `projector-rebuild`, filed as
-issue #396. Nothing else on this story is outstanding from SRE.
+ran at 15:54Z on a Deployment image built from `main@a15f1ec`, rebuilt `dev` to tick 1616234 in
+17 s, and the rebuild Job's own log carries `state projector restore verified`
+(`round_tick=1615987`, `zones=4`, `rebuild=true`). The Job's log was followed while it ran,
+because `projector-rebuild` deletes the Job once caught up. The projector it started afterwards
+reads `andara_restore_total{caller="projector",outcome="ok"} 1`. An earlier run at 15:02Z,
+without the Job's log, is recorded as superseded. `projector-rebuild`'s own gaps (it never reads
+`restore verified`, and its `Failed` message omits exit 5) are issue #396. Nothing else on this
+story is outstanding from SRE.

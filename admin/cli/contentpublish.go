@@ -418,6 +418,13 @@ func placeAll(smap *lang.SourceMap, fs []*contentv1.Diagnostic) []lang.Diagnosti
 		if f.GetSeverity() == contentv1.Severity_WARNING {
 			sev = lang.SeverityWarning
 		}
+		if f.GetPack() != "" {
+			// Another pack's finding (errors.md §1 rule 10.6), the mark of
+			// which is a non-empty pack and nothing else: it is not on this
+			// source, so it isn't placed by chain.
+			out = append(out, lang.Diagnostic{File: f.GetFile(), Code: f.GetCode(), Message: f.GetMessage(), Severity: sev, Pack: f.GetPack()})
+			continue
+		}
 		if d, ok := smap.Place(f.GetCode(), f.GetMessage(), f.GetChain(), sev); ok {
 			out = append(out, d)
 			continue

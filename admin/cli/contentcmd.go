@@ -76,6 +76,9 @@ type jsonDiagnostic struct {
 	Message  string   `json:"message"`
 	Chain    []string `json:"chain,omitempty"`
 	Severity string   `json:"severity"`
+	// Pack is set on a finding in another pack's blobs, reported by the
+	// publish gate (errors.md §1 rule 10.6); absent for the caller's own.
+	Pack string `json:"pack,omitempty"`
 }
 
 func toJSONDiagnostics(ds []lang.Diagnostic) []jsonDiagnostic {
@@ -83,7 +86,7 @@ func toJSONDiagnostics(ds []lang.Diagnostic) []jsonDiagnostic {
 	for _, d := range ds {
 		out = append(out, jsonDiagnostic{
 			File: d.File, Line: d.Line, Col: d.Col, Code: d.Code,
-			Message: d.Message, Chain: d.Chain, Severity: d.Severity.String(),
+			Message: d.Message, Chain: d.Chain, Severity: d.Severity.String(), Pack: d.Pack,
 		})
 	}
 	return out
@@ -110,7 +113,11 @@ func (rt *runtime) writeDiagnostics(ds []lang.Diagnostic, path string) error {
 	var sb strings.Builder
 	for _, d := range ds {
 		shown := d
-		shown.File = filepath.Join(path, d.File)
+		if d.Pack == "" {
+			// Another pack's finding names its own blob, not a file under
+			// --path.
+			shown.File = filepath.Join(path, d.File)
+		}
 		shown.Render(&sb)
 	}
 	if sb.Len() > 0 {

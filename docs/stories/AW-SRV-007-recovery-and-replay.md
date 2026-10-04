@@ -524,6 +524,11 @@ CLAUDE.md §8, plus:
   only.
 - `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
   run in the job summary.
+- **Inherited from `AW-SRV-043`'s §8 review (2026-10-04):** `andara_restore_total{caller="verify"}`
+  is observed live. This story's §8 shows it at `ok` 1 from the running server's scrape after one
+  `snapshot verify --round T` against the local stack's real round (`Admin.VerifySnapshotRound`), and
+  `recover --verify`'s outcome read on the in-process registry, since a one-shot exits before a scrape.
+  Both server callers are wired here, and only `caller="recovery"` had a line.
 - **Inherited from `AW-SRV-006`'s §8 pass (2026-09-24):** this story is the first to drive a real
   snapshot failure through the server. Its §8 shows, from the running server's own registry,
   `andara_snapshot_failures_total{reason="encode"|"timeout"|"stall"}` moving, and
