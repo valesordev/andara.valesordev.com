@@ -5,9 +5,12 @@
 
 package simtest_test
 
-// stallFactor scales AC-1's wall-clock assertion for the build it runs in.
+// stallFactor scales AC-1's CPU-time assertion for the build it runs in.
 //
-// Two, here: the copy measures 2.7 ms against a 5 ms budget uncontended and
-// 4.8 ms with the machine busy, and CI hardware is slower than the workstation
-// those came from. See stallfactor_race_test.go for why this is not one number.
+// Two, here: AW-SRV-006 measured the copy at the 25,000-Entity sizing
+// fixture at 7.4–8.7 ms uncontended (2026-09-22), so the 30 ms limit is about
+// 3.5x that. Thread CPU time of the guard on 2026-10-03, on a workstation
+// shared with other sessions (load average 7–30, so not quiet): 15.7–29.4 ms
+// over 10 runs. See stallfactor_race_test.go for why this is not one number,
+// and docs/specs/testing/timing-assertions.md for why it is CPU time.
 const stallFactor = 2
