@@ -24,11 +24,13 @@ import (
 // origin is where an Input came from. sim.Input.File is the path alone, and
 // two packs can each hold a `town.json`, so the gate tags each input's File
 // with its pack for the build and reads the tag back out of what the build
-// reports (rule 10.2). The tag holds a NUL, which no pack name or blob path
-// can (UnsafeBlobPath).
+// reports (rule 10.2). The tag holds NULs, which no pack name or blob path can
+// (UnsafeBlobPath), and begins with one, so no tag is a substring of another:
+// packs `b` and `ab` holding the same path can't be confused when a tag is
+// replaced in a finding's text.
 type origin struct{ pack, path string }
 
-func tagFile(pack, path string) string { return pack + "\x00" + path }
+func tagFile(pack, path string) string { return "\x00" + pack + "\x00" + path }
 
 // taggedInputs is the build's inputs for packs, in the order given, with each
 // File tagged and the tag's origin recorded.

@@ -700,3 +700,17 @@ func TestContentPublish_AnotherPacksFindingPrintsUnderItsOwnPack(t *testing.T) {
 		t.Errorf("--output json: pack=town findings %d, the publisher's pack_mismatch %d: %+v", foreign, own, j)
 	}
 }
+
+// Two findings of one code in another pack's blob have no position or chain to
+// tell them apart, so the dedupe that lists a finding both stages raise once
+// must not merge them (strict_orphans with three orphans in one file).
+func TestContentPublish_TwoFindingsOfOneCodeInAnotherPacksBlobAreBothShown(t *testing.T) {
+	findings := []*contentv1.Diagnostic{
+		{File: "town.json", Code: "orphan_room", Message: "room a is not reachable", Severity: contentv1.Severity_ERROR, Pack: "town"},
+		{File: "town.json", Code: "orphan_room", Message: "room b is not reachable", Severity: contentv1.Severity_ERROR, Pack: "town"},
+	}
+	diags := mergeDiagnostics(nil, placeAll(nil, findings))
+	if len(diags) != 2 {
+		t.Fatalf("got %d findings, want both: %+v", len(diags), diags)
+	}
+}

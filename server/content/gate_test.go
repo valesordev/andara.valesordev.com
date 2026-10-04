@@ -365,3 +365,47 @@ func TestGate_NoTagReachesAFinding(t *testing.T) {
 		}
 	}
 }
+
+// Packs `b` and `ab` hold the same path. Replacing a tag in a finding's text
+// must not match inside another pack's tag, whichever order the map yields.
+func TestGate_ATagIsNeverASubstringOfAnother(t *testing.T) {
+	origins := map[string]origin{
+		tagFile("b", "z.json"):  {pack: "b", path: "z.json"},
+		tagFile("ab", "z.json"): {pack: "ab", path: "z.json"},
+	}
+	detail := "declared in " + tagFile("ab", "z.json") + " and " + tagFile("b", "z.json")
+	for i := 0; i < 200; i++ {
+		if got := untag(detail, origins); got != "declared in z.json and z.json" {
+			t.Fatalf("untag = %q on try %d", got, i)
+		}
+	}
+}
+
+// A refusal that has the publisher's own error and another pack's: both are
+// reported, and `pack` is set only on the other pack's.
+func TestGate_AnOwnErrorAndAnotherPacksAreBothReported(t *testing.T) {
+	h := gateHarness(t)
+	h.liveAs("town", packFiles("town", map[string][]byte{"town.json": gateZone(t, "town", "gate", rm{id: "gate"})}))
+	h.liveAs("acme", packFiles("acme", map[string][]byte{
+		"glade.json": gateZone(t, "glade", "x", rm{id: "x", exits: []ex{{dir: "west", zone: "town", room: "gate"}}}),
+	}))
+	h.liveAs("town", packFiles("town", map[string][]byte{
+		"town.json": gateZone(t, "town", "gate", rm{id: "gate", exits: []ex{{dir: "east", zone: "glade", room: "x"}}}),
+	}))
+
+	// acme drops glade, which town exits into, and declares Zone `town` itself.
+	got := h.refusedWith("acme", packFiles("acme", map[string][]byte{
+		"z.json": gateZone(t, "town", "market", rm{id: "market"}),
+	}))
+	var own, foreign []string
+	for _, d := range got {
+		if d.GetPack() == "" {
+			own = append(own, d.GetCode())
+		} else if d.GetPack() == "town" {
+			foreign = append(foreign, d.GetCode())
+		}
+	}
+	if !slices.Equal(own, []string{"duplicate_zone"}) || !slices.Equal(foreign, []string{"unknown_zone"}) || len(got) != 2 {
+		t.Fatalf("findings = %v: want acme's duplicate_zone and town's unknown_zone, pack set on town's alone", got)
+	}
+}
