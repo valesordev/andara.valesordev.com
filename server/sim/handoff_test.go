@@ -1015,7 +1015,7 @@ func TestHandoff_ALostAckWindowIsStaleAckedAndTheSourceDropsItsRecord(t *testing
 
 // The implicit ack applies only above the mark: an Arrive at or below it is a
 // retry however the Zone's own Transit stands, so it can't drop a record.
-func TestHandoff_ANotInTheMarkRangeStillImpliesTheAck(t *testing.T) {
+func TestHandoff_AnArriveAtTheMarkIsNotAnImplicitAck(t *testing.T) {
 	h := newHx(t, nil)
 	simtest.Place(h.e, "alice", "town", "plaza")
 	h.tick(simtest.Move("town", "alice", "east")) // town holds Transit(alice, 1)
