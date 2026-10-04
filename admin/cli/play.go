@@ -825,7 +825,7 @@ func (p *player) stream() error {
 	}
 	if !timer.Stop() {
 		// --timeout passed in the instant between Attached and here: the
-		// timer has cancelled the stream. Report it as the timeout it is,
+		// timer has canceled the stream. Report it as the timeout it is,
 		// not as a lost connection to reconnect from.
 		return errNoAttached
 	}
