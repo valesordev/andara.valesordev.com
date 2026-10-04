@@ -363,7 +363,8 @@ message PublishVersionResponse {
   // read from the compiled source, not trusted from the caller.
   uint64 core_version = 2;
   // Warnings only (missing_reverse_exit, orphan_room), in this version's own
-  // blobs. Errors refuse the publish and are in the status details.
+  // blobs, and another pack's that this version newly causes (errors.md §1
+  // rule 10.3). Errors refuse the publish and are in the status details.
   repeated andara.content.v1.Diagnostic warnings = 3;
 }
 

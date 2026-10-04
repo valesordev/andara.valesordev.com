@@ -1908,7 +1908,8 @@ type PublishVersionResponse struct {
 	// read from the compiled source, not trusted from the caller.
 	CoreVersion uint64 `protobuf:"varint,2,opt,name=core_version,json=coreVersion,proto3" json:"core_version,omitempty"`
 	// Warnings only (missing_reverse_exit, orphan_room), in this version's own
-	// blobs. Errors refuse the publish and are in the status details.
+	// blobs, and another pack's that this version newly causes (errors.md §1
+	// rule 10.3). Errors refuse the publish and are in the status details.
 	Warnings      []*v12.Diagnostic `protobuf:"bytes,3,rep,name=warnings,proto3" json:"warnings,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

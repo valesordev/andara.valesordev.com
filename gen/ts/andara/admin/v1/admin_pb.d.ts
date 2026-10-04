@@ -851,7 +851,8 @@ export declare type PublishVersionResponse = Message<"andara.admin.v1.PublishVer
 
   /**
    * Warnings only (missing_reverse_exit, orphan_room), in this version's own
-   * blobs. Errors refuse the publish and are in the status details.
+   * blobs, and another pack's that this version newly causes (errors.md §1
+   * rule 10.3). Errors refuse the publish and are in the status details.
    *
    * @generated from field: repeated andara.content.v1.Diagnostic warnings = 3;
    */

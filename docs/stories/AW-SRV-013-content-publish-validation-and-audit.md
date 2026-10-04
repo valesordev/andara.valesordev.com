@@ -725,7 +725,8 @@ reporting it offline is `AW-CLI-010` (SPRINT-04). #267 can close.
 
 The gate still builds one World from every active pack and the publisher's, and refuses on any
 error. What it reports and counts is `errors.md` §1 rule 10: the publisher's Zones last at the gate so
-theirs is the one that loses, findings attributed by (pack, path) and only the publisher's own reported,
+theirs is the one that loses, findings attributed by (pack, path) and only the publisher's own reported (plus warnings the
+publish newly causes in another pack),
 one `duplicate_zone` naming both packs, no cascade. `PublishFindings` and `PublishVersionResponse.warnings` keep their
 shape. `validation_failures_total{code}`, `findings_count` and the `warn` line's `code` follow the
 reported findings. The story stays `done`. Implementation builds it as SPRINT-04 item 8, to the tests

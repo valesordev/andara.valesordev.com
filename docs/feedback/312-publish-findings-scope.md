@@ -41,6 +41,9 @@ Fixtures. The incumbent is pack `town` with Zone `town` (Rooms `plaza`, `shop`),
 3. **Given** (1) with another `acme` Zone `glade` whose Exit targets `town.market` **when** it publishes
    **then** still one finding. **When** `acme` then renames its `town` **and** publishes **then** the
    Exit's own `unknown_room` is reported, because `town.market` doesn't exist in the World.
+   **And given** an `acme` Exit that targets `town.missing`, which neither `town`'s nor `acme`'s `town`
+   declares **when** it publishes with the clash **then** that `unknown_room` is reported beside the
+   `duplicate_zone`.
 4. **Given** one pack with two files declaring Zone `x` and a Room twice **when** it publishes **then**
    `duplicate_zone` and `duplicate_room` are both reported, as today (rule 10.4).
 5. **Given** `town` and `acme` both have a blob `town.json`, `town`'s holding a `missing_reverse_exit`
@@ -57,9 +60,14 @@ Fixtures. The incumbent is pack `town` with Zone `town` (Rooms `plaza`, `shop`),
    `content.strict_orphans` is turned on afterwards **when** `acme` publishes a valid pack **then** the
    publish is refused with that finding reported with `pack` `town` (rule 10.6), not with an empty
    refusal and no panic.
-9. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
+9. **Given** active `town` has an Exit into `acme`'s Zone `glade`, and `acme@1`'s `glade` has the reverse
+   Exit **when** `acme@2` publishes with the reverse Exit removed **then** the publish succeeds and
+   `warnings` carries `town`'s `missing_reverse_exit` with `pack` `town`, printed `town/<file>: …`. **And
+   when** `acme` publishes with no change to that Exit **then** a `missing_reverse_exit` that `town`
+   already had is not reported.
+10. **Mutation checks:** restoring sorted order at the gate makes 1 fail (the cascade returns); removing
    the dropped-Zone filter makes 2 and 3 fail; filtering by path alone makes 5 fail; leaving the
-   `<pack>/` prefix on foreign findings makes 7 fail; dropping the 10.6 report makes 8 fail; keying the CLI on `line` `0` instead of `pack` makes the `pack_mismatch` half of 7 fail.
+   `<pack>/` prefix on foreign findings makes 7 fail; dropping the 10.6 report makes 8 fail; reporting every foreign warning makes 5 fail; dropping the new-warning comparison makes 9 fail; keying the CLI on `line` `0` instead of `pack` makes the `pack_mismatch` half of 7 fail.
 
 On merge, `docs/builders/04-your-first-zone.md` loses its "ignore it" paragraph about the
 `purgatory.json` warning. That edit is architecture's (a `docs/builders` path), so say so on the PR.
