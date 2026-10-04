@@ -41,6 +41,11 @@ state and advances it. No network, no datastore, no filesystem, no wall clock, n
 Deterministic given a starting state, a tick number, and an ordered input sequence. Enforced by
 `depguard`, not by convention.
 
+**Restore mismatch** — A Snapshot round restored into an Engine that doesn't hash to the round tick's
+recorded State Hash, or whose recorded `sim_seed` differs from the effective seed. A restore is verified
+at the round's own tick, so a corrupt round is named there and not found a tick later as a divergence.
+The projector exits `5` with `reason=hash` or `reason=seed` (AW-SRV-043).
+
 **State Hash** — A hash over complete World state at a Tick. The determinism assertion point, the
 identity recovery verifies against, and a field on every Tick Boundary Record. SHA-256 over a
 canonical serialization of: `state_version`, the tick, the seed and the RNG's state, the next Event

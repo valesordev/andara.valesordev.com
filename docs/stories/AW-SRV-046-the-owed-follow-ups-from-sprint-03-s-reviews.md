@@ -4,7 +4,7 @@ title: The owed follow-ups from SPRINT-03's reviews
 epic: EPIC-05
 component: server
 type: chore
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-013, AW-SRV-034, AW-SRV-035, AW-SRV-036, AW-SRV-037, AW-CLI-002, AW-CLI-003]
 blocks: []
@@ -189,3 +189,27 @@ that the key is present and empty. The code passes `actor.ActingAs` straight thr
 (`server/auth/packs.go`), and AC-6 requires only the empty case. Its non-empty side is
 `AW-SRV-039`'s to observe once that path exists.
 Items 1 to 6 and 8 touch no instrumentation.
+
+## §8 close (architecture, 2026-10-04): `done`
+
+Every checklist item holds, run on `main` ad4ef09 plus this review.
+- **Acceptance criteria.** AC-1 to AC-4 and AC-6 pass: the named tests run and pass
+  (`TestSimRendersADepartureWithNoDirection`, `TestContentValidate_SummaryCountsErrorsOnly`,
+  `TestContentFetch_RefusesADotDotPath`, `TestContentActivate_AsTheApprover`,
+  `TestContentPublish_ABlobOverOneMiBIsChunked`,
+  `TestContentActivate_ConfirmationLineJoinsTheServersRecord`, `TestPreviousActive`,
+  `TestActivateVersion_RefusesWhatTheLoaderWouldRefuse`, `TestBuildWorld_LoaderAgreesWithCompiler`,
+  `TestDevFixtureSourceMatchesTestContent`, `TestSetBuilderPacks_LogFields`,
+  `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock`), each mutation-checked once per the record.
+  AC-5 and AC-8: the README rows and the feedback files' "Done in `AW-SRV-046`" sections exist.
+- **AC-2 is accepted as satisfied in substance, as the record asks.** Its Given, a pack with 2 errors
+  and 3 warnings, isn't reachable, because `mergeDiagnostics` already drops warnings whenever there is
+  an error. The count is now errors-only by construction rather than by the merge, and the test drives
+  `reportValidated` directly with that input and asserts the whole summary line.
+- **`make check`** ended `check: all clean`, exit 0.
+- **Instrumentation** is SRE's, recorded above: no instrument added, and the Account grant path's
+  `trace_id`, `session_id` and `acting_as_account_id` keys observed on the running server, both
+  `trace_id`s resolved in Tempo.
+- **Deferred observation, carried:** `acting_as_account_id` with a value can't be produced yet, since
+  no Admin call sets it. It's carried to `AW-SRV-039`'s Definition of done, added in this review.
+- **Config, migration, glossary.** No config key or migration, and no domain term. No `[ASSUMPTION]`.
