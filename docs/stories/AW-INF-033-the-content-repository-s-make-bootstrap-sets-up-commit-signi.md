@@ -4,7 +4,7 @@ title: The Content Repository's make bootstrap sets up commit signing
 epic: EPIC-05
 component: infra
 type: infra
-status: ready
+status: review
 size: S
 depends_on: [AW-INF-022, AW-INF-023]
 blocks: []
@@ -119,3 +119,57 @@ steps, and `andara.solo7.media` #14 is closed by the merging PR.
 - `[ASSUMPTION]` SRE has write access in the Content Repository, as for `andara.solo7.media` #11.
   If that repository's role hook blocks the SRE role there (as #14's comment reports), Brian decides
   which role builds it.
+
+## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
+
+The build is in `andara.solo7.media`, where SRE has no role (its roles are `content`, `producer`,
+`world-builder`, `concept-art` and `writing-assistant`, so the Open question's case applied). SRE
+wrote the change as a patch, tested it in a scratch repo, and Brian applied it by hand and merged
+it as `andara.solo7.media` **#24** (merged 2026-10-04T15:53Z, a signed commit, `4044237`). Its six
+files are byte-identical to the tested patch: `scripts/bootstrap.sh` (mode `100755`), `Makefile`,
+`README.md`, `CLAUDE.md`, `.github/allowed_signers` and `.github/workflows/check.yaml`.
+
+| AC | Shown by |
+|----|----------|
+| 1 | The patch's acceptance harness: with no name or email it exits `1`, prints both `git config --local` lines and "verified on GitHub (Settings > Emails)", and writes no signing config |
+| 2 | The harness: the five `git config --local` values are set, a following commit reads `Good "git" signature for <email>` and not `No principal matched`, and a second run changes nothing and exits `0`. Also on the real macOS runner (AC-7 below) |
+| 3 | **Met for a passphrase-protected key, and a deviation from the AC's wording otherwise; put to architecture (below).** The harness, with a passphrase key the agent doesn't hold: exit `1` and `eval "$(ssh-agent -s)" && ssh-add <key>`; with `uname` stubbed to Darwin, `ssh-add --apple-use-keychain <key>`; a passphrase key the agent does hold passes. An **unencrypted key the agent doesn't hold exits `0`**, where the AC as worded ("a key the agent doesn't hold") says `1`: git signs with that key without an agent, so `1` would reject a setup that works |
+| 4 | The harness: a key absent from `.github/allowed_signers`, or present for another key under the same email, prints `<email> <keytype> <key>` and exits `0` |
+| 5 | The harness, with `gh` stubbed: logged in and key unregistered is exit `1` with `gh ssh-key add <key> --type signing`. No `gh`, `gh` not logged in, or a `gh api` failure (a token without `admin:ssh_signing_key`) is exit `0` with the settings path and "Key type: Signing Key" |
+| 6 | The harness: `CI=true` sets only `gpg.ssh.allowedSignersFile`, prints `commit signing skipped (CI doesn't commit)`, and exits `0` |
+| 7 | **On `andara.solo7.media` #24, the `check (macOS, make 3.81)` job passed** (GNU Make 3.81, run `37214652163`). Its new step emptied `CI`, made a local identity, a throwaway key in `~/.ssh` and a started agent, appended the key's line to `allowed_signers`, ran `CI= /usr/bin/make bootstrap` twice with an unchanged config, and its commit read `Good "git" signature for ci-builder@example.com with ED25519 key SHA256:9efaoW…` |
+
+The harness (42 checks, and 14 mutants of the script, each caught when run; the mutant list was
+inline and wasn't kept) lived in SRE's scratchpad and isn't committed anywhere: that repository's Test plan has no unit tests, and AC-7's job is the standing
+test. It ran on Linux with OpenSSH 10.5 and bash 5.3, so the macOS job is also the only run on
+bash 3.2 and Make 3.81.
+
+**Where the script improves on #14's draft:** a failing `gh api` is "can't check", not "key not
+registered"; the sign test can't wait on a passphrase prompt (`SSH_ASKPASS` is an always-failing
+program); a private `user.signingkey` resolves to its `.pub`; and `grep` isn't `-q` under `pipefail`,
+so a SIGPIPE can't read as "not registered".
+
+**AC-3's wording, for architecture's ruling.** `make bootstrap` tests what git needs, which is that the
+key signs with nobody at the keyboard, not whether `ssh-agent` holds it. With no agent in the
+environment, run against the merged script (2026-10-04):
+
+| Key, no agent | `make bootstrap` | `git commit` |
+|---------------|------------------|--------------|
+| unencrypted | exit `0` ("the key signs unattended") | exit `0`; `git log --show-signature` reads `Good "git" signature for <email>` |
+| passphrase-protected | exit `1`, with the `ssh-agent` + `ssh-add` hint | exit `128`: `Enter passphrase for …` |
+
+So the script agrees with git in both rows. AC-3 and the Interface contract's exit-`1` list ("the agent
+holding it") name the agent as the condition. SRE has not changed either: the contract is
+architecture's, and the amendment is in `docs/feedback/AW-INF-033-content-repo-bootstrap-signing.md`.
+The story's §8 item "every acceptance criterion demonstrably passes" depends on that ruling.
+
+**Definition of done:**
+- **Builder's Guide section 4.** It's architecture's file (`docs/builders/04-your-first-zone.md`,
+  "Sign your commits"). The edit is routed to architecture's §8 review in
+  `docs/feedback/AW-INF-033-content-repo-bootstrap-signing.md`.
+- **`andara.solo7.media` #14 is still open.** #24's commit message and body don't close it
+  (`closingIssuesReferences` is empty). It needs closing by hand, citing #24.
+
+**Not run by SRE:** the Manual/operator step in a fresh clone against a real GitHub account. #24's
+CI has no `gh` login and no GitHub Signing Key, so the "GitHub has this key" path and AC-5's
+`gh ssh-key add` path ran only against the `gh` stub.
