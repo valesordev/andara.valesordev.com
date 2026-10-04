@@ -716,23 +716,46 @@ func sortedDue(m map[sim.Tick][]sim.HandoffRetry) []dueAt {
 	return out
 }
 
-// DueHandoffs orders earliest due first, then by Entity ID, and the record
-// with no schedule entry sorts first.
+// DueHandoffs orders earliest due first, then by Entity ID. It shows only when
+// the batch cap cuts a set that became due at different times: here three
+// records, a Zone that couldn't apply for a while, then a batch of one.
 func TestHandoff_DueRecordsAreOrderedEarliestFirstThenByEntityID(t *testing.T) {
-	h := newHx(t, func(c *sim.Config) { c.HandoffRetryTicks = 4; c.HandoffRetryBatch = 10 })
-	for _, id := range []string{"c", "a", "b"} {
+	h := newHx(t, func(c *sim.Config) { c.HandoffRetryTicks = 4; c.HandoffRetryBatch = 1 })
+	for _, id := range []string{"a", "b", "c"} {
 		simtest.Place(h.e, id, "town", "plaza")
 	}
-	h.tick(simtest.Move("town", "b", "east")) // departs first: due first
-	h.tick(simtest.Move("town", "c", "east"), simtest.Move("town", "a", "east"))
+	// Departures on ticks 1, 2, 3 in the order c, a, b: due at 5, 6, 7.
+	h.tick(simtest.Move("town", "c", "east"))
+	h.tick(simtest.Move("town", "a", "east"))
+	h.tick(simtest.Move("town", "b", "east"))
+	h.zone("town").Faulted = true
+	h.idle(20)
+	h.zone("town").Faulted = false
 	var order []string
-	for _, due := range sortedDue(h.idle(6)) {
+	for i := 0; i < 3; i++ {
+		_, due := h.tick()
+		if len(due) != 1 {
+			t.Fatalf("batch of one returned %d retries", len(due))
+		}
+		order = append(order, string(due[0].Entity))
+	}
+	if want := []string{"c", "a", "b"}; !slices.Equal(order, want) {
+		t.Fatalf("retry order = %v, want %v: earliest due first (c, a, b), not by Entity ID (a, b, c)", order, want)
+	}
+	// Due at the same time, Entity ID breaks the tie.
+	h2 := newHx(t, func(c *sim.Config) { c.HandoffRetryTicks = 4; c.HandoffRetryBatch = 10 })
+	for _, id := range []string{"c", "a", "b"} {
+		simtest.Place(h2.e, id, "town", "plaza")
+	}
+	h2.tick(simtest.Move("town", "c", "east"), simtest.Move("town", "a", "east"), simtest.Move("town", "b", "east"))
+	var tied []string
+	for _, due := range sortedDue(h2.idle(5)) {
 		for _, d := range due.rs {
-			order = append(order, string(d.Entity))
+			tied = append(tied, string(d.Entity))
 		}
 	}
-	if want := []string{"b", "a", "c"}; !slices.Equal(order[:3], want) {
-		t.Fatalf("retry order = %v, want %v: b departed first, then a and c together by Entity ID", order, want)
+	if want := []string{"a", "b", "c"}; !slices.Equal(tied, want) {
+		t.Fatalf("records due together = %v, want Entity-ID order %v", tied, want)
 	}
 }
 
