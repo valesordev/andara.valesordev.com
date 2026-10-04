@@ -285,6 +285,149 @@ class GuideIndentedCode(GuideFixture):
         self.assertIn("0 links", out)
 
 
+class GuideIndentedCodeBoundaries(GuideFixture):
+    def lines(self, text):
+        code, prose, _ = bg.split_blocks(text)
+        return [n for n, _ in code], [n for n, _ in prose]
+
+    def test_three_spaces_is_not_code_and_four_is(self):
+        self.assertEqual(self.lines("p\n\n   x\n\n    y\n")[0], [5])
+
+    def test_consecutive_indented_lines_are_one_block(self):
+        self.assertEqual(self.lines("p\n\n    a\n    b\n    c\n")[0], [3, 4, 5])
+
+    def test_a_bogus_command_on_the_second_indented_line_is_found(self):
+        (self.root / bg.REFERENCE).write_text(ref_md(linked=False))
+        self.guide("a.md", "# A\n\n    andara-cli content approve x\n    andara-cli content bogus\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:4: no command "andara-cli content bogus"', err)
+
+    def test_code_then_blank_then_code(self):
+        self.assertEqual(self.lines("p\n\n    a\n\n    b\n")[0], [3, 5])
+
+    def test_an_indented_line_after_prose_that_follows_code_is_a_continuation(self):
+        self.assertEqual(self.lines("p\n\n    a\nprose\n    b\n")[0], [3])
+
+    def test_a_list_then_a_paragraph_then_indented_code(self):
+        self.assertEqual(self.lines("- item\n\npara\n\n    code\n")[0], [5])
+
+    def test_code_may_follow_a_heading_or_a_fence_directly(self):
+        self.assertEqual(self.lines("# H\n    after heading\n")[0], [2])
+        self.assertEqual(self.lines("```\nx\n```\n    after fence\n")[0], [2, 4])
+
+    def test_in_a_bullet_list_code_needs_the_content_offset_plus_four(self):
+        # `- item` has content offset 2: five spaces is item content, six is code.
+        self.assertEqual(self.lines("- item\n\n     five\n\n      six\n")[0], [5])
+
+    def test_in_a_numbered_list_the_offset_is_the_marker_width(self):
+        self.assertEqual(self.lines("1. item\n\n      six\n\n       seven\n")[0], [5])
+
+    def test_five_spaces_after_a_marker_is_a_marker_and_one_space(self):
+        # `-      item` (six spaces) has content offset 2, not 7. Eight spaces is code under offset 2
+        # and only item content under offset 7, which a dedent can't mask the way it does at six.
+        self.assertEqual(self.lines("-      item\n\n        y\n")[0], [3])
+
+    def test_an_item_marker_indented_past_the_offset_is_code(self):
+        self.assertEqual(self.lines("- a\n\n      - b\n")[0], [3])
+        self.assertEqual(self.lines("- a\n\n    - b\n")[0], [])
+
+    def test_a_paragraph_under_a_nested_item_is_not_code(self):
+        self.assertEqual(self.lines("- a\n\n    - b\n\n        para of b\n")[0], [])
+
+    def test_a_third_level_item_is_prose_so_its_links_are_checked(self):
+        (self.root / bg.REFERENCE).write_text(ref_md(linked=False))
+        self.guide("a.md", "# A\n\n- a\n\n    - b\n\n        - c [x](nope.md)\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:7: broken link nope.md", err)
+
+    def test_a_fence_outside_the_item_ends_the_list(self):
+        self.assertEqual(self.lines("- a\n\n```\nx\n```\n\n    code\n")[0], [4, 7])
+
+    def test_a_thematic_break_ends_the_list(self):
+        self.assertEqual(self.lines("- a\n\n* * *\n\n    code\n")[0], [5])
+
+    def test_a_lazy_continuation_keeps_the_item_open(self):
+        self.assertEqual(self.lines("- item\nlazy\n\n    more\n")[0], [])
+
+    def test_a_dedented_line_after_a_blank_ends_the_list(self):
+        self.assertEqual(self.lines("- a\n\npara\n\n    code\n")[0], [5])
+
+
+class GuideParagraphBoundaries(GuideFixture):
+    def check(self, text):
+        self.guide("a.md", text)
+        return self.run_bg("guide-check")
+
+    def test_a_stray_backtick_in_one_list_item_does_not_hide_the_next_item_s_link(self):
+        rc, _, err = self.check("# A\n\n- the ` key\n- see [l](missing.md) and `x`\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:4: broken link missing.md", err)
+
+    def test_a_stray_backtick_in_a_table_row_does_not_hide_the_next_row(self):
+        rc, _, err = self.check("# A\n\n| a ` b |\n|---|\n| [l](missing.md) | `x` |\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:5: broken link missing.md", err)
+
+    def test_a_stray_backtick_in_a_heading_does_not_hide_the_next_line(self):
+        rc, _, err = self.check("# A\n\n## Heading ` tick\n[l](missing.md) then `x`\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:4: broken link missing.md", err)
+
+    def test_a_heading_cannot_hold_the_start_of_a_link(self):
+        rc, out, _ = self.check("# A\n\n## [H\ntext](missing.md)\n")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 links", out)
+
+    def test_a_blockquote_starts_a_new_paragraph(self):
+        rc, _, err = self.check("# A\n\ntext ` here\n> [l](missing.md) `x`\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:4: broken link missing.md", err)
+
+    def test_line_numbers_are_exact_after_a_multi_line_code_span(self):
+        text = ("# A\n\n"
+                "A long first line of the paragraph that goes on for a while and a while longer yet.\n"
+                "Then `a code span that begins here and\n"
+                "runs across two more lines of text\n"
+                "before it ends` and some words after it.\n"
+                "Final line with [the link](missing.md) on it.\n")
+        rc, _, err = self.check(text)
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:7: broken link missing.md", err)
+
+    def test_findings_print_in_line_order_within_a_file(self):
+        # One paragraph: the inline link on line 4 is found before the definitions on 3 and 5.
+        rc, _, err = self.check("# A\n\n[a]: first-missing.md\ntext [c](second-missing.md)\n[b]: third-missing.md\n")
+        self.assertEqual(rc, 1)
+        order = [l.split(":")[2] for l in err.strip().splitlines()]
+        self.assertEqual(order, ["3", "4", "5"])
+
+    def test_a_link_at_either_edge_of_a_line_deep_in_a_paragraph_maps_to_its_own_line(self):
+        # Twelve short lines: any drift in the running offsets moves a link at a line's edge
+        # to its neighbour.
+        lines = ["a"] * 10 + ["see [x](m.md)", "[y](n.md) tail"]
+        rc, _, err = self.check("# A\n\n" + "\n".join(lines) + "\n")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:13: broken link m.md", err)
+        self.assertIn("a.md:14: broken link n.md", err)
+
+
+class GuideTimeout(GuideFixture):
+    def test_a_binary_that_hangs_is_unverifiable_not_a_hang(self):
+        text = FAKE.replace("__REF_JSON__", str(self.ref_json)).replace(
+            'if args and args[0] == "__complete":', 'if args and args[0] == "__complete":\n    __import__("time").sleep(10)', 1)
+        self.cli.write_text(text)
+        self.guide("a.md", "# A\n\n```\nandara-cli content approve x\n```\n")
+        old, bg.TIMEOUT_S = bg.TIMEOUT_S, 1
+        try:
+            rc, _, err = self.run_bg("guide-check")
+        finally:
+            bg.TIMEOUT_S = old
+        self.assertEqual(rc, 1)
+        self.assertIn("`andara-cli __complete` exited 124", err)
+
+
 class GuideFences(GuideFixture):
     def test_a_tilde_fence_is_a_code_block(self):
         self.guide("a.md", "# A\n\n~~~\nandara-cli content bogus\n~~~\n")

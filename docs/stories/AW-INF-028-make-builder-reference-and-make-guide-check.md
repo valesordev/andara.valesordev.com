@@ -218,7 +218,7 @@ nothing links to the generated one.
 ## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
 
 Branch `sre/aw-inf-028-builder-reference-guide-check`. The logic is `scripts/builder_guide.py`, and
-the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (58
+the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (84
 cases, run by `make scripts-test`), against a fake `andara-cli` that implements `__complete` and
 `--help`. The live runs below used the real binary built from this tree.
 
@@ -266,6 +266,17 @@ cases, run by `make scripts-test`), against a fake `andara-cli` that implements 
   item) are scanned for commands, and their links are not checked.
 - Links are matched per paragraph, so a link split across lines is checked and reported at the line
   it starts on. A blank line or a fence ends a paragraph. Inline code may span lines.
+
+**The re-review of those fixes found no P0 or P1, and four P2s, fixed:**
+- A paragraph was too coarse for inline code: a stray backtick in one list item hid a broken link in
+  the next, which the per-line scan had caught. Paragraphs now end at list-item markers, headings,
+  table rows, blockquotes and thematic breaks.
+- The list state is the item's content offset, not a boolean, so nested lists, lazy continuations,
+  fences and thematic breaks behave as CommonMark has them, and code may follow a heading or a fence
+  directly. Blockquotes and HTML blocks aren't modelled, and neither is in the guide.
+- Both sets of tests now pin their thresholds and offsets: 26 mutants of the new code left no
+  survivor. Findings print in line order, and a hung binary is exit 124, reported like any other
+  failure of it, not a hang.
 
 **Known limits, in the script's docstring:** an unknown flag doesn't fail a line, because only
 `<path> --help` runs; words after `--` count as flag values; and `-ojson` makes the real

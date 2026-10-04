@@ -67,8 +67,16 @@ class Unverifiable(Exception):
     finding for that line, never a pass: an empty answer would read as "no such subcommand"."""
 
 
+TIMEOUT_S = 120
+
+
 def run(cmd, env=None, **kw):
-    return subprocess.run(cmd, capture_output=True, text=True, env=env, **kw)
+    """subprocess.run, with a deadline: a hung binary is exit 124 and a message, so it reaches the
+    same handling as any other failure instead of hanging `make check`."""
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=TIMEOUT_S, **kw)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(cmd, 124, "", "timed out after %d s" % TIMEOUT_S)
 
 
 def build_cli(root, tmp):
@@ -162,7 +170,20 @@ def md_files(guide):
     return sorted(p for p in Path(guide).rglob("*.md"))
 
 
-LIST_ITEM = re.compile(r"^ {0,3}(?:[-*+]|\d{1,9}[.)])\s")
+LIST_MARKER = re.compile(r"^(\s*)([-*+]|\d{1,9}[.)])(\s+|$)")
+ATX_HEADING = re.compile(r"^ {0,3}#{1,6}(\s|$)")
+THEMATIC_BREAK = re.compile(r"^ {0,3}([-*_])(\s*\1){2,}\s*$")
+BLOCKQUOTE = re.compile(r"^ {0,3}>")
+
+
+def list_content_offset(line):
+    """Where the content of a list item starts, or 0 when the line isn't one. CommonMark: the
+    marker, plus one to four spaces (five or more is the marker and one space, then code)."""
+    m = LIST_MARKER.match(line.expandtabs(4))
+    if not m or THEMATIC_BREAK.match(line):
+        return 0
+    gap = len(m.group(3)) if len(m.group(3)) <= 4 else 1
+    return len(m.group(1)) + len(m.group(2)) + gap
 
 
 def split_blocks(text):
@@ -170,34 +191,58 @@ def split_blocks(text):
 
     Code is a fenced block or an indented one. CommonMark: a fence closes on a run of the same
     character at least as long as the opener, with nothing after it, so a longer fence may contain
-    a shorter one. A line indented four spaces or a tab is code when a blank line or other code
-    comes before it. Inside a list item the content is already indented, so there it takes eight.
+    a shorter one. A line indented four spaces or a tab is code when a blank line, a heading, a
+    fence or other code comes before it, not when it continues a paragraph. Inside a list item
+    "four" is counted from the item's content offset, which the last item's marker sets, and a
+    thematic break, a fence outside the item, or a dedented line after a blank ends the list.
+
+    Not modelled: blockquotes, and HTML blocks. Neither is in the guide.
     """
     code, prose, fence, opened = [], [], None, 0
-    in_list, prev_blank, prev_code = False, True, False
+    offset = 0          # content offset of the open list item, 0 outside a list
+    prev_blank = True   # a code block may start here
+    prev_code = False
     for n, line in enumerate(text.splitlines(), 1):
+        expanded = line.expandtabs(4)
+        indent = len(expanded) - len(expanded.lstrip())
         if fence is None:
-            m = FENCE_OPEN.match(line)
+            m = FENCE_OPEN.match(line) if indent < offset + 4 else None
             if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
                 fence, opened = m.group(1), n
+                if indent < offset:
+                    offset = 0
                 prev_blank = prev_code = False
                 continue
-            expanded = line.expandtabs(4)
-            indent = len(expanded) - len(expanded.lstrip())
             blank = not line.strip()
-            if not blank and indent < 4:
-                in_list = bool(LIST_ITEM.match(line)) or (in_list and indent > 0)
-            if not blank and indent >= (8 if in_list else 4) and (prev_blank or prev_code):
+            if blank:
+                prose.append((n, line))
+                prev_blank, prev_code = True, False
+                continue
+            if THEMATIC_BREAK.match(line):
+                offset = 0
+                prose.append((n, line))
+                prev_blank, prev_code = True, False
+                continue
+            is_item = list_content_offset(line)
+            if is_item and indent < offset + 4 and not (prev_blank and indent >= 4 and not offset):
+                offset = is_item
+                prose.append((n, line))
+                prev_blank, prev_code = False, False
+                continue
+            if offset and prev_blank and indent < offset:
+                offset = 0  # a dedented line after a blank ends the list
+            if indent >= offset + 4 and (prev_blank or prev_code):
                 code.append((n, line))
                 prev_blank, prev_code = False, True
                 continue
             prose.append((n, line))
-            prev_blank, prev_code = blank, prev_code and blank
+            # A heading is a one-line block, so code may follow it directly.
+            prev_blank, prev_code = bool(ATX_HEADING.match(line)), False
         else:
             stripped = line.strip()
-            if stripped and set(stripped) == {fence[0]} and len(stripped) >= len(fence) and len(line) - len(line.lstrip()) < 4:
+            if stripped and set(stripped) == {fence[0]} and len(stripped) >= len(fence) and indent < 4 + offset:
                 fence = None
-                prev_blank = prev_code = False
+                prev_blank, prev_code = True, False
                 continue
             code.append((n, line))
     return code, prose, (opened if fence else 0)
@@ -307,18 +352,30 @@ def anchors(path):
 
 
 def paragraphs(prose):
-    """Runs of consecutive non-blank prose lines, each as [(line number, text), …]. A fence or a
-    blank line ends a run, since neither can sit inside an inline construct."""
+    """Runs of prose lines that can share an inline construct, each as [(line number, text), …].
+    A blank line, a fence, a list-item marker, a blockquote marker or a table row starts a new run,
+    and a heading, table row or thematic break ends one: none of those can hold a construct that
+    began on another line, and merging them lets one stray backtick hide the links after it."""
     run_, out = [], []
+
+    def flush():
+        nonlocal run_
+        if run_:
+            out.append(run_)
+        run_ = []
+
     for n, line in prose:
-        if line.strip() and (not run_ or run_[-1][0] == n - 1):
-            run_.append((n, line))
-        else:
-            if run_:
-                out.append(run_)
-            run_ = [(n, line)] if line.strip() else []
-    if run_:
-        out.append(run_)
+        if not line.strip():
+            flush()
+            continue
+        single = bool(ATX_HEADING.match(line) or THEMATIC_BREAK.match(line) or line.lstrip().startswith("|"))
+        starts = single or BLOCKQUOTE.match(line) or list_content_offset(line)
+        if run_ and (run_[-1][0] != n - 1 or starts):
+            flush()
+        run_.append((n, line))
+        if single:
+            flush()
+    flush()
     return out
 
 
@@ -416,9 +473,10 @@ def cmd_guide_check(root, cli, tmp):
 
     for f in files:
         rel = f.relative_to(root)
+        ff = []  # (line, finding), printed in line order
         code, prose, unclosed = split_blocks(f.read_text())
         if unclosed:
-            findings.append("%s:%d: unclosed code fence" % (rel, unclosed))
+            ff.append((unclosed, "%s:%d: unclosed code fence" % (rel, unclosed)))
         for n, text in joined_commands(code):
             if cli_ready is None:
                 cli = cli or build_cli(root, tmp)
@@ -427,10 +485,10 @@ def cmd_guide_check(root, cli, tmp):
             try:
                 bad = check_command(cli_ready[0], cli, cli_ready[1], command_words(text))
             except Unverifiable as e:
-                findings.append('%s:%d: cannot verify "%s": %s' % (rel, n, text, e))
+                ff.append((n, '%s:%d: cannot verify "%s": %s' % (rel, n, text, e)))
                 continue
             if bad:
-                findings.append('%s:%d: no command "%s"' % (rel, n, " ".join(bad)))
+                ff.append((n, '%s:%d: no command "%s"' % (rel, n, " ".join(bad))))
         for para in paragraphs(prose):
             for n, target in link_targets(para):
                 resolved = resolve_link(root, f, target)
@@ -444,7 +502,8 @@ def cmd_guide_check(root, cli, tmp):
                     # other file nothing could match it.
                     ok = dest.is_file() and dest.suffix == ".md" and frag.lower() in anchors(dest)
                 if not ok:
-                    findings.append("%s:%d: broken link %s" % (rel, n, target))
+                    ff.append((n, "%s:%d: broken link %s" % (rel, n, target)))
+        findings.extend(t for _, t in sorted(ff, key=lambda x: x[0]))
 
     codes = 0
     ref, errs = Path(root, REFERENCE), Path(root, ERRORS)
