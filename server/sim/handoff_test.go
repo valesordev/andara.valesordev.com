@@ -11,6 +11,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/sim"
@@ -259,8 +260,8 @@ func TestHandoff_ALateRetryIsStaleHoweverLateItComes(t *testing.T) {
 	if !bytes.Equal(before, sim.ZoneCanonicalBytes(h.zone("wilds"))) {
 		t.Fatal("a stale Arrive changed the Zone")
 	}
-	if h.zone("wilds").Placed["alice"] != 1 {
-		t.Fatalf("wilds' mark for alice = %d, want 1", h.zone("wilds").Placed["alice"])
+	if h.zone("wilds").Placed["alice"].Seq != 1 {
+		t.Fatalf("wilds' mark for alice = %d, want 1", h.zone("wilds").Placed["alice"].Seq)
 	}
 }
 
@@ -280,12 +281,12 @@ func TestHandoff_AMarkIsPerEntity(t *testing.T) {
 	}
 
 	// Two Entities: X decided here at 5, Y arriving for the first time at 1.
-	h.zone("town").Placed["x"] = 5
+	h.zone("town").Placed["x"] = sim.PlacedMark{Seq: 5}
 	y := sim.EntityState{ID: "y", Template: "andara.core.Character", ContentVersion: "core@1", HandoffSeq: 1}
 	res, _ = h.tick(&logv1.LoggedCommand{ZoneId: "town", ActorId: "y", Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
 		RoomId: "plaza", Entity: y.Proto(), OriginZoneId: "wilds", OriginRoomId: "trail", HandoffSeq: 1,
 	}}})
-	if h.held("town", "y") == nil || res.StaleArrivals != 0 || h.zone("town").Placed["y"] != 1 {
+	if h.held("town", "y") == nil || res.StaleArrivals != 0 || h.zone("town").Placed["y"].Seq != 1 {
 		t.Fatalf("y was not placed by its own first arrival: held=%v stale=%d marks=%v", h.held("town", "y"), res.StaleArrivals, h.zone("town").Placed)
 	}
 }
@@ -332,7 +333,7 @@ func TestHandoff_AnArriveIsAnImplicitAckOfALowerTransitRecord(t *testing.T) {
 	if len(h.zone("town").Transit) != 0 || h.e.HandoffScheduleSize() != 0 {
 		t.Fatalf("the transit record outlived the implicit ack: %v, schedule %d", h.zone("town").Transit, h.e.HandoffScheduleSize())
 	}
-	if h.held("town", "alice") == nil || h.zone("town").Placed["alice"] != 2 {
+	if h.held("town", "alice") == nil || h.zone("town").Placed["alice"].Seq != 2 {
 		t.Fatalf("the arrival was not decided after the drop: held %v marks %v", h.held("town", "alice"), h.zone("town").Placed)
 	}
 	if len(ofType(res.Events, sim.EvCharacterArrived)) != 1 {
@@ -565,6 +566,14 @@ func TestHandoff_ReplayMatchesAndTheScheduleIsNotHashed(t *testing.T) {
 		if replica.StateHash() != h.e.StateHash() {
 			t.Fatal("a replayed World hashes differently")
 		}
+		// Replay wrote no schedule entry, even for a departure inside the
+		// replayed range, so the record is due on the first live call.
+		if n := replica.HandoffScheduleSize(); n != 0 {
+			t.Fatalf("replay wrote %d schedule entries", n)
+		}
+		if due := replica.DueHandoffs(replica.Tick() + 1); len(due) != 1 || due[0].Entity != "alice" {
+			t.Fatalf("the first live call after a replay should retry alice: %v", due)
+		}
 	}
 }
 
@@ -777,7 +786,7 @@ func TestHandoff_SnapshotCarriesTransitAndMarks(t *testing.T) {
 	}
 	// The Zones that hold records: town a Transit record, town a mark for bob.
 	town := h.zone("town")
-	if len(town.Transit) != 1 || town.Placed["bob"] != 1 {
+	if len(town.Transit) != 1 || town.Placed["bob"].Seq != 1 {
 		t.Fatalf("setup: transit %v placed %v", town.Transit, town.Placed)
 	}
 }
@@ -792,7 +801,7 @@ func TestHandoff_BodyStateHashRefusesWhatItWouldReadDifferently(t *testing.T) {
 			h.tick(simtest.Move("town", id, "east"))
 		}
 		simtest.Place(h.e, "dave", "town", "hall")
-		h.zone("town").Placed = map[sim.EntityID]uint64{"x": 1, "y": 2}
+		h.zone("town").Placed = map[sim.EntityID]sim.PlacedMark{"x": {Seq: 1}, "y": {Seq: 2}}
 		for _, s := range h.e.SnapshotAll(0) {
 			if s.Zone == "town" {
 				return &s
@@ -819,4 +828,140 @@ func TestHandoff_BodyStateHashRefusesWhatItWouldReadDifferently(t *testing.T) {
 	check("an Entity in both entities and transit", func(b *statev1.ZoneState) { b.Entities = append(b.Entities, b.Transit[0].Entity) })
 	check("a dormant Entity in transit", func(b *statev1.ZoneState) { b.Transit[0].Entity.Dormant = true })
 	check("a linkdead Entity in transit", func(b *statev1.ZoneState) { b.Transit[0].Entity.LinkdeadDeadlineTick = 9 })
+}
+
+// AC-6: a replay that fails part way leaves the engine live: the flag that
+// stops replay writing schedule entries is cleared by defer, so a boundary gap
+// or a hash mismatch can't leave a departure that follows unscheduled.
+func TestHandoff_AFailedReplayLeavesTheEngineLive(t *testing.T) {
+	h := newHx(t, nil)
+	simtest.Place(h.e, "alice", "town", "plaza")
+	simtest.Place(h.e, "bob", "town", "plaza")
+	// A boundary for a tick that doesn't follow the engine's: ErrBoundaryGap.
+	err := h.e.Replay([]sim.TickCompleted{{Tick: 5}}, newLogSource(nil))
+	if err == nil {
+		t.Fatal("the replay of a gapped log succeeded")
+	}
+	h.tick(simtest.Move("town", "alice", "east"))
+	if n := h.e.HandoffScheduleSize(); n != 1 {
+		t.Fatalf("a live departure after a failed replay wrote %d schedule entries, want 1", n)
+	}
+	// And a hash mismatch, the other early return.
+	h2 := newHx(t, nil)
+	simtest.Place(h2.e, "alice", "town", "plaza")
+	err = h2.e.Replay([]sim.TickCompleted{{Tick: 1, StateVersion: sim.StateVersion, StateHash: [32]byte{9}}}, newLogSource(nil))
+	if err == nil {
+		t.Fatal("a replay that mismatched succeeded")
+	}
+	h2.tick(simtest.Move("town", "alice", "east"))
+	if n := h2.e.HandoffScheduleSize(); n != 1 {
+		t.Fatalf("a live departure after a hash mismatch wrote %d schedule entries, want 1", n)
+	}
+}
+
+// An Arrive whose Room the content no longer has lands in the fallback Room
+// and sets the mark all the same, so a duplicate is re-acked and a stale one
+// is stale, never entity_present.
+func TestHandoff_AnArriveAtTheFallbackSetsTheMark(t *testing.T) {
+	h := newHx(t, nil)
+	simtest.Place(h.e, "alice", "town", "plaza")
+	res, _ := h.tick(simtest.Move("town", "alice", "east"))
+	arr := arrivalOf(t, res.Outbound)
+	arr.GetArrive().RoomId = "vanished"
+	h.tick(cloneArrive(arr))
+	fallback := h.e.World().Zones["wilds"].Fallback
+	if got := h.held("wilds", "alice"); got == nil || got.Room != fallback {
+		t.Fatalf("alice = %+v, want her in %s", got, fallback)
+	}
+	if m := h.zone("wilds").Placed["alice"]; m.Seq != 1 || m.Rejected {
+		t.Fatalf("the fallback landing set the mark to %+v, want {1 false}", m)
+	}
+	res2, _ := h.tick(cloneArrive(arr))
+	if len(ofType(res2.Events, sim.EvCommandRejected)) != 0 || ackOf(t, res2.Outbound).GetHandoffAck().GetHandoffSeq() != 1 {
+		t.Fatalf("a duplicate of a fallback landing: events %v outbound %v", res2.Events, res2.Outbound)
+	}
+}
+
+// AC-7, the other half: nothing is produced for a healthy Zone whose
+// Partition is frozen by another Zone's fault. A Partition freezes for every
+// Zone that hashes to it.
+func TestHandoff_NoRetryWhileThePartitionIsFrozen(t *testing.T) {
+	seen := map[int32]string{}
+	var a, b string
+	for i := 0; a == ""; i++ {
+		id := fmt.Sprintf("z%d", i)
+		p := sim.PartitionFor(sim.ZoneID(id))
+		if o, ok := seen[p]; ok {
+			a, b = o, id
+		}
+		seen[p] = id
+	}
+	zone := func(id string) sim.Input {
+		return sim.Input{File: id + ".json", Def: &contentv1.ZoneDefinition{FormatVersion: 1, Id: id, Name: id, FallbackRoom: "r",
+			Rooms: []*contentv1.RoomDefinition{{Id: "r", Title: "r", Description: "r"}}}}
+	}
+	w, errs := sim.BuildWorld([]sim.Input{zone(a), zone(b), zone("elsewhere")}, sim.Options{})
+	for _, e := range errs {
+		if !sim.IsWarning(e, false) {
+			t.Fatal(e)
+		}
+	}
+	e := sim.NewEngine(w, nil, sim.Config{Seed: 1, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers()})
+	e.State().Zones[sim.ZoneID(a)].Transit = map[sim.EntityID]sim.TransitRecord{
+		"e": {Entity: sim.EntityState{ID: "e", Template: "andara.core.Character", Room: "r", HandoffSeq: 1}, To: "elsewhere", Room: "r"},
+	}
+	// b shares a's Partition and faults: a is healthy and frozen.
+	e.State().Zones[sim.ZoneID(b)].Faulted = true
+	if e.State().Zones[sim.ZoneID(a)].Faulted {
+		t.Fatal("setup: a should be healthy")
+	}
+	if due := e.DueHandoffs(1); len(due) != 0 {
+		t.Fatalf("a retry for a Zone on a frozen Partition: %v", due)
+	}
+	e.State().Zones[sim.ZoneID(b)].Faulted = false
+	if due := e.DueHandoffs(2); len(due) != 1 {
+		t.Fatalf("the first call after the Partition thaws should retry: %v", due)
+	}
+}
+
+// A mark that records a rejection (AW-SRV-027 sets it) is carried and hashed:
+// it round-trips through the body, losing the flag changes HashZone, and a
+// body that holds the Entity at the rejected sequence is refused. A retry of
+// a rejected handoff is neither placed nor acked here: 027 reissues the
+// rejection.
+func TestHandoff_ARejectedMarkIsCarriedHashedAndNeverAcked(t *testing.T) {
+	h := newHx(t, nil)
+	h.zone("wilds").Placed = map[sim.EntityID]sim.PlacedMark{"ghost": {Seq: 2, Rejected: true}}
+	var snap sim.Snapshot
+	for _, s := range h.e.SnapshotAll(0) {
+		if s.Zone == "wilds" {
+			snap = s
+		}
+	}
+	body := snap.BodyProto()
+	if len(body.GetPlaced()) != 1 || !body.GetPlaced()[0].GetRejected() {
+		t.Fatalf("the body lost the flag: %v", body.GetPlaced())
+	}
+	if got := sim.ZoneStateFromProto(body); got.Placed["ghost"] != (sim.PlacedMark{Seq: 2, Rejected: true}) || sim.HashZone(got) != sim.HashZone(h.zone("wilds")) {
+		t.Fatalf("the mark did not round-trip: %+v", got.Placed)
+	}
+	lost := proto.Clone(body).(*statev1.ZoneState)
+	lost.GetPlaced()[0].Rejected = false
+	if sim.HashZone(sim.ZoneStateFromProto(lost)) == sim.HashZone(h.zone("wilds")) {
+		t.Fatal("restoring a mark with the flag lost leaves HashZone unchanged")
+	}
+	held := proto.Clone(body).(*statev1.ZoneState)
+	held.Entities = append(held.Entities, &statev1.EntityState{EntityId: "ghost", Template: "andara.core.Character", HandoffSeq: 2})
+	if _, err := sim.BodyStateHash(held); err == nil {
+		t.Fatal("BodyStateHash accepted a rejected mark whose Entity is held at that sequence")
+	}
+	// A retry of the rejected handoff: nothing placed, no ack.
+	before := sim.ZoneCanonicalBytes(h.zone("wilds"))
+	ghost := sim.EntityState{ID: "ghost", Template: "andara.core.Character", ContentVersion: "core@1", HandoffSeq: 2}
+	res, _ := h.tick(&logv1.LoggedCommand{ZoneId: "wilds", ActorId: "ghost", Command: &logv1.LoggedCommand_Arrive{Arrive: &logv1.Arrive{
+		RoomId: "trail", Entity: ghost.Proto(), OriginZoneId: "town", OriginRoomId: "plaza", HandoffSeq: 2,
+	}}})
+	if len(res.Outbound) != 0 || len(res.Events) != 0 || !bytes.Equal(before, sim.ZoneCanonicalBytes(h.zone("wilds"))) {
+		t.Fatalf("a retry of a rejected handoff must place nothing and ack nothing: events %v outbound %v", res.Events, res.Outbound)
+	}
 }

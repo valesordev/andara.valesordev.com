@@ -339,6 +339,10 @@ type Engine struct {
 	// config never enters hashed state (AW-SRV-028). A record with no entry
 	// is due, which is what a recovery leaves.
 	handoffs map[handoffKey]handoffSched
+	// replaying is set for the length of ReplayEach and cleared by defer, so its
+	// early-error and hash-mismatch returns clear it too: what makes the retry
+	// schedule a property of the live loop alone (AW-SRV-028).
+	replaying bool
 }
 
 // NewEngine builds an Engine at tick 0 with every Zone empty.
@@ -689,6 +693,8 @@ func (e *Engine) Replay(boundaries []TickCompleted, src RecordSource) error {
 // the hook — the state projector (AW-SRV-019) — produces nothing for the tick
 // that diverged. An error from after stops the replay and is returned as is.
 func (e *Engine) ReplayEach(boundaries []TickCompleted, src RecordSource, after func(StepResult) error) error {
+	e.replaying = true
+	defer func() { e.replaying = false }()
 	for _, b := range boundaries {
 		if b.Tick != e.state.Tick+1 {
 			// A missing boundary is a tick whose batching decision was

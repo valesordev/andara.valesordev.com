@@ -92,7 +92,10 @@ func (e *Engine) retryInterval(attempts int) Tick {
 // noteHandoff records the departure as the handoff's first attempt, so the
 // Arrive the departure produced isn't re-sent on the same tick.
 func (e *Engine) noteHandoff(id EntityID, seq uint64, tick Tick) {
-	if e == nil {
+	if e == nil || e.replaying {
+		// Nothing while replaying: a record whose departure is replayed has no
+		// entry, like one restored from a snapshot, so every record found after
+		// a recovery is due on the first live call.
 		return
 	}
 	e.handoffs[handoffKey{id, seq}] = handoffSched{attempts: 1, last: tick}

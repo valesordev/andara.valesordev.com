@@ -267,7 +267,7 @@ func (z *ZoneState) Clone() *ZoneState {
 		}
 	}
 	if len(z.Placed) > 0 {
-		out.Placed = make(map[EntityID]uint64, len(z.Placed))
+		out.Placed = make(map[EntityID]PlacedMark, len(z.Placed))
 		for id, s := range z.Placed {
 			out.Placed[id] = s
 		}

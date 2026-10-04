@@ -45,7 +45,19 @@ type ZoneState struct {
 	// an Entity's life, so an Arrive at or below the mark is a retry or stale
 	// however late it comes, and no other Zone or record is needed to know it.
 	// Kept for good; hashed. A nil map is an empty one.
-	Placed map[EntityID]uint64
+	Placed map[EntityID]PlacedMark
+}
+
+// PlacedMark is the highest handoff sequence a Zone has decided for an Entity,
+// and whether that decision was a rejection (AW-SRV-027, which sets it; this
+// story carries it in the codec and the hash). A placement sets {Seq, false}, so
+// the flag always describes the current mark. A retry of the same handoff
+// gets the same answer back: a placed handoff is acked again, a rejected one
+// is rejected again, because acking a rejection would make the source drop a
+// record whose Entity was never placed and never restored.
+type PlacedMark struct {
+	Seq      uint64
+	Rejected bool
 }
 
 // TransitRecord is an Entity on its way out of a Zone: the Entity as it will
@@ -70,15 +82,12 @@ func (z *ZoneState) setTransit(r TransitRecord) {
 	z.Transit[r.Entity.ID] = r
 }
 
-// markPlaced records that the sequence was decided here for the Entity,
-// never lowering a mark.
+// markPlaced records that the sequence was placed here for the Entity.
 func (z *ZoneState) markPlaced(id EntityID, seq uint64) {
 	if z.Placed == nil {
-		z.Placed = map[EntityID]uint64{}
+		z.Placed = map[EntityID]PlacedMark{}
 	}
-	if seq > z.Placed[id] {
-		z.Placed[id] = seq
-	}
+	z.Placed[id] = PlacedMark{Seq: seq}
 }
 
 // WorldState is everything mutable the simulation holds, and everything the
@@ -215,7 +224,14 @@ func ZoneCanonicalBytes(z *ZoneState) []byte {
 	}
 	sort.Strings(pids)
 	for _, pid := range pids {
-		writeFields(&b, "placed", pid, strconv.FormatUint(z.Placed[EntityID(pid)], 10))
+		m := z.Placed[EntityID(pid)]
+		fields := []string{"placed", pid, strconv.FormatUint(m.Seq, 10)}
+		if m.Rejected {
+			// Written only when true, as the Entity's optional records are, so
+			// a mark of a placement hashes as it would without the flag.
+			fields = append(fields, "rejected")
+		}
+		writeFields(&b, fields...)
 	}
 	return []byte(b.String())
 }

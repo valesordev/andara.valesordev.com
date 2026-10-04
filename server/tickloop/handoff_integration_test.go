@@ -193,7 +193,7 @@ func TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost(t *testing.T) {
 	if s.Zones["wilds"].Entities["alice"] == nil || s.Zones["town"].Entities["alice"] != nil || len(s.Zones["town"].Transit) != 0 {
 		t.Fatalf("alice did not arrive: wilds %v, town %v, transit %v", s.Zones["wilds"].Entities, s.Zones["town"].Entities, s.Zones["town"].Transit)
 	}
-	if s.Zones["wilds"].Placed["alice"] != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
+	if s.Zones["wilds"].Placed["alice"].Seq != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
 		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v", s.Zones["wilds"].Placed)
 	}
 }

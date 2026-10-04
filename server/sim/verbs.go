@@ -372,6 +372,11 @@ type arriveView struct {
 	drop  bool
 	stale bool // placed nothing; counted
 	retry bool // placed nothing; the Zone already holds it at this sequence
+	// reissue: the retry of a handoff this Zone rejected (AW-SRV-027). The
+	// same HandoffRejected goes back, never an ack: acking it would make the
+	// source drop a record whose Entity was never placed. 027 produces it;
+	// until then nothing sets a rejected mark, so this is the data 028 reads.
+	reissue bool
 }
 
 // validateArrive decides an Arrive by this Zone's own state alone
@@ -384,6 +389,9 @@ type arriveView struct {
 //     the target placed it and moved it on: that is an ack, and the record is
 //     dropped before the arrival is decided. A sequence at or above is a
 //     misrouted Arrive, rejected entity_present.
+//   - At the Zone's mark when the mark records a rejection (AW-SRV-027): a
+//     retry of a rejected handoff, which gets the same rejection back and is
+//     never acked. Nothing sets such a mark in this story.
 //   - At or below the Zone's mark for the Entity, it is a retry or stale and
 //     is acked, never placed: untouched if the Zone holds the Entity at that
 //     very sequence, counted as stale otherwise. No Event either way.
@@ -404,7 +412,9 @@ func validateArrive(a *ApplyContext, cmd *logv1.LoggedCommand) (arriveView, erro
 	}
 	held := a.Zone.Entities[v.id]
 	switch mark := a.Zone.Placed[v.id]; {
-	case v.seq <= mark:
+	case v.seq == mark.Seq && mark.Rejected:
+		v.reissue = true
+	case v.seq <= mark.Seq:
 		v.retry = held != nil && held.HandoffSeq == v.seq
 		v.stale = !v.retry
 	case held != nil:
@@ -430,6 +440,9 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	arr := cmd.GetArrive()
 	if v.drop {
 		a.dropTransit(v.id)
+	}
+	if v.reissue {
+		return nil // AW-SRV-027 reissues the HandoffRejected here
 	}
 	if v.stale || v.retry {
 		if v.stale {

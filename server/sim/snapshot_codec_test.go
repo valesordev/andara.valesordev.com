@@ -62,6 +62,38 @@ func TestBodyHashCoversEveryProtoField(t *testing.T) {
 			})
 		}
 	}
+	// The Entities in transit, and what each says about where it is going; the
+	// handoff marks (AW-SRV-028). Their nested fields are corrupted one at a
+	// time too: a record with only an empty element appended would be refused
+	// for being empty, which proves nothing about the fields inside it.
+	for ti := range base.GetTransit() {
+		tf := fields(base.GetTransit()[ti].ProtoReflect())
+		for i := 0; i < tf.Len(); i++ {
+			fd := tf.Get(i)
+			if fd.Kind() == protoreflect.MessageKind && !fd.IsList() {
+				continue // the Entity: its own fields are checked below
+			}
+			check(fmt.Sprintf("%s[%d]", fd.FullName(), ti), fd, func(b *statev1.ZoneState) protoreflect.Message {
+				return b.GetTransit()[ti].ProtoReflect()
+			})
+		}
+		ef := fields(base.GetTransit()[ti].GetEntity().ProtoReflect())
+		for i := 0; i < ef.Len(); i++ {
+			fd := ef.Get(i)
+			check(fmt.Sprintf("transit.%s[%d]", fd.FullName(), ti), fd, func(b *statev1.ZoneState) protoreflect.Message {
+				return b.GetTransit()[ti].GetEntity().ProtoReflect()
+			})
+		}
+	}
+	for pi := range base.GetPlaced() {
+		pf := fields(base.GetPlaced()[pi].ProtoReflect())
+		for i := 0; i < pf.Len(); i++ {
+			fd := pf.Get(i)
+			check(fmt.Sprintf("%s[%d]", fd.FullName(), pi), fd, func(b *statev1.ZoneState) protoreflect.Message {
+				return b.GetPlaced()[pi].ProtoReflect()
+			})
+		}
+	}
 	// A Component and one of its fields, on the full Entity.
 	hero := base.GetEntities()[0]
 	cf := fields(hero.GetComponents()[0].ProtoReflect())
@@ -200,8 +232,24 @@ func fullZone() *ZoneState {
 			},
 			// A second Entity, nowhere and unnamed, so the encoder's
 			// omit-when-unset paths are exercised alongside the full one.
-			"pebble": {ID: "pebble", Template: "andara.core.Entity", ContentVersion: "core@3"},
+			"pebble": {ID: "pebble", Template: "andara.core.Entity", ContentVersion: "core@3", HandoffSeq: 1},
 		},
+		// An Entity on its way out (AW-SRV-028): every field the wire carries
+		// non-zero, never dormant or linkdead (such a body never moves, and a
+		// body that says otherwise is refused), and not also in Entities.
+		Transit: map[EntityID]TransitRecord{
+			"traveler": {
+				Entity: EntityState{
+					ID: "traveler", Room: "gate", Template: "andara.core.Character", ContentVersion: "core@3",
+					Name: "The Traveler", HandoffSeq: 3,
+					Components: []Component{{Type: "andara.core.Memory", Fields: []ComponentField{{Name: "slots", Kind: FieldInt, Int: 4}}}},
+				},
+				To: "harbor", Room: "quay", Direction: "east",
+			},
+		},
+		// One placement and one rejection (AW-SRV-027's), so the flag is
+		// non-zero in the fixture too. A rejected mark's Entity isn't held.
+		Placed: map[EntityID]PlacedMark{"drifter": {Seq: 4}, "outcast": {Seq: 9, Rejected: true}},
 	}
 }
 

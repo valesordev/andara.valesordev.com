@@ -110,7 +110,8 @@ func (s *Snapshot) BodyProto() *statev1.ZoneState {
 	}
 	sort.Strings(pids)
 	for _, id := range pids {
-		out.Placed = append(out.Placed, &statev1.PlacedArrival{EntityId: id, HandoffSeq: z.Placed[EntityID(id)]})
+		m := z.Placed[EntityID(id)]
+		out.Placed = append(out.Placed, &statev1.PlacedArrival{EntityId: id, HandoffSeq: m.Seq, Rejected: m.Rejected})
 	}
 	// Deferred is deliberately empty; see zone_state.proto and
 	// docs/feedback/AW-SRV-006-zone-snapshots.md §3.
@@ -207,9 +208,9 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 	}
 	for _, pp := range p.GetPlaced() {
 		if z.Placed == nil {
-			z.Placed = make(map[EntityID]uint64, len(p.GetPlaced()))
+			z.Placed = make(map[EntityID]PlacedMark, len(p.GetPlaced()))
 		}
-		z.Placed[EntityID(pp.GetEntityId())] = pp.GetHandoffSeq()
+		z.Placed[EntityID(pp.GetEntityId())] = PlacedMark{Seq: pp.GetHandoffSeq(), Rejected: pp.GetRejected()}
 	}
 	return z
 }
@@ -295,9 +296,10 @@ func (e *EntityState) StateProto() *statev1.EntityState { return entityStateProt
 // bodies never move) would hash as a different World from the one the body
 // claims.
 func checkHandoffBody(p *statev1.ZoneState) error {
-	here := make(map[string]bool, len(p.GetEntities()))
+	here := make(map[string]uint64, len(p.GetEntities()))
+	held := make(map[string]bool, len(p.GetEntities()))
 	for _, e := range p.GetEntities() {
-		here[e.GetEntityId()] = true
+		here[e.GetEntityId()], held[e.GetEntityId()] = e.GetHandoffSeq(), true
 	}
 	prev := ""
 	for i, t := range p.GetTransit() {
@@ -308,10 +310,15 @@ func checkHandoffBody(p *statev1.ZoneState) error {
 			return fmt.Errorf("snapshot: zone %s has a transit record with no entity", p.GetZoneId())
 		case i > 0 && id <= prev:
 			return fmt.Errorf("snapshot: zone %s transit is not sorted and unique by entity_id at %q", p.GetZoneId(), id)
-		case here[id]:
+		case held[id]:
 			return fmt.Errorf("snapshot: zone %s holds entity %s both in entities and in transit", p.GetZoneId(), id)
 		case e.GetDormant() || e.GetLinkdeadDeadlineTick() != 0:
 			return fmt.Errorf("snapshot: zone %s has entity %s in transit and %s: such a body never moves", p.GetZoneId(), id, dormantOrLinkdead(e))
+		case e.GetDormantSinceTick() != 0 || e.GetLinkdeadSinceTick()|e.GetLinkdeadCeilingTick()|e.GetLinkdeadExtensionTicks() != 0:
+			// Not in the hash for a body that is neither dormant nor linkdead,
+			// and the record can't carry them on the wire: refuse them rather
+			// than let a corrupted value pass.
+			return fmt.Errorf("snapshot: zone %s has entity %s in transit carrying dormant or linkdead fields", p.GetZoneId(), id)
 		}
 		prev = id
 	}
@@ -325,6 +332,10 @@ func checkHandoffBody(p *statev1.ZoneState) error {
 			return fmt.Errorf("snapshot: zone %s placed is not sorted and unique by entity_id at %q", p.GetZoneId(), id)
 		case m.GetHandoffSeq() == 0:
 			return fmt.Errorf("snapshot: zone %s has a placed mark of 0 for entity %s", p.GetZoneId(), id)
+		case m.GetRejected() && held[id] && here[id] == m.GetHandoffSeq():
+			// A rejection places nothing: the Entity was never here at that
+			// sequence, so a body that holds it there contradicts itself.
+			return fmt.Errorf("snapshot: zone %s has a rejected mark for entity %s at sequence %d and holds it there", p.GetZoneId(), id, m.GetHandoffSeq())
 		}
 		prev = id
 	}
