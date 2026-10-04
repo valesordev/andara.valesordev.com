@@ -298,3 +298,55 @@ and a pending flag value doesn't. A word with no flags listed is that flag's val
 **Outstanding before `done`:** the interim `docs/builders/07-reference.md` is still in the guide and
 nothing links the generated `reference.md`. That's architecture's `arch/` PR (Definition of done),
 merged after this one.
+
+## §8 instrumentation check — 2026-10-04 (SRE, `sre/aw-inf-028-verify`)
+
+**The story's §7 holds, after one fix made in this PR (below).** It adds no metric, trace or alert (`make` targets with no service), and
+promises one thing: the targets report through their exit codes and their `builder-reference:` and
+`guide-check:` lines, **which CI's job log keeps**. SRE built this story as well as verifying it, so
+the check below is a read of what ran, not an independent re-derivation; architecture's §8 review
+is the independent one. Run on `main` 90f1487:
+
+| Observation | Result |
+|-------------|--------|
+| `make guide-check` on the real guide | exit `0`; stdout is exactly `guide-check: 28 commands, 37 codes, 117 links ok`; stderr is empty |
+| `make builder-reference-check` on a current tree | exit `0`, and prints nothing (the contract's only success output is the exit code) |
+| the same, after a hand edit to `reference.md` | `builder-reference: stale; run make builder-reference` on stderr; the script exits `1`, and `make` reports `Error 1` and exits `2`, the point already in the record above |
+| `guide-check` on a copy of the guide with a bad command and a broken link | script exit `1` (`make` reports `Error 1` and exits `2`); stdout empty; one stderr line per finding: `guide-check: docs/builders/05-the-everyday-loop.md:114: no command "andara-cli content bogus"` and `…:116: broken link nope.md` |
+| CI's log, `main` push run `37215866929` (`b2091f1`), job `check` | the steps `builder reference is current` and `builder's guide commands, codes and links` both ran and succeeded, and the log holds `guide-check: 28 commands, 37 codes, 117 links ok` |
+
+The working tree was restored after the stale-file run (`git status` clean).
+
+**A gap in the contract's "one finding per line, prefixed", found by this check's review, and fixed
+in this PR (issue #401).** The build failure (`go build … failed`) and the `andara-cli content
+reference` failure embed the tool's own stderr in one message, which can span lines, and only the
+first line carried the prefix. With a real syntax error in `cmd/andara-cli` (a throwaway worktree,
+never committed), the targets before the fix:
+
+```
+builder-reference: go build ./cmd/andara-cli failed: # github.com/valesordev/andara/cmd/andara-cli
+cmd/andara-cli/zz_broken.go:3:14: syntax error: unexpected {, expected )
+```
+
+`say_err` now splits a message and prefixes each line, for the `Fail` path and for `guide-check`'s
+findings. The same error, after the fix, under both targets (`make` exit `2`, script exit `1`, stdout
+empty):
+
+```
+builder-reference: go build ./cmd/andara-cli failed: # github.com/valesordev/andara/cmd/andara-cli
+builder-reference: cmd/andara-cli/zz_broken.go:3:14: syntax error: unexpected {, expected )
+guide-check: go build ./cmd/andara-cli failed: # github.com/valesordev/andara/cmd/andara-cli
+guide-check: cmd/andara-cli/zz_broken.go:3:14: syntax error: unexpected {, expected )
+```
+
+Fixture tests cover a failing build under `builder-reference`, `builder-reference-check` and
+`guide-check`, a failing `content reference` (a fake CLI with two lines of stderr and exit 7), the
+helper itself, and that single-line findings are unchanged. Four mutants of the fix were each
+caught (`main` back to a plain print, `say_err` without the prefix, without `splitlines`, and without
+its `or [""]` fallback), and a fifth is equivalent: a plain print in `guide-check`'s findings loop,
+because those findings are single-line by construction. The `content reference` failure path is covered by that fixture
+test only, not run live: the real CLI doesn't fail it on a healthy build.
+
+**Not observed:** a failing run in CI's log. No run on `main` has failed these steps, so that the
+runner keeps the stderr finding lines is inferred from it keeping the stdout summary line, not seen.
+The finding lines were read locally, above.
