@@ -61,6 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
+        builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check
 
 ## help: print this target list
@@ -130,7 +131,7 @@ schemas-check:
 CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
                  backlog-check status-check values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
-                 core-versions-check
+                 core-versions-check builder-reference-check guide-check
 
 ## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
 check: $(CHECK_TARGETS)
@@ -234,6 +235,18 @@ validate-stories:
 ## scripts-test: unit tests for the Python tooling under scripts/ (scripts/tests)
 scripts-test:
 	@$(PY) -m unittest discover -s $(SCRIPTS)/tests
+
+## builder-reference: regenerate the Builder's Guide reference tables from andara-cli content reference
+builder-reference:
+	@$(PY) $(SCRIPTS)/builder_guide.py reference
+
+## builder-reference-check: fail if docs/builders/reference.md differs from what make builder-reference writes
+builder-reference-check:
+	@$(PY) $(SCRIPTS)/builder_guide.py reference-check
+
+## guide-check: every andara-cli command in the Builder's Guide exists, every diagnostic code is documented, every link resolves
+guide-check:
+	@$(PY) $(SCRIPTS)/builder_guide.py guide-check
 
 ## core-versions-check: fail if content/core/VERSIONS changes other than by appending the next version (AW-INF-029)
 core-versions-check:

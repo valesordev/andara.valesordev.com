@@ -4,7 +4,7 @@ title: make builder-reference and make guide-check
 epic: EPIC-06
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-CLI-009]
 blocks: []
@@ -214,3 +214,48 @@ nothing links to the generated one.
 4. `[ASSUMPTION]` `builder-reference-check` is a separate target, as `values-schema-check` is, so that
    `make check` never writes the tree. `AW-INF-023` AC-2 names only the failure message, and this
    target prints exactly that.
+
+## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
+
+Branch `sre/aw-inf-028-builder-reference-guide-check`. The logic is `scripts/builder_guide.py`, and
+the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (30
+cases, run by `make scripts-test`), against a fake `andara-cli` that implements `__complete` and
+`--help`. The live runs below used the real binary built from this tree.
+
+| AC | Where it's shown |
+|----|------------------|
+| 1 | `make builder-reference` builds `./cmd/andara-cli` into a temp dir (`go build`), runs `content reference --output json` with an empty HOME, and prints `builder-reference: wrote docs/builders/reference.md`. `test_a_second_run_is_byte_identical`; `test_a_failing_build_exits_one` |
+| 2 | Live: a hand-added row makes `make builder-reference-check` print `builder-reference: stale; run make builder-reference`, and `make builder-reference` clears it. `test_check_passes_when_current_and_names_a_stale_or_missing_file` (a missing file is stale too), `test_check_writes_nothing`. The step is in `CHECK_TARGETS` and `ci.yaml` |
+| 3 | `test_writes_the_four_sections_in_order`: the `GENERATED … DO NOT HAND-EDIT` line, then Directions, Component types, `andara.core@N` Templates and Diagnostics, each diagnostic linking `errors.md` §3 |
+| 4 | `test_an_added_key_or_field_changes_nothing`, `test_an_unsupported_format_version_exits_one` |
+| 5 | `test_a_group_followed_by_an_unknown_word_is_a_typo`, `test_an_unknown_root_command_is_a_typo`, `test_a_leaf_with_positionals_passes`, `test_a_global_flag_before_the_command_passes`, `test_a_command_whose_help_fails_is_reported`, `test_a_typo_after_a_global_flag_and_its_value_is_still_a_typo` |
+| 6 | `test_a_code_in_errors_but_not_the_reference`, `test_a_code_in_the_reference_but_not_errors`, `test_only_section_3_counts` |
+| 7 | `test_a_missing_target`, `test_a_missing_anchor`, `test_heading_slugs_and_explicit_anchors_resolve` |
+| 8 | `test_every_failure_is_reported_not_only_the_first`. Live, on a copy of the guide with a bad command, a broken link and a deleted code row, all three were printed |
+| 9 | `test_a_guide_with_only_the_reference_passes`. **On `main`'s guide:** `guide-check: 28 commands, 37 codes, 117 links ok`, exit 0, so no finding goes to architecture |
+| 10 | `make help` lists all three, and the first and last help lines are the contract's, character for character |
+
+**Mutations, each caught by a named test:**
+- dropping the group-plus-leftover rule;
+- dropping the flag-value discriminator (it survived the first test set, which only exercised a
+  leaf after a flag. `test_a_typo_after_a_global_flag_and_its_value_is_still_a_typo` kills it);
+- dropping either code direction;
+- dropping the anchor check, the `format_version` check, the staleness check, the `--help` exit
+  check, or the scoping of `errors.md` to §3.
+
+**How the command path is resolved.** After a flag that takes a value, and at a leaf, `__complete ''`
+returns nothing, so that alone can't tell the two apart, and `-o json content bogus` would end its
+path at `json`. The resolver therefore also asks `__complete '-'`: a command context lists flags,
+and a pending flag value doesn't. A word with no flags listed is that flag's value.
+
+**Two details the contract didn't say, both settled by the real guide:**
+- An explicit `<a id="x">` before a heading is an anchor GitHub honors, and `09-when-something-fails.md`
+  uses them for every code (`#core_version_mismatch`). The checker counts them, and keeps
+  underscores in heading slugs as GitHub does.
+- **The exit codes are the script's.** `make` reports any failing recipe as exit 2, so AC-2's "exits
+  `1`" holds for `scripts/builder_guide.py` and `make check` fails either way
+  (`docs/feedback/AW-INF-029-…`, the same point).
+
+**Outstanding before `done`:** the interim `docs/builders/07-reference.md` is still in the guide and
+nothing links the generated `reference.md`. That's architecture's `arch/` PR (Definition of done),
+merged after this one.

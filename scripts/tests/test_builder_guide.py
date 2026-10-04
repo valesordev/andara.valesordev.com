@@ -1,0 +1,340 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Valesor Development
+
+"""scripts/builder_guide.py (AW-INF-028): fixture guides and a fake andara-cli.
+
+The fake implements the two things the script asks of the binary: Cobra's hidden `__complete`
+(subcommands for '', flags for '-', nothing while a flag value is pending) and `--help` (exit 0 for
+anything resolvable, as Cobra does for `content bogus --help`). Run by `make scripts-test`.
+"""
+
+import contextlib
+import importlib.util
+import io
+import json
+import os
+import stat
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+SPEC = importlib.util.spec_from_file_location(
+    "builder_guide", Path(__file__).resolve().parent.parent / "builder_guide.py")
+bg = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(bg)
+
+FAKE = r'''#!/usr/bin/env python3
+import json, os, sys
+TREE = {"content": {"approve": {}, "validate": {}, "reference": {}, "broken": {}},
+        "auth": {"login": {}}, "completion": {}}
+VALUE_FLAGS = {"-o", "--output", "--path", "--config"}
+args = sys.argv[1:]
+if args and args[0] == "__complete":
+    words, to_complete = args[1:-1], args[-1]
+    node, pending, positional = TREE, False, False
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w in VALUE_FLAGS:
+            if i + 1 < len(words):
+                i += 1
+            else:
+                pending = True
+        elif w.startswith("-"):
+            pass
+        elif not positional and w in node:
+            node = node[w]
+        else:
+            positional = True
+        i += 1
+    if pending:
+        print(":0")
+    elif to_complete.startswith("-"):
+        print("--output\toutput format\n-o\toutput format\n--help\thelp\n:4")
+    elif node and not positional:
+        for name in node:
+            print(name + "\tdesc")
+        print(":4")
+    else:
+        print(":0")
+    sys.exit(0)
+if args[:2] == ["content", "reference"] and "--output" in args and "--help" not in args:
+    sys.stdout.write(open("__REF_JSON__").read())
+    sys.exit(0)
+if "--help" in args:
+    sys.exit(1 if "broken" in args else 0)
+sys.exit(0)
+'''
+
+REF = {
+    "format_version": 1,
+    "directions": [{"name": "north", "reverse": "south"}, {"name": "south", "reverse": "north"}],
+    "component_types": [{"type": "andara.core.Behavior", "fields": [{"name": "name", "kind": "string"}]},
+                        {"type": "andara.core.Dark", "fields": []}],
+    "core": {"pack": "andara.core", "version": 3,
+             "templates": [{"name": "andara.core.Npc", "kind": "entity",
+                            "chain": ["andara.core.Entity", "andara.core.Npc"]}]},
+    "diagnostics": [{"code": "orphan_room", "severity": "warning", "raised_by": "both"},
+                    {"code": "unknown_room", "severity": "error", "raised_by": "both"}],
+}
+
+ERRORS_MD = """# Errors
+
+## 2. Shared
+
+| `not_a_code_section` | x |
+
+## 3. The codes
+
+### 3.1 Raised only by the compiler
+
+| Code | Token |
+|------|-------|
+| `orphan_room` | the room |
+| `unknown_room` | the room |
+
+## 4. The sidecar
+
+| `after_section_3` | x |
+"""
+
+
+def ref_md(codes=("orphan_room", "unknown_room")):
+    rows = "\n".join("| [`%s`](../specs/content-language/v1/errors.md#3-the-codes) | error | both |" % c
+                     for c in codes)
+    return "<!-- GENERATED -->\n\n# Reference\n\n## Diagnostics\n\n| Code | Severity | Raised by |\n|---|---|---|\n" + rows + "\n"
+
+
+class Fixture(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.root = Path(self._tmp.name)
+        self.cli = self.root / "fake-andara-cli"
+        self.ref_json = self.root / "ref.json"
+        self.ref_json.write_text(json.dumps(REF))
+        self.cli.write_text(FAKE.replace("__REF_JSON__", str(self.ref_json)))
+        self.cli.chmod(self.cli.stat().st_mode | stat.S_IEXEC)
+        (self.root / "docs/builders").mkdir(parents=True)
+        errors = self.root / bg.ERRORS
+        errors.parent.mkdir(parents=True)
+        errors.write_text(ERRORS_MD)
+
+    def guide(self, name, text):
+        (self.root / "docs/builders" / name).write_text(textwrap.dedent(text))
+
+    def run_bg(self, action):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = bg.main([action, "--root", str(self.root), "--cli", str(self.cli)])
+        return rc, out.getvalue(), err.getvalue()
+
+
+class GuideCommands(Fixture):
+    def commands(self, *lines):
+        self.guide("a.md", "# A\n\n```\n" + "\n".join(lines) + "\n```\n")
+        return self.run_bg("guide-check")
+
+    def test_a_group_followed_by_an_unknown_word_is_a_typo(self):
+        rc, _, err = self.commands("andara-cli content bogus")
+        self.assertEqual(rc, 1)
+        self.assertIn('guide-check: docs/builders/a.md:4: no command "andara-cli content bogus"', err)
+
+    def test_an_unknown_root_command_is_a_typo(self):
+        rc, _, err = self.commands("andara-cli frobnicate")
+        self.assertEqual(rc, 1)
+        self.assertIn('no command "andara-cli frobnicate"', err)
+
+    def test_a_leaf_with_positionals_passes(self):
+        rc, out, err = self.commands("andara-cli content approve brian 1")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("1 commands", out)
+
+    def test_a_global_flag_before_the_command_passes(self):
+        rc, _, err = self.commands("andara-cli -o json content validate --path .")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_a_typo_after_a_global_flag_and_its_value_is_still_a_typo(self):
+        # Without telling a flag's value from a subcommand, `json` ends the path at the root,
+        # which isn't asked about its leftovers, and the typo passes.
+        rc, _, err = self.commands("andara-cli -o json content bogus")
+        self.assertEqual(rc, 1)
+        self.assertIn('no command "andara-cli content bogus"', err)
+
+    def test_a_flag_with_an_equals_value_is_skipped_too(self):
+        rc, _, err = self.commands("andara-cli --output=json content bogus")
+        self.assertEqual(rc, 1)
+        self.assertIn('no command "andara-cli content bogus"', err)
+
+    def test_a_prompt_and_a_placeholder_pass(self):
+        rc, _, err = self.commands("$ andara-cli content approve <pack> <version>")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_a_command_whose_help_fails_is_reported(self):
+        rc, _, err = self.commands("andara-cli content broken")
+        self.assertEqual(rc, 1)
+        self.assertIn('no command "andara-cli content broken"', err)
+
+    def test_a_continued_line_is_one_command(self):
+        rc, out, err = self.commands("andara-cli content validate \\", "  --path .")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("1 commands", out)
+
+    def test_a_shell_pipe_ends_the_command(self):
+        rc, _, err = self.commands("andara-cli -o json content reference | jq .")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_prose_and_other_programs_are_not_commands(self):
+        self.guide("a.md", "# A\n\nRun andara-cli content bogus.\n\n```\nls andara-cli\ngo test\n```\n")
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 commands", out)
+
+
+class GuideCodes(Fixture):
+    def test_a_code_in_errors_but_not_the_reference(self):
+        (self.root / bg.REFERENCE).write_text(ref_md(("orphan_room",)))
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("guide-check: code unknown_room is in errors.md but not the reference", err)
+
+    def test_a_code_in_the_reference_but_not_errors(self):
+        (self.root / bg.REFERENCE).write_text(ref_md(("orphan_room", "unknown_room", "invented")))
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("guide-check: code invented is in the reference but not errors.md", err)
+
+    def test_only_section_3_counts(self):
+        (self.root / bg.REFERENCE).write_text(ref_md())
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("2 codes", out)
+
+
+class GuideLinks(Fixture):
+    def test_a_missing_target(self):
+        self.guide("a.md", "# A\n\nSee [b](nope.md).\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("guide-check: docs/builders/a.md:3: broken link nope.md", err)
+
+    def test_a_missing_anchor(self):
+        self.guide("a.md", "# A\n\nSee [b](b.md#nowhere).\n")
+        self.guide("b.md", "# B\n\n## Somewhere\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("broken link b.md#nowhere", err)
+
+    def test_heading_slugs_and_explicit_anchors_resolve(self):
+        self.guide("a.md", "# A\n\n[1](b.md#some-heading--here) [2](b.md#core_code) [3](#a) [4](b.md#dup-1)\n")
+        self.guide("b.md", '# B\n\n## Some `heading` & here\n\n### <a id="core_code"></a>`core_code`\n\n## dup\n\n## dup\n')
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_external_links_and_links_in_code_are_not_checked(self):
+        self.guide("a.md", "# A\n\n[x](https://example.com/404) `[y](gone.md)`\n\n```\n[z](gone.md)\n```\n")
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 links", out)
+
+    def test_a_link_to_a_directory_or_a_sibling_resolves(self):
+        self.guide("a.md", "# A\n\n[up](../builders/b.md) [spec](../specs/content-language/v1/errors.md#3-the-codes)\n")
+        self.guide("b.md", "# B\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+
+
+class GuideCheckOverall(Fixture):
+    def test_every_failure_is_reported_not_only_the_first(self):
+        self.guide("a.md", "# A\n\n[b](nope.md)\n\n```\nandara-cli content bogus\n```\n")
+        (self.root / bg.REFERENCE).write_text(ref_md(("orphan_room",)))
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertEqual(len(err.strip().splitlines()), 3, err)
+
+    def test_a_guide_with_only_the_reference_passes(self):
+        (self.root / bg.REFERENCE).write_text(ref_md())
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertEqual(out.strip(), "guide-check: 0 commands, 2 codes, 2 links ok")
+
+    def test_an_empty_guide_is_not_a_failure(self):
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "guide-check: 0 commands, 0 codes, 0 links ok")
+
+    def test_no_guide_directory_exits_two(self):
+        (self.root / "docs/builders").rmdir()
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 2)
+        self.assertIn("docs/builders doesn't exist", err)
+
+
+class Reference(Fixture):
+    def test_writes_the_four_sections_in_order(self):
+        rc, out, _ = self.run_bg("reference")
+        self.assertEqual(rc, 0)
+        self.assertEqual(out.strip(), "builder-reference: wrote docs/builders/reference.md")
+        text = (self.root / bg.REFERENCE).read_text()
+        self.assertTrue(text.startswith("<!-- GENERATED by make builder-reference"))
+        heads = [l for l in text.splitlines() if l.startswith("## ")]
+        self.assertEqual(heads, ["## Directions", "## Component types", "## `andara.core@3` Templates", "## Diagnostics"])
+        self.assertIn("| `andara.core.Behavior` | `name` | string |", text)
+        self.assertIn("| `andara.core.Dark` | none | none |", text)
+        self.assertIn("| `andara.core.Npc` | entity | `andara.core.Entity` › `andara.core.Npc` |", text)
+        self.assertIn("| [`orphan_room`](../specs/content-language/v1/errors.md#3-the-codes) | warning | both |", text)
+
+    def test_a_second_run_is_byte_identical(self):
+        self.run_bg("reference")
+        first = (self.root / bg.REFERENCE).read_bytes()
+        self.run_bg("reference")
+        self.assertEqual((self.root / bg.REFERENCE).read_bytes(), first)
+
+    def test_an_added_key_or_field_changes_nothing(self):
+        self.run_bg("reference")
+        first = (self.root / bg.REFERENCE).read_text()
+        more = json.loads(json.dumps(REF))
+        more["extra_section"] = [1]
+        more["directions"][0]["note"] = "x"
+        more["diagnostics"][0]["since"] = 4
+        self.ref_json.write_text(json.dumps(more))
+        rc, _, _ = self.run_bg("reference")
+        self.assertEqual(rc, 0)
+        self.assertEqual((self.root / bg.REFERENCE).read_text(), first)
+
+    def test_an_unsupported_format_version_exits_one(self):
+        self.ref_json.write_text(json.dumps(dict(REF, format_version=2)))
+        rc, _, err = self.run_bg("reference")
+        self.assertEqual(rc, 1)
+        self.assertIn("builder-reference: unsupported format_version 2", err)
+        self.assertFalse((self.root / bg.REFERENCE).exists())
+
+    def test_check_passes_when_current_and_names_a_stale_or_missing_file(self):
+        rc, _, err = self.run_bg("reference-check")
+        self.assertEqual(rc, 1, "a missing file is stale")
+        self.assertIn("builder-reference: stale; run make builder-reference", err)
+        self.run_bg("reference")
+        self.assertEqual(self.run_bg("reference-check")[0], 0)
+        path = self.root / bg.REFERENCE
+        path.write_text(path.read_text() + "hand edit\n")
+        rc, _, err = self.run_bg("reference-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("builder-reference: stale; run make builder-reference", err)
+
+    def test_check_writes_nothing(self):
+        self.run_bg("reference-check")
+        self.assertFalse((self.root / bg.REFERENCE).exists())
+
+    def test_a_failing_build_exits_one(self):
+        os.environ["GO"] = "/bin/false"
+        self.addCleanup(os.environ.pop, "GO", None)
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = bg.main(["reference", "--root", str(self.root)])
+        self.assertEqual(rc, 1)
+        self.assertIn("builder-reference: go build ./cmd/andara-cli failed", err.getvalue())
+
+
+if __name__ == "__main__":
+    unittest.main()
