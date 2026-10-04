@@ -35,5 +35,5 @@ asks for:
   `.github/allowed_signers` in their first PR. It isn't fatal: GitHub still verifies the commit.
 - **Keep** the passphrase paragraph (`ssh-add`, naming the private key) and the re-sign paragraph.
   `make bootstrap` fails with the exact `ssh-add` command when the agent doesn't hold the key.
-- Section 9 and any other page that repeats the signing steps should point at `make bootstrap` too.
+- No other page of the guide repeats the signing steps (checked with a search of `docs/builders/`).
 
