@@ -36,7 +36,7 @@ not an event.
   `terminationGracePeriodSeconds`, which this story derives.
 - Post-start: `AW-SRV-007` recovery, readiness only after verify (already the contract; this story tests
   it under a rolling update).
-- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [--round T]` as the only deploy path
+- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [ROUND=T]` as the only deploy path
   for `prod`, and for `local`, where the rolling-update test runs. `dev` is deployed by Argo CD from
   `main` (`AW-INF-019`), and `make deploy ENV=dev` refuses while that Application exists, as
   `helm-install` does. *(Scoped 2026-09-26, `AW-INF-019`'s contract review.)*
@@ -44,7 +44,7 @@ not an event.
   with the image (`content/core/` in the repo, compiled by `AW-CLI-006`) before the new pod reports
   ready, as `operator`, no second approver (`AW-SRV-013` AC-11). Rollback activates the previous
   core version the same way.
-- The `state_version` rollback path: refuse, then `rollback --round` pins an older round and the old
+- The `state_version` rollback path: refuse, then `make rollback ROUND=T` pins an older round and the old
   binary recovers from it, replaying the tail the newer binary wrote — which is safe because the log is
   Commands, not state (ADR-0005: replay never re-runs anything but `Apply`).
 - Interruption measurement: `andara_deploy_interruption_seconds` from `ServerStopping` to first
@@ -82,7 +82,7 @@ not an event.
    ready, `RecoveryStateMismatch` fires, the StatefulSet rollout stalls, and `make deploy` exits `2`
    printing the runbook path.
 4. **Given** `make rollback` to a binary that cannot read the current `state_version` **when** the old
-   pod starts **then** it exits `4` naming both versions; **given** `make rollback --round T` with a
+   pod starts **then** it exits `4` naming both versions; **given** `make rollback ROUND=T` with a
    round the old binary can read **then** it recovers from `T`, replays the newer binary's tail, and
    reaches `serving` with a hash equal to the newer binary's `TickCompleted` at head — or exits `8` if
    the newer binary's semantics changed, which is the honest signal that a rollback needs a fix-forward.
@@ -138,7 +138,7 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | AC-6 |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping` |
-| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | — | one-boot override used by `rollback` |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` is unset. Set by `make rollback ROUND=T`, cleared by the next `make deploy` or `make rollback`; `AW-SRV-007`'s Configuration table has the server side |
 | `snapshot.keep_rounds` | `ANDARA_SNAPSHOT_KEEP_ROUNDS` | `120` | |
 | `snapshot.keep_deploy_rounds` | `ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS` | `30` | |
 
@@ -217,3 +217,11 @@ the expected interruption as a number from the last CI run, and every step is a 
 - `[ASSUMPTION]` Retention numbers 120 / 30 rounds. Two hours of minute-rounds plus a month of deploy
   points is enough to pin any rollback anyone would attempt; disk cost is `andara_snapshot_bytes ×
   rounds`.
+
+## Split (architecture, 2026-10-03)
+
+The ruling is in `docs/feedback/AW-INF-005-007-split.md`, "Architecture: the split". This story keeps
+its ID and shrinks to the lifecycle contract (`docs/specs/deploy/lifecycle.md` and `ServerStopping`);
+the build moves to `lane: sre` and `lane: implementation` stories PM writes at the SPRINT-05 boundary.
+The four pin-lifecycle questions above are answered there. Until PM's stories exist, every AC above
+stays here, and nothing is removed.

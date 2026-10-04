@@ -40,3 +40,108 @@ before its deploy half reaches `ready`:
 For SRE when the split lands: `deploy/helm/andara/keys.yaml` gives `recovery.pin_round` as
 `story: AW-INF-007`. Its server contract is now `AW-SRV-007`'s Configuration table (`0` means
 unset), so repoint it.
+
+## Architecture: the split (2026-10-03)
+
+### What happens to the originals
+
+**Each keeps its ID and shrinks to its contract. Neither is superseded.** Both are cited from runbooks,
+alert specs, SLO documents, `keys.yaml`, `server/ingress/metrics.go` and about seventy story and spec
+lines, and story IDs are never renumbered or reused (CLAUDE.md §4). A superseded ID leaves every one of
+those pointing at a story that no longer says anything. Each stays `lane: architecture` and is small
+enough to be one session.
+
+**The order, so no AC is ever unowned:**
+1. PM writes the children at `draft`, copying the moved ACs verbatim.
+2. Architecture's contract review readies them and, **in the same PR**, strips those ACs from the
+   original and notes where each went.
+3. The original goes `ready` → `in-progress` → `review` → `done` as the contract story below.
+
+Until step 2 the originals keep every AC. A lapse in PM's grooming loses nothing. Both children's
+`depends_on` name the original where they need its contract written first.
+
+### AW-INF-005: the lines
+
+| Part | Lane | Holds | ACs |
+|---|---|---|---|
+| **`AW-INF-005`, kept** (S) | architecture | `docs/specs/kafka/broker-contract.md` and `client-contract.md`, from the Interface contract's tables with the claim each setting carries; the retention decision; the per-Partition degradation contract (the Definition of done's "blind spot", written as an amendment to `AW-SRV-010`'s body) | none behavioural. Its criteria are the files and that each row of both tables is present with its claim |
+| **Broker contract enforcement** (S) | sre | `scripts/broker_assert.py`, `make broker-assert`, the CI run on `local`, the scheduled job on the cluster | 5 |
+| **Kafka availability SLO, alerts, runbooks** (M) | sre | `docs/specs/slo/kafka-availability.md` and the check of `world-write-availability.md`, `WorldReadOnly`, `SimulationConsumerLagging`, both runbooks, `make slo-report` | 7, 8, and the alert half of 2 |
+| **Kafka degradation rehearsal** (M) | sre | `make kafka-rehearsal`, the report under `docs/specs/kafka/rehearsals/` | 1, 2, 3, 6. Depends on the per-Partition story below for 2 |
+| **`andara-server config-assert`** (S) | implementation | the self-test against the client contract | 4. Depends on the kept `AW-INF-005` having written `client-contract.md` |
+| **Per-Partition degraded state** (M) | implementation | a retriable broker-side produce error marks that Partition read-only, the probe reads leader and ISR from metadata, `andara_ingress_degraded` gains `partition` (cardinality 64) | new, from the Definition of done's blind spot; an `AW-SRV-010` follow-up. It must name the exact errors (`NOT_ENOUGH_REPLICAS`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER`) as ACs |
+
+**Corrections that came out of this.**
+- `docs/specs/slo/` is SRE's path (CLAUDE.md §2), so this story could never have delivered
+  `kafka-availability.md` from the architecture lane. That is the lane mix PM saw.
+- The story said `dev` and `prod` are Redpanda. They're Apache Kafka under Strimzi (`AW-INF-014`), and
+  `local` is a single Redpanda at replication factor 1. The story body is corrected. The rehearsal
+  proves broker-failure semantics on that Kafka and still can't prove disk failure, so the caveat
+  stands.
+- The "first 28 days of measurement" in AC-7 is time-gated: an SLO document can be written and
+  reviewed on day 1. The SLO story delivers the documents with the proposed targets and an empty
+  measurement table. The 28-day validation is a dated review PM schedules for 28 days after the
+  alerts are live, and it isn't an AC of that story.
+
+### AW-INF-007: the lines
+
+| Part | Lane | Holds | ACs |
+|---|---|---|---|
+| **`AW-INF-007`, kept** (S) | architecture | `docs/specs/deploy/lifecycle.md` (sequence, round tags, configuration, the scripts' exit codes, the pin lifecycle below) and `ServerStopping` in `event.proto`, with its `oneof` field number pinned by architecture, not left to the implementer | none behavioural, as for `AW-INF-005` |
+| **Pre-stop** (M) | implementation | `andara-server prestop`: `ServerStopping`, the notice lead, `ingress` degraded, the snapshot at the boundary, offsets, the log line and metrics; `deploy.*` keys | 1 (server half), 6 |
+| **Round tags and retention** (M) | implementation | the tag objects, `ListRounds` reporting them, the retention sweep, `andara-cli snapshot list` and `tag`, `snapshot.keep_*` | 7 |
+| **`make deploy` and `make rollback`** (M) | sre | both scripts and their exit codes, the `andara.core` step, the pin lifecycle, printing the interruption against the RTO | 4, 8, and 5's printing |
+| **Chart lifecycle and the rolling-update test** (M) | sre | the `preStop` hook, `terminationGracePeriodSeconds`, the `make check` bound, the kind rolling-update test in CI | 1 (hook and bound), 2, 3, 9, and the test half of 6 |
+
+**Held for the kept `AW-INF-007`'s contract, and not decided here:** who emits
+`andara_deploy_interruption_seconds`, and where its clock starts. The server restarts, so it has no
+clock across the gap, and a script can't write a Prometheus series for `prod`. AC-5 stays out of the
+SRE `make` story until that is ruled, and its parts say so in `depends_on`.
+
+`dev`'s `PreSync` core step stays with the story that moves `dev` to the store, as the story already
+says.
+
+### PR #356's four questions, answered
+
+1. **Who clears `recovery.pin_round`: the next `make deploy` or `make rollback`.** Every deploy and
+   every rollback passes the key explicitly, `0` unless `ROUND=T` is given, so clearing costs no extra
+   rollout. It stays set across a restart that isn't one of those. That recovers from `T` again: slower,
+   to the same state, because the log tail is replayed. The runbook says so. The alternative, a second
+   `helm upgrade` straight after the rollback, doubles the interruption of a rare incident, and I've
+   rejected it.
+2. **Retention: tag `T` `rollback:<T>`.** `make rollback ROUND=T` tags it before it sets the pin.
+   That keeps it under `snapshot.keep_deploy_rounds` like a deploy round, so a late restart doesn't
+   exit `7` `missing` and crash-loop. A tag for a round that's gone is an error before anything moves.
+3. **`make rollback`'s exit.** Through `make` every failure is `2`, so the evidence is the script's own
+   line, as in `AW-INF-029`. The script, `scripts/rollback.sh`, waits on the rollout. If it stalls, it
+   reads the pod's last termination code (`kubectl get pod andara-0 -o
+   jsonpath={.status.containerStatuses[0].lastState.terminated.exitCode}`) and the previous
+   container's `recovery` error line (`round_tick`, `cause`). It prints
+   `rollback: pod exited <n> (<meaning>): round <T> cause=<c>`, and exits: `0` ok, `1` rollout timeout
+   with another cause, `4` the pod exited `4`, `7` it exited `7`, `8` it exited `8`. `make deploy`
+   keeps `0`, `1`, `2` and `6`. The tests assert the script's codes and the printed line.
+4. **Spelling: `ROUND=T`.** Corrected in the story's scope, AC-4 and the Configuration table.
+   `recovery.pin_round`'s default is `0`, as `AW-SRV-007` says. The chart's `keys.yaml` repoint is for
+   SRE (below).
+
+**The consequence we won't like:** between a rollback and the next deploy, a pod restart recovers from
+the pinned round. It's correct and slower, and if the round's tag were ever removed by hand it would
+exit `7`. The runbook names both.
+
+## For SRE
+
+Your view on the lines is welcome before PM grooms. Two questions:
+1. Do the five SRE parts (three for Kafka, two for deploy) fit your lane and size, or would you merge
+   the Kafka enforcement and SLO stories?
+2. Is "cleared by the next deploy" acceptable for the pin, given a `prod` restart in between recovers
+   from `T`? If not, say so and I'll weigh the second rollout again.
+
+When the split lands, `deploy/helm/andara/keys.yaml` repoints `recovery.pin_round` from
+`story: AW-INF-007` to `AW-SRV-007`'s Configuration table, as above.
+
+## For PM
+
+The parts are listed with lane, size and ACs, ready to copy into stories. Their order in SPRINT-05:
+the kept `AW-INF-005` and `AW-INF-007` first (architecture's, and everything waits on them), then the
+two implementation stories that unblock SRE (`config-assert`, per-Partition state, pre-stop, tags),
+then the SRE stories. `AW-INF-032` and `AW-INF-034` (the M2 gate scripts) don't depend on any of this.
