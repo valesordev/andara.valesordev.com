@@ -29,7 +29,7 @@ bound, raise the race factor, or something else. **Both, and neither alone.** `t
 now says:
 1. **The CPU limit comes from the worst in-suite reading**, at least 1.5× it, over at least 20 full-suite
    runs at varied load (a race factor of about 13–14 or more). It moves only by an architecture ruling,
-   and only when the allocation bound at that commit equals its recorded value.
+   and only when the observed allocation count at that commit is within 1.0× of its recorded value.
 2. **The structural gate is an allocation bound:** the count at most 1.05× its recorded value and the
    bytes at most 1.25×, the minimum over the rounds, recorded with the Go version and the build tag.
    CPU time is a tripwire for work that doesn't allocate.

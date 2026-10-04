@@ -72,7 +72,7 @@ in the suite at load 17), because cache, memory-bandwidth and SMT contention are
 So the rule is: **a CPU-time limit is at least 1.5× the worst reading inside the full suite**, over at
 least 20 full-suite runs at varied load, and it is recorded beside the factor with the date, the load,
 and the allocation count and bytes at that commit. **The factor changes only by an architecture ruling,
-and only after the allocation bound at that commit equals its recorded value**, so a re-measurement
+and only after the observed allocation count at that commit is within 1.0× of its recorded value**, so a re-measurement
 on a tree whose copy has crept can't raise the limit and hide it. For the race build that comes to a factor of about 13–14 or more (134.6 ms × 1.5 ≈ 200 ms), and
 implementation sets the figure from its own runs. The same measurement sets the non-race factor.
 `make check` runs the guard in the suite, so the suite is the condition that counts.
@@ -84,10 +84,10 @@ against a 5 ms budget" history in the race file and above the test is true as wr
 The guard exists to catch a structural change, such as an encode or a hash moving back inside the
 tick (24.7 ms against a 5 ms budget, once), and a copy that starts walking topology. A CPU limit that
 loose catches only the gross cases, so **the structural gate is an allocation bound**, which load
-can't move: the test asserts the allocation count (`testing.AllocsPerRun`, its integer average) and the bytes
+can't move: the test asserts the allocation count (`testing.AllocsPerRun`, an integer average, called several times) and the bytes
 allocated per round (`runtime`'s `TotalAlloc` before and after) at the sizing fixture. Both counters
-are process-wide, so noise from a stray goroutine only adds, and the test takes the **minimum over its
-rounds**. **Allocations at most 1.05× the recorded value, bytes at most 1.25×.** The count is
+are process-wide, so noise from a stray goroutine only adds, and the test takes the **minimum over
+its calls and rounds**. **Allocations at most 1.05× the recorded value, bytes at most 1.25×.** The count is
 deterministic, so a deeper clone that adds one allocation per Entity (+25,000 on a few hundred
 thousand) fails it, and the bytes headroom is for toolchain drift. An encode, a hash buffer or a
 deeper clone moving into the tick allocates, so it fails at once. The bound is recorded with the Go
@@ -127,7 +127,7 @@ Implementation's, in one PR (SPRINT-04 item 6). Each is a command whose output g
 4. **Still catches, on CPU:** with mutator CPU of twice the limit added to `SnapshotAll` in a scratch
    worktree (never committed), the loaded run fails 20 of 20.
 5. **Still catches, on allocation:** with one 64-byte allocation kept per Entity per round in the same
-   scratch worktree (about +25,000 allocations and +2 MB), the **allocation-count** bound fails, with the
+   scratch worktree (about +25,000 allocations and +1.6 MB), the **allocation-count** bound fails, with the
    CPU limit untouched, 20 of 20. The log prints the recorded baselines. (A single large buffer, which
    adds one allocation and a few percent of the bytes, would pass and prove nothing.)
 6. The stale comments in `stallfactor_norace_test.go` are corrected as §2 says, and the worst in-suite
