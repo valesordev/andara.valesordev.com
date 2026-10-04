@@ -176,13 +176,16 @@ check observed those on the running server (`main` 9797225, local stack). As the
 | `builder packs refused` | `WARN` | `6971d110…`, non-empty | present, empty | present, empty | `reason=core_not_grantable` |
 
 That is `AW-SRV-035`'s rule (2026-09-30): the correlation ID is `trace_id`, `session_id` is empty
-because an Admin call runs in no Game Session, and `acting_as_account_id` is empty without an act-as token.
+because an Admin call runs in no Game Session, and `acting_as_account_id` is empty, since no Admin call can set it yet (below).
 Both `trace_id`s resolve in Tempo to the `andara.admin.v1.Admin/SetBuilderPacks` trace (the accepted
 one with its `accounts.write` child). `TestSetBuilderPacks_LogFields` and
 `TestSetBuilderPacks_ARefusalDoesNotHoldTheWriteLock` pass.
 
-**Not observed live, and not asserted:** `acting_as_account_id` with a value. `account set-packs`
-has no `--as`; only an act-as token (from `andara-cli play --as`) sets it on an Admin call, and
-`TestSetBuilderPacks_LogFields` asserts only that the key is present and empty. The code passes
-`actor.ActingAs` straight through (`server/auth/packs.go`), and AC-6 requires only the empty case.
+**Not observed live, and not asserted:** `acting_as_account_id` with a value. No Admin call can
+produce one yet: `account set-packs` has no `--as`, `andara-cli play --as` acts only on the game
+Session, and nothing in `server/auth` issues a token with an `act` claim. Admin acting-as is
+`AW-SRV-039` (`draft`), which uses per-call metadata. `TestSetBuilderPacks_LogFields` asserts only
+that the key is present and empty. The code passes `actor.ActingAs` straight through
+(`server/auth/packs.go`), and AC-6 requires only the empty case. Its non-empty side is
+`AW-SRV-039`'s to observe once that path exists.
 Items 1 to 6 and 8 touch no instrumentation.
