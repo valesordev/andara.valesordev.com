@@ -191,13 +191,15 @@ func (g *gate) explained(f sim.ValidationError) bool {
 				if sim.Direction(e.GetDirection()) != f.Exit {
 					continue
 				}
+				// The first Exit of a direction is the one the build keeps and
+				// reports; a later one is a duplicate_direction and is never
+				// resolved, so it can't explain the first's finding.
 				toZone := e.GetToZone()
 				if toZone == "" {
 					toZone = d.GetId()
 				}
-				if _, dropped := g.clash[toZone]; dropped && g.declares(toZone, e.GetToRoom()) {
-					return true
-				}
+				_, dropped := g.clash[toZone]
+				return dropped && g.declares(toZone, e.GetToRoom())
 			}
 		}
 	}

@@ -409,3 +409,23 @@ func TestGate_AnOwnErrorAndAnotherPacksAreBothReported(t *testing.T) {
 		t.Fatalf("findings = %v: want acme's duplicate_zone and town's unknown_zone, pack set on town's alone", got)
 	}
 }
+
+// A Room with two Exits in one direction: the build keeps the first and
+// reports it, so whether the clash explains an unknown_room is judged on the
+// first Exit's target, not on a later duplicate's. Here the first Exit names a
+// Room nobody declares and the duplicate names the dropped Zone's own Room.
+func TestGate_TheClashIsJudgedOnTheExitTheBuildKept(t *testing.T) {
+	h := gateHarness(t)
+	h.townLive()
+	got := codes(h.refusedWith("acme", packFiles("acme", map[string][]byte{
+		"z.json": gateZone(t, "town", "market", rm{id: "market"}),
+		"glade.json": gateZone(t, "glade", "g", rm{id: "g", exits: []ex{
+			{dir: "north", zone: "town", room: "missing"},
+			{dir: "north", zone: "town", room: "market"},
+		}}),
+	})))
+	slices.Sort(got)
+	if want := []string{"duplicate_direction", "duplicate_zone", "unknown_room"}; !slices.Equal(got, want) {
+		t.Fatalf("findings = %v, want %v: the first Exit's missing target is not explained by the clash", got, want)
+	}
+}
