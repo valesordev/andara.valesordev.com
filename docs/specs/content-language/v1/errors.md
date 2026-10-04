@@ -105,8 +105,9 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
        pack is not reported, except as rule 10.6 says. A warning attributed to another pack is reported
        only if it is **new**: the gate builds the World in effect as well as the World with this
        version, and a warning in the second and not the first (keyed by pack, file, code, and the Zone, Room and Exit it names, since the sim's `Chain` is empty for a reverse-exit warning)
-       is the publish's doing, such as a removed reverse Exit that leaves an active pack's Exit
-       one-way. It is reported in 10.6's form (`pack` set, empty chain, `line` and `col` `0`), in
+       is the publish's doing. Cross-pack Exits don't exist (`semantics.md`), so no Builder's change can
+       cause one today, such as a removed reverse Exit that would leave another pack's Exit one-way:
+       the rule is defensive, and becomes live if a cross-pack reference is ever allowed. It is reported in 10.6's form (`pack` set, empty chain, `line` and `col` `0`), in
        `PublishVersionResponse.warnings`. A warning in both is the other pack's own, shown when that
        pack publishes and not at every publish after it. This is on the success path only, since
        rule 7 reports no warnings beside an error.
@@ -128,8 +129,9 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
     5. **The message names both packs.** A cross-pack `duplicate_zone` reads
        `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
        the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
-    6. **An error in another pack's blobs** (for example a new version that removes a Zone another pack
-       exits into, or `content.strict_orphans` making a pack's `orphan_room` an error) still refuses
+    6. **An error in another pack's blobs** (today the reachable case is `content.strict_orphans` making
+       a pack's `orphan_room` an error; a Zone another pack "exits into" can't occur, since cross-pack
+       Exits don't exist) still refuses
        the publish, whatever its cause, since the gate can't tell a caused error from one already
        there. It is reported with `Diagnostic.pack` set to that pack's id, `file` as its blob path, an
        **empty chain**, and `line` and `col` `0`. `andara-cli` takes a non-empty `pack` as the mark
