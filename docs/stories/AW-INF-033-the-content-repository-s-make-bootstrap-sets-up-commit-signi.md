@@ -133,14 +133,14 @@ files are byte-identical to the tested patch: `scripts/bootstrap.sh` (mode `1007
 |----|----------|
 | 1 | The patch's acceptance harness: with no name or email it exits `1`, prints both `git config --local` lines and "verified on GitHub (Settings > Emails)", and writes no signing config |
 | 2 | The harness: the five `git config --local` values are set, a following commit reads `Good "git" signature for <email>` and not `No principal matched`, and a second run changes nothing and exits `0`. Also on the real macOS runner (AC-7 below) |
-| 3 | The harness, with a passphrase-protected key the agent doesn't hold: exit `1` and `eval "$(ssh-agent -s)" && ssh-add <key>`. With `uname` stubbed to Darwin, `ssh-add --apple-use-keychain <key>`. A passphrase key the agent does hold passes |
+| 3 | The harness, with a passphrase-protected key the agent doesn't hold: exit `1` and `eval "$(ssh-agent -s)" && ssh-add <key>`. With `uname` stubbed to Darwin, `ssh-add --apple-use-keychain <key>`. A passphrase key the agent does hold passes. **The condition is "can sign with nobody at the keyboard", which is what git needs:** an unencrypted key that isn't in the agent signs without it, so `make bootstrap` passes it (exit `0`), as git would. The AC's "key the agent doesn't hold" is met for a key that needs its agent |
 | 4 | The harness: a key absent from `.github/allowed_signers`, or present for another key under the same email, prints `<email> <keytype> <key>` and exits `0` |
 | 5 | The harness, with `gh` stubbed: logged in and key unregistered is exit `1` with `gh ssh-key add <key> --type signing`. No `gh`, `gh` not logged in, or a `gh api` failure (a token without `admin:ssh_signing_key`) is exit `0` with the settings path and "Key type: Signing Key" |
 | 6 | The harness: `CI=true` sets only `gpg.ssh.allowedSignersFile`, prints `commit signing skipped (CI doesn't commit)`, and exits `0` |
 | 7 | **On `andara.solo7.media` #24, the `check (macOS, make 3.81)` job passed** (GNU Make 3.81, run `37214652163`). Its new step emptied `CI`, made a local identity, a throwaway key in `~/.ssh` and a started agent, appended the key's line to `allowed_signers`, ran `CI= /usr/bin/make bootstrap` twice with an unchanged config, and its commit read `Good "git" signature for ci-builder@example.com with ED25519 key SHA256:9efaoW…` |
 
-The harness (42 checks, 14 mutants of the script all caught) lived in SRE's scratchpad and isn't
-committed anywhere: that repository's Test plan has no unit tests, and AC-7's job is the standing
+The harness (42 checks, and 14 mutants of the script, each caught when run; the mutant list was
+inline and wasn't kept) lived in SRE's scratchpad and isn't committed anywhere: that repository's Test plan has no unit tests, and AC-7's job is the standing
 test. It ran on Linux with OpenSSH 10.5 and bash 5.3, so the macOS job is also the only run on
 bash 3.2 and Make 3.81.
 

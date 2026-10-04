@@ -21,12 +21,21 @@ that repository). AC-7's macOS job passed there; the record is in the story's "V
 ### For architecture: the Builder's Guide edit, for the §8 review
 `docs/builders/04-your-first-zone.md` still describes the hand-typed steps. `make guide-check` passes
 as it stands, since the section runs no `andara-cli` command. The edit this story's Definition of done
-asks for:
-- **The clone block** (around line 22) gains `make bootstrap` before `make tools`:
-  `git clone … && cd andara.solo7.media && make bootstrap && make tools`.
-- **"Sign your commits"**: step 1 (the GitHub Signing Key) stays, because that is the one thing the
-  target can only check when `gh` is logged in. Steps 2 and 3 (`git config` lines, and the
-  `~/.config/git/allowed_signers` file) become `make bootstrap`. It sets everything with
+asks for, keeping in mind that **`make bootstrap` checks and sets up signing but doesn't set
+`user.name` or `user.email`**: with either unset it exits `1`, prints the two `git config --local`
+lines, and stops. A first-time Builder has neither in a fresh clone.
+- **Keep the identity step, `--local`, ahead of `make bootstrap`:**
+  `git config --local user.name "<your name>"` and
+  `git config --local user.email "<a verified GitHub email>"` (the email GitHub has verified, or the
+  commit shows unverified). That is the part of today's step 2 that stays.
+- **Don't chain `make bootstrap` into the clone block.** `git clone … && make bootstrap && make tools`
+  stops at `make bootstrap` for a Builder with no identity yet, a key the agent doesn't hold, or (with
+  `gh` logged in) a key not yet registered as a Signing Key, and `make tools` never runs. Leave the
+  clone block as it is, and run `make bootstrap` in "Sign your commits", after step 1 and the identity
+  lines. Or say that the first run may stop and print what's missing, and to run it again.
+- **"Sign your commits"**: step 1 (the GitHub Signing Key) stays, because the target can only check it
+  when `gh` is logged in. The rest of step 2 (`gpg.format`, `user.signingkey`, `commit.gpgsign`) and
+  step 3 (the `~/.config/git/allowed_signers` file) become `make bootstrap`. It sets them with
   `git config --local`, finds the key (`user.signingkey`, then the `identityfile` for github.com, then
   `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`), and trusts the repository's own tracked
   `.github/allowed_signers`, so the hand-made local file goes away.
@@ -34,6 +43,6 @@ asks for:
   `<email> <keytype> <key> … Add this line by pull request`, the Builder adds it to
   `.github/allowed_signers` in their first PR. It isn't fatal: GitHub still verifies the commit.
 - **Keep** the passphrase paragraph (`ssh-add`, naming the private key) and the re-sign paragraph.
-  `make bootstrap` fails with the exact `ssh-add` command when the agent doesn't hold the key.
+  `make bootstrap` fails with the exact `ssh-add` command when a passphrase key isn't in the agent
+  (an unencrypted key signs without the agent, so it passes, as it would for git).
 - No other page of the guide repeats the signing steps (checked with a search of `docs/builders/`).
-
