@@ -121,7 +121,9 @@ export declare type ZoneState = Message<"andara.state.v1.ZoneState"> & {
    * and kept for good. A handoff
    * sequence only grows along an Entity's life, so an Arrive at or below this
    * mark is a retry or stale, however late it comes, and no other Zone or
-   * record is needed to know that. Hashed; empty adds nothing.
+   * record is needed to know that. The entry also says whether that decision
+   * was a rejection, which a retry of the same handoff is answered with again.
+   * Hashed, rejected included when true; empty adds nothing.
    *
    * @generated from field: repeated andara.state.v1.PlacedArrival placed = 10;
    */
@@ -192,6 +194,17 @@ export declare type PlacedArrival = Message<"andara.state.v1.PlacedArrival"> & {
    * @generated from field: uint64 handoff_seq = 2;
    */
   handoffSeq: bigint;
+
+  /**
+   * True when the Zone's decision for handoff_seq was a rejection
+   * (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+   * same answer back: a placed handoff is acked again, a rejected one is
+   * rejected again. Acking a rejected handoff would make the source drop a
+   * transit record whose Entity was never placed and never restored.
+   *
+   * @generated from field: bool rejected = 3;
+   */
+  rejected: boolean;
 };
 
 /**

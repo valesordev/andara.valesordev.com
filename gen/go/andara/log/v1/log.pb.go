@@ -696,9 +696,14 @@ func (x *HandoffAck) GetHandoffSeq() uint64 {
 // A faulted target's refusal of a NEW handoff (AW-SRV-027): the Arrive was
 // consumed and not placed, the target's placed mark for the Entity is set to
 // handoff_seq, and the source restores the Entity at home. A retry of a
-// handoff the target already placed is acked, never rejected. Produced by the
-// target's tick to the source Zone's partition (LoggedCommand.zone_id is the
-// source Zone). Never a verb.
+// handoff the target already placed is acked, never rejected, and a retry of
+// one it already rejected is rejected again, so a lost rejection is repeated
+// until the source applies one. The source applies a HandoffRejected only when
+// its Transit[entity_id] has handoff_seq equal to this one; a rejection that
+// matches no record (none, or another sequence) is a duplicate, consumed with
+// no Event and no state change, and so is any HandoffRejected a faulted source
+// receives (its record stays). Produced by the target's tick to the source
+// Zone's partition (LoggedCommand.zone_id is the source Zone). Never a verb.
 type HandoffRejected struct {
 	state      protoimpl.MessageState `protogen:"open.v1"`
 	EntityId   string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`

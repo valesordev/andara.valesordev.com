@@ -336,6 +336,15 @@ recovered record is due on the first live call. The entry is deleted whenever a 
 `HandoffRejected` is now a pinned message in `log.proto` (field 14) for `AW-SRV-027`, which builds it; 027's
 ACs are renumbered 1 to 9, and a `HandoffAck` for a faulted source is consumed with no Event.
 
+## From Codex on #403, in the story
+
+Two more, both real. A rejected handoff has to stay rejected: if the first `HandoffRejected` is lost, the
+source retries, and a mark that held only the sequence would classify the retry as stale and ack it, so the
+source would drop a record whose Entity was never placed and never restored. The mark now records its
+outcome (`PlacedArrival.rejected`, field 3), and the target reissues the same answer. And replay writes no
+schedule entries at all, so a record whose departure was replayed is due on the first live call like one
+restored from a snapshot; this also closes the AC-6 over-claim the last review left.
+
 ## For implementation
 
 Take the story as amended and the protos as pinned. Run `make proto-check` to see `gen/` matches. You can
