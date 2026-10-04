@@ -64,11 +64,12 @@ number of distinct Entities that cross Zones: Entity IDs are never reused, and I
 (`AW-SRV-047`) take a new ID each time they're placed.
 
 Two thresholds, chosen from the snapshot sizing fixture (`server/simtest/sizing.go`: 16 Zones and
-25,000 Entities) and **neither measured against marks**. That fixture's in-tick copy already takes
-about 12 ms of the 15 ms `snapshot.max_stall_ms` (11.7, 12.8 and 13.2 ms in three runs of
-`TestSnapshotCopyStaysInsideTheStallBudget` on 2026-10-04, CPU time), and marks are added to those
-Entities, so they draw on 2 to 3 ms of headroom. CI
-only fails past four times the budget, so a green run says nothing about marks.
+25,000 Entities) and **neither measured against marks**. Against the 15 ms `snapshot.max_stall_ms`
+itself, that fixture's in-tick copy already takes about 12 ms without `-race` (11.7, 12.8 and 13.2 ms
+in three runs of `TestSnapshotCopyStaysInsideTheStallBudget` on 2026-10-04, CPU time), and marks are
+added to those Entities, so they draw on 2 to 3 ms of headroom. The test fails only far past that: a
+plain `go test` at 4 times the budget (60 ms), and CI, which runs `go test -race`, at 14 times (210 ms,
+where the copy took about 51 ms in one run the same day). A green run says nothing about marks.
 
 | `andara_handoff_placed_entries` | Means | Do |
 |---------------------------------|-------|----|
