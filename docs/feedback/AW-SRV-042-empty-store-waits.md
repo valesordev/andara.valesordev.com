@@ -188,3 +188,12 @@ The amendment's verification tests live in `server/boot` under the `integration`
 (`ANDARA_KAFKA_BROKERS=localhost:9092 go test -tags integration ./server/boot/`), on throwaway
 topics only. **Ask:** add `./server/boot/` to the target, so that the §8 record's "the
 integration tests" means tests CI runs.
+
+## SRE: `./server/boot/` is in `make test-integration` (#299, 2026-10-03)
+
+Added to the target's package list, between `./server/projector/` and `./admin/cli/`. The `stack`
+workflow's "the record log and the tick loop on the broker" step runs the target, and its path
+filter already covers `server/**`, so CI runs `held_integration_test.go` and
+`projector_wait_integration_test.go`, and the existing `TestProjectorBoot_ReadOnlyAndWaitsForZones`,
+from this PR on. The full target passes against the local stack with `server/boot` in it
+(`ok … server/boot 11.1s`; the other seven packages pass too).
