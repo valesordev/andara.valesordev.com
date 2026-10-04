@@ -92,12 +92,16 @@ allocated per round (`runtime`'s `TotalAlloc` before and after) at the sizing fi
 are process-wide, so noise from a stray goroutine only adds, and the test takes the **minimum over
 its calls and rounds**. **Allocations at most 1.05× the recorded value, bytes at most 1.25×.** The count is
 deterministic, so a deeper clone that adds one allocation per Entity (+25,000 on a few hundred
-thousand) fails it, and the bytes headroom is for toolchain drift. An encode, a hash buffer or a
-deeper clone moving into the tick allocates, so it fails at once. The bound is recorded with the Go
+thousand) fails it, and the bytes headroom is for toolchain drift. **What it catches:** anything that
+allocates per Entity (a deeper clone, a per-Entity encode), and anything that allocates more than about
+2.1 MB in total, which is 25% of the 8.4 MB baseline (a canonical encode of a whole Zone allocates in
+proportion to the world, and is of this kind). **What it misses:** a single allocation, or a few, under
+that, such as one small buffer, and a streaming, non-allocating hash. The gate narrows the gap and
+doesn't close it. The CPU tripwire sees the gross cases of what it misses, and
+`andara_snapshot_tick_stall_seconds` sees the rest in production. The bound is recorded with the Go
 version and the build tag (`-race` allocates differently). A failure prints the recorded Go version and
 tag beside the observed ones and says "re-record with a note", so a toolchain drift is a visible
-re-record and not a silent loosening. It would miss a streaming, non-allocating hash, which only the
-CPU tripwire covers. It doesn't replace the service-level number. The shipped
+re-record and not a silent loosening. It doesn't replace the service-level number. The shipped
 SLI is the server's own `andara_snapshot_tick_stall_seconds`, wall-clock, in the tick.
 
 ## 3. A service-level measurement runs where it can be trusted
