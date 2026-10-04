@@ -37,6 +37,7 @@ the first that explains the lag.
 | 4 | `andara_tick_input_starved_total` rising | The broker is unreachable. The loop keeps its schedule applying nothing; lag from this is small and stops when the broker returns. If lag is large *and* starvation is rising, something else is also wrong. |
 | 5 | `andara_tick_publish_failures_total{kind}` | The producer's buffer is full or the broker refused; the tick does not wait for either, so this is not itself lag — but it says the broker is unhealthy. |
 | 6 | `andara_tick_duration_seconds` p99 low, lag rising anyway | The loop goroutine is stalled outside `Step` — a wedged handler, a checkpoint commit past its two-second bound, GC. Take a goroutine dump (`kill -QUIT`) and look for the tick goroutine. |
+| 7 *(ships with `AW-SRV-028`)* | `andara_handoffs_in_transit` above 0 for more than a few minutes, **and** `rate(andara_handoff_retries_total[5m])` above 0 | Cross-Zone moves are waiting for an acknowledgement that isn't coming: the broker, or the target Zone's Partition. A handoff whose `Arrive` the target hasn't applied within `sim.handoff_retry_ticks` (1 s at the defaults) is retried, backing off to `sim.handoff_retry_max_ticks` (10 s), so a handoff that is merely in flight doesn't retry. The count above 0 with no retries is ordinary traffic, not a fault. Retries rising point back to steps 4 and 5 (the broker) or steps 1 and 2 (the target's lag or a faulted Zone). The players in transit can't act and are refused `in_transit` until the handoff settles |
 
 `rate(andara_ingress_produced_total{partition}[5m])` (AW-SRV-010) joins this table when ingress exists.
 
@@ -48,6 +49,30 @@ the first that explains the lag.
 | Input faster than `max_per_tick` | Raise `sim.max_per_tick` if tick duration has headroom under the 50 ms budget; otherwise this is the same conversation as above. |
 | Broker unreachable | Restore the broker. The loop recovers on its own; nothing to restart. |
 | Loop stalled | Restart the pod. Recovery replays from the recorded boundaries and resumes at the last recorded tick; expect a boot proportional to the log's age until snapshots exist (`AW-SRV-006`). |
+| An Entity stuck in transit *(ships with `AW-SRV-028`)* | **There is no operator release before `AW-SRV-027`.** An Entity in transit to a faulted Zone stays in `Transit` and keeps retrying, with its player refused `in_transit`, until the Zone's fault clears; that is by design, because nothing else may place or restore it. Fix what the step-7 retries point at: restore the broker, or roll back the pack that faulted the Zone (`AW-SRV-013`). A restart replays straight back into the same Transit, so don't. On `dev` only, `make world-reset` frees it by destroying every Character and Account; never on `prod` |
+
+## The handoff marks *(ships with `AW-SRV-028`)*
+
+Each Zone keeps, for good, a mark for every Entity that has ever arrived in it by handoff: the
+highest handoff sequence it decided. Marks are what make a retried `Arrive` harmless, and nothing
+prunes them. They're hashed Zone state and part of every snapshot body, so they cost the same
+things Entities do: snapshot copy time inside the tick (budget `snapshot.max_stall_ms`, 15 ms) and
+State Hash work. `andara_handoff_placed_entries` is the count, summed over Zones, and it only goes up
+while the World runs (a restart reads it back from the restored state, so a reset to 0 after a
+restart is a bug, not a pruning). It grows with Entity churn: every Entity ID is new and never
+reused (Item Instances, `AW-SRV-047`, take new IDs each time they're placed).
+
+Two thresholds, both from the snapshot sizing fixture (`server/simtest/sizing.go`: 16 Zones and
+25,000 Entities inside the 15 ms copy budget) and **neither measured against marks**:
+
+| `andara_handoff_placed_entries` | Means | Do |
+|---------------------------------|-------|----|
+| 25,000 or more | The marks alone are as many as the Entities that copy budget was sized for. A mark is cheaper than an Entity (no Components), so this is a floor, not a limit | Plan the pruning story (`AW-SRV-028`'s Out of scope names it, a `HandoffClosed` record), and estimate the runway: `delta(andara_handoff_placed_entries[7d])` against 100,000 |
+| 100,000 or more | Four times the sizing fixture's population | Pruning is wanted before the next release. Re-run `TestSnapshotCopyStaysInsideTheStallBudget` with marks added to its fixture to learn the real cost, and watch `andara_snapshot_tick_stall_seconds` (the in-tick copy, the part players feel) against the stall budget, and `andara_snapshot_bytes{zone}` for the size |
+
+These are a dashboard line and a ticket, not an alert: no SLO covers the marks yet, and an alert
+needs one (CLAUDE.md §7). Replace both numbers with measured ones once the sizing fixture carries
+marks.
 
 ## What not to do
 
