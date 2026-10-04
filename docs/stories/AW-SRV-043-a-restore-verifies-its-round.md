@@ -4,7 +4,7 @@ title: A restore verifies its round
 epic: EPIC-04
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-006, AW-SRV-019]
 blocks: [AW-SRV-007]
@@ -379,3 +379,20 @@ than the Job's log above does. Two follow-ups, neither this story's, filed as is
 - `projector-rebuild` should require `restore verified` in the Job's log before it deletes the Job.
 - Its `Failed` message lists exits 2, 3 and 4 and omits 5 (`scripts/projector.py`); it should name
   the restore mismatch.
+
+## §8 close (architecture, 2026-10-04): `done`
+
+The one item the review above held the story on is recorded, so every checklist item now holds. Run on
+`main` b2091f1: **`make check` ended `check: all clean`**, exit 0.
+- **The operator step** (SRE's record above): `make projector-rebuild ENV=dev` ran on `dev` at
+  2026-10-04T15:54Z on the projector's image built from `main@a15f1ec`, and the rebuild Job's own log
+  carries `state projector restore verified` for `round_tick=1615987`, `zones=4`. I checked what the
+  record rests on: `#365`, this story's merge, is an ancestor of `a15f1ec`, and the line is emitted at
+  `server/projector/run.go:388`. The projector that `projector-start` brought up afterwards restored the
+  same round, and its `/metrics` read `andara_restore_total{caller="projector",outcome="ok"}` 1. The first
+  run, at 15:02Z, is kept as superseded and isn't relied on.
+- **Everything the review above found still stands:** the acceptance criteria, the tests in CI, the
+  instrumentation record, the glossary entry and the resolved `[ASSUMPTION]`. The `caller="verify"` line
+  is `AW-SRV-007`'s Definition of done.
+- **Not this story's:** `projector-rebuild` never reads `restore verified` itself and its `Failed`
+  message omits exit `5`. SRE filed both as #396, and neither changes this story's criteria.
