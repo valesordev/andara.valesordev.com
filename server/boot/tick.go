@@ -46,8 +46,20 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		// content.
 		Handlers: sim.Handlers(),
 		Content:  rt.Content,
+		// The cross-Zone handoff retry schedule (AW-SRV-028), reaching only
+		// the retry pass, never hashed state.
+		HandoffRetryTicks:    sim.Tick(cfg.SimHandoffRetryTicks),
+		HandoffRetryMaxTicks: sim.Tick(cfg.SimHandoffRetryMaxTicks),
+		HandoffRetryBatch:    cfg.SimHandoffRetryBatch,
 	}
 	engine := sim.NewEngine(sim.EmptyWorld(), nil, engineCfg)
+	if first, hold, outside := handoffRetryOutsideHold(cfg.SimHandoffRetryTicks, cfg.SimTickRate, cfg.IngressTransitHold); outside {
+		// A warning, not a refusal: the default is fixed in ticks and
+		// sim.tick_rate is configurable (AW-SRV-028).
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelWarn, "sim.handoff_retry_ticks is not below ingress.transit_hold: the first retry of a lost Arrive lands after the Gateway's hold for the crossing has ended",
+			slog.Int("handoff_retry_ticks", cfg.SimHandoffRetryTicks), slog.Int("tick_rate", cfg.SimTickRate),
+			slog.String("first_retry_after", first.String()), slog.String("transit_hold", hold.String()))
+	}
 	// Before recovery, so the content applied while replaying reaches the
 	// gauges it moves.
 	rt.Engine = engine
@@ -643,4 +655,16 @@ func (s swapProducer) ProduceSwap(ctx context.Context, cmd *logv1.LoggedCommand)
 		}}
 	}
 	return err
+}
+
+// handoffRetryOutsideHold reports whether the first retry of a lost Arrive,
+// retryTicks at tickRate, is not below the Gateway's non-zero transit hold. The
+// hold is what a Session waits through a crossing, so a first retry that comes
+// after it leaves the Character in limbo past the hold.
+func handoffRetryOutsideHold(retryTicks, tickRate int, hold time.Duration) (first, held time.Duration, outside bool) {
+	if hold <= 0 || tickRate < 1 {
+		return 0, hold, false
+	}
+	first = time.Duration(retryTicks) * time.Second / time.Duration(tickRate)
+	return first, hold, first >= hold
 }

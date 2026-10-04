@@ -74,6 +74,11 @@ func applyMarkLinkdead(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	if id == "" {
 		id = EntityID(mark.GetCharacterId())
 	}
+	if _, between := a.Zone.Transit[id]; between {
+		// The body is on its way out: marking nothing linkdead would leave the
+		// roster waiting for a LinkdeadEnded that never comes (AW-SRV-028).
+		return transitReject()
+	}
 	ent, ok := a.Zone.Entities[id]
 	if !ok || !ent.Present() || ent.Linkdead() {
 		return nil

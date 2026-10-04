@@ -90,6 +90,28 @@ func (s *Snapshot) BodyProto() *statev1.ZoneState {
 	for _, id := range ids {
 		out.Entities = append(out.Entities, entityStateProto(z.Entities[EntityID(id)]))
 	}
+	// Entities in transit and the handoff marks, each sorted by Entity ID
+	// (AW-SRV-028). Both hashed, so both carried: a restore that dropped them
+	// could not reproduce the hash, and recovery would exit 6.
+	tids := make([]string, 0, len(z.Transit))
+	for id := range z.Transit {
+		tids = append(tids, string(id))
+	}
+	sort.Strings(tids)
+	for _, id := range tids {
+		r := z.Transit[EntityID(id)]
+		out.Transit = append(out.Transit, &statev1.TransitRecord{
+			Entity: entityStateProto(&r.Entity), ToZoneId: string(r.To), RoomId: string(r.Room), Direction: string(r.Direction),
+		})
+	}
+	pids := make([]string, 0, len(z.Placed))
+	for id := range z.Placed {
+		pids = append(pids, string(id))
+	}
+	sort.Strings(pids)
+	for _, id := range pids {
+		out.Placed = append(out.Placed, &statev1.PlacedArrival{EntityId: id, HandoffSeq: z.Placed[EntityID(id)]})
+	}
 	// Deferred is deliberately empty; see zone_state.proto and
 	// docs/feedback/AW-SRV-006-zone-snapshots.md §3.
 	return out
@@ -109,6 +131,7 @@ func entityStateProto(e *EntityState) *statev1.EntityState {
 		LinkdeadDeadlineTick:   uint64(e.LinkdeadDeadline),
 		LinkdeadCeilingTick:    uint64(e.LinkdeadCeiling),
 		LinkdeadExtensionTicks: uint64(e.LinkdeadExtension),
+		HandoffSeq:             e.HandoffSeq,
 	}
 	// Sorted here rather than trusted: an EntityState assembled by hand in a
 	// test never went through the loader, and an encoder that silently
@@ -172,32 +195,52 @@ func ZoneStateFromProto(p *statev1.ZoneState) *ZoneState {
 		FaultedTick: Tick(p.GetFaultedTick()),
 	}
 	for _, ep := range p.GetEntities() {
-		e := &EntityState{
-			ID:             EntityID(ep.GetEntityId()),
-			Room:           RoomID(ep.GetRoomId()),
-			Template:       TemplateRef(ep.GetTemplate()),
-			ContentVersion: ep.GetContentVersion(),
-			Name:           ep.GetName(),
-			Dormant:        ep.GetDormant(),
-			DormantSince:   Tick(ep.GetDormantSinceTick()),
-
-			LinkdeadSince:     Tick(ep.GetLinkdeadSinceTick()),
-			LinkdeadDeadline:  Tick(ep.GetLinkdeadDeadlineTick()),
-			LinkdeadCeiling:   Tick(ep.GetLinkdeadCeilingTick()),
-			LinkdeadExtension: Tick(ep.GetLinkdeadExtensionTicks()),
+		e := entityStateFromProto(ep)
+		z.Entities[e.ID] = &e
+	}
+	for _, tp := range p.GetTransit() {
+		if z.Transit == nil {
+			z.Transit = make(map[EntityID]TransitRecord, len(p.GetTransit()))
 		}
-		for _, cv := range ep.GetComponents() {
-			c := Component{Type: ComponentType(cv.GetType())}
-			for _, fd := range cv.GetFields() {
-				f, _ := fieldValue(fd)
-				c.Fields = append(c.Fields, f)
-			}
-			e.Components = append(e.Components, c)
+		e := entityStateFromProto(tp.GetEntity())
+		z.Transit[e.ID] = TransitRecord{Entity: e, To: ZoneID(tp.GetToZoneId()), Room: RoomID(tp.GetRoomId()), Direction: Direction(tp.GetDirection())}
+	}
+	for _, pp := range p.GetPlaced() {
+		if z.Placed == nil {
+			z.Placed = make(map[EntityID]uint64, len(p.GetPlaced()))
 		}
-		sortComponents(e.Components)
-		z.Entities[e.ID] = e
+		z.Placed[EntityID(pp.GetEntityId())] = pp.GetHandoffSeq()
 	}
 	return z
+}
+
+// entityStateFromProto is the inverse of entityStateProto.
+func entityStateFromProto(ep *statev1.EntityState) EntityState {
+	e := EntityState{
+		ID:             EntityID(ep.GetEntityId()),
+		Room:           RoomID(ep.GetRoomId()),
+		Template:       TemplateRef(ep.GetTemplate()),
+		ContentVersion: ep.GetContentVersion(),
+		Name:           ep.GetName(),
+		Dormant:        ep.GetDormant(),
+		DormantSince:   Tick(ep.GetDormantSinceTick()),
+
+		LinkdeadSince:     Tick(ep.GetLinkdeadSinceTick()),
+		LinkdeadDeadline:  Tick(ep.GetLinkdeadDeadlineTick()),
+		LinkdeadCeiling:   Tick(ep.GetLinkdeadCeilingTick()),
+		LinkdeadExtension: Tick(ep.GetLinkdeadExtensionTicks()),
+		HandoffSeq:        ep.GetHandoffSeq(),
+	}
+	for _, cv := range ep.GetComponents() {
+		c := Component{Type: ComponentType(cv.GetType())}
+		for _, fd := range cv.GetFields() {
+			f, _ := fieldValue(fd)
+			c.Fields = append(c.Fields, f)
+		}
+		e.Components = append(e.Components, c)
+	}
+	sortComponents(e.Components)
+	return e
 }
 
 // BodyStateHash is the state_hash of a decoded snapshot body: SnapshotHash over
@@ -229,6 +272,9 @@ func BodyStateHash(p *statev1.ZoneState) ([32]byte, error) {
 			return [32]byte{}, fmt.Errorf("snapshot: entity %s carries dormant_since_tick and is not dormant", e.GetEntityId())
 		}
 	}
+	if err := checkHandoffBody(p); err != nil {
+		return [32]byte{}, err
+	}
 	prng, err := DecodePRNG(p.GetPrngState())
 	if err != nil {
 		return [32]byte{}, err
@@ -240,3 +286,54 @@ func BodyStateHash(p *statev1.ZoneState) ([32]byte, error) {
 // message the state projector's Entity records carry (AW-SRV-019), so an
 // index and a snapshot cannot disagree on an Entity's shape.
 func (e *EntityState) StateProto() *statev1.EntityState { return entityStateProto(e) }
+
+// checkHandoffBody refuses a body whose transit or placed records the hash
+// would read differently from how they were written (AW-SRV-028 AC-13): the
+// hash sorts by Entity ID and writes one record per ID, so an unsorted body, a
+// duplicated ID, a mark of 0 (a sequence starts at 1), an Entity both here
+// and in transit, or a transit Entity that is dormant or linkdead (those
+// bodies never move) would hash as a different World from the one the body
+// claims.
+func checkHandoffBody(p *statev1.ZoneState) error {
+	here := make(map[string]bool, len(p.GetEntities()))
+	for _, e := range p.GetEntities() {
+		here[e.GetEntityId()] = true
+	}
+	prev := ""
+	for i, t := range p.GetTransit() {
+		e := t.GetEntity()
+		id := e.GetEntityId()
+		switch {
+		case id == "":
+			return fmt.Errorf("snapshot: zone %s has a transit record with no entity", p.GetZoneId())
+		case i > 0 && id <= prev:
+			return fmt.Errorf("snapshot: zone %s transit is not sorted and unique by entity_id at %q", p.GetZoneId(), id)
+		case here[id]:
+			return fmt.Errorf("snapshot: zone %s holds entity %s both in entities and in transit", p.GetZoneId(), id)
+		case e.GetDormant() || e.GetLinkdeadDeadlineTick() != 0:
+			return fmt.Errorf("snapshot: zone %s has entity %s in transit and %s: such a body never moves", p.GetZoneId(), id, dormantOrLinkdead(e))
+		}
+		prev = id
+	}
+	prev = ""
+	for i, m := range p.GetPlaced() {
+		id := m.GetEntityId()
+		switch {
+		case id == "":
+			return fmt.Errorf("snapshot: zone %s has a placed mark with no entity", p.GetZoneId())
+		case i > 0 && id <= prev:
+			return fmt.Errorf("snapshot: zone %s placed is not sorted and unique by entity_id at %q", p.GetZoneId(), id)
+		case m.GetHandoffSeq() == 0:
+			return fmt.Errorf("snapshot: zone %s has a placed mark of 0 for entity %s", p.GetZoneId(), id)
+		}
+		prev = id
+	}
+	return nil
+}
+
+func dormantOrLinkdead(e *statev1.EntityState) string {
+	if e.GetDormant() {
+		return "dormant"
+	}
+	return "linkdead"
+}

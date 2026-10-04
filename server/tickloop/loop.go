@@ -20,6 +20,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/sim"
 )
@@ -335,10 +336,23 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 		l.metrics.PublishFailures.WithLabelValues(kind).Inc()
 		l.log.LogAttrs(tctx, slog.LevelWarn, "not published", slog.String("kind", kind), slog.Uint64("tick", uint64(tick)), slog.String("detail", err.Error()), slog.String("trace_id", traceID(tctx)))
 	}
-	if len(res.Outbound) > 0 {
-		if err := l.opts.Publisher.Produce(tctx, res.Outbound); err != nil {
+	// The handoff retry pass (AW-SRV-028) is the live loop's alone: it runs
+	// after Step, outside it, and replay never calls it, so a recovery
+	// produces, counts and logs no retry. What it returns goes out with the
+	// tick's own cross-Zone Commands.
+	outbound := res.Outbound
+	retries := l.opts.Engine.DueHandoffs(tick)
+	if len(retries) > 0 {
+		outbound = append(append([]*logv1.LoggedCommand(nil), res.Outbound...), retryCommands(retries)...)
+		l.noteRetries(tctx, tick, retries)
+	}
+	l.metrics.HandoffStaleArrivals.Add(float64(res.StaleArrivals))
+	l.metrics.HandoffsInTransit.Set(float64(l.opts.Engine.HandoffsInTransit()))
+	l.metrics.HandoffPlacedEntries.Set(float64(l.opts.Engine.HandoffPlacedEntries()))
+	if len(outbound) > 0 {
+		if err := l.opts.Publisher.Produce(tctx, outbound); err != nil {
 			l.metrics.PublishFailures.WithLabelValues("commands").Inc()
-			l.log.LogAttrs(tctx, slog.LevelWarn, "cross-zone commands not produced", slog.Uint64("tick", uint64(tick)), slog.Int("count", len(res.Outbound)), slog.String("detail", err.Error()), slog.String("trace_id", traceID(tctx)))
+			l.log.LogAttrs(tctx, slog.LevelWarn, "cross-zone commands not produced", slog.Uint64("tick", uint64(tick)), slog.Int("count", len(outbound)), slog.String("detail", err.Error()), slog.String("trace_id", traceID(tctx)))
 		}
 	}
 
@@ -679,6 +693,13 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 		}
 		span.End()
 		l.log.LogAttrs(actx, slog.LevelDebug, "command applied", fields...)
+		switch out.Code {
+		case sim.CodeEntityPresent, sim.CodeInvalidArrival, sim.CodeIDReused:
+			// An invariant the sim's own sequences keep, or a Command no
+			// well-formed producer writes: neither is a player's mistake, so
+			// it is an error, not the debug line above (AW-SRV-028).
+			l.log.LogAttrs(actx, slog.LevelError, "handoff or bind refused: "+out.Code, append(fields, slog.String("entity_id", r.Command.GetActorId()))...)
+		}
 		if b := out.Bind; b != nil {
 			// AW-SRV-014: whether the Character entered the World, and
 			// where, is known only here. character selected says the
@@ -691,6 +712,31 @@ func (l *Loop) Begin(zone sim.ZoneID, r sim.Record) func(sim.Outcome) {
 				slog.String("trace_id", traceID(actx)))
 		}
 	}
+}
+
+// retryCommands is the Commands of a retry batch.
+func retryCommands(rs []sim.HandoffRetry) []*logv1.LoggedCommand {
+	out := make([]*logv1.LoggedCommand, len(rs))
+	for i, r := range rs {
+		out[i] = r.Command
+	}
+	return out
+}
+
+// noteRetries counts a tick's retries and logs them: one warn for the tick
+// with the count and the oldest attempt, and a debug line per retry, so a
+// restart with many stuck handoffs doesn't write a line each at warn.
+func (l *Loop) noteRetries(ctx context.Context, tick sim.Tick, rs []sim.HandoffRetry) {
+	l.metrics.HandoffRetries.Add(float64(len(rs)))
+	oldest := 0
+	for _, r := range rs {
+		oldest = max(oldest, r.Attempt)
+		l.log.LogAttrs(ctx, slog.LevelDebug, "handoff retried",
+			slog.String("entity_id", string(r.Entity)), slog.String("from_zone", string(r.From)), slog.String("to_zone", string(r.To)),
+			slog.Uint64("seq", r.Seq), slog.Int("attempt", r.Attempt), slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)))
+	}
+	l.log.LogAttrs(ctx, slog.LevelWarn, "handoffs retried: an Arrive was not acknowledged",
+		slog.Int("count", len(rs)), slog.Int("oldest_attempt", oldest), slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)))
 }
 
 // observeZones flushes the per-Zone accumulators into the histogram and a

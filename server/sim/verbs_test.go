@@ -237,9 +237,9 @@ func TestMove_CrossZone(t *testing.T) {
 		t.Fatalf("correlation invented: %v", out)
 	}
 
-	// Between departure and arrival the actor is nowhere: a Command on
-	// either Zone is actor_not_found.
-	if rej := rejection(t, step(t, e, simtest.Look("town", "alice")).Events); rej.GetCode() != sim.CodeActorNotFound {
+	// Between departure and the target's acknowledgement the actor is in the
+	// source's Transit: a Command for it there is in_transit (AW-SRV-028).
+	if rej := rejection(t, step(t, e, simtest.Look("town", "alice")).Events); rej.GetCode() != sim.CodeInTransit {
 		t.Fatalf("in transit, town: %v", rej)
 	}
 
@@ -296,6 +296,7 @@ func TestArrive_RebuildsEntityExactly(t *testing.T) {
 	e.State().Zones["town"].Entities["merchant"] = &ent
 	want := ent
 	want.Room = "pier"
+	want.HandoffSeq = 1 // it has been through one handoff
 
 	out := step(t, e, simtest.Move("town", "merchant", "south")).Outbound[0]
 	step(t, e, out)
@@ -314,7 +315,8 @@ func TestArrive_IntoAGoneRoomLandsAtTheFallback(t *testing.T) {
 	out := step(t, e, simtest.Move("town", "alice", "east")).Outbound[0]
 	out.GetArrive().RoomId = "vanished"
 	res := step(t, e, out)
-	if len(ofType(res.Events, sim.EvCommandRejected)) != 0 || len(res.Outbound) != 0 {
+	// Not rejected and not bounced: the one thing produced is the ack home.
+	if len(ofType(res.Events, sim.EvCommandRejected)) != 0 || len(res.Outbound) != 1 || res.Outbound[0].GetHandoffAck() == nil || res.Outbound[0].GetZoneId() != "town" {
 		t.Fatalf("rejected or bounced: %v outbound=%v", res.Events, res.Outbound)
 	}
 	rel := ofType(res.Events, sim.EvEntityRelocated)

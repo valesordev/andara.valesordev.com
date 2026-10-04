@@ -259,6 +259,19 @@ func (z *ZoneState) Clone() *ZoneState {
 	for id, e := range z.Entities {
 		out.Entities[id] = e.Clone()
 	}
+	if len(z.Transit) > 0 {
+		out.Transit = make(map[EntityID]TransitRecord, len(z.Transit))
+		for id, r := range z.Transit {
+			r.Entity = *r.Entity.Clone()
+			out.Transit[id] = r
+		}
+	}
+	if len(z.Placed) > 0 {
+		out.Placed = make(map[EntityID]uint64, len(z.Placed))
+		for id, s := range z.Placed {
+			out.Placed[id] = s
+		}
+	}
 	return out
 }
 

@@ -24,6 +24,12 @@ type Metrics struct {
 	ZoneFaults       *prometheus.CounterVec // {zone}
 	PublishFailures  *prometheus.CounterVec // {kind}: events, commands, checkpoint, boundary
 	BoundaryLost     prometheus.Counter     // andara_tick_boundary_lost_total: 0 or 1 per process (AW-SRV-026)
+
+	// The cross-Zone handoff (AW-SRV-028). No Entity or Zone labels.
+	HandoffsInTransit    prometheus.Gauge   // andara_handoffs_in_transit
+	HandoffRetries       prometheus.Counter // andara_handoff_retries_total
+	HandoffStaleArrivals prometheus.Counter // andara_handoff_stale_arrivals_total
+	HandoffPlacedEntries prometheus.Gauge   // andara_handoff_placed_entries
 }
 
 // TickBuckets place the 50 ms Tick Budget on a boundary (ADR-0008), so the
@@ -53,13 +59,19 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		ZoneFaults:      prometheus.NewCounterVec(prometheus.CounterOpts{Name: "andara_tick_zone_faults_total", Help: "Zones quarantined by a panic inside a tick."}, []string{"zone"}),
 		PublishFailures: prometheus.NewCounterVec(prometheus.CounterOpts{Name: "andara_tick_publish_failures_total", Help: "Ticks whose Events, cross-Zone Commands, or checkpoint could not be written."}, []string{"kind"}),
 		BoundaryLost:    prometheus.NewCounter(prometheus.CounterOpts{Name: "andara_tick_boundary_lost_total", Help: "Tick Boundary Records lost, each of which stops the loop into exact recovery: 0 or 1 per process."}),
+
+		HandoffsInTransit:    prometheus.NewGauge(prometheus.GaugeOpts{Name: "andara_handoffs_in_transit", Help: "Entities that have left a Zone and are not yet acknowledged by the target. Sustained above 0, the broker or the target Partition is stuck."}),
+		HandoffRetries:       prometheus.NewCounter(prometheus.CounterOpts{Name: "andara_handoff_retries_total", Help: "Arrives produced again for an unacknowledged handoff."}),
+		HandoffStaleArrivals: prometheus.NewCounter(prometheus.CounterOpts{Name: "andara_handoff_stale_arrivals_total", Help: "Arrives acknowledged and not placed, because the Zone's mark for the Entity was at or above their sequence."}),
+		HandoffPlacedEntries: prometheus.NewGauge(prometheus.GaugeOpts{Name: "andara_handoff_placed_entries", Help: "Handoff marks held across every Zone. Kept for good, so it grows with the Entities that cross Zones; the runbook says when pruning is wanted."}),
 	}
 	for _, k := range []string{"events", "commands", "checkpoint", "boundary"} {
 		m.PublishFailures.WithLabelValues(k)
 	}
 	if reg != nil {
 		reg.MustRegister(m.TickDuration, m.ZoneTickDuration, m.Ticks, m.Overruns, m.Lag, m.AppliedRecords,
-			m.DeferredRecords, m.InputStarved, m.ConsumerLag, m.CheckpointAge, m.ZoneFaults, m.PublishFailures, m.BoundaryLost)
+			m.DeferredRecords, m.InputStarved, m.ConsumerLag, m.CheckpointAge, m.ZoneFaults, m.PublishFailures, m.BoundaryLost,
+			m.HandoffsInTransit, m.HandoffRetries, m.HandoffStaleArrivals, m.HandoffPlacedEntries)
 	}
 	return m
 }

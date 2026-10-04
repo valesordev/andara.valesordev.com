@@ -237,9 +237,14 @@ func TestPipeline_CrossZoneResolvesNextTick(t *testing.T) {
 	if got := vh.engine.State().Zones["wilds"].Entities["alice"]; got == nil || got.Room != "trail" {
 		t.Fatalf("alice = %+v", got)
 	}
+	// The Arrive, then the target's HandoffAck back to the source, which
+	// applies it and drops the transit record (AW-SRV-028).
 	_, _, produced := vh.pub.Snapshot()
-	if len(produced) != 1 || produced[0].GetZoneId() != "wilds" {
+	if len(produced) != 2 || produced[0].GetZoneId() != "wilds" || produced[0].GetArrive() == nil || produced[1].GetZoneId() != "town" || produced[1].GetHandoffAck() == nil {
 		t.Fatalf("produced = %v", produced)
+	}
+	if n := len(vh.engine.State().Zones["town"].Transit); n != 0 {
+		t.Fatalf("town still holds %d transit records after the ack", n)
 	}
 }
 

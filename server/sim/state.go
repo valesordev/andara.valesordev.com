@@ -34,6 +34,51 @@ type ZoneState struct {
 	// panic at the same point on replay — and is hashed as it stands.
 	Faulted     bool
 	FaultedTick Tick
+	// Transit is the Entities that have left this Zone and are not yet
+	// acknowledged (AW-SRV-028), by Entity ID. An Entity in transit is not in
+	// Entities: it is inert, and every Command for it is rejected in_transit,
+	// until the target's HandoffAck drops the record. Hashed, so a restore and
+	// a replay carry it. A nil map is an empty one.
+	Transit map[EntityID]TransitRecord
+	// Placed is the highest handoff sequence this Zone has decided for each
+	// Entity that arrived by handoff (AW-SRV-028). A sequence only grows along
+	// an Entity's life, so an Arrive at or below the mark is a retry or stale
+	// however late it comes, and no other Zone or record is needed to know it.
+	// Kept for good; hashed. A nil map is an empty one.
+	Placed map[EntityID]uint64
+}
+
+// TransitRecord is an Entity on its way out of a Zone: the Entity as it will
+// arrive (its HandoffSeq already incremented; its Room is the one it left, so
+// a restore at home has it), and where it is going. It holds no retry
+// schedule: when the next Arrive is due comes from config, and config never
+// enters hashed state, so the Engine keeps it in memory (DueHandoffs).
+type TransitRecord struct {
+	Entity EntityState
+	// To is the target Zone and Room the target Zone's Room the Arrive names.
+	To   ZoneID
+	Room RoomID
+	// Direction is the Exit the move took, empty for a Goto.
+	Direction Direction
+}
+
+// setTransit puts an Entity in transit.
+func (z *ZoneState) setTransit(r TransitRecord) {
+	if z.Transit == nil {
+		z.Transit = map[EntityID]TransitRecord{}
+	}
+	z.Transit[r.Entity.ID] = r
+}
+
+// markPlaced records that the sequence was decided here for the Entity,
+// never lowering a mark.
+func (z *ZoneState) markPlaced(id EntityID, seq uint64) {
+	if z.Placed == nil {
+		z.Placed = map[EntityID]uint64{}
+	}
+	if seq > z.Placed[id] {
+		z.Placed[id] = seq
+	}
 }
 
 // WorldState is everything mutable the simulation holds, and everything the
@@ -149,6 +194,28 @@ func ZoneCanonicalBytes(z *ZoneState) []byte {
 	sort.Strings(eids)
 	for _, eid := range eids {
 		b.Write(EntityCanonicalBytes(*z.Entities[EntityID(eid)]))
+	}
+	// One record per Entity in transit, then the Entity's own records, and one
+	// per Placed mark, each only when present, as the Entity's optional
+	// records are: a World with nothing in transit and no handoff history
+	// hashes as it did before AW-SRV-028, so StateVersion doesn't move.
+	tids := make([]string, 0, len(z.Transit))
+	for id := range z.Transit {
+		tids = append(tids, string(id))
+	}
+	sort.Strings(tids)
+	for _, tid := range tids {
+		r := z.Transit[EntityID(tid)]
+		writeFields(&b, "transit", tid, string(r.To), string(r.Room), string(r.Direction))
+		b.Write(EntityCanonicalBytes(r.Entity))
+	}
+	pids := make([]string, 0, len(z.Placed))
+	for id := range z.Placed {
+		pids = append(pids, string(id))
+	}
+	sort.Strings(pids)
+	for _, pid := range pids {
+		writeFields(&b, "placed", pid, strconv.FormatUint(z.Placed[EntityID(pid)], 10))
 	}
 	return []byte(b.String())
 }

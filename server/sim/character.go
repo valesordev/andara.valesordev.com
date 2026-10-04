@@ -103,6 +103,25 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 		a.bound(bind, id, z.ID, ent.Room, BindRerouted)
 		return nil
 	}
+	// Not in any Zone's Entities, but on its way out of one: a body for the
+	// Character would be a second one, and the Arrive would then place the
+	// first as well (AW-SRV-028). The search is unchanged first, so for the few
+	// ticks between the target placing the Entity and the source applying the
+	// ack, when it is in both, the Bind finds it in Entities, where it is. The
+	// roster and Gateway consequence of this rejection is described in the
+	// story and isn't built here.
+	for _, zid := range a.State.SortedZoneIDs() {
+		if _, between := a.State.Zones[zid].Transit[id]; between {
+			return transitReject()
+		}
+	}
+	// An Entity ID is never reused: marks are kept for good, so a new body at
+	// handoff sequence 0 would have its handoffs read as stale and be lost.
+	for _, zid := range a.State.SortedZoneIDs() {
+		if _, marked := a.State.Zones[zid].Placed[id]; marked {
+			return &RejectError{Code: CodeIDReused, Stage: StageValidate, Message: "that character cannot enter the world"}
+		}
+	}
 	// Never bound: a new body at the spawn Room.
 	room, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: RoomID(bind.GetSpawnRoomId())})
 	if !ok {
@@ -121,6 +140,11 @@ func applyBindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), arrived(a.Zone.ID, room.ID, ent.DisplayName()))
 	a.bound(bind, id, a.Zone.ID, room.ID, BindSpawned)
 	return nil
+}
+
+// transitReject is the rejection of a Command for an Entity between Zones.
+func transitReject() error {
+	return &RejectError{Code: CodeInTransit, Stage: StageValidate, Message: "you are between places"}
 }
 
 // bound reports what the bind did, for the Outcome.
@@ -145,6 +169,9 @@ func applyUnbindCharacter(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	id := EntityID(cmd.GetActorId())
 	if id == "" {
 		id = EntityID(cmd.GetUnbindCharacter().GetCharacterId())
+	}
+	if _, between := a.Zone.Transit[id]; between {
+		return transitReject()
 	}
 	ent, ok := a.Zone.Entities[id]
 	if !ok || !ent.Present() {
