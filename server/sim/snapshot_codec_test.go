@@ -23,11 +23,9 @@ import (
 // entry can't outlive the work it waits for and leave its field unguarded. An
 // entry for a field the descriptors don't have yet is inert. Each entry is
 // deleted by the story that covers its field in ZoneCanonicalBytes.
-var pendingFields = map[string]string{
-	"andara.state.v1.ZoneState.transit":       "AW-SRV-028: covered by the hash in 028's PR; delete this entry there",
-	"andara.state.v1.ZoneState.placed":        "AW-SRV-028: covered by the hash in 028's PR; delete this entry there",
-	"andara.state.v1.EntityState.handoff_seq": "AW-SRV-028: covered by the hash in 028's PR; delete this entry there",
-}
+// Empty: AW-SRV-028 covered the three fields it pinned early (ZoneState.transit,
+// ZoneState.placed, EntityState.handoff_seq) and deleted their entries.
+var pendingFields = map[string]string{}
 
 // The tripwire (AC-3, as amended): every field of the ZoneState and
 // EntityState protos, and of the Components an Entity carries, is corrupted in
