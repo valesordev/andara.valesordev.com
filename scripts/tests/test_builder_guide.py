@@ -100,10 +100,14 @@ ERRORS_MD = """# Errors
 """
 
 
-def ref_md(codes=("orphan_room", "unknown_room")):
-    rows = "\n".join("| [`%s`](../specs/content-language/v1/errors.md#3-the-codes) | error | both |" % c
-                     for c in codes)
-    return "<!-- GENERATED -->\n\n# Reference\n\n## Diagnostics\n\n| Code | Severity | Raised by |\n|---|---|---|\n" + rows + "\n"
+def ref_md(codes=("orphan_room", "unknown_room"), linked=True):
+    def row(c):
+        cell = "[`%s`](../specs/content-language/v1/errors.md#3-the-codes)" % c if linked else "`%s`" % c
+        return "| %s | error | both |" % cell
+    # A code-looking row outside Diagnostics, which must not count as a documented code.
+    other = "## Component types\n\n| Type | Field | Kind |\n|---|---|---|\n| `not_a_diagnostic` | none | none |\n\n"
+    return ("<!-- GENERATED -->\n\n# Reference\n\n" + other + "## Diagnostics\n\n"
+            "| Code | Severity | Raised by |\n|---|---|---|\n" + "\n".join(row(c) for c in codes) + "\n")
 
 
 class Fixture(unittest.TestCase):
@@ -131,7 +135,13 @@ class Fixture(unittest.TestCase):
         return rc, out.getvalue(), err.getvalue()
 
 
-class GuideCommands(Fixture):
+class GuideFixture(Fixture):
+    def setUp(self):
+        super().setUp()
+        (self.root / bg.REFERENCE).write_text(ref_md(linked=False))
+
+
+class GuideCommands(GuideFixture):
     def commands(self, *lines):
         self.guide("a.md", "# A\n\n```\n" + "\n".join(lines) + "\n```\n")
         return self.run_bg("guide-check")
@@ -168,8 +178,14 @@ class GuideCommands(Fixture):
         self.assertIn('no command "andara-cli content bogus"', err)
 
     def test_a_prompt_and_a_placeholder_pass(self):
-        rc, _, err = self.commands("$ andara-cli content approve <pack> <version>")
+        rc, out, err = self.commands("$ andara-cli content approve <pack> <version>")
         self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("1 commands", out)  # the prompt didn't hide the line from the check
+
+    def test_a_prompt_does_not_hide_a_typo(self):
+        rc, _, err = self.commands("$ andara-cli content bogus")
+        self.assertEqual(rc, 1)
+        self.assertIn('no command "andara-cli content bogus"', err)
 
     def test_a_command_whose_help_fails_is_reported(self):
         rc, _, err = self.commands("andara-cli content broken")
@@ -181,15 +197,59 @@ class GuideCommands(Fixture):
         self.assertEqual((rc, err), (0, ""), err)
         self.assertIn("1 commands", out)
 
-    def test_a_shell_pipe_ends_the_command(self):
-        rc, _, err = self.commands("andara-cli -o json content reference | jq .")
-        self.assertEqual((rc, err), (0, ""), err)
+    def test_a_continuation_carries_the_typo_on_its_second_line(self):
+        rc, _, err = self.commands("andara-cli content \\", "  bogus")
+        self.assertEqual(rc, 1)
+        self.assertIn('docs/builders/a.md:4: no command "andara-cli content bogus"', err)
+
+    def test_a_shell_operator_ends_the_command(self):
+        # On a group, the words after the operator would be leftovers, and fail, if they counted.
+        for line in ("andara-cli content | grep x", "andara-cli content > out.txt",
+                     "andara-cli content && echo done", "andara-cli content; echo done",
+                     "andara-cli content # a comment"):
+            rc, out, err = self.commands(line)
+            self.assertEqual((rc, err), (0, ""), "%s: %s" % (line, err))
+            self.assertIn("1 commands", out)
 
     def test_prose_and_other_programs_are_not_commands(self):
         self.guide("a.md", "# A\n\nRun andara-cli content bogus.\n\n```\nls andara-cli\ngo test\n```\n")
         rc, out, _ = self.run_bg("guide-check")
         self.assertEqual(rc, 0)
         self.assertIn("0 commands", out)
+
+
+class GuideFences(GuideFixture):
+    def test_a_tilde_fence_is_a_code_block(self):
+        self.guide("a.md", "# A\n\n~~~\nandara-cli content bogus\n~~~\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:4: no command "andara-cli content bogus"', err)
+
+    def test_a_longer_fence_may_contain_a_shorter_one(self):
+        self.guide("a.md", "# A\n\n````md\n```\nandara-cli content bogus\n```\n````\n\n[x](nope.md)\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:5: no command "andara-cli content bogus"', err)
+        self.assertIn("a.md:9: broken link nope.md", err)
+
+    def test_a_fence_with_an_info_string_does_not_close_a_fence(self):
+        self.guide("a.md", "# A\n\n```\n```bash\nandara-cli content bogus\n```\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:5: no command "andara-cli content bogus"', err)
+
+    def test_a_backtick_run_with_a_backtick_in_its_info_string_is_not_a_fence(self):
+        self.guide("a.md", "# A\n\n```inline``` is prose\n\n[x](nope.md)\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:5: broken link nope.md", err)
+        self.assertNotIn("unclosed", err)
+
+    def test_an_unclosed_fence_is_a_finding(self):
+        self.guide("a.md", "# A\n\n```\nandara-cli content approve x\n\n[x](nope.md)\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("docs/builders/a.md:3: unclosed code fence", err)
 
 
 class GuideCodes(Fixture):
@@ -212,7 +272,7 @@ class GuideCodes(Fixture):
         self.assertIn("2 codes", out)
 
 
-class GuideLinks(Fixture):
+class GuideLinks(GuideFixture):
     def test_a_missing_target(self):
         self.guide("a.md", "# A\n\nSee [b](nope.md).\n")
         rc, _, err = self.run_bg("guide-check")
@@ -232,11 +292,82 @@ class GuideLinks(Fixture):
         rc, _, err = self.run_bg("guide-check")
         self.assertEqual((rc, err), (0, ""), err)
 
+    def test_an_explicit_anchor_and_an_underscore_are_anchors_a_heading_slug_isnt(self):
+        self.guide("a.md", "# A\n\n[1](b.md#x_y) [2](b.md#a_b) [3](b.md#A_B)\n")
+        self.guide("b.md", '# B\n\n## <a id="x_y"></a>Other text\n\n## A_B\n')
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_setext_headings_are_anchors(self):
+        self.guide("a.md", "# A\n\n[1](b.md#second-title)\n")
+        self.guide("b.md", "First\n=====\n\nSecond title\n------------\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_a_heading_with_a_link_slugs_to_its_text(self):
+        self.guide("a.md", "# A\n\n[1](b.md#link-text)\n")
+        self.guide("b.md", "# B\n\n## [Link text](http://x.y/z)\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+
+    def test_a_fragment_on_a_file_that_isnt_markdown_is_broken(self):
+        self.guide("a.md", "# A\n\n[x](notes.txt#frag)\n")
+        self.guide("notes.txt", "# frag\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("broken link notes.txt#frag", err)
+
+    def test_valid_link_forms_resolve(self):
+        self.guide("a.md", textwrap.dedent("""\
+            # A
+
+            [angle](<b.md>) [query](b.md?plain=1) [pct](my%20file.md) [titled](b.md "A title")
+            [escaped](b\\_c.md) [root](/docs/builders/b.md) [nested [brackets] ok](b.md)
+            ![image](pic.png) <a href="b.md">html</a>
+
+            [ref]: b.md
+            """))
+        self.guide("b.md", "# B\n")
+        self.guide("my file.md", "# M\n")
+        self.guide("b_c.md", "# BC\n")
+        (self.root / "docs/builders/pic.png").write_bytes(b"x")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("10 links", out)
+
+    def test_link_forms_that_used_to_pass_unchecked_are_checked(self):
+        self.guide("a.md", textwrap.dedent("""\
+            # A
+
+            [angle](<missing one.md>)
+            ![image](missing.png)
+            <a href="missing-html.md">html</a>
+            [nested [brackets] x](missing-nested.md)
+            [parens](missing(1).md)
+            [dir](../builders#nope)
+            [up](../../../../etc/passwd)
+
+            [ref]: missing-ref.md
+            """))
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        for t in ("<missing one.md>", "missing.png", "missing-html.md", "missing-nested.md",
+                  "missing(1).md", "../builders#nope", "../../../../etc/passwd", "missing-ref.md"):
+            self.assertIn("broken link " + t, err)
+
     def test_external_links_and_links_in_code_are_not_checked(self):
         self.guide("a.md", "# A\n\n[x](https://example.com/404) `[y](gone.md)`\n\n```\n[z](gone.md)\n```\n")
         rc, out, _ = self.run_bg("guide-check")
         self.assertEqual(rc, 0)
         self.assertIn("0 links", out)
+
+    def test_a_guide_page_in_a_subdirectory_is_checked(self):
+        (self.root / "docs/builders/sub").mkdir()
+        (self.root / "docs/builders/sub/c.md").write_text("# C\n\n[x](nope.md)\n\n```\nandara-cli content bogus\n```\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("docs/builders/sub/c.md:3: broken link nope.md", err)
+        self.assertIn('docs/builders/sub/c.md:6: no command "andara-cli content bogus"', err)
 
     def test_a_link_to_a_directory_or_a_sibling_resolves(self):
         self.guide("a.md", "# A\n\n[up](../builders/b.md) [spec](../specs/content-language/v1/errors.md#3-the-codes)\n")
@@ -258,6 +389,12 @@ class GuideCheckOverall(Fixture):
         rc, out, err = self.run_bg("guide-check")
         self.assertEqual((rc, err), (0, ""), err)
         self.assertEqual(out.strip(), "guide-check: 0 commands, 2 codes, 2 links ok")
+
+    def test_a_guide_with_pages_and_no_reference_does_not_go_quiet(self):
+        self.guide("a.md", "# A\n")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn("guide-check: docs/builders/reference.md not found; run make builder-reference", err)
 
     def test_an_empty_guide_is_not_a_failure(self):
         rc, out, _ = self.run_bg("guide-check")
@@ -309,6 +446,17 @@ class Reference(Fixture):
         self.assertEqual(rc, 1)
         self.assertIn("builder-reference: unsupported format_version 2", err)
         self.assertFalse((self.root / bg.REFERENCE).exists())
+
+    def test_a_payload_that_isnt_the_contract_exits_one_with_a_message(self):
+        for payload, want in (("not json", "printed no JSON object"), ("[]", "isn't an object"),
+                              (json.dumps({"format_version": True}), "unsupported format_version true"),
+                              (json.dumps({"format_version": "1"}), 'unsupported format_version "1"'),
+                              (json.dumps({k: v for k, v in REF.items() if k != "core"}), "has no 'core'")):
+            self.ref_json.write_text(payload)
+            rc, _, err = self.run_bg("reference")
+            self.assertEqual(rc, 1, payload)
+            self.assertIn(want, err)
+            self.assertNotIn("Traceback", err)
 
     def test_check_passes_when_current_and_names_a_stale_or_missing_file(self):
         rc, _, err = self.run_bg("reference-check")

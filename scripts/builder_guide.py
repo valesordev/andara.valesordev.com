@@ -25,6 +25,10 @@ and their values are skipped, because `__complete` parses them against the real 
 (a command with subcommands) followed by a word that isn't one is a typo (`content bogus`). A
 leaf takes positionals.
 
+Known limits of that resolution, left as they are: an unknown flag doesn't fail a line (only
+`<path> --help` is run, and Cobra accepts it), words after `--` or after a bare `--help` count as
+flag values, and `-ojson` (no space) isn't parsed by `__complete`.
+
 Exit codes: 0 ok; 1 a check failed or the build or CLI did; 2 docs/builders/ doesn't exist.
 Findings go to stderr, one per line, prefixed `builder-reference:` or `guide-check:`; the
 `guide-check` summary goes to stdout.
@@ -38,6 +42,7 @@ import shlex
 import subprocess
 import sys
 import tempfile
+from urllib.parse import unquote
 from pathlib import Path
 
 GUIDE = "docs/builders"
@@ -83,8 +88,14 @@ def reference_json(cli, env):
         data = json.loads(r.stdout)
     except ValueError as e:
         raise Fail("`content reference` printed no JSON object: %s" % e)
-    if data.get("format_version") != 1:
-        raise Fail("unsupported format_version %s" % data.get("format_version"))
+    if not isinstance(data, dict):
+        raise Fail("`content reference` printed JSON that isn't an object")
+    version = data.get("format_version")
+    if type(version) is not int or version != 1:
+        raise Fail("unsupported format_version %s" % json.dumps(version))
+    for key in ("directions", "component_types", "core", "diagnostics"):
+        if key not in data:
+            raise Fail("`content reference` JSON has no %r" % key)
     return data
 
 
@@ -130,8 +141,10 @@ def cmd_reference(root, cli, tmp, check):
 
 # --- guide-check -------------------------------------------------------------------------
 
-FENCE = re.compile(r"^\s*(```+|~~~+)")
-LINK = re.compile(r"(?<!\!)\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+FENCE_OPEN = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
+INLINE_LINK = re.compile(r"\[(?:[^\[\]]|\[[^\]]*\])*\]\(\s*(<[^>]*>|(?:[^()\s]|\([^()\s]*\))+)(?:\s+(?:\"[^\"]*\"|'[^']*'))?\s*\)")
+REF_DEF = re.compile(r"^ {0,3}\[[^\]]+\]:\s*(<[^>]*>|\S+)")
+HREF = re.compile(r"""<a\s[^>]*?href=["']([^"']+)["']""", re.I)
 SCHEME = re.compile(r"^([a-z][a-z0-9+.-]*:|//)", re.I)
 CODE_ROW = re.compile(r"^\|\s*(?:\[)?`([a-z][a-z0-9_]*)`")
 
@@ -141,15 +154,26 @@ def md_files(guide):
 
 
 def split_blocks(text):
-    """(code lines with 1-based numbers, prose lines with 1-based numbers). Fences don't nest."""
-    code, prose, fence = [], [], None
+    """(code lines, prose lines, line of an unclosed fence or 0), 1-based numbers.
+
+    CommonMark: a fence closes on a run of the same character at least as long as the opener,
+    with nothing after it, so a longer fence may contain a shorter one.
+    """
+    code, prose, fence, opened = [], [], None, 0
     for n, line in enumerate(text.splitlines(), 1):
-        m = FENCE.match(line)
-        if m and (fence is None or line.strip().startswith(fence)):
-            fence = None if fence else m.group(1)[:3]
-            continue
-        (code if fence else prose).append((n, line))
-    return code, prose
+        if fence is None:
+            m = FENCE_OPEN.match(line)
+            if m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
+                fence, opened = m.group(1), n
+                continue
+            prose.append((n, line))
+        else:
+            stripped = line.strip()
+            if stripped and set(stripped) == {fence[0]} and len(stripped) >= len(fence) and len(line) - len(line.lstrip()) < 4:
+                fence = None
+                continue
+            code.append((n, line))
+    return code, prose, (opened if fence else 0)
 
 
 def joined_commands(code_lines):
@@ -223,7 +247,8 @@ def check_command(comp, cli, env, words):
 
 
 def slug(heading, seen):
-    s = re.sub(r"[`*]", "", heading.strip().lower())
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", heading)  # link syntax: the text stays
+    s = re.sub(r"[`*]", "", s.strip().lower())
     s = re.sub(r"[^\w\- ]", "", s).replace(" ", "-")
     n = seen.get(s, 0)
     seen[s] = n + 1
@@ -231,16 +256,44 @@ def slug(heading, seen):
 
 
 def anchors(path):
-    code, prose = split_blocks(Path(path).read_text())
+    """Lowercased anchors GitHub generates for a file: ATX and setext headings, and explicit
+    <a id=…> / <a name=…>. Matching is case-insensitive, as GitHub's is."""
+    _, prose, _ = split_blocks(Path(path).read_text())
     seen, out = {}, set()
-    for _, line in prose:
-        # An explicit <a id="x"> or <a name="x"> is an anchor GitHub honors, and it's not part of
-        # the heading's own slug.
-        out.update(re.findall(r'<a\s+(?:id|name)="([^"]+)"', line))
-        m = re.match(r"^#{1,6}\s+(.*?)\s*#*\s*$", line)
+    for i, (_, line) in enumerate(prose):
+        out.update(a.lower() for a in re.findall(r'<a\s+(?:id|name)="([^"]+)"', line))
+        m = re.match(r"^ {0,3}#{1,6}\s+(.*?)\s*#*\s*$", line)
+        if not m and i + 1 < len(prose) and line.strip() and re.match(r"^ {0,3}(=+|-+)\s*$", prose[i + 1][1]):
+            m = re.match(r"^\s*(.*?)\s*$", line)
         if m:
             out.add(slug(re.sub(r"<[^>]+>", "", m.group(1)), seen))
     return out
+
+
+def link_targets(line):
+    """Every link destination on a prose line: inline links and images, reference definitions,
+    and <a href>. Inline code is removed first."""
+    line = re.sub(r"`[^`]*`", "", line)
+    found = [m.group(1) for m in INLINE_LINK.finditer(line)]
+    m = REF_DEF.match(line)
+    if m:
+        found.append(m.group(1))
+    found += HREF.findall(line)
+    return found
+
+
+def resolve_link(root, f, target):
+    """(destination Path, fragment) for a relative link, or None for one that isn't ours to check."""
+    target = unquote(target.strip().strip("<>").strip())
+    target = re.sub(r"\\([\\`*_{}\[\]()#+\-.!<>|])", r"\1", target)
+    if not target or SCHEME.match(target):
+        return None
+    path, _, frag = target.partition("#")
+    path = path.partition("?")[0]
+    if not path:
+        return f, frag
+    base = Path(root) if path.startswith("/") else f.parent
+    return (base / path.lstrip("/")), frag
 
 
 def errors_codes(path):
@@ -269,6 +322,22 @@ def reference_codes(path):
     return codes
 
 
+def command_words(text):
+    """The words of an `andara-cli …` line after the program name, up to the first shell operator
+    (`|`, `>`, `&&`, `;`) or comment."""
+    lex = shlex.shlex(text, posix=True, punctuation_chars=True)
+    lex.whitespace_split, lex.commenters = True, "#"
+    words = []
+    try:
+        for tok in lex:
+            if set(tok) <= set(lex.punctuation_chars):
+                break
+            words.append(tok)
+    except ValueError:  # an unbalanced quote: take the words as written
+        words = text.split()
+    return words[1:]
+
+
 def cmd_guide_check(root, cli, tmp):
     guide = Path(root, GUIDE)
     if not guide.is_dir():
@@ -278,34 +347,33 @@ def cmd_guide_check(root, cli, tmp):
     files = md_files(guide)
     commands = links = 0
     cli_ready = None
+    root_path = Path(root).resolve()
 
     for f in files:
         rel = f.relative_to(root)
-        code, prose = split_blocks(f.read_text())
+        code, prose, unclosed = split_blocks(f.read_text())
+        if unclosed:
+            findings.append("%s:%d: unclosed code fence" % (rel, unclosed))
         for n, text in joined_commands(code):
             if cli_ready is None:
                 cli = cli or build_cli(root, tmp)
                 cli_ready = (Completer(cli, clean_env(tmp)), clean_env(tmp))
-            try:
-                words = shlex.split(re.split(r"\s(?:\||>|>>|&&|;)\s|\s#", text)[0])[1:]
-            except ValueError:
-                words = text.split()[1:]
             commands += 1
-            bad = check_command(cli_ready[0], cli, cli_ready[1], words)
+            bad = check_command(cli_ready[0], cli, cli_ready[1], command_words(text))
             if bad:
                 findings.append('%s:%d: no command "%s"' % (rel, n, " ".join(bad)))
         for n, line in prose:
-            line = re.sub(r"`[^`]*`", "", line)
-            for m in LINK.finditer(line):
-                target = m.group(1)
-                if SCHEME.match(target):
+            for target in link_targets(line):
+                resolved = resolve_link(root, f, target)
+                if resolved is None:
                     continue
                 links += 1
-                file_part, _, frag = target.partition("#")
-                dest = f if not file_part else (f.parent / file_part)
-                ok = dest.exists()
-                if ok and frag and dest.is_file() and dest.suffix == ".md":
-                    ok = frag in anchors(dest)
+                dest, frag = resolved
+                ok = dest.exists() and dest.resolve().is_relative_to(root_path)
+                if ok and frag:
+                    # A fragment needs a Markdown file with that anchor; on a directory or any
+                    # other file nothing could match it.
+                    ok = dest.is_file() and dest.suffix == ".md" and frag.lower() in anchors(dest)
                 if not ok:
                     findings.append("%s:%d: broken link %s" % (rel, n, target))
 
@@ -321,6 +389,10 @@ def cmd_guide_check(root, cli, tmp):
                 findings.append("code %s is in errors.md but not the reference" % c)
             for c in sorted(in_ref - in_err):
                 findings.append("code %s is in the reference but not errors.md" % c)
+    elif files:
+        # An empty guide passes (AC-9). One with pages and no reference has nothing to hold the
+        # codes against, which is the check going quiet, not passing.
+        findings.append("%s not found; run make builder-reference" % REFERENCE)
 
     for line in findings:
         print("guide-check: " + line, file=sys.stderr)

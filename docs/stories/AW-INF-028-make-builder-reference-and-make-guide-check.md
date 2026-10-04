@@ -218,7 +218,7 @@ nothing links to the generated one.
 ## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
 
 Branch `sre/aw-inf-028-builder-reference-guide-check`. The logic is `scripts/builder_guide.py`, and
-the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (30
+the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (46
 cases, run by `make scripts-test`), against a fake `andara-cli` that implements `__complete` and
 `--help`. The live runs below used the real binary built from this tree.
 
@@ -242,6 +242,25 @@ cases, run by `make scripts-test`), against a fake `andara-cli` that implements 
 - dropping either code direction;
 - dropping the anchor check, the `format_version` check, the staleness check, the `--help` exit
   check, or the scoping of `errors.md` to §3.
+
+**Pre-PR review hardened the guide checks** (no P0 or P1; five P2s and the cheap P3s fixed):
+- `guide-check` no longer goes quiet on a guide with pages and no `reference.md`: it fails
+  `docs/builders/reference.md not found; run make builder-reference`. An empty guide still passes.
+- Fences follow CommonMark (a longer fence holds a shorter one, `~~~` counts, an info string doesn't
+  close a fence), and an unclosed fence is a finding.
+- Links: images, `<a href>`, reference definitions, `<angle>` targets, `?query`, `%20`, escapes,
+  nested brackets, parenthesised targets and repo-root `/` links are all checked. A fragment on a
+  directory or a non-Markdown file, or a path leaving the repo, is broken. Anchors are
+  case-insensitive, setext headings count, and a heading's link text slugs without the URL.
+- Shell operators end a command through `shlex`'s punctuation handling (`|`, `>`, `&&`, `;`, `#`).
+- A malformed or off-contract JSON payload is a `builder-reference:` line, not a traceback.
+- The tests that passed with their code broken (the `$ ` prompt, line continuation, pipes, explicit
+  anchors, underscores, the reference's section scoping) now fail without it. A 37-mutant run left
+  no survivor.
+
+**Known limits, in the script's docstring:** an unknown flag doesn't fail a line, because only
+`<path> --help` runs; words after `--` count as flag values; and `-ojson` isn't parsed by
+`__complete`. None occurs in the guide, and each would need the CLI's own flag table.
 
 **How the command path is resolved.** After a flag that takes a value, and at a leaf, `__complete ''`
 returns nothing, so that alone can't tell the two apart, and `-o json content bogus` would end its
