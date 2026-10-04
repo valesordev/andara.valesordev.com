@@ -60,8 +60,8 @@ pass the regression it exists to catch.
 
 ## 2. The limit stays a multiple of the budget, and the measurement justifies the factor
 
-`limit = stallFactor × snapshot.max_stall_ms` (15 ms) stays: 30 ms without `-race` and 120 ms with it
-(`stallFactor` 2 and 8, in `server/simtest/stallfactor_*_test.go`). `AW-SRV-006` measured the copy at
+Until 2026-10-03 the limit was `stallFactor × snapshot.max_stall_ms` (15 ms): 30 ms without `-race` and
+120 ms with it (`stallFactor` 2 and 8, in `server/simtest/stallfactor_*_test.go`). `AW-SRV-006` measured the copy at
 25,000 Entities on 2026-09-22: 7.4–8.7 ms uncontended and 34.7 ms under `-race`. So each limit is
 about 3.5× the quiet figure, and the factor's comment says so, with the date and machine.
 
@@ -77,8 +77,8 @@ on a tree whose copy has crept can't raise the limit and hide it. For the race b
 implementation sets the figure from its own runs. The same measurement sets the non-race factor.
 `make check` runs the guard in the suite, so the suite is the condition that counts. **Each guard has
 its own factor constant.** A factor shared between guards moves the limit of every one that reads it
-(`TestContentSwapStaysInsideHalfTheTickBudget` read `stallFactor` too, and implementation was right to
-give the snapshot guard `snapshotStallFactor` and leave the other untouched).
+(`TestContentSwapStaysInsideHalfTheTickBudget` reads `stallFactor` too, so PR #386 gives the snapshot
+guard `snapshotStallFactor` and leaves the other limit where it was).
 
 Two comments are stale. `stallfactor_norace_test.go` pairs 10,000-Entity timings (2.7 ms, 4.8 ms)
 with a 5 ms budget. The race file's 2.7 ms and 12.6 ms are 10,000-Entity figures too. The "24.7 ms
@@ -144,5 +144,6 @@ check is only a tripwire, and that is architecture's call to make, not a looseni
 ## Revisit when
 
 - CI moves to runners where `RUSAGE_THREAD` isn't available.
-- A second timing guard exists. Two is the point to ask whether `internal/` wants a shared
-  `cputime` helper; one is not.
+- The second timing guard, `TestContentSwapStaysInsideHalfTheTickBudget`, is converted: two CPU-time
+  guards are the point to ask whether `internal/` wants a shared `cputime` helper. It exists today but
+  is still wall-clock (`docs/specs/testing/README.md`'s audit), so the question opens when it converts.

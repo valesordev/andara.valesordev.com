@@ -24,7 +24,7 @@ the rule.
 
 | Guard | State |
 |-------|-------|
-| `server/simtest` `TestSnapshotCopyStaysInsideTheStallBudget` | converted (PR #386): thread CPU time, the limit from the worst in-suite reading, an allocation bound as the structural gate (74,119 allocations and 8,408,136 bytes per round at the sizing fixture, `go1.27.1`) |
+| `server/simtest` `TestSnapshotCopyStaysInsideTheStallBudget` | being converted in PR #386: thread CPU time, the limit from the worst in-suite reading, an allocation bound as the structural gate (74,119 allocations and 8,408,136 bytes per round at the sizing fixture, `go1.27.1`) |
 | `server/simtest` `TestContentSwapStaysInsideHalfTheTickBudget` (`AW-SRV-012` AC-9) | **not converted.** A wall-clock assertion in `make check` (`stallFactor` × 25 ms), which the rule's §1 rules out. No failure is recorded against it, so it converts on its first flake or the next time `server/simtest` is touched, whichever comes first: CPU time on its own factor, the limit from the in-suite worst, and an allocation bound if its work allocates |
 
 ## Audit state
