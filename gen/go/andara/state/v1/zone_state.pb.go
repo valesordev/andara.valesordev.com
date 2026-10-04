@@ -269,9 +269,15 @@ func (x *TransitRecord) GetDirection() string {
 
 // The highest handoff_seq decided in this Zone for one Entity.
 type PlacedArrival struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EntityId      string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
-	HandoffSeq    uint64                 `protobuf:"varint,2,opt,name=handoff_seq,json=handoffSeq,proto3" json:"handoff_seq,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	EntityId   string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	HandoffSeq uint64                 `protobuf:"varint,2,opt,name=handoff_seq,json=handoffSeq,proto3" json:"handoff_seq,omitempty"`
+	// True when the Zone's decision for handoff_seq was a rejection
+	// (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+	// same answer back: a placed handoff is acked again, a rejected one is
+	// rejected again. Acking a rejected handoff would make the source drop a
+	// transit record whose Entity was never placed and never restored.
+	Rejected      bool `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -318,6 +324,13 @@ func (x *PlacedArrival) GetHandoffSeq() uint64 {
 		return x.HandoffSeq
 	}
 	return 0
+}
+
+func (x *PlacedArrival) GetRejected() bool {
+	if x != nil {
+		return x.Rejected
+	}
+	return false
 }
 
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
@@ -523,11 +536,12 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\n" +
 	"to_zone_id\x18\x02 \x01(\tR\btoZoneId\x12\x17\n" +
 	"\aroom_id\x18\x03 \x01(\tR\x06roomId\x12\x1c\n" +
-	"\tdirection\x18\x04 \x01(\tR\tdirection\"M\n" +
+	"\tdirection\x18\x04 \x01(\tR\tdirection\"i\n" +
 	"\rPlacedArrival\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1f\n" +
 	"\vhandoff_seq\x18\x02 \x01(\x04R\n" +
-	"handoffSeq\"\x9c\x04\n" +
+	"handoffSeq\x12\x1a\n" +
+	"\brejected\x18\x03 \x01(\bR\brejected\"\x9c\x04\n" +
 	"\vEntityState\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12A\n" +

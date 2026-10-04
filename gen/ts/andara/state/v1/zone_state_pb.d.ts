@@ -192,6 +192,17 @@ export declare type PlacedArrival = Message<"andara.state.v1.PlacedArrival"> & {
    * @generated from field: uint64 handoff_seq = 2;
    */
   handoffSeq: bigint;
+
+  /**
+   * True when the Zone's decision for handoff_seq was a rejection
+   * (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+   * same answer back: a placed handoff is acked again, a rejected one is
+   * rejected again. Acking a rejected handoff would make the source drop a
+   * transit record whose Entity was never placed and never restored.
+   *
+   * @generated from field: bool rejected = 3;
+   */
+  rejected: boolean;
 };
 
 /**

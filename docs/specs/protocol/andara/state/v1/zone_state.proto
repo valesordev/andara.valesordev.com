@@ -107,6 +107,13 @@ message TransitRecord {
 message PlacedArrival {
   string entity_id = 1;
   uint64 handoff_seq = 2;
+
+  // True when the Zone's decision for handoff_seq was a rejection
+  // (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+  // same answer back: a placed handoff is acked again, a rejected one is
+  // rejected again. Acking a rejected handoff would make the source drop a
+  // transit record whose Entity was never placed and never restored.
+  bool rejected = 3;
 }
 
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a

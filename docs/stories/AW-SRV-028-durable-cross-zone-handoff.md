@@ -71,6 +71,9 @@ body can't depart; `Goto` is in scope.*
   Zone's own state:
   - `s` is at or below `Placed[e]` and the Zone holds `e` with stored `handoff_seq == s`: a retry of a handoff
     already placed. Re-ack, change nothing.
+  - `s` equals the mark and the mark records a **rejection** (`AW-SRV-027`): a retry of a handoff already
+    rejected. Reissue the same `HandoffRejected`, never an ack, and place nothing. Acking it would make the
+    source drop a record whose Entity the target never placed and the source never restored.
   - `s` is at or below `Placed[e]` otherwise: stale, a retry that overtook the Entity's next move, however
     late it comes. Ack it, place nothing, count it. It emits no Event and no `CommandRejected`.
   - `s` is above `Placed[e]` and the Zone holds `e`: an invariant violation, rejected `entity_present`
@@ -100,14 +103,16 @@ body can't depart; `Goto` is in scope.*
   long-stuck handoff never wraps to a zero interval. **The mechanism:** the engine keeps
   `{attempts, last attempt}` in memory per `(Entity, handoff_seq)`, not in the hash, so replay under a
   retuned config produces the same state. A record with no entry is due, and a retry then writes `(1, T)`, so
-  a restart resets the backoff. `applyMove` and `applyGoto` write `(1, T)` for the departure, so the `Arrive`
-  they produce isn't re-sent on the same tick. **`DueHandoffs` is never called by replay.** Recovery goes
+  a restart resets the backoff. `applyMove` and `applyGoto` write `(1, T)` for a **live** departure, so the
+  `Arrive` they produce isn't re-sent on the same tick, and write **nothing while the engine is replaying**
+  (`ReplayEach`): a record whose departure is replayed has no entry, like one restored from a snapshot, so
+  every record found after a recovery is due on the first live call. **`DueHandoffs` is never called by
+  replay.** Recovery goes
   through `ReplayEach` (`tickloop.RecoverFrom`, and the projector's engine), which runs the same `Step` as the
   live loop, so the pass lives outside `Step`: replay produces no retries, counts none and logs none, and the
   projector's engine, which must never produce, can't. An engine built by `RestoreEngine` or `NewEngine` has
   no entries, so **a record found after a recovery is due on the first live call**, and is retried within
-  `ceil(n / sim.handoff_retry_batch)` ticks for `n` records; one a replayed departure wrote an entry for is due
-  once its interval has passed since that tick. **The engine deletes the entry whenever a `Transit` record is
+  `ceil(n / sim.handoff_retry_batch)` ticks for `n` records. **The engine deletes the entry whenever a `Transit` record is
   dropped** (the ack, the implicit ack, and `AW-SRV-027`'s rejection), so the map holds one entry per record
   in transit. The three config values reach the `Engine` through its `Config`, as the sim reads no other
   config; a zero value means the default. **No retry is produced while the source Zone is faulted or its
@@ -219,7 +224,8 @@ body can't depart; `Goto` is in scope.*
    `sim.handoff_retry_max_ticks` **then** the hashes still match, since the schedule isn't in the hash.
    **And given** a replay that ends with `n` records in `Transit` **when** the first live ticks run **then**
    every record is retried within `ceil(n / sim.handoff_retry_batch)` ticks, none on the departure tick, and
-   no more than the batch on any tick, and **the replay itself produced no retry and counted none**.
+   no more than the batch on any tick, and **the replay itself produced no retry, wrote no schedule entry and
+   counted none**, including for a record whose departure was in the replayed range.
 7. **Given** a source Zone that is faulted, or whose Partition is frozen **when** ticks pass **then** no
    `Arrive` is produced for its transit records, and **when** it can apply again **then** the first tick
    retries. **And given** an unanswered handoff **then** the gaps between attempts double from
@@ -245,7 +251,7 @@ body can't depart; `Goto` is in scope.*
     applied **then** the transit record is dropped and the arrival is decided by the dedup rule.
 13. **Given** a Zone with `Transit` records and `Placed` marks **when** it is snapshotted and restored **then**
     `HashZone` is identical, and `BodyStateHash` refuses a body with an unsorted or duplicated `transit` or
-    `placed`, a `placed` mark of 0, an Entity in both `entities` and `transit` of one Zone, or a `transit`
+    `placed`, a `placed` mark of 0, a `rejected` mark whose Entity is also held at that sequence, an Entity in both `entities` and `transit` of one Zone, or a `transit`
    Entity that is dormant or linkdead.
 14. **Given** A holds `Transit(e, 3)` after A→B→C→B **when** a late `HandoffAck(e, 1)` applies **then** the
     record stays, and **when** `HandoffAck(e, 3)` applies **then** it is dropped.
@@ -360,7 +366,8 @@ implicit ack makes AC-12 fail; letting the exponent overflow makes AC-7's 64-att
 schedule makes AC-6's changed-config case fail; routing `Goto` around the handshake makes AC-15 fail; dropping
 the `id_reused` guard makes AC-16 fail; dropping `actor_linkdead` makes AC-8's second half
 fail; not rejecting `UnbindCharacter` or `MarkLinkdead` in transit makes AC-8's first half fail; registering
-no entry at departure (so the departure tick re-sends) makes AC-6's last case fail; running the retry pass inside `Step` (so replay produces retries) makes AC-6's
+no entry at a live departure (so the departure tick re-sends) makes AC-6's last case fail, and writing entries
+while replaying (so a replayed departure isn't due on the first live call) makes AC-6's replay case fail; running the retry pass inside `Step` (so replay produces retries) makes AC-6's
 replay case and AC-2's `RecoverFrom` case fail; not deleting the entry when the record is dropped makes AC-1's
 schedule assertion fail; dropping the batch cap, or ordering by Entity ID alone, makes AC-6's batch case
 fail; dropping a field from the proto makes AC-10 fail.

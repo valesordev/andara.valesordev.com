@@ -77,8 +77,10 @@ one bad Behavior cannot take a region of the world down with it.
 7. **Given** a faulted B and a new handoff `Arrive(e, s)` **when** it applies **then** `HandoffRejected{e, s,
    zone_faulted}` is produced to the source Zone, B's mark for `e` is `s`, and the source restores `e` at its
    origin Room with `CharacterArrived{from_direction: reverse}`, keeping the incremented `handoff_seq`.
-8. **Given** the rejected handoff of AC-7 **when** a retry of it applies after B is healthy **then** it is
-   stale: nothing is placed. A replay of the exchange hashes identically, the mark included.
+8. **Given** the rejected handoff of AC-7 **when** its `HandoffRejected` is lost and a retry of the `Arrive`
+   applies, whether B is still faulted or healthy again **then** B produces the same `HandoffRejected`, not
+   an ack, nothing is placed, and the source restores the Entity when it applies it. A replay of the
+   exchange hashes identically, the mark and its outcome included.
 9. **Given** a `HandoffAck` for an Entity in a faulted source Zone's `Transit` **when** it applies **then** it
    is consumed with no Event and the record stays.
 
@@ -153,8 +155,11 @@ story's:
   frozen Zone still holds it, and a restart would bring it back: two bodies. Only an `Arrive` that would be a
   new handoff is rejected;
 - a new handoff consumed and rejected for a faulted Zone **also sets the Zone's mark for the Entity to that
-  sequence**, so a retry the source produced before it applied the rejection, or after a restart, is stale
-  and can't place a second body once the Zone is healthy again, and produces
+  sequence and records that the outcome was a rejection** (`PlacedArrival.rejected`), so a retry the source
+  produced before it applied the rejection, or after a restart, **gets the same `HandoffRejected` again**,
+  never an ack: an ack would make the source drop a record whose Entity was never placed and never
+  restored, and the Entity would be lost. A retry can't place a second body once the Zone is healthy again
+  either. The first rejection produces
   `HandoffRejected{entity_id, handoff_seq, code: "zone_faulted"}` to the source Zone's Partition
   (`andara.log.v1.LoggedCommand` field 14, `HandoffRejected`, pinned in `log.proto`), and `andara_handoff_rejected_total{code}` counts it;
 - the source applies it: it drops the transit record and restores the Entity to its origin Room
