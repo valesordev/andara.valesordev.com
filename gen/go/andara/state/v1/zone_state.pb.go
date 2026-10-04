@@ -73,8 +73,22 @@ type ZoneState struct {
 	// A faulted Zone's Partition stops advancing until the process restarts, and
 	// the state left behind is deterministic — the same records panic at the
 	// same point on replay — so it is hashed, and snapshotted, as it stands.
-	Faulted       bool   `protobuf:"varint,7,opt,name=faulted,proto3" json:"faulted,omitempty"`
-	FaultedTick   uint64 `protobuf:"varint,8,opt,name=faulted_tick,json=faultedTick,proto3" json:"faulted_tick,omitempty"`
+	Faulted     bool   `protobuf:"varint,7,opt,name=faulted,proto3" json:"faulted,omitempty"`
+	FaultedTick uint64 `protobuf:"varint,8,opt,name=faulted_tick,json=faultedTick,proto3" json:"faulted_tick,omitempty"`
+	// Entities that have left this Zone and are not yet acknowledged
+	// (AW-SRV-028), sorted by entity_id. They are not in `entities`. Hashed, so
+	// a restore must carry them, and recovery retries them from here. Empty adds
+	// nothing to the hash.
+	Transit []*TransitRecord `protobuf:"bytes,9,rep,name=transit,proto3" json:"transit,omitempty"`
+	// The highest handoff_seq this Zone has decided for each Entity that arrived
+	// by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+	// and kept for good. A handoff
+	// sequence only grows along an Entity's life, so an Arrive at or below this
+	// mark is a retry or stale, however late it comes, and no other Zone or
+	// record is needed to know that. The entry also says whether that decision
+	// was a rejection, which a retry of the same handoff is answered with again.
+	// Hashed, rejected included when true; empty adds nothing.
+	Placed        []*PlacedArrival `protobuf:"bytes,10,rep,name=placed,proto3" json:"placed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -165,6 +179,162 @@ func (x *ZoneState) GetFaultedTick() uint64 {
 	return 0
 }
 
+func (x *ZoneState) GetTransit() []*TransitRecord {
+	if x != nil {
+		return x.Transit
+	}
+	return nil
+}
+
+func (x *ZoneState) GetPlaced() []*PlacedArrival {
+	if x != nil {
+		return x.Placed
+	}
+	return nil
+}
+
+// An Entity in transit out of this Zone: the Entity as it will arrive, and
+// what the retry and a restore at home need.
+type TransitRecord struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The Entity as the target will receive it. entity.room_id is the Room it
+	// left from, which a restore at home would use, and entity.handoff_seq is
+	// the handoff's sequence. Never dormant or linkdead: those bodies never move.
+	Entity   *EntityState `protobuf:"bytes,1,opt,name=entity,proto3" json:"entity,omitempty"`
+	ToZoneId string       `protobuf:"bytes,2,opt,name=to_zone_id,json=toZoneId,proto3" json:"to_zone_id,omitempty"`
+	// The Room in to_zone_id the Arrive names.
+	RoomId string `protobuf:"bytes,3,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	// The Direction the move went, empty for a Goto. The reverse of it is the
+	// from_direction of a restore at home.
+	Direction     string `protobuf:"bytes,4,opt,name=direction,proto3" json:"direction,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransitRecord) Reset() {
+	*x = TransitRecord{}
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransitRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransitRecord) ProtoMessage() {}
+
+func (x *TransitRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransitRecord.ProtoReflect.Descriptor instead.
+func (*TransitRecord) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TransitRecord) GetEntity() *EntityState {
+	if x != nil {
+		return x.Entity
+	}
+	return nil
+}
+
+func (x *TransitRecord) GetToZoneId() string {
+	if x != nil {
+		return x.ToZoneId
+	}
+	return ""
+}
+
+func (x *TransitRecord) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *TransitRecord) GetDirection() string {
+	if x != nil {
+		return x.Direction
+	}
+	return ""
+}
+
+// The highest handoff_seq decided in this Zone for one Entity.
+type PlacedArrival struct {
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	EntityId   string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	HandoffSeq uint64                 `protobuf:"varint,2,opt,name=handoff_seq,json=handoffSeq,proto3" json:"handoff_seq,omitempty"`
+	// True when the Zone's decision for handoff_seq was a rejection
+	// (AW-SRV-027), false for a placement. A retry of the same handoff gets the
+	// same answer back: a placed handoff is acked again, a rejected one is
+	// rejected again. Acking a rejected handoff would make the source drop a
+	// transit record whose Entity was never placed and never restored.
+	Rejected      bool `protobuf:"varint,3,opt,name=rejected,proto3" json:"rejected,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *PlacedArrival) Reset() {
+	*x = PlacedArrival{}
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *PlacedArrival) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*PlacedArrival) ProtoMessage() {}
+
+func (x *PlacedArrival) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use PlacedArrival.ProtoReflect.Descriptor instead.
+func (*PlacedArrival) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *PlacedArrival) GetEntityId() string {
+	if x != nil {
+		return x.EntityId
+	}
+	return ""
+}
+
+func (x *PlacedArrival) GetHandoffSeq() uint64 {
+	if x != nil {
+		return x.HandoffSeq
+	}
+	return 0
+}
+
+func (x *PlacedArrival) GetRejected() bool {
+	if x != nil {
+		return x.Rejected
+	}
+	return false
+}
+
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
 // round-trip test pins the two together.
 //
@@ -218,13 +388,15 @@ type EntityState struct {
 	// AW-SRV-015; see linkdead_since_tick (7).
 	LinkdeadCeilingTick    uint64 `protobuf:"varint,11,opt,name=linkdead_ceiling_tick,json=linkdeadCeilingTick,proto3" json:"linkdead_ceiling_tick,omitempty"`
 	LinkdeadExtensionTicks uint64 `protobuf:"varint,12,opt,name=linkdead_extension_ticks,json=linkdeadExtensionTicks,proto3" json:"linkdead_extension_ticks,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// AW-SRV-028; see andara.log.v1.Entity.handoff_seq. 0 adds nothing to the hash.
+	HandoffSeq    uint64 `protobuf:"varint,13,opt,name=handoff_seq,json=handoffSeq,proto3" json:"handoff_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EntityState) Reset() {
 	*x = EntityState{}
-	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -236,7 +408,7 @@ func (x *EntityState) String() string {
 func (*EntityState) ProtoMessage() {}
 
 func (x *EntityState) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -249,7 +421,7 @@ func (x *EntityState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntityState.ProtoReflect.Descriptor instead.
 func (*EntityState) Descriptor() ([]byte, []int) {
-	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{1}
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *EntityState) GetEntityId() string {
@@ -336,11 +508,18 @@ func (x *EntityState) GetLinkdeadExtensionTicks() uint64 {
 	return 0
 }
 
+func (x *EntityState) GetHandoffSeq() uint64 {
+	if x != nil {
+		return x.HandoffSeq
+	}
+	return 0
+}
+
 var File_andara_state_v1_zone_state_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\n" +
-	" andara/state/v1/zone_state.proto\x12\x0fandara.state.v1\x1a\x1candara/content/v1/zone.proto\x1a\x17andara/log/v1/log.proto\"\xac\x02\n" +
+	" andara/state/v1/zone_state.proto\x12\x0fandara.state.v1\x1a\x1candara/content/v1/zone.proto\x1a\x17andara/log/v1/log.proto\"\x9e\x03\n" +
 	"\tZoneState\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -350,7 +529,21 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\bdeferred\x18\x05 \x03(\v2\x1c.andara.log.v1.LoggedCommandR\bdeferred\x12\"\n" +
 	"\rnext_event_id\x18\x06 \x01(\x04R\vnextEventId\x12\x18\n" +
 	"\afaulted\x18\a \x01(\bR\afaulted\x12!\n" +
-	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\"\xfb\x03\n" +
+	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\x128\n" +
+	"\atransit\x18\t \x03(\v2\x1e.andara.state.v1.TransitRecordR\atransit\x126\n" +
+	"\x06placed\x18\n" +
+	" \x03(\v2\x1e.andara.state.v1.PlacedArrivalR\x06placed\"\x9a\x01\n" +
+	"\rTransitRecord\x124\n" +
+	"\x06entity\x18\x01 \x01(\v2\x1c.andara.state.v1.EntityStateR\x06entity\x12\x1c\n" +
+	"\n" +
+	"to_zone_id\x18\x02 \x01(\tR\btoZoneId\x12\x17\n" +
+	"\aroom_id\x18\x03 \x01(\tR\x06roomId\x12\x1c\n" +
+	"\tdirection\x18\x04 \x01(\tR\tdirection\"i\n" +
+	"\rPlacedArrival\x12\x1b\n" +
+	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1f\n" +
+	"\vhandoff_seq\x18\x02 \x01(\x04R\n" +
+	"handoffSeq\x12\x1a\n" +
+	"\brejected\x18\x03 \x01(\bR\brejected\"\x9c\x04\n" +
 	"\vEntityState\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12A\n" +
@@ -366,7 +559,9 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\x04name\x18\n" +
 	" \x01(\tR\x04name\x122\n" +
 	"\x15linkdead_ceiling_tick\x18\v \x01(\x04R\x13linkdeadCeilingTick\x128\n" +
-	"\x18linkdead_extension_ticks\x18\f \x01(\x04R\x16linkdeadExtensionTicksB\xc0\x01\n" +
+	"\x18linkdead_extension_ticks\x18\f \x01(\x04R\x16linkdeadExtensionTicks\x12\x1f\n" +
+	"\vhandoff_seq\x18\r \x01(\x04R\n" +
+	"handoffSeqB\xc0\x01\n" +
 	"\x13com.andara.state.v1B\x0eZoneStateProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03ASX\xaa\x02\x0fAndara.State.V1\xca\x02\x0fAndara\\State\\V1\xe2\x02\x1bAndara\\State\\V1\\GPBMetadata\xea\x02\x11Andara::State::V1b\x06proto3"
 
 var (
@@ -381,22 +576,27 @@ func file_andara_state_v1_zone_state_proto_rawDescGZIP() []byte {
 	return file_andara_state_v1_zone_state_proto_rawDescData
 }
 
-var file_andara_state_v1_zone_state_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_andara_state_v1_zone_state_proto_msgTypes = make([]protoimpl.MessageInfo, 4)
 var file_andara_state_v1_zone_state_proto_goTypes = []any{
 	(*ZoneState)(nil),          // 0: andara.state.v1.ZoneState
-	(*EntityState)(nil),        // 1: andara.state.v1.EntityState
-	(*v1.LoggedCommand)(nil),   // 2: andara.log.v1.LoggedCommand
-	(*v11.ComponentValue)(nil), // 3: andara.content.v1.ComponentValue
+	(*TransitRecord)(nil),      // 1: andara.state.v1.TransitRecord
+	(*PlacedArrival)(nil),      // 2: andara.state.v1.PlacedArrival
+	(*EntityState)(nil),        // 3: andara.state.v1.EntityState
+	(*v1.LoggedCommand)(nil),   // 4: andara.log.v1.LoggedCommand
+	(*v11.ComponentValue)(nil), // 5: andara.content.v1.ComponentValue
 }
 var file_andara_state_v1_zone_state_proto_depIdxs = []int32{
-	1, // 0: andara.state.v1.ZoneState.entities:type_name -> andara.state.v1.EntityState
-	2, // 1: andara.state.v1.ZoneState.deferred:type_name -> andara.log.v1.LoggedCommand
-	3, // 2: andara.state.v1.EntityState.components:type_name -> andara.content.v1.ComponentValue
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	3, // 0: andara.state.v1.ZoneState.entities:type_name -> andara.state.v1.EntityState
+	4, // 1: andara.state.v1.ZoneState.deferred:type_name -> andara.log.v1.LoggedCommand
+	1, // 2: andara.state.v1.ZoneState.transit:type_name -> andara.state.v1.TransitRecord
+	2, // 3: andara.state.v1.ZoneState.placed:type_name -> andara.state.v1.PlacedArrival
+	3, // 4: andara.state.v1.TransitRecord.entity:type_name -> andara.state.v1.EntityState
+	5, // 5: andara.state.v1.EntityState.components:type_name -> andara.content.v1.ComponentValue
+	6, // [6:6] is the sub-list for method output_type
+	6, // [6:6] is the sub-list for method input_type
+	6, // [6:6] is the sub-list for extension type_name
+	6, // [6:6] is the sub-list for extension extendee
+	0, // [0:6] is the sub-list for field type_name
 }
 
 func init() { file_andara_state_v1_zone_state_proto_init() }
@@ -410,7 +610,7 @@ func file_andara_state_v1_zone_state_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_state_v1_zone_state_proto_rawDesc), len(file_andara_state_v1_zone_state_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   4,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

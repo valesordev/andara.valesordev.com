@@ -129,7 +129,7 @@ message CharacterRef { string character_id = 1; string name = 2; CharacterStatus
                        string zone_id = 4; string room_id = 5; int64 created_unix = 6; }
 message NameReservation { string character_id = 1; string account_id = 2; }   // key: name/{fold(name)}
 
-// additions to andara/log/v1/log.proto LoggedCommand oneof — 13 and 14 are AW-SRV-028's
+// additions to andara/log/v1/log.proto LoggedCommand oneof — 13 is AW-SRV-028's HandoffAck, 14 is held for AW-SRV-027's HandoffRejected
 BindCharacter   bind_character   = 15;   // character_id, account_id, name; spawn RoomRef when never bound
 UnbindCharacter unbind_character = 16;   // character_id, reason: QUIT (SWITCH: AW-SRV-032; LINKDEAD: AW-SRV-015)
 ```
@@ -753,7 +753,7 @@ The server's stdout `trace_id` attribute equals the record-level ID on every lin
   discard. **Decided at the re-groom (2026-09-21): it carries the Room** — see the contract.
 - **Corrected 2026-09-19 (review of PR #34): the contract sketch's arm numbers are taken.**
   `Arrive` shipped as `LoggedCommand` arm 12 (`AW-SRV-003`) and `AW-SRV-028` takes 13
-  (`HandoffAck`) and 14 (`HandoffRejected`). `BindCharacter` and `UnbindCharacter` are 15 and 16.
+  (`HandoffAck`) and 14 is held for `AW-SRV-027`'s `HandoffRejected`. `BindCharacter` and `UnbindCharacter` are 15 and 16.
   Two things this story must do that the sketch does not say: (1) `ingress.Bindings.Publish` moves
   only Sessions whose Character is already in its table, so `SelectCharacter` calls
   `Bindings.Bind(session, {Actor, Zone})` with the roster's last-known Zone *before* the

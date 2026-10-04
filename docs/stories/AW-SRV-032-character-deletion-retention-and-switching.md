@@ -175,3 +175,13 @@ CLAUDE.md §8, plus: the replay-purge test and the rollback-reservation test.
   a way to hold six names. Carried from `AW-SRV-014`.
 - `[ASSUMPTION]` Deleted Characters keep their dormant body until purge, so an undelete — if ever
   wanted — is one status flip. No undelete RPC is groomed.
+
+## Constraint from AW-SRV-028 (architecture, 2026-10-04)
+
+`AW-SRV-028`'s placed marks (`ZoneState.placed`) are kept for good, so they assume an Entity ID is never
+reused. `PurgeCharacter` removes a dormant body, so **the roster never reissues a `character_id`**. `AW-SRV-014`'s
+IDs are random 32-hex and nothing there forbids a reissue, so this is a new constraint on 014's roster, which
+its ID scheme has to state. Clearing the Entity's marks in every Zone is not an alternative: it would cross
+Partitions and reopen the stale-retry hole `AW-SRV-028` closes. `AW-SRV-028` also refuses (`id_reused`) a
+`BindCharacter` that would create a body for an ID some Zone holds a mark for, so a reissued ID fails loudly
+instead of losing the body.
