@@ -213,7 +213,7 @@ func mergeDiagnostics(a, b []lang.Diagnostic) []lang.Diagnostic {
 	seen := map[string]bool{}
 	var out []lang.Diagnostic
 	for _, d := range slices.Concat(a, b) {
-		k := fmt.Sprintf("%s\x00%d\x00%d\x00%s\x00%s", d.File, d.Line, d.Col, d.Code, strings.Join(d.Chain, "\x00"))
+		k := fmt.Sprintf("%s\x00%s\x00%d\x00%d\x00%s\x00%s", d.Pack, d.File, d.Line, d.Col, d.Code, strings.Join(d.Chain, "\x00"))
 		if seen[k] {
 			continue
 		}

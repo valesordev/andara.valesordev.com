@@ -275,7 +275,15 @@ commands show approval state before a change and render the server's refusal.
   local finding stops it there. It then asks `HasBlobs` which blobs the server already has and
   uploads only the rest, one `PublishBlob` stream each, and publishes with the pack's newest
   version as parent. A stale parent (someone published meanwhile) is explained, not retried.
-  The server's findings print in the same format as local ones, placed on the source.
+  The server's findings print in the same format as local ones, placed on the source. The
+  gate judges your version in the World the active packs make, with yours last, so a Zone id
+  another pack already has is one finding on your `zone` line (`ZoneID town declared in pack
+  acme and in active pack town@3`), and the active pack stays whole. It reports what you can fix
+  and what your publish newly causes. A finding in another pack's blobs, which still refuses
+  the publish because the gate can't tell a caused one from one already there, prints as
+  `<pack>/<file>: CODE message` with no position, since it isn't on your source; `--output
+  json` carries it with `pack` set. A warning in another pack's file shows only when this
+  publish caused it (a reverse Exit you removed), and not again at every publish after.
 - **`approve <pack> <version> [--yes]`**: approving a version you published (an Operator's
   self-approval) asks first; with no terminal it needs `--yes`.
 - **`activate <pack> <version> [--yes] [--override --reason TEXT]`** and **`rollback <pack>
