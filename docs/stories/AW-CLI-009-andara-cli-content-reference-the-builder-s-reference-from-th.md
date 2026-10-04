@@ -4,7 +4,7 @@ title: andara-cli content reference — the Builder's reference from the binary
 epic: EPIC-06
 component: cli
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-002]
 blocks: [AW-INF-028]
@@ -197,13 +197,13 @@ CLAUDE.md §8, plus: the golden file is committed, and the completeness test run
 
 ## Open questions
 
-- `[ASSUMPTION]` The flag values are `human|json`, not `text|json`. `human` is the global
+- *Resolved 2026-10-04 (architecture, §8):* The flag values are `human|json`, not `text|json`. `human` is the global
   `--output` flag's existing value (`admin/cli/root.go`), and a second spelling for one command
   would split the CLI's vocabulary.
-- `[ASSUMPTION]` `andara.core` Templates carry no Components or fields in the reference. Section 7
+- *Resolved 2026-10-04 (architecture, §8):* `andara.core` Templates carry no Components or fields in the reference. Section 7
   asks for each Template's chain only, and `content inspect template` (`AW-CLI-002` AC-7) already
   shows the flattened fields.
-- `[ASSUMPTION]` The count of 37 in the manual step is today's count: 24 `sim.ErrCode` values plus
+- *Resolved 2026-10-04 (architecture, §8):* The count of 37 in the manual step is today's count: 24 `sim.ErrCode` values plus
   the 13 `lang.Code*` literals that no `sim.ErrCode` shares. It will drift. The step checks that the command runs,
   not that the count is 37.
 
@@ -249,9 +249,10 @@ A new Component type needs no row. The command reads `sim`'s registry, so it app
 output, and only the golden flags it.
 
 **Outstanding before `done`:**
-- AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
-  an empty `HOME` and no config.
-- AW-INF-028 consumes the JSON.
+- ~~AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
+  an empty `HOME` and no config.~~ Done: `make cli-offline-check` runs in the `cli-release` job (SRE's
+  §8 check below).
+- AW-INF-028 consumes the JSON. That is a downstream consumer, not a blocker.
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-cli-009-verify`)
 
@@ -281,3 +282,23 @@ cli-offline-check: content reference ran with no network and no HOME: exit 0, em
 (which `andara-cli version` prints) with 4 Templates, and 37 diagnostics. The warnings are
 `missing_reverse_exit` and `orphan_room`. Two runs are byte-identical, and an extra argument exits
 `2`. The human output has the four headings, with `Core (andara.core@1)`.
+
+## §8 close (architecture, 2026-10-04): `done`
+
+Every checklist item holds, run on `main` ad4ef09 plus this review.
+- **Acceptance criteria.** `TestContentReference_*` (9 tests) pass. I also ran a fresh `andara-cli` build
+  with an empty `HOME` and no config: `content reference --output json` exits `0`, stderr is empty and
+  stdout is one object with `format_version`, `directions` (12), `component_types` (6), `core`
+  (`version` 1, 4 Templates, which `andara-cli version --output json` also reports as `core_version`)
+  and `diagnostics` (37: 16 `both`, 13 `compiler`, 8 `loader`; the warnings are `missing_reverse_exit`
+  and `orphan_room`). A second run is byte-identical and equal to `admin/cli/testdata/reference/reference.json`
+  (AC-8). The human output has the four headings, with `Core (andara.core@1)`. An extra argument and an
+  unknown flag each exit `2` (AC-10). AC-5 to AC-7 are the tests' own mutation-checked claims.
+- **Tests in CI.** The tests run in `make check`, and `make cli-offline-check` runs AC-1 in `busybox`
+  with `--network none` in the `cli-release` job (SRE's record above).
+- **`make check`** ended `check: all clean`, exit 0.
+- **Instrumentation** is SRE's, recorded above: the story adds none, and the `cli.command` span and
+  `command completed` line are observed.
+- **Config, migration, glossary.** No config key. `admin/README.md` has the command's row. Nothing
+  migrates, and the story introduces no domain term. The three `[ASSUMPTION]`s are marked resolved above,
+  each against the output I read.

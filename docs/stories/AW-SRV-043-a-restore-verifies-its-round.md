@@ -219,7 +219,7 @@ CLAUDE.md §8.
    the server's `5`. Recorded in `AW-SRV-007`'s body.
 2. **Resolved 2026-10-02 (architecture): the `AW-SRV-007` edge.** Added in the commit that moves
    this story to `ready`.
-3. `[ASSUMPTION]` Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01).
+3. *Resolved 2026-10-04 (architecture, §8):* Planned for SPRINT-04, ahead of `AW-SRV-007` (architecture, 2026-10-01); it landed in SPRINT-04 and `AW-SRV-007` is still `ready`.
 
 ## Verification record — 2026-10-03 (implementation; `review` until the §8 checklist passes)
 
@@ -259,7 +259,7 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
 - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
-  build deployed to `dev`.
+  build deployed to `dev`. Still to run: SRE records it in this story (§8 review below).
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 
@@ -301,3 +301,34 @@ all observed, and the `stack` workflow runs it after `stack-linkdead`. At `main`
 
 **Runbook:** `docs/runbooks/state-projector-down.md`'s exit `5` row no longer says it ships with
 this story.
+
+## §8 review (architecture, 2026-10-04): stays `review` on the operator step
+
+Every checklist item holds except one, run on `main` ad4ef09 plus this review. The story stays at `review`
+until SRE records the operator step (below), which is the one thing left.
+- **Acceptance criteria.** The sim and store tests the record names (`TestRestore_*`,
+  `TestRestoredEngineContinuesTheWorld`) pass on `main`. AC-3, AC-4 and AC-5's projector half are
+  `TestRun_*` against Redpanda, which SRE ran on the stack (record above), and AC-8's #143 regression
+  is `TestRestore_Issue143IsNamedAtTheRoundTick`, which names the round's tick.
+- **Tests in CI.** The unit tests are in `make test`. The Redpanda tests run in `make test-integration`
+  and in SRE's `make stack-projector-check`, which the `stack` workflow runs.
+- **`make check`** ended `check: all clean`, exit 0.
+- **Instrumentation** is SRE's, recorded above: `andara_restore_total{caller="projector"}` read from the
+  projector's own `/metrics` at `ok` 1 after a bootstrap, the `restore verified` line, and the
+  `state.bootstrap` → `restore.verify` trace in Tempo. The exit `5` row is in the runbook.
+- **Deferred observations, carried and not dropped** (CLAUDE.md §8, "verified against a real backend
+  when no caller exists yet"):
+  - `andara_restore_total{caller="verify"}` gets a Definition-of-done line in `AW-SRV-007`, added in
+    this review. `{caller="recovery"}` was already `AW-SRV-007`'s, through `AW-INF-032`.
+  - The mismatch series and `error` line from a running projector can't be scraped, since it exits `5`
+    first. The integration tests read them on the in-process registry, as the Observability section
+    says.
+
+**Not done, and not carried:** the operator step in the Test plan, `make projector-rebuild ENV=dev` on a
+`dev` running this build, with `state projector restore verified` in its log. The §8 carve-out above is
+for an instrumentation observation that no caller can make yet. This one has a caller and only needs a
+run, since Argo CD deploys `main` to `dev`, so SRE (on the tailnet) runs it and records the line here.
+`AW-SRV-007` depends on this story and counts it as met at `review`, so nothing waits on it.
+- **Config, migration, glossary.** No config key. The round's `sim_seed` field is additive: a round
+  without it reads as `0` and derives the seed (AC-6). The glossary gains **Restore mismatch** in this
+  review. The one `[ASSUMPTION]` is marked resolved above.
