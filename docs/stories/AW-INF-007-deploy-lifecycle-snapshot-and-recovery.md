@@ -129,7 +129,7 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 | Target | Does | Exit |
 |--------|------|-----:|
 | `make deploy ENV=<env> TAG=<tag>` | publish+activate `andara.core@<tag>`; `helm upgrade --install --set image.tag`; `kubectl rollout status --timeout`; reads `andara_deploy_interruption_seconds`, prints it against RTO | `0` ok · `2` hash mismatch · `1` rollout timeout · `6` core pack rejected |
-| `make rollback ENV=<env> [ROUND=T]` | `helm upgrade --reuse-values --set image.tag=<previous> --set recovery.pin_round=<T or 0>`, **not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is the `image.tag` of the previous revision (`helm get values --revision`). With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: as above · `4` state_version · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
+| `make rollback ENV=<env> [ROUND=T] [TAG=<tag>]` | the same upgrade as `make deploy`, through the same script as `helm-install` (`--values <env>.yaml`, no `--reuse-values`, the Argo CD and Kafka-Ready guards, digest pinning), with `image.tag=<previous>` and `recovery.pin_round=<T or 0>`. **Not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is `TAG`, or else the `image.tag` of the newest revision older than the current one whose status isn't `failed` (`helm history`, then `helm get values --revision <n> --all`). The script labels its upgrade `rollback to <tag>`, and without `TAG` it refuses on a revision so labelled, since "previous" would be the bad image. With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: `0` ok · `1` rollout timeout or another pod exit · `4` state_version · `6` the previous core pack was rejected · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
 | `make snapshot-tag ENV=<env> TAG=<t>` | a thin wrapper over `andara-cli snapshot tag`, which tags the newest round (`prestop` tags in-process) | |
 
 The exit codes are the scripts' (`scripts/deploy.sh`, `scripts/rollback.sh`). Through `make` every failure
@@ -139,7 +139,8 @@ jsonpath={.status.containerStatuses[0].lastState.terminated.exitCode}`, falling 
 `.state.terminated` before the first restart. Its meanings are `AW-SRV-007`'s: `3` log gap and `6` restore
 mismatch both map to the script's `1` with the pod's code in the printed line, `8` hash mismatch maps to
 `2` for `make deploy` and stays `8` for `make rollback`. `make deploy`'s own `6` is the core pack step
-and isn't the pod's `6`.
+and isn't the pod's `6`. For `make deploy`, any pod exit not named here (`1`, `4`, `7`) maps to the
+script's `1` with the pod's code printed.
 
 ### Configuration
 
