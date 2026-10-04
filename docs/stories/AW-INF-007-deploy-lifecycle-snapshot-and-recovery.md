@@ -36,7 +36,7 @@ not an event.
   `terminationGracePeriodSeconds`, which this story derives.
 - Post-start: `AW-SRV-007` recovery, readiness only after verify (already the contract; this story tests
   it under a rolling update).
-- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [--round T]` as the only deploy path
+- `make deploy ENV=<env> TAG=<tag>` and `make rollback ENV=<env> [ROUND=T] [TAG=<tag>]` as the only deploy path
   for `prod`, and for `local`, where the rolling-update test runs. `dev` is deployed by Argo CD from
   `main` (`AW-INF-019`), and `make deploy ENV=dev` refuses while that Application exists, as
   `helm-install` does. *(Scoped 2026-09-26, `AW-INF-019`'s contract review.)*
@@ -44,7 +44,7 @@ not an event.
   with the image (`content/core/` in the repo, compiled by `AW-CLI-006`) before the new pod reports
   ready, as `operator`, no second approver (`AW-SRV-013` AC-11). Rollback activates the previous
   core version the same way.
-- The `state_version` rollback path: refuse, then `rollback --round` pins an older round and the old
+- The `state_version` rollback path: refuse, then `make rollback ROUND=T` pins an older round and the old
   binary recovers from it, replaying the tail the newer binary wrote — which is safe because the log is
   Commands, not state (ADR-0005: replay never re-runs anything but `Apply`).
 - Interruption measurement: `andara_deploy_interruption_seconds` from `ServerStopping` to first
@@ -59,8 +59,8 @@ not an event.
     `make deploy` runs.
   - `andara_deploy_interruption_seconds` is recorded on `dev` rolls too. The RTO comparison
     reads `prod`'s series (`namespace="andara-prod"`) and CI's `local` run, never `dev`'s.
-- Retention of snapshot rounds: keep `snapshot.keep_rounds` (default 120 = 2 h) plus every round tagged
-  by a deploy for `snapshot.keep_deploy_rounds` (default 30).
+- Retention of snapshot rounds: keep `snapshot.keep_rounds` (default 120 = 2 h) plus every tagged round
+  (`deploy:` or `rollback:`) for `snapshot.keep_deploy_rounds` (default 30).
 
 ### Out of scope
 - The snapshot and recovery mechanisms — `AW-SRV-006`, `AW-SRV-007`.
@@ -82,7 +82,7 @@ not an event.
    ready, `RecoveryStateMismatch` fires, the StatefulSet rollout stalls, and `make deploy` exits `2`
    printing the runbook path.
 4. **Given** `make rollback` to a binary that cannot read the current `state_version` **when** the old
-   pod starts **then** it exits `4` naming both versions; **given** `make rollback --round T` with a
+   pod starts **then** it exits `4` naming both versions; **given** `make rollback ROUND=T` with a
    round the old binary can read **then** it recovers from `T`, replays the newer binary's tail, and
    reaches `serving` with a hash equal to the newer binary's `TickCompleted` at head — or exits `8` if
    the newer binary's semantics changed, which is the honest signal that a rollback needs a fix-forward.
@@ -94,7 +94,7 @@ not an event.
    `deploy.notice_lead` before the stream closes, and `andara-cli play` reconnects with backoff and
    rebinds within `session.linkdead_grace` (`AW-SRV-015` AC-9).
 7. **Given** `snapshot.keep_rounds` exceeded **when** the retention sweep runs **then** the oldest
-   untagged rounds are deleted, deploy-tagged rounds are kept, and never the newest complete round.
+   untagged rounds are deleted, tagged rounds (`deploy:` or `rollback:`) are kept, and never the newest complete round.
 8. **Given** a deploy whose image carries `andara.core` version `V` **when** `make deploy` runs
    **then** `andara.core@V` is published and active before the new pod's `/readyz` is polled, the
    activation audit record names the deploy tag, and a Builder pack compiled against `V-1` keeps
@@ -129,8 +129,18 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 | Target | Does | Exit |
 |--------|------|-----:|
 | `make deploy ENV=<env> TAG=<tag>` | publish+activate `andara.core@<tag>`; `helm upgrade --install --set image.tag`; `kubectl rollout status --timeout`; reads `andara_deploy_interruption_seconds`, prints it against RTO | `0` ok · `2` hash mismatch · `1` rollout timeout · `6` core pack rejected |
-| `make rollback ENV=<env> [ROUND=T]` | `helm rollback` to previous revision; with `ROUND`, sets `recovery.pin_round=T` for one boot | as above · `4` state_version |
-| `make snapshot-tag ENV=<env> TAG=<t>` | tags the newest round (used by `prestop`) | |
+| `make rollback ENV=<env> [ROUND=T] [TAG=<tag>]` | the same upgrade as `make deploy`: `scripts/deploy.sh` and `scripts/rollback.sh` each call `scripts/helm_install.sh`, which gains optional pass-through for extra `--set` values and `--description` (an SRE change to an `AW-INF-003` script; every guard failure in it exits `1`), and it carries (`--values <env>.yaml`, no `--reuse-values`, the Argo CD and Kafka-Ready guards, digest pinning), with `image.tag=<previous>` (which may be `tag@sha256:…` from the digest-pinning step, and `helm_install.sh` passes that through) and `recovery.pin_round=<T or 0>`. **Not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is `TAG`; or, when the current revision is **failed** and its values carry `release.rolled_back_to=<tag>` (the refuse-then-retry flow after a pod exit `4`), that `<tag>`, so `make rollback ROUND=T` retries the old binary it was refused for; or else the `image.tag` of the newest older revision whose status isn't `failed` (`helm history`, then `helm get values --revision <n> --all`). The marker is a value, not the upgrade's `--description`, because Helm overwrites the description of a failed revision. `make rollback` sets `release.rolled_back_to=<previous>`, and `make deploy` sets it empty, so the marker is exactly the revisions that were rollbacks (`helm get values --revision <n> --all`). Without `TAG` it refuses on a **deployed** revision carrying the marker, since "previous" would be the bad image. The description is only the human label (`rollback to <tag>`). `release.rolled_back_to` is a hand-written top-level chart value, not a server key: it's declared in `deploy/helm/andara/schema.base.yaml` (a string) and `values.yaml` (default empty), never in `keys.yaml`, and gets no environment variable. The schema check gains a `helm template --set release.rolled_back_to=x` case. A tag failure (no such round, or one that isn't complete) exits `1` before `helm upgrade`, with `rollback: round <T> not found` or `… is not complete`, and re-tagging a name a round already carries is a no-op success. Exit `7` stays the pod's. After a failed rollback followed by a failed deploy, "previous" would be the pre-rollback image, so the runbook tells the operator to pass `TAG`. With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: `0` ok · `1` rollout timeout or another pod exit · `4` state_version · `6` the previous core pack was rejected · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
+| `make snapshot-tag ENV=<env> TAG=<t> [ROUND=<tick>]` | a thin wrapper over `andara-cli snapshot tag --name <t> [--round <tick>]`, which tags the newest round, or the round at `<tick>` when given (it refuses a round that isn't `Complete`) (`prestop` tags in-process). `make rollback ROUND=T` passes `ROUND=T`, so the pinned round is the one protected | |
+
+The exit codes are the scripts' (`scripts/deploy.sh`, `scripts/rollback.sh`). Through `make` every failure
+is `2`, and the evidence is the script's printed line (`AW-INF-029`'s pattern). A pod's exit code reaches
+the script by `kubectl get pod <the pod the rollout is waiting on> -n andara-<env> -o
+jsonpath={.status.containerStatuses[0].lastState.terminated.exitCode}`, falling back to
+`.state.terminated` before the first restart. Its meanings are `AW-SRV-007`'s: `3` log gap and `6` restore
+mismatch both map to the script's `1` with the pod's code in the printed line, `8` hash mismatch maps to
+`2` for `make deploy` and stays `8` for `make rollback`. `make deploy`'s own `6` is the core pack step
+and isn't the pod's `6`; likewise `make rollback`'s `6` is the previous core pack's rejection, and the pod's `6` maps to its `1`. For `make deploy`, any pod exit not named here (`1`, `4`, `7`) maps to the
+script's `1` with the pod's code printed.
 
 ### Configuration
 
@@ -138,7 +148,7 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | AC-6 |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping` |
-| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | — | one-boot override used by `rollback` |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` is unset. Set by `make rollback ROUND=T`, cleared by the next `make deploy` or `make rollback`; `AW-SRV-007`'s Configuration table has the server side |
 | `snapshot.keep_rounds` | `ANDARA_SNAPSHOT_KEEP_ROUNDS` | `120` | |
 | `snapshot.keep_deploy_rounds` | `ANDARA_SNAPSHOT_KEEP_DEPLOY_ROUNDS` | `30` | |
 
@@ -147,8 +157,8 @@ Chart value `terminationGracePeriodSeconds` default `90`, validated by AC-9.
 ### Round tags
 
 A tag is a zero-byte object at `{zone_id}/{tick}/{state_version}/{offset}.tag/{name}`; `ListRounds`
-reports tags. Retention never deletes a tagged round while it is within `keep_deploy_rounds` of the
-newest tag.
+reports tags. Retention never deletes a round carrying **any** tag (`deploy:<tag>` or `rollback:<T>`) while it is
+among the newest `keep_deploy_rounds` tagged rounds. N counts tagged rounds, not minutes.
 
 **Amended 2026-09-22, following `AW-SRV-006`'s key format.** The tag path tracked a key that had no
 tick in it, and a tag is a statement about a *round* — which an offset does not identify, because an
@@ -204,11 +214,13 @@ the expected interruption as a number from the last CI run, and every step is a 
 
 ## Open questions
 
-- **Open since PR #356 (2026-10-03), for the SPRINT-05 split:** who clears `recovery.pin_round`, whether
-  retention keeps the pinned round, what `make rollback` itself exits, and `ROUND=T` vs `--round T`.
-  See `docs/feedback/AW-INF-005-007-split.md`, "From PR #356's review". These affect this story's
-  Interface contract, so its deploy half doesn't start before the split answers them. The server
-  side of the key is `AW-SRV-007`'s (its Configuration table and AC-15).
+- **Resolved 2026-10-03 (architecture), for the SPRINT-05 split:** PR #356's four pin-lifecycle questions
+  are answered in `docs/feedback/AW-INF-005-007-split.md`, "PR #356's four questions, answered", and in
+  the Make-targets table above: the next `make deploy` or `make rollback` clears `recovery.pin_round`,
+  `T` is tagged `rollback:<T>`, `make rollback`'s exits are the script's, and the spelling is
+  `ROUND=T`. The deploy half is no longer waiting on them. It waits on the ruling for AC-5's emitter
+  and clock, which the kept story holds. The server side of the key is `AW-SRV-007`'s (its
+  Configuration table and AC-15).
 
 - `[NEEDS BRIAN]` The `message` in `ServerStopping` — countdown, in-world notice, or nothing. The
   field and the lead time exist either way; the words do not affect this contract.
@@ -217,3 +229,11 @@ the expected interruption as a number from the last CI run, and every step is a 
 - `[ASSUMPTION]` Retention numbers 120 / 30 rounds. Two hours of minute-rounds plus a month of deploy
   points is enough to pin any rollback anyone would attempt; disk cost is `andara_snapshot_bytes ×
   rounds`.
+
+## Split (architecture, 2026-10-03)
+
+The ruling is in `docs/feedback/AW-INF-005-007-split.md`, "Architecture: the split". This story keeps
+its ID and shrinks to the lifecycle contract (`docs/specs/deploy/lifecycle.md` and `ServerStopping`);
+the build moves to `lane: sre` and `lane: implementation` stories PM writes at the SPRINT-05 boundary.
+The four pin-lifecycle questions above are answered there. Until PM's stories exist, every AC above
+stays here, and nothing is removed.

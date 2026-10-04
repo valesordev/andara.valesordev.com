@@ -22,7 +22,8 @@ discovered one.
 `AW-SRV-010` implements the read-only mode and emits `andara_ingress_degraded`. This story owns the
 operational contract around it: the SLO the alert hangs from, the runbook, the cluster configuration
 that makes the mode rare, and the rehearsal that proves the zero-RPO claim on the cluster we actually
-run — which, per the 2026-09-10 decision, is a three-broker Redpanda on one kind box, so the rehearsal
+run — which is, for `dev` and `prod`, three Strimzi-managed Apache Kafka brokers per namespace on one kind
+box (`AW-INF-014`; `local` is a single Redpanda, replication factor 1), so the rehearsal
 proves broker-failure semantics and cannot prove disk-failure semantics. Said here so nobody reads a
 green rehearsal as more than it is.
 
@@ -45,15 +46,15 @@ rehearsed, so that the first time it happens is not the first time we think abou
 - Alerts `WorldReadOnly` and `SimulationConsumerLagging`, runbooks `world-read-only.md` (completing
   `AW-SRV-010`'s) and `simulation-consumer-lagging.md`.
 - `make kafka-rehearsal ENV=<env>`: the degradation and zero-RPO rehearsal, results written to
-  `docs/specs/kafka/rehearsals/<date>.md`.
+  `docs/specs/slo/rehearsals/<date>.md` *(moved 2026-10-03 from `docs/specs/kafka/`, which is architecture's; the report is SRE's)*.
 - Retention decision recorded: `andara.commands.v1` infinite, `andara.events.v1` 30 d; tiered storage
   when `andara_kafka_log_bytes` says so.
 
 ### Out of scope
 - Topic definitions — `AW-INF-004`. The degradation implementation — `AW-SRV-010`.
 - Tiered storage configuration; a follow-up when disk demands it.
-- Managed Kafka. Self-hosted Redpanda on the box (2026-09-10); the client half is unchanged if that
-  moves.
+- Managed Kafka. Self-hosted Apache Kafka on the box for `dev` and `prod` (`AW-INF-014`); the client
+  half is unchanged if that moves.
 
 ## Acceptance criteria
 
@@ -174,5 +175,15 @@ alerts; one rehearsal report is committed.
   `topics.yaml` already holds; tiered storage is the follow-up when disk says so.
 - **World write-availability target proposed** at 99.5% → 99.9%; the deploy-budget consequence (~40
   deploys / 28 d at 99.9%) stands and `AW-INF-007`'s `make deploy` prints the remaining budget.
-- `[ASSUMPTION]` Self-hosted Redpanda on the box. If this moves to managed Kafka, the broker half of the
+- `[ASSUMPTION]` Self-hosted Apache Kafka on the box (`AW-INF-014`; `local` is Redpanda). If this moves to managed Kafka, the broker half of the
   contract becomes an assertion about someone else's cluster, which `broker-assert` still runs.
+
+## Split (architecture, 2026-10-03)
+
+*(Corrected 2026-10-03: this story said Redpanda for `dev` and `prod`. `AW-INF-014` put Apache Kafka
+there, and Redpanda has no `unclean.leader.election.enable`.)* The ruling is in
+`docs/feedback/AW-INF-005-007-split.md`, "Architecture: the split". This story keeps its ID and shrinks
+to the broker and client contracts, the retention decision and the per-Partition degradation contract.
+The enforcement, SLO, alerts and rehearsal move to `lane: sre` stories and `config-assert` and the
+per-Partition server change to `lane: implementation` stories, which PM writes at the SPRINT-05
+boundary. Until they exist, every AC above stays here, and nothing is removed.
