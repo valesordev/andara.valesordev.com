@@ -45,8 +45,9 @@ func newHx(t *testing.T, mutate func(*sim.Config)) *hx {
 	return &hx{t: t, e: sim.NewEngine(w, reg, cfg)}
 }
 
-// tick applies cmds in one tick, in order, then runs the retry pass.
-func (h *hx) tick(cmds ...*logv1.LoggedCommand) (sim.StepResult, []sim.HandoffRetry) {
+// step applies cmds in one tick, in order, with no retry pass: the schedule is
+// what applying them alone wrote.
+func (h *hx) step(cmds ...*logv1.LoggedCommand) sim.StepResult {
 	h.t.Helper()
 	next := map[int32]int64{}
 	var recs []sim.Record
@@ -63,6 +64,13 @@ func (h *hx) tick(cmds ...*logv1.LoggedCommand) (sim.StepResult, []sim.HandoffRe
 	if err != nil {
 		h.t.Fatal(err)
 	}
+	return res
+}
+
+// tick applies cmds in one tick, in order, then runs the retry pass.
+func (h *hx) tick(cmds ...*logv1.LoggedCommand) (sim.StepResult, []sim.HandoffRetry) {
+	h.t.Helper()
+	res := h.step(cmds...)
 	return res, h.e.DueHandoffs(res.Tick)
 }
 
@@ -842,7 +850,7 @@ func TestHandoff_AFailedReplayLeavesTheEngineLive(t *testing.T) {
 	if err == nil {
 		t.Fatal("the replay of a gapped log succeeded")
 	}
-	h.tick(simtest.Move("town", "alice", "east"))
+	h.step(simtest.Move("town", "alice", "east"))
 	if n := h.e.HandoffScheduleSize(); n != 1 {
 		t.Fatalf("a live departure after a failed replay wrote %d schedule entries, want 1", n)
 	}
@@ -853,7 +861,7 @@ func TestHandoff_AFailedReplayLeavesTheEngineLive(t *testing.T) {
 	if err == nil {
 		t.Fatal("a replay that mismatched succeeded")
 	}
-	h2.tick(simtest.Move("town", "alice", "east"))
+	h2.step(simtest.Move("town", "alice", "east"))
 	if n := h2.e.HandoffScheduleSize(); n != 1 {
 		t.Fatalf("a live departure after a hash mismatch wrote %d schedule entries, want 1", n)
 	}
