@@ -12,9 +12,12 @@ failures came from load the suite doesn't make (other sessions, the local `kind`
 SPRINT-04 item 6. The change is `server/simtest` only: a `linux` CPU-time helper
 (`runtime.LockOSThread` + `getrusage(RUSAGE_THREAD)`), a wall-clock fallback elsewhere, and the stale
 `stallfactor_*_test.go` comments corrected. The six acceptance commands are at the foot of the
-ruling, and command 3 (the full `-race` suite, 20 of 20) is the binding one. If it fails, report
+ruling, and command 3 (the full `-race` suite, 20 of 20, and `make test` 5 of 5) is the binding one. If it fails, report
 here rather than loosening the limit. (As first written this said five commands, with command 2
-binding; the amendment replaced it, and the answer below is to the amended version.)
+binding; the amendment replaced it. The "For architecture" report below keeps the original
+five-command numbering: its "acceptance 4" is now command 3, its "acceptance 2" report-back clause
+is now command 3's, and its "acceptance 5" is now command 6. Only "Implementation's answer to the
+ruling" uses the six.)
 
 ## For SRE
 
