@@ -53,7 +53,9 @@ world is one command.
 3. **Given** two Characters **when** `andara-cli character list` runs **then** one line each — name,
    `live`/`dormant`, `zone/room` — sorted by name; `--output json` carries the summaries.
 4. **Given** `play --character Aldric` **when** the Session opens **then** `SelectCharacter` is called
-   before `Subscribe`'s first `look`, the ack is shown only under protocol visibility, and the
+   before `Subscribe`, and the first `look` is sent only after the stream's `Attached` frame has arrived
+   (`AW-SRV-011` AC-11; never on the response headers, and bounded by `--timeout`, past which `play`
+   fails as a connection failure rather than proceeding), the ack is shown only under protocol visibility, and the
    automatic `look`'s answer is the Room Aldric stands in (its title, then its description).
    Aldric's own arrival may be read just before it. The `BindCharacter` and the `look` apply in the
    same tick, and the arrival is Room-scoped (`AW-SRV-014` AC-5), so it reaches the Session. The
@@ -267,3 +269,9 @@ fresh stack at `cbe409e`.
 Feedback §4 (`count` on `CreateCharacterResponse`) is declined for now; the reasoning is in the
 feedback file.
 
+## Attached (architecture, 2026-10-03)
+
+AC-4's verified order is now `ListCharacters` < `SelectCharacter` < `Subscribe` < `Attached` received <
+`Submit look`, per `AW-SRV-011` AC-11 and `docs/feedback/AW-SRV-011-first-look-before-subscribe.md`.
+`TestPlay_SelectsBeforeSubscribe` flaked because the first `look` raced the stream's attach. With the
+wait it can't, and the fake Egress sends `Attached` after it records `Subscribe`.

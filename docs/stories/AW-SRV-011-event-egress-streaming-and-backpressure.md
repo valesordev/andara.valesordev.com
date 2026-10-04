@@ -60,7 +60,7 @@ connection to cost only me, so that one bad network does not lag everyone in the
    control must not become an unbounded server-side queue.
 6. **Given** a Session that reconnects with `last_event_id` **when** the requested Events are still
    within the resume window **then** the stream resumes from the next Event with no gap and no
-   duplicate; **and given** they are not **then** the stream opens with a `Resync` frame naming the
+   duplicate; **and given** they are not **then** the stream opens with `Attached` (AC-11), then a `Resync` frame naming the
    reason (`resume_window_exceeded`, or `no_history` when this process retained nothing for the
    Session) and runs live from there, rather than silently skipping. A silent gap is worse than an
    explicit resync. *(Reconciled 2026-09-21 at the flip to `review`: the sketch said "a typed
@@ -78,6 +78,14 @@ connection to cost only me, so that one bad network does not lag everyone in the
     receive their Events, because Events reach Sessions through the in-process seam and reach Kafka
     through a different subscriber to that same seam. A broker problem must not stop the game from
     being visible.
+11. **Given** any `Subscribe` **when** the egress has positioned the stream's cursor **then** the first
+    frame the client receives is `Attached{cursor_event_id}` (Event ID 0), before a `Resync`, a
+    Heartbeat or any Event. **Given** a client that submits a Command after it has received `Attached`
+    **then** the Events that Command causes, and every other Event the Session perceives from the cursor
+    on, are delivered on that stream, on a first Subscribe as on a resume. **Given** a client that has
+    received no frame yet **then** it may rely on nothing: the response headers carry no guarantee, and a
+    client must not treat them as the stream being open. *(Added 2026-10-03, #116 and #117; ruled in
+    `docs/feedback/AW-SRV-011-first-look-before-subscribe.md`.)*
 
 ## Interface contract
 
@@ -490,3 +498,17 @@ Against `origin/main` `033f2c6`, compose stack with the server image rebuilt fro
   built; `AW-CLI-004` carries the flag.
 - **Resolved 2026-09-20 (Brian): the Session availability target is 99.5 % over 28 days**, as
   proposed. `AW-SRV-014` validates it against first measurement.
+
+## Attached (architecture, 2026-10-03)
+
+A contract change after `done`, from #116 and #117. `play`'s automatic `look` could reach the server
+before the stream attached, and on a first Subscribe a cursor starts at the ring's end at attach, so an
+Event published before it was never sent. No spec said what a client may rely on before its first
+command, and the two comments that said (`play.go`: "the headers are back, so the gateway has the
+stream"; `game.go`: "a client's Subscribe call does not return until they arrive") were both wrong.
+
+**The ruling is AC-11 and `Attached attached = 23` in `event.proto`.** The egress writes `Attached`
+after it positions the cursor, from inside `Egress.Subscribe`, as it already writes `Heartbeat` and
+`Resync`, so the seam's signature doesn't change. The gateway's headers-only `stream.Send(nil)` may stay
+or go, and nothing may depend on it. `AW-CLI-007` AC-4 and `AW-SRV-030`'s egress inherit it. Implementation
+builds it as SPRINT-04 item 13, to the tests in the feedback file.
