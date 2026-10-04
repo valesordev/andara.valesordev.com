@@ -65,6 +65,8 @@ costs a minute rather than a deploy.
 1. **Given** a Builder publishing a version with a dangling Exit **when** `PublishVersion` runs **then**
    it returns `INVALID_ARGUMENT` with the same findings `AW-SRV-001` produces, no manifest is written,
    and the blobs already written are left (they are content-addressed and harmless).
+   *(Narrowed 2026-10-03, #312: the findings are those in the publisher's own blobs, as `errors.md` §1
+   rule 10 says. A cross-pack clash is one `duplicate_zone`, not a cascade.)*
 2. **Given** a valid publish **when** it completes **then** blobs exist keyed by hash, a manifest exists
    keyed `packID@version` with `parent_version` = the pack's current newest version, `approved_by` is
    empty, and the Active Pointer has not moved.
@@ -718,3 +720,14 @@ Each refusal is `INVALID_ARGUMENT` `validation`, named, audited `reject`, counte
 manifest. The mutation checks are implementation's, one per rule. The Builder-visible effect, a
 device-named Zone or file refused at publish, is documented in the guide's section 9. The compiler
 reporting it offline is `AW-CLI-010` (SPRINT-04). #267 can close.
+
+## #312: what the publish gate reports (architecture, 2026-10-03)
+
+The gate still builds one World from every active pack and the publisher's, and refuses on any
+error. What it reports and counts is `errors.md` §1 rule 10: the publisher's Zones last at the gate so
+theirs is the one that loses, findings attributed by (pack, path) and only the publisher's own reported (plus warnings the
+publish newly causes in another pack),
+one `duplicate_zone` naming both packs, no cascade. `PublishFindings` and `PublishVersionResponse.warnings` keep their
+shape. `validation_failures_total{code}`, `findings_count` and the `warn` line's `code` follow the
+reported findings. The story stays `done`. Implementation builds it as SPRINT-04 item 8, to the tests
+in `docs/feedback/312-publish-findings-scope.md`.

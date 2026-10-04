@@ -265,6 +265,14 @@ export declare type Diagnostic = Message<"andara.content.v1.Diagnostic"> & {
    * @generated from field: andara.content.v1.Severity severity = 7;
    */
   severity: Severity;
+
+  /**
+   * Set only by the publish gate, on a finding in another pack's blobs: that
+   * pack's id (errors.md §1 rule 10.6). Empty means the caller's own pack.
+   *
+   * @generated from field: string pack = 8;
+   */
+  pack: string;
 };
 
 /**

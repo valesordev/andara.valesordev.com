@@ -850,8 +850,9 @@ export declare type PublishVersionResponse = Message<"andara.admin.v1.PublishVer
   coreVersion: bigint;
 
   /**
-   * Warnings only (missing_reverse_exit, orphan_room). Errors refuse the
-   * publish and are in the status details.
+   * Warnings only (missing_reverse_exit, orphan_room), in this version's own
+   * blobs, and another pack's that this version newly causes (errors.md §1
+   * rule 10.3). Errors refuse the publish and are in the status details.
    *
    * @generated from field: repeated andara.content.v1.Diagnostic warnings = 3;
    */
@@ -1388,7 +1389,10 @@ export declare const Admin: GenService<{
   /**
    * Validate the blobs as one pack and write its version manifest. Findings
    * that refuse the publish are INVALID_ARGUMENT, carried in the status
-   * details as PublishFindings. Warnings return in the response.
+   * details as PublishFindings. Warnings return in the response. Both are
+   * the publisher's own, apart from an error the publish causes in another
+   * pack's blobs. A cross-pack Zone clash is reported once, at the
+   * publisher's declaration (errors.md §1 rule 10).
    *
    * @generated from rpc andara.admin.v1.Admin.PublishVersion
    */

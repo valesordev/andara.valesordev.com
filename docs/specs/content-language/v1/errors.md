@@ -57,7 +57,7 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
 3. **End of input is the position one past the final character.** A file that ends mid-declaration
    reports at end-of-file rather than at the opening brace; `scripts/content_grammar_check.py`
    computes it the same way and the syntax sidecars say so.
-4. **Every finding is printed, not just the first.** A Builder fixing ten broken exits should need
+4. **Every finding is printed, not just the first** (rule 10.4 is the one place the publish gate holds back). A Builder fixing ten broken exits should need
    one compile, not ten — the rule `AW-SRV-001` already set for boot. Parsing is the exception: a
    syntax error stops the parse of that file, so a file produces at most one `syntax_error`. Other
    files in the pack are still parsed and still report. Encoding is the other exception, and a
@@ -86,6 +86,67 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
    was kept. `duplicate_pack` is pack-level (its chain is empty), so it is reported once, at the
    **first** `pack` declaration in sorted file order, with both files in the message.
 9. **A cycle is one finding**, positioned at its lowest-named member, whichever file that is in.
+10. **The publish gate reports what the publisher can fix** (`AW-SRV-013`, ruled 2026-10-03, #312).
+    `CheckPublish` builds one World from every active pack's blobs and the publisher's, and refuses on
+    any error in it. This rule is about **Zones**, the one name that is shared across packs.
+    Templates are named under their pack (`ErrPackMismatch`), so they can't clash across packs. What
+    the gate **reports** is narrower than what it refuses:
+    1. **Incumbents first, at the gate only.** The gate's inputs are the active packs' Zones in
+       sorted pack order, then the publisher's. `inputsOf` sorts every pack by name today, so a
+       publisher whose name sorts first (`sre.verify` before `town`) keeps its Zone and the
+       incumbent's is the one dropped. That is the cascade in #312. With the publisher last, rule 8's
+       "the one that lost" is always the publisher's, and the incumbent stays whole. Boot, load,
+       activation and `content validate` keep sorted-by-name order. A publish never breaks a pack
+       that is already active.
+    2. **Attribution is by (pack, path).** Two packs can both have a `town.json`, and
+       `sim.Input.File` is the path alone. The gate tags every input with its pack when it builds
+       them, and attributes each finding and warning through that tag. A path filter is wrong.
+    3. **Only the publisher's own, and what the publish newly causes.** An error attributed to another
+       pack is not reported, except as rule 10.6 says. A warning attributed to another pack is reported
+       only if it is **new**: the gate builds the World in effect as well as the World with this
+       version, and a warning in the second and not the first (keyed by pack, file, code, and the Zone, Room and Exit it names, since the sim's `Chain` is empty for a reverse-exit warning)
+       is the publish's doing, such as a removed reverse Exit that leaves an active pack's Exit
+       one-way. It is reported in 10.6's form (`pack` set, empty chain, `line` and `col` `0`), in
+       `PublishVersionResponse.warnings`. A warning in both is the other pack's own, shown when that
+       pack publishes and not at every publish after it. This is on the success path only, since
+       rule 7 reports no warnings beside an error.
+    4. **Root only, across packs.** A cross-pack `duplicate_zone` drops the publisher's whole Zone and
+       is reported once. Findings that exist only because that Zone was dropped are not reported: its
+       Rooms are not `duplicate_room`, and an Exit, in any of the publisher's Zones, into the dropped
+       Zone's id whose target **Room is declared in the dropped Zone** is not `unknown_room` (the
+       Builder meant their own Zone, and it will resolve once the clash is fixed). An Exit into that
+       id whose target Room is declared in neither the incumbent nor the dropped Zone is still
+       reported, because the clash doesn't explain it. `unknown_zone` can't arise from the clash,
+       since the id still exists. Ordering doesn't do this. It's a filter over the dropped Zone's
+       declared Rooms. The finding's `Zone`, `Room` and `Exit` name the *source* Exit, and its target
+       is only in the message, so the gate finds the target by looking the Exit up in the
+       publisher's resolved Zone definitions (or a `Target` field is added to `sim.ValidationError`),
+       applying `build.go`'s default that an empty target Zone means the Exit's own Zone. It never
+       parses `Detail`. The suppressed findings show after the clash is fixed, at the cost of one more
+       publish round (rule 4's "every finding is printed" yields to this). Two files of one pack
+       declaring the same Zone keep rule 4: `duplicate_room` is reported too.
+    5. **The message names both packs.** A cross-pack `duplicate_zone` reads
+       `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
+       the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
+    6. **An error in another pack's blobs** (for example a new version that removes a Zone another pack
+       exits into, or `content.strict_orphans` making a pack's `orphan_room` an error) still refuses
+       the publish, whatever its cause, since the gate can't tell a caused error from one already
+       there. It is reported with `Diagnostic.pack` set to that pack's id, `file` as its blob path, an
+       **empty chain**, and `line` and `col` `0`. `andara-cli` takes a non-empty `pack` as the mark
+       of a foreign finding, and nothing else: it doesn't place it by chain, and it prints
+       `<pack>/<file>: <code> <message>`, with no position. The publisher's own pack-level findings
+       (`pack_mismatch`, a syntax error with no position) have an empty `pack` and keep printing as
+       the publisher's. `--output json` carries `pack`. The gate refuses if and only if the build
+       has an error, and a refusal never has zero findings: every error not removed by rule 10.4 is
+       reported, under this rule when it is another pack's. No instance of a caused one is known. If
+       one is seen, it goes to architecture.
+
+    The counts follow the report: `validation_failures_total{code}` and the audit record's
+    `findings_count` count reported findings, and the refusal's `warn` line carries the first
+    reported finding's `code`. Rule 1's "a finding with `line: 0` is a defect" has rule 10.6 as its
+    one exception, and the corpus is unaffected, since it compiles one pack at a time. Rule 10 doesn't
+    reach activation: a version published beside a rival that was not yet active when it passed the
+    gate can still show the old cascade when the second is activated.
 
 ### Where the position lands
 

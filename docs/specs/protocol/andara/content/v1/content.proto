@@ -106,6 +106,9 @@ message Diagnostic {
   // The declaration chain, outermost first.
   repeated string chain = 6;
   Severity severity = 7;
+  // Set only by the publish gate, on a finding in another pack's blobs: that
+  // pack's id (errors.md §1 rule 10.6). Empty means the caller's own pack.
+  string pack = 8;
 }
 
 enum Severity {
