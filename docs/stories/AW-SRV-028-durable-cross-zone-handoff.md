@@ -68,21 +68,29 @@ body can't depart; `Goto` is in scope.*
 - **The dedup rule: marks, which depend on no time and no ordering.** `ZoneState.Placed`: for each Entity
   that has been decided in this Zone by handoff, the highest `handoff_seq` decided here, hashed, sorted, kept
   for good. A handoff sequence only grows along an Entity's life, so an `Arrive(e, s)` is decided by this
-  Zone's own state:
-  - `s` is at or below `Placed[e]` and the Zone holds `e` with stored `handoff_seq == s`: a retry of a handoff
-    already placed. Re-ack, change nothing.
-  - `s` equals the mark and the mark records a **rejection** (`AW-SRV-027`): a retry of a handoff already
-    rejected. Reissue the same `HandoffRejected`, never an ack, and place nothing. Acking it would make the
-    source drop a record whose Entity the target never placed and the source never restored.
-  - `s` is at or below `Placed[e]` otherwise: stale, a retry that overtook the Entity's next move, however
-    late it comes. Ack it, place nothing, count it. It emits no Event and no `CommandRejected`.
-  - `s` is above `Placed[e]` and the Zone holds `e`: an invariant violation, rejected `entity_present`
-    (post-log), with an `error` logged. It can't happen with sequences that only grow.
-  - `s` is above `Placed[e]`, or `e` has no mark: a new handoff. Place it, set `Placed[e] = s`, ack.
-  - `s` is 0: malformed, rejected `invalid_arrival`. So is an `Arrive` whose `handoff_seq` differs from its
-    `entity.handoff_seq`, and one with no `entity` or an empty `entity.id`.
-  - The Zone holds `e` in its own `Transit` with a sequence at or above `s`: rejected `entity_present`
-    (only a misrouted `Arrive` gets here; a lower sequence is the implicit ack below).
+  Zone's own state, **in this order, and the first case that matches decides it**:
+  1. **Malformed:** `s` is 0, or the `Arrive`'s `handoff_seq` differs from its `entity.handoff_seq`, or it has
+     no `entity` or an empty `entity.id`: rejected `invalid_arrival`, nothing placed.
+  2. **By the mark, whatever else the Zone holds** (`s` at or below `Placed[e]`):
+     - `s` equals the mark and the mark records a **rejection** (`AW-SRV-027`): a retry of a handoff already
+       rejected. Reissue the same `HandoffRejected`, never an ack, and place nothing. Acking it would make the
+       source drop a record whose Entity the target never placed and the source never restored.
+     - the Zone holds `e` with stored `handoff_seq == s`: a retry of a handoff already placed. Re-ack, change
+       nothing.
+     - otherwise: stale, a retry that overtook the Entity's next move, however late it comes. Ack it, place
+       nothing, count it. It emits no Event and no `CommandRejected`. **This applies while the Zone holds `e` in
+       its own `Transit` too**: after A→B (seq 1), B placed `e` and acked, the ack was lost, and B moved `e` on
+       (`Transit(e, 2)`), A's late retry of seq 1 is stale and acked, not rejected. The ack is what lets A drop
+       its record.
+  3. **Above the mark** (`s` is above `Placed[e]`, or `e` has no mark):
+     - the Zone holds `e` in `Entities`, or in its own `Transit` with a sequence at or above `s`: an invariant
+       violation, rejected `entity_present` (post-log), with an `error` logged. Only a misrouted `Arrive`
+       reaches it, since sequences only grow and a Zone that held `e` at or above `s` has a mark for it
+       unless `e` began there;
+     - the Zone holds `e` in its own `Transit` with a lower sequence: the implicit ack below, and then the
+       arrival is decided again, once: the second pass can only be a new handoff, since `Entities` and `Transit`
+       are exclusive within a Zone;
+     - otherwise a new handoff: place it, set `Placed[e] = {s, rejected: false}`, ack.
   `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark and records the rejection,
   so a retry that follows gets the same `HandoffRejected` and a restore at home can't be undone by one. A
   placement sets `Placed[e]` to `{s, rejected: false}`, so the flag always describes the current mark. The mark is kept for good, so a retry produced by a
@@ -94,7 +102,8 @@ body can't depart; `Goto` is in scope.*
   Pruning by proof is deferred (below).
 - **Implicit ack.** An `Arrive(e, s)` into a Zone that still holds `e` in its own `Transit` with a lower
   `handoff_seq` proves the target placed `e` and moved it on. The Zone drops that transit record and then
-  decides the arrival by the rule above.
+  decides the arrival by the rule above. It applies only to an `Arrive` above the mark (case 3); at or below
+  the mark the Arrive is stale and no such record can exist.
 - **Retry with backoff, held in memory.** The live tick loop calls `Engine.DueHandoffs(tick)` after `Step`,
   and produces what it returns: the `Arrive` for the transit records that are due, at most
   `sim.handoff_retry_batch` of them per call (default 50), earliest due first (a record with no entry sorts
@@ -217,7 +226,9 @@ body can't depart; `Goto` is in scope.*
    `seq k+1` **when** B applies it **then** it is stale: nothing is placed and it is acked. **And given** that
    retry reaches B after a thousand ticks more than any retry window, or from a source process that
    restarted after B's first ack **then** the outcome is the same, because B's mark for the Entity is
-   `k` and nothing prunes it.
+   `k` and nothing prunes it. **And given** B moved the Entity on and so holds `Transit(e, k+1)` when the
+   retry of `k` arrives (the ack was lost) **then** it is stale-acked, with no `entity_present` rejection, no
+   `error` log and no Event, and A drops its record.
 5. **Given** the Character moved A→B→C→B (seq `k`, `k+1`, `k+2`) **when** a retry of `Arrive(seq k)` reaches
    B while it holds the Entity at `k+2` **then** it is stale. **And given** two Entities, X decided in B at
    seq 5 and Y arriving at B at seq 1 for the first time **then** Y is placed: a mark is per Entity, not per
@@ -239,8 +250,9 @@ body can't depart; `Goto` is in scope.*
    is applied. This holds for a verb, `UnbindCharacter` and `MarkLinkdead`. **And given** a linkdead
    actor **when** a `Move` or `Goto` applies **then** it is rejected `actor_linkdead` and the body stays.
 9. **Given** an `Arrive` for an Entity the Zone holds, with `s` above the Zone's mark for it **then** it is
-   rejected `entity_present`, and so is one for an Entity the Zone holds in its own `Transit` at a sequence
-   at or above `s`; **and given** `s == 0`, an `Arrive.handoff_seq` that differs from its
+   rejected `entity_present`, and so is one with `s` above the mark for an Entity the Zone holds in its own
+   `Transit` at a sequence at or above `s`; **and given** `s` at or below the mark with the Zone holding the
+   Entity in its own `Transit` **then** it is stale-acked, not rejected (AC-4); **and given** `s == 0`, an `Arrive.handoff_seq` that differs from its
    `entity.handoff_seq`, or no `entity` or an empty `entity.id` **then** it is rejected `invalid_arrival`;
    all place nothing.
 10. **Given** `EntityState` gains a field in a later story **when** the round-trip test runs without the
@@ -250,8 +262,9 @@ body can't depart; `Goto` is in scope.*
     source hasn't applied the ack **then** the Bind finds it in `Entities`, where it is. Across the whole
     exchange no Zone pair holds two `Entities` with one ID, asserted by a scan, and the `Transit` and
     `Entities` copies coexist only until the ack is applied.
-12. **Given** an `Arrive(e, s)` at a Zone that holds `e` in its own `Transit` with a lower seq **when**
-    applied **then** the transit record is dropped and the arrival is decided by the dedup rule.
+12. **Given** an `Arrive(e, s)` with `s` above the Zone's mark for `e`, at a Zone that holds `e` in its own
+    `Transit` with a lower seq **when** applied **then** the transit record is dropped and the arrival is
+    decided by the dedup rule, once.
 13. **Given** a Zone with `Transit` records and `Placed` marks **when** it is snapshotted and restored **then**
     `HashZone` is identical, and `BodyStateHash` refuses a body with an unsorted or duplicated `transit` or
     `placed`, a `placed` mark of 0, a `rejected` mark whose Entity is also held at that sequence, an Entity in both `entities` and `transit` of one Zone, or a `transit`
@@ -362,7 +375,8 @@ the same reset, `make world-reset ENV=dev CONFIRM=andara-dev`, and the PR says s
   through a lost `Arrive` isn't expressible as a product command (CLAUDE.md §9); AC-2's integration test
   stands for it. A flag is a follow-up, with the player-facing text for `in_transit`.
 
-Mutation checks to record: dropping the mark check makes AC-4 fail; treating a mark as removable by time
+Mutation checks to record: dropping the mark check makes AC-4 fail; deciding the own-`Transit` case before
+the mark makes AC-4's lost-ack case fail; treating a mark as removable by time
 makes AC-4's second half fail; a per-Zone scalar in place of the per-Entity mark makes AC-5's two-Entity
 case fail; matching an ack by Entity alone makes AC-14 fail; letting a Bind search only `Entities`, or only
 `Transit`, makes AC-11 fail; producing retries while the source is faulted makes AC-7 fail; dropping the
