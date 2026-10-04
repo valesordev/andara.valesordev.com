@@ -58,7 +58,9 @@ func renderEvent(env *gamev1.EventEnvelope) []string {
 		// The message, verbatim: it is player-facing by contract
 		// (AW-SRV-003), and the code is for scripts, not people.
 		return []string{p.CommandRejected.GetMessage()}
-	case *gamev1.EventEnvelope_Heartbeat:
+	case *gamev1.EventEnvelope_Heartbeat, *gamev1.EventEnvelope_Attached:
+		// Stream plumbing, not a thing that happened: no line. --output
+		// json still carries both.
 		return nil
 	case *gamev1.EventEnvelope_Resync:
 		return []string{"You may have missed some events; the world continues from here."}

@@ -63,7 +63,7 @@ func TestRender_RecordingCoversTheTable(t *testing.T) {
 	for _, env := range recordedEvents(t, filepath.Join("testdata", "play", "events.jsonl")) {
 		seen[eventName(env)] = true
 	}
-	for _, want := range []string{"RoomDescribed", "CharacterArrived", "CharacterLeft", "CommandRejected", "Heartbeat", "Resync", "ZoneFaulted", "SubscriberDropped", "SimulationStopped",
+	for _, want := range []string{"RoomDescribed", "CharacterArrived", "CharacterLeft", "CommandRejected", "Heartbeat", "Attached", "Resync", "ZoneFaulted", "SubscriberDropped", "SimulationStopped",
 		"CharacterLinkdead", "CharacterReconnected", "CharacterDespawned"} {
 		if !seen[want] {
 			t.Errorf("the recording has no %s", want)

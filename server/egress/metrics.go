@@ -30,6 +30,7 @@ const (
 const (
 	TypeHeartbeat = "heartbeat"
 	TypeResync    = "resync"
+	TypeAttached  = "attached"
 )
 
 // Resync reasons, Resync.reason and the `reason` label of
@@ -106,6 +107,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	m.Sent.WithLabelValues(TypeHeartbeat)
 	m.Sent.WithLabelValues(TypeResync)
+	m.Sent.WithLabelValues(TypeAttached)
 	for _, r := range []string{ReasonBufferFull, ReasonClientGone, ReasonDraining, ReasonRevoked} {
 		m.Drops.WithLabelValues(r)
 	}

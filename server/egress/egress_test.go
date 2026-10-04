@@ -150,9 +150,21 @@ type client struct {
 	done   chan error
 	sendMu sync.Mutex
 	inSend bool
+	// raw leaves the stream's first frame, Attached, to the test: the
+	// ordering tests assert on it. Otherwise subscribe reads it and keeps
+	// it in attached, so next() starts at what follows.
+	raw      bool
+	attached *gamev1.EventEnvelope
+	// onAttached runs inside Send, as the Attached frame is written and
+	// before Send returns: the egress is then at the point a client that
+	// reacts to Attached is, with the writer held.
+	onAttached func()
 }
 
 func (c *client) Send(env *gamev1.EventEnvelope) error {
+	if c.onAttached != nil && env.GetAttached() != nil {
+		c.onAttached()
+	}
 	if c.block != nil {
 		c.sendMu.Lock()
 		c.inSend = true
@@ -174,6 +186,10 @@ func (c *client) Send(env *gamev1.EventEnvelope) error {
 	}
 }
 
+// rawStream is subscribe's mutate for a test that reads the stream's first
+// frame itself, or holds the Subscribe mid-way and never reaches it.
+func rawStream(c *client) { c.raw = true }
+
 // subscribe opens a stream for session with last, on a fresh Session
 // lifetime unless one is given.
 func (f *fixture) subscribe(session string, p auth.Principal, last uint64, world bool, mutate func(*client)) *client {
@@ -185,6 +201,24 @@ func (f *fixture) subscribe(session string, p auth.Principal, last uint64, world
 	go func() {
 		c.done <- f.e.subscribe(c.ctx, session, p, c.ended, &gamev1.SubscribeRequest{SessionId: session, LastEventId: last, World: world}, c)
 	}()
+	if c.raw || c.block != nil {
+		return c
+	}
+	// Every stream opens with Attached (AW-SRV-011 AC-11), the one frame
+	// before which a client may rely on nothing. A stream that ends before
+	// it attaches (a refused world scope, a closed Session) never sends it:
+	// the error goes back for the test to read.
+	select {
+	case env := <-c.recv:
+		if env.GetAttached() == nil || env.GetEventId() != 0 {
+			f.t.Fatalf("first frame = %v, want Attached with event_id 0", env)
+		}
+		c.attached = env
+	case err := <-c.done:
+		c.done <- err
+	case <-time.After(5 * time.Second):
+		f.t.Fatal("no Attached within 5s")
+	}
 	return c
 }
 

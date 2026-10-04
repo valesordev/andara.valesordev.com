@@ -183,6 +183,18 @@ func (s *stack) open(c gamev1connect.GameClient, token string, entity string, zo
 	return resp.Msg.SessionId
 }
 
+// attached reads the stream's first frame, which is Attached on every stream
+// (AW-SRV-011 AC-11), and fails the test if it is anything else.
+func attached(t *testing.T, st *connect.ServerStreamForClient[gamev1.EventEnvelope]) {
+	t.Helper()
+	if !st.Receive() {
+		t.Fatalf("stream ended before Attached: %v", st.Err())
+	}
+	if st.Msg().GetAttached() == nil || st.Msg().GetEventId() != 0 {
+		t.Fatalf("first frame = %v, want Attached with event_id 0", st.Msg())
+	}
+}
+
 // emit publishes one RoomDescribed to the plaza, with padding bytes of
 // description, and flushes the fan-out. It returns the Event ID and how
 // long Publish, the tick's part, took.
@@ -275,10 +287,12 @@ func TestStalledStream_ResetKeepsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, stalled)
 	healthy, err := healthyClient.Subscribe(context.Background(), connect.NewRequest(&gamev1.SubscribeRequest{SessionId: healthyID}))
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, healthy)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 2 }, "both subscribed")
 	first, _ := s.emit(16)
 	if !stalled.Receive() || !healthy.Receive() {
@@ -330,6 +344,7 @@ func TestStalledStream_ResetKeepsSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, again)
 	if !again.Receive() {
 		t.Fatalf("resubscribe: %v", again.Err())
 	}
@@ -377,10 +392,12 @@ func TestStalledSocket_EndsStream(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, stalled)
 	healthy, err := healthyClient.Subscribe(context.Background(), connect.NewRequest(&gamev1.SubscribeRequest{SessionId: healthyID}))
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, healthy)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 2 }, "both subscribed")
 	s.emit(16)
 	if !stalled.Receive() || !healthy.Receive() {
@@ -457,6 +474,7 @@ func TestDropConnection_TearsDownSessions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// droppingEgress closes the connection and sends nothing, Attached included.
 	for stream.Receive() {
 	}
 	if stream.Err() == nil {
@@ -475,6 +493,7 @@ func TestDrain_EndsStreamTyped(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, stream)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "stream open")
 	if err := s.srv.Shutdown(context.Background()); err != nil {
 		t.Fatal(err)
@@ -504,6 +523,7 @@ func TestRevoked_StreamEndsWithFrame(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, stream)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "stream open")
 	s.v.revoke.Store(true)
 	if !stream.Receive() {
@@ -543,6 +563,7 @@ func TestFanout_500Streams(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		attached(t, st)
 		streams[i] = st
 	}
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == n }, "500 subscribed")
@@ -607,6 +628,7 @@ func TestWorld_Gateway(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, world)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "gm subscribed")
 	id, _ := s.emit(16)
 	if !world.Receive() || world.Msg().GetEventId() != id {
@@ -649,6 +671,7 @@ func TestEventsFlowWhenPublisherFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	attached(t, stream)
 	waitFor(t, func() bool { return gauge(t, s.eg.Metrics().Streams) == 1 }, "subscribed")
 	source.Push(simtest.Look("town", "alice"))
 	if !stream.Receive() {

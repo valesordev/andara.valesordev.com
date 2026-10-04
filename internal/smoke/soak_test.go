@@ -124,6 +124,9 @@ func TestSoak_SubscribeStaysOpen(t *testing.T) {
 		t.Fatalf("Subscribe through the edge: %v", err)
 	}
 	started := time.Now()
+	if !stream.Receive() || stream.Msg().GetAttached() == nil {
+		t.Fatalf("first frame through the edge = %v / %v, want Attached", stream.Msg(), stream.Err())
+	}
 	ended := make(chan error, 1)
 	go func() {
 		for stream.Receive() {

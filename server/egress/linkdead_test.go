@@ -266,7 +266,7 @@ func TestLinkdead_FailedFirstSubscribeRacingThePark(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.place("s1", "aldric", "town", "plaza")
-	a := f.subscribe("s1", player, 0, false, nil)
+	a := f.subscribe("s1", player, 0, false, rawStream)
 	<-inObserver
 
 	parked := make(chan struct{})
@@ -343,12 +343,12 @@ func TestLinkdead_FailedFirstSubscribeLeavesAConcurrentOneTracked(t *testing.T) 
 		t.Fatal(err)
 	}
 	f.place("s1", "aldric", "town", "plaza")
-	a := f.subscribe("s1", player, 0, false, nil)
+	a := f.subscribe("s1", player, 0, false, rawStream)
 	<-inFirst
 	f.e.mu.Lock()
 	s := f.e.sessions["s1"]
 	f.e.mu.Unlock()
-	b := f.subscribe("s1", player, 0, false, nil)
+	b := f.subscribe("s1", player, 0, false, rawStream)
 	// The second is committed to the state before the first lets go.
 	waitFor(t, func() bool {
 		f.e.mu.Lock()
@@ -399,7 +399,7 @@ func TestLinkdead_RebindLeavesNeverSubscribedStateAlone(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.place("s1", "aldric", "town", "plaza")
-	a := f.subscribe("s1", player, 0, false, nil)
+	a := f.subscribe("s1", player, 0, false, rawStream)
 	<-inObserver
 	f.e.mu.Lock()
 	s := f.e.sessions["s1"]

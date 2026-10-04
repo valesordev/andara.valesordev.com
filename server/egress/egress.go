@@ -187,12 +187,21 @@ func (e *Egress) subscribe(ctx context.Context, sessionID string, principal auth
 	if err != nil {
 		return connectError(err)
 	}
-	st, resync, err := sess.attach(ctx, req.GetLastEventId())
+	st, resync, cursor, err := sess.attach(ctx, req.GetLastEventId())
 	if err != nil {
 		return connectError(err)
 	}
 	e.metrics.Streams.Inc()
 	err = func() error {
+		// The stream's open signal (AW-SRV-011 AC-11): sent after attach has
+		// positioned the cursor and before anything else, a Resync included.
+		// A client that submits a Command once it has this frame gets that
+		// Command's Events. Event ID 0, so lastSent and lastEvent stay as the
+		// resume left them.
+		attached := &gamev1.EventEnvelope{Tick: e.opts.LastTick(), Payload: &gamev1.EventEnvelope_Attached{Attached: &gamev1.Attached{CursorEventId: cursor}}}
+		if err := st.send(out, frame{typ: TypeAttached, env: attached}); err != nil {
+			return st.sendErr(err)
+		}
 		if resync != "" {
 			span.SetAttributes(attribute.String("stream.resync", resync))
 			e.metrics.Resyncs.WithLabelValues(resync).Inc()
@@ -687,16 +696,25 @@ func (s *session) pump(sub *events.Subscription) {
 // attach opens a stream on the Session: one at a time. It resolves the
 // resume point and reports the Resync reason when there is one. A Session
 // in the drop state leaves it here: the client reopened.
-func (s *session) attach(ctx context.Context, last uint64) (*stream, string, error) {
+func (s *session) attach(ctx context.Context, last uint64) (*stream, string, uint64, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.stream != nil {
-		return nil, "", ErrAlreadySubscribed
+		return nil, "", 0, ErrAlreadySubscribed
 	}
 	if s.hubEnded {
-		return nil, "", hubEnded(s.reason)
+		return nil, "", 0, hubEnded(s.reason)
 	}
 	seq, resync := s.hist.resume(last)
+	// Attached.cursor_event_id: last_event_id when a resume holds, else the
+	// newest Event retained (0 if none). Read under the lock the cursor is
+	// positioned under, so the first Event the stream delivers has a greater
+	// ID. After a reset newest is 0 while the floor is above 0, and a new
+	// Event's ID is still greater than both.
+	cursor := s.hist.newest
+	if resync == "" && last != 0 {
+		cursor = last
+	}
 	if s.adopted {
 		// A reconnect's first stream: a resume the linkdead Session's ring
 		// could not honor says the window is too small for the grace
@@ -715,7 +733,7 @@ func (s *session) attach(ctx context.Context, last uint64) (*stream, string, err
 		s.inDrop = false
 		s.e.metrics.InDropState.Dec()
 	}
-	return st, resync, nil
+	return st, resync, cursor, nil
 }
 
 // detach closes the stream on the Session, entering the drop state when

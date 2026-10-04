@@ -1,3 +1,4 @@
+{"tick":"9","attached":{"cursor_event_id":"0"}}
 {"event_id":"1","tick":"10","client_ref":"r-1","room_described":{"zone_id":"town","room_id":"square","title":"Town Square","description":"A wide square of worn flagstones, ringed by shuttered stalls.","exits":["east","north","west"],"occupants":["Mara","Tobin"]}}
 {"event_id":"2","tick":"11","room_described":{"zone_id":"town","room_id":"cell","title":"Bare Cell","description":"Four walls and nothing else.","exits":[]}}
 {"event_id":"3","tick":"12","client_ref":"r-2","character_left":{"zone_id":"town","room_id":"square","character_name":"Mara","to_direction":"north"}}

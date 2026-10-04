@@ -300,6 +300,12 @@ func subscribe(ctx context.Context, t *testing.T, game gamev1connect.GameClient,
 		t.Fatal(err)
 	}
 	es := &eventStream{events: make(chan *gamev1.EventEnvelope, 64), errs: make(chan error, 1)}
+	// Every stream opens with Attached (AW-SRV-011 AC-11): the frame before
+	// which a client may rely on nothing. Wait for it, so a Command the test
+	// submits next has its Events on this stream.
+	if !stream.Receive() || stream.Msg().GetAttached() == nil {
+		t.Fatalf("first frame = %v / %v, want Attached", stream.Msg(), stream.Err())
+	}
 	go func() {
 		for stream.Receive() {
 			es.events <- stream.Msg()

@@ -281,9 +281,9 @@ func TestPlay_SelectsBeforeSubscribe(t *testing.T) {
 		t.Fatalf("exit=%d\nstdout:\n%s\nstderr:\n%s", res.exit, res.stdout, res.stderr)
 	}
 	calls := w.called()
-	sel, sub, look := indexOf(calls, "SelectCharacter:ch-aldric"), indexOf(calls, "Subscribe"), indexOf(calls, "Submit:look")
-	if sel < 0 || sub < 0 || look < 0 || sel >= sub || sub >= look {
-		t.Fatalf("calls out of order: %v", calls)
+	sel, sub, att, look := indexOf(calls, "SelectCharacter:ch-aldric"), indexOf(calls, "Subscribe"), indexOf(calls, "Attached"), indexOf(calls, "Submit:look")
+	if sel < 0 || sub < 0 || att < 0 || look < 0 || sel >= sub || sub >= att || att >= look {
+		t.Fatalf("calls out of order, want SelectCharacter < Subscribe < Attached < Submit:look: %v", calls)
 	}
 	var player []string
 	for _, l := range strings.Split(strings.TrimSpace(res.stdout), "\n") {

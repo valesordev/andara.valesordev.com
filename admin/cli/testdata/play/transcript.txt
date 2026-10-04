@@ -1,3 +1,6 @@
+# Attached event_id=0 tick=9 client_ref=""
+(nothing)
+
 # RoomDescribed event_id=1 tick=10 client_ref="r-1"
 Town Square
 A wide square of worn flagstones, ringed by shuttered stalls.

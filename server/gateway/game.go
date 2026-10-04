@@ -148,10 +148,12 @@ func (g *gameService) Subscribe(ctx context.Context, req *connect.Request[gamev1
 	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
 	defer cancel()
 	// Flush the response headers now, before there is anything to send.
-	// Connect writes them with the first message, and a client's Subscribe
-	// call does not return until they arrive — so a quiet world would look
-	// like a stream that never opened. A nil send is Connect's way to say
-	// "headers only".
+	// Connect writes them with the first message; the egress's first
+	// message is Attached, so this only makes the client's Subscribe call
+	// return a moment sooner. It is not the stream's open signal: headers
+	// carry no guarantee about the egress, and the same handler serves
+	// Connect, gRPC and gRPC-Web (ADR-0003). Attached is, AW-SRV-011 AC-11.
+	// A nil send is Connect's way to say "headers only".
 	if err := stream.Send(nil); err != nil {
 		return err
 	}

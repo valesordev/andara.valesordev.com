@@ -10,6 +10,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -55,9 +56,12 @@ type world struct {
 	createAnswer func(name string) error
 	answer       func(w *world, req *gamev1.SubmitRequest) (*gamev1.SubmitResponse, error)
 	frames       chan frame
-	nextID       atomic.Uint64
-	offset       atomic.Int64
-	streams      atomic.Int32
+	// noAttached makes Subscribe skip the Attached frame, as a server
+	// built before AW-SRV-011 AC-11 would.
+	noAttached bool
+	nextID     atomic.Uint64
+	offset     atomic.Int64
+	streams    atomic.Int32
 }
 
 type frame struct {
@@ -141,9 +145,21 @@ func (w *world) Subscribe(ctx context.Context, _ *gateway.Session, req *gamev1.S
 	w.mu.Lock()
 	w.subs = append(w.subs, req)
 	w.calls = append(w.calls, "Subscribe")
+	noAttached := w.noAttached
 	w.mu.Unlock()
 	w.streams.Add(1)
 	defer w.streams.Add(-1)
+	if !noAttached {
+		// The open signal (AW-SRV-011 AC-11), recorded before it is sent: a
+		// client submits its first look only once it has arrived, so
+		// Subscribe < Attached < Submit:look holds in calls by construction.
+		w.mu.Lock()
+		w.calls = append(w.calls, "Attached")
+		w.mu.Unlock()
+		if err := stream.Send(&gamev1.EventEnvelope{Tick: 7, Payload: &gamev1.EventEnvelope_Attached{Attached: &gamev1.Attached{CursorEventId: req.GetLastEventId()}}}); err != nil {
+			return err
+		}
+	}
 	if req.GetLastEventId() != 0 {
 		// Nothing is retained across a test server's restart, and this
 		// fake retains nothing at all: every resume is a Resync.
@@ -950,4 +966,60 @@ func TestPlay_RefreshesAnExpiredToken(t *testing.T) {
 	if res.exit != ExitConnect {
 		t.Fatalf("exit=%d, want %d: %s", res.exit, ExitConnect, res.stderr)
 	}
+}
+
+// AW-SRV-011 AC-11, the client's half: a server that never sends Attached
+// doesn't start. play waits --timeout for the stream's open signal and then
+// fails with exit 4 (error.code timeout), sends no look, and doesn't retry:
+// with --reconnect too, since reopening would only wait --timeout again.
+func TestPlay_NoAttachedIsATimeout(t *testing.T) {
+	for _, reconnect := range []bool{false, true} {
+		t.Run(fmt.Sprintf("reconnect=%v", reconnect), func(t *testing.T) {
+			w := newWorld()
+			w.noAttached = true
+			_, env := playServer(t, w, nil)
+
+			args := []string{"--timeout", "300ms", "--output", "json"}
+			if reconnect {
+				args = append(args, "--reconnect")
+			}
+			start := time.Now()
+			// A client that retried instead of failing would never return,
+			// so the call has a deadline of its own to name that.
+			done := make(chan runResult, 1)
+			go func() { done <- play(t, env, strings.NewReader(""), args...) }()
+			var res runResult
+			select {
+			case res = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("play did not exit within 10s of a 300ms --timeout: it retried the stream instead of failing")
+			}
+			if res.exit != ExitTimeout {
+				t.Fatalf("exit=%d, want %d\nstdout:\n%s\nstderr:\n%s", res.exit, ExitTimeout, res.stdout, res.stderr)
+			}
+			if code := jsonErrorCode(t, res.stdout); code != CodeTimeout {
+				t.Errorf("error.code = %q, want %q\n%s", code, CodeTimeout, res.stdout+res.stderr)
+			}
+			if took := time.Since(start); took < 300*time.Millisecond || took > 5*time.Second {
+				t.Errorf("took %s, want it to fail at --timeout (300ms)", took)
+			}
+			calls := w.called()
+			if got := countOf(calls, "Subscribe"); got != 1 {
+				t.Errorf("Subscribe called %d times, want one and no retry: %v", got, calls)
+			}
+			if indexOf(calls, "Submit:look") >= 0 {
+				t.Errorf("a look was sent without Attached: %v", calls)
+			}
+		})
+	}
+}
+
+func countOf(calls []string, call string) int {
+	n := 0
+	for _, c := range calls {
+		if c == call {
+			n++
+		}
+	}
+	return n
 }
