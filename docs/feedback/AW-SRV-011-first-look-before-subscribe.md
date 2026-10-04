@@ -38,3 +38,68 @@ A CLI-only fix (waiting for headers) narrows the window but doesn't close it. Th
 the real gateway with a fake Egress (`admin/cli/play_test.go`), which records `Subscribe` only when
 `Egress.Subscribe` is entered, after the headers flush. So any ruling also needs the test or the fake
 made deterministic. Implementation's item 13 waits on this ruling.
+
+## Architecture: the ruling (2026-10-03)
+
+**Option 3, in-band: every `Subscribe` stream's first frame is `Attached`, written by the egress after
+it positions the stream's cursor.** Options 1 and 2 aren't taken, and option 4 is rejected.
+
+**What a client may rely on.**
+- **Before the first frame: nothing.** The response headers carry no guarantee. They aren't a signal that
+  the stream is open, and `play.go`'s and `game.go`'s comments saying otherwise are wrong.
+- **After `Attached`:** every Event the Session perceives from the cursor on is delivered, including the
+  Events a Command submitted after the frame arrived causes. The cursor is set before the frame is
+  written, so a Command submitted after the frame enters the log after the cursor and its Events are past it.
+  This holds on a first Subscribe (`last_event_id` 0) as on a resume.
+- **Order of frames:** `Attached`, then `Resync` when the resume can't hold, then Heartbeats and Events.
+  `Attached{cursor_event_id}` is the Event ID the stream is already past: `last_event_id` on a resume that
+  holds, the ring's end on a first Subscribe, `0` with nothing retained.
+
+**Why this one.**
+- **Not option 4.** Guaranteeing order only per tick, and moving the test, hides a real loss: on a first
+  Subscribe an Event published before attach is never sent, so a player's first `RoomDescribed` could be
+  dropped on a faster path (an in-process source, a fast tick).
+- **Not option 1.** Splitting the seam into register and run changes the signature of a `done` story's
+  seam, and `AW-SRV-030`'s event-topic egress is a second implementer who'd pay for it. It still gives
+  the client only the headers as its signal.
+- **Not option 2.** Having the egress flush the headers after attach keeps the signature but makes
+  every implementer flush, needs a headers-only send on `Sender`, and still leaves the signal as HTTP
+  header timing. connect-go's `CallServerStream` returns before the headers arrive (#117), and a Phase 2
+  browser client can't see them early at all (ADR-0003), so the protocol shouldn't depend on them.
+- **In-band** is transport-independent, adds no seam change (the egress already writes `Heartbeat` and
+  `Resync` from inside `Subscribe`), and gives the test a deterministic order.
+
+**The wire.** `Attached attached = 23` in `EventEnvelope.payload`, with `message Attached { uint64
+cursor_event_id = 1; }`. Event ID 0, no `EventType`, like `Heartbeat` and `Resync`. It's additive, and
+`make proto-check` shows no breaking change. `gen/` is regenerated.
+
+**The consequence we won't like.** A client built against this waits for `Attached`, so against a server
+without it `play` would wait forever. It waits at most `--timeout` (30 s) and then fails as a connection
+failure. It never proceeds silently. The CLI and the server ship together in this repo, so the skew window
+is one deploy.
+
+## For implementation
+
+SPRINT-04 item 13. Server and CLI, in one PR if it fits.
+1. **Egress:** write `Attached` from `Subscribe` after `attach` positions the cursor, before `Resync`,
+   Heartbeats and Events, on every stream (first Subscribe, resume that holds, resume that can't). Pin
+   the ordering in `egress_test.go`.
+2. **Gateway:** `game.go`'s headers-only `stream.Send(nil)` may stay or go. Fix its comment either way.
+3. **CLI:** `play.go` `stream()` waits for `Attached` before its first `look`, bounded by `--timeout`,
+   and fixes its comment. The fake Egress in `admin/cli/play_test.go` writes `Attached` after it records
+   `Subscribe`, so `TestPlay_SelectsBeforeSubscribe` asserts `Subscribe` < `Attached` < `Submit:look`
+   deterministically.
+4. **Tests, each Given/When/Then:**
+   - **Given** a first Subscribe with `last_event_id` 0 **when** a Command is submitted after `Attached`
+     arrives **then** its Event is delivered, run against the real egress with the Hub publishing in the
+     same tick (a mutation that attaches after the frame fails it).
+   - **Given** a resume that holds **when** the stream opens **then** the frames are `Attached` (with
+     `cursor_event_id` = `last_event_id`), then Events.
+   - **Given** a resume that can't hold **then** the frames are `Attached`, then `Resync`.
+   - **Given** a server that never sends `Attached` **when** `play` runs **then** it fails at `--timeout`
+     as a connection failure and sends no `look`.
+5. `AW-SRV-030`'s egress inherits the AC when it's next touched; nothing to do here.
+
+## For SRE
+
+None. No new instrument. `andara_stream_resyncs_total` and the rest are unchanged.

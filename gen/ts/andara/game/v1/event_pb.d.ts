@@ -131,6 +131,15 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: CharacterDespawned;
     case: "characterDespawned";
+  } | {
+    /**
+     * The first frame of every Subscribe stream (AW-SRV-011 AC-11): the
+     * cursor is positioned. Event ID 0, like Heartbeat and Resync.
+     *
+     * @generated from field: andara.game.v1.Attached attached = 23;
+     */
+    value: Attached;
+    case: "attached";
   } | { case: undefined; value?: undefined };
 };
 
@@ -420,7 +429,33 @@ export declare const HeartbeatSchema: GenMessage<Heartbeat>;
  * server (AW-SRV-011). The client's view has a gap it must rebuild — a
  * `look` — rather than one the server silently skipped. The stream then
  * runs live from now. last_event_id echoes what was asked for.
+ * The first frame of every Subscribe stream, sent after the egress has
+ * positioned the stream's cursor and before anything else (AW-SRV-011 AC-11).
+ * A client may rely on nothing before it. After it, every Event the Session
+ * perceives from the cursor on is delivered, including the Events a Command
+ * submitted after this frame arrived causes. It is the stream's only open
+ * signal: response headers carry no guarantee, and a browser client cannot
+ * see them early (ADR-0003). cursor_event_id is the ID of the last Event the
+ * stream is already past: last_event_id on a resume that holds, the ring's
+ * end on a first Subscribe, 0 with nothing retained. The first Event the
+ * stream delivers has a greater ID.
  *
+ * @generated from message andara.game.v1.Attached
+ */
+export declare type Attached = Message<"andara.game.v1.Attached"> & {
+  /**
+   * @generated from field: uint64 cursor_event_id = 1;
+   */
+  cursorEventId: bigint;
+};
+
+/**
+ * Describes the message andara.game.v1.Attached.
+ * Use `create(AttachedSchema)` to create a new message.
+ */
+export declare const AttachedSchema: GenMessage<Attached>;
+
+/**
  * @generated from message andara.game.v1.Resync
  */
 export declare type Resync = Message<"andara.game.v1.Resync"> & {

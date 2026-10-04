@@ -43,6 +43,10 @@ message EventEnvelope {
     CharacterLinkdead character_linkdead = 20;
     CharacterReconnected character_reconnected = 21;
     CharacterDespawned character_despawned = 22;
+
+    // The first frame of every Subscribe stream (AW-SRV-011 AC-11): the
+    // cursor is positioned. Event ID 0, like Heartbeat and Resync.
+    Attached attached = 23;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -50,7 +54,7 @@ message EventEnvelope {
   // because a reserved range must shrink to be used and buf counts that as a
   // breaking change. AW-SRV-004's EventType strings map one-to-one onto this
   // oneof; the string form is derived from the field, never carried alongside
-  // it, so the two cannot disagree. Heartbeat and Resync are the two
+  // it, so the two cannot disagree. Heartbeat, Resync and Attached are the
   // payloads with no EventType: they are about the stream, not the World.
 }
 
@@ -143,6 +147,20 @@ message Heartbeat {}
 // server (AW-SRV-011). The client's view has a gap it must rebuild — a
 // `look` — rather than one the server silently skipped. The stream then
 // runs live from now. last_event_id echoes what was asked for.
+// The first frame of every Subscribe stream, sent after the egress has
+// positioned the stream's cursor and before anything else (AW-SRV-011 AC-11).
+// A client may rely on nothing before it. After it, every Event the Session
+// perceives from the cursor on is delivered, including the Events a Command
+// submitted after this frame arrived causes. It is the stream's only open
+// signal: response headers carry no guarantee, and a browser client cannot
+// see them early (ADR-0003). cursor_event_id is the ID of the last Event the
+// stream is already past: last_event_id on a resume that holds, the ring's
+// end on a first Subscribe, 0 with nothing retained. The first Event the
+// stream delivers has a greater ID.
+message Attached {
+  uint64 cursor_event_id = 1;
+}
+
 message Resync {
   uint64 last_event_id = 1;
   // resume_window_exceeded: retained history no longer reaches back that
