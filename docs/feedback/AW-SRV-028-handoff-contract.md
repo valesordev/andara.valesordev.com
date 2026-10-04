@@ -272,8 +272,10 @@ reissues a `character_id` (clearing marks in every Zone would cross Partitions a
   restore the Entity at home while the frozen Zone still holds it; and that a rejection also sets the mark, so
   a retry after a restore can't place a second body once the Zone is healthy. 027 now depends on 028.
 - **(c)** **Yes, the retry skips a faulted source Zone, and a source whose Partition is frozen.** The
-  backoff (`sim.handoff_retry_max_ticks`, new, default 600) bounds what a stuck target costs: the interval
-  doubles to a minute, and the exponent saturates so it can't wrap to zero.
+  backoff (`sim.handoff_retry_max_ticks`, new, default 100) bounds what a stuck target costs: the interval
+  doubles to 10 s, and the exponent saturates so it can't wrap to zero. A new `sim.handoff_retry_batch`
+  (default 50) caps the retries produced in one tick, so a restart with many in-flight handoffs can't fill a
+  tick's budget and defer players' Commands.
 - **There is no operator release for an Entity stuck in transit to a faulted Zone before 027.** Its
   Character gets `in_transit` on every Bind. The story says so, and so will the runbook. Whether a restart
   clears a fault is left to 027.
@@ -285,8 +287,9 @@ reissues a `character_id` (clearing marks in every Zone would cross Partitions a
   placing the Entity and the source applying the ack, a Bind finds it in `Entities`, where it is. It keeps
   the single-process assumption the existing cross-Zone search has.
 - **The Gateway already holds for a crossing**: `ReleaseSession` waits for it to settle, bounded by
-  `ingress.transit_hold` (2 s). The first retry therefore has to land inside the hold, so
-  `sim.handoff_retry_ticks` defaults to 10 ticks (1 s), validated at startup as less than the hold.
+  `ingress.transit_hold` (2 s). The first retry should land inside the hold, so `sim.handoff_retry_ticks`
+  defaults to 10 ticks (1 s) and startup logs a `warn` when it doesn't (a warning, not a refusal, since the
+  default is in ticks and `sim.tick_rate` is configurable). It holds for the first retry only.
 - **What outlasts the hold is worse than I first wrote.** A lost `Arrive` that outlasts two seconds leaves
   a teardown rejected after the roster's produce returned nil, so the roster holds a linkdead flag that
   `LinkdeadEnded` never frees (the Account's other Characters are `already_live` until the same Character is
@@ -311,6 +314,18 @@ Entities), ack matching and `Goto`; the round-trip test lists the fields `log.v1
 AC-8 says the test feeds a hand-built record, since a well-behaved Gateway holds a Session's Commands before
 the log; and the `AW-SRV-007` handoff-in-flight recovery test moved into 007's Definition of done.
 
+## From the third review, all in the story
+
+The retry mechanism is specified: the engine keeps `{attempts, last attempt}` in memory per
+`(Entity, handoff_seq)`, a missing entry is due, a departure writes `(1, T)`, and `Replay` and `RestoreEngine`
+clear every entry when they finish, since `ReplayEach` runs the same `Step` as the live loop. It is capped per
+tick (`sim.handoff_retry_batch`). The config validation is a startup warning, not a refusal. The change isn't
+reversible once a handoff is logged, and the recovery is `make world-reset ENV=dev CONFIRM=andara-dev`. The
+state projector omits an Entity in transit, accepted here and left to `AW-SRV-019`. `AW-SRV-027`'s ACs are
+written (a retry of a placed handoff is acked, a new handoff is rejected and sets the mark, a retry after a
+restore is stale). The new rejection codes are in the glossary and in `sim.RejectCodes()`. The manual
+`sim repl` step is dropped, since `sim repl` has no failure-injection flag.
+
 ## For implementation
 
 Take the story as amended and the protos as pinned. Run `make proto-check` to see `gen/` matches. You can
@@ -327,7 +342,7 @@ then `Transit` and the retry, then the Bind handling.
   `SelectCharacter` waits for the Character's crossing to settle as release does; the roster frees a linkdead
   hold unless `LinkdeadEntered` is observed within the produce deadline; a teardown rejected `in_transit` is
   retried once the Binding settles. It follows `AW-SRV-028` and isn't a blocker for it.
-- **SRE:** review the story's two Observability additions, `andara_handoff_placed_entries` (no labels) and
-  `sim.handoff_retry_max_ticks` (a new config key for `keys.yaml` and the values schema, beside the changed
-  default of `sim.handoff_retry_ticks`). The runbook step for a stuck handoff goes in
-  `docs/runbooks/simulation-lagging.md`.
+- **SRE:** review the story's Observability additions, `andara_handoff_placed_entries` (no labels) and the
+  per-tick summary `warn` in place of one per retry, and the new config keys `sim.handoff_retry_max_ticks`
+  and `sim.handoff_retry_batch` for `keys.yaml` and the values schema, beside the default of
+  `sim.handoff_retry_ticks`. The runbook step for a stuck handoff goes in `docs/runbooks/simulation-lagging.md`.

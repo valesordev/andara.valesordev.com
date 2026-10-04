@@ -34,6 +34,8 @@ one bad Behavior cannot take a region of the world down with it.
 ### In scope
 - `Engine.Step`: after a fault, records for the faulted Zone are consumed and rejected with
   `zone_faulted` (a `CommandRejected` to the actor), and the Partition's offset advances past them.
+  **An `Arrive` is first decided by `AW-SRV-028`'s dedup rule** (see the amendment at the end): only an
+  `Arrive` that would be a new handoff is rejected.
   Records for other Zones on the same Partition are applied.
 - `Step` no longer refuses input for a Partition with a faulted Zone; `Source.Poll` no longer takes
   a frozen-Partition list. `Engine.FaultedPartitions()` becomes `FaultedZones()`.
@@ -59,8 +61,16 @@ one bad Behavior cannot take a region of the world down with it.
 3. **Given** the fault **when** the same records are replayed from boundaries **then** the State
    Hash sequence is identical, including the ticks after the fault.
 4. **Given** a handler in Zone C that `Produce`s a Command into faulted Zone A **when** the produced
-   Command is applied on A's Partition **then** it is rejected `zone_faulted` and C's state is
-   unchanged by the rejection.
+   Command is applied on A's Partition **then** it is rejected `zone_faulted`, and C's state is
+   unchanged by the rejection, except that an `Arrive` is decided by the dedup rule first and a new
+   handoff's rejection is `HandoffRejected` (ACs 6 to 8).
+6. **Given** a faulted B that already placed `Arrive(e, s)` **when** a retry of it applies **then** it is
+   acked (or stale-acked), no `HandoffRejected` is produced, and the source drops its record.
+7. **Given** a faulted B and a new handoff `Arrive(e, s)` **when** it applies **then** `HandoffRejected{e, s,
+   zone_faulted}` is produced to the source Zone, B's mark for `e` is `s`, and the source restores `e` at its
+   origin Room with `CharacterArrived{from_direction: reverse}`, keeping the incremented `handoff_seq`.
+8. **Given** the rejected handoff of AC-7 **when** a retry of it applies after B is healthy **then** it is
+   stale: nothing is placed. A replay of the exchange hashes identically, the mark included.
 5. **Given** `AW-SRV-002`'s `TestStep_ZoneFaultIsContained` and `TestLoop_ZoneFault` **when** this
    story lands **then** they are rewritten to assert the new rule, not deleted; the golden hash
    sequence (`AC-1` of 002) is regenerated only if the fixture log contains a fault, and the PR says

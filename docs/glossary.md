@@ -510,7 +510,7 @@ last seen in, hence which Partition its Commands go to. Session state, not World
 `CharacterLeft` addressed to the bound Character puts the Binding in Transit, the `CharacterArrived`
 settles it on the new Zone (AW-SRV-010).
 
-**Transit** — The state of a Binding between its Character's `CharacterLeft` and the
+**Transit** — (Binding) The state of a Binding between its Character's `CharacterLeft` and the
 `CharacterArrived` that follows: one Tick across a Zone boundary, or as long as a stuck handoff
 lasts. A Session in Transit has its Intents held, in order, and released to the new Zone's
 Partition on arrival, so the cross-Zone delay stays visible in the Events without a player ever
@@ -579,12 +579,29 @@ durable. `andara_ingress_degraded` is 1 for its duration; `WorldReadOnly` (AW-IN
 **Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
 cross-Zone Exit (ADR-0001 rule 4): the Entity by value, the Room to place it in, and the Direction it
 came through. Resolves on a later Tick — one, in a single process — never as a call. Not a Command
-Verb: no Intent parses to it (AW-SRV-003).
+Verb: no Intent parses to it (AW-SRV-003). Part of a Handoff.
+
+**Handoff** — A cross-Zone move made durable (AW-SRV-028): the source keeps the Entity in its Transit record
+until the target's HandoffAck arrives, re-producing the Arrive on a backoff in the meantime, and the target
+decides each Arrive against its Placed marks. Every step is a logged Command, so a crash anywhere leaves the
+Entity in exactly one authoritative place.
+
+**Handoff sequence** — `handoff_seq`: how many handoffs an Entity has been through, incremented by the source
+each time it leaves and carried on the Arrive and the Entity. It only grows along an Entity's life, which is
+what lets a Zone tell a retry from a new handoff.
+
+**Transit record** — (Zone) An Entity that has left a Zone and isn't yet acknowledged, held in `ZoneState.Transit`,
+hashed, with its target Zone, Room and Direction. Not the Binding's Transit.
+
+**Placed mark** — `ZoneState.Placed[e]`: the highest handoff sequence a Zone has decided for Entity `e`, kept for
+good. An Arrive at or below it is a retry or stale, however late it comes.
 
 **Rejection Code** — The stable, snake_case, additive-only name a rejected Command carries:
 pre-log on the Submit response (`unknown_verb`, `missing_argument`, `invalid_argument`,
 `intent_too_large`, `not_authorized`, `in_transit`), post-log in a `CommandRejected` Event (`no_such_exit`,
-`exit_blocked`, `actor_not_found`, `unknown_room`, `zone_faulted`, `unsupported_command`). The set is
+`exit_blocked`, `actor_not_found`, `unknown_room`, `zone_faulted`, `unsupported_command`, and, from
+AW-SRV-028, `in_transit` for an Entity between Zones, `actor_linkdead`, `entity_present`, `invalid_arrival`,
+`id_reused`). The set is
 closed, which is what makes it a metric label (AW-SRV-003).
 
 ---

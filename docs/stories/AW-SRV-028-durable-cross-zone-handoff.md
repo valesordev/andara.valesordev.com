@@ -77,7 +77,9 @@ body can't depart; `Goto` is in scope.*
     (post-log), with an `error` logged. It can't happen with sequences that only grow.
   - `s` is above `Placed[e]`, or `e` has no mark: a new handoff. Place it, set `Placed[e] = s`, ack.
   - `s` is 0: malformed, rejected `invalid_arrival`. So is an `Arrive` whose `handoff_seq` differs from its
-    `entity.handoff_seq`.
+    `entity.handoff_seq`, and one with no `entity` or an empty `entity.id`.
+  - The Zone holds `e` in its own `Transit` with a sequence at or above `s`: rejected `entity_present`
+    (only a misrouted `Arrive` gets here; a lower sequence is the implicit ack below).
   `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark, so a retry that follows is
   stale and a restore at home can't be undone by one. The mark is kept for good, so a retry produced by a
   restarted source after the original ack landed is still stale: nothing here relies on how records on
@@ -90,29 +92,43 @@ body can't depart; `Goto` is in scope.*
   `handoff_seq` proves the target placed `e` and moved it on. The Zone drops that transit record and then
   decides the arrival by the rule above.
 - **Retry with backoff, held in memory.** Each tick, after applying records, the source re-produces
-  `Arrive` for every transit record whose next attempt is due, in Entity-ID order. The interval after the
-  n-th attempt is `min(sim.handoff_retry_ticks × 2^min(n-1, 16), sim.handoff_retry_max_ticks)`: the exponent
-  saturates, so a long-stuck handoff never wraps to a zero interval. The engine holds each record's attempt
-  count and last attempt in memory, not in the hash, so replay under a retuned config produces the same
-  state, and **a record found after a recovery is due on the first live tick** (replay discards outbound
-  Commands anyway, so this is also what heals a handoff after a restart). **No retry is produced while the
-  source Zone is faulted or its Partition is frozen** (`AW-SRV-002`): the ack couldn't be applied.
+  `Arrive` for the transit records that are due, at most `sim.handoff_retry_batch` of them per tick
+  (default 50), earliest due first and then in Entity-ID order, so a restart with many in-flight handoffs
+  doesn't fill a tick's `sim.max_per_tick` budget and defer players' Commands. The interval after the n-th
+  attempt is `min(sim.handoff_retry_ticks × 2^min(n-1, 16), sim.handoff_retry_max_ticks)`: the exponent
+  saturates, so a long-stuck handoff never wraps to a zero interval. **The mechanism:** the engine keeps
+  `{attempts, last attempt}` in memory per `(Entity, handoff_seq)`, not in the hash, so replay under a
+  retuned config produces the same state. A record with no entry is due. `applyMove` and `applyGoto` write
+  the entry `(1, T)` for the departure, so the `Arrive` they produce isn't re-sent on the same tick.
+  `Replay` and `RestoreEngine` clear every entry when they finish, because `ReplayEach` runs the same `Step`
+  as the live loop and would otherwise leave each record looking as if it had just been tried: **a record
+  found after a recovery is due on the first live retry pass**, and is retried within
+  `ceil(n / sim.handoff_retry_batch)` ticks for `n` records. The three config values reach the `Engine`
+  through its `Config`, as the sim reads no other config. **No retry is produced while the source Zone is
+  faulted or its Partition is frozen** (`AW-SRV-002`): the ack couldn't be applied. A retried `Arrive`
+  carries the same `handoff_seq` and Entity bytes as the first, with `actor_id` the Entity ID and no
+  session or client ref.
 - **Every Command for an Entity in transit is rejected `in_transit`**, after logging (it parsed and was
   authorized): the verbs, `UnbindCharacter` and `MarkLinkdead`. **`BindCharacter`** for a Character whose
   Entity is in any Zone's `Transit` is rejected `in_transit` too, and creates no body. Its search is unchanged
   first, every Zone's `Entities`, and then every Zone's `Transit`: for the few ticks between the target
   placing the Entity and the source applying the ack the Entity is in both, and the Bind finds it in
-  `Entities`, where it is. It keeps the single-process assumption the existing cross-Zone search has, which
-  the sharding ADR lifts for both.
+  `Entities`, where it is. It keeps the single-process assumption the existing cross-Zone search has, as does
+  `id_reused`'s scan of every Zone's marks, which the sharding ADR lifts for all of them.
   **The first retry comes inside the Gateway's hold.** `ReleaseSession` already waits for a crossing to
-  settle, bounded by `ingress.transit_hold` (default 2 s), so `sim.handoff_retry_ticks` must give a first
-  retry that lands inside it: default 10 ticks (1 s), validated at startup as less than the hold. A lost
-  `Arrive` then heals before the hold runs out.
+  settle, bounded by `ingress.transit_hold` (default 2 s), so the first retry of a lost `Arrive` should land
+  inside it: `sim.handoff_retry_ticks` defaults to 10 ticks (1 s at 10 Hz), and server startup logs a `warn`
+  when `handoff_retry_ticks / sim.tick_rate` is not below a non-zero hold. It is a warning, not a refusal,
+  because the default is fixed in ticks and `sim.tick_rate` is configurable (1 to 100). This holds for the
+  first retry only: after an outage the interval has grown, to at most `sim.handoff_retry_max_ticks`
+  (10 s), and a Character is then in limbo up to that long after the broker is back.
   **What outlasts the hold, and what it does to a Session**, from the roster's code (`roster.go`):
   - A teardown produced after the hold, `UnbindCharacter` or `MarkLinkdead`, is rejected `in_transit`
     post-log, so the produce returned nil. For a linkdead end the roster then holds the Character's live
     flag waiting for a `LinkdeadEnded` that never comes, because no body is linkdead, so the Account's
-    other Characters are `already_live` until the same Character is selected again.
+    other Characters are `already_live` until the same Character is selected again. (A `MarkLinkdead` that
+    finds no body leaves the same state today, and the roster's comment calls holding the flag right; what
+    is new is that the body is absent only for the transit window.)
   - A `BindCharacter` rejected post-log leaves `SelectCharacter` returning OK, with the Session bound and
     confirmed and no body. A reselect is `already_live`. It heals when the `Arrive` lands and its
     `CharacterArrived` reaches the Session, and if the target is stuck it doesn't.
@@ -152,6 +168,10 @@ body can't depart; `Goto` is in scope.*
 - Multi-process ownership: the protocol is correct across processes because every step is a logged
   Command and the dedup rule reads only the target's own state. The `BindCharacter` search is the one thing
   here that isn't.
+- **The state projector omits an Entity in transit**: it computes records from `Entities` only
+  (`server/projector/projector.go`), so a Character stuck in `Transit` is absent from the state topic and
+  any index built from it until it lands. That is accepted here, and `AW-SRV-019`'s projector is the place
+  to revisit it if stuck handoffs become common.
 - **A constraint on later stories: an Entity ID is never reused.** Marks are kept for good, so an Entity
   deleted and created again under the same ID would start at `handoff_seq` 0 and have its handoffs read as
   stale: it would be lost. Today only `BindCharacter`'s never-bound path creates an Entity at seq 0, with the
@@ -167,7 +187,8 @@ body can't depart; `Goto` is in scope.*
 1. **Given** a Character moving A→B **when** the `Arrive` is never delivered (producer failure
    injected) **then** the Character stays in A's `Transit`, `in_transit` answers its Commands, and
    after `sim.handoff_retry_ticks` ticks the `Arrive` is produced again; on delivery B places it,
-   acks, and A's transit record is gone within one tick of the ack.
+   acks, and A's transit record is gone on the tick that applies the ack. The retried `Arrive` has the same
+   `handoff_seq` and Entity bytes as the first.
 2. **Given** the source process killed after publishing tick `T`'s boundary and before the
    `Arrive` is acknowledged **when** it recovers **then** `Transit` still holds the Character at the
    recovered hash, the first live tick retries, and the Character arrives in B exactly once.
@@ -184,8 +205,10 @@ body can't depart; `Goto` is in scope.*
    Zone.
 6. **Given** the same records replayed from boundaries **when** the exchange is replayed **then** every hash
    matches. **And given** the node recovers with a different `sim.handoff_retry_ticks` or
-   `sim.handoff_retry_max_ticks` **then** the hashes still match, since the schedule isn't in the hash, and
-   the first live tick retries every record in `Transit`.
+   `sim.handoff_retry_max_ticks` **then** the hashes still match, since the schedule isn't in the hash.
+   **And given** a replay that ends with `n` records in `Transit` **when** the first live ticks run **then**
+   every record is retried within `ceil(n / sim.handoff_retry_batch)` ticks, none on the departure tick, and
+   no more than the batch on any tick.
 7. **Given** a source Zone that is faulted, or whose Partition is frozen **when** ticks pass **then** no
    `Arrive` is produced for its transit records, and **when** it can apply again **then** the first tick
    retries. **And given** an unanswered handoff **then** the gaps between attempts double from
@@ -196,8 +219,10 @@ body can't depart; `Goto` is in scope.*
    is applied. This holds for a verb, `UnbindCharacter` and `MarkLinkdead`. **And given** a linkdead
    actor **when** a `Move` or `Goto` applies **then** it is rejected `actor_linkdead` and the body stays.
 9. **Given** an `Arrive` for an Entity the Zone holds, with `s` above the Zone's mark for it **then** it is
-   rejected `entity_present`; **and given** `s == 0`, or an `Arrive.handoff_seq` that differs from its
-   `entity.handoff_seq` **then** it is rejected `invalid_arrival`; both place nothing.
+   rejected `entity_present`, and so is one for an Entity the Zone holds in its own `Transit` at a sequence
+   at or above `s`; **and given** `s == 0`, an `Arrive.handoff_seq` that differs from its
+   `entity.handoff_seq`, or no `entity` or an empty `entity.id` **then** it is rejected `invalid_arrival`;
+   all place nothing.
 10. **Given** `EntityState` gains a field in a later story **when** the round-trip test runs without the
     proto gaining it **then** the test fails naming the field.
 11. **Given** a Character in transit **when** a `BindCharacter` for it applies, at the source **then** it is
@@ -209,7 +234,8 @@ body can't depart; `Goto` is in scope.*
     applied **then** the transit record is dropped and the arrival is decided by the dedup rule.
 13. **Given** a Zone with `Transit` records and `Placed` marks **when** it is snapshotted and restored **then**
     `HashZone` is identical, and `BodyStateHash` refuses a body with an unsorted or duplicated `transit` or
-    `placed`, a `placed` mark of 0, or a `transit` Entity that is dormant or linkdead.
+    `placed`, a `placed` mark of 0, an Entity in both `entities` and `transit` of one Zone, or a `transit`
+   Entity that is dormant or linkdead.
 14. **Given** A holds `Transit(e, 3)` after A→B→C→B **when** a late `HandoffAck(e, 1)` applies **then** the
     record stays, and **when** `HandoffAck(e, 3)` applies **then** it is dropped.
 15. **Given** a `Goto` into another Zone **when** it applies **then** the Entity goes through the same
@@ -250,14 +276,16 @@ type ZoneState struct { /* … */ Transit map[EntityID]TransitRecord; Placed map
 
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
-| `sim.handoff_retry_ticks` | `ANDARA_HANDOFF_RETRY_TICKS` | `10` | 1 s at 10 Hz; the first retry interval. Greater than 0, at least the broker round trip in ticks, and **less than `ingress.transit_hold`** so a lost `Arrive` heals inside the Gateway's hold; validated at startup |
-| `sim.handoff_retry_max_ticks` | `ANDARA_HANDOFF_RETRY_MAX_TICKS` | `600` | 1 minute at 10 Hz; the longest gap between attempts. At least `sim.handoff_retry_ticks`; validated at startup |
+| `sim.handoff_retry_ticks` | `ANDARA_HANDOFF_RETRY_TICKS` | `10` | 1 s at 10 Hz; the first retry interval. Greater than 0 (validated at startup in `server/config`, beside its other checks). Should exceed the broker round trip and stay below `ingress.transit_hold` once converted by `sim.tick_rate`: a startup `warn`, never a refusal |
+| `sim.handoff_retry_max_ticks` | `ANDARA_HANDOFF_RETRY_MAX_TICKS` | `100` | 10 s at 10 Hz; the longest gap between attempts. At least `sim.handoff_retry_ticks`; validated at startup |
+| `sim.handoff_retry_batch` | `ANDARA_HANDOFF_RETRY_BATCH` | `50` | the most `Arrive` retries produced in one tick. Greater than 0; validated at startup |
 
 ### Error taxonomy
 
 `in_transit` (validate; the actor is between Zones, and a `BindCharacter` for a Character whose Entity is),
-`actor_linkdead` (validate; a `Move` or `Goto` by a linkdead body), `stale_arrival` (consumed, acked, nothing
+`actor_linkdead` (validate; a `Move` or `Goto` by a linkdead body, in the Zone or across one), `stale_arrival` (consumed, acked, nothing
 placed, no Event), `entity_present`, `invalid_arrival` and `id_reused` (validate; nothing placed).
+The new codes are added to `sim.RejectCodes()`, the closed label set of the rejection metric.
 `HandoffRejected` and its codes are `AW-SRV-027`'s. The `actor_not_found` a `Move` in flight used to get is
 now `in_transit`, and that test is rewritten.
 
@@ -273,7 +301,10 @@ the Entity at the source; the new code leaves it in `Transit`, so the hash at th
 recorded one and recovery exits `6` there. `dev` has such logs. Pre-launch the remedy is
 `make world-reset ENV=dev` with the deploy that carries this story, and a fresh local stack for the planned
 `AW-INF-032`. The PR says so, and says whether the golden fixture log contains a cross-Zone move.
-`andara.commands.v1` gains one record kind (13), tick-produced.
+`andara.commands.v1` gains one record kind (13), tick-produced. **It isn't reversible once a handoff has
+been logged:** a binary from before this story meets `HandoffAck` as an unsupported Command and drops
+`Transit` from snapshots as unknown fields, so its replay diverges and recovery exits `6`. The recovery is
+the same reset, `make world-reset ENV=dev CONFIRM=andara-dev`, and the PR says so.
 
 ## Observability requirements
 
@@ -281,7 +312,9 @@ recorded one and recovery exits `6` there. `dev` has such logs. Pre-launch the r
   (counter); `andara_handoff_stale_arrivals_total` (counter); `andara_handoff_placed_entries` (gauge, no
   labels: marks summed over Zones). No Entity or Zone labels. *(`andara_handoff_rejected_total` moves to
   `AW-SRV-027` with the rejection.)*
-- **Logs:** `warn` per retry with `entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`; `error` on
+- **Logs:** `warn` once per tick that produced retries, with the count and the oldest `attempt`, and one
+  `debug` per retry with `entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`, so a restart with many
+  stuck handoffs doesn't write a line each; `error` on
   `entity_present`, `invalid_arrival` and `id_reused`. `trace_id` from the originating `Move` for a live
   retry; a retry after a recovery starts a new trace and carries `entity_id`.
 - **Traces:** the `Arrive`, `HandoffAck` and retries carry the original `Move`'s traceparent where it is
@@ -298,8 +331,9 @@ recorded one and recovery exits `6` there. `dev` has such logs. Pre-launch the r
   AC-6 recovering under a changed config; the backoff schedule exactly, at attempt counts of 64 and
   beyond; the round-trip test (AC-10); the snapshot round trip (AC-13).
 - **Integration (`make test-integration`):** AC-2 with `SIGKILL` between boundary and ack, on the broker.
-- **Manual/operator:** `andara-cli sim repl` with two Zones and a scripted producer failure: expect
-  "you are between places" for `look`, then arrival after the retry.
+- **Manual/operator:** none in this story. `sim repl` has no failure-injection flag, so a manual walk
+  through a lost `Arrive` isn't expressible as a product command (CLAUDE.md §9); AC-2's integration test
+  stands for it. A flag is a follow-up, with the player-facing text for `in_transit`.
 
 Mutation checks to record: dropping the mark check makes AC-4 fail; treating a mark as removable by time
 makes AC-4's second half fail; a per-Zone scalar in place of the per-Entity mark makes AC-5's two-Entity
@@ -307,7 +341,10 @@ case fail; matching an ack by Entity alone makes AC-14 fail; letting a Bind sear
 `Transit`, makes AC-11 fail; producing retries while the source is faulted makes AC-7 fail; dropping the
 implicit ack makes AC-12 fail; letting the exponent overflow makes AC-7's 64-attempt case fail; hashing the
 schedule makes AC-6's changed-config case fail; routing `Goto` around the handshake makes AC-15 fail; dropping
-the `id_reused` guard makes AC-16 fail.
+the `id_reused` guard makes AC-16 fail; dropping `actor_linkdead` makes AC-8's second half
+fail; not rejecting `UnbindCharacter` or `MarkLinkdead` in transit makes AC-8's first half fail; registering
+no entry at departure (so the departure tick re-sends) or not clearing entries at the end of a replay makes
+AC-6's last case fail; dropping a field from the proto makes AC-10 fail.
 
 ## Definition of done
 
@@ -317,9 +354,9 @@ golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md`
 
 ## Open questions
 
-- `[ASSUMPTION]` `handoff_retry_ticks` = 10 and `handoff_retry_max_ticks` = 600. A retry is cheap and
-  idempotent; too short doubles broker traffic under a slow broker, too long is a player stuck "between
-  places". Tune on the stack, inside the `ingress.transit_hold` constraint.
+- `[ASSUMPTION]` `handoff_retry_ticks` = 10, `handoff_retry_max_ticks` = 100 and `handoff_retry_batch` = 50.
+  A retry is cheap and idempotent; too short doubles broker traffic under a slow broker, too long is a player
+  stuck "between places". Tune on the stack, with `ingress.transit_hold` in view.
 - **Resolved 2026-09-18 (Brian):** the delay stays perceptible in the Events and the Gateway holds
   a Session's Commands during transit (`AW-SRV-010`). The sim still rejects `in_transit`; the hold
   is what keeps a well-behaved Gateway from ever reaching that path.
