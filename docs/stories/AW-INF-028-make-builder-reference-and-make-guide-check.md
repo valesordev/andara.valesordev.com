@@ -341,9 +341,10 @@ guide-check: cmd/andara-cli/zz_broken.go:3:14: syntax error: unexpected {, expec
 
 Fixture tests cover a failing build under `builder-reference`, `builder-reference-check` and
 `guide-check`, a failing `content reference` (a fake CLI with two lines of stderr and exit 7), the
-helper itself, and that single-line findings are unchanged; four mutants of the fix were each
-caught, and the fifth (not splitting `guide-check`'s findings, which are single-line by
-construction) is equivalent. The `content reference` failure path is covered by that fixture
+helper itself, and that single-line findings are unchanged. Four mutants of the fix were each
+caught (`main` back to a plain print, `say_err` without the prefix, without `splitlines`, and without
+its `or [""]` fallback), and a fifth is equivalent: a plain print in `guide-check`'s findings loop,
+because those findings are single-line by construction. The `content reference` failure path is covered by that fixture
 test only, not run live: the real CLI doesn't fail it on a healthy build.
 
 **Not observed:** a failing run in CI's log. No run on `main` has failed these steps, so that the
