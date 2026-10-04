@@ -4,7 +4,7 @@ title: Durable cross-Zone handoff — in-transit state, acknowledgement, and tic
 epic: EPIC-02
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-003]
 blocks: [AW-SRV-007, AW-SRV-027, AW-SRV-047]
