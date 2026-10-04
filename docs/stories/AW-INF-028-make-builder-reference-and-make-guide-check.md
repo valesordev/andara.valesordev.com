@@ -4,7 +4,7 @@ title: make builder-reference and make guide-check
 epic: EPIC-06
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-CLI-009]
 blocks: []
