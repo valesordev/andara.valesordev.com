@@ -218,6 +218,73 @@ class GuideCommands(GuideFixture):
         self.assertIn("0 commands", out)
 
 
+class GuideFailsClosed(GuideFixture):
+    """When the binary can't answer, a line is unverifiable, not passed."""
+
+    def fake(self, completion_body):
+        text = FAKE.replace("__REF_JSON__", str(self.ref_json)).replace(
+            'if args and args[0] == "__complete":', 'if args and args[0] == "__complete":\n' + completion_body, 1)
+        self.cli.write_text(text)
+
+    def test_a_completion_that_exits_non_zero_is_unverifiable(self):
+        self.fake("    sys.exit(3)")
+        self.guide("a.md", "# A\n\n```\nandara-cli content bogus\n```\n")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, out), (1, ""))
+        self.assertIn('docs/builders/a.md:4: cannot verify "andara-cli content bogus"', err)
+        self.assertIn("`andara-cli __complete` exited 3", err)
+
+    def test_a_completion_with_no_directive_is_unverifiable(self):
+        self.fake("    sys.exit(0)")
+        self.guide("a.md", "# A\n\n```\nandara-cli content approve x\n```\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("printed no completion directive", err)
+
+    def test_one_bad_line_does_not_hide_the_others(self):
+        self.fake("    if any(w.startswith('-o') and len(w) > 2 for w in args[1:]):\n        sys.exit(2)")
+        self.guide("a.md", "# A\n\n```\nandara-cli -ojson content approve x\nandara-cli content bogus\nandara-cli content approve y\n```\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:4: cannot verify "andara-cli -ojson content approve x"', err)
+        self.assertIn('a.md:5: no command "andara-cli content bogus"', err)
+        self.assertEqual(len(err.strip().splitlines()), 2, err)
+
+
+class GuideIndentedCode(GuideFixture):
+    def test_an_indented_block_is_checked(self):
+        self.guide("a.md", "# A\n\nRun:\n\n    andara-cli content bogus\n    andara-cli content approve x\n")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:5: no command "andara-cli content bogus"', err)
+        self.assertEqual(len(err.strip().splitlines()), 1, err)
+
+    def test_a_tab_indented_block_is_checked(self):
+        self.guide("a.md", "# A\n\n\tandara-cli content bogus\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:3: no command "andara-cli content bogus"', err)
+
+    def test_an_indented_line_continuing_a_paragraph_is_not_code(self):
+        self.guide("a.md", "# A\n\nA paragraph\n    andara-cli content bogus\n")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("0 commands", out)
+
+    def test_list_content_is_not_code_until_it_is_indented_further(self):
+        self.guide("a.md", "# A\n\n- an item\n\n    andara-cli is the program\n\n- another\n\n        andara-cli content bogus\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn('a.md:9: no command "andara-cli content bogus"', err)
+        self.assertNotIn(":5:", err)
+
+    def test_links_inside_an_indented_block_are_not_checked(self):
+        self.guide("a.md", "# A\n\n    [x](nope.md)\n")
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 links", out)
+
+
 class GuideFences(GuideFixture):
     def test_a_tilde_fence_is_a_code_block(self):
         self.guide("a.md", "# A\n\n~~~\nandara-cli content bogus\n~~~\n")
@@ -360,6 +427,32 @@ class GuideLinks(GuideFixture):
         rc, out, _ = self.run_bg("guide-check")
         self.assertEqual(rc, 0)
         self.assertIn("0 links", out)
+
+    def test_a_link_split_across_lines_is_checked_and_reported_where_it_starts(self):
+        self.guide("a.md", "# A\n\nSee [details](\nmissing.md\n) and [two\nlines](also-missing.md).\n")
+        rc, _, err = self.run_bg("guide-check")
+        self.assertEqual(rc, 1)
+        self.assertIn("a.md:3: broken link missing.md", err)
+        self.assertIn("a.md:5: broken link also-missing.md", err)
+
+    def test_a_link_split_across_a_blank_line_is_not_a_link(self):
+        self.guide("a.md", "# A\n\n[text\n\n](missing.md)\n")
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 links", out)
+
+    def test_a_fenced_block_ends_a_paragraph(self):
+        self.guide("a.md", "# A\n\n[text\n```\ncode\n```\n](missing.md)\n")
+        rc, out, _ = self.run_bg("guide-check")
+        self.assertEqual(rc, 0)
+        self.assertIn("0 links", out)
+
+    def test_inline_code_spanning_lines_hides_link_syntax(self):
+        self.guide("a.md", "# A\n\nUse `[x](\nmissing.md)` here, and [ok](b.md).\n")
+        self.guide("b.md", "# B\n")
+        rc, out, err = self.run_bg("guide-check")
+        self.assertEqual((rc, err), (0, ""), err)
+        self.assertIn("1 links", out)
 
     def test_a_guide_page_in_a_subdirectory_is_checked(self):
         (self.root / "docs/builders/sub").mkdir()

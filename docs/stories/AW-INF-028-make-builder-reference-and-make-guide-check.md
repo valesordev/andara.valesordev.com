@@ -218,7 +218,7 @@ nothing links to the generated one.
 ## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
 
 Branch `sre/aw-inf-028-builder-reference-guide-check`. The logic is `scripts/builder_guide.py`, and
-the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (46
+the three targets are one-line wrappers. Its tests are `scripts/tests/test_builder_guide.py` (58
 cases, run by `make scripts-test`), against a fake `andara-cli` that implements `__complete` and
 `--help`. The live runs below used the real binary built from this tree.
 
@@ -258,9 +258,18 @@ cases, run by `make scripts-test`), against a fake `andara-cli` that implements 
   anchors, underscores, the reference's section scoping) now fail without it. A 37-mutant run left
   no survivor.
 
+**Codex's three P2s on the PR, fixed:**
+- A `__complete` that exits non-zero or prints no `:<directive>` line is `cannot verify "<line>"`,
+  not an empty candidate list that lets a nonexistent command through. The failure is cached per
+  query, and one unverifiable line doesn't hide the others.
+- Indented code blocks (four spaces or a tab after a blank line or other code; eight inside a list
+  item) are scanned for commands, and their links are not checked.
+- Links are matched per paragraph, so a link split across lines is checked and reported at the line
+  it starts on. A blank line or a fence ends a paragraph. Inline code may span lines.
+
 **Known limits, in the script's docstring:** an unknown flag doesn't fail a line, because only
-`<path> --help` runs; words after `--` count as flag values; and `-ojson` isn't parsed by
-`__complete`. None occurs in the guide, and each would need the CLI's own flag table.
+`<path> --help` runs; words after `--` count as flag values; and `-ojson` makes the real
+`__complete` exit 0 with no candidates. None occurs in the guide, and each would need the CLI's own flag table.
 
 **How the command path is resolved.** After a flag that takes a value, and at a leaf, `__complete ''`
 returns nothing, so that alone can't tell the two apart, and `-o json content bogus` would end its
