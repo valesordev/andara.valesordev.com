@@ -123,6 +123,12 @@ every Command for an Entity in transit is rejected `in_transit`; `Goto` is in sc
 - Whether a restart clears a Zone's fault. The repo is inconsistent (`server/sim/state.go` and
   `AW-SRV-027` say "until restart" while the snapshot carries `Faulted` and nothing resets it on
   recovery), and it is `AW-SRV-027`'s to settle.
+- **A constraint on later stories: an Entity ID is never reused while any Zone holds a placed mark for
+  it.** A mark is kept for good, so an Entity deleted and later created again under the same ID would start
+  at `handoff_seq` 0 and have its handoffs read as stale: it would be lost. Nothing today deletes an Entity
+  except a cross-Zone departure (`verbs.go`), and a despawn makes a Character's body dormant rather than
+  removing it. `AW-SRV-032`'s `PurgeCharacter` removes a body, so either the roster never reissues a
+  `character_id` or the purge clears the Entity's marks in every Zone; its body now says so.
 - Multi-process ownership: the protocol is correct across processes because every step is a logged
   Command and the dedup rule reads only the target's own state. The `BindCharacter` search above is the one
   thing here that isn't.

@@ -227,6 +227,10 @@ producers, no window, and no client-contract claim to add to `AW-INF-005`. The s
 placed it. Options (b) and (c) fall as before: (b) bounds when retries are produced, not when a lagging target
 applies them, and (c) needs a World-scoped record crossing Partitions.
 
+**A constraint on later stories.** Marks assume an Entity ID is never reused. Nothing deletes an Entity today
+except a cross-Zone departure, and a despawn makes a Character dormant. `AW-SRV-032`'s `PurgeCharacter` removes a
+body, so its body now says the roster must never reissue a `character_id` or the purge must clear the marks.
+
 **The cost, which we won't like.** The marks are never pruned: one small entry per Entity that has ever
 arrived in a Zone by handoff, hashed with the Zone. At the sizing fixture's 25,000 Entities that is at most
 25,000 entries per Zone visited. `andara_handoff_placed_entries` shows it. Pruning by proof is a story of its
