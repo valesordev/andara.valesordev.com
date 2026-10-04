@@ -64,6 +64,72 @@ message ZoneState {
   // same point on replay — so it is hashed, and snapshotted, as it stands.
   bool faulted = 7;
   uint64 faulted_tick = 8;
+
+  // Entities that have left this Zone and are not yet acknowledged
+  // (AW-SRV-028), sorted by entity_id. They are not in `entities`. Hashed, so
+  // a restore must carry them, and recovery retries them from here. Empty adds
+  // nothing to the hash.
+  repeated TransitRecord transit = 9;
+
+  // Arrive handoffs into this Zone whose HandoffClosed has not been applied
+  // (AW-SRV-028), sorted by entity_id. They are what lets a late retry be
+  // recognised as stale after the Entity has moved on. Hashed; empty adds
+  // nothing.
+  repeated OpenArrivals arrivals = 10;
+}
+
+// An Entity in transit out of this Zone: the Entity as it will arrive, and
+// what the retry and a restore at home need.
+message TransitRecord {
+  // The Entity as the target will receive it. entity.room_id is the Room it
+  // left from, which a restore at home would use, and entity.handoff_seq is
+  // the handoff's sequence. Never dormant or linkdead: those bodies never move.
+  EntityState entity = 1;
+
+  string to_zone_id = 2;
+
+  // The Room in to_zone_id the Arrive names.
+  string room_id = 3;
+
+  // The Direction the move went, empty for a Goto. The reverse of it is the
+  // from_direction of a restore at home.
+  string direction = 4;
+
+  // The Tick of the last Arrive produced for it, and how many have been
+  // produced. The next retry is due at last_attempt_tick plus
+  // min(sim.handoff_retry_ticks × 2^(attempts-1), sim.handoff_retry_max_ticks).
+  uint64 last_attempt_tick = 5;
+  uint32 attempts = 6;
+
+  // A Command for the Entity that arrived while it was in transit and is
+  // carried out when the handoff resolves.
+  TransitPending pending = 7;
+}
+
+message TransitPending {
+  enum Kind {
+    KIND_UNSPECIFIED = 0;
+    UNBIND = 1;
+    MARK_LINKDEAD = 2;
+  }
+  Kind kind = 1;
+
+  // UNBIND: the UnbindCharacter's reason, as andara.log.v1.UnbindReason.
+  int32 unbind_reason = 2;
+
+  // MARK_LINKDEAD: the MarkLinkdead's tick counts, which the producer
+  // converted from seconds, so a replay reads what was produced.
+  uint64 grace_ticks = 3;
+  uint64 extension_ticks = 4;
+  uint64 max_ticks = 5;
+}
+
+// An Entity's handoffs into this Zone that are still open: no HandoffClosed has
+// been applied for them. Sorted by entity_id, and open_seqs ascending. An Arrive
+// whose handoff_seq is in open_seqs is a retry of one already placed.
+message OpenArrivals {
+  string entity_id = 1;
+  repeated uint64 open_seqs = 2;
 }
 
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
@@ -126,4 +192,7 @@ message EntityState {
   // AW-SRV-015; see linkdead_since_tick (7).
   uint64 linkdead_ceiling_tick = 11;
   uint64 linkdead_extension_ticks = 12;
+
+  // AW-SRV-028; see andara.log.v1.Entity.handoff_seq. 0 adds nothing to the hash.
+  uint64 handoff_seq = 13;
 }

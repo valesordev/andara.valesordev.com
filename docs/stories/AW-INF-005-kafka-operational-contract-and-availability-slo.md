@@ -187,3 +187,8 @@ to the broker and client contracts, the retention decision and the per-Partition
 The enforcement, SLO, alerts and rehearsal move to `lane: sre` stories and `config-assert` and the
 per-Partition server change to `lane: implementation` stories, which PM writes at the SPRINT-05
 boundary. Until they exist, every AC above stays here, and nothing is removed.
+
+*Added 2026-10-04 (architecture, from `AW-SRV-028`):* the client contract's list of claims also carries
+**per-Partition order from one producer**, and that **a record the client reports as failed is never
+appended later**. `AW-SRV-028`'s `HandoffClosed` proof rests on both.
+

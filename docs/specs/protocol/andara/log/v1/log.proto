@@ -61,15 +61,18 @@ message LoggedCommand {
     Look look = 10;
     Move move = 11;
     Arrive arrive = 12;
-    // 13 and 14 are AW-SRV-028's (HandoffAck, HandoffRejected).
+    HandoffAck handoff_ack = 13;
+    // 14 is held for AW-SRV-027's HandoffRejected{zone_faulted}, the answer a
+    // faulted target gives. AW-SRV-028 does not add it.
     BindCharacter bind_character = 15;
     UnbindCharacter unbind_character = 16;
     ContentSwap content_swap = 17;
     MarkLinkdead mark_linkdead = 18;
     Goto goto = 19;
+    HandoffClosed handoff_closed = 20;
   }
 
-  // Verbs beyond these arrive with their own stories, taking numbers from 20
+  // Verbs beyond these arrive with their own stories, taking numbers from 21
   // upward — deliberately NOT `reserved`. A reserved range would have
   // to shrink to add a verb, and buf treats shrinking one as a breaking change,
   // so reserving numbers "to hold them" makes the most routine schema change in
@@ -123,11 +126,41 @@ message Arrive {
   // The Entity as the source Zone last held it.
   Entity entity = 3;
 
-  // Where it left from, so a target that no longer has room_id — content
-  // moved under the log — can send it back rather than lose it. Cleared on
-  // the way back, so a bounce is one hop, never a loop.
+  // Where it left from: the source Zone, which the target produces its
+  // HandoffAck to, and the Room it stood in. A move and a Goto both write
+  // them. They are the arrival's origin; nothing bounces on them (AW-SRV-012
+  // places an arrival whose Room is gone in the Zone's fallback Room).
   string origin_zone_id = 4;
   string origin_room_id = 5;
+
+  // The Entity's handoff sequence for this move (AW-SRV-028): the source
+  // incremented it when the Entity left, and it equals entity.handoff_seq.
+  // The target takes this field as the authority. Retries of one handoff carry
+  // the same value, which is what makes a retry recognisable.
+  uint64 handoff_seq = 6;
+}
+
+// The target's answer to an Arrive it has placed, or recognised as one it
+// already placed or as stale (AW-SRV-028). Produced by the target's tick to
+// the source Zone's partition (LoggedCommand.zone_id is the source Zone). The
+// source drops its transit record for (entity_id, handoff_seq) and produces a
+// HandoffClosed. An ack that matches no transit record is a duplicate and is
+// ignored. An Arrive for an Entity the source still holds in transit, with a
+// higher handoff_seq, is an implicit ack of that record. Never a verb.
+message HandoffAck {
+  string entity_id = 1;
+  uint64 handoff_seq = 2;
+}
+
+// The source's proof that it has stopped producing Arrives for
+// (entity_id, handoff_seq) (AW-SRV-028). Produced by the source's tick to the
+// target Zone's partition after it applied the HandoffAck, so it is ordered
+// after every Arrive the source produced there: the target applies every
+// retry of that handoff before it applies this. The target then drops the
+// handoff from its open arrivals. Never a verb.
+message HandoffClosed {
+  string entity_id = 1;
+  uint64 handoff_seq = 2;
 }
 
 // A Session enters the World as a Character (AW-SRV-014). Produced by the
@@ -286,6 +319,11 @@ message Entity {
   // never moves, so it never crosses a Zone. Nor is linkdead state
   // (AW-SRV-015): a linkdead body is inert, so it never moves either.
   string name = 5;
+
+  // How many handoffs the Entity has been through (AW-SRV-028): 0 for one that
+  // never left its first Zone, incremented by the source each time it leaves.
+  // Field 5 is `name` since AW-SRV-014, so this is 6.
+  uint64 handoff_seq = 6;
 }
 
 // An Event as it was emitted by the simulation and written to the log. This is

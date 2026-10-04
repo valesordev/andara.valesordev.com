@@ -122,3 +122,20 @@ CLAUDE.md §8, plus: `AW-SRV-002`'s Zone-fault question points here as resolved.
 - **Resolved 2026-09-18 (Brian): quarantine the Zone, not the Partition.**
 - `[ASSUMPTION]` A faulted Zone stays faulted until restart. Re-arming is `AW-SRV-012`'s reload, if
   it wants it; nothing here prevents it.
+
+## HandoffRejected (architecture, 2026-10-04)
+
+From `AW-SRV-028`'s contract review (`docs/feedback/AW-SRV-028-handoff-contract.md`). `AW-SRV-028`
+builds the durable cross-Zone handoff and does **not** add a rejection: under today's freeze a faulted
+target never answers, and the Entity waits safely in the source's `Transit`. This story's rule, that a
+faulted Zone's records are consumed and rejected, is what lets the target answer, so the rejection is this
+story's:
+- an `Arrive` consumed and rejected for a faulted Zone produces
+  `HandoffRejected{entity_id, handoff_seq, code: "zone_faulted"}` to the source Zone's Partition
+  (`andara.log.v1.LoggedCommand` field 14, held for it), and `andara_handoff_rejected_total{code}` counts it;
+- the source applies it: it drops the transit record, restores the Entity to its origin Room
+  (`TransitRecord.entity.room_id`; the Zone's fallback Room with `EntityRelocated{room_removed}` if that Room
+  is gone), emits `CharacterArrived{from_direction: reverse of the move's direction}`, and carries out any
+  pending Unbind or MarkLinkdead the record holds.
+It needs an AC for each of those, and the size may want revisiting.
+

@@ -41,6 +41,55 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type TransitPending_Kind int32
+
+const (
+	TransitPending_KIND_UNSPECIFIED TransitPending_Kind = 0
+	TransitPending_UNBIND           TransitPending_Kind = 1
+	TransitPending_MARK_LINKDEAD    TransitPending_Kind = 2
+)
+
+// Enum value maps for TransitPending_Kind.
+var (
+	TransitPending_Kind_name = map[int32]string{
+		0: "KIND_UNSPECIFIED",
+		1: "UNBIND",
+		2: "MARK_LINKDEAD",
+	}
+	TransitPending_Kind_value = map[string]int32{
+		"KIND_UNSPECIFIED": 0,
+		"UNBIND":           1,
+		"MARK_LINKDEAD":    2,
+	}
+)
+
+func (x TransitPending_Kind) Enum() *TransitPending_Kind {
+	p := new(TransitPending_Kind)
+	*p = x
+	return p
+}
+
+func (x TransitPending_Kind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (TransitPending_Kind) Descriptor() protoreflect.EnumDescriptor {
+	return file_andara_state_v1_zone_state_proto_enumTypes[0].Descriptor()
+}
+
+func (TransitPending_Kind) Type() protoreflect.EnumType {
+	return &file_andara_state_v1_zone_state_proto_enumTypes[0]
+}
+
+func (x TransitPending_Kind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use TransitPending_Kind.Descriptor instead.
+func (TransitPending_Kind) EnumDescriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{2, 0}
+}
+
 // One Zone's mutable state at a tick boundary.
 type ZoneState struct {
 	state  protoimpl.MessageState `protogen:"open.v1"`
@@ -73,8 +122,18 @@ type ZoneState struct {
 	// A faulted Zone's Partition stops advancing until the process restarts, and
 	// the state left behind is deterministic — the same records panic at the
 	// same point on replay — so it is hashed, and snapshotted, as it stands.
-	Faulted       bool   `protobuf:"varint,7,opt,name=faulted,proto3" json:"faulted,omitempty"`
-	FaultedTick   uint64 `protobuf:"varint,8,opt,name=faulted_tick,json=faultedTick,proto3" json:"faulted_tick,omitempty"`
+	Faulted     bool   `protobuf:"varint,7,opt,name=faulted,proto3" json:"faulted,omitempty"`
+	FaultedTick uint64 `protobuf:"varint,8,opt,name=faulted_tick,json=faultedTick,proto3" json:"faulted_tick,omitempty"`
+	// Entities that have left this Zone and are not yet acknowledged
+	// (AW-SRV-028), sorted by entity_id. They are not in `entities`. Hashed, so
+	// a restore must carry them, and recovery retries them from here. Empty adds
+	// nothing to the hash.
+	Transit []*TransitRecord `protobuf:"bytes,9,rep,name=transit,proto3" json:"transit,omitempty"`
+	// Arrive handoffs into this Zone whose HandoffClosed has not been applied
+	// (AW-SRV-028), sorted by entity_id. They are what lets a late retry be
+	// recognised as stale after the Entity has moved on. Hashed; empty adds
+	// nothing.
+	Arrivals      []*OpenArrivals `protobuf:"bytes,10,rep,name=arrivals,proto3" json:"arrivals,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -165,6 +224,259 @@ func (x *ZoneState) GetFaultedTick() uint64 {
 	return 0
 }
 
+func (x *ZoneState) GetTransit() []*TransitRecord {
+	if x != nil {
+		return x.Transit
+	}
+	return nil
+}
+
+func (x *ZoneState) GetArrivals() []*OpenArrivals {
+	if x != nil {
+		return x.Arrivals
+	}
+	return nil
+}
+
+// An Entity in transit out of this Zone: the Entity as it will arrive, and
+// what the retry and a restore at home need.
+type TransitRecord struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The Entity as the target will receive it. entity.room_id is the Room it
+	// left from, which a restore at home would use, and entity.handoff_seq is
+	// the handoff's sequence. Never dormant or linkdead: those bodies never move.
+	Entity   *EntityState `protobuf:"bytes,1,opt,name=entity,proto3" json:"entity,omitempty"`
+	ToZoneId string       `protobuf:"bytes,2,opt,name=to_zone_id,json=toZoneId,proto3" json:"to_zone_id,omitempty"`
+	// The Room in to_zone_id the Arrive names.
+	RoomId string `protobuf:"bytes,3,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	// The Direction the move went, empty for a Goto. The reverse of it is the
+	// from_direction of a restore at home.
+	Direction string `protobuf:"bytes,4,opt,name=direction,proto3" json:"direction,omitempty"`
+	// The Tick of the last Arrive produced for it, and how many have been
+	// produced. The next retry is due at last_attempt_tick plus
+	// min(sim.handoff_retry_ticks × 2^(attempts-1), sim.handoff_retry_max_ticks).
+	LastAttemptTick uint64 `protobuf:"varint,5,opt,name=last_attempt_tick,json=lastAttemptTick,proto3" json:"last_attempt_tick,omitempty"`
+	Attempts        uint32 `protobuf:"varint,6,opt,name=attempts,proto3" json:"attempts,omitempty"`
+	// A Command for the Entity that arrived while it was in transit and is
+	// carried out when the handoff resolves.
+	Pending       *TransitPending `protobuf:"bytes,7,opt,name=pending,proto3" json:"pending,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TransitRecord) Reset() {
+	*x = TransitRecord{}
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransitRecord) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransitRecord) ProtoMessage() {}
+
+func (x *TransitRecord) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransitRecord.ProtoReflect.Descriptor instead.
+func (*TransitRecord) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *TransitRecord) GetEntity() *EntityState {
+	if x != nil {
+		return x.Entity
+	}
+	return nil
+}
+
+func (x *TransitRecord) GetToZoneId() string {
+	if x != nil {
+		return x.ToZoneId
+	}
+	return ""
+}
+
+func (x *TransitRecord) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *TransitRecord) GetDirection() string {
+	if x != nil {
+		return x.Direction
+	}
+	return ""
+}
+
+func (x *TransitRecord) GetLastAttemptTick() uint64 {
+	if x != nil {
+		return x.LastAttemptTick
+	}
+	return 0
+}
+
+func (x *TransitRecord) GetAttempts() uint32 {
+	if x != nil {
+		return x.Attempts
+	}
+	return 0
+}
+
+func (x *TransitRecord) GetPending() *TransitPending {
+	if x != nil {
+		return x.Pending
+	}
+	return nil
+}
+
+type TransitPending struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	Kind  TransitPending_Kind    `protobuf:"varint,1,opt,name=kind,proto3,enum=andara.state.v1.TransitPending_Kind" json:"kind,omitempty"`
+	// UNBIND: the UnbindCharacter's reason, as andara.log.v1.UnbindReason.
+	UnbindReason int32 `protobuf:"varint,2,opt,name=unbind_reason,json=unbindReason,proto3" json:"unbind_reason,omitempty"`
+	// MARK_LINKDEAD: the MarkLinkdead's tick counts, which the producer
+	// converted from seconds, so a replay reads what was produced.
+	GraceTicks     uint64 `protobuf:"varint,3,opt,name=grace_ticks,json=graceTicks,proto3" json:"grace_ticks,omitempty"`
+	ExtensionTicks uint64 `protobuf:"varint,4,opt,name=extension_ticks,json=extensionTicks,proto3" json:"extension_ticks,omitempty"`
+	MaxTicks       uint64 `protobuf:"varint,5,opt,name=max_ticks,json=maxTicks,proto3" json:"max_ticks,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *TransitPending) Reset() {
+	*x = TransitPending{}
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TransitPending) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TransitPending) ProtoMessage() {}
+
+func (x *TransitPending) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TransitPending.ProtoReflect.Descriptor instead.
+func (*TransitPending) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *TransitPending) GetKind() TransitPending_Kind {
+	if x != nil {
+		return x.Kind
+	}
+	return TransitPending_KIND_UNSPECIFIED
+}
+
+func (x *TransitPending) GetUnbindReason() int32 {
+	if x != nil {
+		return x.UnbindReason
+	}
+	return 0
+}
+
+func (x *TransitPending) GetGraceTicks() uint64 {
+	if x != nil {
+		return x.GraceTicks
+	}
+	return 0
+}
+
+func (x *TransitPending) GetExtensionTicks() uint64 {
+	if x != nil {
+		return x.ExtensionTicks
+	}
+	return 0
+}
+
+func (x *TransitPending) GetMaxTicks() uint64 {
+	if x != nil {
+		return x.MaxTicks
+	}
+	return 0
+}
+
+// An Entity's handoffs into this Zone that are still open: no HandoffClosed has
+// been applied for them. Sorted by entity_id, and open_seqs ascending. An Arrive
+// whose handoff_seq is in open_seqs is a retry of one already placed.
+type OpenArrivals struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EntityId      string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
+	OpenSeqs      []uint64               `protobuf:"varint,2,rep,packed,name=open_seqs,json=openSeqs,proto3" json:"open_seqs,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *OpenArrivals) Reset() {
+	*x = OpenArrivals{}
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *OpenArrivals) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*OpenArrivals) ProtoMessage() {}
+
+func (x *OpenArrivals) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use OpenArrivals.ProtoReflect.Descriptor instead.
+func (*OpenArrivals) Descriptor() ([]byte, []int) {
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *OpenArrivals) GetEntityId() string {
+	if x != nil {
+		return x.EntityId
+	}
+	return ""
+}
+
+func (x *OpenArrivals) GetOpenSeqs() []uint64 {
+	if x != nil {
+		return x.OpenSeqs
+	}
+	return nil
+}
+
 // One Entity as the simulation holds it. The Go form is sim.EntityState; a
 // round-trip test pins the two together.
 //
@@ -218,13 +530,15 @@ type EntityState struct {
 	// AW-SRV-015; see linkdead_since_tick (7).
 	LinkdeadCeilingTick    uint64 `protobuf:"varint,11,opt,name=linkdead_ceiling_tick,json=linkdeadCeilingTick,proto3" json:"linkdead_ceiling_tick,omitempty"`
 	LinkdeadExtensionTicks uint64 `protobuf:"varint,12,opt,name=linkdead_extension_ticks,json=linkdeadExtensionTicks,proto3" json:"linkdead_extension_ticks,omitempty"`
-	unknownFields          protoimpl.UnknownFields
-	sizeCache              protoimpl.SizeCache
+	// AW-SRV-028; see andara.log.v1.Entity.handoff_seq. 0 adds nothing to the hash.
+	HandoffSeq    uint64 `protobuf:"varint,13,opt,name=handoff_seq,json=handoffSeq,proto3" json:"handoff_seq,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *EntityState) Reset() {
 	*x = EntityState{}
-	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -236,7 +550,7 @@ func (x *EntityState) String() string {
 func (*EntityState) ProtoMessage() {}
 
 func (x *EntityState) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_state_v1_zone_state_proto_msgTypes[1]
+	mi := &file_andara_state_v1_zone_state_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -249,7 +563,7 @@ func (x *EntityState) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntityState.ProtoReflect.Descriptor instead.
 func (*EntityState) Descriptor() ([]byte, []int) {
-	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{1}
+	return file_andara_state_v1_zone_state_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *EntityState) GetEntityId() string {
@@ -336,11 +650,18 @@ func (x *EntityState) GetLinkdeadExtensionTicks() uint64 {
 	return 0
 }
 
+func (x *EntityState) GetHandoffSeq() uint64 {
+	if x != nil {
+		return x.HandoffSeq
+	}
+	return 0
+}
+
 var File_andara_state_v1_zone_state_proto protoreflect.FileDescriptor
 
 const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\n" +
-	" andara/state/v1/zone_state.proto\x12\x0fandara.state.v1\x1a\x1candara/content/v1/zone.proto\x1a\x17andara/log/v1/log.proto\"\xac\x02\n" +
+	" andara/state/v1/zone_state.proto\x12\x0fandara.state.v1\x1a\x1candara/content/v1/zone.proto\x1a\x17andara/log/v1/log.proto\"\xa1\x03\n" +
 	"\tZoneState\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -350,7 +671,34 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\bdeferred\x18\x05 \x03(\v2\x1c.andara.log.v1.LoggedCommandR\bdeferred\x12\"\n" +
 	"\rnext_event_id\x18\x06 \x01(\x04R\vnextEventId\x12\x18\n" +
 	"\afaulted\x18\a \x01(\bR\afaulted\x12!\n" +
-	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\"\xfb\x03\n" +
+	"\ffaulted_tick\x18\b \x01(\x04R\vfaultedTick\x128\n" +
+	"\atransit\x18\t \x03(\v2\x1e.andara.state.v1.TransitRecordR\atransit\x129\n" +
+	"\barrivals\x18\n" +
+	" \x03(\v2\x1d.andara.state.v1.OpenArrivalsR\barrivals\"\x9d\x02\n" +
+	"\rTransitRecord\x124\n" +
+	"\x06entity\x18\x01 \x01(\v2\x1c.andara.state.v1.EntityStateR\x06entity\x12\x1c\n" +
+	"\n" +
+	"to_zone_id\x18\x02 \x01(\tR\btoZoneId\x12\x17\n" +
+	"\aroom_id\x18\x03 \x01(\tR\x06roomId\x12\x1c\n" +
+	"\tdirection\x18\x04 \x01(\tR\tdirection\x12*\n" +
+	"\x11last_attempt_tick\x18\x05 \x01(\x04R\x0flastAttemptTick\x12\x1a\n" +
+	"\battempts\x18\x06 \x01(\rR\battempts\x129\n" +
+	"\apending\x18\a \x01(\v2\x1f.andara.state.v1.TransitPendingR\apending\"\x93\x02\n" +
+	"\x0eTransitPending\x128\n" +
+	"\x04kind\x18\x01 \x01(\x0e2$.andara.state.v1.TransitPending.KindR\x04kind\x12#\n" +
+	"\runbind_reason\x18\x02 \x01(\x05R\funbindReason\x12\x1f\n" +
+	"\vgrace_ticks\x18\x03 \x01(\x04R\n" +
+	"graceTicks\x12'\n" +
+	"\x0fextension_ticks\x18\x04 \x01(\x04R\x0eextensionTicks\x12\x1b\n" +
+	"\tmax_ticks\x18\x05 \x01(\x04R\bmaxTicks\";\n" +
+	"\x04Kind\x12\x14\n" +
+	"\x10KIND_UNSPECIFIED\x10\x00\x12\n" +
+	"\n" +
+	"\x06UNBIND\x10\x01\x12\x11\n" +
+	"\rMARK_LINKDEAD\x10\x02\"H\n" +
+	"\fOpenArrivals\x12\x1b\n" +
+	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x1b\n" +
+	"\topen_seqs\x18\x02 \x03(\x04R\bopenSeqs\"\x9c\x04\n" +
 	"\vEntityState\x12\x1b\n" +
 	"\tentity_id\x18\x01 \x01(\tR\bentityId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12A\n" +
@@ -366,7 +714,9 @@ const file_andara_state_v1_zone_state_proto_rawDesc = "" +
 	"\x04name\x18\n" +
 	" \x01(\tR\x04name\x122\n" +
 	"\x15linkdead_ceiling_tick\x18\v \x01(\x04R\x13linkdeadCeilingTick\x128\n" +
-	"\x18linkdead_extension_ticks\x18\f \x01(\x04R\x16linkdeadExtensionTicksB\xc0\x01\n" +
+	"\x18linkdead_extension_ticks\x18\f \x01(\x04R\x16linkdeadExtensionTicks\x12\x1f\n" +
+	"\vhandoff_seq\x18\r \x01(\x04R\n" +
+	"handoffSeqB\xc0\x01\n" +
 	"\x13com.andara.state.v1B\x0eZoneStateProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/state/v1;statev1\xa2\x02\x03ASX\xaa\x02\x0fAndara.State.V1\xca\x02\x0fAndara\\State\\V1\xe2\x02\x1bAndara\\State\\V1\\GPBMetadata\xea\x02\x11Andara::State::V1b\x06proto3"
 
 var (
@@ -381,22 +731,32 @@ func file_andara_state_v1_zone_state_proto_rawDescGZIP() []byte {
 	return file_andara_state_v1_zone_state_proto_rawDescData
 }
 
-var file_andara_state_v1_zone_state_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_andara_state_v1_zone_state_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
+var file_andara_state_v1_zone_state_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_andara_state_v1_zone_state_proto_goTypes = []any{
-	(*ZoneState)(nil),          // 0: andara.state.v1.ZoneState
-	(*EntityState)(nil),        // 1: andara.state.v1.EntityState
-	(*v1.LoggedCommand)(nil),   // 2: andara.log.v1.LoggedCommand
-	(*v11.ComponentValue)(nil), // 3: andara.content.v1.ComponentValue
+	(TransitPending_Kind)(0),   // 0: andara.state.v1.TransitPending.Kind
+	(*ZoneState)(nil),          // 1: andara.state.v1.ZoneState
+	(*TransitRecord)(nil),      // 2: andara.state.v1.TransitRecord
+	(*TransitPending)(nil),     // 3: andara.state.v1.TransitPending
+	(*OpenArrivals)(nil),       // 4: andara.state.v1.OpenArrivals
+	(*EntityState)(nil),        // 5: andara.state.v1.EntityState
+	(*v1.LoggedCommand)(nil),   // 6: andara.log.v1.LoggedCommand
+	(*v11.ComponentValue)(nil), // 7: andara.content.v1.ComponentValue
 }
 var file_andara_state_v1_zone_state_proto_depIdxs = []int32{
-	1, // 0: andara.state.v1.ZoneState.entities:type_name -> andara.state.v1.EntityState
-	2, // 1: andara.state.v1.ZoneState.deferred:type_name -> andara.log.v1.LoggedCommand
-	3, // 2: andara.state.v1.EntityState.components:type_name -> andara.content.v1.ComponentValue
-	3, // [3:3] is the sub-list for method output_type
-	3, // [3:3] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	5, // 0: andara.state.v1.ZoneState.entities:type_name -> andara.state.v1.EntityState
+	6, // 1: andara.state.v1.ZoneState.deferred:type_name -> andara.log.v1.LoggedCommand
+	2, // 2: andara.state.v1.ZoneState.transit:type_name -> andara.state.v1.TransitRecord
+	4, // 3: andara.state.v1.ZoneState.arrivals:type_name -> andara.state.v1.OpenArrivals
+	5, // 4: andara.state.v1.TransitRecord.entity:type_name -> andara.state.v1.EntityState
+	3, // 5: andara.state.v1.TransitRecord.pending:type_name -> andara.state.v1.TransitPending
+	0, // 6: andara.state.v1.TransitPending.kind:type_name -> andara.state.v1.TransitPending.Kind
+	7, // 7: andara.state.v1.EntityState.components:type_name -> andara.content.v1.ComponentValue
+	8, // [8:8] is the sub-list for method output_type
+	8, // [8:8] is the sub-list for method input_type
+	8, // [8:8] is the sub-list for extension type_name
+	8, // [8:8] is the sub-list for extension extendee
+	0, // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_andara_state_v1_zone_state_proto_init() }
@@ -409,13 +769,14 @@ func file_andara_state_v1_zone_state_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_state_v1_zone_state_proto_rawDesc), len(file_andara_state_v1_zone_state_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   2,
+			NumEnums:      1,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_andara_state_v1_zone_state_proto_goTypes,
 		DependencyIndexes: file_andara_state_v1_zone_state_proto_depIdxs,
+		EnumInfos:         file_andara_state_v1_zone_state_proto_enumTypes,
 		MessageInfos:      file_andara_state_v1_zone_state_proto_msgTypes,
 	}.Build()
 	File_andara_state_v1_zone_state_proto = out.File
