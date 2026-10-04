@@ -44,6 +44,14 @@ keys:
   - {key: sim.seed,                    env: ANDARA_SIM_SEED,               type: int, default: 0, story: AW-SRV-002}
   - {key: sim.checkpoint_every_ticks,  env: ANDARA_CHECKPOINT_EVERY_TICKS, type: int, default: 100, min: 1, story: AW-SRV-002}
 
+  # --- AW-SRV-028: cross-Zone handoff retry ---
+  # sim.handoff_retry_max_ticks must be at least sim.handoff_retry_ticks, and the server logs a startup
+  # warn (never a refusal) when sim.handoff_retry_ticks / sim.tick_rate is not below a non-zero ingress.transit_hold.
+  # Both are cross-key checks the server makes at startup; the schema can only bound each key alone.
+  - {key: sim.handoff_retry_ticks,     env: ANDARA_HANDOFF_RETRY_TICKS,     type: int, default: 10,  min: 1, story: AW-SRV-028}
+  - {key: sim.handoff_retry_max_ticks, env: ANDARA_HANDOFF_RETRY_MAX_TICKS, type: int, default: 100, min: 1, story: AW-SRV-028}
+  - {key: sim.handoff_retry_batch,     env: ANDARA_HANDOFF_RETRY_BATCH,     type: int, default: 50,  min: 1, story: AW-SRV-028}
+
   # --- AW-SRV-003: command pipeline ---
   - {key: command.max_intent_bytes,    env: ANDARA_MAX_INTENT_BYTES,       type: int, default: 4096, min: 1, story: AW-SRV-003}
   - {key: command.verb_table_path,     env: ANDARA_VERB_TABLE,             type: string, default: "", story: AW-SRV-003}
