@@ -46,7 +46,7 @@ unset), so repoint it.
 ### What happens to the originals
 
 **Each keeps its ID and shrinks to its contract. Neither is superseded.** Both are cited from runbooks,
-alert specs, SLO documents, `keys.yaml`, `server/ingress/metrics.go` and over a hundred and eighty story, spec and runbook
+alert specs, SLO documents, `keys.yaml`, `server/ingress/metrics.go` and over a hundred and seventy story, spec and runbook
 lines, and story IDs are never renumbered or reused (CLAUDE.md §4). A superseded ID leaves every one of
 those pointing at a story that no longer says anything. Each stays `lane: architecture` and is small
 enough to be one session.
@@ -125,7 +125,9 @@ says.
    (`round_tick`, `cause`). The pod's `3` and `6` map to the script's `1` with the pod's code in the
    printed line. The story's Make-targets table carries the full mapping. It prints
    `rollback: pod exited <n> (<meaning>): round <T> cause=<c>`, and exits: `0` ok, `1` rollout timeout
-   with another cause, `4` the pod exited `4`, `7` it exited `7`, `8` it exited `8`. `make deploy`
+   with another cause, `4` the pod exited `4`, `6` the previous core pack was rejected (the pod's own `6`
+   maps to `1`), `7` it exited `7`, `8` it exited `8`. `scripts/rollback.sh` and `scripts/deploy.sh` each
+   call `helm_install.sh`, which gains pass-through for `--set` and `--description`. `make deploy`
    keeps `0`, `1`, `2` and `6`. The tests assert the script's codes and the printed line.
 4. **Spelling: `ROUND=T`.** Corrected in the story's scope, AC-4 and the Configuration table.
    `recovery.pin_round`'s default is `0`, as `AW-SRV-007` says. The chart's `keys.yaml` repoint is for
