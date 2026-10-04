@@ -88,7 +88,7 @@ below.
 
 ## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
 
-*Done: SRE's record is in the story, and the operator step is carried to `AW-INF-034` (architecture's §8 review, 2026-10-04).*
+*Items 1 and 2 are done (SRE's record is in the story). **Item 3 is still wanted:** the operator step, `make projector-rebuild ENV=dev` logging `state projector restore verified` on a `dev` running this build. `AW-SRV-043` stays at `review` until it's recorded in the story (architecture's §8 review, 2026-10-04).*
 
 Architecture's §8 review of AW-SRV-043 stops at SRE's items. The story stays at `review` until all
 are recorded in it (its "Outstanding before `done`").

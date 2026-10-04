@@ -4,7 +4,7 @@ title: A restore verifies its round
 epic: EPIC-04
 component: server
 type: feature
-status: done
+status: review
 size: M
 depends_on: [AW-SRV-006, AW-SRV-019]
 blocks: [AW-SRV-007]
@@ -259,7 +259,7 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
 - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
-  build deployed to `dev`. Carried to `AW-INF-034`'s Definition of done (§8 close below).
+  build deployed to `dev`. Still to run: SRE records it in this story (§8 review below).
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 
@@ -302,9 +302,10 @@ all observed, and the `stack` workflow runs it after `stack-linkdead`. At `main`
 **Runbook:** `docs/runbooks/state-projector-down.md`'s exit `5` row no longer says it ships with
 this story.
 
-## §8 close (architecture, 2026-10-04): `done`
+## §8 review (architecture, 2026-10-04): stays `review` on the operator step
 
-Every checklist item holds, run on `main` ad4ef09 plus this review.
+Every checklist item holds except one, run on `main` ad4ef09 plus this review. The story stays at `review`
+until SRE records the operator step (below), which is the one thing left.
 - **Acceptance criteria.** The sim and store tests the record names (`TestRestore_*`,
   `TestRestoredEngineContinuesTheWorld`) pass on `main`. AC-3, AC-4 and AC-5's projector half are
   `TestRun_*` against Redpanda, which SRE ran on the stack (record above), and AC-8's #143 regression
@@ -322,8 +323,12 @@ Every checklist item holds, run on `main` ad4ef09 plus this review.
   - The mismatch series and `error` line from a running projector can't be scraped, since it exits `5`
     first. The integration tests read them on the in-process registry, as the Observability section
     says.
-  - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this build on
-    `dev`, which is tailnet-only. It is carried to `AW-INF-034`'s Definition of done.
+
+**Not done, and not carried:** the operator step in the Test plan, `make projector-rebuild ENV=dev` on a
+`dev` running this build, with `state projector restore verified` in its log. The §8 carve-out above is
+for an instrumentation observation that no caller can make yet. This one has a caller and only needs a
+run, since Argo CD deploys `main` to `dev`, so SRE (on the tailnet) runs it and records the line here.
+`AW-SRV-007` depends on this story and counts it as met at `review`, so nothing waits on it.
 - **Config, migration, glossary.** No config key. The round's `sim_seed` field is additive: a round
   without it reads as `0` and derives the seed (AC-6). The glossary gains **Restore mismatch** in this
   review. The one `[ASSUMPTION]` is marked resolved above.

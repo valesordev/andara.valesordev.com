@@ -524,7 +524,7 @@ CLAUDE.md §8, plus:
   only.
 - `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
   run in the job summary.
-- **Inherited from `AW-SRV-043`'s §8 pass (2026-10-04):** `andara_restore_total{caller="verify"}`
+- **Inherited from `AW-SRV-043`'s §8 review (2026-10-04):** `andara_restore_total{caller="verify"}`
   is observed live. This story's §8 shows it at `ok` 1 from the running server's scrape after one
   `snapshot verify --round T` against the local stack's real round (`Admin.VerifySnapshotRound`), and
   `recover --verify`'s outcome read on the in-process registry, since a one-shot exits before a scrape.

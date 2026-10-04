@@ -184,9 +184,6 @@ is the test, and the `CONFIRM` guard is why it exists.
 CLAUDE.md §8, plus:
 - `AW-SRV-007`'s "fires on the cluster" line, which `AW-INF-009` inherits, isn't this story's to
   close, but AC-7's run is recorded where `AW-INF-009`'s §8 can cite it.
-- **Inherited from `AW-SRV-043`'s §8 pass (2026-10-04):** the operator step. The §8 record shows
-  `make projector-rebuild ENV=dev` logging `state projector restore verified` on a `dev` that runs
-  the build with `AW-SRV-043` in it, with `andara_restore_total{caller="projector",outcome="ok"}` at 1.
 - The §8 record shows `andara_recovery_*` read from `dev`'s recovered server, and the `recovery.run`
   trace resolved in Tempo.
 
