@@ -684,6 +684,10 @@ func (p *player) endStream() {
 	}
 }
 
+// errNoAttached is stream()'s result when --timeout passed with no Attached
+// frame: the server never said the stream was open (AW-SRV-011 AC-11).
+var errNoAttached = errors.New("the stream sent no Attached frame within --timeout")
+
 // streamLoop owns the Subscribe stream for the life of play: it opens it,
 // reads it, and when it ends decides between resubscribing on the same
 // Session, reopening a Session (AC-7), or giving up.
@@ -700,6 +704,12 @@ func (p *player) streamLoop() {
 		var ce *connect.Error
 		typed := errors.As(err, &ce)
 		switch {
+		case errors.Is(err, errNoAttached):
+			// Before the connection-lost path: a server that doesn't send
+			// Attached won't start, so reopening the stream, with or
+			// without --reconnect, would only wait --timeout again.
+			p.fatal <- &AppError{Exit: ExitTimeout, Code: CodeTimeout, Message: "the server did not say the event stream was open within --timeout", Detail: map[string]any{}}
+			return
 		case err == nil:
 			// The server ended the stream cleanly. Nothing is wrong with
 			// the Session; open another — after a beat, so a server that
@@ -763,10 +773,14 @@ func jitter(d time.Duration) time.Duration {
 	return d/2 + time.Duration(rand.Int64N(int64(d/2)+1))
 }
 
-// stream runs one Subscribe until it ends and returns why. The first
-// stream of a Session asks for the Room once the server has accepted the
-// subscription; a later one resumes from lastEvent, and a Resync frame on
-// it triggers the look instead.
+// stream runs one Subscribe until it ends and returns why. It waits for the
+// Attached frame, the stream's only open signal (AW-SRV-011 AC-11), before
+// anything else: the first stream of a Session asks for the Room once it has
+// arrived, so the look's RoomDescribed is addressed to this stream. A later
+// stream resumes from lastEvent, and a Resync frame on it triggers the look
+// instead. The wait is bounded by --timeout, from before the Subscribe call,
+// because Receive isn't bounded per call and the call itself may return
+// before the headers arrive.
 func (p *player) stream() error {
 	sctx, cancel := context.WithCancel(p.ctx)
 	defer cancel()
@@ -775,16 +789,41 @@ func (p *player) stream() error {
 	id := p.sessionID
 	p.mu.Unlock()
 
+	// Canceling the stream's context ends Receive with CodeCanceled, the
+	// same as the player leaving, so the timer records that it was the one.
+	var timedOut atomic.Bool
+	timer := time.AfterFunc(p.rt.settings.Timeout, func() {
+		timedOut.Store(true)
+		cancel()
+	})
+	defer timer.Stop()
+
 	last := p.lastEvent.Load()
 	p.protof("» Subscribe session_id=%s last_event_id=%d world=%t", id, last, p.o.world)
 	st, err := p.game.Subscribe(sctx, connect.NewRequest(&gamev1.SubscribeRequest{SessionId: id, LastEventId: last, World: p.o.world}))
 	if err != nil {
+		if timedOut.Load() {
+			return errNoAttached
+		}
 		p.protof("« error session_id=%s %s", id, describeError(err))
 		return err
 	}
 	defer func() { _ = st.Close() }()
-	// The headers are back, so the gateway has the stream; the look's
-	// RoomDescribed is addressed to this Session's subscription.
+	attached := false
+	for !attached && st.Receive() {
+		env := st.Msg()
+		p.handle(env)
+		attached = env.GetAttached() != nil
+	}
+	if !attached {
+		if timedOut.Load() {
+			p.protof("« no Attached session_id=%s within --timeout", id)
+			return errNoAttached
+		}
+		// The stream ended before it was open: the loop reads why.
+		return st.Err()
+	}
+	timer.Stop()
 	if p.looked.CompareAndSwap(false, true) && last == 0 {
 		go func() {
 			p.look()

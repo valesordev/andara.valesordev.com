@@ -217,6 +217,11 @@ func TestRun_Linkdead(t *testing.T) {
 	// contiguous: the resume is checked as every Event Aldric's Room had
 	// after lastA, in order — its own linkdead, Brin leaving and coming
 	// back — then the reconnect. A Resync, or a missing one, fails.
+	// The stream opens with Attached, and a resume that holds carries the
+	// resume point as its cursor (AW-SRV-011 AC-11).
+	if !resumed.Receive() || resumed.Msg().GetAttached().GetCursorEventId() != lastA {
+		t.Fatalf("the resume's first frame = %v / %v, want Attached at %d", resumed.Msg(), resumed.Err(), lastA)
+	}
 	var got []string
 	prev := lastA
 	for len(got) < 4 && resumed.Receive() {

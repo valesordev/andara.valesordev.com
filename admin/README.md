@@ -364,7 +364,7 @@ another against the same recorded stream.
 | `CharacterReconnected` | "`<name>` reconnects." |
 | `CharacterDespawned` | "`<name>` fades from the world." for `linkdead` and `linkdead_ceiling`; "`<name>` leaves the world." for `quit`, `switch`, and any other reason. The wording is a placeholder, Brian's to change |
 | `CommandRejected` | the message, verbatim — the same voice as a refusal returned on `Submit` |
-| `Heartbeat` | nothing |
+| `Heartbeat`, `Attached` | nothing. `Attached` is the stream's open signal (see below) |
 | `Resync` | "You may have missed some events; the world continues from here." and a fresh `look` |
 | `ZoneFaulted`, `SubscriberDropped`, `SimulationStopped` | one system-voice line each (`SubscriberDropped`'s `buffer_full` and `revoked` as prose; the token stays under `/protocol`) |
 | anything newer than this client | "Something happened here that this client cannot describe (event N)." |
@@ -414,12 +414,20 @@ it was typed:
 ```
 printf 'look\nnorth\n' | andara-cli play
 printf 'look\n' | andara-cli play --output json | jq .
-printf 'look\n' | andara-cli play --output json | jq 'select(.heartbeat == null)'   # Events only
+printf 'look\n' | andara-cli play --output json | jq 'select(.heartbeat == null and .attached == null)'   # Events only
 ```
 
 Heartbeats are in the JSON stream on purpose: the proto calls them stream
-frames, and a heartbeat's `tick` is the only liveness a script can see. Filter
-them out with the `jq` above rather than expecting the client to.
+frames, and a heartbeat's `tick` is the only liveness a script can see. So is
+`Attached`, the first frame of every stream. Filter them out with the `jq`
+above rather than expecting the client to.
+
+`play` sends its first `look` only once `Attached` has arrived: it is the one
+signal that the server has the stream, and a `look` sent before it can be
+answered to a stream that isn't there yet. If it doesn't arrive within
+`--timeout`, `play` exits 4 with `error.code` `timeout`, sends no `look`, and
+does not retry, with or without `--reconnect`: a server that doesn't send
+`Attached` won't start, and reopening the stream would only wait again.
 
 History lives at `$XDG_STATE_HOME/andara/history` (`~/.local/state/andara/history`),
 last 1000 lines, opt out with `--no-history`. `--timeout` bounds opening the

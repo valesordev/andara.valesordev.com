@@ -172,6 +172,16 @@ func TestStartEgress_MemoryLoopback(t *testing.T) {
 		streamDone <- rt.Egress.SubscribeWith(streamCtx, sess, &gamev1.SubscribeRequest{SessionId: "s-1"}, sendFunc(func(env *gamev1.EventEnvelope) error { recv <- env; return nil }))
 	}()
 	waitFor(t, func() bool { return testutil.ToFloat64(rt.Egress.Metrics().Streams) == 1 }, "subscribed")
+	// The stream opens with Attached (AW-SRV-011 AC-11); the rebind below
+	// sends no second one.
+	select {
+	case env := <-recv:
+		if env.GetAttached() == nil {
+			t.Fatalf("first frame = %v, want Attached", env)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no Attached")
+	}
 	// Binding after subscribing: the routing table tells the egress, which
 	// re-reads where the Session perceives from.
 	rt.Bindings.Bind("s-1", command.Binding{Actor: "ghost", Zone: "town"})

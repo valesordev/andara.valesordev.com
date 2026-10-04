@@ -522,6 +522,16 @@ fan-out's buffer and the client's socket. A Session that subscribes gets **one H
 as long as it lives**, read by its own goroutine — the pump — into a ring of what the Session has
 been sent, `egress.resume_window` deep. The stream is a cursor over that ring. So:
 
+- **Attached.** Every stream's first frame is `Attached` (Event ID 0, no `EventType`), written after
+  the stream's cursor is positioned and before anything else, a `Resync` included. It is the
+  stream's only open signal: a client that submits a Command once it has arrived gets that
+  Command's Events, and may rely on nothing before it. Response headers say nothing about the
+  egress, and the same handler serves Connect, gRPC and gRPC-Web, so no transport's header timing
+  can be the signal. `cursor_event_id` is `last_event_id` when a resume holds, else the newest
+  Event retained for the Session (0 if none), so the first Event the stream delivers has a greater
+  ID. It does not move the client's resume point (it has no Event ID), and a `Rebind` sends no
+  second one. A client built against it waits for `Attached`, so against a server without it
+  `andara-cli play` fails at `--timeout` with exit `4` rather than proceeding.
 - **Resume.** A stream that ends and is reopened with `last_event_id` continues from the next
   retained Event with no gap and no duplicate, including Events that arrived while no stream was
   open — the pump kept retaining. A resume point the window no longer reaches, or one this server
@@ -598,7 +608,7 @@ runbook for `SessionsDroppingAtRate`.
 | Metric | Type | Labels | Cardinality bound |
 |--------|------|--------|-------------------|
 | `andara_stream_subscribers` | gauge | — | 1; open `Subscribe` streams |
-| `andara_stream_events_sent_total` | counter | `type` | the EventType enum + `heartbeat`, `resync` |
+| `andara_stream_events_sent_total` | counter | `type` | the EventType enum + `heartbeat`, `resync`, `attached` |
 | `andara_session_egress_drops_total` | counter | `reason` | `buffer_full`, `client_gone`, `draining`, `revoked` |
 | `andara_sessions_in_drop_state` | gauge | — | 1; Sessions whose last stream the server ended (`buffer_full`, `draining`) and that have not reopened one — the SLI's unavailable Session-seconds |
 | `andara_stream_buffer_depth` | histogram | — | 1; a stream's unsent count when an Event was appended for it, across Sessions |
