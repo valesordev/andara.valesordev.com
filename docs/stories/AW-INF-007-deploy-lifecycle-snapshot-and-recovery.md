@@ -129,8 +129,8 @@ ServerStopping { string message = 1; uint32 expected_back_seconds = 2; }
 | Target | Does | Exit |
 |--------|------|-----:|
 | `make deploy ENV=<env> TAG=<tag>` | publish+activate `andara.core@<tag>`; `helm upgrade --install --set image.tag`; `kubectl rollout status --timeout`; reads `andara_deploy_interruption_seconds`, prints it against RTO | `0` ok · `2` hash mismatch · `1` rollout timeout · `6` core pack rejected |
-| `make rollback ENV=<env> [ROUND=T] [TAG=<tag>]` | the same upgrade as `make deploy`: `scripts/deploy.sh` and `scripts/rollback.sh` each call `scripts/helm_install.sh`, which gains optional pass-through for extra `--set` values and `--description` (an SRE change to an `AW-INF-003` script; every guard failure in it exits `1`), and it carries (`--values <env>.yaml`, no `--reuse-values`, the Argo CD and Kafka-Ready guards, digest pinning), with `image.tag=<previous>` (which may be `tag@sha256:…` from the digest-pinning step, and `helm_install.sh` passes that through) and `recovery.pin_round=<T or 0>`. **Not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is `TAG`, or else the `image.tag` of the newest revision older than the current one whose status isn't `failed` (`helm history`, then `helm get values --revision <n> --all`). The script labels its upgrade `rollback to <tag>`, and without `TAG` it refuses on a revision so labelled, since "previous" would be the bad image. With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: `0` ok · `1` rollout timeout or another pod exit · `4` state_version · `6` the previous core pack was rejected · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
-| `make snapshot-tag ENV=<env> TAG=<t>` | a thin wrapper over `andara-cli snapshot tag`, which tags the newest round (`prestop` tags in-process) | |
+| `make rollback ENV=<env> [ROUND=T] [TAG=<tag>]` | the same upgrade as `make deploy`: `scripts/deploy.sh` and `scripts/rollback.sh` each call `scripts/helm_install.sh`, which gains optional pass-through for extra `--set` values and `--description` (an SRE change to an `AW-INF-003` script; every guard failure in it exits `1`), and it carries (`--values <env>.yaml`, no `--reuse-values`, the Argo CD and Kafka-Ready guards, digest pinning), with `image.tag=<previous>` (which may be `tag@sha256:…` from the digest-pinning step, and `helm_install.sh` passes that through) and `recovery.pin_round=<T or 0>`. **Not** `helm rollback`, which takes no `--set` and so could neither set nor clear the pin. `<previous>` is `TAG`; or, when the current revision is a **failed** `rollback to <tag>` (the refuse-then-retry flow after a pod exit `4`), that `<tag>`, so `make rollback ROUND=T` retries the old binary it was refused for; or else the `image.tag` of the newest older revision whose status isn't `failed` (`helm history`, then `helm get values --revision <n> --all`). The script labels its upgrade `rollback to <tag>`, and without `TAG` it refuses on a **deployed** revision so labelled, since "previous" would be the bad image. With `ROUND`, it first tags `T` `rollback:<T>` (`make snapshot-tag`). The pin stays until the next `make deploy` or `make rollback` | script exits: `0` ok · `1` rollout timeout or another pod exit · `4` state_version · `6` the previous core pack was rejected · `7` the pinned round is incomplete · `8` hash mismatch under the pin |
+| `make snapshot-tag ENV=<env> TAG=<t> [ROUND=<tick>]` | a thin wrapper over `andara-cli snapshot tag --name <t> [--round <tick>]`, which tags the newest round, or the round at `<tick>` when given (`prestop` tags in-process). `make rollback ROUND=T` passes `ROUND=T`, so the pinned round is the one protected | |
 
 The exit codes are the scripts' (`scripts/deploy.sh`, `scripts/rollback.sh`). Through `make` every failure
 is `2`, and the evidence is the script's printed line (`AW-INF-029`'s pattern). A pod's exit code reaches
@@ -214,11 +214,13 @@ the expected interruption as a number from the last CI run, and every step is a 
 
 ## Open questions
 
-- **Open since PR #356 (2026-10-03), for the SPRINT-05 split:** who clears `recovery.pin_round`, whether
-  retention keeps the pinned round, what `make rollback` itself exits, and `ROUND=T` vs `--round T`.
-  See `docs/feedback/AW-INF-005-007-split.md`, "From PR #356's review". These affect this story's
-  Interface contract, so its deploy half doesn't start before the split answers them. The server
-  side of the key is `AW-SRV-007`'s (its Configuration table and AC-15).
+- **Resolved 2026-10-03 (architecture), for the SPRINT-05 split:** PR #356's four pin-lifecycle questions
+  are answered in `docs/feedback/AW-INF-005-007-split.md`, "PR #356's four questions, answered", and in
+  the Make-targets table above: the next `make deploy` or `make rollback` clears `recovery.pin_round`,
+  `T` is tagged `rollback:<T>`, `make rollback`'s exits are the script's, and the spelling is
+  `ROUND=T`. The deploy half is no longer waiting on them. It waits on the ruling for AC-5's emitter
+  and clock, which the kept story holds. The server side of the key is `AW-SRV-007`'s (its
+  Configuration table and AC-15).
 
 - `[NEEDS BRIAN]` The `message` in `ServerStopping` — countdown, in-world notice, or nothing. The
   field and the lead time exist either way; the words do not affect this contract.

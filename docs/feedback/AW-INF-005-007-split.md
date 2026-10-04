@@ -89,8 +89,8 @@ Until step 2 the originals keep every AC. A lapse in PM's grooming loses nothing
 |---|---|---|---|
 | **`AW-INF-007`, kept** (S) | architecture | `docs/specs/deploy/lifecycle.md` (sequence, round tags, configuration, the scripts' exit codes, the pin lifecycle below) and `ServerStopping` in `event.proto`, with its `oneof` field number pinned by architecture, not left to the implementer; **and the ruling on AC-5's emitter and clock (below)** | none behavioural, as for `AW-INF-005`. AC-5 is **held here**, and only here |
 | **Pre-stop** (M) | implementation | `andara-server prestop`: `ServerStopping`, the notice lead, `ingress` degraded, the snapshot at the boundary, offsets, the log line and metrics; `deploy.*` keys | 1 (server half), 6 |
-| **Round tags and retention** (M) | implementation | the tag objects, `ListRounds` reporting them, the retention sweep, `andara-cli snapshot list` and `tag`, `snapshot.keep_*`; retention counts any tag, `deploy:` or `rollback:`, and N counts tagged rounds | 7, amended to say so |
-| **`make deploy` and `make rollback`** (M) | sre | both scripts and their exit codes, the `andara.core` step, the pin lifecycle (`helm upgrade`, not `helm rollback`), the `make snapshot-tag` wrapper | 4, 8, and the `make deploy` half of 3 (exit `2`, the runbook path printed) |
+| **Round tags and retention** (M) | implementation | the tag objects, `ListRounds` reporting them, the retention sweep, `andara-cli snapshot list` and `tag` (`tag` takes `--round <tick>`, so a historical round can be protected), `snapshot.keep_*`; retention counts any tag, `deploy:` or `rollback:`, and N counts tagged rounds | 7, amended to say so |
+| **`make deploy` and `make rollback`** (M) | sre | both scripts and their exit codes, the `andara.core` step, the pin lifecycle (`helm upgrade`, not `helm rollback`), the `make snapshot-tag` wrapper (with `ROUND=<tick>`) | 4, 8, and the `make deploy` half of 3 (exit `2`, the runbook path printed) |
 | **Chart lifecycle and the rolling-update test** (M) | sre | the `preStop` hook, `terminationGracePeriodSeconds`, the `make check` bound, the kind rolling-update test in CI | 1 (hook and bound), 2, 3 (the pod never ready, `RecoveryStateMismatch`, the rollout stalled), 9, and the test half of 6 |
 
 **Held for the kept `AW-INF-007`'s contract, and not decided here:** who emits
@@ -107,7 +107,8 @@ says.
 
 1. **Who clears `recovery.pin_round`: the next `make deploy` or `make rollback`.** `make rollback` is the
    deploy's own upgrade with `image.tag=<previous>`, not `helm rollback`, which takes no `--set`. It
-   shares `helm_install.sh`'s guards and refuses without `TAG` on a revision that was itself a rollback. Every deploy
+   shares `helm_install.sh`'s guards. After a failed rollback (the pod exited `4`), `ROUND=T` retries the
+   same old image, and without `TAG` it refuses on a *deployed* revision that was itself a rollback. Every deploy
    and every rollback passes the key explicitly, `0` unless `ROUND=T` is given, so clearing costs no extra
    rollout. It stays set across a restart that isn't one of those. That recovers from `T` again: slower,
    to the same state, because the log tail is replayed. The runbook says so. The alternative, a second
