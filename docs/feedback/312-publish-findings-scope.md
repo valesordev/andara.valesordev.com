@@ -81,3 +81,11 @@ wasn't yet active when it passed the gate can show the old cascade. File it as i
 None. The Observability section's names and labels don't change; only what the counter counts.
 `AW-INF-021`'s §8 record cites `unknown_room` 3 beside `duplicate_zone` 1 for the old behavior, and
 that record stands as written.
+
+**Note (2026-10-04, from the Builder's Guide review).** Tests 7 and 9 describe Worlds no compiler can
+produce, because cross-pack Exits do not exist (`semantics.md`). They are defensive tests that build the
+World directly, as `gate_test.go` does, and so does test 8, which flips `strict_orphans` on after the
+town is live, something no running server does. **No foreign error or foreign warning is reachable on a
+running server today**: the branches are defensive, and `errors.md` rules 10.3 and 10.6 say so. What a
+Builder does see is tests 1 to 6: their own findings and warnings, and one `duplicate_zone` naming both
+packs.
