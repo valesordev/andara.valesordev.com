@@ -249,9 +249,10 @@ A new Component type needs no row. The command reads `sim`'s registry, so it app
 output, and only the golden flags it.
 
 **Outstanding before `done`:**
-- AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
-  an empty `HOME` and no config.
-- AW-INF-028 consumes the JSON.
+- ~~AC-1's run in CI's network-less job is SRE's to wire. Here it's the unit test above, run with
+  an empty `HOME` and no config.~~ Done: `make cli-offline-check` runs in the `cli-release` job (SRE's
+  §8 check below).
+- AW-INF-028 consumes the JSON. That is a downstream consumer, not a blocker.
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-cli-009-verify`)
 

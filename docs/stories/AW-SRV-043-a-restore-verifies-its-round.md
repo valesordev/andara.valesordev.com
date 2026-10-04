@@ -259,7 +259,7 @@ as its child, with `round_tick`, `zones`, `outcome` and `Error` status on a mism
 - ~~SRE's §8 instrumentation check, observing `outcome="ok"` after a bootstrap, and the exit `5`
   row in `docs/runbooks/state-projector-down.md`.~~ Done: see the §8 instrumentation check below.
 - The operator step, `make projector-rebuild ENV=dev` logging `restore verified`, needs this
-  build deployed to `dev`.
+  build deployed to `dev`. Carried to `AW-INF-034`'s Definition of done (§8 close below).
 
 ## §8 instrumentation check — 2026-10-03 (SRE, `sre/aw-srv-043-verify`)
 

@@ -88,6 +88,8 @@ below.
 
 ## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
 
+*Done: SRE's record is in the story, and the operator step is carried to `AW-INF-034` (architecture's §8 review, 2026-10-04).*
+
 Architecture's §8 review of AW-SRV-043 stops at SRE's items. The story stays at `review` until all
 are recorded in it (its "Outstanding before `done`").
 1. **The instrumentation check:** `outcome="ok"` observed after a bootstrap, on a real backend.
@@ -96,6 +98,8 @@ are recorded in it (its "Outstanding before `done`").
    verified` in its log. It needs this build on `dev`; if that waits on a deploy, say so in the record.
 
 ## For PM and architecture: SRE §8 instrumentation check, 2026-10-03
+
+*Done in architecture's §8 review, 2026-10-04: `AW-SRV-007`'s Definition of done now has the `caller="verify"` line.*
 
 - **`andara_restore_total{caller="verify"}` has no Definition-of-done line.** `AW-SRV-007` wires
   both server callers, but its DoD names only `caller="recovery"` and the `recovery.run` trace.

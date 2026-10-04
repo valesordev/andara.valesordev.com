@@ -41,8 +41,9 @@ state and advances it. No network, no datastore, no filesystem, no wall clock, n
 Deterministic given a starting state, a tick number, and an ordered input sequence. Enforced by
 `depguard`, not by convention.
 
-**Restore mismatch** — A Snapshot round restored into an Engine that doesn't hash to the round tick's
-recorded State Hash, or whose recorded `sim_seed` differs from the effective seed. A restore is verified
+**Restore mismatch** — A Snapshot Round restored into an Engine that doesn't hash to the round tick's
+recorded State Hash, or whose non-zero recorded `sim_seed` differs from the effective seed (a round
+written before the field reads as `0` and skips the seed check). A restore is verified
 at the round's own tick, so a corrupt round is named there and not found a tick later as a divergence.
 The projector exits `5` with `reason=hash` or `reason=seed` (AW-SRV-043).
 
