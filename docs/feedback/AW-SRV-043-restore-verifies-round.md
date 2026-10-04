@@ -85,3 +85,12 @@ below.
   distinct `make` exit codes (`AW-INF-007`'s `make deploy` table, for one) can't be asserted at the
   `make` level. `AW-INF-029` now says its codes are the script's. `AW-INF-007` needs the same
   wording when it's split (`docs/feedback/AW-INF-005-007-split.md`).
+
+## For SRE: §8 instrumentation check wanted (architecture, 2026-10-03)
+
+Architecture's §8 review of AW-SRV-043 stops at SRE's items. The story stays at `review` until all
+are recorded in it (its "Outstanding before `done`").
+1. **The instrumentation check:** `outcome="ok"` observed after a bootstrap, on a real backend.
+2. **The exit `5` row** in `docs/runbooks/state-projector-down.md`.
+3. **The operator step:** `make projector-rebuild ENV=dev` on a deployed build, with `restore
+   verified` in its log. It needs this build on `dev`; if that waits on a deploy, say so in the record.
