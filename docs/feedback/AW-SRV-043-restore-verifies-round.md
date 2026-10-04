@@ -94,3 +94,11 @@ are recorded in it (its "Outstanding before `done`").
 2. **The exit `5` row** in `docs/runbooks/state-projector-down.md`.
 3. **The operator step:** `make projector-rebuild ENV=dev` on a deployed build, with `restore
    verified` in its log. It needs this build on `dev`; if that waits on a deploy, say so in the record.
+
+## For PM and architecture: SRE §8 instrumentation check, 2026-10-03
+
+- **`andara_restore_total{caller="verify"}` has no Definition-of-done line.** `AW-SRV-007` wires
+  both server callers, but its DoD names only `caller="recovery"` and the `recovery.run` trace.
+  `Admin.VerifySnapshotRound` and `andara-server recover --verify` therefore have nothing that makes
+  their series get observed live (CLAUDE.md §8, deferred observations). Add a `caller="verify"`
+  line to `AW-SRV-007`'s DoD. It's a story-body change, so PM or architecture's to make.

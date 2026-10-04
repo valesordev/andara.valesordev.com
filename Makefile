@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
-        stack-boundary-lost cli-offline-check
+        stack-boundary-lost cli-offline-check stack-projector-check
 
 ## help: print this target list
 help:
@@ -348,6 +348,10 @@ stack-boundary-lost:
 ## stack-linkdead: the linkdead gate scripted — drop a player's stream, reconnect, and a bystander sees both — needs `make up` and `make build`
 stack-linkdead: build
 	@$(SCRIPTS)/stack_linkdead.sh
+
+## stack-projector-check: AW-SRV-043 §7 — `andara-projector state --rebuild` on the host against the stack; its restore metric, log line and spans are observed — needs `make up` and `make build`
+stack-projector-check: build
+	@$(SCRIPTS)/stack_projector_check.sh
 
 ## kind-platform: install Traefik and cert-manager into a fresh kind cluster the way the box has them — KIND_CLUSTER=<name>
 kind-platform:
