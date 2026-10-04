@@ -823,7 +823,12 @@ func (p *player) stream() error {
 		// The stream ended before it was open: the loop reads why.
 		return st.Err()
 	}
-	timer.Stop()
+	if !timer.Stop() {
+		// --timeout passed in the instant between Attached and here: the
+		// timer has cancelled the stream. Report it as the timeout it is,
+		// not as a lost connection to reconnect from.
+		return errNoAttached
+	}
 	if p.looked.CompareAndSwap(false, true) && last == 0 {
 		go func() {
 			p.look()

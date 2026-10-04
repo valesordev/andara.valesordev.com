@@ -427,7 +427,8 @@ signal that the server has the stream, and a `look` sent before it can be
 answered to a stream that isn't there yet. If it doesn't arrive within
 `--timeout`, `play` exits 4 with `error.code` `timeout`, sends no `look`, and
 does not retry, with or without `--reconnect`: a server that doesn't send
-`Attached` won't start, and reopening the stream would only wait again.
+`Attached` won't start, and reopening the stream would only wait again. The
+bound starts at the `Subscribe` call, so it covers a reconnect's stream too.
 
 History lives at `$XDG_STATE_HOME/andara/history` (`~/.local/state/andara/history`),
 last 1000 lines, opt out with `--no-history`. `--timeout` bounds opening the

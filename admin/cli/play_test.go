@@ -984,7 +984,16 @@ func TestPlay_NoAttachedIsATimeout(t *testing.T) {
 				args = append(args, "--reconnect")
 			}
 			start := time.Now()
-			res := play(t, env, strings.NewReader(""), args...)
+			// A client that retried instead of failing would never return,
+			// so the call has a deadline of its own to name that.
+			done := make(chan runResult, 1)
+			go func() { done <- play(t, env, strings.NewReader(""), args...) }()
+			var res runResult
+			select {
+			case res = <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("play did not exit within 10s of a 300ms --timeout: it retried the stream instead of failing")
+			}
 			if res.exit != ExitTimeout {
 				t.Fatalf("exit=%d, want %d\nstdout:\n%s\nstderr:\n%s", res.exit, ExitTimeout, res.stdout, res.stderr)
 			}
