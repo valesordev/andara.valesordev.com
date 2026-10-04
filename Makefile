@@ -61,7 +61,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
-        stack-boundary-lost
+        stack-boundary-lost cli-offline-check
 
 ## help: print this target list
 help:
@@ -307,6 +307,10 @@ CLI_TAG = $(if $(filter command line,$(origin TAG)),$(TAG),cli-dev)
 ## cli-release: build andara-cli for every Builder platform into dist/, with SHA256SUMS
 cli-release:
 	@$(SCRIPTS)/cli_release.sh "$(GO)" "$(VERSION)" "$(LDFLAGS_CLI)"
+
+## cli-offline-check: run the built linux/amd64 andara-cli with no network and no HOME and check `content reference` — needs `make cli-release` (AW-CLI-009 AC-1)
+cli-offline-check:
+	@$(SCRIPTS)/cli_offline_check.sh
 
 ## cli-release-check: download a published andara-cli anonymously, verify it, and run it — TAG=<tag>, default cli-dev (AW-INF-020)
 cli-release-check:

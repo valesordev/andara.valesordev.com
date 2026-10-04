@@ -141,6 +141,8 @@ jobs:
           tar -C "$RUNNER_TEMP/cli" -xzf dist/andara-cli_*_linux_amd64.tar.gz
           docker run --rm -v "$RUNNER_TEMP/cli:/cli:ro" -v "$PWD/docs/specs/content-language/v1/corpus:/corpus:ro" \
             busybox:stable /cli/andara-cli content fmt --check --path /corpus/valid/town
+      - name: content reference runs with no network and no HOME
+        run: make cli-offline-check
 
   # AW-SRV-002 AC-3 and its Definition of Done: replay equality and the golden State Hash
   # sequence run on every architecture a replica or a developer might be, and a
