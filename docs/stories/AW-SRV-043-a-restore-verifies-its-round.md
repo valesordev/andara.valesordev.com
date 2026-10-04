@@ -338,7 +338,8 @@ run, since Argo CD deploys `main` to `dev`, so SRE (on the tailnet) runs it and 
 **`make projector-rebuild ENV=dev` ran on `dev`, and the rebuild Job's own log carries `restore
 verified`.** The Job ran at 2026-10-04T15:54Z on the projector Deployment's image
 `ghcr.io/valesordev/andara-server:dev@sha256:c22c5ce5…`, built from `main@a15f1ec` (the Application
-was Synced; the Deployment's ReplicaSet for that image was created at 15:54:29Z, before the run).
+was Synced; the Deployment's ReplicaSet for that image was created at 15:54:29Z, before the run, and the cluster's events show the Job's pod pulling that
+digest at 15:54:57Z).
 That commit contains this story's code. `projector-rebuild` deletes the Job once it has caught up,
 so its log was followed with `kubectl logs -f` while it ran. The run:
 
@@ -350,7 +351,9 @@ projector-start: ready in 7s
 projector-rebuild: rebuilt to tick 1616234 in 17s
 ```
 
-The Job's log (`andara-projector state --rebuild`, `rebuild=true`):
+The Job's log (`andara-projector state --rebuild`, `rebuild=true`), an excerpt with the fields
+trimmed (each line also carries `trace_id`, and `started` also `tick`, `committed`,
+`committed_tick` and `silent_through`); the Job is deleted, so it can't be re-read:
 
 ```
 state projector restore verified   round_tick=1615987 zones=4
