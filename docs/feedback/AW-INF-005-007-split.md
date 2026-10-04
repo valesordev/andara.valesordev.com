@@ -109,7 +109,7 @@ says.
    deploy's own upgrade with `image.tag=<previous>`, not `helm rollback`, which takes no `--set`. It
    shares `helm_install.sh`'s guards. After a failed rollback (the pod exited `4`), `ROUND=T` retries the
    same old image, and without `TAG` it refuses on a *deployed* revision that was itself a rollback.
-   Both are read from `deploy.rolled_back_to` in the revision's values, not from the description, which
+   Both are read from `release.rolled_back_to` in the revision's values, not from the description, which
    Helm overwrites when an upgrade fails. Every deploy
    and every rollback passes the key explicitly, `0` unless `ROUND=T` is given, so clearing costs no extra
    rollout. It stays set across a restart that isn't one of those. That recovers from `T` again: slower,
