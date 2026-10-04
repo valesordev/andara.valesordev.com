@@ -4,7 +4,7 @@ title: The Content Repository's make bootstrap sets up commit signing
 epic: EPIC-05
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-INF-022, AW-INF-023]
 blocks: []
