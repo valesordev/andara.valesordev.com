@@ -133,7 +133,7 @@ files are byte-identical to the tested patch: `scripts/bootstrap.sh` (mode `1007
 |----|----------|
 | 1 | The patch's acceptance harness: with no name or email it exits `1`, prints both `git config --local` lines and "verified on GitHub (Settings > Emails)", and writes no signing config |
 | 2 | The harness: the five `git config --local` values are set, a following commit reads `Good "git" signature for <email>` and not `No principal matched`, and a second run changes nothing and exits `0`. Also on the real macOS runner (AC-7 below) |
-| 3 | The harness, with a passphrase-protected key the agent doesn't hold: exit `1` and `eval "$(ssh-agent -s)" && ssh-add <key>`. With `uname` stubbed to Darwin, `ssh-add --apple-use-keychain <key>`. A passphrase key the agent does hold passes. **The condition is "can sign with nobody at the keyboard", which is what git needs:** an unencrypted key that isn't in the agent signs without it, so `make bootstrap` passes it (exit `0`), as git would. The AC's "key the agent doesn't hold" is met for a key that needs its agent |
+| 3 | **Met for a passphrase-protected key, and a deviation from the AC's wording otherwise; put to architecture (below).** The harness, with a passphrase key the agent doesn't hold: exit `1` and `eval "$(ssh-agent -s)" && ssh-add <key>`; with `uname` stubbed to Darwin, `ssh-add --apple-use-keychain <key>`; a passphrase key the agent does hold passes. An **unencrypted key the agent doesn't hold exits `0`**, where the AC as worded ("a key the agent doesn't hold") says `1`: git signs with that key without an agent, so `1` would reject a setup that works |
 | 4 | The harness: a key absent from `.github/allowed_signers`, or present for another key under the same email, prints `<email> <keytype> <key>` and exits `0` |
 | 5 | The harness, with `gh` stubbed: logged in and key unregistered is exit `1` with `gh ssh-key add <key> --type signing`. No `gh`, `gh` not logged in, or a `gh api` failure (a token without `admin:ssh_signing_key`) is exit `0` with the settings path and "Key type: Signing Key" |
 | 6 | The harness: `CI=true` sets only `gpg.ssh.allowedSignersFile`, prints `commit signing skipped (CI doesn't commit)`, and exits `0` |
@@ -148,6 +148,20 @@ bash 3.2 and Make 3.81.
 registered"; the sign test can't wait on a passphrase prompt (`SSH_ASKPASS` is an always-failing
 program); a private `user.signingkey` resolves to its `.pub`; and `grep` isn't `-q` under `pipefail`,
 so a SIGPIPE can't read as "not registered".
+
+**AC-3's wording, for architecture's ruling.** `make bootstrap` tests what git needs, which is that the
+key signs with nobody at the keyboard, not whether `ssh-agent` holds it. With no agent in the
+environment, run against the merged script (2026-10-04):
+
+| Key, no agent | `make bootstrap` | `git commit` |
+|---------------|------------------|--------------|
+| unencrypted | exit `0` ("the key signs unattended") | exit `0`; `git log --show-signature` reads `Good "git" signature for <email>` |
+| passphrase-protected | exit `1`, with the `ssh-agent` + `ssh-add` hint | exit `128`: `Enter passphrase for …` |
+
+So the script agrees with git in both rows. AC-3 and the Interface contract's exit-`1` list ("the agent
+holding it") name the agent as the condition. SRE has not changed either: the contract is
+architecture's, and the amendment is in `docs/feedback/AW-INF-033-content-repo-bootstrap-signing.md`.
+The story's §8 item "every acceptance criterion demonstrably passes" depends on that ruling.
 
 **Definition of done:**
 - **Builder's Guide section 4.** It's architecture's file (`docs/builders/04-your-first-zone.md`,
