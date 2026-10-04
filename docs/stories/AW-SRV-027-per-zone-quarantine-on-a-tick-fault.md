@@ -35,11 +35,13 @@ one bad Behavior cannot take a region of the world down with it.
 - `Engine.Step`: after a fault, records for the faulted Zone are consumed and rejected with
   `zone_faulted` (a `CommandRejected` to the actor), and the Partition's offset advances past them.
   **An `Arrive` is first decided by `AW-SRV-028`'s dedup rule** (see the amendment at the end): only an
-  `Arrive` that would be a new handoff is rejected: a faulted Zone applies 028's cases 1, 2 and 3a as
-  written, and the implicit ack of 3b still drops a transit record in a Zone that is also a source; only
-  case 3c becomes `HandoffRejected`. A `HandoffAck` addressed to a faulted source Zone is
-  consumed with no Event, and its transit record stays by design (the Zone's state is frozen), which is why
-  `AW-SRV-028` produces no retry while its source is faulted.
+  `Arrive` that would be a new handoff is rejected: a faulted Zone applies 028's cases 1, 2 and 3a (the
+  `entity_present` bullet) as written, and only case 3c (the new handoff) becomes `HandoffRejected`. Case 3b
+  (the implicit ack) is the one place a faulted Zone drops a transit record, because the Zone's own
+  `Arrive` above its mark is the proof that the Entity moved on; the same pass then rejects as 3c. A
+  `HandoffAck` or `HandoffRejected` addressed to a faulted source Zone proves nothing about its own
+  Entities, so it is consumed with no Event and the transit record stays (the Zone's state is frozen by
+  that rule), which is why `AW-SRV-028` produces no retry while its source is faulted.
   Records for other Zones on the same Partition are applied.
 - `Step` no longer refuses input for a Partition with a faulted Zone; `Source.Poll` no longer takes
   a frozen-Partition list. `Engine.FaultedPartitions()` becomes `FaultedZones()`.
