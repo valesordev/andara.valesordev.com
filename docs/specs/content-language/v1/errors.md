@@ -129,10 +129,12 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
     5. **The message names both packs.** A cross-pack `duplicate_zone` reads
        `ZoneID <id> declared in pack <publisher> and in active pack <other>@<version>`. It lands on
        the publisher's `zone` keyword (rule 8), which the CLI places on the publisher's source.
-    6. **An error in another pack's blobs** (today the reachable case is `content.strict_orphans` making
-       a pack's `orphan_room` an error; a Zone another pack "exits into" can't occur, since cross-pack
-       Exits don't exist) still refuses
-       the publish, whatever its cause, since the gate can't tell a caused error from one already
+    6. **An error in another pack's blobs** still refuses the publish, whatever its cause. **No such
+       case is reachable on a running server today:** cross-pack Exits don't exist, `orphan_room` is
+       Zone-local, and `content.strict_orphans` is startup-only config that the loader and the gate
+       share, so no serving pack can hold an error the gate would then find. The branch is defensive: it
+       keeps a refusal from ever being empty and from mislabelling another pack's finding as the
+       publisher's. It refuses because the gate can't tell a caused error from one already
        there. It is reported with `Diagnostic.pack` set to that pack's id, `file` as its blob path, an
        **empty chain**, and `line` and `col` `0`. `andara-cli` takes a non-empty `pack` as the mark
        of a foreign finding, and nothing else: it doesn't place it by chain, and it prints
@@ -140,8 +142,8 @@ the fields above, with `severity` as `"error"` or `"warning"`. Failures that are
        (`pack_mismatch`, a syntax error with no position) have an empty `pack` and keep printing as
        the publisher's. `--output json` carries `pack`. The gate refuses if and only if the build
        has an error, and a refusal never has zero findings: every error not removed by rule 10.4 is
-       reported, under this rule when it is another pack's. No instance of a caused one is known. If
-       one is seen, it goes to architecture.
+       reported, under this rule when it is another pack's. If one is ever seen, it
+       goes to architecture.
 
     The counts follow the report: `validation_failures_total{code}` and the audit record's
     `findings_count` count reported findings, and the refusal's `warn` line carries the first

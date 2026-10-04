@@ -84,5 +84,8 @@ that record stands as written.
 
 **Note (2026-10-04, from the Builder's Guide review).** Tests 7 and 9 describe Worlds no compiler can
 produce, because cross-pack Exits do not exist (`semantics.md`). They are defensive tests that build the
-World directly, as `gate_test.go` does. The foreign error a Builder's publish can actually meet is test
-8's (`content.strict_orphans`). `errors.md` rules 10.3 and 10.6 say the same.
+World directly, as `gate_test.go` does, and so does test 8, which flips `strict_orphans` on after the
+town is live, something no running server does. **No foreign error or foreign warning is reachable on a
+running server today**: the branches are defensive, and `errors.md` rules 10.3 and 10.6 say so. What a
+Builder does see is tests 1 to 6: their own findings and warnings, and one `duplicate_zone` naming both
+packs.

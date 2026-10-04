@@ -189,10 +189,9 @@ in the World changes yet.
 
 Publish prints what is in your pack: its findings and its warnings, placed on your source. It doesn't
 print another pack's existing warnings: the town's one-way Exit out of Purgatory is the town's own and
-shows when the town publishes. If another pack's own content fails in the World (for example, an
-Operator has turned on strict orphan checking and the town has an orphan Room), publish refuses and
-prints that finding under the other pack's name (`town/…`), never as one of your files. Tell an
-Operator. A Zone ID clash is one `duplicate_zone` on your Zone, naming both packs.
+shows when the town publishes. A Zone ID clash is one `duplicate_zone` on your Zone, naming both
+packs. If publish ever refuses on a finding printed under another pack's name (`town/…`), it isn't one
+of your files and isn't yours to fix: tell an Operator.
 
 ## Approve it
 
