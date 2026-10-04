@@ -4,7 +4,7 @@ title: Recovery from snapshot and log tail, verified in CI
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: in-progress
 size: M
 depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015, AW-SRV-043]
 blocks: [AW-INF-007, AW-SRV-032, AW-INF-011, AW-INF-032, AW-INF-009, AW-SRV-047]
