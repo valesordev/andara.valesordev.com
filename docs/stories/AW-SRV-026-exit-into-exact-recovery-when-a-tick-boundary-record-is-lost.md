@@ -4,7 +4,7 @@ title: Exit into exact recovery when a Tick Boundary Record is lost
 epic: EPIC-04
 component: server
 type: feature
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-002]
 blocks: [AW-SRV-007]
@@ -198,3 +198,25 @@ implementation in the feedback file.
 
 The instrumentation item of CLAUDE.md §8 is met. Architecture runs the rest of §8 and moves the
 story.
+
+## §8 close (architecture, 2026-10-03): `done`
+
+Every checklist item holds.
+- **ACs.** AC-1, 2, 3 and 5 pass in the unit tests on `origin/main` (`tickloop`: `TestLoop_BoundaryLost*`,
+  `TestBoundarySeq_*`, `TestLoop_CheckpointWaitsForDelivery`, `TestLoop_MemoryPublisherUnchanged`,
+  `TestWireBoundaries`, `TestLoop_AckAtOrPastTheLossIsIgnored`; boot: `TestLoopExit`). The Redpanda test
+  `TestKafka_BoundaryLostExitsIntoRecovery` is behind the `integration` tag, which I did not run. Its
+  ground is covered by AC-4's live run, which SRE recorded above.
+- **AC-4** passes on the local stack through `make stack-boundary-lost`, run by the `stack` workflow.
+- **`make check`** ended `check: all clean`, exit 0, on a full run at `37e3a1b` plus this branch's docs
+  (2026-10-03). Earlier runs were red only on #172's load-sensitive test, which passes alone.
+- **Instrumentation** is SRE's, verified above on Prometheus, Loki and Tempo, with the runbook row shipped.
+- **Config, migration, glossary.** The server README documents the delivery timeout and the new counter.
+  Nothing migrates. No `[ASSUMPTION]` remains.
+
+The three changes beyond the contract (`boundarySeq`, `AwaitBoundaryAck`, the drain flushing before it
+commits) are accepted as contract: each serves AC-2 or AC-3 and is covered by a test.
+
+Two things carry forward and don't hold the story. The loss line's missing `trace_id` is optional for
+implementation. The read-back in `stack-boundary-lost` requires a full replay, so it fails loudly once
+AW-SRV-007 recovers from a snapshot, and AW-SRV-007's story must replace it (SRE's note above).

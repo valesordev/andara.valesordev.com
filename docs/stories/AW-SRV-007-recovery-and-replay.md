@@ -583,3 +583,8 @@ CLAUDE.md §8, plus:
   contract: recovery is silent on the wire.
 - `[ASSUMPTION]` `recovery.require_snapshot` defaults `false` so M1 keeps booting; `AW-INF-003`'s prod
   values set it `true`.
+
+- **Carried from `AW-SRV-026`'s §8 close (2026-10-03).** `make stack-boundary-lost` reads the log back
+  by requiring a recovery that replayed the whole log (`ticks_replayed == tick`). Once this story
+  recovers from a snapshot, that check fails loudly. This story replaces the read-back (and tells SRE
+  in its feedback file), so `make stack-boundary-lost` keeps passing on a snapshot recovery.

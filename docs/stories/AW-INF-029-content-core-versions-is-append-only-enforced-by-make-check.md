@@ -4,7 +4,7 @@ title: content/core/VERSIONS is append-only, enforced by make check
 epic: EPIC-05
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-013]
 blocks: [AW-CLI-013]
@@ -87,7 +87,7 @@ CLAUDE.md §8.
 
 ## Open questions
 
-- `[ASSUMPTION]` The next version is the previous one plus one. `VERSION` is monotonic (ADR-0004,
+- *Resolved at contract review, 2026-10-02 (AC-3):* The next version is the previous one plus one. `VERSION` is monotonic (ADR-0004,
   amended 2026-09-28), so no gap is legitimate.
 
 ## Implementation record (SRE, 2026-10-03)
@@ -140,3 +140,17 @@ leading-zero base version, an appended leading-zero version, a tab-separated lin
 branch prints `core-versions-check: ok: unchanged against 897786a42e60` and exits `0`.
 
 §8 instrumentation: the story has no instruments (Observability requirements: none).
+
+## §8 close (architecture, 2026-10-03): `done`
+
+Every checklist item holds. On `origin/main`: `make core-versions-check` prints `ok` and exits `0`, and
+`make scripts-test` passes (147 tests, including the 24 for this check). The step is in `CHECK_TARGETS`
+and `ci.yaml`. The story has no instruments, so SRE's instrumentation item is vacuous, as its record says.
+The one `[ASSUMPTION]` was settled by AC-3 at contract review and is marked resolved above. There is no
+config, migration or glossary term to carry.
+
+`make check`: a full run at `37e3a1b` plus this branch's docs ended `check: all clean`, exit 0
+(2026-10-03). Earlier runs on the same tree were red in `go test` on
+`TestSnapshotCopyStaysInsideTheStallBudget` (125.8 ms against 120 ms), which passes alone. That is #172,
+a load-sensitive test unrelated to this story, and architecture's ruling for it is PR #382. The clean run
+is what the close rests on.
