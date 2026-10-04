@@ -4,6 +4,8 @@
 package simtest_test
 
 import (
+	"math"
+	"runtime"
 	"testing"
 	"time"
 
@@ -62,18 +64,27 @@ func TestSizingFixtureIsTheDocumentedScale(t *testing.T) {
 // AC-1: the in-tick copy of a snapshot round stays under snapshot.max_stall_ms
 // at the sizing fixture's scale.
 //
-// A regression guard, so it measures the CPU time of its own thread rather
-// than wall-clock (docs/specs/testing/timing-assertions.md, #172): load from
-// other processes deschedules the thread without charging it. SnapshotAll
-// spawns no goroutines, which is what makes the thread's time the copy's
-// time; code that handed work to other goroutines would need process CPU
-// instead. Off linux it falls back to wall-clock and the log line says so.
+// Two checks, per docs/specs/testing/timing-assertions.md (#172):
 //
-// Not parallel, and measured as the worst of several rounds rather than the
-// mean: a stall is felt when it happens, not on average. The threshold is the
-// config default scaled by stallFactor, which moves with the build — see
-// stallfactor_race_test.go. The wall-clock number is
-// BenchmarkSnapshotAllAtSizingScale, run serially on a quiet machine.
+// The structural gate is an allocation bound. A copy that grows (an encode, a
+// hash buffer, a deeper clone moving into the tick) allocates, and load can't
+// move an allocation count. The test takes the minimum over several
+// testing.AllocsPerRun calls and the minimum TotalAlloc bytes over the rounds
+// (both counters are process-wide, so a stray goroutine only adds), and holds
+// them to allocBoundCount and allocBoundBytes of the values recorded in
+// stallfactor_*_test.go.
+//
+// CPU time is the tripwire for work that doesn't allocate. It's the thread's
+// own CPU time rather than wall-clock: load from other processes deschedules
+// the thread without charging it. SnapshotAll spawns no goroutines, which is
+// what makes the thread's time the copy's time; code that handed work to other
+// goroutines would need process CPU instead. Off linux it falls back to
+// wall-clock and the log line says so. The limit is set from the worst reading
+// inside the full suite, not from a quiet one (stallfactor_race_test.go).
+//
+// Not parallel, and the CPU figure is the worst of several rounds rather than
+// the mean: a stall is felt when it happens, not on average. The wall-clock
+// number is BenchmarkSnapshotAllAtSizingScale, run serially on a quiet machine.
 //
 // What this defends against is not a slow machine but a structural change: an
 // encode creeping back inside the tick, or a copy that started walking
@@ -86,25 +97,38 @@ func TestSnapshotCopyStaysInsideTheStallBudget(t *testing.T) {
 		t.Fatalf("SizingEngine: %v", err)
 	}
 	const budget = 15 * time.Millisecond // snapshot.max_stall_ms
-	limit := stallFactor * budget
+	limit := snapshotStallFactor * budget
 
 	var worst time.Duration
 	var snaps []sim.Snapshot
 	var measure string
+	minBytes := uint64(math.MaxUint64)
 	for i := 0; i < 5; i++ {
+		var before, after runtime.MemStats
+		runtime.ReadMemStats(&before)
 		d, what := threadCPU(t, func() { snaps = e.SnapshotAll(time.Now().UnixNano()) })
+		runtime.ReadMemStats(&after)
 		measure = what
-		if d > worst {
-			worst = d
-		}
+		worst = max(worst, d)
+		minBytes = min(minBytes, after.TotalAlloc-before.TotalAlloc)
 	}
 	if len(snaps) != simtest.SizingZones {
 		t.Fatalf("round covered %d zones, want %d", len(snaps), simtest.SizingZones)
 	}
-	t.Logf("snapshot copy at the sizing fixture (%d zones, %d entities): worst of 5 rounds = %s (%s), budget %s, limit %s",
-		simtest.SizingZones, simtest.SizingEntities, worst.Round(time.Microsecond), measure, budget, limit)
+	minAllocs := math.MaxFloat64
+	for i := 0; i < 3; i++ {
+		minAllocs = min(minAllocs, testing.AllocsPerRun(3, func() { snaps = e.SnapshotAll(0) }))
+	}
+
+	t.Logf("snapshot copy at the sizing fixture (%d zones, %d entities): worst of 5 rounds = %s (%s), limit %s (%dx the %s stall budget); allocations %.0f (recorded %d), bytes %d (recorded %d), %s %s",
+		simtest.SizingZones, simtest.SizingEntities, worst.Round(time.Microsecond), measure, limit, snapshotStallFactor, budget,
+		minAllocs, recordedAllocs, minBytes, recordedBytes, runtime.Version(), buildTag)
+	if minAllocs > float64(recordedAllocs)*allocBoundCount || float64(minBytes) > float64(recordedBytes)*allocBoundBytes {
+		t.Errorf("in-tick snapshot copy allocated %.0f times and %d bytes per round, past %.2fx the recorded %d allocations or %.2fx the recorded %d bytes (recorded on %s, observed on %s, build %q): the copy has grown. If this is toolchain drift, re-record the values in stallfactor_*_test.go with a note",
+			minAllocs, minBytes, allocBoundCount, recordedAllocs, allocBoundBytes, recordedBytes, recordedGo, runtime.Version(), buildTag)
+	}
 	if worst > limit {
-		t.Fatalf("in-tick snapshot copy took %s of %s, past the %s limit (%dx the %s stall budget): either the copy-on-write assumption in AW-SRV-006 no longer holds at this scale, or work that belongs off the tick has moved onto it", worst, measure, limit, stallFactor, budget)
+		t.Fatalf("in-tick snapshot copy took %s of %s, past the %s limit (%dx the %s stall budget): either the copy-on-write assumption in AW-SRV-006 no longer holds at this scale, or work that belongs off the tick has moved onto it", worst, measure, limit, snapshotStallFactor, budget)
 	}
 }
 

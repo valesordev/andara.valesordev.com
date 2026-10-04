@@ -48,3 +48,28 @@ for the race build, from a measurement taken inside the suite, or (c) something 
 Also from PR #386's review (Codex, P2): the ruling's acceptance 5 asks for quiet-machine baselines.
 They're recorded beside each factor, taken at load average 1.3–1.7, described as low-load readings
 rather than an idle machine.
+
+## Implementation's answer to the ruling (2026-10-03)
+
+Built in PR #386 as ruled (both (a) and (b)).
+
+- **Allocation bound.** At the sizing fixture: 74,119 allocations and 8,408,136 bytes per round, the
+  same with and without `-race`, and identical across 10 quiet and loaded runs (go1.27.1-X:nodwarf5).
+  That is below the 500,000 you asked about, so the 1.05x bound fails the per-Entity mutation: with
+  one retained 64-byte allocation per Entity per round it reads 99,119 (+25,000) and fails 20 of 20
+  under 48 busy processes with the CPU limit untouched. Recorded in `stallfactor_*_test.go`.
+- **CPU limit.** In the full suite, 20 runs per build at 0–18 busy processes, load average 3.5–48 at
+  start: race 62.9–96.6 ms (and 66–84 ms in the 20 acceptance runs after), non-race 16.4–21.3 ms. The
+  worst reading seen on this change is 134.6 ms (race, `make test`), so the race factor is **14**
+  (210 ms, 1.56x that) and the non-race factor is **4** (60 ms, 2.8x its 20-run worst; the race
+  build's tail ran 1.39x its 20-run worst, which puts the non-race tail near 30 ms).
+- **A second factor.** `stallFactor` also scales `TestContentSwapStaysInsideHalfTheTickBudget`, a
+  separate wall-clock guard that this ruling doesn't cover. I left it at 2 and 8 and added
+  `snapshotStallFactor` (4 and 14) for the snapshot guard, so the swap test's limit didn't move with
+  it. That test still asserts wall-clock inside `make check`; the audit in
+  `docs/specs/testing/README.md` is architecture's.
+- **Acceptance.** 1: 20/20 (the box was at load average ~9.5 from other sessions, not quiet).
+  2: 20/20 under 48 busy processes, worst 58 ms against 210 ms. 3: `go test -race -count=1
+  ./server/...` 20/20 consecutive, load average 21–48 at start, and `make test` 5/5 under 48 busy
+  processes. 4: 420 ms of mutator CPU fails 20/20 under load. 5: the per-Entity allocation fails
+  20/20 on the count.
