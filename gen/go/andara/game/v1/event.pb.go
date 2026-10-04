@@ -899,60 +899,6 @@ func (*Heartbeat) Descriptor() ([]byte, []int) {
 // server (AW-SRV-011). The client's view has a gap it must rebuild — a
 // `look` — rather than one the server silently skipped. The stream then
 // runs live from now. last_event_id echoes what was asked for.
-// The first frame of every Subscribe stream, sent after the egress has
-// positioned the stream's cursor and before anything else (AW-SRV-011 AC-11).
-// A client may rely on nothing before it. After it, every Event the Session
-// perceives from the cursor on is delivered, including the Events a Command
-// submitted after this frame arrived causes. It is the stream's only open
-// signal: response headers carry no guarantee, and a browser client cannot
-// see them early (ADR-0003). cursor_event_id is the ID of the last Event the
-// stream is already past: last_event_id on a resume that holds, the ring's
-// end on a first Subscribe, 0 with nothing retained. The first Event the
-// stream delivers has a greater ID.
-type Attached struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	CursorEventId uint64                 `protobuf:"varint,1,opt,name=cursor_event_id,json=cursorEventId,proto3" json:"cursor_event_id,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *Attached) Reset() {
-	*x = Attached{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[10]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *Attached) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*Attached) ProtoMessage() {}
-
-func (x *Attached) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[10]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use Attached.ProtoReflect.Descriptor instead.
-func (*Attached) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{10}
-}
-
-func (x *Attached) GetCursorEventId() uint64 {
-	if x != nil {
-		return x.CursorEventId
-	}
-	return 0
-}
-
 type Resync struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
 	LastEventId uint64                 `protobuf:"varint,1,opt,name=last_event_id,json=lastEventId,proto3" json:"last_event_id,omitempty"`
@@ -966,7 +912,7 @@ type Resync struct {
 
 func (x *Resync) Reset() {
 	*x = Resync{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	mi := &file_andara_game_v1_event_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -978,7 +924,7 @@ func (x *Resync) String() string {
 func (*Resync) ProtoMessage() {}
 
 func (x *Resync) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	mi := &file_andara_game_v1_event_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -991,7 +937,7 @@ func (x *Resync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resync.ProtoReflect.Descriptor instead.
 func (*Resync) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{11}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *Resync) GetLastEventId() uint64 {
@@ -1006,6 +952,63 @@ func (x *Resync) GetReason() string {
 		return x.Reason
 	}
 	return ""
+}
+
+// The first frame of every Subscribe stream, sent after the egress has
+// positioned the stream's cursor and before anything else, a Resync included
+// (AW-SRV-011 AC-11). A client may rely on nothing before it. After it, every
+// Event the Session perceives from the cursor on is delivered, including the
+// Events a Command submitted after this frame arrived causes, until a Rebind
+// re-bases the cursor (AW-SRV-014), which sends no new Attached. It is the
+// stream's only open signal: response headers carry no guarantee, and the same
+// handler serves Connect, gRPC and gRPC-Web (ADR-0003), so it can't be one
+// transport's.
+// cursor_event_id is the ID of the newest Event retained for the Session
+// (0 if none), or last_event_id when a resume holds. The first Event the
+// stream delivers has a greater ID, and a Resync that follows is read against
+// it.
+type Attached struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	CursorEventId uint64                 `protobuf:"varint,1,opt,name=cursor_event_id,json=cursorEventId,proto3" json:"cursor_event_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *Attached) Reset() {
+	*x = Attached{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *Attached) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*Attached) ProtoMessage() {}
+
+func (x *Attached) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use Attached.ProtoReflect.Descriptor instead.
+func (*Attached) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *Attached) GetCursorEventId() uint64 {
+	if x != nil {
+		return x.CursorEventId
+	}
+	return 0
 }
 
 // A body's Session lost its stream; the body stays where it stands. No
@@ -1270,12 +1273,12 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\n" +
 	"to_room_id\x18\x04 \x01(\tR\btoRoomId\x12\x16\n" +
 	"\x06reason\x18\x05 \x01(\tR\x06reason\"\v\n" +
-	"\tHeartbeat\"2\n" +
-	"\bAttached\x12&\n" +
-	"\x0fcursor_event_id\x18\x01 \x01(\x04R\rcursorEventId\"D\n" +
+	"\tHeartbeat\"D\n" +
 	"\x06Resync\x12\"\n" +
 	"\rlast_event_id\x18\x01 \x01(\x04R\vlastEventId\x12\x16\n" +
-	"\x06reason\x18\x02 \x01(\tR\x06reason\"l\n" +
+	"\x06reason\x18\x02 \x01(\tR\x06reason\"2\n" +
+	"\bAttached\x12&\n" +
+	"\x0fcursor_event_id\x18\x01 \x01(\x04R\rcursorEventId\"l\n" +
 	"\x11CharacterLinkdead\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
@@ -1316,8 +1319,8 @@ var file_andara_game_v1_event_proto_goTypes = []any{
 	(*SimulationStopped)(nil),    // 7: andara.game.v1.SimulationStopped
 	(*EntityRelocated)(nil),      // 8: andara.game.v1.EntityRelocated
 	(*Heartbeat)(nil),            // 9: andara.game.v1.Heartbeat
-	(*Attached)(nil),             // 10: andara.game.v1.Attached
-	(*Resync)(nil),               // 11: andara.game.v1.Resync
+	(*Resync)(nil),               // 10: andara.game.v1.Resync
+	(*Attached)(nil),             // 11: andara.game.v1.Attached
 	(*CharacterLinkdead)(nil),    // 12: andara.game.v1.CharacterLinkdead
 	(*CharacterReconnected)(nil), // 13: andara.game.v1.CharacterReconnected
 	(*CharacterDespawned)(nil),   // 14: andara.game.v1.CharacterDespawned
@@ -1331,12 +1334,12 @@ var file_andara_game_v1_event_proto_depIdxs = []int32{
 	6,  // 5: andara.game.v1.EventEnvelope.subscriber_dropped:type_name -> andara.game.v1.SubscriberDropped
 	7,  // 6: andara.game.v1.EventEnvelope.simulation_stopped:type_name -> andara.game.v1.SimulationStopped
 	9,  // 7: andara.game.v1.EventEnvelope.heartbeat:type_name -> andara.game.v1.Heartbeat
-	11, // 8: andara.game.v1.EventEnvelope.resync:type_name -> andara.game.v1.Resync
+	10, // 8: andara.game.v1.EventEnvelope.resync:type_name -> andara.game.v1.Resync
 	8,  // 9: andara.game.v1.EventEnvelope.entity_relocated:type_name -> andara.game.v1.EntityRelocated
 	12, // 10: andara.game.v1.EventEnvelope.character_linkdead:type_name -> andara.game.v1.CharacterLinkdead
 	13, // 11: andara.game.v1.EventEnvelope.character_reconnected:type_name -> andara.game.v1.CharacterReconnected
 	14, // 12: andara.game.v1.EventEnvelope.character_despawned:type_name -> andara.game.v1.CharacterDespawned
-	10, // 13: andara.game.v1.EventEnvelope.attached:type_name -> andara.game.v1.Attached
+	11, // 13: andara.game.v1.EventEnvelope.attached:type_name -> andara.game.v1.Attached
 	14, // [14:14] is the sub-list for method output_type
 	14, // [14:14] is the sub-list for method input_type
 	14, // [14:14] is the sub-list for extension type_name

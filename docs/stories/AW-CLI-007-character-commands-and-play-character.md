@@ -55,7 +55,7 @@ world is one command.
 4. **Given** `play --character Aldric` **when** the Session opens **then** `SelectCharacter` is called
    before `Subscribe`, and the first `look` is sent only after the stream's `Attached` frame has arrived
    (`AW-SRV-011` AC-11; never on the response headers, and bounded by `--timeout`, past which `play`
-   fails as a connection failure rather than proceeding), the ack is shown only under protocol visibility, and the
+   exits `4` (`error.code` `timeout`) rather than proceeding, and `--reconnect` doesn't retry it), the ack is shown only under protocol visibility, and the
    automatic `look`'s answer is the Room Aldric stands in (its title, then its description).
    Aldric's own arrival may be read just before it. The `BindCharacter` and the `look` apply in the
    same tick, and the arrival is Room-scoped (`AW-SRV-014` AC-5), so it reaches the Session. The

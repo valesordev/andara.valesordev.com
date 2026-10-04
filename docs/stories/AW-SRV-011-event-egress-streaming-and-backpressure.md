@@ -510,5 +510,8 @@ stream"; `game.go`: "a client's Subscribe call does not return until they arrive
 **The ruling is AC-11 and `Attached attached = 23` in `event.proto`.** The egress writes `Attached`
 after it positions the cursor, from inside `Egress.Subscribe`, as it already writes `Heartbeat` and
 `Resync`, so the seam's signature doesn't change. The gateway's headers-only `stream.Send(nil)` may stay
-or go, and nothing may depend on it. `AW-CLI-007` AC-4 and `AW-SRV-030`'s egress inherit it. Implementation
-builds it as SPRINT-04 item 13, to the tests in the feedback file.
+or go, and nothing may depend on it. The guarantee lasts until a `Rebind`, which re-bases the cursor and
+sends no new `Attached`. `AW-CLI-007` AC-4 and `AW-SRV-030`'s egress inherit it. Implementation builds it
+as SPRINT-04 item 13, to the tests in the feedback file. Earlier mentions in this story that list only
+`Heartbeat` and `Resync` as stream frames (the sketch, the proto list, decision 2), and the one saying a
+resume from `last_event_id=5` opens with `Resync{no_history}`, are read with `Attached` first.
