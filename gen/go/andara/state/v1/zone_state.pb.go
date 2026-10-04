@@ -85,7 +85,9 @@ type ZoneState struct {
 	// and kept for good. A handoff
 	// sequence only grows along an Entity's life, so an Arrive at or below this
 	// mark is a retry or stale, however late it comes, and no other Zone or
-	// record is needed to know that. Hashed; empty adds nothing.
+	// record is needed to know that. The entry also says whether that decision
+	// was a rejection, which a retry of the same handoff is answered with again.
+	// Hashed, rejected included when true; empty adds nothing.
 	Placed        []*PlacedArrival `protobuf:"bytes,10,rep,name=placed,proto3" json:"placed,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

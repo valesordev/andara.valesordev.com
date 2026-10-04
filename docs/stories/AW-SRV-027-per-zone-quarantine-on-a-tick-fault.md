@@ -81,6 +81,10 @@ one bad Behavior cannot take a region of the world down with it.
    applies, whether B is still faulted or healthy again **then** B produces the same `HandoffRejected`, not
    an ack, nothing is placed, and the source restores the Entity when it applies it. A replay of the
    exchange hashes identically, the mark and its outcome included.
+10. **Given** a source that restored `e` at home after a rejection and departed again with `s+1`, so it holds
+    `Transit(e, s+1)` **when** a late or duplicate `HandoffRejected(e, s)` applies **then** it is consumed with
+    no Event, and `Transit(e, s+1)`, the body and the State Hash are unchanged. **And given** a
+    `HandoffRejected` for an Entity in a faulted source's `Transit` **then** it is consumed and the record stays.
 9. **Given** a `HandoffAck` for an Entity in a faulted source Zone's `Transit` **when** it applies **then** it
    is consumed with no Event and the record stays.
 
@@ -119,10 +123,14 @@ exactly as they diverge in history, which is correct.
 
 ## Test plan
 
-- **Unit:** AC-1 through AC-4 and AC-6 through AC-9 on the stepped clock; the replay negative — a replay that re-applied
+- **Unit:** AC-1 through AC-10 on the stepped clock; the replay negative — a replay that re-applied
   instead of re-rejecting after the fault would hash differently.
 - **Integration (`make test-integration`):** a fault on the broker, then `Recover` reproducing the
   same hash.
+Mutation checks to record: acking a retry of a rejected handoff (or leaving `rejected` out of the hash) makes
+AC-8 fail; matching a `HandoffRejected` by Entity alone makes AC-10 fail; rejecting a retry of a placed
+handoff makes AC-6 fail.
+
 - **Manual/operator:** none beyond `make check`; there is no verb that panics on purpose outside a
   test fixture.
 
@@ -161,8 +169,11 @@ story's:
   restored, and the Entity would be lost. A retry can't place a second body once the Zone is healthy again
   either. The first rejection produces
   `HandoffRejected{entity_id, handoff_seq, code: "zone_faulted"}` to the source Zone's Partition
-  (`andara.log.v1.LoggedCommand` field 14, `HandoffRejected`, pinned in `log.proto`), and `andara_handoff_rejected_total{code}` counts it;
-- the source applies it: it drops the transit record and restores the Entity to its origin Room
+  (`andara.log.v1.LoggedCommand` field 14, `HandoffRejected`, pinned in `log.proto`), and `andara_handoff_rejected_total{code}` counts each `HandoffRejected` produced, reissues included;
+- the source applies it **only when its `Transit[e].handoff_seq` equals the rejection's**, as it does an ack:
+  with no record, or another sequence, the rejection is a duplicate and is consumed with no Event and no
+  state change; a faulted source consumes it too and its record stays. When it matches, the source drops
+  the transit record and restores the Entity to its origin Room
   (`TransitRecord.entity.room_id`; the Zone's fallback Room with `EntityRelocated{room_removed}` if that Room
   is gone), emitting `CharacterArrived{from_direction: reverse of the move's direction}`. The restored
   Entity keeps its incremented `handoff_seq`, so its next departure takes a sequence above the mark.

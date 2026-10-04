@@ -594,7 +594,7 @@ what lets a Zone tell a retry from a new handoff.
 hashed, with its target Zone, Room and Direction. Not the Binding's Transit.
 
 **Placed mark** — `ZoneState.Placed[e]`: the highest handoff sequence a Zone has decided for Entity `e`, kept for
-good. An Arrive at or below it is a retry or stale, however late it comes.
+good. An Arrive at or below it is a retry or stale, however late it comes; a retry of a handoff the Zone rejected is rejected again.
 
 **Rejection Code** — The stable, snake_case, additive-only name a rejected Command carries:
 pre-log on the Submit response (`unknown_verb`, `missing_argument`, `invalid_argument`,

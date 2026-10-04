@@ -83,8 +83,9 @@ body can't depart; `Goto` is in scope.*
     `entity.handoff_seq`, and one with no `entity` or an empty `entity.id`.
   - The Zone holds `e` in its own `Transit` with a sequence at or above `s`: rejected `entity_present`
     (only a misrouted `Arrive` gets here; a lower sequence is the implicit ack below).
-  `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark, so a retry that follows is
-  stale and a restore at home can't be undone by one. The mark is kept for good, so a retry produced by a
+  `AW-SRV-027`'s rejection of a new handoff by a faulted Zone also sets the mark and records the rejection,
+  so a retry that follows gets the same `HandoffRejected` and a restore at home can't be undone by one. A
+  placement sets `Placed[e]` to `{s, rejected: false}`, so the flag always describes the current mark. The mark is kept for good, so a retry produced by a
   restarted source after the original ack landed is still stale: nothing here relies on how records on
   different Partitions or from different process lives are ordered. The cost is one entry per Entity that has
   been decided in a Zone by handoff, hashed with the Zone and copied by every in-tick snapshot; at the sizing
@@ -106,7 +107,9 @@ body can't depart; `Goto` is in scope.*
   a restart resets the backoff. `applyMove` and `applyGoto` write `(1, T)` for a **live** departure, so the
   `Arrive` they produce isn't re-sent on the same tick, and write **nothing while the engine is replaying**
   (`ReplayEach`): a record whose departure is replayed has no entry, like one restored from a snapshot, so
-  every record found after a recovery is due on the first live call. **`DueHandoffs` is never called by
+  every record found after a recovery is due on the first live call. The mechanism is an `Engine` field set
+  at the top of `ReplayEach` and cleared by `defer`, so its early-error and hash-mismatch returns clear it too;
+  a test that a replay error followed by live use leaves it unset is part of AC-6. **`DueHandoffs` is never called by
   replay.** Recovery goes
   through `ReplayEach` (`tickloop.RecoverFrom`, and the projector's engine), which runs the same `Step` as the
   live loop, so the pass lives outside `Step`: replay produces no retries, counts none and logs none, and the
@@ -252,7 +255,8 @@ body can't depart; `Goto` is in scope.*
 13. **Given** a Zone with `Transit` records and `Placed` marks **when** it is snapshotted and restored **then**
     `HashZone` is identical, and `BodyStateHash` refuses a body with an unsorted or duplicated `transit` or
     `placed`, a `placed` mark of 0, a `rejected` mark whose Entity is also held at that sequence, an Entity in both `entities` and `transit` of one Zone, or a `transit`
-   Entity that is dormant or linkdead.
+   Entity that is dormant or linkdead. **And given** a mark with `rejected` set **then** it round-trips and is
+   in the hash: restoring it with the flag lost changes `HashZone`.
 14. **Given** A holds `Transit(e, 3)` after A→B→C→B **when** a late `HandoffAck(e, 1)` applies **then** the
     record stays, and **when** `HandoffAck(e, 3)` applies **then** it is dropped.
 15. **Given** a `Goto` into another Zone **when** it applies **then** the Entity goes through the same
@@ -281,16 +285,16 @@ type TransitRecord struct {
 }
 type ZoneState struct { /* … */ Transit map[EntityID]TransitRecord; Placed map[EntityID]uint64 }
 // Engine, not hashed: a schedule keyed by (EntityID, handoff_seq) holding {attempts, last attempt}.
-// A missing entry is due. applyMove and applyGoto write (1, T). The entry is deleted when the Transit
-// record is dropped.
-// Engine.DueHandoffs(tick) []Outbound, called by the live loop after Step and never by replay: the due
+// A missing entry is due. applyMove and applyGoto write (1, T) for a live departure and nothing while
+// replaying (ReplayEach). The entry is deleted when the Transit record is dropped.
+// Engine.DueHandoffs(tick) []*logv1.LoggedCommand, called by the live loop after Step and never by replay: the due
 // records, earliest first then Entity-ID order, at most sim.handoff_retry_batch, skipped while the Zone is
 // faulted or its Partition is frozen.
 ```
 
 **Canonical bytes.** Each hashed record is written only when present, as `entity_dormant` and
-`entity_linkdead` are: a `transit` and a `placed` record per entry, and `entity_handoff` only for a non-zero
-`handoff_seq`. The tag names are implementation's, and the round-trip and hash tests pin them.
+`entity_linkdead` are: a `transit` and a `placed` record per entry, with the `rejected` flag written only when
+true, and `entity_handoff` only for a non-zero `handoff_seq`. The tag names are implementation's, and the round-trip and hash tests pin them.
 
 ### Configuration
 
