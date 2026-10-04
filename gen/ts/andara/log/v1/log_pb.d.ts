@@ -121,9 +121,16 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
     case: "handoffAck";
   } | {
     /**
-     * 14 is held for AW-SRV-027's HandoffRejected{zone_faulted}, the answer a
-     * faulted target gives. AW-SRV-028 does not add it.
+     * AW-SRV-027's: the answer a faulted target gives to a new handoff.
+     * Pinned here so that story builds to a fixed contract; AW-SRV-028 neither
+     * produces nor applies it.
      *
+     * @generated from field: andara.log.v1.HandoffRejected handoff_rejected = 14;
+     */
+    value: HandoffRejected;
+    case: "handoffRejected";
+  } | {
+    /**
      * @generated from field: andara.log.v1.BindCharacter bind_character = 15;
      */
     value: BindCharacter;
@@ -325,6 +332,41 @@ export declare type HandoffAck = Message<"andara.log.v1.HandoffAck"> & {
  * Use `create(HandoffAckSchema)` to create a new message.
  */
 export declare const HandoffAckSchema: GenMessage<HandoffAck>;
+
+/**
+ * A faulted target's refusal of a NEW handoff (AW-SRV-027): the Arrive was
+ * consumed and not placed, the target's placed mark for the Entity is set to
+ * handoff_seq, and the source restores the Entity at home. A retry of a
+ * handoff the target already placed is acked, never rejected. Produced by the
+ * target's tick to the source Zone's partition (LoggedCommand.zone_id is the
+ * source Zone). Never a verb.
+ *
+ * @generated from message andara.log.v1.HandoffRejected
+ */
+export declare type HandoffRejected = Message<"andara.log.v1.HandoffRejected"> & {
+  /**
+   * @generated from field: string entity_id = 1;
+   */
+  entityId: string;
+
+  /**
+   * @generated from field: uint64 handoff_seq = 2;
+   */
+  handoffSeq: bigint;
+
+  /**
+   * `zone_faulted`. A string so a later reason needs no schema change.
+   *
+   * @generated from field: string code = 3;
+   */
+  code: string;
+};
+
+/**
+ * Describes the message andara.log.v1.HandoffRejected.
+ * Use `create(HandoffRejectedSchema)` to create a new message.
+ */
+export declare const HandoffRejectedSchema: GenMessage<HandoffRejected>;
 
 /**
  * A Session enters the World as a Character (AW-SRV-014). Produced by the

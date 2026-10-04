@@ -116,8 +116,9 @@ export declare type ZoneState = Message<"andara.state.v1.ZoneState"> & {
   transit: TransitRecord[];
 
   /**
-   * The highest handoff_seq this Zone has placed for each Entity that arrived
-   * by handoff (AW-SRV-028), sorted by entity_id and kept for good. A handoff
+   * The highest handoff_seq this Zone has decided for each Entity that arrived
+   * by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+   * and kept for good. A handoff
    * sequence only grows along an Entity's life, so an Arrive at or below this
    * mark is a retry or stale, however late it comes, and no other Zone or
    * record is needed to know that. Hashed; empty adds nothing.
@@ -177,7 +178,7 @@ export declare type TransitRecord = Message<"andara.state.v1.TransitRecord"> & {
 export declare const TransitRecordSchema: GenMessage<TransitRecord>;
 
 /**
- * The highest handoff_seq placed in this Zone for one Entity.
+ * The highest handoff_seq decided in this Zone for one Entity.
  *
  * @generated from message andara.state.v1.PlacedArrival
  */

@@ -71,8 +71,9 @@ message ZoneState {
   // nothing to the hash.
   repeated TransitRecord transit = 9;
 
-  // The highest handoff_seq this Zone has placed for each Entity that arrived
-  // by handoff (AW-SRV-028), sorted by entity_id and kept for good. A handoff
+  // The highest handoff_seq this Zone has decided for each Entity that arrived
+  // by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+  // and kept for good. A handoff
   // sequence only grows along an Entity's life, so an Arrive at or below this
   // mark is a retry or stale, however late it comes, and no other Zone or
   // record is needed to know that. Hashed; empty adds nothing.
@@ -102,7 +103,7 @@ message TransitRecord {
   // is due on the first live tick.
 }
 
-// The highest handoff_seq placed in this Zone for one Entity.
+// The highest handoff_seq decided in this Zone for one Entity.
 message PlacedArrival {
   string entity_id = 1;
   uint64 handoff_seq = 2;

@@ -249,8 +249,8 @@ reissues a `character_id` (clearing marks in every Zone would cross Partitions a
 - `log.v1.Entity.handoff_seq = 6`, since field 5 is `name`, and `log.v1.Arrive.handoff_seq = 6`. The
   `Arrive`'s is the authority; a difference, or a 0, is `invalid_arrival`. `origin_zone_id` and
   `origin_room_id` stay, re-documented as the arrival's origin; the comment about a one-hop bounce is gone.
-- `HandoffAck` is `LoggedCommand` 13. 14 stays unused here, held in its comment for `AW-SRV-027`'s
-  `HandoffRejected`. 20 stays free.
+- `HandoffAck` is `LoggedCommand` 13. 14 is `HandoffRejected`, pinned in `log.proto` for `AW-SRV-027`,
+  which builds it. 20 stays free.
 - `state.v1.ZoneState.transit = 9` and `placed = 10`, and `EntityState.handoff_seq = 13`, with
   `TransitRecord` (entity, target Zone and Room, direction) and `PlacedArrival`. **A transit record embeds
   `state.v1.EntityState`**, the hashed shape, and `entity.room_id` is the origin Room.
@@ -303,7 +303,7 @@ reissues a `character_id` (clearing marks in every Zone would cross Partitions a
 - The Definition of done line is reworded as you suggested.
 - `Arrive.origin_zone_id` and `origin_room_id` are kept as the arrival's origin.
 - **`Goto` goes through the same handshake**, in the story's Scope, with an AC.
-- Field 14 is held for 027, since it isn't dropped.
+- Field 14 is `HandoffRejected`, pinned in the proto for 027 (a message with `entity_id`, `handoff_seq` and `code`), since 028 doesn't build it.
 
 ## Other corrections from the reviews, all in the story
 
@@ -325,6 +325,16 @@ state projector omits an Entity in transit, accepted here and left to `AW-SRV-01
 written (a retry of a placed handoff is acked, a new handoff is rejected and sets the mark, a retry after a
 restore is stale). The new rejection codes are in the glossary and in `sim.RejectCodes()`. The manual
 `sim repl` step is dropped, since `sim repl` has no failure-injection flag.
+
+## From the fourth review, all in the story
+
+The retry pass is `Engine.DueHandoffs(tick)`, called by the live loop after `Step` and **never by replay**:
+recovery runs through `ReplayEach`, which runs the same `Step` as the live loop, so a pass inside `Step` (or a
+clear hooked to `Replay`) would leave each record looking just tried, and the projector's engine, which
+must never produce, would retry too. An engine built by `RestoreEngine` has no schedule entries, so a
+recovered record is due on the first live call. The entry is deleted whenever a `Transit` record is dropped.
+`HandoffRejected` is now a pinned message in `log.proto` (field 14) for `AW-SRV-027`, which builds it; 027's
+ACs are renumbered 1 to 9, and a `HandoffAck` for a faulted source is consumed with no Event.
 
 ## For implementation
 

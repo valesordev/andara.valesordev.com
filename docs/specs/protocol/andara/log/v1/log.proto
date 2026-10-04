@@ -62,8 +62,10 @@ message LoggedCommand {
     Move move = 11;
     Arrive arrive = 12;
     HandoffAck handoff_ack = 13;
-    // 14 is held for AW-SRV-027's HandoffRejected{zone_faulted}, the answer a
-    // faulted target gives. AW-SRV-028 does not add it.
+    // AW-SRV-027's: the answer a faulted target gives to a new handoff.
+    // Pinned here so that story builds to a fixed contract; AW-SRV-028 neither
+    // produces nor applies it.
+    HandoffRejected handoff_rejected = 14;
     BindCharacter bind_character = 15;
     UnbindCharacter unbind_character = 16;
     ContentSwap content_swap = 17;
@@ -151,6 +153,19 @@ message Arrive {
 message HandoffAck {
   string entity_id = 1;
   uint64 handoff_seq = 2;
+}
+
+// A faulted target's refusal of a NEW handoff (AW-SRV-027): the Arrive was
+// consumed and not placed, the target's placed mark for the Entity is set to
+// handoff_seq, and the source restores the Entity at home. A retry of a
+// handoff the target already placed is acked, never rejected. Produced by the
+// target's tick to the source Zone's partition (LoggedCommand.zone_id is the
+// source Zone). Never a verb.
+message HandoffRejected {
+  string entity_id = 1;
+  uint64 handoff_seq = 2;
+  // `zone_faulted`. A string so a later reason needs no schema change.
+  string code = 3;
 }
 
 // A Session enters the World as a Character (AW-SRV-014). Produced by the

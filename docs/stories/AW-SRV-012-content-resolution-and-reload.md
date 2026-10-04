@@ -336,7 +336,7 @@ stale comments.
      are architecture's under the lane table.
   3. **Three protocol additions**, all under `docs/specs/protocol/`. `ZoneDefinition.fallback_room`
      at **6**, which is free. `LoggedCommand.content_swap` — the Interface Contract sketch says
-     **16, but 16 is already `unbind_character`** and 13/14 are held for `AW-SRV-028`, so the next
+     **16, but 16 is already `unbind_character`** and 13 is `AW-SRV-028`'s and 14 is `AW-SRV-027`'s, so the next
      free number is **17**. `EntityRelocated` in `event.proto`'s payload oneof at **19**; the sketch
      gives no number and 18 is `Resync`. Until these land, **AC-2, AC-3, AC-9 and AC-10 cannot be
      implemented**: there is no Command to record the swap in the log, no Event to carry the

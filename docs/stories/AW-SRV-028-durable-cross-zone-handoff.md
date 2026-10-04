@@ -91,23 +91,30 @@ body can't depart; `Goto` is in scope.*
 - **Implicit ack.** An `Arrive(e, s)` into a Zone that still holds `e` in its own `Transit` with a lower
   `handoff_seq` proves the target placed `e` and moved it on. The Zone drops that transit record and then
   decides the arrival by the rule above.
-- **Retry with backoff, held in memory.** Each tick, after applying records, the source re-produces
-  `Arrive` for the transit records that are due, at most `sim.handoff_retry_batch` of them per tick
-  (default 50), earliest due first and then in Entity-ID order, so a restart with many in-flight handoffs
-  doesn't fill a tick's `sim.max_per_tick` budget and defer players' Commands. The interval after the n-th
-  attempt is `min(sim.handoff_retry_ticks × 2^min(n-1, 16), sim.handoff_retry_max_ticks)`: the exponent
-  saturates, so a long-stuck handoff never wraps to a zero interval. **The mechanism:** the engine keeps
+- **Retry with backoff, held in memory.** The live tick loop calls `Engine.DueHandoffs(tick)` after `Step`,
+  and produces what it returns: the `Arrive` for the transit records that are due, at most
+  `sim.handoff_retry_batch` of them per call (default 50), earliest due first (a record with no entry sorts
+  first) and then in Entity-ID order, so a restart with many in-flight handoffs doesn't fill a tick's
+  `sim.max_per_tick` budget and defer players' Commands. The interval after the n-th attempt is
+  `min(sim.handoff_retry_ticks × 2^min(n-1, 16), sim.handoff_retry_max_ticks)`: the exponent saturates, so a
+  long-stuck handoff never wraps to a zero interval. **The mechanism:** the engine keeps
   `{attempts, last attempt}` in memory per `(Entity, handoff_seq)`, not in the hash, so replay under a
-  retuned config produces the same state. A record with no entry is due. `applyMove` and `applyGoto` write
-  the entry `(1, T)` for the departure, so the `Arrive` they produce isn't re-sent on the same tick.
-  `Replay` and `RestoreEngine` clear every entry when they finish, because `ReplayEach` runs the same `Step`
-  as the live loop and would otherwise leave each record looking as if it had just been tried: **a record
-  found after a recovery is due on the first live retry pass**, and is retried within
-  `ceil(n / sim.handoff_retry_batch)` ticks for `n` records. The three config values reach the `Engine`
-  through its `Config`, as the sim reads no other config. **No retry is produced while the source Zone is
-  faulted or its Partition is frozen** (`AW-SRV-002`): the ack couldn't be applied. A retried `Arrive`
-  carries the same `handoff_seq` and Entity bytes as the first, with `actor_id` the Entity ID and no
-  session or client ref.
+  retuned config produces the same state. A record with no entry is due, and a retry then writes `(1, T)`, so
+  a restart resets the backoff. `applyMove` and `applyGoto` write `(1, T)` for the departure, so the `Arrive`
+  they produce isn't re-sent on the same tick. **`DueHandoffs` is never called by replay.** Recovery goes
+  through `ReplayEach` (`tickloop.RecoverFrom`, and the projector's engine), which runs the same `Step` as the
+  live loop, so the pass lives outside `Step`: replay produces no retries, counts none and logs none, and the
+  projector's engine, which must never produce, can't. An engine built by `RestoreEngine` or `NewEngine` has
+  no entries, so **a record found after a recovery is due on the first live call**, and is retried within
+  `ceil(n / sim.handoff_retry_batch)` ticks for `n` records; one a replayed departure wrote an entry for is due
+  once its interval has passed since that tick. **The engine deletes the entry whenever a `Transit` record is
+  dropped** (the ack, the implicit ack, and `AW-SRV-027`'s rejection), so the map holds one entry per record
+  in transit. The three config values reach the `Engine` through its `Config`, as the sim reads no other
+  config; a zero value means the default. **No retry is produced while the source Zone is faulted or its
+  Partition is frozen** (`AW-SRV-002`): the ack couldn't be applied. A retried `Arrive` carries the same
+  `handoff_seq` and Entity bytes as the first, with `actor_id` the Entity ID and no session or client ref,
+  so if the first `Arrive` was lost the arrival Events lose the mover's `client_ref` echo (the Binding still
+  settles, since it routes by the Entity).
 - **Every Command for an Entity in transit is rejected `in_transit`**, after logging (it parsed and was
   authorized): the verbs, `UnbindCharacter` and `MarkLinkdead`. **`BindCharacter`** for a Character whose
   Entity is in any Zone's `Transit` is rejected `in_transit` too, and creates no body. Its search is unchanged
@@ -143,7 +150,9 @@ body can't depart; `Goto` is in scope.*
   The fields it deliberately doesn't carry are `room_id` (the `Arrive` names the Room), the dormant fields
   and the linkdead fields (such a body never moves). Anything else added to `EntityState` and not to the
   proto fails the test naming the field.
-- A swapped-in Zone (`content.go`'s `&ZoneState{...}`) initialises `Transit` and `Placed`.
+- Every place that builds or copies a `ZoneState` carries `Transit` and `Placed`: a swapped-in Zone
+  (`content.go`), `state.go`'s constructor, `snapshot_codec.go`'s restore, and `Clone` in `snapshot.go`, so
+  the in-tick snapshot copy holds them.
 
 ### Out of scope
 - Holding or queueing a player's Commands during transit: presentation (`AW-SRV-011`, `AW-SRV-010`).
@@ -151,7 +160,7 @@ body can't depart; `Goto` is in scope.*
 - **`HandoffRejected` and the target answering `zone_faulted`: `AW-SRV-027`.** Under today's freeze
   (`AW-SRV-002`) a faulted target never answers, so an Entity in transit to it stays safely in the
   source's `Transit`, retrying on its backoff. `AW-SRV-027` adds the rejection and the restore at home
-  (`log.v1` field 14 is held for it). **There is no operator action to release a stuck Entity before
+  (`log.v1` field 14, `HandoffRejected`, is pinned in `log.proto` for it and not used here). **There is no operator action to release a stuck Entity before
   that**: its Character gets `in_transit` on every Bind until the fault is resolved, which is `AW-SRV-027`'s
   to give a path to. Until then it is accepted, and `docs/runbooks/simulation-lagging.md` will say so when
   this story's runbook change lands.
@@ -187,11 +196,13 @@ body can't depart; `Goto` is in scope.*
 1. **Given** a Character moving A→B **when** the `Arrive` is never delivered (producer failure
    injected) **then** the Character stays in A's `Transit`, `in_transit` answers its Commands, and
    after `sim.handoff_retry_ticks` ticks the `Arrive` is produced again; on delivery B places it,
-   acks, and A's transit record is gone on the tick that applies the ack. The retried `Arrive` has the same
-   `handoff_seq` and Entity bytes as the first.
+   acks, and A's transit record is gone on the tick that applies the ack, with its schedule entry deleted.
+   The retried `Arrive` has the same `handoff_seq` and Entity bytes as the first.
 2. **Given** the source process killed after publishing tick `T`'s boundary and before the
    `Arrive` is acknowledged **when** it recovers **then** `Transit` still holds the Character at the
-   recovered hash, the first live tick retries, and the Character arrives in B exactly once.
+   recovered hash, the first live call to `DueHandoffs` retries it, and the Character arrives in B exactly
+   once. This is asserted through `tickloop.RecoverFrom`, which uses `ReplayEach`, and not only through
+   `Replay`.
 3. **Given** a retried `Arrive` delivered twice **when** B applies the second **then** it re-acks, emits no
    Event, and B's `ZoneCanonicalBytes` and `Placed` are unchanged by it.
 4. **Given** the Character moved A→B→C and a retry of `Arrive(seq k)` reaches B after it left with
@@ -208,7 +219,7 @@ body can't depart; `Goto` is in scope.*
    `sim.handoff_retry_max_ticks` **then** the hashes still match, since the schedule isn't in the hash.
    **And given** a replay that ends with `n` records in `Transit` **when** the first live ticks run **then**
    every record is retried within `ceil(n / sim.handoff_retry_batch)` ticks, none on the departure tick, and
-   no more than the batch on any tick.
+   no more than the batch on any tick, and **the replay itself produced no retry and counted none**.
 7. **Given** a source Zone that is faulted, or whose Partition is frozen **when** ticks pass **then** no
    `Arrive` is produced for its transit records, and **when** it can apply again **then** the first tick
    retries. **And given** an unanswered handoff **then** the gaps between attempts double from
@@ -247,7 +258,7 @@ body can't depart; `Goto` is in scope.*
 
 The wire and snapshot shapes are in the protos, pinned by architecture:
 `docs/specs/protocol/andara/log/v1/log.proto` (`Arrive.handoff_seq = 6`, `Entity.handoff_seq = 6`,
-`HandoffAck` at `LoggedCommand` 13, 14 held for `AW-SRV-027`) and
+`HandoffAck` at `LoggedCommand` 13, and 14 `HandoffRejected` pinned for `AW-SRV-027`) and
 `docs/specs/protocol/andara/state/v1/zone_state.proto` (`ZoneState.transit = 9`, `placed = 10`,
 `EntityState.handoff_seq = 13`, and `TransitRecord` and `PlacedArrival`). A transit record embeds
 `state.v1.EntityState`, the hashed shape, and `entity.room_id` is the origin Room. `HandoffAck` is not a
@@ -263,9 +274,12 @@ type TransitRecord struct {
     Direction Direction   // empty for a Goto
 }
 type ZoneState struct { /* … */ Transit map[EntityID]TransitRecord; Placed map[EntityID]uint64 }
-// Engine, not hashed: attempts[EntityID] and lastAttempt[EntityID], reset at recovery.
-// Step, after applying records: produce the retries that are due (Entity-ID order, skipped while the
-// Zone is faulted or its Partition is frozen).
+// Engine, not hashed: a schedule keyed by (EntityID, handoff_seq) holding {attempts, last attempt}.
+// A missing entry is due. applyMove and applyGoto write (1, T). The entry is deleted when the Transit
+// record is dropped.
+// Engine.DueHandoffs(tick) []Outbound, called by the live loop after Step and never by replay: the due
+// records, earliest first then Entity-ID order, at most sim.handoff_retry_batch, skipped while the Zone is
+// faulted or its Partition is frozen.
 ```
 
 **Canonical bytes.** Each hashed record is written only when present, as `entity_dormant` and
@@ -285,7 +299,9 @@ type ZoneState struct { /* … */ Transit map[EntityID]TransitRecord; Placed map
 `in_transit` (validate; the actor is between Zones, and a `BindCharacter` for a Character whose Entity is),
 `actor_linkdead` (validate; a `Move` or `Goto` by a linkdead body, in the Zone or across one), `stale_arrival` (consumed, acked, nothing
 placed, no Event), `entity_present`, `invalid_arrival` and `id_reused` (validate; nothing placed).
-The new codes are added to `sim.RejectCodes()`, the closed label set of the rejection metric.
+The new rejection codes (`in_transit` already exists, plus `actor_linkdead`, `entity_present`,
+`invalid_arrival` and `id_reused`) are added to `sim.RejectCodes()`, the closed label set of the rejection
+metric. `stale_arrival` is not a rejection: it is counted by `andara_handoff_stale_arrivals_total`.
 `HandoffRejected` and its codes are `AW-SRV-027`'s. The `actor_not_found` a `Move` in flight used to get is
 now `in_transit`, and that test is rewritten.
 
@@ -299,7 +315,8 @@ only when present, so a World with nothing in transit and no handoff history has
 **A log written before this story that contains a cross-Zone move does not replay.** The old code deleted
 the Entity at the source; the new code leaves it in `Transit`, so the hash at that tick differs from the
 recorded one and recovery exits `6` there. `dev` has such logs. Pre-launch the remedy is
-`make world-reset ENV=dev` with the deploy that carries this story, and a fresh local stack for the planned
+`make world-reset ENV=dev CONFIRM=andara-dev` with the deploy that carries this story (it destroys `dev`'s
+Characters and Accounts), and a fresh local stack for the planned
 `AW-INF-032`. The PR says so, and says whether the golden fixture log contains a cross-Zone move.
 `andara.commands.v1` gains one record kind (13), tick-produced. **It isn't reversible once a handoff has
 been logged:** a binary from before this story meets `HandoffAck` as an unsupported Command and drops
@@ -343,13 +360,15 @@ implicit ack makes AC-12 fail; letting the exponent overflow makes AC-7's 64-att
 schedule makes AC-6's changed-config case fail; routing `Goto` around the handshake makes AC-15 fail; dropping
 the `id_reused` guard makes AC-16 fail; dropping `actor_linkdead` makes AC-8's second half
 fail; not rejecting `UnbindCharacter` or `MarkLinkdead` in transit makes AC-8's first half fail; registering
-no entry at departure (so the departure tick re-sends) or not clearing entries at the end of a replay makes
-AC-6's last case fail; dropping a field from the proto makes AC-10 fail.
+no entry at departure (so the departure tick re-sends) makes AC-6's last case fail; running the retry pass inside `Step` (so replay produces retries) makes AC-6's
+replay case and AC-2's `RecoverFrom` case fail; not deleting the entry when the record is dropped makes AC-1's
+schedule assertion fail; dropping the batch cap, or ordering by Entity ID alone, makes AC-6's batch case
+fail; dropping a field from the proto makes AC-10 fail.
 
 ## Definition of done
 
 CLAUDE.md §8, plus: `AW-SRV-003`'s record notes that `AW-SRV-012` replaced the one-hop bounce (it still
-says this story retires it); the PR states the `make world-reset ENV=dev` consequence and whether the
+says this story retires it); the PR states the `make world-reset ENV=dev CONFIRM=andara-dev` consequence and whether the
 golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md` has the handoff step.
 
 ## Open questions

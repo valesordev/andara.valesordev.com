@@ -80,8 +80,9 @@ type ZoneState struct {
 	// a restore must carry them, and recovery retries them from here. Empty adds
 	// nothing to the hash.
 	Transit []*TransitRecord `protobuf:"bytes,9,rep,name=transit,proto3" json:"transit,omitempty"`
-	// The highest handoff_seq this Zone has placed for each Entity that arrived
-	// by handoff (AW-SRV-028), sorted by entity_id and kept for good. A handoff
+	// The highest handoff_seq this Zone has decided for each Entity that arrived
+	// by handoff, placed or rejected (AW-SRV-028, AW-SRV-027), sorted by entity_id
+	// and kept for good. A handoff
 	// sequence only grows along an Entity's life, so an Arrive at or below this
 	// mark is a retry or stale, however late it comes, and no other Zone or
 	// record is needed to know that. Hashed; empty adds nothing.
@@ -266,7 +267,7 @@ func (x *TransitRecord) GetDirection() string {
 	return ""
 }
 
-// The highest handoff_seq placed in this Zone for one Entity.
+// The highest handoff_seq decided in this Zone for one Entity.
 type PlacedArrival struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EntityId      string                 `protobuf:"bytes,1,opt,name=entity_id,json=entityId,proto3" json:"entity_id,omitempty"`
