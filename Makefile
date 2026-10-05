@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
         builder-reference builder-reference-check guide-check \
-        stack-boundary-lost cli-offline-check stack-projector-check
+        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary
 
 ## help: print this target list
 help:
@@ -202,7 +202,27 @@ test-integration:
 	@ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
 	  ANDARA_S3_TEST_ACCESS_KEY="$${ANDARA_S3_TEST_ACCESS_KEY:-andaratest}" \
 	  ANDARA_S3_TEST_SECRET_KEY="$${ANDARA_S3_TEST_SECRET_KEY:-andaratest123}" \
-	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/ ./server/content/ ./server/projector/ ./server/boot/ ./admin/cli/
+	  $(GO) test -tags integration -race -count=1 -v -timeout 10m ./server/recordlog/ ./server/tickloop/ ./server/ingress/ ./server/store/ ./server/content/ ./server/projector/ ./server/boot/ ./server/recovery/ ./admin/cli/
+
+## recovery-timing: AW-SRV-007 AC-7 — recover the sizing fixture with a 600-tick tail, timed per phase, into RECOVERY_TIMING_OUT — needs `make up` (a broker; PROFILE=min is enough); takes minutes
+# No -race: the bound under test is 90 s of replay at the 100 ms tick, and the race detector's
+# slowdown would measure the detector. The test asserts the bound and the tail itself.
+RECOVERY_TIMING_OUT ?= .local/recovery-timing.json
+recovery-timing:
+	@mkdir -p "$(dir $(RECOVERY_TIMING_OUT))"
+	@ANDARA_RECOVERY_TIMING=1 ANDARA_RECOVERY_TIMING_OUT="$(abspath $(RECOVERY_TIMING_OUT))" \
+	  ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
+	  $(GO) test -tags integration -count=1 -v -timeout 20m -run '^TestRecoveryTimingAtSizingScale$$' ./server/recovery/
+
+## recovery-timing-previous: download the last successful main run's recovery-timing artifact into RECOVERY_TIMING_PREVIOUS (default .local/recovery-timing-previous) — needs gh
+RECOVERY_TIMING_PREVIOUS ?= .local/recovery-timing-previous
+recovery-timing-previous:
+	@mkdir -p "$(RECOVERY_TIMING_PREVIOUS)"
+	@python3 $(SCRIPTS)/recovery_timing.py previous "$(RECOVERY_TIMING_PREVIOUS)"
+
+## recovery-timing-summary: render RECOVERY_TIMING_OUT against the previous run's as a table, to $$GITHUB_STEP_SUMMARY when set
+recovery-timing-summary:
+	@python3 $(SCRIPTS)/recovery_timing.py summary "$(RECOVERY_TIMING_OUT)" "$(RECOVERY_TIMING_PREVIOUS)/recovery-timing.json"
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:

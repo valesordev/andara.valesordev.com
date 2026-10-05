@@ -196,6 +196,14 @@ For architecture, from the §8 ops commit. `make stack-recover-mismatch` is the 
   through its recovery, anchored on Prometheus having scraped the recovered `1` (AW-INF-032's record).
 - **Both are in the `stack` workflow**, the normal one first, since the mismatch run leaves the alert in `ALERTS`.
 - **Compose** gains `ANDARA_SIM_SEED: "${ANDARA_SIM_SEED:-0}"` (0 derives the seed, as before).
-- **Still SRE's, and open:** the `ANDARA_RECOVERY_TIMING=1` CI job and its artifact, and the §8 instrumentation check
-  itself, on an `sre/aw-srv-007-verify` branch.
+- **AC-6 was not met in CI.** `make test-integration` didn't list `./server/recovery/`, so the kill-and-recover
+  tests skipped everywhere (`ANDARA_KAFKA_BROKERS` unset). It does now: 8.5 s against the stack's broker, all
+  passing. The `stack` workflow's `make test-integration` step runs on every `server/**` change.
+- **AC-7's job exists.** `.github/workflows/recovery-timing.yaml` runs `make recovery-timing` on a change to
+  `server/sim`, `store`, `recovery`, `simtest` or `tickloop`, weekly, and by hand. It uploads
+  `recovery-timing.json` and `make recovery-timing-summary` compares `replay` with the newest successful run on
+  main in the job summary (`scripts/recovery_timing.py`, 20 unit tests). Locally against the stack's broker: `total`
+  46.79 s (`replay` 46.48), tail 603 ticks from round 781, peak RSS 93 MB, 157 s for the whole test, and no
+  `-race` (the bound is wall-clock). Its first CI run has no previous run to compare with.
+- **Still SRE's, and open:** the §8 instrumentation check itself, on an `sre/aw-srv-007-verify` branch.
 
