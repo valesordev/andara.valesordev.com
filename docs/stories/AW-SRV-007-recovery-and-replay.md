@@ -71,6 +71,10 @@ match, so that a crash is an interruption rather than an incident.
 - Probes. This story exposes readiness; `AW-INF-003` wires it.
 - What players see. Recovery is silent to a connected client beyond a dropped stream; `AW-SRV-015`
   rebinds them and `AW-INF-007` owns any notice.
+- Marking a Character linkdead who was in a `Transit` record at the kill, once its handoff lands. The boot
+  sweep takes the bodies present at boot; the ones in transit land afterwards and stay unmarked, as today. It
+  is an ordering protocol between the Roster and the sim, requested from PM as its own story in
+  `docs/feedback/AW-SRV-007-transit-orphan-mark.md` (it was AC-17 here until 2026-10-05).
 
 ## Acceptance criteria
 
@@ -139,14 +143,15 @@ match, so that a crash is an interruption rather than an incident.
     RSS is within 10% of that run's. *(Added 2026-10-02, feedback item 2.)*
 13. **Given** a round that `AW-SRV-043`'s `RestoreEngine` refuses, as `ErrRestoreMismatch` or
     `ErrSeedMismatch`, or one that doesn't restore onto the content in effect
-    (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below) **when** boot recovery runs
+    (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below), or whose recorded content can't be
+    resolved before restore because it names a pack version the source doesn't have (`sim.ErrRoundContent`, AC-16) **when** boot recovery runs
     **then** the server exits `6`. Nothing is
     replayed and no other round is tried. `andara_recovery_state_hash_match` is `0`,
     `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
     `recovery restore mismatch` carries `round_tick`, `reason` (`hash`, `seed` or `content`), and
     `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`,
-    `pack`, `recorded_digest` and `built_digest` for a digest mismatch and `zone_id` for an unknown
-    Zone. It never binds
+    `pack`, `recorded_digest` and `built_digest` for a digest mismatch, `zone_id` for an unknown
+    Zone, and `pack_versions` for a pack version the source doesn't have (AC-16). It never binds
     `grpc.listen`, and AC-14's linger applies. *(Added 2026-10-02, feedback item 3.)*
 14. **Given** `recovery.mismatch_linger` of `60s` **when** boot recovery ends in exit `8` or `6`
     **then**, for 60 s before exiting, the server serves `/metrics` and `/livez` with `200` and
@@ -158,7 +163,7 @@ match, so that a crash is an interruption rather than an incident.
 15. **Given** a named round that isn't complete, named by `recover --verify --round T` or by
     `recovery.pin_round=T` at boot **when** recovery runs **then** it exits `7`, restores nothing,
     and tries no other round. `andara_recovery_failures_total{reason="round"}` is `1`, and one
-    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons:
+    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons (a fifth, `content`, exits `6` when selected: AC-16):
     - `missing`: no object for a Zone, or one that vanished after listing; a tick with no object
       at all is `missing` with every owned Zone;
     - `duplicate`: two objects for one Zone;
@@ -174,6 +179,47 @@ match, so that a crash is an interruption rather than an incident.
     `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
     object exists at the tick), and `andara-cli snapshot verify` exits `1`.
     *(Added in PR #356 review, 2026-10-03.)*
+16. **Given** a round written at content version V and a content swap applied after it that adds a
+    Zone, **when** the server is killed and recovers **then** the round is judged complete against the Zones
+    of V, not of the content in effect at boot: it is selected, restored on V, and the swap is replayed from
+    the log. (A swap can't remove a Zone: `AW-SRV-012` refuses it, so V's Zones are always a subset of any
+    later content's, and the added Zone is what makes a good round `missing` against the current content.)
+    - **Which Zones.** Discovery lists the current content's Zones, a superset of V's for swap-only change.
+      **When the current content has no Zones** (the boot's serve-from-the-log path, `server/README.md`:
+      "Zones no pointer names"), discovery lists none, finds no round, and recovery does what it does today: it replays the log,
+      bounded by retention (exit `3`); `recovery.require_snapshot` and `recovery.pin_round` exit `7` with
+      no Zones named; `snapshot list` shows no rounds. `WorldStore.List` is per Zone and can't
+      enumerate Zones; lifting that limit needs a Zone enumeration on the store, which this story doesn't add.
+      V is the `content` of the first hash-valid envelope in Zone order; envelopes that disagree on it are
+      `disagree`, as AC-11 has it. A round with no hash-valid envelope, and a tick with no object at all, are
+      judged against the current content's Zones (`missing` names them). The owned set is V's Zones that this
+      process's Partitions own (all 64 today, ADR-0002). A V Zone with no object is `missing`.
+    - **Cause `content`** is new beside AC-15's four. It covers a round whose recorded content names a
+      pack version the source doesn't have (the versions are in `Reason`), and an object for a listed Zone that V doesn't list
+      (the `zone_id` is in `Reason`). It ranks below `duplicate`, `hash` and `disagree`, and above the
+      missing-Zone problem: when V names a version the source doesn't have there is no Zone list to compute it against. A vanished
+      object keeps its own cause, `missing`, as today. The cause lives on `store.Round` (`Cause`, `CauseZones`)
+      and isn't on the wire: `snapshot list` shows only `complete=false` for it, with no proto change.
+      **When it is selected**, by boot's newest round, `--round T` or `recovery.pin_round`, it exits `6` with
+      `reason=content`, counted under `reason="restore"`, and no other round is tried (AC-13).
+      `NewestComplete` and `RoundAt` both translate cause `content` into `sim.ErrRoundZoneUnknown` (the
+      unknown Zone) or a new typed `sim.ErrRoundContent{Tick, Versions}` (a pack version the source doesn't have), never into
+      `ErrRoundIncomplete`, and `NewestComplete` returns it on meeting such a round rather than skipping it.
+      `Classify` maps both to `6`. `Admin.VerifySnapshotRound` and `snapshot verify --round T` return
+      `VERIFY_OUTCOME_CONTENT_MISMATCH` for it, as they already do for `ErrRoundZoneUnknown`; the response
+      carries no cause field and the log line carries the versions or the Zone.
+      **Logging.** Both errors are raised before `RestoreEngine`, in round selection and in the `Prepare`
+      call, so they are logged as `recovery restore mismatch` (`logRestoreMismatch`, with `zone_id` or
+      `pack_versions`), not as `recovery refused` (`logRefusal`), and `andara_recovery_state_hash_match`
+      is `0` (AC-13). **Only a version the source doesn't have** is cause `content`: `ContentSource.Prepare` returns a new
+      sentinel `sim.ErrContentVersionUnknown{Pack, Version}` for it, and the rebuild's wrapped `Prepare`
+      failure becomes `ErrRoundContent{Tick, Versions}` only when it wraps that. `ErrNoContentSource`, a
+      transient source or registry failure and a missing config stay exit `1`, `reason=store`: retryable or
+      operator errors, not a state mismatch, and they must not set the gauge `RecoveryStateMismatch` pages
+      on. The tick for the log line comes from the error's `Tick`, and `selectRound`'s caller routes both
+      typed errors to `logRestoreMismatch`. **This moves a version the source doesn't have from exit `1`**
+      (`reason=store`) to exit `6`.
+    *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
 
 ## Interface contract
 
@@ -188,8 +234,11 @@ type Round struct {
     Complete     bool                    // exactly one hash-valid object per owned Zone; PRNG, EventID, seed agree
 }
 
-// ListRounds groups WorldStore keys by tick and marks completeness against the
-// process's owned Zones. Newest first.
+// ListRounds groups WorldStore keys by tick and marks completeness against each
+// round's own owned Zones (AC-16: the Zones of the content the round records,
+// resolved through a function the caller supplies, so `store` doesn't import
+// `sim.ContentSource`; resolved once per versions set). Discovery lists the
+// current content's Zones. Newest first.
 //
 // The grouping is a prefix scan: the key is
 // {zone_id}/{tick}/{state_version}/{offset} (AW-SRV-006, amended 2026-09-22),
@@ -199,7 +248,15 @@ type Round struct {
 // ticks at an older version. Completeness is still a per-object hash check, so
 // verifying a round does read every object it names — discovery is what the
 // key format makes cheap, not verification.
-func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error)
+func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) ([]Round, error)
+// `NewestComplete` and `RoundAt` take the same two arguments in place of `owned`;
+// `StateVersionOf` takes `listed` alone. `recovery.Options.Owned` becomes `Listed` plus `ZonesAt`.
+
+// ZonesAt resolves a round's recorded content (pack ID to version) to its Zones. The server builds
+// it on `Options.Prepare`, taking the Zone IDs from the Topology's World, and caches it per versions
+// set. A `ZonesAt` error that wraps `sim.ErrContentVersionUnknown` is cause `content`; any other error propagates unchanged and exits `1`, `reason=store`. Nil or empty versions resolve to the current content
+// and are not cause `content`.
+type ZonesAt func(versions map[string]uint64) ([]sim.ZoneID, error)
 
 // Recover is the whole boot-time path. It returns a ready Engine or a typed error.
 func Recover(ctx context.Context, opts RecoverOptions) (*sim.Engine, Report, error)
@@ -232,25 +289,30 @@ reader at the round's own tick (`SeekAfter(round − 1)`), reads that `TickCompl
 replays and never loads the topic. That settles the open question inherited from PR #32. A
 cold start with no round reads from offset 0, as AC-9 says.
 
-Ready means: hash verified, consumer lag under `sim.tick_budget_ms × 10`, and the first live tick
-completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
+Ready means: hash verified, the loop's schedule lag (`andara_simulation_lag_seconds`) under
+`sim.tick_budget_ms × 10`, and the first live tick completed. *(Amended 2026-10-05: it said "consumer
+lag", which is per-Partition offsets and has no duration. The schedule is anchored at the loop's start, so
+after a long recovery this checks that the first ticks keep pace; it doesn't say the commands backlog is
+drained. Commands accepted before the crash are applied in order at `max_per_tick`, visible on
+`andara_tick_deferred_records`, and are delayed, not lost.)* `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 
 ### Exit codes
 
 | Code | Condition |
 |-----:|-----------|
 | `0` | recovered and serving, or `--verify` matched |
-| `1` | configuration or store error before recovery began |
+| `1` | configuration or store error before recovery began, including a content-source failure that isn't `ErrContentVersionUnknown` (AC-16) |
 | `2` | *never assigned:* Go's own exit for an unrecovered panic or a runtime fatal error |
 | `3` | `ErrLogGap` — retention shorter than the snapshot age |
 | `4` | `ErrStateVersion` — binary older than the snapshot |
 | `5` | *not recovery's:* `AW-SRV-026`'s `ExitBoundaryLost`, a running server that lost a Tick Boundary Record |
 | `6` | `ErrRestoreMismatch` or `ErrSeedMismatch` (`AW-SRV-043`): the round doesn't reproduce its own tick |
-| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete *(was `5` until 2026-10-02)* |
+| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete, except cause `content`, which is `6` (AC-16) *(was `5` until 2026-10-02)* |
 | `8` | `ErrHashMismatch` — the alerting condition *(was `2` until 2026-10-02)* |
 
 Exit `6` also covers the round refusing to restore onto the content in effect:
-`sim.ContentDigestError`, or a round carrying a Zone the content doesn't have (`sim.RestoreEngine`).
+`sim.ContentDigestError`, a round carrying a Zone its own content doesn't list (`sim.RestoreEngine`), or
+a round whose recorded content names a pack version the source doesn't have (AC-16).
 That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and it logs
 `reason=content`, counted under `andara_recovery_failures_total{reason="restore"}`.
 `andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
@@ -336,7 +398,9 @@ behind `ListRounds`), `ErrLogGap{Partition, Need, Have}`,
 #356's review so that it names AC-15's causes and the Zones involved; for `disagree`, AC-11's two
 values ride on the log line; the snapshot writer in `tickloop` and `store.ListRounds`' existing
 callers set `cause=missing` where they set `Missing` today), `ErrOffsetGap` (from
-`AW-SRV-002`, re-raised during replay).
+`AW-SRV-002`, re-raised during replay). `Admin.VerifySnapshotRound` runs one verify at a time and refuses
+a second with `FAILED_PRECONDITION`, ErrorInfo reason `verify_busy` (a reason inside the pinned
+`admin.proto`'s statuses; it doesn't queue, ruled 2026-10-05); `andara-cli snapshot verify` exits `1`.
 
 ## Data / state impact
 
@@ -429,9 +493,11 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`.
       PM's decision (2026-10-02): `AW-INF-009` carries it in SPRINT-05, and architecture amends
       that story's contract. It doesn't hold this one.
-  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. Compose has no restart
-    policy, so after the 60 s linger the target goes stale and the gauge's last `0` stops being
-    scraped. `keep_firing_for` keeps the alert visible after the process has gone.
+  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. *(Corrected 2026-10-05
+    from SRE's note: compose does have `restart: on-failure` since `AW-SRV-026`, so a refused recovery loops:
+    each cycle recovers, mismatches, lingers 60 s and exits, and the target is stale between lingers.
+    `keep_firing_for` bridges those gaps and holds the page 15 minutes after the loop is stopped. The first
+    version of this bullet said compose had no restart policy.)*
   - **§8.** `RecoveryStateMismatch` is observed in the local stack's Prometheus:
     - **firing**, against a compose server recovering from a deliberately corrupted round;
     - **never in `ALERTS`**, at neither `alertstate`, through a normal compose recovery
@@ -501,6 +567,17 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   24 h history run (AC-12) is skipped unless its variable is set, as `AW-SRV-019`'s AC-6 run is,
   and its result is recorded in the implementation record. Every mismatch exit test dials
   `grpc.listen` while the process runs and is refused (AC-5).
+- **AC-16 (added 2026-10-05):** *Unit* (`server/store`): a round whose content lists a Zone with no
+  object is `missing`; an object for a listed Zone V doesn't list is cause `content`, `zone_id` in `Reason`;
+  content that names a pack version the source doesn't have is cause `content` with the versions in `Reason`, and a `ZonesAt` error that doesn't wrap `ErrContentVersionUnknown` is not (exit `1`); a tick with no object names
+  the current content's Zones (`snapshotadmin.go`'s `verifyResponse` takes `len(Listed)` for its `owned`
+  argument, and its `NOT_FOUND` check relies on that full list); `Classify` maps `ErrRoundContent` to `6`;
+  `RoundAt` and `NewestComplete` each return the typed error for cause `content` and never
+  `ErrRoundIncomplete`. The recovery log line for each is `recovery restore mismatch` with `zone_id` or
+  `pack_versions`, and `andara_recovery_state_hash_match` reads `0`. *Integration:* write a round at V, swap to V+1 with an added Zone,
+  kill, recover: the round is selected and the swap replays; a round whose pack version is gone from the
+  content source exits `6` with `pack_versions`, and `snapshot list` shows it `complete=false`; a source that
+  fails with `ErrNoContentSource` or an I/O error exits `1`, not `6`, and leaves the gauge unset. With no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`, and `snapshot list` shows no rounds (`server/store`).
 - **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play
   and asserts the M2 gate. Then, on the recovered stack:
   ```
@@ -549,7 +626,8 @@ CLAUDE.md §8, plus:
   kill-and-recover test with 50 Sessions. Also: a Character linkdead at the kill recovers from a
   *snapshot* with its four linkdead fields as they were (015 AC-6 proves full-log replay only), and
   a body the crash left present with no Session is marked linkdead at recovery rather than left
-  present forever. `AW-SRV-015` joined `depends_on` with this line: the linkdead state and the
+  present forever (the boot sweep, over `Entities`; a Character in a `Transit` record at the kill lands
+  unmarked until the story requested in `docs/feedback/AW-SRV-007-transit-orphan-mark.md` is built). `AW-SRV-015` joined `depends_on` with this line: the linkdead state and the
   reconnect it exercises are 015's.
 
 ## Open questions
@@ -644,7 +722,13 @@ replay begins: a log still being written (a verify against a running server) has
 **Deviations and questions for architecture:** the owned-Zone set is the loaded content's Zones; "consumer lag under ten
 tick budgets" is read as the loop's schedule lag; and recovery now marks Characters a crash left standing linkdead.
 
+**Architecture's rulings on the questions above (2026-10-05)** are in
+`docs/feedback/AW-SRV-007-implementation-requests.md`. One changes the contract and needs implementation:
+AC-16 (the owned set comes from the round's own content). The "schedule lag" reading and `verify_busy`
+stand as built. The Character in transit at the kill (briefly AC-17) is moved out to a story for PM.
+
 **Outstanding before `done`:**
+- **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
 - SRE: the Helm key `recovery.mismatch_linger` (PR open on main) and the regenerated values schema, the `stack-boundary-lost`
   read-back (`round_tick + ticks_replayed == tick`), compose's `60s`, the `RecoveryStateMismatch` rule, the runbook,
   and the CI job. **`make check` fails only at `values-schema-check` until that key merges.**

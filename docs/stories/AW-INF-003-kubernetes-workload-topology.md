@@ -106,7 +106,7 @@ deploy/helm/values/{local,dev,prod}.yaml
 | Probe | Path | Port | Period / threshold | Semantics |
 |-------|------|------|--------------------|-----------|
 | startup | `/readyz` | `http` (`ANDARA_HTTP_PORT`, 8080) | 10 s × 60 | recovery in progress; body `{"phase": "load|seek|replay|verify|serving"}` |
-| readiness | `/readyz` | `http` | 5 s × 2 | 200 only when `AW-SRV-007` ready flag set **and** consumer lag < `sim.tick_budget_ms × 10` |
+| readiness | `/readyz` | `http` | 5 s × 2 | 200 only when `AW-SRV-007` ready flag set **and** the loop's schedule lag (`andara_simulation_lag_seconds`) < `sim.tick_budget_ms × 10` *(amended 2026-10-05: it said consumer lag, which is offsets; `AW-SRV-007`'s Ready definition)* |
 | liveness | `/livez` | `http` | 10 s × 3 | 200 if process alive and last tick within `tick_budget × 100`; never depends on Kafka |
 
 Liveness must not depend on any external system: a Kafka outage is a read-only World (`AW-SRV-010`),
