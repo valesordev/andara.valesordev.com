@@ -340,7 +340,7 @@ func (o RunOptions) roundBoundary(ctx context.Context, boundaries *BoundaryReade
 		return sim.TickCompleted{}, fmt.Errorf("boundaries: %w", err)
 	}
 	o.Log.Info("boundary reader positioned at the round", "round_tick", uint64(round), "offset", at)
-	if !boundaries.boundaryAfter {
+	if !boundaries.BoundaryAfter() {
 		// No boundary at or after the round's tick is on the log, whatever
 		// else follows the last one. The round was written after its
 		// boundary was acknowledged, so a later read can't bring it: the
@@ -486,7 +486,7 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 			parts = append(parts, p)
 		}
 		cfg.Partitions = parts
-		boundaries.buf = append(first, boundaries.buf...)
+		boundaries.Unread(first)
 		return sim.NewEngine(sim.EmptyWorld(), nil, cfg), 0, nil
 	}
 }
