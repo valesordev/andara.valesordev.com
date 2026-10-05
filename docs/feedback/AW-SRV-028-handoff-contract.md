@@ -406,7 +406,7 @@ instrumentation item is the only one left that isn't architecture's or implement
   - **Logs, against Loki:** the per-tick `warn` (`count`, `oldest_attempt`), the per-retry `debug`
     (`entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`), and the `error` lines for `entity_present`,
     `invalid_arrival` and `id_reused` (field names as in `server/README.md`). A retry, live or after
-    recovery, starts a new trace and carries `entity_id`; it doesn't carry the Move's `trace_id` (the
+    recovery, starts a new trace (the tick's `sim.tick`) and its `debug` line carries `entity_id`; it doesn't carry the Move's `trace_id` (the
     story's Deviations, agreed 2026-10-04, and its Observability section now says so).
   - **Traces, against Tempo:** the `Arrive` and `HandoffAck` carrying the original `Move`'s traceparent
     where it is known. A retry is a new trace.
