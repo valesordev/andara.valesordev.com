@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # RecoveryStateMismatch
 
 **Alert:** `andara_recovery_state_hash_match == 0`, `for: 0m`, `keep_firing_for: 15m`.
-**Severity:** page. **SLO:** `docs/specs/slo/recovery.md`. **Ships with:** `AW-SRV-007`.
+**Severity:** page. **SLO:** `docs/specs/slo/recovery.md`. **Written with:** `AW-SRV-007`, merged.
 
 ## What fired, and what the player is experiencing
 

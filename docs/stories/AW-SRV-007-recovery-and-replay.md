@@ -767,6 +767,8 @@ inherited line allows; implementation's tests read it there.
 - `recovered from the log` (`info`): `tick`, `round_tick`, `ticks_replayed`.
 - `recovery restore mismatch` (`error`, one line): `round_tick`, `reason`, `trace_id`, and for `seed` the
   `recorded_seed` and `configured_seed`. `holding /metrics for the hash mismatch to be scraped` (`error`): `for`.
+  **Not read back from Loki:** `recovery refused` (the `error` line for exits `3`, `4` and `7`), since no run here
+  refused that way; its fields are `server/recovery/logs.go`'s and the integration suite's.
 - **Deviations from the required-fields list** (`ts`, `level`, `msg`, `service`, `env`, `tick`, `partition`,
   `trace_id`): `partition` is on none of them (a recovery spans every Partition, and `offsets` carries them);
   `recovered from the log` has no `trace_id`. For architecture to amend the list or implementation to add them.
@@ -814,11 +816,20 @@ the README documents `zone_id` only). Either the contract drops `bytes` or imple
   run after the first. This line stays open until it has one.
 - **Inherited from `AW-SRV-043`:** `caller="verify"` observed live, above.
 - **Inherited from `AW-SRV-006`:** `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}` are **not
-  observed**. `boundary` is driven by a lost Tick Boundary Record, which exits the process (`5`) and takes its
-  counters with it, so a scrape can't see it; `encode` needs an encoder fault; `stall` needs a copy over
+  observed**. None was driven on a running server. `boundary` needs a failed boundary publish (a lost boundary also
+  exits the server `5`, so `make stack-boundary-lost` restarts it and the counter starts again; whether the round in
+  flight counted `boundary` before the exit wasn't looked at); `encode` needs an encoder fault; `stall` needs a copy over
   `max_stall_ms`, which the marks sizing measurement (`AW-INF-035`) is the first thing that could produce at scale.
   Architecture names where each is inherited.
 - **Moved to its own story (architecture, §8 rulings):** the in-transit orphan mark.
+
+### The implementation record's "Outstanding before `done`" list, 2026-10-05
+
+- **SRE's items** (the Helm key and values schema, the `stack-boundary-lost` read-back, compose's `60s`, the rule, the
+  runbook, the CI job): all merged (#415, #417, #418, #421). `make check` on `main` passes `values-schema-check`.
+- **`AW-INF-032`'s live observation, and `snapshot verify` against a real round:** done, above.
+- **`AW-SRV-006`'s failure reasons:** not observed, above.
+- **AC-16** (the owned set is the loaded content's Zones, not the round's): not SRE's, and not checked here.
 
 ### Not observed on a running server
 
