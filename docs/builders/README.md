@@ -24,8 +24,8 @@ names a rule, it links there instead of restating it.
    pack.
 6. [The language, by example](06-the-language-by-example.md): a guided tour, with links into the
    specification.
-7. [Reference](07-reference.md): Directions, Component types, `andara.core` Templates, and
-   diagnostic codes.
+7. [Reference](reference.md): Directions, Component types, `andara.core` Templates, and
+   diagnostic codes, generated from `andara-cli` itself so it can't drift.
 8. [Building on `dev`](08-building-on-dev.md): the town, Purgatory, and `goto`.
 9. [When something fails](09-when-something-fails.md): exit codes, the errors you'll meet, and how
    to ask for a server change.
