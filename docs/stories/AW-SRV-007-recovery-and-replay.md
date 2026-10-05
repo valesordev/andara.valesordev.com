@@ -71,6 +71,10 @@ match, so that a crash is an interruption rather than an incident.
 - Probes. This story exposes readiness; `AW-INF-003` wires it.
 - What players see. Recovery is silent to a connected client beyond a dropped stream; `AW-SRV-015`
   rebinds them and `AW-INF-007` owns any notice.
+- Marking a Character linkdead who was in a `Transit` record at the kill, once its handoff lands. The boot
+  sweep takes the bodies present at boot; the ones in transit land afterwards and stay unmarked, as today. It
+  is an ordering protocol between the Roster and the sim, requested from PM as its own story in
+  `docs/feedback/AW-SRV-007-transit-orphan-mark.md` (it was AC-17 here until 2026-10-05).
 
 ## Acceptance criteria
 
@@ -216,23 +220,6 @@ match, so that a crash is an interruption rather than an incident.
       typed errors to `logRestoreMismatch`. **This moves a version the source doesn't have from exit `1`**
       (`reason=store`) to exit `6`.
     *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
-17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
-    at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
-    (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
-    `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` with no
-    backoff, until the Entity is placed or gone, not issued once at boot. At most `sim.handoff_retry_batch`
-    marks are produced per tick, earliest due first as `AW-SRV-028` orders `Arrive` retries, a separate
-    budget from theirs (so up to twice the batch overall), so a crash that left many Characters in transit
-    doesn't recreate the restart burst the cap exists for. Each attempt re-resolves where the Character is,
-    Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
-    Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
-    to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
-    Entities nor any Transit record. A handoff stuck on a faulted Zone is retried without end, and shows on
-    `andara_handoffs_in_transit` and in the runbook's stuck-handoff step.
-    **A Character that rebinds first isn't marked**, and one a player is playing is never removed at grace
-    `0`: each attempt goes through `Roster.MarkTransit`, which orders it against `SelectCharacter`
-    (Interface contract, "Marking a Character in transit").
-    *(Added 2026-10-05, architecture, at §8; see the feedback file's item 3.)*
 
 ## Interface contract
 
@@ -285,56 +272,6 @@ type Report struct {
     Match    bool
 }
 ```
-
-### Marking a Character in transit (AC-17)
-
-```go
-// CONTRACT SKETCH — not an implementation
-package roster
-
-// MarkTransit marks one Character body a crash left present or in transit, ordered against
-// SelectCharacter. The tick loop owns the schedule, the due order and the sim.handoff_retry_batch
-// budget; the Roster owns the ordering. The produce is bounded by ingress.produce_deadline.
-func (r *Roster) MarkTransit(ctx context.Context, b sim.CharacterBody) MarkOutcome
-
-type MarkOutcome int
-
-const (
-	MarkProduced MarkOutcome = iota // the MarkLinkdead (UnbindCharacter{QUIT} at grace 0) is acked in the log
-	MarkDropped                     // an entry for the Character exists: final
-	MarkFailed                      // the produce failed or timed out: retried next period
-)
-```
-
-A Roster holds entries by Account (`byAccount`, `bySession`) under one lock, `r.mu` (`AW-SRV-014`'s
-`lock(account)` is that lock), and `Select` produces its `BindCharacter` after releasing it. Checking a flag
-and producing afterwards therefore leaves a window, so the order is built in:
-1. The Roster keeps a set of marking entries by Character ID under `r.mu`, apart from `byAccount`: an orphan
-   has no Account, so it can't be keyed there.
-2. An attempt takes one `r.mu` critical section: if any `byAccount` entry has that `character` (a scan, or a
-   by-Character index; the batch bounds it), live, linkdead (it stays in `byAccount`) or releasing, or a marking
-   entry exists, the outcome is `MarkDropped`; otherwise it inserts a marking entry that records the Zone the
-   mark is produced to. It unlocks, produces, then locks, removes the entry and closes its
-   channel, whatever the produce returned. `MarkDropped` is final: that Session's teardown owns the body.
-3. `SelectCharacter` checks the set, by the requested Character ID, inside the critical section that
-   registers its entry. On a hit it releases `r.mu`, waits on the entry's channel or `ctx.Done()` (answered
-   `already_live` on the latter, as its wait on a releasing teardown is), and re-checks. A `Select` that
-   waited produces its `BindCharacter` **to the Zone the marking entry recorded**, not to the Roster's
-   last-known Zone, so the mark and the Bind are in one Zone's partition and apply in offset order. Log append
-   order alone doesn't give apply order across Zones: a Bind applied first, in another Zone, finds the body
-   present and not linkdead, answers `BindPresent` with no re-route (`applyBindCharacter`), and the mark then
-   lands on a body a player is playing, or at grace `0` removes it. A `Select` that registered first makes the
-   attempt `MarkDropped`.
-4. After the mark, a Bind applies to the linkdead body (the reconnect path) at grace above `0`; at grace `0`
-   the body is gone and the Bind spawns it fresh.
-5. A `Select` whose own produce failed leaves its body present and unmarked until the next select, as AC-11's
-   failed-produce path does today. That hole is accepted: this story doesn't change it.
-6. An attempt is complete when the body is observed linkdead (or gone or dormant at grace `0`). A mark produced
-   to a Zone the body has left, or rejected `in_transit`, is not: the loop re-resolves and tries again at the
-   next period.
-7. `MarkOrphans` (boot) takes no marking entry: `StartTickLoop` runs it before `grpc.listen` is bound, so no
-   `Select` exists, and it takes the bodies present at boot while `MarkTransit` takes the ones that land
-   after.
 
 ### Sequence
 
@@ -630,7 +567,7 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   24 h history run (AC-12) is skipped unless its variable is set, as `AW-SRV-019`'s AC-6 run is,
   and its result is recorded in the implementation record. Every mismatch exit test dials
   `grpc.listen` while the process runs and is refused (AC-5).
-- **AC-16 and AC-17 (added 2026-10-05):** *Unit* (`server/store`): a round whose content lists a Zone with no
+- **AC-16 (added 2026-10-05):** *Unit* (`server/store`): a round whose content lists a Zone with no
   object is `missing`; an object for a listed Zone V doesn't list is cause `content`, `zone_id` in `Reason`;
   content that names a pack version the source doesn't have is cause `content` with the versions in `Reason`, and a `ZonesAt` error that doesn't wrap `ErrContentVersionUnknown` is not (exit `1`); a tick with no object names
   the current content's Zones (`snapshotadmin.go`'s `verifyResponse` takes `len(Listed)` for its `owned`
@@ -640,19 +577,7 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   `pack_versions`, and `andara_recovery_state_hash_match` reads `0`. *Integration:* write a round at V, swap to V+1 with an added Zone,
   kill, recover: the round is selected and the swap replays; a round whose pack version is gone from the
   content source exits `6` with `pack_versions`, and `snapshot list` shows it `complete=false`; a source that
-  fails with `ErrNoContentSource` or an I/O error exits `1`, not `6`, and leaves the gauge unset; extend
-  `TestRecoveryWithAHandoffInFlight` with a Character in the `Transit` record, killed and recovered: its
-  body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`). Also: a Character that lands between two attempts and is rebound by a `Select` racing
-  the attempt is never marked, and at grace `0` never removed, with the log order mark-before-Bind or no
-  mark, under `-race` (a Roster test, with a Bind produced before the check and a Bind after the registration); `MarkTransit` is
-  `MarkDropped` on a live, a linkdead and a releasing entry for the Character; a `Select` blocks until the fake
-  `Log.Produce` of the mark returns and its Bind is produced second, to the Zone the mark went to, with the
-  Roster's last-known Zone a different one, and a sim test over two Zones on two partitions applies the mark
-  before the Bind; a failed or timed-out mark produce clears
-  the marking entry, the waiting `Select` proceeds, and the failed attempt is retried next period;
-  N Characters left in transit produce at most `sim.handoff_retry_batch` marks per tick, apart from `Arrive`
-  retries; and with no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`,
-  and `snapshot list` shows no rounds (`server/store`).
+  fails with `ErrNoContentSource` or an I/O error exits `1`, not `6`, and leaves the gauge unset. With no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`, and `snapshot list` shows no rounds (`server/store`).
 - **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play
   and asserts the M2 gate. Then, on the recovered stack:
   ```
@@ -797,12 +722,12 @@ replay begins: a log still being written (a verify against a running server) has
 tick budgets" is read as the loop's schedule lag; and recovery now marks Characters a crash left standing linkdead.
 
 **Architecture's rulings on the questions above (2026-10-05)** are in
-`docs/feedback/AW-SRV-007-implementation-requests.md`. Two change the contract and need implementation:
-AC-16 (the owned set comes from the round's own content) and AC-17 (a Character in transit at the kill is
-marked linkdead when it lands). The "schedule lag" reading and `verify_busy` stand as built.
+`docs/feedback/AW-SRV-007-implementation-requests.md`. One changes the contract and needs implementation:
+AC-16 (the owned set comes from the round's own content). The "schedule lag" reading and `verify_busy`
+stand as built. The Character in transit at the kill (briefly AC-17) is moved out to a story for PM.
 
 **Outstanding before `done`:**
-- **AC-16 and AC-17**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
+- **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
 - SRE: the Helm key `recovery.mismatch_linger` (PR open on main) and the regenerated values schema, the `stack-boundary-lost`
   read-back (`round_tick + ticks_replayed == tick`), compose's `60s`, the `RecoveryStateMismatch` rule, the runbook,
   and the CI job. **`make check` fails only at `values-schema-check` until that key merges.**

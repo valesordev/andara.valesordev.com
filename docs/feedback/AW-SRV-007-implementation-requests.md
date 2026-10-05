@@ -65,8 +65,8 @@ should answer.
 
 ## Architecture: the rulings (2026-10-05)
 
-Two of the four change the contract (1 and 3) and need implementation. The story is amended; it stays at
-`review`, because AC-16 and AC-17 are new and neither is built.
+One of the four changes the contract (1) and needs implementation. The story is amended; it stays at
+`review`, because AC-16 is new and isn't built. Item 3 closes a hole that turned out to be its own story.
 
 ### 1. The owned Zone set comes from the round's own recorded content (AC-16)
 
@@ -119,7 +119,7 @@ and I'm not adding that: commands accepted before the crash are applied in order
 `/readyz` turning true while a backlog drains shows up as player-visible lag in an RTO test. The amendment
 says the consequence.
 
-### 3. Bodies a crash left present: your reading is the contract, with one hole closed (AC-17)
+### 3. Bodies a crash left present: your reading is the contract; the in-transit hole is a separate story
 
 The story's inherited line already says a body present with no Session is marked linkdead at recovery. Your
 reading (every Character body, `Template == andara.core.Character`, a `MarkLinkdead` each, an
@@ -129,15 +129,13 @@ line, and `AW-SRV-014`'s README line "nothing at boot invents an unbind" becomin
 The hole: a Character in a `Transit` record at the kill isn't in any Zone's `Entities`, so a sweep over
 present bodies skips it, and `MarkLinkdead` rejects `in_transit` (my `AW-SRV-028` ruling, item 3). The
 retry then lands it, non-linkdead and with no Session. `BindCharacter` doesn't reject a present,
-non-linkdead body (`AW-SRV-015` struck `ErrNotLinkdead`), so the Account can still rebind it. But until it
-does, nothing times the body out: it stays in the world with no linkdead deadline, which is the "present
-forever" the story's inherited line is there to prevent. The sweep therefore keeps the IDs of Characters it found in `Transit` and retries their mark, every
-`sim.handoff_retry_ticks`, until the Entity is placed or gone. Each attempt re-resolves where the Character
-is (Entities, then Transit, as `BindCharacter` does) and is produced to the Zone that holds it. A mark produced
-to the source Zone after the ack would no-op (`applyMarkLinkdead` finds nothing in that Zone) and never mark
-the body. A handoff stuck on a faulted Zone retries without end (`AW-SRV-028` item 2), visible on
-`andara_handoffs_in_transit`. That is AC-17. The existing `TestRecoveryWithAHandoffInFlight` is the natural place to add
-a Character.
+non-linkdead body (`AW-SRV-015` struck `ErrNotLinkdead`), so the Account can still rebind it. Until it does,
+nothing times the body out: it stays in the world with no linkdead deadline, the "present forever" the
+inherited line is there to prevent. I first wrote the fix as AC-17 here. Four review rounds found each time a
+further gap in it (it is an ordering protocol between the Roster and the sim across Zone partitions), so it is
+moved out: `docs/feedback/AW-SRV-007-transit-orphan-mark.md` asks PM for the story and carries what the
+reviews found. The hole exists today and this story doesn't widen it. The boot sweep (bodies present at boot) is
+unchanged and is this story's.
 
 ### 4. `verify_busy` stands
 
@@ -156,13 +154,7 @@ the loop is stopped.
 - **Empty current content.** Right that the current content isn't always a superset of a round's: with no
   Zones (the serve-from-the-log path) discovery lists none. AC-16 now says so and keeps today's behavior there,
   a log replay bounded by retention. A Zone enumeration on `WorldStore` would lift it and isn't in this story.
-- **A rebound Character isn't marked.** Real race: a body that lands between attempts can be rebound, and a
-  later mark would mark it or, with a grace of `0`, remove it. A flag checked and then produced after
-  releasing the lock doesn't close it (`Select` produces its Bind outside the Roster's lock too), and a
-  marking entry for an orphan can't live in `byAccount` (no Account), so `Select` can't see it unless the
-  contract says so. The story's Interface contract now names `Roster.MarkTransit` and its seven rules: a
-  marking set by Character ID under `r.mu`; the attempt drops on any entry for the Character and otherwise
-  registers; `Select` checks the set in the critical section that registers its entry, waits on a hit, and then produces its
-  Bind to the Zone the mark went to (log order alone doesn't give apply order across Zones).
-- **Capped.** At most `sim.handoff_retry_batch` marks per tick, earliest due first, a separate budget from
-  `Arrive` retries of the same size.
+- **A rebound Character isn't marked; the cap on the marks.** Both are right, and both belong to the
+  in-transit mark, which is moved out of this story to its own (see item 3 and
+  `AW-SRV-007-transit-orphan-mark.md`, where the rebind race, its apply-order cases and the cap are the first
+  items).
