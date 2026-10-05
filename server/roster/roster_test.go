@@ -684,3 +684,57 @@ func TestRoster_FollowsTheBodyAcrossZones(t *testing.T) {
 		t.Fatalf("the UnbindCharacter went to %s, want wilds", last.GetZoneId())
 	}
 }
+
+// AW-SRV-007: the bodies a crash left standing are marked linkdead at
+// recovery, with the configured durations, and a failed produce is counted
+// and not retried.
+func TestRoster_MarkOrphansProducesALinkdeadMarkPerBody(t *testing.T) {
+	f := newFixture(t, func(o *roster.Options) {
+		o.Linkdead = roster.LinkdeadTicks{Grace: 180, Extension: 60, Max: 300}
+	})
+	bodies := []sim.CharacterBody{{Zone: "town", ID: "ch-1"}, {Zone: "wilds", ID: "ch-2"}}
+	produced, failed := f.roster.MarkOrphans(context.Background(), bodies)
+	if produced != 2 || failed != 0 {
+		t.Fatalf("produced %d failed %d", produced, failed)
+	}
+	recs := f.log.records()
+	if len(recs) != 2 {
+		t.Fatalf("records %v", recs)
+	}
+	for i, r := range recs {
+		m := r.GetMarkLinkdead()
+		if m == nil || r.GetActorId() != string(bodies[i].ID) || r.GetZoneId() != string(bodies[i].Zone) || r.GetSessionId() != "" ||
+			m.GetCharacterId() != string(bodies[i].ID) || m.GetGraceTicks() != 180 || m.GetExtensionTicks() != 60 || m.GetMaxTicks() != 300 {
+			t.Errorf("record %d: %v", i, r)
+		}
+	}
+	if !strings.Contains(f.metrics(), `andara_character_unbinds_total{outcome="ok",reason="linkdead"} 2`) {
+		t.Errorf("metrics:\n%s", f.metrics())
+	}
+
+	f.log.failWith(ingress.ErrUnavailable)
+	if produced, failed := f.roster.MarkOrphans(context.Background(), bodies); produced != 0 || failed != 2 {
+		t.Fatalf("with the broker down: produced %d failed %d", produced, failed)
+	}
+	if !strings.Contains(f.metrics(), `andara_character_unbinds_total{outcome="produce_failed",reason="linkdead"} 2`) {
+		t.Error("produce_failed not counted")
+	}
+	if len(f.log.records()) != 2 {
+		t.Error("a failed produce was retried")
+	}
+}
+
+// With linkdead_grace 0 a lost Session quits (ReleaseSession), so an orphan
+// does too.
+func TestRoster_MarkOrphansQuitsWhenThereIsNoGrace(t *testing.T) {
+	f := newFixture(t)
+	if produced, _ := f.roster.MarkOrphans(context.Background(), []sim.CharacterBody{{Zone: "town", ID: "ch-1"}}); produced != 1 {
+		t.Fatal("not produced")
+	}
+	if u := f.log.records()[0].GetUnbindCharacter(); u == nil || u.GetReason() != logv1.UnbindReason_QUIT {
+		t.Fatalf("record %v", f.log.records()[0])
+	}
+	if got, _ := f.roster.MarkOrphans(context.Background(), nil); got != 0 {
+		t.Error("an empty set produced")
+	}
+}

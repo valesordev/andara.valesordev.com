@@ -585,6 +585,62 @@ func (r *Roster) holdLinkdead(l *live) {
 	}
 }
 
+// MarkOrphans produces the teardown of every Character body a crash left
+// standing with no Session (AW-SRV-007, from AW-SRV-015): a MarkLinkdead with
+// the configured durations, or an UnbindCharacter{QUIT} when linkdead_grace is
+// 0, as ReleaseSession would have for a lost connection. Every Session is gone
+// at recovery, so a body present with no Session would otherwise stand in its
+// Room until its Account selects it, however long that is. A clean drain
+// already marked its bodies; these are the ones it didn't reach.
+//
+// It is bounded by one ingress.produce_deadline for the whole batch, and a
+// produce that fails is counted and logged and not retried: the body stays
+// present until the next select takes it where it stands, as AC-11 says.
+// Returns how many records were produced and how many failed.
+func (r *Roster) MarkOrphans(ctx context.Context, bodies []sim.CharacterBody) (produced, failed int) {
+	if len(bodies) == 0 {
+		return 0, 0
+	}
+	ctx, cancel := context.WithTimeout(ctx, r.opts.ProduceDeadline)
+	defer cancel()
+	ctx, span := r.tracer.Start(ctx, "recovery.mark_orphans", trace.WithAttributes(attribute.Int("bodies", len(bodies))))
+	defer span.End()
+	ld := r.opts.Linkdead
+	reason := ReasonLinkdead
+	if ld.Grace == 0 {
+		reason = ReasonQuit
+	}
+	for _, b := range bodies {
+		cmd := &logv1.LoggedCommand{
+			ZoneId:             string(b.Zone),
+			ActorId:            string(b.ID),
+			TraceId:            command.TraceParent(ctx),
+			AcceptedAtUnixNano: r.now().UnixNano(),
+		}
+		if ld.Grace == 0 {
+			cmd.Command = &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{CharacterId: string(b.ID), Reason: logv1.UnbindReason_QUIT}}
+		} else {
+			cmd.Command = &logv1.LoggedCommand_MarkLinkdead{MarkLinkdead: &logv1.MarkLinkdead{
+				CharacterId: string(b.ID), GraceTicks: ld.Grace, ExtensionTicks: ld.Extension, MaxTicks: ld.Max,
+			}}
+		}
+		outcome := UnbindOK
+		if _, err := r.opts.Log.Produce(ctx, cmd); err != nil {
+			outcome = UnbindProduceFailed
+			failed++
+			r.log.LogAttrs(ctx, slog.LevelWarn, "orphaned character not released: produce failed; the body stays present until the next select",
+				slog.String("character_id", string(b.ID)), slog.String("zone", string(b.Zone)),
+				slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+		} else {
+			produced++
+		}
+		r.metrics.Unbinds.WithLabelValues(reason, outcome).Inc()
+	}
+	r.log.LogAttrs(ctx, slog.LevelInfo, "characters left present by a crash released",
+		slog.Int("bodies", len(bodies)), slog.Int("produced", produced), slog.Int("failed", failed), slog.String("reason", reason), slog.String("trace_id", traceID(ctx)))
+	return produced, failed
+}
+
 // SeedLinkdead is the bodies recovery left linkdead, for the gauge: called
 // once, before the loop runs.
 func (r *Roster) SeedLinkdead(ids []sim.EntityID) {

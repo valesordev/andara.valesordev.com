@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -30,6 +31,9 @@ func main() {
 }
 
 func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit int) {
+	if len(args) > 0 && args[0] == "recover" {
+		return runRecover(args[1:], env, stdout, stderr)
+	}
 	cfg, err := config.Parse(args, env, stderr)
 	if err != nil {
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
@@ -120,7 +124,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	loop, err := rt.StartTickLoop(ctx)
 	if err != nil {
 		tel.Log.Error("tick loop", "detail", err.Error())
-		return boot.ExitFail
+		return rt.ExitOnStartError(ctx, err, func() (net.Listener, error) { return net.Listen("tcp", cfg.HTTPListen()) }, time.After)
 	}
 	loopCtx, stopLoop := context.WithCancel(context.Background())
 	defer stopLoop()
@@ -225,6 +229,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		Auth:                    auth.NewService(accounts),
 		Accounts:                auth.NewAdmin(accounts),
 		ContentAdmin:            contentAdmin,
+		SnapshotAdmin:           rt.NewSnapshotAdmin(),
 		Rechecker:               accounts,
 		RecheckInterval:         cfg.AuthRecheckInterval,
 		KeepaliveTimeout:        cfg.SessionLinkdeadDetect,

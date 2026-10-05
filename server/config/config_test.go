@@ -608,3 +608,40 @@ func TestParse_HandoffRetryKeys(t *testing.T) {
 		t.Errorf("a max equal to the first interval was refused: %v", err)
 	}
 }
+
+// AW-SRV-007's keys: defaults, env, flag, and the refusals.
+func TestParse_RecoveryKeys(t *testing.T) {
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.RecoveryRequireSnapshot || c.RecoveryReplayBatch != 4096 || c.RecoveryVerifyTimeout != 600*time.Second || c.RecoveryPinRound != 0 || c.RecoveryMismatchLinger != 0 {
+		t.Fatalf("defaults %+v", c)
+	}
+	env := withTLS(func(k string) (string, bool) {
+		return map[string]string{
+				"ANDARA_RECOVERY_REQUIRE_SNAPSHOT": "true", "ANDARA_RECOVERY_REPLAY_BATCH": "7",
+				"ANDARA_RECOVERY_VERIFY_TIMEOUT": "9s", "ANDARA_RECOVERY_PIN_ROUND": "4200", "ANDARA_RECOVERY_MISMATCH_LINGER": "60s",
+			}[k], map[string]bool{"ANDARA_RECOVERY_REQUIRE_SNAPSHOT": true, "ANDARA_RECOVERY_REPLAY_BATCH": true,
+				"ANDARA_RECOVERY_VERIFY_TIMEOUT": true, "ANDARA_RECOVERY_PIN_ROUND": true, "ANDARA_RECOVERY_MISMATCH_LINGER": true}[k]
+	})
+	c, err = Parse(nil, env, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !c.RecoveryRequireSnapshot || c.RecoveryReplayBatch != 7 || c.RecoveryVerifyTimeout != 9*time.Second || c.RecoveryPinRound != 4200 || c.RecoveryMismatchLinger != time.Minute {
+		t.Fatalf("env %+v", c)
+	}
+	c, err = Parse([]string{"--recovery-pin-round=12", "--recovery-mismatch-linger=5s"}, withTLS(nil), nil)
+	if err != nil || c.RecoveryPinRound != 12 || c.RecoveryMismatchLinger != 5*time.Second {
+		t.Fatalf("flags: %v %+v", err, c)
+	}
+	for _, bad := range [][]string{{"--recovery-replay-batch=0"}, {"--recovery-verify-timeout=0s"}, {"--recovery-mismatch-linger=-1s"}} {
+		if _, err := Parse(bad, withTLS(nil), io.Discard); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+	if _, err := Parse(nil, withTLS(func(k string) (string, bool) { return "x", k == "ANDARA_RECOVERY_PIN_ROUND" }), nil); err == nil {
+		t.Error("a non-numeric pin round was accepted")
+	}
+}

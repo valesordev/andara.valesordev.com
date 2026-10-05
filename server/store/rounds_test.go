@@ -5,6 +5,7 @@ package store_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -317,5 +318,155 @@ func TestRoundCarriesTheContentInEffect(t *testing.T) {
 	}
 	if rounds[0].Complete || !strings.Contains(rounds[0].Reason, "content in effect disagrees") {
 		t.Fatalf("round %+v", rounds[0])
+	}
+}
+
+// roundTamper rewrites the envelope of one object of the round at tick.
+func roundTamper(t *testing.T, fs *store.FS, key string, f func(*statev1.SnapshotEnvelope)) {
+	t.Helper()
+	raw, err := fs.Get(context.Background(), key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	f(&env)
+	if raw, err = canonical.Marshal(&env); err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Put(context.Background(), key, raw); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func asIncomplete(t *testing.T, err error) *sim.ErrRoundIncomplete {
+	t.Helper()
+	var inc *sim.ErrRoundIncomplete
+	if !errors.As(err, &inc) {
+		t.Fatalf("error is %T (%v), want *sim.ErrRoundIncomplete", err, err)
+	}
+	return inc
+}
+
+// AW-SRV-007 AC-15: a named round resolves to one round, or is refused with
+// its cause and Zones, and no other round is substituted for it.
+func TestRoundAtNamesTheCauseOfAnIncompleteRound(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	live, fs, _, owned := roundFixture(t, 2)
+	tick := live.Tick()
+
+	round, state, err := store.RoundAt(ctx, fs, owned, tick)
+	if err != nil || !round.Complete || state.Tick != tick {
+		t.Fatalf("a complete round: %+v, %v", round, err)
+	}
+
+	// No object at all: missing, with every owned Zone.
+	_, _, err = store.RoundAt(ctx, fs, owned, tick+500)
+	if inc := asIncomplete(t, err); inc.Cause != sim.RoundMissing || len(inc.Zones) != len(owned) || inc.Tick != tick+500 {
+		t.Fatalf("a tick with no objects: %+v", inc)
+	}
+
+	rounds, err := store.ListRounds(ctx, fs, owned)
+	if err != nil || len(rounds) != 1 {
+		t.Fatalf("rounds %v, %v", rounds, err)
+	}
+	zones := rounds[0].Zones
+
+	// disagree: one object's seed differs.
+	roundTamper(t, fs, zones[len(zones)-1].Key, func(e *statev1.SnapshotEnvelope) { e.SimSeed++ })
+	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	if inc := asIncomplete(t, err); inc.Cause != sim.RoundDisagree || len(inc.Zones) != 1 || inc.Zones[0] != zones[len(zones)-1].Zone {
+		t.Fatalf("a disagreeing seed: %+v", inc)
+	}
+
+	// hash: an object's hash is wrong.
+	roundTamper(t, fs, zones[len(zones)-1].Key, func(e *statev1.SnapshotEnvelope) { e.SimSeed-- }) // restore the seed
+	roundTamper(t, fs, zones[0].Key, func(e *statev1.SnapshotEnvelope) { e.StateHash[0] ^= 0xff })
+	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	if inc := asIncomplete(t, err); inc.Cause != sim.RoundHash || len(inc.Zones) != 1 || inc.Zones[0] != zones[0].Zone {
+		t.Fatalf("a hash-invalid object: %+v", inc)
+	}
+	// Named, it is never replaced by an older complete round, even one that exists.
+	if _, _, ok, _ := store.NewestComplete(ctx, fs, owned); ok {
+		t.Fatal("setup: the only round is hash-invalid, so no round is complete")
+	}
+}
+
+// A round holding one Zone twice (two offsets at one tick) is malformed:
+// incomplete with cause duplicate, and a named one is refused.
+func TestRoundAtRefusesADuplicateZone(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	live, fs, _, owned := roundFixture(t, 2)
+	tick := live.Tick()
+	snaps := live.SnapshotAll(5)
+	// A second object for one Zone at the same tick, at another offset.
+	snap := snaps[0]
+	wire, err := snap.Encode()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(wire, &env); err != nil {
+		t.Fatal(err)
+	}
+	dupKey := sim.SnapshotKey(snap.Zone, snap.StateVersion, snap.Tick, 999999)
+	if err := fs.Put(ctx, dupKey, wire); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	if inc := asIncomplete(t, err); inc.Cause != sim.RoundDuplicate || len(inc.Zones) != 1 || inc.Zones[0] != snap.Zone {
+		t.Fatalf("a duplicate Zone: %+v", inc)
+	}
+}
+
+// A tick holding a partial group at state_version v+1 and a complete one at v
+// names the v round; a tick whose every group is newer than this binary is a
+// *sim.ErrStateVersion (exit 4).
+func TestRoundAtResolvesToTheHighestReadableVersion(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	live, fs, _, owned := roundFixture(t, 2)
+	tick := live.Tick()
+	rounds, err := store.ListRounds(ctx, fs, owned)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One object of the same round, rewritten as state_version+1: a partial
+	// group at the newer version.
+	first := rounds[0].Zones[0]
+	raw, err := fs.Get(ctx, first.Key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env statev1.SnapshotEnvelope
+	if err := proto.Unmarshal(raw, &env); err != nil {
+		t.Fatal(err)
+	}
+	env.StateVersion = sim.StateVersion + 1
+	newer, err := canonical.Marshal(&env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fs.Put(ctx, sim.SnapshotKey(first.Zone, sim.StateVersion+1, tick, first.Offset), newer); err != nil {
+		t.Fatal(err)
+	}
+	round, state, err := store.RoundAt(ctx, fs, owned, tick)
+	if err != nil || round.StateVersion != sim.StateVersion || !round.Complete || state.Tick != tick {
+		t.Fatalf("the complete v round should load beside a partial v+1 group: %+v %v", round, err)
+	}
+
+	// A tick whose only group is newer than the binary.
+	only := store.NewFS(t.TempDir())
+	if err := only.Put(ctx, sim.SnapshotKey(first.Zone, sim.StateVersion+1, tick, first.Offset), newer); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = store.RoundAt(ctx, only, owned, tick)
+	var sv *sim.ErrStateVersion
+	if !errors.As(err, &sv) || sv.Have != sim.StateVersion+1 || sv.Want != sim.StateVersion {
+		t.Fatalf("every group newer than the binary: %v", err)
 	}
 }

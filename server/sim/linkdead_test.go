@@ -10,6 +10,7 @@ import (
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/simtest"
+	"github.com/valesordev/andara/server/store"
 )
 
 // The durations every test here marks with, in Ticks: 180 s, 60 s and 300 s
@@ -374,5 +375,55 @@ func TestLinkdead_ReplayDespawnsOnTheSameTick(t *testing.T) {
 	}
 	if ent := rec.State().Zones["town"].Entities["ch-1"]; !ent.Dormant || ent.DormantSince != despawnedAt {
 		t.Fatalf("recovered body %+v: want dormant since %d", ent, despawnedAt)
+	}
+}
+
+// AW-SRV-007: a body the crash left present is listed; one that is linkdead or
+// dormant, or not a Character, is not.
+func TestPresentCharacters_ListsBodiesWithNoSessionMark(t *testing.T) {
+	e := emptyEngine(t)
+	simtest.Place(e, "bob", "town", "plaza") // not a Character body: an Entity of another Template
+	e.State().Zones["town"].Entities["bob"].Template = "andara.core.Npc"
+	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	step(t, e, simtest.Bind("town", "ch-2", "Brin", "plaza"))
+	step(t, e, simtest.MarkLinkdead("town", "ch-2", grace, extension, ceiling))
+	got := e.PresentCharacters()
+	if len(got) != 1 || got[0].ID != "ch-1" || got[0].Zone != "town" {
+		t.Fatalf("PresentCharacters = %v, want only ch-1 in town", got)
+	}
+	e.State().Zones["town"].Entities["ch-1"].Dormant = true
+	if got := e.PresentCharacters(); len(got) != 0 {
+		t.Fatalf("a dormant body is listed: %v", got)
+	}
+}
+
+// AW-SRV-007: a body linkdead at the kill comes back from a snapshot with its
+// four linkdead fields as they were.
+func TestLinkdead_SurvivesASnapshotRound(t *testing.T) {
+	e := emptyEngine(t)
+	linkdeadWorld(t, e)
+	before := *e.State().Zones["town"].Entities["ch-1"]
+	var zs *sim.ZoneState
+	for _, s := range e.SnapshotAll(1) {
+		raw, err := s.Encode()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if s.Zone != "town" {
+			continue
+		}
+		_, body, err := store.Decode(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		zs = body
+	}
+	if zs == nil {
+		t.Fatal("no town snapshot")
+	}
+	after := zs.Entities["ch-1"]
+	if after == nil || after.LinkdeadSince != before.LinkdeadSince || after.LinkdeadDeadline != before.LinkdeadDeadline ||
+		after.LinkdeadCeiling != before.LinkdeadCeiling || after.LinkdeadExtension != before.LinkdeadExtension || !after.Linkdead() {
+		t.Fatalf("restored %+v, want the fields of %+v", after, before)
 	}
 }

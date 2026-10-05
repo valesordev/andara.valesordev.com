@@ -22,6 +22,10 @@ type ZoneSnapshotRef struct {
 	// found equal to the envelope's. Invalid names why in Reason.
 	Valid  bool
 	Reason string
+	// Cause is the AW-SRV-007 AC-15 cause (sim.RoundMissing, RoundHash,
+	// RoundDisagree) this object makes its round incomplete for; empty when
+	// Valid.
+	Cause string
 }
 
 // Round is one snapshot round: every object written at one tick under one
@@ -37,6 +41,14 @@ type Round struct {
 	Complete bool
 	// Reason says why a round is not Complete, for `snapshot list` and logs.
 	Reason string
+	// Cause is the AW-SRV-007 AC-15 cause of the first problem found (one of
+	// sim.RoundMissing, RoundDuplicate, RoundHash, RoundDisagree), and
+	// CauseZones the Zones it is about. Empty for a Complete round.
+	Cause      string
+	CauseZones []sim.ZoneID
+	// TakenAt is the newest taken_at_unix_nano among the objects that could
+	// be read: diagnostic only (Admin.ListSnapshotRounds).
+	TakenAt int64
 }
 
 // ListRounds groups WorldStore keys by tick and marks completeness against
@@ -77,6 +89,46 @@ func NewestComplete(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) 
 		}
 	}
 	return Round{}, sim.RoundState{}, false, nil
+}
+
+// RoundAt resolves a named tick to one round and its decoded state
+// (AW-SRV-007 AC-15): `recover --verify --round T`, `recovery.pin_round`, and
+// `Admin.VerifySnapshotRound`. After a rollback the same tick can hold a group
+// at a newer state_version and one at an older one, so the name resolves to the
+// highest state_version at T that this binary can read. A group that isn't
+// complete is a *sim.ErrRoundIncomplete naming its cause and Zones, and no
+// other round is substituted for it. A tick with no object at all is
+// RoundMissing with every owned Zone. Every group at T newer than this binary
+// is a *sim.ErrStateVersion.
+func RoundAt(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, tick sim.Tick) (Round, sim.RoundState, error) {
+	rounds, err := discover(ctx, ws, owned)
+	if err != nil {
+		return Round{}, sim.RoundState{}, err
+	}
+	var group []Round
+	for _, r := range rounds {
+		if r.Tick == tick {
+			group = append(group, r)
+		}
+	}
+	if len(group) == 0 {
+		return Round{Tick: tick}, sim.RoundState{}, &sim.ErrRoundIncomplete{Tick: tick, Cause: sim.RoundMissing, Zones: append([]sim.ZoneID(nil), owned...)}
+	}
+	// discover orders a tick's groups by state_version, highest first.
+	for i := range group {
+		if group[i].StateVersion > sim.StateVersion {
+			continue
+		}
+		state, err := verify(ctx, ws, owned, &group[i])
+		if err != nil {
+			return Round{}, sim.RoundState{}, err
+		}
+		if !group[i].Complete {
+			return group[i], sim.RoundState{}, &sim.ErrRoundIncomplete{Tick: tick, Cause: group[i].Cause, Zones: group[i].CauseZones}
+		}
+		return group[i], state, nil
+	}
+	return group[0], sim.RoundState{}, &sim.ErrStateVersion{Have: group[0].StateVersion, Want: sim.StateVersion}
 }
 
 type roundKey struct {
@@ -132,16 +184,21 @@ func discover(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Rou
 func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round) (sim.RoundState, error) {
 	state := sim.RoundState{Tick: r.Tick, StateVersion: sim.StateVersion}
 	present := map[sim.ZoneID]int{}
+	type problem struct {
+		cause string
+		text  string
+		zones []sim.ZoneID
+	}
 	var (
-		first   = true
-		reasons []string
+		first    = true
+		problems []problem
 	)
 	for i := range r.Zones {
 		ref := &r.Zones[i]
 		present[ref.Zone]++
 		raw, err := ws.Get(ctx, ref.Key)
 		if errors.Is(err, sim.ErrSnapshotNotFound) {
-			ref.Reason = "object vanished after listing"
+			ref.Reason, ref.Cause = "object vanished after listing", sim.RoundMissing
 			continue
 		}
 		if err != nil {
@@ -149,17 +206,20 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		}
 		env, body, err := readVerified(raw, sim.StateVersion, true)
 		if err != nil {
-			ref.Reason = err.Error()
+			ref.Reason, ref.Cause = err.Error(), sim.RoundHash
 			continue
+		}
+		if t := env.GetTakenAtUnixNano(); t > r.TakenAt {
+			r.TakenAt = t
 		}
 		zone := sim.ZoneStateFromProto(body)
 		if zone.ID != ref.Zone || sim.Tick(env.GetTick()) != r.Tick {
-			ref.Reason = fmt.Sprintf("envelope names zone %s tick %d", zone.ID, env.GetTick())
+			ref.Reason, ref.Cause = fmt.Sprintf("envelope names zone %s tick %d", zone.ID, env.GetTick()), sim.RoundHash
 			continue
 		}
 		prng, err := sim.DecodePRNG(body.GetPrngState())
 		if err != nil {
-			ref.Reason = err.Error()
+			ref.Reason, ref.Cause = err.Error(), sim.RoundHash
 			continue
 		}
 		next := body.GetNextEventId()
@@ -181,20 +241,20 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 			}
 		case !sameContent(content, env.GetContentDigest(), state.Content, state.ContentDigest):
 			// One cut at one tick has one content in effect (AW-SRV-012).
-			ref.Reason = "content in effect disagrees with the rest of the round"
+			ref.Reason, ref.Cause = "content in effect disagrees with the rest of the round", sim.RoundDisagree
 			continue
 		case prng != state.PRNG || next != state.NextEventID:
 			// AW-SRV-007 AC-11: a round is one cut at one tick, so these agree
 			// by construction; disagreement means two cuts assembled as one.
-			ref.Reason = fmt.Sprintf("prng %x… / next_event_id %d disagree with the round's %x… / %d", prng[0], next, state.PRNG[0], state.NextEventID)
+			ref.Reason, ref.Cause = fmt.Sprintf("prng %x… / next_event_id %d disagree with the round's %x… / %d", prng[0], next, state.PRNG[0], state.NextEventID), sim.RoundDisagree
 			continue
 		case seed != state.SimSeed:
 			// Every Zone's envelope in a round carries the same seed
 			// (AW-SRV-043).
-			ref.Reason = fmt.Sprintf("sim_seed %d disagrees with the round's %d", seed, state.SimSeed)
+			ref.Reason, ref.Cause = fmt.Sprintf("sim_seed %d disagrees with the round's %d", seed, state.SimSeed), sim.RoundDisagree
 			continue
 		case !equalOffsets(offsets, state.Offsets):
-			ref.Reason = "partition offsets disagree with the rest of the round"
+			ref.Reason, ref.Cause = "partition offsets disagree with the rest of the round", sim.RoundDisagree
 			continue
 		}
 		ref.Valid = true
@@ -202,12 +262,12 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 	}
 	for _, ref := range r.Zones {
 		if !ref.Valid {
-			reasons = append(reasons, fmt.Sprintf("%s: %s", ref.Key, ref.Reason))
+			problems = append(problems, problem{cause: ref.Cause, text: fmt.Sprintf("%s: %s", ref.Key, ref.Reason), zones: []sim.ZoneID{ref.Zone}})
 		}
 	}
 	for _, z := range sortedZones(present) {
 		if present[z] > 1 {
-			reasons = append(reasons, fmt.Sprintf("zone %s has %d objects at tick %d", z, present[z], r.Tick))
+			problems = append(problems, problem{cause: sim.RoundDuplicate, text: fmt.Sprintf("zone %s has %d objects at tick %d", z, present[z], r.Tick), zones: []sim.ZoneID{z}})
 		}
 	}
 	var missing []sim.ZoneID
@@ -217,12 +277,12 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		}
 	}
 	if len(missing) > 0 {
-		reasons = append(reasons, (&sim.ErrRoundIncomplete{Tick: r.Tick, Missing: missing}).Error())
+		problems = append(problems, problem{cause: sim.RoundMissing, text: (&sim.ErrRoundIncomplete{Tick: r.Tick, Cause: sim.RoundMissing, Zones: missing}).Error(), zones: missing})
 	}
-	r.Complete = len(reasons) == 0 && len(r.Zones) > 0
+	r.Complete = len(problems) == 0 && len(r.Zones) > 0
 	if !r.Complete {
-		if len(reasons) > 0 {
-			r.Reason = reasons[0]
+		if len(problems) > 0 {
+			r.Reason, r.Cause, r.CauseZones = problems[0].text, problems[0].cause, problems[0].zones
 		}
 		return sim.RoundState{}, nil
 	}

@@ -22,7 +22,7 @@ import (
 func TestRecovered_RefusesALogThatPredatesTheContentRule(t *testing.T) {
 	rt, _ := runtime(t, fixture(t, "valid"), false)
 
-	hook := rt.recovered()
+	hook := rt.recovered(new(bool))
 	if err := hook(sim.StepResult{Tick: 1}); err != nil {
 		t.Fatalf("an empty tick: %v", err)
 	}
@@ -30,7 +30,7 @@ func TestRecovered_RefusesALogThatPredatesTheContentRule(t *testing.T) {
 		t.Fatalf("a Command before any swap: err = %v", err)
 	}
 
-	hook = rt.recovered()
+	hook = rt.recovered(new(bool))
 	genesis := sim.StepResult{Tick: 1, Swaps: []sim.SwapApplied{{Pack: "dir"}}, Completed: sim.TickCompleted{CommandsApplied: 1}}
 	if err := hook(genesis); err != nil {
 		t.Fatalf("the genesis tick: %v", err)
@@ -41,7 +41,7 @@ func TestRecovered_RefusesALogThatPredatesTheContentRule(t *testing.T) {
 
 	// A swap and a Command in the same first tick: the Command applied first,
 	// on no content, which a log written under the rule cannot contain.
-	hook = rt.recovered()
+	hook = rt.recovered(new(bool))
 	mixed := sim.StepResult{Tick: 1, Swaps: []sim.SwapApplied{{Pack: "dir"}}, Completed: sim.TickCompleted{CommandsApplied: 2}}
 	if err := hook(mixed); !errors.Is(err, ErrPreRuleLog) {
 		t.Fatalf("a Command beside genesis: err = %v", err)

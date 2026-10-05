@@ -166,10 +166,10 @@ func RestoreEngine(w *World, templates *TemplateRegistry, cfg Config, r RoundSta
 	seen := make(map[ZoneID]bool, len(r.Zones))
 	for _, z := range r.Zones {
 		if _, ok := s.Zones[z.ID]; !ok {
-			return nil, fmt.Errorf("restore: round at tick %d carries zone %q, which the loaded content does not have", r.Tick, z.ID)
+			return nil, &ErrRoundZoneUnknown{Tick: r.Tick, Zone: z.ID}
 		}
 		if seen[z.ID] {
-			return nil, fmt.Errorf("restore: round at tick %d carries zone %q twice", r.Tick, z.ID)
+			return nil, &ErrRoundZoneDuplicate{Tick: r.Tick, Zone: z.ID}
 		}
 		seen[z.ID] = true
 		s.Zones[z.ID] = z.Clone()
@@ -178,6 +178,30 @@ func RestoreEngine(w *World, templates *TemplateRegistry, cfg Config, r RoundSta
 		return nil, &RestoreMismatch{RoundTick: uint64(r.Tick), Recorded: append([]byte(nil), r.RecordedHash...), Restored: got[:]}
 	}
 	return e, nil
+}
+
+// ErrRoundZoneUnknown: the round carries a Zone the loaded content does not
+// have, so the content that wrote it isn't the content loaded and restoring
+// would drop Entities without a trace (AW-SRV-007 exit 6, reason=content).
+type ErrRoundZoneUnknown struct {
+	Tick Tick
+	Zone ZoneID
+}
+
+func (e *ErrRoundZoneUnknown) Error() string {
+	return fmt.Sprintf("restore: round at tick %d carries zone %q, which the loaded content does not have", e.Tick, e.Zone)
+}
+
+// ErrRoundZoneDuplicate: the round carries one Zone twice, a malformed round
+// that ListRounds marks incomplete (AW-SRV-007 exit 7, cause=duplicate); the
+// restore refusal is the backstop behind it.
+type ErrRoundZoneDuplicate struct {
+	Tick Tick
+	Zone ZoneID
+}
+
+func (e *ErrRoundZoneDuplicate) Error() string {
+	return fmt.Sprintf("restore: round at tick %d carries zone %q twice", e.Tick, e.Zone)
 }
 
 // SortedZoneIDs is every Zone in the state, sorted.

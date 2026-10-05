@@ -688,6 +688,24 @@ for hot per-Character and per-Room reads, Postgres for tabular and admin queries
 analytics. Serves tooling, out-of-session queries, and — once sharded — cross-Shard reads. **Never serves
 the in-game read path**, which reads in-memory state, and is never written to directly.
 
+**Recovery** — A boot's path back to a verified World (`AW-SRV-007`): select the newest complete Snapshot
+Round (or the one `recovery.pin_round` names), restore it onto the content it recorded, seek the Tick
+Boundary log to the round's tick, replay every boundary after it to the head, and prove the State Hash at
+each. It refuses rather than guess, with an exit code per refusal (`3` log gap, `4` newer state version,
+`6` restore mismatch, `7` incomplete round, `8` hash mismatch), and never tries another round than the one
+it chose. With no complete round it replays from offset zero. `andara-server recover --verify` and
+`Admin.VerifySnapshotRound` run the same path against a scratch Engine that is never served.
+
+**Mismatch Linger** — The time (`recovery.mismatch_linger`) a boot that ends in a hash or restore mismatch
+serves `/metrics` and `/livez` before exiting, so that `andara_recovery_state_hash_match` `0` is scraped
+and `RecoveryStateMismatch` can fire. It never binds `grpc.listen`. Off by default: on a cluster only a
+Ready pod is scraped, and a linger would only slow the crash-loop alert.
+
+**Orphaned Body** — A Character body present in a Room, and not linkdead, after a recovery. Every Session is
+gone at a restart, so a body the crash left standing has none; recovery marks it linkdead (or unbinds it
+when `session.linkdead_grace` is `0`) so it despawns on the grace schedule instead of standing forever
+(`AW-SRV-007`, from `AW-SRV-015`).
+
 **Recovery Point Objective (RPO)** — Maximum acceptable World state loss after an unplanned restart.
 **Zero acknowledged actions.** A Command is durable on at least two brokers before the player is acked,
 and in-memory state is entirely derived from the log, so nothing acknowledged can be lost. The claim

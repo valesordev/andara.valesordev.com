@@ -210,9 +210,29 @@ ANDARA_SNAPSHOT_S3_ENDPOINT: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_SNAPSHOT_UPLOAD_TIMEOUT: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "recovery" "require_snapshot" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_REQUIRE_SNAPSHOT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "recovery" "replay_batch" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_REPLAY_BATCH: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "recovery" "verify_timeout" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_VERIFY_TIMEOUT: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "recovery" "mismatch_linger" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_MISMATCH_LINGER: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "recovery" "rto_target" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_RECOVERY_RTO_TARGET: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "recovery" "pin_round" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_RECOVERY_PIN_ROUND: {{ $v | toString | quote }}
 {{- end }}
 {{- $v := dig "kafka" "brokers" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}

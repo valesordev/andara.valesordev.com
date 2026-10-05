@@ -13,12 +13,17 @@
 #   - Once the broker is back, the server recovers to the last delivered boundary: its
 #     `recovered from the log` tick is the loss line's `last_delivered_tick`, and
 #     `andara_ticks_total` moves again.
-#   - The topic is gapless. Today's recovery replays every boundary from tick 1 and refuses a
-#     gap (sim.ErrBoundaryGap), so one more restart that recovers past the loss, replaying the
-#     whole log, is the read-back. It also covers the boundaries published after the first
-#     recovery. The read-back requires `ticks_replayed == tick`, a full replay: once AW-SRV-007
-#     recovers from a snapshot, this step fails loudly instead of proving nothing, and needs a
-#     read-back of its own.
+#   - The topic is gapless. One more restart that recovers past the loss is the read-back, and what
+#     it proves depends on where recovery starts. Recovery refuses a gap (sim.ErrBoundaryGap)
+#     in whatever it replays, and `recovered from the log` reports `round_tick` (0 on a cold
+#     start), `ticks_replayed` (the tail past the round) and `tick`:
+#       * a full replay (`round_tick` absent or 0) replays every boundary, so `ticks_replayed == tick`;
+#       * a snapshot recovery replays only (round_tick, tick], so the line must satisfy
+#         `round_tick + ticks_replayed == tick`, and the replayed tail covers the loss only if the
+#         round precedes it, `round_tick < last_delivered_tick`. A round at or past the loss
+#         (one cut after the first recovery, before this restart) proves nothing about the loss,
+#         and the step fails loudly and says so instead of passing.
+#     It also covers the boundaries published after the first recovery.
 #
 # The script asserts the loss through its log line, not andara_tick_boundary_lost_total: the
 # counter is 0 or 1 in a process that exits seconds later. The §8 record checked the counter
@@ -164,12 +169,23 @@ until ready; do
   fi
   sleep 2
 done
+# readback:begin (scripts/tests/test_stack_boundary_lost_readback.py runs this block)
 again="$(field "$RECOVERED_LINE" tick | tail -1)"
 replayed="$(field "$RECOVERED_LINE" ticks_replayed | tail -1)"
+round="$(field "$RECOVERED_LINE" round_tick | tail -1)"
+round="${round:-0}"
 [[ -n "$again" && -n "$replayed" ]] || fail "the read-back restart logged no \`${RECOVERED_LINE}\` line"
-[[ "$replayed" == "$again" ]] \
-  || fail "the read-back replayed ${replayed} ticks to reach ${again}: not a full replay, so it doesn't read the topic back (has AW-SRV-007's snapshot recovery landed?)"
+(( round + replayed == again )) \
+  || fail "the read-back's \`${RECOVERED_LINE}\` line is inconsistent: round_tick ${round} + ticks_replayed ${replayed} != tick ${again}"
+# With no round the sum above is `ticks_replayed == tick`: a full replay, which crosses the loss, and
+# `round` is 0, so the next line holds. A snapshot recovery's replayed tail is (round_tick, tick], so
+# it crosses the loss only if the round precedes it. snapshot.interval can cut a round between the
+# first recovery and this restart; then there is nothing to read back across the loss, and saying so
+# beats passing.
+(( round < last_delivered )) \
+  || fail "the read-back restored the round at tick ${round}, at or past the loss at ${last_delivered}, so the replayed tail (${round}, ${again}] doesn't cross it: nothing read the topic back across the loss (a round was cut after the first recovery; see snapshot.interval)"
 awk -v a="$again" -v b="$last_delivered" 'BEGIN { exit !(a > b) }' \
   || fail "the read-back recovered to tick ${again}, not past the loss at ${last_delivered}"
+# readback:end
 say "read-back recovered to tick ${again}: the boundaries are gapless across the loss"
 say "AW-SRV-026 AC-4 — exited 5 on the lost boundary, recovered to it, gapless — passes"

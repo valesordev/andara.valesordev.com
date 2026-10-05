@@ -225,3 +225,32 @@ func despawnReason(r logv1.UnbindReason) string {
 	}
 	return DespawnQuit
 }
+
+// CharacterBody names one Character body in the World.
+type CharacterBody struct {
+	Zone ZoneID
+	ID   EntityID
+}
+
+// PresentCharacters is every Character body standing in a Room that is not
+// linkdead, sorted by Zone then ID: after a restart, the bodies a crash left
+// with no Session (AW-SRV-007, from AW-SRV-015). Every Session is gone at
+// recovery, so each of these would otherwise stand in its Room until its
+// Account selects it. Read on the loop goroutine, or before it runs.
+func (e *Engine) PresentCharacters() []CharacterBody {
+	var out []CharacterBody
+	for zid, z := range e.state.Zones {
+		for id, ent := range z.Entities {
+			if e.isCharacter(ent) && ent.Present() && !ent.Linkdead() {
+				out = append(out, CharacterBody{Zone: zid, ID: id})
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Zone != out[j].Zone {
+			return out[i].Zone < out[j].Zone
+		}
+		return out[i].ID < out[j].ID
+	})
+	return out
+}

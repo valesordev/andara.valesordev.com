@@ -4,7 +4,7 @@ title: Recovery from snapshot and log tail, verified in CI
 epic: EPIC-04
 component: server
 type: feature
-status: ready
+status: review
 size: M
 depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015, AW-SRV-043]
 blocks: [AW-INF-007, AW-SRV-032, AW-INF-011, AW-INF-032, AW-INF-009, AW-SRV-047]
@@ -596,3 +596,58 @@ CLAUDE.md §8, plus:
   by requiring a recovery that replayed the whole log (`ticks_replayed == tick`). Once this story
   recovers from a snapshot, that check fails loudly. This story replaces the read-back (and tells SRE
   in its feedback file), so `make stack-boundary-lost` keeps passing on a snapshot recovery.
+
+## Verification record — 2026-10-04 (implementation; `review` until the §8 checklist passes)
+
+Branch `impl/aw-srv-007-recovery`. Requests to SRE and the two questions for architecture are in
+`docs/feedback/AW-SRV-007-implementation-requests.md`. Integration tests ran on the local compose Redpanda with
+the filesystem store (`ANDARA_KAFKA_BROKERS=localhost:9092`, `-tags integration`).
+
+| AC | Test | What it asserts |
+|----|------|-----------------|
+| 1 | `TestRecoveryAgainstTheBroker/AC-1` | A real `SIGKILL` of a process taking a round every 400 ms: recovery restores a round, replays a tail, and its State Hash and tick are the last surviving boundary's |
+| 2 | `…/AC-2` | Records deleted below a round's offset on one Partition: exit `3`, `LogGapError` naming the Partition, the round's offset and the log's earliest. The oldest round is used: the newest has consumed the whole log, and a log can't begin past its own end |
+| 3 | `…/AC-3`; `TestReplayBatchDoesNotChangeTheHashes` | Batch 1, 7, 4096: the same hash at every replayed tick |
+| 4 | `…/AC-4`; `TestANamedRoundThatIsNotCompleteIsExit7…` | A hash-invalid object: the newest round is incomplete, recovery uses the next; named, exit `7` `cause=hash` |
+| 5 | `…/AC-5`; `TestAHashMismatchAtATailBoundaryIsExit8NamingTheTick`; `TestStartTickLoop_ARewrittenBoundaryIsExit8WithTheGaugeAtZero` | A republished events topic with one tail hash flipped: exit `8` at that tick and the round used, gauge `0`, `failures{hash}` `1`. Through boot: the refusal is a `*recovery.Failure` that lingers, and nothing past the tick loop is built, so `grpc.listen` is never bound |
+| 6 | the integration tests above | They run under `make test-integration`; **the CI job that gates `server/sim` and `server/store` changes is SRE's (feedback)** |
+| 7 | `TestRecoveryTimingAtSizingScale` | 25,000 Entities, 2,000 Rooms, 16 Zones, 500 Characters, a round at tick 777 and a tail of 602 ticks: `total` 46.3 s (`load` 0.24, `seek` 0.05, `replay` 45.98, `verify` 0.07), peak RSS 97 MB (the test process, which also read the boundaries). Writes `recovery-timing.json` |
+| 8 | `…/AC-1` | Every acknowledged Command's `(partition, offset)` is below the replayed head of its Partition, and the record there is byte-equal to the one acknowledged. The test waits for every ack to be applied before the kill |
+| 9 | `…/AC-9`; `TestColdStartReplaysFromZero`; `TestRequireSnapshotRefusesAColdStartWithExit7` | No round: replay from offset zero to the same hash; with `require_snapshot`, exit `7` |
+| 10 | `andara-server recover --verify [--round T]` (`cmd/andara-server/recover.go`); `TestRecover_RefusesWhatItCannotRun`, `TestPrintVerify_…` | Flags, output and exit mapping (a restore mismatch is a `mismatch` and exits `8`). **Not run end to end here**: it needs a round a real server wrote, which `AW-INF-032`'s stack run provides |
+| 11 | `store` tests (earlier commits), `TestRoundAt…`; `…/AC-13` | A round whose objects disagree is `incomplete` with `cause=disagree` |
+| 12 | `TestSeekIsBoundedByTheRoundNotTheHistory` | 864,000 ticks of history, round at tick 864,000, 10-tick tail, the sizing fixture, on the local compose Redpanda: with no history `load+seek+replay` 1,035 ms, with history 1,304 ms (+269 ms, under the 1 s bound; `seek` 5 ms → 279 ms); peak RSS 94.0 MB vs 92.4 MB (-2%). The test found two real costs, fixed here in `tickloop/reader.go`: the reader's client began prefetching the history from offset 0 while the search was still running, and a client was built per probe |
+| 13 | `…/AC-13`; `TestARestoreThatDoesNotReproduceItsTickIsExit6` | Every object of the newest round with a flipped, re-signed `prng_state`: exit `6`, nothing replayed, no other round tried, gauge `0`, `failures{restore}` `1`, `restore_total{recovery,hash_mismatch}` `1` |
+| 14 | `TestHoldMismatch_ServesOperatorHTTPThenReturns` | `/metrics` and `/livez` `200`, `/readyz` and `/startedz` `503`, the clock ends it, a signal ends it at once; `Lingers` is true for `8` and `6` only |
+| 15 | `store` `RoundAt` tests; `TestVerifyResponse_RefusalsNameTheirStatus`; `TestSnapshotAdmin_IsOperatorOnly`; `TestSnapshotVerify_MatchAndMismatchExits` | A named incomplete round is exit `7` and nothing else is tried; the RPC maps no-object to `NOT_FOUND` and an incomplete round to `FAILED_PRECONDITION`; the CLI exits `1` |
+
+**Definition of done.** `TestRecoveryWithAHandoffInFlight`: a `Transit` record at the recovered hash from a round,
+retried by a second process on its first live ticks, alice arriving exactly once at sequence 1.
+`TestFiftyCharactersSurviveAKill` (AW-SRV-015): 50 Characters recover from a round, the one linkdead at the kill keeps its
+four fields, the other 49 are found by `PresentCharacters`, and after their marks and 50 reconnects every body is present and
+none despawned. `Roster.MarkOrphans` produces those marks at boot (`TestRoster_MarkOrphans…`). The `Engine` was driven
+in-process for the marks and reconnects; the Gateway path is `AW-SRV-014`'s tests.
+
+**Mutation checks**, each in a scratch worktree: restore exit `6`→`8`; a named round falling back to the newest; the
+hash-match gauge registered at construction; replay chasing a moving log; a restore not counted under `caller=verify`; a
+mismatch reporting no round; a restore mismatch not setting the gauge; exit `7` setting it; readiness ignoring the first
+live tick, and the lag; exit `7` lingering; the linger ignoring a signal; a verify using the live instruments; no-object
+being `FAILED_PRECONDITION`; `PresentCharacters` including linkdead bodies, or non-Characters; `MarkOrphans` in the wrong
+Zone, and unbinding with a grace; the reader not positioning at the start; the last replayed tick dropped (AC-1). Three
+survived at first (`caller=verify`, scratch options, reader positioning) and now fail a test.
+
+**Beyond the contract's surface.** `tickloop.BoundaryReader.HeadTick`, `Loop.Live`, `Engine.PresentCharacters`,
+`Roster.MarkOrphans`, `store.Round.TakenAt`, the gateway's `SnapshotAdmin` seam, and `snapshot list` over RPC with
+`--local` for the old per-Zone object listing (existing tests now pass `--local`). Replay ends at the log's head as it is when
+replay begins: a log still being written (a verify against a running server) has an end that moves.
+
+**Deviations and questions for architecture:** the owned-Zone set is the loaded content's Zones; "consumer lag under ten
+tick budgets" is read as the loop's schedule lag; and recovery now marks Characters a crash left standing linkdead.
+
+**Outstanding before `done`:**
+- SRE: the Helm key `recovery.mismatch_linger` (PR open on main) and the regenerated values schema, the `stack-boundary-lost`
+  read-back (`round_tick + ticks_replayed == tick`), compose's `60s`, the `RecoveryStateMismatch` rule, the runbook,
+  and the CI job. **`make check` fails only at `values-schema-check` until that key merges.**
+- `AW-INF-032`'s live observation and `recover --verify` / `snapshot verify` against a real round, so
+  `andara_restore_total{caller="verify"}` is observed live (the inherited AW-SRV-043 line).
+- Not observed: the inherited `AW-SRV-006` failure reasons (`encode`, `stall`, `boundary`) driven through the server.
