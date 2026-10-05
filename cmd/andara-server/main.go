@@ -239,6 +239,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		Auth:                    auth.NewService(accounts),
 		Accounts:                auth.NewAdmin(accounts),
 		ContentAdmin:            contentAdmin,
+		SnapshotAdmin:           rt.NewSnapshotAdmin(),
 		Rechecker:               accounts,
 		RecheckInterval:         cfg.AuthRecheckInterval,
 		KeepaliveTimeout:        cfg.SessionLinkdeadDetect,

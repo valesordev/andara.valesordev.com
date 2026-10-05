@@ -46,6 +46,9 @@ type Round struct {
 	// CauseZones the Zones it is about. Empty for a Complete round.
 	Cause      string
 	CauseZones []sim.ZoneID
+	// TakenAt is the newest taken_at_unix_nano among the objects that could
+	// be read: diagnostic only (Admin.ListSnapshotRounds).
+	TakenAt int64
 }
 
 // ListRounds groups WorldStore keys by tick and marks completeness against
@@ -205,6 +208,9 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 		if err != nil {
 			ref.Reason, ref.Cause = err.Error(), sim.RoundHash
 			continue
+		}
+		if t := env.GetTakenAtUnixNano(); t > r.TakenAt {
+			r.TakenAt = t
 		}
 		zone := sim.ZoneStateFromProto(body)
 		if zone.ID != ref.Zone || sim.Tick(env.GetTick()) != r.Tick {

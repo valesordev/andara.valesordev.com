@@ -64,6 +64,9 @@ type Options struct {
 	// ContentAdmin is the content publish half of Admin (AW-SRV-013). Nil
 	// leaves those methods UNIMPLEMENTED, as on a content.source=dir server.
 	ContentAdmin ContentAdmin
+	// SnapshotAdmin is the Snapshot Round half of Admin (AW-SRV-007). Nil
+	// leaves those methods UNIMPLEMENTED.
+	SnapshotAdmin SnapshotAdmin
 	// Rechecker, with RecheckInterval, is the AC-12 loop: every open
 	// Session's Principal is re-read on the interval and the Session closed
 	// if its Account was disabled or its roles changed. Nil disables it.
