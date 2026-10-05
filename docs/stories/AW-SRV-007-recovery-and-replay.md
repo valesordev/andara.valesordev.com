@@ -626,7 +626,8 @@ CLAUDE.md §8, plus:
   kill-and-recover test with 50 Sessions. Also: a Character linkdead at the kill recovers from a
   *snapshot* with its four linkdead fields as they were (015 AC-6 proves full-log replay only), and
   a body the crash left present with no Session is marked linkdead at recovery rather than left
-  present forever. `AW-SRV-015` joined `depends_on` with this line: the linkdead state and the
+  present forever (the boot sweep, over `Entities`; a Character in a `Transit` record at the kill lands
+  unmarked until the story requested in `docs/feedback/AW-SRV-007-transit-orphan-mark.md` is built). `AW-SRV-015` joined `depends_on` with this line: the linkdead state and the
   reconnect it exercises are 015's.
 
 ## Open questions

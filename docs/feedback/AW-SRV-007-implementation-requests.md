@@ -66,7 +66,7 @@ should answer.
 ## Architecture: the rulings (2026-10-05)
 
 One of the four changes the contract (1) and needs implementation. The story is amended; it stays at
-`review`, because AC-16 is new and isn't built. Item 3 closes a hole that turned out to be its own story.
+`review`, because AC-16 is new and isn't built. Item 3 is a hole that turned out to be its own story.
 
 ### 1. The owned Zone set comes from the round's own recorded content (AC-16)
 

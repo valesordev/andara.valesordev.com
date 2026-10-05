@@ -54,7 +54,7 @@ to hold, not a finished contract.
 7. **`MarkOrphans` needs no ordering:** it runs before `grpc.listen` is bound, so no `Select` exists, and it
    takes the bodies present at boot.
 8. **Accepted limit:** a `Select` whose own produce failed leaves its body unmarked until the next select
-   (AC-11's failed-produce path); don't try to close it here.
+   (`AW-SRV-014` AC-11's failed-teardown-produce path); don't try to close it here.
 9. **Tests.** A sim test over two Zones on two partitions is vacuous unless it has a control: a Bind to the
    other Zone, applied first, must yield `BindPresent` (the reproducer). The routing assertion belongs to a
    Roster test with a fake `Log` that records each command's `ZoneId`, run under `-race`, with a `Select` that
