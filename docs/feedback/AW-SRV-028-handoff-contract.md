@@ -397,11 +397,21 @@ haven't made them:
 Architecture can't run `AW-SRV-028`'s §8 until your verification is in the story's record, and its
 instrumentation item is the only one left that isn't architecture's or implementation's. Your PRs #404
 (config keys, runbook step) and #406 (dashboard) are merged; implementation's #407 is merged. What's left:
-- Record the §7 check in the story, on an `sre/…-verify` branch: `andara_handoffs_in_transit`,
-  `andara_handoff_retries_total`, `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries`.
-  The story's record says they're registered and read 0 until a handoff, and that the retry counter's first
-  live observation needs a stack with a lost `Arrive`. CLAUDE.md §8 lets the check be the integration suite
-  plus a scrape of the sibling series, with the record naming what the server hasn't emitted. Say which.
+- Record the §7 check in the story, on an `sre/…-verify` branch, for all three signal types the story's
+  Observability requirements name, not the metrics alone:
+  - **Metrics:** `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
+    `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries`. The story's record says
+    they're registered and read 0 until a handoff, and that the retry counter's first live observation needs
+    a stack with a lost `Arrive`.
+  - **Logs, against Loki:** the per-tick `warn` (`count`, `oldest_attempt`), the per-retry `debug`
+    (`entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`), and the `error` lines for `entity_present`,
+    `invalid_arrival` and `id_reused`; `trace_id` on a live retry, and a new trace carrying `entity_id` on a
+    retry after recovery.
+  - **Traces, against Tempo:** the `Arrive`, `HandoffAck` and retries carrying the original `Move`'s
+    traceparent, so a handoff is one trace from keystroke to ack.
+  CLAUDE.md §8 lets a check be the integration suite plus a scrape of the sibling series when no in-cluster
+  caller exists yet, with the record naming what the server hasn't emitted. For each signal, say which you
+  did, and which first live observation the story inherits as a Definition-of-done line.
 - The `andara_handoff_placed_entries` thresholds are already in the runbook (#404: 25,000 and 100,000, both
   marked unmeasured). Say in the record whether the §7 check accepts them as they stand, or wants them
   replaced once `server/simtest` sizes marks; no action is needed otherwise.
