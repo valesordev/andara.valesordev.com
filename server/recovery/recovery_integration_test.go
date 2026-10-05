@@ -11,11 +11,13 @@ package recovery_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
@@ -79,6 +81,10 @@ func topics(t *testing.T, bk []string, tag string) (commands, events string) {
 const (
 	fixtureScript = "script"
 	fixtureCross  = "cross"
+	// fixtureSizing is the AC-7 World: simtest's sizing fixture (25,000
+	// Entities, 2,000 Rooms, 16 Zones, 500 Characters), populated directly, so
+	// a process starts on it and recovery restores it from a round.
+	fixtureSizing = "sizing"
 )
 
 // options is recovery over the broker and the store at dir, the way boot builds
@@ -91,9 +97,13 @@ func options(t *testing.T, fix string, bk []string, commands, events, dir string
 	}
 	cfg := sim.Config{Seed: 11, Partitions: simtest.AllPartitions(), Handlers: simtest.Handlers(reg)}
 	world := simtest.World
-	if fix == fixtureCross {
+	switch fix {
+	case fixtureCross:
 		world = simtest.CrossingWorld
 		cfg = sim.Config{Seed: 9, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers()}
+	case fixtureSizing:
+		world = simtest.SizingWorld
+		cfg = sim.Config{Seed: 7, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers()}
 	}
 	w, err := world()
 	if err != nil {
@@ -120,8 +130,11 @@ func options(t *testing.T, fix string, bk []string, commands, events, dir string
 func zoneIDs(t *testing.T, fix string) []sim.ZoneID {
 	t.Helper()
 	e, err := simtest.NewEngine(11)
-	if fix == fixtureCross {
+	switch fix {
+	case fixtureCross:
 		e, err = simtest.NewVerbEngine(9)
+	case fixtureSizing:
+		e, err = simtest.SizingEngine(7)
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -140,11 +153,23 @@ func TestRecoveryChild(t *testing.T) {
 	bk, commands, events, dir, fix := strings.Split(parts[0], ","), parts[1], parts[2], parts[3], parts[4]
 	ctx := context.Background()
 	o, closeReader := options(t, fix, bk, commands, events, dir)
-	e, _, err := recovery.Recover(ctx, o)
+	var e *sim.Engine
+	var err error
+	if fix == fixtureSizing {
+		// A World the log can't build from empty: the process starts on it,
+		// and recovery restores it from the rounds this process writes.
+		e, err = simtest.SizingEngine(7)
+	} else {
+		e, _, err = recovery.Recover(ctx, o)
+	}
 	closeReader()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
+	}
+	interval, rate := 400*time.Millisecond, 50
+	if fix == fixtureSizing {
+		interval, rate = 60*time.Second, 1000
 	}
 	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
@@ -162,14 +187,14 @@ func TestRecoveryChild(t *testing.T) {
 		out = &arriveDropping{KafkaPublisher: pub}
 	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	snap, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{Store: store.NewFS(dir), Interval: 400 * time.Millisecond, MaxStall: time.Second, UploadTimeout: 10 * time.Second, AwaitBoundaryAck: true, Log: log})
+	snap, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{Store: store.NewFS(dir), Interval: interval, MaxStall: time.Second, UploadTimeout: 10 * time.Second, AwaitBoundaryAck: true, Log: log})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
 	}
 	loop, err := tickloop.New(tickloop.Options{
 		Engine: e, Source: src, Publisher: out, Snapshotter: snap, AwaitBoundaryAck: true,
-		TickRate: 50, TickBudget: 20 * time.Millisecond, MaxPerTick: 3, DrainTimeout: 5 * time.Second, CheckpointEvery: 5, Log: log,
+		TickRate: rate, TickBudget: 20 * time.Millisecond, MaxPerTick: 3, DrainTimeout: 5 * time.Second, CheckpointEvery: 5, Log: log,
 	})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
@@ -692,4 +717,219 @@ func TestRecoveryWithAHandoffInFlight(t *testing.T) {
 	if s.Zones["town"].Entities["alice"] != nil || s.Zones["wilds"].Placed["alice"].Seq != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
 		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v", s.Zones["wilds"].Placed)
 	}
+}
+
+// AC-7: recovery of the sizing fixture with a 600-tick tail, timed per phase,
+// with its peak RSS, written to recovery-timing.json for the CI job summary.
+// It runs the fixture for minutes, so it's off unless ANDARA_RECOVERY_TIMING is
+// set: the CI job sets it, and ANDARA_RECOVERY_TIMING_OUT names the artifact.
+func TestRecoveryTimingAtSizingScale(t *testing.T) {
+	if os.Getenv("ANDARA_RECOVERY_TIMING") == "" {
+		t.Skip("set ANDARA_RECOVERY_TIMING=1 to run the sizing-scale recovery (minutes)")
+	}
+	bk := brokers(t)
+	commands, events := topics(t, bk, "sizing")
+	dir := t.TempDir()
+	child := spawn(t, fixtureSizing, "lossless", bk, commands, events, dir)
+	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGKILL); _ = child.Wait() })
+
+	// The tail is the ticks past the newest round, and it is 600 or more when
+	// the process is killed: the round interval is longer than 600 ticks cost.
+	const tail = 600
+	fs := store.NewFS(dir)
+	var round sim.Tick
+	eventually.Observed(t, 8*time.Minute, "a round, and a tail of 600 ticks past it", func() (bool, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		r, _, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureSizing))
+		if err != nil || !ok {
+			return false, fmt.Sprint("no complete round ", err)
+		}
+		bs, err := tickloop.ReadBoundaries(ctx, bk, events)
+		if err != nil {
+			return false, err.Error()
+		}
+		round = r.Tick
+		return len(bs) >= int(r.Tick)+tail, fmt.Sprintf("round %d, head %d", r.Tick, len(bs))
+	})
+	if err := child.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	want, err := tickloop.ReadBoundaries(context.Background(), bk, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	o, closeReader := options(t, fixtureSizing, bk, commands, events, dir)
+	defer closeReader()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	e, rep, err := recovery.Recover(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.StateHash() != want[len(want)-1].StateHash {
+		t.Fatalf("recovered hash %x, the log's last is %x", e.StateHash(), want[len(want)-1].StateHash)
+	}
+	phases := map[string]float64{}
+	for ph, d := range rep.Phases {
+		phases[ph] = d.Seconds()
+	}
+	out := map[string]any{
+		"round_tick": uint64(rep.Round.Tick), "tail_ticks": rep.Replayed, "entities": simtest.SizingEntities, "rooms": simtest.SizingRooms,
+		"zones": simtest.SizingZones, "characters": simtest.SizingCharacters, "peak_rss_bytes": peakRSS(),
+		"phases_seconds": phases, "head_tick": uint64(e.Tick()),
+	}
+	body, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := os.Getenv("ANDARA_RECOVERY_TIMING_OUT")
+	if path == "" {
+		path = filepath.Join(t.TempDir(), "recovery-timing.json")
+	}
+	if err := os.WriteFile(path, append(body, '\n'), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("recovery-timing.json (%s):\n%s", path, body)
+	if rep.Replayed < tail || rep.Round.Tick != round {
+		t.Fatalf("tail %d from round %d, want at least %d from round %d", rep.Replayed, rep.Round.Tick, tail, round)
+	}
+	if total := rep.Phases[recovery.PhaseTotal]; total >= 90*time.Second {
+		t.Fatalf("total %s, want under 90s", total)
+	}
+}
+
+// peakRSS is this process's high-water resident set in bytes (VmHWM), 0 where
+// /proc isn't there.
+func peakRSS() int64 {
+	b, err := os.ReadFile("/proc/self/status")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if rest, ok := strings.CutPrefix(line, "VmHWM:"); ok {
+			var kb int64
+			if _, err := fmt.Sscanf(strings.TrimSpace(rest), "%d", &kb); err == nil {
+				return kb * 1024
+			}
+		}
+	}
+	return 0
+}
+
+// DoD (inherited from AW-SRV-015): 50 Characters play, the process is killed,
+// and the World recovers from a round with every body where it stood. The one
+// linkdead at the kill still is, with its four fields; the other 49 are the
+// bodies no Session holds, which recovery's caller marks linkdead, and every
+// one of the 50 then rebinds with none despawned.
+func TestFiftyCharactersSurviveAKill(t *testing.T) {
+	bk := brokers(t)
+	commands, events := topics(t, bk, "fifty")
+	dir := t.TempDir()
+	spawnRooms := []struct{ zone, room string }{{"town", "plaza"}, {"docks", "pier"}, {"wilds", "trail"}}
+	var cmds []*logv1.LoggedCommand
+	ids := make([]string, 50)
+	for i := range ids {
+		ids[i] = fmt.Sprintf("ch-%02d", i)
+		sr := spawnRooms[i%len(spawnRooms)]
+		cmds = append(cmds, simtest.Bind(sr.zone, ids[i], "Char"+ids[i], sr.room))
+	}
+	cmds = append(cmds, simtest.MarkLinkdead("town", ids[0], 100000, 6000, 300000))
+	produceCommands(t, bk, commands, cmds)
+
+	child := spawn(t, fixtureCross, "lossless", bk, commands, events, dir)
+	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGKILL); _ = child.Wait() })
+	fs := store.NewFS(dir)
+	eventually.Observed(t, 60*time.Second, "a round holding all 50 bodies, with a tail", func() (bool, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross))
+		if err != nil || !ok {
+			return false, fmt.Sprint("no complete round ", err)
+		}
+		bodies := 0
+		for _, z := range state.Zones {
+			bodies += len(z.Entities)
+		}
+		bs, err := tickloop.ReadBoundaries(ctx, bk, events)
+		return err == nil && bodies == 50 && len(bs) >= int(r.Tick)+3, fmt.Sprintf("round %d holds %d bodies", r.Tick, bodies)
+	})
+	if err := child.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	want, err := tickloop.ReadBoundaries(context.Background(), bk, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	o, closeReader := options(t, fixtureCross, bk, commands, events, dir)
+	defer closeReader()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	e, rep, err := recovery.Recover(ctx, o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Round.Tick == 0 || e.StateHash() != want[len(want)-1].StateHash {
+		t.Fatalf("recovered from round %d to %x, the log's last is %x", rep.Round.Tick, e.StateHash(), want[len(want)-1].StateHash)
+	}
+	orphans := e.PresentCharacters()
+	if len(orphans) != 49 {
+		t.Fatalf("%d bodies with no Session, want 49 (one was linkdead at the kill)", len(orphans))
+	}
+	if ent := e.State().Zones["town"].Entities[sim.EntityID(ids[0])]; ent == nil || !ent.Linkdead() || ent.LinkdeadDeadline-ent.LinkdeadSince != 100000 {
+		t.Fatalf("the body linkdead at the kill lost its fields in the round: %+v", ent)
+	}
+
+	// What the roster produces for those 49 (Roster.MarkOrphans), then the 50
+	// reconnects: every body present again, none despawned.
+	apply := func(cmds ...*logv1.LoggedCommand) {
+		t.Helper()
+		var in sim.TickInput
+		for _, c := range cmds {
+			p := sim.CommandPartition(c)
+			next := e.State().Offsets[p] + int64(countOn(in, p))
+			in.Records = append(in.Records, sim.Record{Partition: p, Offset: next, Command: c})
+		}
+		if _, err := e.Step(in); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var marks, binds []*logv1.LoggedCommand
+	for _, b := range orphans {
+		marks = append(marks, simtest.MarkLinkdead(string(b.Zone), string(b.ID), 100000, 6000, 300000))
+	}
+	for i, id := range ids {
+		sr := spawnRooms[i%len(spawnRooms)]
+		binds = append(binds, simtest.Bind(sr.zone, id, "Char"+id, sr.room))
+	}
+	apply(marks...)
+	if n := len(e.LinkdeadBodies()); n != 50 {
+		t.Fatalf("%d bodies linkdead after the marks, want 50", n)
+	}
+	apply(binds...)
+	if n := len(e.PresentCharacters()); n != 50 || len(e.LinkdeadBodies()) != 0 {
+		t.Fatalf("after the reconnects %d bodies present and %d linkdead, want 50 and 0", n, len(e.LinkdeadBodies()))
+	}
+	for _, z := range e.State().Zones {
+		for id, ent := range z.Entities {
+			if ent.Dormant {
+				t.Errorf("%s despawned", id)
+			}
+		}
+	}
+}
+
+// countOn is how many records in already target partition p.
+func countOn(in sim.TickInput, p int32) int {
+	n := 0
+	for _, r := range in.Records {
+		if r.Partition == p {
+			n++
+		}
+	}
+	return n
 }

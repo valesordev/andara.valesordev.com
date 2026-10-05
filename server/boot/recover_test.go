@@ -13,8 +13,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
+
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	"github.com/valesordev/andara/server/content"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
+	"github.com/valesordev/andara/server/simtest"
 )
 
 func TestStartExit_MapsRecoveryRefusals(t *testing.T) {
@@ -141,4 +146,74 @@ func httpGet(h http.Handler, path string) int {
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
 	return rec.Code
+}
+
+// recovery.pin_round, recovery.require_snapshot and recovery.replay_batch
+// reach the Options boot recovery runs with; a store is opened only when
+// something reads rounds.
+func TestRecoverOptions_CarryTheRecoveryKeys(t *testing.T) {
+	rt, _ := runtime(t, fixture(t, "valid"), false)
+	rt.replay = &memLog{}
+	rt.Cfg.SnapshotStore, rt.Cfg.SnapshotFSPath = "fs", t.TempDir()
+	var inEffect bool
+
+	rt.Cfg.SnapshotInterval = 0
+	o, release, err := rt.RecoverOptions(context.Background(), sim.Config{}, &inEffect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if o.Store != nil || o.Round != nil || o.RequireSnapshot {
+		t.Fatalf("snapshots off, nothing pinned: store %v round %v require %v", o.Store, o.Round, o.RequireSnapshot)
+	}
+
+	rt.Cfg.RecoveryPinRound, rt.Cfg.RecoveryRequireSnapshot, rt.Cfg.RecoveryReplayBatch = 4200, true, 7
+	o, release, err = rt.RecoverOptions(context.Background(), sim.Config{}, &inEffect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release()
+	if o.Store == nil || o.Round == nil || *o.Round != 4200 || !o.RequireSnapshot || o.ReplayBatch != 7 {
+		t.Fatalf("pinned: store %v round %v require %v batch %d", o.Store, o.Round, o.RequireSnapshot, o.ReplayBatch)
+	}
+}
+
+// AC-5 through StartTickLoop: a rewritten tail boundary is a *recovery.Failure
+// whose exit is 8 and which lingers, the gauge is 0 and counted under
+// reason=hash, and nothing past the tick loop was built, so no grpc.listen was
+// ever bound.
+func TestStartTickLoop_ARewrittenBoundaryIsExit8WithTheGaugeAtZero(t *testing.T) {
+	rt := recoveringRuntime(t, &memLog{recs: simtest.MemorySource{}})
+	swap := &logv1.ContentSwap{PackId: content.DirPack}
+	topo, err := rt.Content.Prepare(nil, swap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sim.ContentDigest(topo)
+	swap.WorldDigest = d[:]
+	live := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 5, Partitions: allPartitionsForTest(), Handlers: sim.Handlers(), Content: rt.Content})
+	log := &memLog{recs: simtest.MemorySource{}}
+	log.record(t, live, nil, &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: swap}},
+		simtest.Bind("town", "ch-1", "Aldric", "plaza"), simtest.Look("town", "ch-1"), nil, nil)
+	log.boundaries[4].StateHash[0] ^= 0xff // tick 5
+	rt.replay = log
+
+	if n := testutil.CollectAndCount(rt.Tel.Reg, "andara_recovery_state_hash_match"); n != 0 {
+		t.Fatalf("the gauge has %d samples before recovery sets it", n)
+	}
+	_, err = rt.StartTickLoop(context.Background())
+	var hm *recovery.HashMismatchError
+	if !errors.As(err, &hm) || hm.Tick != 5 || hm.Round != 0 {
+		t.Fatalf("err %v, want a hash mismatch at tick 5 from a cold start", err)
+	}
+	if StartExit(err) != recovery.ExitHashMismatch || !Lingers(err) {
+		t.Fatalf("exit %d lingers %v, want 8 and true", StartExit(err), Lingers(err))
+	}
+	if testutil.ToFloat64(rt.RecoveryMetrics().HashMatch()) != 0 ||
+		testutil.ToFloat64(rt.RecoveryMetrics().Failures.WithLabelValues(recovery.ReasonHash)) != 1 {
+		t.Fatal("gauge not 0, or failures{hash} not 1")
+	}
+	if rt.Ready() || rt.started.Load() {
+		t.Fatal("a refused recovery must not be ready or started")
+	}
 }
