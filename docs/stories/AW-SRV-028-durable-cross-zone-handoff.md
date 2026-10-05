@@ -368,12 +368,15 @@ yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
   correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
   retry lines is the tick's trace:** a retry carries no trace of the originating `Move`, live or after a recovery.
 - **Traces:** the first `Arrive` and the `HandoffAck` carry the originating `Move`'s trace id, so a handoff that
-  settles first time is one trace from keystroke to ack. **A retry carries no trace id.** It starts a trace of its
-  own (`DueHandoffs` builds it without one), is produced in the tick's context and published with the tick's
-  other cross-Zone Commands, and gets no span of its own. Its `command.apply` is a tick-produced record with no
-  trace to inherit a sampling decision from, so `Loop.Begin` marks it for `SpanFilter` at the tick's
-  one-in-a-hundred (`server/telemetry/sampling.go`), never an always-sampled root of its own: a restart with many
-  stuck handoffs must not export a trace per retried Entity. A retry can carry none because the
+  settles first time is one trace from keystroke to ack. **A retry carries no trace id.** It is produced in the tick's context and published with the tick's other
+  cross-Zone Commands, and gets no span at production. With no trace id for `command.ParentFrom` to extract
+  (`server/command/pipeline.go`: an empty value returns the context unchanged), the retried `Arrive`'s
+  `command.apply` continues the applying tick's context, so it is a child of that tick's trace, linked to
+  `sim.tick`: not of the originating `Move`'s trace, and not a trace root of its own. It has no Gateway trace to
+  inherit a sampling decision from, so `Loop.Begin` marks it for `SpanFilter` at the tick's one-in-a-hundred
+  (`server/telemetry/sampling.go`), never an always-sampled root: a restart with many stuck handoffs must not
+  export a trace per retried Entity. *(`DueHandoffs`' own comment and the implementation record's Deviations say a
+  retry "starts a trace of its own"; what happens is the above.)* A retry can carry none because the
   `Transit` record is hashed and holds no trace (`TransitRecord{Entity, To, Room, Direction}`), so there is nothing
   to copy one from. #403's text said a retry carries the `Move`'s traceparent where it is known; this departs from
   it, and the implementation record's Deviations records that as agreed with architecture on 2026-10-04. That
@@ -548,10 +551,10 @@ retries at the tick's one-in-a-hundred.
 
 **Met by construction, and read from the code only.** The gauges are derived from the Engine's state each tick
 (the `len` of each Zone's maps, so the cost is the number of Zones), never incremented: tested, and observed live
-across a restart. **A retry gets no span of its own and starts a trace of its own** (it's produced in the tick's
-context and published with its other cross-Zone Commands), and its `command.apply` is marked at the tick's
-one-in-a-hundred because it carries no trace id (`Loop.Begin`, `DueHandoffs`): read from the code, with no
-test and no live observation of it. The first `Arrive` and the `HandoffAck` carry the `Move`'s trace id
+across a restart. **A retry gets no span at production, and its `command.apply` is a child of the applying tick's trace**
+(`command.ParentFrom` returns the context unchanged for an empty trace id, and `Loop.Begin` starts the span from the
+tick's context), marked at the tick's one-in-a-hundred because it carries no trace id (`Loop.Begin`,
+`DueHandoffs`): read from the code, with no test and no live observation of it. The first `Arrive` and the `HandoffAck` carry the `Move`'s trace id
 (`server/sim/verbs.go`), also read from the code.
 
 **An environment note, not a defect of this story.** `make stack-play` failed on this stack: it restarts the
