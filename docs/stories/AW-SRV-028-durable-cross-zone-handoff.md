@@ -348,23 +348,52 @@ the same reset, `make world-reset ENV=dev CONFIRM=andara-dev`, and the PR says s
 
 ## Observability requirements
 
+*SRE review, 2026-10-05: amended after architecture's contract (#403). The log bound below is a requested
+change: architecture's reply accepting it is a message that isn't in the repository, and it isn't confirmed there
+yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
+
 - **Metrics:** `andara_handoffs_in_transit` (gauge, no labels); `andara_handoff_retries_total`
   (counter); `andara_handoff_stale_arrivals_total` (counter); `andara_handoff_placed_entries` (gauge, no
-  labels: marks summed over Zones). No Entity or Zone labels. *(`andara_handoff_rejected_total` moves to
-  `AW-SRV-027` with the rejection.)*
-- **Logs:** `warn` once per tick that produced retries, with the count and the oldest `attempt`, and one
-  `debug` per retry with `entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`, so a restart with many
-  stuck handoffs doesn't write a line each; `error` on
-  `entity_present`, `invalid_arrival` and `id_reused`. A retry, live or after a recovery, starts a new
-  trace (the tick's `sim.tick`, sampled like any tick), and its `debug` line carries `entity_id`: the Transit record is hashed and can't hold the Move's `trace_id` (amended
-  2026-10-04 to what was built, the deviation recorded below).
-- **Traces:** the `Arrive` and `HandoffAck` carry the original `Move`'s traceparent where it is known. A
-  retry starts a new trace, so the join back to the Move's trace is by the `debug` line's `entity_id`, not
-  a span attribute.
-- **Alerts:** none. `andara_handoffs_in_transit` sustained above 0 is a dashboard panel and a diagnostic
-  step in `docs/runbooks/simulation-lagging.md` (a stuck handoff means the broker or the target Partition
-  is). This story adds that step, and a line that an Entity stuck in transit to a faulted Zone has no
-  release before `AW-SRV-027`, and a threshold on `andara_handoff_placed_entries` past which pruning is wanted.
+  labels: marks summed over Zones). No Entity or Zone labels: four series in all. *(`andara_handoff_rejected_total`
+  moves to `AW-SRV-027` with the rejection.)* **The two gauges are derived from the Engine's state on every
+  tick** (the `len` of each Zone's `Transit` and `Placed`, so the cost is the number of Zones, not the number
+  of marks) and never incremented, so a restart or a restore reads the restored values from its first tick.
+  The counters start at 0 after a restart.
+- **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
+  retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick`, `in_transit` and
+  `trace_id`. *(Requested, not built, and not yet confirmed in the repository: SRE proposed it after #403 merged.
+  The code still logs one per tick; issue #409 and the feedback file.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
+  retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
+  and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
+  correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
+  retry lines is the tick's trace:** a retry carries no trace of the originating `Move`, live or after a recovery.
+- **Traces:** the first `Arrive` and the `HandoffAck` carry the originating `Move`'s trace id, so a handoff that
+  settles first time is one trace from keystroke to ack. **A retry carries no trace id.** It is produced in the *producing* tick's context and published with that tick's
+  other cross-Zone Commands, and gets no span at production; the retry log lines carry that tick's trace. It is
+  applied later, by the target Zone's tick after the broker round trip, and with no trace id for `command.ParentFrom`
+  to extract (`server/command/pipeline.go`: an empty value returns the context unchanged), the retried `Arrive`'s
+  `command.apply` is a direct child of the *applying* tick's `sim.tick` span (the loop also links it to `sim.tick`,
+  which here is its own parent). So it sits neither in the originating `Move`'s trace nor in a trace root of its
+  own, and the log lines and the span are in two different traces. It has no Gateway trace to inherit a sampling
+  decision from, so `Loop.Begin` marks it for `SpanFilter`, and it is exported only when the applying tick's number
+  is a multiple of 100 (`server/telemetry/sampling.go`), never an always-sampled root. An overrun keeps `sim.tick`
+  but not this span, so an overrun tick's exported `sim.tick` has no retry child. A restart with many stuck
+  handoffs must not export a trace per retried Entity. *(`DueHandoffs`' comment says a retry "starts a trace of its
+  own", and the implementation record's Deviations says "a retry starts a new trace"; what happens is the above.)* A retry can carry none because the
+  `Transit` record is hashed and holds no trace (`TransitRecord{Entity, To, Room, Direction}`), so there is nothing
+  to copy one from. #403's text said a retry carries the `Move`'s traceparent where it is known; this departs from
+  it, and the implementation record's Deviations records that as agreed with architecture on 2026-10-04. That
+  record's phrase "as the Observability section says it should" was true of #403's wording, and this section now
+  says what is built.
+- **Alerts:** none. `andara_handoffs_in_transit` above 0 is ordinary traffic. Sustained for minutes with
+  `rate(andara_handoff_retries_total[5m])` rising, it means the broker or the target Partition: a handoff in
+  flight longer than `sim.handoff_retry_ticks` retries, so the retry rate is the age signal and no age gauge is
+  needed. It has a dashboard panel (`andara-tick-health`, *Cross-Zone handoffs*) and a diagnostic step
+  (`docs/runbooks/simulation-lagging.md`, Diagnose step 7). The same runbook says an Entity stuck in transit to
+  a faulted Zone has no release before `AW-SRV-027`, and sets the thresholds on `andara_handoff_placed_entries`
+  past which pruning is wanted (25,000 and 100,000, both unmeasured). No SLO covers handoffs, and before
+  `AW-SRV-027` an operator has no action to take on one, so an alert would page for nothing. Revisit with
+  `AW-SRV-027`: a ticket on sustained retries, which needs an SLO that Brian sets.
 
 ## Test plan
 
@@ -373,6 +402,12 @@ the same reset, `make world-reset ENV=dev CONFIRM=andara-dev`, and the PR says s
   AC-6 recovering under a changed config; the backoff schedule exactly, at attempt counts of 64 and
   beyond; the round-trip test (AC-10); the snapshot round trip (AC-13).
 - **Integration (`make test-integration`):** AC-2 with `SIGKILL` between boundary and ack, on the broker.
+- **Sizing fixture with marks (SRE's ask, agreed in architecture's message of 2026-10-04, which isn't in the repository; a follow-up, not a Definition-of-done
+  item of this story):** give the snapshot sizing fixture (`server/simtest/sizing.go`: 16 Zones, 25,000
+  Entities, the 15 ms `snapshot.max_stall_ms`) a population of `Placed` marks, at 25,000 and at 100,000, and
+  record the in-tick copy and the State Hash cost with them, so the two thresholds in
+  `docs/runbooks/simulation-lagging.md` ("The handoff marks") can be replaced by measured ones. The fixture's
+  copy already takes about 12 of its 15 ms without marks, so that is where the headroom shows.
 - **Manual/operator:** none in this story. `sim repl` has no failure-injection flag, so a manual walk
   through a lost `Arrive` isn't expressible as a product command (CLAUDE.md §9); AC-2's integration test
   stands for it. A flag is a follow-up, with the player-facing text for `in_transit`.
@@ -472,3 +507,63 @@ can't read a `HandoffAck`), and a fresh local stack for `AW-INF-032`.
 - SRE's §8 instrumentation check: `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
   `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries` are registered and read 0 until a
   handoff; the retry counter's first live observation is on a stack with a lost `Arrive`.
+
+## §8 instrumentation check — 2026-10-05 (SRE, `sre/aw-srv-028-observability-amendment`)
+
+**The four series, the gauges' restore behavior and the dashboard and runbook all hold live. The summary
+`warn` is the one deviation from the amended §7 (issue #409), and four observations are covered by tests
+only.** Run on the local stack at `main` bc4badf (`make up` rebuilt the server image from this tree with
+#407; the server reports revision `bc4badf`):
+
+| Observation | Result |
+|-------------|--------|
+| The series on a fresh scrape | `andara_handoff_placed_entries`, `andara_handoff_retries_total`, `andara_handoff_stale_arrivals_total` and `andara_handoffs_in_transit` are all present at 0, pre-registered, with no labels |
+| One Character walks Purgatory to Market Plaza (`andara-cli play`, `out`) | `placed_entries` 4 → 5; `in_transit` 0; `retries_total` 0; `stale_arrivals_total` 0. The handoff acknowledged inside a tick or two, so its transit window is too short to scrape |
+| `docker compose restart andara-server`, ready after about 90 s | `placed_entries` **5**, `in_transit` 0, both counters 0. The mark count survived the restart because the gauge is rebuilt from the recovered state, and the counters restarted at 0, as the amended §7 says |
+| Prometheus and Grafana | Prometheus scrapes all four series (5, 0, 0, 0). `andara-tick-health` has the two *Cross-Zone handoffs* panels (#406), whose four queries now return data |
+
+**Covered by tests, not run live** (`go test -race -run TestHandoffLoop_ ./server/tickloop/`, three tests,
+all pass; they read the metric objects, per CLAUDE.md §8): a lost `Arrive` is retried and acknowledged
+(`HandoffsInTransit` 1 → 0, `HandoffRetries` 0 → 1, `HandoffPlacedEntries` 1, a `warn` carrying
+`oldest_attempt`); a recovery retries from the recovered `Transit` and counts nothing for the replay; a stale
+`Arrive` is counted and an impossible one is logged at `error`. A live retry needs an unacknowledged handoff,
+which on this stack means breaking the broker mid-move: `sim repl` has no failure-injection flag (the story's
+own Test plan), so `retries_total` above 0, `stale_arrivals_total` above 0, `in_transit` above 0 on a scrape,
+and the `warn`, `debug` and `error` lines have not been emitted by the running server. The first story that can
+make that observation carries it. No story arranges one yet: AW-INF-032's `make stack-recover` kills the server
+and may catch a handoff in flight by chance, but it doesn't inject loss or assert a retry, so a failure-injection
+flag (the follow-up the Test plan above names) is what would make the observation repeatable.
+
+**One deviation from the amended §7: the summary `warn`, and it is a contract change.** Architecture's #403 text said
+"`warn` once per tick that produced retries, with the count and the oldest `attempt`", and the code matches it:
+one `warn` for every tick that produced retries, with `count`, `oldest_attempt`, `tick` and `trace_id`
+(`server/tickloop/loop.go`, `noteRetries`). The amended §7 asks for at most one per `sim.handoff_retry_ticks`
+window, with `retries`, `oldest_attempt`, `tick` and `in_transit`. SRE proposed that after #403 merged, and
+architecture accepted it in a cross-session message on 2026-10-04 (not in the repository), so the change is asked
+for in the feedback file to be confirmed there. #407 shipped before the amendment, and the code is right by the
+merged contract. It is up to ten lines a second under a sustained outage and about one every 10 s for a single
+stuck handoff: issue #409, for implementation, not blocking, and only if architecture confirms the change. The
+`debug` line per retry and the `error` lines match.
+
+**A difference from #403's text that is already agreed: a retry's trace.** #403's §7 said a live retry's `trace_id`
+is the originating `Move`'s and that retries carry its traceparent. The code gives a retry no trace id, because the
+`Transit` record is hashed and holds no trace to copy one from, and this story's implementation record (Deviations)
+records that as agreed with architecture on 2026-10-04. The amended §7 says what is built. It is also what keeps
+retries at the tick's one-in-a-hundred.
+
+**Met by construction, and read from the code only.** The gauges are derived from the Engine's state each tick
+(the `len` of each Zone's maps, so the cost is the number of Zones), never incremented: tested, and observed live
+across a restart. **A retry gets no span at production, and its `command.apply` is a direct child of the applying tick's `sim.tick`
+span** (`command.ParentFrom` returns the context unchanged for an empty trace id, and `Loop.Begin` starts the span
+from the tick's context), exported only when the applying tick's number is a multiple of 100, because it carries
+no trace id (`Loop.Begin`, `DueHandoffs`): read from the code, with no test and no live observation of it. The first `Arrive` and the `HandoffAck` carry the `Move`'s trace id
+(`server/sim/verbs.go`), also read from the code.
+
+**An environment note, not a defect of this story.** `make stack-play` failed on this stack: it restarts the
+server under an open session and waits 60 s, and recovery took about 90 s, because until AW-SRV-007 lands
+recovery replays the whole log and this stack's log is about three days old (2.77 million ticks). A fresh
+stack recovers in seconds, as CI's does. It's for AW-INF-032 and AW-SRV-007, and it's why a fresh local stack
+is the right one for `make stack-recover`.
+
+**The dev reset** (`make world-reset ENV=dev CONFIRM=andara-dev`) is not run. It needs Brian's go in the
+session that runs it, at the time the deploy carrying this story reaches `dev`.

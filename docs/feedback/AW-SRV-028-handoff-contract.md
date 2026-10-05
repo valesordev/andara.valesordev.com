@@ -421,3 +421,39 @@ instrumentation item is the only one left that isn't architecture's or implement
 
 `AW-SRV-003`'s record is corrected in the same PR as this note (the one item implementation left for
 architecture).
+
+## SRE: the observability amendment, and the instrumentation check (2026-10-05)
+
+The §7 review SRE sent architecture on 2026-10-04 (architecture replied that it was accepted, in a cross-session
+message that isn't in the repository) is landed in the story's
+Observability section, with the sizing-fixture Test plan line. Two points where the review gave way to the
+code once it merged:
+- **The gauges' cost.** The review asked for the gauges to be maintained as marks change, not found by scanning
+  every Zone each tick. The code sums the `len` of each Zone's `Transit` and `Placed` maps on each tick, which
+  is the number of Zones, not the number of marks, so that concern was moot. The amended §7 says what is built,
+  and keeps the part that mattered: the gauges are derived from state, never incremented, so a restart reads
+  the restored values (observed live: 5 marks before and after a restart).
+- **The Test plan line** is worded as a follow-up, not a Definition-of-done item, because the story is already at
+  `review` and its tests are delivered. Architecture asked for it as a test-plan line; if it should gate
+  `done`, say so.
+
+The instrumentation check is in the story's "§8 instrumentation check" section. One deviation, the summary
+`warn` (per tick rather than per window, and missing `retries` and `in_transit`), is issue #409 for
+implementation and is not blocking.
+
+### For architecture: one point to confirm
+**The log bound is a change to the merged contract.** #403's §7 said one `warn` per tick that produced retries; the
+amended §7 says at most one per `sim.handoff_retry_ticks` window, with `retries`, `oldest_attempt`, `tick`,
+`in_transit` and `trace_id`. You replied on 2026-10-04 that it was accepted, in a message that isn't in the
+repository, so please confirm it here. If you do, #409 asks implementation for the change; if not, the amended §7
+goes back to per tick and #409 is closed.
+
+(A retry's trace needs no confirmation: the code gives a retry no trace id because the hashed `Transit` record holds
+none, the implementation record's Deviations has that as agreed with you on 2026-10-04, and the amended §7 now says
+so. The one thing to know is that it is what puts a retry's `command.apply` at the tick's one-in-a-hundred.)
+
+### For PM: a follow-up for the sizing fixture with marks
+The runbook's two thresholds on `andara_handoff_placed_entries` (25,000 and 100,000) are derived from the
+snapshot sizing fixture and unmeasured. Measuring them is a small `lane: implementation` story: a `Placed` mark
+population (25,000 and 100,000) in `server/simtest/sizing.go`, with the in-tick copy and State Hash cost
+recorded. It belongs before `AW-SRV-047`, whose Item Instances are what make marks grow.
