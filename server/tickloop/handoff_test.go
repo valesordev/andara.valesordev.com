@@ -143,7 +143,15 @@ func TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges(t *testing.T) {
 // warn per sim.handoff_retry_ticks window, aggregating that window's retries,
 // not one per tick that produced them.
 func TestHandoffLoop_RetriesAreSummarizedOncePerWindow(t *testing.T) {
-	vh := newVerbHarness(t)
+	// Alice is in transit, her Arrive lost, so in_transit reads 1.
+	vh, _ := lossyHarness(t, func(c *logv1.LoggedCommand) bool { return c.GetArrive() != nil })
+	if err := vh.submit("s-alice", "east"); err != nil {
+		t.Fatal(err)
+	}
+	vh.runTicks(3)
+	if n := gauge(vh.loop.metrics.HandoffsInTransit); n != 1 {
+		t.Fatalf("andara_handoffs_in_transit = %v, want 1", n)
+	}
 	l := vh.loop
 	ctx := context.Background()
 	win := vh.engine.HandoffRetryWindow()
@@ -179,8 +187,11 @@ func TestHandoffLoop_RetriesAreSummarizedOncePerWindow(t *testing.T) {
 		if m["retries"] != float64(6) || m["oldest_attempt"] != float64(i+2) {
 			t.Errorf("window %d: retries %v oldest_attempt %v, want 6 and %d", i, m["retries"], m["oldest_attempt"], i+2)
 		}
-		if _, ok := m["in_transit"]; !ok {
-			t.Errorf("window %d: no in_transit field: %v", i, m)
+		if m["in_transit"] != float64(1) {
+			t.Errorf("window %d: in_transit %v, want 1", i, m["in_transit"])
+		}
+		if want := float64(base + sim.Tick(i+1)*win); m["tick"] != want {
+			t.Errorf("window %d: tick %v, want the flush tick %v", i, m["tick"], want)
 		}
 		if _, ok := m["count"]; ok {
 			t.Errorf("window %d still carries count: %v", i, m)
