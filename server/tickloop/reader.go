@@ -56,7 +56,15 @@ type Boundary struct {
 // that bootstraps from a round finds its place by binary search rather than
 // by reading the history before it (AW-SRV-019 AC-6).
 type BoundaryReader struct {
+	// client talks to the broker and consumes nothing: it lists offsets and
+	// pings. consumer reads the Partition, and is built by consume at the
+	// offset the reader was positioned at. It is never moved with SetOffsets
+	// from a position it had already started fetching from: a client built at
+	// the start or the end and then moved can race its own first offset
+	// resolution, and a reader that lost sat where it began and read nothing
+	// (the intermittent projector timeouts after AW-SRV-007, #422).
 	client   *kgo.Client
+	consumer *kgo.Client
 	brokers  []string
 	topic    string
 	clientID string
@@ -76,11 +84,11 @@ type BoundaryReader struct {
 	// Partition's end: records that aren't boundaries (a tick's Events
 	// sent before its boundary) can follow the last one (review of #365).
 	boundaryAfter bool
-	// positioned is whether the reader has been told where to read: by
-	// SeekAfter, or at the Partition's start by the first Next. The client is
-	// built at the Partition's end so that it prefetches nothing until then: a
-	// client built at the start began pulling the history while SeekAfter was
-	// still searching for the place past it (AW-SRV-007 AC-12).
+	// positioned is whether the reader has a consumer at the position it was
+	// told to read from: by SeekAfter, or at the Partition's start by the
+	// first Next. The consumer is built then, and not before, so it prefetches
+	// nothing while SeekAfter is still searching for the place past the history
+	// (AW-SRV-007 AC-12).
 	positioned bool
 }
 
@@ -92,9 +100,6 @@ func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clien
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID+"-boundaries"),
-		kgo.FetchMaxBytes(16<<20),
-		kgo.FetchMaxPartitionBytes(4<<20),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{eventsTopic: {BoundaryPartition: kgo.NewOffset().AtEnd()}}),
 	)
 	if err != nil {
 		return nil, err
@@ -131,14 +136,9 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 		return 0, fmt.Errorf("boundary offsets: %w", errors.Join(so.Err, eo.Err))
 	}
 	lo, hi := so.Offset, eo.Offset
-	pc, err := r.probeClient(lo)
-	if err != nil {
-		return 0, err
-	}
-	defer pc.Close()
 	for lo < hi {
 		mid := lo + (hi-lo)/2
-		t, at, ok, err := r.probe(ctx, pc, mid, hi)
+		t, at, ok, err := r.probe(ctx, mid, hi)
 		if err != nil {
 			return 0, err
 		}
@@ -150,15 +150,17 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 	}
 	r.boundaryAfter = false
 	if lo < eo.Offset {
-		t, _, ok, err := r.probe(ctx, pc, lo, eo.Offset)
+		t, _, ok, err := r.probe(ctx, lo, eo.Offset)
 		if err != nil {
 			return 0, err
 		}
 		r.boundaryAfter = ok && t > tick
 	}
 	r.start, r.expect = so.Offset, tick+1
+	if err := r.consume(lo); err != nil {
+		return 0, err
+	}
 	r.positioned = true
-	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: lo}}})
 	return lo, nil
 }
 
@@ -232,11 +234,10 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 	return tick, found, nil
 }
 
-// probeClient is the one client a SeekAfter probes with, moved between
-// offsets rather than built per probe: a client per probe left the garbage of
-// seventeen clients and their fetch buffers behind, which showed as tens of MB
-// of peak RSS in a recovery over a long history (AW-SRV-007 AC-12). Its fetches
-// are small: a probe wants the first boundary at an offset, not a megabyte.
+// probeClient is a client for one probe, built at the offset it reads from and
+// never moved. Its fetches are small: a probe wants the first boundary at an
+// offset, not a megabyte, and a 1 MiB fetch per probe was tens of MB of peak
+// RSS in a recovery over a long history (AW-SRV-007 AC-12).
 func (r *BoundaryReader) probeClient(offset int64) (*kgo.Client, error) {
 	return kgo.NewClient(
 		kgo.SeedBrokers(r.brokers...),
@@ -249,8 +250,12 @@ func (r *BoundaryReader) probeClient(offset int64) (*kgo.Client, error) {
 
 // probe reads from offset until the first boundary, returning its tick and
 // offset, or ok=false if there is none before end.
-func (r *BoundaryReader) probe(ctx context.Context, cl *kgo.Client, offset, end int64) (sim.Tick, int64, bool, error) {
-	cl.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: offset}}})
+func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick, int64, bool, error) {
+	cl, err := r.probeClient(offset)
+	if err != nil {
+		return 0, 0, false, err
+	}
+	defer cl.Close()
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
@@ -297,7 +302,7 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 	}
 	if len(r.buf) == 0 {
 		pctx, cancel := context.WithTimeout(ctx, wait)
-		fetches := r.client.PollFetches(pctx)
+		fetches := r.consumer.PollFetches(pctx)
 		cancel()
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
@@ -330,7 +335,9 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 		if got := r.buf[0].Tick; got > r.expect {
 			// The search landed past the boundary it was looking for. Read
 			// from the start instead, as the reader did before it could seek.
-			r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: r.start}}})
+			if err := r.consume(r.start); err != nil {
+				return nil, err
+			}
 			r.buf, r.next, r.expect = nil, r.start, 0
 			return nil, nil
 		}
@@ -354,8 +361,30 @@ func (r *BoundaryReader) positionAtStart(ctx context.Context) error {
 		return fmt.Errorf("boundary start offset: %w", so.Err)
 	}
 	r.start, r.next = so.Offset, so.Offset
+	if err := r.consume(so.Offset); err != nil {
+		return err
+	}
 	r.positioned = true
-	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: so.Offset}}})
+	return nil
+}
+
+// consume (re)builds the consumer at offset.
+func (r *BoundaryReader) consume(offset int64) error {
+	if r.consumer != nil {
+		r.consumer.Close()
+		r.consumer = nil
+	}
+	c, err := kgo.NewClient(
+		kgo.SeedBrokers(r.brokers...),
+		kgo.ClientID(r.clientID+"-boundaries"),
+		kgo.FetchMaxBytes(16<<20),
+		kgo.FetchMaxPartitionBytes(4<<20),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
+	)
+	if err != nil {
+		return fmt.Errorf("boundary consumer at %d: %w", offset, err)
+	}
+	r.consumer = c
 	return nil
 }
 
@@ -377,7 +406,12 @@ func (r *BoundaryReader) Unread(bs []Boundary) {
 func (r *BoundaryReader) AtHead() bool { return len(r.buf) == 0 && r.next >= r.hwm }
 
 // Close closes the reader.
-func (r *BoundaryReader) Close() { r.client.Close() }
+func (r *BoundaryReader) Close() {
+	r.client.Close()
+	if r.consumer != nil {
+		r.consumer.Close()
+	}
+}
 
 // CommandSource is a sim.RecordSource over andara.commands.v1 that consumes
 // once, from the replica's offsets, and serves Replay's ranges from
