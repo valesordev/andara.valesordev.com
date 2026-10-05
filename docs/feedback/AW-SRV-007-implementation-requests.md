@@ -87,19 +87,20 @@ no circularity: current content is a superset of the round's, so listing its Zon
 one envelope's header gives V.
 - **Discovery** lists the current content's Zones (`ws.List` is per Zone, as today). **Judgement** is per
   round: V's Zones, narrowed to the Partitions this process owns (all 64 today, ADR-0002).
-- A listed Zone object the round's content doesn't list is the existing `ErrRoundZoneUnknown` (exit `6`,
-  `reason=content`): a corruption case, not a swap case. A V Zone with no object is `missing`.
+- A V Zone with no object is `missing`.
 - Envelopes in one group that disagree on `content` are `disagree`, as today.
-- Cause `content` (new, beside AC-15's four) covers unresolved content and an object for a listed Zone V
-  doesn't list. `snapshot list` and `verify` show it `incomplete` and don't fail the call. When selected
-  (boot's newest, `--round`, `pin_round`) it exits `6`, `reason=content`, counted under `reason="restore"`,
-  no other round tried: `ErrRoundZoneUnknown`, or a new `sim.ErrRoundContent{Tick, Versions}` with
-  `pack_versions` on the line. **That moves unresolved content from exit `1`**, so `Classify` and
-  `logRestoreMismatch` change. V comes from the first hash-valid envelope in Zone order.
+- Cause `content` (new, beside AC-15's four; the story's AC-16 has the full rule) covers unresolved content
+  and an object for a listed Zone V doesn't list. It ranks below `duplicate`, `hash` and `disagree`, above
+  `missing`. Only `snapshot list` shows it. Selected (boot's newest, `--round`, `pin_round`), it exits `6`,
+  `reason=content`, no other round tried, via `ErrRoundZoneUnknown` or a new `sim.ErrRoundContent{Tick,
+  Versions}`; `RoundAt` and `NewestComplete` both return those and never `ErrRoundIncomplete`. The log line is
+  `recovery restore mismatch` (`logRestoreMismatch`), not `recovery refused`, since both are raised before
+  `RestoreEngine`. `snapshot verify` returns `CONTENT_MISMATCH`, as it does for `ErrRoundZoneUnknown`.
+  **That moves unresolved content from exit `1`.** V comes from the first hash-valid envelope in Zone order.
 - **Signatures** are pinned in the story's sketch: `ListRounds`, `NewestComplete` and `RoundAt` take
   `(listed []sim.ZoneID, zonesAt ZonesAt)` in place of `owned`, `StateVersionOf` takes `listed`, and
   `recovery.Options.Owned` becomes `Listed` and `ZonesAt`. `ZonesAt` resolves a round's recorded content to its
-  Zones; the server builds it on `Options.Prepare` and supplies it, so `store` doesn't import `sim.ContentSource`; resolve once per content digest, or
+  Zones; the server builds it on `Options.Prepare` and supplies it, so `store` doesn't import `sim.ContentSource`; resolve once per versions set, or
   `snapshot list` runs the content resolution per round. For a tick with no object, `missing` names the
   current content's Zones.
 
