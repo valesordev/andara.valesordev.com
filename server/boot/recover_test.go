@@ -167,6 +167,16 @@ func TestRecoverOptions_CarryTheRecoveryKeys(t *testing.T) {
 		t.Fatalf("snapshots off, nothing pinned: store %v round %v require %v", o.Store, o.Round, o.RequireSnapshot)
 	}
 
+	// recover --verify reads the rounds that exist, with snapshots off.
+	rt.Cfg.RecoveryPinRound = 0
+	rt.ReadRounds = true
+	if o, release, err = rt.RecoverOptions(context.Background(), sim.Config{}, &inEffect); err != nil || o.Store == nil {
+		t.Fatalf("ReadRounds: store %v err %v", o.Store, err)
+	} else {
+		release()
+	}
+	rt.ReadRounds = false
+
 	rt.Cfg.RecoveryPinRound, rt.Cfg.RecoveryRequireSnapshot, rt.Cfg.RecoveryReplayBatch = 4200, true, 7
 	o, release, err = rt.RecoverOptions(context.Background(), sim.Config{}, &inEffect)
 	if err != nil {

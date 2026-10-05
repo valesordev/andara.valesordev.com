@@ -275,6 +275,13 @@ func (l *Loop) run(ctx context.Context) error {
 			}
 			return err
 		}
+		// Readiness reads the lag at completion: a tick that ran long and
+		// finished late must not leave the schedule lag measured at its start.
+		if done := l.clock.Now().Sub(due); done > 0 {
+			l.lagNanos.Store(int64(done))
+		} else {
+			l.lagNanos.Store(0)
+		}
 		l.liveTicks.Add(1)
 
 		if now = l.clock.Now(); now.Sub(lastLog) >= time.Second {

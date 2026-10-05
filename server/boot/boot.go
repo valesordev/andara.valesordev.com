@@ -161,6 +161,9 @@ type Runtime struct {
 	// completed and its lag: /readyz is 503 until the first live tick has
 	// completed within 10 tick budgets of schedule (AW-SRV-007).
 	live func() (uint64, time.Duration)
+	// ReadRounds opens the snapshot store for recovery even when snapshots are
+	// off and nothing is pinned: `recover --verify` reads the rounds that exist.
+	ReadRounds bool
 	// recMetrics is the recovery instrument set, registered on first use.
 	recMetrics *recovery.Metrics
 	recOnce    sync.Once

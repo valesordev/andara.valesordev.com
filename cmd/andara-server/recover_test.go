@@ -44,7 +44,7 @@ func TestPrintVerify_SaysMatchOrMismatchWithBothHashes(t *testing.T) {
 
 	var out bytes.Buffer
 	printVerify(&out, rep, nil)
-	if !strings.HasPrefix(out.String(), "match\n") || !strings.Contains(out.String(), "round_tick=4200") || !strings.Contains(out.String(), "phase_total=1s") {
+	if !strings.HasPrefix(out.String(), "match\n") || !strings.Contains(out.String(), "round_tick=4200") || !strings.Contains(out.String(), "phase_total=1s") || !strings.Contains(out.String(), "recorded_hash=aa") || !strings.Contains(out.String(), "replayed_hash=aa") {
 		t.Errorf("match:\n%s", out.String())
 	}
 

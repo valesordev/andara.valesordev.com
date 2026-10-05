@@ -64,7 +64,7 @@ func (rt *Runtime) ownedZones() []sim.ZoneID {
 // when snapshots are off and nothing names a round.
 func (rt *Runtime) openSnapshotStore() (sim.WorldStore, error) {
 	cfg := rt.Cfg
-	if cfg.SnapshotInterval <= 0 && cfg.RecoveryPinRound == 0 && !cfg.RecoveryRequireSnapshot {
+	if cfg.SnapshotInterval <= 0 && cfg.RecoveryPinRound == 0 && !cfg.RecoveryRequireSnapshot && !rt.ReadRounds {
 		return nil, nil
 	}
 	return store.Open(store.Options{

@@ -188,6 +188,21 @@ func TestLoop_ScheduleAdherence(t *testing.T) {
 // AC-7: a tick over budget increments the overrun counter and logs at warn
 // with the tick and its duration; AC-8: sustained 3× overload raises lag
 // monotonically, never spins, and never drops input.
+// Live reports the lag at a tick's completion, not at its start: a first tick
+// that runs long and finishes late is not ready (AW-SRV-007).
+func TestLoop_LiveLagIsMeasuredWhenTheTickCompletes(t *testing.T) {
+	h := newHarness(t, func(o *Options) { o.MaxPerTick = 1 })
+	h.setCost(90 * time.Millisecond)
+	h.source.Push(simtest.Look("town", "a"))
+	if err := h.runFor(10 * time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	ticks, lag := h.loop.Live()
+	if ticks == 0 || lag < 90*time.Millisecond {
+		t.Fatalf("ticks %d lag %s, want the 90ms the first tick ran past its due time", ticks, lag)
+	}
+}
+
 func TestLoop_OverrunAndLag(t *testing.T) {
 	h := newHarness(t, func(o *Options) { o.MaxPerTick = 1 })
 	// 150 ms per Command, one Command per tick: every tick is 3× budget.

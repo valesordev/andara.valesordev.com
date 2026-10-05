@@ -93,6 +93,7 @@ func runRecover(args []string, env config.EnvLookup, stdout, stderr io.Writer) i
 		tel.Log.Error("content: what the Active Pointers name does not load; a round cannot be rebuilt without it", "detail", err.Error())
 		return boot.ExitFail
 	}
+	rt.ReadRounds = true
 	inEffect := false
 	o, release, err := rt.RecoverOptions(ctx, rt.EngineConfig(), &inEffect)
 	if err != nil {
@@ -123,7 +124,7 @@ func printVerify(w io.Writer, rep recovery.Report, err error) {
 	f := recovery.Classify(err)
 	switch {
 	case f == nil:
-		_, _ = fmt.Fprintf(w, "match\nround_tick=%d\ntick=%d\nreplayed_ticks=%d\nstate_hash=%x\n", rep.Round.Tick, rep.Tick, rep.Replayed, rep.Actual)
+		_, _ = fmt.Fprintf(w, "match\nround_tick=%d\ntick=%d\nreplayed_ticks=%d\nrecorded_hash=%x\nreplayed_hash=%x\n", rep.Round.Tick, rep.Tick, rep.Replayed, rep.Expected, rep.Actual)
 	case f.Exit == recovery.ExitHashMismatch:
 		_, _ = fmt.Fprintf(w, "mismatch\nreason=hash\nround_tick=%d\ntick=%d\nrecorded_hash=%x\nreplayed_hash=%x\n", rep.Round.Tick, rep.MismatchTick, rep.Expected, rep.Actual)
 	case f.Exit == recovery.ExitRestore:
