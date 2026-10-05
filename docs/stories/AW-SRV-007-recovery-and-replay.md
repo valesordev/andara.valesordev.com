@@ -187,9 +187,10 @@ match, so that a crash is an interruption rather than an incident.
       process's Partitions own (all 64 today, ADR-0002). A V Zone with no object is `missing`.
     - **Cause `content`** is new beside AC-15's four. It covers a round whose recorded content can't be
       resolved (the pack versions are in `Reason`), and an object for a listed Zone that V doesn't list
-      (the `zone_id` is in `Reason`). It ranks below `duplicate`, `hash` and `disagree` (object-level
-      problems found first) and above `missing`: when V can't be resolved there is no Zone list to compute
-      `missing` against. Only `snapshot list` shows cause `content`, as `incomplete`, without failing the call.
+      (the `zone_id` is in `Reason`). It ranks below `duplicate`, `hash` and `disagree`, and above the
+      missing-Zone problem: when V can't be resolved there is no Zone list to compute it against. A vanished
+      object keeps its own cause, `missing`, as today. The cause lives on `store.Round` (`Cause`, `CauseZones`)
+      and isn't on the wire: `snapshot list` shows only `complete=false` for it, with no proto change.
       **When it is selected**, by boot's newest round, `--round T` or `recovery.pin_round`, it exits `6` with
       `reason=content`, counted under `reason="restore"`, and no other round is tried (AC-13).
       `NewestComplete` and `RoundAt` both translate cause `content` into `sim.ErrRoundZoneUnknown` (the
@@ -201,8 +202,14 @@ match, so that a crash is an interruption rather than an incident.
       **Logging.** Both errors are raised before `RestoreEngine`, in round selection and in the `Prepare`
       call, so they are logged as `recovery restore mismatch` (`logRestoreMismatch`, with `zone_id` or
       `pack_versions`), not as `recovery refused` (`logRefusal`), and `andara_recovery_state_hash_match`
-      is `0` (AC-13). The wrapped `Prepare` failure at recovery's content rebuild becomes
-      `ErrRoundContent{Tick, Versions}`. **This moves unresolved content from exit `1`** (`reason=store`).
+      is `0` (AC-13). **Only a version the source doesn't have** is cause `content`: `ContentSource.Prepare` returns a new
+      sentinel `sim.ErrContentVersionUnknown{Pack, Version}` for it, and the rebuild's wrapped `Prepare`
+      failure becomes `ErrRoundContent{Tick, Versions}` only when it wraps that. `ErrNoContentSource`, a
+      transient source or registry failure and a missing config stay exit `1`, `reason=store`: retryable or
+      operator errors, not a state mismatch, and they must not set the gauge `RecoveryStateMismatch` pages
+      on. The tick for the log line comes from the error's `Tick`, and `selectRound`'s caller routes both
+      typed errors to `logRestoreMismatch`. **This moves a version the source doesn't have from exit `1`**
+      (`reason=store`) to exit `6`.
     *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
 17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
     at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
@@ -572,7 +579,8 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   `ErrRoundIncomplete`. The recovery log line for each is `recovery restore mismatch` with `zone_id` or
   `pack_versions`, and `andara_recovery_state_hash_match` reads `0`. *Integration:* write a round at V, swap to V+1 with an added Zone,
   kill, recover: the round is selected and the swap replays; a round whose pack version is gone from the
-  content source exits `6` with `pack_versions`, and `snapshot list` shows it cause `content`; extend
+  content source exits `6` with `pack_versions`, and `snapshot list` shows it `complete=false`; a source that
+  fails with `ErrNoContentSource` or an I/O error exits `1`, not `6`, and leaves the gauge unset; extend
   `TestRecoveryWithAHandoffInFlight` with a Character in the `Transit` record, killed and recovered: its
   body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`).
 - **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play

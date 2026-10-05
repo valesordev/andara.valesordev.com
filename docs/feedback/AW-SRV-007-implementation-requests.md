@@ -91,12 +91,12 @@ one envelope's header gives V.
 - Envelopes in one group that disagree on `content` are `disagree`, as today.
 - Cause `content` (new, beside AC-15's four; the story's AC-16 has the full rule) covers unresolved content
   and an object for a listed Zone V doesn't list. It ranks below `duplicate`, `hash` and `disagree`, above
-  `missing`. Only `snapshot list` shows it. Selected (boot's newest, `--round`, `pin_round`), it exits `6`,
+  `missing`. It lives on `store.Round`, not on the wire: `snapshot list` shows `complete=false`. Selected (boot's newest, `--round`, `pin_round`), it exits `6`,
   `reason=content`, no other round tried, via `ErrRoundZoneUnknown` or a new `sim.ErrRoundContent{Tick,
   Versions}`; `RoundAt` and `NewestComplete` both return those and never `ErrRoundIncomplete`. The log line is
   `recovery restore mismatch` (`logRestoreMismatch`), not `recovery refused`, since both are raised before
   `RestoreEngine`. `snapshot verify` returns `CONTENT_MISMATCH`, as it does for `ErrRoundZoneUnknown`.
-  **That moves unresolved content from exit `1`.** V comes from the first hash-valid envelope in Zone order.
+  **That moves a version the source doesn't have from exit `1`**, via a new `sim.ErrContentVersionUnknown` the source returns; `ErrNoContentSource` and I/O errors stay at exit `1`. V comes from the first hash-valid envelope in Zone order.
 - **Signatures** are pinned in the story's sketch: `ListRounds`, `NewestComplete` and `RoundAt` take
   `(listed []sim.ZoneID, zonesAt ZonesAt)` in place of `owned`, `StateVersionOf` takes `listed`, and
   `recovery.Options.Owned` becomes `Listed` and `ZonesAt`. `ZonesAt` resolves a round's recorded content to its
@@ -107,7 +107,7 @@ one envelope's header gives V.
 **Test (AC-16):** write a round at V, swap to V+1 with an added Zone, kill, recover: the round is selected
 and the swap replays. `server/store` unit cases: a round whose content lists a Zone with no object
 (`missing`); an object for a listed Zone the round's content doesn't list (`ErrRoundZoneUnknown`); content that
-can't be resolved (exit `6`, and `snapshot list` cause `content`).
+can't be resolved (`Round.Cause` `content`, and exit `6` when selected; `snapshot list` shows `complete=false`).
 
 ### 2. "Consumer lag" in Ready is the loop's schedule lag, as you read it
 
