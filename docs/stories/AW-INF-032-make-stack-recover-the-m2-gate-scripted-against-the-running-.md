@@ -202,16 +202,21 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
 
 **Where the script differs from the contract above**, each recorded in
 `docs/feedback/AW-INF-032-stack-recover.md`:
-- **Rooms.** Room 1 is the Market Plaza (`out` from Purgatory) and Room 2 the Town Hall (`north`). B stays in
-  Purgatory, where it spawns.
+- **Rooms.** Room 1 is the Market Plaza (`out` from Purgatory) and Room 2 the Town Hall (`north`). B walks
+  `out` and `north` to the Town Hall and waits there, instead of staying in Purgatory: a despawn is addressed
+  to the Room's occupants, so with the two in different Rooms neither could have read the other's despawn line,
+  and AC-5's absence check would pass whatever happened. In the shared Room each is the other's witness, and B
+  also reads A arrive from the south.
 - **AC-5's `already_live` check.** Both clients run with `--show-protocol`, and the assertion is that neither
   `reason=already_live` nor the waiting line appears after the kill, as PM proposed for `AW-INF-034`.
   Architecture hasn't amended AC-5 yet.
 - **AC-6's Rooms.** `character list` records a body's Room at its unbind, so a list taken before the quit still
-  shows the Plaza for A. The script asserts the Rooms the post-recovery looks read: `dormant town/hall` for A
-  and `dormant purgatory/start` for B.
+  shows the Plaza for A. The script asserts the Room the post-recovery looks read: `dormant town/hall` for both.
 - **The trace id** is printed from the `recovery complete` line, which carries `trace_id`. The contract says
   "ready line".
+- **AC-7's exit code.** A failing run prints the server container's status, exit code and restart count
+  (`docker inspect`) before its last 50 log lines, so a server that exits non-zero during recovery is reported
+  with its code, under `restart: on-failure` too.
 - **A failed run** starts the server again if its kill left it down, so the steps after it in the `stack`
   workflow still have a server. The job summary gets a three-line table: the header, the separator and the row.
 
@@ -219,6 +224,10 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
 and leaves the server ready; expecting the Market Plaza instead of the Town Hall in A's post-recovery look fails
 with "the tail move was not replayed". A first run asserted AC-6 against a pre-kill `character list` and failed
 on exactly that Room, which is how the list's behaviour was found.
+
+**Deferred from the pre-PR review (P3):** the line marks before the post-recovery `look` are taken without a
+sentinel, so a late line from before the kill could in principle satisfy that poll; a reconnect's automatic
+look could satisfy it instead of the explicit one. Both still show a Room read after the reconnect.
 
 **Not observed:** the 60 s Phase 1 exit RTO (out of scope), and the CI run itself, which this PR's `stack`
 workflow supplies.

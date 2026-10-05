@@ -5,21 +5,23 @@
 # The M2 gate (AW-INF-032), scripted against the running stack: "`kill -9` the server; the
 # World returns within 120 s with a matching State Hash, and every linkdead Character rebinds
 # rather than despawning."
-#   - Two player Accounts each create a Character. Both spawn in Purgatory (AW-INF-024). A walks
-#     `out` to the Market Plaza (Room 1); B stays where it spawned and watches.
+#   - Two player Accounts each create a Character. Both spawn in Purgatory (AW-INF-024). B walks
+#     `out` and `north` to the Town Hall (Room 2) and waits there. A walks `out` to the Market
+#     Plaza (Room 1).
 #   - The script waits for a complete snapshot round newer than that move, R, so recovery starts
 #     from a snapshot and not from offset zero.
-#   - A then walks `north` to the Town Hall (Room 2), after R and before the kill. That move is in
-#     the log tail only, so A ending in the Town Hall proves the tail was replayed.
+#   - A then walks `north` to the Town Hall, after R and before the kill, and B reads it arrive.
+#     That move is in the log tail only, so A ending in the Town Hall proves the tail was replayed.
 #   - SIGKILL to the compose andara-server, then `start`, both here. /readyz must answer within
 #     STACK_RECOVER_RTO seconds of the kill (default 120).
 #   - The server's /metrics: andara_recovery_state_hash_match is 1 and andara_recovery_round_tick
 #     is R. A larger round_tick means a round completed after the tail move, and the run proves
 #     nothing about the tail: it exits 1 asking for a rerun.
 #   - A's and B's `play` clients reconnect on their own. Neither transcript shows the
-#     already-live protocol reason or the waiting line, A's `look` reads the Town Hall, B's reads
-#     Purgatory, and neither reads a despawn line.
-#   - Both quit cleanly and `character list` shows each dormant where it was before the kill.
+#     already-live protocol reason or the waiting line, both `look`s read the Town Hall, and
+#     neither reads a despawn line. They share that Room so each is the other's witness: a
+#     despawn is addressed to the Room's occupants, and a client can't read its own.
+#   - Both quit cleanly and `character list` shows each dormant in the Town Hall.
 #
 # Creates two Accounts and two Characters per run, with random suffixes, as stack_linkdead.sh
 # does. `make down VOLUMES=1` clears them. The stack is left running and ready.
@@ -99,6 +101,8 @@ fail() {
   echo "stack-recover: $*" >&2
   echo "--- A:" >&2; sed 's/^/  A| /' "$AOUT" >&2
   echo "--- B, the bystander:" >&2; sed 's/^/  B| /' "$BOUT" >&2
+  local cid; cid="$("${COMPOSE[@]}" ps -aq andara-server 2>/dev/null | head -1)"
+  [[ -z "$cid" ]] || echo "--- andara-server container: $(docker inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} restarts={{.RestartCount}}' "$cid" 2>&1)" >&2
   echo "--- andara-server, last 50 lines:" >&2
   "${COMPOSE[@]}" logs --no-color --no-log-prefix --tail 50 andara-server >&2 2>&1 || true
   restart_if_killed
@@ -120,7 +124,7 @@ for line in sys.stdin:
     if all(labels.get(k) == v for k, v in want.items()):
         total += float(m.group(4)); seen = True
 if seen:
-    print(int(total) if total == int(total) else total)
+    print(int(total) if total == total and abs(total) != float("inf") and total == int(total) else total)
 ' "$@"
 }
 
@@ -150,7 +154,9 @@ poll_after() {
 # newest_round: the tick of the newest round `snapshot list` calls complete, or 0 when none is.
 # The table's first column is the tick, newest first; its fourth is COMPLETE.
 newest_round() {
-  bin/andara-cli snapshot list 2>/dev/null | awk 'NR > 1 && $4 == "true" { print $1; exit }' || true
+  local out
+  out="$(bin/andara-cli snapshot list 2>/dev/null)" || return 1
+  awk 'NR > 1 && $4 == "true" { print $1; exit }' <<<"$out"
 }
 
 # state_and_room <name> <list>: the Character's STATE and ROOM columns from `character list`.
@@ -177,18 +183,20 @@ B=(--credentials "$WORK/cred-b.yaml")
 bin/andara-cli "${A[@]}" character create "$CHAR_A" >/dev/null || fail "character create $CHAR_A failed"
 bin/andara-cli "${B[@]}" character create "$CHAR_B" >/dev/null || fail "character create $CHAR_B failed"
 
-round_before="$(newest_round)"; round_before="${round_before:-0}"
+round_before="$(newest_round)" || fail "andara-cli snapshot list failed"; round_before="${round_before:-0}"
 echo "stack-recover: newest complete round before the run: ${round_before/#0/none}"
 
 # --show-protocol puts `reason=already_live` on the transcript; play prints only the waiting line
 # for it otherwise (docs/feedback/AW-INF-032-stack-recover.md, PM's 2026-10-03 note).
-echo "stack-recover: $CHAR_B spawns in Purgatory and stays to watch ..."
+echo "stack-recover: $CHAR_B spawns in Purgatory and walks out and north to the Town Hall to watch ..."
 mkfifo "$WORK/b-in"
 bin/andara-cli "${B[@]}" play --character "$CHAR_B" --show-protocol <"$WORK/b-in" >"$BOUT" 2>&1 &
 BPID=$!
 exec 4>"$WORK/b-in"
 poll "$BOUT" "^-- Connected to [^ ]\+ as recover-b-$hex, playing $CHAR_B " 20 "$BPID" || fail "B never connected playing $CHAR_B"
 poll "$BOUT" '^Purgatory$' 20 "$BPID" || fail "B never read Purgatory from its automatic look"
+printf 'out\nnorth\nlook\n' >&4
+poll "$BOUT" '^Town Hall$' 20 "$BPID" || fail "B never read Room 2 (the Town Hall) from its look after out and north"
 
 echo "stack-recover: $CHAR_A spawns in Purgatory and walks out to the Market Plaza ..."
 mkfifo "$WORK/a-in"
@@ -200,11 +208,13 @@ poll "$AOUT" '^Purgatory$' 20 "$APID" || fail "A never read Purgatory from its a
 printf 'out\nlook\n' >&3
 poll "$AOUT" '^Market Plaza$' 20 "$APID" || fail "A never read Room 1 (the Market Plaza) from its look after out"
 
-# AC-2. A round newer than A's first move, polled to a deadline of snapshot.interval + 30 s.
+# AC-2. A round newer than A's first move, polled to a deadline of snapshot.interval + 30 s. The
+# floor is read again now, after the move, so a round cut before it can't count.
+round_before="$(newest_round)" || fail "andara-cli snapshot list failed"; round_before="${round_before:-0}"
 echo "stack-recover: waiting up to ${ROUND_DEADLINE}s for a complete round past ${round_before} ..."
 R=""
 for _ in $(seq 1 "$ROUND_DEADLINE"); do
-  n="$(newest_round)"
+  n="$(newest_round)" || n=""
   if [[ -n "$n" ]] && (( n > round_before )); then R="$n"; break; fi
   sleep 1
 done
@@ -215,14 +225,15 @@ echo "stack-recover: round R = $R"
 echo "stack-recover: $CHAR_A walks north to the Town Hall, after the round ..."
 printf 'north\nlook\n' >&3
 poll "$AOUT" '^Town Hall$' 20 "$APID" || fail "A never read Room 2 (the Town Hall) from its look after north"
-latest="$(newest_round)"
+poll "$BOUT" "^$CHAR_A arrives from the south\.$" 20 "$BPID" || fail "B did not read $CHAR_A arrive in the Town Hall"
+latest="$(newest_round)" || fail "andara-cli snapshot list failed before the kill"
 [[ "$latest" == "$R" ]] \
   || fail "a round completed after the tail move (newest is ${latest:-none}, R was $R); the run proves nothing, rerun"
 
 a_lines="$(wc -l <"$AOUT")"; b_lines="$(wc -l <"$BOUT")"
 echo "stack-recover: SIGKILL to andara-server, then start ..."
 SERVER_KILLED=1
-t_kill="$(date +%s.%N)"
+t_kill="$(python3 -c 'import time; print(time.time())')"
 "${COMPOSE[@]}" kill -s KILL andara-server >/dev/null || fail "docker compose kill andara-server failed"
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 "${COMPOSE[@]}" start andara-server >/dev/null || fail "docker compose start andara-server failed"
@@ -231,7 +242,7 @@ for _ in $(seq 1 $(( RTO * 4 ))); do
   if curl -sf "$READYZ" >/dev/null 2>&1; then ready=1; break; fi
   sleep 0.25
 done
-t_ready="$(date +%s.%N)"
+t_ready="$(python3 -c 'import time; print(time.time())')"
 [[ -n "$ready" ]] || fail "/readyz did not return 200 within ${RTO}s of the kill"
 kill_to_ready="$(python3 -c 'import sys; print(round(float(sys.argv[2]) - float(sys.argv[1]), 1))' "$t_kill" "$t_ready")"
 python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)' "$kill_to_ready" "$RTO" \
@@ -282,7 +293,7 @@ a_mark="$(wc -l <"$AOUT")"; b_mark="$(wc -l <"$BOUT")"
 printf 'look\n' >&3
 printf 'look\n' >&4
 poll_after "$AOUT" "$a_mark" '^Town Hall$' 20 "$APID" || fail "A's look after the recovery does not read the Town Hall: the tail move was not replayed"
-poll_after "$BOUT" "$b_mark" '^Purgatory$' 20 "$BPID" || fail "B's look after the recovery does not read Purgatory"
+poll_after "$BOUT" "$b_mark" '^Town Hall$' 20 "$BPID" || fail "B's look after the recovery does not read the Town Hall"
 # Absence, anchored (live-assertions.md rule 3): each stream is in order, so with the answering
 # look read, any despawn or refusal before it is in the transcript too.
 if tail -n +"$(( a_lines + 1 ))" "$AOUT" | grep -q -e 'reason=already_live' -e 'Waiting for your previous session to end'; then
@@ -297,7 +308,7 @@ fi
 if tail -n +"$(( b_lines + 1 ))" "$BOUT" | grep -q -e 'leaves the world\.' -e 'fades from the world\.'; then
   fail "B read a despawn line between the kill and the reconnect"
 fi
-echo "stack-recover: both rebound; $CHAR_A reads the Town Hall (the tail move), $CHAR_B reads Purgatory"
+echo "stack-recover: both rebound; both read the Town Hall (A's is the tail move)"
 
 # AC-6. A clean quit: EOF on stdin is play's quit, and it sends CloseSession.
 echo "stack-recover: both quit ..."
@@ -314,8 +325,8 @@ after_b="$(state_and_room "$CHAR_B" "$list_b")"
 # The Rooms the looks read after the recovery: the roster records a body's Room at its unbind.
 [[ "$after_a" == "dormant town/hall" ]] \
   || { echo "$list_a" >&2; fail "character list shows $CHAR_A as '$after_a', want 'dormant town/hall'"; }
-[[ "$after_b" == "dormant purgatory/start" ]] \
-  || { echo "$list_b" >&2; fail "character list shows $CHAR_B as '$after_b', want 'dormant purgatory/start'"; }
+[[ "$after_b" == "dormant town/hall" ]] \
+  || { echo "$list_b" >&2; fail "character list shows $CHAR_B as '$after_b', want 'dormant town/hall'"; }
 
 if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {

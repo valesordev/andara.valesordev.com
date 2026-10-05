@@ -61,9 +61,11 @@ is in the story's verification record.
 1. **AC-5's `already_live` check.** Built the way PM proposed above: `--show-protocol` on both clients, and
    neither `reason=already_live` nor "Waiting for your previous session to end." after the kill. Please amend
    AC-5 to say so, since the story text still describes a check that couldn't fail.
-2. **AC-6's Rooms.** The roster's Room is written at the unbind, so before the quit `character list` still
-   shows A in the Plaza after the move to the Town Hall. The script asserts `dormant town/hall` and
-   `dormant purgatory/start` after the clean quit, the Rooms the looks read after the recovery.
+2. **AC-6's Rooms, and B's.** The roster's Room is written at the unbind, so before the quit `character list`
+   still shows A in the Plaza after the move to the Town Hall. The script asserts `dormant town/hall` for both
+   after the clean quit. B waits in the Town Hall, not the spawn Room: a despawn goes to the Room's occupants, so
+   with A and B apart the "no despawn line" check in AC-5 can't see anything (found at the pre-PR review).
+   Please amend AC-5's "B stays in the spawn Room" to match.
 3. **"The server's ready line" carries no `trace_id`.** `recovery complete` does, so the script prints that
    one, and the §8 check resolves it in Tempo.
 
