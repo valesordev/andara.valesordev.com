@@ -90,12 +90,16 @@ one envelope's header gives V.
 - A listed Zone object the round's content doesn't list is the existing `ErrRoundZoneUnknown` (exit `6`,
   `reason=content`): a corruption case, not a swap case. A V Zone with no object is `missing`.
 - Envelopes in one group that disagree on `content` are `disagree`, as today.
-- Content that can't be resolved at those versions is exit `6` with `reason=content` and `pack_versions`
-  on the line, counted under `reason="restore"`, no other round tried (AC-13). `snapshot list` shows it
-  `incomplete`, cause `content`, versions in `Reason`. A named round is exit `6`, not `7`.
-- **Signatures.** `ListRounds`, `NewestComplete` and `RoundAt` take `(listed []sim.ZoneID, zonesAt
-  ZonesAt)` in place of `owned`, where `zonesAt` resolves a round's recorded content to its Zones. The
-  server supplies it, so `store` doesn't import `sim.ContentSource`; resolve once per content digest, or
+- Cause `content` (new, beside AC-15's four) covers unresolved content and an object for a listed Zone V
+  doesn't list. `snapshot list` and `verify` show it `incomplete` and don't fail the call. When selected
+  (boot's newest, `--round`, `pin_round`) it exits `6`, `reason=content`, counted under `reason="restore"`,
+  no other round tried: `ErrRoundZoneUnknown`, or a new `sim.ErrRoundContent{Tick, Versions}` with
+  `pack_versions` on the line. **That moves unresolved content from exit `1`**, so `Classify` and
+  `logRestoreMismatch` change. V comes from the first hash-valid envelope in Zone order.
+- **Signatures** are pinned in the story's sketch: `ListRounds`, `NewestComplete` and `RoundAt` take
+  `(listed []sim.ZoneID, zonesAt ZonesAt)` in place of `owned`, `StateVersionOf` takes `listed`, and
+  `recovery.Options.Owned` becomes `Listed` and `ZonesAt`. `ZonesAt` resolves a round's recorded content to its
+  Zones; the server builds it on `Options.Prepare` and supplies it, so `store` doesn't import `sim.ContentSource`; resolve once per content digest, or
   `snapshot list` runs the content resolution per round. For a tick with no object, `missing` names the
   current content's Zones.
 
@@ -130,7 +134,7 @@ forever" the story's inherited line is there to prevent. The sweep therefore kee
 `sim.handoff_retry_ticks`, until the Entity is placed or gone. Each attempt re-resolves where the Character
 is (Entities, then Transit, as `BindCharacter` does) and is produced to the Zone that holds it. A mark produced
 to the source Zone after the ack would no-op (`applyMarkLinkdead` finds nothing in that Zone) and never mark
-the body. A handoff stuck on a faulted Zone retries without end (`AW-SRV-028` item 5), visible on
+the body. A handoff stuck on a faulted Zone retries without end (`AW-SRV-028` item 2), visible on
 `andara_handoffs_in_transit`. That is AC-17. The existing `TestRecoveryWithAHandoffInFlight` is the natural place to add
 a Character.
 

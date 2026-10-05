@@ -139,7 +139,8 @@ match, so that a crash is an interruption rather than an incident.
     RSS is within 10% of that run's. *(Added 2026-10-02, feedback item 2.)*
 13. **Given** a round that `AW-SRV-043`'s `RestoreEngine` refuses, as `ErrRestoreMismatch` or
     `ErrSeedMismatch`, or one that doesn't restore onto the content in effect
-    (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below) **when** boot recovery runs
+    (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below), or whose recorded content can't be
+    resolved before restore (`sim.ErrRoundContent`, AC-16) **when** boot recovery runs
     **then** the server exits `6`. Nothing is
     replayed and no other round is tried. `andara_recovery_state_hash_match` is `0`,
     `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
@@ -158,7 +159,7 @@ match, so that a crash is an interruption rather than an incident.
 15. **Given** a named round that isn't complete, named by `recover --verify --round T` or by
     `recovery.pin_round=T` at boot **when** recovery runs **then** it exits `7`, restores nothing,
     and tries no other round. `andara_recovery_failures_total{reason="round"}` is `1`, and one
-    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons:
+    `error` line carries `round_tick` and `cause`. The causes map `ListRounds`' reasons (a fifth, `content`, exits `6` when selected: AC-16):
     - `missing`: no object for a Zone, or one that vanished after listing; a tick with no object
       at all is `missing` with every owned Zone;
     - `duplicate`: two objects for one Zone;
@@ -179,21 +180,29 @@ match, so that a crash is an interruption rather than an incident.
     of V, not of the content in effect at boot: it is selected, restored on V, and the swap is replayed from
     the log. (A swap can't remove a Zone: `AW-SRV-012` refuses it, so V's Zones are always a subset of any
     later content's, and the added Zone is what makes a good round `missing` against the current content.)
-    Discovery lists the current content's Zones, a superset of V's, and one envelope's header gives V. A
-    Zone object the round's content doesn't list, found in that listing, is `sim.ErrRoundZoneUnknown` (exit
-    `6`, `reason=content`, a corruption case), and a Zone V lists with no object is `missing` (exit `7` when
-    named). The owned set is V's Zones that this process's Partitions own (all 64 today, ADR-0002). For a tick
-    with no object at all, `missing` names the current content's Zones. A round whose content can't be
-    resolved is exit `6`, `reason=content`, with `pack_versions` on the `error` line, counted under
-    `reason="restore"`, and no other round is tried (AC-13). `snapshot list` shows such a round
-    `incomplete` with cause `content` and the versions in `Reason`, and a named one (`--round T`) is exit
-    `6`, not `7`. `snapshot list` judges every round this way.
+    - **Which Zones.** Discovery lists the current content's Zones, a superset of V's for swap-only change.
+      V is the `content` of the first hash-valid envelope in Zone order; envelopes that disagree on it are
+      `disagree`, as AC-11 has it. A round with no hash-valid envelope, and a tick with no object at all, are
+      judged against the current content's Zones (`missing` names them). The owned set is V's Zones that this
+      process's Partitions own (all 64 today, ADR-0002). A V Zone with no object is `missing`.
+    - **Cause `content`** is new beside AC-15's four. It covers a round whose recorded content can't be
+      resolved (the pack versions are in `Reason`), and an object for a listed Zone that V doesn't list
+      (the `zone_id` is in `Reason`). `snapshot list` and `snapshot verify` show such a round `incomplete`
+      with cause `content` and don't fail the call. **When it is selected**, by boot's newest round, `--round
+      T` or `recovery.pin_round`, it exits `6` with `reason=content`, counted under `reason="restore"`, and
+      no other round is tried (AC-13): `sim.ErrRoundZoneUnknown` for the unknown Zone, and a new typed
+      `sim.ErrRoundContent{Tick, Versions}` for unresolved content, with `pack_versions` on the `error` line.
+      `NewestComplete` returns that error on meeting such a round and doesn't skip it. **This moves
+      unresolved content from exit `1`** (`reason=store`, today's wrapped `Prepare` failure), so `Classify`
+      maps `ErrRoundContent` to `6` before its `ErrRoundIncomplete` case, and `logRestoreMismatch` gains the
+      `pack_versions` field.
     *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
 17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
     at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
     (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
-    `MarkLinkdead` rejects `in_transit`, so the mark is retried, every `sim.handoff_retry_ticks`, until the
-    Entity is placed or gone, not issued once at boot. Each attempt re-resolves where the Character is,
+    `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` and outside
+    `AW-SRV-028`'s backoff and batch cap (those govern `Arrive` retries), until the Entity is placed or gone,
+    not issued once at boot. Each attempt re-resolves where the Character is,
     Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
     Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
     to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
@@ -229,7 +238,12 @@ type Round struct {
 // verifying a round does read every object it names — discovery is what the
 // key format makes cheap, not verification.
 func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) ([]Round, error)
-// `NewestComplete` and `RoundAt` take the same two arguments in place of `owned`.
+// `NewestComplete` and `RoundAt` take the same two arguments in place of `owned`;
+// `StateVersionOf` takes `listed` alone. `recovery.Options.Owned` becomes `Listed` plus `ZonesAt`.
+
+// ZonesAt resolves a round's recorded content (pack ID to version) to its Zones. The server builds
+// it on `Options.Prepare` and caches it per versions set. Its error is the unresolved-content case.
+type ZonesAt func(versions map[string]uint64) ([]sim.ZoneID, error)
 
 // Recover is the whole boot-time path. It returns a ready Engine or a typed error.
 func Recover(ctx context.Context, opts RecoverOptions) (*sim.Engine, Report, error)
@@ -280,7 +294,7 @@ drained. Commands accepted before the crash are applied in order at `max_per_tic
 | `4` | `ErrStateVersion` — binary older than the snapshot |
 | `5` | *not recovery's:* `AW-SRV-026`'s `ExitBoundaryLost`, a running server that lost a Tick Boundary Record |
 | `6` | `ErrRestoreMismatch` or `ErrSeedMismatch` (`AW-SRV-043`): the round doesn't reproduce its own tick |
-| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete *(was `5` until 2026-10-02)* |
+| `7` | `ErrRoundIncomplete`: no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete, except cause `content`, which is `6` (AC-16) *(was `5` until 2026-10-02)* |
 | `8` | `ErrHashMismatch` — the alerting condition *(was `2` until 2026-10-02)* |
 
 Exit `6` also covers the round refusing to restore onto the content in effect:
@@ -540,6 +554,15 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   24 h history run (AC-12) is skipped unless its variable is set, as `AW-SRV-019`'s AC-6 run is,
   and its result is recorded in the implementation record. Every mismatch exit test dials
   `grpc.listen` while the process runs and is refused (AC-5).
+- **AC-16 and AC-17 (added 2026-10-05):** *Unit* (`server/store`): a round whose content lists a Zone with no
+  object is `missing`; an object for a listed Zone V doesn't list is cause `content`, `zone_id` in `Reason`;
+  content that can't be resolved is cause `content` with the versions in `Reason`; a tick with no object names
+  the current content's Zones (the `snapshotadmin.go` `NOT_FOUND` check relies on that full list);
+  `Classify` maps `ErrRoundContent` to `6`. *Integration:* write a round at V, swap to V+1 with an added Zone,
+  kill, recover: the round is selected and the swap replays; a round whose pack version is gone from the
+  content source exits `6` with `pack_versions`, and `snapshot list` shows it cause `content`; extend
+  `TestRecoveryWithAHandoffInFlight` with a Character in the `Transit` record, killed and recovered: its
+  body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`).
 - **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play
   and asserts the M2 gate. Then, on the recovered stack:
   ```
