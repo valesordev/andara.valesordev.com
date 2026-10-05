@@ -50,6 +50,7 @@ cd "$(dirname "$0")/.."
 HTTP_PORT="${ANDARA_HTTP_PORT:-8080}"
 METRICS="http://localhost:${HTTP_PORT}/metrics"
 READYZ="http://localhost:${HTTP_PORT}/readyz"
+PROM="http://localhost:${ANDARA_METRICS_PORT:-9090}"
 OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}"
 COMPOSE=(docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server)
 RTO="${STACK_RECOVER_RTO:-120}"
@@ -114,6 +115,12 @@ if seen:
 ' "$@"
 }
 
+# prom <query>: the number of series Prometheus returns for an instant query; empty on an error.
+prom() {
+  curl -sf --get "$PROM/api/v1/query" --data-urlencode "query=$1" \
+    | python3 -c 'import json, sys; d = json.load(sys.stdin); print(len(d["data"]["result"]) if d["status"] == "success" else "")' 2>/dev/null || true
+}
+
 # poll <file> <pattern> <seconds> <pid>: poll to a deadline for a line in a transcript
 # (docs/specs/testing/live-assertions.md rule 1). Fails early if the play writing it has exited.
 poll() {
@@ -169,6 +176,15 @@ B=(--credentials "$WORK/cred-b.yaml")
 bin/andara-cli "${A[@]}" character create "$CHAR_A" >/dev/null || fail "character create $CHAR_A failed"
 bin/andara-cli "${B[@]}" character create "$CHAR_B" >/dev/null || fail "character create $CHAR_B failed"
 
+# RecoveryStateMismatch must be loaded for its absence after the recovery to mean anything.
+rules="$(curl -sf "$PROM/api/v1/rules" | python3 -c '
+import json, sys
+d = json.load(sys.stdin)
+print(sum(1 for g in d["data"]["groups"] for r in g["rules"] if r["name"] == "RecoveryStateMismatch"))')" \
+  || fail "Prometheus isn't answering on $PROM"
+[[ "$rules" == "1" ]] || fail "Prometheus has $rules rules named RecoveryStateMismatch, want 1 (a long-lived stack needs \`curl -X POST $PROM/-/reload\` after a rules change)"
+alert_before="$(prom 'ALERTS{alertname="RecoveryStateMismatch"}')"
+[[ -n "$alert_before" ]] || fail "Prometheus gave no answer for ALERTS{alertname=\"RecoveryStateMismatch\"}"
 round_before="$(newest_round)" || fail "andara-cli snapshot list failed"; round_before="${round_before:-0}"
 echo "stack-recover: newest complete round before the run: ${round_before/#0/none}"
 
@@ -316,6 +332,25 @@ for _ in $(seq 1 20); do
 done
 [[ "${despawned:-absent}" == "0" ]] || fail "andara_events_emitted_total{type=\"character_despawned\"} is ${despawned:-absent} after the recovery, want 0: a body despawned instead of rebinding"
 [[ -n "$reconnected" && "$reconnected" -ge 2 ]] || fail "andara_linkdead_outcomes_total{outcome=\"reconnected\"} is ${reconnected:-absent}, want at least 2 (A and B)"
+# CLAUDE.md §8 / AW-SRV-007: RecoveryStateMismatch is never in ALERTS, at either alertstate, through a
+# normal recovery. Anchored (live-assertions.md rule 3): once Prometheus has scraped the recovered
+# process's 1, two evaluation intervals later (5 s each) the rule has judged it. An earlier
+# `make stack-recover-mismatch` leaves the alert in ALERTS for its keep_firing_for (15 m), and then
+# the absence can't be told from that, so it is skipped and says so.
+if [[ "$alert_before" == "0" ]]; then
+  seen_one=""
+  for _ in $(seq 1 60); do
+    [[ "$(prom 'andara_recovery_state_hash_match == 1')" == "1" ]] && { seen_one=1; break; }
+    sleep 0.5
+  done
+  [[ -n "$seen_one" ]] || fail "Prometheus never scraped andara_recovery_state_hash_match at 1 from the recovered server within 30s"
+  sleep 12
+  [[ "$(prom 'ALERTS{alertname="RecoveryStateMismatch"}')" == "0" ]] \
+    || fail "RecoveryStateMismatch is in ALERTS after a normal recovery"
+  echo "stack-recover: RecoveryStateMismatch is absent from ALERTS through the recovery (Prometheus scraped the 1)"
+else
+  echo "stack-recover: skipped the RecoveryStateMismatch absence check: it had ${alert_before} series in ALERTS before the run (keep_firing_for from an earlier make stack-recover-mismatch)"
+fi
 echo "stack-recover: both rebound; both read the Town Hall (A's is the tail move)"
 
 # AC-6. A clean quit: EOF on stdin is play's quit, and it sends CloseSession.

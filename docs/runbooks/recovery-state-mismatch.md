@@ -24,7 +24,10 @@ with the evidence.
 `recovery.mismatch_linger` (compose sets 60 s) so the gauge is scraped. Compose restarts a failed server
 (`restart: on-failure`), so a refused recovery **loops**: each cycle recovers, mismatches, lingers and exits,
 and the page keeps firing while it does. `keep_firing_for` keeps it visible for 15 minutes after the loop is
-stopped (`docker compose stop andara-server`) or its cause is fixed. **On `dev` and `prod` this rule can't
+stopped (`docker compose stop andara-server`) or its cause is fixed. `make stack-recover-mismatch` makes
+this happen on purpose and checks each step: it restarts the server on another `sim.seed`, so recovery refuses its
+round with exit `6`, `reason=seed`, and it then watches the linger, the alert, the exit and the alert outliving the
+process, and recovers the same round on the server's own seed. **On `dev` and `prod` this rule can't
 fire**: the annotation scrape keeps only Ready pods, and a refused recovery was never Ready, so the `0` is
 never scraped. What pages there is `AndaraServerUnavailable` (`for: 2m`), and `server-unavailable.md` sends
 exit `8` and exit `6` here. `AW-INF-009` (planned for SPRINT-05) adds a second clause to this same rule, read

@@ -4,7 +4,7 @@ title: make stack-recover — the M2 gate scripted against the running stack
 epic: EPIC-04
 component: infra
 type: infra
-status: in-progress
+status: review
 size: S
 depends_on: [AW-SRV-007, AW-INF-017]
 blocks: [AW-INF-034]
@@ -229,6 +229,13 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
   with its code, under `restart: on-failure` too.
 - **A failed run** starts the server again if its kill left it down, so the steps after it in the `stack`
   workflow still have a server. The job summary gets a three-line table: the header, the separator and the row.
+
+**Added for AW-SRV-007's §8 (2026-10-05):** after the recovery and before the quits, the script asserts that
+`RecoveryStateMismatch` is loaded in Prometheus, that Prometheus has scraped the recovered process's
+`andara_recovery_state_hash_match` at 1, and that twelve seconds later (two evaluation intervals) the alert has no series in
+`ALERTS` at either state. If an earlier `make stack-recover-mismatch` left the alert in `ALERTS` (it stays for
+`keep_firing_for`, 15 m, and the instant query's 5-minute lookback adds to that), the absence can't be told from
+that, so the check is skipped and says so.
 
 **Mutations, run live:** `STACK_RECOVER_RTO=1` fails with `/readyz did not return 200 within 1s of the kill`
 and leaves the server ready; expecting the Market Plaza instead of the Town Hall in A's post-recovery look fails

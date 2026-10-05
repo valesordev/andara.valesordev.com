@@ -26,6 +26,7 @@ on:
       - "scripts/stack_play.sh"
       - "scripts/stack_linkdead.sh"
       - "scripts/stack_recover.sh"
+      - "scripts/stack_recover_mismatch.sh"
       - "scripts/stack_boundary_lost.sh"
       - "scripts/stack_projector_check.sh"
       - "scripts/tls.sh"
@@ -54,6 +55,7 @@ on:
       - "scripts/stack_play.sh"
       - "scripts/stack_linkdead.sh"
       - "scripts/stack_recover.sh"
+      - "scripts/stack_recover_mismatch.sh"
       - "scripts/stack_boundary_lost.sh"
       - "scripts/stack_projector_check.sh"
       - "scripts/tls.sh"
@@ -414,6 +416,15 @@ jobs:
       # run against a server that has been through a recovery.
       - name: the M2 gate against the stack — kill -9, recover from a snapshot, rebind
         run: make stack-recover
+
+      # RecoveryStateMismatch seen firing (scripts/stack_recover_mismatch.sh, AW-SRV-007 AC-14):
+      # the server restarts on another sim.seed so recovery refuses its round (exit 6) and
+      # lingers with andara_recovery_state_hash_match at 0, the alert fires and outlives the
+      # process, and the server's own seed recovers the same round. Right after the M2 gate,
+      # whose absence check needs ALERTS empty, since this leaves the alert there for its
+      # keep_firing_for (15 m).
+      - name: RecoveryStateMismatch fires on a refused recovery and outlives the process
+        run: make stack-recover-mismatch
 
       # AW-SRV-043 §7: the projector's restore series, log line and spans, on the stack's own
       # snapshot rounds. The compose has no projector, so the host binary is the only writer

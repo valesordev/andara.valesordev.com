@@ -304,6 +304,9 @@ services:
       # would never see it, and it would only slow AndaraServerCrashLooping. A server that doesn't
       # read it yet ignores it.
       ANDARA_RECOVERY_MISMATCH_LINGER: "60s"
+      # sim.seed, 0 derived. `make stack-recover-mismatch` restarts the server with another one so
+      # recovery refuses the newest round (exit 6, reason=seed) and the linger is observable.
+      ANDARA_SIM_SEED: "${ANDARA_SIM_SEED:-0}"
       ANDARA_ENV: "local"
       ANDARA_LOG_FORMAT: "json"
       ANDARA_LOG_LEVEL: "${ANDARA_LOG_LEVEL:-info}"

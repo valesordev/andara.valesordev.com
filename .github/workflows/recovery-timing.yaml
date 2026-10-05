@@ -1,0 +1,88 @@
+# AW-SRV-007 AC-7: recover the sizing fixture (25,000 Entities, 2,000 Rooms, 16 Zones, 500
+# Characters) with a 600-tick tail, and publish the per-phase timing as an artifact. The job
+# summary compares `replay` with the newest successful run on main. The test itself fails a
+# `total` of 90 s or more (M2's 120 s less 30 s for detection and process start) and a tail
+# under 600 ticks.
+#
+# It takes minutes, so it isn't `stack`'s step: it runs when a change could move the number
+# (the Engine, the store, recovery, the fixture, the tick loop), on a schedule so a runner
+# drift shows too, and by hand.
+
+name: recovery-timing
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "server/sim/**"
+      - "server/store/**"
+      - "server/recovery/**"
+      - "server/simtest/**"
+      - "server/tickloop/**"
+      - "server/boot/**"
+      - "go.mod"
+      - "go.sum"
+      - "scripts/recovery_timing.py"
+      - ".github/workflows/recovery-timing.yaml"
+  workflow_dispatch:
+  schedule:
+    - cron: "41 6 * * 1"
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  timing:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: bootstrap
+        run: make bootstrap
+
+      # The test starts its own server children and needs only the broker.
+      - name: up
+        run: make up PROFILE=min
+
+      - name: the previous run's timing
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: make recovery-timing-previous
+
+      - name: recover the sizing fixture with a 600-tick tail
+        run: make recovery-timing
+
+      - name: recovery-timing.json
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: recovery-timing
+          path: .local/recovery-timing.json
+          if-no-files-found: error
+          # The file sits in .local, and upload-artifact v4.4+ skips hidden paths by default.
+          include-hidden-files: true
+
+      # Also after a failed run: the test writes its JSON before it asserts the bounds, and the
+      # numbers are what you want from a run that broke one.
+      - name: compare replay with the previous run
+        if: always() && hashFiles('.local/recovery-timing.json') != ''
+        run: make recovery-timing-summary
+
+      - name: down
+        if: always()
+        run: make down
