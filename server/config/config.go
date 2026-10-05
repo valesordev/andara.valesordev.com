@@ -169,6 +169,21 @@ type Config struct {
 	SnapshotS3Endpoint    string
 	SnapshotUploadTimeout time.Duration
 
+	// Recovery (AW-SRV-007). RecoveryRequireSnapshot makes a boot with no
+	// complete round exit 7 instead of replaying the log from offset zero.
+	// RecoveryReplayBatch is how many boundaries one replay step takes, and
+	// changes nothing but memory (AC-3). RecoveryVerifyTimeout bounds
+	// `recover --verify`. RecoveryPinRound, when above 0, names the round boot
+	// recovery uses and refuses if it isn't complete (AC-15); the server never
+	// clears it. RecoveryMismatchLinger is how long a boot that ends in exit 8
+	// or 6 serves /metrics before exiting, so that the mismatch is scraped
+	// (AC-14).
+	RecoveryRequireSnapshot bool
+	RecoveryReplayBatch     int
+	RecoveryVerifyTimeout   time.Duration
+	RecoveryPinRound        uint64
+	RecoveryMismatchLinger  time.Duration
+
 	// TraceSampleRatio is the head-sampling ratio for the Game/Submit
 	// trace root (AW-SRV-010); rejections are kept whatever it says.
 	// TrustInboundTraceparent lets a client's traceparent parent the RPC
@@ -264,6 +279,13 @@ const (
 	DefaultSnapshotFSPath        = "/var/lib/andara/snapshots"
 	DefaultSnapshotUploadTimeout = 30 * time.Second
 
+	// Recovery (AW-SRV-007). The linger is off by default: on a cluster the
+	// scrape keeps only Ready pods and it would only slow the crash-loop
+	// alert; compose sets 60s.
+	DefaultRecoveryReplayBatch    = 4096
+	DefaultRecoveryVerifyTimeout  = 600 * time.Second
+	DefaultRecoveryMismatchLinger = 0
+
 	DefaultTraceSampleRatio = 0.01
 )
 
@@ -355,6 +377,9 @@ func defaults() Config {
 		SnapshotStore:            DefaultSnapshotStore,
 		SnapshotFSPath:           DefaultSnapshotFSPath,
 		SnapshotUploadTimeout:    DefaultSnapshotUploadTimeout,
+		RecoveryReplayBatch:      DefaultRecoveryReplayBatch,
+		RecoveryVerifyTimeout:    DefaultRecoveryVerifyTimeout,
+		RecoveryMismatchLinger:   DefaultRecoveryMismatchLinger,
 		TraceSampleRatio:         DefaultTraceSampleRatio,
 	}
 }
@@ -473,6 +498,11 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.StringVar(&c.SnapshotS3Bucket, "snapshot-s3-bucket", c.SnapshotS3Bucket, "bucket the s3 store writes to; required when snapshot.store=s3 (ANDARA_SNAPSHOT_S3_BUCKET)")
 	fs.StringVar(&c.SnapshotS3Endpoint, "snapshot-s3-endpoint", c.SnapshotS3Endpoint, "S3 endpoint; MinIO locally, empty for AWS (ANDARA_SNAPSHOT_S3_ENDPOINT)")
 	fs.DurationVar(&c.SnapshotUploadTimeout, "snapshot-upload-timeout", c.SnapshotUploadTimeout, "a round exceeding this is failed, not queued behind the next (ANDARA_SNAPSHOT_UPLOAD_TIMEOUT)")
+	fs.BoolVar(&c.RecoveryRequireSnapshot, "recovery-require-snapshot", c.RecoveryRequireSnapshot, "exit 7 when no complete snapshot round exists instead of replaying from offset zero (ANDARA_RECOVERY_REQUIRE_SNAPSHOT)")
+	fs.IntVar(&c.RecoveryReplayBatch, "recovery-replay-batch", c.RecoveryReplayBatch, "boundaries one replay step takes; changes memory, never the result (ANDARA_RECOVERY_REPLAY_BATCH)")
+	fs.DurationVar(&c.RecoveryVerifyTimeout, "recovery-verify-timeout", c.RecoveryVerifyTimeout, "bounds `recover --verify` (ANDARA_RECOVERY_VERIFY_TIMEOUT)")
+	fs.Uint64Var(&c.RecoveryPinRound, "recovery-pin-round", c.RecoveryPinRound, "the snapshot round boot recovery must use, refusing it if incomplete; 0 means the newest complete (ANDARA_RECOVERY_PIN_ROUND)")
+	fs.DurationVar(&c.RecoveryMismatchLinger, "recovery-mismatch-linger", c.RecoveryMismatchLinger, "how long a boot ending in a hash or restore mismatch serves /metrics before it exits (ANDARA_RECOVERY_MISMATCH_LINGER)")
 	fs.Float64Var(&c.TraceSampleRatio, "trace-sample-ratio", c.TraceSampleRatio, "fraction of Game/Submit traces exported; rejections always are (ANDARA_TRACE_SAMPLE_RATIO)")
 	fs.BoolVar(&c.TrustInboundTraceparent, "trust-inbound-traceparent", c.TrustInboundTraceparent, "let a client's traceparent parent the RPC span and decide its sampling (ANDARA_TRUST_INBOUND_TRACEPARENT)")
 	fs.DurationVar(&c.SessionLinkdeadMax, "session-linkdead-max", c.SessionLinkdeadMax, "hard ceiling on linkdead duration; auth.session_ttl must exceed it (ANDARA_LINKDEAD_MAX)")
@@ -551,6 +581,15 @@ func (c Config) validateSnapshot() error {
 	// than a misconfiguration.
 	if c.SnapshotMaxStall < 0 {
 		return fmt.Errorf("snapshot.max_stall_ms must not be negative, got %s", c.SnapshotMaxStall)
+	}
+	if c.RecoveryReplayBatch < 1 {
+		return fmt.Errorf("recovery.replay_batch must be at least 1, got %d", c.RecoveryReplayBatch)
+	}
+	if c.RecoveryVerifyTimeout <= 0 {
+		return fmt.Errorf("recovery.verify_timeout must be positive, got %s", c.RecoveryVerifyTimeout)
+	}
+	if c.RecoveryMismatchLinger < 0 {
+		return fmt.Errorf("recovery.mismatch_linger must not be negative, got %s", c.RecoveryMismatchLinger)
 	}
 	if c.SnapshotUploadTimeout <= 0 {
 		return fmt.Errorf("snapshot.upload_timeout must be positive, got %s", c.SnapshotUploadTimeout)
@@ -950,7 +989,12 @@ type fileConfig struct {
 		LinkdeadDetect          *string `yaml:"linkdead_detect"`
 	} `yaml:"session"`
 	Recovery *struct {
-		RTOTarget *string `yaml:"rto_target"`
+		RTOTarget       *string `yaml:"rto_target"`
+		RequireSnapshot *bool   `yaml:"require_snapshot"`
+		ReplayBatch     *int    `yaml:"replay_batch"`
+		VerifyTimeout   *string `yaml:"verify_timeout"`
+		PinRound        *uint64 `yaml:"pin_round"`
+		MismatchLinger  *string `yaml:"mismatch_linger"`
 	} `yaml:"recovery"`
 	Character *struct {
 		MaxPerAccount *int    `yaml:"max_per_account"`
@@ -1194,6 +1238,32 @@ func applyFile(c *Config, path string) error {
 			return fmt.Errorf("config file %s: %w", path, err)
 		}
 	}
+	if r := fc.Recovery; r != nil {
+		if r.RequireSnapshot != nil {
+			c.RecoveryRequireSnapshot = *r.RequireSnapshot
+		}
+		if r.ReplayBatch != nil {
+			c.RecoveryReplayBatch = *r.ReplayBatch
+		}
+		if r.PinRound != nil {
+			c.RecoveryPinRound = *r.PinRound
+		}
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"recovery.verify_timeout", r.VerifyTimeout, &c.RecoveryVerifyTimeout},
+			{"recovery.mismatch_linger", r.MismatchLinger, &c.RecoveryMismatchLinger},
+		} {
+			if d.v == nil {
+				continue
+			}
+			if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
+		}
+	}
 	if ch := fc.Character; ch != nil {
 		if ch.MaxPerAccount != nil {
 			c.CharacterMaxPerAccount = *ch.MaxPerAccount
@@ -1434,6 +1504,20 @@ func applyEnv(c *Config, env EnvLookup) error {
 		}
 		c.TrustInboundTraceparent = b
 	}
+	if v, ok := env("ANDARA_RECOVERY_REQUIRE_SNAPSHOT"); ok {
+		b, err := strconv.ParseBool(strings.TrimSpace(v))
+		if err != nil {
+			return fmt.Errorf("ANDARA_RECOVERY_REQUIRE_SNAPSHOT must be true or false, got %q", v)
+		}
+		c.RecoveryRequireSnapshot = b
+	}
+	if v, ok := env("ANDARA_RECOVERY_PIN_ROUND"); ok {
+		n, err := strconv.ParseUint(strings.TrimSpace(v), 10, 64)
+		if err != nil {
+			return fmt.Errorf("ANDARA_RECOVERY_PIN_ROUND must be an unsigned integer, got %q", v)
+		}
+		c.RecoveryPinRound = n
+	}
 	if v, ok := env("ANDARA_TRACE_SAMPLE_RATIO"); ok {
 		f, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 		if err != nil {
@@ -1491,6 +1575,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_RECOVERY_RTO_TARGET", &c.RecoveryRTOTarget},
 		{"ANDARA_SNAPSHOT_INTERVAL", &c.SnapshotInterval},
 		{"ANDARA_SNAPSHOT_UPLOAD_TIMEOUT", &c.SnapshotUploadTimeout},
+		{"ANDARA_RECOVERY_VERIFY_TIMEOUT", &c.RecoveryVerifyTimeout},
+		{"ANDARA_RECOVERY_MISMATCH_LINGER", &c.RecoveryMismatchLinger},
 		{"ANDARA_CONTENT_RELOAD_DEBOUNCE", &c.ContentReloadDebounce},
 	} {
 		if v, ok := env(dv.name); ok {
@@ -1534,6 +1620,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_INGRESS_MAX_PENDING", &c.IngressMaxPending},
 		{"ANDARA_CHARACTER_MAX_PER_ACCOUNT", &c.CharacterMaxPerAccount},
 		{"ANDARA_EGRESS_BUFFER", &c.EgressBuffer},
+		{"ANDARA_RECOVERY_REPLAY_BATCH", &c.RecoveryReplayBatch},
 		{"ANDARA_EGRESS_RESUME_WINDOW", &c.EgressResumeWindow},
 		{"ANDARA_EGRESS_ASSUMED_EVENT_RATE", &c.EgressAssumedEventRate},
 	} {
