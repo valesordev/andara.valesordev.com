@@ -866,3 +866,23 @@ the store, so they are exercised on the metric objects by the integration suite
 (`TestExitCodeMapsEveryError` and the per-exit tests, which the §8 deferral rule allows), with the series exposed at
 `0` by the scrape above. No story inherits a live observation: a recovery fault in the log or the store isn't a
 deployment path. `AW-INF-009`'s dev run of exit `6` is the first on a cluster.
+
+### AC-16 and the §8 follow-ups — implementation record, 2026-10-05
+
+Branch `impl/aw-srv-007-ac16`.
+
+| What | Test | What it asserts |
+|------|------|-----------------|
+| AC-16, a round after a swap that added a Zone | `TestARoundIsSelectedAfterASwapAddedAZone` (`server/recovery`; a real Engine on `simtest.VersionedContent` p@1 then p@2 adding Zone c, a round between them) | The round is selected and restored on p@1 and the swap replays to the head hash. Judged on the current content (`ZonesAt` forced to the listed Zones) the same round is incomplete and recovery replays from zero |
+| the rule in `store` | `TestRoundIsJudgedAgainstItsOwnContentsZones`, `TestAnObjectForAZoneItsContentDoesNotListIsContentMismatch`, `TestAVersionTheSourceLacksIsContentMismatchAndIsNotSkipped`, `TestAnyOtherZonesAtErrorPropagates`, `TestContentRanksBelowHashAndAboveMissing`, `TestObjectProblemsOutrankContent` | V's Zones; an extra object is `ErrRoundZoneUnknown`; an unknown version is `ErrRoundContent` and `NewestComplete` does not fall back to the older complete round; any other `ZonesAt` error propagates; ranking: object problems and a vanished object (cause `missing`) above content, content above a missing Zone |
+| exit 6 `reason=content`, and exit 1 for a source that fails to answer | `TestAVersionTheSourceLacksIsExit6`, `TestASourceThatFailsToAnswerIsExit1`, `TestAnUnknownVersionAtTheRebuildIsExit6` | one `recovery restore mismatch` line with `pack_versions`, no `recovery refused`, gauge `0`, `failures{restore}` `1`; exit 1 leaves the gauge unset |
+| `ErrContentVersionUnknown` from the sources | `TestManifestMissingIsAContentVersionUnknown`, `TestDirSourceNamesAVersionItLacks` | `ErrManifestMissing` and the dir source's refusals unwrap to it; a timeout does not |
+| `bytes` on `recovery.load_snapshot` | `TestLoadSnapshotSpansCarryTheKeyAndTheBytesRead`, `TestANamedRoundLoadsNoOtherTick` | per Zone `zone_id`, `key`, `bytes` (= the object's size), `round_tick`, started around the store read; a named round reads only its own tick |
+| `trace_id` on `recovered from the log` | `TestReportNamesTheRecoveryRunTrace`, `TestRecoveredFromTheLogCarriesTheTraceID` | `Report.TraceID` is the `recovery.run` trace; the boot line carries the key |
+| seeds as decimal strings (#423) | `TestSeedIsLoggedAsADecimalString`, `TestRestoreMismatchLogsSeedsAsStrings`, the projector's seed-mismatch test | `seed`, `recorded_seed`, `configured_seed` on the server and the projector |
+| `andara_snapshot_failures_total{reason="encode"}` | `TestAZoneThatCannotBeEncodedIsCountedUnderEncode` (a new `SnapshotOptions.Encode` seam, since nothing in a real World makes the codec fail) | the counter is `1`, the round is incomplete, no object is written |
+
+**Not built or not run:** the added-Zone case is an in-process test with a real Engine and a stepped log, not a SIGKILL of a process;
+`ListSnapshotRounds` now builds the topology per distinct recorded content on the serving process, and the projector still
+judges a round on the loaded content's Zones (it passes no `ZonesAt`). `recovery.load_snapshot` spans also appear for the objects
+of newer rounds the boot scan skims before the winner (they carry `round_tick`).
