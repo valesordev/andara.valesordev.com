@@ -4,7 +4,7 @@ title: make stack-recover — the M2 gate scripted against the running stack
 epic: EPIC-04
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-007, AW-INF-017]
 blocks: [AW-INF-034]
@@ -183,15 +183,16 @@ Definition of done says so.
 
 ## Open questions
 
-- `[ASSUMPTION]` After a restart, a reconnecting client's Character is rebound through
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05 (architecture, §8): `AW-SRV-007` didn't make a bystander's `<A> reconnects.`
+  deterministic, so AC-5 doesn't assert it, and the script doesn't.* After a restart, a reconnecting client's Character is rebound through
   `AW-SRV-015`'s recovered-linkdead path (`Roster.SeedLinkdead`). B may read `<A> reconnects.` for
   A, but AC-5 doesn't assert it: whether a bystander's own reconnect races A's announcement is
   `AW-SRV-007`'s behaviour, not this target's. Architecture adds it to AC-5 at contract review if
   `AW-SRV-007` makes it deterministic.
-- `[ASSUMPTION]` `snapshot list`'s round table, with a `complete` column, is `AW-SRV-007`'s contract.
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05: `AW-SRV-007` merged and ships the grouped table; the script reads it.* `snapshot list`'s round table, with a `complete` column, is `AW-SRV-007`'s contract.
   Today the command needs `--zone` and lists per-Zone objects (`admin/cli/snapshotcmd.go`). The
   script uses the table `AW-SRV-007` ships, which is why that story is a hard dependency.
-- `[ASSUMPTION]` `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05: the interval stays 60 s, and the script's AC-2 deadline is the running server's `andara_snapshot_interval_seconds` plus 30 s (recorded above). The CI step takes about a minute.* `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
   run. If that's too slow for the `stack` workflow, the script may set a shorter interval on the
   compose server only. That's SRE's call when building, and it's recorded in the story.
 
@@ -252,3 +253,29 @@ look could satisfy it instead of the explicit one. Both still show a Room read a
 
 **Not observed:** the 60 s Phase 1 exit RTO (out of scope), and the CI run itself, which this PR's `stack`
 workflow supplies.
+
+## §8 close (architecture, 2026-10-05): done
+
+Run from the `stack` workflow's passing run on `main` at `0b43f76` (run 37333182657), and from the script and the
+Makefile on that tree, since the target needs a running stack and CI is a second environment from SRE's own.
+
+- **Every acceptance criterion passes.** The `the M2 gate against the stack — kill -9, recover from a snapshot,
+  rebind` step passed in 63 s. Its log has `stack-recover: ready 1.4s after the kill (RTO 120s), round 4164, hash
+  match` and the closing `M2 gate — killed, recovered from a snapshot, hash matched, both rebound — passes`. That
+  covers AC-1 to AC-6, with AC-5's and AC-6's amended text matching what the script asserts (B in Room 2 with A,
+  `--show-protocol` for `already_live`, `dormant town/hall`). AC-7's failure path is SRE's mutations run live in the
+  record above (`STACK_RECOVER_RTO=1`, the wrong Room), and the script's precondition exits are in its first lines
+  (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`).
+- **Tests in CI.** The `stack` workflow runs `make stack-recover` after `make stack-linkdead` on every PR and merge
+  to `main`, as the Test plan says. It isn't in `make check`'s targets, like the other stack targets: it needs a
+  running stack.
+- **`make help`** lists `stack-recover`, with the contract's text; `STACK_RECOVER_RTO ?= 120` is in the Makefile and
+  the job summary is written only when `$GITHUB_STEP_SUMMARY` is set.
+- **Instrumentation** is SRE's own check and this story's Definition of done: the record above has the series read
+  from the running server (`andara_recovery_state_hash_match`, `_duration_seconds{phase}`, `_round_tick`,
+  `andara_restore_total{caller="recovery"}`) and the `recovery.run` trace resolved in Tempo. `AW-SRV-007`'s §8 cites
+  this run, as decided.
+- **The three `[ASSUMPTION]`s** are marked resolved above. **No config key, migration or domain term** is added.
+- **Carried, not blocking:** the P3 deferred from the pre-PR review (the line marks before the post-recovery `look`
+  have no sentinel) stays as recorded; and the 60 s Phase 1 exit RTO is out of scope, lowered in the Makefile at that exit.
+
