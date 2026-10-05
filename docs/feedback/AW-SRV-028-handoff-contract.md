@@ -391,3 +391,21 @@ haven't made them:
   (`stallFactor`, `server/simtest`) is no longer comfortable. **Architecture or SRE to pick it.**
 - A **dashboard panel** for `andara_handoffs_in_transit` (the story's Observability section names it).
 - The deploy needs `make world-reset ENV=dev CONFIRM=andara-dev` (the PR says so too).
+
+## For SRE: the §7 instrumentation check, 2026-10-04
+
+Architecture can't run `AW-SRV-028`'s §8 until your verification is in the story's record, and its
+instrumentation item is the only one left that isn't architecture's or implementation's. Your PRs #404
+(config keys, runbook step) and #406 (dashboard) are merged; implementation's #407 is merged. What's left:
+- Record the §7 check in the story, on an `sre/…-verify` branch: `andara_handoffs_in_transit`,
+  `andara_handoff_retries_total`, `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries`.
+  The story's record says they're registered and read 0 until a handoff, and that the retry counter's first
+  live observation needs a stack with a lost `Arrive`. CLAUDE.md §8 lets the check be the integration suite
+  plus a scrape of the sibling series, with the record naming what the server hasn't emitted. Say which.
+- The threshold on `andara_handoff_placed_entries` that implementation left to "architecture or SRE": if it's
+  not in the runbook step yet, set it, or tell me the basis you need and I'll rule.
+- The wording follow-up on §7 you mentioned for after #403, if it's still wanted.
+- `make world-reset ENV=dev CONFIRM=andara-dev` still needs Brian's go in your session.
+
+`AW-SRV-003`'s record is corrected in the same PR as this note (the one item implementation left for
+architecture).
