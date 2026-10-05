@@ -841,7 +841,24 @@ the README documents `zone_id` only). Either the contract drops `bytes` or imple
   with `timed out after 8m0s waiting for a round, and a tail of 600 ticks past it`: 600 ticks cost about as much as the
   fixture's 60 s snapshot interval on a runner, so the tail often never builds (issue #424, implementation's test).
   The previous-run download did work on those runs (`previous run 37322596095`), so the comparison needs one passing
-  run after the first. This line stays open until it has one.
+  run after the first. This line stays open until it has one (closed below).
+
+  **Observed 2026-10-05, after implementation's #424 fix (#426, a 180 s snapshot interval):** run 37339999386 on
+  `96e707c` passed, and its "compare replay with the previous run" step succeeded against run 37322596095 (the
+  step's summary file isn't in the run log, so the table below is the same script, `scripts/recovery_timing.py
+  summary`, run over those two runs' `recovery-timing` artifacts). Round 3314, tail 603 ticks, peak RSS 118 MB:
+
+  | phase | now (s) | previous (s) | change |
+  |---|---|---|---|
+  | load | 0.15 | 0.20 | -0.05 s (-26%) |
+  | seek | 0.01 | 0.02 | -0.01 s (-38%) |
+  | **replay** | 34.08 | 45.75 | -11.67 s (-25%) |
+  | verify | 0.05 | 0.08 | -0.03 s (-34%) |
+  | total | 34.30 | 46.05 | -11.75 s (-26%) |
+
+  `total` is 34.30 s against the 90 s bound. The test took 259.6 s on the runner. The replay is 25% faster than the
+  first run's on the same code, which says what a runner's variance is: the comparison is a trend line, not a gate.
+  The summary's "tails differ" note now fires only on a difference over 5% (it fired on 603 against 601).
 - **Inherited from `AW-SRV-043`:** `caller="verify"` observed live, above.
 - **Inherited from `AW-SRV-006`:** `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}` are **not
   observed**. None was driven on a running server. `boundary` needs a failed boundary publish (a lost boundary also

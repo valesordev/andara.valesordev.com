@@ -54,6 +54,14 @@ class Render(unittest.TestCase):
         self.assertIn("The tails differ (650 now, 602 before)", out)
         self.assertNotIn("The tails differ", rt.render(sample(), sample()))
 
+    def test_a_few_ticks_of_tail_is_the_same_tail(self):
+        self.assertNotIn("The tails differ", rt.render(sample(tail=603), sample(tail=601)))
+        self.assertNotIn("The tails differ", rt.render(sample(tail=601), sample(tail=603)))
+
+    def test_five_percent_is_the_edge_of_the_same_tail(self):
+        self.assertNotIn("The tails differ", rt.render(sample(tail=630), sample(tail=600)))
+        self.assertIn("The tails differ", rt.render(sample(tail=631), sample(tail=600)))
+
     def test_a_different_fixture_is_called_out(self):
         prev = sample()
         prev["entities"] = 20000

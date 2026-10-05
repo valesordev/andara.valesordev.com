@@ -86,7 +86,8 @@ def render(cur, prev=None):
         else:
             out.append("| %s | %s | %s | %s |" % (name, seconds(now), seconds(before), change(now, before)))
     note = ""
-    if prev["tail_ticks"] != cur["tail_ticks"]:
+    # The test stops at 600 ticks or a few more, so 601 against 603 is the same tail; 5% is not.
+    if abs(cur["tail_ticks"] - prev["tail_ticks"]) > 0.05 * prev["tail_ticks"]:
         note = " The tails differ (%d now, %d before), so the replay times aren't like for like." % (
             cur["tail_ticks"], prev["tail_ticks"])
     shape = [k for k in ("entities", "rooms", "zones", "characters") if prev[k] != cur[k]]
