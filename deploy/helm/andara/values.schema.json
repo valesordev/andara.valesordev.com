@@ -416,10 +416,34 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "require_snapshot": {
+              "type": "boolean",
+              "description": "ANDARA_RECOVERY_REQUIRE_SNAPSHOT (AW-SRV-007). Default when unset: False."
+            },
+            "replay_batch": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "ANDARA_RECOVERY_REPLAY_BATCH (AW-SRV-007). Default when unset: 4096."
+            },
+            "verify_timeout": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_RECOVERY_VERIFY_TIMEOUT (AW-SRV-007). Default when unset: '600s'."
+            },
+            "mismatch_linger": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_RECOVERY_MISMATCH_LINGER (AW-SRV-007). Default when unset: '0s'."
+            },
             "rto_target": {
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_RECOVERY_RTO_TARGET (AW-SRV-015). Default when unset: '60s'."
+            },
+            "pin_round": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "ANDARA_RECOVERY_PIN_ROUND (AW-INF-007). Default when unset: 0."
             }
           }
         },
