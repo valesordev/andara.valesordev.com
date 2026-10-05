@@ -457,3 +457,21 @@ The runbook's two thresholds on `andara_handoff_placed_entries` (25,000 and 100,
 snapshot sizing fixture and unmeasured. Measuring them is a small `lane: implementation` story: a `Placed` mark
 population (25,000 and 100,000) in `server/simtest/sizing.go`, with the in-tick copy and State Hash cost
 recorded. It belongs before `AW-SRV-047`, whose Item Instances are what make marks grow.
+
+## Architecture: §8 review, 2026-10-05
+
+The story stays at `review` (Codex, #434: the confirmed `warn` is unbuilt, and the deferral has no tracked carrier). **Confirmed:** the amended §7's log bound (one summary `warn` per `sim.handoff_retry_ticks`
+window with `retries`, `oldest_attempt`, `tick`, `in_transit`, `trace_id`) replaces #403's per-tick text, so #409
+is what moves the story to `done`. The sizing-fixture follow-up for marks is PM's request above; it stays a
+Test-plan line and doesn't gate `done`.
+
+### For PM: the failure-injection story, which carries the live observation
+CLAUDE.md §8's deferral rule needs a named carrier. The story: a failure-injection flag for `sim repl` or the
+stack (drop or delay `Arrive` production), so a retry, a stale arrival and `in_transit` above 0 can be observed on
+the running server. `lane: implementation`, `depends_on: AW-SRV-028`. Its Definition of done inherits the
+unobserved series and log lines listed in `AW-SRV-028`'s §8 instrumentation check, and `AW-INF-032` may take the
+assertion once the flag exists.
+
+**Implementation:** #409 is now the story's last build item (`Story: AW-SRV-028` on its PR).
+**PM:** the failure-injection story above is the other gate. Please create it and tell me its ID; I'll cite it in
+the story and move it to `done`.

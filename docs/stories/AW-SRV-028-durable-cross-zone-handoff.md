@@ -361,8 +361,8 @@ yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
   The counters start at 0 after a restart.
 - **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
   retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick`, `in_transit` and
-  `trace_id`. *(Requested, not built, and not yet confirmed in the repository: SRE proposed it after #403 merged.
-  The code still logs one per tick; issue #409 and the feedback file.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
+  `trace_id`. *(Confirmed 2026-10-05 by architecture, §8 review below; not built: the code still logs one per tick,
+  and the story stays at `review` until #409 builds it.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
   retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
   and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
   correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
@@ -435,7 +435,7 @@ golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md`
 
 ## Open questions
 
-- `[ASSUMPTION]` `handoff_retry_ticks` = 10, `handoff_retry_max_ticks` = 100 and `handoff_retry_batch` = 50.
+- ~~`[ASSUMPTION]`~~ **Resolved 2026-10-05 (architecture):** the defaults ship as built. `handoff_retry_ticks` = 10, `handoff_retry_max_ticks` = 100 and `handoff_retry_batch` = 50.
   A retry is cheap and idempotent; too short doubles broker traffic under a slow broker, too long is a player
   stuck "between places". Tune on the stack, with `ingress.transit_hold` in view.
 - **Resolved 2026-09-18 (Brian):** the delay stays perceptible in the Events and the Gateway holds
@@ -504,7 +504,7 @@ can't read a `HandoffAck`), and a fresh local stack for `AW-INF-032`.
   threshold.~~ Done: #404 (keys, runbook step, thresholds) and #406 (dashboard). The two thresholds are
   unmeasured, as the runbook says.
 - ~~Architecture: `AW-SRV-003`'s record.~~ Done 2026-10-04: it now says `AW-SRV-012` replaced the bounce.
-- SRE's §8 instrumentation check: `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
+- ~~SRE's §8 instrumentation check~~ Done 2026-10-05 (below): `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
   `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries` are registered and read 0 until a
   handoff; the retry counter's first live observation is on a stack with a lost `Arrive`.
 
@@ -567,3 +567,27 @@ is the right one for `make stack-recover`.
 
 **The dev reset** (`make world-reset ENV=dev CONFIRM=andara-dev`) is not run. It needs Brian's go in the
 session that runs it, at the time the deploy carrying this story reaches `dev`.
+
+## §8 review (architecture, 2026-10-05): stays at `review`, two items open
+
+Run after #433. Everything else holds:
+- **ACs 1-16** each map to a named test in the verification record, all of which exist
+  (`server/sim/handoff_test.go`, `server/tickloop/handoff_test.go`, `handoff_integration_test.go`,
+  `server/config/config_test.go`, `server/sim/entity_roundtrip_test.go`); `make check` is green.
+- **Config** is in `server/README.md`, `deploy/helm/andara/values.schema.json` and `keys.yaml`, and the
+  `simulation-lagging.md` runbook has the handoff step. The glossary has **Handoff** and **Transit**.
+- **Migration:** no schema change; deploying needs `make world-reset ENV=dev CONFIRM=andara-dev`, stated in the
+  record and still waiting on Brian's go in SRE's session.
+- **The one `[ASSUMPTION]`** (retry defaults 10 / 100 / 50) is resolved: the values are config, tuned without a
+  contract change, and the runbook marks its thresholds unmeasured.
+- **The summary `warn` bound is confirmed** as the contract: at most one per `sim.handoff_retry_ticks` window,
+  carrying `retries`, `oldest_attempt`, `tick`, `in_transit` and `trace_id`.
+
+**Open before `done`** (Codex's two P2s on #434, both right):
+1. **The confirmed `warn` is unbuilt.** `server/tickloop/loop.go` (`noteRetries`) logs one per retrying tick with
+   `count` and no `in_transit`, so the §7 instrumentation doesn't emit as specified. Issue #409 is the work; its
+   PR carries `Story: AW-SRV-028`, and the story moves to `done` when it merges.
+2. **The deferral has no carrier.** The live observation of `retries_total`, `stale_arrivals_total`,
+   `in_transit` above 0 and the `warn`, `debug` and `error` lines rests on a failure-injection story that PM
+   hasn't written (`AW-SRV-049` puts the flag out of scope). Per §8, the story is `done` when the carrier exists
+   as a tracked story whose Definition of done names those lines; PM's request is in the feedback file.
