@@ -181,7 +181,7 @@ CLAUDE.md §8.
 moves to `done`, an `arch/` PR, merged after this story's, deletes the guide's interim
 `docs/builders/07-reference.md`. It points `docs/builders/README.md`'s section 7 at `reference.md`,
 and `make guide-check` passes on the result. Until then, the guide has two reference pages, and
-nothing links to the generated one.
+nothing links to the generated one. Done: see the §8 close below.
 
 ## Open questions
 
@@ -366,7 +366,7 @@ exit 0.
     missing anchor, added together to a guide page, gave all three findings in one run
     (`no command "andara-cli content bogus"`, `broken link no-such-file.md`, `broken link
     reference.md#no-such-anchor`) and then, reverted, `guide-check: 28 commands, 37 codes, 110 links ok`.
-  - **AC-3, 4, 6, 9:** the 84 cases in `scripts/tests/test_builder_guide.py`, run by `make scripts-test` in
+  - **AC-3, 4, 6, 9:** the 90 cases in `scripts/tests/test_builder_guide.py`, run by `make scripts-test` in
     `make check`; AC-9's real-guide run is the line above.
   - **AC-10:** `make help` lists the three targets, and the first and last help lines are the contract's.
 - **Tests in CI.** `make builder-reference-check` and `make guide-check` are in `CHECK_TARGETS`, and SRE's
@@ -375,9 +375,10 @@ exit 0.
   `guide-check:` lines as the signal, which CI's log keeps.
 - **The carried architecture item is done.** This PR deletes the interim `docs/builders/07-reference.md`,
   points `README.md`'s section 7 and the three links into it (sections 1, 6 and 9) at `reference.md`, and
-  `guide-check` passes on the result. The interim page held three things the generated one doesn't: the
-  Components' meanings and a note that content takes no direction abbreviations, which moved into section
-  6, and a pointer to the diagnostic codes, which the generated Diagnostics table now carries row by row.
+  `guide-check` passes on the result. The interim page held four things the generated one doesn't. Three moved
+  into section 6: the Components' meanings, that `andara.core.Npc` carries `andara.core.Memory`, and a note
+  that content takes no direction abbreviations. The fourth, a pointer to the diagnostic codes, the
+  generated Diagnostics table now carries row by row.
 - **Config, migration, glossary.** No config key and no migration. The glossary's one reference to the
   interim page now names `reference.md`. The two `[ASSUMPTION]`s are marked resolved above: 3 holds on the
   real guide today (`guide-check` passes), and 4 is the separate `builder-reference-check` target in the

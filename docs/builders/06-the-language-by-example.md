@@ -74,16 +74,17 @@ zone cellars "The Cellars" {
 
 A Component is a named piece of data on a Room, a Zone, or a Template. Most of today's are markers,
 with no fields and an empty `{}`. Only the server defines Component types, so a type it doesn't know
-is an error. [Section 7](reference.md#component-types) lists them, and what each means is:
+is an error. [Section 7](reference.md#component-types) lists them, and what each means is below.
+Dark, Indoors, NoMagic and NoRecall are recorded and none of them changes play yet. A Zone's Components
+don't pass down to its Rooms; see
+[Components on Rooms and Zones](../specs/content-language/v1/semantics.md#components-on-rooms-and-zones).
 
 - `andara.core.Behavior` has a `name` field, and names the Behavior an NPC runs. It's recorded and not yet run.
 - `andara.core.Dark`: the Room is unlit.
 - `andara.core.Indoors`: enclosed, with no weather or sky.
-- `andara.core.Memory`: the Entity remembers.
+- `andara.core.Memory`: the Entity remembers. Every `andara.core.Npc` already carries it.
 - `andara.core.NoMagic`: magic doesn't work here.
 - `andara.core.NoRecall`: recall and self-teleport don't leave from here.
-
-[Components on Rooms and Zones](../specs/content-language/v1/semantics.md#components-on-rooms-and-zones).
 
 ## Templates
 
