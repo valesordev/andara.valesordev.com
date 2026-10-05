@@ -76,8 +76,9 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 1. Exit code and last log line, as above. Once `AW-SRV-007` ships, every refusal is one `error`
    line with the fields its exit-code table names.
 2. `kubectl -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
-3. **Once `AW-SRV-007` ships:** is the newest snapshot round complete? `andara-cli snapshot list`
-   lists rounds over `Admin`, with a `complete` column. An incomplete newest round with
+3. **Once `AW-SRV-007` ships:** is the newest snapshot round complete? Today `andara-cli snapshot list
+   --zone <zone>` reads the store directly, one Zone at a time, with no `complete` column
+   (`recovery-state-mismatch.md`, step 1); a grouped form with one comes with `AW-SRV-007`. An incomplete newest round with
    `recovery.require_snapshot=true` is exit `7`. Today's recovery doesn't read snapshots at all (it
    replays the log), so this step can't explain today's crash loop.
 4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status

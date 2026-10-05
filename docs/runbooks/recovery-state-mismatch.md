@@ -52,7 +52,9 @@ The `error` line says which refusal it was:
 | `8` | Replaying the log from the round reached a tick whose hash differs from the recorded one | List the rounds, and ask each older one whether it reproduces the World (below). If an older round does, the newest round was the bad part. **If every round mismatches at the same tick, it isn't a round**: replay isn't deterministic, or a log record changed. That is a determinism failure; stop, keep the evidence, and escalate to implementation with the `error` line and the tick |
 | `6`, `hash` | The newest round doesn't reproduce its own recorded hash: a corrupt round | Choose an older round, as below |
 | `6`, `seed` | The configured `sim.seed` differs from the round's `recorded_seed` | Not a data fault: set `sim.seed` back to `recorded_seed` (or remove it, if it was unset when the round was written). An older round written under the same seed has the same problem |
-| `6`, `content` | The round doesn't restore onto the content this server builds: a digest differs (`pack`, `recorded_digest`, `built_digest`) or a Zone is unknown (`zone_id`) | Two causes. **The build:** this image builds different content bytes than the build that wrote the round, so roll the image back to the build that wrote it, or escalate to implementation (`server-crashlooping.md`); an older round fails the same way. **The content in effect:** a pack's pointer or files moved since the round, and **there is no offline fix for that on the cluster**: moving the Active Pointer back (`andara-cli content rollback`) is an Admin RPC, and a refused recovery never binds `grpc.listen`, so the CLI has nothing to reach. On compose (`content.source=dir`), restore the content files the round was written under (git), or reset the local stack (`make down VOLUMES=1`). On the cluster (`content.source=kafka`), keep the World scaled to zero and escalate with the `error` line |
+| `6`, `content` | The round doesn't restore onto what this server builds: a digest differs (`pack`, `recorded_digest`, `built_digest`) or a Zone is unknown (`zone_id`) | **`content.source=kafka` (the cluster):** the cause is the build. This image builds different content bytes than the build that wrote the round (its compiler, validator or embedded `andara.core`), or doesn't define a Zone the round has. Roll the image back to the build that wrote the round, or escalate to implementation (`server-crashlooping.md`); an older round fails the same way. **A pack's Active Pointer is not a cause:** recovery rebuilds the content the round recorded, version by version, from the store, so moving the pointer back would fix nothing, and `andara-cli content rollback` couldn't be reached anyway, because a refused recovery never binds `grpc.listen`. **`content.source=dir` (compose, or a cluster set to `dir`):** the cause is the files. The server builds the directory as it is now, so restore the content files the round was written under (git; on a cluster, the content ConfigMap or the values), then restart. An older round may have been written under the current files, so it is worth trying. On compose, `make down VOLUMES=1` is the local reset: it removes the log and the snapshots and **discards the local World and Accounts**, so confirm with Brian first (`server-crashlooping.md`) |
+
+*Written against the contract. `AW-SRV-007`'s §8 check re-reads the `content` row against what the merged server does.*
 
 ## How to mitigate
 
@@ -84,8 +86,9 @@ nothing acknowledged is lost, but a determinism fault at a later tick fails agai
 
 ## What not to do
 
-- **Do not delete the snapshot volume to "reset".** It is the one action that turns a 60 s recovery into a
-  full-history replay (`server-unavailable.md`), and it removes the rounds you are choosing between.
+- **On the cluster, do not delete the snapshot volume to "reset".** It is the one action that turns a 60 s
+  recovery into a full-history replay (`server-unavailable.md`), and it removes the rounds you are choosing
+  between. (On compose, `make down VOLUMES=1` is the local reset, and it discards the local World.)
 - **Do not roll the image back to "try the older build".** A binary older than a round's `state_version`
   exits `4`, and a build with different simulation code is what causes an exit `8`. The one exception is an exit `6`
   `content` caused by the build, where `server-crashlooping.md` rolls back to the build that *wrote the round*.
