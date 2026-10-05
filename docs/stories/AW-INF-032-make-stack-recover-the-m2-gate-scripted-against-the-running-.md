@@ -264,7 +264,8 @@ Makefile on that tree, since the target needs a running stack and CI is a second
   match` and the closing `M2 gate — killed, recovered from a snapshot, hash matched, both rebound — passes`. That
   covers AC-1 to AC-6, with AC-5's and AC-6's amended text matching what the script asserts (B in Room 2 with A,
   `--show-protocol` for `already_live`, `dormant town/hall`). AC-7's failure path is SRE's mutations run live in the
-  record above (`STACK_RECOVER_RTO=1`, the wrong Room), and the script's precondition exits are in its first lines
+  record above (`STACK_RECOVER_RTO=1`, the wrong Room); the container exit-code line and the cleanup of
+  `andara-cli` children I read in the script (lines 72-97), and didn't run; the precondition exits are in its first lines
   (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`).
 - **Tests in CI.** The `stack` workflow runs `make stack-recover` after `make stack-linkdead` on every PR and merge
   to `main`, as the Test plan says. It isn't in `make check`'s targets, like the other stack targets: it needs a
@@ -274,7 +275,7 @@ Makefile on that tree, since the target needs a running stack and CI is a second
 - **Instrumentation** is SRE's own check and this story's Definition of done: the record above has the series read
   from the running server (`andara_recovery_state_hash_match`, `_duration_seconds{phase}`, `_round_tick`,
   `andara_restore_total{caller="recovery"}`) and the `recovery.run` trace resolved in Tempo. `AW-SRV-007`'s §8 cites
-  this run, as decided.
+  `make stack-recover`'s runs (#421's 37318364410 and 37315058628, and a local run), as decided on 2026-10-02.
 - **The three `[ASSUMPTION]`s** are marked resolved above. **No config key, migration or domain term** is added.
 - **Carried, not blocking:** the P3 deferred from the pre-PR review (the line marks before the post-recovery `look`
   have no sentinel) stays as recorded; and the 60 s Phase 1 exit RTO is out of scope, lowered in the Makefile at that exit.
