@@ -329,3 +329,23 @@ func TestReplayEndsAtTheHeadItStartedWith(t *testing.T) {
 		t.Fatalf("tick %d replayed %d, want 8 and 3", e.Tick(), rep.Replayed)
 	}
 }
+
+// A verify's restore is counted under caller=verify, boot's under recovery.
+func TestRestoreIsCountedUnderItsCaller(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct {
+		verify bool
+		caller string
+		other  string
+	}{{false, recovery.CallerRecovery, recovery.CallerVerify}, {true, recovery.CallerVerify, recovery.CallerRecovery}} {
+		w := newWorld(t, 8, 4)
+		o := w.opts(t)
+		o.Verify = c.verify
+		if _, _, err := recovery.Recover(context.Background(), o); err != nil {
+			t.Fatal(err)
+		}
+		if testutil.ToFloat64(o.Metrics.Restores.WithLabelValues(c.caller, "ok")) != 1 || testutil.ToFloat64(o.Metrics.Restores.WithLabelValues(c.other, "ok")) != 0 {
+			t.Errorf("verify=%v: restore_total not under %s", c.verify, c.caller)
+		}
+	}
+}

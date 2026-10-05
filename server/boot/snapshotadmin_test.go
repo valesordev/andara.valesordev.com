@@ -76,3 +76,12 @@ func TestVerifyResponse_RefusalsNameTheirStatus(t *testing.T) {
 		t.Errorf("an unclassified failure must not name a status: %v", err)
 	}
 }
+
+func TestScratchOptions_ReportToNothingLive(t *testing.T) {
+	live := recovery.NewMetrics(nil)
+	o := recovery.Options{Metrics: live, After: func(sim.StepResult) error { return nil }, OnEngine: func(*sim.Engine) {}, OnRestored: func([]sim.SwapApplied) {}}
+	s := scratchOptions(o, 4200)
+	if s.Metrics == live || s.After != nil || s.OnEngine != nil || s.OnRestored != nil || !s.Verify || s.Round == nil || *s.Round != 4200 {
+		t.Fatalf("scratch options %+v", s)
+	}
+}

@@ -108,9 +108,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	tick := sim.Tick(req.GetTick())
 	// A scratch recovery: it reports nothing to the live Engine, the content
 	// source, or the recovery gauges that RecoveryStateMismatch pages on.
-	o.Round, o.Verify = &tick, true
-	o.After, o.OnEngine, o.OnRestored = nil, nil, nil
-	o.Metrics = recovery.NewMetrics(nil)
+	o = scratchOptions(o, tick)
 	_, rep, rerr := recovery.Recover(ctx, o)
 	resp, err := verifyResponse(rerr, rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
 	// Counted as andara_restore_total{caller="verify"}: ok, or the restore's
@@ -123,6 +121,16 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 		rt.RecoveryMetrics().Restores.WithLabelValues(recovery.CallerVerify, outcome).Inc()
 	}
 	return resp, err
+}
+
+// scratchOptions turns boot's recovery Options into a verify of round tick: it
+// names the round, and reports to nothing live: not the Engine, not the content
+// source, and not the recovery instruments RecoveryStateMismatch pages on.
+func scratchOptions(o recovery.Options, tick sim.Tick) recovery.Options {
+	o.Round, o.Verify = &tick, true
+	o.After, o.OnEngine, o.OnRestored = nil, nil, nil
+	o.Metrics = recovery.NewMetrics(nil)
+	return o
 }
 
 // verifyResponse is what Admin.VerifySnapshotRound answers for a scratch
