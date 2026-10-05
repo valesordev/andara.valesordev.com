@@ -157,10 +157,11 @@ the loop is stopped.
   Zones (the serve-from-the-log path) discovery lists none. AC-16 now says so and keeps today's behavior there,
   a log replay bounded by retention. A Zone enumeration on `WorldStore` would lift it and isn't in this story.
 - **A rebound Character isn't marked.** Real race: a body that lands between attempts can be rebound, and a
-  later mark would mark it or, with a grace of `0`, remove it. A flag checked and then produced after releasing
-  the lock doesn't close it (`Select` produces its Bind outside the Roster's lock as well), so AC-17 orders
-  each attempt against `Select` under the Roster's lock: drop on any entry for that Character (live, linkdead,
-  releasing), else register a marking entry that `Select` waits on until the mark's produce returns. There is
-  no per-Account lock for an orphan, which has no Account; the check is by Character ID.
+  later mark would mark it or, with a grace of `0`, remove it. A flag checked and then produced after
+  releasing the lock doesn't close it (`Select` produces its Bind outside the Roster's lock too), and a
+  marking entry for an orphan can't live in `byAccount` (no Account), so `Select` can't see it unless the
+  contract says so. The story's Interface contract now names `Roster.MarkTransit` and the five rules: a
+  marking set by Character ID under `r.mu`; the attempt drops on any entry for the Character and otherwise
+  registers; `Select` checks the set in the critical section that registers its entry and waits on a hit.
 - **Capped.** At most `sim.handoff_retry_batch` marks per tick, earliest due first, a separate budget from
   `Arrive` retries of the same size.

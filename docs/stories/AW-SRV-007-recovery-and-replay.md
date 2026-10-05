@@ -222,24 +222,16 @@ match, so that a crash is an interruption rather than an incident.
     `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` with no
     backoff, until the Entity is placed or gone, not issued once at boot. At most `sim.handoff_retry_batch`
     marks are produced per tick, earliest due first as `AW-SRV-028` orders `Arrive` retries, a separate
-    budget from theirs (so up to twice the batch is produced per tick overall), so a crash that left many Characters in
-    transit doesn't recreate the restart burst the cap exists for.
-    **A Character that rebinds first isn't marked.** A body that lands between two attempts can be rebound
-    (`BindCharacter` accepts a present, non-linkdead body), and a mark applied then would mark, or with a
-    grace of `0` remove, a Character a player is playing. Checking a flag and then producing, with the lock
-    released between, doesn't close it: `Select` produces its `BindCharacter` outside the Roster's lock too.
-    So each attempt is ordered against `Select` under the Roster's lock (`AW-SRV-014`'s `lock(account)` is that
-    lock; an orphan has no Account, so the check is by Character ID over the Roster's entries): it drops
-    when any entry for that Character exists, live, linkdead or releasing, and otherwise registers a marking
-    entry for the Character before it produces and holds it until the produce returns, as a teardown holds
-    its `releasing` entry. A `Select` for that Character waits on the entry, so **a mark in flight is in the
-    log before any Bind the Roster produces after it**, and a bind after the mark takes the linkdead
-    reconnect path. A `Select` that registered first makes the attempt drop. Each attempt re-resolves where the Character is,
+    budget from theirs (so up to twice the batch overall), so a crash that left many Characters in transit
+    doesn't recreate the restart burst the cap exists for. Each attempt re-resolves where the Character is,
     Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
     Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
     to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
     Entities nor any Transit record. A handoff stuck on a faulted Zone is retried without end, and shows on
     `andara_handoffs_in_transit` and in the runbook's stuck-handoff step.
+    **A Character that rebinds first isn't marked**, and one a player is playing is never removed at grace
+    `0`: each attempt goes through `Roster.MarkTransit`, which orders it against `SelectCharacter`
+    (Interface contract, "Marking a Character in transit").
     *(Added 2026-10-05, architecture, at §8; see the feedback file's item 3.)*
 
 ## Interface contract
@@ -293,6 +285,45 @@ type Report struct {
     Match    bool
 }
 ```
+
+### Marking a Character in transit (AC-17)
+
+```go
+// CONTRACT SKETCH — not an implementation
+package roster
+
+// MarkTransit marks one Character body a crash left present or in transit, ordered against
+// SelectCharacter. The tick loop owns the schedule, the due order and the sim.handoff_retry_batch
+// budget; the Roster owns the ordering. The produce is bounded by ingress.produce_deadline.
+func (r *Roster) MarkTransit(ctx context.Context, b sim.CharacterBody) MarkOutcome
+
+type MarkOutcome int
+
+const (
+	MarkProduced MarkOutcome = iota // the MarkLinkdead (UnbindCharacter{QUIT} at grace 0) is acked in the log
+	MarkDropped                     // an entry for the Character exists: final
+	MarkFailed                      // the produce failed or timed out: retried next period
+)
+```
+
+A Roster holds entries by Account (`byAccount`, `bySession`) under one lock, `r.mu` (`AW-SRV-014`'s
+`lock(account)` is that lock), and `Select` produces its `BindCharacter` after releasing it. Checking a flag
+and producing afterwards therefore leaves a window, so the order is built in:
+1. The Roster keeps a set of marking entries by Character ID under `r.mu`, apart from `byAccount`: an orphan
+   has no Account, so it can't be keyed there.
+2. An attempt takes one `r.mu` critical section: if any `byAccount` entry has that `character`, live,
+   linkdead (it stays in `byAccount`) or releasing, or a marking entry exists, the outcome is `MarkDropped`;
+   otherwise it inserts a marking entry. It unlocks, produces, then locks, removes the entry and closes its
+   channel, whatever the produce returned. `MarkDropped` is final: that Session's teardown owns the body.
+3. `SelectCharacter` checks the set, by the requested Character ID, inside the critical section that
+   registers its entry. On a hit it releases `r.mu`, waits on the entry's channel or `ctx.Done()` (answered
+   `already_live` on the latter, as its wait on a releasing teardown is), and re-checks. So **a mark in flight
+   is in the log before any Bind the Roster produces after it.** A `Select` that registered first makes the
+   attempt `MarkDropped`.
+4. After the mark, a Bind applies to the linkdead body (the reconnect path) at grace above `0`; at grace `0`
+   the body is gone and the Bind spawns it fresh.
+5. A `Select` whose own produce failed leaves its body present and unmarked until the next select, as AC-11's
+   failed-produce path does today; this story doesn't change that.
 
 ### Sequence
 
@@ -602,7 +633,10 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   `TestRecoveryWithAHandoffInFlight` with a Character in the `Transit` record, killed and recovered: its
   body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`). Also: a Character that lands between two attempts and is rebound by a `Select` racing
   the attempt is never marked, and at grace `0` never removed, with the log order mark-before-Bind or no
-  mark, under `-race` (a Roster test, with a Bind produced before the check and a Bind after the registration);
+  mark, under `-race` (a Roster test, with a Bind produced before the check and a Bind after the registration); `MarkTransit` is
+  `MarkDropped` on a live, a linkdead and a releasing entry for the Character; a `Select` blocks until the fake
+  `Log.Produce` of the mark returns and its Bind is produced second; a failed or timed-out mark produce clears
+  the marking entry, the waiting `Select` proceeds, and the failed attempt is retried next period;
   N Characters left in transit produce at most `sim.handoff_retry_batch` marks per tick, apart from `Arrive`
   retries; and with no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`,
   and `snapshot list` shows no rounds (`server/store`).
