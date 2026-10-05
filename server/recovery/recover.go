@@ -73,6 +73,10 @@ type Options struct {
 	// After is called with each replayed tick once its hash is verified: how
 	// the content source learns the swaps recovery applied (AW-SRV-012).
 	After func(sim.StepResult) error
+	// OnEngine is called with the Engine as soon as it exists, restored or
+	// fresh, before replay applies anything to it: what the replay's
+	// per-tick hook reads the content in effect from.
+	OnEngine func(*sim.Engine)
 	// OnRestored is called with the content a restored round had in effect.
 	OnRestored func([]sim.SwapApplied)
 
@@ -212,6 +216,9 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 			o.Metrics.SetHashMatch(false)
 			return fail(err)
 		}
+		if o.OnEngine != nil {
+			o.OnEngine(eng)
+		}
 		if o.OnRestored != nil && len(state.Content) > 0 {
 			restored := make([]sim.SwapApplied, 0, len(state.Content))
 			for p, v := range state.Content {
@@ -238,6 +245,9 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 			topo = sim.Topology{World: sim.EmptyWorld()}
 		}
 		eng = sim.NewEngine(topo.World, topo.Templates, cfg)
+		if o.OnEngine != nil {
+			o.OnEngine(eng)
+		}
 		begin = map[int32]int64{}
 		for p := range eng.State().Offsets {
 			begin[p] = 0
@@ -268,7 +278,7 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 		var cd *sim.ContentDigestError
 		switch {
 		case errors.As(err, &hm):
-			err = &HashMismatchError{Tick: hm.Tick, Expected: hm.Recorded, Actual: hm.Replayed, Round: rep.Round.Tick}
+			err = &HashMismatchError{Tick: hm.Tick, Expected: hm.Recorded, Actual: hm.Replayed, Round: rep.Round.Tick, cause: hm}
 			rep.MismatchTick, rep.Expected, rep.Actual = hm.Tick, hm.Recorded, hm.Replayed
 			o.Metrics.SetHashMatch(false)
 			o.Log.ErrorContext(ctx, "recovery state hash mismatch", "tick", uint64(hm.Tick),

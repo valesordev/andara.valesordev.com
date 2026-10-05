@@ -64,14 +64,22 @@ type HashMismatchError struct {
 	Expected [32]byte // the Tick Boundary Record's
 	Actual   [32]byte // the replayed World's
 	Round    sim.Tick
+
+	cause *sim.HashMismatchError
 }
 
 func (e *HashMismatchError) Error() string {
 	return fmt.Sprintf("state hash mismatch at tick %d: recorded %x, replayed %x (replayed from the round at tick %d)", e.Tick, e.Expected, e.Actual, e.Round)
 }
 
-// Unwrap makes errors.Is(err, sim.ErrHashMismatch) hold.
-func (e *HashMismatchError) Unwrap() error { return sim.ErrHashMismatch }
+// Unwrap makes errors.Is(err, sim.ErrHashMismatch) hold, and keeps the Engine's
+// own error reachable for a caller that reads it.
+func (e *HashMismatchError) Unwrap() []error {
+	if e.cause != nil {
+		return []error{e.cause}
+	}
+	return []error{sim.ErrHashMismatch}
+}
 
 // Failure is a recovery that failed: the error, the exit code it maps to, the
 // failure reason, and, for an exit-6 restore, its reason. It is what Recover

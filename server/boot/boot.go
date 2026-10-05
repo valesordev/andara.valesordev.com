@@ -23,6 +23,7 @@ import (
 	"github.com/valesordev/andara/server/events"
 	"github.com/valesordev/andara/server/ingress"
 	"github.com/valesordev/andara/server/roster"
+	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/telemetry"
 	"github.com/valesordev/andara/server/tickloop"
@@ -156,6 +157,8 @@ type Runtime struct {
 	// replay, when set, is the log recovery reads instead of Kafka's: a test
 	// drives StartTickLoop's recovery with it.
 	replay replayLog
+	// recMetrics is the recovery instrument set, registered on first use.
+	recMetrics *recovery.Metrics
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table
