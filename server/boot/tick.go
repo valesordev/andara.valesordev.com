@@ -77,30 +77,30 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		}
 		source, publisher = ms, &tickloop.MemoryPublisher{OnProduce: func(c *logv1.LoggedCommand) { ms.Push(c) }}
 	case "kafka":
-			// Recovery (AW-SRV-007): the newest complete snapshot round, the log's
-			// boundaries after it replayed to the head, and the State Hash
-			// proven at every one, so the World that starts ticking is the one
-			// that was running. A refusal is a *recovery.Failure and its exit
-			// code is main's.
-			inEffect := false
-			ropts, release, err := rt.RecoverOptions(ctx, engineCfg, &inEffect)
-			if err != nil {
-				return nil, err
+		// Recovery (AW-SRV-007): the newest complete snapshot round, the log's
+		// boundaries after it replayed to the head, and the State Hash
+		// proven at every one, so the World that starts ticking is the one
+		// that was running. A refusal is a *recovery.Failure and its exit
+		// code is main's.
+		inEffect := false
+		ropts, release, err := rt.RecoverOptions(ctx, engineCfg, &inEffect)
+		if err != nil {
+			return nil, err
+		}
+		rec, rep, err := recovery.Recover(ctx, ropts)
+		release()
+		if err != nil {
+			if werr := RecoveryError(ctx, err, rt.Engine, rt.recoveryLog()); errors.Is(werr, ErrPreRuleLog) {
+				err = &recovery.Failure{Err: werr, Exit: recovery.ExitConfig, Reason: recovery.ReasonStore}
 			}
-			rec, rep, err := recovery.Recover(ctx, ropts)
-			release()
-			if err != nil {
-				if werr := RecoveryError(ctx, err, rt.Engine, rt.recoveryLog()); errors.Is(werr, ErrPreRuleLog) {
-					err = &recovery.Failure{Err: werr, Exit: recovery.ExitConfig, Reason: recovery.ReasonStore}
-				}
-				return nil, fmt.Errorf("recovery: %w", err)
-			}
-			engine = rec
-			rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
-				slog.Uint64("ticks_replayed", rep.Replayed),
-				slog.Uint64("round_tick", uint64(rep.Round.Tick)),
-				slog.Uint64("tick", uint64(engine.Tick())),
-			)
+			return nil, fmt.Errorf("recovery: %w", err)
+		}
+		engine = rec
+		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
+			slog.Uint64("ticks_replayed", rep.Replayed),
+			slog.Uint64("round_tick", uint64(rep.Round.Tick)),
+			slog.Uint64("tick", uint64(engine.Tick())),
+		)
 		source, err = tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{
 			Brokers:  cfg.KafkaBrokers,
 			Group:    "andara-sim-" + cfg.Environment,

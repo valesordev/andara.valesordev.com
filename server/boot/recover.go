@@ -178,3 +178,7 @@ func (rt *Runtime) HoldMismatch(ctx context.Context, ln net.Listener, linger tim
 }
 
 var _ = io.Discard
+
+// EngineConfig is the Engine's configuration for this process: what recovery
+// builds and restores with.
+func (rt *Runtime) EngineConfig() sim.Config { return engineConfig(rt.Cfg, rt.Content) }

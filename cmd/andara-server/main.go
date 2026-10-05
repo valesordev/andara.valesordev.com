@@ -31,6 +31,9 @@ func main() {
 }
 
 func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit int) {
+	if len(args) > 0 && args[0] == "recover" {
+		return runRecover(args[1:], env, stdout, stderr)
+	}
 	cfg, err := config.Parse(args, env, stderr)
 	if err != nil {
 		_, _ = io.WriteString(stderr, err.Error()+"\n")
