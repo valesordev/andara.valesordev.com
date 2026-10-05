@@ -779,7 +779,7 @@ func (l *Loop) flushRetries(ctx context.Context, tick sim.Tick) {
 	*w = retryWindow{}
 }
 
-// retryWindow is the retries since the first one not yet summarised.
+// retryWindow is the retries since the first one not yet summarized.
 type retryWindow struct {
 	start   sim.Tick
 	retries int

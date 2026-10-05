@@ -53,7 +53,7 @@ func (e *Engine) retryTicks() Tick {
 	return DefaultHandoffRetryTicks
 }
 
-// HandoffRetryWindow is the interval, in ticks, the live loop summarises
+// HandoffRetryWindow is the interval, in ticks, the live loop summarizes
 // handoff retries over: sim.handoff_retry_ticks.
 func (e *Engine) HandoffRetryWindow() Tick { return e.retryTicks() }
 

@@ -142,7 +142,7 @@ func TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges(t *testing.T) {
 // AW-SRV-028 §7, issue #409: a sustained outage writes at most one summary
 // warn per sim.handoff_retry_ticks window, aggregating that window's retries,
 // not one per tick that produced them.
-func TestHandoffLoop_RetriesAreSummarisedOncePerWindow(t *testing.T) {
+func TestHandoffLoop_RetriesAreSummarizedOncePerWindow(t *testing.T) {
 	vh := newVerbHarness(t)
 	l := vh.loop
 	ctx := context.Background()
