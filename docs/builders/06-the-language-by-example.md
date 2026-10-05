@@ -48,7 +48,9 @@ zone town "Town" {
 - `exit north -> hall`: one way, from this Room. A way back is a second Exit, in the other Room. A
   bare target is a Room in the same Zone, and `wilds.trail` is Room `trail` of Zone `wilds`, which
   must be in the same pack. [Exit targets](../specs/content-language/v1/semantics.md#exit-targets)
-  and [Directions](../specs/content-language/v1/semantics.md#directions).
+  and [Directions](../specs/content-language/v1/semantics.md#directions). There are twelve directions,
+  in lowercase, each with a reverse, which [the reference](reference.md#directions) lists. The
+  abbreviations players type (`n`, `ne`, `u`) aren't valid in content.
 
 Two warnings are worth knowing. Neither stops a pack:
 - An Exit with no Exit back is legal, and it's usually a forgotten return, so `validate` warns
@@ -72,7 +74,15 @@ zone cellars "The Cellars" {
 
 A Component is a named piece of data on a Room, a Zone, or a Template. Most of today's are markers,
 with no fields and an empty `{}`. Only the server defines Component types, so a type it doesn't know
-is an error. [Section 7](07-reference.md#component-types) lists them.
+is an error. [Section 7](reference.md#component-types) lists them, and what each means is:
+
+- `andara.core.Behavior` has a `name` field, and names the Behavior an NPC runs. It's recorded and not yet run.
+- `andara.core.Dark`: the Room is unlit.
+- `andara.core.Indoors`: enclosed, with no weather or sky.
+- `andara.core.Memory`: the Entity remembers.
+- `andara.core.NoMagic`: magic doesn't work here.
+- `andara.core.NoRecall`: recall and self-teleport don't leave from here.
+
 [Components on Rooms and Zones](../specs/content-language/v1/semantics.md#components-on-rooms-and-zones).
 
 ## Templates

@@ -4,7 +4,7 @@ title: make builder-reference and make guide-check
 epic: EPIC-06
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-CLI-009]
 blocks: []
@@ -209,9 +209,9 @@ nothing links to the generated one.
    (`docs/feedback/AW-INF-023-builders-guide.md`). Also from that ruling, for the contract review:
    `AW-INF-023`'s AC-1 and AC-2 now live here, and the code check runs both directions. Every
    `errors.md` code is in the reference, and every code in the reference is in `errors.md`.
-3. `[ASSUMPTION]` No `andara-cli` command both has subcommands and takes positional arguments. That
+3. *Resolved 2026-10-04 (architecture, §8):* No `andara-cli` command both has subcommands and takes positional arguments. That
    holds today, and AC-5's leftover-word rule depends on it.
-4. `[ASSUMPTION]` `builder-reference-check` is a separate target, as `values-schema-check` is, so that
+4. *Resolved 2026-10-04 (architecture, §8):* `builder-reference-check` is a separate target, as `values-schema-check` is, so that
    `make check` never writes the tree. `AW-INF-023` AC-2 names only the failure message, and this
    target prints exactly that.
 
@@ -295,9 +295,9 @@ and a pending flag value doesn't. A word with no flags listed is that flag's val
   `1`" holds for `scripts/builder_guide.py` and `make check` fails either way
   (`docs/feedback/AW-INF-029-…`, the same point).
 
-**Outstanding before `done`:** the interim `docs/builders/07-reference.md` is still in the guide and
+~~**Outstanding before `done`:** the interim `docs/builders/07-reference.md` is still in the guide and
 nothing links the generated `reference.md`. That's architecture's `arch/` PR (Definition of done),
-merged after this one.
+merged after this one.~~ Done in architecture's §8 close below.
 
 ## §8 instrumentation check — 2026-10-04 (SRE, `sre/aw-inf-028-verify`)
 
@@ -350,3 +350,36 @@ test only, not run live: the real CLI doesn't fail it on a healthy build.
 **Not observed:** a failing run in CI's log. No run on `main` has failed these steps, so that the
 runner keeps the stderr finding lines is inferred from it keeping the stdout summary line, not seen.
 The finding lines were read locally, above.
+
+## §8 close (architecture, 2026-10-04): `done`
+
+Every checklist item holds, run on `main` bc4badf plus this PR: **`make check` ended `check: all clean`**,
+exit 0.
+- **Acceptance criteria.** I ran them on a fresh worktree, independently of SRE's record, since SRE built this
+  story and says its own §8 check is a read of what ran.
+  - **AC-1:** `make builder-reference` prints `builder-reference: wrote docs/builders/reference.md`, and a
+    second run is byte-identical.
+  - **AC-2:** `builder-reference-check` exits clean on a current file, and after a hand-added row prints
+    `builder-reference: stale; run make builder-reference` (`make` reports `Error 1`, and the script's exit `1` is
+    the AC's, as the record says).
+  - **AC-5, 7, 8:** a code block with `andara-cli content bogus`, a link to a missing file and a link to a
+    missing anchor, added together to a guide page, gave all three findings in one run
+    (`no command "andara-cli content bogus"`, `broken link no-such-file.md`, `broken link
+    reference.md#no-such-anchor`) and then, reverted, `guide-check: 28 commands, 37 codes, 110 links ok`.
+  - **AC-3, 4, 6, 9:** the 84 cases in `scripts/tests/test_builder_guide.py`, run by `make scripts-test` in
+    `make check`; AC-9's real-guide run is the line above.
+  - **AC-10:** `make help` lists the three targets, and the first and last help lines are the contract's.
+- **Tests in CI.** `make builder-reference-check` and `make guide-check` are in `CHECK_TARGETS`, and SRE's
+  record shows both steps in CI's log on `main`.
+- **Instrumentation** is SRE's, recorded above: none, with the exit codes and `builder-reference:` and
+  `guide-check:` lines as the signal, which CI's log keeps.
+- **The carried architecture item is done.** This PR deletes the interim `docs/builders/07-reference.md`,
+  points `README.md`'s section 7 and the three links into it (sections 1, 6 and 9) at `reference.md`, and
+  `guide-check` passes on the result. The interim page held three things the generated one doesn't: the
+  Components' meanings and a note that content takes no direction abbreviations, which moved into section
+  6, and a pointer to the diagnostic codes, which the generated Diagnostics table now carries row by row.
+- **Config, migration, glossary.** No config key and no migration. The glossary's one reference to the
+  interim page now names `reference.md`. The two `[ASSUMPTION]`s are marked resolved above: 3 holds on the
+  real guide today (`guide-check` passes), and 4 is the separate `builder-reference-check` target in the
+  Makefile.
+

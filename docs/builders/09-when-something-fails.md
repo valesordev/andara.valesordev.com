@@ -29,7 +29,7 @@ with each finding's own code, and the summary's code on stderr ([section 5](05-t
 | `duplicate_direction` | a Room has two Exits the same way | one Exit per Direction per Room |
 | `fallback_missing` | a Zone has no `fallback`, or it names a Room that isn't in the Zone | add `fallback <room>` |
 | `pack_mismatch` | the `pack` line names a different pack from the one being compiled | in the Content Repository, the `pack` line names the directory it's in |
-| `unknown_component_type` | a Component the server doesn't define | [the list](07-reference.md#component-types) |
+| `unknown_component_type` | a Component the server doesn't define | [the list](reference.md#component-types) |
 | `missing_reverse_exit` | warning: an Exit has no Exit back | add the return Exit, or leave it if one-way is what you meant |
 | `orphan_room` | warning: nothing in the Zone leads into the Room | add an Exit in, or ignore it if you'll `goto` there |
 | `would_reformat` | `fmt --check` found files not in canonical layout | `andara-cli content fmt --path <pack>` |
