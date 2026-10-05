@@ -166,7 +166,7 @@ func (s *sliceBoundaries) Next(_ context.Context, max int, _ time.Duration) ([]t
 // HoldMismatch serves the operator surface on ln for linger after a boot that
 // ended in a hash or restore mismatch, so that /metrics is scraped with
 // andara_recovery_state_hash_match at 0 (AC-14): /metrics and /livez answer
-// 200, /readyz and /startedz 503, and grpc.listen is never bound. A cancelled
+// 200, /readyz and /startedz 503, and grpc.listen is never bound. A canceled
 // ctx (SIGTERM, SIGINT) ends it at once. wait is the clock, time.After in a
 // process and a stepped channel in a test.
 func (rt *Runtime) HoldMismatch(ctx context.Context, ln net.Listener, linger time.Duration, wait func(time.Duration) <-chan time.Time) {
