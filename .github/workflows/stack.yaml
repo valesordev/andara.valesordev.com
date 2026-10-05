@@ -36,11 +36,14 @@ on:
       # What the stack mounts, embeds or reads from outside the Go packages above: compose
       # mounts testdata/content/valid and the recovery scripts hard-code its Rooms; content/core
       # is go:embed'd into the server binary; schemas.py reads the .proto files; `make bootstrap`
-      # is the job's first step.
+      # is the job's first step and installs scripts/requirements.txt; .dockerignore shapes the
+      # image's build context.
       - "testdata/**"
       - "content/**"
       - "docs/specs/protocol/**"
       - "scripts/bootstrap.sh"
+      - "scripts/requirements.txt"
+      - ".dockerignore"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
       # The server is part of the stack since AW-SRV-005, and the account store talks to
@@ -73,11 +76,14 @@ on:
       # What the stack mounts, embeds or reads from outside the Go packages above: compose
       # mounts testdata/content/valid and the recovery scripts hard-code its Rooms; content/core
       # is go:embed'd into the server binary; schemas.py reads the .proto files; `make bootstrap`
-      # is the job's first step.
+      # is the job's first step and installs scripts/requirements.txt; .dockerignore shapes the
+      # image's build context.
       - "testdata/**"
       - "content/**"
       - "docs/specs/protocol/**"
       - "scripts/bootstrap.sh"
+      - "scripts/requirements.txt"
+      - ".dockerignore"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
       - "server/**"
