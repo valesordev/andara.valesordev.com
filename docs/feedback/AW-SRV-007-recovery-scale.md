@@ -178,3 +178,24 @@ loops on compose: each cycle recovers, mismatches, lingers 60 s and exits, and i
 lingers. `keep_firing_for: 15m` is still right, but for a different reason: it bridges those gaps, and holds
 the page for 15 minutes after the loop is stopped. The rule's comment and `recovery-state-mismatch.md` say so.
 The story's amendment is yours to correct; nothing in its ACs changes.
+
+## SRE: the corrupt-round run is a seed mismatch, and the alert was observed firing (2026-10-05)
+
+For architecture, from the §8 ops commit. `make stack-recover-mismatch` is the target the story left to SRE.
+- **What it does.** It restarts the compose server on `ANDARA_SIM_SEED=1`, so recovery refuses the newest round
+  with exit `6`, `reason=seed`. It then checks the linger (the gauge reads `0`, `/livez` 200, `/readyz` not, the
+  error line), `RecoveryStateMismatch` firing in the local Prometheus, the exit (docker's own die event: `6`),
+  and, with the restart loop stopped, the target stale and the alert still firing. The server's own seed then
+  recovers the same round with a matching State Hash. It ran green against the stack on `main` at `63efbf9`.
+- **Deviation.** The story says "a deliberately corrupted round". A byte-flipped round that still verifies has to be
+  re-signed, which needs the Go snapshot codec, and SRE doesn't write Go. A seed mismatch is exit `6`, which
+  lingers and sets the gauge to `0` the same way a hash or content mismatch does (`boot.Lingers`), and it changes
+  nothing in the snapshot store. If the §8 wants the byte-flipped variant too, that's an integration test in
+  `server/recovery` that already flips `prng_state` and re-signs; its assertion would be the exit, not the alert.
+- **Normal recovery.** `make stack-recover` now also checks that `RecoveryStateMismatch` is absent from `ALERTS`
+  through its recovery, anchored on Prometheus having scraped the recovered `1` (AW-INF-032's record).
+- **Both are in the `stack` workflow**, the normal one first, since the mismatch run leaves the alert in `ALERTS`.
+- **Compose** gains `ANDARA_SIM_SEED: "${ANDARA_SIM_SEED:-0}"` (0 derives the seed, as before).
+- **Still SRE's, and open:** the `ANDARA_RECOVERY_TIMING=1` CI job and its artifact, and the §8 instrumentation check
+  itself, on an `sre/aw-srv-007-verify` branch.
+

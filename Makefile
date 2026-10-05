@@ -57,7 +57,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
-        values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover \
+        values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
@@ -366,6 +366,10 @@ stack-linkdead: build
 STACK_RECOVER_RTO ?= 120
 stack-recover: build
 	@STACK_RECOVER_RTO=$(STACK_RECOVER_RTO) $(SCRIPTS)/stack_recover.sh
+
+## stack-recover-mismatch: RecoveryStateMismatch observed firing — restart the server on another sim.seed so recovery refuses its round (exit 6), then watch the linger, the alert and the exit — needs `make up` and `make build` (about 2 minutes)
+stack-recover-mismatch: build
+	@$(SCRIPTS)/stack_recover_mismatch.sh
 
 ## stack-projector-check: AW-SRV-043 §7 — `andara-projector state --rebuild` on the host against the stack; its restore metric, log line and spans are observed — needs `make up` and `make build`
 stack-projector-check: build
