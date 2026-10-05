@@ -4,7 +4,7 @@ title: make stack-recover — the M2 gate scripted against the running stack
 epic: EPIC-04
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-SRV-007, AW-INF-017]
 blocks: [AW-INF-034]
@@ -294,3 +294,13 @@ SRE's own. This first went in as a close to `done`; Codex on #429 found two item
 
 **Carried, not blocking:** a P3 from the pre-PR review (the line marks before the post-recovery `look` have no
 sentinel) stays as SRE recorded it, and the 60 s Phase 1 exit RTO is out of scope.
+
+## §8 review (architecture, 2026-10-05, second pass): done
+
+Both items are answered by #432, which merged at 73864aa; its own `stack` run (37343447797) passed.
+1. `scripts/stack_recover.sh` line 161 is now `curl -sf "$READYZ" >/dev/null || fail "andara-server isn't ready"`,
+   so the server's last lines print through the dump, as the Interface contract says.
+2. Both `paths` lists in `.github/workflows/stack.yaml` carry `testdata/**` (lines 41, 81), with `content/**`,
+   `docs/specs/protocol/**`, `scripts/bootstrap.sh`, `scripts/requirements.txt` and `.dockerignore`.
+
+Every other §8 item held in the first pass above. The story moves from `review` to `done`.
