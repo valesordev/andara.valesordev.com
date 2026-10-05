@@ -800,8 +800,9 @@ inherited line allows; implementation's tests read it there.
 - **Deviations from the required-fields list** (`ts`, `level`, `msg`, `service`, `env`, `tick`, `partition`,
   `trace_id`): `partition` is on none of them (a recovery spans every Partition, and `offsets` carries them);
   `recovered from the log` has no `trace_id`. For architecture to amend the list or implementation to add them.
+  *(`partition` is ruled in the feedback file; `trace_id` is now on `recovered from the log`, observed in the AC-16 section below.)*
 - **A uint64 above 2^63 reaches Loki rounded** (a seed reads `16406829232824263000` in Loki and
-  `16406829232824261652` on stderr): issue #423. The runbook now says to read `recorded_seed` from the pod's own log.
+  `16406829232824261652` on stderr): issue #423. *(Fixed and observed in the AC-16 section below; the runbook no longer says to read the pod log.)*
 
 ### Traces, resolved in Tempo by the printed `trace_id` (`208bce564d3327bc4ea4a4a00bd1e40e`)
 
@@ -904,3 +905,20 @@ Branch `impl/aw-srv-007-ac16`.
 `ListSnapshotRounds` now builds the topology per distinct recorded content on the serving process, and the projector still
 judges a round on the loaded content's Zones (it passes no `ZonesAt`). `recovery.load_snapshot` spans also appear for the objects
 of newer rounds the boot scan skims before the winner (they carry `round_tick`).
+
+### AC-16 pieces observed on the running stack — 2026-10-05 (SRE, `sre/aw-srv-007-ac16-verify`)
+
+`main` at 73864aa (AC-16 and its review fixes in), `make up`, then `make stack-recover` and `make stack-recover-mismatch`,
+both passing (kill to ready 2.2 s, `process-start-to-ready` 0.95 s, 38 replayed ticks).
+
+| Piece | Observed |
+|-------|----------|
+| `recovery.load_snapshot` attributes | Tempo, trace `09480ab2f11fa55735277f5083987146`: four spans (`docks`, `purgatory`, `town`, `wilds`), each with `zone_id`, `key`, `round_tick` (3407129) and `bytes` (423, 927, 5078, 423) |
+| the rest of the `recovery.run` tree | `recovery.seek` (`offset`), `restore.verify` (`round_tick`, `outcome=ok`), `recovery.replay` (`ticks` 38, `records` 2), `recovery.verify`, `recovery.run` |
+| `trace_id` on the recovery lines | `recovery complete` carries the `recovery.run` trace (the one the script prints and Tempo resolves); `recovered from the log` carries `trace_id` as well (the restart that ends `make stack-recover-mismatch`, `ticks_replayed` 358) |
+| seeds as decimal strings (#423) | `tick loop configured` logs `"seed":"16406829232824261652"`, and Loki's `recovery restore mismatch` carries `recorded_seed` `16406829232824261652` and `configured_seed` `1` as exact strings. The value is above 2^63 and is no longer rounded |
+
+**Not observed:** `andara_snapshot_failures_total{reason="encode"}` (needs a codec failure; the integration test above
+covers the metric object), and AC-16's added-Zone case on a process (an in-process test, as implementation records).
+With these in, nothing of the AC-16 pieces or #423 is outstanding for SRE (`partition` is ruled in the feedback file). The runbook's seed row no longer
+sends the operator to the pod log.
