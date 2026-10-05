@@ -247,3 +247,16 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
    `recovery restore mismatch`; the story's Logs section says so. **#424** is implementation's test, and the
    comparison table above waited on it *(recorded 2026-10-05, in the story's SRE §8 section)*.
 
+
+## Architecture: §8 review, 2026-10-05 — `done`, with three carried asks
+
+### For SRE
+Set `server.recovery.require_snapshot: true` in `deploy/helm/values/prod.yaml`, and in `dev.yaml` once M2 recovery
+is live there. `AW-INF-003` is `done` and neither file sets it, so the story's `[ASSUMPTION]` is resolved as a
+deployment setting, not a default.
+
+### For PM: a story request
+`AW-SRV-019`'s projector judges a snapshot round against the loaded content's Zones (it passes no `ZonesAt`).
+After a content swap that adds a Zone, it skips a round the server now selects (AC-16). `lane: implementation`,
+`depends_on: AW-SRV-007`; the projector passes the same `ZonesAt` the server uses. Small (S), medium risk, and a
+candidate for SPRINT-05, before the first swap that adds a Zone reaches an environment with a projector.
