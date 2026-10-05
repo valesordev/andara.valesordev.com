@@ -432,10 +432,10 @@ rather than a quietly wrong World.
 - Required fields: `ts`, `level`, `msg`, `service`, `env`, `tick`, `trace_id`. *(Amended 2026-10-05, at §8,
   from SRE's check: `partition` isn't required on recovery lines, since a recovery spans every Partition and
   `offsets` carries them. `trace_id` is required on every recovery line, including `recovered from the log`, the
-  cold-start summary, which has none today and which is the only completion line when no round exists.)*
+  summary `server/boot` writes after every recovery, which an operator reads first and which has none today.)*
   A 64-bit seed or identifier in a log attribute (`recorded_seed`, `configured_seed`, `seed`) is logged as a
-  decimal string, so Loki reads what stderr prints: the OTLP bridge rounds a `uint64` above 2^53 (#423,
-  ruled 2026-10-05).
+  decimal string, so Loki reads what stderr prints: the OTLP bridge turns a `uint64` above 2^63 into a
+  float64 (#423, ruled 2026-10-05).
 
 ### Traces
 - `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `key`; amended 2026-10-05: the object's size is

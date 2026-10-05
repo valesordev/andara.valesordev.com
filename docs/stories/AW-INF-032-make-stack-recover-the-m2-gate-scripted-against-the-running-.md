@@ -62,8 +62,8 @@ cite it.
 1. **Given** the stack up **when** `make stack-recover` runs **then** the script records the tick
    of the newest round whose `complete` column is `true` in `andara-cli snapshot list`'s table
    (`AW-SRV-007`'s CLI contract), or none. A and B then both enter play with `play --character`. A
-   moves one Exit away from the spawn Room (Room 1), and B stays in the spawn Room. A's transcript
-   shows Room 1's title.
+   moves one Exit away from the spawn Room (Room 1), and B walks to Room 2, through Room 1, and stays
+   there. A's transcript shows Room 1's title. *(Amended 2026-10-05: B used to stay in the spawn Room.)*
 2. **Given** A in Room 1 **when** the script polls `andara-cli snapshot list` to a deadline of
    `snapshot.interval` + 30 s, per `live-assertions.md` **then** a round complete with a tick
    strictly greater than AC-1's recorded tick is listed, and the script records it as `R`. If none
@@ -91,7 +91,9 @@ cite it.
    replayed. B waits in Room 2 with A, so each is the other's witness to a despawn line, and B's `look` shows
    B there with A. Neither
    transcript has a `leaves the world` or `fades from the world` line for either Character between
-   the kill and the reconnect. The bodies rebound; they didn't despawn.
+   the kill and the reconnect. The bodies rebound; they didn't despawn. The script also asserts it on the server: `andara_events_emitted_total{type="character_despawned"}`
+   is `0` since the recovery, and `andara_linkdead_outcomes_total{outcome="reconnected"}` is at least `2`, one per
+   player, because the transcripts can't see a despawn emitted before a client resubscribes.
 6. **Given** both back **when** A and B quit cleanly **then** `character list` shows each `dormant`
    in Room 2 (the roster writes a Room at the unbind, so before the quit it still shows A in Room 1).
 7. **Given** any assertion failing **when** the script exits **then** it exits 1 with
@@ -211,11 +213,11 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
   also reads A arrive from the south.
 - **AC-5's `already_live` check.** Both clients run with `--show-protocol`, and the assertion is that neither
   `reason=already_live` nor the waiting line appears after the kill, as PM proposed for `AW-INF-034`.
-  Architecture hasn't amended AC-5 yet.
+  Amended 2026-10-05.
 - **AC-6's Rooms.** `character list` records a body's Room at its unbind, so a list taken before the quit still
   shows the Plaza for A. The script asserts the Room the post-recovery looks read: `dormant town/hall` for both.
-- **The trace id** is printed from the `recovery complete` line, which carries `trace_id`. The contract says
-  "ready line".
+- **The trace id** is printed from the `recovery complete` line, which carries `trace_id`. The contract said
+  "ready line"; amended 2026-10-05.
 - **AC-5's despawn check also reads the server.** The transcripts can't see a despawn emitted before a client
   resubscribes (the hub replays nothing to a new subscription), so before the quits the script asserts
   `andara_events_emitted_total{type="character_despawned"}` is 0 since the recovery, and

@@ -214,8 +214,9 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
 1. **The deviations from §7.**
    - **`partition` on recovery lines:** not required. A recovery spans every Partition and `offsets` carries
      them. The required-fields list drops it.
-   - **`trace_id` on `recovered from the log`:** required, and implementation adds it. That line is the only
-     completion line when no round exists, so an operator reading it must be able to reach the trace.
+   - **`trace_id` on `recovered from the log`:** required, and implementation adds it. It is the summary
+     `server/boot` writes after every recovery, round or no round, the line an operator reads first, and it
+     should reach the trace as `recovery complete` does.
    - **`recovery.load_snapshot` carries `key`, not `bytes`:** the contract changes to `key`. The size of a
      round's objects is `andara_snapshot_bytes{zone}`, and the key names the object a failed load is about.
    - **"`andara-cli` commands only":** reworded. The runbook uses `andara-cli snapshot list --local` and
@@ -237,7 +238,7 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
 4. **`AW-INF-032`'s AC-5 and AC-6:** amended to what the script does. B waits in Room 2 with A; the
    `already_live` check is `--show-protocol` on both clients (neither `reason=already_live` nor the waiting
    line); `character list` reads `dormant` in Room 2; the trace id comes from `recovery complete`.
-5. **#423** (a `uint64` above 2^53 rounded in Loki): agreed with the fix SRE proposed. Seeds and 64-bit
+5. **#423** (a `uint64` above 2^63 reaches Loki as a float64): agreed with the fix SRE proposed. Seeds and 64-bit
    identifiers in log attributes are decimal strings, in `tick loop configured` and
    `recovery restore mismatch`; the story's Logs section says so. **#424** is implementation's test, and the
    comparison table above waits on it.
