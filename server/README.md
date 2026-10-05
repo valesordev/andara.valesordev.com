@@ -303,8 +303,8 @@ live tick. Nothing is produced for a faulted Zone or a frozen Partition.
 
 `andara_handoffs_in_transit` sustained above 0 means the broker or the target Partition is stuck.
 `andara_handoff_placed_entries` grows with the Entities that cross Zones. Logs: `handoffs retried: an
-Arrive was not acknowledged` at `warn` once per tick that produced retries, with `count` and
-`oldest_attempt`; `handoff retried` at `debug` per retry with `entity_id`, `from_zone`, `to_zone`,
+Arrive was not acknowledged` at `warn`, at most once per `sim.handoff_retry_ticks` window, with
+`retries` (the window's count), `oldest_attempt`, `tick`, `in_transit` and `trace_id`; `handoff retried` at `debug` per retry with `entity_id`, `from_zone`, `to_zone`,
 `seq`, `attempt`; `error` for a refused `entity_present`, `invalid_arrival` or `id_reused`. A retry
 starts a new trace.
 

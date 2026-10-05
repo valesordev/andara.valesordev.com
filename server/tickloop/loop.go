@@ -66,11 +66,12 @@ type Options struct {
 
 // Loop runs the tick loop.
 type Loop struct {
-	opts    Options
-	log     *slog.Logger
-	tracer  trace.Tracer
-	metrics *Metrics
-	clock   Clock
+	opts     Options
+	log      *slog.Logger
+	tracer   trace.Tracer
+	metrics  *Metrics
+	clock    Clock
+	retryWin retryWindow // the open handoff-retry summary window
 
 	interval time.Duration
 
@@ -362,6 +363,7 @@ func (l *Loop) tick(ctx context.Context, tick sim.Tick, lag time.Duration) error
 	// produces, counts and logs no retry. What it returns goes out with the
 	// tick's own cross-Zone Commands.
 	outbound := res.Outbound
+	l.flushRetries(tctx, tick)
 	retries := l.opts.Engine.DueHandoffs(tick)
 	if len(retries) > 0 {
 		outbound = append(append([]*logv1.LoggedCommand(nil), res.Outbound...), retryCommands(retries)...)
@@ -744,20 +746,44 @@ func retryCommands(rs []sim.HandoffRetry) []*logv1.LoggedCommand {
 	return out
 }
 
-// noteRetries counts a tick's retries and logs them: one warn for the tick
-// with the count and the oldest attempt, and a debug line per retry, so a
-// restart with many stuck handoffs doesn't write a line each at warn.
+// noteRetries counts a tick's retries, logs a debug line per retry, and adds
+// them to the open summary window. The summary warn is flushRetries's: at most
+// one per sim.handoff_retry_ticks window, so a sustained outage doesn't write
+// a line on most ticks.
 func (l *Loop) noteRetries(ctx context.Context, tick sim.Tick, rs []sim.HandoffRetry) {
 	l.metrics.HandoffRetries.Add(float64(len(rs)))
-	oldest := 0
+	if l.retryWin.retries == 0 {
+		l.retryWin.start = tick
+	}
 	for _, r := range rs {
-		oldest = max(oldest, r.Attempt)
+		l.retryWin.oldest = max(l.retryWin.oldest, r.Attempt)
 		l.log.LogAttrs(ctx, slog.LevelDebug, "handoff retried",
 			slog.String("entity_id", string(r.Entity)), slog.String("from_zone", string(r.From)), slog.String("to_zone", string(r.To)),
 			slog.Uint64("seq", r.Seq), slog.Int("attempt", r.Attempt), slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)))
 	}
+	l.retryWin.retries += len(rs)
+}
+
+// flushRetries, before a tick's own retries are noted, writes the summary warn once the open window is a whole
+// sim.handoff_retry_ticks old, with the window's retries, its oldest attempt
+// and the Entities in transit now, and opens the next. It runs every tick, so
+// a window whose retries stopped is still reported within one interval.
+func (l *Loop) flushRetries(ctx context.Context, tick sim.Tick) {
+	w := &l.retryWin
+	if w.retries == 0 || tick < w.start+l.opts.Engine.HandoffRetryWindow() {
+		return
+	}
 	l.log.LogAttrs(ctx, slog.LevelWarn, "handoffs retried: an Arrive was not acknowledged",
-		slog.Int("count", len(rs)), slog.Int("oldest_attempt", oldest), slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)))
+		slog.Int("retries", w.retries), slog.Int("oldest_attempt", w.oldest), slog.Uint64("tick", uint64(tick)),
+		slog.Int("in_transit", l.opts.Engine.HandoffsInTransit()), slog.String("trace_id", traceID(ctx)))
+	*w = retryWindow{}
+}
+
+// retryWindow is the retries since the first one not yet summarised.
+type retryWindow struct {
+	start   sim.Tick
+	retries int
+	oldest  int
 }
 
 // observeZones flushes the per-Zone accumulators into the histogram and a

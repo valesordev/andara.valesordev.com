@@ -5,6 +5,7 @@ package tickloop
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -135,6 +136,61 @@ func TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges(t *testing.T) {
 	}
 	if !strings.Contains(logs, `"msg":"handoff retried"`) || !strings.Contains(logs, `"entity_id":"alice"`) {
 		t.Errorf("no debug line per retry naming the Entity")
+	}
+}
+
+// AW-SRV-028 §7, issue #409: a sustained outage writes at most one summary
+// warn per sim.handoff_retry_ticks window, aggregating that window's retries,
+// not one per tick that produced them.
+func TestHandoffLoop_RetriesAreSummarisedOncePerWindow(t *testing.T) {
+	vh := newVerbHarness(t)
+	l := vh.loop
+	ctx := context.Background()
+	win := vh.engine.HandoffRetryWindow()
+	retry := func(attempt int) sim.HandoffRetry {
+		return sim.HandoffRetry{Entity: "alice", From: "town", To: "wilds", Seq: 1, Attempt: attempt}
+	}
+	// Retries on most ticks of three windows: 2 a tick on the first three
+	// ticks of each window, with the oldest attempt rising.
+	const base = sim.Tick(1000)
+	for w := sim.Tick(0); w < 3; w++ {
+		start := base + w*win
+		for i := sim.Tick(0); i < win; i++ {
+			tick := start + i
+			l.flushRetries(ctx, tick)
+			if i < 3 {
+				l.noteRetries(ctx, tick, []sim.HandoffRetry{retry(int(w) + 2), retry(1)})
+			}
+		}
+	}
+	l.flushRetries(ctx, base+3*win)
+
+	var warns []map[string]any
+	for _, line := range strings.Split(vh.logs.String(), "\n") {
+		var m map[string]any
+		if json.Unmarshal([]byte(line), &m) == nil && m["level"] == "WARN" && strings.HasPrefix(fmt.Sprint(m["msg"]), "handoffs retried") {
+			warns = append(warns, m)
+		}
+	}
+	if len(warns) != 3 {
+		t.Fatalf("%d summary warns over 3 windows, want 3:\n%s", len(warns), vh.logs.String())
+	}
+	for i, m := range warns {
+		if m["retries"] != float64(6) || m["oldest_attempt"] != float64(i+2) {
+			t.Errorf("window %d: retries %v oldest_attempt %v, want 6 and %d", i, m["retries"], m["oldest_attempt"], i+2)
+		}
+		if _, ok := m["in_transit"]; !ok {
+			t.Errorf("window %d: no in_transit field: %v", i, m)
+		}
+		if _, ok := m["count"]; ok {
+			t.Errorf("window %d still carries count: %v", i, m)
+		}
+	}
+	if got := counter(l.metrics.HandoffRetries); got != 18 {
+		t.Errorf("andara_handoff_retries_total = %v, want every retry counted (18)", got)
+	}
+	if n := strings.Count(vh.logs.String(), `"msg":"handoff retried"`); n != 18 {
+		t.Errorf("%d debug lines, want one per retry (18)", n)
 	}
 }
 
