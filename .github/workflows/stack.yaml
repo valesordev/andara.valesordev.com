@@ -33,6 +33,14 @@ on:
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
       - "scripts/schemas.py"
+      # What the stack mounts, embeds or reads from outside the Go packages above: compose
+      # mounts testdata/content/valid and the recovery scripts hard-code its Rooms; content/core
+      # is go:embed'd into the server binary; schemas.py reads the .proto files; `make bootstrap`
+      # is the job's first step.
+      - "testdata/**"
+      - "content/**"
+      - "docs/specs/protocol/**"
+      - "scripts/bootstrap.sh"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
       # The server is part of the stack since AW-SRV-005, and the account store talks to
@@ -62,6 +70,14 @@ on:
       - "scripts/auth_keys.sh"
       - "scripts/topics.py"
       - "scripts/schemas.py"
+      # What the stack mounts, embeds or reads from outside the Go packages above: compose
+      # mounts testdata/content/valid and the recovery scripts hard-code its Rooms; content/core
+      # is go:embed'd into the server binary; schemas.py reads the .proto files; `make bootstrap`
+      # is the job's first step.
+      - "testdata/**"
+      - "content/**"
+      - "docs/specs/protocol/**"
+      - "scripts/bootstrap.sh"
       - "deploy/kafka/**"
       - ".github/workflows/stack.yaml"
       - "server/**"
