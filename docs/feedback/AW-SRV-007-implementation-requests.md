@@ -151,3 +151,14 @@ Applied: the story's amendment no longer says compose has no restart policy. It 
 loops under `restart: on-failure` and that `keep_firing_for` bridges the stale gaps and holds the page after
 the loop is stopped.
 
+### From Codex on #419 (2026-10-05)
+
+- **Empty current content.** Right that the current content isn't always a superset of a round's: with no
+  Zones (the serve-from-the-log path) discovery lists none. AC-16 now says so and keeps today's behavior there,
+  a log replay bounded by retention. A Zone enumeration on `WorldStore` would lift it and isn't in this story.
+- **A rebound Character isn't marked.** Real race: a body that lands between attempts can be rebound, and a
+  later mark would mark it or, with a grace of `0`, remove it. AC-17 produces each attempt under the Gateway's
+  per-Account lock and only while the Gateway has no live Session for that Character.
+- **Capped.** The orphan marks share the cap's size: at most `sim.handoff_retry_batch` per tick, counted apart
+  from `Arrive` retries.
+

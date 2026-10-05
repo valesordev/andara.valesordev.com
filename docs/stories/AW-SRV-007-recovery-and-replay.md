@@ -181,6 +181,10 @@ match, so that a crash is an interruption rather than an incident.
     the log. (A swap can't remove a Zone: `AW-SRV-012` refuses it, so V's Zones are always a subset of any
     later content's, and the added Zone is what makes a good round `missing` against the current content.)
     - **Which Zones.** Discovery lists the current content's Zones, a superset of V's for swap-only change.
+      **When the current content has no Zones** (the boot's serve-from-the-log path, `server/README.md`:
+      "Zones no pointer names"), discovery lists none, finds no round, and recovery replays the log as it
+      does today, so the log's retention bounds it (exit `3`). `WorldStore.List` is per Zone and can't
+      enumerate Zones; lifting that limit needs a Zone enumeration on the store, which this story doesn't add.
       V is the `content` of the first hash-valid envelope in Zone order; envelopes that disagree on it are
       `disagree`, as AC-11 has it. A round with no hash-valid envelope, and a tick with no object at all, are
       judged against the current content's Zones (`missing` names them). The owned set is V's Zones that this
@@ -214,9 +218,16 @@ match, so that a crash is an interruption rather than an incident.
 17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
     at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
     (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
-    `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` and outside
-    `AW-SRV-028`'s backoff and batch cap (those govern `Arrive` retries), until the Entity is placed or gone,
-    not issued once at boot. Each attempt re-resolves where the Character is,
+    `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` with no
+    backoff, until the Entity is placed or gone, not issued once at boot. At most `sim.handoff_retry_batch`
+    marks are produced per tick, counted apart from `Arrive` retries, so a crash that left many Characters in
+    transit doesn't recreate the restart burst the cap exists for.
+    **A Character that rebinds first isn't marked.** A body that lands between two attempts can be rebound
+    (`BindCharacter` accepts a present, non-linkdead body), and a mark applied then would mark, or with a
+    grace of `0` remove, a Character a player is playing. Each attempt is produced under the Gateway's lock for
+    the Account and only while the Gateway has no live Session for that Character (`AW-SRV-014`'s live flag is
+    the one-live guard): a Session that bound first sets the flag and the pending mark is dropped; a bind
+    after the mark takes the linkdead reconnect path. Each attempt re-resolves where the Character is,
     Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
     Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
     to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
