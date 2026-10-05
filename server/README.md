@@ -332,7 +332,7 @@ when the one it chose is refused, and it never serves a World that didn't reprod
 | `3` | the log no longer holds the round (`ErrLogGap`): retention is shorter than the snapshot age. The `error` line names the Partition, the round's offset and the log's earliest |
 | `4` | the round was written by a newer binary (`ErrStateVersion`) |
 | `5` | not recovery's: a running server lost a Tick Boundary Record (AW-SRV-026) |
-| `6` | the round doesn't reproduce its own tick: `ErrRestoreMismatch`, `ErrSeedMismatch`, or it doesn't restore onto the content (`reason=content`) |
+| `6` | the round doesn't reproduce its own tick: `ErrRestoreMismatch`, `ErrSeedMismatch`, or it doesn't restore onto the content (`reason=content`): a digest mismatch, an object for a Zone the round's content doesn't list, or recorded content that names a pack version the content source doesn't have (`ErrRoundContent`; a source that merely fails to answer is exit `1`) |
 | `7` | no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete; the line carries `round_tick` and `cause` (`missing`, `duplicate`, `hash`, `disagree`) |
 | `8` | a replayed boundary's State Hash differs from the recorded one (`ErrHashMismatch`); the line names the tick, both hashes and the round used |
 
@@ -342,6 +342,12 @@ sample until a recovery sets it.
 
 `/readyz` answers `200` only when recovery verified the World, the Gateway serves with content in
 effect, and the first live tick has completed within ten `sim.tick_budget_ms` of schedule.
+
+**Which Zones a round must hold.** A round is complete when it holds one hash-valid object for every
+Zone of the content *it records* (the `content` of its envelopes), not of the content in effect at boot: a
+content swap that adds a Zone after the last round must not make that round incomplete. Discovery lists the
+loaded content's Zones, and each round's own Zones are resolved through the content source (once per set of
+versions). With no Zones loaded, nothing is discovered and recovery replays the log.
 
 **Characters a crash left standing.** Every Session is gone at recovery. Each Character body present
 and not linkdead gets a `MarkLinkdead` (or an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is
@@ -369,7 +375,7 @@ gap or a newer `state_version`.
 | `andara_recovery_round_tick` | gauge | none | 1; the round used, `0` for a cold start |
 | `andara_restore_total` | counter | `caller`, `outcome` | `recovery` and `verify` here × `ok`, `hash_mismatch`, `seed_mismatch` |
 
-Spans: `recovery.run`, with children `recovery.load_snapshot` (per Zone, `zone_id`), `restore.verify`,
+Spans: `recovery.run`, with children `recovery.load_snapshot` (per Zone object read, around the read itself: `zone_id`, `key`, `bytes`), `restore.verify`,
 `recovery.seek`, `recovery.replay` (`ticks`, `records`) and `recovery.verify`.
 
 ## The command pipeline (AW-SRV-003)

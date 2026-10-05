@@ -46,9 +46,10 @@ func (rt *Runtime) RecoveryMetrics() *recovery.Metrics {
 	return rt.recMetrics
 }
 
-// ownedZones is the Zones a complete round must carry: those of the content
-// loaded. Nil when none has loaded.
-func (rt *Runtime) ownedZones() []sim.ZoneID {
+// listedZones is the Zones discovery lists: those of the content loaded. A
+// round is judged against the Zones of the content it records (AC-16). Nil when
+// none has loaded.
+func (rt *Runtime) listedZones() []sim.ZoneID {
 	if rt.World == nil {
 		return nil
 	}
@@ -86,7 +87,7 @@ func (rt *Runtime) RecoverOptions(ctx context.Context, engineCfg sim.Config, inE
 	}
 	o := recovery.Options{
 		Store:           ws,
-		Owned:           rt.ownedZones(),
+		Listed:          rt.listedZones(),
 		Config:          engineCfg,
 		Content:         rt.Content,
 		RequireSnapshot: cfg.RecoveryRequireSnapshot,
@@ -219,4 +220,10 @@ func (rt *Runtime) releaseOrphans(ctx context.Context, e *sim.Engine) {
 	case rt.Roster != nil:
 		rt.Roster.MarkOrphans(ctx, e.PresentCharacters())
 	}
+}
+
+// zonesAt resolves a round's recorded content to its Zones through the content
+// source, once per set of versions.
+func (rt *Runtime) zonesAt() store.ZonesAt {
+	return recovery.NewZonesAt(func(v map[string]uint64) (sim.Topology, error) { return sim.PrepareContent(rt.Content, v) })
 }

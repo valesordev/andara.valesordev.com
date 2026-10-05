@@ -425,7 +425,7 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 		} else if v > sim.StateVersion {
 			return nil, 0, &sim.ErrStateVersion{Have: v, Want: sim.StateVersion}
 		}
-		round, state, ok, err := store.NewestComplete(ctx, o.Store, owned)
+		round, state, ok, err := store.NewestComplete(ctx, o.Store, owned, nil)
 		if err != nil {
 			return nil, 0, fmt.Errorf("snapshot store: %w", err)
 		}

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"time"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
@@ -103,6 +104,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			slog.Uint64("ticks_replayed", rep.Replayed),
 			slog.Uint64("round_tick", uint64(rep.Round.Tick)),
 			slog.Uint64("tick", uint64(engine.Tick())),
+			slog.String("trace_id", rep.TraceID),
 		)
 		source, err = tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{
 			Brokers:  cfg.KafkaBrokers,
@@ -208,7 +210,7 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 		slog.Int("tick_rate", cfg.SimTickRate),
 		slog.String("tick_budget", cfg.SimTickBudget.String()),
 		slog.Int("partitions", len(cfg.SimPartitions)),
-		slog.Uint64("seed", engine.State().Seed),
+		seedAttr(engine.State().Seed),
 	)
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "snapshots configured",
 		slog.Bool("enabled", snapshotter.Enabled()),
@@ -684,3 +686,7 @@ func engineConfig(cfg config.Config, content sim.ContentSource) sim.Config {
 		HandoffRetryBatch:    cfg.SimHandoffRetryBatch,
 	}
 }
+
+// seedAttr is a seed as a decimal string: a uint64 above 2^63 reaches Loki
+// rounded to a float64 (#423).
+func seedAttr(seed uint64) slog.Attr { return slog.String("seed", strconv.FormatUint(seed, 10)) }

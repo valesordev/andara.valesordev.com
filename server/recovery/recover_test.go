@@ -110,7 +110,7 @@ func (w *world) opts(t *testing.T) recovery.Options {
 	}
 	return recovery.Options{
 		Store:      w.fs,
-		Owned:      w.owned,
+		Listed:     w.owned,
 		Boundaries: &memBoundaries{all: w.bounds},
 		OpenRecords: func(_ context.Context, _ map[int32]int64) (sim.RecordSource, error) {
 			return w.records, nil

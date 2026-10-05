@@ -332,6 +332,33 @@ func TestOneZoneFailingMakesTheRoundIncomplete(t *testing.T) {
 	assertFailure(t, h.s, "store", 1)
 }
 
+// A Zone that fails to encode is counted under reason="encode", the round is
+// incomplete, and the Zone's object is never written (AW-SRV-006 §8, carried to
+// AW-SRV-007).
+func TestAZoneThatCannotBeEncodedIsCountedUnderEncode(t *testing.T) {
+	t.Parallel()
+	h := newRoundHarness(t, func(o *tickloop.SnapshotOptions) {
+		o.Encode = func(s *sim.Snapshot) ([]byte, error) {
+			if s.Zone == "docks" {
+				return nil, errors.New("canonical: a map")
+			}
+			return s.Encode()
+		}
+	})
+	h.advance(60 * time.Second)
+	h.s.Maybe(context.Background(), snapshotEngine(t))
+
+	var incomplete *sim.ErrRoundIncomplete
+	if err := h.await(t).err; !errors.As(err, &incomplete) || len(incomplete.Zones) != 1 || incomplete.Zones[0] != "docks" {
+		t.Fatalf("round error %v, want incomplete naming docks", err)
+	}
+	assertFailure(t, h.s, "encode", 1)
+	assertFailure(t, h.s, "store", 0)
+	if keys, _ := h.fs.List(context.Background(), "docks"); len(keys) != 0 {
+		t.Errorf("the unencodable Zone left an object behind: %v", keys)
+	}
+}
+
 // A round still running when the next interval elapses does not get a second
 // one started behind it.
 func TestRoundsAreSingleFlight(t *testing.T) {

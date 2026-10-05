@@ -186,6 +186,13 @@ func (e *ErrManifestMissing) Error() string {
 	return fmt.Sprintf("no manifest for %s on %s", ManifestKey(e.Pack, e.Version), e.Topic)
 }
 
+// Unwrap makes a missing manifest the sim's ErrContentVersionUnknown, so a
+// snapshot round recording a version this store never had is cause content, not
+// a retryable source failure (AW-SRV-007 AC-16).
+func (e *ErrManifestMissing) Unwrap() error {
+	return &sim.ErrContentVersionUnknown{Pack: e.Pack, Version: e.Version}
+}
+
 func (e *ErrBlobCorrupt) Error() string {
 	return fmt.Sprintf("blob for %s is stored under %s but its body hashes to %s",
 		e.Path, hex.EncodeToString(e.Want), hex.EncodeToString(e.Got))

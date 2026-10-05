@@ -63,7 +63,7 @@ func (a *SnapshotAdmin) ListSnapshotRounds(ctx context.Context, req *adminv1.Lis
 	if ws == nil {
 		return nil, &snapshotStatus{codeFailedPrecondition, "snapshots_disabled", "snapshots are disabled on this server (snapshot.interval is 0)"}
 	}
-	rounds, err := store.ListRounds(ctx, ws, a.rt.ownedZones())
+	rounds, err := store.ListRounds(ctx, ws, a.rt.listedZones(), a.rt.zonesAt())
 	if err != nil {
 		return nil, fmt.Errorf("list rounds: %w", err)
 	}
@@ -120,7 +120,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	// source, or the recovery gauges that RecoveryStateMismatch pages on.
 	o = scratchOptions(o, tick, rt.RecoveryMetrics())
 	_, rep, rerr := recovery.Recover(ctx, o)
-	return verifyResponse(rerr, ctx.Err(), rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
+	return verifyResponse(rerr, ctx.Err(), rep, tick, len(rt.listedZones()), rt.Cfg.RecoveryVerifyTimeout)
 }
 
 // scratchOptions turns boot's recovery Options into a verify of round tick: it

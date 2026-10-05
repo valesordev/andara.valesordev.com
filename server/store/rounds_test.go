@@ -6,6 +6,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -56,7 +57,7 @@ func TestRestoredEngineContinuesTheWorld(t *testing.T) {
 	t.Parallel()
 	live, fs, remaining, owned := roundFixture(t, 3)
 
-	round, state, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	round, state, ok, err := store.NewestComplete(context.Background(), fs, owned, nil)
 	if err != nil || !ok {
 		t.Fatalf("NewestComplete: ok=%v err=%v", ok, err)
 	}
@@ -116,7 +117,7 @@ func TestNewestCompleteSkipsAnIncompleteNewerRound(t *testing.T) {
 	snaps := live.SnapshotAll(2)
 	writeRound(t, fs, snaps[1:]) // the first Zone's object never lands
 
-	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +127,7 @@ func TestNewestCompleteSkipsAnIncompleteNewerRound(t *testing.T) {
 	if rounds[0].Complete || !strings.Contains(rounds[0].Reason, string(snaps[0].Zone)) {
 		t.Fatalf("newer round should be incomplete naming %s: %+v", snaps[0].Zone, rounds[0])
 	}
-	round, _, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	round, _, ok, err := store.NewestComplete(context.Background(), fs, owned, nil)
 	if err != nil || !ok || round.Tick != older {
 		t.Fatalf("NewestComplete = tick %d ok=%v err=%v, want %d", round.Tick, ok, err, older)
 	}
@@ -137,7 +138,7 @@ func TestNewestCompleteSkipsAnIncompleteNewerRound(t *testing.T) {
 func TestHashInvalidObjectMakesTheRoundIncomplete(t *testing.T) {
 	t.Parallel()
 	_, fs, _, owned := roundFixture(t, 2)
-	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil || len(rounds) != 1 {
 		t.Fatalf("rounds=%v err=%v", rounds, err)
 	}
@@ -158,14 +159,14 @@ func TestHashInvalidObjectMakesTheRoundIncomplete(t *testing.T) {
 	if err := fs.Put(context.Background(), key, tampered); err != nil {
 		t.Fatal(err)
 	}
-	rounds, err = store.ListRounds(context.Background(), fs, owned)
+	rounds, err = store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rounds[0].Complete || rounds[0].Zones[0].Valid || !strings.Contains(rounds[0].Reason, "hashes to") {
 		t.Fatalf("tampered round should be incomplete on the hash: %+v", rounds[0])
 	}
-	if _, _, ok, _ := store.NewestComplete(context.Background(), fs, owned); ok {
+	if _, _, ok, _ := store.NewestComplete(context.Background(), fs, owned, nil); ok {
 		t.Fatal("NewestComplete selected a hash-invalid round")
 	}
 }
@@ -189,7 +190,7 @@ func TestDisagreeingPRNGMakesTheRoundIncomplete(t *testing.T) {
 		t.Fatalf("fixture: ticks %d and %d", other.Tick(), tick)
 	}
 	snaps := other.SnapshotAll(3)
-	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +202,7 @@ func TestDisagreeingPRNGMakesTheRoundIncomplete(t *testing.T) {
 	if err := fs.Put(context.Background(), last.Key, body); err != nil {
 		t.Fatal(err)
 	}
-	rounds, err = store.ListRounds(context.Background(), fs, owned)
+	rounds, err = store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestDisagreeingSeedMakesTheRoundIncomplete(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeRound(t, fs, live.SnapshotAll(2))
-	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -241,14 +242,14 @@ func TestDisagreeingSeedMakesTheRoundIncomplete(t *testing.T) {
 	if err := fs.Put(context.Background(), last.Key, raw); err != nil {
 		t.Fatal(err)
 	}
-	rounds, err = store.ListRounds(context.Background(), fs, owned)
+	rounds, err = store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if rounds[0].Complete || !strings.Contains(rounds[0].Reason, "sim_seed") {
 		t.Fatalf("a round disagreeing on sim_seed: complete %t, reason %q", rounds[0].Complete, rounds[0].Reason)
 	}
-	round, state, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	round, state, ok, err := store.NewestComplete(context.Background(), fs, owned, nil)
 	if err != nil || !ok || round.Tick != older || state.SimSeed != 11 {
 		t.Fatalf("NewestComplete: tick %d (want %d), seed %d, ok %t, %v", round.Tick, older, state.SimSeed, ok, err)
 	}
@@ -291,7 +292,7 @@ func TestRoundCarriesTheContentInEffect(t *testing.T) {
 	fs := store.NewFS(t.TempDir())
 	e := contentRound(t, fs, 3)
 	owned := e.State().SortedZoneIDs()
-	_, state, ok, err := store.NewestComplete(context.Background(), fs, owned)
+	_, state, ok, err := store.NewestComplete(context.Background(), fs, owned, nil)
 	if err != nil || !ok {
 		t.Fatalf("ok=%v err=%v", ok, err)
 	}
@@ -312,7 +313,7 @@ func TestRoundCarriesTheContentInEffect(t *testing.T) {
 	if err := fs.Put(context.Background(), snaps[0].Key(), body); err != nil {
 		t.Fatal(err)
 	}
-	rounds, err := store.ListRounds(context.Background(), fs, owned)
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,18 +359,18 @@ func TestRoundAtNamesTheCauseOfAnIncompleteRound(t *testing.T) {
 	live, fs, _, owned := roundFixture(t, 2)
 	tick := live.Tick()
 
-	round, state, err := store.RoundAt(ctx, fs, owned, tick)
+	round, state, err := store.RoundAt(ctx, fs, owned, nil, tick)
 	if err != nil || !round.Complete || state.Tick != tick {
 		t.Fatalf("a complete round: %+v, %v", round, err)
 	}
 
 	// No object at all: missing, with every owned Zone.
-	_, _, err = store.RoundAt(ctx, fs, owned, tick+500)
+	_, _, err = store.RoundAt(ctx, fs, owned, nil, tick+500)
 	if inc := asIncomplete(t, err); inc.Cause != sim.RoundMissing || len(inc.Zones) != len(owned) || inc.Tick != tick+500 {
 		t.Fatalf("a tick with no objects: %+v", inc)
 	}
 
-	rounds, err := store.ListRounds(ctx, fs, owned)
+	rounds, err := store.ListRounds(ctx, fs, owned, nil)
 	if err != nil || len(rounds) != 1 {
 		t.Fatalf("rounds %v, %v", rounds, err)
 	}
@@ -377,7 +378,7 @@ func TestRoundAtNamesTheCauseOfAnIncompleteRound(t *testing.T) {
 
 	// disagree: one object's seed differs.
 	roundTamper(t, fs, zones[len(zones)-1].Key, func(e *statev1.SnapshotEnvelope) { e.SimSeed++ })
-	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	_, _, err = store.RoundAt(ctx, fs, owned, nil, tick)
 	if inc := asIncomplete(t, err); inc.Cause != sim.RoundDisagree || len(inc.Zones) != 1 || inc.Zones[0] != zones[len(zones)-1].Zone {
 		t.Fatalf("a disagreeing seed: %+v", inc)
 	}
@@ -385,12 +386,12 @@ func TestRoundAtNamesTheCauseOfAnIncompleteRound(t *testing.T) {
 	// hash: an object's hash is wrong.
 	roundTamper(t, fs, zones[len(zones)-1].Key, func(e *statev1.SnapshotEnvelope) { e.SimSeed-- }) // restore the seed
 	roundTamper(t, fs, zones[0].Key, func(e *statev1.SnapshotEnvelope) { e.StateHash[0] ^= 0xff })
-	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	_, _, err = store.RoundAt(ctx, fs, owned, nil, tick)
 	if inc := asIncomplete(t, err); inc.Cause != sim.RoundHash || len(inc.Zones) != 1 || inc.Zones[0] != zones[0].Zone {
 		t.Fatalf("a hash-invalid object: %+v", inc)
 	}
 	// Named, it is never replaced by an older complete round, even one that exists.
-	if _, _, ok, _ := store.NewestComplete(ctx, fs, owned); ok {
+	if _, _, ok, _ := store.NewestComplete(ctx, fs, owned, nil); ok {
 		t.Fatal("setup: the only round is hash-invalid, so no round is complete")
 	}
 }
@@ -417,7 +418,7 @@ func TestRoundAtRefusesADuplicateZone(t *testing.T) {
 	if err := fs.Put(ctx, dupKey, wire); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = store.RoundAt(ctx, fs, owned, tick)
+	_, _, err = store.RoundAt(ctx, fs, owned, nil, tick)
 	if inc := asIncomplete(t, err); inc.Cause != sim.RoundDuplicate || len(inc.Zones) != 1 || inc.Zones[0] != snap.Zone {
 		t.Fatalf("a duplicate Zone: %+v", inc)
 	}
@@ -431,7 +432,7 @@ func TestRoundAtResolvesToTheHighestReadableVersion(t *testing.T) {
 	ctx := context.Background()
 	live, fs, _, owned := roundFixture(t, 2)
 	tick := live.Tick()
-	rounds, err := store.ListRounds(ctx, fs, owned)
+	rounds, err := store.ListRounds(ctx, fs, owned, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -454,7 +455,7 @@ func TestRoundAtResolvesToTheHighestReadableVersion(t *testing.T) {
 	if err := fs.Put(ctx, sim.SnapshotKey(first.Zone, sim.StateVersion+1, tick, first.Offset), newer); err != nil {
 		t.Fatal(err)
 	}
-	round, state, err := store.RoundAt(ctx, fs, owned, tick)
+	round, state, err := store.RoundAt(ctx, fs, owned, nil, tick)
 	if err != nil || round.StateVersion != sim.StateVersion || !round.Complete || state.Tick != tick {
 		t.Fatalf("the complete v round should load beside a partial v+1 group: %+v %v", round, err)
 	}
@@ -464,9 +465,143 @@ func TestRoundAtResolvesToTheHighestReadableVersion(t *testing.T) {
 	if err := only.Put(ctx, sim.SnapshotKey(first.Zone, sim.StateVersion+1, tick, first.Offset), newer); err != nil {
 		t.Fatal(err)
 	}
-	_, _, err = store.RoundAt(ctx, only, owned, tick)
+	_, _, err = store.RoundAt(ctx, only, owned, nil, tick)
 	var sv *sim.ErrStateVersion
 	if !errors.As(err, &sv) || sv.Have != sim.StateVersion+1 || sv.Want != sim.StateVersion {
 		t.Fatalf("every group newer than the binary: %v", err)
+	}
+}
+
+// AW-SRV-007 AC-16: a round is judged against the Zones of the content it
+// records, not the content in effect at boot.
+
+// contentTag marks every object of the round at fs's newest tick as written
+// under pack@version.
+func contentTag(t *testing.T, fs *store.FS, owned []sim.ZoneID, pack string, version uint64) {
+	t.Helper()
+	rounds, err := store.ListRounds(context.Background(), fs, owned, nil)
+	if err != nil || len(rounds) == 0 {
+		t.Fatal(err)
+	}
+	for _, z := range rounds[0].Zones {
+		roundTamper(t, fs, z.Key, func(env *statev1.SnapshotEnvelope) {
+			env.Content = []*statev1.PackVersion{{PackId: pack, Version: version}}
+			env.ContentDigest = []byte("digest")
+		})
+	}
+}
+
+func zonesOf(names ...sim.ZoneID) store.ZonesAt {
+	return func(map[string]uint64) ([]sim.ZoneID, error) { return names, nil }
+}
+
+func TestRoundIsJudgedAgainstItsOwnContentsZones(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, fs, _, owned := roundFixture(t, 2)
+	contentTag(t, fs, owned, "town", 1)
+	// The content in effect now has a fourth Zone the round never had: the
+	// round is still complete, because V's Zones are the three it holds.
+	listed := append(append([]sim.ZoneID(nil), owned...), "newzone")
+	rounds, err := store.ListRounds(ctx, fs, listed, zonesOf(owned...))
+	if err != nil || len(rounds) != 1 || !rounds[0].Complete {
+		t.Fatalf("a round judged on the current content's extra Zone: %+v err %v", rounds, err)
+	}
+	// Against the current content alone (no ZonesAt) it is missing that Zone:
+	// the case AC-16 removes.
+	rounds, err = store.ListRounds(ctx, fs, listed, nil)
+	if err != nil || rounds[0].Complete || rounds[0].Cause != sim.RoundMissing {
+		t.Fatalf("without ZonesAt: %+v", rounds[0])
+	}
+	// A Zone V lists and the round has no object for is missing.
+	rounds, _ = store.ListRounds(ctx, fs, listed, zonesOf(append(append([]sim.ZoneID(nil), owned...), "newzone")...))
+	if rounds[0].Complete || rounds[0].Cause != sim.RoundMissing || len(rounds[0].CauseZones) != 1 || rounds[0].CauseZones[0] != "newzone" {
+		t.Fatalf("a V Zone with no object: %+v", rounds[0])
+	}
+}
+
+func TestAnObjectForAZoneItsContentDoesNotListIsContentMismatch(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, fs, _, owned := roundFixture(t, 2)
+	contentTag(t, fs, owned, "town", 1)
+	zonesAt := zonesOf(owned[:2]...) // V lists two of the three Zones the round holds
+	rounds, err := store.ListRounds(ctx, fs, owned, zonesAt)
+	if err != nil || rounds[0].Complete || rounds[0].Cause != "content" || !strings.Contains(rounds[0].Reason, string(owned[2])) {
+		t.Fatalf("round %+v err %v", rounds[0], err)
+	}
+	var zu *sim.ErrRoundZoneUnknown
+	if _, _, ok, err := store.NewestComplete(ctx, fs, owned, zonesAt); ok || !errors.As(err, &zu) || zu.Zone != owned[2] {
+		t.Fatalf("NewestComplete: ok %v err %v, want ErrRoundZoneUnknown for %s", ok, err, owned[2])
+	}
+	var inc *sim.ErrRoundIncomplete
+	if _, _, err := store.RoundAt(ctx, fs, owned, zonesAt, rounds[0].Tick); !errors.As(err, &zu) || errors.As(err, &inc) {
+		t.Fatalf("RoundAt: %v, want ErrRoundZoneUnknown and never ErrRoundIncomplete", err)
+	}
+}
+
+func TestAVersionTheSourceLacksIsContentMismatchAndIsNotSkipped(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	live, fs, _, owned := roundFixture(t, 2)
+	older := live.Tick()
+	// A newer round, written after another tick, whose content the source lacks.
+	if _, err := live.Step(sim.TickInput{}); err != nil {
+		t.Fatal(err)
+	}
+	writeRound(t, fs, live.SnapshotAll(2))
+	contentTag(t, fs, owned, "town", 9)
+	missing := func(map[string]uint64) ([]sim.ZoneID, error) {
+		return nil, fmt.Errorf("prepare: %w", &sim.ErrContentVersionUnknown{Pack: "town", Version: 9})
+	}
+	rounds, err := store.ListRounds(ctx, fs, owned, missing)
+	if err != nil || rounds[0].Complete || rounds[0].Cause != "content" || rounds[0].Tick <= older {
+		t.Fatalf("newest round %+v err %v", rounds[0], err)
+	}
+	// The older round carries no content, so it is complete: and NewestComplete
+	// must not fall back to it.
+	if !rounds[1].Complete || rounds[1].Tick != older {
+		t.Fatalf("older round %+v", rounds[1])
+	}
+	var rc *sim.ErrRoundContent
+	if _, _, ok, err := store.NewestComplete(ctx, fs, owned, missing); ok || !errors.As(err, &rc) || rc.Versions["town"] != 9 || rc.Tick != rounds[0].Tick {
+		t.Fatalf("NewestComplete: ok %v err %v, want ErrRoundContent at tick %d", ok, err, rounds[0].Tick)
+	}
+	if _, _, err := store.RoundAt(ctx, fs, owned, missing, rounds[0].Tick); !errors.As(err, &rc) {
+		t.Fatalf("RoundAt: %v", err)
+	}
+}
+
+func TestAnyOtherZonesAtErrorPropagates(t *testing.T) {
+	t.Parallel()
+	_, fs, _, owned := roundFixture(t, 2)
+	contentTag(t, fs, owned, "town", 1)
+	boom := errors.New("registry timed out")
+	_, err := store.ListRounds(context.Background(), fs, owned, func(map[string]uint64) ([]sim.ZoneID, error) { return nil, boom })
+	if !errors.Is(err, boom) {
+		t.Fatalf("err %v, want the source's own error, not a round's cause", err)
+	}
+}
+
+// The ranking: content is below a hash-invalid object and above a missing Zone.
+func TestContentRanksBelowHashAndAboveMissing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, fs, _, owned := roundFixture(t, 2)
+	contentTag(t, fs, owned, "town", 1)
+	// V lists a Zone the round lacks (missing) and omits one it holds (content).
+	zonesAt := zonesOf(append([]sim.ZoneID{"absent"}, owned[:2]...)...)
+	rounds, err := store.ListRounds(ctx, fs, owned, zonesAt)
+	if err != nil || rounds[0].Cause != "content" {
+		t.Fatalf("content over missing: %+v err %v", rounds[0], err)
+	}
+	raw, _ := fs.Get(ctx, rounds[0].Zones[0].Key)
+	raw[len(raw)/2] ^= 0xff
+	if err := fs.Put(ctx, rounds[0].Zones[0].Key, raw); err != nil {
+		t.Fatal(err)
+	}
+	rounds, err = store.ListRounds(ctx, fs, owned, zonesAt)
+	if err != nil || rounds[0].Cause != sim.RoundHash {
+		t.Fatalf("hash over content: %+v err %v", rounds[0], err)
 	}
 }

@@ -38,8 +38,13 @@ type Boundaries interface {
 type Options struct {
 	// Store holds the snapshot rounds; nil means there are none.
 	Store sim.WorldStore
-	// Owned is the Zones a complete round must carry one object for.
-	Owned []sim.ZoneID
+	// Listed is the Zones discovery lists: the loaded content's. A round is
+	// judged complete against the Zones of the content it records, which
+	// ZonesAt resolves (AC-16).
+	Listed []sim.ZoneID
+	// ZonesAt resolves a round's recorded content to its Zones. Nil builds it
+	// on Prepare (or sim.PrepareContent over Content), caching per versions set.
+	ZonesAt store.ZonesAt
 	// Boundaries is the boundary stream, positioned by Recover.
 	Boundaries Boundaries
 	// OpenRecords opens the Command source for the Partitions at their start
@@ -112,6 +117,8 @@ type Report struct {
 	Expected, Actual [32]byte
 	// MismatchTick is the tick of the first mismatching boundary.
 	MismatchTick sim.Tick
+	// TraceID is the recovery.run trace: what the boot summary line carries.
+	TraceID string
 }
 
 func (o *Options) defaults() {
@@ -147,6 +154,7 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 	ctx, span := o.Tracer.Start(ctx, "recovery.run")
 	defer span.End()
 	traceID := span.SpanContext().TraceID().String()
+	rep.TraceID = traceID
 
 	finish := func() {
 		rep.Phases[PhaseTotal] = o.Now().Sub(start)
@@ -170,9 +178,20 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 
 	// Select and load the round: Phase load.
 	t0 := o.Now()
+	// Each object read starts and ends its own span around the read itself.
+	ctx = store.WithReadObserver(ctx, func(zone sim.ZoneID, key string) func(int, error) {
+		_, sp := o.Tracer.Start(ctx, "recovery.load_snapshot", trace.WithAttributes(attribute.String("zone_id", string(zone)), attribute.String("key", key)))
+		return func(n int, err error) {
+			sp.SetAttributes(attribute.Int("bytes", n))
+			if err != nil {
+				sp.SetStatus(codes.Error, err.Error())
+			}
+			sp.End()
+		}
+	})
 	round, state, found, err := o.selectRound(ctx)
 	if err != nil {
-		o.logRefusal(ctx, err, traceID)
+		o.logSelection(ctx, err, traceID)
 		return fail(err)
 	}
 	var eng *sim.Engine
@@ -182,18 +201,22 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 		rep.Round = round
 		o.Log.InfoContext(ctx, "recovery starting from a snapshot round", "tick", uint64(round.Tick), "zones", len(round.Zones),
 			"offsets", offsetsString(state.Offsets), "trace_id", traceID)
-		for _, z := range round.Zones {
-			_, zs := o.Tracer.Start(ctx, "recovery.load_snapshot", trace.WithAttributes(attribute.String("zone_id", string(z.Zone)), attribute.String("key", z.Key)))
-			zs.End()
-		}
 		prepare := o.Prepare
 		if prepare == nil {
 			prepare = func(v map[string]uint64) (sim.Topology, error) { return sim.PrepareContent(o.Content, v) }
 		}
 		topo, err := prepare(state.Content)
 		if err != nil {
-			err = fmt.Errorf("snapshot round at tick %d: rebuild its content: %w", round.Tick, err)
-			o.logRefusal(ctx, err, traceID)
+			var unknown *sim.ErrContentVersionUnknown
+			if errors.As(err, &unknown) {
+				// A version the source doesn't have: the round doesn't restore
+				// onto it, which is exit 6 (AC-16), where a source that failed
+				// to answer is exit 1 and must not set the gauge.
+				err = &sim.ErrRoundContent{Tick: round.Tick, Versions: state.Content, Unknown: unknown}
+			} else {
+				err = fmt.Errorf("snapshot round at tick %d: rebuild its content: %w", round.Tick, err)
+			}
+			o.logSelection(ctx, err, traceID)
 			return fail(err)
 		}
 		t1 := phase(PhaseLoad, t0)
@@ -328,6 +351,44 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 	return eng, rep, nil
 }
 
+// zonesAt is ZonesAt, or the one built on the content source: it prepares the
+// topology the recorded versions build and reads its Zones, once per set.
+func (o *Options) zonesAt() store.ZonesAt {
+	if o.ZonesAt != nil {
+		return o.ZonesAt
+	}
+	prepare := o.Prepare
+	if prepare == nil {
+		prepare = func(v map[string]uint64) (sim.Topology, error) { return sim.PrepareContent(o.Content, v) }
+	}
+	return NewZonesAt(prepare)
+}
+
+// NewZonesAt is store.ZonesAt over prepare: the Zones of the topology a set of
+// recorded versions builds, resolved once per set.
+func NewZonesAt(prepare func(map[string]uint64) (sim.Topology, error)) store.ZonesAt {
+	cache := map[string][]sim.ZoneID{}
+	return func(versions map[string]uint64) ([]sim.ZoneID, error) {
+		key := fmt.Sprint(versions)
+		if zs, ok := cache[key]; ok {
+			return zs, nil
+		}
+		topo, err := prepare(versions)
+		if err != nil {
+			return nil, err
+		}
+		zs := []sim.ZoneID{}
+		if topo.World != nil {
+			for id := range topo.World.Zones {
+				zs = append(zs, id)
+			}
+		}
+		sort.Slice(zs, func(i, j int) bool { return zs[i] < zs[j] })
+		cache[key] = zs
+		return zs, nil
+	}
+}
+
 // selectRound chooses the round to restore: the named one, else the newest
 // complete. found is false for a cold start.
 func (o *Options) selectRound(ctx context.Context) (store.Round, sim.RoundState, bool, error) {
@@ -335,7 +396,7 @@ func (o *Options) selectRound(ctx context.Context) (store.Round, sim.RoundState,
 		if o.Store == nil {
 			return store.Round{}, sim.RoundState{}, false, fmt.Errorf("round %d is named and no snapshot store is configured", *o.Round)
 		}
-		r, st, err := store.RoundAt(ctx, o.Store, o.Owned, *o.Round)
+		r, st, err := store.RoundAt(ctx, o.Store, o.Listed, o.zonesAt(), *o.Round)
 		if err != nil {
 			return store.Round{}, sim.RoundState{}, false, err
 		}
@@ -344,14 +405,14 @@ func (o *Options) selectRound(ctx context.Context) (store.Round, sim.RoundState,
 	if o.Store != nil {
 		// A round written by a newer binary is a refusal naming both versions,
 		// not a silent fall back to an older round the operator did not choose.
-		v, err := store.StateVersionOf(ctx, o.Store, o.Owned)
+		v, err := store.StateVersionOf(ctx, o.Store, o.Listed)
 		if err != nil {
 			return store.Round{}, sim.RoundState{}, false, fmt.Errorf("snapshot store: %w", err)
 		}
 		if v > sim.StateVersion {
 			return store.Round{}, sim.RoundState{}, false, &sim.ErrStateVersion{Have: v, Want: sim.StateVersion}
 		}
-		r, st, ok, err := store.NewestComplete(ctx, o.Store, o.Owned)
+		r, st, ok, err := store.NewestComplete(ctx, o.Store, o.Listed, o.zonesAt())
 		if err != nil {
 			return store.Round{}, sim.RoundState{}, false, fmt.Errorf("snapshot store: %w", err)
 		}
@@ -360,7 +421,7 @@ func (o *Options) selectRound(ctx context.Context) (store.Round, sim.RoundState,
 		}
 	}
 	if o.RequireSnapshot {
-		return store.Round{}, sim.RoundState{}, false, &sim.ErrRoundIncomplete{Cause: sim.RoundMissing, Zones: o.Owned}
+		return store.Round{}, sim.RoundState{}, false, &sim.ErrRoundIncomplete{Cause: sim.RoundMissing, Zones: o.Listed}
 	}
 	return store.Round{}, sim.RoundState{}, false, nil
 }
@@ -449,4 +510,25 @@ func offsetsString(po []sim.PartitionOffset) string {
 		s += fmt.Sprintf("%d:%d", p.Partition, p.Offset)
 	}
 	return s
+}
+
+// logSelection logs a refusal made choosing or rebuilding a round. A round that
+// doesn't restore onto the content it records (AC-16) is a restore mismatch:
+// the `recovery restore mismatch` line, and the hash-match gauge at 0. Anything
+// else is `recovery refused`.
+func (o *Options) logSelection(ctx context.Context, err error, traceID string) {
+	var (
+		rc *sim.ErrRoundContent
+		zu *sim.ErrRoundZoneUnknown
+	)
+	switch {
+	case errors.As(err, &rc):
+		o.logRestoreMismatch(ctx, err, rc.Tick, traceID)
+	case errors.As(err, &zu):
+		o.logRestoreMismatch(ctx, err, zu.Tick, traceID)
+	default:
+		o.logRefusal(ctx, err, traceID)
+		return
+	}
+	o.Metrics.SetHashMatch(false)
 }

@@ -12,12 +12,48 @@ import (
 	"github.com/valesordev/andara/server/sim"
 )
 
+// ZonesAt resolves a round's recorded content (pack ID to version) to the Zones
+// that content has (AW-SRV-007 AC-16). The server builds it on the content
+// source, so store doesn't import it. An error that wraps
+// sim.ErrContentVersionUnknown is cause content; any other error is returned
+// as it is. Nil or empty versions resolve to the listed (current) Zones.
+type ZonesAt func(versions map[string]uint64) ([]sim.ZoneID, error)
+
+// ReadObserver is told when one object of a round is about to be read, and how
+// the read ended: the hook recovery starts its `recovery.load_snapshot` span
+// with, around the read itself (AW-SRV-007 §7). It lives on the context so
+// that the round functions' signatures don't carry a tracer.
+type ReadObserver func(zone sim.ZoneID, key string) (done func(bytes int, err error))
+
+type readObserverKey struct{}
+
+// WithReadObserver returns a context whose rounds' object reads call obs.
+func WithReadObserver(ctx context.Context, obs ReadObserver) context.Context {
+	return context.WithValue(ctx, readObserverKey{}, obs)
+}
+
+func observeRead(ctx context.Context, zone sim.ZoneID, key string) func(int, error) {
+	if obs, ok := ctx.Value(readObserverKey{}).(ReadObserver); ok && obs != nil {
+		if done := obs(zone, key); done != nil {
+			return done
+		}
+	}
+	return func(int, error) {}
+}
+
+// causeContent is Round.Cause for a round whose recorded content the source
+// can't restore it onto: not on the wire (a round shows complete=false), and
+// refused by NewestComplete and RoundAt as a typed error, never skipped.
+const causeContent = "content"
+
 // ZoneSnapshotRef is one Zone's object in a round: its key, and whether it
 // read back hash-valid.
 type ZoneSnapshotRef struct {
 	Zone   sim.ZoneID
 	Key    string
 	Offset int64
+	// Bytes is the size of the object as read: the loaded payload.
+	Bytes int
 	// Valid is set once the object has been read, decoded, and its body's hash
 	// found equal to the envelope's. Invalid names why in Reason.
 	Valid  bool
@@ -46,6 +82,9 @@ type Round struct {
 	// CauseZones the Zones it is about. Empty for a Complete round.
 	Cause      string
 	CauseZones []sim.ZoneID
+	// Err is the typed refusal for cause content: *sim.ErrRoundContent or
+	// *sim.ErrRoundZoneUnknown.
+	Err error
 	// TakenAt is the newest taken_at_unix_nano among the objects that could
 	// be read: diagnostic only (Admin.ListSnapshotRounds).
 	TakenAt int64
@@ -58,13 +97,13 @@ type Round struct {
 // without a Get — but completeness is a per-object hash check, so this reads
 // every object of every round it returns. A caller that wants only the newest
 // complete round should call NewestComplete, which stops at the first.
-func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error) {
-	rounds, err := discover(ctx, ws, owned)
+func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) ([]Round, error) {
+	rounds, err := discover(ctx, ws, listed)
 	if err != nil {
 		return nil, err
 	}
 	for i := range rounds {
-		if _, err := verify(ctx, ws, owned, &rounds[i]); err != nil {
+		if _, err := verify(ctx, ws, listed, zonesAt, &rounds[i]); err != nil {
 			return nil, err
 		}
 	}
@@ -74,15 +113,21 @@ func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]R
 // NewestComplete returns the newest complete round and its decoded state, or
 // ok=false when no round is complete. Older rounds are read only while every
 // newer one fails to verify.
-func NewestComplete(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) (Round, sim.RoundState, bool, error) {
-	rounds, err := discover(ctx, ws, owned)
+func NewestComplete(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) (Round, sim.RoundState, bool, error) {
+	rounds, err := discover(ctx, ws, listed)
 	if err != nil {
 		return Round{}, sim.RoundState{}, false, err
 	}
 	for i := range rounds {
-		state, err := verify(ctx, ws, owned, &rounds[i])
+		state, err := verify(ctx, ws, listed, zonesAt, &rounds[i])
 		if err != nil {
 			return Round{}, sim.RoundState{}, false, err
+		}
+		if rounds[i].Cause == causeContent {
+			// A round that doesn't restore onto the content it records is
+			// refused where it stands, not skipped: an older round would be a
+			// World nobody chose (AW-SRV-007 AC-16).
+			return rounds[i], sim.RoundState{}, false, rounds[i].Err
 		}
 		if rounds[i].Complete {
 			return rounds[i], state, true, nil
@@ -100,8 +145,8 @@ func NewestComplete(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) 
 // other round is substituted for it. A tick with no object at all is
 // RoundMissing with every owned Zone. Every group at T newer than this binary
 // is a *sim.ErrStateVersion.
-func RoundAt(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, tick sim.Tick) (Round, sim.RoundState, error) {
-	rounds, err := discover(ctx, ws, owned)
+func RoundAt(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt, tick sim.Tick) (Round, sim.RoundState, error) {
+	rounds, err := discover(ctx, ws, listed)
 	if err != nil {
 		return Round{}, sim.RoundState{}, err
 	}
@@ -112,16 +157,19 @@ func RoundAt(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, tick si
 		}
 	}
 	if len(group) == 0 {
-		return Round{Tick: tick}, sim.RoundState{}, &sim.ErrRoundIncomplete{Tick: tick, Cause: sim.RoundMissing, Zones: append([]sim.ZoneID(nil), owned...)}
+		return Round{Tick: tick}, sim.RoundState{}, &sim.ErrRoundIncomplete{Tick: tick, Cause: sim.RoundMissing, Zones: append([]sim.ZoneID(nil), listed...)}
 	}
 	// discover orders a tick's groups by state_version, highest first.
 	for i := range group {
 		if group[i].StateVersion > sim.StateVersion {
 			continue
 		}
-		state, err := verify(ctx, ws, owned, &group[i])
+		state, err := verify(ctx, ws, listed, zonesAt, &group[i])
 		if err != nil {
 			return Round{}, sim.RoundState{}, err
+		}
+		if group[i].Cause == causeContent {
+			return group[i], sim.RoundState{}, group[i].Err
 		}
 		if !group[i].Complete {
 			return group[i], sim.RoundState{}, &sim.ErrRoundIncomplete{Tick: tick, Cause: group[i].Cause, Zones: group[i].CauseZones}
@@ -138,9 +186,9 @@ type roundKey struct {
 
 // discover lists every owned Zone's keys and groups them into rounds, newest
 // tick first; within a tick, the higher state_version first.
-func discover(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error) {
+func discover(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID) ([]Round, error) {
 	byRound := map[roundKey][]ZoneSnapshotRef{}
-	for _, z := range owned {
+	for _, z := range listed {
 		keys, err := ws.List(ctx, z)
 		if err != nil {
 			return nil, fmt.Errorf("store: list rounds: zone %s: %w", z, err)
@@ -181,13 +229,14 @@ func discover(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Rou
 // A body newer than this binary is recorded as the round's reason like any
 // other invalid object. The caller that must refuse on it (AW-SRV-019 AC-10,
 // AW-SRV-007's exit 4) reads it with StateVersionOf.
-func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round) (sim.RoundState, error) {
+func verify(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt, r *Round) (sim.RoundState, error) {
 	state := sim.RoundState{Tick: r.Tick, StateVersion: sim.StateVersion}
 	present := map[sim.ZoneID]int{}
 	type problem struct {
 		cause string
 		text  string
 		zones []sim.ZoneID
+		err   error // the typed refusal, for cause content
 	}
 	var (
 		first    = true
@@ -196,7 +245,10 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 	for i := range r.Zones {
 		ref := &r.Zones[i]
 		present[ref.Zone]++
+		end := observeRead(ctx, ref.Zone, ref.Key)
 		raw, err := ws.Get(ctx, ref.Key)
+		end(len(raw), err)
+		ref.Bytes = len(raw)
 		if errors.Is(err, sim.ErrSnapshotNotFound) {
 			ref.Reason, ref.Cause = "object vanished after listing", sim.RoundMissing
 			continue
@@ -270,6 +322,37 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 			problems = append(problems, problem{cause: sim.RoundDuplicate, text: fmt.Sprintf("zone %s has %d objects at tick %d", z, present[z], r.Tick), zones: []sim.ZoneID{z}})
 		}
 	}
+	// The Zones this round must hold an object for (AC-16): those of the content
+	// it records, V, the content of its first hash-valid envelope in Zone order.
+	// A round with no hash-valid envelope, or none recording content, is judged
+	// against the listed (current) Zones.
+	owned := listed
+	if len(state.Content) > 0 && zonesAt != nil {
+		zs, err := zonesAt(state.Content)
+		var unknown *sim.ErrContentVersionUnknown
+		switch {
+		case errors.As(err, &unknown):
+			rc := &sim.ErrRoundContent{Tick: r.Tick, Versions: copyContent(state.Content), Unknown: unknown}
+			problems = append(problems, problem{cause: causeContent, text: rc.Error(), err: rc})
+			owned = nil // no Zone list to compute the missing ones against
+		case err != nil:
+			return sim.RoundState{}, fmt.Errorf("store: round at tick %d: the Zones of its content: %w", r.Tick, err)
+		default:
+			owned = zs
+		}
+	}
+	if len(state.Content) > 0 && zonesAt != nil && owned != nil {
+		have := make(map[sim.ZoneID]bool, len(owned))
+		for _, z := range owned {
+			have[z] = true
+		}
+		for _, z := range sortedZones(present) {
+			if !have[z] {
+				ze := &sim.ErrRoundZoneUnknown{Tick: r.Tick, Zone: z}
+				problems = append(problems, problem{cause: causeContent, text: ze.Error(), zones: []sim.ZoneID{z}, err: ze})
+			}
+		}
+	}
 	var missing []sim.ZoneID
 	for _, z := range owned {
 		if present[z] == 0 {
@@ -279,14 +362,25 @@ func verify(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID, r *Round
 	if len(missing) > 0 {
 		problems = append(problems, problem{cause: sim.RoundMissing, text: (&sim.ErrRoundIncomplete{Tick: r.Tick, Cause: sim.RoundMissing, Zones: missing}).Error(), zones: missing})
 	}
+	// Ranking is the order they were found in: an object problem (a vanished
+	// object keeps its own cause, missing), a duplicate, then content, then a
+	// missing Zone. problems[0] names the round's cause.
 	r.Complete = len(problems) == 0 && len(r.Zones) > 0
 	if !r.Complete {
 		if len(problems) > 0 {
-			r.Reason, r.Cause, r.CauseZones = problems[0].text, problems[0].cause, problems[0].zones
+			r.Reason, r.Cause, r.CauseZones, r.Err = problems[0].text, problems[0].cause, problems[0].zones, problems[0].err
 		}
 		return sim.RoundState{}, nil
 	}
 	return state, nil
+}
+
+func copyContent(in map[string]uint64) map[string]uint64 {
+	out := make(map[string]uint64, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func sameContent(a map[string]uint64, ad []byte, b map[string]uint64, bd []byte) bool {
@@ -326,8 +420,8 @@ func sortedZones(m map[sim.ZoneID]int) []sim.ZoneID {
 // was written at, read from the envelopes alone. A bootstrap that found no
 // complete round uses it to tell "nothing to load" from "written by a newer
 // binary" (AW-SRV-019 AC-10, AW-SRV-007 exit 4).
-func StateVersionOf(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) (uint32, error) {
-	rounds, err := discover(ctx, ws, owned)
+func StateVersionOf(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID) (uint32, error) {
+	rounds, err := discover(ctx, ws, listed)
 	if err != nil {
 		return 0, err
 	}
