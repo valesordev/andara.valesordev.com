@@ -182,8 +182,9 @@ match, so that a crash is an interruption rather than an incident.
     later content's, and the added Zone is what makes a good round `missing` against the current content.)
     - **Which Zones.** Discovery lists the current content's Zones, a superset of V's for swap-only change.
       **When the current content has no Zones** (the boot's serve-from-the-log path, `server/README.md`:
-      "Zones no pointer names"), discovery lists none, finds no round, and recovery replays the log as it
-      does today, so the log's retention bounds it (exit `3`). `WorldStore.List` is per Zone and can't
+      "Zones no pointer names"), discovery lists none, finds no round, and recovery does what it does today: it replays the log,
+      bounded by retention (exit `3`); `recovery.require_snapshot` and `recovery.pin_round` exit `7` with
+      no Zones named; `snapshot list` shows no rounds. `WorldStore.List` is per Zone and can't
       enumerate Zones; lifting that limit needs a Zone enumeration on the store, which this story doesn't add.
       V is the `content` of the first hash-valid envelope in Zone order; envelopes that disagree on it are
       `disagree`, as AC-11 has it. A round with no hash-valid envelope, and a tick with no object at all, are
@@ -220,14 +221,20 @@ match, so that a crash is an interruption rather than an incident.
     (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
     `MarkLinkdead` rejects `in_transit`, so the mark is retried, flat every `sim.handoff_retry_ticks` with no
     backoff, until the Entity is placed or gone, not issued once at boot. At most `sim.handoff_retry_batch`
-    marks are produced per tick, counted apart from `Arrive` retries, so a crash that left many Characters in
+    marks are produced per tick, earliest due first as `AW-SRV-028` orders `Arrive` retries, a separate
+    budget from theirs (so up to twice the batch is produced per tick overall), so a crash that left many Characters in
     transit doesn't recreate the restart burst the cap exists for.
     **A Character that rebinds first isn't marked.** A body that lands between two attempts can be rebound
     (`BindCharacter` accepts a present, non-linkdead body), and a mark applied then would mark, or with a
-    grace of `0` remove, a Character a player is playing. Each attempt is produced under the Gateway's lock for
-    the Account and only while the Gateway has no live Session for that Character (`AW-SRV-014`'s live flag is
-    the one-live guard): a Session that bound first sets the flag and the pending mark is dropped; a bind
-    after the mark takes the linkdead reconnect path. Each attempt re-resolves where the Character is,
+    grace of `0` remove, a Character a player is playing. Checking a flag and then producing, with the lock
+    released between, doesn't close it: `Select` produces its `BindCharacter` outside the Roster's lock too.
+    So each attempt is ordered against `Select` under the Roster's lock (`AW-SRV-014`'s `lock(account)` is that
+    lock; an orphan has no Account, so the check is by Character ID over the Roster's entries): it drops
+    when any entry for that Character exists, live, linkdead or releasing, and otherwise registers a marking
+    entry for the Character before it produces and holds it until the produce returns, as a teardown holds
+    its `releasing` entry. A `Select` for that Character waits on the entry, so **a mark in flight is in the
+    log before any Bind the Roster produces after it**, and a bind after the mark takes the linkdead
+    reconnect path. A `Select` that registered first makes the attempt drop. Each attempt re-resolves where the Character is,
     Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
     Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
     to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
@@ -593,7 +600,12 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   content source exits `6` with `pack_versions`, and `snapshot list` shows it `complete=false`; a source that
   fails with `ErrNoContentSource` or an I/O error exits `1`, not `6`, and leaves the gauge unset; extend
   `TestRecoveryWithAHandoffInFlight` with a Character in the `Transit` record, killed and recovered: its
-  body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`).
+  body is marked linkdead once the retry lands it (an `UnbindCharacter{QUIT}` with `linkdead_grace` `0`). Also: a Character that lands between two attempts and is rebound by a `Select` racing
+  the attempt is never marked, and at grace `0` never removed, with the log order mark-before-Bind or no
+  mark, under `-race` (a Roster test, with a Bind produced before the check and a Bind after the registration);
+  N Characters left in transit produce at most `sim.handoff_retry_batch` marks per tick, apart from `Arrive`
+  retries; and with no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`,
+  and `snapshot list` shows no rounds (`server/store`).
 - **Manual/operator:** `make stack-recover` (`AW-INF-032`), which kills the compose server mid-play
   and asserts the M2 gate. Then, on the recovered stack:
   ```
