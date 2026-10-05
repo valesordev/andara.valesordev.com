@@ -134,7 +134,7 @@ on a recovered server, which starts with no flags (`AW-SRV-048` covers the orpha
 
 ## Test plan
 - **Unit:** (a) with a stepped clock and a fake `Log` that rejects `in_transit`; (b)'s deadline; (c)'s
-  retry, once; the newer-Binding cancel (AC-7); the `-race` pairs (AC-8).
+  retry, once; the newer-Binding cancel (AC-7); the `-race` pairs (AC-9); a late `LinkdeadEntered` after a freed hold (AC-8), pending Open question 1b.
 - **Integration:** a two-Zone sim with a delayed `Arrive` and a Session that selects and drops across it
   (AC-1 to AC-5).
 - **Manual/operator:** none until `sim repl` has a failure-injection flag (see Out of scope).
@@ -144,14 +144,14 @@ CLAUDE.md §8, plus:
 - The roster README's `already_live` and teardown lines say what happens during a crossing.
 
 ## Open questions
+1. **Where does the roster observe a rejected teardown?** *(Architecture's.)* The post-log
+   `CommandRejected{in_transit}` Event may be enough. If the roster needs a synchronous answer from the
+   Log, `AW-SRV-014`'s produce seam changes and this story is M with a seam change.
 1b. **Does a wall-clock bound contradict #114?** *(Architecture's.)* `holdLinkdead` carries "No wall-clock bound ...
    a timer here could free the Account while the body is still in the World (review of #114)" (`server/roster/roster.go`).
    Scope (b) frees the hold after `ingress.produce_deadline`, and a late `LinkdeadEntered` could then leave
    two live Characters (AC-8). The source asks for the free but doesn't answer this. Both are in
    `docs/feedback/AW-SRV-049-roster-observation.md`.
-1. **Where does the roster observe a rejected teardown?** *(Architecture's.)* The post-log
-   `CommandRejected{in_transit}` Event may be enough. If the roster needs a synchronous answer from the
-   Log, `AW-SRV-014`'s produce seam changes and this story is M with a seam change.
 2. `[ASSUMPTION]` `SelectCharacter` past the hold is `UNAVAILABLE`, matching `AW-SRV-010`'s past-hold row,
    not a new status.
 3. `[ASSUMPTION]` Retry of a teardown is once per settle, not on a timer, since the Binding's settle is
