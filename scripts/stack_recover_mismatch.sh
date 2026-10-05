@@ -15,8 +15,9 @@
 # gauge to 0 the same way a hash or content mismatch does. A byte-flipped round, re-signed so it
 # verifies, needs the Go codec, which this script doesn't carry.
 #   1. A complete round exists and RecoveryStateMismatch is loaded, with no series in ALERTS.
-#   2. SIGKILL, then start with the other seed. During the linger: /metrics reads the gauge 0,
-#      /livez is 200, /readyz isn't, and the error line names reason=seed.
+#   2. SIGKILL, then start with the other seed. During the linger: /metrics reads the gauge 0 and
+#      andara_recovery_failures_total{reason="restore"} 1, /livez is 200, /readyz isn't, and the
+#      error line names reason=seed.
 #   3. Prometheus has RecoveryStateMismatch firing.
 #   4. The linger ends and the server exits 6 (docker's die event).
 #   5. The server is stopped, so nothing restarts it. 25 s on, the target is stale (the gauge has no
@@ -164,6 +165,9 @@ say "SIGKILL, then start with ANDARA_SIM_SEED=$SEED ..."
 "${COMPOSE[@]}" kill -s KILL andara-server >/dev/null || fail "docker compose kill failed"
 ANDARA_SIM_SEED="$SEED" "${COMPOSE[@]}" up -d --no-deps andara-server >/dev/null 2>&1 || fail "docker compose up with ANDARA_SIM_SEED=$SEED failed"
 await 40 "andara_recovery_state_hash_match never read 0 on the server's /metrics" gauge_is 0
+# The failure counter is §7's other series on this path: one refusal, reason restore (exit 6).
+failures="$(metric andara_recovery_failures_total reason=restore)"
+[[ "$failures" == "1" ]] || fail "andara_recovery_failures_total{reason=\"restore\"} is '${failures:-absent}' during the linger, want 1"
 curl -sf "$LIVEZ" >/dev/null || fail "/livez isn't 200 during the linger"
 ! ready || fail "/readyz is 200 during the linger"
 await 20 "no error line names the seed mismatch" seed_error_logged

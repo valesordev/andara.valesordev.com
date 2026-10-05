@@ -40,7 +40,7 @@ The fastest safe action depends on what `describe` says:
 | exit `1` after an image rollback, the log naming `andara.core` | the older build can't load the newer core that's active (AW-SRV-013 AC-17). Roll the image forward again. While the newer build serves, move the pointers back in this order: (1) every active pack that pins the newer core, with `andara-cli content rollback <pack>`. `andara-cli content rollback andara.core` refuses with `core_version` and names each of them (`pack@version`) until they're back (AC-14). (2) Then `andara-cli content rollback andara.core`. (3) Then roll the image back. **An image rollback across a core bump is always dependent packs, then core, then image** |
 | exit `1`, `content core not published` or `andara.core` named in the `error` line, on a store-backed server (`content.source=kafka`) | the server publishes and activates its build's `andara.core` at boot, and readiness waits until that core is in effect (`AW-SRV-013` AC-15 to AC-17). The `error` line names which rule stopped it: another digest for the same core version (AC-16, a build-pipeline fault, so escalate to implementation), or a store write that failed (check the broker, `world-read-only.md`). Nothing to roll back in the store: the server wrote nothing it didn't finish |
 | exit `1`, `no content in effect: the World has no Zones and there is no previous version to retain`, on a store-backed server | **a World that had content and has lost it.** The log holds a swap with Zones, and the store now refuses or lacks every version it could serve. This is not the fresh-environment wait above, which never exits. Don't reset: `make world-reset` keeps the content topics and would only discard the World. Escalate to implementation with the `error` line and `andara_content_load_failures_total{reason}` |
-| `Last State` exit code `8` or `6` in `describe` (once `AW-SRV-007` ships), with the `error` line `recovery restore mismatch` (`6`) or the hash mismatch (`8`) | `RecoveryStateMismatch`; follow `recovery-state-mismatch.md`. **Do not** delete the snapshot volume to "reset" — that is the one action that turns a 60 s recovery into a full-history replay |
+| `Last State` exit code `8` or `6` in `describe`, with the `error` line `recovery restore mismatch` (`6`) or the hash mismatch (`8`) | `RecoveryStateMismatch`; follow `recovery-state-mismatch.md`. **Do not** delete the snapshot volume to "reset" — that is the one action that turns a 60 s recovery into a full-history replay |
 
 ## How to diagnose
 
@@ -59,6 +59,5 @@ The fastest safe action depends on what `describe` says:
 
 - `/readyz` has shown `replay` for longer than the startup budget: the log tail is larger than the
   RTO assumes — page the implementation lane; this is an `AW-SRV-007` regression, not an ops fix.
-- A recovery hash mismatch twice in a row (today exit `1` with `state hash mismatch`; exit `8` once
-  `AW-SRV-007` ships): the World is non-deterministic. Stop restarting; escalate as a
+- A recovery hash mismatch twice in a row (exit `8`): the World is non-deterministic. Stop restarting; escalate as a
   sim bug with both hashes from the log line.

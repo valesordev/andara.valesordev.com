@@ -6,7 +6,7 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 # RecoveryStateMismatch
 
 **Alert:** `andara_recovery_state_hash_match == 0`, `for: 0m`, `keep_firing_for: 15m`.
-**Severity:** page. **SLO:** `docs/specs/slo/recovery.md`. **Ships with:** `AW-SRV-007`.
+**Severity:** page. **SLO:** `docs/specs/slo/recovery.md`. **Written with:** `AW-SRV-007`, merged.
 
 ## What fired, and what the player is experiencing
 
@@ -54,25 +54,27 @@ The `error` line says which refusal it was:
 |--------------|-------|----|
 | `8` | Replaying the log from the round reached a tick whose hash differs from the recorded one | List the rounds, and ask each older one whether it reproduces the World (below). If an older round does, the newest round was the bad part. **If every round mismatches at the same tick, it isn't a round**: replay isn't deterministic, or a log record changed. That is a determinism failure; stop, keep the evidence, and escalate to implementation with the `error` line and the tick |
 | `6`, `hash` | The newest round doesn't reproduce its own recorded hash: a corrupt round | Choose an older round, as below |
-| `6`, `seed` | The configured `sim.seed` differs from the round's `recorded_seed` | Not a data fault: set `sim.seed` back to `recorded_seed` (or remove it, if it was unset when the round was written). An older round written under the same seed has the same problem |
+| `6`, `seed` | The configured `sim.seed` differs from the round's `recorded_seed` | Not a data fault: set `sim.seed` back to `recorded_seed` (or remove it, if it was unset when the round was written). **Read `recorded_seed` from the pod's own log (`make logs`, `kubectl logs --previous`), not from Loki:** the log exporter rounds a 64-bit value above 2^63, so Loki shows a different seed (issue #423). An older round written under the same seed has the same problem |
 | `6`, `content` | The round doesn't restore onto what this server builds: a digest differs (`pack`, `recorded_digest`, `built_digest`) or a Zone is unknown (`zone_id`) | **`content.source=kafka` (the cluster):** the cause is the build. This image builds different content bytes than the build that wrote the round (its compiler or validator), or doesn't define a Zone the round has. Roll the image back to the build that wrote the round, or escalate to implementation (`server-crashlooping.md`). No record ties a round to an image, so find the build from the round's `TAKEN AT` against the deploy history (`make argocd-status ENV=dev`, or the Helm release history). An older round with the same pack versions fails the same way; one with different versions may not. **A pack's Active Pointer is not a cause:** recovery rebuilds the content the round recorded, version by version, from the store, so moving the pointer back would fix nothing, and `andara-cli content rollback` couldn't be reached anyway, because a refused recovery never binds `grpc.listen`. **`content.source=dir` (compose, or a cluster set to `dir`):** the cause is the files. The server builds the directory as it is now, so restore the content files the round was written under (git; on a cluster, `contentVolume.*` in the values, and a chart with `render: true` takes its content from git), then restart. An older round may have been written under the current files, so it is worth trying. On compose, `make down VOLUMES=1` is the local reset: it removes the log and the snapshots and **discards the local World and Accounts**, so confirm with Brian first (`server-crashlooping.md`) |
 
-*Written against the contract. `AW-SRV-007`'s §8 check re-reads the `content` row against what the merged server does.*
+*The `content` row was re-read against `server/sim/restore.go` and `server/recovery/logs.go` at `AW-SRV-007`'s §8 (2026-10-05): the fields and the two causes hold. `pack` reads `(snapshot round)` when the round's own content digest is what differs.*
 
 ## How to mitigate
 
 Keep the World down while you choose. On the cluster that is `server-crashlooping.md`'s scale-to-zero (and
 on `dev`, suspend the Application's automated sync first, as it says). Then:
 
-1. **List the rounds, one Zone at a time.** `andara-cli snapshot list --zone <zone> --store fs --fs-path <dir>`
-   (or `--store s3 --s3-bucket <bucket> --s3-endpoint <endpoint>`) reads the store directly, so it answers even
-   with no server running. It requires `--zone` and prints that Zone's objects, newest first: `TICK`, `VERSION`,
-   `OFFSET`, `BYTES`, `TAKEN AT`, `STATE HASH` and `KEY`, and an error for an object it can't read. It doesn't
-   group rounds or say which are complete. A round is the objects of every Zone at one `TICK`, so run it for
+1. **List the rounds, one Zone at a time.** A refused recovery serves no Admin endpoint (it never binds
+   `grpc.listen`), so the grouped `andara-cli snapshot list` (`TICK`, `VERSION`, `ZONES`, `COMPLETE`, `AGE`, over
+   `Admin.ListSnapshotRounds`) can't answer. Use `--local`: `andara-cli snapshot list --local --zone <zone> --store fs
+   --fs-path <dir>` (or `--store s3 --s3-bucket <bucket> --s3-endpoint <endpoint>`) reads the store directly, so it
+   answers with no server running. It requires `--zone` and prints that Zone's objects, newest first: `TICK`,
+   `VERSION`, `OFFSET`, `BYTES`, `TAKEN AT`, `STATE HASH` and `KEY`, and an error for an object it can't read. It
+   doesn't group rounds or say which are complete. A round is the objects of every Zone at one `TICK`, so run it for
    each Zone and read down to a tick they all have; a Zone with no object at a tick makes that round incomplete.
-   On compose: `andara-cli snapshot list --zone town --store fs --fs-path .local/data/snapshots`. The grouped
-   form, with `complete` and `age` and no `--zone`, is `AW-SRV-007`'s and not built yet.
-2. **Ask the one-shot about a round** *(`AW-SRV-007`, not built yet)*. `andara-server recover --verify --round
+   On compose: `andara-cli snapshot list --local --zone town --store fs --fs-path .local/data/snapshots`. Once a
+   server is serving again, plain `andara-cli snapshot list` gives the grouped form with `COMPLETE`.
+2. **Ask the one-shot about a round.** `andara-server recover --verify --round
    <tick>`, run in the server image against the same store, prints `match` or `mismatch` with both hashes and
    the phase timings, and exits `0` on a match, `8` on any mismatch, and `7` if the named round isn't
    complete. It never lingers and never touches the live server. `andara-cli snapshot verify --round <tick>`
@@ -80,9 +82,10 @@ on `dev`, suspend the Application's automated sync first, as it says). Then:
 3. **Deploy pinned to a round that matches** *(`AW-INF-007`, not built yet)*. That is `recovery.pin_round` and
    its `make rollback ROUND=<tick>`.
 
-**Until steps 2 and 3 exist, the per-Zone `snapshot list` is the only step available:** keep the World scaled to zero and
-escalate to implementation with the `error` line and the tick of the newest round, as `server-crashlooping.md`
-says for the same reason.
+**Until step 3 exists, there is no way to deploy pinned to a round:** keep the World scaled to zero, choose the
+round with steps 1 and 2, and escalate to implementation with the `error` line and that tick, as
+`server-crashlooping.md` says for the same reason. (The server reads `recovery.pin_round` already; the `make rollback`
+that sets it on a cluster is `AW-INF-007`'s.)
 
 An older round helps only when the round was the bad part. It replays the log forward from that round, so
 nothing acknowledged is lost, but a determinism fault at a later tick fails again on the way.

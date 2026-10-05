@@ -735,3 +735,110 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
 - `AW-INF-032`'s live observation and `recover --verify` / `snapshot verify` against a real round, so
   `andara_restore_total{caller="verify"}` is observed live (the inherited AW-SRV-043 line).
 - Not observed: the inherited `AW-SRV-006` failure reasons (`encode`, `stall`, `boundary`) driven through the server.
+
+## §8 instrumentation check — 2026-10-05 (SRE, `sre/aw-srv-007-verify`)
+
+*This section is the dated SRE record. Architecture's rulings on its deviations and its "not observed" lines are in
+`docs/feedback/AW-SRV-007-recovery-scale.md` and this story's Outstanding list (PR #427), and where they differ they
+win.*
+
+Against the local stack on `main` at `3dedb00` (`make up` rebuilt the server from that tree), and the `stack`
+workflow on #421 (run 37318364410, the re-run that passed, and 37315058628 before it). The live observation is
+`AW-INF-032`'s `make stack-recover`, as the Definition of done says. Every number below was read from the running
+server's `/metrics`, Prometheus, Tempo or Loki, not from the test registry, except where a row says so.
+
+### Metrics
+
+| Series | Observed | Where |
+|---|---|---|
+| `andara_recovery_state_hash_match` | `1` after a normal recovery; `0` during a refused recovery's linger, and absent before either | `make stack-recover`, `make stack-recover-mismatch`; Prometheus reads the `1` too |
+| `andara_recovery_round_tick` | `3270926`, equal to the round `R` the script waited for (`3.270926e+06` on the wire; the script compares integers) | `make stack-recover` (asserts it) |
+| `andara_recovery_replayed_ticks` | `45` | same run |
+| `andara_recovery_duration_seconds{phase}` | all five phases `count` 1: `load` 0.822 s, `seek` 0.018, `replay` 0.012, `verify` 0.0001, `total` 0.852 | same run |
+| `andara_recovery_failures_total{reason="restore"}` | `1` during the refusal's linger (exit `6`, `reason=seed`) | `make stack-recover-mismatch` now asserts it |
+| `andara_recovery_failures_total{reason}` for `hash`, `gap`, `round`, `store`, `version` | exposed at `0`, **not driven on a running server** | see "Not observed" |
+| `andara_restore_total{caller="recovery",outcome="ok"}` | `1` | `make stack-recover` (asserts at least 1) |
+| `andara_restore_total{caller="verify",outcome="ok"}` | `0` before, `1` after one `andara-cli snapshot verify --round 3271572` (`outcome=match`, `compared_tick=3271915`) | the inherited `AW-SRV-043` line |
+
+`recover --verify`'s outcome is on the in-process registry only (a one-shot exits before a scrape), as the
+inherited line allows; implementation's tests read it there.
+
+### Logs, read back from Loki (`{service_name="andara-server"}`)
+
+- `recovery starting from a snapshot round` (`info`): `tick`, `trace_id`, `zones`, `offsets`.
+- `recovery complete` (`info`): `tick`, `round_tick`, `replayed_ticks`, `load_ms`, `seek_ms`, `replay_ms`,
+  `verify_ms`, `total_ms`, `state_hash`, `trace_id`.
+- `recovered from the log` (`info`): `tick`, `round_tick`, `ticks_replayed`.
+- `recovery restore mismatch` (`error`, one line): `round_tick`, `reason`, `trace_id`, and for `seed` the
+  `recorded_seed` and `configured_seed`. `holding /metrics for the hash mismatch to be scraped` (`error`): `for`.
+  **Not read back from Loki:** `recovery refused` (the `error` line for exits `3`, `4` and `7`), since no run here
+  refused that way; its fields are `server/recovery/logs.go`'s and the integration suite's.
+- **Deviations from the required-fields list** (`ts`, `level`, `msg`, `service`, `env`, `tick`, `partition`,
+  `trace_id`): `partition` is on none of them (a recovery spans every Partition, and `offsets` carries them);
+  `recovered from the log` has no `trace_id`. For architecture to amend the list or implementation to add them.
+- **A uint64 above 2^63 reaches Loki rounded** (a seed reads `16406829232824263000` in Loki and
+  `16406829232824261652` on stderr): issue #423. The runbook now says to read `recorded_seed` from the pod's own log.
+
+### Traces, resolved in Tempo by the printed `trace_id` (`208bce564d3327bc4ea4a4a00bd1e40e`)
+
+`recovery.run` (root) with children `recovery.load_snapshot` ×4 (`zone_id`, and `key`), `recovery.seek`,
+`restore.verify` (`round_tick`, `outcome=ok`), `recovery.replay` (`ticks` 45, `records` 2) and `recovery.verify`.
+**Deviation:** `recovery.load_snapshot` carries `key`, not the `bytes` the §7 names (`server/recovery/recover.go:186`;
+the README documents `zone_id` only). Either the contract drops `bytes` or implementation adds it.
+
+### Alerts
+
+- **`RecoveryStateMismatch` fired** on compose against a refused recovery (a seed mismatch, exit `6`: see
+  `docs/feedback/AW-SRV-007-recovery-scale.md` for why not a byte-flipped round), and **outlived the process**: with
+  the restart loop stopped, the target stale after 25 s and the alert still firing (`keep_firing_for`). Locally several
+  times, and in CI (run 37318364410: `RecoveryStateMismatch — fired on a refused recovery, outlived the process,
+  cleared by the right seed — passes`).
+- **Absent from `ALERTS`, at either `alertstate`, through a normal recovery**, anchored on Prometheus scraping the
+  recovered `1` (locally with the alert clear, and in CI: `RecoveryStateMismatch is absent from ALERTS through the
+  recovery (Prometheus scraped the 1)`).
+- **Not observed: firing on the cluster.** The expression can't fire there (Ready-only scrape). `AW-INF-009`
+  inherits it, as the Definition of done says.
+- The runbook exists, and its commands are `andara-cli` for listing (`--local`, since a refused recovery serves no
+  Admin endpoint) and `andara-server recover --verify` for the one-shot. The Definition of done says "`andara-cli`
+  commands only": `snapshot verify` is `andara-cli`, but it needs a serving server, so after a refusal the one-shot
+  is the server binary. For architecture to reword the line or accept the one-shot.
+
+### Definition of done, line by line
+
+- **Live observation of `AW-INF-032`'s run:** done, above.
+- **The kill-and-recover test gates merges:** it did not. `make test-integration` never listed `./server/recovery/`,
+  so the package skipped in CI (`ANDARA_KAFKA_BROKERS` unset). Added in #421: the package's tests, 8.5 s against the stack's broker.
+- **`recovery-timing.json` is a CI artifact, `replay` compared with the previous run:** the job exists
+  (`.github/workflows/recovery-timing.yaml`, #421). Locally: `total` 46.79 s (bound 90 s), `replay` 46.48 s, tail 603
+  ticks from round 781, peak RSS 93 MB, 157 s for the test. **In CI** (`recovery-timing` workflow, run
+  37322596095 on `3dedb00`): passed, `total` 46.05 s, `replay` 45.75 s, tail 601 ticks from round 701, peak RSS 103 MB,
+  the `recovery-timing` artifact uploaded, and the summary step ran ("no previous run", as the first run must). **Not
+  observed: the comparison table.** Two later runs of the same commit (a dispatch and its re-run) failed in the test
+  with `timed out after 8m0s waiting for a round, and a tail of 600 ticks past it`: 600 ticks cost about as much as the
+  fixture's 60 s snapshot interval on a runner, so the tail often never builds (issue #424, implementation's test).
+  The previous-run download did work on those runs (`previous run 37322596095`), so the comparison needs one passing
+  run after the first. This line stays open until it has one.
+- **Inherited from `AW-SRV-043`:** `caller="verify"` observed live, above.
+- **Inherited from `AW-SRV-006`:** `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}` are **not
+  observed**. None was driven on a running server. `boundary` needs a failed boundary publish (a lost boundary also
+  exits the server `5`, so `make stack-boundary-lost` restarts it and the counter starts again; whether the round in
+  flight counted `boundary` before the exit wasn't looked at); `encode` needs an encoder fault; `stall` needs a copy over
+  `max_stall_ms`, which the marks sizing measurement (`AW-INF-035`) is the first thing that could produce at scale.
+  Architecture names where each is inherited.
+- **Moved to its own story (architecture, §8 rulings):** the in-transit orphan mark.
+
+### The implementation record's "Outstanding before `done`" list, 2026-10-05
+
+- **SRE's items** (the Helm key and values schema, the `stack-boundary-lost` read-back, compose's `60s`, the rule, the
+  runbook, the CI job): all merged (#415, #417, #418, #421). `make check` on `main` passes `values-schema-check`.
+- **`AW-INF-032`'s live observation, and `snapshot verify` against a real round:** done, above.
+- **`AW-SRV-006`'s failure reasons:** not observed, above.
+- **AC-16** (the owned set is the loaded content's Zones, not the round's): not SRE's, and not checked here.
+
+### Not observed on a running server
+
+`andara_recovery_failures_total` for `hash`, `gap`, `round`, `store` and `version`: each needs a fault in the log or
+the store, so they are exercised on the metric objects by the integration suite
+(`TestExitCodeMapsEveryError` and the per-exit tests, which the §8 deferral rule allows), with the series exposed at
+`0` by the scrape above. No story inherits a live observation: a recovery fault in the log or the store isn't a
+deployment path. `AW-INF-009`'s dev run of exit `6` is the first on a cluster.
