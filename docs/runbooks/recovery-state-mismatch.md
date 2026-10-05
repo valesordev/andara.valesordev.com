@@ -52,16 +52,21 @@ The `error` line says which refusal it was:
 | `8` | Replaying the log from the round reached a tick whose hash differs from the recorded one | List the rounds, and ask each older one whether it reproduces the World (below). If an older round does, the newest round was the bad part. **If every round mismatches at the same tick, it isn't a round**: replay isn't deterministic, or a log record changed. That is a determinism failure; stop, keep the evidence, and escalate to implementation with the `error` line and the tick |
 | `6`, `hash` | The newest round doesn't reproduce its own recorded hash: a corrupt round | Choose an older round, as below |
 | `6`, `seed` | The configured `sim.seed` differs from the round's `recorded_seed` | Not a data fault: set `sim.seed` back to `recorded_seed` (or remove it, if it was unset when the round was written). An older round written under the same seed has the same problem |
-| `6`, `content` | The round doesn't restore onto the content in effect: a digest differs (`pack`, `recorded_digest`, `built_digest`) or a Zone is unknown (`zone_id`) | Content changed since the round was written. Roll the content back (`andara-cli content rollback`), or choose a round written under the current content |
+| `6`, `content` | The round doesn't restore onto the content this server builds: a digest differs (`pack`, `recorded_digest`, `built_digest`) or a Zone is unknown (`zone_id`) | Two causes. **The build:** this image builds different content bytes than the build that wrote the round, so roll the image back to the build that wrote it, or escalate to implementation (`server-crashlooping.md`); an older round fails the same way. **The content in effect:** a pack's pointer or files moved since the round, and **there is no offline fix for that on the cluster**: moving the Active Pointer back (`andara-cli content rollback`) is an Admin RPC, and a refused recovery never binds `grpc.listen`, so the CLI has nothing to reach. On compose (`content.source=dir`), restore the content files the round was written under (git), or reset the local stack (`make down VOLUMES=1`). On the cluster (`content.source=kafka`), keep the World scaled to zero and escalate with the `error` line |
 
 ## How to mitigate
 
 Keep the World down while you choose. On the cluster that is `server-crashlooping.md`'s scale-to-zero (and
 on `dev`, suspend the Application's automated sync first, as it says). Then:
 
-1. **List the rounds.** `andara-cli snapshot list` (available today) prints each round's tick,
-   `state_version`, Zones, whether it is complete, and its age. A round that isn't complete is never
-   selected on its own.
+1. **List the rounds, one Zone at a time.** `andara-cli snapshot list --zone <zone> --store fs --fs-path <dir>`
+   (or `--store s3 --s3-bucket <bucket> --s3-endpoint <endpoint>`) reads the store directly, so it answers even
+   with no server running. It requires `--zone` and prints that Zone's objects, newest first: `TICK`, `VERSION`,
+   `OFFSET`, `BYTES`, `TAKEN AT`, `STATE HASH` and `KEY`, and an error for an object it can't read. It doesn't
+   group rounds or say which are complete. A round is the objects of every Zone at one `TICK`, so run it for
+   each Zone and read down to a tick they all have; a Zone with no object at a tick makes that round incomplete.
+   On compose: `andara-cli snapshot list --zone town --store fs --fs-path .local/data/snapshots`. The grouped
+   form, with `complete` and `age` and no `--zone`, is `AW-SRV-007`'s and not built yet.
 2. **Ask the one-shot about a round** *(`AW-SRV-007`, not built yet)*. `andara-server recover --verify --round
    <tick>`, run in the server image against the same store, prints `match` or `mismatch` with both hashes and
    the phase timings, and exits `0` on a match, `8` on any mismatch, and `7` if the named round isn't
@@ -70,7 +75,7 @@ on `dev`, suspend the Application's automated sync first, as it says). Then:
 3. **Deploy pinned to a round that matches** *(`AW-INF-007`, not built yet)*. That is `recovery.pin_round` and
    its `make rollback ROUND=<tick>`.
 
-**Until steps 2 and 3 exist, `snapshot list` is the only step available:** keep the World scaled to zero and
+**Until steps 2 and 3 exist, the per-Zone `snapshot list` is the only step available:** keep the World scaled to zero and
 escalate to implementation with the `error` line and the tick of the newest round, as `server-crashlooping.md`
 says for the same reason.
 
@@ -82,8 +87,11 @@ nothing acknowledged is lost, but a determinism fault at a later tick fails agai
 - **Do not delete the snapshot volume to "reset".** It is the one action that turns a 60 s recovery into a
   full-history replay (`server-unavailable.md`), and it removes the rounds you are choosing between.
 - **Do not roll the image back to "try the older build".** A binary older than a round's `state_version`
-  exits `4`, and a build with different simulation code is what causes an exit `8`.
+  exits `4`, and a build with different simulation code is what causes an exit `8`. The one exception is an exit `6`
+  `content` caused by the build, where `server-crashlooping.md` rolls back to the build that *wrote the round*.
 - **Do not raise `recovery.verify_timeout`.** A mismatch is not a timeout.
+- **Do not reach for `andara-cli content rollback`.** It needs a serving Admin endpoint, and a refused recovery
+  never provides one.
 - **Do not set `recovery.mismatch_linger` on the cluster.** It would add 60 s to every crash-loop cycle and
   delay `AndaraServerCrashLooping`, and the Ready-only scrape would never see it.
 - **Do not read a quiet gauge as "fixed".** The gauge has no sample until a recovery sets it. A recovery that
