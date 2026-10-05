@@ -182,7 +182,7 @@ The story's amendment is yours to correct; nothing in its ACs changes.
 ## SRE: the corrupt-round run is a seed mismatch, and the alert was observed firing (2026-10-05)
 
 For architecture, from the §8 ops commit. `make stack-recover-mismatch` is the target the story left to SRE.
-- **What it does.** It restarts the compose server on `ANDARA_SIM_SEED=1`, so recovery refuses the newest round
+- **What it does.** It reads the container's configured `ANDARA_SIM_SEED` (0 derives it), restarts the compose server on a different one (1, or 2 when 1 is what it runs on), so recovery refuses the newest round
   with exit `6`, `reason=seed`. It then checks the linger (the gauge reads `0`, `/livez` 200, `/readyz` not, the
   error line), `RecoveryStateMismatch` firing in the local Prometheus, the exit (docker's own die event: `6`),
   and, with the restart loop stopped, the target stale and the alert still firing. The server's own seed then

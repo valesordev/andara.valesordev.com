@@ -10,7 +10,7 @@
 # clause), so this is the one place the rule is seen to fire.
 #
 # The refusal is made without touching a byte of the snapshot store: the server is restarted with
-# ANDARA_SIM_SEED=1, so recovery refuses the newest round with exit 6 and reason=seed (the round's
+# another ANDARA_SIM_SEED than the one it runs on, so recovery refuses the newest round with exit 6 and reason=seed (the round's
 # recorded_seed differs; docs/runbooks/recovery-state-mismatch.md). That exit lingers and sets the
 # gauge to 0 the same way a hash or content mismatch does. A byte-flipped round, re-signed so it
 # verifies, needs the Go codec, which this script doesn't carry.
@@ -51,7 +51,8 @@ OPERATOR="${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}"
 export ANDARA_UID="${ANDARA_UID:-$(id -u)}" ANDARA_GID="${ANDARA_GID:-$(id -g)}"
 COMPOSE=(docker compose -f deploy/compose/docker-compose.yaml --profile full --profile server)
 RTO="${STACK_RECOVER_RTO:-120}"
-SEED=1
+ORIG_SEED=""   # the running container's configured ANDARA_SIM_SEED, read before the kill
+SEED=""        # the temporary one, never equal to it
 ALERT=RecoveryStateMismatch
 
 WORK="$(mktemp -d -t stack-recover-mismatch.XXXXXX)"
@@ -64,7 +65,7 @@ export XDG_STATE_HOME="$WORK/state"
 TOUCHED=""
 cleanup() {
   if [[ -n "$TOUCHED" ]] && ! curl -sf "$READYZ" >/dev/null 2>&1; then
-    "${COMPOSE[@]}" up -d --no-deps andara-server >/dev/null 2>&1 || true
+    ANDARA_SIM_SEED="${ORIG_SEED:-0}" "${COMPOSE[@]}" up -d --no-deps andara-server >/dev/null 2>&1 || true
   fi
   rm -rf "$WORK"
 }
@@ -144,6 +145,18 @@ complete="$(awk 'NR > 1 && $4 == "true" { print $1; exit }' <<<"$rounds")"
 [[ -n "$complete" ]] || fail "no complete snapshot round yet; the stack needs one interval of play before this run"
 say "newest complete round $complete; $ALERT loaded and absent from ALERTS"
 
+# The seed the stack runs on, as the container is configured (0 derives it): restored exactly at the
+# end, and the temporary one is chosen to differ from it. A stack started with its own
+# ANDARA_SIM_SEED=1 would otherwise be "restarted" on the seed it already has.
+cid="$("${COMPOSE[@]}" ps -q andara-server)" || fail "docker compose ps failed"
+[[ -n "$cid" ]] || fail "no andara-server container"
+ORIG_SEED="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$cid" | sed -n 's/^ANDARA_SIM_SEED=//p')"
+ORIG_SEED="${ORIG_SEED:-0}"
+[[ "$ORIG_SEED" =~ ^[0-9]+$ ]] || fail "the container's ANDARA_SIM_SEED is '$ORIG_SEED', not a number"
+SEED=1
+[[ "$ORIG_SEED" != "$SEED" ]] || SEED=2
+say "the server runs on sim.seed ${ORIG_SEED/#0/0 (derived)}; the refusal will use $SEED"
+
 # 2. The refused recovery.
 SINCE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 TOUCHED=1
@@ -172,8 +185,8 @@ alert_firing || fail "$ALERT stopped firing with the target gone; keep_firing_fo
 say "the target is stale and $ALERT is still firing"
 
 # 6. Back to the server's own seed: the same round recovers.
-say "starting with the server's own seed ..."
-"${COMPOSE[@]}" up -d --no-deps andara-server >/dev/null 2>&1 || fail "docker compose up failed"
+say "starting with the server's own seed ($ORIG_SEED) ..."
+ANDARA_SIM_SEED="$ORIG_SEED" "${COMPOSE[@]}" up -d --no-deps andara-server >/dev/null 2>&1 || fail "docker compose up with ANDARA_SIM_SEED=$ORIG_SEED failed"
 await "$RTO" "the server is not ready ${RTO}s after the restart with its own seed" ready
 await 30 "andara_recovery_state_hash_match is not 1 after the recovery with its own seed" gauge_is 1
 say "recovered with a matching State Hash. $ALERT stays in ALERTS for its keep_firing_for (15m)"
