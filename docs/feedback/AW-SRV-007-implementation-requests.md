@@ -70,32 +70,39 @@ Two of the four change the contract (1 and 3) and need implementation. The story
 
 ### 1. The owned Zone set comes from the round's own recorded content (AC-16)
 
-Your reading, the loaded content's Zones, is wrong in a case that isn't rare. A round is taken every 60 s
-and a content swap can land any time after it, so a swap that adds or removes a Zone between the last round
-and the kill is routine. The round then lists `incomplete` for a Zone the current content lacks, and
-recovery falls back to an older round or to a full-log replay, which is the RTO this story exists to hold, or
-exit `3` if retention doesn't reach back. An extra Zone in the current content fails as exit `6` for a round
-that is fine.
+Your reading, the loaded content's Zones, fails in a case that isn't rare, though not the one I first
+wrote. A swap can't remove a Zone (`AW-SRV-012` refuses it as `zone_removed`, and the Engine's
+`SwapZoneRemoved` is a backstop), so a round's Zones are always a subset of any later content's. The failing
+direction is an **added** Zone: a swap that adds one after the last round (a round is taken every 60 s, a
+swap can land any time) makes the current content list a Zone every existing round lacks. `verify` marks it
+`missing`, every round is `incomplete`, and recovery falls back to a full-log replay (the RTO this story
+exists to hold), or exit `7` with `recovery.require_snapshot`, or exit `3` if retention doesn't reach back.
+It lasts until the first round taken after the swap. (I first wrote that an extra Zone in current content is
+exit `6`. It isn't: exit `6` is a round holding a Zone its topology lacks, which swaps can't produce.)
 
 The round already says which Zones it covers. Every envelope carries `content` and `content_digest`
 (`snapshot.proto` fields 8 and 9: "Every Zone's envelope in a round carries the same values"), and the field's
-own comment says recovery resolves those versions and rebuilds the topology before loading the body. So:
-- read one envelope's header from the group, resolve its `content` (as recovery must anyway), and take that
-  topology's Zones, narrowed to the Partitions this process owns (all 64 today, ADR-0002), as the owned set
-  for that round. Completeness is then judged against it, and per round, so `ListRounds` and `NewestComplete`
-  take the set from each group and not from one argument;
-- a Zone object the round's content doesn't list is the existing `ErrRoundZoneUnknown` (exit `6`,
-  `reason=content`). A listed Zone with no object is `missing`;
-- envelopes in one group that disagree on `content` are `disagree` (AC-11's list already names it);
-- content that can't be resolved at those versions is exit `6` with `reason=content` naming the pack
-  versions. It is not `incomplete`: nothing is wrong with the round's objects.
+own comment says recovery resolves those versions and rebuilds the topology before loading the body. There is
+no circularity: current content is a superset of the round's, so listing its Zones finds every object, and
+one envelope's header gives V.
+- **Discovery** lists the current content's Zones (`ws.List` is per Zone, as today). **Judgement** is per
+  round: V's Zones, narrowed to the Partitions this process owns (all 64 today, ADR-0002).
+- A listed Zone object the round's content doesn't list is the existing `ErrRoundZoneUnknown` (exit `6`,
+  `reason=content`): a corruption case, not a swap case. A V Zone with no object is `missing`.
+- Envelopes in one group that disagree on `content` are `disagree`, as today.
+- Content that can't be resolved at those versions is exit `6` with `reason=content` and `pack_versions`
+  on the line, counted under `reason="restore"`, no other round tried (AC-13). `snapshot list` shows it
+  `incomplete`, cause `content`, versions in `Reason`. A named round is exit `6`, not `7`.
+- **Signatures.** `ListRounds`, `NewestComplete` and `RoundAt` take `(listed []sim.ZoneID, zonesAt
+  ZonesAt)` in place of `owned`, where `zonesAt` resolves a round's recorded content to its Zones. The
+  server supplies it, so `store` doesn't import `sim.ContentSource`; resolve once per content digest, or
+  `snapshot list` runs the content resolution per round. For a tick with no object, `missing` names the
+  current content's Zones.
 
-A World with no content yet writes no round, so "no owned Zones, vacuously complete" can't arise from a real
-round. The test for it is a `ListRounds` over a store with no objects.
-
-**Test (AC-16):** write a round at V, swap content to V+1 with an added Zone (and again with a removed one),
-kill, recover: the round is selected and the swap replays. `server/store` also needs the unit case the other
-way: an object for a Zone the round's content doesn't list.
+**Test (AC-16):** write a round at V, swap to V+1 with an added Zone, kill, recover: the round is selected
+and the swap replays. `server/store` unit cases: a round whose content lists a Zone with no object
+(`missing`); an object for a listed Zone the round's content doesn't list (`ErrRoundZoneUnknown`); content that
+can't be resolved (exit `6`, and `snapshot list` cause `content`).
 
 ### 2. "Consumer lag" in Ready is the loop's schedule lag, as you read it
 
@@ -119,8 +126,12 @@ present bodies skips it, and `MarkLinkdead` rejects `in_transit` (my `AW-SRV-028
 retry then lands it, non-linkdead and with no Session. `BindCharacter` doesn't reject a present,
 non-linkdead body (`AW-SRV-015` struck `ErrNotLinkdead`), so the Account can still rebind it. But until it
 does, nothing times the body out: it stays in the world with no linkdead deadline, which is the "present
-forever" the story's inherited line is there to prevent. The sweep therefore keeps the IDs of Characters it found in `Transit` and retries their mark until the Entity is
-placed or gone. That is AC-17. The existing `TestRecoveryWithAHandoffInFlight` is the natural place to add
+forever" the story's inherited line is there to prevent. The sweep therefore keeps the IDs of Characters it found in `Transit` and retries their mark, every
+`sim.handoff_retry_ticks`, until the Entity is placed or gone. Each attempt re-resolves where the Character
+is (Entities, then Transit, as `BindCharacter` does) and is produced to the Zone that holds it. A mark produced
+to the source Zone after the ack would no-op (`applyMarkLinkdead` finds nothing in that Zone) and never mark
+the body. A handoff stuck on a faulted Zone retries without end (`AW-SRV-028` item 5), visible on
+`andara_handoffs_in_transit`. That is AC-17. The existing `TestRecoveryWithAHandoffInFlight` is the natural place to add
 a Character.
 
 ### 4. `verify_busy` stands

@@ -145,8 +145,8 @@ match, so that a crash is an interruption rather than an incident.
     `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
     `recovery restore mismatch` carries `round_tick`, `reason` (`hash`, `seed` or `content`), and
     `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`,
-    `pack`, `recorded_digest` and `built_digest` for a digest mismatch and `zone_id` for an unknown
-    Zone. It never binds
+    `pack`, `recorded_digest` and `built_digest` for a digest mismatch, `zone_id` for an unknown
+    Zone, and `pack_versions` for content that can't be resolved (AC-16). It never binds
     `grpc.listen`, and AC-14's linger applies. *(Added 2026-10-02, feedback item 3.)*
 14. **Given** `recovery.mismatch_linger` of `60s` **when** boot recovery ends in exit `8` or `6`
     **then**, for 60 s before exiting, the server serves `/metrics` and `/livez` with `200` and
@@ -174,20 +174,31 @@ match, so that a crash is an interruption rather than an incident.
     `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
     object exists at the tick), and `andara-cli snapshot verify` exits `1`.
     *(Added in PR #356 review, 2026-10-03.)*
-16. **Given** a round written at content version V and a content swap applied after it, which adds or
-    removes a Zone, **when** the server is killed and recovers **then** the round is judged complete against
-    the Zones of V, not of the content in effect at boot: it is selected, restored on V, and the swap is
-    replayed from the log. A Zone object the round's own content doesn't list is
-    `sim.ErrRoundZoneUnknown` (exit `6`, `reason=content`), and a Zone it lists with no object is `missing`
-    (exit `7` when named). The owned set is the round's content's Zones that this process's Partitions own
-    (all 64 today, ADR-0002). A round whose content can't be resolved is exit `6` with `reason=content`
-    naming the pack versions, not `incomplete`. `snapshot list` judges each round the same way.
+16. **Given** a round written at content version V and a content swap applied after it that adds a
+    Zone, **when** the server is killed and recovers **then** the round is judged complete against the Zones
+    of V, not of the content in effect at boot: it is selected, restored on V, and the swap is replayed from
+    the log. (A swap can't remove a Zone: `AW-SRV-012` refuses it, so V's Zones are always a subset of any
+    later content's, and the added Zone is what makes a good round `missing` against the current content.)
+    Discovery lists the current content's Zones, a superset of V's, and one envelope's header gives V. A
+    Zone object the round's content doesn't list, found in that listing, is `sim.ErrRoundZoneUnknown` (exit
+    `6`, `reason=content`, a corruption case), and a Zone V lists with no object is `missing` (exit `7` when
+    named). The owned set is V's Zones that this process's Partitions own (all 64 today, ADR-0002). For a tick
+    with no object at all, `missing` names the current content's Zones. A round whose content can't be
+    resolved is exit `6`, `reason=content`, with `pack_versions` on the `error` line, counted under
+    `reason="restore"`, and no other round is tried (AC-13). `snapshot list` shows such a round
+    `incomplete` with cause `content` and the versions in `Reason`, and a named one (`--round T`) is exit
+    `6`, not `7`. `snapshot list` judges every round this way.
     *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
 17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
     at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
     (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
-    `MarkLinkdead` rejects `in_transit`, so the mark is retried until the Entity is placed or gone, not
-    issued once at boot. Until then the Character's Account can't select it, as for any Character in transit.
+    `MarkLinkdead` rejects `in_transit`, so the mark is retried, every `sim.handoff_retry_ticks`, until the
+    Entity is placed or gone, not issued once at boot. Each attempt re-resolves where the Character is,
+    Entities then Transit as `BindCharacter` does, and is produced to the Zone that holds it: the source
+    Zone while its Transit record stands (rejected `in_transit`), the target after the ack. A mark produced
+    to the source after the ack would no-op and never mark the body. "Gone" is the Character in neither
+    Entities nor any Transit record. A handoff stuck on a faulted Zone is retried without end, and shows on
+    `andara_handoffs_in_transit` and in the runbook's stuck-handoff step.
     *(Added 2026-10-05, architecture, at §8; see the feedback file's item 3.)*
 
 ## Interface contract
@@ -203,8 +214,11 @@ type Round struct {
     Complete     bool                    // exactly one hash-valid object per owned Zone; PRNG, EventID, seed agree
 }
 
-// ListRounds groups WorldStore keys by tick and marks completeness against the
-// process's owned Zones. Newest first.
+// ListRounds groups WorldStore keys by tick and marks completeness against each
+// round's own owned Zones (AC-16: the Zones of the content the round records,
+// resolved through a function the caller supplies, so `store` doesn't import
+// `sim.ContentSource`; resolved once per content digest). Discovery lists the
+// current content's Zones. Newest first.
 //
 // The grouping is a prefix scan: the key is
 // {zone_id}/{tick}/{state_version}/{offset} (AW-SRV-006, amended 2026-09-22),
@@ -214,7 +228,8 @@ type Round struct {
 // ticks at an older version. Completeness is still a per-object hash check, so
 // verifying a round does read every object it names — discovery is what the
 // key format makes cheap, not verification.
-func ListRounds(ctx context.Context, ws sim.WorldStore, owned []sim.ZoneID) ([]Round, error)
+func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zonesAt ZonesAt) ([]Round, error)
+// `NewestComplete` and `RoundAt` take the same two arguments in place of `owned`.
 
 // Recover is the whole boot-time path. It returns a ready Engine or a typed error.
 func Recover(ctx context.Context, opts RecoverOptions) (*sim.Engine, Report, error)
@@ -269,7 +284,8 @@ drained. Commands accepted before the crash are applied in order at `max_per_tic
 | `8` | `ErrHashMismatch` — the alerting condition *(was `2` until 2026-10-02)* |
 
 Exit `6` also covers the round refusing to restore onto the content in effect:
-`sim.ContentDigestError`, or a round carrying a Zone the content doesn't have (`sim.RestoreEngine`).
+`sim.ContentDigestError`, a round carrying a Zone its own content doesn't list (`sim.RestoreEngine`), or
+a round whose recorded content can't be resolved (AC-16).
 That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and it logs
 `reason=content`, counted under `andara_recovery_failures_total{reason="restore"}`.
 `andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
