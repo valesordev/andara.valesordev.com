@@ -904,3 +904,20 @@ Branch `impl/aw-srv-007-ac16`.
 `ListSnapshotRounds` now builds the topology per distinct recorded content on the serving process, and the projector still
 judges a round on the loaded content's Zones (it passes no `ZonesAt`). `recovery.load_snapshot` spans also appear for the objects
 of newer rounds the boot scan skims before the winner (they carry `round_tick`).
+
+### AC-16 pieces observed on the running stack — 2026-10-05 (SRE, `sre/aw-srv-007-ac16-verify`)
+
+`main` at 73864aa (AC-16 and its review fixes in), `make up`, then `make stack-recover` and `make stack-recover-mismatch`,
+both passing (kill to ready 2.2 s, `process-start-to-ready` 0.95 s, 38 replayed ticks).
+
+| Piece | Observed |
+|-------|----------|
+| `recovery.load_snapshot` attributes | Tempo, trace `09480ab2f11fa55735277f5083987146`: four spans (`docks`, `purgatory`, `town`, `wilds`), each with `zone_id`, `key`, `round_tick` (3407129) and `bytes` (423, 927, 5078, 423) |
+| the rest of the `recovery.run` tree | `recovery.seek` (`offset`), `restore.verify` (`round_tick`, `outcome=ok`), `recovery.replay` (`ticks` 38, `records` 2), `recovery.verify`, `recovery.run` |
+| `trace_id` on the recovery lines | `recovery complete` carries the `recovery.run` trace (the one the script prints and Tempo resolves); `recovered from the log` carries `trace_id` as well (the restart that ends `make stack-recover-mismatch`, `ticks_replayed` 358) |
+| seeds as decimal strings (#423) | `tick loop configured` logs `"seed":"16406829232824261652"`, and Loki's `recovery restore mismatch` carries `recorded_seed` `16406829232824261652` and `configured_seed` `1` as exact strings. The value is above 2^63 and is no longer rounded |
+
+**Not observed:** `andara_snapshot_failures_total{reason="encode"}` (needs a codec failure; the integration test above
+covers the metric object), and AC-16's added-Zone case on a process (an in-process test, as implementation records).
+With these in, nothing of this story's §7 instrumentation is outstanding for SRE. The runbook's seed row no longer
+sends the operator to the pod log.
