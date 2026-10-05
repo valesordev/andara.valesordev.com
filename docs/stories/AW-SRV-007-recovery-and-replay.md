@@ -738,6 +738,10 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
 
 ## §8 instrumentation check — 2026-10-05 (SRE, `sre/aw-srv-007-verify`)
 
+*This section is the dated SRE record. Architecture's rulings on its deviations and its "not observed" lines are in
+`docs/feedback/AW-SRV-007-recovery-scale.md` and this story's Outstanding list (PR #427), and where they differ they
+win.*
+
 Against the local stack on `main` at `3dedb00` (`make up` rebuilt the server from that tree), and the `stack`
 workflow on #421 (run 37318364410, the re-run that passed, and 37315058628 before it). The live observation is
 `AW-INF-032`'s `make stack-recover`, as the Definition of done says. Every number below was read from the running
