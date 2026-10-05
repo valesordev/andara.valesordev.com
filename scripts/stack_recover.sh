@@ -35,9 +35,10 @@
 # Exit codes: 0 the gate held; 1 an assertion failed, a precondition is missing, or the run was
 # inconclusive (a round completed after the tail move).
 #
-# Environment: ANDARA_HTTP_PORT, ANDARA_BOOTSTRAP_OPERATOR, ANDARA_TLS_CA_FILE,
-# ANDARA_SNAPSHOT_INTERVAL (read to size the AC-2 deadline; the compose server's own is 60s) and
-# STACK_RECOVER_RTO (seconds, default 120; Phase 1 exit lowers it to 60 in the Makefile).
+# Environment: ANDARA_HTTP_PORT, ANDARA_BOOTSTRAP_OPERATOR, ANDARA_TLS_CA_FILE and
+# STACK_RECOVER_RTO (seconds, default 120; Phase 1 exit lowers it to 60 in the Makefile). The AC-2
+# deadline is the running server's own snapshot.interval plus 30 s, read from
+# andara_snapshot_interval_seconds, so no setting here can disagree with the server.
 
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -54,24 +55,6 @@ COMPOSE=(docker compose -f deploy/compose/docker-compose.yaml --profile full --p
 RTO="${STACK_RECOVER_RTO:-120}"
 [[ "$RTO" =~ ^[0-9]+$ && "$RTO" -gt 0 ]] || { echo "stack-recover: STACK_RECOVER_RTO=$RTO is not a whole number of seconds above 0" >&2; exit 1; }
 
-# A Go duration (`500ms`, `1m30s`), rounded up to whole seconds.
-duration_s() {
-  python3 - "$1" <<'PY'
-import math, re, sys
-d = sys.argv[1].strip()
-units = {"ns": 1e-9, "us": 1e-6, "µs": 1e-6, "ms": 1e-3, "s": 1, "m": 60, "h": 3600}
-parts = re.findall(r"(\d+(?:\.\d*)?|\.\d+)(ns|us|µs|ms|s|m|h)", d)
-if d == "0":
-    print(0)
-elif not parts or "".join(n + u for n, u in parts) != d.lstrip("+"):
-    sys.exit("stack-recover: %r is not a Go duration" % d)
-else:
-    print(math.ceil(sum(float(n) * units[u] for n, u in parts)))
-PY
-}
-INTERVAL_S="$(duration_s "${ANDARA_SNAPSHOT_INTERVAL:-60s}")" || exit 1
-(( INTERVAL_S > 0 )) || { echo "stack-recover: snapshot.interval is 0, so no round is ever cut and there is nothing to recover from" >&2; exit 1; }
-ROUND_DEADLINE=$(( INTERVAL_S + 30 ))
 
 # An isolated home: the credentials this writes must not land in the developer's.
 WORK="$(mktemp -d -t stack-recover.XXXXXX)"
@@ -214,6 +197,11 @@ poll "$AOUT" '^Market Plaza$' 20 "$APID" || fail "A never read Room 1 (the Marke
 # AC-2. A round newer than A's first move, polled to a deadline of snapshot.interval + 30 s. The
 # floor is read again now, after the move, so a round cut before it can't count.
 round_before="$(newest_round)" || fail "andara-cli snapshot list failed"; round_before="${round_before:-0}"
+interval_s="$(metric andara_snapshot_interval_seconds)"
+[[ -n "$interval_s" ]] || fail "andara_snapshot_interval_seconds is absent from the server's /metrics"
+python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > 0 else 1)' "$interval_s" \
+  || fail "the server's snapshot.interval is 0, so no round is ever cut and there is nothing to recover from"
+ROUND_DEADLINE="$(python3 -c 'import math, sys; print(math.ceil(float(sys.argv[1])) + 30)' "$interval_s")"
 echo "stack-recover: waiting up to ${ROUND_DEADLINE}s for a complete round past ${round_before} ..."
 R=""
 for _ in $(seq 1 "$ROUND_DEADLINE"); do
@@ -254,11 +242,14 @@ python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) <= float(sys.argv[2]) e
 # AC-4. The recovery's own instruments, polled to a deadline: the first scrape after ready can
 # land before the server has published them.
 echo "stack-recover: the server's /metrics ..."
-hash_match=""; round_tick=""
+hash_match=""; round_tick=""; replayed=""; total_s=""; restored=""
 for _ in $(seq 1 30); do
   hash_match="$(metric andara_recovery_state_hash_match)"
   round_tick="$(metric andara_recovery_round_tick)"
-  [[ "$hash_match" == "1" && -n "$round_tick" ]] && break
+  replayed="$(metric andara_recovery_replayed_ticks)"
+  total_s="$(metric andara_recovery_duration_seconds_sum phase=total)"
+  restored="$(metric andara_restore_total caller=recovery outcome=ok)"
+  [[ "$hash_match" == "1" && -n "$round_tick" && -n "$replayed" && -n "$total_s" && "${restored:-0}" -ge 1 ]] && break
   sleep 0.5
 done
 [[ "$hash_match" == "1" ]] || fail "andara_recovery_state_hash_match is '${hash_match:-absent}' after recovery, want 1"
@@ -267,9 +258,11 @@ if (( round_tick > R )); then
   fail "recovery used round $round_tick, newer than R=$R: a round completed between the re-read and the kill; the run proves nothing, rerun"
 fi
 (( round_tick == R )) || fail "andara_recovery_round_tick is $round_tick, want R=$R: the recovery did not start from that round"
-replayed="$(metric andara_recovery_replayed_ticks)"
-total_s="$(metric andara_recovery_duration_seconds_sum phase=total)"
-restored="$(metric andara_restore_total caller=recovery outcome=ok)"
+# The gate is the live verification of these instruments (CLAUDE.md §8): one that is absent, or a
+# recovery that restored no round, fails here instead of printing n/a.
+[[ -n "$replayed" ]] || fail "andara_recovery_replayed_ticks is absent after recovery"
+[[ -n "$total_s" ]] || fail "andara_recovery_duration_seconds_sum{phase=\"total\"} is absent after recovery"
+[[ "${restored:-0}" -ge 1 ]] || fail "andara_restore_total{caller=\"recovery\",outcome=\"ok\"} is '${restored:-absent}' after recovery, want at least 1"
 trace_id="$("${COMPOSE[@]}" logs --no-log-prefix --since "$SINCE" andara-server 2>/dev/null \
   | python3 -c '
 import json, sys
@@ -284,7 +277,7 @@ for line in sys.stdin:
 print(tid)
 ')"
 echo "stack-recover: ready ${kill_to_ready}s after the kill (RTO ${RTO}s), round ${round_tick}, hash match"
-echo "stack-recover: kill-to-ready ${kill_to_ready}s; process-start-to-ready (andara_recovery_duration_seconds{phase=\"total\"}) ${total_s:-n/a}s; replayed ticks ${replayed:-n/a}; restore ok ${restored:-n/a}; recovery.run trace ${trace_id:-n/a}"
+echo "stack-recover: kill-to-ready ${kill_to_ready}s; process-start-to-ready (andara_recovery_duration_seconds{phase=\"total\"}) ${total_s}s; replayed ticks ${replayed}; restore ok ${restored}; recovery.run trace ${trace_id:-n/a}"
 
 # AC-5. The clients reconnect on their own: a second `Connected` line each, then a look.
 echo "stack-recover: waiting for both players to rebind ..."
@@ -347,7 +340,7 @@ if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then
   {
     echo "| kill-to-ready (s) | process-start-to-ready (s) | replayed ticks | round tick |"
     echo "|---|---|---|---|"
-    echo "| ${kill_to_ready} | ${total_s:-n/a} | ${replayed:-n/a} | ${round_tick} |"
+    echo "| ${kill_to_ready} | ${total_s} | ${replayed} | ${round_tick} |"
   } >>"$GITHUB_STEP_SUMMARY"
 fi
 echo "stack-recover: M2 gate — killed, recovered from a snapshot, hash matched, both rebound — passes"

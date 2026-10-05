@@ -218,6 +218,12 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
   resubscribes (the hub replays nothing to a new subscription), so before the quits the script asserts
   `andara_events_emitted_total{type="character_despawned"}` is 0 since the recovery, and
   `andara_linkdead_outcomes_total{outcome="reconnected"}` is at least 2, one per player.
+- **The AC-2 deadline** is the running server's `andara_snapshot_interval_seconds` plus 30 s, not an environment
+  variable the compose server doesn't receive (PR review). The script reads no `ANDARA_SNAPSHOT_INTERVAL`.
+- **AC-4 requires every series it prints.** `andara_recovery_replayed_ticks`,
+  `andara_recovery_duration_seconds_sum{phase="total"}` and `andara_restore_total{caller="recovery",outcome="ok"}`
+  (at least 1) fail the gate when absent, since this run is the live verification of those instruments (PR
+  review). A renamed series fails with `andara_recovery_replayed_ticks is absent after recovery`.
 - **AC-7's exit code.** A failing run prints the server container's status, exit code and restart count
   (`docker inspect`) before its last 50 log lines, so a server that exits non-zero during recovery is reported
   with its code, under `restart: on-failure` too.
