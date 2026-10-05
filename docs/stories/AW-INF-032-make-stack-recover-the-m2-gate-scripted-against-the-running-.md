@@ -112,7 +112,10 @@ cite it.
   to 60 there.
 - Exit codes: `0` all assertions held; `1` an assertion failed, a precondition is missing
   (`no .local/cli.yaml; run make up first`, `no bin/andara-cli; run make build first`), or the run
-  was inconclusive (AC-3 and AC-4's rerun case). AC-7's dump and cleanup apply to all three.
+  was inconclusive (AC-3 and AC-4's rerun case). AC-7's dump and cleanup apply from the first command that touches
+  the stack: the file checks and the `STACK_RECOVER_RTO` check run before anything exists to dump or clean, so
+  they print their one line and exit `1`; `andara-server isn't ready` and every later failure go through the
+  dump, which prints the server's last 50 lines. *(Amended 2026-10-05, at §8, from Codex on #429.)*
 - Job summary: when `$GITHUB_STEP_SUMMARY` is set, one appended table row with kill-to-ready
   seconds, `andara_recovery_duration_seconds_sum{phase="total"}`, `andara_recovery_replayed_ticks`,
   and the round tick. With it unset, nothing is appended. *(Named in the contract 2026-10-02, from
@@ -164,7 +167,8 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
 
 - **Unit:** none; the script is exercised by running it.
 - **Integration:** the `stack` workflow runs `make stack-recover` after `make stack-linkdead`, on
-  every PR and merge to `main`.
+  every PR and merge to `main` that touches the stack's inputs (the `paths` filters in `stack.yaml`), and
+  weekly. *(Amended 2026-10-05: it said "every PR and merge", which the filters make untrue; see the §8 review.)*
 - **Manual/operator:**
   ```
   make up && make build
@@ -183,15 +187,16 @@ Definition of done says so.
 
 ## Open questions
 
-- `[ASSUMPTION]` After a restart, a reconnecting client's Character is rebound through
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05 (architecture, §8): `AW-SRV-007` didn't make a bystander's `<A> reconnects.`
+  deterministic, so AC-5 doesn't assert it, and the script doesn't.* After a restart, a reconnecting client's Character is rebound through
   `AW-SRV-015`'s recovered-linkdead path (`Roster.SeedLinkdead`). B may read `<A> reconnects.` for
   A, but AC-5 doesn't assert it: whether a bystander's own reconnect races A's announcement is
   `AW-SRV-007`'s behaviour, not this target's. Architecture adds it to AC-5 at contract review if
   `AW-SRV-007` makes it deterministic.
-- `[ASSUMPTION]` `snapshot list`'s round table, with a `complete` column, is `AW-SRV-007`'s contract.
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05: `AW-SRV-007` merged and ships the grouped table; the script reads it.* `snapshot list`'s round table, with a `complete` column, is `AW-SRV-007`'s contract.
   Today the command needs `--zone` and lists per-Zone objects (`admin/cli/snapshotcmd.go`). The
   script uses the table `AW-SRV-007` ships, which is why that story is a hard dependency.
-- `[ASSUMPTION]` `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
+- ~~`[ASSUMPTION]`~~ *Resolved 2026-10-05: the interval stays 60 s, and the script's AC-2 deadline is the running server's `andara_snapshot_interval_seconds` plus 30 s (recorded above). The CI step takes about a minute.* `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
   run. If that's too slow for the `stack` workflow, the script may set a shorter interval on the
   compose server only. That's SRE's call when building, and it's recorded in the story.
 
@@ -252,3 +257,40 @@ look could satisfy it instead of the explicit one. Both still show a Room read a
 
 **Not observed:** the 60 s Phase 1 exit RTO (out of scope), and the CI run itself, which this PR's `stack`
 workflow supplies.
+
+## §8 review (architecture, 2026-10-05): stays at `review`, two items for SRE
+
+Run from the `stack` workflow's passing run on `main` at `0b43f76` (run 37333182657), and from the script, the
+Makefile and the workflow on that tree. The target needs a running stack, and CI is a second environment from
+SRE's own. This first went in as a close to `done`; Codex on #429 found two items, both real, so it stays here.
+
+**What holds.**
+- **AC-1 to AC-6** pass: the `the M2 gate against the stack — kill -9, recover from a snapshot, rebind` step
+  took 63 s, with `ready 1.4s after the kill (RTO 120s), round 4164, hash match` and the closing `M2 gate —
+  killed, recovered from a snapshot, hash matched, both rebound — passes`, and the script asserts what the amended
+  AC-5 and AC-6 say (B in Room 2 with A, `--show-protocol` for `already_live`, `dormant town/hall`).
+- **AC-7's failure path** through `fail()` is SRE's live mutation runs in the record above
+  (`STACK_RECOVER_RTO=1`, the wrong Room). The container exit-code line and the cleanup of `andara-cli`
+  children I read in the script (lines 72-97) and didn't run.
+- `make help` has the contract's text; `STACK_RECOVER_RTO ?= 120` is in the Makefile; the job summary is written
+  only when `$GITHUB_STEP_SUMMARY` is set. `stack-recover` isn't in `make check`'s targets, like the other stack
+  targets: it needs a running stack.
+- **Instrumentation** is SRE's own record in the story (the four recovery series from the running server and the
+  `recovery.run` trace in Tempo), and `AW-SRV-007`'s §8 cites `make stack-recover`'s runs (#421's 37318364410 and
+  37315058628, and a local run), as decided on 2026-10-02.
+- The three `[ASSUMPTION]`s are marked resolved. No config key, migration or domain term is added.
+
+**Open before `done`** (the ask is in `docs/feedback/AW-INF-032-stack-recover.md`, "For SRE"):
+1. **The not-ready precondition skips the dump.** `scripts/stack_recover.sh` line 159 is
+   `curl -sf "$READYZ" … || { echo "andara-server isn't ready" >&2; exit 1; }`, which exits without `fail()`, so
+   the server's last 50 lines, the one diagnostic that matters for that failure, never print. The contract is
+   amended above: the file and RTO checks print one line (nothing exists yet), and this one goes through the
+   dump.
+2. **The `stack` workflow doesn't run on every PR, and misses an input of this script.** Both `paths` lists omit
+   `testdata/**`: compose mounts `testdata/content/valid`, and `stack_recover.sh` hard-codes its Rooms and exits,
+   so a fixture-only change can break the gate without running it. The Test plan is amended to say what the
+   filters do; SRE adds `testdata/**` to both lists, and checks the other inputs the stack bakes in
+   (`content/**`, for one) the same way.
+
+**Carried, not blocking:** a P3 from the pre-PR review (the line marks before the post-recovery `look` have no
+sentinel) stays as SRE recorded it, and the 60 s Phase 1 exit RTO is out of scope.

@@ -72,3 +72,17 @@ is in the story's verification record.
 AW-SRV-007's §8 can cite this run: the series, the trace and the 2.2 s kill-to-ready are in the story's record.
 `RecoveryStateMismatch`'s firing observation still needs a corrupt-round run, which has no target yet (a §9 gap
 AW-SRV-007 assigns to SRE; it's the next piece after this PR).
+
+## For SRE: two items from architecture's §8 review, 2026-10-05
+
+Both are from Codex on PR #429, checked against the tree. The story stays at `review` until they land.
+1. **`scripts/stack_recover.sh` line 159** (`andara-server isn't ready`) exits directly, so the failure prints no
+   container status and no server log. Route it through `fail`, which prints both transcripts (empty at that point),
+   the container's status and exit code, and the last 50 server lines. The two file checks and the RTO check
+   before it stay as they are: nothing exists yet to dump or clean, and the contract now says so.
+2. **`.github/workflows/stack.yaml`'s `paths` lists** (`push` and `pull_request`) omit `testdata/**`, which compose
+   mounts as the content (`deploy/compose/docker-compose.yaml`, `../../testdata/content/valid`) and whose Rooms
+   and exits the script hard-codes. Add it to both. While there, check the other inputs the stack bakes in or
+   mounts the same way (`content/**` is the one I'd look at first) and add what a stack run depends on. The Test
+   plan now says "every PR and merge that touches the stack's inputs, and weekly".
+
