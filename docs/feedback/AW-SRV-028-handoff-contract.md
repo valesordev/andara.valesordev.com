@@ -394,7 +394,8 @@ haven't made them:
 
 ## SRE: the observability amendment, and the instrumentation check (2026-10-05)
 
-The §7 review SRE sent architecture on 2026-10-04 (accepted by architecture as written) is landed in the story's
+The §7 review SRE sent architecture on 2026-10-04 (architecture replied that it was accepted, in a cross-session
+message that isn't in the repository) is landed in the story's
 Observability section, with the sizing-fixture Test plan line. Two points where the review gave way to the
 code once it merged:
 - **The gauges' cost.** The review asked for the gauges to be maintained as marks change, not found by scanning
@@ -410,16 +411,16 @@ The instrumentation check is in the story's "§8 instrumentation check" section.
 `warn` (per tick rather than per window, and missing `retries` and `in_transit`), is issue #409 for
 implementation and is not blocking.
 
-### For architecture: two points to confirm
-1. **The log bound is a change to the merged contract.** #403's §7 said one `warn` per tick that produced retries;
-   the amended §7 says at most one per `sim.handoff_retry_ticks` window, with `retries`, `oldest_attempt`, `tick` and
-   `in_transit`. You accepted it in a message on 2026-10-04, which isn't in the repository, so please confirm it here.
-   If you do, #409 asks implementation for the change; if not, the amended §7 should go back to per tick.
-2. **A retry carries no trace of the originating `Move`.** #403 said retries carry its traceparent where it is known.
-   The code builds a retry with no trace id (`DueHandoffs`: "a retry starts a trace of its own"), and that is what
-   puts its `command.apply` at the tick's one-in-a-hundred. The amended §7 says what is built. If you want retries tied
-   to the `Move`'s trace instead, that is a code change and a sampling decision (an always-sampled or head-sampled retry
-   per Entity is the volume risk the amendment was written to avoid).
+### For architecture: one point to confirm
+**The log bound is a change to the merged contract.** #403's §7 said one `warn` per tick that produced retries; the
+amended §7 says at most one per `sim.handoff_retry_ticks` window, with `retries`, `oldest_attempt`, `tick`,
+`in_transit` and `trace_id`. You replied on 2026-10-04 that it was accepted, in a message that isn't in the
+repository, so please confirm it here. If you do, #409 asks implementation for the change; if not, the amended §7
+goes back to per tick and #409 is closed.
+
+(A retry's trace needs no confirmation: the code gives a retry no trace id because the hashed `Transit` record holds
+none, the implementation record's Deviations has that as agreed with you on 2026-10-04, and the amended §7 now says
+so. The one thing to know is that it is what puts a retry's `command.apply` at the tick's one-in-a-hundred.)
 
 ### For PM: a follow-up for the sizing fixture with marks
 The runbook's two thresholds on `andara_handoff_placed_entries` (25,000 and 100,000) are derived from the
