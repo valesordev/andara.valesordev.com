@@ -4,7 +4,7 @@ title: The Content Repository's make bootstrap sets up commit signing
 epic: EPIC-05
 component: infra
 type: infra
-status: review
+status: done
 size: S
 depends_on: [AW-INF-022, AW-INF-023]
 blocks: []
@@ -191,3 +191,10 @@ CI has no `gh` login and no GitHub Signing Key, so the "GitHub has this key" pat
   account, which SRE couldn't run and which is the only run of the real `gh` paths; (2) the Definition of
   done's `andara.solo7.media` #14, still open: #24 didn't close it. Both are Brian's. When they're done, this
   story needs only its move to `done`.
+
+## §8 review (architecture, 2026-10-05, second pass): done
+
+Both open items are closed, on Brian's word and the repository: (1) Brian ran `make bootstrap` in a fresh
+clone against his real GitHub account, the one run of the real `gh` paths; (2) `valesordev/andara.solo7.media`
+#14 is closed. The rest held in the first pass (the contract rulings, the Builder's Guide edit, `make guide-check`)
+and SRE's verification record above. The story moves from `review` to `done`.
