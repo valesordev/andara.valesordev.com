@@ -43,30 +43,36 @@ first commit. These steps use an SSH key: the one you clone with is fine.
 
 1. On GitHub, under **Settings → SSH and GPG keys → New SSH key**, add your public key again with
    **Key type: Signing Key**. A key added for authentication doesn't sign.
-2. In the clone, tell `git` who you are and how to sign. The email must be one GitHub has verified
-   for your account, or GitHub shows the commit as unverified:
+2. In the clone, tell `git` who you are. The email must be one GitHub has verified for your account,
+   or GitHub shows the commit as unverified:
 
    ```
-   git config user.name "<your name>"
-   git config user.email "<a verified GitHub email>"
-   git config gpg.format ssh
-   git config user.signingkey ~/.ssh/id_ed25519.pub
-   git config commit.gpgsign true
+   git config --local user.name "<your name>"
+   git config --local user.email "<a verified GitHub email>"
    ```
 
-   Use your own public key's path.
-3. To check signatures locally, tell `git` which keys to trust. Create a file listing yours, then:
+3. Run `make bootstrap`. It sets the signing configuration in this clone only, never globally. It
+   finds your key (`user.signingkey`, then the one `ssh -G github.com` reports, then
+   `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`) and trusts the repository's own
+   `.github/allowed_signers`, so you don't keep a trust file of your own:
 
    ```
-   git config gpg.ssh.allowedSignersFile ~/.config/git/allowed_signers
+   make bootstrap
    ```
 
-   The file has one line per key: `<your email> <the contents of your .pub file>`.
+`make bootstrap` can stop and print what's missing: a name or email, a key (it prints the
+`ssh-keygen` line to make one), a passphrase key your agent doesn't hold, or, when `gh` is logged in,
+a key not yet registered as a Signing Key. Fix what it names and run it again. It's safe to re-run.
+
+If it prints `<email> <keytype> <key>` and "Add this line by pull request", add that line to
+`.github/allowed_signers` in your first pull request. That isn't fatal: GitHub still verifies the
+commit.
 
 Check a commit with `git log --show-signature -1`. It reads `Good "git" signature for <your email>`.
 
-If your key has a passphrase, `git` asks for it on every commit. Add the key to your agent once
-per session with `ssh-add`, naming the private key, not the `.pub`.
+If your key has a passphrase, `git` asks for it on every commit. `make bootstrap` stops with the exact
+command when the agent doesn't hold it; or add the key once per session with `ssh-add`, naming the
+private key, not the `.pub`.
 
 If you committed before setting this up, re-sign the branch's commits with
 `git rebase --exec 'git commit --amend --no-edit -S' main`, then `git push --force-with-lease`.
