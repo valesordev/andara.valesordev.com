@@ -429,10 +429,18 @@ rather than a quietly wrong World.
 ### Logs
 - `info` at start with round tick and offsets; `info` at ready with phase durations.
 - `error` on every refusal, one line, with the fields the exit-code table names.
-- Required fields: `ts`, `level`, `msg`, `service`, `env`, `tick`, `partition`, `trace_id`.
+- Required fields: `ts`, `level`, `msg`, `service`, `env`, `tick`, `trace_id`. *(Amended 2026-10-05, at §8,
+  from SRE's check: `partition` isn't required on recovery lines, since a recovery spans every Partition and
+  `offsets` carries them. `trace_id` is required on every recovery line, including `recovered from the log`, the
+  summary `server/boot` writes after every recovery, which an operator reads first and which has none today.)*
+  A 64-bit seed or identifier in a log attribute (`recorded_seed`, `configured_seed`, `seed`) is logged as a
+  decimal string, so Loki reads what stderr prints: the OTLP bridge turns a `uint64` above 2^63 into a
+  float64 (#423, ruled 2026-10-05).
 
 ### Traces
-- `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `bytes`),
+- `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `key` and `bytes`, the loaded payload's size; amended 2026-10-05: SRE's
+  check found `key` and no `bytes`, and `andara_snapshot_bytes{zone}` can't stand in, since it is the writer's gauge,
+  set only when a new round is written, so it is absent while recovery loads and later describes another round),
   `recovery.seek`, `recovery.replay` (`ticks`, `records`), `recovery.verify`.
 
 ### Alerts
@@ -597,25 +605,33 @@ CLAUDE.md §8, plus:
   `andara_recovery_duration_seconds{phase}`, `andara_recovery_round_tick`,
   `andara_restore_total{caller="recovery"}`, and the `recovery.run` trace resolved in Tempo. So
   this story's §8 follows `AW-INF-032`'s merge. `RecoveryStateMismatch` is verified against compose
-  only: firing on a corrupt round, and never in `ALERTS` through a normal recovery. "Fires on the
+  only: firing on a refused recovery, and never in `ALERTS` through a normal recovery. *(Ruled 2026-10-05: the compose run is a seed mismatch, exit `6` with `reason=seed`, not a byte-flipped round. A re-signed byte-flip needs the Go snapshot codec, and the alert keys on the gauge, which every exit-`6` and `8` refusal sets the same way (`boot.Lingers`); the byte-flipped variant is `server/recovery`'s integration test, asserting the exit.)* "Fires on the
   cluster" is not yet observed, and `AW-INF-009` inherits it.
 - The kill-and-recover test gates merges on every `server/sim` and `server/store` change.
-- `docs/runbooks/recovery-state-mismatch.md` exists and resolves its alert with `andara-cli` commands
-  only.
+- `docs/runbooks/recovery-state-mismatch.md` exists and resolves its alert with `andara-cli` for listing
+  (`snapshot list --local`, since a refused recovery serves no Admin endpoint) and `andara-server recover
+  --verify` for the one-shot verify. *(Amended 2026-10-05: it said "`andara-cli` commands only", but
+  `snapshot verify` needs a serving server, which a refusal isn't.)*
 - `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
-  run in the job summary.
+  run in the job summary. *(2026-10-05, SRE's §8: the job and the comparison step exist and ran; the table
+  itself hasn't been produced, because two later runs failed in the test (#424) before a second passing
+  run existed. **This line gates `done`**, with no new owner: #424 is its fix, and the story isn't `done`
+  until AC-16 lands anyway. SRE records the table from the first passing run after the first.)*
 - **Inherited from `AW-SRV-043`'s §8 review (2026-10-04):** `andara_restore_total{caller="verify"}`
   is observed live. This story's §8 shows it at `ok` 1 from the running server's scrape after one
   `snapshot verify --round T` against the local stack's real round (`Admin.VerifySnapshotRound`), and
   `recover --verify`'s outcome read on the in-process registry, since a one-shot exits before a scrape.
   Both server callers are wired here, and only `caller="recovery"` had a line.
-- **Inherited from `AW-SRV-006`'s §8 pass (2026-09-24):** this story is the first to drive a real
-  snapshot failure through the server. Its §8 shows, from the running server's own registry,
-  `andara_snapshot_failures_total{reason="encode"|"timeout"|"stall"}` moving, and
-  `{reason="boundary"}` once `AW-SRV-006` AC-8 lands. `store` and `rounds_total{incomplete}` were
-  observed at 006's pass. *(2026-09-26, 006's second §8 pass: `timeout` was observed from the
-  compose server, on a round whose boundary ack didn't arrive while the broker was paused. It's
-  off this list. `encode`, `stall` and `boundary` remain.)*
+- **Inherited from `AW-SRV-006`'s §8 pass (2026-09-24), ruled 2026-10-05 at this story's §8:** the first
+  live drive of `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}`. SRE's check
+  (2026-10-05) drove none on a running server, and none can be driven without a fault no deployment path
+  offers: an encoder fault, a copy over `max_stall_ms` (the sizing fixture measures 8 ms of 15), and a failed
+  boundary publish, which also exits the server `5`. So the check is the integration suite's assertion on the
+  metric objects, plus the series exposed at `0` on the scrape (§8's no-in-cluster-caller rule), and the line
+  leaves this story and has no new owner. What exists: `stall` (`server/tickloop/snapshot_test.go:408`) and
+  `boundary` (`snapshot_ack_test.go:74,110`) assert it; **`encode` (`snapshot.go:428`) has no test that
+  asserts it**, so implementation adds one, which is the only open item here. `store` and `timeout` were
+  observed live at 006's passes, and `rounds_total{incomplete}` at its first.
 - **Inherited from `AW-SRV-012` (2026-09-25, architecture):** restore from a snapshot resolves
   `SnapshotEnvelope.content` (the per-pack versions in effect at its tick), rebuilds the topology,
   and checks `content_digest` *before* loading any Zone body. A mismatch halts recovery like a
@@ -727,14 +743,22 @@ tick budgets" is read as the loop's schedule lag; and recovery now marks Charact
 AC-16 (the owned set comes from the round's own content). The "schedule lag" reading and `verify_busy`
 stand as built. The Character in transit at the kill (briefly AC-17) is moved out to a story for PM.
 
-**Outstanding before `done`:**
+**Outstanding before `done`, after SRE's §8 check and architecture's rulings of 2026-10-05
+(`docs/feedback/AW-SRV-007-recovery-scale.md`, "Architecture: SRE's §8 deviations"):**
+- A test asserting `andara_snapshot_failures_total{reason="encode"}` on the metric object
+  (`server/tickloop/snapshot.go:428` increments it; no test asserts it). Implementation.
+- `bytes` on `recovery.load_snapshot` (the loaded payload's size, beside `key`): carry `len(raw)` on
+  `ZoneSnapshotRef` from the read in `server/store/rounds.go` (`ws.Get`), and start the span around that read:
+  today it is started and ended in `recover.go`'s loop after `selectRound` has done every read, so it has zero
+  duration and a "slow load" can't be seen on it. And `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
+  `recovery restore mismatch` (#423). Implementation.
+- The recovery-timing comparison table: SRE, from the first passing run after #424's fix.
 - **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
-- SRE: the Helm key `recovery.mismatch_linger` (PR open on main) and the regenerated values schema, the `stack-boundary-lost`
-  read-back (`round_tick + ticks_replayed == tick`), compose's `60s`, the `RecoveryStateMismatch` rule, the runbook,
-  and the CI job. **`make check` fails only at `values-schema-check` until that key merges.**
-- `AW-INF-032`'s live observation and `recover --verify` / `snapshot verify` against a real round, so
-  `andara_restore_total{caller="verify"}` is observed live (the inherited AW-SRV-043 line).
-- Not observed: the inherited `AW-SRV-006` failure reasons (`encode`, `stall`, `boundary`) driven through the server.
+- ~~SRE's items~~ (the Helm key, the `stack-boundary-lost` read-back, compose's `60s`, the rule, the runbook, the
+  CI job) and ~~`AW-INF-032`'s live observation~~ with `snapshot verify` against a real round: done, per SRE's §8
+  check (PR #425).
+- ~~The inherited `AW-SRV-006` failure reasons driven through the server~~: ruled 2026-10-05, no live drive;
+  the `encode` assertion above is what remains.
 
 ## §8 instrumentation check — 2026-10-05 (SRE, `sre/aw-srv-007-verify`)
 
