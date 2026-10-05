@@ -140,7 +140,7 @@ match, so that a crash is an interruption rather than an incident.
 13. **Given** a round that `AW-SRV-043`'s `RestoreEngine` refuses, as `ErrRestoreMismatch` or
     `ErrSeedMismatch`, or one that doesn't restore onto the content in effect
     (`sim.ContentDigestError`, or `sim.ErrRoundZoneUnknown`, below), or whose recorded content can't be
-    resolved before restore (`sim.ErrRoundContent`, AC-16) **when** boot recovery runs
+    resolved before restore because it names a pack version the source doesn't have (`sim.ErrRoundContent`, AC-16) **when** boot recovery runs
     **then** the server exits `6`. Nothing is
     replayed and no other round is tried. `andara_recovery_state_hash_match` is `0`,
     `andara_recovery_failures_total{reason="restore"}` is `1`, and one `error` line
@@ -257,7 +257,7 @@ func ListRounds(ctx context.Context, ws sim.WorldStore, listed []sim.ZoneID, zon
 
 // ZonesAt resolves a round's recorded content (pack ID to version) to its Zones. The server builds
 // it on `Options.Prepare`, taking the Zone IDs from the Topology's World, and caches it per versions
-// set. Its error is the unresolved-content case. Nil or empty versions resolve to the current content
+// set. A `ZonesAt` error that wraps `sim.ErrContentVersionUnknown` is cause `content`; any other error propagates unchanged and exits `1`, `reason=store`. Nil or empty versions resolve to the current content
 // and are not cause `content`.
 type ZonesAt func(versions map[string]uint64) ([]sim.ZoneID, error)
 
@@ -304,7 +304,7 @@ drained. Commands accepted before the crash are applied in order at `max_per_tic
 | Code | Condition |
 |-----:|-----------|
 | `0` | recovered and serving, or `--verify` matched |
-| `1` | configuration or store error before recovery began |
+| `1` | configuration or store error before recovery began, including a content-source failure that isn't `ErrContentVersionUnknown` (AC-16) |
 | `2` | *never assigned:* Go's own exit for an unrecovered panic or a runtime fatal error |
 | `3` | `ErrLogGap` — retention shorter than the snapshot age |
 | `4` | `ErrStateVersion` — binary older than the snapshot |
@@ -315,7 +315,7 @@ drained. Commands accepted before the crash are applied in order at `max_per_tic
 
 Exit `6` also covers the round refusing to restore onto the content in effect:
 `sim.ContentDigestError`, a round carrying a Zone its own content doesn't list (`sim.RestoreEngine`), or
-a round whose recorded content can't be resolved (AC-16).
+a round whose recorded content names a pack version the source doesn't have (AC-16).
 That's the inherited `AW-SRV-012` line's "halts like a State Hash mismatch", and it logs
 `reason=content`, counted under `andara_recovery_failures_total{reason="restore"}`.
 `andara_restore_total` keeps `AW-SRV-043`'s three outcomes and doesn't count it.
@@ -572,7 +572,7 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   `grpc.listen` while the process runs and is refused (AC-5).
 - **AC-16 and AC-17 (added 2026-10-05):** *Unit* (`server/store`): a round whose content lists a Zone with no
   object is `missing`; an object for a listed Zone V doesn't list is cause `content`, `zone_id` in `Reason`;
-  content that can't be resolved is cause `content` with the versions in `Reason`; a tick with no object names
+  content that names a pack version the source doesn't have is cause `content` with the versions in `Reason`, and a `ZonesAt` error that doesn't wrap `ErrContentVersionUnknown` is not (exit `1`); a tick with no object names
   the current content's Zones (`snapshotadmin.go`'s `verifyResponse` takes `len(Listed)` for its `owned`
   argument, and its `NOT_FOUND` check relies on that full list); `Classify` maps `ErrRoundContent` to `6`;
   `RoundAt` and `NewestComplete` each return the typed error for cause `content` and never
