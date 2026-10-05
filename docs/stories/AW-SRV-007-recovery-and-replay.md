@@ -4,7 +4,7 @@ title: Recovery from snapshot and log tail, verified in CI
 epic: EPIC-04
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-006, AW-SRV-026, AW-SRV-028, AW-SRV-015, AW-SRV-043]
 blocks: [AW-INF-007, AW-SRV-032, AW-INF-011, AW-INF-032, AW-INF-009, AW-SRV-047, AW-SRV-048]
@@ -683,8 +683,10 @@ CLAUDE.md §8, plus:
 - **`linkdead_grace > RTO` is a standing invariant** (ADR-0006), asserted at startup by `AW-SRV-015`.
 - `[NEEDS BRIAN]` What players see during recovery — carried by `AW-INF-007`. Does not affect this
   contract: recovery is silent on the wire.
-- `[ASSUMPTION]` `recovery.require_snapshot` defaults `false` so M1 keeps booting; `AW-INF-003`'s prod
-  values set it `true`.
+- ~~`[ASSUMPTION]`~~ **Resolved 2026-10-05 (architecture):** `recovery.require_snapshot` defaults `false` so M1 keeps
+  booting. `AW-INF-003` is `done` without setting it, and the chart has no prod values yet, so the `true` is a
+  deployment setting SRE makes in the first environment's values (asked in the feedback file, with `AW-INF-009`'s
+  dev run); it changes no contract.
 
 - **Carried from `AW-SRV-026`'s §8 close (2026-10-03).** `make stack-boundary-lost` reads the log back
   by requiring a recovery that replayed the whole log (`ticks_replayed == tick`). Once this story
@@ -922,3 +924,22 @@ both passing (kill to ready 2.2 s, `process-start-to-ready` 0.95 s, 38 replayed 
 covers the metric object), and AC-16's added-Zone case on a process (an in-process test, as implementation records).
 With these in, nothing of the AC-16 pieces or #423 is outstanding for SRE (`partition` is ruled in the feedback file). The runbook's seed row no longer
 sends the operator to the pod log.
+
+## §8 review (architecture, 2026-10-05): done
+
+Every §8 item holds, with SRE's records above (instrumentation, the timing table, the AC-16 pieces):
+- **AC-1 to AC-16** each map to a named test in the implementation records, including AC-16's
+  `TestARoundIsSelectedAfterASwapAddedAZone` and the `content` cause's tests; the `encode` assertion
+  (`TestAZoneThatCannotBeEncodedIsCountedUnderEncode`, `server/tickloop/snapshot_test.go`) exists. `make check`
+  is green and the `check` workflow is green on `main`.
+- **The Outstanding list is empty:** `encode`, `bytes` and the load span, `trace_id` on `recovered from the log`,
+  and decimal-string seeds are built and observed (SRE's `sre/aw-srv-007-ac16-verify` section); the timing table
+  is recorded; AC-16 is in. The in-transit orphan mark is its own story (PM request).
+- **Definition of done:** the handoff-in-flight recovery test is `TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost`;
+  the live observation is `make stack-recover` and `stack-recover-mismatch` runs; `AW-SRV-006`'s `encode` reason is
+  the metric-object assertion, ruled above. `AW-SRV-043`'s `caller="verify"` is in SRE's record.
+- **Config** (`recovery.*`) is in `server/README.md`, `keys.yaml` and the values schema; the runbooks exist.
+- **The `[ASSUMPTION]`** is resolved above. No migration: recovery reads the existing log and snapshots.
+- **Carried, not blocking:** the projector (`AW-SRV-019`) still judges a round on the loaded content's Zones, so
+  after a swap that adds a Zone it skips a round the server accepts; asked of PM in the feedback file.
+  `AW-INF-009` inherits the first cluster run of exit `6`.
