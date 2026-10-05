@@ -74,6 +74,8 @@ trap cleanup EXIT
 
 fail() {
   echo "stack-recover-mismatch: $*" >&2
+  local cid; cid="$("${COMPOSE[@]}" ps -aq andara-server 2>/dev/null | head -1)" || cid=""
+  [[ -z "$cid" ]] || echo "--- andara-server container: $(docker inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} restarts={{.RestartCount}}' "$cid" 2>&1)" >&2
   echo "--- andara-server, last 50 lines:" >&2
   "${COMPOSE[@]}" logs --no-color --no-log-prefix --tail 50 andara-server >&2 2>&1 || true
   exit 1
@@ -130,7 +132,7 @@ exit6_seen() {
 }
 
 # 1. Preconditions.
-ready || { echo "stack-recover-mismatch: andara-server isn't ready" >&2; exit 1; }
+ready || fail "andara-server isn't ready"
 curl -sf "$PROM/-/ready" >/dev/null || { echo "stack-recover-mismatch: Prometheus isn't answering on $PROM" >&2; exit 1; }
 rules="$(curl -sf "$PROM/api/v1/rules" | python3 -c '
 import json, sys

@@ -156,7 +156,9 @@ newest_round() {
 state_and_room() { awk -v n="$1" '$1 == n { print $2, $3 }' <<<"$2"; }
 
 echo "stack-recover: logging in as ${OPERATOR%%:*} ..."
-curl -sf "$READYZ" >/dev/null || { echo "stack-recover: andara-server isn't ready" >&2; exit 1; }
+# Past the file and tool checks above there is something to dump, so this one goes through fail(): the
+# container's status and the server's last lines say why it isn't ready (a crash loop, a refused recovery).
+curl -sf "$READYZ" >/dev/null || fail "andara-server isn't ready"
 printf '%s\n' "${OPERATOR#*:}" | bin/andara-cli auth login --username "${OPERATOR%%:*}" --password-stdin >/dev/null \
   || fail "auth login failed"
 
