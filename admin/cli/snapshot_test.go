@@ -51,7 +51,7 @@ func seedSnapshots(t *testing.T, ticks ...sim.Tick) string {
 
 func TestSnapshotListPrintsARowPerRoundNewestFirst(t *testing.T) {
 	dir := seedSnapshots(t, 10, 20, 30)
-	res := runCLI(t, []string{"snapshot", "list", "--zone", "town", "--fs-path", dir}, isolatedEnv(t, nil))
+	res := runCLI(t, []string{"snapshot", "list", "--local", "--zone", "town", "--fs-path", dir}, isolatedEnv(t, nil))
 	if res.exit != 0 {
 		t.Fatalf("exit %d\nstdout: %s\nstderr: %s", res.exit, res.stdout, res.stderr)
 	}
@@ -72,7 +72,7 @@ func TestSnapshotListPrintsARowPerRoundNewestFirst(t *testing.T) {
 
 func TestSnapshotListJSONCarriesTheFullHash(t *testing.T) {
 	dir := seedSnapshots(t, 10)
-	res := runCLI(t, []string{"snapshot", "list", "--zone", "town", "--fs-path", dir, "-o", "json"}, isolatedEnv(t, nil))
+	res := runCLI(t, []string{"snapshot", "list", "--local", "--zone", "town", "--fs-path", dir, "-o", "json"}, isolatedEnv(t, nil))
 	if res.exit != 0 {
 		t.Fatalf("exit %d\nstderr: %s", res.exit, res.stderr)
 	}
@@ -112,7 +112,7 @@ func TestSnapshotListJSONCarriesTheFullHash(t *testing.T) {
 }
 
 func TestSnapshotListOnAnEmptyStoreSaysSo(t *testing.T) {
-	res := runCLI(t, []string{"snapshot", "list", "--zone", "town", "--fs-path", t.TempDir()}, isolatedEnv(t, nil))
+	res := runCLI(t, []string{"snapshot", "list", "--local", "--zone", "town", "--fs-path", t.TempDir()}, isolatedEnv(t, nil))
 	if res.exit != 0 {
 		t.Fatalf("exit %d\nstderr: %s", res.exit, res.stderr)
 	}
@@ -130,7 +130,7 @@ func TestSnapshotListReportsAnUnreadableObjectAsARow(t *testing.T) {
 	if err := ws.Put(context.Background(), sim.SnapshotKey("town", sim.StateVersion, 20, 20), []byte("not an envelope")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	res := runCLI(t, []string{"snapshot", "list", "--zone", "town", "--fs-path", dir, "-o", "json"}, isolatedEnv(t, nil))
+	res := runCLI(t, []string{"snapshot", "list", "--local", "--zone", "town", "--fs-path", dir, "-o", "json"}, isolatedEnv(t, nil))
 	if res.exit != 0 {
 		t.Fatalf("exit %d\nstderr: %s", res.exit, res.stderr)
 	}
@@ -155,7 +155,7 @@ func TestSnapshotListReportsAnUnreadableObjectAsARow(t *testing.T) {
 }
 
 func TestSnapshotListRequiresAZone(t *testing.T) {
-	res := runCLI(t, []string{"snapshot", "list", "--fs-path", t.TempDir()}, isolatedEnv(t, nil))
+	res := runCLI(t, []string{"snapshot", "list", "--local", "--fs-path", t.TempDir()}, isolatedEnv(t, nil))
 	if res.exit == 0 {
 		t.Fatal("snapshot list without --zone succeeded")
 	}

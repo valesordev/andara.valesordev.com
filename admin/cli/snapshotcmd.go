@@ -7,11 +7,15 @@ import (
 	"context"
 	"encoding/hex"
 	"fmt"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
+	"connectrpc.com/connect"
 	"github.com/spf13/cobra"
 
+	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
 	"github.com/valesordev/andara/server/config"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/store"
@@ -42,6 +46,7 @@ func newSnapshotCmd(rt *runtime) *cobra.Command {
 		},
 	}
 	cmd.AddCommand(newSnapshotListCmd(rt))
+	cmd.AddCommand(newSnapshotVerifyCmd(rt))
 	return cmd
 }
 
@@ -70,19 +75,25 @@ func newSnapshotListCmd(rt *runtime) *cobra.Command {
 		s3Bucket   string
 		s3Endpoint string
 		limit      int
+		local      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List a Zone's snapshot objects, newest offset first",
-		Long: "List the snapshot objects a Zone has in the configured store, newest offset first.\n\n" +
-			"Reads the store directly rather than asking a server, so it answers what is in the\n" +
-			"bucket or on the volume even when no server is running.",
+		Short: "List snapshot rounds as the server sees them, or a Zone's objects with --local",
+		Long: "List the snapshot rounds the server sees, newest first, with whether each is complete\n" +
+			"against the Zones the server owns (Admin.ListSnapshotRounds, operator only).\n\n" +
+			"With --local, list one Zone's objects newest offset first, reading the store directly\n" +
+			"and asking no server: it answers what is in the bucket or on the volume even when no\n" +
+			"server is running, or when the server's view disagrees.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if !local {
+				return rt.snapshotListRPC(zone, limit)
+			}
 			if zone == "" {
-				return fmt.Errorf("--zone is required")
+				return fmt.Errorf("--zone is required with --local")
 			}
 			ws, err := store.Open(store.Options{
 				Kind:       storeKind,
@@ -118,7 +129,8 @@ func newSnapshotListCmd(rt *runtime) *cobra.Command {
 		},
 	}
 	fs := cmd.Flags()
-	fs.StringVar(&zone, "zone", "", "Zone to list (required)")
+	fs.StringVar(&zone, "zone", "", "Zone to list; required with --local, otherwise only rounds holding it")
+	fs.BoolVar(&local, "local", false, "read the configured store directly and issue no RPC")
 	fs.StringVar(&storeKind, "store", config.DefaultSnapshotStore, "snapshot store: fs or s3")
 	fs.StringVar(&fsPath, "fs-path", config.DefaultSnapshotFSPath, "directory the fs store writes under")
 	fs.StringVar(&s3Bucket, "s3-bucket", "", "bucket the s3 store writes to")
@@ -196,4 +208,117 @@ func dashIfEmpty(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// snapshotListRPC is `snapshot list` over Admin.ListSnapshotRounds.
+func (rt *runtime) snapshotListRPC(zone string, limit int) error {
+	client, err := rt.adminClient()
+	if err != nil {
+		return err
+	}
+	ctx, cancel := rt.callCtx()
+	defer cancel()
+	resp, err := client.ListSnapshotRounds(ctx, connect.NewRequest(&adminv1.ListSnapshotRoundsRequest{ZoneId: zone, Limit: uint32(limit)}))
+	if err != nil {
+		return rpcError(err)
+	}
+	type roundRow struct {
+		Tick         uint64   `json:"tick"`
+		StateVersion uint32   `json:"state_version"`
+		Zones        []string `json:"zones"`
+		Complete     bool     `json:"complete"`
+		TakenAt      string   `json:"taken_at,omitempty"`
+		AgeSeconds   int64    `json:"age_seconds,omitempty"`
+	}
+	now := time.Now()
+	rows := make([]roundRow, 0, len(resp.Msg.GetRounds()))
+	for _, r := range resp.Msg.GetRounds() {
+		row := roundRow{Tick: r.GetTick(), StateVersion: r.GetStateVersion(), Zones: r.GetZoneIds(), Complete: r.GetComplete()}
+		if ns := r.GetTakenAtUnixNano(); ns > 0 {
+			t := time.Unix(0, ns)
+			row.TakenAt, row.AgeSeconds = t.UTC().Format(time.RFC3339), int64(now.Sub(t).Seconds())
+		}
+		rows = append(rows, row)
+	}
+	if rt.settings.Output == outputJSON {
+		return rt.writeJSON(struct {
+			Count  int        `json:"count"`
+			Rounds []roundRow `json:"rounds"`
+		}{Count: len(rows), Rounds: rows})
+	}
+	if len(rows) == 0 {
+		_, err := fmt.Fprintln(rt.stdout, "no snapshot rounds")
+		return err
+	}
+	w := tabwriter.NewWriter(rt.stdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "TICK\tVERSION\tZONES\tCOMPLETE\tAGE"); err != nil {
+		return err
+	}
+	for _, r := range rows {
+		age := "-"
+		if r.TakenAt != "" {
+			age = (time.Duration(r.AgeSeconds) * time.Second).String()
+		}
+		if _, err := fmt.Fprintf(w, "%d\t%d\t%d\t%t\t%s\n", r.Tick, r.StateVersion, len(r.Zones), r.Complete, age); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+func newSnapshotVerifyCmd(rt *runtime) *cobra.Command {
+	var round uint64
+	cmd := &cobra.Command{
+		Use:   "verify --round T",
+		Short: "Verify one snapshot round on the server against its recorded hashes",
+		Long: "Restore round T into a scratch Engine on the server, verify it at its own tick, replay\n" +
+			"it to the log head, and compare with the head's recorded State Hash\n" +
+			"(Admin.VerifySnapshotRound, operator only). The live Engine is never touched.\n\n" +
+			"Exits 0 for a match; 1 for a mismatch (told apart by `outcome`) or a refusal (NOT_FOUND,\n" +
+			"FAILED_PRECONDITION); 3 when the server can't be reached; 4 on a timeout.",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Args:          cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if round == 0 {
+				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--round is required and must be above 0", Detail: map[string]any{"flag": "--round"}}
+			}
+			client, err := rt.adminClient()
+			if err != nil {
+				return err
+			}
+			ctx, cancel := rt.callCtx()
+			defer cancel()
+			resp, err := client.VerifySnapshotRound(ctx, connect.NewRequest(&adminv1.VerifySnapshotRoundRequest{Tick: round}))
+			if err != nil {
+				return rpcError(err)
+			}
+			m := resp.Msg
+			outcome := strings.ToLower(strings.TrimPrefix(m.GetOutcome().String(), "VERIFY_OUTCOME_"))
+			verdict := "mismatch"
+			if m.GetMatch() {
+				verdict = "match"
+			}
+			data := map[string]any{"result": verdict, "outcome": outcome, "round": round, "compared_tick": m.GetComparedTick()}
+			text := fmt.Sprintf("%s\noutcome=%s\nround=%d", verdict, outcome, round)
+			switch m.GetOutcome() {
+			case adminv1.VerifyOutcome_VERIFY_OUTCOME_SEED_MISMATCH:
+				data["recorded_seed"], data["configured_seed"] = m.GetRecordedSeed(), m.GetConfiguredSeed()
+				text += fmt.Sprintf("\nrecorded_seed=%d\nconfigured_seed=%d", m.GetRecordedSeed(), m.GetConfiguredSeed())
+			case adminv1.VerifyOutcome_VERIFY_OUTCOME_CONTENT_MISMATCH:
+			default:
+				data["expected_hash"], data["actual_hash"] = hex.EncodeToString(m.GetExpectedHash()), hex.EncodeToString(m.GetActualHash())
+				text += fmt.Sprintf("\ncompared_tick=%d\nexpected_hash=%x\nactual_hash=%x", m.GetComparedTick(), m.GetExpectedHash(), m.GetActualHash())
+			}
+			if err := rt.writeResult(text, data); err != nil {
+				return err
+			}
+			if !m.GetMatch() {
+				return &AppError{Exit: ExitFail, Code: "snapshot_mismatch", Message: "round " + strconv.FormatUint(round, 10) + " does not reproduce the log: " + outcome, Rendered: true}
+			}
+			return nil
+		},
+	}
+	cmd.Flags().Uint64Var(&round, "round", 0, "tick of the round to verify (required)")
+	return cmd
 }
