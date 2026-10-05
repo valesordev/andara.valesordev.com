@@ -177,9 +177,13 @@ func (rt *Runtime) HoldMismatch(ctx context.Context, ln net.Listener, linger tim
 	case <-wait(linger):
 	case <-ctx.Done():
 	}
-	sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	// A scrape in flight gets a second to finish; a connection that never
+	// sent a request would otherwise hold the exit for Shutdown's whole bound.
+	sctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	_ = srv.Shutdown(sctx)
+	if srv.Shutdown(sctx) != nil {
+		_ = srv.Close()
+	}
 }
 
 var _ = io.Discard

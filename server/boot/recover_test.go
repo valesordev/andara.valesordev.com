@@ -47,7 +47,7 @@ func TestStartExit_MapsRecoveryRefusals(t *testing.T) {
 
 func httpStatus(t *testing.T, base, path string) int {
 	t.Helper()
-	resp, err := http.Get(base + path)
+	resp, err := (&http.Client{Transport: &http.Transport{DisableKeepAlives: true}}).Get(base + path)
 	if err != nil {
 		t.Fatal(err)
 	}
