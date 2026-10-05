@@ -102,13 +102,16 @@ None.
 ## Test plan
 - **Unit:** the three subtests above; a fixture whose mark count is checked (AC-5).
 - **Integration:** none.
-- **Manual/operator:** `go test ./server/simtest -run TestSnapshotCopyStaysInsideTheStallBudget` with and
-  without `-race`, reading the artifact. `[ASSUMPTION]` a `make` target exists or is added by SRE
-  (CLAUDE.md §9); if not, the command above is a §9 defect for an SRE story.
+- **Manual/operator:** a `make` target that runs the marks subtests with and without `-race` and keeps both
+  artifacts (CLAUDE.md §9: a documented `go test` sequence that isn't a target is a defect). The Makefile is
+  SRE's, so the target is requested in `docs/feedback/AW-SRV-050-marks-sizing-target.md`; this story's
+  operator step is that target, and it can't reach `done` without it.
 
 ## Definition of done
 CLAUDE.md §8, plus:
 - The runbook request is in `docs/feedback/` addressed to SRE with the measured numbers.
+- The `make` target for the measurement exists (SRE's, requested in
+  `docs/feedback/AW-SRV-050-marks-sizing-target.md`) and its output carries both builds' artifacts.
 
 ## Open questions
 - `[ASSUMPTION]` The artifact's name and shape, and the limit in AC-6. Neither changes another story's

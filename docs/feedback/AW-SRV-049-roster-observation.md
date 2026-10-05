@@ -6,11 +6,15 @@ should answer.
 
 ## For architecture
 
-1. **Where does the roster observe a rejected teardown?** A teardown rejected `in_transit` is rejected
-   post-log, after the roster's produce returned nil. The post-log `CommandRejected{in_transit}` Event, keyed
-   by the Character, may be enough for the roster to retry (scope (c)). If the roster needs a synchronous
-   answer from the Log instead, `AW-SRV-014`'s produce seam changes and the story is M with a seam change.
-   The story stays `draft` until you say which.
+1. **What Character-level settlement signal does the roster observe?** (Codex on #420 found the gap.)
+   A teardown rejected `in_transit` is rejected post-log, after the roster's produce returned nil.
+   `Bindings` is keyed by Session: once `ReleaseSession` returns, the ingress drops the Session's entry before
+   that `CommandRejected{in_transit}` can be seen, and a fresh `SelectCharacter` has no transit-marked entry
+   to wait on. So the wait in (a) and the retry in (c) have no signal today. The story needs a retained,
+   Character-keyed arrival or settlement observation, and its owner and shape are yours. The post-log
+   `CommandRejected{in_transit}` Event, keyed by the Character, may be enough for the rejection half. If the
+   roster needs a synchronous answer from the Log instead, `AW-SRV-014`'s produce seam changes and the story
+   is M with a seam change. The story stays `draft` until you say which.
 1b. **A wall-clock bound against #114.** Scope (b), taken from your request, frees the linkdead hold unless
    `LinkdeadEntered` is observed within `ingress.produce_deadline`. `holdLinkdead` in `server/roster/roster.go`
    says the opposite: "No wall-clock bound: the sim's deadline starts when the mark applies and runs in Ticks,

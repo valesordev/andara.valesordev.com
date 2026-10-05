@@ -90,14 +90,16 @@ isn't there.
 package roster
 
 // Non-binding names; the observable contract is the bullets below.
-// settle waits until the Character's Binding is not in transit, bounded by ingress.transit_hold,
-// as ReleaseSession's wait does today (roster.go, Bindings.Binding under ProduceDeadline).
+// settle waits until the Character's crossing has settled, bounded by ingress.transit_hold.
+// ReleaseSession's wait keys on the SESSION's routing entry (Bindings.Lookup/Binding by session ID), which
+// SelectCharacter has no entry for yet and which the ingress drops when the Session ends. So settle needs a
+// CHARACTER-keyed signal that outlives the Session: what it is, and who retains it, is Open question 1.
 func (r *Roster) settle(ctx context.Context, id sim.EntityID) error
 
 // holdLinkdead frees the live flag unless LinkdeadEntered for the Character is observed within
 // ingress.produce_deadline.
 
-// retryTeardown re-produces a teardown rejected in_transit once the Binding settles;
+// retryTeardown re-produces a teardown rejected in_transit once the Character's crossing settles;
 // a newer Binding for the Character cancels it.
 ```
 
@@ -133,7 +135,9 @@ on a recovered server, which starts with no flags (`AW-SRV-048` covers the orpha
   (`AW-SRV-028`) is the signal.
 
 ## Test plan
-- **Unit:** (a) with a stepped clock and a fake `Log` that rejects `in_transit`; (b)'s deadline; (c)'s
+- **Unit:** (a) with a stepped clock and a fake that models the **apply-time** `CommandRejected{in_transit}` Event
+  after a produce that succeeded (a fake `Log` that fails the produce is the pre-log path and doesn't
+  exercise this story); (b)'s deadline; (c)'s
   retry, once; the newer-Binding cancel (AC-7); the `-race` pairs (AC-9); a late `LinkdeadEntered` after a freed hold (AC-8), pending Open question 1b.
 - **Integration:** a two-Zone sim with a delayed `Arrive` and a Session that selects and drops across it
   (AC-1 to AC-5).
@@ -144,8 +148,13 @@ CLAUDE.md §8, plus:
 - The roster README's `already_live` and teardown lines say what happens during a crossing.
 
 ## Open questions
-1. **Where does the roster observe a rejected teardown?** *(Architecture's.)* The post-log
-   `CommandRejected{in_transit}` Event may be enough. If the roster needs a synchronous answer from the
+1. **What Character-level settlement signal does the roster observe?** *(Architecture's; raised by Codex on
+   #420.)* `Bindings` is keyed by Session. After a teardown the log accepted, `ReleaseSession` returns and the
+   ingress drops the Session's entry before the post-log `CommandRejected{in_transit}` can be seen, and a
+   fresh `SelectCharacter` has no transit-marked entry to wait on. `settle` (AC-1, AC-4, AC-5) therefore has
+   no signal today. The story needs a retained, Character-keyed arrival/settlement observation (an Event the
+   roster subscribes to, or a retained marker), and its owner and shape are architecture's. The post-log
+   `CommandRejected{in_transit}` Event may be enough for the rejection half. If the roster needs a synchronous answer from the
    Log, `AW-SRV-014`'s produce seam changes and this story is M with a seam change.
 1b. **Does a wall-clock bound contradict #114?** *(Architecture's.)* `holdLinkdead` carries "No wall-clock bound ...
    a timer here could free the Account while the body is still in the World (review of #114)" (`server/roster/roster.go`).
