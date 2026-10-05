@@ -410,6 +410,17 @@ The instrumentation check is in the story's "§8 instrumentation check" section.
 `warn` (per tick rather than per window, and missing `retries` and `in_transit`), is issue #409 for
 implementation and is not blocking.
 
+### For architecture: two points to confirm
+1. **The log bound is a change to the merged contract.** #403's §7 said one `warn` per tick that produced retries;
+   the amended §7 says at most one per `sim.handoff_retry_ticks` window, with `retries`, `oldest_attempt`, `tick` and
+   `in_transit`. You accepted it in a message on 2026-10-04, which isn't in the repository, so please confirm it here.
+   If you do, #409 asks implementation for the change; if not, the amended §7 should go back to per tick.
+2. **A retry carries no trace of the originating `Move`.** #403 said retries carry its traceparent where it is known.
+   The code builds a retry with no trace id (`DueHandoffs`: "a retry starts a trace of its own"), and that is what
+   puts its `command.apply` at the tick's one-in-a-hundred. The amended §7 says what is built. If you want retries tied
+   to the `Move`'s trace instead, that is a code change and a sampling decision (an always-sampled or head-sampled retry
+   per Entity is the volume risk the amendment was written to avoid).
+
 ### For PM: a follow-up for the sizing fixture with marks
 The runbook's two thresholds on `andara_handoff_placed_entries` (25,000 and 100,000) are derived from the
 snapshot sizing fixture and unmeasured. Measuring them is a small `lane: implementation` story: a `Placed` mark

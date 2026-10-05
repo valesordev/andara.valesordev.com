@@ -360,17 +360,21 @@ reasoning is recorded in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
   The counters start at 0 after a restart.
 - **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
   retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick` and `in_transit`.
-  Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
+  *(A change SRE made after #403 merged, which architecture accepted; the code still logs one per tick, issue
+  #409.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
   retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
-  and `attempt`, so a restart with many stuck handoffs doesn't write a line each. `error` on
-  `entity_present`, `invalid_arrival` and `id_reused`. `trace_id` from the originating `Move` for a live
-  retry; a retry after a recovery starts a new trace and carries `entity_id`.
-- **Traces:** a retry is produced in the tick's own context and published with the tick's other cross-Zone
-  Commands, and it gets no span of its own. The retried `Arrive`'s `command.apply` is a tick-produced record,
-  so it follows `SpanFilter`'s one-in-a-hundred (`server/telemetry/sampling.go`) and is never an always-sampled
-  root of its own: a restart with many stuck handoffs must not export a trace per retried Entity. The
-  `Arrive`, `HandoffAck` and retries carry the original `Move`'s traceparent where it is known, so a handoff is
-  one trace from keystroke to ack.
+  and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
+  correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
+  retry lines is the tick's trace:** a retry carries no trace of the originating `Move`, live or after a recovery.
+- **Traces:** the first `Arrive` and the `HandoffAck` carry the originating `Move`'s trace id, so a handoff that
+  settles first time is one trace from keystroke to ack. **A retry carries no trace id.** It starts a trace of its
+  own (`DueHandoffs` builds it without one), is produced in the tick's context and published with the tick's
+  other cross-Zone Commands, and gets no span of its own. Its `command.apply` is a tick-produced record with no
+  trace to inherit a sampling decision from, so `Loop.Begin` marks it for `SpanFilter` at the tick's
+  one-in-a-hundred (`server/telemetry/sampling.go`), never an always-sampled root of its own: a restart with many
+  stuck handoffs must not export a trace per retried Entity. *(Architecture's #403 text said a retry carries the
+  `Move`'s traceparent where it is known. The code doesn't do that and this section says what it does; architecture
+  to confirm, in the feedback file.)*
 - **Alerts:** none. `andara_handoffs_in_transit` above 0 is ordinary traffic. Sustained for minutes with
   `rate(andara_handoff_retries_total[5m])` rising, it means the broker or the target Partition: a handoff in
   flight longer than `sim.handoff_retry_ticks` retries, so the retry rate is the age signal and no age gauge is
@@ -517,21 +521,32 @@ all pass; they read the metric objects, per CLAUDE.md §8): a lost `Arrive` is r
 which on this stack means breaking the broker mid-move: `sim repl` has no failure-injection flag (the story's
 own Test plan), so `retries_total` above 0, `stale_arrivals_total` above 0, `in_transit` above 0 on a scrape,
 and the `warn`, `debug` and `error` lines have not been emitted by the running server. The first story that can
-make that observation carries it: AW-INF-032's `make stack-recover` kills the server, and a handoff in flight
-across the kill is where a retry would appear.
+make that observation carries it. No story arranges one yet: AW-INF-032's `make stack-recover` kills the server
+and may catch a handoff in flight by chance, but it doesn't inject loss or assert a retry, so a failure-injection
+flag (the follow-up the Test plan above names) is what would make the observation repeatable.
 
-**One deviation from the amended §7: the summary `warn`.** The code logs one `warn` for every tick that
-produced retries, with `count`, `oldest_attempt`, `tick` and `trace_id` (`server/tickloop/loop.go`,
-`noteRetries`). The amended §7 asks for at most one per `sim.handoff_retry_ticks` window, with `retries`,
-`oldest_attempt`, `tick` and `in_transit`. #407 shipped before that wording landed. It is up to ten lines a
-second under a sustained outage and about one every 10 s for a single stuck handoff, so it isn't a
-correctness fault: issue #409, for implementation, not blocking. The `debug` line per retry and the `error`
-lines match.
+**One deviation from the amended §7: the summary `warn`, and it is a contract change.** Architecture's #403 text said
+"`warn` once per tick that produced retries, with the count and the oldest `attempt`", and the code matches it:
+one `warn` for every tick that produced retries, with `count`, `oldest_attempt`, `tick` and `trace_id`
+(`server/tickloop/loop.go`, `noteRetries`). The amended §7 asks for at most one per `sim.handoff_retry_ticks`
+window, with `retries`, `oldest_attempt`, `tick` and `in_transit`. SRE proposed that after #403 merged, and
+architecture accepted it in a cross-session message on 2026-10-04 (not in the repository), so the change is asked
+for in the feedback file to be confirmed there. #407 shipped before the amendment, and the code is right by the
+merged contract. It is up to ten lines a second under a sustained outage and about one every 10 s for a single
+stuck handoff: issue #409, for implementation, not blocking, and only if architecture confirms the change. The
+`debug` line per retry and the `error` lines match.
 
-**Where §7 was met by construction.** The gauges are derived from the Engine's state each tick (the `len` of
-each Zone's maps, so the cost is the number of Zones), never incremented. A retry gets no span of its own: it's
-produced in the tick's context and published with its other cross-Zone Commands, so the retried `Arrive`'s
-`command.apply` follows `SpanFilter`.
+**A second difference from architecture's text: a retry's trace.** #403's §7 said a live retry's `trace_id` is the
+originating `Move`'s and that retries carry its traceparent. The code gives a retry no trace id (see Traces above),
+so the amended §7 says what's built. That is also what keeps retries at the tick's one-in-a-hundred.
+
+**Met by construction, and read from the code only.** The gauges are derived from the Engine's state each tick
+(the `len` of each Zone's maps, so the cost is the number of Zones), never incremented: tested, and observed live
+across a restart. **A retry gets no span of its own and starts a trace of its own** (it's produced in the tick's
+context and published with its other cross-Zone Commands), and its `command.apply` is marked at the tick's
+one-in-a-hundred because it carries no trace id (`Loop.Begin`, `DueHandoffs`): read from the code, with no
+test and no live observation of it. The first `Arrive` and the `HandoffAck` carry the `Move`'s trace id
+(`server/sim/verbs.go`), also read from the code.
 
 **An environment note, not a defect of this story.** `make stack-play` failed on this stack: it restarts the
 server under an open session and waits 60 s, and recovery took about 90 s, because until AW-SRV-007 lands
