@@ -106,9 +106,9 @@ def test_schema_rejects(env):
         ("server.http.port=ten", "/server/http/port"),
         ("probes.startup.periodSeconds=0", "/probes/startup/periodSeconds"),
         # A groomed key the server does not read yet stays out of the schema.
-        # snapshot.* moved into it with AW-SRV-006, so the example here is
-        # AW-SRV-007's, which is still pending.
-        ("server.recovery.require_snapshot=true", "/server"),
+        # snapshot.* moved into it with AW-SRV-006 and recovery.* with AW-SRV-007, so the
+        # example here is AW-SRV-009's, which is still pending.
+        ("server.agent.lease_ttl=45s", "/server"),
         ("snapshots.size=20GB", "/snapshots/size"),
         ("nonsense=1", "additional properties"),
     ]
