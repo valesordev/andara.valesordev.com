@@ -26,3 +26,9 @@ func TestRestoreMismatchLogsSeedsAsStrings(t *testing.T) {
 		}
 	}
 }
+
+func TestPackVersionsAreSorted(t *testing.T) {
+	if got := packVersions(map[string]uint64{"b": 2, "a": 1}); got != "a@1,b@2" {
+		t.Fatalf("got %q", got)
+	}
+}

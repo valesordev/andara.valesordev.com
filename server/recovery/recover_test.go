@@ -6,6 +6,7 @@ package recovery_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -384,5 +385,41 @@ func TestRestoresCanBeCountedElsewhere(t *testing.T) {
 	}
 	if testutil.ToFloat64(live.Restores.WithLabelValues(recovery.CallerVerify, "ok")) != 1 || testutil.ToFloat64(o.Metrics.Restores.WithLabelValues(recovery.CallerVerify, "ok")) != 0 {
 		t.Fatal("the restore was not counted on the override alone")
+	}
+}
+
+// NewZonesAt resolves a set of versions once, however many rounds ask.
+func TestZonesAtIsResolvedOncePerSetOfVersions(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	za := recovery.NewZonesAt(func(map[string]uint64) (sim.Topology, error) {
+		calls++
+		w, err := simtest.World()
+		return sim.Topology{World: w}, err
+	})
+	for range 3 {
+		if zs, err := za(map[string]uint64{"p": 1, "q": 2}); err != nil || len(zs) != 3 {
+			t.Fatalf("zones %v err %v", zs, err)
+		}
+	}
+	if _, err := za(map[string]uint64{"p": 2}); err != nil || calls != 2 {
+		t.Fatalf("prepare ran %d times for two sets of versions", calls)
+	}
+}
+
+// A version the source lacks, found while rebuilding a round's content after
+// ZonesAt succeeded, is still ErrRoundContent and exit 6.
+func TestAnUnknownVersionAtTheRebuildIsExit6(t *testing.T) {
+	t.Parallel()
+	w := newSwapWorld(t)
+	o := w.opts(w.src, nil)
+	o.ZonesAt = func(map[string]uint64) ([]sim.ZoneID, error) { return []sim.ZoneID{"a", "b"}, nil }
+	o.Prepare = func(v map[string]uint64) (sim.Topology, error) {
+		return sim.Topology{}, fmt.Errorf("source: %w", &sim.ErrContentVersionUnknown{Pack: "p", Version: v["p"]})
+	}
+	_, _, err := recovery.Recover(context.Background(), o)
+	var rc *sim.ErrRoundContent
+	if !errors.As(err, &rc) || recovery.ExitCode(err) != recovery.ExitRestore {
+		t.Fatalf("err %v exit %d", err, recovery.ExitCode(err))
 	}
 }

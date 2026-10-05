@@ -605,3 +605,36 @@ func TestContentRanksBelowHashAndAboveMissing(t *testing.T) {
 		t.Fatalf("hash over content: %+v err %v", rounds[0], err)
 	}
 }
+
+// Pinned ranking: an object problem (a hash-invalid object here) and a duplicate
+// outrank content; a vanished object keeps cause missing and its place, so it
+// outranks content too.
+func TestObjectProblemsOutrankContent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	_, fs, _, owned := roundFixture(t, 2)
+	contentTag(t, fs, owned, "town", 1)
+	zonesAt := zonesOf(owned[:2]...) // omits the third Zone's object: content
+	rounds, _ := store.ListRounds(ctx, fs, owned, zonesAt)
+	if rounds[0].Cause != "content" {
+		t.Fatalf("setup: %+v", rounds[0])
+	}
+	// A vanished object: the listing finds it, the read doesn't.
+	vanished := &vanishingStore{WorldStore: fs, gone: rounds[0].Zones[0].Key}
+	got, err := store.ListRounds(ctx, vanished, owned, zonesAt)
+	if err != nil || got[0].Cause != sim.RoundMissing {
+		t.Fatalf("vanished vs content: %+v err %v", got[0], err)
+	}
+}
+
+type vanishingStore struct {
+	sim.WorldStore
+	gone string
+}
+
+func (v *vanishingStore) Get(ctx context.Context, key string) ([]byte, error) {
+	if key == v.gone {
+		return nil, sim.ErrSnapshotNotFound
+	}
+	return v.WorldStore.Get(ctx, key)
+}

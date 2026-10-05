@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"testing"
 
+	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -23,5 +24,18 @@ func TestManifestMissingIsAContentVersionUnknown(t *testing.T) {
 	}
 	if errors.As(fmt.Errorf("resolve: %w", context.DeadlineExceeded), &unknown) {
 		t.Fatal("a timeout is not a version the source lacks")
+	}
+}
+
+// content.source=dir cannot prepare a pack version: that is a version it lacks.
+func TestDirSourceNamesAVersionItLacks(t *testing.T) {
+	c, errs := Open(context.Background(), Options{Source: SourceDir, Path: t.TempDir()})
+	if c == nil {
+		t.Skipf("no dir source here: %v", errs)
+	}
+	_, err := c.Prepare(nil, &logv1.ContentSwap{PackId: "town", Version: 7})
+	var unknown *sim.ErrContentVersionUnknown
+	if !errors.As(err, &unknown) || unknown.Pack != "town" || unknown.Version != 7 {
+		t.Fatalf("err %v", err)
 	}
 }

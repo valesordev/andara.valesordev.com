@@ -52,7 +52,7 @@ func TestLoadSnapshotSpansCarryTheKeyAndTheBytesRead(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if a["zone_id"].AsString() == "" || !strings.HasPrefix(key, a["zone_id"].AsString()+"/") || a["bytes"].AsInt64() != int64(len(raw)) {
+		if a["zone_id"].AsString() == "" || a["round_tick"].AsInt64() != 4 || !strings.HasPrefix(key, a["zone_id"].AsString()+"/") || a["bytes"].AsInt64() != int64(len(raw)) {
 			t.Errorf("span attributes %v, want zone_id, key and bytes=%d", a, len(raw))
 		}
 	}
@@ -83,4 +83,26 @@ func TestANamedRoundLoadsNoOtherTick(t *testing.T) {
 	if loads != len(w.owned) {
 		t.Errorf("%d load_snapshot spans for the named round, want %d", loads, len(w.owned))
 	}
+}
+
+// Report.TraceID is the recovery.run trace: what boot's summary line carries.
+func TestReportNamesTheRecoveryRunTrace(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, 6, 3)
+	rec := tracetest.NewSpanRecorder()
+	o := w.opts(t)
+	o.Tracer = sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(rec)).Tracer("test")
+	_, rep, err := recovery.Recover(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range rec.Ended() {
+		if s.Name() == "recovery.run" {
+			if rep.TraceID == "" || rep.TraceID != s.SpanContext().TraceID().String() {
+				t.Fatalf("Report.TraceID %q, recovery.run trace %s", rep.TraceID, s.SpanContext().TraceID())
+			}
+			return
+		}
+	}
+	t.Fatal("no recovery.run span")
 }

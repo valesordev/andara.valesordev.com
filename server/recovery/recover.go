@@ -180,7 +180,10 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 	t0 := o.Now()
 	// Each object read starts and ends its own span around the read itself.
 	ctx = store.WithReadObserver(ctx, func(zone sim.ZoneID, key string) func(int, error) {
-		_, sp := o.Tracer.Start(ctx, "recovery.load_snapshot", trace.WithAttributes(attribute.String("zone_id", string(zone)), attribute.String("key", key)))
+		// round_tick tells the objects of a newer round the scan skimmed and
+		// found incomplete from the round that was used.
+		_, _, tick, _, _ := sim.ParseSnapshotKey(key)
+		_, sp := o.Tracer.Start(ctx, "recovery.load_snapshot", trace.WithAttributes(attribute.String("zone_id", string(zone)), attribute.String("key", key), attribute.Int64("round_tick", int64(tick))))
 		return func(n int, err error) {
 			sp.SetAttributes(attribute.Int("bytes", n))
 			if err != nil {
