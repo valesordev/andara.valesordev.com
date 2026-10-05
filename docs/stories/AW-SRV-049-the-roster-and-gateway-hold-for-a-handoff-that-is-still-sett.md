@@ -45,7 +45,7 @@ isn't there.
 - **(b)** The roster frees its linkdead hold unless `LinkdeadEntered` is observed within the produce
   deadline (`ingress.produce_deadline`), so a rejected `MarkLinkdead` doesn't leave the Account's other
   Characters `already_live`.
-- **(c)** A teardown rejected `in_transit` is retried once the Binding settles, as a failed produce is.
+- **(c)** A teardown rejected `in_transit` is retried once the Character's crossing settles, as a failed produce is.
 - A `BindCharacter` rejected `in_transit` after the wait in (a) answers `SelectCharacter` with a retryable
   error, never OK with no body.
 
@@ -71,7 +71,7 @@ isn't there.
 4. **Given** the same Session **when** the crossing settles **then** the rejected teardown is produced
    again and the Character is marked linkdead, once, and never twice.
 5. **Given** `session.linkdead_grace` `0` **when** a QUIT `UnbindCharacter` is rejected `in_transit`
-   **then** it is retried after the Binding settles, and the Character ends dormant.
+   **then** it is retried after the Character's crossing settles, and the Character ends dormant.
 6. **Given** a `BindCharacter` rejected `in_transit` after the wait **when** `SelectCharacter` answers
    **then** the status is not OK.
 7. **Given** a teardown retried and the Character since rebound by a newer Session **when** the retry
@@ -152,8 +152,8 @@ CLAUDE.md §8, plus:
    #420.)* `Bindings` is keyed by Session. After a teardown the log accepted, `ReleaseSession` returns and the
    ingress drops the Session's entry before the post-log `CommandRejected{in_transit}` can be seen, and a
    fresh `SelectCharacter` has no transit-marked entry to wait on. `settle` (AC-1, AC-4, AC-5) therefore has
-   no signal today. The story needs a retained, Character-keyed arrival/settlement observation (an Event the
-   roster subscribes to, or a retained marker), and its owner and shape are architecture's. The post-log
+   no signal today. The story needs a retained, Character-keyed arrival/settlement observation (`Bindings`' Character-keyed `byActor` index is dropped with the Session's entry, so it isn't that signal),
+   and its owner and shape are architecture's. The post-log
    `CommandRejected{in_transit}` Event may be enough for the rejection half. If the roster needs a synchronous answer from the
    Log, `AW-SRV-014`'s produce seam changes and this story is M with a seam change.
 1b. **Does a wall-clock bound contradict #114?** *(Architecture's.)* `holdLinkdead` carries "No wall-clock bound ...
@@ -163,5 +163,5 @@ CLAUDE.md §8, plus:
    `docs/feedback/AW-SRV-049-roster-observation.md`.
 2. `[ASSUMPTION]` `SelectCharacter` past the hold is `UNAVAILABLE`, matching `AW-SRV-010`'s past-hold row,
    not a new status.
-3. `[ASSUMPTION]` Retry of a teardown is once per settle, not on a timer, since the Binding's settle is
+3. `[ASSUMPTION]` Retry of a teardown is once per settle, not on a timer, since the crossing's settling is
    the event.

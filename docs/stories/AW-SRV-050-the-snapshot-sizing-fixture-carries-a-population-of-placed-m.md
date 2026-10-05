@@ -6,7 +6,7 @@ component: server          # server | cli | infra | client
 type: chore                # feature | infra | spike | chore | bug
 status: draft              # draft | ready | in-progress | review | done | blocked
 size: S                    # S | M | L  — L means "split it"
-depends_on: [AW-SRV-028]
+depends_on: [AW-SRV-028, AW-INF-035]
 blocks: [AW-SRV-047]
 lane: implementation       # architecture (contracts) | sre (infra, ops) | implementation (source)
 risk: low                  # low | medium | high
@@ -102,16 +102,14 @@ None.
 ## Test plan
 - **Unit:** the three subtests above; a fixture whose mark count is checked (AC-5).
 - **Integration:** none.
-- **Manual/operator:** a `make` target that runs the marks subtests with and without `-race` and keeps both
-  artifacts (CLAUDE.md §9: a documented `go test` sequence that isn't a target is a defect). The Makefile is
-  SRE's, so the target is requested in `docs/feedback/AW-SRV-050-marks-sizing-target.md`; this story's
-  operator step is that target, and it can't reach `done` without it.
+- **Manual/operator:** `make marks-sizing` (`AW-INF-035`, `lane: sre`), which runs the marks subtests with
+  and without `-race` and keeps both artifacts. The `go test` sequence behind it is a §9 defect until that
+  target exists: `§9 defect → AW-INF-035`.
 
 ## Definition of done
 CLAUDE.md §8, plus:
 - The runbook request is in `docs/feedback/` addressed to SRE with the measured numbers.
-- The `make` target for the measurement exists (SRE's, requested in
-  `docs/feedback/AW-SRV-050-marks-sizing-target.md`) and its output carries both builds' artifacts.
+- `make marks-sizing` (`AW-INF-035`) exists and its output carries both builds' artifacts.
 
 ## Open questions
 - `[ASSUMPTION]` The artifact's name and shape, and the limit in AC-6. Neither changes another story's

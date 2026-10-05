@@ -11,7 +11,8 @@ should answer.
    `Bindings` is keyed by Session: once `ReleaseSession` returns, the ingress drops the Session's entry before
    that `CommandRejected{in_transit}` can be seen, and a fresh `SelectCharacter` has no transit-marked entry
    to wait on. So the wait in (a) and the retry in (c) have no signal today. The story needs a retained,
-   Character-keyed arrival or settlement observation, and its owner and shape are yours. The post-log
+   Character-keyed arrival or settlement observation that outlives the Session's entry (`Bindings.byActor` is
+   dropped with it), and its owner and shape are yours. The post-log
    `CommandRejected{in_transit}` Event, keyed by the Character, may be enough for the rejection half. If the
    roster needs a synchronous answer from the Log instead, `AW-SRV-014`'s produce seam changes and the story
    is M with a seam change. The story stays `draft` until you say which.
