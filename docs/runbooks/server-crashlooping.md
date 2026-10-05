@@ -23,7 +23,7 @@ The last log line before exit names the reason; the exit code is in
 ## How to mitigate
 
 **Stop the loop before diagnosing.** A restarting server re-runs recovery each time, and each
-recovery replays the whole log today (a snapshot round and the log tail once `AW-SRV-007` ships), so
+recovery restores the newest complete snapshot round and replays the log tail (`AW-SRV-007`), so
 the loop itself is load.
 
 ```
@@ -38,8 +38,8 @@ seconds. Suspend the `andara-dev` Application's automated sync first, and restor
 scale back. No `make` target does that yet: `make server-stop`/`server-start` is #362, a §9
 defect. Until it ships, leave the loop running on `dev` and diagnose from `--previous` logs.
 
-Then, by exit code. Until `AW-SRV-007` and `AW-SRV-043` ship, a refused recovery has no code of
-its own. It exits `1`, with a `tick loop` `error` line.
+Then, by exit code. A refused recovery has a code of its own (`AW-SRV-007`, `AW-SRV-043`): `3`, `4`, `6`,
+`7` and `8` below. Every other boot failure exits `1`.
 
 **Exits the server has today:**
 
@@ -51,10 +51,10 @@ its own. It exits `1`, with a `tick loop` `error` line.
 | `137` / OOMKilled | memory below the World's footprint | raise `resources.requests.memory` (or re-run `make measure-tick`). A projector replica has the same footprint as the server (`AW-SRV-019`) |
 | liveness restart, no exit line | tick loop wedged for `tick_budget × 100` | `AW-SRV-002`'s `SimulationLagging` runbook. This is the liveness probe doing its job |
 
-**Exits that ship with `AW-SRV-007` and `AW-SRV-043`** (`AW-SRV-007`'s exit table). Pinning a round
-is `make rollback ENV=<env> ROUND=<tick>` (`AW-INF-007`), which sets `recovery.pin_round`. **Neither
-exists yet.** Until they do, a row that says "pin an older round" means: keep the World scaled to
-zero and escalate to implementation with the `error` line.
+**Recovery's own exits** (`AW-SRV-007`'s exit table, and `AW-SRV-043`'s `6`). Pinning a round
+is `make rollback ENV=<env> ROUND=<tick>` (`AW-INF-007`), which sets `recovery.pin_round`. The server reads
+`recovery.pin_round`; **the target doesn't exist yet.** Until it does, a row that says "pin an older round" means:
+keep the World scaled to zero and escalate to implementation with the `error` line.
 
 | Exit | Meaning | Action |
 |-----:|---------|--------|
@@ -73,15 +73,15 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 
 ## How to diagnose
 
-1. Exit code and last log line, as above. Once `AW-SRV-007` ships, every refusal is one `error`
-   line with the fields its exit-code table names.
+1. Exit code and last log line, as above. Every recovery refusal is one `error` line with the fields its
+   exit-code table names.
 2. `kubectl -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
-3. **Once `AW-SRV-007` ships:** is the newest snapshot round complete? Today `andara-cli snapshot
-   list --zone <zone>` reads the store directly, one Zone at a time, with no `complete` column
-   (`recovery-state-mismatch.md`, step 1); a grouped form with one comes with `AW-SRV-007`. An
-   incomplete newest round with `recovery.require_snapshot=true` is exit `7`. Today's recovery
-   doesn't read snapshots at all (it replays the log), so this step can't explain today's crash
-   loop.
+3. Is the newest snapshot round complete? With a server serving, `andara-cli snapshot list` gives the
+   rounds newest first with a `COMPLETE` column. A server in a crash loop serves no Admin endpoint, so there use
+   `andara-cli snapshot list --local --zone <zone>`, one Zone at a time with no `complete` column
+   (`recovery-state-mismatch.md`, step 1). An incomplete newest round is exit `7` with
+   `recovery.require_snapshot=true`; without it, recovery falls back to the newest complete round, or to the whole
+   log when there is none.
 4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status
    ENV=dev` names the synced revision and image. If a deploy is the cause, revert it on `main`.
    Argo CD syncs the good build, and `make argocd-recover ENV=dev` replaces a pod stuck on the bad
@@ -93,8 +93,7 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 
 ## When to escalate
 
-- A hash mismatch that repeats: today, exit `1` with `state hash mismatch` on two boots with the
-  same seed and build; once `AW-SRV-007` ships, exit `8` on two consecutive rounds: non-determinism in the sim; escalate as a bug, do not keep
-  trying rounds.
+- A hash mismatch that repeats: exit `8` on two consecutive rounds, with the same seed and build:
+  non-determinism in the sim; escalate as a bug, do not keep trying rounds.
 - OOM at a request already 2× the measurement: the fixture no longer matches the World; the
   implementation lane re-measures.
