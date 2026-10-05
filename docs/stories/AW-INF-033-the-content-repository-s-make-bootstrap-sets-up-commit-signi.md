@@ -61,9 +61,10 @@ hand-typed `git config`.
    `Good "git" signature for <email>`, and doesn't read `No principal matched`. (A key missing from
    `allowed_signers` still prints `Good "git" signature with …`, so the bare prefix proves nothing.)
    Running it a second time changes nothing and exits 0.
-3. **Given** a key the agent doesn't hold **when** `make bootstrap` runs **then** it exits 1 and
-   prints `ssh-add --apple-use-keychain <key>` on Darwin, or `eval "$(ssh-agent -s)" && ssh-add <key>`
-   elsewhere.
+3. **Given** a key that can't sign without a prompt, such as a passphrase-protected key its agent
+   doesn't hold, **when** `make bootstrap` runs **then** it exits 1 and prints
+   `ssh-add --apple-use-keychain <key>` on Darwin, or `eval "$(ssh-agent -s)" && ssh-add <key>`
+   elsewhere. (An unencrypted key signs without an agent, so it passes, as it would for `git`.)
 4. **Given** a key that isn't in `.github/allowed_signers` **when** `make bootstrap` runs **then** it
    prints the exact `<email> <keytype> <key>` line to add by pull request, and exits 0.
 5. **Given** `gh` logged in and the key not registered as a Signing Key **when** `make bootstrap`
@@ -85,7 +86,7 @@ hand-typed `git config`.
 - Output: `bootstrap: <step>` lines; on failure, one `bootstrap: <what's missing>` line to stderr,
   plus the command that fixes it.
 - Exit codes: `0` signing set up, or CI, or the GitHub check couldn't run (no `gh` login); `1` a
-  precondition is missing (name or email, a key, the agent, or a Signing Key that a logged-in `gh`
+  precondition is missing (name or email, a key, a key that can't sign unattended such as a passphrase key its agent doesn't hold, or a Signing Key that a logged-in `gh`
   shows isn't registered).
 - Key choice, in order: `user.signingkey` if set; the `identityfile` that `ssh -G github.com`
   reports (its `.pub`); then `~/.ssh/id_ed25519.pub`, `id_ecdsa.pub` or `id_rsa.pub`. With none, it
@@ -116,9 +117,9 @@ steps, and `andara.solo7.media` #14 is closed by the merging PR.
 
 ## Open questions
 
-- `[ASSUMPTION]` SRE has write access in the Content Repository, as for `andara.solo7.media` #11.
-  If that repository's role hook blocks the SRE role there (as #14's comment reports), Brian decides
-  which role builds it.
+- ~~`[ASSUMPTION]` SRE has write access in the Content Repository~~ Resolved 2026-10-04: it doesn't
+  (the hook blocked it, as #14's comment reported). SRE wrote the change as a patch and Brian applied it as
+  `andara.solo7.media` #24.
 
 ## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
 
@@ -173,3 +174,20 @@ The story's §8 item "every acceptance criterion demonstrably passes" depends on
 **Not run by SRE:** the Manual/operator step in a fresh clone against a real GitHub account. #24's
 CI has no `gh` login and no GitHub Signing Key, so the "GitHub has this key" path and AC-5's
 `gh ssh-key add` path ran only against the `gh` stub.
+
+## Architecture: §8 review, 2026-10-04 (stays at `review`)
+
+- **AC-3 and the contract, ruled.** SRE's wording stands. The build tests that the key signs unattended
+  (`ssh-keygen -Y sign`, what `git` runs), and the verification record's table shows the script and `git`
+  agree in both rows. Exiting `1` for an unencrypted key outside the agent would reject a clone that signs.
+  AC-3 and the contract's exit-`1` list are amended above, and the code stays as merged. This is a contract
+  change after `ready`, recorded here.
+- **The guide edit is done.** `docs/builders/04-your-first-zone.md`, "Sign your commits": step 1 (the
+  Signing Key) stays; the `--local` identity lines come first; `make bootstrap` replaces the hand-typed
+  `gpg.format`, `user.signingkey`, `commit.gpgsign` and trust-file steps; it says the target can stop and
+  print what's missing and is safe to re-run, and what to do with the `allowed_signers` line it prints. The
+  clone block is unchanged, as SRE asked. `make guide-check` passes.
+- **Open before `done`:** (1) the Manual/operator step, `make bootstrap` in a fresh clone against a real GitHub
+  account, which SRE couldn't run and which is the only run of the real `gh` paths; (2) the Definition of
+  done's `andara.solo7.media` #14, still open: #24 didn't close it. Both are Brian's. When they're done, this
+  story needs only its move to `done`.
