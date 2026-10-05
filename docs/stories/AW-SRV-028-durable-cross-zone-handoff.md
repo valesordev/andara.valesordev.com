@@ -361,8 +361,8 @@ yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
   The counters start at 0 after a restart.
 - **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
   retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick`, `in_transit` and
-  `trace_id`. *(Requested, not built, and not yet confirmed in the repository: SRE proposed it after #403 merged.
-  The code still logs one per tick; issue #409 and the feedback file.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
+  `trace_id`. *(Confirmed 2026-10-05 by architecture, §8 review below; not built: the code still logs one per tick,
+  and `done` here accepts that gap. Issue #409.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
   retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
   and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
   correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
@@ -573,15 +573,17 @@ session that runs it, at the time the deploy carrying this story reaches `dev`.
 Run on `main` after #433. Every item holds:
 - **ACs 1-16** each map to a named test in the verification record. I confirmed the named tests exist
   (`server/sim/handoff_test.go`, `server/tickloop/handoff_test.go`, `handoff_integration_test.go`,
-  `server/config/config_test.go`, `server/sim/entity_roundtrip_test.go`), and `make check` is clean on `main`.
+  `server/config/config_test.go`, `server/sim/entity_roundtrip_test.go`), and `make check` is clean on `main` (run 2026-10-05 from the `arch/aw-srv-028-review-close` branch, at its base).
 - **Config** is in `server/README.md`, `deploy/helm/andara/values.schema.json` and `keys.yaml`, and the
   `simulation-lagging.md` runbook has the handoff step. The glossary has **Handoff** and **Transit**.
 - **Migration:** no schema change; deploying needs `make world-reset ENV=dev CONFIRM=andara-dev`, stated in the
   record and still waiting on Brian's go in SRE's session.
 - **Instrumentation** is SRE's record above. Per CLAUDE.md §8, the four series were read from the running server
-  and the lost-`Arrive` observations rest on the `TestHandoffLoop_` tests over the metric objects. The first
-  story to inject a lost `Arrive` (none yet) carries the live observation.
+  and the lost-`Arrive` observations rest on the `TestHandoffLoop_` tests over the metric objects. The carrier
+  is the failure-injection story (Test plan, above), requested from PM in the feedback file; it inherits the live
+  observation of `retries_total`, `stale_arrivals_total`, `in_transit` above 0 and the `warn`, `debug` and `error`
+  lines as a Definition-of-done line.
 - **The one `[ASSUMPTION]`** (retry defaults 10 / 100 / 50) is resolved: the values are config, tuned without a
   contract change, and the runbook marks its thresholds unmeasured.
-- **The summary `warn` change is confirmed:** at most one per `sim.handoff_retry_ticks` window, carrying
+- **The summary `warn` change is confirmed, and accepted as unbuilt at `done`** (the code logs one per tick until #409): at most one per `sim.handoff_retry_ticks` window, carrying
   `retries`, `oldest_attempt`, `tick`, `in_transit` and `trace_id`. Issue #409 stands for implementation.

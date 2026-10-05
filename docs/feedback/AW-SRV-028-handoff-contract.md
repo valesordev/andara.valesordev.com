@@ -464,3 +464,10 @@ The story is `done`. **Confirmed:** the amended §7's log bound (one summary `wa
 window with `retries`, `oldest_attempt`, `tick`, `in_transit`, `trace_id`) replaces #403's per-tick text, so #409
 stays open for implementation. The sizing-fixture follow-up for marks is PM's request above; it stays a
 Test-plan line and doesn't gate `done`.
+
+### For PM: the failure-injection story, which carries the live observation
+CLAUDE.md §8's deferral rule needs a named carrier. The story: a failure-injection flag for `sim repl` or the
+stack (drop or delay `Arrive` production), so a retry, a stale arrival and `in_transit` above 0 can be observed on
+the running server. `lane: implementation`, `depends_on: AW-SRV-028`. Its Definition of done inherits the
+unobserved series and log lines listed in `AW-SRV-028`'s §8 instrumentation check, and `AW-INF-032` may take the
+assertion once the flag exists.
