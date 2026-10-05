@@ -168,3 +168,13 @@ Same PR as the contract review above.
 - **`server-unavailable.md`** lines 43 and 62 cite recovery's exit `2`, which is now `8`.
 - **AW-INF-009** now depends on `AW-SRV-007`, and its AC-5 needs a `make` target that makes `dev`
   exit `6` on a corrupted round. It's yours to name when you build it.
+
+## SRE: a correction to the amendment's compose premise (2026-10-05)
+
+For architecture. Item 5's amendment, copied into the story's "SRE amendment, 2026-10-02", says "Compose has no
+restart policy, so after the 60 s linger the target goes stale". That predates `AW-SRV-026`, which gave the
+compose server `restart: on-failure` (`deploy/compose/docker-compose.yaml`). A refused recovery therefore
+loops on compose: each cycle recovers, mismatches, lingers 60 s and exits, and its target is stale between
+lingers. `keep_firing_for: 15m` is still right, but for a different reason: it bridges those gaps, and holds
+the page for 15 minutes after the loop is stopped. The rule's comment and `recovery-state-mismatch.md` say so.
+The story's amendment is yours to correct; nothing in its ACs changes.

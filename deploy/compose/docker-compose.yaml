@@ -298,6 +298,12 @@ services:
       ANDARA_AUTH_BOOTSTRAP_OPERATOR: "${ANDARA_BOOTSTRAP_OPERATOR:-operator:andara-local}"
       ANDARA_OTLP_ENDPOINT: "otel-collector:4317"
       ANDARA_SERVICE_NAME: "andara-server"
+      # AW-SRV-007 AC-14: a refused recovery (exit 8 or 6) holds /metrics and /livez up for this
+      # long before it exits, so Prometheus scrapes andara_recovery_state_hash_match at 0 and
+      # RecoveryStateMismatch can fire. The chart leaves it at 0s: the cluster's Ready-only scrape
+      # would never see it, and it would only slow AndaraServerCrashLooping. A server that doesn't
+      # read it yet ignores it.
+      ANDARA_RECOVERY_MISMATCH_LINGER: "60s"
       ANDARA_ENV: "local"
       ANDARA_LOG_FORMAT: "json"
       ANDARA_LOG_LEVEL: "${ANDARA_LOG_LEVEL:-info}"

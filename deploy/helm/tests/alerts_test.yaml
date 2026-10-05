@@ -384,3 +384,96 @@ tests:
       - eval_time: 30m
         alertname: SnapshotStale
         exp_alerts: []
+
+  # AW-SRV-007. A refused recovery sets the gauge to 0 and exits; compose's 60 s linger is
+  # what lets a scrape see it. Its static target then goes stale, so the page has to outlive
+  # the process: keep_firing_for holds it for 15 minutes after the last 0.
+  - name: compose — a recovery mismatch pages at once and outlives the process that set it
+    interval: 1m
+    input_series:
+      - series: 'andara_recovery_state_hash_match{job="andara-server", instance="andara-server:8080"}'
+        values: '_ _ 0 0 stale'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 2m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, instance: "andara-server:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 10m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, instance: "andara-server:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 17m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, instance: "andara-server:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 18m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, instance: "andara-server:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 19m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+
+  # A normal recovery sets the gauge to 1 and must never page, however long it stays 1.
+  - name: compose — a matching recovery never pages
+    interval: 1m
+    input_series:
+      - series: 'andara_recovery_state_hash_match{job="andara-server", instance="andara-server:8080"}'
+        values: '1 1 1 1 1 1 1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+
+  # The gauge is never pre-seeded: a server that hasn't finished recovery, or whose HTTP came
+  # up early, exposes no sample, and absence is not a mismatch.
+  - name: compose — a server whose recovery hasn't set the gauge does not page
+    interval: 1m
+    input_series:
+      - series: 'up{job="andara-server", instance="andara-server:8080"}'
+        values: '1 1 1 1 1 1'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 5m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+
+  # The cluster's label shape: the same series carries its namespace, so a page names the
+  # environment. (The expression itself can't fire there until the gauge is scraped from a pod
+  # that never became Ready; AW-INF-009 carries that signal, so this is the shape, not the cluster.)
+  - name: cluster — a mismatch carries its namespace
+    interval: 1m
+    input_series:
+      - series: 'andara_recovery_state_hash_match{job="andara-server", namespace="andara-dev", instance="10.0.0.7:8080"}'
+        values: '0 0'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, namespace: andara-dev, instance: "10.0.0.7:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md

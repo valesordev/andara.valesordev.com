@@ -30,12 +30,12 @@ says "connect to the database" is a gap in the CLI (`CLAUDE.md` §10).
 | `projection-stale.md` | `AW-SRV-019`, shared with `AW-SRV-017`/`018` | `ProjectionStale` |
 | `state-projector-down.md` | `AW-INF-025` | `StateProjectorDown` |
 | `content-load-failing.md` | `AW-SRV-012` (written by architecture) | `ContentLoadFailing` |
+| `recovery-state-mismatch.md` | `AW-SRV-007` (ships with it) | `RecoveryStateMismatch` |
 
 ## Planned
 
 | File | Story | Alert |
 |------|-------|-------|
-| `recovery-state-mismatch.md` | `AW-SRV-007` | `RecoveryStateMismatch` |
 | `simulation-consumer-lagging.md` | `AW-INF-005` | `SimulationConsumerLagging` |
 | `deploy-and-rollback.md` | `AW-INF-007` | — (procedure, not an alert) |
 | `npcs-unattended.md` | `AW-SRV-009` | `NPCsUnattended` |

@@ -60,7 +60,7 @@ zero and escalate to implementation with the `error` line.
 |-----:|---------|--------|
 | `3` | log gap: retention shorter than the round's age | if `recovery.pin_round` is set, a stale pin: clear it. If not, recovery already chose the newest complete round, so the history it needs is gone: exact recovery is impossible. Escalate, and fix retention (`AW-INF-005`) |
 | `4` | binary older than the round's `state_version` | a rollback that can't read forward state: roll the image forward, or pin a round the old binary wrote |
-| `6` | the round doesn't reproduce its own tick. The `error` line `recovery restore mismatch` has `reason` | by `reason`. `hash`: a corrupt round, so `recovery-state-mismatch.md` and pin an older round. `seed`: the configured `sim.seed` differs from the round's `recorded_seed`, so restore the seed value; an older round has the same seed. `content`: this binary builds different content bytes than the round recorded (`pack`, `recorded_digest`, `built_digest`), or a round Zone this build doesn't define (`zone_id`), so roll the image back to the build that wrote the round, or escalate to implementation; an older round fails the same way |
+| `6` | the round doesn't reproduce its own tick. The `error` line `recovery restore mismatch` has `reason` | by `reason`. `hash`: a corrupt round, so `recovery-state-mismatch.md` and pin an older round. `seed`: the configured `sim.seed` differs from the round's `recorded_seed`, so restore the seed value; an older round has the same seed. `content`: this binary builds different content bytes than the round recorded (`pack`, `recorded_digest`, `built_digest`), or a round Zone this build doesn't define (`zone_id`). On `content.source=kafka`, roll the image back to the build that wrote the round, or escalate to implementation; on `content.source=dir`, restore the content files. `recovery-state-mismatch.md` has the detail, and how to find the build |
 | `7` | no complete snapshot round with `recovery.require_snapshot=true`, or a pinned round that isn't complete. The `error` line's `cause` is `missing`, `duplicate`, `hash` or `disagree` | pinned: recovery tries no other round, so clear or change `recovery.pin_round`. Not pinned: `SnapshotStale` and `snapshot-stale.md`, for why rounds stopped completing |
 | `8` | State Hash mismatch after replay: the alerting condition | `recovery-state-mismatch.md`. Pin an older round |
 
@@ -76,10 +76,12 @@ kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
 1. Exit code and last log line, as above. Once `AW-SRV-007` ships, every refusal is one `error`
    line with the fields its exit-code table names.
 2. `kubectl -n andara-<env> describe pod andara-0` — `OOMKilled` vs `Error` vs probe failure events.
-3. **Once `AW-SRV-007` ships:** is the newest snapshot round complete? `andara-cli snapshot list`
-   lists rounds over `Admin`, with a `complete` column. An incomplete newest round with
-   `recovery.require_snapshot=true` is exit `7`. Today's recovery doesn't read snapshots at all (it
-   replays the log), so this step can't explain today's crash loop.
+3. **Once `AW-SRV-007` ships:** is the newest snapshot round complete? Today `andara-cli snapshot
+   list --zone <zone>` reads the store directly, one Zone at a time, with no `complete` column
+   (`recovery-state-mismatch.md`, step 1); a grouped form with one comes with `AW-SRV-007`. An
+   incomplete newest round with `recovery.require_snapshot=true` is exit `7`. Today's recovery
+   doesn't read snapshots at all (it replays the log), so this step can't explain today's crash
+   loop.
 4. Was there a deploy in the last ten minutes? On `dev`, Argo CD deploys: `make argocd-status
    ENV=dev` names the synced revision and image. If a deploy is the cause, revert it on `main`.
    Argo CD syncs the good build, and `make argocd-recover ENV=dev` replaces a pod stuck on the bad
