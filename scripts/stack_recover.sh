@@ -184,6 +184,7 @@ print(sum(1 for g in d["data"]["groups"] for r in g["rules"] if r["name"] == "Re
   || fail "Prometheus isn't answering on $PROM"
 [[ "$rules" == "1" ]] || fail "Prometheus has $rules rules named RecoveryStateMismatch, want 1 (a long-lived stack needs \`curl -X POST $PROM/-/reload\` after a rules change)"
 alert_before="$(prom 'ALERTS{alertname="RecoveryStateMismatch"}')"
+[[ -n "$alert_before" ]] || fail "Prometheus gave no answer for ALERTS{alertname=\"RecoveryStateMismatch\"}"
 round_before="$(newest_round)" || fail "andara-cli snapshot list failed"; round_before="${round_before:-0}"
 echo "stack-recover: newest complete round before the run: ${round_before/#0/none}"
 
@@ -348,7 +349,7 @@ if [[ "$alert_before" == "0" ]]; then
     || fail "RecoveryStateMismatch is in ALERTS after a normal recovery"
   echo "stack-recover: RecoveryStateMismatch is absent from ALERTS through the recovery (Prometheus scraped the 1)"
 else
-  echo "stack-recover: skipped the RecoveryStateMismatch absence check: it had ${alert_before:-unknown} series in ALERTS before the run (keep_firing_for from an earlier make stack-recover-mismatch)"
+  echo "stack-recover: skipped the RecoveryStateMismatch absence check: it had ${alert_before} series in ALERTS before the run (keep_firing_for from an earlier make stack-recover-mismatch)"
 fi
 echo "stack-recover: both rebound; both read the Town Hall (A's is the tail move)"
 

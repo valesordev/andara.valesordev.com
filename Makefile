@@ -210,6 +210,7 @@ test-integration:
 RECOVERY_TIMING_OUT ?= .local/recovery-timing.json
 recovery-timing:
 	@mkdir -p "$(dir $(RECOVERY_TIMING_OUT))"
+	@rm -f "$(RECOVERY_TIMING_OUT)"
 	@ANDARA_RECOVERY_TIMING=1 ANDARA_RECOVERY_TIMING_OUT="$(abspath $(RECOVERY_TIMING_OUT))" \
 	  ANDARA_KAFKA_BROKERS="$${ANDARA_KAFKA_BROKERS:-localhost:$${ANDARA_KAFKA_PORT:-9092}}" \
 	  $(GO) test -tags integration -count=1 -v -timeout 20m -run '^TestRecoveryTimingAtSizingScale$$' ./server/recovery/

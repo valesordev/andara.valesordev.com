@@ -15,7 +15,8 @@
       since the first run has nothing to compare with.
 
 The bounds themselves (`total` under 90 s, a tail of at least 600 ticks) are the test's own
-assertions, so a run that breaks them never reaches the artifact.
+assertions. It writes the JSON before it asserts them, so a run that breaks one still has its
+numbers, and `previous` only reads successful runs.
 """
 
 import argparse
@@ -88,6 +89,10 @@ def render(cur, prev=None):
     if prev["tail_ticks"] != cur["tail_ticks"]:
         note = " The tails differ (%d now, %d before), so the replay times aren't like for like." % (
             cur["tail_ticks"], prev["tail_ticks"])
+    shape = [k for k in ("entities", "rooms", "zones", "characters") if prev[k] != cur[k]]
+    if shape:
+        note += " The fixture differs (%s), so the replay times aren't like for like." % ", ".join(
+            "%s %d now, %d before" % (k, cur[k], prev[k]) for k in shape)
     out += ["", "Compared with the newest successful run on main (tail %d ticks).%s" % (prev["tail_ticks"], note)]
     return "\n".join(out) + "\n"
 
@@ -122,8 +127,9 @@ def previous(args, run=gh):
     r = run("run", "list", "--workflow", args.workflow, "--branch", args.branch, "--status", "success",
             "--limit", "1", "--json", "databaseId", "--jq", ".[0].databaseId // empty")
     if r.returncode != 0:
-        print("recovery_timing: gh run list failed: %s" % r.stderr.strip(), file=sys.stderr)
-        return 1
+        # A comparison is a nicety: an API blip must not fail the job before the bound is tested.
+        print("no previous run (gh run list failed: %s)" % r.stderr.strip())
+        return 0
     run_id = r.stdout.strip()
     if not run_id:
         print("no previous run")

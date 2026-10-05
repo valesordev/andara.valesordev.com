@@ -54,6 +54,14 @@ class Render(unittest.TestCase):
         self.assertIn("The tails differ (650 now, 602 before)", out)
         self.assertNotIn("The tails differ", rt.render(sample(), sample()))
 
+    def test_a_different_fixture_is_called_out(self):
+        prev = sample()
+        prev["entities"] = 20000
+        prev["zones"] = 8
+        out = rt.render(sample(), prev)
+        self.assertIn("The fixture differs (entities 25000 now, 20000 before, zones 16 now, 8 before)", out)
+        self.assertNotIn("The fixture differs", rt.render(sample(), sample()))
+
     def test_a_phase_the_previous_run_lacks_is_dashed(self):
         prev = sample()
         del prev["phases_seconds"]["seek"]
@@ -171,9 +179,10 @@ class Previous(unittest.TestCase):
         run, _ = self.fake((0, "9", ""), download=(1, "no artifact"))
         self.assertEqual(rt.previous(self.args(), run), 0)
 
-    def test_a_failing_gh_list_is_an_error(self):
-        run, _ = self.fake((1, "", "HTTP 403"))
-        self.assertEqual(rt.previous(self.args(), run), 1)
+    def test_a_failing_gh_list_is_not_an_error_either(self):
+        run, calls = self.fake((1, "", "HTTP 403"))
+        self.assertEqual(rt.previous(self.args(), run), 0)
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == "__main__":

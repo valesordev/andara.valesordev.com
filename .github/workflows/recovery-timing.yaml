@@ -19,6 +19,9 @@ on:
       - "server/recovery/**"
       - "server/simtest/**"
       - "server/tickloop/**"
+      - "server/boot/**"
+      - "go.mod"
+      - "go.sum"
       - "scripts/recovery_timing.py"
       - ".github/workflows/recovery-timing.yaml"
   workflow_dispatch:
@@ -71,8 +74,13 @@ jobs:
           name: recovery-timing
           path: .local/recovery-timing.json
           if-no-files-found: error
+          # The file sits in .local, and upload-artifact v4.4+ skips hidden paths by default.
+          include-hidden-files: true
 
+      # Also after a failed run: the test writes its JSON before it asserts the bounds, and the
+      # numbers are what you want from a run that broke one.
       - name: compare replay with the previous run
+        if: always() && hashFiles('.local/recovery-timing.json') != ''
         run: make recovery-timing-summary
 
       - name: down

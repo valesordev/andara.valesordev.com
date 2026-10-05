@@ -118,12 +118,13 @@ target_stale() { [[ "$(prom 'andara_recovery_state_hash_match')" == "0" ]]; }
 ready() { curl -sf "$READYZ" >/dev/null 2>&1; }
 seed_error_logged() {
   "${COMPOSE[@]}" logs --no-log-prefix --since "$SINCE" andara-server 2>/dev/null \
-    | grep 'recovery restore mismatch' | grep -q '"reason":"seed"'
+    | grep 'recovery restore mismatch' | grep '"reason":"seed"' >/dev/null
 }
-# docker's own record of the deaths since SINCE, which a restart loop never hides.
+# docker's own record of the deaths since SINCE, which a restart loop never hides. `grep >/dev/null`,
+# not `grep -q`: a grep that quits at its match SIGPIPEs the producer, and pipefail reads that as no match.
 exit6_seen() {
   docker events --since "$SINCE" --until "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --filter event=die \
-    --filter label=com.docker.compose.service=andara-server --format '{{.Actor.Attributes.exitCode}}' | grep -qx 6
+    --filter label=com.docker.compose.service=andara-server --format '{{.Actor.Attributes.exitCode}}' | grep -x 6 >/dev/null
 }
 
 # 1. Preconditions.
