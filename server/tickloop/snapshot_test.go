@@ -306,8 +306,8 @@ func TestOneZoneFailingMakesTheRoundIncomplete(t *testing.T) {
 	if !errors.As(err, &incomplete) {
 		t.Fatalf("round error is %T (%v), want *sim.ErrRoundIncomplete", err, err)
 	}
-	if len(incomplete.Missing) != 1 || incomplete.Missing[0] != "docks" {
-		t.Errorf("Missing = %v, want [docks]", incomplete.Missing)
+	if len(incomplete.Zones) != 1 || incomplete.Zones[0] != "docks" {
+		t.Errorf("Zones = %v, want [docks]", incomplete.Zones)
 	}
 	if incomplete.Tick != 42 {
 		t.Errorf("Tick = %d, want 42", incomplete.Tick)

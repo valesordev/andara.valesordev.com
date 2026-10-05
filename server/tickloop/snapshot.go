@@ -458,7 +458,7 @@ func (s *Snapshotter) run(ctx context.Context, tick sim.Tick, snaps []sim.Snapsh
 		// deleting. The previous complete round stays the newest selectable
 		// one.
 		s.metrics.Rounds.WithLabelValues("incomplete").Inc()
-		incomplete := &sim.ErrRoundIncomplete{Tick: tick, Missing: missing}
+		incomplete := &sim.ErrRoundIncomplete{Tick: tick, Cause: sim.RoundMissing, Zones: missing}
 		s.log.LogAttrs(ctx, slog.LevelWarn, "snapshot round incomplete",
 			slog.Uint64("tick", uint64(tick)), slog.Int("zones", len(snaps)),
 			slog.Int("missing", len(missing)), slog.String("detail", incomplete.Error()),

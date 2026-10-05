@@ -27,6 +27,22 @@ import (
 // boundaries skip a tick. Exit 3.
 var ErrLogGap = errors.New("log gap")
 
+// LogGapError is ErrLogGap with what disagreed: the Partition's earliest
+// offset on the log (Have) is past where the caller must read from (Need)
+// (AW-SRV-007 AC-2). errors.Is(err, ErrLogGap) holds.
+type LogGapError struct {
+	Topic     string
+	Partition int32
+	Need      int64
+	Have      int64
+}
+
+func (e *LogGapError) Error() string {
+	return fmt.Sprintf("%v: %s partition %d begins at %d, the replica needs %d", ErrLogGap, e.Topic, e.Partition, e.Have, e.Need)
+}
+
+func (e *LogGapError) Unwrap() error { return ErrLogGap }
+
 // Boundary is a Tick Boundary Record as read, with when it was produced — the
 // record timestamp, which is what the lag metric measures from.
 type Boundary struct {
@@ -290,7 +306,7 @@ func NewCommandSource(ctx context.Context, brokers []string, topic, clientID str
 	for p, off := range start {
 		if so, ok := starts.Lookup(topic, p); ok && so.Offset > off {
 			client.Close()
-			return nil, fmt.Errorf("%w: %s partition %d begins at %d, the replica needs %d", ErrLogGap, topic, p, so.Offset, off)
+			return nil, &LogGapError{Topic: topic, Partition: p, Need: off, Have: so.Offset}
 		}
 	}
 	return &CommandSource{client: client, topic: topic, timeout: 30 * time.Second, buf: map[int32][]sim.Record{}}, nil

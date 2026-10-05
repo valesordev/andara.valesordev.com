@@ -253,7 +253,7 @@ func TestErrStateVersionNamesBothVersions(t *testing.T) {
 
 func TestErrRoundIncompleteNamesTheMissingZones(t *testing.T) {
 	t.Parallel()
-	err := &ErrRoundIncomplete{Tick: 4200, Missing: []ZoneID{"village", "forest"}}
+	err := &ErrRoundIncomplete{Tick: 4200, Cause: RoundMissing, Zones: []ZoneID{"village", "forest"}}
 	msg := err.Error()
 	for _, want := range []string{"4200", "village", "forest"} {
 		if !bytes.Contains([]byte(msg), []byte(want)) {

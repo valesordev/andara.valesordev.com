@@ -345,19 +345,43 @@ func (e *ErrSnapshotStall) Error() string {
 	return fmt.Sprintf("snapshot copy at tick %d took %.3fms, over the %.3fms budget", e.Tick, e.Elapsed*1000, e.Budget*1000)
 }
 
-// ErrRoundIncomplete: one or more Zone writes failed, so the round is not a
-// consistent cut of the World and AW-SRV-007 must not select it. The Zones that
-// did succeed are left where they are — they are valid objects, and the
-// previous complete round is still the newest selectable one.
+// The causes of an incomplete round (AW-SRV-007 AC-15), which ListRounds' reasons
+// map to.
+const (
+	// RoundMissing: no object for a Zone, or one that vanished after listing.
+	RoundMissing = "missing"
+	// RoundDuplicate: two objects for one Zone.
+	RoundDuplicate = "duplicate"
+	// RoundHash: an object that is hash-invalid, undecodable (its PRNG too),
+	// unmigratable, or whose envelope names another Zone or tick.
+	RoundHash = "hash"
+	// RoundDisagree: objects whose PRNG, EventID, seed, content in effect or
+	// Partition offsets differ.
+	RoundDisagree = "disagree"
+)
+
+// ErrRoundIncomplete: the round is not a consistent cut of the World, so
+// AW-SRV-007 must not select it, and refuses a named one (exit 7). Cause is
+// one of the Round* constants and Zones the Zones it is about. The snapshot
+// writer sets RoundMissing and the Zones whose write failed; the Zones that did
+// succeed are left where they are, valid objects, and the previous complete
+// round is still the newest selectable one.
 type ErrRoundIncomplete struct {
-	Tick    Tick
-	Missing []ZoneID
+	Tick  Tick
+	Cause string
+	Zones []ZoneID
 }
 
 func (e *ErrRoundIncomplete) Error() string {
-	names := make([]string, len(e.Missing))
-	for i, z := range e.Missing {
+	names := make([]string, len(e.Zones))
+	for i, z := range e.Zones {
 		names[i] = string(z)
 	}
-	return fmt.Sprintf("snapshot round at tick %d is incomplete: %d zone(s) not written: %v", e.Tick, len(e.Missing), names)
+	switch e.Cause {
+	case RoundMissing:
+		return fmt.Sprintf("snapshot round at tick %d is incomplete: %d zone(s) not written: %v", e.Tick, len(e.Zones), names)
+	case "":
+		return fmt.Sprintf("snapshot round at tick %d is incomplete: %v", e.Tick, names)
+	}
+	return fmt.Sprintf("snapshot round at tick %d is incomplete (%s): %v", e.Tick, e.Cause, names)
 }
