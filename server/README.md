@@ -103,6 +103,11 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `snapshot.s3_bucket` | `ANDARA_SNAPSHOT_S3_BUCKET` | — | Required when `snapshot.store=s3`; the server refuses to start without it rather than failing its first round a minute after it looked healthy. |
 | `snapshot.s3_endpoint` | `ANDARA_SNAPSHOT_S3_ENDPOINT` | — | S3 endpoint. versitygw locally; empty for AWS. |
 | `snapshot.upload_timeout` | `ANDARA_SNAPSHOT_UPLOAD_TIMEOUT` | `30s` | A round exceeding it is failed, not queued behind the next one; the next round starts on schedule. It also bounds the wait for the broker to acknowledge the round's `TickCompleted`: with `sim.source=kafka` nothing is encoded or written until that acknowledgement arrives, a boundary reported lost abandons the round as `andara_snapshot_failures_total{reason="boundary"}`, and no acknowledgement inside the timeout abandons it as `reason="timeout"`. A boundary whose `Publish` failed outright takes no round, and a round that was due counts `reason="boundary"`. Must not exceed `snapshot.interval` — if the two would have to meet, the body has outgrown the cadence. |
+| `recovery.require_snapshot` | `ANDARA_RECOVERY_REQUIRE_SNAPSHOT` | `false` | Boot with no complete snapshot round exits `7` instead of replaying the log from offset zero. `true` in prod once M2 lands: a cold replay is a retention bug, not a boot. |
+| `recovery.replay_batch` | `ANDARA_RECOVERY_REPLAY_BATCH` | `4096` | Boundaries one replay step takes. It bounds memory only: the State Hash sequence is the same at any value. At least `1`. |
+| `recovery.verify_timeout` | `ANDARA_RECOVERY_VERIFY_TIMEOUT` | `600s` | Bounds `andara-server recover --verify` and `Admin.VerifySnapshotRound`; past it the RPC answers `DEADLINE_EXCEEDED`. |
+| `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` recovers from the newest complete round. `T > 0` names round `T`: boot recovery uses it, and exits `7` if it isn't complete, trying no other. Read on every boot and never cleared by the server; `make rollback ROUND=T` sets and clears it. |
+| `recovery.mismatch_linger` | `ANDARA_RECOVERY_MISMATCH_LINGER` | `0s` | How long a boot that ends in exit `8` or `6` serves `/metrics` and `/livez` (`200`) and `/readyz` and `/startedz` (`503`) before exiting, so `andara_recovery_state_hash_match` `0` is scraped. A signal ends it at once. `grpc.listen` is never bound. Compose sets `60s`; the chart leaves `0s`, where only a Ready pod is scraped. |
 | `telemetry.trace_sample_ratio` | `ANDARA_TRACE_SAMPLE_RATIO` | `0.01` | Fraction of `Game/Submit` traces exported, decided at the root and carried into the tick's `command.apply`. Every rejection is exported whatever it says; every other root is. |
 | `telemetry.trust_inbound_traceparent` | `ANDARA_TRUST_INBOUND_TRACEPARENT` | `false` | Let a client's W3C `traceparent` parent the RPC span — and carry its sampling decision. Off, the RPC span is a new root that links to the client's context, so the ratio applies whatever the client sent. `make up` sets it, so andara-cli's `cli.command` root sits above the RPC locally. |
 
@@ -309,6 +314,63 @@ recovery exits `6`. `make world-reset ENV=dev CONFIRM=andara-dev` with the deplo
 `dev`'s Characters and Accounts. A binary from before it can't read a log that has a `HandoffAck`
 either: the same reset. An Entity ID is never reused: a `BindCharacter` for an ID some Zone holds a
 mark for is refused `id_reused`.
+
+## Recovery (AW-SRV-007)
+
+A boot recovers the World before it serves anything. It picks the newest **complete** snapshot round
+(or the one `recovery.pin_round` names), rebuilds the content that round recorded and checks its
+digest, restores the Zones and checks the result against the round's own tick (AW-SRV-043), seeks the
+Tick Boundary log to that tick by binary search, and replays every boundary after it to the head,
+verifying the State Hash at each. It streams boundaries `recovery.replay_batch` at a time and never
+loads the topic. With no complete round it replays from offset zero. It never tries another round
+when the one it chose is refused, and it never serves a World that didn't reproduce its history.
+
+| Exit | Condition |
+|-----:|-----------|
+| `0` | recovered and serving |
+| `1` | configuration or store error before recovery began |
+| `3` | the log no longer holds the round (`ErrLogGap`): retention is shorter than the snapshot age. The `error` line names the Partition, the round's offset and the log's earliest |
+| `4` | the round was written by a newer binary (`ErrStateVersion`) |
+| `5` | not recovery's: a running server lost a Tick Boundary Record (AW-SRV-026) |
+| `6` | the round doesn't reproduce its own tick: `ErrRestoreMismatch`, `ErrSeedMismatch`, or it doesn't restore onto the content (`reason=content`) |
+| `7` | no complete round with `recovery.require_snapshot=true`, or a named round that isn't complete; the line carries `round_tick` and `cause` (`missing`, `duplicate`, `hash`, `disagree`) |
+| `8` | a replayed boundary's State Hash differs from the recorded one (`ErrHashMismatch`); the line names the tick, both hashes and the round used |
+
+`2` is never assigned: it is Go's own exit for a runtime fatal error. Exits `8` and `6` set
+`andara_recovery_state_hash_match` to `0` and linger under `recovery.mismatch_linger`. The gauge has no
+sample until a recovery sets it.
+
+`/readyz` answers `200` only when recovery verified the World, the Gateway serves with content in
+effect, and the first live tick has completed within ten `sim.tick_budget_ms` of schedule.
+
+**Characters a crash left standing.** Every Session is gone at recovery. Each Character body present
+and not linkdead gets a `MarkLinkdead` (or an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is
+`0`) produced before the loop runs, counted on `andara_character_unbinds_total{reason="linkdead"}`.
+
+```
+andara-server recover --verify [--round T]     # match or mismatch, both hashes, phase timings
+andara-cli snapshot list [--zone Z] [--local]  # rounds the server sees; --local reads the store
+andara-cli snapshot verify --round T           # Admin.VerifySnapshotRound, a scratch Engine
+```
+
+`recover --verify` loads a round, replays to head, prints `match` or `mismatch reason=...`, and exits
+`0` or `8` (a restore mismatch is a mismatch too); `7`, `4` and `3` are refusals. It never binds
+`grpc.listen`, never lingers, and never serves what it built. `Admin.VerifySnapshotRound` is the same
+check against a scratch Engine inside the running server (OPERATOR only): a mismatch is a response with
+an `outcome`, `NOT_FOUND` is a tick with no object, `FAILED_PRECONDITION` an incomplete round, a log
+gap or a newer `state_version`.
+
+| Metric | Type | Labels | Cardinality bound |
+|--------|------|--------|-------------------|
+| `andara_recovery_duration_seconds` | histogram | `phase` | 5: `load`, `seek`, `replay`, `verify`, `total` |
+| `andara_recovery_replayed_ticks` | gauge | none | 1 |
+| `andara_recovery_state_hash_match` | gauge | none | 1; `0` or `1`, absent until a recovery sets it |
+| `andara_recovery_failures_total` | counter | `reason` | 6: `hash`, `restore`, `gap`, `version`, `round`, `store` |
+| `andara_recovery_round_tick` | gauge | none | 1; the round used, `0` for a cold start |
+| `andara_restore_total` | counter | `caller`, `outcome` | `recovery` and `verify` here × `ok`, `hash_mismatch`, `seed_mismatch` |
+
+Spans: `recovery.run`, with children `recovery.load_snapshot` (per Zone, `zone_id`), `restore.verify`,
+`recovery.seek`, `recovery.replay` (`ticks`, `records`) and `recovery.verify`.
 
 ## The command pipeline (AW-SRV-003)
 
@@ -845,8 +907,8 @@ roster's position from the routing table. A quit frees the flag. `CloseSession` 
 the `UnbindCharacter` is durable and the flag is free, so a `SelectCharacter` sent after the
 response is never `already_live`. Until a teardown has produced, the Character is `already_live`
 to the same Account. The exception is a reconnect of that Character after a lost connection,
-which waits for the `MarkLinkdead` instead. Nothing at boot invents an unbind: a body left present
-by a crash is taken where it stands by the next select. A `BindCharacter` the roster routed to the
+which waits for the `MarkLinkdead` instead. A body a crash left present is marked linkdead at recovery
+(see Recovery); a mark that fails to produce leaves it present, and the next select takes it where it stands. A `BindCharacter` the roster routed to the
 wrong Zone is re-produced by the sim to the Zone that holds the body.
 
 **A drain, and what it leaves.** Every bound Session is closed as linkdead, so every teardown
