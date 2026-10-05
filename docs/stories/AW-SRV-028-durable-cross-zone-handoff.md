@@ -392,8 +392,8 @@ fail; dropping a field from the proto makes AC-10 fail.
 
 ## Definition of done
 
-CLAUDE.md §8, plus: `AW-SRV-003`'s record notes that `AW-SRV-012` replaced the one-hop bounce (it still
-says this story retires it); the PR states the `make world-reset ENV=dev CONFIRM=andara-dev` consequence and whether the
+CLAUDE.md §8, plus: `AW-SRV-003`'s record notes that `AW-SRV-012` replaced the one-hop bounce (done
+2026-10-04); the PR states the `make world-reset ENV=dev CONFIRM=andara-dev` consequence and whether the
 golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md` has the handoff step.
 
 ## Open questions
@@ -462,12 +462,11 @@ ENV=dev CONFIRM=andara-dev`** (a log with a cross-Zone move from before doesn't 
 can't read a `HandoffAck`), and a fresh local stack for `AW-INF-032`.
 
 **Outstanding before `done`:**
-- **`pendingFields`** (PR #405, the tripwire allowlist for this story's three fields): this branch covers
-  them, so the entries come out when it meets `main`, and the tripwire fails until they do.
-- SRE: the three Helm keys (`keys.yaml`, SRE's PR #404) and the regenerated `values.schema.json` and
-  `_env.tpl`; the runbook step, the dashboard panel and the `andara_handoff_placed_entries` threshold.
-- Architecture: `AW-SRV-003`'s record still says this story retires the one-hop bounce (it's a contract
-  section of another story, not mine to edit).
+- ~~`pendingFields`~~ Done: the map is empty on `main` (#407).
+- ~~SRE: the three Helm keys, the runbook step, the dashboard panel and the `andara_handoff_placed_entries`
+  threshold.~~ Done: #404 (keys, runbook step, thresholds) and #406 (dashboard). The two thresholds are
+  unmeasured, as the runbook says.
+- ~~Architecture: `AW-SRV-003`'s record.~~ Done 2026-10-04: it now says `AW-SRV-012` replaced the bounce.
 - SRE's §8 instrumentation check: `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
   `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries` are registered and read 0 until a
   handoff; the retry counter's first live observation is on a stack with a lost `Arrive`.

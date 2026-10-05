@@ -402,9 +402,9 @@ instrumentation item is the only one left that isn't architecture's or implement
   The story's record says they're registered and read 0 until a handoff, and that the retry counter's first
   live observation needs a stack with a lost `Arrive`. CLAUDE.md §8 lets the check be the integration suite
   plus a scrape of the sibling series, with the record naming what the server hasn't emitted. Say which.
-- The threshold on `andara_handoff_placed_entries` that implementation left to "architecture or SRE": if it's
-  not in the runbook step yet, set it, or tell me the basis you need and I'll rule.
-- The wording follow-up on §7 you mentioned for after #403, if it's still wanted.
+- The `andara_handoff_placed_entries` thresholds are already in the runbook (#404: 25,000 and 100,000, both
+  marked unmeasured). Say in the record whether the §7 check accepts them as they stand, or wants them
+  replaced once `server/simtest` sizes marks; no action is needed otherwise.
 - `make world-reset ENV=dev CONFIRM=andara-dev` still needs Brian's go in your session.
 
 `AW-SRV-003`'s record is corrected in the same PR as this note (the one item implementation left for
