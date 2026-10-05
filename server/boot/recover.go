@@ -213,12 +213,10 @@ type orphanReleaser interface {
 // Session linkdead (AW-SRV-007, from AW-SRV-015): every Session is gone at a
 // restart.
 func (rt *Runtime) releaseOrphans(ctx context.Context, e *sim.Engine) {
-	var r orphanReleaser = rt.orphans
-	if r == nil && rt.Roster != nil {
-		r = rt.Roster
+	switch {
+	case rt.orphans != nil:
+		rt.orphans.MarkOrphans(ctx, e.PresentCharacters())
+	case rt.Roster != nil:
+		rt.Roster.MarkOrphans(ctx, e.PresentCharacters())
 	}
-	if r == nil {
-		return
-	}
-	r.MarkOrphans(ctx, e.PresentCharacters())
 }
