@@ -23,11 +23,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
+	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/internal/eventually"
 	"github.com/valesordev/andara/server/recovery"
 	"github.com/valesordev/andara/server/sim"
@@ -513,6 +515,61 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 			t.Fatalf("report %+v", rep2)
 		}
 		_ = ctx
+	})
+
+	// AC-13: every object of the newest round carries a flipped byte of
+	// prng_state, re-signed, so the round agrees with itself and verifies. It
+	// doesn't reproduce its own tick: exit 6, nothing replayed, no other round
+	// tried, the gauge at 0 and failures{restore} at 1.
+	t.Run("AC-13 a round that does not reproduce its tick is exit 6", func(t *testing.T) {
+		dir := copyStore(t, h.dir)
+		fs := store.NewFS(dir)
+		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript))
+		if err != nil || !ok {
+			t.Fatal(err)
+		}
+		for _, z := range newest.Zones {
+			raw, err := fs.Get(context.Background(), z.Key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var env statev1.SnapshotEnvelope
+			var body statev1.ZoneState
+			if err := proto.Unmarshal(raw, &env); err != nil {
+				t.Fatal(err)
+			}
+			if err := proto.Unmarshal(env.GetBody(), &body); err != nil {
+				t.Fatal(err)
+			}
+			body.PrngState[0] ^= 0x01
+			if env.Body, err = canonical.Marshal(&body); err != nil {
+				t.Fatal(err)
+			}
+			sum, err := sim.BodyStateHash(&body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			env.StateHash = sum[:]
+			if raw, err = canonical.Marshal(&env); err != nil {
+				t.Fatal(err)
+			}
+			if err := fs.Put(context.Background(), z.Key, raw); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var m *recovery.Metrics
+		_, rep, err := recoverOnce(t, h, dir, func(o *recovery.Options) { m = o.Metrics })
+		var rmm *sim.RestoreMismatch
+		if !errors.As(err, &rmm) || recovery.ExitCode(err) != recovery.ExitRestore || rmm.RoundTick != uint64(newest.Tick) {
+			t.Fatalf("err %v (exit %d), want a restore mismatch at round %d", err, recovery.ExitCode(err), newest.Tick)
+		}
+		if rep.Replayed != 0 || rep.Round.Tick != newest.Tick {
+			t.Fatalf("replayed %d from round %d: nothing may be replayed and no other round tried", rep.Replayed, rep.Round.Tick)
+		}
+		if testutil.ToFloat64(m.HashMatch()) != 0 || testutil.ToFloat64(m.Failures.WithLabelValues(recovery.ReasonRestore)) != 1 ||
+			testutil.ToFloat64(m.Restores.WithLabelValues(recovery.CallerRecovery, "hash_mismatch")) != 1 {
+			t.Fatal("gauge not 0, failures{restore} not 1, or restore_total{hash_mismatch} not 1")
+		}
 	})
 
 	// AC-2 last: it deletes history. Retention past the round's offset is
