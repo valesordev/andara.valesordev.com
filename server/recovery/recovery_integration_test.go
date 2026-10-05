@@ -933,3 +933,180 @@ func countOn(in sim.TickInput, p int32) int {
 	}
 	return n
 }
+
+// TestRecoveryAC12Child is the process AC-12 measures: recovery and nothing
+// else, so its peak RSS is recovery's. It prints one line for the parent.
+func TestRecoveryAC12Child(t *testing.T) {
+	spec := os.Getenv("ANDARA_RECOVERY_AC12_CHILD")
+	if spec == "" {
+		t.Skip("child mode only")
+	}
+	parts := strings.Split(spec, "|")
+	o, closeReader := options(t, parts[4], strings.Split(parts[0], ","), parts[1], parts[2], parts[3])
+	defer closeReader()
+	_, rep, err := recovery.Recover(context.Background(), o)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "child:", err)
+		os.Exit(3)
+	}
+	ms := func(ph string) int64 { return rep.Phases[ph].Milliseconds() }
+	fmt.Printf("AC12 load=%d seek=%d replay=%d total=%d replayed=%d round=%d rss=%d\n",
+		ms(recovery.PhaseLoad), ms(recovery.PhaseSeek), ms(recovery.PhaseReplay), ms(recovery.PhaseTotal), rep.Replayed, rep.Round.Tick, peakRSS())
+}
+
+type ac12Run struct{ load, seek, replay, total, replayed, round, rss int64 }
+
+func runAC12Child(t *testing.T, fix string, bk []string, commands, events, dir string) ac12Run {
+	t.Helper()
+	cmd := exec.Command(os.Args[0], "-test.run", "^TestRecoveryAC12Child$", "-test.v")
+	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_AC12_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix)
+	cmd.Stderr = os.Stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("recovery child: %v\n%s", err, out)
+	}
+	var r ac12Run
+	for _, line := range strings.Split(string(out), "\n") {
+		if rest, ok := strings.CutPrefix(line, "AC12 "); ok {
+			if _, err := fmt.Sscanf(rest, "load=%d seek=%d replay=%d total=%d replayed=%d round=%d rss=%d", &r.load, &r.seek, &r.replay, &r.total, &r.replayed, &r.round, &r.rss); err != nil {
+				t.Fatalf("child line %q: %v", line, err)
+			}
+			return r
+		}
+	}
+	t.Fatalf("the child printed no AC12 line:\n%s", out)
+	return r
+}
+
+// AC-12: with ANDARA_AC12_HISTORY_TICKS ticks of history ahead of the round
+// (864000 is 24 h at 10 Hz) and a 10-tick tail, recovery finds the round's own
+// boundary by binary search rather than reading the history: its load + seek +
+// replay is within 1 s of the same run with no history, and its peak RSS within
+// 10%. The history is filler (a boundary and an Event per tick), written to a
+// second set of topics; the World is fabricated at the round's tick, as
+// AW-SRV-019's AC-6 run does. Off unless the variable is set: 24 h of
+// boundaries is hundreds of MB of broker, so the record says which broker it
+// ran on.
+func TestSeekIsBoundedByTheRoundNotTheHistory(t *testing.T) {
+	raw := os.Getenv("ANDARA_AC12_HISTORY_TICKS")
+	if raw == "" {
+		t.Skip("ANDARA_AC12_HISTORY_TICKS not set; AC-12 is a measurement, run on a throwaway broker")
+	}
+	var history int
+	if _, err := fmt.Sscanf(raw, "%d", &history); err != nil || history < 10 {
+		t.Fatalf("ANDARA_AC12_HISTORY_TICKS=%q: want a tick count of at least 10", raw)
+	}
+	bk := brokers(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+
+	// A World that has been running for `history` ticks: the sizing fixture,
+	// restored at tick H with the round's own hash learned the way AC-6 does.
+	// The fixture is what makes the RSS bound mean something: 10% of a 30 MB
+	// process is the noise of one allocator arena.
+	reg, err := simtest.Templates()
+	if err != nil {
+		t.Fatal(err)
+	}
+	w, err := simtest.SizingWorld()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := sim.Config{Seed: 7, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers()}
+	e0, err := simtest.SizingEngine(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	putRound := func(fs *store.FS, e *sim.Engine) {
+		t.Helper()
+		for _, s := range e.SnapshotAll(1) {
+			body, err := s.Encode()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := fs.Put(ctx, s.Key(), body); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if _, err := e0.Step(sim.TickInput{}); err != nil {
+		t.Fatal(err)
+	}
+	scratch := store.NewFS(t.TempDir())
+	putRound(scratch, e0)
+	_, state, ok, err := store.NewestComplete(ctx, scratch, zoneIDs(t, fixtureSizing))
+	if err != nil || !ok {
+		t.Fatalf("the fabricated round: ok %v %v", ok, err)
+	}
+	state.Tick, state.RecordedHash = sim.Tick(history), make([]byte, 32)
+	var rm *sim.RestoreMismatch
+	if _, err := sim.RestoreEngine(w, reg, cfg, state); !errors.As(err, &rm) {
+		t.Fatalf("learning the fabricated round's hash: %v", err)
+	}
+	state.RecordedHash = rm.Restored
+	live, err := sim.RestoreEngine(w, reg, cfg, state)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	putRound(store.NewFS(dir), live)
+	boundaries := []sim.TickCompleted{{Tick: live.Tick(), Offsets: live.State().Offsets, StateHash: live.StateHash(), StateVersion: sim.StateVersion}}
+	for range 10 {
+		res, err := live.Step(sim.TickInput{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		boundaries = append(boundaries, res.Completed)
+	}
+
+	commands, withHistory := topics(t, bk, "ac12-history")
+	_, quiet := topics(t, bk, "ac12-quiet")
+
+	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.ProducerBatchMaxBytes(1<<20))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	write := func(topic string, tcs ...sim.TickCompleted) {
+		t.Helper()
+		recs := make([]*kgo.Record, 0, 2*len(tcs))
+		for _, tc := range tcs {
+			body, err := canonical.Marshal(tc.Proto())
+			if err != nil {
+				t.Fatal(err)
+			}
+			recs = append(recs,
+				&kgo.Record{Topic: topic, Partition: tickloop.BoundaryPartition, Key: []byte("z00"), Value: body},
+				&kgo.Record{Topic: topic, Partition: tickloop.BoundaryPartition, Key: []byte(tickloop.BoundaryKey), Value: body})
+		}
+		if err := cl.ProduceSync(ctx, recs...).FirstErr(); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for from := 1; from < history; from += 5000 {
+		var batch []sim.TickCompleted
+		for tick := from; tick < from+5000 && tick < history; tick++ {
+			like := boundaries[0]
+			like.Tick = sim.Tick(tick)
+			batch = append(batch, like)
+		}
+		write(withHistory, batch...)
+	}
+	write(withHistory, boundaries...)
+	write(quiet, boundaries...)
+
+	none := runAC12Child(t, fixtureSizing, bk, commands, quiet, dir)
+	full := runAC12Child(t, fixtureSizing, bk, commands, withHistory, dir)
+	t.Logf("AC-12: %d ticks of history, round at tick %d, %d-tick tail", history, history, len(boundaries)-1)
+	t.Logf("  no history: load %d ms, seek %d ms, replay %d ms, total %d ms, peak RSS %d bytes", none.load, none.seek, none.replay, none.total, none.rss)
+	t.Logf("  history:    load %d ms, seek %d ms, replay %d ms, total %d ms, peak RSS %d bytes", full.load, full.seek, full.replay, full.total, full.rss)
+	if none.round != int64(history) || full.round != int64(history) || none.replayed != 10 || full.replayed != 10 {
+		t.Fatalf("round %d/%d replayed %d/%d, want round %d and 10 ticks both times", none.round, full.round, none.replayed, full.replayed, history)
+	}
+	if extra := (full.load + full.seek + full.replay) - (none.load + none.seek + none.replay); extra > 1000 {
+		t.Errorf("the history cost recovery %d ms more, past 1 s: it reads history it never replays", extra)
+	}
+	if none.rss > 0 && float64(full.rss) > 1.10*float64(none.rss) {
+		t.Errorf("peak RSS %d bytes with history, %d without: more than 10%% over", full.rss, none.rss)
+	}
+}

@@ -76,6 +76,12 @@ type BoundaryReader struct {
 	// Partition's end: records that aren't boundaries (a tick's Events
 	// sent before its boundary) can follow the last one (review of #365).
 	boundaryAfter bool
+	// positioned is whether the reader has been told where to read: by
+	// SeekAfter, or at the Partition's start by the first Next. The client is
+	// built at the Partition's end so that it prefetches nothing until then: a
+	// client built at the start began pulling the history while SeekAfter was
+	// still searching for the place past it (AW-SRV-007 AC-12).
+	positioned bool
 }
 
 // NewBoundaryReader starts reading the boundary Partition from its start.
@@ -86,7 +92,9 @@ func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clien
 	client, err := kgo.NewClient(
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID+"-boundaries"),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{eventsTopic: {BoundaryPartition: kgo.NewOffset().AtStart()}}),
+		kgo.FetchMaxBytes(16<<20),
+		kgo.FetchMaxPartitionBytes(4<<20),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{eventsTopic: {BoundaryPartition: kgo.NewOffset().AtEnd()}}),
 	)
 	if err != nil {
 		return nil, err
@@ -123,9 +131,14 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 		return 0, fmt.Errorf("boundary offsets: %w", errors.Join(so.Err, eo.Err))
 	}
 	lo, hi := so.Offset, eo.Offset
+	pc, err := r.probeClient(lo)
+	if err != nil {
+		return 0, err
+	}
+	defer pc.Close()
 	for lo < hi {
 		mid := lo + (hi-lo)/2
-		t, at, ok, err := r.probe(ctx, mid, hi)
+		t, at, ok, err := r.probe(ctx, pc, mid, hi)
 		if err != nil {
 			return 0, err
 		}
@@ -137,13 +150,14 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 	}
 	r.boundaryAfter = false
 	if lo < eo.Offset {
-		t, _, ok, err := r.probe(ctx, lo, eo.Offset)
+		t, _, ok, err := r.probe(ctx, pc, lo, eo.Offset)
 		if err != nil {
 			return 0, err
 		}
 		r.boundaryAfter = ok && t > tick
 	}
 	r.start, r.expect = so.Offset, tick+1
+	r.positioned = true
 	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: lo}}})
 	return lo, nil
 }
@@ -184,12 +198,7 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 	if from >= end {
 		return 0, false, nil
 	}
-	cl, err := kgo.NewClient(
-		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID+"-boundaries"),
-		kgo.FetchMaxPartitionBytes(1<<20),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(from)}}),
-	)
+	cl, err := r.probeClient(from)
 	if err != nil {
 		return 0, false, err
 	}
@@ -223,19 +232,25 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 	return tick, found, nil
 }
 
-// probe reads from offset until the first boundary, returning its tick and
-// offset, or ok=false if there is none before end.
-func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick, int64, bool, error) {
-	cl, err := kgo.NewClient(
+// probeClient is the one client a SeekAfter probes with, moved between
+// offsets rather than built per probe: a client per probe left the garbage of
+// seventeen clients and their fetch buffers behind, which showed as tens of MB
+// of peak RSS in a recovery over a long history (AW-SRV-007 AC-12). Its fetches
+// are small: a probe wants the first boundary at an offset, not a megabyte.
+func (r *BoundaryReader) probeClient(offset int64) (*kgo.Client, error) {
+	return kgo.NewClient(
 		kgo.SeedBrokers(r.brokers...),
 		kgo.ClientID(r.clientID+"-boundaries"),
-		kgo.FetchMaxPartitionBytes(1<<20),
+		kgo.FetchMaxBytes(256<<10),
+		kgo.FetchMaxPartitionBytes(128<<10),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
 	)
-	if err != nil {
-		return 0, 0, false, err
-	}
-	defer cl.Close()
+}
+
+// probe reads from offset until the first boundary, returning its tick and
+// offset, or ok=false if there is none before end.
+func (r *BoundaryReader) probe(ctx context.Context, cl *kgo.Client, offset, end int64) (sim.Tick, int64, bool, error) {
+	cl.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: offset}}})
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	for {
@@ -275,6 +290,11 @@ func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick
 // Next returns up to max boundaries, waiting at most wait for the first. An
 // empty result with no error is a quiet log.
 func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) ([]Boundary, error) {
+	if !r.positioned {
+		if err := r.positionAtStart(ctx); err != nil {
+			return nil, err
+		}
+	}
 	if len(r.buf) == 0 {
 		pctx, cancel := context.WithTimeout(ctx, wait)
 		fetches := r.client.PollFetches(pctx)
@@ -320,6 +340,23 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 	out := append([]Boundary(nil), r.buf[:n]...)
 	r.buf = r.buf[n:]
 	return out, nil
+}
+
+// positionAtStart points the reader at the Partition's first offset, for a
+// caller that read before it sought.
+func (r *BoundaryReader) positionAtStart(ctx context.Context) error {
+	starts, err := kadm.NewClient(r.client).ListStartOffsets(ctx, r.topic)
+	if err != nil {
+		return fmt.Errorf("boundary start offset: %w", err)
+	}
+	so, ok := starts.Lookup(r.topic, BoundaryPartition)
+	if !ok || so.Err != nil {
+		return fmt.Errorf("boundary start offset: %w", so.Err)
+	}
+	r.start, r.next = so.Offset, so.Offset
+	r.positioned = true
+	r.client.SetOffsets(map[string]map[int32]kgo.EpochOffset{r.topic: {BoundaryPartition: {Epoch: -1, Offset: so.Offset}}})
+	return nil
 }
 
 // BoundaryAfter reports whether SeekAfter found a boundary for a tick after
