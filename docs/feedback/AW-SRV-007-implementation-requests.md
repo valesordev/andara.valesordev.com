@@ -160,8 +160,9 @@ the loop is stopped.
   later mark would mark it or, with a grace of `0`, remove it. A flag checked and then produced after
   releasing the lock doesn't close it (`Select` produces its Bind outside the Roster's lock too), and a
   marking entry for an orphan can't live in `byAccount` (no Account), so `Select` can't see it unless the
-  contract says so. The story's Interface contract now names `Roster.MarkTransit` and the five rules: a
+  contract says so. The story's Interface contract now names `Roster.MarkTransit` and its seven rules: a
   marking set by Character ID under `r.mu`; the attempt drops on any entry for the Character and otherwise
-  registers; `Select` checks the set in the critical section that registers its entry and waits on a hit.
+  registers; `Select` checks the set in the critical section that registers its entry, waits on a hit, and then produces its
+  Bind to the Zone the mark went to (log order alone doesn't give apply order across Zones).
 - **Capped.** At most `sim.handoff_retry_batch` marks per tick, earliest due first, a separate budget from
   `Arrive` retries of the same size.

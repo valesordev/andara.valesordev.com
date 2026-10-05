@@ -311,19 +311,30 @@ A Roster holds entries by Account (`byAccount`, `bySession`) under one lock, `r.
 and producing afterwards therefore leaves a window, so the order is built in:
 1. The Roster keeps a set of marking entries by Character ID under `r.mu`, apart from `byAccount`: an orphan
    has no Account, so it can't be keyed there.
-2. An attempt takes one `r.mu` critical section: if any `byAccount` entry has that `character`, live,
-   linkdead (it stays in `byAccount`) or releasing, or a marking entry exists, the outcome is `MarkDropped`;
-   otherwise it inserts a marking entry. It unlocks, produces, then locks, removes the entry and closes its
+2. An attempt takes one `r.mu` critical section: if any `byAccount` entry has that `character` (a scan, or a
+   by-Character index; the batch bounds it), live, linkdead (it stays in `byAccount`) or releasing, or a marking
+   entry exists, the outcome is `MarkDropped`; otherwise it inserts a marking entry that records the Zone the
+   mark is produced to. It unlocks, produces, then locks, removes the entry and closes its
    channel, whatever the produce returned. `MarkDropped` is final: that Session's teardown owns the body.
 3. `SelectCharacter` checks the set, by the requested Character ID, inside the critical section that
    registers its entry. On a hit it releases `r.mu`, waits on the entry's channel or `ctx.Done()` (answered
-   `already_live` on the latter, as its wait on a releasing teardown is), and re-checks. So **a mark in flight
-   is in the log before any Bind the Roster produces after it.** A `Select` that registered first makes the
+   `already_live` on the latter, as its wait on a releasing teardown is), and re-checks. A `Select` that
+   waited produces its `BindCharacter` **to the Zone the marking entry recorded**, not to the Roster's
+   last-known Zone, so the mark and the Bind are in one Zone's partition and apply in offset order. Log append
+   order alone doesn't give apply order across Zones: a Bind applied first, in another Zone, finds the body
+   present and not linkdead, answers `BindPresent` with no re-route (`applyBindCharacter`), and the mark then
+   lands on a body a player is playing, or at grace `0` removes it. A `Select` that registered first makes the
    attempt `MarkDropped`.
 4. After the mark, a Bind applies to the linkdead body (the reconnect path) at grace above `0`; at grace `0`
    the body is gone and the Bind spawns it fresh.
 5. A `Select` whose own produce failed leaves its body present and unmarked until the next select, as AC-11's
-   failed-produce path does today; this story doesn't change that.
+   failed-produce path does today. That hole is accepted: this story doesn't change it.
+6. An attempt is complete when the body is observed linkdead (or gone or dormant at grace `0`). A mark produced
+   to a Zone the body has left, or rejected `in_transit`, is not: the loop re-resolves and tries again at the
+   next period.
+7. `MarkOrphans` (boot) takes no marking entry: `StartTickLoop` runs it before `grpc.listen` is bound, so no
+   `Select` exists, and it takes the bodies present at boot while `MarkTransit` takes the ones that land
+   after.
 
 ### Sequence
 
@@ -635,7 +646,9 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
   the attempt is never marked, and at grace `0` never removed, with the log order mark-before-Bind or no
   mark, under `-race` (a Roster test, with a Bind produced before the check and a Bind after the registration); `MarkTransit` is
   `MarkDropped` on a live, a linkdead and a releasing entry for the Character; a `Select` blocks until the fake
-  `Log.Produce` of the mark returns and its Bind is produced second; a failed or timed-out mark produce clears
+  `Log.Produce` of the mark returns and its Bind is produced second, to the Zone the mark went to, with the
+  Roster's last-known Zone a different one, and a sim test over two Zones on two partitions applies the mark
+  before the Bind; a failed or timed-out mark produce clears
   the marking entry, the waiting `Select` proceeds, and the failed attempt is retried next period;
   N Characters left in transit produce at most `sim.handoff_retry_batch` marks per tick, apart from `Arrive`
   retries; and with no Zones in the current content, recovery replays the log, `require_snapshot` exits `7`,
