@@ -171,7 +171,7 @@ func TestRecoveryChild(t *testing.T) {
 	}
 	interval, rate := 400*time.Millisecond, 50
 	if fix == fixtureSizing {
-		interval, rate = 60*time.Second, 1000
+		interval, rate = 180*time.Second, 1000
 	}
 	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-rec-" + commands[len(commands)-8:], Start: e.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
 	if err != nil {
@@ -787,11 +787,13 @@ func TestRecoveryTimingAtSizingScale(t *testing.T) {
 	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGKILL); _ = child.Wait() })
 
 	// The tail is the ticks past the newest round, and it is 600 or more when
-	// the process is killed: the round interval is longer than 600 ticks cost.
+	// the process is killed. The round interval is 180 s so that 600 ticks fit
+	// inside it on a CI runner, where a tick at this scale costs 90-150 ms
+	// (#424): 60 s let the next round cut the tail short about half the time.
 	const tail = 600
 	fs := store.NewFS(dir)
 	var round sim.Tick
-	eventually.Observed(t, 8*time.Minute, "a round, and a tail of 600 ticks past it", func() (bool, string) {
+	eventually.Observed(t, 12*time.Minute, "a round, and a tail of 600 ticks past it", func() (bool, string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		r, _, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureSizing))
