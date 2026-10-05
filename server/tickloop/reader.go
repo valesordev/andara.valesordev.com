@@ -84,11 +84,11 @@ type BoundaryReader struct {
 	// Partition's end: records that aren't boundaries (a tick's Events
 	// sent before its boundary) can follow the last one (review of #365).
 	boundaryAfter bool
-	// positioned is whether the reader has been told where to read: by
-	// SeekAfter, or at the Partition's start by the first Next. The client is
-	// built at the Partition's end so that it prefetches nothing until then: a
-	// client built at the start began pulling the history while SeekAfter was
-	// still searching for the place past it (AW-SRV-007 AC-12).
+	// positioned is whether the reader has a consumer at the position it was
+	// told to read from: by SeekAfter, or at the Partition's start by the
+	// first Next. The consumer is built then, and not before, so it prefetches
+	// nothing while SeekAfter is still searching for the place past the history
+	// (AW-SRV-007 AC-12).
 	positioned bool
 }
 
@@ -157,10 +157,10 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 		r.boundaryAfter = ok && t > tick
 	}
 	r.start, r.expect = so.Offset, tick+1
-	r.positioned = true
 	if err := r.consume(lo); err != nil {
 		return 0, err
 	}
+	r.positioned = true
 	return lo, nil
 }
 
@@ -361,8 +361,11 @@ func (r *BoundaryReader) positionAtStart(ctx context.Context) error {
 		return fmt.Errorf("boundary start offset: %w", so.Err)
 	}
 	r.start, r.next = so.Offset, so.Offset
+	if err := r.consume(so.Offset); err != nil {
+		return err
+	}
 	r.positioned = true
-	return r.consume(so.Offset)
+	return nil
 }
 
 // consume (re)builds the consumer at offset.
