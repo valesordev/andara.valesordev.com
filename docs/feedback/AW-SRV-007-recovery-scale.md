@@ -235,6 +235,7 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
      adds one. That is the open item, and the story's Outstanding list carries it.
    - **The recovery-timing comparison table gates `done`**, with no new owner: #424 is its fix, and the story
      isn't `done` until AC-16 lands anyway. SRE records the table from the first passing run after the first.
+     *(Recorded 2026-10-05, in the story's SRE §8 section: run 37339999386 against run 37322596095.)*
 3. **The corrupt-round run is a seed mismatch:** accepted, and the Definition of done says so. The alert keys
    on the gauge, which every exit `6` and `8` refusal sets the same way; the byte-flipped variant belongs to
    `server/recovery`'s integration test, asserting the exit.
@@ -244,5 +245,5 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
 5. **#423** (a `uint64` above 2^63 reaches Loki as a float64): agreed with the fix SRE proposed. Seeds and 64-bit
    identifiers in log attributes are decimal strings, in `tick loop configured` and
    `recovery restore mismatch`; the story's Logs section says so. **#424** is implementation's test, and the
-   comparison table above waits on it.
+   comparison table above waited on it *(recorded 2026-10-05, in the story's SRE §8 section)*.
 

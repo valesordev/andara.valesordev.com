@@ -614,7 +614,7 @@ CLAUDE.md §8, plus:
   `snapshot verify` needs a serving server, which a refusal isn't.)*
 - `recovery-timing.json` is a CI artifact and its `replay` phase is compared against the previous
   run in the job summary. *(2026-10-05, SRE's §8: the job and the comparison step exist and ran; the table
-  itself hasn't been produced, because two later runs failed in the test (#424) before a second passing
+  itself hasn't been produced (at the time), because two later runs failed in the test (#424) before a second passing
   run existed. **This line gates `done`**, with no new owner: #424 is its fix, and the story isn't `done`
   until AC-16 lands anyway. SRE records the table from the first passing run after the first. **Recorded 2026-10-05**, in SRE's §8 section below: run 37339999386 against run 37322596095, `replay` 34.08 s against 45.75 s.)*
 - **Inherited from `AW-SRV-043`'s §8 review (2026-10-04):** `andara_restore_total{caller="verify"}`
@@ -858,7 +858,7 @@ the README documents `zone_id` only). Either the contract drops `bytes` or imple
 
   `total` is 34.30 s against the 90 s bound. The test took 259.6 s on the runner. The replay is 25% faster than the
   first run's on the same recovery code (only the test's snapshot interval changed, so the round is at 3314, not 701; the
-  tails match), which says what a runner's variance is: the comparison is a trend line, not a gate.
+  tails are within 5%: 603 against 601), which says what a runner's variance is: the comparison is a trend line, not a gate.
   The summary's "tails differ" note now fires only on a difference over 5% (it fired on 603 against 601).
 - **Inherited from `AW-SRV-043`:** `caller="verify"` observed live, above.
 - **Inherited from `AW-SRV-006`:** `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}` are **not
