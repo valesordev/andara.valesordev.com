@@ -58,3 +58,7 @@ should answer.
    restart, and produce a `MarkLinkdead` for each (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is
    `0`, as `ReleaseSession` does) before the loop runs. `AW-SRV-014`'s README line "Nothing at boot invents an
    unbind" is now "nothing but this". An NPC is untouched (the test is `Template == andara.core.Character`).
+4. **A second `VerifySnapshotRound` while one runs.** Each verify holds a whole scratch Engine in the serving process
+   (hundreds of MB at the sizing fixture), so the server runs one at a time and refuses the next with
+   `FAILED_PRECONDITION`, ErrorInfo reason `verify_busy`. The pinned `admin.proto` lists the statuses and not the
+   reasons, so this is inside it; tell me if you'd rather it queue.

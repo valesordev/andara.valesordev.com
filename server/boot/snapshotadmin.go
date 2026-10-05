@@ -24,7 +24,6 @@ const (
 	codeInvalidArgument    = 3
 	codeDeadlineExceeded   = 4
 	codeNotFound           = 5
-	codeResourceExhausted  = 8
 	codeFailedPrecondition = 9
 )
 
@@ -102,7 +101,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	// One verify at a time: each holds a whole scratch Engine in the serving
 	// process.
 	if !a.busy.TryLock() {
-		return nil, &snapshotStatus{codeResourceExhausted, "verify_busy", "another snapshot verify is running; try again when it ends"}
+		return nil, &snapshotStatus{codeFailedPrecondition, "verify_busy", "another snapshot verify is running; try again when it ends"}
 	}
 	defer a.busy.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, rt.Cfg.RecoveryVerifyTimeout)
@@ -121,7 +120,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	// source, or the recovery gauges that RecoveryStateMismatch pages on.
 	o = scratchOptions(o, tick, rt.RecoveryMetrics())
 	_, rep, rerr := recovery.Recover(ctx, o)
-	return verifyResponse(rerr, rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
+	return verifyResponse(rerr, ctx.Err(), rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
 }
 
 // scratchOptions turns boot's recovery Options into a verify of round tick: it
@@ -139,7 +138,7 @@ func scratchOptions(o recovery.Options, tick sim.Tick, live *recovery.Metrics) r
 
 // verifyResponse is what Admin.VerifySnapshotRound answers for a scratch
 // recovery's result: a mismatch is a response, a refusal is a status.
-func verifyResponse(rerr error, rep recovery.Report, tick sim.Tick, owned int, timeout time.Duration) (*adminv1.VerifySnapshotRoundResponse, error) {
+func verifyResponse(rerr error, ctxErr error, rep recovery.Report, tick sim.Tick, owned int, timeout time.Duration) (*adminv1.VerifySnapshotRoundResponse, error) {
 	f := recovery.Classify(rerr)
 	if f == nil {
 		return &adminv1.VerifySnapshotRoundResponse{
@@ -147,7 +146,7 @@ func verifyResponse(rerr error, rep recovery.Report, tick sim.Tick, owned int, t
 			ExpectedHash: rep.Expected[:], ActualHash: rep.Actual[:], ComparedTick: uint64(rep.Tick),
 		}, nil
 	}
-	if errors.Is(rerr, context.DeadlineExceeded) {
+	if errors.Is(rerr, context.DeadlineExceeded) && ctxErr != nil {
 		return nil, &snapshotStatus{codeDeadlineExceeded, "verify_timeout", fmt.Sprintf("verify exceeded recovery.verify_timeout (%s)", timeout)}
 	}
 	var (

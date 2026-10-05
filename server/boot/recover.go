@@ -7,7 +7,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -183,8 +182,6 @@ func (rt *Runtime) HoldMismatch(ctx context.Context, ln net.Listener, linger tim
 		_ = srv.Close()
 	}
 }
-
-var _ = io.Discard
 
 // EngineConfig is the Engine's configuration for this process: what recovery
 // builds and restores with.

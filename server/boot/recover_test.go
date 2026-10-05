@@ -223,6 +223,8 @@ func TestStartTickLoop_ARewrittenBoundaryIsExit8WithTheGaugeAtZero(t *testing.T)
 func TestExitOnStartError_LingersOnlyForAMismatch(t *testing.T) {
 	rt, _ := runtime(t, fixture(t, "valid"), false)
 	rt.Cfg.RecoveryMismatchLinger = time.Minute
+	tctx, cancelT := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancelT()
 	listens := 0
 	listen := func() (net.Listener, error) {
 		listens++
@@ -236,6 +238,15 @@ func TestExitOnStartError_LingersOnlyForAMismatch(t *testing.T) {
 	if code := rt.ExitOnStartError(context.Background(), recovery.Classify(&sim.HashMismatchError{}), listen, wait); code != 8 || listens != 1 || asked != time.Minute {
 		t.Fatalf("a hash mismatch: exit %d, listens %d, waited %s", code, listens, asked)
 	}
+	// A restore mismatch (exit 6) lingers too: the same listener, the same wait.
+	for _, e := range []error{&sim.RestoreMismatch{}, &sim.SeedMismatch{}, &sim.ContentDigestError{}} {
+		before := listens
+		tick <- time.Now()
+		if code := rt.ExitOnStartError(tctx, recovery.Classify(e), listen, wait); code != 6 || listens != before+1 {
+			t.Fatalf("%T: exit %d, listens %d, want 6 and one more listen", e, code, listens-before)
+		}
+	}
+	listens = 1
 	for _, err := range []error{recovery.Classify(&sim.ErrRoundIncomplete{}), recovery.Classify(&sim.ErrStateVersion{}), errors.New("broker down")} {
 		if code := rt.ExitOnStartError(context.Background(), err, listen, wait); code == 0 || listens != 1 {
 			t.Fatalf("%v: exit %d, listens %d: it must not linger", err, code, listens)
