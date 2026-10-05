@@ -4,7 +4,7 @@ title: make stack-recover — the M2 gate scripted against the running stack
 epic: EPIC-04
 component: infra
 type: infra
-status: ready
+status: in-progress
 size: S
 depends_on: [AW-SRV-007, AW-INF-017]
 blocks: [AW-INF-034]
@@ -190,3 +190,35 @@ Definition of done says so.
 - `[ASSUMPTION]` `snapshot.interval` is the existing 60 s, so the AC-2 wait adds up to 90 s per CI
   run. If that's too slow for the `stack` workflow, the script may set a shorter interval on the
   compose server only. That's SRE's call when building, and it's recorded in the story.
+
+## Verification record — 2026-10-04 (SRE; `review` until the §8 checklist passes)
+
+`make stack-recover` against the local stack on `main` at `60ced80` (AW-SRV-007 merged), twice, both green:
+kill-to-ready 2.2 s of a 120 s RTO, `andara_recovery_round_tick` equal to R, `andara_recovery_state_hash_match`
+1, `andara_recovery_replayed_ticks` 29 and 39, `andara_restore_total{caller="recovery",outcome="ok"}` 1,
+`andara_recovery_duration_seconds_sum{phase="total"}` 0.74 s. The printed `recovery.run` trace resolved in
+Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify` (`round_tick` 2858998,
+`outcome=ok`), `recovery.replay` and `recovery.verify`.
+
+**Where the script differs from the contract above**, each recorded in
+`docs/feedback/AW-INF-032-stack-recover.md`:
+- **Rooms.** Room 1 is the Market Plaza (`out` from Purgatory) and Room 2 the Town Hall (`north`). B stays in
+  Purgatory, where it spawns.
+- **AC-5's `already_live` check.** Both clients run with `--show-protocol`, and the assertion is that neither
+  `reason=already_live` nor the waiting line appears after the kill, as PM proposed for `AW-INF-034`.
+  Architecture hasn't amended AC-5 yet.
+- **AC-6's Rooms.** `character list` records a body's Room at its unbind, so a list taken before the quit still
+  shows the Plaza for A. The script asserts the Rooms the post-recovery looks read: `dormant town/hall` for A
+  and `dormant purgatory/start` for B.
+- **The trace id** is printed from the `recovery complete` line, which carries `trace_id`. The contract says
+  "ready line".
+- **A failed run** starts the server again if its kill left it down, so the steps after it in the `stack`
+  workflow still have a server. The job summary gets a three-line table: the header, the separator and the row.
+
+**Mutations, run live:** `STACK_RECOVER_RTO=1` fails with `/readyz did not return 200 within 1s of the kill`
+and leaves the server ready; expecting the Market Plaza instead of the Town Hall in A's post-recovery look fails
+with "the tail move was not replayed". A first run asserted AC-6 against a pre-kill `character list` and failed
+on exactly that Room, which is how the list's behaviour was found.
+
+**Not observed:** the 60 s Phase 1 exit RTO (out of scope), and the CI run itself, which this PR's `stack`
+workflow supplies.

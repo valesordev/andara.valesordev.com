@@ -404,6 +404,15 @@ jobs:
       - name: the linkdead gate against the stack — drop, linkdead, reconnect, quit
         run: make stack-linkdead
 
+      # The M2 gate, scripted (scripts/stack_recover.sh, AW-INF-032): SIGKILL the server
+      # after a snapshot round and a tail move, and it is ready within STACK_RECOVER_RTO of
+      # the kill from that round with a matching State Hash, and both players rebind. One
+      # row of kill-to-ready, process-start-to-ready, replayed ticks and round tick goes to
+      # the job summary. It leaves the server running and recovered, so the steps after it
+      # run against a server that has been through a recovery.
+      - name: the M2 gate against the stack — kill -9, recover from a snapshot, rebind
+        run: make stack-recover
+
       # AW-SRV-043 §7: the projector's restore series, log line and spans, on the stack's own
       # snapshot rounds. The compose has no projector, so the host binary is the only writer
       # on its consumer group and `--rebuild` is safe. After the linkdead gate, which leaves

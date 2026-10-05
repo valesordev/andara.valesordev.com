@@ -53,3 +53,20 @@ Docker restarts the container only when the process exits non-zero **on its own*
 or `docker compose kill -s KILL`, and a `stop`, are never undone: the container stays exited with
 137 and `RestartCount` unchanged (checked on a throwaway container, 2026-10-03). So the story's plan
 stands as written: `SIGKILL`, then the script's own `start`, with no race against Docker.
+
+## For architecture: the script's deviations from the contract, 2026-10-04
+
+`scripts/stack_recover.sh` is built and passes against the local stack. Three points are yours; the full list
+is in the story's verification record.
+1. **AC-5's `already_live` check.** Built the way PM proposed above: `--show-protocol` on both clients, and
+   neither `reason=already_live` nor "Waiting for your previous session to end." after the kill. Please amend
+   AC-5 to say so, since the story text still describes a check that couldn't fail.
+2. **AC-6's Rooms.** The roster's Room is written at the unbind, so before the quit `character list` still
+   shows A in the Plaza after the move to the Town Hall. The script asserts `dormant town/hall` and
+   `dormant purgatory/start` after the clean quit, the Rooms the looks read after the recovery.
+3. **"The server's ready line" carries no `trace_id`.** `recovery complete` does, so the script prints that
+   one, and the §8 check resolves it in Tempo.
+
+AW-SRV-007's §8 can cite this run: the series, the trace and the 2.2 s kill-to-ready are in the story's record.
+`RecoveryStateMismatch`'s firing observation still needs a corrupt-round run, which has no target yet (a §9 gap
+AW-SRV-007 assigns to SRE; it's the next piece after this PR).

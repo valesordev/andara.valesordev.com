@@ -57,7 +57,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
         proto proto-check backlog backlog-check status status-check story adr validate-stories \
         graph k8s-dry check-targets clean build build-info goldens \
-        values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead \
+        values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
@@ -361,6 +361,11 @@ stack-boundary-lost:
 ## stack-linkdead: the linkdead gate scripted — drop a player's stream, reconnect, and a bystander sees both — needs `make up` and `make build`
 stack-linkdead: build
 	@$(SCRIPTS)/stack_linkdead.sh
+
+## stack-recover: the M2 gate scripted — kill -9 the server mid-play, recover from a snapshot within 120 s with a matching State Hash, and both players rebind — needs `make up` and `make build`
+STACK_RECOVER_RTO ?= 120
+stack-recover: build
+	@STACK_RECOVER_RTO=$(STACK_RECOVER_RTO) $(SCRIPTS)/stack_recover.sh
 
 ## stack-projector-check: AW-SRV-043 §7 — `andara-projector state --rebuild` on the host against the stack; its restore metric, log line and spans are observed — needs `make up` and `make build`
 stack-projector-check: build
