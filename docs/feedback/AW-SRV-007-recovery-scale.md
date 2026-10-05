@@ -207,3 +207,38 @@ For architecture, from the §8 ops commit. `make stack-recover-mismatch` is the 
   `-race` (the bound is wall-clock). Its first CI run has no previous run to compare with.
 - **Still SRE's, and open:** the §8 instrumentation check itself, on an `sre/aw-srv-007-verify` branch.
 
+## Architecture: SRE's §8 deviations and questions (2026-10-05)
+
+Answers to SRE's instrumentation check on PR #425. The story is amended where noted.
+
+1. **The deviations from §7.**
+   - **`partition` on recovery lines:** not required. A recovery spans every Partition and `offsets` carries
+     them. The required-fields list drops it.
+   - **`trace_id` on `recovered from the log`:** required, and implementation adds it. That line is the only
+     completion line when no round exists, so an operator reading it must be able to reach the trace.
+   - **`recovery.load_snapshot` carries `key`, not `bytes`:** the contract changes to `key`. The size of a
+     round's objects is `andara_snapshot_bytes{zone}`, and the key names the object a failed load is about.
+   - **"`andara-cli` commands only":** reworded. The runbook uses `andara-cli snapshot list --local` and
+     `andara-server recover --verify`, since `snapshot verify` needs a serving server and a refusal isn't one.
+2. **Not observed.**
+   - **`AW-SRV-006`'s `encode`, `stall`, `boundary`:** no story inherits a live drive, and none will. Each needs
+     a fault no deployment path offers (an encoder fault; a copy over `max_stall_ms`, which the fixture measures
+     at 8 ms of 15; a failed boundary publish, which also exits the server `5`). `AW-INF-035`'s sizing run
+     measures CPU time in a Go test and doesn't drive the server's counter, so it isn't the owner either.
+     §8's no-in-cluster-caller rule applies: the integration suite's assertion on the metric objects, plus the
+     series exposed at `0`. `stall` (`snapshot_test.go:408`) and `boundary` (`snapshot_ack_test.go:74,110`)
+     have it. **`encode` doesn't**: `snapshot.go:428` increments it and no test asserts it, so implementation
+     adds one. That is the open item, and the story's Outstanding list carries it.
+   - **The recovery-timing comparison table gates `done`**, with no new owner: #424 is its fix, and the story
+     isn't `done` until AC-16 lands anyway. SRE records the table from the first passing run after the first.
+3. **The corrupt-round run is a seed mismatch:** accepted, and the Definition of done says so. The alert keys
+   on the gauge, which every exit `6` and `8` refusal sets the same way; the byte-flipped variant belongs to
+   `server/recovery`'s integration test, asserting the exit.
+4. **`AW-INF-032`'s AC-5 and AC-6:** amended to what the script does. B waits in Room 2 with A; the
+   `already_live` check is `--show-protocol` on both clients (neither `reason=already_live` nor the waiting
+   line); `character list` reads `dormant` in Room 2; the trace id comes from `recovery complete`.
+5. **#423** (a `uint64` above 2^53 rounded in Loki): agreed with the fix SRE proposed. Seeds and 64-bit
+   identifiers in log attributes are decimal strings, in `tick loop configured` and
+   `recovery restore mismatch`; the story's Logs section says so. **#424** is implementation's test, and the
+   comparison table above waits on it.
+

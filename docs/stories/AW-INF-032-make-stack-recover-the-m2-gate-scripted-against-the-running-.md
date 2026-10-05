@@ -86,12 +86,14 @@ cite it.
    because a restarted process reads `0` by construction. The RPO evidence is AC-5: A's second move
    was acknowledged before the kill, and only the log tail holds it.)*
 5. **Given** the recovery **when** A's and B's `play` clients reconnect on their own (`AW-CLI-007`'s
-   reconnect) **then** neither transcript has an `already_live` refusal. A's `look` shows Room 2:
-   the move that only the log tail held was replayed. B's `look` shows B still in the spawn Room. Neither
+   reconnect) **then** neither client's `--show-protocol` output has `reason=already_live` and neither prints "Waiting for
+   your previous session to end." A's `look` shows Room 2: the move that only the log tail held was
+   replayed. B waits in Room 2 with A, so each is the other's witness to a despawn line, and B's `look` shows
+   B there with A. Neither
    transcript has a `leaves the world` or `fades from the world` line for either Character between
    the kill and the reconnect. The bodies rebound; they didn't despawn.
 6. **Given** both back **when** A and B quit cleanly **then** `character list` shows each `dormant`
-   in the Room from AC-5.
+   in Room 2 (the roster writes a Room at the unbind, so before the quit it still shows A in Room 1).
 7. **Given** any assertion failing **when** the script exits **then** it exits 1 with
    `stack-recover: <what failed>`, prints both transcripts and the server's last 50 lines, and leaves
    no `andara-cli` child running. A server that exits non-zero during recovery is reported with its
@@ -148,7 +150,7 @@ Two Accounts and two Characters per run with random suffixes, as `stack-linkdead
     workflow run. With the variable unset, the script appends nothing.
 - **Traces:** none added. The run produces one `recovery.run` trace (`AW-SRV-007`). That root is
   always sampled (`server/telemetry/sampling.go` ratio-samples only `Game/Submit`). The script
-  prints the `trace_id` from the server's ready line, so the §8 check can resolve the trace in
+  prints the `trace_id` from the server's `recovery complete` line (the contract said "ready line"), so the §8 check can resolve the trace in
   local Tempo. Spans the killed process had buffered are lost with it, and nothing asserts on them.
 - **Alerts:** none added, and the target asserts on no alert state.
   - The local Prometheus evaluates the chart's rules (`deploy/compose/docker-compose.yaml`).
