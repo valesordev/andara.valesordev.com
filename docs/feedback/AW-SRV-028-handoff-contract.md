@@ -405,13 +405,15 @@ instrumentation item is the only one left that isn't architecture's or implement
     a stack with a lost `Arrive`.
   - **Logs, against Loki:** the per-tick `warn` (`count`, `oldest_attempt`), the per-retry `debug`
     (`entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`), and the `error` lines for `entity_present`,
-    `invalid_arrival` and `id_reused`; `trace_id` on a live retry, and a new trace carrying `entity_id` on a
-    retry after recovery.
-  - **Traces, against Tempo:** the `Arrive`, `HandoffAck` and retries carrying the original `Move`'s
-    traceparent, so a handoff is one trace from keystroke to ack.
+    `invalid_arrival` and `id_reused` (field names as in `server/README.md`). A retry, live or after
+    recovery, starts a new trace and carries `entity_id`; it doesn't carry the Move's `trace_id` (the
+    story's Deviations, agreed 2026-10-04, and its Observability section now says so).
+  - **Traces, against Tempo:** the `Arrive` and `HandoffAck` carrying the original `Move`'s traceparent
+    where it is known. A retry is a new trace.
   CLAUDE.md §8 lets a check be the integration suite plus a scrape of the sibling series when no in-cluster
   caller exists yet, with the record naming what the server hasn't emitted. For each signal, say which you
-  did, and which first live observation the story inherits as a Definition-of-done line.
+  did, and which first live observation the story inherits as a Definition-of-done line. The record names
+  only the retry counter's today, so propose the lines for the logs and traces.
 - The `andara_handoff_placed_entries` thresholds are already in the runbook (#404: 25,000 and 100,000, both
   marked unmeasured). Say in the record whether the §7 check accepts them as they stand, or wants them
   replaced once `server/simtest` sizes marks; no action is needed otherwise.

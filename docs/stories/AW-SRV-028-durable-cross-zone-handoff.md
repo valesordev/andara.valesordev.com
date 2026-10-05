@@ -355,10 +355,11 @@ the same reset, `make world-reset ENV=dev CONFIRM=andara-dev`, and the PR says s
 - **Logs:** `warn` once per tick that produced retries, with the count and the oldest `attempt`, and one
   `debug` per retry with `entity_id`, `from_zone`, `to_zone`, `seq`, `attempt`, so a restart with many
   stuck handoffs doesn't write a line each; `error` on
-  `entity_present`, `invalid_arrival` and `id_reused`. `trace_id` from the originating `Move` for a live
-  retry; a retry after a recovery starts a new trace and carries `entity_id`.
-- **Traces:** the `Arrive`, `HandoffAck` and retries carry the original `Move`'s traceparent where it is
-  known, so a handoff is one trace from keystroke to ack.
+  `entity_present`, `invalid_arrival` and `id_reused`. A retry, live or after a recovery, starts a new
+  trace and carries `entity_id`: the Transit record is hashed and can't hold the Move's `trace_id` (amended
+  2026-10-04 to what was built, the deviation recorded below).
+- **Traces:** the `Arrive` and `HandoffAck` carry the original `Move`'s traceparent where it is known. A
+  retry starts a new trace, so a handoff with a retry is two traces, joined by `entity_id`.
 - **Alerts:** none. `andara_handoffs_in_transit` sustained above 0 is a dashboard panel and a diagnostic
   step in `docs/runbooks/simulation-lagging.md` (a stuck handoff means the broker or the target Partition
   is). This story adds that step, and a line that an Entity stuck in transit to a faulted Zone has no
