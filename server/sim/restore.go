@@ -213,3 +213,48 @@ func (s *WorldState) SortedZoneIDs() []ZoneID {
 	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
+
+// ErrContentVersionUnknown is what a ContentSource returns from Prepare for a
+// pack version it doesn't have: a manifest that was never published, or a
+// source of another kind than the one the log was written with. It is the one
+// Prepare failure that is a state mismatch and not a retryable or operator
+// error (AW-SRV-007 AC-16).
+type ErrContentVersionUnknown struct {
+	Pack    string
+	Version uint64
+}
+
+func (e *ErrContentVersionUnknown) Error() string {
+	return fmt.Sprintf("the content source has no %s@%d", e.Pack, e.Version)
+}
+
+// ErrRoundContent: a snapshot round records content that names a pack version
+// the source doesn't have, so the round can't be restored onto it (AW-SRV-007
+// AC-16, exit 6 reason=content). Versions is the content the round records;
+// Unknown is the version the source lacked.
+type ErrRoundContent struct {
+	Tick     Tick
+	Versions map[string]uint64
+	Unknown  *ErrContentVersionUnknown
+}
+
+func (e *ErrRoundContent) Error() string {
+	pv := make([]string, 0, len(e.Versions))
+	for p, v := range e.Versions {
+		pv = append(pv, fmt.Sprintf("%s@%d", p, v))
+	}
+	sort.Strings(pv)
+	msg := fmt.Sprintf("restore: round at tick %d records content %v that the source can't build", e.Tick, pv)
+	if e.Unknown != nil {
+		msg += ": " + e.Unknown.Error()
+	}
+	return msg
+}
+
+// Unwrap makes errors.As find the version the source lacked.
+func (e *ErrRoundContent) Unwrap() error {
+	if e.Unknown == nil {
+		return nil
+	}
+	return e.Unknown
+}

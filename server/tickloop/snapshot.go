@@ -136,6 +136,10 @@ type SnapshotOptions struct {
 	Registry prometheus.Registerer
 	// Now is the clock, for tests. Nil means time.Now.
 	Now func() time.Time
+	// Encode replaces Snapshot.Encode when set. Tests use it to drive the
+	// encode failure, which nothing in a real World can produce: the codec
+	// refuses only a descriptor carrying a map, a float or an Any.
+	Encode func(*sim.Snapshot) ([]byte, error)
 	// OnRound, if set, is called when a round finishes, on the round's
 	// goroutine. Tests use it; nothing in production does.
 	OnRound func(tick sim.Tick, err error)
@@ -493,7 +497,11 @@ func (s *Snapshotter) run(ctx context.Context, tick sim.Tick, snaps []sim.Snapsh
 func (s *Snapshotter) encode(ctx context.Context, snap *sim.Snapshot) ([]byte, error) {
 	_, span := s.tracer.Start(ctx, "snapshot.encode", trace.WithAttributes(attribute.String("zone", string(snap.Zone))))
 	defer span.End()
-	b, err := snap.Encode()
+	encode := snap.Encode
+	if s.opts.Encode != nil {
+		encode = func() ([]byte, error) { return s.opts.Encode(snap) }
+	}
+	b, err := encode()
 	if err != nil {
 		span.SetStatus(codes.Error, err.Error())
 		return nil, err

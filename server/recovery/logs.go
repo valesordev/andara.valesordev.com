@@ -8,6 +8,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/valesordev/andara/server/sim"
@@ -51,18 +53,30 @@ func (o *Options) logRestoreMismatch(ctx context.Context, err error, round sim.T
 		sm *sim.SeedMismatch
 		cd *sim.ContentDigestError
 		zu *sim.ErrRoundZoneUnknown
+		rc *sim.ErrRoundContent
 	)
 	switch {
 	case errors.As(err, &rm):
 		attrs = append(attrs, "recorded_hash", fmt.Sprintf("%x", rm.Recorded), "restored_hash", fmt.Sprintf("%x", rm.Restored))
 	case errors.As(err, &sm):
-		attrs = append(attrs, "recorded_seed", sm.Recorded, "configured_seed", sm.Configured)
+		attrs = append(attrs, "recorded_seed", strconv.FormatUint(sm.Recorded, 10), "configured_seed", strconv.FormatUint(sm.Configured, 10))
 	case errors.As(err, &cd):
 		attrs = append(attrs, "pack", cd.Pack, "recorded_digest", fmt.Sprintf("%x", cd.Recorded), "built_digest", fmt.Sprintf("%x", cd.Built))
 	case errors.As(err, &zu):
 		attrs = append(attrs, "zone_id", string(zu.Zone))
+	case errors.As(err, &rc):
+		attrs = append(attrs, "pack_versions", packVersions(rc.Versions))
 	default:
 		attrs = append(attrs, "detail", err.Error())
 	}
 	o.Log.Log(ctx, slog.LevelError, "recovery restore mismatch", attrs...)
+}
+
+func packVersions(v map[string]uint64) string {
+	pv := make([]string, 0, len(v))
+	for p, n := range v {
+		pv = append(pv, fmt.Sprintf("%s@%d", p, n))
+	}
+	sort.Strings(pv)
+	return strings.Join(pv, ",")
 }

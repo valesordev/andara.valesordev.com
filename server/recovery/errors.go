@@ -104,6 +104,7 @@ func Classify(err error) *Failure {
 		ri  *sim.ErrRoundIncomplete
 		rd  *sim.ErrRoundZoneDuplicate
 		ru  *sim.ErrRoundZoneUnknown
+		rc  *sim.ErrRoundContent
 		rm  *sim.RestoreMismatch
 		sm  *sim.SeedMismatch
 		cd  *sim.ContentDigestError
@@ -126,7 +127,7 @@ func Classify(err error) *Failure {
 		return &Failure{Err: err, Exit: ExitRestore, Reason: ReasonRestore, Restore: RestoreHash}
 	case errors.As(err, &sm):
 		return &Failure{Err: err, Exit: ExitRestore, Reason: ReasonRestore, Restore: RestoreSeed}
-	case errors.As(err, &cd), errors.As(err, &ru):
+	case errors.As(err, &cd), errors.As(err, &ru), errors.As(err, &rc):
 		return &Failure{Err: err, Exit: ExitRestore, Reason: ReasonRestore, Restore: RestoreContent}
 	case errors.As(err, &hm), errors.As(err, &shm):
 		return &Failure{Err: err, Exit: ExitHashMismatch, Reason: ReasonHash}

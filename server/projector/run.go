@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sort"
+	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
@@ -393,7 +394,7 @@ func (o RunOptions) restore(ctx context.Context, topo sim.Topology, cfg sim.Conf
 			"recorded_hash", fmt.Sprintf("%x", rm.Recorded), "restored_hash", fmt.Sprintf("%x", rm.Restored), "trace_id", traceID)
 	case errors.As(err, &sm):
 		o.Log.ErrorContext(ctx, "state projector restore mismatch", "round_tick", sm.RoundTick, "reason", "seed",
-			"recorded_seed", sm.Recorded, "configured_seed", sm.Configured, "trace_id", traceID)
+			"recorded_seed", strconv.FormatUint(sm.Recorded, 10), "configured_seed", strconv.FormatUint(sm.Configured, 10), "trace_id", traceID)
 	}
 	span.SetStatus(codes.Error, err.Error())
 	return nil, err
@@ -425,7 +426,7 @@ func (o RunOptions) bootstrapEngine(ctx context.Context, boundaries *BoundaryRea
 		} else if v > sim.StateVersion {
 			return nil, 0, &sim.ErrStateVersion{Have: v, Want: sim.StateVersion}
 		}
-		round, state, ok, err := store.NewestComplete(ctx, o.Store, owned)
+		round, state, ok, err := store.NewestComplete(ctx, o.Store, owned, nil)
 		if err != nil {
 			return nil, 0, fmt.Errorf("snapshot store: %w", err)
 		}

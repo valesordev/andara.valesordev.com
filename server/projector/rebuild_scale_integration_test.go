@@ -127,7 +127,7 @@ func scaleWorld(t *testing.T, at sim.Tick) (*simtest.FixedContent, *world) {
 
 	ws := store.NewFS(t.TempDir())
 	putRound(t, ws, genesis)
-	_, state, ok, err := store.NewestComplete(context.Background(), ws, e.State().SortedZoneIDs())
+	_, state, ok, err := store.NewestComplete(context.Background(), ws, e.State().SortedZoneIDs(), nil)
 	if err != nil || !ok {
 		t.Fatalf("the genesis round: ok %v, %v", ok, err)
 	}
@@ -238,7 +238,7 @@ type referenceTimes struct{ load, replay time.Duration }
 func loadAndReplay(t *testing.T, src *simtest.FixedContent, ws sim.WorldStore, w *world, round sim.Tick) referenceTimes {
 	t.Helper()
 	began := time.Now()
-	_, state, ok, err := store.NewestComplete(context.Background(), ws, w.live.State().SortedZoneIDs())
+	_, state, ok, err := store.NewestComplete(context.Background(), ws, w.live.State().SortedZoneIDs(), nil)
 	if err != nil || !ok {
 		t.Fatalf("the round: ok %v, %v", ok, err)
 	}

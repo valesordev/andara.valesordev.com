@@ -387,11 +387,11 @@ func (d *dirContent) setProducer(p SwapProducer) {
 // it.
 func (d *dirContent) Prepare(inEffect map[string]uint64, swap *logv1.ContentSwap) (sim.Topology, error) {
 	if swap.GetPackId() != DirPack || swap.GetVersion() != 0 {
-		return sim.Topology{}, fmt.Errorf("content.source=dir cannot prepare %s: the log was written with another content source", ManifestKey(swap.GetPackId(), swap.GetVersion()))
+		return sim.Topology{}, fmt.Errorf("content.source=dir cannot prepare %s: the log was written with another content source: %w", ManifestKey(swap.GetPackId(), swap.GetVersion()), &sim.ErrContentVersionUnknown{Pack: swap.GetPackId(), Version: swap.GetVersion()})
 	}
 	for p := range inEffect {
 		if p != DirPack {
-			return sim.Topology{}, fmt.Errorf("content.source=dir cannot build on %s in effect: the log was written with another content source", p)
+			return sim.Topology{}, fmt.Errorf("content.source=dir cannot build on %s in effect: the log was written with another content source: %w", p, &sim.ErrContentVersionUnknown{Pack: p, Version: inEffect[p]})
 		}
 	}
 	zones, zerrs := LoadDir(d.opts.Path)

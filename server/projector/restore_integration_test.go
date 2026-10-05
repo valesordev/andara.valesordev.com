@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -205,7 +206,7 @@ func TestRun_ARoundFromAnotherSeedExitsFive(t *testing.T) {
 	}
 	line := mismatchLine(t, &logs)
 	if line["round_tick"] != float64(round) || line["reason"] != "seed" ||
-		line["recorded_seed"] != float64(w.live.State().Seed) || line["configured_seed"] != float64(7) {
+		line["recorded_seed"] != strconv.FormatUint(w.live.State().Seed, 10) || line["configured_seed"] != "7" {
 		t.Fatalf("the mismatch line: %v", line)
 	}
 	if got := testutil.ToFloat64(o.Metrics.Restores.WithLabelValues(projector.RestoreCaller, "seed_mismatch")); got != 1 {

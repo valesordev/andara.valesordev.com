@@ -4,12 +4,15 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -298,5 +301,36 @@ func TestStartTickLoop_ReleasesTheBodiesACrashLeftStanding(t *testing.T) {
 	_, serr := rt.StartTickLoop(context.Background())
 	if len(f.got) != 1 || f.got[0].ID != "ch-1" || f.got[0].Zone != "town" {
 		t.Fatalf("released %v, want ch-1 in town (boot said %v)", f.got, serr)
+	}
+}
+
+// A seed above 2^63 is logged as a decimal string: as a JSON number it reaches
+// Loki rounded (#423).
+func TestSeedIsLoggedAsADecimalString(t *testing.T) {
+	var buf bytes.Buffer
+	l := slog.New(slog.NewJSONHandler(&buf, nil))
+	l.LogAttrs(context.Background(), slog.LevelInfo, "x", seedAttr(16406829232824261652))
+	if !strings.Contains(buf.String(), `"seed":"16406829232824261652"`) {
+		t.Fatalf("log line %s", buf.String())
+	}
+}
+
+// The boot summary names the recovery.run trace, round or no round.
+func TestRecoveredFromTheLogCarriesTheTraceID(t *testing.T) {
+	rt, logs := runtime(t, fixture(t, "valid"), false)
+	if code := rt.LoadContent(context.Background()); code != ExitOK {
+		t.Fatalf("load: %s", logs.String())
+	}
+	rt.Cfg.SimSource, rt.Cfg.SimSeed, rt.Cfg.SimPartitions = "kafka", 5, allPartitionsForTest()
+	rt.replay = &memLog{recs: simtest.MemorySource{}}
+	_, _ = rt.StartTickLoop(context.Background()) // fails at the missing broker, after recovery
+	var line string
+	for _, l := range strings.Split(logs.String(), "\n") {
+		if strings.Contains(l, "recovered from the log") {
+			line = l
+		}
+	}
+	if line == "" || !strings.Contains(line, `"trace_id"`) || !strings.Contains(line, `"round_tick"`) {
+		t.Fatalf("no summary line with a trace_id in:\n%s", logs.String())
 	}
 }

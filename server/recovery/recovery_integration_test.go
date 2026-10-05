@@ -117,7 +117,7 @@ func options(t *testing.T, fix string, bk []string, commands, events, dir string
 	}
 	return recovery.Options{
 		Store:      store.NewFS(dir),
-		Owned:      zoneIDs(t, fix),
+		Listed:     zoneIDs(t, fix),
 		Boundaries: br,
 		OpenRecords: func(ctx context.Context, start map[int32]int64) (sim.RecordSource, error) {
 			return tickloop.NewCommandSource(ctx, bk, commands, "recovery-it", start)
@@ -323,7 +323,7 @@ func killedProcess(t *testing.T) *history {
 				return false, fmt.Sprintf("partition %d applied to %d, ack at %d", a.partition, last.Offsets[a.partition], a.offset)
 			}
 		}
-		rounds, err := store.ListRounds(ctx, fs, zoneIDs(t, fixtureScript))
+		rounds, err := store.ListRounds(ctx, fs, zoneIDs(t, fixtureScript), nil)
 		if err != nil {
 			return false, err.Error()
 		}
@@ -450,7 +450,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 	t.Run("AC-4 a hash-invalid Zone object falls back to the next round", func(t *testing.T) {
 		dir := copyStore(t, h.dir)
 		fs := store.NewFS(dir)
-		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript))
+		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript), nil)
 		if err != nil || !ok {
 			t.Fatal(err)
 		}
@@ -520,7 +520,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 	t.Run("AC-13 a round that does not reproduce its tick is exit 6", func(t *testing.T) {
 		dir := copyStore(t, h.dir)
 		fs := store.NewFS(dir)
-		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript))
+		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript), nil)
 		if err != nil || !ok {
 			t.Fatal(err)
 		}
@@ -574,7 +574,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 	// log can't begin past its own end.
 	t.Run("AC-2 a log shorter than the round is exit 3", func(t *testing.T) {
 		dir := copyStore(t, h.dir)
-		rounds, err := store.ListRounds(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript))
+		rounds, err := store.ListRounds(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript), nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -584,7 +584,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 				oldest = r
 			}
 		}
-		_, state, err := store.RoundAt(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript), oldest.Tick)
+		_, state, err := store.RoundAt(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript), nil, oldest.Tick)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -684,7 +684,7 @@ func TestRecoveryWithAHandoffInFlight(t *testing.T) {
 	eventually.Observed(t, 60*time.Second, "a complete round with alice in Transit, and boundaries past it", func() (bool, string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross))
+		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross), nil)
 		if err != nil || !ok {
 			return false, fmt.Sprint("no complete round ", err)
 		}
@@ -796,7 +796,7 @@ func TestRecoveryTimingAtSizingScale(t *testing.T) {
 	eventually.Observed(t, 12*time.Minute, "a round, and a tail of 600 ticks past it", func() (bool, string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		r, _, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureSizing))
+		r, _, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureSizing), nil)
 		if err != nil || !ok {
 			return false, fmt.Sprint("no complete round ", err)
 		}
@@ -900,7 +900,7 @@ func TestFiftyCharactersSurviveAKill(t *testing.T) {
 	eventually.Observed(t, 60*time.Second, "a round holding all 50 bodies, with a tail", func() (bool, string) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross))
+		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross), nil)
 		if err != nil || !ok {
 			return false, fmt.Sprint("no complete round ", err)
 		}
@@ -1089,7 +1089,7 @@ func TestSeekIsBoundedByTheRoundNotTheHistory(t *testing.T) {
 	}
 	scratch := store.NewFS(t.TempDir())
 	putRound(scratch, e0)
-	_, state, ok, err := store.NewestComplete(ctx, scratch, zoneIDs(t, fixtureSizing))
+	_, state, ok, err := store.NewestComplete(ctx, scratch, zoneIDs(t, fixtureSizing), nil)
 	if err != nil || !ok {
 		t.Fatalf("the fabricated round: ok %v %v", ok, err)
 	}

@@ -58,7 +58,7 @@ func (c *VersionedContent) Prepare(inEffect map[string]uint64, swap *logv1.Conte
 	for _, p := range packs {
 		defs, ok := c.Zones[p][after[p]]
 		if !ok {
-			return sim.Topology{}, fmt.Errorf("simtest: no %s@%d", p, after[p])
+			return sim.Topology{}, fmt.Errorf("simtest: no %s@%d: %w", p, after[p], &sim.ErrContentVersionUnknown{Pack: p, Version: after[p]})
 		}
 		for _, d := range defs {
 			inputs = append(inputs, sim.Input{File: d.GetId() + ".json", Def: d})
