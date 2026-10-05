@@ -96,6 +96,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 			return nil, fmt.Errorf("recovery: %w", err)
 		}
 		engine = rec
+		// Every Session is gone: a Character the crash left standing is
+		// marked linkdead rather than left present for good.
+		rt.releaseOrphans(ctx, engine)
 		rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "recovered from the log",
 			slog.Uint64("ticks_replayed", rep.Replayed),
 			slog.Uint64("round_tick", uint64(rep.Round.Tick)),
@@ -199,11 +202,6 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	rt.observeCharacters(engine)
 	if rt.Roster != nil {
 		rt.Roster.SeedLinkdead(engine.LinkdeadBodies())
-		if cfg.SimSource == "kafka" {
-			// Every Session is gone: a Character the crash left standing is
-			// marked linkdead rather than left present for good.
-			rt.Roster.MarkOrphans(ctx, engine.PresentCharacters())
-		}
 	}
 	rt.Tel.Log.LogAttrs(ctx, slog.LevelInfo, "tick loop configured",
 		slog.String("source", cfg.SimSource),

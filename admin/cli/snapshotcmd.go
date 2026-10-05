@@ -266,6 +266,10 @@ func (rt *runtime) snapshotListRPC(zone string, limit int) error {
 	return w.Flush()
 }
 
+// verifyTimeout is how long `snapshot verify` waits at least: the default of
+// recovery.verify_timeout.
+const verifyTimeout = 600 * time.Second
+
 func newSnapshotVerifyCmd(rt *runtime) *cobra.Command {
 	var round uint64
 	cmd := &cobra.Command{
@@ -283,11 +287,14 @@ func newSnapshotVerifyCmd(rt *runtime) *cobra.Command {
 			if round == 0 {
 				return &AppError{Exit: ExitUsage, Code: CodeInvalidValue, Message: "--round is required and must be above 0", Detail: map[string]any{"flag": "--round"}}
 			}
-			client, err := rt.adminClient()
+			client, err := rt.adminClientWith(true)
 			if err != nil {
 				return err
 			}
-			ctx, cancel := rt.callCtx()
+			// A verify replays to the log head, which at the sizing fixture is
+			// most of a minute: it gets the server's own bound
+			// (recovery.verify_timeout, 600 s) unless --timeout is longer.
+			ctx, cancel := context.WithTimeout(rt.callBase(), max(rt.settings.Timeout, verifyTimeout))
 			defer cancel()
 			resp, err := client.VerifySnapshotRound(ctx, connect.NewRequest(&adminv1.VerifySnapshotRoundRequest{Tick: round}))
 			if err != nil {

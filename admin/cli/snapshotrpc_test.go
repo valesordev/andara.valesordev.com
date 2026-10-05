@@ -121,3 +121,15 @@ func TestSnapshotVerify_MatchAndMismatchExits(t *testing.T) {
 		t.Errorf("no --round: exit %d, want %d", res.exit, ExitUsage)
 	}
 }
+
+// A verify replays to the log head, so it isn't bound by the default --timeout.
+func TestSnapshotVerify_OutlivesTheDefaultTimeout(t *testing.T) {
+	env := snapshotServer(t, &fakeSnapshots{verify: func(uint64) (*adminv1.VerifySnapshotRoundResponse, error) {
+		time.Sleep(1500 * time.Millisecond)
+		return &adminv1.VerifySnapshotRoundResponse{Match: true, Outcome: adminv1.VerifyOutcome_VERIFY_OUTCOME_MATCH}, nil
+	}})
+	res := runCLI(t, []string{"snapshot", "verify", "--round", "1", "--timeout", "1s"}, env)
+	if res.exit != ExitOK {
+		t.Fatalf("exit %d: %s", res.exit, res.stderr)
+	}
+}

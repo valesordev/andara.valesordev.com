@@ -124,17 +124,7 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 	loop, err := rt.StartTickLoop(ctx)
 	if err != nil {
 		tel.Log.Error("tick loop", "detail", err.Error())
-		code := boot.StartExit(err)
-		if boot.Lingers(err) && cfg.RecoveryMismatchLinger > 0 {
-			// The mismatch is scraped before the process exits, or the
-			// 0 never leaves it (AC-14). grpc.listen is never bound.
-			if ln, lerr := net.Listen("tcp", cfg.HTTPListen()); lerr != nil {
-				tel.Log.Error("http listen for the mismatch linger", "detail", lerr.Error())
-			} else {
-				rt.HoldMismatch(ctx, ln, cfg.RecoveryMismatchLinger, time.After)
-			}
-		}
-		return code
+		return rt.ExitOnStartError(ctx, err, func() (net.Listener, error) { return net.Listen("tcp", cfg.HTTPListen()) }, time.After)
 	}
 	loopCtx, stopLoop := context.WithCancel(context.Background())
 	defer stopLoop()

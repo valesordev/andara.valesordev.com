@@ -99,26 +99,23 @@ func (f *Failure) Unwrap() error { return f.Err }
 // 1 with reason store, as an operator would act on it, not on a World.
 func Classify(err error) *Failure {
 	var (
-		f      *Failure
-		sv     *sim.ErrStateVersion
-		ri     *sim.ErrRoundIncomplete
-		rd     *sim.ErrRoundZoneDuplicate
-		ru     *sim.ErrRoundZoneUnknown
-		rm     *sim.RestoreMismatch
-		sm     *sim.SeedMismatch
-		cd     *sim.ContentDigestError
-		hm     *HashMismatchError
-		shm    *sim.HashMismatchError
-		lg     *tickloop.LogGapError
-		cancel = errors.Is(err, errCanceled)
+		f   *Failure
+		sv  *sim.ErrStateVersion
+		ri  *sim.ErrRoundIncomplete
+		rd  *sim.ErrRoundZoneDuplicate
+		ru  *sim.ErrRoundZoneUnknown
+		rm  *sim.RestoreMismatch
+		sm  *sim.SeedMismatch
+		cd  *sim.ContentDigestError
+		hm  *HashMismatchError
+		shm *sim.HashMismatchError
+		lg  *tickloop.LogGapError
 	)
 	switch {
 	case err == nil:
 		return nil
 	case errors.As(err, &f):
 		return f
-	case cancel:
-		return &Failure{Err: err, Exit: ExitConfig, Reason: ReasonStore}
 	case errors.As(err, &sv):
 		return &Failure{Err: err, Exit: ExitStateVersion, Reason: ReasonVersion}
 	case errors.As(err, &ri):
@@ -146,7 +143,3 @@ func ExitCode(err error) int {
 	}
 	return ExitOK
 }
-
-// errCanceled marks an error that is the caller's context ending, not a
-// recovery failure.
-var errCanceled = errors.New("recovery canceled")

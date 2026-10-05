@@ -163,6 +163,9 @@ type Runtime struct {
 	live func() (uint64, time.Duration)
 	// recMetrics is the recovery instrument set, registered on first use.
 	recMetrics *recovery.Metrics
+	recOnce    sync.Once
+	// orphans, when set, stands in for the roster in releaseOrphans: a test.
+	orphans orphanReleaser
 }
 
 // LoadVerbs builds the verb table and the command metrics. A verb table

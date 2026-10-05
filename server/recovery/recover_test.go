@@ -349,3 +349,40 @@ func TestRestoreIsCountedUnderItsCaller(t *testing.T) {
 		}
 	}
 }
+
+type closeSource struct {
+	simtest.MemorySource
+	closed *bool
+}
+
+func (c closeSource) Close() { *c.closed = true }
+
+// The Command source's client is closed when recovery ends, whichever Close
+// signature it has (tickloop.CommandSource's returns nothing).
+func TestTheCommandSourceIsClosed(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, 6, 3)
+	o := w.opts(t)
+	closed := false
+	o.OpenRecords = func(context.Context, map[int32]int64) (sim.RecordSource, error) {
+		return closeSource{w.records, &closed}, nil
+	}
+	if _, _, err := recovery.Recover(context.Background(), o); err != nil || !closed {
+		t.Fatalf("err %v, closed %v", err, closed)
+	}
+}
+
+// A separate Restores instrument takes the count in place of Metrics' own.
+func TestRestoresCanBeCountedElsewhere(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, 6, 3)
+	o := w.opts(t)
+	live := recovery.NewMetrics(nil)
+	o.Verify, o.Restores = true, live.Restores
+	if _, _, err := recovery.Recover(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if testutil.ToFloat64(live.Restores.WithLabelValues(recovery.CallerVerify, "ok")) != 1 || testutil.ToFloat64(o.Metrics.Restores.WithLabelValues(recovery.CallerVerify, "ok")) != 0 {
+		t.Fatal("the restore was not counted on the override alone")
+	}
+}

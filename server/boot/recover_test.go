@@ -217,3 +217,65 @@ func TestStartTickLoop_ARewrittenBoundaryIsExit8WithTheGaugeAtZero(t *testing.T)
 		t.Fatal("a refused recovery must not be ready or started")
 	}
 }
+
+// ExitOnStartError: a mismatch lingers on the listener it is given and exits
+// 8; every other refusal returns at once without listening.
+func TestExitOnStartError_LingersOnlyForAMismatch(t *testing.T) {
+	rt, _ := runtime(t, fixture(t, "valid"), false)
+	rt.Cfg.RecoveryMismatchLinger = time.Minute
+	listens := 0
+	listen := func() (net.Listener, error) {
+		listens++
+		return net.Listen("tcp", "127.0.0.1:0")
+	}
+	var asked time.Duration
+	tick := make(chan time.Time, 1)
+	tick <- time.Now()
+	wait := func(d time.Duration) <-chan time.Time { asked = d; return tick }
+
+	if code := rt.ExitOnStartError(context.Background(), recovery.Classify(&sim.HashMismatchError{}), listen, wait); code != 8 || listens != 1 || asked != time.Minute {
+		t.Fatalf("a hash mismatch: exit %d, listens %d, waited %s", code, listens, asked)
+	}
+	for _, err := range []error{recovery.Classify(&sim.ErrRoundIncomplete{}), recovery.Classify(&sim.ErrStateVersion{}), errors.New("broker down")} {
+		if code := rt.ExitOnStartError(context.Background(), err, listen, wait); code == 0 || listens != 1 {
+			t.Fatalf("%v: exit %d, listens %d: it must not linger", err, code, listens)
+		}
+	}
+	rt.Cfg.RecoveryMismatchLinger = 0
+	if code := rt.ExitOnStartError(context.Background(), recovery.Classify(&sim.HashMismatchError{}), listen, wait); code != 8 || listens != 1 {
+		t.Fatalf("linger 0s: exit %d, listens %d", code, listens)
+	}
+}
+
+type fakeOrphans struct{ got []sim.CharacterBody }
+
+func (f *fakeOrphans) MarkOrphans(_ context.Context, b []sim.CharacterBody) (int, int) {
+	f.got = b
+	return len(b), 0
+}
+
+// Boot releases the bodies a crash left standing, as soon as recovery has
+// them: a Character present with no Session is handed to the roster.
+func TestStartTickLoop_ReleasesTheBodiesACrashLeftStanding(t *testing.T) {
+	rt := recoveringRuntime(t, &memLog{recs: simtest.MemorySource{}})
+	swap := &logv1.ContentSwap{PackId: content.DirPack}
+	topo, err := rt.Content.Prepare(nil, swap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := sim.ContentDigest(topo)
+	swap.WorldDigest = d[:]
+	live := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: 5, Partitions: allPartitionsForTest(), Handlers: sim.Handlers(), Content: rt.Content})
+	log := &memLog{recs: simtest.MemorySource{}}
+	log.record(t, live, nil, &logv1.LoggedCommand{Command: &logv1.LoggedCommand_ContentSwap{ContentSwap: swap}},
+		simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	rt.replay = log
+	f := &fakeOrphans{}
+	rt.orphans = f
+
+	// The broker isn't there: the boot fails after recovery, which is far enough.
+	_, serr := rt.StartTickLoop(context.Background())
+	if len(f.got) != 1 || f.got[0].ID != "ch-1" || f.got[0].Zone != "town" {
+		t.Fatalf("released %v, want ch-1 in town (boot said %v)", f.got, serr)
+	}
+}

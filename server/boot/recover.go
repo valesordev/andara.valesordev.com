@@ -43,9 +43,7 @@ func Lingers(err error) bool {
 
 // RecoveryMetrics is the process's recovery instrument set, registered once.
 func (rt *Runtime) RecoveryMetrics() *recovery.Metrics {
-	if rt.recMetrics == nil {
-		rt.recMetrics = recovery.NewMetrics(rt.Tel.Reg)
-	}
+	rt.recOnce.Do(func() { rt.recMetrics = recovery.NewMetrics(rt.Tel.Reg) })
 	return rt.recMetrics
 }
 
@@ -191,3 +189,39 @@ var _ = io.Discard
 // EngineConfig is the Engine's configuration for this process: what recovery
 // builds and restores with.
 func (rt *Runtime) EngineConfig() sim.Config { return engineConfig(rt.Cfg, rt.Content) }
+
+// ExitOnStartError is the exit code of a StartTickLoop failure, after the
+// mismatch linger when the refusal earns one (AC-14): a hash or restore
+// mismatch holds /metrics on the listener listen returns for
+// recovery.mismatch_linger, so the 0 of andara_recovery_state_hash_match is
+// scraped. Every other failure returns at once, and grpc.listen is never bound.
+func (rt *Runtime) ExitOnStartError(ctx context.Context, err error, listen func() (net.Listener, error), wait func(time.Duration) <-chan time.Time) int {
+	if Lingers(err) && rt.Cfg.RecoveryMismatchLinger > 0 {
+		if ln, lerr := listen(); lerr != nil {
+			rt.Tel.Log.Error("http listen for the mismatch linger", "detail", lerr.Error())
+		} else {
+			rt.HoldMismatch(ctx, ln, rt.Cfg.RecoveryMismatchLinger, wait)
+		}
+	}
+	return StartExit(err)
+}
+
+// orphanReleaser is what releases the Character bodies a crash left standing:
+// the roster.
+type orphanReleaser interface {
+	MarkOrphans(ctx context.Context, bodies []sim.CharacterBody) (produced, failed int)
+}
+
+// releaseOrphans marks every Character body the recovered World holds with no
+// Session linkdead (AW-SRV-007, from AW-SRV-015): every Session is gone at a
+// restart.
+func (rt *Runtime) releaseOrphans(ctx context.Context, e *sim.Engine) {
+	var r orphanReleaser = rt.orphans
+	if r == nil && rt.Roster != nil {
+		r = rt.Roster
+	}
+	if r == nil {
+		return
+	}
+	r.MarkOrphans(ctx, e.PresentCharacters())
+}

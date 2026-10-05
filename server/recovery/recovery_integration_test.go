@@ -63,17 +63,17 @@ func topics(t *testing.T, bk []string, tag string) (commands, events string) {
 	nonce := time.Now().UnixNano()
 	commands = fmt.Sprintf("andara.test.rec.commands.%s.%d", tag, nonce)
 	events = fmt.Sprintf("andara.test.rec.events.%s.%d", tag, nonce)
-	for _, tp := range []string{commands, events} {
-		if _, err := adm.CreateTopic(ctx, sim.PartitionCount, 1, nil, tp); err != nil {
-			t.Fatal(err)
-		}
-	}
 	t.Cleanup(func() {
 		dctx, dcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer dcancel()
 		_, _ = adm.DeleteTopics(dctx, commands, events)
 		cl.Close()
 	})
+	for _, tp := range []string{commands, events} {
+		if _, err := adm.CreateTopic(ctx, sim.PartitionCount, 1, nil, tp); err != nil {
+			t.Fatal(err)
+		}
+	}
 	return commands, events
 }
 
@@ -401,10 +401,6 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 
 		// AC-8: every acknowledged Command is below the replayed head of its
 		// Partition, and the record at that offset is the one acknowledged.
-		src, err := tickloop.NewCommandSource(context.Background(), h.bk, h.commands, "recovery-it-ack", map[int32]int64{})
-		if err == nil {
-			defer src.Close()
-		}
 		ks := tickloop.KafkaRecords{Brokers: h.bk, Topic: h.commands}
 		for _, a := range h.acks {
 			if head := e.State().Offsets[a.partition]; a.offset >= head {

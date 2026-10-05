@@ -12,6 +12,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
@@ -81,9 +82,13 @@ type Options struct {
 	// OnRestored is called with the content a restored round had in effect.
 	OnRestored func([]sim.SwapApplied)
 
-	Metrics *Metrics
-	Log     *slog.Logger
-	Tracer  trace.Tracer
+	// Restores counts the restore under andara_restore_total; nil uses
+	// Metrics.Restores. A verify inside a running server counts on the live
+	// instrument while every other recovery instrument stays its own.
+	Restores *prometheus.CounterVec
+	Metrics  *Metrics
+	Log      *slog.Logger
+	Tracer   trace.Tracer
 	// Now is the clock the phases are measured with.
 	Now func() time.Time
 }
@@ -208,7 +213,11 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 			caller = CallerVerify
 		}
 		if oc := sim.RestoreOutcome(err); oc != "" {
-			o.Metrics.Restores.WithLabelValues(caller, oc).Inc()
+			restores := o.Restores
+			if restores == nil {
+				restores = o.Metrics.Restores
+			}
+			restores.WithLabelValues(caller, oc).Inc()
 			rspan.SetAttributes(attribute.String("outcome", oc))
 		}
 		rspan.End()
@@ -266,8 +275,11 @@ func Recover(ctx context.Context, o Options) (*sim.Engine, Report, error) {
 		o.logRefusal(ctx, err, traceID)
 		return fail(err)
 	}
-	if c, ok := src.(io.Closer); ok {
+	switch c := src.(type) {
+	case io.Closer:
 		defer func() { _ = c.Close() }()
+	case interface{ Close() }:
+		defer c.Close()
 	}
 	records := int64(0)
 	err = o.replay(ctx, eng, src, &rep, &records)

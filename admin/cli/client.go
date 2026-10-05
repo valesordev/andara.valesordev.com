@@ -168,6 +168,12 @@ func (rt *runtime) authClient() (authv1connect.AuthClient, error) {
 // adminClient is Admin with the stored session token as bearer. A missing
 // credential is a usage error: nothing was attempted.
 func (rt *runtime) adminClient() (adminv1connect.AdminClient, error) {
+	return rt.adminClientWith(false)
+}
+
+// adminClientWith is adminClient, optionally without the whole-request
+// deadline: a call that sets its own context deadline (snapshot verify).
+func (rt *runtime) adminClientWith(noDeadline bool) (adminv1connect.AdminClient, error) {
 	cred, err := rt.loadCredential()
 	if err != nil {
 		return nil, err
@@ -181,16 +187,23 @@ func (rt *runtime) adminClient() (adminv1connect.AdminClient, error) {
 	if err != nil {
 		return nil, err
 	}
+	if noDeadline {
+		hc.Timeout = 0
+	}
 	return adminv1connect.NewAdminClient(hc, rt.baseURL(), rt.clientOptions(cred.SessionToken)...), nil
 }
 
 // callCtx bounds one RPC by --timeout and carries the command span.
 func (rt *runtime) callCtx() (context.Context, context.CancelFunc) {
-	ctx := rt.ctx
-	if ctx == nil {
-		ctx = context.Background()
+	return context.WithTimeout(rt.callBase(), rt.settings.Timeout)
+}
+
+// callBase is the command's context, without a deadline of its own.
+func (rt *runtime) callBase() context.Context {
+	if rt.ctx == nil {
+		return context.Background()
 	}
-	return context.WithTimeout(ctx, rt.settings.Timeout)
+	return rt.ctx
 }
 
 // rpcError maps a failed RPC onto the exit-code contract: the server not

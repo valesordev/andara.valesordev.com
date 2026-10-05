@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
 	"time"
 
 	"google.golang.org/protobuf/proto"
@@ -23,6 +24,7 @@ const (
 	codeInvalidArgument    = 3
 	codeDeadlineExceeded   = 4
 	codeNotFound           = 5
+	codeResourceExhausted  = 8
 	codeFailedPrecondition = 9
 )
 
@@ -44,7 +46,10 @@ func (e *snapshotStatus) Status() (uint32, string, string, proto.Message) {
 // SnapshotAdmin is the Snapshot Round half of Admin (AW-SRV-007), over the
 // store and the log the server is configured with. It never touches the live
 // Engine: a verify restores a scratch one.
-type SnapshotAdmin struct{ rt *Runtime }
+type SnapshotAdmin struct {
+	rt   *Runtime
+	busy sync.Mutex
+}
 
 // NewSnapshotAdmin builds the Admin seam for the gateway.
 func (rt *Runtime) NewSnapshotAdmin() *SnapshotAdmin { return &SnapshotAdmin{rt: rt} }
@@ -94,6 +99,12 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 		return nil, &snapshotStatus{codeInvalidArgument, "tick_required", "tick must be above 0"}
 	}
 	rt := a.rt
+	// One verify at a time: each holds a whole scratch Engine in the serving
+	// process.
+	if !a.busy.TryLock() {
+		return nil, &snapshotStatus{codeResourceExhausted, "verify_busy", "another snapshot verify is running; try again when it ends"}
+	}
+	defer a.busy.Unlock()
 	ctx, cancel := context.WithTimeout(ctx, rt.Cfg.RecoveryVerifyTimeout)
 	defer cancel()
 	inEffect := false
@@ -108,28 +119,21 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	tick := sim.Tick(req.GetTick())
 	// A scratch recovery: it reports nothing to the live Engine, the content
 	// source, or the recovery gauges that RecoveryStateMismatch pages on.
-	o = scratchOptions(o, tick)
+	o = scratchOptions(o, tick, rt.RecoveryMetrics())
 	_, rep, rerr := recovery.Recover(ctx, o)
-	resp, err := verifyResponse(rerr, rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
-	// Counted as andara_restore_total{caller="verify"}: ok, or the restore's
-	// own refusal.
-	outcome := "ok"
-	if rerr != nil {
-		outcome = sim.RestoreOutcome(recovery.Classify(rerr).Err)
-	}
-	if outcome != "" {
-		rt.RecoveryMetrics().Restores.WithLabelValues(recovery.CallerVerify, outcome).Inc()
-	}
-	return resp, err
+	return verifyResponse(rerr, rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
 }
 
 // scratchOptions turns boot's recovery Options into a verify of round tick: it
 // names the round, and reports to nothing live: not the Engine, not the content
 // source, and not the recovery instruments RecoveryStateMismatch pages on.
-func scratchOptions(o recovery.Options, tick sim.Tick) recovery.Options {
+//
+// The restore is the one thing it counts live: andara_restore_total{caller="verify"}.
+func scratchOptions(o recovery.Options, tick sim.Tick, live *recovery.Metrics) recovery.Options {
 	o.Round, o.Verify = &tick, true
 	o.After, o.OnEngine, o.OnRestored = nil, nil, nil
 	o.Metrics = recovery.NewMetrics(nil)
+	o.Restores = live.Restores
 	return o
 }
 
