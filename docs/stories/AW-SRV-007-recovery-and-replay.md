@@ -174,6 +174,21 @@ match, so that a crash is an interruption rather than an incident.
     `Admin.VerifySnapshotRound` **then** the RPC returns `FAILED_PRECONDITION` (`NOT_FOUND` when no
     object exists at the tick), and `andara-cli snapshot verify` exits `1`.
     *(Added in PR #356 review, 2026-10-03.)*
+16. **Given** a round written at content version V and a content swap applied after it, which adds or
+    removes a Zone, **when** the server is killed and recovers **then** the round is judged complete against
+    the Zones of V, not of the content in effect at boot: it is selected, restored on V, and the swap is
+    replayed from the log. A Zone object the round's own content doesn't list is
+    `sim.ErrRoundZoneUnknown` (exit `6`, `reason=content`), and a Zone it lists with no object is `missing`
+    (exit `7` when named). The owned set is the round's content's Zones that this process's Partitions own
+    (all 64 today, ADR-0002). A round whose content can't be resolved is exit `6` with `reason=content`
+    naming the pack versions, not `incomplete`. `snapshot list` judges each round the same way.
+    *(Added 2026-10-05, architecture, at §8: the owned-Zone question in the implementation's requests.)*
+17. **Given** a Character that is in a `Transit` record when the process is killed, with its Session gone
+    at the restart, **when** the handoff lands (the retry places it) **then** its body is marked linkdead
+    (an `UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`), as for a body present at recovery.
+    `MarkLinkdead` rejects `in_transit`, so the mark is retried until the Entity is placed or gone, not
+    issued once at boot. Until then the Character's Account can't select it, as for any Character in transit.
+    *(Added 2026-10-05, architecture, at §8; see the feedback file's item 3.)*
 
 ## Interface contract
 
@@ -232,8 +247,12 @@ reader at the round's own tick (`SeekAfter(round − 1)`), reads that `TickCompl
 replays and never loads the topic. That settles the open question inherited from PR #32. A
 cold start with no round reads from offset 0, as AC-9 says.
 
-Ready means: hash verified, consumer lag under `sim.tick_budget_ms × 10`, and the first live tick
-completed. `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
+Ready means: hash verified, the loop's schedule lag (`andara_simulation_lag_seconds`) under
+`sim.tick_budget_ms × 10`, and the first live tick completed. *(Amended 2026-10-05: it said "consumer
+lag", which is per-Partition offsets and has no duration. The schedule is anchored at the loop's start, so
+after a long recovery this checks that the first ticks keep pace; it doesn't say the commands backlog is
+drained. Commands accepted before the crash are applied in order at `max_per_tick`, visible on
+`andara_tick_deferred_records`, and are delayed, not lost.)* `/readyz` (`AW-INF-003`) reads this flag; nothing else sets it.
 
 ### Exit codes
 
@@ -336,7 +355,9 @@ behind `ListRounds`), `ErrLogGap{Partition, Need, Have}`,
 #356's review so that it names AC-15's causes and the Zones involved; for `disagree`, AC-11's two
 values ride on the log line; the snapshot writer in `tickloop` and `store.ListRounds`' existing
 callers set `cause=missing` where they set `Missing` today), `ErrOffsetGap` (from
-`AW-SRV-002`, re-raised during replay).
+`AW-SRV-002`, re-raised during replay). `Admin.VerifySnapshotRound` runs one verify at a time and refuses
+a second with `FAILED_PRECONDITION`, ErrorInfo reason `verify_busy` (a reason inside the pinned
+`admin.proto`'s statuses; it doesn't queue, ruled 2026-10-05); `andara-cli snapshot verify` exits `1`.
 
 ## Data / state impact
 
@@ -429,9 +450,11 @@ Recorded in `docs/feedback/AW-SRV-007-recovery-scale.md`, item 5.
     - That work is routed to PM in `docs/feedback/AW-INF-009-recovery-state-mismatch-cluster.md`.
       PM's decision (2026-10-02): `AW-INF-009` carries it in SPRINT-05, and architecture amends
       that story's contract. It doesn't hold this one.
-  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. Compose has no restart
-    policy, so after the 60 s linger the target goes stale and the gauge's last `0` stops being
-    scraped. `keep_firing_for` keeps the alert visible after the process has gone.
+  - **The rule.** It fires with `for: 0m` and carries `keep_firing_for: 15m`. *(Corrected 2026-10-05
+    from SRE's note: compose does have `restart: on-failure` since `AW-SRV-026`, so a refused recovery loops:
+    each cycle recovers, mismatches, lingers 60 s and exits, and the target is stale between lingers.
+    `keep_firing_for` bridges those gaps and holds the page 15 minutes after the loop is stopped. The first
+    version of this bullet said compose had no restart policy.)*
   - **§8.** `RecoveryStateMismatch` is observed in the local stack's Prometheus:
     - **firing**, against a compose server recovering from a deliberately corrupted round;
     - **never in `ALERTS`**, at neither `alertstate`, through a normal compose recovery
@@ -644,7 +667,13 @@ replay begins: a log still being written (a verify against a running server) has
 **Deviations and questions for architecture:** the owned-Zone set is the loaded content's Zones; "consumer lag under ten
 tick budgets" is read as the loop's schedule lag; and recovery now marks Characters a crash left standing linkdead.
 
+**Architecture's rulings on the questions above (2026-10-05)** are in
+`docs/feedback/AW-SRV-007-implementation-requests.md`. Two change the contract and need implementation:
+AC-16 (the owned set comes from the round's own content) and AC-17 (a Character in transit at the kill is
+marked linkdead when it lands). The "schedule lag" reading and `verify_busy` stand as built.
+
 **Outstanding before `done`:**
+- **AC-16 and AC-17**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
 - SRE: the Helm key `recovery.mismatch_linger` (PR open on main) and the regenerated values schema, the `stack-boundary-lost`
   read-back (`round_tick + ticks_replayed == tick`), compose's `60s`, the `RecoveryStateMismatch` rule, the runbook,
   and the CI job. **`make check` fails only at `values-schema-check` until that key merges.**

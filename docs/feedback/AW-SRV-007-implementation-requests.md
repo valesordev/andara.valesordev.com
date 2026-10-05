@@ -62,3 +62,76 @@ should answer.
    (hundreds of MB at the sizing fixture), so the server runs one at a time and refuses the next with
    `FAILED_PRECONDITION`, ErrorInfo reason `verify_busy`. The pinned `admin.proto` lists the statuses and not the
    reasons, so this is inside it; tell me if you'd rather it queue.
+
+## Architecture: the rulings (2026-10-05)
+
+Two of the four change the contract (1 and 3) and need implementation. The story is amended; it stays at
+`review`, because AC-16 and AC-17 are new and neither is built.
+
+### 1. The owned Zone set comes from the round's own recorded content (AC-16)
+
+Your reading, the loaded content's Zones, is wrong in a case that isn't rare. A round is taken every 60 s
+and a content swap can land any time after it, so a swap that adds or removes a Zone between the last round
+and the kill is routine. The round then lists `incomplete` for a Zone the current content lacks, and
+recovery falls back to an older round or to a full-log replay, which is the RTO this story exists to hold, or
+exit `3` if retention doesn't reach back. An extra Zone in the current content fails as exit `6` for a round
+that is fine.
+
+The round already says which Zones it covers. Every envelope carries `content` and `content_digest`
+(`snapshot.proto` fields 8 and 9: "Every Zone's envelope in a round carries the same values"), and the field's
+own comment says recovery resolves those versions and rebuilds the topology before loading the body. So:
+- read one envelope's header from the group, resolve its `content` (as recovery must anyway), and take that
+  topology's Zones, narrowed to the Partitions this process owns (all 64 today, ADR-0002), as the owned set
+  for that round. Completeness is then judged against it, and per round, so `ListRounds` and `NewestComplete`
+  take the set from each group and not from one argument;
+- a Zone object the round's content doesn't list is the existing `ErrRoundZoneUnknown` (exit `6`,
+  `reason=content`). A listed Zone with no object is `missing`;
+- envelopes in one group that disagree on `content` are `disagree` (AC-11's list already names it);
+- content that can't be resolved at those versions is exit `6` with `reason=content` naming the pack
+  versions. It is not `incomplete`: nothing is wrong with the round's objects.
+
+A World with no content yet writes no round, so "no owned Zones, vacuously complete" can't arise from a real
+round. The test for it is a `ListRounds` over a store with no objects.
+
+**Test (AC-16):** write a round at V, swap content to V+1 with an added Zone (and again with a removed one),
+kill, recover: the round is selected and the swap replays. `server/store` also needs the unit case the other
+way: an object for a Zone the round's content doesn't list.
+
+### 2. "Consumer lag" in Ready is the loop's schedule lag, as you read it
+
+Your reading stands, and the story is amended to say so. `andara_consumer_lag` is offsets per Partition (64
+series) and has no duration to compare with `sim.tick_budget_ms × 10`. `andara_simulation_lag_seconds` is the
+SLI `docs/specs/slo/tick-health.md` already names. What it doesn't give is "the commands backlog is drained",
+and I'm not adding that: commands accepted before the crash are applied in order at `max_per_tick`, visible on
+`andara_tick_deferred_records`, so a long backlog delays players and loses nothing. I would revisit if
+`/readyz` turning true while a backlog drains shows up as player-visible lag in an RTO test. The amendment
+says the consequence.
+
+### 3. Bodies a crash left present: your reading is the contract, with one hole closed (AC-17)
+
+The story's inherited line already says a body present with no Session is marked linkdead at recovery. Your
+reading (every Character body, `Template == andara.core.Character`, a `MarkLinkdead` each, an
+`UnbindCharacter{QUIT}` when `session.linkdead_grace` is `0`, before the loop runs; an NPC untouched) is that
+line, and `AW-SRV-014`'s README line "nothing at boot invents an unbind" becoming "nothing but this" is right.
+
+The hole: a Character in a `Transit` record at the kill isn't in any Zone's `Entities`, so a sweep over
+present bodies skips it, and `MarkLinkdead` rejects `in_transit` (my `AW-SRV-028` ruling, item 3). The
+retry then lands it, non-linkdead and with no Session. `BindCharacter` doesn't reject a present,
+non-linkdead body (`AW-SRV-015` struck `ErrNotLinkdead`), so the Account can still rebind it. But until it
+does, nothing times the body out: it stays in the world with no linkdead deadline, which is the "present
+forever" the story's inherited line is there to prevent. The sweep therefore keeps the IDs of Characters it found in `Transit` and retries their mark until the Entity is
+placed or gone. That is AC-17. The existing `TestRecoveryWithAHandoffInFlight` is the natural place to add
+a Character.
+
+### 4. `verify_busy` stands
+
+One verify at a time, refused with `FAILED_PRECONDITION` and reason `verify_busy`, is inside the pinned
+`admin.proto` (it lists statuses, not reasons). A queue would hold a hundreds-of-MB scratch Engine per
+waiting caller. It's in the story's error taxonomy now. `snapshot verify` exits `1`.
+
+### SRE's correction (2026-10-05)
+
+Applied: the story's amendment no longer says compose has no restart policy. It says a refused recovery
+loops under `restart: on-failure` and that `keep_firing_for` bridges the stale gaps and holds the page after
+the loop is stopped.
+
