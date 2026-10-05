@@ -6,7 +6,7 @@ component: server
 type: feature
 status: draft
 size: M
-depends_on: [AW-CLI-013, AW-SRV-012, AW-SRV-014, AW-SRV-007, AW-SRV-028]
+depends_on: [AW-CLI-013, AW-SRV-012, AW-SRV-014, AW-SRV-007, AW-SRV-028, AW-SRV-050]
 blocks: []
 lane: implementation
 risk: medium
