@@ -59,6 +59,36 @@ groups:
         annotations:
           summary: "andara-server restarted more than 3 times in 10 minutes"
           runbook: docs/runbooks/server-crashlooping.md
+  - name: andara-recovery
+    # AW-SRV-007, tied to docs/specs/slo/recovery.md: "a World that recovered to the wrong
+    # state must never take traffic". Ships with AW-SRV-007; before it the gauge has no series
+    # and the rule evaluates nothing.
+    rules:
+      - alert: RecoveryStateMismatch
+        # The server sets the gauge to 0 on exit 8 (the State Hash differs after replay) and on
+        # exit 6 (a round that doesn't reproduce its own tick), then exits. It is never
+        # pre-seeded: a registered gauge exposes 0 at once, so a 0 before recovery had set it
+        # would fire this on every normal boot. A process that exits at once is never scraped,
+        # so compose sets recovery.mismatch_linger to 60s, which holds /metrics and /livez up
+        # for that long (the projector's haltLinger). Compose has no restart policy, so after
+        # the linger its static target goes stale and the 0 stops being scraped; keep_firing_for
+        # keeps the page visible for 15 m after that, long enough to be read.
+        #
+        # On the cluster this expression can't fire: the annotation scrape keeps only Ready
+        # pods, and a refused recovery was never Ready, so the 0 is never scraped, linger or
+        # not. What pages there is AndaraServerUnavailable, whose runbook sends exits 8 and 6
+        # here. A signal that outlives the process (kube-state-metrics' last exit code, or a
+        # Loki rule on the error line) is AW-INF-009's, in SPRINT-05, and it will be a new
+        # expression. This rule has been observed firing on compose only.
+        expr: andara_recovery_state_hash_match == 0
+        for: 0m
+        keep_firing_for: 15m
+        labels:
+          severity: page
+          slo: recovery
+        annotations:
+          summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+          runbook: docs/runbooks/recovery-state-mismatch.md
   - name: andara-tick
     # The tick loop (AW-SRV-002). One alert, on the symptom: players experience the world
     # responding late, which is lag. Overruns and consumer lag are causes — dashboard
