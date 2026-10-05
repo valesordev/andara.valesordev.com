@@ -57,18 +57,22 @@ instead of trusting tests alone.
    gauge reads 0.
 2. **Given** `drop` with `n = 1` **when** a Character crosses Zones **then** the first `Arrive` is not
    produced, `andara_handoffs_in_transit` is 1 until the retry, the retry is produced after
-   `sim.handoff_retry_ticks`, the Character is placed, and `andara_handoff_retries_total` is 1.
+   `sim.handoff_retry_ticks` (1 s at the default 10 ticks and 10 Hz, so a scrape must poll faster than that),
+   the Character is placed, and `andara_handoff_retries_total` is 1.
 3. **Given** `drop` with `n = 3` **when** a Character crosses **then** exactly three productions are lost
    (the original and two retries), `andara_handoff_retries_total` is at least 3, and the Character is placed
    by the fourth.
 4. **Given** `delay` with `d` greater than `sim.handoff_retry_ticks` **when** a Character crosses **then** the
-   retry is applied first, the Character is placed once, the delayed original is stale-acked, and
+   original `Arrive` is held `d` ticks (only the first production of each handoff is held; its retries are
+   not), the retry is applied first, the Character is placed once, the delayed original is stale-acked, and
    `andara_handoff_stale_arrivals_total` is 1. No second body exists.
 5. **Given** the mode on **when** the server starts **then** it logs one `warn` naming the mode and its
    arguments, and the gauge reads 1.
-6. **Given** the mode on and a kill (`SIGKILL`) between the dropped `Arrive` and its retry **when** the
-   server recovers **then** the `Transit` record is retried from the recovered state and the Character is
-   placed (`AW-SRV-028` AC-2 holds with injection on).
+6. **Given** `drop` with `n = 1` on, and a kill (`SIGKILL`) between the dropped `Arrive` and its retry
+   **when** the server restarts with the mode off **then** the first `DueHandoffs` call retries the `Transit`
+   record from the recovered state and the Character is placed (`AW-SRV-028` AC-2). The drop count is per
+   process: a server restarted with the mode on starts its count again, and drops its first recovered retry
+   too.
 7. **Given** the mode's arguments out of range (`n` below 1, `d` below 1, or an unknown mode) **when** the
    server starts **then** it exits 1 and names the key.
 8. **Given** the mode on **when** it affects a production **then** the injection is logged at `debug` with
@@ -79,7 +83,8 @@ instead of trusting tests alone.
 ```go
 // CONTRACT SKETCH — not an implementation
 // The seam is AW-SRV-028's: where the tick loop produces an Arrive for a Transit record.
-// The surface (config key, env var, CLI flag, admin RPC) is Open question 1.
+// The seam is the tick loop's Publisher (outside the Engine, CLAUDE.md §10), which carries the original
+// Arrive and its retries. The surface (config key, env var, CLI flag, admin RPC) is Open question 1.
 type ArriveFault interface {
     // Produce reports whether this Arrive production goes out now, or is lost, or is held.
     Produce(entity sim.EntityID, seq uint64, tick sim.Tick) Decision
@@ -87,7 +92,9 @@ type ArriveFault interface {
 type Decision int // Send | Drop | Hold(until tick)
 ```
 
-- **Modes:** `drop` with `n` productions, `delay` with `d` ticks. Off by default.
+- **Modes:** `drop` with `n` productions (counted per process, across handoffs, from the first), `delay` with
+  `d` ticks (the first production of each handoff only). Off by default. The argument syntax is part of the
+  surface (Open question 1a).
 - **Metrics:** `andara_handoff_fault_active` — gauge, 0 or 1, no labels, pre-registered at 0.
   `andara_handoff_fault_injected_total` — counter, label `mode` (`drop`, `delay`). Two series, pre-registered.
 - **Surface:** `[ASSUMPTION]` a server config key set in the local stack's compose file, for example
@@ -110,7 +117,9 @@ reaching into it).
 
 ### Logs
 - `warn` once at start when on: `mode`, arguments, plus the required fields.
-- `debug` per injected production: `entity_id`, `handoff_seq`, `mode`, `tick`, `trace_id`.
+- `debug` per injected production: `entity_id`, `handoff_seq`, `mode`, `tick`, `trace_id`. The stack logs at
+  `info` by default (`ANDARA_LOG_LEVEL`, `deploy/compose/docker-compose.yaml`), so the debug lines show only
+  at `ANDARA_LOG_LEVEL=debug` (`AW-INF-036` sets it).
 
 ### Traces
 - None. An injected loss has no span; the retry's `command.apply` is as `AW-SRV-028` describes.
@@ -143,6 +152,6 @@ CLAUDE.md §8, plus:
       build tag, or both. §10 allows no privileged back door into a running process, so an admin RPC needs an
       ADR-level answer.
    c. **The `error` line.** Dropping or delaying an `Arrive` can't produce the "impossible `Arrive`" `error`
-      log (`AW-SRV-028` AC-4's third case). Is that line carried here by a third mode (a malformed `Arrive`),
+      log (`AW-SRV-028` AC-9: an `Arrive` rejected `entity_present` or `invalid_arrival`, logged at `error`). Is that line carried here by a third mode (a malformed `Arrive`),
       or left to tests with the §8 record saying so?
 2. `[ASSUMPTION]` Size M: two modes, two metrics, a recovery test, and a startup guard.

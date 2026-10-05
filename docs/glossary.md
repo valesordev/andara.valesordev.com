@@ -705,7 +705,12 @@ Ready pod is scraped, and a linger would only slow the crash-loop alert.
 gone at a restart, so a body the crash left standing has none; recovery marks it linkdead (or unbinds it
 when `session.linkdead_grace` is `0`) so it despawns on the grace schedule instead of standing forever
 (`AW-SRV-007`, from `AW-SRV-015`). A Character in a `Transit` record at the kill isn't a body present at
-boot, so the sweep misses it: see **Transit Mark**.
+boot, so the sweep misses it: see **Failure Injection** — A server mode, off by default and refused outside the local stack, that loses or
+delays a cross-Zone `Arrive` so a retry, a stale arrival and a stuck crossing can be observed on the running
+server (`AW-SRV-051`, draft; surface pending architecture). It acts at the tick loop's production seam,
+never inside the Engine.
+
+**Transit Mark**.
 
 **Transit Mark** — The linkdead mark owed to a Character that was in a `Transit` record when the server was
 killed. Its body lands after recovery non-linkdead with no Session, so the Roster retries the mark until the
