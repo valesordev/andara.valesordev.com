@@ -438,8 +438,9 @@ rather than a quietly wrong World.
   float64 (#423, ruled 2026-10-05).
 
 ### Traces
-- `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `key`; amended 2026-10-05: the object's size is
-  `andara_snapshot_bytes{zone}`, from the writer, and the key names the object a failed load is about),
+- `recovery.run` root; children `recovery.load_snapshot` (per Zone, `zone_id`, `key` and `bytes`, the loaded payload's size; amended 2026-10-05: SRE's
+  check found `key` and no `bytes`, and `andara_snapshot_bytes{zone}` can't stand in, since it is the writer's gauge,
+  set only when a new round is written, so it is absent while recovery loads and later describes another round),
   `recovery.seek`, `recovery.replay` (`ticks`, `records`), `recovery.verify`.
 
 ### Alerts
@@ -746,7 +747,7 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
 (`docs/feedback/AW-SRV-007-recovery-scale.md`, "Architecture: SRE's §8 deviations"):**
 - A test asserting `andara_snapshot_failures_total{reason="encode"}` on the metric object
   (`server/tickloop/snapshot.go:428` increments it; no test asserts it). Implementation.
-- `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
+- `bytes` on `recovery.load_snapshot` (the loaded payload's size, beside `key`), `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
   `recovery restore mismatch` (#423). Implementation.
 - The recovery-timing comparison table: SRE, from the first passing run after #424's fix.
 - **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
