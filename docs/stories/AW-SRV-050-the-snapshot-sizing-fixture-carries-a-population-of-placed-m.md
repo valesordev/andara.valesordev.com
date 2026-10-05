@@ -1,7 +1,7 @@
 ---
 id: AW-SRV-050
 title: The snapshot sizing fixture carries a population of Placed marks
-epic: EPIC-08
+epic: EPIC-02
 component: server          # server | cli | infra | client
 type: chore                # feature | infra | spike | chore | bug
 status: draft              # draft | ready | in-progress | review | done | blocked
@@ -21,8 +21,9 @@ two thresholds on `andara_handoff_placed_entries`, 25,000 and 100,000, and says 
 measured against marks. The sizing fixture's in-tick copy already takes about 12 of its 15 ms
 `snapshot.max_stall_ms` without marks, so marks draw on 2 to 3 ms of headroom.
 
-SRE asked for the measurement, and architecture agreed (`docs/feedback/AW-SRV-028-handoff-contract.md`,
-"For PM: a follow-up for the sizing fixture with marks"). It belongs before `AW-SRV-047`, whose Item
+SRE asked for the measurement (`docs/feedback/AW-SRV-028-handoff-contract.md`, "For PM: a follow-up for
+the sizing fixture with marks"); `AW-SRV-028`'s Test plan says architecture agreed in a message that isn't in
+the repository. It belongs before `AW-SRV-047`, whose Item
 Instances take a new Entity ID each time they're placed, and are what make marks grow.
 
 ## User story
@@ -36,8 +37,8 @@ Hash, so that the runbook's thresholds are numbers I can trust instead of guesse
 - Give the sizing fixture (`server/simtest/sizing.go`: 16 Zones, 25,000 Entities, 15 ms
   `snapshot.max_stall_ms`) a `Placed` mark population, at 25,000 and at 100,000.
 - Record the in-tick copy time and the State Hash cost with each population, with and without `-race`.
-- Replace the runbook's two thresholds with measured ones (the number changes go in the same PR as a
-  request to SRE: the runbook is `docs/runbooks/`, SRE's).
+- Hand SRE the measured numbers in a `docs/feedback/` request, so it replaces the runbook's two thresholds
+  (`docs/runbooks/` is SRE's).
 
 ### Out of scope
 - Pruning the marks (a `HandoffClosed` record) — `AW-SRV-028`'s Out of scope names it. Whether it is
@@ -51,16 +52,17 @@ Hash, so that the runbook's thresholds are numbers I can trust instead of guesse
    copy time and State Hash cost are written to the test's output file (`recovery-timing.json`'s
    sibling, name `[ASSUMPTION]` below), by build (`-race` and not).
 2. **Given** the fixture with 100,000 marks **when** it runs **then** the same two numbers are recorded.
-3. **Given** the fixture with no marks **when** it runs **then** its result matches today's within the
-   test's own noise, so the baseline is unchanged.
-4. **Given** the recorded numbers **when** the PR merges **then** the runbook request names a threshold
-   for each of the 25,000 and 100,000 rows, each computed from the recorded cost and the stall budget
-   as stated in the request (not guessed).
+3. **Given** the `marks=0` subtest **when** it runs **then** it passes today's stall limit, allocation bound
+   and bytes bound unchanged, so the baseline is unchanged.
+4. **Given** the recorded numbers **when** the PR merges **then** `docs/feedback/` holds a request to SRE
+   listing, for each of 0, 25,000 and 100,000 marks, the recorded `copy_cpu_ms` and `hash_cpu_ms` by build,
+   and the marginal cost per mark in ms. The thresholds themselves are SRE's (Open question 1).
 5. **Given** the fixture's marks **when** they are built **then** every mark's Entity ID is unique and
    the sequence is non-zero, so the cost measured is the cost of a real population.
-6. **Given** `go test` with and without `-race` **when** the new cases run **then** each completes and
-   is gated by a stall limit of its own, so CI doesn't go red on a mark population before the limit exists
-   for it. `[ASSUMPTION]` the limit is the existing CPU-time guard's factor (`#172`).
+6. **Given** `go test` with and without `-race` **when** the `marks=25000` and `marks=100000` subtests run
+   **then** they pass without the `marks=0` recorded allocation and bytes bounds (`recordedAllocs`,
+   `recordedBytes`, `allocBoundCount`, `allocBoundBytes`), which apply to `marks=0` only, and each is gated
+   by the CPU-time guard `snapshotStallFactor` (`#172`) against the stall budget.
 
 ## Interface contract
 
@@ -68,8 +70,10 @@ Hash, so that the runbook's thresholds are numbers I can trust instead of guesse
 // CONTRACT SKETCH — not an implementation
 package simtest
 
-// SizingFixture gains a mark population. Zero marks is today's fixture.
-func SizingFixture(opts ...SizingOption) *sim.Engine
+// The sizing engine gains a mark population. Zero marks is today's fixture.
+// Today: SizingEngine(seed) (*sim.Engine, error) and SizingEngineWith(seed, content).
+// New (names are a proposal): an option on SizingEngineWith that adds n Placed marks.
+func SizingEngineWith(seed uint64, content sim.ContentSource, opts ...SizingOption) (*sim.Engine, error)
 func WithPlacedMarks(n int) SizingOption
 ```
 
@@ -109,4 +113,8 @@ CLAUDE.md §8, plus:
 ## Open questions
 - `[ASSUMPTION]` The artifact's name and shape, and the limit in AC-6. Neither changes another story's
   contract.
-- `[ASSUMPTION]` Size S: the fixture is one constant, per `AW-SRV-006`.
+1. **The threshold rule.** *(SRE's, with architecture.)* What fraction of `snapshot.max_stall_ms` a mark
+   population may use, and so the two runbook numbers, is not decided here.
+- `[ASSUMPTION]` Size S: `AW-SRV-006` makes `sizing.go` the one place to change the scale. This story also
+  adds options, subtests, a hash measurement and an artifact, so it is a small S; split it if the hash
+  measurement needs its own harness.

@@ -24,7 +24,8 @@ nothing times it out: it stays in the World with no linkdead deadline. The hole 
 `AW-SRV-007` doesn't widen it. Architecture split it out of that story at its §8 (2026-10-05, Brian's
 decision, `docs/feedback/AW-SRV-007-transit-orphan-mark.md`) after four review rounds each found a
 further gap in the fix. It's an ordering protocol between the Roster and the sim across Zone
-partitions, so it is its own story. Candidate for SPRINT-05.
+partitions, so it is its own story. Held out of any sprint until architecture rules (Open question 1; the question is also in
+`docs/feedback/AW-SRV-048-transit-orphan-design.md`).
 
 The design below is what those reviews found, so it is the list of things any answer must hold, not a
 finished contract. Whether the answer is a Roster protocol or a sim-level guard is architecture's
@@ -55,9 +56,9 @@ once it lands, so that a crash never leaves a body in the World that nothing wil
 - A `Select` whose own produce failed leaving its body unmarked until the next select: an accepted limit
   (`AW-SRV-014` AC-11's failed-teardown-produce path). Don't close it here.
 - `SelectCharacter` waiting on a crossing, the roster freeing a linkdead hold that never ends, and a
-  teardown rejected `in_transit` being retried — a separate roster and Gateway story that follows
-  `AW-SRV-028` (architecture's request, `docs/feedback/AW-SRV-028-handoff-contract.md`). This story marks
-  an orphan after a crash, and that one handles live handoffs.
+  teardown rejected `in_transit` being retried — `AW-SRV-049` (architecture's request,
+  `docs/feedback/AW-SRV-028-handoff-contract.md`). This story marks an orphan after a crash, and that one
+  handles live handoffs.
 - NPCs, which the sweep leaves untouched (`Template == andara.core.Character` is the Character test).
 - Pruning, quarantine and `HandoffRejected` — `AW-SRV-027`.
 
@@ -139,7 +140,9 @@ the mark acts on bodies that have none.
 ### Logs
 - `info` per Character when a mark is applied or skipped: `character_id`, `outcome`, `zone_id`,
   `attempt`, plus the required fields and the correlation ID. Per-event, not per tick.
-- `warn` when a mark has retried `sim.handoff_retry_max_ticks` worth of periods without the body placed.
+- `[ASSUMPTION]` `warn`, once per Character, when a mark attempt is older than `sim.handoff_retry_max_ticks`
+  ticks and the body is still not placed (the key is `AW-SRV-028`'s backoff ceiling, reused here only as a
+  threshold; SRE to confirm or drop it at the §7 review).
 
 ### Traces
 - `roster.mark_transit.attempt` per attempt (`character_id`, `zone_id`, `outcome`), a root span: the
@@ -162,8 +165,10 @@ the mark acts on bodies that have none.
 
 ## Definition of done
 CLAUDE.md §8, plus:
-- `AW-SRV-014`'s README line "nothing at boot invents an unbind" stays "nothing but the boot sweep and
-  the mark of a Character that was in transit".
+- The roster README names this mark beside the boot sweep. `AW-SRV-007`'s review rulings turn the line
+  "nothing at boot invents an unbind" into "nothing but this" (`docs/feedback/AW-SRV-007-implementation-requests.md`,
+  item 3); this story widens that exception to the in-transit mark, in whatever README holds the line once
+  `AW-SRV-007` lands it.
 - The story's §8 record says whether the first live observation of `andara_transit_orphan_marks_total`
   is in the cluster or only against the local stack (§8, no in-cluster caller).
 

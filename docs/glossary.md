@@ -704,7 +704,12 @@ Ready pod is scraped, and a linger would only slow the crash-loop alert.
 **Orphaned Body** — A Character body present in a Room, and not linkdead, after a recovery. Every Session is
 gone at a restart, so a body the crash left standing has none; recovery marks it linkdead (or unbinds it
 when `session.linkdead_grace` is `0`) so it despawns on the grace schedule instead of standing forever
-(`AW-SRV-007`, from `AW-SRV-015`).
+(`AW-SRV-007`, from `AW-SRV-015`). A Character in a `Transit` record at the kill isn't a body present at
+boot, so the sweep misses it: see **Transit Mark**.
+
+**Transit Mark** — The linkdead mark owed to a Character that was in a `Transit` record when the server was
+killed. Its body lands after recovery non-linkdead with no Session, so the Roster retries the mark until the
+body is placed, and a rebind that gets there first cancels it (`AW-SRV-048`, draft).
 
 **Recovery Point Objective (RPO)** — Maximum acceptable World state loss after an unplanned restart.
 **Zero acknowledged actions.** A Command is durable on at least two brokers before the player is acked,

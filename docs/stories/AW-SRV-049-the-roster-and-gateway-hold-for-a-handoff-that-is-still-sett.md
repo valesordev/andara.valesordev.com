@@ -1,7 +1,7 @@
 ---
 id: AW-SRV-049
 title: The roster and Gateway hold for a handoff that is still settling
-epic: EPIC-04
+epic: EPIC-08
 component: server          # server | cli | infra | client
 type: bug                  # feature | infra | spike | chore | bug
 status: draft              # draft | ready | in-progress | review | done | blocked
@@ -22,7 +22,7 @@ for a crossing: `ReleaseSession` waits for it to settle, bounded by `ingress.tra
 `AW-SRV-014` and `AW-SRV-015` never learned of the new rejection. `AW-SRV-028`'s Scope lists what it
 doesn't build, and architecture asked for this story on that list
 (`docs/feedback/AW-SRV-028-handoff-contract.md`, "For Brian, PM and SRE"). It follows `AW-SRV-028`
-and doesn't block it.
+and doesn't block it. Held out of any sprint until architecture rules on Open questions 1 and 1b.
 
 Three cases, from the roster's code. A teardown (`UnbindCharacter` or `MarkLinkdead`) rejected
 `in_transit` is rejected post-log, after the roster's produce returned nil. For a linkdead end the
@@ -58,7 +58,7 @@ isn't there.
 
 ## Acceptance criteria
 
-1. **Given** a Character whose `Departure` is applied and `Arrive` not yet **when** its Account calls
+1. **Given** a Character in a `Transit` record (moved, its `Arrive` not yet applied) **when** its Account calls
    `SelectCharacter` for it **then** the call waits, and answers OK with a bound body once the crossing
    settles within `ingress.transit_hold`.
 2. **Given** a crossing still unsettled after `ingress.transit_hold` **when** `SelectCharacter` is called
@@ -76,7 +76,10 @@ isn't there.
    **then** the status is not OK.
 7. **Given** a teardown retried and the Character since rebound by a newer Session **when** the retry
    would apply **then** it doesn't (the Session that owns the Binding wins), and the newer Session stays bound.
-8. **Given** `-race` and 100 concurrent `SelectCharacter` and stream-drop pairs across a crossing
+8. **Given** a linkdead hold freed after `ingress.produce_deadline` and the Account having selected a second
+   Character **when** `LinkdeadEntered` then arrives for the first **then** the roster [Open question 1b:
+   re-holds, or refuses the second selection]; there are never two live Characters for the Account.
+9. **Given** `-race` and 100 concurrent `SelectCharacter` and stream-drop pairs across a crossing
    **when** they run **then** no Account is left `already_live` with no linkdead Character, and no
    Session is bound with no body.
 
@@ -86,9 +89,10 @@ isn't there.
 // CONTRACT SKETCH — not an implementation
 package roster
 
-// settle waits until the Character's Binding is not in transit, bounded by ingress.transit_hold.
-// Shared by SelectCharacter (new) and ReleaseSession (exists).
-func (r *Roster) settle(ctx context.Context, id sim.EntityID) error // ErrTransitHold past the bound
+// Non-binding names; the observable contract is the bullets below.
+// settle waits until the Character's Binding is not in transit, bounded by ingress.transit_hold,
+// as ReleaseSession's wait does today (roster.go, Bindings.Binding under ProduceDeadline).
+func (r *Roster) settle(ctx context.Context, id sim.EntityID) error
 
 // holdLinkdead frees the live flag unless LinkdeadEntered for the Character is observed within
 // ingress.produce_deadline.
@@ -97,8 +101,9 @@ func (r *Roster) settle(ctx context.Context, id sim.EntityID) error // ErrTransi
 // a newer Binding for the Character cancels it.
 ```
 
-- **Errors:** `SelectCharacter` past the hold fails `UNAVAILABLE` with ErrorInfo reason `in_transit`;
-  existing reasons (`already_live`, …) are unchanged.
+- **Errors:** `SelectCharacter` past the hold fails `UNAVAILABLE` with ErrorInfo `{domain: andara.character,
+  reason: in_transit}`. That reason is new in `AW-SRV-014`'s table (it exists today only on the ingress
+  side, `AW-SRV-010`), so architecture confirms it at contract review. Existing reasons are unchanged.
 - **Config:** `ingress.transit_hold`, `ingress.produce_deadline`, `sim.handoff_retry_ticks`. No new keys.
 - **The roster learns a rejection from the post-log `CommandRejected{in_transit}` event** keyed by the
   Character. Whether that event is enough, or the roster needs a new observation point, is Open question 1.
@@ -139,6 +144,11 @@ CLAUDE.md §8, plus:
 - The roster README's `already_live` and teardown lines say what happens during a crossing.
 
 ## Open questions
+1b. **Does a wall-clock bound contradict #114?** *(Architecture's.)* `holdLinkdead` carries "No wall-clock bound ...
+   a timer here could free the Account while the body is still in the World (review of #114)" (`server/roster/roster.go`).
+   Scope (b) frees the hold after `ingress.produce_deadline`, and a late `LinkdeadEntered` could then leave
+   two live Characters (AC-8). The source asks for the free but doesn't answer this. Both are in
+   `docs/feedback/AW-SRV-049-roster-observation.md`.
 1. **Where does the roster observe a rejected teardown?** *(Architecture's.)* The post-log
    `CommandRejected{in_transit}` Event may be enough. If the roster needs a synchronous answer from the
    Log, `AW-SRV-014`'s produce seam changes and this story is M with a seam change.
