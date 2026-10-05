@@ -89,7 +89,7 @@ one envelope's header gives V.
   round: V's Zones, narrowed to the Partitions this process owns (all 64 today, ADR-0002).
 - A V Zone with no object is `missing`.
 - Envelopes in one group that disagree on `content` are `disagree`, as today.
-- Cause `content` (new, beside AC-15's four; the story's AC-16 has the full rule) covers unresolved content
+- Cause `content` (new, beside AC-15's four; the story's AC-16 has the full rule) covers content that names a pack version the source doesn't have
   and an object for a listed Zone V doesn't list. It ranks below `duplicate`, `hash` and `disagree`, above
   `missing`. It lives on `store.Round`, not on the wire: `snapshot list` shows `complete=false`. Selected (boot's newest, `--round`, `pin_round`), it exits `6`,
   `reason=content`, no other round tried, via `ErrRoundZoneUnknown` or a new `sim.ErrRoundContent{Tick,
@@ -107,7 +107,7 @@ one envelope's header gives V.
 **Test (AC-16):** write a round at V, swap to V+1 with an added Zone, kill, recover: the round is selected
 and the swap replays. `server/store` unit cases: a round whose content lists a Zone with no object
 (`missing`); an object for a listed Zone the round's content doesn't list (`ErrRoundZoneUnknown`); content that
-can't be resolved (`Round.Cause` `content`, and exit `6` when selected; `snapshot list` shows `complete=false`).
+names a pack version the source doesn't have (`Round.Cause` `content`, and exit `6` when selected; `snapshot list` shows `complete=false`); any other `ZonesAt` or `Prepare` error is exit `1`.
 
 ### 2. "Consumer lag" in Ready is the loop's schedule lag, as you read it
 

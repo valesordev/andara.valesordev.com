@@ -147,7 +147,7 @@ match, so that a crash is an interruption rather than an incident.
     `recovery restore mismatch` carries `round_tick`, `reason` (`hash`, `seed` or `content`), and
     `recorded_hash`/`restored_hash`, `recorded_seed`/`configured_seed`, or, for `content`,
     `pack`, `recorded_digest` and `built_digest` for a digest mismatch, `zone_id` for an unknown
-    Zone, and `pack_versions` for content that can't be resolved (AC-16). It never binds
+    Zone, and `pack_versions` for a pack version the source doesn't have (AC-16). It never binds
     `grpc.listen`, and AC-14's linger applies. *(Added 2026-10-02, feedback item 3.)*
 14. **Given** `recovery.mismatch_linger` of `60s` **when** boot recovery ends in exit `8` or `6`
     **then**, for 60 s before exiting, the server serves `/metrics` and `/livez` with `200` and
@@ -185,16 +185,16 @@ match, so that a crash is an interruption rather than an incident.
       `disagree`, as AC-11 has it. A round with no hash-valid envelope, and a tick with no object at all, are
       judged against the current content's Zones (`missing` names them). The owned set is V's Zones that this
       process's Partitions own (all 64 today, ADR-0002). A V Zone with no object is `missing`.
-    - **Cause `content`** is new beside AC-15's four. It covers a round whose recorded content can't be
-      resolved (the pack versions are in `Reason`), and an object for a listed Zone that V doesn't list
+    - **Cause `content`** is new beside AC-15's four. It covers a round whose recorded content names a
+      pack version the source doesn't have (the versions are in `Reason`), and an object for a listed Zone that V doesn't list
       (the `zone_id` is in `Reason`). It ranks below `duplicate`, `hash` and `disagree`, and above the
-      missing-Zone problem: when V can't be resolved there is no Zone list to compute it against. A vanished
+      missing-Zone problem: when V names a version the source doesn't have there is no Zone list to compute it against. A vanished
       object keeps its own cause, `missing`, as today. The cause lives on `store.Round` (`Cause`, `CauseZones`)
       and isn't on the wire: `snapshot list` shows only `complete=false` for it, with no proto change.
       **When it is selected**, by boot's newest round, `--round T` or `recovery.pin_round`, it exits `6` with
       `reason=content`, counted under `reason="restore"`, and no other round is tried (AC-13).
       `NewestComplete` and `RoundAt` both translate cause `content` into `sim.ErrRoundZoneUnknown` (the
-      unknown Zone) or a new typed `sim.ErrRoundContent{Tick, Versions}` (unresolved content), never into
+      unknown Zone) or a new typed `sim.ErrRoundContent{Tick, Versions}` (a pack version the source doesn't have), never into
       `ErrRoundIncomplete`, and `NewestComplete` returns it on meeting such a round rather than skipping it.
       `Classify` maps both to `6`. `Admin.VerifySnapshotRound` and `snapshot verify --round T` return
       `VERIFY_OUTCOME_CONTENT_MISMATCH` for it, as they already do for `ErrRoundZoneUnknown`; the response
