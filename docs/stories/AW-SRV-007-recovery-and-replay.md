@@ -616,7 +616,7 @@ CLAUDE.md §8, plus:
   run in the job summary. *(2026-10-05, SRE's §8: the job and the comparison step exist and ran; the table
   itself hasn't been produced, because two later runs failed in the test (#424) before a second passing
   run existed. **This line gates `done`**, with no new owner: #424 is its fix, and the story isn't `done`
-  until AC-16 lands anyway. SRE records the table from the first passing run after the first.)*
+  until AC-16 lands anyway. SRE records the table from the first passing run after the first. **Recorded 2026-10-05**, in SRE's §8 section below: run 37339999386 against run 37322596095, `replay` 34.08 s against 45.75 s.)*
 - **Inherited from `AW-SRV-043`'s §8 review (2026-10-04):** `andara_restore_total{caller="verify"}`
   is observed live. This story's §8 shows it at `ok` 1 from the running server's scrape after one
   `snapshot verify --round T` against the local stack's real round (`Admin.VerifySnapshotRound`), and
@@ -752,7 +752,7 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
   today it is started and ended in `recover.go`'s loop after `selectRound` has done every read, so it has zero
   duration and a "slow load" can't be seen on it. And `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
   `recovery restore mismatch` (#423). Implementation.
-- The recovery-timing comparison table: SRE, from the first passing run after #424's fix.
+- ~~The recovery-timing comparison table: SRE, from the first passing run after #424's fix.~~ Recorded 2026-10-05, in SRE's §8 section.
 - **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
 - ~~SRE's items~~ (the Helm key, the `stack-boundary-lost` read-back, compose's `60s`, the rule, the runbook, the
   CI job) and ~~`AW-INF-032`'s live observation~~ with `snapshot verify` against a real round: done, per SRE's §8
@@ -837,7 +837,7 @@ the README documents `zone_id` only). Either the contract drops `bytes` or imple
   ticks from round 781, peak RSS 93 MB, 157 s for the test. **In CI** (`recovery-timing` workflow, run
   37322596095 on `3dedb00`): passed, `total` 46.05 s, `replay` 45.75 s, tail 601 ticks from round 701, peak RSS 103 MB,
   the `recovery-timing` artifact uploaded, and the summary step ran ("no previous run", as the first run must). **Not
-  observed: the comparison table.** Two later runs of the same commit (a dispatch and its re-run) failed in the test
+  observed at the time: the comparison table (observed 2026-10-05, below).** Two later runs of the same commit (a dispatch and its re-run) failed in the test
   with `timed out after 8m0s waiting for a round, and a tail of 600 ticks past it`: 600 ticks cost about as much as the
   fixture's 60 s snapshot interval on a runner, so the tail often never builds (issue #424, implementation's test).
   The previous-run download did work on those runs (`previous run 37322596095`), so the comparison needs one passing
@@ -857,7 +857,8 @@ the README documents `zone_id` only). Either the contract drops `bytes` or imple
   | total | 34.30 | 46.05 | -11.75 s (-26%) |
 
   `total` is 34.30 s against the 90 s bound. The test took 259.6 s on the runner. The replay is 25% faster than the
-  first run's on the same code, which says what a runner's variance is: the comparison is a trend line, not a gate.
+  first run's on the same recovery code (only the test's snapshot interval changed, so the round is at 3314, not 701; the
+  tails match), which says what a runner's variance is: the comparison is a trend line, not a gate.
   The summary's "tails differ" note now fires only on a difference over 5% (it fired on 603 against 601).
 - **Inherited from `AW-SRV-043`:** `caller="verify"` observed live, above.
 - **Inherited from `AW-SRV-006`:** `andara_snapshot_failures_total{reason="encode"|"stall"|"boundary"}` are **not
