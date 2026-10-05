@@ -684,16 +684,16 @@ CLAUDE.md §8, plus:
 - `[NEEDS BRIAN]` What players see during recovery — carried by `AW-INF-007`. Does not affect this
   contract: recovery is silent on the wire.
 - ~~`[ASSUMPTION]`~~ **Resolved 2026-10-05 (architecture):** `recovery.require_snapshot` defaults `false` so M1 keeps
-  booting. `AW-INF-003` is `done` without setting it, and the chart has no prod values yet, so the `true` is a
-  deployment setting SRE makes in the first environment's values (asked in the feedback file, with `AW-INF-009`'s
-  dev run); it changes no contract.
+  booting. `AW-INF-003` is `done` without setting it, so the `true` is a
+  deployment setting: `deploy/helm/values/prod.yaml` and `dev.yaml` don't set it, and SRE does (asked in the
+  feedback file); it changes no contract.
 
 - **Carried from `AW-SRV-026`'s §8 close (2026-10-03).** `make stack-boundary-lost` reads the log back
   by requiring a recovery that replayed the whole log (`ticks_replayed == tick`). Once this story
   recovers from a snapshot, that check fails loudly. This story replaces the read-back (and tells SRE
   in its feedback file), so `make stack-boundary-lost` keeps passing on a snapshot recovery.
 
-## Verification record — 2026-10-04 (implementation; `review` until the §8 checklist passes)
+## Verification record — 2026-10-04 (implementation; `done` 2026-10-05, §8 review at the end)
 
 Branch `impl/aw-srv-007-recovery`. Requests to SRE and the two questions for architecture are in
 `docs/feedback/AW-SRV-007-implementation-requests.md`. Integration tests ran on the local compose Redpanda with
@@ -747,15 +747,15 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
 
 **Outstanding before `done`, after SRE's §8 check and architecture's rulings of 2026-10-05
 (`docs/feedback/AW-SRV-007-recovery-scale.md`, "Architecture: SRE's §8 deviations"):**
-- A test asserting `andara_snapshot_failures_total{reason="encode"}` on the metric object
+- ~~A test asserting `andara_snapshot_failures_total{reason="encode"}` on the metric object
   (`server/tickloop/snapshot.go:428` increments it; no test asserts it). Implementation.
 - `bytes` on `recovery.load_snapshot` (the loaded payload's size, beside `key`): carry `len(raw)` on
   `ZoneSnapshotRef` from the read in `server/store/rounds.go` (`ws.Get`), and start the span around that read:
   today it is started and ended in `recover.go`'s loop after `selectRound` has done every read, so it has zero
   duration and a "slow load" can't be seen on it. And `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
-  `recovery restore mismatch` (#423). Implementation.
+  `recovery restore mismatch` (#423). Implementation.~~ Built and observed: see "AC-16 and the §8 follow-ups" and SRE's "AC-16 pieces observed" above.
 - ~~The recovery-timing comparison table: SRE, from the first passing run after #424's fix.~~ Recorded 2026-10-05, in SRE's §8 section.
-- **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).
+- ~~**AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).~~ Built, in the same record.
 - ~~SRE's items~~ (the Helm key, the `stack-boundary-lost` read-back, compose's `60s`, the rule, the runbook, the
   CI job) and ~~`AW-INF-032`'s live observation~~ with `snapshot verify` against a real round: done, per SRE's §8
   check (PR #425).
@@ -937,9 +937,11 @@ Every §8 item holds, with SRE's records above (instrumentation, the timing tabl
   is recorded; AC-16 is in. The in-transit orphan mark is its own story (PM request).
 - **Definition of done:** the handoff-in-flight recovery test is `TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost`;
   the live observation is `make stack-recover` and `stack-recover-mismatch` runs; `AW-SRV-006`'s `encode` reason is
-  the metric-object assertion, ruled above. `AW-SRV-043`'s `caller="verify"` is in SRE's record.
+  the metric-object assertion plus the series exposed at `0` on the scrape, with no carrier (ruled 2026-10-05). `AW-SRV-043`'s `caller="verify"` is in SRE's record.
 - **Config** (`recovery.*`) is in `server/README.md`, `keys.yaml` and the values schema; the runbooks exist.
 - **The `[ASSUMPTION]`** is resolved above. No migration: recovery reads the existing log and snapshots.
+- **`[NEEDS BRIAN]` (recovery's player-visible behaviour)** is carried by `AW-INF-007` and doesn't affect this
+  contract. `AW-SRV-028` at `review` is allowed: §2 gates starting a story on `depends_on`, not closing it.
 - **Carried, not blocking:** the projector (`AW-SRV-019`) still judges a round on the loaded content's Zones, so
   after a swap that adds a Zone it skips a round the server accepts; asked of PM in the feedback file.
   `AW-INF-009` inherits the first cluster run of exit `6`.

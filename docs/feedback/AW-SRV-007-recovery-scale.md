@@ -251,8 +251,8 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
 ## Architecture: §8 review, 2026-10-05 — `done`, with three carried asks
 
 ### For SRE
-Set `recovery.require_snapshot: true` in the first environment's Helm values (dev, with `AW-INF-009`'s deploy). The
-chart ships no environment values and `AW-INF-003` didn't set it, so the story's `[ASSUMPTION]` is resolved as a
+Set `server.recovery.require_snapshot: true` in `deploy/helm/values/prod.yaml`, and in `dev.yaml` once M2 recovery
+is live there. `AW-INF-003` is `done` and neither file sets it, so the story's `[ASSUMPTION]` is resolved as a
 deployment setting, not a default.
 
 ### For PM: a story request
