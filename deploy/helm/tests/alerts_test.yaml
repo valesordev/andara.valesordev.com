@@ -418,6 +418,16 @@ tests:
             exp_annotations:
               summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
               runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 18m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, job: andara-server, instance: "andara-server:8080"}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 19m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
       - eval_time: 20m
         alertname: RecoveryStateMismatch
         exp_alerts: []

@@ -21,19 +21,21 @@ search for an older round (Brian, 2026-09-11). Which round to trust is a decisio
 with the evidence.
 
 **Where this alert can be seen.** On compose, the server holds `/metrics` and `/livez` up for
-`recovery.mismatch_linger` (60 s) so the gauge is scraped, and `keep_firing_for` keeps the page
-visible for 15 minutes after the process is gone. **On `dev` and `prod` this rule can't fire**: the
-annotation scrape keeps only Ready pods, a refused recovery was never Ready, so the `0` is never
-scraped. What pages there is `AndaraServerUnavailable` (`for: 2m`), and `server-unavailable.md` sends
-exit `8` and exit `6` here. A signal on the cluster that outlives the process is `AW-INF-009`'s, and
-will be a new expression.
+`recovery.mismatch_linger` (compose sets 60 s) so the gauge is scraped. Compose restarts a failed server
+(`restart: on-failure`), so a refused recovery **loops**: each cycle recovers, mismatches, lingers and exits,
+and the page keeps firing while it does. `keep_firing_for` keeps it visible for 15 minutes after the loop is
+stopped (`docker compose stop andara-server`) or its cause is fixed. **On `dev` and `prod` this rule can't
+fire**: the annotation scrape keeps only Ready pods, and a refused recovery was never Ready, so the `0` is
+never scraped. What pages there is `AndaraServerUnavailable` (`for: 2m`), and `server-unavailable.md` sends
+exit `8` and exit `6` here. `AW-INF-009` (planned for SPRINT-05) adds a second clause to this same rule, read
+from kube-state-metrics, so that one alert name covers both.
 
 ## How to confirm
 
 | Where | Command | Looking for |
 |-------|---------|-------------|
 | compose | `make logs SVC=andara-server` | the refusal's `error` line, then `holding /metrics for the hash mismatch to be scraped` with `for` |
-| compose, within the 60 s linger | `curl -s localhost:8080/metrics \| grep -E '^andara_recovery_(state_hash_match\|failures_total)'` | `andara_recovery_state_hash_match 0`, and `andara_recovery_failures_total{reason="hash"}` (exit `8`) or `{reason="restore"}` (exit `6`) at `1` |
+| compose, during any linger window (each restart cycle) | `curl -s localhost:${ANDARA_HTTP_PORT:-8080}/metrics \| grep -E '^andara_recovery_(state_hash_match\|failures_total)'` | `andara_recovery_state_hash_match 0`, and `andara_recovery_failures_total{reason="hash"}` (exit `8`) or `{reason="restore"}` (exit `6`) at `1` |
 | cluster | `kubectl -n andara-<env> describe pod andara-0`, the `Last State` of `server` | exit code `8` or `6` |
 | cluster | `kubectl -n andara-<env> logs andara-0 -c server --previous` | the refusal's `error` line |
 
@@ -57,15 +59,20 @@ The `error` line says which refusal it was:
 Keep the World down while you choose. On the cluster that is `server-crashlooping.md`'s scale-to-zero (and
 on `dev`, suspend the Application's automated sync first, as it says). Then:
 
-1. **List the rounds.** `andara-cli snapshot list` prints each round's tick, `state_version`, Zones,
-   whether it is complete, and its age. A round that isn't complete is never selected on its own.
-2. **Ask the one-shot about a round.** `andara-server recover --verify --round <tick>`, run in the server
-   image against the same store, prints `match` or `mismatch` with both hashes and the phase timings, and
-   exits `0` on a match and `8` on any mismatch. It never lingers and never touches the live server.
-   `andara-cli snapshot verify --round <tick>` asks the same of a running server's scratch Engine.
-3. **Deploy pinned to a round that matches.** That is `AW-INF-007`'s `recovery.pin_round` and its
-   `make rollback ROUND=<tick>`, **which don't exist yet.** Until they ship, keep the World scaled to zero
-   and escalate to implementation with the `error` line and the tick of the newest round that matched.
+1. **List the rounds.** `andara-cli snapshot list` (available today) prints each round's tick,
+   `state_version`, Zones, whether it is complete, and its age. A round that isn't complete is never
+   selected on its own.
+2. **Ask the one-shot about a round** *(`AW-SRV-007`, not built yet)*. `andara-server recover --verify --round
+   <tick>`, run in the server image against the same store, prints `match` or `mismatch` with both hashes and
+   the phase timings, and exits `0` on a match, `8` on any mismatch, and `7` if the named round isn't
+   complete. It never lingers and never touches the live server. `andara-cli snapshot verify --round <tick>`
+   asks the same of a running server's scratch Engine.
+3. **Deploy pinned to a round that matches** *(`AW-INF-007`, not built yet)*. That is `recovery.pin_round` and
+   its `make rollback ROUND=<tick>`.
+
+**Until steps 2 and 3 exist, `snapshot list` is the only step available:** keep the World scaled to zero and
+escalate to implementation with the `error` line and the tick of the newest round, as `server-crashlooping.md`
+says for the same reason.
 
 An older round helps only when the round was the bad part. It replays the log forward from that round, so
 nothing acknowledged is lost, but a determinism fault at a later tick fails again on the way.
