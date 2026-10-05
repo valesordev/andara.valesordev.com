@@ -97,6 +97,7 @@ keys:
   - {key: recovery.require_snapshot, env: ANDARA_RECOVERY_REQUIRE_SNAPSHOT, type: bool, default: false, story: AW-SRV-007}
   - {key: recovery.replay_batch,     env: ANDARA_RECOVERY_REPLAY_BATCH,   type: int, default: 4096, min: 1, story: AW-SRV-007}
   - {key: recovery.verify_timeout,   env: ANDARA_RECOVERY_VERIFY_TIMEOUT, type: duration, default: 600s, story: AW-SRV-007}
+  - {key: recovery.mismatch_linger,  env: ANDARA_RECOVERY_MISMATCH_LINGER, type: duration, default: 0s, story: AW-SRV-007}
   - {key: recovery.rto_target,       env: ANDARA_RECOVERY_RTO_TARGET,     type: duration, default: 60s, story: AW-SRV-015}
   - {key: recovery.pin_round,        env: ANDARA_RECOVERY_PIN_ROUND,      type: int, default: 0, min: 0, story: AW-INF-007}
   - {key: deploy.notice_lead,        env: ANDARA_DEPLOY_NOTICE_LEAD,      type: duration, default: 10s, story: AW-INF-007}
