@@ -36,7 +36,7 @@ it's for emergencies, not for routine work.
   each Exit goes one way. Exits can cross into another Zone of the same pack, but not into another
   pack.
 - **Components** on Rooms, Zones and Templates: `Dark`, `Indoors`, `NoMagic`, `NoRecall`, `Memory`
-  and `Behavior` (the full list is in [section 7](07-reference.md#component-types)).
+  and `Behavior` (the full list is in [section 7](reference.md#component-types)).
 - **Templates** that extend `andara.core`'s base types: `Npc`, `Character`, `Item` and `Entity`.
 
 What waits:

@@ -305,6 +305,10 @@ CLAUDE.md §8, plus:
   and the ack, or an outage past the delivery timeout, loses the Character. `AW-SRV-028` is the
   log-driven handshake that closes it and retires the one-hop bounce; this story's record stands as
   what it verified.
+- **Corrected 2026-10-04 (architecture, at `AW-SRV-028`'s §8): the bounce is gone, and not by `AW-SRV-028`.**
+  `AW-SRV-012` replaced it: an `Arrive` whose Room the content in effect no longer has lands in the Zone's
+  fallback Room with `EntityRelocated{room_removed}`, so an arrival is never bounced (`applyArrive`'s comment
+  says so). `AW-SRV-028` closed the loss the bullet above describes, with the log-driven handshake.
 - **§8 pass, 2026-09-19 — done.** Every AC has a named test (`server/command/command_test.go`,
   `server/sim/verbs_test.go`, `server/sim/stages_test.go`); the AC-11 guard is `ErrNotConsumed`
   asserted by `TestHandlers_RefuseUnconsumedContext`; the leak fixture is
