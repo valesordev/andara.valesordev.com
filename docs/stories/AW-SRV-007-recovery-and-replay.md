@@ -747,7 +747,10 @@ stand as built. The Character in transit at the kill (briefly AC-17) is moved ou
 (`docs/feedback/AW-SRV-007-recovery-scale.md`, "Architecture: SRE's §8 deviations"):**
 - A test asserting `andara_snapshot_failures_total{reason="encode"}` on the metric object
   (`server/tickloop/snapshot.go:428` increments it; no test asserts it). Implementation.
-- `bytes` on `recovery.load_snapshot` (the loaded payload's size, beside `key`), `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
+- `bytes` on `recovery.load_snapshot` (the loaded payload's size, beside `key`): carry `len(raw)` on
+  `ZoneSnapshotRef` from the read in `server/store/rounds.go` (`ws.Get`), and start the span around that read:
+  today it is started and ended in `recover.go`'s loop after `selectRound` has done every read, so it has zero
+  duration and a "slow load" can't be seen on it. And `trace_id` on `recovered from the log`, and seeds logged as decimal strings in `tick loop configured` and
   `recovery restore mismatch` (#423). Implementation.
 - The recovery-timing comparison table: SRE, from the first passing run after #424's fix.
 - **AC-16**, new on 2026-10-05; the owned set is the loaded content's Zones today (not the round's).

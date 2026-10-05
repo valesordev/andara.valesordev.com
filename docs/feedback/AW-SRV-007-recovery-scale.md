@@ -217,11 +217,11 @@ Answers to SRE's instrumentation check on PR #425. The story is amended where no
    - **`trace_id` on `recovered from the log`:** required, and implementation adds it. It is the summary
      `server/boot` writes after every recovery, round or no round, the line an operator reads first, and it
      should reach the trace as `recovery complete` does.
-   - **`recovery.load_snapshot` carries `key` and not `bytes`:** the contract keeps `bytes`, and `key` is added
+   - **`recovery.load_snapshot` carries `key` and `bytes`:** the contract keeps `bytes`, and `key` is added
      beside it. (I first ruled `bytes` away on the strength of `andara_snapshot_bytes{zone}`; Codex on #427 was
      right that it can't stand in: it is the writer's gauge, set only after a new round is encoded, so it is
      absent while recovery loads and later describes another round. The loaded payload's size is the only way to
-     correlate a slow or failed load span with the object.) Implementation adds `bytes`.
+     correlate a slow or failed load span with the object.) Implementation adds `bytes` (on `ZoneSnapshotRef`, from the store's read) and moves the span to wrap that read.
    - **"`andara-cli` commands only":** reworded. The runbook uses `andara-cli snapshot list --local` and
      `andara-server recover --verify`, since `snapshot verify` needs a serving server and a refusal isn't one.
 2. **Not observed.**
