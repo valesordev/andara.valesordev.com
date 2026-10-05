@@ -21,6 +21,9 @@
 #     already-live protocol reason or the waiting line, both `look`s read the Town Hall, and
 #     neither reads a despawn line. They share that Room so each is the other's witness: a
 #     despawn is addressed to the Room's occupants, and a client can't read its own.
+#     The server's own counters agree: no `character_despawned` event emitted since the recovery,
+#     and a `reconnected` outcome for each player. That is the check no transcript can make, since
+#     a despawn emitted before a client resubscribes never reaches it.
 #   - Both quit cleanly and `character list` shows each dormant in the Town Hall.
 #
 # Creates two Accounts and two Characters per run, with random suffixes, as stack_linkdead.sh
@@ -101,7 +104,7 @@ fail() {
   echo "stack-recover: $*" >&2
   echo "--- A:" >&2; sed 's/^/  A| /' "$AOUT" >&2
   echo "--- B, the bystander:" >&2; sed 's/^/  B| /' "$BOUT" >&2
-  local cid; cid="$("${COMPOSE[@]}" ps -aq andara-server 2>/dev/null | head -1)"
+  local cid; cid="$("${COMPOSE[@]}" ps -aq andara-server 2>/dev/null | head -1)" || cid=""
   [[ -z "$cid" ]] || echo "--- andara-server container: $(docker inspect -f 'status={{.State.Status}} exit_code={{.State.ExitCode}} restarts={{.RestartCount}}' "$cid" 2>&1)" >&2
   echo "--- andara-server, last 50 lines:" >&2
   "${COMPOSE[@]}" logs --no-color --no-log-prefix --tail 50 andara-server >&2 2>&1 || true
@@ -308,6 +311,18 @@ fi
 if tail -n +"$(( b_lines + 1 ))" "$BOUT" | grep -q -e 'leaves the world\.' -e 'fades from the world\.'; then
   fail "B read a despawn line between the kill and the reconnect"
 fi
+# The server's own count, which needs no witness: the transcripts can't see a despawn emitted
+# before a client resubscribed. The process is new, so its counters began at 0 at the recovery,
+# and each rebind is one `reconnected` outcome. Read before the quits, which despawn.
+despawned="" ; reconnected=""
+for _ in $(seq 1 20); do
+  despawned="$(metric andara_events_emitted_total type=character_despawned)"
+  reconnected="$(metric andara_linkdead_outcomes_total outcome=reconnected)"
+  [[ -n "$reconnected" && "$reconnected" -ge 2 ]] && break
+  sleep 0.5
+done
+[[ "${despawned:-absent}" == "0" ]] || fail "andara_events_emitted_total{type=\"character_despawned\"} is ${despawned:-absent} after the recovery, want 0: a body despawned instead of rebinding"
+[[ -n "$reconnected" && "$reconnected" -ge 2 ]] || fail "andara_linkdead_outcomes_total{outcome=\"reconnected\"} is ${reconnected:-absent}, want at least 2 (A and B)"
 echo "stack-recover: both rebound; both read the Town Hall (A's is the tail move)"
 
 # AC-6. A clean quit: EOF on stdin is play's quit, and it sends CloseSession.

@@ -214,6 +214,10 @@ Tempo: the root, four `recovery.load_snapshot`, `recovery.seek`, `restore.verify
   shows the Plaza for A. The script asserts the Room the post-recovery looks read: `dormant town/hall` for both.
 - **The trace id** is printed from the `recovery complete` line, which carries `trace_id`. The contract says
   "ready line".
+- **AC-5's despawn check also reads the server.** The transcripts can't see a despawn emitted before a client
+  resubscribes (the hub replays nothing to a new subscription), so before the quits the script asserts
+  `andara_events_emitted_total{type="character_despawned"}` is 0 since the recovery, and
+  `andara_linkdead_outcomes_total{outcome="reconnected"}` is at least 2, one per player.
 - **AC-7's exit code.** A failing run prints the server container's status, exit code and restart count
   (`docker inspect`) before its last 50 log lines, so a server that exits non-zero during recovery is reported
   with its code, under `restart: on-failure` too.
