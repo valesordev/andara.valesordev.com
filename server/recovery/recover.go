@@ -28,7 +28,8 @@ type Boundaries interface {
 	SeekAfter(ctx context.Context, tick sim.Tick) (int64, error)
 	BoundaryAfter() bool
 	Next(ctx context.Context, max int, wait time.Duration) ([]tickloop.Boundary, error)
-	AtHead() bool
+	// HeadTick is the tick of the log's last boundary now: where replay ends.
+	HeadTick(ctx context.Context) (sim.Tick, error)
 }
 
 // Options is everything Recover reads, so that nothing in it reaches for a
@@ -384,38 +385,36 @@ func (o *Options) roundBoundary(ctx context.Context, round sim.Tick) (sim.TickCo
 	}
 }
 
-// replay streams the boundaries after the Engine's tick to the log's head,
-// ReplayBatch at a time, never holding the topic.
+// replay streams the boundaries after the Engine's tick up to the log's head as
+// it is when replay begins, ReplayBatch at a time, never holding the topic. The
+// head is fixed up front: a log still being written has an end that moves, and a
+// replay that chased it would never finish.
 func (o *Options) replay(ctx context.Context, e *sim.Engine, src sim.RecordSource, rep *Report, records *int64) error {
-	idle := 0
+	head, err := o.Boundaries.HeadTick(ctx)
+	if err != nil {
+		return fmt.Errorf("boundary head: %w", err)
+	}
 	counting := countingSource{src: src, n: records}
-	for {
+	for e.Tick() < head {
 		bs, err := o.Boundaries.Next(ctx, o.ReplayBatch, o.Poll)
 		if err != nil {
 			return err
 		}
 		tcs := make([]sim.TickCompleted, 0, len(bs))
 		for _, b := range bs {
-			if b.Tick > e.Tick() {
+			if b.Tick > e.Tick() && b.Tick <= head {
 				tcs = append(tcs, b.TickCompleted)
 			}
 		}
 		if len(tcs) == 0 {
-			// A quiet read at the head, twice in a row: an empty read before
-			// the first fetch lands reports a head that isn't one.
-			if len(bs) == 0 && o.Boundaries.AtHead() {
-				if idle++; idle >= 2 {
-					return nil
-				}
-			}
 			continue
 		}
-		idle = 0
 		if err := e.ReplayEach(tcs, counting, o.After); err != nil {
 			return err
 		}
 		rep.Replayed += uint64(len(tcs))
 	}
+	return nil
 }
 
 type countingSource struct {

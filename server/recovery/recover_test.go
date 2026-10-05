@@ -38,7 +38,12 @@ func (m *memBoundaries) SeekAfter(_ context.Context, tick sim.Tick) (int64, erro
 	return int64(m.next), nil
 }
 func (m *memBoundaries) BoundaryAfter() bool { return m.seek }
-func (m *memBoundaries) AtHead() bool        { return m.next >= len(m.all) }
+func (m *memBoundaries) HeadTick(context.Context) (sim.Tick, error) {
+	if len(m.all) == 0 {
+		return 0, nil
+	}
+	return m.all[len(m.all)-1].Tick, nil
+}
 func (m *memBoundaries) Next(_ context.Context, max int, _ time.Duration) ([]tickloop.Boundary, error) {
 	n := min(max, len(m.all)-m.next)
 	out := m.all[m.next : m.next+n]
@@ -299,5 +304,28 @@ func TestExitCodeMapsEveryError(t *testing.T) {
 		if got := recovery.ExitCode(c.err); got != c.want {
 			t.Errorf("%T: exit %d, want %d", c.err, got, c.want)
 		}
+	}
+}
+
+// capped is a log whose end moves while it is read: HeadTick reports where it
+// was when recovery asked, though boundaries past it are already there.
+type capped struct {
+	*memBoundaries
+	head sim.Tick
+}
+
+func (c capped) HeadTick(context.Context) (sim.Tick, error) { return c.head, nil }
+
+func TestReplayEndsAtTheHeadItStartedWith(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t, 12, 5)
+	o := w.opts(t)
+	o.Boundaries = capped{o.Boundaries.(*memBoundaries), 8}
+	e, rep, err := recovery.Recover(context.Background(), o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if e.Tick() != 8 || rep.Replayed != 3 || e.StateHash() != w.bounds[7].StateHash {
+		t.Fatalf("tick %d replayed %d, want 8 and 3", e.Tick(), rep.Replayed)
 	}
 }

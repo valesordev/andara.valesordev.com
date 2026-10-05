@@ -147,7 +147,12 @@ func (s *sliceBoundaries) SeekAfter(_ context.Context, tick sim.Tick) (int64, er
 	return int64(s.next), nil
 }
 func (s *sliceBoundaries) BoundaryAfter() bool { return s.seek }
-func (s *sliceBoundaries) AtHead() bool        { return s.next >= len(s.all) }
+func (s *sliceBoundaries) HeadTick(context.Context) (sim.Tick, error) {
+	if len(s.all) == 0 {
+		return 0, nil
+	}
+	return s.all[len(s.all)-1].Tick, nil
+}
 func (s *sliceBoundaries) Next(_ context.Context, max int, _ time.Duration) ([]tickloop.Boundary, error) {
 	n := min(max, len(s.all)-s.next)
 	out := make([]tickloop.Boundary, n)

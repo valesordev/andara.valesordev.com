@@ -148,6 +148,81 @@ func (r *BoundaryReader) SeekAfter(ctx context.Context, tick sim.Tick) (int64, e
 	return lo, nil
 }
 
+// HeadTick is the tick of the last boundary on the Partition now, 0 for an
+// empty log: where a replay that must end at "the head" ends, fixed when it is
+// asked. A log still being written (a verify against a running server) has a
+// moving end, and a replay that chased it would not finish. It reads backward
+// from the end in growing windows, so the cost is the tail, not the history.
+func (r *BoundaryReader) HeadTick(ctx context.Context) (sim.Tick, error) {
+	adm := kadm.NewClient(r.client)
+	starts, err := adm.ListStartOffsets(ctx, r.topic)
+	if err != nil {
+		return 0, fmt.Errorf("boundary start offset: %w", err)
+	}
+	ends, err := adm.ListEndOffsets(ctx, r.topic)
+	if err != nil {
+		return 0, fmt.Errorf("boundary end offset: %w", err)
+	}
+	so, _ := starts.Lookup(r.topic, BoundaryPartition)
+	eo, _ := ends.Lookup(r.topic, BoundaryPartition)
+	if so.Err != nil || eo.Err != nil {
+		return 0, fmt.Errorf("boundary offsets: %w", errors.Join(so.Err, eo.Err))
+	}
+	for window := int64(64); ; window *= 4 {
+		from := max(so.Offset, eo.Offset-window)
+		if t, ok, err := r.lastBoundary(ctx, from, eo.Offset); err != nil || ok {
+			return t, err
+		}
+		if from <= so.Offset {
+			return 0, nil
+		}
+	}
+}
+
+// lastBoundary reads [from, end) and returns the last boundary's tick.
+func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim.Tick, bool, error) {
+	if from >= end {
+		return 0, false, nil
+	}
+	cl, err := kgo.NewClient(
+		kgo.SeedBrokers(r.brokers...),
+		kgo.ClientID(r.clientID+"-boundaries"),
+		kgo.FetchMaxPartitionBytes(1<<20),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(from)}}),
+	)
+	if err != nil {
+		return 0, false, err
+	}
+	defer cl.Close()
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	var (
+		tick  sim.Tick
+		found bool
+	)
+	for next := from; next < end; {
+		fetches := cl.PollFetches(ctx)
+		if ctx.Err() != nil {
+			return 0, false, ctx.Err()
+		}
+		if err := fetches.Err0(); err != nil {
+			return 0, false, fmt.Errorf("read the boundary head at %d: %w", from, err)
+		}
+		fetches.EachRecord(func(rec *kgo.Record) {
+			next = rec.Offset + 1
+			if rec.Offset >= end || string(rec.Key) != BoundaryKey {
+				return
+			}
+			var tc logv1.TickCompleted
+			if proto.Unmarshal(rec.Value, &tc) != nil {
+				return
+			}
+			tick, found = sim.Tick(tc.GetTick()), true
+		})
+	}
+	return tick, found, nil
+}
+
 // probe reads from offset until the first boundary, returning its tick and
 // offset, or ok=false if there is none before end.
 func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick, int64, bool, error) {

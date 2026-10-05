@@ -73,15 +73,29 @@ func topics(t *testing.T, bk []string, tag string) (commands, events string) {
 	return commands, events
 }
 
+// The two Worlds the tests run: the Script fixture, and the crossing World
+// (town, docks, wilds) with the real verb handlers, where a Move east is a
+// cross-Zone handoff.
+const (
+	fixtureScript = "script"
+	fixtureCross  = "cross"
+)
+
 // options is recovery over the broker and the store at dir, the way boot builds
 // it; the returned func closes the readers.
-func options(t *testing.T, bk []string, commands, events, dir string) (recovery.Options, func()) {
+func options(t *testing.T, fix string, bk []string, commands, events, dir string) (recovery.Options, func()) {
 	t.Helper()
-	w, err := simtest.World()
+	reg, err := simtest.Templates()
 	if err != nil {
 		t.Fatal(err)
 	}
-	reg, err := simtest.Templates()
+	cfg := sim.Config{Seed: 11, Partitions: simtest.AllPartitions(), Handlers: simtest.Handlers(reg)}
+	world := simtest.World
+	if fix == fixtureCross {
+		world = simtest.CrossingWorld
+		cfg = sim.Config{Seed: 9, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers()}
+	}
+	w, err := world()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,24 +103,26 @@ func options(t *testing.T, bk []string, commands, events, dir string) (recovery.
 	if err != nil {
 		t.Fatal(err)
 	}
-	fs := store.NewFS(dir)
 	return recovery.Options{
-		Store:      fs,
-		Owned:      zoneIDs(t),
+		Store:      store.NewFS(dir),
+		Owned:      zoneIDs(t, fix),
 		Boundaries: br,
 		OpenRecords: func(ctx context.Context, start map[int32]int64) (sim.RecordSource, error) {
 			return tickloop.NewCommandSource(ctx, bk, commands, "recovery-it", start)
 		},
-		Config:  sim.Config{Seed: 11, Partitions: simtest.AllPartitions(), Handlers: simtest.Handlers(reg)},
+		Config:  cfg,
 		Prepare: func(map[string]uint64) (sim.Topology, error) { return sim.Topology{World: w, Templates: reg}, nil },
 		Poll:    200 * time.Millisecond,
 		Metrics: recovery.NewMetrics(nil),
 	}, br.Close
 }
 
-func zoneIDs(t *testing.T) []sim.ZoneID {
+func zoneIDs(t *testing.T, fix string) []sim.ZoneID {
 	t.Helper()
 	e, err := simtest.NewEngine(11)
+	if fix == fixtureCross {
+		e, err = simtest.NewVerbEngine(9)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,9 +137,9 @@ func TestRecoveryChild(t *testing.T) {
 		t.Skip("child mode only")
 	}
 	parts := strings.Split(spec, "|")
-	bk, commands, events, dir := strings.Split(parts[0], ","), parts[1], parts[2], parts[3]
+	bk, commands, events, dir, fix := strings.Split(parts[0], ","), parts[1], parts[2], parts[3], parts[4]
 	ctx := context.Background()
-	o, closeReader := options(t, bk, commands, events, dir)
+	o, closeReader := options(t, fix, bk, commands, events, dir)
 	e, _, err := recovery.Recover(ctx, o)
 	closeReader()
 	if err != nil {
@@ -141,14 +157,18 @@ func TestRecoveryChild(t *testing.T) {
 		os.Exit(3)
 	}
 	pub.Commands, pub.Events = commands, events
+	var out tickloop.Publisher = pub
+	if parts[5] == "lossy" {
+		out = &arriveDropping{KafkaPublisher: pub}
+	}
 	log := slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	snap, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{Store: store.NewFS(dir), Interval: 400 * time.Millisecond, UploadTimeout: 10 * time.Second, AwaitBoundaryAck: true, Log: log})
+	snap, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{Store: store.NewFS(dir), Interval: 400 * time.Millisecond, MaxStall: time.Second, UploadTimeout: 10 * time.Second, AwaitBoundaryAck: true, Log: log})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "child:", err)
 		os.Exit(3)
 	}
 	loop, err := tickloop.New(tickloop.Options{
-		Engine: e, Source: src, Publisher: pub, Snapshotter: snap, AwaitBoundaryAck: true,
+		Engine: e, Source: src, Publisher: out, Snapshotter: snap, AwaitBoundaryAck: true,
 		TickRate: 50, TickBudget: 20 * time.Millisecond, MaxPerTick: 3, DrainTimeout: 5 * time.Second, CheckpointEvery: 5, Log: log,
 	})
 	if err != nil {
@@ -164,10 +184,27 @@ func TestRecoveryChild(t *testing.T) {
 	}
 }
 
-func spawn(t *testing.T, bk []string, commands, events, dir string) *exec.Cmd {
+// arriveDropping is the Kafka publisher with its cross-Zone producer dropping
+// every Arrive: what a broker outage past the delivery timeout does.
+type arriveDropping struct{ *tickloop.KafkaPublisher }
+
+func (p *arriveDropping) Produce(ctx context.Context, cmds []*logv1.LoggedCommand) error {
+	var keep []*logv1.LoggedCommand
+	for _, c := range cmds {
+		if c.GetArrive() == nil {
+			keep = append(keep, c)
+		}
+	}
+	if len(keep) == 0 {
+		return nil
+	}
+	return p.KafkaPublisher.Produce(ctx, keep)
+}
+
+func spawn(t *testing.T, fix, mode string, bk []string, commands, events, dir string) *exec.Cmd {
 	t.Helper()
 	cmd := exec.Command(os.Args[0], "-test.run", "^TestRecoveryChild$", "-test.v")
-	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+dir)
+	cmd.Env = append(os.Environ(), "ANDARA_RECOVERY_CHILD="+strings.Join(bk, ",")+"|"+commands+"|"+events+"|"+dir+"|"+fix+"|"+mode)
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		t.Fatal(err)
@@ -186,24 +223,34 @@ type ack struct {
 // producer does, and records every acknowledgement's partition and offset.
 func submit(t *testing.T, bk []string, commands string, n int) []ack {
 	t.Helper()
+	var cmds []*logv1.LoggedCommand
+	for _, recs := range simtest.Script(n) {
+		for _, r := range recs {
+			cmds = append(cmds, r.Command)
+		}
+	}
+	return produceCommands(t, bk, commands, cmds)
+}
+
+// produceCommands produces cmds in order, each to its own Partition.
+func produceCommands(t *testing.T, bk []string, commands string, cmds []*logv1.LoggedCommand) []ack {
+	t.Helper()
 	cl, err := kgo.NewClient(kgo.SeedBrokers(bk...), kgo.RecordPartitioner(kgo.ManualPartitioner()), kgo.RequiredAcks(kgo.AllISRAcks()))
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer cl.Close()
 	var acks []ack
-	for _, recs := range simtest.Script(n) {
-		for _, r := range recs {
-			body, err := canonical.Marshal(r.Command)
-			if err != nil {
-				t.Fatal(err)
-			}
-			res := cl.ProduceSync(context.Background(), &kgo.Record{Topic: commands, Partition: sim.CommandPartition(r.Command), Key: []byte(r.Command.GetZoneId()), Value: body})
-			if err := res.FirstErr(); err != nil {
-				t.Fatal(err)
-			}
-			acks = append(acks, ack{partition: res[0].Record.Partition, offset: res[0].Record.Offset, value: body})
+	for _, cmd := range cmds {
+		body, err := canonical.Marshal(cmd)
+		if err != nil {
+			t.Fatal(err)
 		}
+		res := cl.ProduceSync(context.Background(), &kgo.Record{Topic: commands, Partition: sim.CommandPartition(cmd), Key: []byte(cmd.GetZoneId()), Value: body})
+		if err := res.FirstErr(); err != nil {
+			t.Fatal(err)
+		}
+		acks = append(acks, ack{partition: res[0].Record.Partition, offset: res[0].Record.Offset, value: body})
 	}
 	return acks
 }
@@ -228,7 +275,7 @@ func killedProcess(t *testing.T) *history {
 	commands, events := topics(t, bk, "live")
 	dir := t.TempDir()
 	h := &history{bk: bk, commands: commands, events: events, dir: dir}
-	child := spawn(t, bk, commands, events, dir)
+	child := spawn(t, fixtureScript, "lossless", bk, commands, events, dir)
 	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGKILL); _ = child.Wait() })
 	h.acks = submit(t, bk, commands, 40)
 
@@ -249,7 +296,7 @@ func killedProcess(t *testing.T) *history {
 				return false, fmt.Sprintf("partition %d applied to %d, ack at %d", a.partition, last.Offsets[a.partition], a.offset)
 			}
 		}
-		rounds, err := store.ListRounds(ctx, fs, zoneIDs(t))
+		rounds, err := store.ListRounds(ctx, fs, zoneIDs(t, fixtureScript))
 		if err != nil {
 			return false, err.Error()
 		}
@@ -298,7 +345,7 @@ func copyStore(t *testing.T, from string) string {
 
 func recoverOnce(t *testing.T, h *history, dir string, mutate func(*recovery.Options)) (*sim.Engine, recovery.Report, error) {
 	t.Helper()
-	o, closeReader := options(t, h.bk, h.commands, h.events, dir)
+	o, closeReader := options(t, fixtureScript, h.bk, h.commands, h.events, dir)
 	defer closeReader()
 	if mutate != nil {
 		mutate(&o)
@@ -380,7 +427,7 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 	t.Run("AC-4 a hash-invalid Zone object falls back to the next round", func(t *testing.T) {
 		dir := copyStore(t, h.dir)
 		fs := store.NewFS(dir)
-		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t))
+		newest, _, ok, err := store.NewestComplete(context.Background(), fs, zoneIDs(t, fixtureScript))
 		if err != nil || !ok {
 			t.Fatal(err)
 		}
@@ -445,37 +492,53 @@ func TestRecoveryAgainstTheBroker(t *testing.T) {
 
 	// AC-2 last: it deletes history. Retention past the round's offset is
 	// exit 3, naming the Partition, the round's offset and the log's earliest.
+	// The oldest round is used: the newest has consumed the whole log, and a
+	// log can't begin past its own end.
 	t.Run("AC-2 a log shorter than the round is exit 3", func(t *testing.T) {
 		dir := copyStore(t, h.dir)
-		newest, state, ok, err := store.NewestComplete(context.Background(), store.NewFS(dir), zoneIDs(t))
-		if err != nil || !ok {
+		rounds, err := store.ListRounds(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var oldest store.Round
+		for _, r := range rounds {
+			if r.Complete {
+				oldest = r
+			}
+		}
+		_, state, err := store.RoundAt(context.Background(), store.NewFS(dir), zoneIDs(t, fixtureScript), oldest.Tick)
+		if err != nil {
 			t.Fatal(err)
 		}
 		var target sim.PartitionOffset
 		for _, po := range state.Offsets {
-			if po.Offset > 0 {
+			if end, err := tickloop.EndOffset(context.Background(), h.bk, h.commands, po.Partition); err == nil && po.Offset > 0 && po.Offset < end {
 				target = po
 				break
 			}
 		}
 		if target.Offset == 0 {
-			t.Skip("the round holds no Command offsets to truncate below")
+			t.Skip("no Partition has a Command past the oldest round's offset to truncate below")
 		}
 		cl, err := kgo.NewClient(kgo.SeedBrokers(h.bk...))
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer cl.Close()
-		adm := kadm.NewClient(cl)
 		del := kadm.Offsets{}
 		del.Add(kadm.Offset{Topic: h.commands, Partition: target.Partition, At: target.Offset + 1})
-		if _, err := adm.DeleteRecords(context.Background(), del); err != nil {
+		resp, err := kadm.NewClient(cl).DeleteRecords(context.Background(), del)
+		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = recoverOnce(t, h, dir, nil)
+		if err := resp.Error(); err != nil {
+			t.Fatal(err)
+		}
+		tick := oldest.Tick
+		_, _, err = recoverOnce(t, h, dir, func(o *recovery.Options) { o.Round = &tick })
 		var lg *tickloop.LogGapError
-		if !errors.As(err, &lg) || recovery.ExitCode(err) != recovery.ExitLogGap || lg.Partition != target.Partition || lg.Need != target.Offset || lg.Have <= lg.Need {
-			t.Fatalf("round %d: err %v (exit %d), want a log gap on partition %d at %d", newest.Tick, err, recovery.ExitCode(err), target.Partition, target.Offset)
+		if !errors.As(err, &lg) || recovery.ExitCode(err) != recovery.ExitLogGap || lg.Partition != target.Partition || lg.Need != target.Offset || lg.Have != target.Offset+1 {
+			t.Fatalf("round %d: err %v (exit %d), want a log gap on partition %d at %d", oldest.Tick, err, recovery.ExitCode(err), target.Partition, target.Offset)
 		}
 	})
 }
@@ -523,4 +586,110 @@ func republish(t *testing.T, h *history, tick sim.Tick) string {
 		})
 	}
 	return events2
+}
+
+// DoD (moved from AW-SRV-028): the recovery test includes a handoff in flight.
+// alice's Move east is logged and applied, and every Arrive the process
+// produces is lost, so a Transit record stands in the rounds it takes. It is
+// SIGKILLed with alice in Transit, a second process recovers from a round, and
+// the first live ticks retry: she arrives in wilds exactly once.
+func TestRecoveryWithAHandoffInFlight(t *testing.T) {
+	bk := brokers(t)
+	commands, events := topics(t, bk, "handoff")
+	dir := t.TempDir()
+	produceCommands(t, bk, commands, []*logv1.LoggedCommand{simtest.Bind("town", "alice", "Alice", "plaza")})
+	child := spawn(t, fixtureCross, "lossy", bk, commands, events, dir)
+	t.Cleanup(func() { _ = child.Process.Signal(syscall.SIGKILL); _ = child.Wait() })
+	produceCommands(t, bk, commands, []*logv1.LoggedCommand{simtest.Move("town", "alice", "east")})
+
+	fs := store.NewFS(dir)
+	eventually.Observed(t, 60*time.Second, "a complete round with alice in Transit, and boundaries past it", func() (bool, string) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		r, state, ok, err := store.NewestComplete(ctx, fs, zoneIDs(t, fixtureCross))
+		if err != nil || !ok {
+			return false, fmt.Sprint("no complete round ", err)
+		}
+		for _, z := range state.Zones {
+			if z.ID == "town" && len(z.Transit) == 1 {
+				bs, err := tickloop.ReadBoundaries(ctx, bk, events)
+				return err == nil && len(bs) >= int(r.Tick)+3, fmt.Sprintf("round %d, %d boundaries", r.Tick, len(bs))
+			}
+		}
+		return false, fmt.Sprintf("round %d has no Transit", r.Tick)
+	})
+	if err := child.Process.Signal(syscall.SIGKILL); err != nil {
+		t.Fatal(err)
+	}
+	_ = child.Wait()
+	before, err := tickloop.ReadBoundaries(context.Background(), bk, events)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	recoverCross := func() (*sim.Engine, recovery.Report, error) {
+		o, closeReader := options(t, fixtureCross, bk, commands, events, dir)
+		defer closeReader()
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		return recovery.Recover(ctx, o)
+	}
+	r, rep, err := recoverCross()
+	if err != nil {
+		t.Fatalf("recovery after the SIGKILL: %v", err)
+	}
+	if rep.Round.Tick == 0 || r.StateHash() != before[len(before)-1].StateHash {
+		t.Fatalf("recovered from round %d to hash %x, the log's last is %x", rep.Round.Tick, r.StateHash(), before[len(before)-1].StateHash)
+	}
+	st := r.State()
+	if len(st.Zones["town"].Transit) != 1 || st.Zones["town"].Entities["alice"] != nil || st.Zones["wilds"].Entities["alice"] != nil {
+		t.Fatalf("alice should be in town's Transit and nowhere else at the recovered hash: transit %v", st.Zones["town"].Transit)
+	}
+
+	// The second life: it recovers and runs lossless. Its first live ticks
+	// retry from the recovered Transit.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	src, err := tickloop.NewKafkaSource(ctx, tickloop.KafkaSourceOptions{Brokers: bk, Group: "andara-rec-second-" + commands[len(commands)-8:], Start: r.State().Offsets, Topic: commands, LagEvery: 200 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := tickloop.NewKafkaPublisher(ctx, bk, "recovery-it-second")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub.Commands, pub.Events = commands, events
+	off, err := tickloop.NewSnapshotter(tickloop.SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loop, err := tickloop.New(tickloop.Options{
+		Engine: r, Source: src, Publisher: pub, Snapshotter: off, AwaitBoundaryAck: true,
+		TickRate: 50, TickBudget: 20 * time.Millisecond, MaxPerTick: 3, DrainTimeout: 5 * time.Second, CheckpointEvery: 5,
+		Log: slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn})),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.SetObserver(loop)
+	tickloop.WireBoundaries(pub, loop, off, nil)
+	done := make(chan error, 1)
+	go func() { done <- loop.Run(ctx) }()
+	defer func() { cancel(); <-done }()
+
+	var after *sim.Engine
+	eventually.Observed(t, 60*time.Second, "alice arrived in wilds after the second life's retries", func() (bool, string) {
+		var err error
+		var arep recovery.Report
+		after, arep, err = recoverCross()
+		if err != nil {
+			return false, err.Error()
+		}
+		s := after.State()
+		return s.Zones["wilds"].Entities["alice"] != nil && len(s.Zones["town"].Transit) == 0, fmt.Sprintf("tick %d from round %d", after.Tick(), arep.Round.Tick)
+	})
+	s := after.State()
+	if s.Zones["town"].Entities["alice"] != nil || s.Zones["wilds"].Placed["alice"].Seq != 1 || s.Zones["wilds"].Entities["alice"].HandoffSeq != 1 {
+		t.Fatalf("alice should have been placed exactly once, at sequence 1: marks %v", s.Zones["wilds"].Placed)
+	}
 }
