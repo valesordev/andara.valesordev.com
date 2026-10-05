@@ -4,7 +4,7 @@ title: Durable cross-Zone handoff — in-transit state, acknowledgement, and tic
 epic: EPIC-02
 component: server
 type: feature
-status: review
+status: done
 size: M
 depends_on: [AW-SRV-003]
 blocks: [AW-SRV-007, AW-SRV-027, AW-SRV-047, AW-SRV-048, AW-SRV-049, AW-SRV-050]
@@ -435,7 +435,7 @@ golden fixture contains a cross-Zone move; `docs/runbooks/simulation-lagging.md`
 
 ## Open questions
 
-- `[ASSUMPTION]` `handoff_retry_ticks` = 10, `handoff_retry_max_ticks` = 100 and `handoff_retry_batch` = 50.
+- ~~`[ASSUMPTION]`~~ **Resolved 2026-10-05 (architecture):** the defaults ship as built. `handoff_retry_ticks` = 10, `handoff_retry_max_ticks` = 100 and `handoff_retry_batch` = 50.
   A retry is cheap and idempotent; too short doubles broker traffic under a slow broker, too long is a player
   stuck "between places". Tune on the stack, with `ingress.transit_hold` in view.
 - **Resolved 2026-09-18 (Brian):** the delay stays perceptible in the Events and the Gateway holds
@@ -504,7 +504,7 @@ can't read a `HandoffAck`), and a fresh local stack for `AW-INF-032`.
   threshold.~~ Done: #404 (keys, runbook step, thresholds) and #406 (dashboard). The two thresholds are
   unmeasured, as the runbook says.
 - ~~Architecture: `AW-SRV-003`'s record.~~ Done 2026-10-04: it now says `AW-SRV-012` replaced the bounce.
-- SRE's §8 instrumentation check: `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
+- ~~SRE's §8 instrumentation check~~ Done 2026-10-05 (below): `andara_handoffs_in_transit`, `andara_handoff_retries_total`,
   `andara_handoff_stale_arrivals_total` and `andara_handoff_placed_entries` are registered and read 0 until a
   handoff; the retry counter's first live observation is on a stack with a lost `Arrive`.
 
@@ -567,3 +567,21 @@ is the right one for `make stack-recover`.
 
 **The dev reset** (`make world-reset ENV=dev CONFIRM=andara-dev`) is not run. It needs Brian's go in the
 session that runs it, at the time the deploy carrying this story reaches `dev`.
+
+## §8 review (architecture, 2026-10-05): done
+
+Run on `main` after #433. Every item holds:
+- **ACs 1-16** each map to a named test in the verification record. I confirmed the named tests exist
+  (`server/sim/handoff_test.go`, `server/tickloop/handoff_test.go`, `handoff_integration_test.go`,
+  `server/config/config_test.go`, `server/sim/entity_roundtrip_test.go`), and `make check` is clean on `main`.
+- **Config** is in `server/README.md`, `deploy/helm/andara/values.schema.json` and `keys.yaml`, and the
+  `simulation-lagging.md` runbook has the handoff step. The glossary has **Handoff** and **Transit**.
+- **Migration:** no schema change; deploying needs `make world-reset ENV=dev CONFIRM=andara-dev`, stated in the
+  record and still waiting on Brian's go in SRE's session.
+- **Instrumentation** is SRE's record above. Per CLAUDE.md §8, the four series were read from the running server
+  and the lost-`Arrive` observations rest on the `TestHandoffLoop_` tests over the metric objects. The first
+  story to inject a lost `Arrive` (none yet) carries the live observation.
+- **The one `[ASSUMPTION]`** (retry defaults 10 / 100 / 50) is resolved: the values are config, tuned without a
+  contract change, and the runbook marks its thresholds unmeasured.
+- **The summary `warn` change is confirmed:** at most one per `sim.handoff_retry_ticks` window, carrying
+  `retries`, `oldest_attempt`, `tick`, `in_transit` and `trace_id`. Issue #409 stands for implementation.

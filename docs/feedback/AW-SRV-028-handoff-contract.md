@@ -457,3 +457,10 @@ The runbook's two thresholds on `andara_handoff_placed_entries` (25,000 and 100,
 snapshot sizing fixture and unmeasured. Measuring them is a small `lane: implementation` story: a `Placed` mark
 population (25,000 and 100,000) in `server/simtest/sizing.go`, with the in-tick copy and State Hash cost
 recorded. It belongs before `AW-SRV-047`, whose Item Instances are what make marks grow.
+
+## Architecture: §8 review, 2026-10-05
+
+The story is `done`. **Confirmed:** the amended §7's log bound (one summary `warn` per `sim.handoff_retry_ticks`
+window with `retries`, `oldest_attempt`, `tick`, `in_transit`, `trace_id`) replaces #403's per-tick text, so #409
+stays open for implementation. The sizing-fixture follow-up for marks is PM's request above; it stays a
+Test-plan line and doesn't gate `done`.
