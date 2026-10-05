@@ -192,6 +192,9 @@ func (rt *Runtime) StartTickLoop(ctx context.Context) (*tickloop.Loop, error) {
 	// loop existed, so attach it now.
 	engine.SetObserver(loop)
 	rt.Engine = engine
+	if cfg.SimSource == "kafka" {
+		rt.live = loop.Live
+	}
 	// The bodies as recovery left them; the loop keeps the gauge current.
 	rt.observeCharacters(engine)
 	if rt.Roster != nil {

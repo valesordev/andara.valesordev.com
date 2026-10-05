@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -111,14 +112,23 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	o.After, o.OnEngine, o.OnRestored = nil, nil, nil
 	o.Metrics = recovery.NewMetrics(nil)
 	_, rep, rerr := recovery.Recover(ctx, o)
-	f := recovery.Classify(rerr)
+	resp, err := verifyResponse(rerr, rep, tick, len(rt.ownedZones()), rt.Cfg.RecoveryVerifyTimeout)
+	// Counted as andara_restore_total{caller="verify"}: ok, or the restore's
+	// own refusal.
 	outcome := "ok"
-	if f != nil {
-		outcome = sim.RestoreOutcome(f.Err)
+	if rerr != nil {
+		outcome = sim.RestoreOutcome(recovery.Classify(rerr).Err)
 	}
 	if outcome != "" {
 		rt.RecoveryMetrics().Restores.WithLabelValues(recovery.CallerVerify, outcome).Inc()
 	}
+	return resp, err
+}
+
+// verifyResponse is what Admin.VerifySnapshotRound answers for a scratch
+// recovery's result: a mismatch is a response, a refusal is a status.
+func verifyResponse(rerr error, rep recovery.Report, tick sim.Tick, owned int, timeout time.Duration) (*adminv1.VerifySnapshotRoundResponse, error) {
+	f := recovery.Classify(rerr)
 	if f == nil {
 		return &adminv1.VerifySnapshotRoundResponse{
 			Match: true, Outcome: adminv1.VerifyOutcome_VERIFY_OUTCOME_MATCH,
@@ -126,7 +136,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 		}, nil
 	}
 	if errors.Is(rerr, context.DeadlineExceeded) {
-		return nil, &snapshotStatus{codeDeadlineExceeded, "verify_timeout", fmt.Sprintf("verify exceeded recovery.verify_timeout (%s)", rt.Cfg.RecoveryVerifyTimeout)}
+		return nil, &snapshotStatus{codeDeadlineExceeded, "verify_timeout", fmt.Sprintf("verify exceeded recovery.verify_timeout (%s)", timeout)}
 	}
 	var (
 		hm *recovery.HashMismatchError
@@ -152,7 +162,7 @@ func (a *SnapshotAdmin) VerifySnapshotRound(ctx context.Context, req *adminv1.Ve
 	case f.Exit == recovery.ExitRestore:
 		return &adminv1.VerifySnapshotRoundResponse{Outcome: adminv1.VerifyOutcome_VERIFY_OUTCOME_CONTENT_MISMATCH}, nil
 	case errors.As(rerr, &ri):
-		if ri.Cause == sim.RoundMissing && len(ri.Zones) == len(rt.ownedZones()) {
+		if ri.Cause == sim.RoundMissing && len(ri.Zones) == owned {
 			return nil, &snapshotStatus{codeNotFound, "round_not_found", fmt.Sprintf("no snapshot object at tick %d", tick)}
 		}
 		return nil, &snapshotStatus{codeFailedPrecondition, "round_incomplete", ri.Error()}

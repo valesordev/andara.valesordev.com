@@ -157,6 +157,10 @@ type Runtime struct {
 	// replay, when set, is the log recovery reads instead of Kafka's: a test
 	// drives StartTickLoop's recovery with it.
 	replay replayLog
+	// live, set once a recovered loop exists, reports how many ticks it has
+	// completed and its lag: /readyz is 503 until the first live tick has
+	// completed within 10 tick budgets of schedule (AW-SRV-007).
+	live func() (uint64, time.Duration)
 	// recMetrics is the recovery instrument set, registered on first use.
 	recMetrics *recovery.Metrics
 }
@@ -441,7 +445,7 @@ func (rt *Runtime) Handler() http.Handler {
 		_, _ = w.Write([]byte("ok\n"))
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if !rt.ready.Load() {
+		if !rt.Ready() {
 			http.Error(w, "not ready\n", http.StatusServiceUnavailable)
 			return
 		}
@@ -454,8 +458,20 @@ func (rt *Runtime) Handler() http.Handler {
 
 // Ready reports whether a World has been loaded and the process is not
 // draining.
+//
+// Ready is the recovered World serving: recovery verified its hash (the
+// process would not otherwise be here), the Gateway serves with content in
+// effect, and the first live tick has completed within 10 tick budgets of
+// schedule (AW-SRV-007). Nothing else answers /readyz.
 func (rt *Runtime) Ready() bool {
-	return rt.ready.Load()
+	if !rt.ready.Load() {
+		return false
+	}
+	if rt.live == nil {
+		return true
+	}
+	ticks, lag := rt.live()
+	return ticks > 0 && lag < 10*rt.Cfg.SimTickBudget
 }
 
 // Drain flips readiness off. The gateway calls it when Shutdown begins, so

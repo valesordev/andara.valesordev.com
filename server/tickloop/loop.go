@@ -84,8 +84,13 @@ type Loop struct {
 	// waiting on their boundary's acknowledgement, and published the newest
 	// tick whose boundary was handed to the publisher; the loop's goroutine
 	// only.
-	acked     atomic.Uint64
-	lost      atomic.Pointer[BoundaryLostError]
+	acked atomic.Uint64
+	lost  atomic.Pointer[BoundaryLostError]
+	// liveTicks is the ticks this loop has completed since it started, and
+	// lagNanos the distance behind schedule at the last one: what readiness
+	// reads (AW-SRV-007), from another goroutine.
+	liveTicks atomic.Uint64
+	lagNanos  atomic.Int64
 	pending   []sim.TickCompleted
 	published sim.TickCompleted
 
@@ -162,6 +167,13 @@ func New(o Options) (*Loop, error) {
 
 // Metrics exposes the loop's instruments, for tests.
 func (l *Loop) Metrics() *Metrics { return l.metrics }
+
+// Live is how many ticks this loop has completed since it started, and how far
+// behind schedule it was at the last one. Zero ticks means the first live tick
+// hasn't completed. Safe from any goroutine.
+func (l *Loop) Live() (ticks uint64, lag time.Duration) {
+	return l.liveTicks.Load(), time.Duration(l.lagNanos.Load())
+}
 
 // Interval is the tick interval.
 func (l *Loop) Interval() time.Duration { return l.interval }
@@ -251,6 +263,7 @@ func (l *Loop) run(ctx context.Context) error {
 			lag = 0
 		}
 		l.metrics.Lag.Set(lag.Seconds())
+		l.lagNanos.Store(int64(lag))
 
 		l.mu.Lock()
 		l.inflight = tick
@@ -262,6 +275,7 @@ func (l *Loop) run(ctx context.Context) error {
 			}
 			return err
 		}
+		l.liveTicks.Add(1)
 
 		if now = l.clock.Now(); now.Sub(lastLog) >= time.Second {
 			lastLog = now

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -100,4 +101,44 @@ func TestHoldMismatch_ServesOperatorHTTPThenReturns(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Ready is the first live tick completed within 10 tick budgets of schedule,
+// on top of the Gateway serving (AW-SRV-007).
+func TestReady_WaitsForTheFirstLiveTickWithinTenBudgets(t *testing.T) {
+	rt, _ := runtime(t, fixture(t, "valid"), false)
+	rt.Cfg.SimTickBudget = 50 * time.Millisecond
+	rt.MarkReady()
+	var ticks uint64
+	var lag time.Duration
+	rt.live = func() (uint64, time.Duration) { return ticks, lag }
+	for _, c := range []struct {
+		ticks uint64
+		lag   time.Duration
+		want  bool
+	}{
+		{0, 0, false},
+		{1, 499 * time.Millisecond, true},
+		{9, 500 * time.Millisecond, false},
+		{9, time.Second, false},
+	} {
+		ticks, lag = c.ticks, c.lag
+		if got := rt.Ready(); got != c.want {
+			t.Errorf("ticks %d lag %s: Ready = %v, want %v", c.ticks, c.lag, got, c.want)
+		}
+		if got := httpGet(rt.Handler(), "/readyz"); (got == 200) != c.want {
+			t.Errorf("ticks %d lag %s: /readyz = %d", c.ticks, c.lag, got)
+		}
+	}
+	rt.Drain()
+	ticks, lag = 5, 0
+	if rt.Ready() {
+		t.Error("Ready while draining")
+	}
+}
+
+func httpGet(h http.Handler, path string) int {
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, path, nil))
+	return rec.Code
 }
