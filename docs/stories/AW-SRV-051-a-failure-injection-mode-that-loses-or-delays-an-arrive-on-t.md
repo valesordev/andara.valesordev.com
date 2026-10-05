@@ -152,6 +152,7 @@ CLAUDE.md §8, plus:
       build tag, or both. §10 allows no privileged back door into a running process, so an admin RPC needs an
       ADR-level answer.
    c. **The `error` line.** Dropping or delaying an `Arrive` can't produce the "impossible `Arrive`" `error`
-      log (`AW-SRV-028` AC-9: an `Arrive` rejected `entity_present` or `invalid_arrival`, logged at `error`). Is that line carried here by a third mode (a malformed `Arrive`),
+      log (`AW-SRV-028` AC-9's rejections, `entity_present` and `invalid_arrival`, which its §7 Logs say are logged at
+      `error`). Is that line carried here by a third mode (a malformed `Arrive`),
       or left to tests with the §8 record saying so?
 2. `[ASSUMPTION]` Size M: two modes, two metrics, a recovery test, and a startup guard.

@@ -14,7 +14,7 @@ the role that should answer.
 2. **How is it kept out of production?** The story says the mode is refused outside the local stack. Say how:
    refuse the key unless the environment is the local stack, a build tag, or both.
 3. **The `error` line.** Dropping or delaying an `Arrive` can't produce `AW-SRV-028` AC-9's `error` log
-   (an `Arrive` rejected `entity_present` or `invalid_arrival`). Do you want a third mode (a malformed `Arrive`) in this story, or is that line left
+   (an `Arrive` rejected `entity_present` or `invalid_arrival`; the `error` level is in its §7 Logs). Do you want a third mode (a malformed `Arrive`) in this story, or is that line left
    to tests, with the §8 record saying so?
 4. **Which story is the carrier you cite?** Because the Makefile is SRE's, the live observation is a target,
    so the carrier is split: `AW-SRV-051` (the mode, `lane: implementation`) and `AW-INF-036` (`make
