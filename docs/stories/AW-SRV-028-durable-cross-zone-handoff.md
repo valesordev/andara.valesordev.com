@@ -362,8 +362,8 @@ yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
 - **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
   retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick`, `in_transit` and
   `trace_id`. *(Confirmed 2026-10-05 by architecture; built in #409 (#442): `flushRetries`,
-  `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
-  retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
+  `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`.)* Under a sustained broker outage the retries land on most ticks, so the summary holds the log to one line
+  per window where a `warn` per retrying tick would be about ten a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
   and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
   correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
   retry lines is the tick's trace:** a retry carries no trace of the originating `Move`, live or after a recovery.
@@ -585,7 +585,10 @@ the first:
 **Closed 2026-10-05, third pass (architecture), once #409 merged and #443 created the carrier:**
 1. **The `warn` is built.** #409 (#442) added `flushRetries` (`server/tickloop/loop.go`): one summary `warn` once the
    open window is `sim.handoff_retry_ticks` old, with `retries`, `oldest_attempt`, `tick`, `in_transit` and
-   `trace_id`, asserted by `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`. A window still open when the loop
+   `trace_id`; the test asserts `retries`, `oldest_attempt`, `in_transit`, the flush `tick` and the absence of `count`,
+   and does not assert `trace_id`, which `flushRetries` fills from `traceID(ctx)` as the `debug` line does. The
+   carrier's run is where `trace_id` on the live `warn` is checked (`AW-INF-036` AC-3, ruling 6 in
+   `docs/feedback/AW-SRV-051-failure-injection-surface.md`). A window still open when the loop
    stops isn't flushed, as the verification record says; the stopping process's last lines aren't a retry signal.
 2. **The carrier is `AW-INF-036`** (`lane: sre`, `make stack-handoff-fault`, depends on `AW-SRV-051`'s failure-injection
    mode). Its Definition of done carries the live observation of `andara_handoff_retries_total` and
