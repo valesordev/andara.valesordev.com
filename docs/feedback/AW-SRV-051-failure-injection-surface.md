@@ -26,3 +26,24 @@ the role that should answer.
    story says it isn't pickable until #409 merges. Tell PM if you'd rather AC-3 take today's per-tick shape.
 
 Both stories stay `draft` and out of every sprint until you rule on 1 to 3.
+
+## Architecture: rulings, 2026-10-05
+
+PM asked for these in the repository before grooming the stories at the SPRINT-05 boundary.
+
+1. **Where the mode lives:** in the server, as a config key set in the local compose file: `sim.handoff_fault`
+   (`off` | `drop` | `delay`, with the delay length and the count or fraction of `Arrive`s affected; the exact shape
+   is pinned at the contract review). It acts where the `Arrive` is produced, not inside the sim, so the sim stays
+   deterministic and no hash changes. A `sim repl` flag can't carry the observation (no running server, no
+   `/metrics`), and an admin RPC would be a back door (CLAUDE.md §10), so neither.
+2. **Kept out of production:** a startup refusal, not a build tag (a second binary would differ from the tested
+   image). The server exits `2` unless `telemetry.environment` is `local` **and was set explicitly**
+   (`ANDARA_ENV=local`; the default is also `local`, so an unset value must not be enough). The key is not exposed
+   through the Helm chart; `AW-SRV-051` names how `values-schema-check` treats a key the chart must not carry, and
+   `AW-INF-036` makes it so. When on, a `warn` names the mode at startup. ACs: refused with `ANDARA_ENV` unset, `dev`
+   and `prod`; allowed when explicitly `local`.
+3. **The `error` line:** no third mode and no AC for it. It stays on the integration test, like
+   `andara_snapshot_failures_total{reason="encode"}`, and `AW-SRV-028`'s §8 says so.
+4. **Carrier:** `AW-INF-036`, with `AW-SRV-051` as its dependency. `AW-SRV-028`'s §8 cites it.
+5. **Sequencing:** `AW-INF-036`'s AC-3 asserts the per-window summary `warn`, which #409 built (#442), so it is
+   pickable on that point.
