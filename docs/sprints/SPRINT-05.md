@@ -48,7 +48,8 @@ each draft to `ready` or `blocked`.
 - **AW-SRV-040** — every Admin account write audits outside the Account write lock.
 - **AW-INF-037** — `make server-stop` and `make server-start` (SRE; #362, a §9 defect in
   `docs/runbooks/server-crashlooping.md`). It's off the demo's path: `AW-INF-034` kills from the node and
-  never scales the StatefulSet.
+  never scales the StatefulSet. Its Open question 1 (what a manual sync during a stop does) is SRE's to
+  rule before it's `ready`.
 - **AW-SRV-039** — Admin acting-as. The sprint's slack, and last.
 
 ## Architecture backlog (pickup order)
@@ -106,7 +107,8 @@ story at `review`.
 
 **Risk:** the demo's path is SRE's items 1–4 and architecture's item 1, with implementation's item 2 behind
 it if #363 still holds. Implementation's list is a builder-polish queue and doesn't gate the demo. If SRE
-runs short, item 5 (`AW-INF-037`) carries over; items 1–4 don't. If implementation runs short, item 8 carries over first, then item 7, then item 6.
+runs short, item 5 (`AW-INF-037`) carries over; items 1–4 don't. If implementation runs short, item 8
+carries over first, then item 7, then item 6.
 
 ## Carryover from SPRINT-04
 None. Every SPRINT-04 story is `done` (see its close-out).
@@ -129,8 +131,8 @@ AW-CLI-012 (architecture) can enter the contract review early if content asks.
 **Owed by PM, not yet written:** the nine children of the AW-INF-005 and AW-INF-007 split
 (`docs/feedback/AW-INF-005-007-split.md`), copied verbatim from the originals' ACs. Architecture expected them
 at this boundary. They aren't in this PR because the demo doesn't need them (`AW-INF-032` and `AW-INF-034`
-don't depend on the split) and nine stories copied from two large ones would hold the sprint's start back
-for work no lane picks up first. They land in the next PM PR, which re-plans this sprint as SPRINT-03 did,
+don't depend on the split), and the originals keep every AC until architecture's strip, so a delay loses
+nothing. They land in the next PM PR, which re-plans this sprint as SPRINT-03 did,
 so architecture's items 5 and 6 can strip the originals.
 
 ## Close-out

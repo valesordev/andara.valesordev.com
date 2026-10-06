@@ -1,7 +1,7 @@
 ---
 id: AW-INF-037
 title: make server-stop and server-start take the server down and back up on an Argo-managed environment
-epic: EPIC-05
+epic: EPIC-07
 component: infra
 type: chore
 status: draft
