@@ -51,6 +51,7 @@ stories, and drops the stale "held at `review`" and "isn't pickable until #409 m
 5. **Sequencing:** `AW-INF-036`'s AC-3 asserts the per-window summary `warn`, which #409 built (#442), so it is
    pickable on that point.
 6. **`trace_id` on the live summary `warn`** (Codex, #444): `AW-SRV-028`'s loop test doesn't assert it, so
-   `AW-INF-036`'s AC-3 adds `trace_id` to the fields it checks on the `warn` (non-empty, and a trace id that
-   resolves in Tempo as the applying tick's trace), beside `retries`, `oldest_attempt`, `tick` and `in_transit`.
+   `AW-INF-036`'s AC-3 adds `trace_id` to the fields it checks on the `warn` (present, and a 32-hex trace id; not
+   that it resolves in Tempo, since a tick's trace is exported one tick in a hundred and the `warn` flushes on an
+   arbitrary tick), beside `retries`, `oldest_attempt`, `tick` and `in_transit`.
    PM folds it into AC-3 at the SPRINT-05 boundary.
