@@ -451,7 +451,7 @@ Branch `impl/aw-srv-028-durable-handoff`. The contract questions and the hand-of
 
 | AC | Test | What it asserts |
 |----|------|-----------------|
-| 1 | `TestHandoff_ALostArriveIsRetriedAndThenAcknowledged` (`server/sim`); `TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges` | No re-send on the departure tick; `in_transit` answers a Command; the retry comes at departure + `handoff_retry_ticks` with the same `handoff_seq` and Entity bytes, no session, client ref or trace; the record and its schedule entry go on the tick that applies the ack. Through the loop: the retry is counted, the gauge returns to 0, one `warn` per retrying tick and one `debug` per retry |
+| 1 | `TestHandoff_ALostArriveIsRetriedAndThenAcknowledged` (`server/sim`); `TestHandoffLoop_ALostArriveIsRetriedAndTheWorldConverges`; `TestHandoffLoop_RetriesAreSummarizedOncePerWindow` | No re-send on the departure tick; `in_transit` answers a Command; the retry comes at departure + `handoff_retry_ticks` with the same `handoff_seq` and Entity bytes, no session, client ref or trace; the record and its schedule entry go on the tick that applies the ack. Through the loop: the retry is counted, the gauge returns to 0, at most one summary `warn` per `sim.handoff_retry_ticks` window (`retries`, `oldest_attempt`, `tick`, `in_transit`, `trace_id`; #409) and one `debug` per retry. Three windows of retries on most ticks give three `warn`s, every retry still counted and logged at `debug` |
 | 2 | `TestKafka_AHandoffSurvivesASIGKILLWithTheArriveLost` (Redpanda); `TestHandoffLoop_RecoveryRetriesFromTheRecoveredTransit` (through `tickloop.RecoverFrom`) | A real `SIGKILL` after the boundaries and with every `Arrive` lost: `Transit` holds alice at the recovered hash, the recovered process retries within its first ticks, and she lands in wilds once, at sequence 1 |
 | 3 | `TestHandoff_ADuplicateArriveIsReAckedAndChangesNothing` | Re-acked, no Event, the Zone's canonical bytes unchanged, not counted stale |
 | 4 | `TestHandoff_ALateRetryIsStaleHoweverLateItComes`; `TestHandoff_ALostAckWindowIsStaleAckedAndTheSourceDropsItsRecord` (B holds `Transit(e, 2)` with mark 1, A's retry of seq 1 is stale-acked with no rejection and A drops its record) | A retry of seq 1 after the Entity moved on, delivered 1,000 ticks later: stale, acked, nothing placed. The mark is kept |
@@ -522,7 +522,7 @@ only.** Run on the local stack at `main` bc4badf (`make up` rebuilt the server i
 | `docker compose restart andara-server`, ready after about 90 s | `placed_entries` **5**, `in_transit` 0, both counters 0. The mark count survived the restart because the gauge is rebuilt from the recovered state, and the counters restarted at 0, as the amended §7 says |
 | Prometheus and Grafana | Prometheus scrapes all four series (5, 0, 0, 0). `andara-tick-health` has the two *Cross-Zone handoffs* panels (#406), whose four queries now return data |
 
-**Covered by tests, not run live** (`go test -race -run TestHandoffLoop_ ./server/tickloop/`, three tests,
+**Covered by tests, not run live** (`go test -race -run TestHandoffLoop_ ./server/tickloop/`, four tests,
 all pass; they read the metric objects, per CLAUDE.md §8): a lost `Arrive` is retried and acknowledged
 (`HandoffsInTransit` 1 → 0, `HandoffRetries` 0 → 1, `HandoffPlacedEntries` 1, a `warn` carrying
 `oldest_attempt`); a recovery retries from the recovered `Transit` and counts nothing for the replay; a stale
@@ -534,16 +534,14 @@ make that observation carries it. No story arranges one yet: AW-INF-032's `make 
 and may catch a handoff in flight by chance, but it doesn't inject loss or assert a retry, so a failure-injection
 flag (the follow-up the Test plan above names) is what would make the observation repeatable.
 
-**One deviation from the amended §7: the summary `warn`, and it is a contract change.** Architecture's #403 text said
-"`warn` once per tick that produced retries, with the count and the oldest `attempt`", and the code matches it:
-one `warn` for every tick that produced retries, with `count`, `oldest_attempt`, `tick` and `trace_id`
-(`server/tickloop/loop.go`, `noteRetries`). The amended §7 asks for at most one per `sim.handoff_retry_ticks`
-window, with `retries`, `oldest_attempt`, `tick` and `in_transit`. SRE proposed that after #403 merged, and
-architecture accepted it in a cross-session message on 2026-10-04 (not in the repository), so the change is asked
-for in the feedback file to be confirmed there. #407 shipped before the amendment, and the code is right by the
-merged contract. It is up to ten lines a second under a sustained outage and about one every 10 s for a single
-stuck handoff: issue #409, for implementation, not blocking, and only if architecture confirms the change. The
-`debug` line per retry and the `error` lines match.
+**The amended §7's summary `warn` is built (#409, architecture confirmed it in the §8 review).** The code first
+logged one `warn` per tick that produced retries, with `count` (#407, right by #403's text). It now logs at most
+one per `sim.handoff_retry_ticks` window, with `retries`, `oldest_attempt`, `tick`, `in_transit` and `trace_id`
+(`server/tickloop/loop.go`, `noteRetries` and `flushRetries`; `Engine.HandoffRetryWindow`), pinned by
+`TestHandoffLoop_RetriesAreSummarizedOncePerWindow`. A window still open when the loop stops is not flushed: its
+retries are in the counter and the `debug` lines. The `debug` line per retry and the `error` lines are unchanged.
+The §7 Logs bullet's "requested, not built" note and `docs/feedback/AW-SRV-028-handoff-contract.md` still describe
+the per-tick warn; both are architecture's to update.
 
 **A difference from #403's text that is already agreed: a retry's trace.** #403's §7 said a live retry's `trace_id`
 is the originating `Move`'s and that retries carry its traceparent. The code gives a retry no trace id, because the
