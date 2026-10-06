@@ -63,7 +63,7 @@ instead of trusting tests alone.
    (the original and two retries), `andara_handoff_retries_total` is at least 3, and the Character is placed
    by the fourth.
 4. **Given** `delay` with `d` greater than `sim.handoff_retry_ticks` **when** a Character crosses **then** the
-   original `Arrive` is held `d` ticks (only the first production of each handoff is held; its retries are
+   original `Arrive` is held `d` ticks and released on tick `d` even if that tick produces nothing else (only the first production of each handoff is held; its retries are
    not), the retry is applied first, the Character is placed once, the delayed original is stale-acked, and
    `andara_handoff_stale_arrivals_total` is 1. No second body exists.
 5. **Given** the mode on **when** the server starts **then** it logs one `warn` naming the mode and its
@@ -90,8 +90,15 @@ type ArriveFault interface {
     Produce(entity sim.EntityID, seq uint64, tick sim.Tick) Decision
 }
 type Decision int // Send | Drop | Hold(until tick)
+
+// Release is called on EVERY tick, whether or not the tick produced anything: the loop calls
+// Publisher.Produce only when its outbound list is non-empty, so a held Arrive would otherwise sit
+// buffered through quiet ticks and never go out. It returns the held Arrives whose tick has come.
+Release(tick sim.Tick) []*logv1.LoggedCommand
 ```
 
+- **Held Arrives** live in the fault, not in the Engine, and aren't hashed. A restart loses them, which is
+  safe because the source's retry still stands (`AW-SRV-028` AC-2).
 - **Modes:** `drop` with `n` productions (counted per process, across handoffs, from the first), `delay` with
   `d` ticks (the first production of each handoff only). Off by default. The argument syntax is part of the
   surface (Open question 1a).
@@ -128,7 +135,8 @@ reaching into it).
 - None. A server with the mode on is a local-stack condition; it is refused elsewhere (Open question 1b).
 
 ## Test plan
-- **Unit:** the decision function for `drop` and `delay` over a stepped clock (AC-1 to AC-4); argument
+- **Unit:** the decision function for `drop` and `delay` over a stepped clock (AC-1 to AC-4), including a
+  held `Arrive` released on a tick with no other outbound; argument
   validation (AC-7); the gauge and counters (AC-5, AC-8). Reads the metric objects.
 - **Integration:** a two-Zone engine with the tick loop, a fake `Log`, and the mode on, asserting AC-2 to AC-4
   from the metric objects; a broker-level kill between the dropped `Arrive` and its retry (AC-6), beside

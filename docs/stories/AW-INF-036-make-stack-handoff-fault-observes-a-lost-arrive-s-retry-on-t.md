@@ -39,7 +39,9 @@ log lines it produces, so that `AW-SRV-028`'s instrumentation is observed live a
   the server back.
 - It asserts the observations below by polling to a deadline (`docs/specs/testing/live-assertions.md`), not
   by one read.
-- It is in `.PHONY`, `make help` and `make check-targets`.
+- It is in `.PHONY` and `make help`, like `make stack-recover`. It is **not** in `CHECK_TARGETS`: `make check`
+  depends on that list and the CI parity guard requires a step for each entry, and this target needs a running
+  stack and runs for minutes.
 
 ### Out of scope
 - The mode — `AW-SRV-051`.
@@ -61,7 +63,8 @@ log lines it produces, so that `AW-SRV-028`'s instrumentation is observed live a
 4. **Given** an assertion that doesn't hold by its deadline **when** the target runs **then** it exits
    non-zero and names the observation.
 5. **Given** two runs in a row **when** the second starts **then** it succeeds (idempotent, CLAUDE.md §9).
-6. **Given** `make help` and `make check-targets` **when** they run **then** the target appears in both.
+6. **Given** `make help` and `make check-targets` **when** they run **then** the target appears in `make help`
+   and does not appear in `make check-targets`, so `make check` never runs it.
 
 ## Interface contract
 
