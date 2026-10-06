@@ -206,8 +206,8 @@ None. Every SPRINT-04 story is `done`.
 Issues opened during SPRINT-04, and who owes each:
 | Issue | Owes | In SPRINT-05? |
 |-------|------|---------------|
-| #363 `dev` stops booting once `andara.events.v1` retention expires its first segment | architecture, then implementation | **Yes.** It breaks the M2 gate on `dev` |
-| #362 runbooks can't stop a crash-looping server on `dev`: Argo CD self-heal undoes `kubectl scale` | SRE | **Yes.** `dev`'s kill-and-recover needs a working stop |
+| #363 `dev` stops booting once `andara.events.v1` retention expires its first segment | architecture, then implementation | **Yes.** It can break the M2 gate on `dev`; architecture rules whether it still holds now that `AW-SRV-007` has shipped |
+| #362 runbooks can't stop a crash-looping server on `dev`: Argo CD self-heal undoes `kubectl scale` | SRE | **Yes, as AW-INF-037** (groomed in this PR, `lane: sre`). Not on the demo's path |
 | #423 `uint64` log attributes above 2^63 are rounded in Loki | SRE | No. Observability polish, held |
 | #422 projector integration tests time out waiting for the first commit (intermittent) | SRE | No. The stack workflow is green; held |
 | #396 `projector-rebuild` reports success without proving the restore verified | SRE | No. Held |
@@ -219,7 +219,8 @@ Unanswered `docs/feedback/` items, and who owes each:
 - **Architecture:** `docs/feedback/AW-SRV-048-transit-orphan-design.md`, `AW-SRV-049-roster-observation.md`
   and `AW-SRV-051-failure-injection-surface.md` (the last has its rulings recorded, so PM folds them in
   at grooming), and AW-SRV-027's re-size after it grew (`AW-SRV-028-handoff-contract.md`).
-- **PM:** `docs/feedback/AW-INF-005-007-split.md`, the nine children (see SPRINT-05's re-plan).
+- **PM:** `docs/feedback/AW-INF-005-007-split.md`, the nine children. SPRINT-05 defers them to the next PM PR
+  and says why.
 
 ### Other findings
 - **The `argocd-install` closing status** item (SPRINT-04's SRE item 2) merged as #353.

@@ -20,7 +20,7 @@ of 120 s. The `stack` workflow runs it on every merge, after `stack-linkdead`.
   place of a PM re-run (2026-10-05, his answer "c"), as he did for SPRINT-03's `dev` steps.
 - **The run quoted below:** the `stack` workflow on `main`, run 37392791066, at `e007216` (the merge of
   #442, the last code merge before this close-out; every merge after it is docs). The job's steps 5
-  to 22 are the steps below, in order. The run is
+  to 7, 20 to 23 and 26 are the steps below, in order; its steps 8 to 19 check other things. The run is
   https://github.com/valesordev/andara.valesordev.com/actions/runs/37392791066.
 - A reader can re-run it on any clean clone of `origin/main` with the steps below.
 
@@ -55,10 +55,12 @@ of 120 s. The `stack` workflow runs it on every merge, after `stack-linkdead`.
    - **Run (CI, step 22):**
      ```
      stack-recover: newest complete round before the run: 3002
+     …
      stack-recover: waiting up to 90s for a complete round past 3002 ...
      stack-recover: round R = 4239
      stack-recover: Recoveredtwqyzmzx walks north to the Town Hall, after the round ...
      stack-recover: SIGKILL to andara-server, then start ...
+     …
      stack-recover: ready 1.3s after the kill (RTO 120s), round 4239, hash match
      stack-recover: kill-to-ready 1.3s; process-start-to-ready (andara_recovery_duration_seconds{phase="total"}) 0.055668292s; replayed ticks 15; restore ok 1; recovery.run trace eaee839f555d00644da81d124b373249
      stack-recover: RecoveryStateMismatch is absent from ALERTS through the recovery (Prometheus scraped the 1)

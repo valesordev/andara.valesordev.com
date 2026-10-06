@@ -46,6 +46,9 @@ each draft to `ready` or `blocked`.
 - **AW-CLI-010** — the compiler reports unportable names offline.
 - **AW-CLI-011** — a TLS verification failure names the CA in use and where it came from.
 - **AW-SRV-040** — every Admin account write audits outside the Account write lock.
+- **AW-INF-037** — `make server-stop` and `make server-start` (SRE; #362, a §9 defect in
+  `docs/runbooks/server-crashlooping.md`). It's off the demo's path: `AW-INF-034` kills from the node and
+  never scales the StatefulSet.
 - **AW-SRV-039** — Admin acting-as. The sprint's slack, and last.
 
 ## Architecture backlog (pickup order)
@@ -53,8 +56,9 @@ After the contract review above:
 
 1. **#363**: rule how `dev` boots once `andara.events.v1`'s retention has expired its first segment (a
    whole-log recovery with nothing to read). It's `AW-INF-005`'s retention decision and
-   `AW-SRV-007`'s `recovery.require_snapshot`, and it breaks the demo on `dev`. Implementation takes the
-   code half once it's ruled.
+   `AW-SRV-007`'s `recovery.require_snapshot`. It can break the demo on `dev`: the issue was written before
+   `AW-SRV-007` shipped, and its trigger is about 30 days after the last `dev` reset. Rule whether it still
+   holds. If it does, implementation takes the code half.
 2. **`docs/feedback/AW-SRV-049-roster-observation.md`, `AW-SRV-048-transit-orphan-design.md`:** rule the
    questions in them (the Character-level settlement signal; the wall-clock bound against #114; Roster
    protocol or sim-level guard). The stories are held, below.
@@ -64,9 +68,12 @@ After the contract review above:
    still `ready` at S. Write the re-size in `docs/feedback/` before anyone picks it up.
 5. **AW-INF-005** — Kafka operational contract and the retention decision — ready, M. It shrinks to its
    contract once PM has written its children and architecture has stripped the moved ACs
-   (`docs/feedback/AW-INF-005-007-split.md`).
+   (`docs/feedback/AW-INF-005-007-split.md`). **Skip items 5 and 6 until the PM PR that writes the nine
+   children has merged.** Nothing is lost by waiting: the originals keep every AC until the strip.
 6. **AW-INF-007** — the deploy lifecycle contract, including who emits
-   `andara_deploy_interruption_seconds` (AC-5) — ready, M, the same split.
+   `andara_deploy_interruption_seconds` (AC-5) — ready, M, the same split and the same wait. Its
+   `AW-SRV-030` dependency (held for SPRINT-06) doesn't block this contract work, which writes a spec and
+   one `event.proto` message.
 7. The §8 review of each story as it reaches `review`.
 
 ## SRE backlog (pickup order)
@@ -80,10 +87,10 @@ story at `review`.
    Depends on `AW-SRV-007` (`done`).
 3. **AW-INF-009** — alert rule delivery, with the `RecoveryStateMismatch` cluster clause architecture
    amended on 2026-10-02 — ready, S. Depends on `AW-SRV-007` (`done`).
-4. **#362**: runbooks can't stop a crash-looping server on `dev`, because Argo CD self-heal undoes
-   `kubectl scale`. The demo's kill-and-recover needs a working stop.
-5. **AW-INF-034** — `make env-recover` — after its contract review, and after items 2 and 3. Last,
-   because it waits on both and it's the demo.
+4. **AW-INF-034** — `make env-recover` — after its contract review, and after items 2 and 3. It waits on
+   both and it's the demo.
+5. **AW-INF-037** — `make server-stop` and `make server-start` (#362) — after its contract review. Not on the
+   demo's path; it closes a runbook §9 defect, and goes after the demo's items.
 
 ## Implementation backlog (pickup order)
 1. **AW-SRV-032** — character deletion, name retention, purge, and switching bodies — ready, M. Depends on
@@ -97,10 +104,9 @@ story at `review`.
 7. **AW-SRV-040** — after its contract review. S.
 8. **AW-SRV-039** — slack, after its contract review. M.
 
-**Risk:** the demo's path is SRE's items 1–5 and architecture's item 1, with implementation's item 2 behind
-it if #363 needs code. Implementation's list is a builder-polish queue and doesn't gate the demo. If SRE
-runs short, item 4 (#362) carries over only if the demo can stop the server another way; items 1–3 and 5
-don't carry. If implementation runs short, item 8 carries over first, then item 7, then item 6.
+**Risk:** the demo's path is SRE's items 1–4 and architecture's item 1, with implementation's item 2 behind
+it if #363 still holds. Implementation's list is a builder-polish queue and doesn't gate the demo. If SRE
+runs short, item 5 (`AW-INF-037`) carries over; items 1–4 don't. If implementation runs short, item 8 carries over first, then item 7, then item 6.
 
 ## Carryover from SPRINT-04
 None. Every SPRINT-04 story is `done` (see its close-out).
@@ -121,8 +127,11 @@ needs them sooner, and no `content-need` issue asks for them; AW-SRV-047 also wa
 AW-CLI-012 (architecture) can enter the contract review early if content asks.
 
 **Owed by PM, not yet written:** the nine children of the AW-INF-005 and AW-INF-007 split
-(`docs/feedback/AW-INF-005-007-split.md`), copied verbatim from the originals' ACs. They land in a PM PR that
-re-plans this sprint, as SPRINT-03 did, so architecture's items 5 and 6 can strip the originals.
+(`docs/feedback/AW-INF-005-007-split.md`), copied verbatim from the originals' ACs. Architecture expected them
+at this boundary. They aren't in this PR because the demo doesn't need them (`AW-INF-032` and `AW-INF-034`
+don't depend on the split) and nine stories copied from two large ones would hold the sprint's start back
+for work no lane picks up first. They land in the next PM PR, which re-plans this sprint as SPRINT-03 did,
+so architecture's items 5 and 6 can strip the originals.
 
 ## Close-out
 (filled in by the next PM session)
