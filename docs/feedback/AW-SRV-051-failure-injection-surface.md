@@ -40,7 +40,7 @@ stories, and drops the stale "held at `review`" and "isn't pickable until #409 m
    deterministic and no hash changes. A `sim repl` flag can't carry the observation (no running server, no
    `/metrics`), and an admin RPC would be a back door (CLAUDE.md §10), so neither.
 2. **Kept out of production:** a startup refusal, not a build tag (a second binary would differ from the tested
-   image). The server exits with the config exit (`ExitConfig`, `2`; `AW-SRV-051`'s draft says `1`, and PM reconciles it) unless `telemetry.environment` is `local` **and was set explicitly**
+   image). The server exits with the existing configuration-error code (`1`, as `AW-SRV-051`'s draft already says) unless `telemetry.environment` is `local` **and was set explicitly**
    (`ANDARA_ENV=local`; the default is also `local`, so an unset value must not be enough). The key is not exposed
    through the Helm chart; `AW-SRV-051` names how `values-schema-check` treats a key the chart must not carry, and
    `AW-INF-036` makes it so. When on, a `warn` names the mode at startup. ACs: refused with `ANDARA_ENV` unset, `dev`
