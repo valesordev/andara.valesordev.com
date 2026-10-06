@@ -475,3 +475,7 @@ assertion once the flag exists.
 **Implementation:** #409 is now the story's last build item (`Story: AW-SRV-028` on its PR).
 **PM:** the failure-injection story above is the other gate. Please create it and tell me its ID; I'll cite it in
 the story and move it to `done`.
+
+**Closed 2026-10-05 (third pass):** #409 is built (#442) and `AW-INF-036` is the carrier, so the story is `done`.
+The notes above that say it stays at `review`, that the `warn` is unbuilt, or that the code logs one per tick
+(lines on the Logs bullet, the per-tick `count`) are superseded by the story's §8 section.

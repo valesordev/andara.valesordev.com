@@ -361,8 +361,8 @@ yet. The reasoning is in `docs/feedback/AW-SRV-028-handoff-contract.md`.*
   The counters start at 0 after a restart.
 - **Logs:** **at most one summary `warn` per `sim.handoff_retry_ticks` window**, aggregating the window's
   retries, with the fields `retries` (the count over the window), `oldest_attempt`, `tick`, `in_transit` and
-  `trace_id`. *(Confirmed 2026-10-05 by architecture, §8 review below; not built: the code still logs one per tick,
-  built in #409 (`flushRetries`, `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`).)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
+  `trace_id`. *(Confirmed 2026-10-05 by architecture; built in #409 (#442): `flushRetries`,
+  `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`.)* Under a sustained broker outage the retries land on most ticks, so one `warn` per tick that produced
   retries is about ten lines a second. One `debug` per retry, with `entity_id`, `from_zone`, `to_zone`, `seq`
   and `attempt`, so a restart with many stuck handoffs doesn't write a line each; that line is how a retry is
   correlated to its handoff. `error` on `entity_present`, `invalid_arrival` and `id_reused`. **`trace_id` on the
@@ -566,9 +566,10 @@ is the right one for `make stack-recover`.
 **The dev reset** (`make world-reset ENV=dev CONFIRM=andara-dev`) is not run. It needs Brian's go in the
 session that runs it, at the time the deploy carrying this story reaches `dev`.
 
-## §8 review (architecture, 2026-10-05): stays at `review`, two items open
+## §8 review (architecture, 2026-10-05): closed at the third pass
 
-Run after #433. Everything else holds:
+The first two passes held the story at `review` for the two items under "Closed" below. Everything else held from
+the first:
 - **ACs 1-16** each map to a named test in the verification record, all of which exist
   (`server/sim/handoff_test.go`, `server/tickloop/handoff_test.go`, `handoff_integration_test.go`,
   `server/config/config_test.go`, `server/sim/entity_roundtrip_test.go`); `make check` is green.
@@ -581,7 +582,7 @@ Run after #433. Everything else holds:
 - **The summary `warn` bound is confirmed** as the contract: at most one per `sim.handoff_retry_ticks` window,
   carrying `retries`, `oldest_attempt`, `tick`, `in_transit` and `trace_id`.
 
-**Closed 2026-10-05, third pass (architecture):**
+**Closed 2026-10-05, third pass (architecture), once #409 merged and #443 created the carrier:**
 1. **The `warn` is built.** #409 (#442) added `flushRetries` (`server/tickloop/loop.go`): one summary `warn` once the
    open window is `sim.handoff_retry_ticks` old, with `retries`, `oldest_attempt`, `tick`, `in_transit` and
    `trace_id`, asserted by `TestHandoffLoop_RetriesAreSummarizedOncePerWindow`. A window still open when the loop
@@ -592,4 +593,5 @@ Run after #433. Everything else holds:
    and `debug` lines, and records the run for this story's §8. The `error` line (AC-9) has no live carrier: a
    malformed `Arrive` can't arise in a deployed system, so it stays on
    `TestHandoffLoop_AStaleArriveIsCountedAndAnImpossibleOneIsLoggedAtError` (ruled in
-   `docs/feedback/AW-SRV-051-failure-injection-surface.md`). The story moves from `review` to `done`.
+   `docs/feedback/AW-SRV-051-failure-injection-surface.md`). The story moves from `review` to `done`. The `warn`'s shape is covered by that test and not yet seen live; the
+   carrier's run is where the live line is seen (SRE's record above predates #409).
