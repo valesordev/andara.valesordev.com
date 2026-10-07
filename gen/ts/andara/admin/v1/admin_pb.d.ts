@@ -919,8 +919,8 @@ export declare type ApproveVersionResponse = Message<"andara.admin.v1.ApproveVer
   approvedAtUnixNano: bigint;
 
   /**
-   * The approver is the publisher, or the real actor behind the publisher's
-   * acting-as Session. Only an OPERATOR can do this, and only while
+   * The approver is the manifest's `author`, or its `publisher` (the real actor
+   * behind an acting-as publish; AW-SRV-039). Only an OPERATOR can do this, and only while
    * content.operator_self_approval is true.
    *
    * @generated from field: bool self_approval = 3;

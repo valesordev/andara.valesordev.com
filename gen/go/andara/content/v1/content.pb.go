@@ -196,7 +196,7 @@ type ContentVersion struct {
 	// service fills `publisher = author` on read, in ListVersions and
 	// GetVersion alike, so the wire never carries it empty and no client
 	// re-implements the rule. That is true and not a fallback: no token carries
-	// an `act` claim today (ops.go never sets one), so no acted-as manifest
+	// an `act` claim today (nothing in server/auth populates it), so no acted-as manifest
 	// could have been written before this field.
 	Publisher     string `protobuf:"bytes,10,opt,name=publisher,proto3" json:"publisher,omitempty"`
 	unknownFields protoimpl.UnknownFields

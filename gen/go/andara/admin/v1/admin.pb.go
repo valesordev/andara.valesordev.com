@@ -2067,8 +2067,8 @@ type ApproveVersionResponse struct {
 	state              protoimpl.MessageState `protogen:"open.v1"`
 	ApprovedBy         string                 `protobuf:"bytes,1,opt,name=approved_by,json=approvedBy,proto3" json:"approved_by,omitempty"`
 	ApprovedAtUnixNano int64                  `protobuf:"varint,2,opt,name=approved_at_unix_nano,json=approvedAtUnixNano,proto3" json:"approved_at_unix_nano,omitempty"`
-	// The approver is the publisher, or the real actor behind the publisher's
-	// acting-as Session. Only an OPERATOR can do this, and only while
+	// The approver is the manifest's `author`, or its `publisher` (the real actor
+	// behind an acting-as publish; AW-SRV-039). Only an OPERATOR can do this, and only while
 	// content.operator_self_approval is true.
 	SelfApproval  bool `protobuf:"varint,3,opt,name=self_approval,json=selfApproval,proto3" json:"self_approval,omitempty"`
 	unknownFields protoimpl.UnknownFields
