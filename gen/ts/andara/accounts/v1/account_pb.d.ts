@@ -218,6 +218,24 @@ export declare type CharacterRef = Message<"andara.accounts.v1.CharacterRef"> & 
    * @generated from field: int64 created_unix = 6;
    */
   createdUnix: bigint;
+
+  /**
+   * Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+   * retention expiry on the wall clock, deleted_unix + character.delete_retention;
+   * only the Tick the purge applies on is deterministic.
+   *
+   * @generated from field: int64 deleted_unix = 7;
+   */
+  deletedUnix: bigint;
+
+  /**
+   * Set by the Gateway's sweep once PurgeCharacter is durable in the log, so
+   * the sweep never produces it twice. Zero until then. The entry itself
+   * stays, DELETED, for good: the name is never reused (ADR-0006).
+   *
+   * @generated from field: int64 purged_unix = 8;
+   */
+  purgedUnix: bigint;
 };
 
 /**
@@ -426,7 +444,7 @@ export declare const AuthConfigSchema: GenMessage<AuthConfig>;
 /**
  * Prefixed, unlike the other enums here, because AccountStatus already
  * holds ACTIVE in this package. DELETED is declared so the field never
- * changes shape; nothing writes it before AW-SRV-032.
+ * changes shape; AW-SRV-032 is the first to write it.
  *
  * @generated from enum andara.accounts.v1.CharacterStatus
  */

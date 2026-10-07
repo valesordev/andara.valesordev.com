@@ -93,6 +93,14 @@ message CharacterRef {
   string zone_id = 4;
   string room_id = 5;
   int64 created_unix = 6;
+  // Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+  // retention expiry on the wall clock, deleted_unix + character.delete_retention;
+  // only the Tick the purge applies on is deterministic.
+  int64 deleted_unix = 7;
+  // Set by the Gateway's sweep once PurgeCharacter is durable in the log, so
+  // the sweep never produces it twice. Zero until then. The entry itself
+  // stays, DELETED, for good: the name is never reused (ADR-0006).
+  int64 purged_unix = 8;
 }
 
 // The record under "name/{fold(name)}": who holds the name. A DELETED
@@ -104,7 +112,7 @@ message NameReservation {
 
 // Prefixed, unlike the other enums here, because AccountStatus already
 // holds ACTIVE in this package. DELETED is declared so the field never
-// changes shape; nothing writes it before AW-SRV-032.
+// changes shape; AW-SRV-032 is the first to write it.
 enum CharacterStatus {
   CHARACTER_STATUS_UNSPECIFIED = 0;
   CHARACTER_STATUS_ACTIVE = 1;

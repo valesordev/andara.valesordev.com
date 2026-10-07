@@ -38,7 +38,7 @@ const (
 
 // Prefixed, unlike the other enums here, because AccountStatus already
 // holds ACTIVE in this package. DELETED is declared so the field never
-// changes shape; nothing writes it before AW-SRV-032.
+// changes shape; AW-SRV-032 is the first to write it.
 type CharacterStatus int32
 
 const (
@@ -585,9 +585,17 @@ type CharacterRef struct {
 	Status      CharacterStatus        `protobuf:"varint,3,opt,name=status,proto3,enum=andara.accounts.v1.CharacterStatus" json:"status,omitempty"`
 	// Where the Gateway last knew the body to be: the spawn Room at create,
 	// and the routing table's entry at unbind. Routes the next BindCharacter.
-	ZoneId        string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
-	RoomId        string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
-	CreatedUnix   int64  `protobuf:"varint,6,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	ZoneId      string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId      string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CreatedUnix int64  `protobuf:"varint,6,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	// Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+	// retention expiry on the wall clock, deleted_unix + character.delete_retention;
+	// only the Tick the purge applies on is deterministic.
+	DeletedUnix int64 `protobuf:"varint,7,opt,name=deleted_unix,json=deletedUnix,proto3" json:"deleted_unix,omitempty"`
+	// Set by the Gateway's sweep once PurgeCharacter is durable in the log, so
+	// the sweep never produces it twice. Zero until then. The entry itself
+	// stays, DELETED, for good: the name is never reused (ADR-0006).
+	PurgedUnix    int64 `protobuf:"varint,8,opt,name=purged_unix,json=purgedUnix,proto3" json:"purged_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -660,6 +668,20 @@ func (x *CharacterRef) GetRoomId() string {
 func (x *CharacterRef) GetCreatedUnix() int64 {
 	if x != nil {
 		return x.CreatedUnix
+	}
+	return 0
+}
+
+func (x *CharacterRef) GetDeletedUnix() int64 {
+	if x != nil {
+		return x.DeletedUnix
+	}
+	return 0
+}
+
+func (x *CharacterRef) GetPurgedUnix() int64 {
+	if x != nil {
+		return x.PurgedUnix
 	}
 	return 0
 }
@@ -1103,14 +1125,17 @@ const file_andara_accounts_v1_account_proto_rawDesc = "" +
 	"characters\x18\v \x03(\v2 .andara.accounts.v1.CharacterRefR\n" +
 	"characters\x12#\n" +
 	"\rbuilder_packs\x18\f \x03(\tR\fbuilderPacks\x12)\n" +
-	"\x10workload_subject\x18\r \x01(\tR\x0fworkloadSubject\"\xd7\x01\n" +
+	"\x10workload_subject\x18\r \x01(\tR\x0fworkloadSubject\"\x9b\x02\n" +
 	"\fCharacterRef\x12!\n" +
 	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
 	"\x06status\x18\x03 \x01(\x0e2#.andara.accounts.v1.CharacterStatusR\x06status\x12\x17\n" +
 	"\azone_id\x18\x04 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x05 \x01(\tR\x06roomId\x12!\n" +
-	"\fcreated_unix\x18\x06 \x01(\x03R\vcreatedUnix\"S\n" +
+	"\fcreated_unix\x18\x06 \x01(\x03R\vcreatedUnix\x12!\n" +
+	"\fdeleted_unix\x18\a \x01(\x03R\vdeletedUnix\x12\x1f\n" +
+	"\vpurged_unix\x18\b \x01(\x03R\n" +
+	"purgedUnix\"S\n" +
 	"\x0fNameReservation\x12!\n" +
 	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x1d\n" +
 	"\n" +

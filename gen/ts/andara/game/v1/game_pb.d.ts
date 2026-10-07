@@ -340,6 +340,45 @@ export declare type SelectCharacterRequest = Message<"andara.game.v1.SelectChara
 export declare const SelectCharacterRequestSchema: GenMessage<SelectCharacterRequest>;
 
 /**
+ * @generated from message andara.game.v1.DeleteCharacterRequest
+ */
+export declare type DeleteCharacterRequest = Message<"andara.game.v1.DeleteCharacterRequest"> & {
+  /**
+   * @generated from field: string session_id = 1;
+   */
+  sessionId: string;
+
+  /**
+   * @generated from field: string character_id = 2;
+   */
+  characterId: string;
+};
+
+/**
+ * Describes the message andara.game.v1.DeleteCharacterRequest.
+ * Use `create(DeleteCharacterRequestSchema)` to create a new message.
+ */
+export declare const DeleteCharacterRequestSchema: GenMessage<DeleteCharacterRequest>;
+
+/**
+ * @generated from message andara.game.v1.DeleteCharacterResponse
+ */
+export declare type DeleteCharacterResponse = Message<"andara.game.v1.DeleteCharacterResponse"> & {
+  /**
+   * The Character as it now stands: DELETED, deleted_unix set.
+   *
+   * @generated from field: andara.game.v1.CharacterSummary character = 1;
+   */
+  character?: CharacterSummary | undefined;
+};
+
+/**
+ * Describes the message andara.game.v1.DeleteCharacterResponse.
+ * Use `create(DeleteCharacterResponseSchema)` to create a new message.
+ */
+export declare const DeleteCharacterResponseSchema: GenMessage<DeleteCharacterResponse>;
+
+/**
  * SubmitResponse's fields, in a message of its own so the two RPCs can
  * grow apart.
  *
@@ -407,6 +446,14 @@ export declare type CharacterSummary = Message<"andara.game.v1.CharacterSummary"
    * @generated from field: int64 created_unix = 7;
    */
   createdUnix: bigint;
+
+  /**
+   * Zero unless status is DELETED (AW-SRV-032). A purged Character is still
+   * listed as DELETED; purged_unix is the Gateway's bookkeeping, not shown.
+   *
+   * @generated from field: int64 deleted_unix = 8;
+   */
+  deletedUnix: bigint;
 };
 
 /**
@@ -493,6 +540,24 @@ export declare const Game: GenService<{
     methodKind: "unary";
     input: typeof CreateCharacterRequestSchema;
     output: typeof CreateCharacterResponseSchema;
+  },
+  /**
+   * Soft-delete a Character of the Session's Account (AW-SRV-032): status
+   * DELETED, the body left where it is until the retention sweep purges it,
+   * the name reserved for good, and the roster slot held until the purge.
+   * It holds the Character's live flag across its check and the status flip,
+   * as SelectCharacter does, and SelectCharacter re-checks the status under
+   * the same roster lock, so a second Session cannot bind a Character
+   * that is being deleted.
+   * Errors, domain andara.character: character_live (FAILED_PRECONDITION),
+   * no_such_character (NOT_FOUND: not owned, or already deleted).
+   *
+   * @generated from rpc andara.game.v1.Game.DeleteCharacter
+   */
+  deleteCharacter: {
+    methodKind: "unary";
+    input: typeof DeleteCharacterRequestSchema;
+    output: typeof DeleteCharacterResponseSchema;
   },
   /**
    * Enter the World as one of the Account's Characters. The response has

@@ -71,17 +71,46 @@ message LoggedCommand {
     ContentSwap content_swap = 17;
     MarkLinkdead mark_linkdead = 18;
     Goto goto = 19;
+    // AW-SRV-032's: the Gateway's retention sweep produces it once a deleted
+    // Character's retention has expired; the sim removes the dormant body.
+    // 23, because 17-19 are used and AW-SRV-009 holds 20-22 (MarkAttendance,
+    // SetMemory, Say): reusing a number breaks log replay.
+    PurgeCharacter purge_character = 23;
   }
 
-  // Verbs beyond these arrive with their own stories, taking numbers from 20
-  // upward — deliberately NOT `reserved`. A reserved range would have
-  // to shrink to add a verb, and buf treats shrinking one as a breaking change,
+  // Verbs beyond these arrive with their own stories, taking the next free
+  // number (23 is PurgeCharacter's; AW-SRV-009 holds 20-22) — deliberately NOT
+  // `reserved`. A reserved range would have to shrink to add a verb, and buf
+  // treats shrinking one as a breaking change,
   // so reserving numbers "to hold them" makes the most routine schema change in
   // the project fail CI. `reserved` is for numbers that have been used and
   // retired; an unused number needs no ceremony to stay available.
 }
 
 message Look {}
+
+// Remove a deleted Character's body from Zone state (AW-SRV-032, ADR-0006).
+// Produced by the Gateway's sweep to the Zone partition of the roster's
+// last-known zone_id; the sim records the Tick it applied on, so replay purges
+// on the same Tick whatever the wall clock says.
+//
+// The roster's zone_id is best-effort, so a body found in another Zone is
+// re-routed: the same Command is produced to the Zone that holds it, as
+// BindCharacter's is (AW-SRV-014, ADR-0001). The body is usually dormant, but
+// a crash can leave one present in a Room with no Session, and DeleteCharacter
+// cannot see that (the live flag is in memory). So the apply handles all
+// three:
+//   present - a Room-scoped CharacterDespawned{reason: "purge"} first, with
+//             any linkdead fields cleared, then the removal;
+//   dormant - the removal;
+//   absent in every Zone - a silent no-op: no Event, no CommandRejected. That
+//             is the normal case for a Character created and never bound, and
+//             it makes a duplicate produce harmless.
+// A removal emits CharacterPurged. The roster entry and the name reservation
+// are not Zone state and are untouched.
+message PurgeCharacter {
+  string character_id = 1;
+}
 
 message Move {
   // A Direction label. Deliberately a string, not an enum. The canonical

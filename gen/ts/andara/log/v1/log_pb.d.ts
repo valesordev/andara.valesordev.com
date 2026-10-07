@@ -159,6 +159,17 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: Goto;
     case: "goto";
+  } | {
+    /**
+     * AW-SRV-032's: the Gateway's retention sweep produces it once a deleted
+     * Character's retention has expired; the sim removes the dormant body.
+     * 23, because 17-19 are used and AW-SRV-009 holds 20-22 (MarkAttendance,
+     * SetMemory, Say): reusing a number breaks log replay.
+     *
+     * @generated from field: andara.log.v1.PurgeCharacter purge_character = 23;
+     */
+    value: PurgeCharacter;
+    case: "purgeCharacter";
   } | { case: undefined; value?: undefined };
 };
 
@@ -179,6 +190,42 @@ export declare type Look = Message<"andara.log.v1.Look"> & {
  * Use `create(LookSchema)` to create a new message.
  */
 export declare const LookSchema: GenMessage<Look>;
+
+/**
+ * Remove a deleted Character's body from Zone state (AW-SRV-032, ADR-0006).
+ * Produced by the Gateway's sweep to the Zone partition of the roster's
+ * last-known zone_id; the sim records the Tick it applied on, so replay purges
+ * on the same Tick whatever the wall clock says.
+ *
+ * The roster's zone_id is best-effort, so a body found in another Zone is
+ * re-routed: the same Command is produced to the Zone that holds it, as
+ * BindCharacter's is (AW-SRV-014, ADR-0001). The body is usually dormant, but
+ * a crash can leave one present in a Room with no Session, and DeleteCharacter
+ * cannot see that (the live flag is in memory). So the apply handles all
+ * three:
+ *   present - a Room-scoped CharacterDespawned{reason: "purge"} first, with
+ *             any linkdead fields cleared, then the removal;
+ *   dormant - the removal;
+ *   absent in every Zone - a silent no-op: no Event, no CommandRejected. That
+ *             is the normal case for a Character created and never bound, and
+ *             it makes a duplicate produce harmless.
+ * A removal emits CharacterPurged. The roster entry and the name reservation
+ * are not Zone state and are untouched.
+ *
+ * @generated from message andara.log.v1.PurgeCharacter
+ */
+export declare type PurgeCharacter = Message<"andara.log.v1.PurgeCharacter"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+};
+
+/**
+ * Describes the message andara.log.v1.PurgeCharacter.
+ * Use `create(PurgeCharacterSchema)` to create a new message.
+ */
+export declare const PurgeCharacterSchema: GenMessage<PurgeCharacter>;
 
 /**
  * @generated from message andara.log.v1.Move

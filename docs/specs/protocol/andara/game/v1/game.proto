@@ -49,6 +49,17 @@ service Game {
   rpc ListCharacters(ListCharactersRequest) returns (ListCharactersResponse);
   rpc CreateCharacter(CreateCharacterRequest) returns (CreateCharacterResponse);
 
+  // Soft-delete a Character of the Session's Account (AW-SRV-032): status
+  // DELETED, the body left where it is until the retention sweep purges it,
+  // the name reserved for good, and the roster slot held until the purge.
+  // It holds the Character's live flag across its check and the status flip,
+  // as SelectCharacter does, and SelectCharacter re-checks the status under
+  // the same roster lock, so a second Session cannot bind a Character
+  // that is being deleted.
+  // Errors, domain andara.character: character_live (FAILED_PRECONDITION),
+  // no_such_character (NOT_FOUND: not owned, or already deleted).
+  rpc DeleteCharacter(DeleteCharacterRequest) returns (DeleteCharacterResponse);
+
   // Enter the World as one of the Account's Characters. The response has
   // Submit's shape and meaning: the BindCharacter Command is durable in
   // the log at the returned offset, and the arrival — CharacterArrived
@@ -175,6 +186,16 @@ message SelectCharacterRequest {
   string character_id = 2;
 }
 
+message DeleteCharacterRequest {
+  string session_id = 1;
+  string character_id = 2;
+}
+
+message DeleteCharacterResponse {
+  // The Character as it now stands: DELETED, deleted_unix set.
+  CharacterSummary character = 1;
+}
+
 // SubmitResponse's fields, in a message of its own so the two RPCs can
 // grow apart.
 message SelectCharacterResponse {
@@ -193,4 +214,7 @@ message CharacterSummary {
   // Bound to a Session right now — this one or another of the Account's.
   bool live = 6;
   int64 created_unix = 7;
+  // Zero unless status is DELETED (AW-SRV-032). A purged Character is still
+  // listed as DELETED; purged_unix is the Gateway's bookkeeping, not shown.
+  int64 deleted_unix = 8;
 }
