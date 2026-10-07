@@ -72,8 +72,7 @@ type AuditRecord struct {
 	Reason        string `protobuf:"bytes,24,opt,name=reason,proto3" json:"reason,omitempty"`
 	FindingsCount uint32 `protobuf:"varint,25,opt,name=findings_count,json=findingsCount,proto3" json:"findings_count,omitempty"`
 	// The approver is the manifest's `author`, or its `publisher` (the real actor
-	// behind an acting-as publish; AW-SRV-039) (ADR-0004, amended 2026-09-26,
-	// where "publisher" means `author`).
+	// behind an acting-as publish; AW-SRV-039) (ADR-0004, amended 2026-09-26).
 	SelfApproval bool `protobuf:"varint,26,opt,name=self_approval,json=selfApproval,proto3" json:"self_approval,omitempty"`
 	// SetBuilderPacks (AW-SRV-035): the Account's pack set before and after.
 	BuilderPacksBefore []string `protobuf:"bytes,27,rep,name=builder_packs_before,json=builderPacksBefore,proto3" json:"builder_packs_before,omitempty"`
