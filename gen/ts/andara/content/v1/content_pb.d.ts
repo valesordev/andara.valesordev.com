@@ -204,6 +204,18 @@ export declare type ActiveVersion = Message<"andara.content.v1.ActiveVersion"> &
    * @generated from field: int64 activated_at_unix_nano = 4;
    */
   activatedAtUnixNano: bigint;
+
+  /**
+   * The W3C traceparent of the ActivateVersion call that moved the pointer
+   * (AW-SRV-045), so the Loader's content.load can link to it. A link, not a
+   * parent: one debounced load can serve several moves. Empty for the boot's
+   * core activation and for a record written before this field existed, both
+   * meaning no link. Diagnostic: it never affects what loads, and the pointer
+   * record is not World state, so the State Hash is unchanged.
+   *
+   * @generated from field: string trace_parent = 5;
+   */
+  traceParent: string;
 };
 
 /**

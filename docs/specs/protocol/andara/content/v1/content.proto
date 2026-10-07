@@ -87,6 +87,13 @@ message ActiveVersion {
   // Account moved last (AW-SRV-013).
   string activated_by = 3;
   int64 activated_at_unix_nano = 4;
+  // The W3C traceparent of the ActivateVersion call that moved the pointer
+  // (AW-SRV-045), so the Loader's content.load can link to it. A link, not a
+  // parent: one debounced load can serve several moves. Empty for the boot's
+  // core activation and for a record written before this field existed, both
+  // meaning no link. Diagnostic: it never affects what loads, and the pointer
+  // record is not World state, so the State Hash is unchanged.
+  string trace_parent = 5;
 }
 
 // One finding from the compiler or the validator, as errors.md §1 shapes it.
