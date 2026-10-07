@@ -90,12 +90,13 @@ type GameClient interface {
 	// no_such_character (NOT_FOUND).
 	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
 	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
-	// Soft-delete a Character of the Session's Account (AW-SRV-032): refused
-	// while the Character is live; otherwise it produces UnbindCharacter{QUIT}
-	// (a no-op on a dormant body, a despawn of one a crash left present without
-	// a Session), then sets status DELETED. The body stays dormant until the
-	// retention sweep purges it, the name is reserved for good, and the roster
-	// slot is held until the purge.
+	// Soft-delete a Character of the Session's Account (AW-SRV-032): status
+	// DELETED, the body left where it is until the retention sweep purges it,
+	// the name reserved for good, and the roster slot held until the purge.
+	// It holds the Character's live flag across its check and the status flip,
+	// as SelectCharacter does, and SelectCharacter re-checks the status under
+	// the same roster lock, so a second Session cannot bind a Character
+	// that is being deleted.
 	// Errors, domain andara.character: character_live (FAILED_PRECONDITION),
 	// no_such_character (NOT_FOUND: not owned, or already deleted).
 	DeleteCharacter(context.Context, *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error)
@@ -260,12 +261,13 @@ type GameHandler interface {
 	// no_such_character (NOT_FOUND).
 	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
 	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
-	// Soft-delete a Character of the Session's Account (AW-SRV-032): refused
-	// while the Character is live; otherwise it produces UnbindCharacter{QUIT}
-	// (a no-op on a dormant body, a despawn of one a crash left present without
-	// a Session), then sets status DELETED. The body stays dormant until the
-	// retention sweep purges it, the name is reserved for good, and the roster
-	// slot is held until the purge.
+	// Soft-delete a Character of the Session's Account (AW-SRV-032): status
+	// DELETED, the body left where it is until the retention sweep purges it,
+	// the name reserved for good, and the roster slot held until the purge.
+	// It holds the Character's live flag across its check and the status flip,
+	// as SelectCharacter does, and SelectCharacter re-checks the status under
+	// the same roster lock, so a second Session cannot bind a Character
+	// that is being deleted.
 	// Errors, domain andara.character: character_live (FAILED_PRECONDITION),
 	// no_such_character (NOT_FOUND: not owned, or already deleted).
 	DeleteCharacter(context.Context, *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error)

@@ -436,20 +436,27 @@ func (*Look) Descriptor() ([]byte, []int) {
 	return file_andara_log_v1_log_proto_rawDescGZIP(), []int{1}
 }
 
-// Remove a deleted Character's dormant body from Zone state (AW-SRV-032,
-// ADR-0006). Produced by the Gateway's sweep to the Zone partition of the
-// roster's last-known zone_id; the sim records the Tick it applied on, so
-// replay purges on the same Tick whatever the wall clock says.
+// Remove a deleted Character's body from Zone state (AW-SRV-032, ADR-0006).
+// Produced by the Gateway's sweep to the Zone partition of the roster's
+// last-known zone_id; the sim records the Tick it applied on, so replay purges
+// on the same Tick whatever the wall clock says.
 //
-// The body is dormant or absent by then: DeleteCharacter produces
-// UnbindCharacter{QUIT} before it flips the status, so a body left present
-// without a Session by a crash is despawned in front of its Room first, and
-// SelectCharacter refuses a DELETED Character, so nothing re-binds it.
-// Applying a purge to a Character with no body in the Zone is a silent
-// no-op: no Event, no CommandRejected. That is the normal case for a
-// Character created and never bound, and it makes a duplicate produce
-// harmless. The roster entry and the name reservation are not Zone state
-// and are untouched.
+// The roster's zone_id is best-effort, so a body found in another Zone is
+// re-routed: the same Command is produced to the Zone that holds it, as
+// BindCharacter's is (AW-SRV-014, ADR-0001). The body is usually dormant, but
+// a crash can leave one present in a Room with no Session, and DeleteCharacter
+// cannot see that (the live flag is in memory). So the apply handles all
+// three:
+//
+//	present - a Room-scoped CharacterDespawned{reason: "purge"} first, with
+//	          any linkdead fields cleared, then the removal;
+//	dormant - the removal;
+//	absent in every Zone - a silent no-op: no Event, no CommandRejected. That
+//	          is the normal case for a Character created and never bound, and
+//	          it makes a duplicate produce harmless.
+//
+// A removal emits CharacterPurged. The roster entry and the name reservation
+// are not Zone state and are untouched.
 type PurgeCharacter struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	CharacterId   string                 `protobuf:"bytes,1,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`

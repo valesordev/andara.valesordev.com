@@ -578,7 +578,7 @@ export declare type CharacterDespawned = Message<"andara.game.v1.CharacterDespaw
   characterName: string;
 
   /**
-   * quit, switch, linkdead, linkdead_ceiling. A string, as EntityRelocated's
+   * quit, switch, linkdead, linkdead_ceiling, purge (AW-SRV-032). A string, as EntityRelocated's
    * and Resync's are, so a new reason needs no schema change; a client
    * renders an unknown one as it renders quit.
    *

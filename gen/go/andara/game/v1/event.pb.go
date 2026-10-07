@@ -1164,7 +1164,7 @@ type CharacterDespawned struct {
 	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
 	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
-	// quit, switch, linkdead, linkdead_ceiling. A string, as EntityRelocated's
+	// quit, switch, linkdead, linkdead_ceiling, purge (AW-SRV-032). A string, as EntityRelocated's
 	// and Resync's are, so a new reason needs no schema change; a client
 	// renders an unknown one as it renders quit.
 	Reason        string `protobuf:"bytes,4,opt,name=reason,proto3" json:"reason,omitempty"`
