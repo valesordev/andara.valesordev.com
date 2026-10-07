@@ -163,9 +163,10 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
     /**
      * AW-SRV-032's: the Gateway's retention sweep produces it once a deleted
      * Character's retention has expired; the sim removes the dormant body.
-     * 20, because 17-19 are taken: reusing a number breaks log replay.
+     * 23, because 17-19 are used and AW-SRV-009 holds 20-22 (MarkAttendance,
+     * SetMemory, Say): reusing a number breaks log replay.
      *
-     * @generated from field: andara.log.v1.PurgeCharacter purge_character = 20;
+     * @generated from field: andara.log.v1.PurgeCharacter purge_character = 23;
      */
     value: PurgeCharacter;
     case: "purgeCharacter";
@@ -195,9 +196,11 @@ export declare const LookSchema: GenMessage<Look>;
  * ADR-0006). Produced by the Gateway's sweep to the Zone partition of the
  * roster's last-known zone_id; the sim records the Tick it applied on, so
  * replay purges on the same Tick whatever the wall clock says. Applying it to
- * a Character that is live, or that has no body in the Zone, is a no-op with
- * a CommandRejected{code: "no_such_character"}, so a duplicate produce is
- * harmless. The roster entry and the name reservation are not Zone state and
+ * a Character that has no body in the Zone is a silent no-op: no Event, no
+ * CommandRejected. That is the normal case for a Character created and never
+ * bound (its body was never instantiated), and it makes a duplicate produce
+ * harmless. A body cannot be live here: DeleteCharacter refuses a live
+ * Character and SelectCharacter refuses a DELETED one. The roster entry and the name reservation are not Zone state and
  * are untouched.
  *
  * @generated from message andara.log.v1.PurgeCharacter

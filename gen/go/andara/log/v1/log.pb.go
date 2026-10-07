@@ -373,8 +373,9 @@ type LoggedCommand_Goto struct {
 type LoggedCommand_PurgeCharacter struct {
 	// AW-SRV-032's: the Gateway's retention sweep produces it once a deleted
 	// Character's retention has expired; the sim removes the dormant body.
-	// 20, because 17-19 are taken: reusing a number breaks log replay.
-	PurgeCharacter *PurgeCharacter `protobuf:"bytes,20,opt,name=purge_character,json=purgeCharacter,proto3,oneof"`
+	// 23, because 17-19 are used and AW-SRV-009 holds 20-22 (MarkAttendance,
+	// SetMemory, Say): reusing a number breaks log replay.
+	PurgeCharacter *PurgeCharacter `protobuf:"bytes,23,opt,name=purge_character,json=purgeCharacter,proto3,oneof"`
 }
 
 func (*LoggedCommand_Look) isLoggedCommand_Command() {}
@@ -439,9 +440,11 @@ func (*Look) Descriptor() ([]byte, []int) {
 // ADR-0006). Produced by the Gateway's sweep to the Zone partition of the
 // roster's last-known zone_id; the sim records the Tick it applied on, so
 // replay purges on the same Tick whatever the wall clock says. Applying it to
-// a Character that is live, or that has no body in the Zone, is a no-op with
-// a CommandRejected{code: "no_such_character"}, so a duplicate produce is
-// harmless. The roster entry and the name reservation are not Zone state and
+// a Character that has no body in the Zone is a silent no-op: no Event, no
+// CommandRejected. That is the normal case for a Character created and never
+// bound (its body was never instantiated), and it makes a duplicate produce
+// harmless. A body cannot be live here: DeleteCharacter refuses a live
+// Character and SelectCharacter refuses a DELETED one. The roster entry and the name reservation are not Zone state and
 // are untouched.
 type PurgeCharacter struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -1747,7 +1750,7 @@ const file_andara_log_v1_log_proto_rawDesc = "" +
 	"\fcontent_swap\x18\x11 \x01(\v2\x1a.andara.log.v1.ContentSwapH\x00R\vcontentSwap\x12B\n" +
 	"\rmark_linkdead\x18\x12 \x01(\v2\x1b.andara.log.v1.MarkLinkdeadH\x00R\fmarkLinkdead\x12)\n" +
 	"\x04goto\x18\x13 \x01(\v2\x13.andara.log.v1.GotoH\x00R\x04goto\x12H\n" +
-	"\x0fpurge_character\x18\x14 \x01(\v2\x1d.andara.log.v1.PurgeCharacterH\x00R\x0epurgeCharacterB\t\n" +
+	"\x0fpurge_character\x18\x17 \x01(\v2\x1d.andara.log.v1.PurgeCharacterH\x00R\x0epurgeCharacterB\t\n" +
 	"\acommand\"\x06\n" +
 	"\x04Look\"3\n" +
 	"\x0ePurgeCharacter\x12!\n" +

@@ -93,8 +93,9 @@ message CharacterRef {
   string zone_id = 4;
   string room_id = 5;
   int64 created_unix = 6;
-  // Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. Retention expires
-  // at deleted_unix + character.delete_retention.
+  // Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+  // retention expiry on the wall clock, deleted_unix + character.delete_retention;
+  // only the Tick the purge applies on is deterministic.
   int64 deleted_unix = 7;
   // Set by the Gateway's sweep once PurgeCharacter is durable in the log, so
   // the sweep never produces it twice. Zero until then. The entry itself

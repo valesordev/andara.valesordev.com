@@ -220,8 +220,9 @@ export declare type CharacterRef = Message<"andara.accounts.v1.CharacterRef"> & 
   createdUnix: bigint;
 
   /**
-   * Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. Retention expires
-   * at deleted_unix + character.delete_retention.
+   * Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+   * retention expiry on the wall clock, deleted_unix + character.delete_retention;
+   * only the Tick the purge applies on is deterministic.
    *
    * @generated from field: int64 deleted_unix = 7;
    */

@@ -588,8 +588,9 @@ type CharacterRef struct {
 	ZoneId      string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
 	RoomId      string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	CreatedUnix int64  `protobuf:"varint,6,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
-	// Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. Retention expires
-	// at deleted_unix + character.delete_retention.
+	// Set by DeleteCharacter (AW-SRV-032); zero while ACTIVE. The Gateway judges
+	// retention expiry on the wall clock, deleted_unix + character.delete_retention;
+	// only the Tick the purge applies on is deterministic.
 	DeletedUnix int64 `protobuf:"varint,7,opt,name=deleted_unix,json=deletedUnix,proto3" json:"deleted_unix,omitempty"`
 	// Set by the Gateway's sweep once PurgeCharacter is durable in the log, so
 	// the sweep never produces it twice. Zero until then. The entry itself
