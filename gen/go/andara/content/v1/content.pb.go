@@ -355,8 +355,15 @@ type ActiveVersion struct {
 	// Account moved last (AW-SRV-013).
 	ActivatedBy         string `protobuf:"bytes,3,opt,name=activated_by,json=activatedBy,proto3" json:"activated_by,omitempty"`
 	ActivatedAtUnixNano int64  `protobuf:"varint,4,opt,name=activated_at_unix_nano,json=activatedAtUnixNano,proto3" json:"activated_at_unix_nano,omitempty"`
-	unknownFields       protoimpl.UnknownFields
-	sizeCache           protoimpl.SizeCache
+	// The W3C traceparent of the ActivateVersion call that moved the pointer
+	// (AW-SRV-045), so the Loader's content.load can link to it. A link, not a
+	// parent: one debounced load can serve several moves. Empty for the boot's
+	// core activation and for a record written before this field existed, both
+	// meaning no link. Diagnostic: it never affects what loads, and the pointer
+	// record is not World state, so the State Hash is unchanged.
+	TraceParent   string `protobuf:"bytes,5,opt,name=trace_parent,json=traceParent,proto3" json:"trace_parent,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ActiveVersion) Reset() {
@@ -415,6 +422,13 @@ func (x *ActiveVersion) GetActivatedAtUnixNano() int64 {
 		return x.ActivatedAtUnixNano
 	}
 	return 0
+}
+
+func (x *ActiveVersion) GetTraceParent() string {
+	if x != nil {
+		return x.TraceParent
+	}
+	return ""
 }
 
 // One finding from the compiler or the validator, as errors.md §1 shapes it.
@@ -553,12 +567,13 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04hash\x18\x02 \x01(\fR\x04hash\x12\x1d\n" +
 	"\n" +
-	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\"\x9a\x01\n" +
+	"size_bytes\x18\x03 \x01(\x04R\tsizeBytes\"\xbd\x01\n" +
 	"\rActiveVersion\x12\x17\n" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12!\n" +
 	"\factivated_by\x18\x03 \x01(\tR\vactivatedBy\x123\n" +
-	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNano\"\xd7\x01\n" +
+	"\x16activated_at_unix_nano\x18\x04 \x01(\x03R\x13activatedAtUnixNano\x12!\n" +
+	"\ftrace_parent\x18\x05 \x01(\tR\vtraceParent\"\xd7\x01\n" +
 	"\n" +
 	"Diagnostic\x12\x12\n" +
 	"\x04file\x18\x01 \x01(\tR\x04file\x12\x12\n" +
