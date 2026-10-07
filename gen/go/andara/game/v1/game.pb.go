@@ -713,6 +713,103 @@ func (x *SelectCharacterRequest) GetCharacterId() string {
 	return ""
 }
 
+type DeleteCharacterRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	SessionId     string                 `protobuf:"bytes,1,opt,name=session_id,json=sessionId,proto3" json:"session_id,omitempty"`
+	CharacterId   string                 `protobuf:"bytes,2,opt,name=character_id,json=characterId,proto3" json:"character_id,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCharacterRequest) Reset() {
+	*x = DeleteCharacterRequest{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCharacterRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCharacterRequest) ProtoMessage() {}
+
+func (x *DeleteCharacterRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCharacterRequest.ProtoReflect.Descriptor instead.
+func (*DeleteCharacterRequest) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *DeleteCharacterRequest) GetSessionId() string {
+	if x != nil {
+		return x.SessionId
+	}
+	return ""
+}
+
+func (x *DeleteCharacterRequest) GetCharacterId() string {
+	if x != nil {
+		return x.CharacterId
+	}
+	return ""
+}
+
+type DeleteCharacterResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The Character as it now stands: DELETED, deleted_unix set.
+	Character     *CharacterSummary `protobuf:"bytes,1,opt,name=character,proto3" json:"character,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *DeleteCharacterResponse) Reset() {
+	*x = DeleteCharacterResponse{}
+	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *DeleteCharacterResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*DeleteCharacterResponse) ProtoMessage() {}
+
+func (x *DeleteCharacterResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use DeleteCharacterResponse.ProtoReflect.Descriptor instead.
+func (*DeleteCharacterResponse) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *DeleteCharacterResponse) GetCharacter() *CharacterSummary {
+	if x != nil {
+		return x.Character
+	}
+	return nil
+}
+
 // SubmitResponse's fields, in a message of its own so the two RPCs can
 // grow apart.
 type SelectCharacterResponse struct {
@@ -725,7 +822,7 @@ type SelectCharacterResponse struct {
 
 func (x *SelectCharacterResponse) Reset() {
 	*x = SelectCharacterResponse{}
-	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	mi := &file_andara_game_v1_game_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -737,7 +834,7 @@ func (x *SelectCharacterResponse) String() string {
 func (*SelectCharacterResponse) ProtoMessage() {}
 
 func (x *SelectCharacterResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_game_proto_msgTypes[12]
+	mi := &file_andara_game_v1_game_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -750,7 +847,7 @@ func (x *SelectCharacterResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SelectCharacterResponse.ProtoReflect.Descriptor instead.
 func (*SelectCharacterResponse) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{12}
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SelectCharacterResponse) GetAcceptedOffset() int64 {
@@ -777,15 +874,18 @@ type CharacterSummary struct {
 	ZoneId string `protobuf:"bytes,4,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
 	RoomId string `protobuf:"bytes,5,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
 	// Bound to a Session right now — this one or another of the Account's.
-	Live          bool  `protobuf:"varint,6,opt,name=live,proto3" json:"live,omitempty"`
-	CreatedUnix   int64 `protobuf:"varint,7,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	Live        bool  `protobuf:"varint,6,opt,name=live,proto3" json:"live,omitempty"`
+	CreatedUnix int64 `protobuf:"varint,7,opt,name=created_unix,json=createdUnix,proto3" json:"created_unix,omitempty"`
+	// Zero unless status is DELETED (AW-SRV-032). A purged Character is still
+	// listed as DELETED; purged_unix is the Gateway's bookkeeping, not shown.
+	DeletedUnix   int64 `protobuf:"varint,8,opt,name=deleted_unix,json=deletedUnix,proto3" json:"deleted_unix,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *CharacterSummary) Reset() {
 	*x = CharacterSummary{}
-	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	mi := &file_andara_game_v1_game_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -797,7 +897,7 @@ func (x *CharacterSummary) String() string {
 func (*CharacterSummary) ProtoMessage() {}
 
 func (x *CharacterSummary) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_game_proto_msgTypes[13]
+	mi := &file_andara_game_v1_game_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -810,7 +910,7 @@ func (x *CharacterSummary) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CharacterSummary.ProtoReflect.Descriptor instead.
 func (*CharacterSummary) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{13}
+	return file_andara_game_v1_game_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CharacterSummary) GetCharacterId() string {
@@ -858,6 +958,13 @@ func (x *CharacterSummary) GetLive() bool {
 func (x *CharacterSummary) GetCreatedUnix() int64 {
 	if x != nil {
 		return x.CreatedUnix
+	}
+	return 0
+}
+
+func (x *CharacterSummary) GetDeletedUnix() int64 {
+	if x != nil {
+		return x.DeletedUnix
 	}
 	return 0
 }
@@ -916,10 +1023,16 @@ const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\x16SelectCharacterRequest\x12\x1d\n" +
 	"\n" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
-	"\fcharacter_id\x18\x02 \x01(\tR\vcharacterId\"`\n" +
+	"\fcharacter_id\x18\x02 \x01(\tR\vcharacterId\"Z\n" +
+	"\x16DeleteCharacterRequest\x12\x1d\n" +
+	"\n" +
+	"session_id\x18\x01 \x01(\tR\tsessionId\x12!\n" +
+	"\fcharacter_id\x18\x02 \x01(\tR\vcharacterId\"Y\n" +
+	"\x17DeleteCharacterResponse\x12>\n" +
+	"\tcharacter\x18\x01 \x01(\v2 .andara.game.v1.CharacterSummaryR\tcharacter\"`\n" +
 	"\x17SelectCharacterResponse\x12'\n" +
 	"\x0faccepted_offset\x18\x01 \x01(\x03R\x0eacceptedOffset\x12\x1c\n" +
-	"\tpartition\x18\x02 \x01(\x05R\tpartition\"\xef\x01\n" +
+	"\tpartition\x18\x02 \x01(\x05R\tpartition\"\x92\x02\n" +
 	"\x10CharacterSummary\x12!\n" +
 	"\fcharacter_id\x18\x01 \x01(\tR\vcharacterId\x12\x12\n" +
 	"\x04name\x18\x02 \x01(\tR\x04name\x12;\n" +
@@ -927,7 +1040,8 @@ const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\azone_id\x18\x04 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x05 \x01(\tR\x06roomId\x12\x12\n" +
 	"\x04live\x18\x06 \x01(\bR\x04live\x12!\n" +
-	"\fcreated_unix\x18\a \x01(\x03R\vcreatedUnix2\xfb\x04\n" +
+	"\fcreated_unix\x18\a \x01(\x03R\vcreatedUnix\x12!\n" +
+	"\fdeleted_unix\x18\b \x01(\x03R\vdeletedUnix2\xdf\x05\n" +
 	"\x04Game\x12V\n" +
 	"\vOpenSession\x12\".andara.game.v1.OpenSessionRequest\x1a#.andara.game.v1.OpenSessionResponse\x12G\n" +
 	"\x06Submit\x12\x1d.andara.game.v1.SubmitRequest\x1a\x1e.andara.game.v1.SubmitResponse\x12N\n" +
@@ -935,6 +1049,7 @@ const file_andara_game_v1_game_proto_rawDesc = "" +
 	"\fCloseSession\x12#.andara.game.v1.CloseSessionRequest\x1a$.andara.game.v1.CloseSessionResponse\x12_\n" +
 	"\x0eListCharacters\x12%.andara.game.v1.ListCharactersRequest\x1a&.andara.game.v1.ListCharactersResponse\x12b\n" +
 	"\x0fCreateCharacter\x12&.andara.game.v1.CreateCharacterRequest\x1a'.andara.game.v1.CreateCharacterResponse\x12b\n" +
+	"\x0fDeleteCharacter\x12&.andara.game.v1.DeleteCharacterRequest\x1a'.andara.game.v1.DeleteCharacterResponse\x12b\n" +
 	"\x0fSelectCharacter\x12&.andara.game.v1.SelectCharacterRequest\x1a'.andara.game.v1.SelectCharacterResponseB\xb4\x01\n" +
 	"\x12com.andara.game.v1B\tGameProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03AGX\xaa\x02\x0eAndara.Game.V1\xca\x02\x0eAndara\\Game\\V1\xe2\x02\x1aAndara\\Game\\V1\\GPBMetadata\xea\x02\x10Andara::Game::V1b\x06proto3"
 
@@ -950,7 +1065,7 @@ func file_andara_game_v1_game_proto_rawDescGZIP() []byte {
 	return file_andara_game_v1_game_proto_rawDescData
 }
 
-var file_andara_game_v1_game_proto_msgTypes = make([]protoimpl.MessageInfo, 14)
+var file_andara_game_v1_game_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_andara_game_v1_game_proto_goTypes = []any{
 	(*OpenSessionRequest)(nil),      // 0: andara.game.v1.OpenSessionRequest
 	(*OpenSessionResponse)(nil),     // 1: andara.game.v1.OpenSessionResponse
@@ -964,34 +1079,39 @@ var file_andara_game_v1_game_proto_goTypes = []any{
 	(*CreateCharacterRequest)(nil),  // 9: andara.game.v1.CreateCharacterRequest
 	(*CreateCharacterResponse)(nil), // 10: andara.game.v1.CreateCharacterResponse
 	(*SelectCharacterRequest)(nil),  // 11: andara.game.v1.SelectCharacterRequest
-	(*SelectCharacterResponse)(nil), // 12: andara.game.v1.SelectCharacterResponse
-	(*CharacterSummary)(nil),        // 13: andara.game.v1.CharacterSummary
-	(v1.CharacterStatus)(0),         // 14: andara.accounts.v1.CharacterStatus
-	(*EventEnvelope)(nil),           // 15: andara.game.v1.EventEnvelope
+	(*DeleteCharacterRequest)(nil),  // 12: andara.game.v1.DeleteCharacterRequest
+	(*DeleteCharacterResponse)(nil), // 13: andara.game.v1.DeleteCharacterResponse
+	(*SelectCharacterResponse)(nil), // 14: andara.game.v1.SelectCharacterResponse
+	(*CharacterSummary)(nil),        // 15: andara.game.v1.CharacterSummary
+	(v1.CharacterStatus)(0),         // 16: andara.accounts.v1.CharacterStatus
+	(*EventEnvelope)(nil),           // 17: andara.game.v1.EventEnvelope
 }
 var file_andara_game_v1_game_proto_depIdxs = []int32{
-	13, // 0: andara.game.v1.ListCharactersResponse.characters:type_name -> andara.game.v1.CharacterSummary
-	13, // 1: andara.game.v1.CreateCharacterResponse.character:type_name -> andara.game.v1.CharacterSummary
-	14, // 2: andara.game.v1.CharacterSummary.status:type_name -> andara.accounts.v1.CharacterStatus
-	0,  // 3: andara.game.v1.Game.OpenSession:input_type -> andara.game.v1.OpenSessionRequest
-	2,  // 4: andara.game.v1.Game.Submit:input_type -> andara.game.v1.SubmitRequest
-	4,  // 5: andara.game.v1.Game.Subscribe:input_type -> andara.game.v1.SubscribeRequest
-	5,  // 6: andara.game.v1.Game.CloseSession:input_type -> andara.game.v1.CloseSessionRequest
-	7,  // 7: andara.game.v1.Game.ListCharacters:input_type -> andara.game.v1.ListCharactersRequest
-	9,  // 8: andara.game.v1.Game.CreateCharacter:input_type -> andara.game.v1.CreateCharacterRequest
-	11, // 9: andara.game.v1.Game.SelectCharacter:input_type -> andara.game.v1.SelectCharacterRequest
-	1,  // 10: andara.game.v1.Game.OpenSession:output_type -> andara.game.v1.OpenSessionResponse
-	3,  // 11: andara.game.v1.Game.Submit:output_type -> andara.game.v1.SubmitResponse
-	15, // 12: andara.game.v1.Game.Subscribe:output_type -> andara.game.v1.EventEnvelope
-	6,  // 13: andara.game.v1.Game.CloseSession:output_type -> andara.game.v1.CloseSessionResponse
-	8,  // 14: andara.game.v1.Game.ListCharacters:output_type -> andara.game.v1.ListCharactersResponse
-	10, // 15: andara.game.v1.Game.CreateCharacter:output_type -> andara.game.v1.CreateCharacterResponse
-	12, // 16: andara.game.v1.Game.SelectCharacter:output_type -> andara.game.v1.SelectCharacterResponse
-	10, // [10:17] is the sub-list for method output_type
-	3,  // [3:10] is the sub-list for method input_type
-	3,  // [3:3] is the sub-list for extension type_name
-	3,  // [3:3] is the sub-list for extension extendee
-	0,  // [0:3] is the sub-list for field type_name
+	15, // 0: andara.game.v1.ListCharactersResponse.characters:type_name -> andara.game.v1.CharacterSummary
+	15, // 1: andara.game.v1.CreateCharacterResponse.character:type_name -> andara.game.v1.CharacterSummary
+	15, // 2: andara.game.v1.DeleteCharacterResponse.character:type_name -> andara.game.v1.CharacterSummary
+	16, // 3: andara.game.v1.CharacterSummary.status:type_name -> andara.accounts.v1.CharacterStatus
+	0,  // 4: andara.game.v1.Game.OpenSession:input_type -> andara.game.v1.OpenSessionRequest
+	2,  // 5: andara.game.v1.Game.Submit:input_type -> andara.game.v1.SubmitRequest
+	4,  // 6: andara.game.v1.Game.Subscribe:input_type -> andara.game.v1.SubscribeRequest
+	5,  // 7: andara.game.v1.Game.CloseSession:input_type -> andara.game.v1.CloseSessionRequest
+	7,  // 8: andara.game.v1.Game.ListCharacters:input_type -> andara.game.v1.ListCharactersRequest
+	9,  // 9: andara.game.v1.Game.CreateCharacter:input_type -> andara.game.v1.CreateCharacterRequest
+	12, // 10: andara.game.v1.Game.DeleteCharacter:input_type -> andara.game.v1.DeleteCharacterRequest
+	11, // 11: andara.game.v1.Game.SelectCharacter:input_type -> andara.game.v1.SelectCharacterRequest
+	1,  // 12: andara.game.v1.Game.OpenSession:output_type -> andara.game.v1.OpenSessionResponse
+	3,  // 13: andara.game.v1.Game.Submit:output_type -> andara.game.v1.SubmitResponse
+	17, // 14: andara.game.v1.Game.Subscribe:output_type -> andara.game.v1.EventEnvelope
+	6,  // 15: andara.game.v1.Game.CloseSession:output_type -> andara.game.v1.CloseSessionResponse
+	8,  // 16: andara.game.v1.Game.ListCharacters:output_type -> andara.game.v1.ListCharactersResponse
+	10, // 17: andara.game.v1.Game.CreateCharacter:output_type -> andara.game.v1.CreateCharacterResponse
+	13, // 18: andara.game.v1.Game.DeleteCharacter:output_type -> andara.game.v1.DeleteCharacterResponse
+	14, // 19: andara.game.v1.Game.SelectCharacter:output_type -> andara.game.v1.SelectCharacterResponse
+	12, // [12:20] is the sub-list for method output_type
+	4,  // [4:12] is the sub-list for method input_type
+	4,  // [4:4] is the sub-list for extension type_name
+	4,  // [4:4] is the sub-list for extension extendee
+	0,  // [0:4] is the sub-list for field type_name
 }
 
 func init() { file_andara_game_v1_game_proto_init() }
@@ -1006,7 +1126,7 @@ func file_andara_game_v1_game_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_game_v1_game_proto_rawDesc), len(file_andara_game_v1_game_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   14,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

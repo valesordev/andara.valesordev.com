@@ -57,6 +57,7 @@ type EventEnvelope struct {
 	//	*EventEnvelope_CharacterReconnected
 	//	*EventEnvelope_CharacterDespawned
 	//	*EventEnvelope_Attached
+	//	*EventEnvelope_CharacterPurged
 	Payload       isEventEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -246,6 +247,15 @@ func (x *EventEnvelope) GetAttached() *Attached {
 	return nil
 }
 
+func (x *EventEnvelope) GetCharacterPurged() *CharacterPurged {
+	if x != nil {
+		if x, ok := x.Payload.(*EventEnvelope_CharacterPurged); ok {
+			return x.CharacterPurged
+		}
+	}
+	return nil
+}
+
 type isEventEnvelope_Payload interface {
 	isEventEnvelope_Payload()
 }
@@ -310,6 +320,13 @@ type EventEnvelope_Attached struct {
 	Attached *Attached `protobuf:"bytes,23,opt,name=attached,proto3,oneof"`
 }
 
+type EventEnvelope_CharacterPurged struct {
+	// AW-SRV-032: a dormant body was removed. Scoped to the purged Entity
+	// alone: no Room's occupants ever saw a dormant body, so none are told.
+	// It exists so the projector can tombstone the Entity's key (AW-SRV-019).
+	CharacterPurged *CharacterPurged `protobuf:"bytes,24,opt,name=character_purged,json=characterPurged,proto3,oneof"`
+}
+
 func (*EventEnvelope_RoomDescribed) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_CharacterArrived) isEventEnvelope_Payload() {}
@@ -337,6 +354,8 @@ func (*EventEnvelope_CharacterReconnected) isEventEnvelope_Payload() {}
 func (*EventEnvelope_CharacterDespawned) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_Attached) isEventEnvelope_Payload() {}
+
+func (*EventEnvelope_CharacterPurged) isEventEnvelope_Payload() {}
 
 type RoomDescribed struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
@@ -1211,11 +1230,73 @@ func (x *CharacterDespawned) GetReason() string {
 	return ""
 }
 
+// A purged Character's body no longer exists in Zone state (AW-SRV-032).
+// character_name is the roster name, which the reservation keeps.
+type CharacterPurged struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	ZoneId        string                 `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
+	RoomId        string                 `protobuf:"bytes,2,opt,name=room_id,json=roomId,proto3" json:"room_id,omitempty"`
+	CharacterName string                 `protobuf:"bytes,3,opt,name=character_name,json=characterName,proto3" json:"character_name,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *CharacterPurged) Reset() {
+	*x = CharacterPurged{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *CharacterPurged) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CharacterPurged) ProtoMessage() {}
+
+func (x *CharacterPurged) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CharacterPurged.ProtoReflect.Descriptor instead.
+func (*CharacterPurged) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *CharacterPurged) GetZoneId() string {
+	if x != nil {
+		return x.ZoneId
+	}
+	return ""
+}
+
+func (x *CharacterPurged) GetRoomId() string {
+	if x != nil {
+		return x.RoomId
+	}
+	return ""
+}
+
+func (x *CharacterPurged) GetCharacterName() string {
+	if x != nil {
+		return x.CharacterName
+	}
+	return ""
+}
+
 var File_andara_game_v1_event_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\xfc\b\n" +
+	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\xca\t\n" +
 	"\rEventEnvelope\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\x04R\aeventId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -1235,7 +1316,8 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\x12character_linkdead\x18\x14 \x01(\v2!.andara.game.v1.CharacterLinkdeadH\x00R\x11characterLinkdead\x12[\n" +
 	"\x15character_reconnected\x18\x15 \x01(\v2$.andara.game.v1.CharacterReconnectedH\x00R\x14characterReconnected\x12U\n" +
 	"\x13character_despawned\x18\x16 \x01(\v2\".andara.game.v1.CharacterDespawnedH\x00R\x12characterDespawned\x126\n" +
-	"\battached\x18\x17 \x01(\v2\x18.andara.game.v1.AttachedH\x00R\battachedB\t\n" +
+	"\battached\x18\x17 \x01(\v2\x18.andara.game.v1.AttachedH\x00R\battached\x12L\n" +
+	"\x10character_purged\x18\x18 \x01(\v2\x1f.andara.game.v1.CharacterPurgedH\x00R\x0fcharacterPurgedB\t\n" +
 	"\apayload\"\xc9\x01\n" +
 	"\rRoomDescribed\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
@@ -1291,7 +1373,11 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
 	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
 	"\x0echaracter_name\x18\x03 \x01(\tR\rcharacterName\x12\x16\n" +
-	"\x06reason\x18\x04 \x01(\tR\x06reasonB\xb5\x01\n" +
+	"\x06reason\x18\x04 \x01(\tR\x06reason\"j\n" +
+	"\x0fCharacterPurged\x12\x17\n" +
+	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
+	"\aroom_id\x18\x02 \x01(\tR\x06roomId\x12%\n" +
+	"\x0echaracter_name\x18\x03 \x01(\tR\rcharacterNameB\xb5\x01\n" +
 	"\x12com.andara.game.v1B\n" +
 	"EventProtoP\x01Z9github.com/valesordev/andara/gen/go/andara/game/v1;gamev1\xa2\x02\x03AGX\xaa\x02\x0eAndara.Game.V1\xca\x02\x0eAndara\\Game\\V1\xe2\x02\x1aAndara\\Game\\V1\\GPBMetadata\xea\x02\x10Andara::Game::V1b\x06proto3"
 
@@ -1307,7 +1393,7 @@ func file_andara_game_v1_event_proto_rawDescGZIP() []byte {
 	return file_andara_game_v1_event_proto_rawDescData
 }
 
-var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 15)
+var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
 var file_andara_game_v1_event_proto_goTypes = []any{
 	(*EventEnvelope)(nil),        // 0: andara.game.v1.EventEnvelope
 	(*RoomDescribed)(nil),        // 1: andara.game.v1.RoomDescribed
@@ -1324,6 +1410,7 @@ var file_andara_game_v1_event_proto_goTypes = []any{
 	(*CharacterLinkdead)(nil),    // 12: andara.game.v1.CharacterLinkdead
 	(*CharacterReconnected)(nil), // 13: andara.game.v1.CharacterReconnected
 	(*CharacterDespawned)(nil),   // 14: andara.game.v1.CharacterDespawned
+	(*CharacterPurged)(nil),      // 15: andara.game.v1.CharacterPurged
 }
 var file_andara_game_v1_event_proto_depIdxs = []int32{
 	1,  // 0: andara.game.v1.EventEnvelope.room_described:type_name -> andara.game.v1.RoomDescribed
@@ -1340,11 +1427,12 @@ var file_andara_game_v1_event_proto_depIdxs = []int32{
 	13, // 11: andara.game.v1.EventEnvelope.character_reconnected:type_name -> andara.game.v1.CharacterReconnected
 	14, // 12: andara.game.v1.EventEnvelope.character_despawned:type_name -> andara.game.v1.CharacterDespawned
 	11, // 13: andara.game.v1.EventEnvelope.attached:type_name -> andara.game.v1.Attached
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	15, // 14: andara.game.v1.EventEnvelope.character_purged:type_name -> andara.game.v1.CharacterPurged
+	15, // [15:15] is the sub-list for method output_type
+	15, // [15:15] is the sub-list for method input_type
+	15, // [15:15] is the sub-list for extension type_name
+	15, // [15:15] is the sub-list for extension extendee
+	0,  // [0:15] is the sub-list for field type_name
 }
 
 func init() { file_andara_game_v1_event_proto_init() }
@@ -1367,6 +1455,7 @@ func file_andara_game_v1_event_proto_init() {
 		(*EventEnvelope_CharacterReconnected)(nil),
 		(*EventEnvelope_CharacterDespawned)(nil),
 		(*EventEnvelope_Attached)(nil),
+		(*EventEnvelope_CharacterPurged)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1374,7 +1463,7 @@ func file_andara_game_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_game_v1_event_proto_rawDesc), len(file_andara_game_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   15,
+			NumMessages:   16,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

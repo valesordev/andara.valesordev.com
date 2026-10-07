@@ -47,6 +47,11 @@ message EventEnvelope {
     // The first frame of every Subscribe stream (AW-SRV-011 AC-11): the
     // cursor is positioned. Event ID 0, like Heartbeat and Resync.
     Attached attached = 23;
+
+    // AW-SRV-032: a dormant body was removed. Scoped to the purged Entity
+    // alone: no Room's occupants ever saw a dormant body, so none are told.
+    // It exists so the projector can tombstone the Entity's key (AW-SRV-019).
+    CharacterPurged character_purged = 24;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -207,4 +212,12 @@ message CharacterDespawned {
   // and Resync's are, so a new reason needs no schema change; a client
   // renders an unknown one as it renders quit.
   string reason = 4;
+}
+
+// A purged Character's body no longer exists in Zone state (AW-SRV-032).
+// character_name is the roster name, which the reservation keeps.
+message CharacterPurged {
+  string zone_id = 1;
+  string room_id = 2;
+  string character_name = 3;
 }

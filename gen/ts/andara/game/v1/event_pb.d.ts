@@ -140,6 +140,16 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: Attached;
     case: "attached";
+  } | {
+    /**
+     * AW-SRV-032: a dormant body was removed. Scoped to the purged Entity
+     * alone: no Room's occupants ever saw a dormant body, so none are told.
+     * It exists so the projector can tombstone the Entity's key (AW-SRV-019).
+     *
+     * @generated from field: andara.game.v1.CharacterPurged character_purged = 24;
+     */
+    value: CharacterPurged;
+    case: "characterPurged";
   } | { case: undefined; value?: undefined };
 };
 
@@ -582,4 +592,33 @@ export declare type CharacterDespawned = Message<"andara.game.v1.CharacterDespaw
  * Use `create(CharacterDespawnedSchema)` to create a new message.
  */
 export declare const CharacterDespawnedSchema: GenMessage<CharacterDespawned>;
+
+/**
+ * A purged Character's body no longer exists in Zone state (AW-SRV-032).
+ * character_name is the roster name, which the reservation keeps.
+ *
+ * @generated from message andara.game.v1.CharacterPurged
+ */
+export declare type CharacterPurged = Message<"andara.game.v1.CharacterPurged"> & {
+  /**
+   * @generated from field: string zone_id = 1;
+   */
+  zoneId: string;
+
+  /**
+   * @generated from field: string room_id = 2;
+   */
+  roomId: string;
+
+  /**
+   * @generated from field: string character_name = 3;
+   */
+  characterName: string;
+};
+
+/**
+ * Describes the message andara.game.v1.CharacterPurged.
+ * Use `create(CharacterPurgedSchema)` to create a new message.
+ */
+export declare const CharacterPurgedSchema: GenMessage<CharacterPurged>;
 

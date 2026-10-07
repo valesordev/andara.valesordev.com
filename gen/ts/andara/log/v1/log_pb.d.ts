@@ -159,6 +159,16 @@ export declare type LoggedCommand = Message<"andara.log.v1.LoggedCommand"> & {
      */
     value: Goto;
     case: "goto";
+  } | {
+    /**
+     * AW-SRV-032's: the Gateway's retention sweep produces it once a deleted
+     * Character's retention has expired; the sim removes the dormant body.
+     * 20, because 17-19 are taken: reusing a number breaks log replay.
+     *
+     * @generated from field: andara.log.v1.PurgeCharacter purge_character = 20;
+     */
+    value: PurgeCharacter;
+    case: "purgeCharacter";
   } | { case: undefined; value?: undefined };
 };
 
@@ -179,6 +189,31 @@ export declare type Look = Message<"andara.log.v1.Look"> & {
  * Use `create(LookSchema)` to create a new message.
  */
 export declare const LookSchema: GenMessage<Look>;
+
+/**
+ * Remove a deleted Character's dormant body from Zone state (AW-SRV-032,
+ * ADR-0006). Produced by the Gateway's sweep to the Zone partition of the
+ * roster's last-known zone_id; the sim records the Tick it applied on, so
+ * replay purges on the same Tick whatever the wall clock says. Applying it to
+ * a Character that is live, or that has no body in the Zone, is a no-op with
+ * a CommandRejected{code: "no_such_character"}, so a duplicate produce is
+ * harmless. The roster entry and the name reservation are not Zone state and
+ * are untouched.
+ *
+ * @generated from message andara.log.v1.PurgeCharacter
+ */
+export declare type PurgeCharacter = Message<"andara.log.v1.PurgeCharacter"> & {
+  /**
+   * @generated from field: string character_id = 1;
+   */
+  characterId: string;
+};
+
+/**
+ * Describes the message andara.log.v1.PurgeCharacter.
+ * Use `create(PurgeCharacterSchema)` to create a new message.
+ */
+export declare const PurgeCharacterSchema: GenMessage<PurgeCharacter>;
 
 /**
  * @generated from message andara.log.v1.Move

@@ -54,6 +54,8 @@ const (
 	GameListCharactersProcedure = "/andara.game.v1.Game/ListCharacters"
 	// GameCreateCharacterProcedure is the fully-qualified name of the Game's CreateCharacter RPC.
 	GameCreateCharacterProcedure = "/andara.game.v1.Game/CreateCharacter"
+	// GameDeleteCharacterProcedure is the fully-qualified name of the Game's DeleteCharacter RPC.
+	GameDeleteCharacterProcedure = "/andara.game.v1.Game/DeleteCharacter"
 	// GameSelectCharacterProcedure is the fully-qualified name of the Game's SelectCharacter RPC.
 	GameSelectCharacterProcedure = "/andara.game.v1.Game/SelectCharacter"
 )
@@ -88,6 +90,12 @@ type GameClient interface {
 	// no_such_character (NOT_FOUND).
 	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
 	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
+	// Soft-delete a Character of the Session's Account (AW-SRV-032): status
+	// DELETED, the body left dormant until the retention sweep purges it, the
+	// name reserved for good, and the roster slot held until the purge.
+	// Errors, domain andara.character: character_live (FAILED_PRECONDITION),
+	// no_such_character (NOT_FOUND: not owned, or already deleted).
+	DeleteCharacter(context.Context, *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error)
 	// Enter the World as one of the Account's Characters. The response has
 	// Submit's shape and meaning: the BindCharacter Command is durable in
 	// the log at the returned offset, and the arrival — CharacterArrived
@@ -152,6 +160,12 @@ func NewGameClient(httpClient connect.HTTPClient, baseURL string, opts ...connec
 			connect.WithSchema(gameMethods.ByName("CreateCharacter")),
 			connect.WithClientOptions(opts...),
 		),
+		deleteCharacter: connect.NewClient[v1.DeleteCharacterRequest, v1.DeleteCharacterResponse](
+			httpClient,
+			baseURL+GameDeleteCharacterProcedure,
+			connect.WithSchema(gameMethods.ByName("DeleteCharacter")),
+			connect.WithClientOptions(opts...),
+		),
 		selectCharacter: connect.NewClient[v1.SelectCharacterRequest, v1.SelectCharacterResponse](
 			httpClient,
 			baseURL+GameSelectCharacterProcedure,
@@ -169,6 +183,7 @@ type gameClient struct {
 	closeSession    *connect.Client[v1.CloseSessionRequest, v1.CloseSessionResponse]
 	listCharacters  *connect.Client[v1.ListCharactersRequest, v1.ListCharactersResponse]
 	createCharacter *connect.Client[v1.CreateCharacterRequest, v1.CreateCharacterResponse]
+	deleteCharacter *connect.Client[v1.DeleteCharacterRequest, v1.DeleteCharacterResponse]
 	selectCharacter *connect.Client[v1.SelectCharacterRequest, v1.SelectCharacterResponse]
 }
 
@@ -200,6 +215,11 @@ func (c *gameClient) ListCharacters(ctx context.Context, req *connect.Request[v1
 // CreateCharacter calls andara.game.v1.Game.CreateCharacter.
 func (c *gameClient) CreateCharacter(ctx context.Context, req *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error) {
 	return c.createCharacter.CallUnary(ctx, req)
+}
+
+// DeleteCharacter calls andara.game.v1.Game.DeleteCharacter.
+func (c *gameClient) DeleteCharacter(ctx context.Context, req *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error) {
+	return c.deleteCharacter.CallUnary(ctx, req)
 }
 
 // SelectCharacter calls andara.game.v1.Game.SelectCharacter.
@@ -237,6 +257,12 @@ type GameHandler interface {
 	// no_such_character (NOT_FOUND).
 	ListCharacters(context.Context, *connect.Request[v1.ListCharactersRequest]) (*connect.Response[v1.ListCharactersResponse], error)
 	CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error)
+	// Soft-delete a Character of the Session's Account (AW-SRV-032): status
+	// DELETED, the body left dormant until the retention sweep purges it, the
+	// name reserved for good, and the roster slot held until the purge.
+	// Errors, domain andara.character: character_live (FAILED_PRECONDITION),
+	// no_such_character (NOT_FOUND: not owned, or already deleted).
+	DeleteCharacter(context.Context, *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error)
 	// Enter the World as one of the Account's Characters. The response has
 	// Submit's shape and meaning: the BindCharacter Command is durable in
 	// the log at the returned offset, and the arrival — CharacterArrived
@@ -297,6 +323,12 @@ func NewGameHandler(svc GameHandler, opts ...connect.HandlerOption) (string, htt
 		connect.WithSchema(gameMethods.ByName("CreateCharacter")),
 		connect.WithHandlerOptions(opts...),
 	)
+	gameDeleteCharacterHandler := connect.NewUnaryHandler(
+		GameDeleteCharacterProcedure,
+		svc.DeleteCharacter,
+		connect.WithSchema(gameMethods.ByName("DeleteCharacter")),
+		connect.WithHandlerOptions(opts...),
+	)
 	gameSelectCharacterHandler := connect.NewUnaryHandler(
 		GameSelectCharacterProcedure,
 		svc.SelectCharacter,
@@ -317,6 +349,8 @@ func NewGameHandler(svc GameHandler, opts ...connect.HandlerOption) (string, htt
 			gameListCharactersHandler.ServeHTTP(w, r)
 		case GameCreateCharacterProcedure:
 			gameCreateCharacterHandler.ServeHTTP(w, r)
+		case GameDeleteCharacterProcedure:
+			gameDeleteCharacterHandler.ServeHTTP(w, r)
 		case GameSelectCharacterProcedure:
 			gameSelectCharacterHandler.ServeHTTP(w, r)
 		default:
@@ -350,6 +384,10 @@ func (UnimplementedGameHandler) ListCharacters(context.Context, *connect.Request
 
 func (UnimplementedGameHandler) CreateCharacter(context.Context, *connect.Request[v1.CreateCharacterRequest]) (*connect.Response[v1.CreateCharacterResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.CreateCharacter is not implemented"))
+}
+
+func (UnimplementedGameHandler) DeleteCharacter(context.Context, *connect.Request[v1.DeleteCharacterRequest]) (*connect.Response[v1.DeleteCharacterResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.game.v1.Game.DeleteCharacter is not implemented"))
 }
 
 func (UnimplementedGameHandler) SelectCharacter(context.Context, *connect.Request[v1.SelectCharacterRequest]) (*connect.Response[v1.SelectCharacterResponse], error) {
