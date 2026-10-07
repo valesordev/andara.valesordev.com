@@ -67,6 +67,16 @@ message ContentVersion {
   // server reads it from the compiled pack (`requires andara.core@N`); a
   // publisher does not supply it. 0 for andara.core itself.
   uint64 core_version = 9;
+
+  // The real actor who wrote this manifest (AW-SRV-039): the caller's Account,
+  // whoever they acted as. `author` is the acting-as Account when there was
+  // one, so for an acted-as publish author != publisher; otherwise the two are
+  // equal. Always set on write. A manifest written before this field existed
+  // reads empty, and is reported as equal to `author`: true, not a fallback,
+  // because no acted-as manifest could exist before it. Kept here and not
+  // rebuilt from the audit topic, which does not outlive its 365-day retention
+  // or an `auth.store=memory` restart. For andara.core, `server`, as author.
+  string publisher = 10;
 }
 
 message BlobRef {

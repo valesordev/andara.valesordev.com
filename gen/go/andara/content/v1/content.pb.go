@@ -184,7 +184,16 @@ type ContentVersion struct {
 	// against so version skew is a legible error rather than a mystery. The
 	// server reads it from the compiled pack (`requires andara.core@N`); a
 	// publisher does not supply it. 0 for andara.core itself.
-	CoreVersion   uint64 `protobuf:"varint,9,opt,name=core_version,json=coreVersion,proto3" json:"core_version,omitempty"`
+	CoreVersion uint64 `protobuf:"varint,9,opt,name=core_version,json=coreVersion,proto3" json:"core_version,omitempty"`
+	// The real actor who wrote this manifest (AW-SRV-039): the caller's Account,
+	// whoever they acted as. `author` is the acting-as Account when there was
+	// one, so for an acted-as publish author != publisher; otherwise the two are
+	// equal. Always set on write. A manifest written before this field existed
+	// reads empty, and is reported as equal to `author`: true, not a fallback,
+	// because no acted-as manifest could exist before it. Kept here and not
+	// rebuilt from the audit topic, which does not outlive its 365-day retention
+	// or an `auth.store=memory` restart. For andara.core, `server`, as author.
+	Publisher     string `protobuf:"bytes,10,opt,name=publisher,proto3" json:"publisher,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -280,6 +289,13 @@ func (x *ContentVersion) GetCoreVersion() uint64 {
 		return x.CoreVersion
 	}
 	return 0
+}
+
+func (x *ContentVersion) GetPublisher() string {
+	if x != nil {
+		return x.Publisher
+	}
+	return ""
 }
 
 type BlobRef struct {
@@ -551,7 +567,7 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\x04hash\x18\x01 \x01(\fR\x04hash\x12\x12\n" +
 	"\x04body\x18\x02 \x01(\fR\x04body\x12\x1d\n" +
 	"\n" +
-	"media_type\x18\x03 \x01(\tR\tmediaType\"\xe0\x02\n" +
+	"media_type\x18\x03 \x01(\tR\tmediaType\"\xfe\x02\n" +
 	"\x0eContentVersion\x12\x17\n" +
 	"\apack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n" +
 	"\aversion\x18\x02 \x01(\x04R\aversion\x12%\n" +
@@ -562,7 +578,9 @@ const file_andara_content_v1_content_proto_rawDesc = "" +
 	"\vapproved_by\x18\a \x01(\tR\n" +
 	"approvedBy\x121\n" +
 	"\x15approved_at_unix_nano\x18\b \x01(\x03R\x12approvedAtUnixNano\x12!\n" +
-	"\fcore_version\x18\t \x01(\x04R\vcoreVersion\"P\n" +
+	"\fcore_version\x18\t \x01(\x04R\vcoreVersion\x12\x1c\n" +
+	"\tpublisher\x18\n" +
+	" \x01(\tR\tpublisher\"P\n" +
 	"\aBlobRef\x12\x12\n" +
 	"\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n" +
 	"\x04hash\x18\x02 \x01(\fR\x04hash\x12\x1d\n" +

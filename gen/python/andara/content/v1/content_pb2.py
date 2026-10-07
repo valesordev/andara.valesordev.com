@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1f\x61ndara/content/v1/content.proto\x12\x11\x61ndara.content.v1\"M\n\x04\x42lob\x12\x12\n\x04hash\x18\x01 \x01(\x0cR\x04hash\x12\x12\n\x04\x62ody\x18\x02 \x01(\x0cR\x04\x62ody\x12\x1d\n\nmedia_type\x18\x03 \x01(\tR\tmediaType\"\xe0\x02\n\x0e\x43ontentVersion\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12%\n\x0eparent_version\x18\x03 \x01(\x04R\rparentVersion\x12\x30\n\x05\x62lobs\x18\x04 \x03(\x0b\x32\x1a.andara.content.v1.BlobRefR\x05\x62lobs\x12\x16\n\x06\x61uthor\x18\x05 \x01(\tR\x06\x61uthor\x12\x33\n\x16published_at_unix_nano\x18\x06 \x01(\x03R\x13publishedAtUnixNano\x12\x1f\n\x0b\x61pproved_by\x18\x07 \x01(\tR\napprovedBy\x12\x31\n\x15\x61pproved_at_unix_nano\x18\x08 \x01(\x03R\x12\x61pprovedAtUnixNano\x12!\n\x0c\x63ore_version\x18\t \x01(\x04R\x0b\x63oreVersion\"P\n\x07\x42lobRef\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n\x04hash\x18\x02 \x01(\x0cR\x04hash\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\"\xbd\x01\n\rActiveVersion\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12!\n\x0c\x61\x63tivated_by\x18\x03 \x01(\tR\x0b\x61\x63tivatedBy\x12\x33\n\x16\x61\x63tivated_at_unix_nano\x18\x04 \x01(\x03R\x13\x61\x63tivatedAtUnixNano\x12!\n\x0ctrace_parent\x18\x05 \x01(\tR\x0btraceParent\"\xd7\x01\n\nDiagnostic\x12\x12\n\x04\x66ile\x18\x01 \x01(\tR\x04\x66ile\x12\x12\n\x04line\x18\x02 \x01(\rR\x04line\x12\x10\n\x03\x63ol\x18\x03 \x01(\rR\x03\x63ol\x12\x12\n\x04\x63ode\x18\x04 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x05 \x01(\tR\x07message\x12\x14\n\x05\x63hain\x18\x06 \x03(\tR\x05\x63hain\x12\x37\n\x08severity\x18\x07 \x01(\x0e\x32\x1b.andara.content.v1.SeverityR\x08severity\x12\x12\n\x04pack\x18\x08 \x01(\tR\x04pack*<\n\x08Severity\x12\x18\n\x14SEVERITY_UNSPECIFIED\x10\x00\x12\t\n\x05\x45RROR\x10\x01\x12\x0b\n\x07WARNING\x10\x02\x42\xcc\x01\n\x15\x63om.andara.content.v1B\x0c\x43ontentProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03\x41\x43X\xaa\x02\x11\x41ndara.Content.V1\xca\x02\x11\x41ndara\\Content\\V1\xe2\x02\x1d\x41ndara\\Content\\V1\\GPBMetadata\xea\x02\x13\x41ndara::Content::V1b\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x1f\x61ndara/content/v1/content.proto\x12\x11\x61ndara.content.v1\"M\n\x04\x42lob\x12\x12\n\x04hash\x18\x01 \x01(\x0cR\x04hash\x12\x12\n\x04\x62ody\x18\x02 \x01(\x0cR\x04\x62ody\x12\x1d\n\nmedia_type\x18\x03 \x01(\tR\tmediaType\"\xfe\x02\n\x0e\x43ontentVersion\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12%\n\x0eparent_version\x18\x03 \x01(\x04R\rparentVersion\x12\x30\n\x05\x62lobs\x18\x04 \x03(\x0b\x32\x1a.andara.content.v1.BlobRefR\x05\x62lobs\x12\x16\n\x06\x61uthor\x18\x05 \x01(\tR\x06\x61uthor\x12\x33\n\x16published_at_unix_nano\x18\x06 \x01(\x03R\x13publishedAtUnixNano\x12\x1f\n\x0b\x61pproved_by\x18\x07 \x01(\tR\napprovedBy\x12\x31\n\x15\x61pproved_at_unix_nano\x18\x08 \x01(\x03R\x12\x61pprovedAtUnixNano\x12!\n\x0c\x63ore_version\x18\t \x01(\x04R\x0b\x63oreVersion\x12\x1c\n\tpublisher\x18\n \x01(\tR\tpublisher\"P\n\x07\x42lobRef\x12\x12\n\x04path\x18\x01 \x01(\tR\x04path\x12\x12\n\x04hash\x18\x02 \x01(\x0cR\x04hash\x12\x1d\n\nsize_bytes\x18\x03 \x01(\x04R\tsizeBytes\"\xbd\x01\n\rActiveVersion\x12\x17\n\x07pack_id\x18\x01 \x01(\tR\x06packId\x12\x18\n\x07version\x18\x02 \x01(\x04R\x07version\x12!\n\x0c\x61\x63tivated_by\x18\x03 \x01(\tR\x0b\x61\x63tivatedBy\x12\x33\n\x16\x61\x63tivated_at_unix_nano\x18\x04 \x01(\x03R\x13\x61\x63tivatedAtUnixNano\x12!\n\x0ctrace_parent\x18\x05 \x01(\tR\x0btraceParent\"\xd7\x01\n\nDiagnostic\x12\x12\n\x04\x66ile\x18\x01 \x01(\tR\x04\x66ile\x12\x12\n\x04line\x18\x02 \x01(\rR\x04line\x12\x10\n\x03\x63ol\x18\x03 \x01(\rR\x03\x63ol\x12\x12\n\x04\x63ode\x18\x04 \x01(\tR\x04\x63ode\x12\x18\n\x07message\x18\x05 \x01(\tR\x07message\x12\x14\n\x05\x63hain\x18\x06 \x03(\tR\x05\x63hain\x12\x37\n\x08severity\x18\x07 \x01(\x0e\x32\x1b.andara.content.v1.SeverityR\x08severity\x12\x12\n\x04pack\x18\x08 \x01(\tR\x04pack*<\n\x08Severity\x12\x18\n\x14SEVERITY_UNSPECIFIED\x10\x00\x12\t\n\x05\x45RROR\x10\x01\x12\x0b\n\x07WARNING\x10\x02\x42\xcc\x01\n\x15\x63om.andara.content.v1B\x0c\x43ontentProtoP\x01Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\xa2\x02\x03\x41\x43X\xaa\x02\x11\x41ndara.Content.V1\xca\x02\x11\x41ndara\\Content\\V1\xe2\x02\x1d\x41ndara\\Content\\V1\\GPBMetadata\xea\x02\x13\x41ndara::Content::V1b\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -32,16 +32,16 @@ _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'andara.content.v1.content_p
 if not _descriptor._USE_C_DESCRIPTORS:
   _globals['DESCRIPTOR']._loaded_options = None
   _globals['DESCRIPTOR']._serialized_options = b'\n\025com.andara.content.v1B\014ContentProtoP\001Z?github.com/valesordev/andara/gen/go/andara/content/v1;contentv1\242\002\003ACX\252\002\021Andara.Content.V1\312\002\021Andara\\Content\\V1\342\002\035Andara\\Content\\V1\\GPBMetadata\352\002\023Andara::Content::V1'
-  _globals['_SEVERITY']._serialized_start=980
-  _globals['_SEVERITY']._serialized_end=1040
+  _globals['_SEVERITY']._serialized_start=1010
+  _globals['_SEVERITY']._serialized_end=1070
   _globals['_BLOB']._serialized_start=54
   _globals['_BLOB']._serialized_end=131
   _globals['_CONTENTVERSION']._serialized_start=134
-  _globals['_CONTENTVERSION']._serialized_end=486
-  _globals['_BLOBREF']._serialized_start=488
-  _globals['_BLOBREF']._serialized_end=568
-  _globals['_ACTIVEVERSION']._serialized_start=571
-  _globals['_ACTIVEVERSION']._serialized_end=760
-  _globals['_DIAGNOSTIC']._serialized_start=763
-  _globals['_DIAGNOSTIC']._serialized_end=978
+  _globals['_CONTENTVERSION']._serialized_end=516
+  _globals['_BLOBREF']._serialized_start=518
+  _globals['_BLOBREF']._serialized_end=598
+  _globals['_ACTIVEVERSION']._serialized_start=601
+  _globals['_ACTIVEVERSION']._serialized_end=790
+  _globals['_DIAGNOSTIC']._serialized_start=793
+  _globals['_DIAGNOSTIC']._serialized_end=1008
 # @@protoc_insertion_point(module_scope)
