@@ -1,11 +1,17 @@
 ---
 name: project-sync
-description: Sync this repo's GitHub Project board from the story and sprint files on origin/main, then report where the active sprint stands (done/total, open stories by lane and status, open PRs). Trigger on "sync the project", "update the board", "sync github", "where are we in the sprint", "sprint status", and at sprint boundaries (the PM sprint skills call it). Not for editing stories or sprint plans (those are PM's files), and not for issues the mirror didn't create.
+description: Report where the active sprint stands (done/total, open stories by lane and status, open PRs), first syncing the GitHub Project from the story and sprint files on origin/main in repos that still keep stories in files. Trigger on "sync the project", "update the board", "sync github", "where are we in the sprint", "sprint status", and at sprint boundaries (the PM sprint skills call it). Not for editing stories or sprint plans (those are PM's files), and not for issues the mirror didn't create.
 argument-hint: "[--dry-run]"
-allowed-tools: Bash(.claude/bin/project-mirror:*) Bash(.claude/bin/sprint-state:*) Bash(git fetch:*) Bash(gh pr list:*)
+allowed-tools: Bash(.claude/bin/project-mirror:*) Bash(.claude/bin/sprint-state:*) Bash(.claude/bin/story list:*) Bash(git fetch:*) Bash(gh pr list:*)
 ---
 
 # Sync the GitHub Project and report the sprint
+
+**If `.claude/roles/_repo.md` has `stories: github`**, the board is the source
+of truth and there's nothing to mirror. Skip section 1, and report from the
+board instead (section 2 with `sprint-state`, `story list --sprint <n>`, and
+`gh pr list`; the progress line is your count of `story list --sprint <n>` by
+status).
 
 The board is a one-way mirror. Story files on `origin/main` are the source of
 truth, and any GitHub-side edit to a mirrored issue or field is overwritten.

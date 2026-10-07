@@ -7,7 +7,7 @@ here.
 | What | Where | License | Copyright |
 |------|-------|---------|-----------|
 | Code, build, deploy, configuration, generated code, test fixtures | Everything not listed below — including the protocol under `docs/specs/protocol/` | [Apache-2.0](LICENSE) | Valesor Development |
-| Documentation | `docs/` (prose: ADRs, epics, stories, specs, SLOs, runbooks, glossary, roadmap) and the generated `BACKLOG.md` | [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt) | Valesor Development |
+| Documentation | `docs/` (prose: ADRs, epics, stories, specs, SLOs, runbooks, glossary, roadmap) | [CC BY-SA 4.0](LICENSES/CC-BY-SA-4.0.txt) | Valesor Development |
 | Creative work — *Andara's World* itself | The name; the world and its setting; every work of canon | Open Canon (below) | solo7.media |
 
 ## Code — Apache License 2.0
@@ -29,8 +29,7 @@ The fixtures under `testdata/` are code, not content. The zones there ("Town", "
 The design record under `docs/` — architecture decision records, epics, stories, protocol
 and schema prose, SLOs, runbooks, the glossary, and the roadmap — is licensed under
 [Creative Commons Attribution-ShareAlike 4.0 International](LICENSES/CC-BY-SA-4.0.txt), the
-Valesor Development standard for written work. `BACKLOG.md` is generated from the stories
-and carries their license.
+Valesor Development standard for written work.
 
 Attribution: *"Andara's World documentation, © Valesor Development, CC BY-SA 4.0,
 https://github.com/valesordev/andara.valesordev.com"*.

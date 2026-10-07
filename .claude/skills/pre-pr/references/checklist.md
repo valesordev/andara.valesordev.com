@@ -23,6 +23,9 @@ test now catches that class mechanically.
 - [ ] Heuristic parsing of commands, paths, or arguments is tested against
       flags, quoting, and `--` (the AW-INF-028 command-path extraction).
 - [ ] Empty, nil, and zero inputs behave as specified.
+- [ ] Option parsing handles unique long-option prefixes (`--har` is `--hard`
+      to git and getopt) and flag precedence (`-f` wins over `-b`) (the #38
+      guard bypasses).
 
 ## Checks that can pass silently
 
@@ -38,6 +41,9 @@ test now catches that class mechanically.
       and story/ADR ID that the diff *names* exists. Grep for each one. This
       applies to stories, runbooks, and docs as well as code (the nonexistent
       metric).
+- [ ] Paths named in skills, charters, and docs resolve where they run: the
+      vendored `.claude/…` in a target repo, not the source tree (the #37
+      checklist path).
 - [ ] Every acceptance criterion in the story is met, or the gap is stated.
 
 ## Deploy surface
@@ -49,6 +55,13 @@ test now catches that class mechanically.
       recovery replay).
 - [ ] Runbook and rollback steps are complete and in order, and each step
       names the command.
+
+## Permission rules
+
+- [ ] No allow rule ends in a wildcard (`:*`, ` *`) on a command with
+      execution-capable flags: `make --eval`, `go -toolexec`/`-exec`,
+      `gofmt -w`, kubeconfig exec plugins, `helm --post-renderer`. Allow the
+      exact command instead (the #39 fragment).
 
 ## Copies and drift
 

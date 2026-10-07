@@ -55,8 +55,8 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
 
 .PHONY: help bootstrap up down logs ps tls auth-keys topics-apply topics-diff \
         schemas-apply schemas-check schemas-diff check fmt fmt-check vet lint test test-integration test-determinism \
-        proto proto-check backlog backlog-check status status-check story adr validate-stories \
-        graph k8s-dry check-targets clean build build-info goldens \
+        proto proto-check adr \
+        k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
@@ -128,12 +128,12 @@ schemas-check:
 # The single list. CI enumerates these as named steps for diagnosability, and a parity
 # guard in the workflow reads this target to prove the two lists have not drifted —
 # they had, silently, before `status-check` existed.
-CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check validate-stories \
-                 backlog-check status-check values-schema-check k8s-dry helm-test \
+CHECK_TARGETS := fmt-check vet lint test proto-check schemas-check \
+                 values-schema-check k8s-dry helm-test \
                  license-check content-grammar-check content-conformance scripts-test \
                  core-versions-check builder-reference-check guide-check
 
-## check: fmt, vet, lint, test, proto, story validation, manifests — what CI runs
+## check: fmt, vet, lint, test, proto, manifests — what CI runs
 check: $(CHECK_TARGETS)
 	@echo "check: all clean"
 
@@ -233,26 +233,6 @@ proto:
 proto-check:
 	@$(SCRIPTS)/proto.sh check
 
-## backlog: render BACKLOG.md from story frontmatter, write it, and print it — not committed (AW-INF-026)
-backlog:
-	@$(PY) $(SCRIPTS)/gen_backlog.py
-
-## backlog-check: fail if the backlog view doesn't render; writes nothing
-backlog-check:
-	@$(PY) $(SCRIPTS)/gen_backlog.py --check
-
-## status: render docs/status.md — each lane's development state, one screen — write it and print it; not committed (AW-INF-026)
-status:
-	@$(PY) $(SCRIPTS)/gen_status.py
-
-## status-check: fail if the status view doesn't render within its one-screen budget; writes nothing
-status-check:
-	@$(PY) $(SCRIPTS)/gen_status.py --check
-
-## validate-stories: schema-check frontmatter, resolve IDs, detect cycles
-validate-stories:
-	@$(PY) $(SCRIPTS)/validate_stories.py
-
 ## scripts-test: unit tests for the Python tooling under scripts/ (scripts/tests)
 scripts-test:
 	@$(PY) -m unittest discover -s $(SCRIPTS)/tests
@@ -280,17 +260,6 @@ content-grammar-check:
 ## content-conformance: run the AW-CLI-005 corpus against the compiler (AW-CLI-006 AC-1)
 content-conformance:
 	@$(GO) run ./content/conformance
-
-## graph: emit the story dependency DAG as mermaid
-graph:
-	@$(PY) $(SCRIPTS)/gen_graph.py
-
-## story: scaffold a story — make story COMP=SRV TITLE="..."
-story:
-	@if [[ -z "$(COMP)" || -z "$(TITLE)" ]]; then \
-	  echo 'make: story: usage: make story COMP=<SRV|CLI|INF|CLT> TITLE="<title>"' >&2; exit 2; \
-	fi
-	@$(PY) $(SCRIPTS)/new_story.py "$(COMP)" "$(TITLE)"
 
 ## adr: scaffold an ADR — make adr TITLE="..."
 adr:

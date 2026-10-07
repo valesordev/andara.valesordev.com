@@ -43,10 +43,30 @@ Rank is the story's position in that sprint's lists (views sort by it).
 Only issues the mirror created (an `<ID> — ` title and the mirror notice) are
 ever changed; bugs and other issues that mention a story are left alone.
 Needs `gh` with the `project` scope (`gh auth refresh -s project`).
+
+    project-mirror <repo-dir> --cutover --ref stories-final [--apply]
+
+The cutover hands the board to GitHub (`stories: github`, `sprints: project`
+in _repo.md). It reads the files at a pushed tag, which the issues link to
+afterwards, and runs even when _repo.md already says `stories: github`. It
+stops unless the board matches the tag, then:
+
+    Sprint        single-select -> number field (REST can't add options), values
+                  from the files; views grouped or filtered on it need re-adding
+    sprint issues `SPRINT-NN — <goal>` per plan file, labeled `sprint` (+
+                  `sprint:active|planned`), closed ones closed; an open sprint's
+                  body is its plan, a closed one's links its file
+    bodies        the mirror notice removed; a truncated story links its file
+    feedback      one comment on each open story linking its docs/feedback files
+
+Each step skips what's already done, so a failed run can be repeated. The
+mirror never runs after the cutover.
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import json
 import re
 import subprocess
@@ -190,6 +210,15 @@ def fit(body: str, path: str) -> str:
     return body[:BODY_LIMIT] + f"\n\n… truncated; the full story is `{path}`.\n"
 
 
+def is_number(f: dict | None) -> bool:
+    return bool(f) and f.get("dataType") == "NUMBER"
+
+
+def sprint_number(name: str | int) -> int:
+    """SPRINT-04 -> 4: the value of a number Sprint field."""
+    return int(re.sub(r"^[A-Z]+-", "", str(name)))
+
+
 def sprint_files(files: dict[str, str]) -> list[tuple[int, str, str, list[str]]]:
     """(number, name, status, listed IDs) for each sprint file, oldest first."""
     sprints = []
@@ -281,13 +310,16 @@ def strip_notice(body: str) -> str:
     return re.sub(r"\A> \[!NOTE\]\n> Mirrored from .*?\n\n", "", body or "", flags=re.S)
 
 
-def managed(title: str, body: str | None) -> str | None:
+def managed(title: str, body: str | None, by_title: bool = False) -> str | None:
     """The story or epic ID of an issue this mirror created, else None.
 
     Both the `<ID> — ` title and the mirror notice are required, so an issue
-    that is only about a story (`AW-INF-013: helm-install …`) is never touched."""
+    that is only about a story (`AW-INF-013: helm-install …`) is never touched.
+    `by_title` drops the notice check, for a cutover that has already stripped it."""
     m = TITLE_ID.match(title)
-    if not m or not title[m.end():].startswith(" — ") or strip_notice(body or "") == (body or ""):
+    if not m or not title[m.end():].startswith(" — "):
+        return None
+    if not by_title and strip_notice(body or "") == (body or ""):
         return None
     return m.group(1)
 
@@ -310,13 +342,18 @@ class GitHub:
             sys.exit(f"gh api graphql failed: {r.stderr.strip() or r.stdout.strip()}")
         return json.loads(r.stdout)["data"]
 
-    def mutate(self, what: str, query: str, **vars) -> dict | None:
+    def act(self, what: str) -> bool:
+        """Print and count one change; True when it should be made (--apply)."""
         print(f"  {what}")
         verb = what.split(" ")[0].rstrip(":")
         if TITLE_ID.match(verb):
-            verb = "blocked-by" if " blocked by " in what else "set field"
+            verb = ("blocked-by" if " blocked by " in what else "comment" if " comment " in what
+                    else "body" if " mirror notice" in what else "set field")
         self.ops[verb] = self.ops.get(verb, 0) + 1
-        if not self.apply:
+        return self.apply
+
+    def mutate(self, what: str, query: str, **vars) -> dict | None:
+        if not self.act(what):
             return None
         self.writes += 1
         if self.writes % 50 == 0:
@@ -339,7 +376,7 @@ class GitHub:
         return json.loads(r.stdout or "null")
 
 
-def load_state(gh: GitHub, project_title: str) -> dict:
+def load_state(gh: GitHub, project_title: str, by_title: bool = False) -> dict:
     q = """query($o:String!,$n:String!,$t:String!){
       organization(login:$o){ id
         issueTypes(first:50){nodes{id name}}
@@ -350,7 +387,7 @@ def load_state(gh: GitHub, project_title: str) -> dict:
     project = next((p for p in org["projectsV2"]["nodes"] if p["title"] == project_title), None)
     st = {"org_id": org["id"], "repo_id": d["repository"]["id"],
           "types": {t["name"]: t["id"] for t in org["issueTypes"]["nodes"]},
-          "project": project, "fields": {}, "items": {}, "issues": {}}
+          "project": project, "fields": {}, "items": {}, "issues": {}, "unmarked": []}
 
     after = None
     while True:
@@ -361,9 +398,11 @@ def load_state(gh: GitHub, project_title: str) -> dict:
         page = gh.gql(q, o=gh.owner, n=gh.name, **({"a": after} if after else {}))
         conn = page["repository"]["issues"]
         for i in conn["nodes"]:
-            key = managed(i["title"], i["body"])
+            key = managed(i["title"], i["body"], by_title)
             if key:
                 st["issues"][key] = i
+            elif managed(i["title"], i["body"], True):
+                st["unmarked"].append(i["number"])
         if not conn["pageInfo"]["hasNextPage"]:
             break
         after = conn["pageInfo"]["endCursor"]
@@ -412,6 +451,9 @@ def option_list(known: list[str], seen: set[str]) -> list[str]:
 
 def sync(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], title: str) -> None:
     st = load_state(gh, title)
+    if len(st["unmarked"]) > len(st["issues"]):  # most story issues lost the notice
+        sys.exit(f"project-mirror: {len(st['unmarked'])} story issues have no mirror notice, so "
+                 "this repo's board was cut over to GitHub; mirroring would duplicate them.")
     placeholder = iter(range(1, 10**6))
 
     def pid() -> str:
@@ -433,6 +475,8 @@ def sync(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], title: str) -> 
     # Fields: create missing ones; make single-select options a superset, keeping option ids.
     selects = {"Status": STATUSES, "Plan": PLANS,
                "Sprint": sorted({w.fields.get("Sprint") for w in want.values()} - {None})}
+    if is_number(st["fields"].get("Sprint")):  # after a cutover: no options to manage
+        del selects["Sprint"]
     for name, (_, known) in SELECT_FIELDS.items():
         seen = {w.fields.get(name) for w in want.values()} - {None}
         selects[name] = option_list(known, seen)
@@ -580,15 +624,17 @@ def sync(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], title: str) -> 
               addProjectV2ItemById(input:{projectId:$p,contentId:$c}){item{id}}}""", p=pid(), c=node[w.key])
             item = {"id": d["addProjectV2ItemById"]["item"]["id"] if d else f"<item {w.key}>", "values": {}}
         for fname, value in w.fields.items():
+            f = st["fields"].get(fname) or {"id": f"<field {fname}>", "options": []}
+            if fname == "Sprint" and is_number(f) and value is not None:
+                value = sprint_number(value)
             if item["values"].get(fname) == value or (value is None and fname not in item["values"]):
                 continue
-            f = st["fields"].get(fname) or {"id": f"<field {fname}>", "options": []}
             if value is None:
                 gh.mutate(f"{w.key}: clear {fname}", """mutation($p:ID!,$i:ID!,$f:ID!){
                   clearProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f}){clientMutationId}}""",
                           p=pid(), i=item["id"], f=f["id"])
                 continue
-            if fname == "Rank":
+            if fname == "Rank" or is_number(f):
                 v = {"number": float(value)}
             elif fname == "Story ID":
                 v = {"text": value}
@@ -602,6 +648,183 @@ def sync(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], title: str) -> 
     print("\n" + (", ".join(f"{n} {k}" for k, n in sorted(gh.ops.items())) or "in sync"))
     if st["project"] and st["project"].get("url"):
         print(f"\n{st['project']['url']}")
+
+
+# ---------------------------------------------------------------- cutover
+
+TRUNCATED = re.compile(r"\n\n… truncated; the full story is `([^`]+)`\.\n\Z")
+FEEDBACK_MARK = "**Feedback (cutover):**"
+SPRINT_LABELS = {"sprint": "5319E7", "sprint:planned": "C5DEF5", "sprint:active": "0E8A16"}
+
+
+@dataclass
+class SprintIssue:
+    n: int
+    title: str
+    body: str
+    status: str               # closed | active | planned
+
+
+def sprint_issues(files: dict[str, str], blob) -> tuple[list[SprintIssue], list[str]]:
+    """The sprint issues a cutover creates, one per plan file, and any problems.
+
+    The title is the file's `# SPRINT-NN — <goal>` heading. A closed sprint's
+    body links its plan file, which stays as its close-out record. An active or
+    planned sprint's body is the plan itself (minus the heading and Status line),
+    since that file goes away at the cutover."""
+    out, problems = [], []
+    for p, text in sorted(files.items()):
+        m = SPRINT_FILE.search(p)
+        if not m:
+            continue
+        name = m.group(1)
+        st = re.search(r"^Status:\s*(\w+)", text, re.M)
+        status = st.group(1).lower() if st else ""
+        if status not in ("closed", "active", "planned"):
+            problems.append(f"{p}: Status {status or 'missing'!r}")
+            continue
+        head = re.match(r"\A# (.+)\n", text)
+        goal = head.group(1).split(" — ", 1)[1].strip() if head and " — " in head.group(1) else ""
+        title = f"{name} — {goal or 'sprint'}"
+        link = f"[`{p}`]({blob(p)})"
+        if status == "closed":
+            body = f"Closed before stories moved to GitHub. Plan and close-out: {link}.\n"
+        else:
+            rest = text[head.end():] if head else text
+            rest = re.sub(r"\A\s*Status:[^\n]*\n", "", rest.lstrip("\n")).lstrip("\n")
+            body = f"Plan at the cutover, from {link}.\n\n{rest}"
+            if len(body) > BODY_LIMIT:
+                body = body[:BODY_LIMIT] + f"\n\n… truncated; the full plan is {link}.\n"
+        out.append(SprintIssue(sprint_number(name), title, body, status))
+    out.sort(key=lambda s: s.n)
+    open_ = [s for s in out if s.status != "closed"]
+    if len(open_) > 1 or (open_ and open_[0].n != out[-1].n):
+        problems.append("only the highest-numbered sprint may be open: "
+                        + ", ".join(f"SPRINT-{s.n:02d} {s.status}" for s in open_))
+    return out, problems
+
+
+def cutover_body(body: str, blob) -> str:
+    """An issue body without the mirror notice; a truncated story links its file at the tag."""
+    out = strip_notice(body)
+    return TRUNCATED.sub(lambda m: f"\n\n… truncated; the full story is [`{m.group(1)}`]"
+                                   f"({blob(m.group(1))}).\n", out)
+
+
+def feedback_files(paths: list[str], sid: str) -> list[str]:
+    """docs/feedback files about one story: named `<ID>.md` or `<ID>-<slug>.md`."""
+    return [p for p in paths if re.match(rf"{re.escape(sid)}(?:-|\.md$)", p.rsplit("/", 1)[-1])]
+
+
+def cutover(gh: GitHub, want: dict[str, Want], ms: dict[str, dict], files: dict[str, str],
+            feedback: list[str], title: str, ref: str, blob) -> int:
+    """Hand the board from the files to GitHub. Every step is idempotent."""
+    sprints, problems = sprint_issues(files, blob)
+    for p in problems:
+        print(f"error: {p}")
+    if problems or not sprints:
+        print("cutover: fix the sprint files first" if problems else "cutover: no sprint files")
+        return 1
+    st = load_state(gh, title, by_title=True)
+    if not st["project"]:
+        print(f"cutover: no org Project titled {title!r}; run the mirror first")
+        return 1
+    have_sprints = {}
+    for i in gh.rest(f"repos/{gh.owner}/{gh.name}/issues?labels=sprint&state=all&per_page=100"):
+        m = re.match(r"^SPRINT-(\d+) — ", i.get("title") or "")
+        if m and "pull_request" not in i:
+            have_sprints[int(m.group(1))] = i
+    started = (is_number(st["fields"].get("Sprint")) or have_sprints
+               or any(strip_notice(i["body"] or "") == (i["body"] or "") for i in st["issues"].values()))
+
+    # 0. The board must match the files at the ref, or the cutover freezes a wrong board.
+    if not started:
+        dry = GitHub(f"{gh.owner}/{gh.name}", False)
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            sync(dry, want, ms, title)
+        if dry.ops:
+            print(buf.getvalue())
+            print(f"cutover: the board doesn't match {ref}. Run project-mirror --apply "
+                  f"--ref {ref} first.")
+            return 1
+        print(f"board matches {ref}")
+    else:
+        print("cutover already started: skipping the board check")
+    pid = st["project"]["id"]
+
+    # 1. Sprint becomes a number field: REST can't add single-select options.
+    print("Sprint field")
+    f = st["fields"].get("Sprint")
+    if f and not is_number(f):
+        gh.mutate("delete single-select Sprint (views that group or filter on it lose it)",
+                  """mutation($f:ID!){deleteProjectV2Field(input:{fieldId:$f}){clientMutationId}}""",
+                  f=f["id"])
+        f = None
+        for it in st["items"].values():
+            it["values"].pop("Sprint", None)
+    if not f:
+        d = gh.mutate("create number field Sprint", """mutation($p:ID!){
+          createProjectV2Field(input:{projectId:$p,dataType:NUMBER,name:"Sprint"}){
+            projectV2Field{... on ProjectV2FieldCommon{id name dataType}}}}""", p=pid)
+        f = d["createProjectV2Field"]["projectV2Field"] if d else {"id": "<field Sprint>"}
+    for w in sorted(want.values(), key=lambda w: w.key):
+        cur = st["issues"].get(w.key)
+        value = w.fields.get("Sprint")
+        item = st["items"].get(cur["number"]) if cur else None
+        if value is None or not item or item["values"].get("Sprint") == sprint_number(value):
+            continue
+        gh.mutate(f"{w.key}: Sprint = {sprint_number(value)}", """mutation($p:ID!,$i:ID!,$f:ID!,$v:ProjectV2FieldValue!){
+          updateProjectV2ItemFieldValue(input:{projectId:$p,itemId:$i,fieldId:$f,value:$v}){clientMutationId}}""",
+                  p=pid, i=item["id"], f=f["id"], v={"number": float(sprint_number(value))})
+
+    # 2. Sprint issues, oldest first, with their labels.
+    print("sprint issues")
+    labels = {l["name"] for l in gh.rest(f"repos/{gh.owner}/{gh.name}/labels?per_page=100")}
+    for name, color in SPRINT_LABELS.items():
+        if name not in labels and gh.act(f"create label {name}"):
+            gh.rest(f"repos/{gh.owner}/{gh.name}/labels", "-f", f"name={name}", "-f", f"color={color}")
+    for s in sprints:
+        if s.n in have_sprints:
+            continue
+        lab = ["sprint"] + ([] if s.status == "closed" else [f"sprint:{s.status}"])
+        if gh.act(f"create {s.title} ({s.status})"):
+            args = [f"repos/{gh.owner}/{gh.name}/issues", "-f", f"title={s.title}", "-f", f"body={s.body}"]
+            for l in lab:
+                args += ["-f", f"labels[]={l}"]
+            iss = gh.rest(*args)
+            if s.status == "closed":
+                gh.rest("-X", "PATCH", f"repos/{gh.owner}/{gh.name}/issues/{iss['number']}",
+                        "-f", "state=closed", "-f", "state_reason=completed")
+
+    # 3. Issue bodies lose the mirror notice: GitHub is the source now.
+    print("issue bodies")
+    for key, i in sorted(st["issues"].items()):
+        body = cutover_body(i["body"] or "", blob)
+        if body != (i["body"] or ""):
+            gh.mutate(f"{key} #{i['number']}: drop the mirror notice", """mutation($i:ID!,$b:String!){
+              updateIssue(input:{id:$i,body:$b}){clientMutationId}}""", i=i["id"], b=body)
+
+    # 4. Open stories point at their feedback files, since feedback is comments from now on.
+    print("feedback pointers")
+    for w in sorted(want.values(), key=lambda w: w.key):
+        cur = st["issues"].get(w.key)
+        paths = feedback_files(feedback, w.key)
+        if w.closed or w.key.startswith("EPIC") or not cur or not paths:
+            continue
+        comments = gh.rest(f"repos/{gh.owner}/{gh.name}/issues/{cur['number']}/comments?per_page=100")
+        if any((c.get("body") or "").startswith(FEEDBACK_MARK) for c in comments):
+            continue
+        links = "\n".join(f"- [`{p}`]({blob(p)})" for p in paths)
+        body = (f"{FEEDBACK_MARK} feedback on this story before the cutover is in "
+                f"{'these files' if len(paths) > 1 else 'this file'}. New feedback goes in "
+                f"comments here (`story comment {w.key} --to <role>`).\n\n{links}\n")
+        if gh.act(f"{w.key} #{cur['number']}: comment linking {len(paths)} feedback file(s)"):
+            gh.rest(f"repos/{gh.owner}/{gh.name}/issues/{cur['number']}/comments", "-f", f"body={body}")
+
+    print("\n" + (", ".join(f"{n} {k}" for k, n in sorted(gh.ops.items())) or "nothing to do"))
+    print(f"\n{st['project']['url']}")
+    return 0
 
 
 def board(files: dict[str, str], want: dict[str, Want]) -> list[str]:
@@ -666,6 +889,8 @@ def main(argv: list[str]) -> int:
                                      "(default: <repo-dir>/.claude/roles/_repo.md)")
     ap.add_argument("--apply", action="store_true", help="make the changes (default: print them)")
     ap.add_argument("--offline", action="store_true", help="print the sprint board; no GitHub calls")
+    ap.add_argument("--cutover", action="store_true",
+                    help="hand the board to GitHub, reading the files at --ref (a tag)")
     a = ap.parse_args(argv)
     try:
         a.repo_dir = git(a.repo_dir, "rev-parse", "--show-toplevel").strip()
@@ -682,10 +907,23 @@ def main(argv: list[str]) -> int:
         print("project-mirror: not configured for this repo (no `project:` in "
               ".claude/roles/_repo.md and no --project). Nothing to do.")
         return 0
+    if cfg.get("stories") == "github" and not a.cutover:
+        print("project-mirror: stories here live on GitHub (`stories: github`); there is nothing "
+              "to mirror, and mirroring would overwrite the board. Use .claude/bin/story.")
+        return 0
     if not a.offline and not repo:
         print("project-mirror: can't tell the GitHub repo (no github_repo, no GitHub "
               "origin remote); pass --repo owner/name", file=sys.stderr)
         return 2
+
+    if a.cutover:
+        try:
+            git(a.repo_dir, "rev-parse", "--verify", "--quiet", f"refs/tags/{a.ref}")
+        except subprocess.CalledProcessError:
+            print(f"project-mirror: --cutover reads a tag (the files' last commit, pushed), "
+                  f"and {a.ref} isn't one. Tag it: git tag -s stories-final origin/main && "
+                  f"git push origin stories-final", file=sys.stderr)
+            return 2
 
     sha = git(a.repo_dir, "rev-parse", a.ref).strip()
     files = read_tree(a.repo_dir, a.ref)
@@ -698,6 +936,12 @@ def main(argv: list[str]) -> int:
     if a.offline:
         print("\n".join(board(files, want)))
         return 0
+    if a.cutover:
+        feedback = git(a.repo_dir, "ls-tree", "-r", "--name-only", a.ref, "--", "docs/feedback").split()
+        if not a.apply:
+            print("dry run: nothing is written (--apply to make these changes)\n")
+        return cutover(GitHub(repo, a.apply), want, ms, files, feedback, project, a.ref,
+                       lambda path: f"https://github.com/{repo}/blob/{a.ref}/{path}")
     if not a.apply:
         print("dry run: nothing is written (--apply to make these changes)\n")
     sync(GitHub(repo, a.apply), want, ms, project)

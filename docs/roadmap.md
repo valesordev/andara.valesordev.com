@@ -1,7 +1,7 @@
 # Roadmap — Andara's World
 
-Planning source of truth. Phase → Epic → Milestone. Story status lives in story frontmatter;
-`BACKLOG.md` is the generated view. This file changes when scope or sequencing changes, not when a
+Planning source of truth. Phase → Epic → Milestone. Story status lives on the GitHub Project
+("Andara's World"). This file changes when scope or sequencing changes, not when a
 story closes.
 
 ADR-0001 through ADR-0010 are all `accepted` (ADR-0008 and ADR-0010 on 2026-09-10). Nothing in Phase 1

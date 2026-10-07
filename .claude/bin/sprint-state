@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
-"""Report sprint state from docs/sprints/ on a git ref (default origin/main).
+"""Report sprint state from sprint issues on GitHub, or from docs/sprints/ on a git ref.
 
 Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/sprint-state.
 Vendored into target repos as .claude/bin/sprint-state. Don't edit it there.
 
-    sprint-state [--ref origin/main] [--dir docs/sprints] [--name SPRINT]
+    sprint-state [--source files|project] [--ref origin/main] [--dir docs/sprints] [--name SPRINT]
 
-Reads only plan files named <NAME>-<N>.md (not SPRINT-<N>-demo.md) and the
+The source defaults to `sprints:` in .claude/roles/_repo.md (`project`), else files.
+
+project: issues in `github_repo` labeled `sprint` and titled `<NAME>-NN — <goal>`.
+A closed issue is a closed sprint; an open one is `planned` or `active` by its
+`sprint:planned` / `sprint:active` label. Change them with `.claude/bin/story sprint`.
+
+files: reads only plan files named <NAME>-<N>.md (not SPRINT-<N>-demo.md) and the
 first `Status:` line of each. `--name CYCLE --dir docs/planning/cycles` reads
 the content repo's cycles the same way. Prints one line per sprint, then:
 
@@ -21,15 +27,17 @@ States:
     planned  none active, highest is planned: review and activate it (`next` = it)
 
 Exit 0 on a valid state; exit 1 with `state: invalid` and the reasons when the
-files contradict each other (an unknown status, or any sprint other than the
-highest-numbered one not closed); exit 2 when the ref can't be read.
+sources contradict each other (an unknown status, or any sprint other than the
+highest-numbered one not closed); exit 2 when the ref or GitHub can't be read.
 """
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
+from pathlib import Path
 
 STATUS = re.compile(r"^Status:\s*([A-Za-z-]+)", re.M)
 VALID = {"planned", "active", "closed"}
@@ -46,14 +54,67 @@ def name(n: int) -> str:
     return f"{NAME}-{n:02d}"
 
 
+def repo_config() -> dict:
+    """`key: value` lines of .claude/roles/_repo.md's frontmatter (empty outside a repo)."""
+    try:
+        root = Path(git("rev-parse", "--show-toplevel").strip())
+    except subprocess.CalledProcessError:
+        return {}
+    f = root / ".claude/roles/_repo.md"
+    text = f.read_text() if f.is_file() else ""
+    if not text.startswith("---\n"):
+        return {}
+    head = text[4:text.find("\n---", 4)]
+    return {k.strip(): v.split(" #", 1)[0].strip().strip("'\"")
+            for k, _, v in (l.partition(":") for l in head.splitlines()) if v}
+
+
+def from_project(repo: str) -> list[tuple[int, str, int]]:
+    """(number, status, issue) for each sprint issue; raises OSError when GitHub can't be read."""
+    r = subprocess.run(["gh", "api", "-X", "GET", "--paginate", "--slurp",
+                        f"/repos/{repo}/issues?labels=sprint&state=all&per_page=100"],
+                       stdin=subprocess.DEVNULL, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise OSError((r.stderr or r.stdout).strip())
+    pages = json.loads(r.stdout or "[]")
+    issues = [i for p in pages for i in (p if isinstance(p, list) else [p])]
+    title = re.compile(rf"^{re.escape(NAME)}-(\d+) — ")
+    out = []
+    for i in issues:
+        m = title.match(i.get("title") or "")
+        if not m or "pull_request" in i:
+            continue
+        if i.get("state") == "closed":
+            st = "closed"
+        else:
+            labels = [l["name"][7:] for l in i.get("labels") or []
+                      if l["name"] in ("sprint:planned", "sprint:active")]
+            st = labels[0] if len(labels) == 1 else ("+".join(labels) or "missing")
+        out.append((int(m.group(1)), st, i["number"]))
+    return out
+
+
 def main(argv: list[str]) -> int:
     ap = argparse.ArgumentParser(add_help=True)
+    ap.add_argument("--source", choices=["files", "project"])
     ap.add_argument("--ref", default="origin/main")
     ap.add_argument("--dir", default="docs/sprints")
-    ap.add_argument("--name", default="SPRINT", help="plan file stem (SPRINT, CYCLE)")
+    ap.add_argument("--name", help="plan file / issue stem (SPRINT, CYCLE)")
     a = ap.parse_args(argv)
+    cfg = repo_config()
     global NAME
-    NAME = a.name.upper()
+    NAME = (a.name or cfg.get("sprint_name") or "SPRINT").upper()
+    if (a.source or ("project" if cfg.get("sprints") == "project" else "files")) == "project":
+        repo = cfg.get("github_repo")
+        if not repo:
+            print("sprint-state: set github_repo: owner/name in .claude/roles/_repo.md", file=sys.stderr)
+            return 2
+        try:
+            rows = from_project(repo)
+        except OSError as e:
+            print(f"sprint-state: can't read sprint issues in {repo}: {e}", file=sys.stderr)
+            return 2
+        return report([(n, st) for n, st, _ in rows], {n: i for n, _, i in rows})
     plan = re.compile(rf"(?:^|/){re.escape(NAME)}-(\d+)\.md$")
 
     try:
@@ -74,10 +135,13 @@ def main(argv: list[str]) -> int:
         text = git("show", f"{a.ref}:{a.dir}/{f}")
         s = STATUS.search(text)
         sprints.append((int(m.group(1)), s.group(1).lower() if s else "missing"))
-    sprints.sort()
+    return report(sprints, {})
 
+
+def report(sprints: list[tuple[int, str]], issues: dict[int, int]) -> int:
+    sprints.sort()
     for n, st in sprints:
-        print(f"{name(n):12} {st}")
+        print(f"{name(n):12} {st}" + (f"  (#{issues[n]})" if n in issues else ""))
 
     problems: list[str] = []
     nums = [n for n, _ in sprints]

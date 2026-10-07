@@ -3,9 +3,10 @@ role: sre
 
 aliases: [ops, reliability]
 branch_prefix: sre/
-writes: [deploy/, .github/, Makefile, scripts/, docs/runbooks/, docs/specs/slo/, docs/stories/, docs/feedback/, docs/glossary.md]
+writes: [deploy/, .github/, Makefile, scripts/, docs/runbooks/, docs/specs/slo/, docs/glossary.md]
 skills: [sre-start-sprint]
 transitions: [ready>in-progress@lane]
+story_edits: [body]
 on_merge: [in-progress>review@lane]
 ---
 # Role: SITE RELIABILITY ENGINEERING
@@ -43,14 +44,22 @@ observability and SLO discipline, §8 definition of done, §9 automation
 contract, and §11 session start all bind you. This file only adds what
 applies to your role alone.
 
+### Stories
+Stories, sprints, and their threads are GitHub issues on the "Andara's World"
+Project. Read `.claude/skills/role/references/stories-on-github.md` once per
+session. Change them only with `.claude/bin/story`: there are no story or
+feedback files.
+
 The tick loop is the heart of the SLI set. Tick duration, tick overrun count,
 and simulation lag are first-class from the first server story onward.
 
 ### Order of work in a sprint
 1. **Observability review** of the sprint's drafts. Architecture's contract
-   review waits on it.
-2. **Instrumentation verification** of every story at `review`, recorded in
-   its §8 record. Architecture moves stories to `done`.
+   review waits on it. You may change only the Observability requirements
+   section of a story's body (`story body`); record the review with
+   `--record "Observability review"`.
+2. **Instrumentation verification** of every story at `review`, recorded with
+   `--record "§8 instrumentation"`. Architecture moves stories to `done`.
 3. **Your own backlog**, in the order the sprint lists it.
 
 ### You own
@@ -66,10 +75,12 @@ and simulation lag are first-class from the first server story onward.
   implementation's; you specify it and verify it.
 - Decide protocol, storage, or service boundaries, or edit `docs/adr/` or the
   rest of `docs/specs/`. An operability concern with a decision goes to
-  architecture in a feedback file.
-- Move a story's `status` except on your own `lane: sre` stories.
-- Write new stories or change sprint scope. Send new work to PM in
-  `docs/feedback/`.
+  architecture as `story comment <ID> --to architecture`.
+- Edit any section of a story's body other than Observability requirements.
+- Move a story's status except `story start` on your own `lane: sre` stories.
+  They reach `review` when your PR (with `Story: <ID>` and `role:sre`) merges.
+- Write new stories or change sprint scope. Send new work to PM as a GitHub
+  issue or `story comment <ID> --to pm`.
 
 ### Also
 - If a diff touches a path your role doesn't own, stop and flag it before

@@ -31,13 +31,24 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           sparse-checkout: .claude
+      # No `stories: github` (or no Project at all): nothing to move, and no App
+      # credentials needed. Skip before minting a token so the run stays green.
+      - id: cfg
+        run: |
+          if grep -qE '^stories:[[:space:]]*github[[:space:]]*$' .claude/roles/_repo.md 2>/dev/null; then
+            echo "stories=github" >> "$GITHUB_OUTPUT"
+          else
+            echo "No stories: github in .claude/roles/_repo.md; skipped."
+          fi
       - id: app
+        if: steps.cfg.outputs.stories == 'github'
         uses: actions/create-github-app-token@v2
         with:
           app-id: ${{ vars.STORY_APP_ID }}
           private-key: ${{ secrets.STORY_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
       - name: Move stories
+        if: steps.cfg.outputs.stories == 'github'
         env:
           GH_TOKEN: ${{ steps.app.outputs.token }}
           PR: ${{ github.event.pull_request.number }}
