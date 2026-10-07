@@ -21,6 +21,10 @@ block GraphQL.
     story comment <ID> (--to ROLE | --record NAME) (--body TEXT | --body-file F)
     story merged <PR>                     the story-merge Action: apply a merged PR's
                                           Story: / Story-Done: lines as its role:<r> label
+    story sprint plan <N> --title T --body-file F    open SPRINT-NN at planned
+    story sprint activate <N>                        planned -> active (one active at a time)
+    story sprint close <N> [--note TEXT]             active -> closed (closes the issue)
+    story sprint body <N> --body-file F              replace the sprint's goal and demo goal
 
 Who may do what comes from the session's role file (.claude/roles/<role>.md):
 
@@ -33,6 +37,12 @@ Who may do what comes from the session's role file (.claude/roles/<role>.md):
     on_merge: [in-progress>review@lane]
         moves only `story merged` makes, when a PR labeled role:<role> merges.
         A session can't make them, so `review` means the work is on main.
+
+Sprints (with `sprints: project` in _repo.md) are issues titled
+`SPRINT-NN — <goal>`, labeled `sprint` and `sprint:planned` or `sprint:active`;
+a closed issue is a closed sprint. `.claude/bin/sprint-state` reads them. A role
+manages them if its story_edits include `Sprint`. Stories record their sprint in
+the Project's `Sprint` field: a number field takes `5`, `05`, or `SPRINT-05`.
 
 `story merged <PR>` reads the merged PR's body and commit messages. A
 `Story: <ID>` line moves the story in-progress → review when the PR's role is
@@ -189,10 +199,12 @@ class Board:
             elif dt == "single_select":
                 body.append({"id": fid, "value": self.option_id(name, v)})
             elif dt == "number":
+                m = re.fullmatch(r"[A-Z]+-(\d+)", str(v))  # Sprint=SPRINT-05 on a number field
                 try:
-                    body.append({"id": fid, "value": float(v)})
+                    v = values[name] = float(m.group(1) if m else v)
                 except ValueError:
                     raise StoryError(f"{name} must be a number, not {v!r}") from None
+                body.append({"id": fid, "value": v})
             else:
                 body.append({"id": fid, "value": str(v)})
         self.gh.api("PATCH", f"{self.base}/items/{item['item']}", {"fields": body})
@@ -265,8 +277,17 @@ def cmd_show(b: Board, who: Who, a) -> str:
     keys = ["Status", "Lane", "Sprint", "Plan", "Rank", "Size", "Risk", "Component"]
     if "Cycle" in b.fields:
         keys.insert(3, "Cycle")
+    deps = b.gh.api("GET", f"/repos/{it['repo']}/issues/{it['number']}/dependencies/blocked_by",
+                    paginate=True) or []
+    by_issue = {i["issue_id"]: i for i in b.items()}
+    blockers = []
+    for d in deps:
+        bi = by_issue.get(d.get("id"))
+        blockers.append(f"{bi['id']} ({bi['fields'].get('Status') or '-'})" if bi and bi["id"]
+                        else f"#{d.get('number')} ({d.get('state')})")
     lines = [f"{it['title']}  (#{it['number']}, {iss.get('state')})  {iss.get('html_url', '')}",
              "  ".join(f"{k}: {_num(f.get(k)) if f.get(k) is not None else '-'}" for k in keys),
+             f"Blocked by: {', '.join(blockers) or '-'}",
              "", (iss.get("body") or "").rstrip()]
     if a.comments:
         cs = b.comments(it["number"], it["repo"])[-a.comments:]
@@ -281,13 +302,20 @@ def _num(v):
     return int(v) if isinstance(v, float) and v.is_integer() else v
 
 
+def _matches(have, want: str) -> bool:
+    """A field value against a filter: numbers match 5, 05 or SPRINT-05; text matches exactly."""
+    if isinstance(have, (int, float)):
+        digits = re.sub(r"^[A-Z]+-", "", want)
+        return digits.isdigit() and int(digits) == have
+    return (have or "") == want
+
+
 def cmd_list(b: Board, who: Who, a) -> str:
     rows = [i for i in b.items() if i["id"].startswith(f"{a.prefix or b.prefix}-")]
-    for key, want in (("Plan", a.plan), ("Sprint", a.sprint), ("Status", a.status), ("Lane", a.lane)):
+    for key, want in (("Plan", a.plan), ("Sprint", a.sprint), ("Cycle", a.cycle),
+                      ("Status", a.status), ("Lane", a.lane)):
         if want:
-            rows = [i for i in rows if (i["fields"].get(key) or "") == want]
-    if a.cycle:
-        rows = [i for i in rows if str(_num(i["fields"].get("Cycle"))) == a.cycle.lstrip("0")]
+            rows = [i for i in rows if _matches(i["fields"].get(key), want)]
     rows.sort(key=lambda i: (i["fields"].get("Rank") is None, i["fields"].get("Rank") or 0, i["id"]))
     out = []
     for i in rows:
@@ -455,10 +483,85 @@ def cmd_merged(b: Board, who: Who, a) -> str:
     return "\n".join(out)
 
 
+SPRINT_TITLE = re.compile(r"^([A-Z]+)-(\d+) — ")
+SPRINT_STATES = ("planned", "active")
+
+
+def _sprints(b: Board, name: str) -> dict[int, dict]:
+    """Sprint issues by number (open and closed), from the repo's `sprint` label."""
+    out = {}
+    for i in b.gh.api("GET", f"/repos/{b.repo}/issues?labels=sprint&state=all&per_page=100",
+                      paginate=True) or []:
+        m = SPRINT_TITLE.match(i.get("title") or "")
+        if m and m.group(1) == name and "pull_request" not in i:
+            out[int(m.group(2))] = i
+    return out
+
+
+def _sprint_state(i: dict) -> str:
+    if i.get("state") == "closed":
+        return "closed"
+    st = [l["name"].split(":", 1)[1] for l in i.get("labels") or []
+          if l["name"] in (f"sprint:{s}" for s in SPRINT_STATES)]
+    return st[0] if len(st) == 1 else "invalid"
+
+
+def cmd_sprint(b: Board, who: Who, a) -> str:
+    who.require()
+    if not who.can_edit("Sprint"):
+        raise StoryError(f"role {who.name} can't manage sprints (needs Sprint in story_edits)")
+    if b.cfg.get("sprints") != "project":
+        raise StoryError("sprints here are still files (no `sprints: project` in "
+                         ".claude/roles/_repo.md); edit docs/sprints/ instead")
+    name = (b.cfg.get("sprint_name") or "SPRINT").upper()
+    key = f"{name}-{a.n:02d}"
+    sprints = _sprints(b, name)
+    cur = sprints.get(a.n)
+    path = f"/repos/{b.repo}/issues"
+    if a.op == "plan":
+        if cur:
+            raise StoryError(f"{key} already exists (#{cur['number']})")
+        if not a.title:
+            raise StoryError("give --title")
+        top = max(sprints, default=0)
+        if a.n != top + 1:
+            raise StoryError(f"the next sprint is {name}-{top + 1:02d}, not {key}")
+        if top and _sprint_state(sprints[top]) != "closed":  # close N, then plan N+1
+            raise StoryError(f"{name}-{top:02d} is still {_sprint_state(sprints[top])}; close it first")
+        iss = b.gh.api("POST", path, {"title": f"{key} — {a.title}", "body": _text(a),
+                                      "labels": ["sprint", "sprint:planned"]})
+        return f"{key} planned (#{iss['number']}): {iss.get('html_url', '')}"
+    if not cur:
+        raise StoryError(f"no {key} issue (label `sprint`) in {b.repo}")
+    st = _sprint_state(cur)
+    n = cur["number"]
+    if a.op == "activate":
+        if st != "planned":
+            raise StoryError(f"{key} is {st}; only a planned sprint can be activated")
+        active = [k for k, i in sprints.items() if _sprint_state(i) == "active"]
+        if active:
+            raise StoryError(f"{name}-{active[0]:02d} is still active; close it first")
+        b.gh.api("DELETE", f"{path}/{n}/labels/sprint:planned")
+        b.gh.api("POST", f"{path}/{n}/labels", {"labels": ["sprint:active"]})
+        b.comment(n, f"**Sprint ({who.name}):** planned → active")
+        return f"{key}: planned → active"
+    if a.op == "close":
+        if st != "active":
+            raise StoryError(f"{key} is {st}; only the active sprint can be closed")
+        b.gh.api("DELETE", f"{path}/{n}/labels/sprint:active")
+        b.comment(n, f"**Sprint ({who.name}):** active → closed" + (f". {a.note}" if a.note else ""))
+        b.gh.api("PATCH", f"{path}/{n}", {"state": "closed", "state_reason": "completed"})
+        return f"{key}: active → closed"
+    if st == "closed":
+        raise StoryError(f"{key} is closed; its record is the close-out doc")
+    b.gh.api("PATCH", f"{path}/{n}", {"body": _text(a)})
+    return f"{key}: body updated"
+
+
 READS = {"show", "list"}
 COMMANDS = {"show": cmd_show, "list": cmd_list, "create": cmd_create, "start": cmd_start,
             "status": cmd_status, "set": cmd_set, "body": cmd_body, "comment": cmd_comment,
-            "merged": cmd_merged}
+            "merged": cmd_merged, "sprint": cmd_sprint}
 
 
 def parser() -> argparse.ArgumentParser:
@@ -479,6 +582,9 @@ def parser() -> argparse.ArgumentParser:
     s = sub.add_parser("body"); s.add_argument("id"); s.add_argument("--body-file", required=True)
     s.add_argument("--note")
     s = sub.add_parser("merged"); s.add_argument("pr", type=int)
+    s = sub.add_parser("sprint"); s.add_argument("op", choices=["plan", "activate", "close", "body"])
+    s.add_argument("n", type=int); s.add_argument("--title"); s.add_argument("--note")
+    s.add_argument("--body"); s.add_argument("--body-file")
     s = sub.add_parser("comment"); s.add_argument("id")
     s.add_argument("--to"); s.add_argument("--record")
     s.add_argument("--body"); s.add_argument("--body-file")
@@ -492,6 +598,11 @@ def main(argv: list[str], gh=None) -> int:
         print("story: not inside a git repository", file=sys.stderr)
         return 2
     cfg = role.Roles(root).repo
+    if a.cmd == "merged" and cfg.get("stories") != "github":
+        # Before the project check: a repo without a Project (or before its cutover)
+        # still runs the vendored story-merge workflow, and must stay green.
+        print("story: no `stories: github` here; the board isn't this repo's source. Skipped.")
+        return 0
     if not cfg.get("project"):
         print("story: this repo has no `project:` in .claude/roles/_repo.md", file=sys.stderr)
         return 2
@@ -499,10 +610,7 @@ def main(argv: list[str], gh=None) -> int:
     if not repo:
         print("story: set github_repo: owner/name in .claude/roles/_repo.md", file=sys.stderr)
         return 2
-    if a.cmd == "merged" and cfg.get("stories") != "github":
-        print("story: no `stories: github` here yet; the story files are still the source. Skipped.")
-        return 0
-    if a.cmd not in READS and cfg.get("stories") != "github":
+    if a.cmd not in READS and a.cmd != "sprint" and cfg.get("stories") != "github":
         print("story: stories here still live in docs/stories (no `stories: github` in "
               ".claude/roles/_repo.md), and project-mirror overwrites the board from them. "
               "Change the story file instead.", file=sys.stderr)
@@ -512,6 +620,7 @@ def main(argv: list[str], gh=None) -> int:
         comps = cfg.get("story_components")
         b = Board(gh or GH(), repo, cfg["project"], cfg.get("story_prefix", ""),
                   comps if isinstance(comps, list) else None)
+        b.cfg = cfg
         print(COMMANDS[a.cmd](b, who, a))
     except StoryError as e:
         print(f"story: {e}", file=sys.stderr)

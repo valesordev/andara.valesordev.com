@@ -2,9 +2,6 @@
 /bin/
 # `make cli-release` archives (AW-INF-020).
 /dist/
-# Generated views: `make backlog` and `make status` render them per clone (AW-INF-026).
-/BACKLOG.md
-/docs/status.md
 # A `go build ./cmd/andara-…` at the root lands here; builds go to bin/ (#78).
 /andara-*
 *.test

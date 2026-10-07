@@ -14,10 +14,9 @@ precedence = "closest"
 SPDX-FileCopyrightText = "2026 Valesor Development"
 SPDX-License-Identifier = "Apache-2.0"
 
-# Documentation: ADRs, epics, stories, specs prose, SLOs, runbooks, glossary, roadmap,
-# and the backlog generated from them.
+# Documentation: ADRs, sprint records, specs prose, SLOs, runbooks, glossary, roadmap.
 [[annotations]]
-path = ["docs/**", "BACKLOG.md"]
+path = ["docs/**"]
 precedence = "closest"
 SPDX-FileCopyrightText = "2026 Valesor Development"
 SPDX-License-Identifier = "CC-BY-SA-4.0"

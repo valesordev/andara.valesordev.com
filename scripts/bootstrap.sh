@@ -210,12 +210,13 @@ set -euo pipefail
 # Hooks live in the common git dir, so every worktree gets this the moment one of them
 # runs bootstrap — including worktrees on branches whose Makefile predates a target named
 # here. Probe rather than assume, or adding a gate breaks commits in every other worktree
-# until it rebases.
-targets="validate-stories"
-for t in backlog-check status-check; do
+# until it rebases. The story checks left the Makefile when stories moved to GitHub
+# (SPRINT-05); a branch from before that still runs them, and a branch after runs nothing.
+targets=""
+for t in validate-stories backlog-check status-check; do
   if grep -q "^$t:" Makefile; then targets="$targets $t"; fi
 done
-make $targets
+[[ -z "$targets" ]] || make $targets
 HOOK
   chmod +x "$HOOKS_DIR/pre-commit"
   ok "git hooks" "pre-commit installed in $(basename "$(dirname "$HOOKS_DIR")")/hooks"

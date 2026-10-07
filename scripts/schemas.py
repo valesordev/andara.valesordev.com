@@ -25,6 +25,7 @@ Stdlib only. This validates the stack, so it must not need anything the stack in
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.error
@@ -38,7 +39,8 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DECL = os.path.join(REPO, "deploy", "kafka", "schemas.yaml")
 TOPICS = os.path.join(REPO, "deploy", "kafka", "topics.yaml")
 PROTO_DIR = os.path.join(REPO, "docs", "specs", "protocol")
-STORIES = os.path.join(REPO, "docs", "stories")
+# Stories are GitHub issues since SPRINT-05, so a pending entry's story is checked by form only.
+STORY_ID = re.compile(r"^AW-[A-Z]+-\d{3}$")
 
 ACCEPT = "application/vnd.schemaregistry.v1+json"
 STRATEGIES = ("TopicNameStrategy", "TopicRecordNameStrategy")
@@ -257,9 +259,8 @@ def check():
             errors.append("pending entry needs both 'topic' and 'story': %r" % p)
             continue
         pending_topics[p["topic"]] = p["story"]
-        hits = [n for n in os.listdir(STORIES) if n.startswith(p["story"] + "-")]
-        if not hits:
-            errors.append("pending topic '%s' names story %s, which does not exist in docs/stories/"
+        if not STORY_ID.match(p["story"]):
+            errors.append("pending topic '%s' names story %r, which is not a story ID (AW-XXX-NNN)"
                           % (p["topic"], p["story"]))
 
     # The check this file exists for: a topic that is neither mapped nor explicitly pending

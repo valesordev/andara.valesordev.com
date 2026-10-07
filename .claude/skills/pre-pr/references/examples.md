@@ -9,4 +9,4 @@
 **Prompt:** (after round 4 with a P1 still open) —
 **Behavior:** The agent doesn't run `role reviewed`. It reports the open P1 with the reviewer's evidence and its own attempts, and asks Brian how to proceed.
 
-**Non-trigger:** "Address the Codex comments on #212" → that's handling review comments on an open PR (it ends by re-running /pre-pr before the push).
+**Non-trigger:** "Address the Codex comments on #212" → `/pr-comments 212`, which runs /pre-pr itself before it pushes.

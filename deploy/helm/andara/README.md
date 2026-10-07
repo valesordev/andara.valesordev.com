@@ -2,7 +2,7 @@
 
 `andara-server` as a one-replica `StatefulSet` owning all 64 Partitions (ADR-0001), with
 readiness that means *simulation* readiness, a snapshot volume that is never deleted by the
-chart, and one `Deployment` per projector. Story: `docs/stories/AW-INF-003-kubernetes-workload-topology.md`.
+chart, and one `Deployment` per projector. Story: [AW-INF-003](https://github.com/valesordev/andara.valesordev.com/issues/201).
 
 ## Files
 

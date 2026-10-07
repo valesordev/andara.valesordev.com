@@ -1,7 +1,9 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Valesor Development
 
-"""Shared frontmatter parsing and repo-layout constants for Andara's planning tooling.
+"""Shared frontmatter parsing and repo-layout constants for Andara's docs tooling (ADRs).
+
+Stories, epics, and sprints are GitHub issues since the SPRINT-05 cutover; nothing here reads them.
 
 Deliberately stdlib-only. This tooling validates the repo; it must not depend on
 anything the repo has to install first.
@@ -12,42 +14,9 @@ import re
 import sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STORIES_DIR = os.path.join(REPO, "docs", "stories")
-EPICS_DIR = os.path.join(REPO, "docs", "epics")
 ADR_DIR = os.path.join(REPO, "docs", "adr")
 TEMPLATE_DIR = os.path.join(REPO, "docs", ".templates")
-BACKLOG = os.path.join(REPO, "BACKLOG.md")
 
-COMPONENTS = {"SRV": "server", "CLI": "cli", "INF": "infra", "CLT": "client"}
-TYPES = ["feature", "infra", "spike", "chore", "bug"]
-STATUSES = ["draft", "ready", "in-progress", "review", "done", "blocked"]
-SIZES = ["S", "M", "L"]
-# The lane a story belongs to: which role builds it (CLAUDE.md §2). It specifies the
-# contract (architecture), builds, ships, operates, or observes what runs to it (sre), or
-# is the thing built to it (implementation). This was `assignee` while two tools split
-# the work; the split was never about who held the keyboard but about which kind of
-# artifact the story produces. The one list of permitted values: gen_status.py refuses a
-# lane here that it has no view for (AW-INF-027).
-LANES = ["architecture", "sre", "implementation"]
-RISKS = ["low", "medium", "high"]
-
-# (key, kind, allowed) — order is the required frontmatter order.
-STORY_SCHEMA = [
-    ("id", "str", None),
-    ("title", "str", None),
-    ("epic", "str", None),
-    ("component", "enum", list(COMPONENTS.values())),
-    ("type", "enum", TYPES),
-    ("status", "enum", STATUSES),
-    ("size", "enum", SIZES),
-    ("depends_on", "list", None),
-    ("blocks", "list", None),
-    ("lane", "enum", LANES),
-    ("risk", "enum", RISKS),
-]
-
-STORY_ID_RE = re.compile(r"^AW-(SRV|CLI|INF|CLT)-(\d{3})$")
-EPIC_ID_RE = re.compile(r"^EPIC-(\d{2})$")
 ADR_ID_RE = re.compile(r"^ADR-(\d{4})$")
 
 
@@ -102,10 +71,6 @@ def load_dir(dirname):
         data, order, body = parse_frontmatter(path)
         out.append((path, data, order, body))
     return out
-
-
-def load_stories():
-    return load_dir(STORIES_DIR)
 
 
 def rel(path):
