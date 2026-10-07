@@ -1,5 +1,5 @@
 # SPRINT-04 — The M2 gate on the local stack
-Status: active
+Status: closed
 Dates: 2026-10-02 →
 
 ## Demo goal
@@ -154,4 +154,76 @@ AW-INF-034, the M2 gate on `dev`, is SPRINT-05's demo (Brian, 2026-10-03). It wa
 sprint's AW-INF-032.
 
 ## Close-out
-(filled in by the next PM session)
+Closed 2026-10-05 by PM, against `origin/main` at `ee865ea`.
+
+**Demo goal: met** (`SPRINT-04-demo.md`), on CI's evidence and not PM's own run. `make stack-recover` passed
+in the `stack` workflow's run 37392791066 on `e007216` (the last code merge on `main`): the server was
+ready 1.3 s after `SIGKILL` (RTO 120 s), from round 4239 with a matching State Hash, and both players
+rebound at the Town Hall. PM didn't re-run it on a clean checkout. The only local stack on this host is
+the SRE clone's, on ports 8080 and 8443, and a second `make up` would collide with it. Brian chose to
+accept CI's run (2026-10-05, his answer "c"), as he did for SPRINT-03's `dev` steps.
+
+**Stories: 10 of 10 done.** The board reads `Current (SPRINT-04): 10/10 done — 10 done`.
+
+### Final status on `origin/main`
+
+| Story | Status | Built in | §8 record (moved to `done`) |
+|-------|--------|----------|-----------------------------|
+| AW-SRV-043 | **done** | #365, #381 (verify), #397 (operator step) | #398 |
+| AW-INF-032 | **done** | #418, #432 | #433 |
+| AW-SRV-007 | **done** | #416, #428, #431, #435 | #436 |
+| AW-CLI-009 | **done** | #367, #383 (verify) | #394 |
+| AW-INF-028 | **done** | #392, #402 (verify) | #410 |
+| AW-INF-029 | **done** | #361 | #380 |
+| AW-SRV-046 | **done** | #368, #388 (verify) | #394 |
+| AW-INF-033 | **done** | #399 | #441 |
+| AW-SRV-026 | **done** | #355, #371 (verify) | #380 |
+| AW-SRV-028 | **done** | #407, #442 (the summary `warn`, #409) | #444 |
+
+| Issue | Fixed in |
+|-------|----------|
+| #172 | #386 (architecture's ruling #382, amendment #390) |
+| #312 | #395 (ruling #384) |
+| #299 | #369 (SRE's amendment #391) |
+| #319 | #358 |
+| #287 | #359 |
+| #290 | #360 |
+| #69 | #379 |
+| #116 | #393 |
+
+### Carryover to SPRINT-05
+None. Every SPRINT-04 story is `done`.
+
+### Status defects (reported, not fixed)
+- **#117 is open although its fix merged.** #393's body says "Closes #116 and #117", but GitHub linked only
+  #116, so #117 (`play`'s first `look` reaching the server before its Subscribe attaches) is still open.
+  `AW-SRV-011` AC-11 and #393 are its fix. It needs closing by whoever triages issues: a comment citing
+  #393, then close.
+- No story frontmatter defects. The board's mirror was synced at `ee865ea`, so every SPRINT-04 story's
+  issue is closed.
+
+### Triage
+Issues opened during SPRINT-04, and who owes each:
+| Issue | Owes | In SPRINT-05? |
+|-------|------|---------------|
+| #363 `dev` stops booting once `andara.events.v1` retention expires its first segment | architecture, then implementation | **Yes.** It can break the M2 gate on `dev`; architecture rules whether it still holds now that `AW-SRV-007` has shipped |
+| #362 runbooks can't stop a crash-looping server on `dev`: Argo CD self-heal undoes `kubectl scale` | SRE | **Yes, as AW-INF-037** (groomed in this PR, `lane: sre`). Not on the demo's path |
+| #423 `uint64` log attributes above 2^63 are rounded in Loki | SRE | No. Observability polish, held |
+| #422 projector integration tests time out waiting for the first commit (intermittent) | SRE | No. The stack workflow is green; held |
+| #396 `projector-rebuild` reports success without proving the restore verified | SRE | No. Held |
+| #385 `TestLogExport_BoundedQueueDropsAndCounts` fails under CPU load | implementation | No. A test flake under CPU load; held |
+| #101 `TestKafka_ConcurrentSubmitsOrdered`'s fixture deadline | implementation | No. Stayed out of SPRINT-04 and stays out |
+| #437–#440, #445, #446 | the mirror's issues for AW-INF-035, AW-SRV-048 to 050, AW-INF-036 and AW-SRV-051 | See SPRINT-05's contract review |
+
+Unanswered `docs/feedback/` items, and who owes each:
+- **Architecture:** `docs/feedback/AW-SRV-048-transit-orphan-design.md`, `AW-SRV-049-roster-observation.md`
+  and `AW-SRV-051-failure-injection-surface.md` (the last has its rulings recorded, so PM folds them in
+  at grooming), and AW-SRV-027's re-size after it grew (`AW-SRV-028-handoff-contract.md`).
+- **PM:** `docs/feedback/AW-INF-005-007-split.md`, the nine children. SPRINT-05 defers them to the next PM PR
+  and says why.
+
+### Other findings
+- **The `argocd-install` closing status** item (SPRINT-04's SRE item 2) merged as #353.
+- **`dev` must be reset** with the deploy that carries `AW-SRV-028`: a log written before it that holds
+  a cross-Zone move won't replay (recovery exits 6). Brian confirmed the reset on 2026-10-05 and SPRINT-05
+  plans it ahead of `AW-INF-034`.
