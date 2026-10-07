@@ -25,7 +25,7 @@ Andara's World › World Foundation, and the Content Development Tracker's "Defi
 Region".
 
 If a player reconnects within the linkdead grace period, their Character is where they left it. After
-it, the Character's state is kept but they re-enter the World rather than stay in it (ADR-0006).
+it (combat extends it, to a ceiling), the Character is despawned: its state is kept, and the player re-enters the World by selecting it (ADR-0006).
 
 ## Is / isn't
 - Is: a persistent, server-authoritative world. The target is that no action the server acknowledged is
@@ -37,18 +37,18 @@ it, the Character's state is kept but they re-enter the World rather than stay i
 - Isn't (yet): open to the public.
 - Isn't, for now: reachable by telnet or other MUD clients. ADR-0003 forecloses them, to be revisited at
   open registration (`docs/roadmap.md`, "What the decisions cost").
-- Isn't (yet) `[ASSUMED]`: more than one gameplay loop. Phase 1's loop is combat (Brian, 2026-10-03,
-  `docs/roadmap.md` "Resolved on 2026-10-03"). Trade, exploration, and social play aren't in Phase 1.
+- Isn't (yet) `[ASSUMED]`: more than one gameplay loop. M4's loop is combat (Brian, 2026-10-03,
+  `docs/roadmap.md` "Resolved on 2026-10-03"); trade, exploration, and social aren't M4's.
 - Isn't, ever: client-authoritative. The client presents and sends intent.
-- Isn't, ever `[ASSUMED]`: a place where a deploy or crash silently loses what the server acknowledged.
 
 ## Principles
 Ordered. When two conflict, the earlier one wins. `[ASSUMED]` The ordering is mine; the individual
 rules come from the repo and canon.
 1. **The world is the product.** A smaller world that is persistent, consistent, and reacts beats a
    larger one that doesn't. Depth in what exists comes before breadth.
-2. **Players' actions persist.** What a player did survives crashes and deploys. Whether and how others
-   see it is a design decision for Brian and the game designer. `[ASSUMED]`
+2. **Players' actions persist.** `[ASSUMED]` What a player did survives crashes and deploys (the target in
+   `docs/specs/slo/recovery.md`, proposed). Whether and how others see it is a design decision for Brian
+   and the game designer.
 3. **Playable before pretty.** Every release is playable by someone at a terminal. Presentation
    follows a stable, playable world, never leads it.
 4. **Canon first.** Content follows approved canon; the plan never invents lore or mechanics. Game
