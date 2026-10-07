@@ -142,11 +142,16 @@ export declare type ContentVersion = Message<"andara.content.v1.ContentVersion">
    * The real actor who wrote this manifest (AW-SRV-039): the caller's Account,
    * whoever they acted as. `author` is the acting-as Account when there was
    * one, so for an acted-as publish author != publisher; otherwise the two are
-   * equal. Always set on write. A manifest written before this field existed
-   * reads empty, and is reported as equal to `author`: true, not a fallback,
-   * because no acted-as manifest could exist before it. Kept here and not
-   * rebuilt from the audit topic, which does not outlive its 365-day retention
-   * or an `auth.store=memory` restart. For andara.core, `server`, as author.
+   * equal. Always set on write, and andara.core's boot writes `server` for
+   * both. Kept on the manifest and not rebuilt from the audit topic, which
+   * does not outlive its 365-day retention or an `auth.store=memory` restart.
+   *
+   * A manifest stored before this field existed holds it empty. The Admin
+   * service fills `publisher = author` on read, in ListVersions and
+   * GetVersion alike, so the wire never carries it empty and no client
+   * re-implements the rule. That is true and not a fallback: no token carries
+   * an `act` claim today (ops.go never sets one), so no acted-as manifest
+   * could have been written before this field.
    *
    * @generated from field: string publisher = 10;
    */
