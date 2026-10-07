@@ -195,13 +195,17 @@ export declare const LookSchema: GenMessage<Look>;
  * Remove a deleted Character's dormant body from Zone state (AW-SRV-032,
  * ADR-0006). Produced by the Gateway's sweep to the Zone partition of the
  * roster's last-known zone_id; the sim records the Tick it applied on, so
- * replay purges on the same Tick whatever the wall clock says. Applying it to
- * a Character that has no body in the Zone is a silent no-op: no Event, no
- * CommandRejected. That is the normal case for a Character created and never
- * bound (its body was never instantiated), and it makes a duplicate produce
- * harmless. A body cannot be live here: DeleteCharacter refuses a live
- * Character and SelectCharacter refuses a DELETED one. The roster entry and the name reservation are not Zone state and
- * are untouched.
+ * replay purges on the same Tick whatever the wall clock says.
+ *
+ * The body is dormant or absent by then: DeleteCharacter produces
+ * UnbindCharacter{QUIT} before it flips the status, so a body left present
+ * without a Session by a crash is despawned in front of its Room first, and
+ * SelectCharacter refuses a DELETED Character, so nothing re-binds it.
+ * Applying a purge to a Character with no body in the Zone is a silent
+ * no-op: no Event, no CommandRejected. That is the normal case for a
+ * Character created and never bound, and it makes a duplicate produce
+ * harmless. The roster entry and the name reservation are not Zone state
+ * and are untouched.
  *
  * @generated from message andara.log.v1.PurgeCharacter
  */

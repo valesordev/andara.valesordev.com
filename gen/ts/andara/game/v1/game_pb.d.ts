@@ -542,9 +542,12 @@ export declare const Game: GenService<{
     output: typeof CreateCharacterResponseSchema;
   },
   /**
-   * Soft-delete a Character of the Session's Account (AW-SRV-032): status
-   * DELETED, the body left dormant until the retention sweep purges it, the
-   * name reserved for good, and the roster slot held until the purge.
+   * Soft-delete a Character of the Session's Account (AW-SRV-032): refused
+   * while the Character is live; otherwise it produces UnbindCharacter{QUIT}
+   * (a no-op on a dormant body, a despawn of one a crash left present without
+   * a Session), then sets status DELETED. The body stays dormant until the
+   * retention sweep purges it, the name is reserved for good, and the roster
+   * slot is held until the purge.
    * Errors, domain andara.character: character_live (FAILED_PRECONDITION),
    * no_such_character (NOT_FOUND: not owned, or already deleted).
    *
