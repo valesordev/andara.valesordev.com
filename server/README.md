@@ -94,6 +94,8 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `ingress.idempotency_window` | `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` | `30s` | How long a Submit's outcome is remembered against its `(Session, client_ref)` once known, so a retry inside it is the same Command. It governs *resolved* keys; a key still in flight lives until its outcome is known, however long that takes. Must exceed `ingress.produce_deadline`. Per process; at most `ingress.max_pending` keys per Session, the oldest resolved one evicted first — a key still in flight is never evicted. |
 | `character.max_per_account` | `ANDARA_CHARACTER_MAX_PER_ACCOUNT` | `5` | Characters an Account may hold (ADR-0006), ACTIVE or DELETED — a deleted one keeps its slot until purged (`AW-SRV-032`). A sixth is `RESOURCE_EXHAUSTED roster_full`. |
+| `character.delete_retention` | `ANDARA_CHARACTER_DELETE_RETENTION` | `720h` | How long a deleted Character's dormant body stays before the Gateway's sweep produces its `PurgeCharacter` (30 d, `AW-SRV-032`). Judged on the wall clock by the Gateway; the purge applies when its Command does, so a replay purges on the same Tick. The name stays reserved after the purge, and the roster entry stays `DELETED`; only the slot is freed. |
+| `character.purge_sweep_interval` | `ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL` | `10m` | How often the Gateway looks for deleted Characters whose retention has expired, and for name reservations with no Character behind them. |
 | `character.spawn_room` | `ANDARA_CHARACTER_SPAWN_ROOM` | `town/plaza` | `zone_id/room_id` a never-bound Character is placed in. Resolved against the loaded content at boot; a value the World lacks fails the boot. The default is the dev fixture's Room, so every values file outside `ENV=local` must set it (the chart's schema requires it). |
 | `character.name_pattern` | `ANDARA_CHARACTER_NAME_PATTERN` | `^[\p{L}][\p{L}' -]{2,23}$` | RE2 a Character name must match, as typed. Uniqueness is on the folded form (NFKC, case-folded, trimmed), across every Account, forever. |
 | `snapshot.interval` | `ANDARA_SNAPSHOT_INTERVAL` | `60s` | Cadence of a snapshot round — one consistent cut of every owned Zone at a tick boundary (`docs/specs/slo/recovery.md`). It sets RTO only: RPO is zero and is decided by broker settings. The round starts on the first boundary past the interval, never mid-tick. `0` disables snapshots, which makes every recovery a replay from the log's beginning: correct, and unbounded. |
@@ -983,7 +985,10 @@ mounts it from `contentVolume.templatesConfigMapName`.
 | `andara_sessions_bound` | gauge | — | Sessions whose `BindCharacter` is in the log and whose teardown has not run; `present − bound` is the bodies no Session drives |
 | `andara_character_creations_total` | counter | `outcome` | `ok`, `roster_full`, `name_taken`, `name_invalid` |
 | `andara_character_bindings_total` | counter | `outcome` | `ok`, `already_live`, `race_lost` (lost to a select whose produce was still in flight), `not_found`, `produce_failed` |
-| `andara_character_unbinds_total` | counter | `reason`, `outcome` | `quit` (an `UnbindCharacter`), `linkdead` (a `MarkLinkdead`) × `ok`, `produce_failed` |
+| `andara_character_unbinds_total` | counter | `reason`, `outcome` | `quit` (an `UnbindCharacter`), `linkdead` (a `MarkLinkdead`), `switch` (an `UnbindCharacter{SWITCH}` from a body switch) × `ok`, `produce_failed` |
+| `andara_roster_characters` | gauge | `status` | `active`, `deleted` — roster entries, from the Gateway's index; a purge leaves the entry `deleted` (the sim's `andara_characters_total{state="dormant"}` is what falls) |
+| `andara_character_purges_total` | counter | `outcome` | `ok` (the sim removed a body), `no_body` (it had none to remove), `already_purged` (the sweep's mark found the entry marked), `reclaimed` (a name reservation with no Character removed) |
+| `andara_character_sweep_duration_seconds` | histogram | — | one sample per retention sweep |
 | `andara_sessions_linkdead` | gauge | `in_combat` | `true`, `false`: bodies waiting out their grace, seeded from recovery and kept by the loop. `in_combat` is whether combat extended the body's deadline on this process |
 | `andara_linkdead_outcomes_total` | counter | `outcome` | `reconnected`, `despawned`, `ceiling`, `died` (declared; nothing produces it until combat exists), `quit` |
 | `andara_linkdead_duration_seconds` | histogram | `in_combat` | `true`, `false`; from the mark to the end of the grace, in Ticks at `sim.tick_rate` |
@@ -1011,6 +1016,42 @@ to `session.lifetime`; `log.produce` under `select`; the tick's `command.apply` 
 `BindCharacter` joins through the record's `trace_id`; `character.unbind` and
 `character.linkdead` are roots linked to the Session. `linkdead.enter` and `linkdead.reconnect` are
 span events on `session.lifetime`.
+
+### Deleting, switching, and purging (AW-SRV-032)
+
+`DeleteCharacter` is a soft delete: the roster entry becomes `DELETED` with `deleted_unix`, the body
+is left dormant, and nothing is produced to the log. A Character that is live, being bound, or
+lingering linkdead is `FAILED_PRECONDITION character_live`; one not on the Account, or already
+deleted, is `NOT_FOUND no_such_character`. The delete and `SelectCharacter` claim the Character
+under one lock, so of a delete and a select racing from two Sessions exactly one wins and a live
+body is never `DELETED`. A deleted Character still counts against `character.max_per_account` until
+purged, and its name stays reserved for good (the reservation is on `andara.accounts.v1`, so a World
+rollback does not release it). `ListCharacters` lists deleted entries with `status` and
+`deleted_unix`.
+
+The sweep (`character.purge_sweep_interval`) produces one `PurgeCharacter` per Character whose
+`deleted_unix + character.delete_retention` has passed, to the Zone the roster last knew the body
+in, then marks the entry `purged_unix` so it is not produced again. The sim handles the body
+wherever it is: a dormant body is removed; a present one (a crash leaves one with no Session) is
+despawned first, `CharacterDespawned{reason: "purge"}` to its Room, with its linkdead fields cleared;
+a body in another Zone is re-routed there; no body is a silent no-op. `CharacterPurged` goes to
+the purged Entity alone. Accepted residual until `AW-SRV-027`: a purge rejected `in_transit` or
+`zone_faulted`, or lost between a re-route's apply and its re-produce, leaves a `DELETED`
+Character's body in Zone state, unreachable and harmless. The same sweep removes name reservations
+no Character is behind (the debris of a crash between creation's two writes) with a tombstone on
+the accounts topic; a reservation with a Character behind it, deleted or not, is never removed.
+
+Selecting another Character on a Session that already drives one switches bodies: the routing table
+names the second before either produce, then `UnbindCharacter{SWITCH}` for the first, then
+`BindCharacter` for the second, so the Room reads `CharacterDespawned{reason: "switch"}` and then
+`CharacterArrived`. A failed first produce puts the Session back on the first Character; a failed
+second leaves it unbound with the first body dormant.
+
+Logs at `info`: `character deleted`, `character purge produced`, `character purge applied` (with
+`was_present`, `rerouted`), `character purge re-routed`, `character switched out`, and `name
+reservation with no character reclaimed`. Spans: `character.delete` under the RPC span, linked to
+`session.lifetime`; `character.sweep` is a root with `expired`, `produced`, `failed`, `reclaimed`;
+the purge's apply joins through the record's `trace_id`.
 
 `canonical.Marshal` (`server/canonical`) is the encoder for anything that feeds the State Hash
 (ADR-0007 rule 3): deterministic protobuf, and it refuses a message whose descriptor contains a

@@ -48,6 +48,14 @@ type Accounts interface {
 	Character(accountID, characterID string) (*accountsv1.CharacterRef, error)
 	CreateCharacter(ctx context.Context, accountID, name, zone, room string) (*accountsv1.CharacterRef, error)
 	SetCharacterPosition(ctx context.Context, accountID, characterID, zone, room string) error
+
+	// The deletion lifecycle (AW-SRV-032).
+	AllCharacters(accountID string) []*accountsv1.CharacterRef
+	DeleteCharacter(ctx context.Context, accountID, characterID string) (*accountsv1.CharacterRef, error)
+	ExpiredCharacters(retention time.Duration) []auth.ExpiredCharacter
+	MarkPurged(ctx context.Context, accountID, characterID string) (bool, error)
+	ReclaimReservations(ctx context.Context) ([]string, error)
+	RosterCounts() (active, deleted int)
 }
 
 // Options configures a Roster.
@@ -78,6 +86,13 @@ type Options struct {
 	// means 10.
 	TickRate int
 
+	// DeleteRetention is character.delete_retention: how long after deletion
+	// the sweep produces the PurgeCharacter. Zero means 720h.
+	DeleteRetention time.Duration
+	// PurgeSweepInterval is character.purge_sweep_interval: how often
+	// RunSweep looks. Zero means 10m.
+	PurgeSweepInterval time.Duration
+
 	Metrics *Metrics
 	Logger  *slog.Logger
 	Tracer  trace.Tracer
@@ -100,6 +115,14 @@ type Roster struct {
 	mu        sync.Mutex
 	byAccount map[string]*live
 	bySession map[string]*live
+	// deleting is the Characters a DeleteCharacter is flipping to DELETED:
+	// held with the live flag's lock, so a SelectCharacter that arrives in
+	// the window loses (AW-SRV-032 AC-11).
+	deleting map[string]struct{}
+	// switching is the Character a Session is switching away from, until its
+	// SWITCH unbind has resolved: it is in neither flag map meanwhile, but it
+	// is still live, and a failed unbind puts it back.
+	switching map[string]struct{}
 	// releases counts the work the roster started in the background — the
 	// teardown produces and the position writes — so a drain or a test can
 	// wait for it. writes bounds the position writes in flight.
@@ -127,6 +150,11 @@ type live struct {
 	name      string
 	zone      sim.ZoneID
 	confirmed bool // the BindCharacter is in the log
+	// bound is below; bindDone is closed when the select that made this flag
+	// has finished producing its BindCharacter, whatever came of it. The
+	// teardown waits for it, so its UnbindCharacter is produced after the bind
+	// and never overtaken by it (Kafka enqueues without the caller's context).
+	bindDone  chan struct{}
 	bound     bool // counted on andara_sessions_bound
 	releasing bool // the teardown has begun; the flag frees when it ends
 	// released is closed when the teardown has finished: the produce done,
@@ -163,6 +191,12 @@ func New(o Options) (*Roster, error) {
 	if o.TickRate <= 0 {
 		o.TickRate = 10
 	}
+	if o.DeleteRetention <= 0 {
+		o.DeleteRetention = 720 * time.Hour
+	}
+	if o.PurgeSweepInterval <= 0 {
+		o.PurgeSweepInterval = 10 * time.Minute
+	}
 	if o.Logger == nil {
 		o.Logger = slog.New(slog.DiscardHandler)
 	}
@@ -175,13 +209,17 @@ func New(o Options) (*Roster, error) {
 	if o.Now == nil {
 		o.Now = time.Now
 	}
-	return &Roster{
+	r := &Roster{
 		opts: o, metrics: o.Metrics, log: o.Logger, tracer: o.Tracer, now: o.Now,
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
+		deleting:       map[string]struct{}{},
+		switching:      map[string]struct{}{},
 		writes:         make(chan struct{}, o.PositionWrites),
 		linkdeadBodies: map[sim.EntityID]bool{},
 		recovered:      map[sim.EntityID]bool{},
-	}, nil
+	}
+	r.refreshRosterGauge()
+	return r, nil
 }
 
 // Metrics returns the roster metrics.
@@ -253,13 +291,15 @@ func (r *Roster) Live(accountID string) (sessionID, characterID string, ok bool)
 	return l.session, l.character, true
 }
 
-// ListCharacters implements gateway.Roster: the Account's ACTIVE
-// Characters, sorted by character_id, with the live one flagged.
+// ListCharacters implements gateway.Roster: the Account's whole roster,
+// sorted by character_id, with the live one flagged. Deleted Characters are
+// listed with status DELETED and deleted_unix: they still hold a slot and a
+// name (AW-SRV-032).
 func (r *Roster) ListCharacters(ctx context.Context, s *gateway.Session) (*gamev1.ListCharactersResponse, error) {
 	acct := s.Principal.EffectiveAccountID()
 	_, liveID, _ := r.Live(acct)
 	out := &gamev1.ListCharactersResponse{MaxPerAccount: uint32(r.opts.Accounts.MaxCharacters())}
-	for _, c := range r.opts.Accounts.Characters(acct) {
+	for _, c := range r.opts.Accounts.AllCharacters(acct) {
 		out.Characters = append(out.Characters, summary(c, c.GetCharacterId() == liveID))
 	}
 	return out, nil
@@ -280,6 +320,7 @@ func (r *Roster) CreateCharacter(ctx context.Context, s *gateway.Session, name s
 		return nil, wireError(err)
 	}
 	span.SetAttributes(attribute.String("character.id", ref.GetCharacterId()))
+	r.refreshRosterGauge()
 	return &gamev1.CreateCharacterResponse{Character: summary(ref, false), MaxPerAccount: uint32(r.opts.Accounts.MaxCharacters())}, nil
 }
 
@@ -293,6 +334,15 @@ func (r *Roster) CreateCharacter(ctx context.Context, s *gateway.Session, name s
 // after DEADLINE_EXCEEDED therefore finds no live flag and produces
 // again; the sim's BindCharacter is idempotent on a present body (AC-11),
 // so the retry is safe without a client_ref.
+//
+// A Session that already drives a Character of its Account switches bodies
+// (AW-SRV-032): the same protocol twice. The routing table names the new
+// Character before either produce, so its arrival is routed to the Session;
+// then UnbindCharacter{SWITCH} for the first, then BindCharacter for the
+// second, in that order, and the live flag moves between them. A first produce
+// that fails puts everything back: the Session still drives the first. A
+// second that fails leaves the Session unbound with the first body dormant —
+// out of the World, not in two Rooms.
 func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, characterID string) (*gamev1.SelectCharacterResponse, error) {
 	acct := s.Principal.EffectiveAccountID()
 	ctx, span := r.tracer.Start(ctx, "character.select",
@@ -306,14 +356,13 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		return nil, err
 	}
 
-	ref, err := r.opts.Accounts.Character(acct, characterID)
-	if err != nil {
+	if _, err := r.opts.Accounts.Character(acct, characterID); err != nil {
 		return fail(OutcomeNotFound, wireError(err))
 	}
 
 	r.mu.Lock()
 	reconnect := false
-	var prev *live
+	var prev, switching *live
 	for {
 		cur, ok := r.byAccount[acct]
 		if !ok {
@@ -340,6 +389,11 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 			prev = cur
 			break
 		}
+		if cur.session == s.ID && cur.confirmed && !cur.releasing && !cur.linkdead && cur.character != characterID {
+			// Switching bodies (AW-SRV-032 AC-6).
+			switching = cur
+			break
+		}
 		outcome, name := OutcomeAlreadyLive, cur.name
 		if !cur.confirmed && !cur.releasing {
 			outcome = OutcomeRaceLost
@@ -362,15 +416,83 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		span.SetStatus(codes.Error, errSessionClosing.Error())
 		return nil, connect.NewError(connect.CodeCanceled, errSessionClosing)
 	}
-	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), reconnectOf: prev}
+	// A DeleteCharacter of this Character is flipping its status, or has
+	// flipped it since the read above: it won (AC-11). The status is read here,
+	// under the lock a delete holds across its own check, so a bind never
+	// outlives a delete (never a live body with status DELETED).
+	if _, sw := r.switching[characterID]; sw && switching == nil {
+		r.mu.Unlock()
+		return fail(OutcomeAlreadyLive, alreadyLive(r.characterName(acct, characterID)))
+	}
+	_, deleting := r.deleting[characterID]
+	ref, err := r.opts.Accounts.Character(acct, characterID)
+	if deleting || err != nil {
+		r.mu.Unlock()
+		if err == nil {
+			err = auth.ErrNoSuchCharacter
+		}
+		return fail(OutcomeNotFound, wireError(err))
+	}
+	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), bindDone: make(chan struct{}), reconnectOf: prev}
+	defer close(l.bindDone)
+	if switching != nil {
+		// The first body's flag leaves the maps now and is put back if its
+		// unbind does not reach the log. Its gauge count is settled after.
+		switching.releasing = true
+		r.switching[switching.character] = struct{}{}
+		delete(r.byAccount, acct)
+		delete(r.bySession, s.ID)
+	}
 	r.byAccount[acct] = l
 	r.bySession[s.ID] = l
 	r.mu.Unlock()
+
+	var oldZone sim.ZoneID
+	var oldRoom sim.RoomID
+	var oldBinding command.Binding
+	if switching != nil {
+		oldZone, oldRoom, oldBinding = r.lookupForSwitch(s.ID, switching)
+	}
 
 	// The routing table first, with the roster's last-known position, so
 	// the arrival the sim emits is routed to this Session and its stream
 	// perceives from the Room it will appear in (egress.Rebind).
 	r.opts.Bindings.Bind(s.ID, command.Binding{Actor: sim.EntityID(characterID), Zone: sim.ZoneID(ref.GetZoneId()), Room: sim.RoomID(ref.GetRoomId())})
+
+	if switching != nil {
+		err := r.produceSwitchUnbind(ctx, s, switching, oldZone, oldRoom)
+		r.mu.Lock()
+		if err != nil {
+			// Nothing reached the log: the Session still drives the first —
+			// unless it ended meanwhile. Then its teardown took the new flag,
+			// not this one, and putting the first back would hold the Account
+			// for a Session that is gone: the body is quit here instead, and
+			// stays claimed in r.switching until that unbind is produced, so
+			// no select or delete of it slips in before the late QUIT.
+			ended := l.releasing
+			r.drop(l)
+			if ended {
+				r.opts.Bindings.Unbind(s.ID)
+				r.mu.Unlock()
+				r.releaseOrphanedSwitch(s, switching, oldZone)
+				r.mu.Lock()
+				delete(r.switching, switching.character)
+				r.mu.Unlock()
+			} else {
+				// The table is put back before the flag, under the lock, so
+				// a teardown that finds the first never reads the second's.
+				r.opts.Bindings.Bind(s.ID, oldBinding)
+				switching.releasing = false
+				r.byAccount[acct] = switching
+				r.bySession[s.ID] = switching
+				delete(r.switching, switching.character)
+				r.mu.Unlock()
+			}
+			return fail(OutcomeProduceFailed, ingress.WireError(err))
+		}
+		delete(r.switching, switching.character)
+		r.mu.Unlock()
+	}
 
 	cmd := &logv1.LoggedCommand{
 		ZoneId:             ref.GetZoneId(),
@@ -412,15 +534,126 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 	}
 	r.mu.Unlock()
 	r.metrics.Bindings.WithLabelValues(OutcomeOK).Inc()
-	span.SetAttributes(attribute.String("outcome", OutcomeOK), attribute.Int64("partition", int64(acc.Partition)), attribute.Int64("offset", acc.Offset), attribute.Bool("reconnect", reconnect))
+	span.SetAttributes(attribute.String("outcome", OutcomeOK), attribute.Int64("partition", int64(acc.Partition)), attribute.Int64("offset", acc.Offset), attribute.Bool("reconnect", reconnect), attribute.Bool("switch", switching != nil))
 	if reconnect {
 		s.AddEvent("linkdead.reconnect", attribute.String("character.id", characterID))
 	}
 	r.log.LogAttrs(ctx, slog.LevelInfo, "character selected",
 		slog.String("account_id", acct), slog.String("character_id", characterID),
 		slog.String("session_id", s.ID), slog.String("zone", ref.GetZoneId()), slog.Bool("reconnect", reconnect),
+		slog.Bool("switch", switching != nil),
 		slog.Int64("partition", int64(acc.Partition)), slog.Int64("offset", acc.Offset), slog.String("trace_id", traceID(ctx)))
 	return &gamev1.SelectCharacterResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}, nil
+}
+
+// releaseOrphanedSwitch quits the first body of a switch whose unbind failed
+// because the Session ended under it, on its own context as the teardown does.
+// Best effort: a failure leaves the body present until the next select takes
+// it where it stands.
+func (r *Roster) releaseOrphanedSwitch(s *gateway.Session, old *live, zone sim.ZoneID) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+	defer cancel()
+	_, err := r.opts.Log.Produce(ctx, &logv1.LoggedCommand{
+		ZoneId: string(zone), ActorId: old.character, SessionId: s.ID,
+		AcceptedAtUnixNano: r.now().UnixNano(),
+		Command: &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{
+			CharacterId: old.character, Reason: logv1.UnbindReason_QUIT,
+		}},
+	})
+	outcome := UnbindOK
+	if err != nil {
+		outcome = UnbindProduceFailed
+		r.log.LogAttrs(ctx, slog.LevelWarn, "character not released: the session ended during a switch and the unbind produce failed",
+			slog.String("account_id", old.account), slog.String("character_id", old.character),
+			slog.String("session_id", s.ID), slog.String("detail", err.Error()))
+	}
+	r.metrics.Unbinds.WithLabelValues(ReasonQuit, outcome).Inc()
+	r.mu.Lock()
+	if old.bound {
+		old.bound = false
+		r.metrics.SessionsBound.Dec()
+	}
+	r.mu.Unlock()
+}
+
+// characterName is the Character's name for an error, or "" if it is unknown.
+func (r *Roster) characterName(acct, characterID string) string {
+	for _, c := range r.opts.Accounts.AllCharacters(acct) {
+		if c.GetCharacterId() == characterID {
+			return c.GetName()
+		}
+	}
+	return ""
+}
+
+// lookupForSwitch is where the first body stands as the routing table knows
+// it, read before the table names the second Character. A body mid-crossing
+// is waited for, as ReleaseSession waits, so the unbind goes to the Zone it
+// arrives in rather than the one it left.
+func (r *Roster) lookupForSwitch(sessionID string, old *live) (sim.ZoneID, sim.RoomID, command.Binding) {
+	zone, room := old.zone, sim.RoomID("")
+	b, bound, inTransit := r.opts.Bindings.Lookup(sessionID)
+	if bound {
+		zone, room = b.Zone, b.Room
+	}
+	if inTransit {
+		wctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+		settled, err := r.opts.Bindings.Binding(wctx, sessionID)
+		cancel()
+		if err == nil {
+			zone, room, b = settled.Zone, settled.Room, settled
+		} else {
+			r.log.LogAttrs(context.Background(), slog.LevelWarn, "character switched mid-crossing: the crossing did not settle; producing to the Zone it left",
+				slog.String("account_id", old.account), slog.String("character_id", old.character),
+				slog.String("session_id", sessionID), slog.String("zone", string(zone)), slog.String("detail", err.Error()))
+		}
+	}
+	if !bound && !inTransit {
+		b = command.Binding{Actor: sim.EntityID(old.character), Zone: zone}
+	}
+	return zone, room, b
+}
+
+// produceSwitchUnbind produces UnbindCharacter{SWITCH} for the Character a
+// Session is switching away from, records where its body went dormant, and
+// settles the live-flag gauge. On error nothing was produced.
+func (r *Roster) produceSwitchUnbind(ctx context.Context, s *gateway.Session, old *live, zone sim.ZoneID, room sim.RoomID) error {
+	cmd := &logv1.LoggedCommand{
+		ZoneId:             string(zone),
+		ActorId:            old.character,
+		SessionId:          s.ID,
+		TraceId:            command.TraceParent(ctx),
+		AcceptedAtUnixNano: r.now().UnixNano(),
+		Command: &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{
+			CharacterId: old.character, Reason: logv1.UnbindReason_SWITCH,
+		}},
+	}
+	if _, err := r.opts.Log.Produce(ctx, cmd); err != nil {
+		r.metrics.Unbinds.WithLabelValues(ReasonSwitch, UnbindProduceFailed).Inc()
+		r.log.LogAttrs(ctx, slog.LevelWarn, "character not switched: unbind produce failed",
+			slog.String("account_id", old.account), slog.String("character_id", old.character),
+			slog.String("session_id", s.ID), slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+		return err
+	}
+	r.metrics.Unbinds.WithLabelValues(ReasonSwitch, UnbindOK).Inc()
+	r.mu.Lock()
+	if old.bound {
+		old.bound = false
+		r.metrics.SessionsBound.Dec()
+	}
+	r.mu.Unlock()
+	if room != "" {
+		if err := r.opts.Accounts.SetCharacterPosition(ctx, old.account, old.character, string(zone), string(room)); err != nil {
+			r.log.LogAttrs(ctx, slog.LevelWarn, "character position not recorded",
+				slog.String("account_id", old.account), slog.String("character_id", old.character),
+				slog.String("session_id", s.ID), slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+		}
+	}
+	r.log.LogAttrs(ctx, slog.LevelInfo, "character switched out",
+		slog.String("account_id", old.account), slog.String("character_id", old.character),
+		slog.String("session_id", s.ID), slog.String("zone", string(zone)), slog.String("room", string(room)),
+		slog.String("trace_id", traceID(ctx)))
+	return nil
 }
 
 // ReleaseSession implements gateway.Roster: the Session is ending. If it
@@ -495,6 +728,14 @@ func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-ch
 	go func() {
 		defer r.releases.Done()
 		defer close(l.released)
+		// The wait for the in-flight bind has its own budget, so a slow bind
+		// does not leave the unbind an expired context.
+		wait := time.NewTimer(r.opts.ProduceDeadline)
+		select {
+		case <-l.bindDone:
+		case <-wait.C:
+		}
+		wait.Stop()
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
 		defer cancel()
 		name, reason := "character.unbind", ReasonQuit
@@ -741,6 +982,206 @@ func (r *Roster) setLinkdeadGauge() {
 	r.metrics.Linkdead.WithLabelValues("false").Set(float64(calm))
 }
 
+// --- deletion and purge (AW-SRV-032) ----------------------------------
+
+// DeleteCharacter implements gateway.Roster: a soft delete. It produces
+// nothing to the log; the body stays dormant until the sweep's purge.
+//
+// The live flag is checked and the status flipped under one claim: while the
+// flip is in flight the Character is in r.deleting, which SelectCharacter
+// checks under r.mu before it installs a flag, and a Character that is live
+// (or being bound, or lingering linkdead) is refused character_live. So of a
+// delete and a select of the same Character from two Sessions exactly one
+// wins, and a live body is never DELETED (AC-11). A body a crash left present
+// has no flag to be refused by; the purge despawns it (AC-9).
+func (r *Roster) DeleteCharacter(ctx context.Context, s *gateway.Session, characterID string) (*gamev1.DeleteCharacterResponse, error) {
+	acct := s.Principal.EffectiveAccountID()
+	ctx, span := r.tracer.Start(ctx, "character.delete",
+		trace.WithLinks(trace.Link{SpanContext: s.SpanContext()}),
+		trace.WithAttributes(attribute.String("session.id", s.ID), attribute.String("character.id", characterID)))
+	defer span.End()
+
+	r.mu.Lock()
+	_, switching := r.switching[characterID]
+	if cur, ok := r.byAccount[acct]; (ok && cur.character == characterID) || switching {
+		name := r.characterName(acct, characterID)
+		r.mu.Unlock()
+		err := characterLive(name)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	if _, busy := r.deleting[characterID]; busy {
+		r.mu.Unlock()
+		err := wireError(auth.ErrNoSuchCharacter)
+		span.SetStatus(codes.Error, err.Error())
+		return nil, err
+	}
+	r.deleting[characterID] = struct{}{}
+	r.mu.Unlock()
+
+	ref, err := r.opts.Accounts.DeleteCharacter(ctx, acct, characterID)
+
+	r.mu.Lock()
+	delete(r.deleting, characterID)
+	r.mu.Unlock()
+	if err != nil {
+		span.SetStatus(codes.Error, err.Error())
+		return nil, wireError(err)
+	}
+	r.refreshRosterGauge()
+	return &gamev1.DeleteCharacterResponse{Character: summary(ref, false)}, nil
+}
+
+// SweepResult is what one retention sweep did.
+type SweepResult struct {
+	// Expired is the deleted Characters whose retention had run out.
+	Expired int
+	// Produced is the PurgeCharacter Commands that reached the log and were
+	// recorded on the roster.
+	Produced int
+	// Failed is the produces or roster writes that did not, left for the
+	// next sweep.
+	Failed int
+	// Reclaimed is the name reservations with no Character behind them that
+	// were removed.
+	Reclaimed int
+}
+
+// Sweep is one pass of the retention sweep, run by the Gateway on a timer:
+// for each deleted Character whose deleted_unix plus character.delete_retention
+// has passed, produce a PurgeCharacter to the Zone the roster last knew the
+// body in, then mark the entry purged so it is never produced again; then
+// remove every name reservation with no Character behind it.
+//
+// Expiry is judged here on the wall clock; determinism is the log's — the
+// sim applies the purge when the Command does, and a replay applies it on the
+// same Tick. The mark follows a durable produce, so a crash between the two
+// produces the Command a second time, which the sim applies as a no-op.
+func (r *Roster) Sweep(ctx context.Context) SweepResult {
+	start := r.now()
+	ctx, span := r.tracer.Start(ctx, "character.sweep", trace.WithNewRoot())
+	defer span.End()
+	var res SweepResult
+
+	expired := r.opts.Accounts.ExpiredCharacters(r.opts.DeleteRetention)
+	res.Expired = len(expired)
+	for _, e := range expired {
+		if ctx.Err() != nil {
+			break
+		}
+		id := e.Ref.GetCharacterId()
+		pctx, cancel := context.WithTimeout(ctx, r.opts.ProduceDeadline)
+		cmd := &logv1.LoggedCommand{
+			ZoneId:             e.Ref.GetZoneId(),
+			ActorId:            id,
+			TraceId:            command.TraceParent(pctx),
+			AcceptedAtUnixNano: r.now().UnixNano(),
+			Command:            &logv1.LoggedCommand_PurgeCharacter{PurgeCharacter: &logv1.PurgeCharacter{CharacterId: id}},
+		}
+		_, err := r.opts.Log.Produce(pctx, cmd)
+		cancel()
+		if err != nil {
+			res.Failed++
+			r.log.LogAttrs(ctx, slog.LevelWarn, "character purge not produced; the next sweep retries",
+				slog.String("account_id", e.AccountID), slog.String("character_id", id),
+				slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+			continue
+		}
+		marked, err := r.opts.Accounts.MarkPurged(ctx, e.AccountID, id)
+		if err != nil {
+			res.Failed++
+			r.log.LogAttrs(ctx, slog.LevelWarn, "character purge produced but not recorded on the roster; the next sweep produces it again",
+				slog.String("account_id", e.AccountID), slog.String("character_id", id),
+				slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+			continue
+		}
+		res.Produced++
+		if !marked {
+			r.metrics.Purges.WithLabelValues(PurgeAlreadyPurged).Inc()
+		}
+		r.log.LogAttrs(ctx, slog.LevelInfo, "character purge produced",
+			slog.String("account_id", e.AccountID), slog.String("character_id", id),
+			slog.String("zone", e.Ref.GetZoneId()), slog.Int64("deleted_unix", e.Ref.GetDeletedUnix()),
+			slog.String("trace_id", traceID(ctx)))
+	}
+
+	if ctx.Err() == nil {
+		removed, err := r.opts.Accounts.ReclaimReservations(ctx)
+		res.Reclaimed = len(removed)
+		for _, key := range removed {
+			r.metrics.Purges.WithLabelValues(PurgeReclaimed).Inc()
+			r.log.LogAttrs(ctx, slog.LevelInfo, "name reservation with no character reclaimed",
+				slog.String("name_key", key), slog.String("trace_id", traceID(ctx)))
+		}
+		if err != nil {
+			res.Failed++
+			r.log.LogAttrs(ctx, slog.LevelWarn, "name reservations not reclaimed; the next sweep retries",
+				slog.String("detail", err.Error()), slog.String("trace_id", traceID(ctx)))
+		}
+	}
+
+	r.refreshRosterGauge()
+	r.metrics.SweepDuration.Observe(r.now().Sub(start).Seconds())
+	span.SetAttributes(attribute.Int("expired", res.Expired), attribute.Int("produced", res.Produced),
+		attribute.Int("failed", res.Failed), attribute.Int("reclaimed", res.Reclaimed))
+	if res.Failed > 0 {
+		span.SetStatus(codes.Error, "sweep incomplete")
+	}
+	return res
+}
+
+// RunSweep runs Sweep once and then every character.purge_sweep_interval until
+// ctx is done. Call it after recovery, when the Command log is writable.
+func (r *Roster) RunSweep(ctx context.Context) {
+	r.releases.Add(1)
+	defer r.releases.Done()
+	t := time.NewTicker(r.opts.PurgeSweepInterval)
+	defer t.Stop()
+	for {
+		r.Sweep(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
+}
+
+// ObservePurges is the tick's purge lifecycle, on the loop goroutine: the
+// metrics and the info lines for every PurgeCharacter the tick applied. A
+// re-route is logged and not counted; the apply it produces is.
+func (r *Roster) ObservePurges(tick sim.Tick, changes []sim.PurgeChange) {
+	for _, c := range changes {
+		ctx := command.ParentFrom(context.Background(), c.TraceID)
+		msg := "character purge applied"
+		switch c.Kind {
+		case sim.PurgeApplied:
+			r.metrics.Purges.WithLabelValues(PurgeOK).Inc()
+		case sim.PurgeNoBody:
+			r.metrics.Purges.WithLabelValues(PurgeNoBody).Inc()
+			msg = "character purge applied: no body"
+		case sim.PurgeRerouted:
+			msg = "character purge re-routed"
+		}
+		attrs := []slog.Attr{
+			slog.String("character_id", string(c.Character)), slog.String("zone", string(c.Zone)), slog.String("room", string(c.Room)),
+			slog.Bool("was_present", c.WasPresent), slog.Bool("rerouted", c.Kind == sim.PurgeRerouted),
+			slog.Uint64("tick", uint64(tick)), slog.String("trace_id", traceID(ctx)),
+		}
+		if c.Session != "" {
+			attrs = append(attrs, slog.String("session_id", c.Session))
+		}
+		r.log.LogAttrs(ctx, slog.LevelInfo, msg, attrs...)
+	}
+}
+
+// refreshRosterGauge sets andara_roster_characters from the roster index.
+func (r *Roster) refreshRosterGauge() {
+	active, deleted := r.opts.Accounts.RosterCounts()
+	r.metrics.RosterCharacters.WithLabelValues(StatusActive).Set(float64(active))
+	r.metrics.RosterCharacters.WithLabelValues(StatusDeleted).Set(float64(deleted))
+}
+
 // closedChan is a teardown with nothing to wait for.
 var closedChan = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
 
@@ -762,6 +1203,7 @@ func summary(c *accountsv1.CharacterRef, isLive bool) *gamev1.CharacterSummary {
 	return &gamev1.CharacterSummary{
 		CharacterId: c.GetCharacterId(), Name: c.GetName(), Status: c.GetStatus(),
 		ZoneId: c.GetZoneId(), RoomId: c.GetRoomId(), Live: isLive, CreatedUnix: c.GetCreatedUnix(),
+		DeletedUnix: c.GetDeletedUnix(),
 	}
 }
 
@@ -777,11 +1219,16 @@ const (
 	ReasonNameInvalid     = "name_invalid"
 	ReasonAlreadyLive     = "already_live"
 	ReasonNoSuchCharacter = "no_such_character"
+	ReasonCharacterLive   = "character_live"
 )
 
 // ErrAlreadyLive: another Character is live on the Account, or this one is
 // bound to another Session. FAILED_PRECONDITION.
 var ErrAlreadyLive = errors.New("a character is already live on this account")
+
+// ErrCharacterLive: the Character to delete is live, or a Session is
+// binding it. FAILED_PRECONDITION; quit first.
+var ErrCharacterLive = errors.New("that character is live; quit first")
 
 // errSessionClosing: the Session ended between the RPC resolving it and
 // the roster registering the binding. CANCELED — there is nobody left to
@@ -810,6 +1257,10 @@ func wireError(err error) error {
 		return withInfo(connect.NewError(connect.CodeNotFound, auth.ErrNoSuchCharacter), ReasonNoSuchCharacter, nil)
 	}
 	return connect.NewError(connect.CodeInternal, err)
+}
+
+func characterLive(name string) error {
+	return withInfo(connect.NewError(connect.CodeFailedPrecondition, fmt.Errorf("%w: %s", ErrCharacterLive, name)), ReasonCharacterLive, map[string]string{"character": name})
 }
 
 func withInfo(ce *connect.Error, reason string, meta map[string]string) *connect.Error {

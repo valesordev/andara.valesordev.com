@@ -25,7 +25,30 @@ type Metrics struct {
 	LinkdeadDuration *prometheus.HistogramVec // andara_linkdead_duration_seconds{in_combat}
 	CombatExtensions prometheus.Counter       // andara_linkdead_combat_extensions_total
 	CeilingDespawns  prometheus.Counter       // andara_linkdead_ceiling_despawns_total
+
+	// The deletion lifecycle (AW-SRV-032). RosterCharacters is the Gateway's
+	// count of roster entries, which a purge leaves standing; Characters above
+	// is the sim's count of bodies, which a purge lowers.
+	RosterCharacters *prometheus.GaugeVec   // andara_roster_characters{status}
+	Purges           *prometheus.CounterVec // andara_character_purges_total{outcome}
+	SweepDuration    prometheus.Histogram   // andara_character_sweep_duration_seconds
 }
+
+// Roster entry statuses, andara_roster_characters{status}.
+const (
+	StatusActive  = "active"
+	StatusDeleted = "deleted"
+)
+
+// Purge outcomes, andara_character_purges_total{outcome}: ok and no_body are
+// what the sim's apply did, already_purged and reclaimed what the Gateway's
+// sweep found.
+const (
+	PurgeOK            = "ok"
+	PurgeAlreadyPurged = "already_purged"
+	PurgeNoBody        = "no_body"
+	PurgeReclaimed     = "reclaimed"
+)
 
 // Linkdead outcomes: how a body's grace ended. died is declared for the
 // combat that will produce it; nothing does yet.
@@ -50,6 +73,7 @@ const (
 const (
 	ReasonQuit          = "quit"
 	ReasonLinkdead      = "linkdead"
+	ReasonSwitch        = "switch"
 	UnbindOK            = "ok"
 	UnbindProduceFailed = "produce_failed"
 )
@@ -89,6 +113,16 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		CombatExtensions: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_linkdead_combat_extensions_total", Help: "Combat interactions against a linkdead Character.",
 		}),
+		RosterCharacters: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+			Name: "andara_roster_characters", Help: "Roster entries by status; a purge removes the body and leaves the entry DELETED.",
+		}, []string{"status"}),
+		Purges: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "andara_character_purges_total", Help: "Deleted Characters' purges by outcome: ok (body removed), no_body (nothing to remove), already_purged, reclaimed (a reservation with no Character).",
+		}, []string{"outcome"}),
+		SweepDuration: prometheus.NewHistogram(prometheus.HistogramOpts{
+			Name: "andara_character_sweep_duration_seconds", Help: "How long one retention sweep took.",
+			Buckets: []float64{.001, .005, .01, .05, .1, .5, 1, 5, 30},
+		}),
 		CeilingDespawns: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "andara_linkdead_ceiling_despawns_total", Help: "Linkdead Characters despawned at session.linkdead_max rather than their deadline.",
 		}),
@@ -109,10 +143,18 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	for _, o := range []string{UnbindOK, UnbindProduceFailed} {
 		m.Unbinds.WithLabelValues(ReasonQuit, o)
 		m.Unbinds.WithLabelValues(ReasonLinkdead, o)
+		m.Unbinds.WithLabelValues(ReasonSwitch, o)
+	}
+	for _, st := range []string{StatusActive, StatusDeleted} {
+		m.RosterCharacters.WithLabelValues(st)
+	}
+	for _, o := range []string{PurgeOK, PurgeAlreadyPurged, PurgeNoBody, PurgeReclaimed} {
+		m.Purges.WithLabelValues(o)
 	}
 	if reg != nil {
 		reg.MustRegister(m.SessionsBound, m.Characters, m.Bindings, m.Unbinds,
-			m.Linkdead, m.LinkdeadOutcomes, m.LinkdeadDuration, m.CombatExtensions, m.CeilingDespawns)
+			m.Linkdead, m.LinkdeadOutcomes, m.LinkdeadDuration, m.CombatExtensions, m.CeilingDespawns,
+			m.RosterCharacters, m.Purges, m.SweepDuration)
 	}
 	return m
 }

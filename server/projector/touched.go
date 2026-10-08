@@ -56,6 +56,10 @@ var table = map[sim.EventType]touches{
 	sim.EvCharacterLinkdead:    {zone: true, room: true, entities: true},
 	sim.EvCharacterReconnected: {zone: true, room: true, entities: true},
 	sim.EvCharacterDespawned:   {zone: true, room: true, entities: true},
+	// A purge (AW-SRV-032) removed the body: the Entity becomes a tombstone,
+	// and the Zone's counts change. The Room never listed a dormant body, and
+	// a present one was despawned (and so re-rendered) first.
+	sim.EvCharacterPurged: {zone: true, room: true, entities: true},
 	// A rejection changes nothing: validate and apply refuse before mutating.
 	sim.EvCommandRejected: {},
 	// A fault sets the Zone's faulted flag, and the panicking handler may
@@ -127,6 +131,8 @@ func payloadPlace(env *gamev1.EventEnvelope) (sim.ZoneID, sim.RoomID) {
 		return sim.ZoneID(p.CharacterReconnected.GetZoneId()), sim.RoomID(p.CharacterReconnected.GetRoomId())
 	case *gamev1.EventEnvelope_CharacterDespawned:
 		return sim.ZoneID(p.CharacterDespawned.GetZoneId()), sim.RoomID(p.CharacterDespawned.GetRoomId())
+	case *gamev1.EventEnvelope_CharacterPurged:
+		return sim.ZoneID(p.CharacterPurged.GetZoneId()), sim.RoomID(p.CharacterPurged.GetRoomId())
 	}
 	return "", ""
 }

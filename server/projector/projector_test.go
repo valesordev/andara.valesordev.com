@@ -306,6 +306,51 @@ func TestZoneExitTombstonesTheOldKey(t *testing.T) {
 	}
 }
 
+// purgeScript is a Character bound, unbound to dormant, and purged
+// (AW-SRV-032), with another standing by.
+func purgeScript(t *testing.T) *world {
+	w := newWorld(t)
+	w.submit(simtest.Bind("town", "hero", "Hero", "plaza"), simtest.Bind("town", "ada", "Ada", "plaza"))
+	w.tick()
+	w.submit(simtest.Unbind("town", "ada"))
+	w.tick()
+	w.submit(simtest.Purge("town", "ada"))
+	w.tick()
+	return w
+}
+
+// AW-SRV-032's inherited line, AW-SRV-019 AC-5: a purge removes the body, so
+// the Entity's key is tombstoned on the tick it applies.
+func TestPurgeTombstonesTheCharacterKey(t *testing.T) {
+	t.Parallel()
+	w := purgeScript(t)
+	purged := w.live.Tick()
+	p := replica(t)
+	byTick := map[sim.Tick][]projector.Out{}
+	if err := p.Replay(w.boundaries, simtest.MemorySource(w.log), func(b sim.TickCompleted, recs []projector.Out) error {
+		byTick[b.Tick] = recs
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var tomb *projector.Out
+	for i, r := range byTick[purged] {
+		if r.Key == "character:town/ada" {
+			tomb = &byTick[purged][i]
+		}
+	}
+	if tomb == nil || !tomb.Tombstone() || tomb.Partition != sim.PartitionFor("town") || tomb.Kind != statev1.AggregateKind_CHARACTER {
+		t.Fatalf("tick %d: want a tombstone for character:town/ada on town's partition, got %+v", purged, byTick[purged])
+	}
+	// The other Character is untouched, and the replica agrees with the live World.
+	if _, ok := p.Engine().State().Zones["town"].Entities["ada"]; ok {
+		t.Fatal("the replica still holds the purged body")
+	}
+	if p.Engine().State().Hash() != w.live.State().Hash() {
+		t.Fatal("replica and live World diverge")
+	}
+}
+
 // faultEngine is the verb engine with one extra move: "boom" renames every
 // Entity in the Zone, deletes one, and panics — partial state applyOne keeps
 // and the State Hash covers.

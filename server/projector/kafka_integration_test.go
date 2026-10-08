@@ -380,14 +380,27 @@ func (b *broker) compactWithinSeconds(t *testing.T) {
 // The filler is one key rewritten, so it compacts down to one record and adds
 // nothing to what is asserted.
 func TestRun_ATombstonedKeyIsCompactedAway(t *testing.T) {
+	assertCompactedAway(t, script(t), "character:town/hero")
+}
+
+// AW-SRV-032's inherited line: the same assertion for a purge, the destroy
+// AW-SRV-019 could not yet exercise. After a purge replays and compaction runs,
+// the purged Character's key is absent.
+func TestRun_APurgedCharacterIsCompactedAway(t *testing.T) {
+	assertCompactedAway(t, purgeScript(t), "character:town/ada")
+}
+
+// assertCompactedAway runs the projector over w, asserts key is tombstoned and
+// still present before compaction, then forces compaction and waits for the key
+// to go, tombstone included.
+func assertCompactedAway(t *testing.T, w *world, key string) {
+	t.Helper()
 	b := newBroker(t)
-	w := script(t)
 	b.mirror(w, 0)
 	r := start(b.options(w))
 	b.waitCommitted(t, w.live.Tick())
 	r.stop(t)
 
-	const key = "character:town/hero"
 	p := sim.PartitionFor("town")
 	// At the default segment.ms the segment holding the tombstone has not
 	// rolled, so it cannot have been compacted: the tombstone is still there

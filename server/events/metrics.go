@@ -67,7 +67,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}),
 	}
 	for _, t := range []sim.EventType{sim.EvRoomDescribed, sim.EvCharacterArrived, sim.EvCharacterLeft, sim.EvCommandRejected, sim.EvZoneFaulted, sim.EvSubscriberDropped, sim.EvSimulationStopped, sim.EvEntityRelocated,
-		sim.EvCharacterLinkdead, sim.EvCharacterReconnected, sim.EvCharacterDespawned} {
+		sim.EvCharacterLinkdead, sim.EvCharacterReconnected, sim.EvCharacterDespawned, sim.EvCharacterPurged} {
 		m.Emitted.WithLabelValues(string(t))
 		m.Redactions.WithLabelValues(string(t))
 	}

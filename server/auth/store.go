@@ -145,6 +145,11 @@ func Open(ctx context.Context, o Options) (*Store, error) {
 	n := 0
 	err = o.Accounts.Replay(ctx, func(r recordlog.Record) error {
 		n++
+		if len(r.Value) == 0 && strings.HasPrefix(r.Key, NamePrefix) {
+			// A tombstone: the reservation was reclaimed (AW-SRV-032).
+			delete(s.roster.names, strings.TrimPrefix(r.Key, NamePrefix))
+			return nil
+		}
 		var rec accountsv1.AccountRecord
 		if err := proto.Unmarshal(r.Value, &rec); err != nil {
 			return fmt.Errorf("auth: record %q on andara.accounts.v1 does not decode: %w", r.Key, err)

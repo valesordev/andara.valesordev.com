@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"golang.org/x/text/cases"
@@ -125,6 +126,34 @@ func (s *Store) Characters(accountID string) []*accountsv1.CharacterRef {
 	return out
 }
 
+// AllCharacters lists an Account's whole roster, sorted by character_id: the
+// ACTIVE Characters and the DELETED ones, purged or not (AW-SRV-032). The
+// returned records must not be mutated.
+func (s *Store) AllCharacters(accountID string) []*accountsv1.CharacterRef {
+	acc, ok := s.lookupID(accountID)
+	if !ok {
+		return nil
+	}
+	return slices.Clone(acc.GetCharacters())
+}
+
+// RosterCounts is how many roster entries are ACTIVE and how many DELETED,
+// purged or not, over every Account: andara_roster_characters.
+func (s *Store) RosterCounts() (active, deleted int) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	for _, acc := range s.byID {
+		for _, c := range acc.GetCharacters() {
+			if c.GetStatus() == accountsv1.CharacterStatus_CHARACTER_STATUS_ACTIVE {
+				active++
+			} else {
+				deleted++
+			}
+		}
+	}
+	return active, deleted
+}
+
 // Character is one ACTIVE Character on the Account, or ErrNoSuchCharacter.
 func (s *Store) Character(accountID, characterID string) (*accountsv1.CharacterRef, error) {
 	for _, c := range s.Characters(accountID) {
@@ -154,7 +183,11 @@ func (s *Store) CreateCharacter(ctx context.Context, accountID, name string, zon
 	if !ok {
 		return nil, ErrNotFound
 	}
-	if len(acc.GetCharacters()) >= s.roster.max {
+	// ACTIVE and DELETED alike count, until the purge: a deleted Character
+	// keeps its slot for the retention window, so deleting is not a way to hold
+	// six names (AW-SRV-032 AC-1). The entry and its reservation outlive the
+	// purge; only the slot is freed.
+	if countSlots(acc) >= s.roster.max {
 		s.metrics.CharacterCreations.WithLabelValues(CreationRosterFull).Inc()
 		return nil, fmt.Errorf("%w: an account holds at most %d characters", ErrRosterFull, s.roster.max)
 	}
@@ -195,9 +228,129 @@ func (s *Store) CreateCharacter(ctx context.Context, accountID, name string, zon
 	s.metrics.CharacterCreations.WithLabelValues(CreationOK).Inc()
 	s.log.LogAttrs(ctx, slog.LevelInfo, "character created",
 		slog.String("account_id", accountID), slog.String("character_id", ref.CharacterId),
-		slog.String("name", fmt.Sprintf("%q", name)), slog.Int("roster", len(acc.Characters)),
+		slog.String("name", fmt.Sprintf("%q", name)), slog.Int("roster", countSlots(acc)),
 		slog.String("session_id", SessionIDFrom(ctx)), slog.String("trace_id", traceID(ctx)))
 	return proto.Clone(ref).(*accountsv1.CharacterRef), nil
+}
+
+// DeleteCharacter soft-deletes an ACTIVE Character: status DELETED and
+// deleted_unix set (AW-SRV-032). The body is left dormant for the retention
+// window, the name reservation stays for good, and the entry keeps counting
+// against character.max_per_account. A Character that is not on the Account,
+// or is already deleted, is ErrNoSuchCharacter. Whether the Character is live
+// is the Gateway's to check before it calls this; the store knows nothing of
+// Sessions.
+func (s *Store) DeleteCharacter(ctx context.Context, accountID, characterID string) (*accountsv1.CharacterRef, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	acc, ok := s.clone(accountID)
+	if !ok {
+		return nil, ErrNotFound
+	}
+	i := slices.IndexFunc(acc.Characters, func(c *accountsv1.CharacterRef) bool {
+		return c.GetCharacterId() == characterID && c.GetStatus() == accountsv1.CharacterStatus_CHARACTER_STATUS_ACTIVE
+	})
+	if i < 0 {
+		return nil, ErrNoSuchCharacter
+	}
+	c := acc.Characters[i]
+	c.Status = accountsv1.CharacterStatus_CHARACTER_STATUS_DELETED
+	c.DeletedUnix = s.now().Unix()
+	if err := s.commit(ctx, acc); err != nil {
+		return nil, err
+	}
+	s.log.LogAttrs(ctx, slog.LevelInfo, "character deleted",
+		slog.String("account_id", accountID), slog.String("character_id", characterID),
+		slog.Int64("deleted_unix", c.DeletedUnix),
+		slog.String("session_id", SessionIDFrom(ctx)), slog.String("trace_id", traceID(ctx)))
+	return proto.Clone(c).(*accountsv1.CharacterRef), nil
+}
+
+// ExpiredCharacter is a deleted Character whose retention has run out and
+// whose purge has not been produced.
+type ExpiredCharacter struct {
+	AccountID string
+	Ref       *accountsv1.CharacterRef
+}
+
+// ExpiredCharacters is every DELETED Character with no purged_unix whose
+// deleted_unix plus retention is at or before now, sorted by Account then
+// Character (AW-SRV-032's sweep). The returned records must not be mutated.
+func (s *Store) ExpiredCharacters(retention time.Duration) []ExpiredCharacter {
+	cutoff := s.now().Add(-retention).Unix()
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []ExpiredCharacter
+	for id, acc := range s.byID {
+		for _, c := range acc.GetCharacters() {
+			if c.GetStatus() == accountsv1.CharacterStatus_CHARACTER_STATUS_DELETED && c.GetPurgedUnix() == 0 && c.GetDeletedUnix() <= cutoff {
+				out = append(out, ExpiredCharacter{AccountID: id, Ref: c})
+			}
+		}
+	}
+	slices.SortFunc(out, func(a, b ExpiredCharacter) int {
+		if c := strings.Compare(a.AccountID, b.AccountID); c != 0 {
+			return c
+		}
+		return strings.Compare(a.Ref.GetCharacterId(), b.Ref.GetCharacterId())
+	})
+	return out
+}
+
+// MarkPurged records that the PurgeCharacter for a deleted Character is
+// durable in the log, so the sweep never produces it again. It reports false
+// when the entry was already marked, and ErrNoSuchCharacter for one that is
+// not DELETED.
+func (s *Store) MarkPurged(ctx context.Context, accountID, characterID string) (bool, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	acc, ok := s.clone(accountID)
+	if !ok {
+		return false, ErrNotFound
+	}
+	i := slices.IndexFunc(acc.Characters, func(c *accountsv1.CharacterRef) bool { return c.GetCharacterId() == characterID })
+	if i < 0 || acc.Characters[i].GetStatus() != accountsv1.CharacterStatus_CHARACTER_STATUS_DELETED {
+		return false, ErrNoSuchCharacter
+	}
+	if acc.Characters[i].GetPurgedUnix() != 0 {
+		return false, nil
+	}
+	acc.Characters[i].PurgedUnix = s.now().Unix()
+	return true, s.commit(ctx, acc)
+}
+
+// ReclaimReservations removes every name reservation that no Character is
+// behind (AW-SRV-032 AC-8): the debris of a crash between CreateCharacter's
+// two writes. A reservation whose Character is on its Account's roster, in any
+// status, is never removed — a deleted name stays reserved for good. It runs
+// under the writer lock, so it cannot see a create between its reservation and
+// its Account record. Returns the keys removed.
+func (s *Store) ReclaimReservations(ctx context.Context) ([]string, error) {
+	s.wmu.Lock()
+	defer s.wmu.Unlock()
+	s.mu.RLock()
+	var dead []string
+	for key, res := range s.roster.names {
+		acc := s.byID[res.GetAccountId()]
+		if acc == nil || !slices.ContainsFunc(acc.GetCharacters(), func(c *accountsv1.CharacterRef) bool { return c.GetCharacterId() == res.GetCharacterId() }) {
+			dead = append(dead, key)
+		}
+	}
+	s.mu.RUnlock()
+	slices.Sort(dead)
+	var removed []string
+	for _, key := range dead {
+		// A tombstone: a nil value deletes the key at compaction, and replays
+		// as an empty record that Open reads as "no reservation".
+		if err := s.opts.Accounts.Append(ctx, NamePrefix+key, nil); err != nil {
+			return removed, fmt.Errorf("auth: remove name reservation: %w", err)
+		}
+		s.mu.Lock()
+		delete(s.roster.names, key)
+		s.mu.Unlock()
+		removed = append(removed, key)
+	}
+	return removed, nil
 }
 
 // SetCharacterPosition records the Gateway's last knowledge of where the
@@ -226,6 +379,18 @@ func (s *Store) SetCharacterPosition(ctx context.Context, accountID, characterID
 // indexReservation records a name/* record read at boot.
 func (s *Store) indexReservation(key string, res *accountsv1.NameReservation) {
 	s.roster.names[strings.TrimPrefix(key, NamePrefix)] = res
+}
+
+// countSlots is how many roster slots the Account holds: every entry not yet
+// purged.
+func countSlots(acc *accountsv1.Account) int {
+	n := 0
+	for _, c := range acc.GetCharacters() {
+		if c.GetPurgedUnix() == 0 {
+			n++
+		}
+	}
+	return n
 }
 
 // normalizeCharacters keeps the roster sorted by character_id.

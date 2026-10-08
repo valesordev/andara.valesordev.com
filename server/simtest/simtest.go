@@ -235,6 +235,13 @@ func Unbind(zone, actor string) *logv1.LoggedCommand {
 	}}}
 }
 
+// Purge is a PurgeCharacter for actor in zone (AW-SRV-032).
+func Purge(zone, actor string) *logv1.LoggedCommand {
+	return &logv1.LoggedCommand{ZoneId: zone, ActorId: actor, Command: &logv1.LoggedCommand_PurgeCharacter{PurgeCharacter: &logv1.PurgeCharacter{
+		CharacterId: actor,
+	}}}
+}
+
 // MarkLinkdead is a MarkLinkdead for actor in zone, with the three durations
 // in Ticks (AW-SRV-015).
 func MarkLinkdead(zone, actor string, grace, extension, max uint64) *logv1.LoggedCommand {

@@ -8,6 +8,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"google.golang.org/protobuf/proto"
 
@@ -196,5 +197,146 @@ func TestCharacters_Options(t *testing.T) {
 	}
 	if _, err := newRoster(CharacterOptions{NamePattern: "("}); err == nil {
 		t.Fatal("a bad pattern compiled")
+	}
+}
+
+// AW-SRV-032 AC-1, AC-2, AC-3: a deleted Character keeps its slot and its name
+// until the purge frees the slot; the name is never freed.
+func TestDeleteCharacter_KeepsSlotAndName(t *testing.T) {
+	f := newFixture(t, func(o *Options) { o.Characters = CharacterOptions{MaxPerAccount: 2} })
+	ctx := context.Background()
+	opCtx, _ := f.bootstrapOperator("oper", "operator-password")
+	a, _ := f.store.CreateAccount(opCtx, "alice", "correct horse battery", nil)
+	b, _ := f.store.CreateAccount(opCtx, "bob", "correct horse battery", nil)
+	one, err := f.store.CreateCharacter(ctx, a, "Aldric", "town", "plaza")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.CreateCharacter(ctx, a, "Brenna", "town", "plaza"); err != nil {
+		t.Fatal(err)
+	}
+
+	f.clock.advance(24 * time.Hour)
+	del, err := f.store.DeleteCharacter(ctx, a, one.GetCharacterId())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if del.GetStatus() != accountsv1.CharacterStatus_CHARACTER_STATUS_DELETED || del.GetDeletedUnix() != f.clock.now().Unix() {
+		t.Fatalf("deleted ref %v", del)
+	}
+	// Gone from the playable roster, present in the whole one.
+	if _, err := f.store.Character(a, one.GetCharacterId()); !errors.Is(err, ErrNoSuchCharacter) {
+		t.Fatalf("a deleted Character is selectable: %v", err)
+	}
+	if n := len(f.store.AllCharacters(a)); n != 2 {
+		t.Fatalf("whole roster has %d entries, want 2", n)
+	}
+	if act, dead := f.store.RosterCounts(); act != 1 || dead != 1 {
+		t.Fatalf("counts %d active, %d deleted", act, dead)
+	}
+	// Twice: already deleted is no such character.
+	if _, err := f.store.DeleteCharacter(ctx, a, one.GetCharacterId()); !errors.Is(err, ErrNoSuchCharacter) {
+		t.Fatalf("second delete: %v", err)
+	}
+	// Another Account's Character is not deletable by this one.
+	if _, err := f.store.DeleteCharacter(ctx, b, one.GetCharacterId()); !errors.Is(err, ErrNoSuchCharacter) {
+		t.Fatalf("delete across Accounts: %v", err)
+	}
+	// AC-1: still counts.
+	if _, err := f.store.CreateCharacter(ctx, a, "Corin", "town", "plaza"); !errors.Is(err, ErrRosterFull) {
+		t.Fatalf("create past the cap with a deleted Character: %v", err)
+	}
+	// AC-2: any letter case, any Account, before and after the purge.
+	for _, name := range []string{"aldric", "ALDRIC"} {
+		if _, err := f.store.CreateCharacter(ctx, b, name, "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+			t.Fatalf("%q before the purge: %v", name, err)
+		}
+	}
+
+	// Not expired until deleted_unix + retention.
+	if got := f.store.ExpiredCharacters(30 * 24 * time.Hour); len(got) != 0 {
+		t.Fatalf("expired early: %v", got)
+	}
+	f.clock.advance(30 * 24 * time.Hour)
+	got := f.store.ExpiredCharacters(30 * 24 * time.Hour)
+	if len(got) != 1 || got[0].AccountID != a || got[0].Ref.GetCharacterId() != one.GetCharacterId() {
+		t.Fatalf("expired %v", got)
+	}
+	marked, err := f.store.MarkPurged(ctx, a, one.GetCharacterId())
+	if err != nil || !marked {
+		t.Fatalf("mark purged: %v %v", marked, err)
+	}
+	if marked, err := f.store.MarkPurged(ctx, a, one.GetCharacterId()); err != nil || marked {
+		t.Fatalf("second mark: %v %v", marked, err)
+	}
+	if got := f.store.ExpiredCharacters(30 * 24 * time.Hour); len(got) != 0 {
+		t.Fatalf("a purged Character is produced again: %v", got)
+	}
+	if _, err := f.store.MarkPurged(ctx, a, "nope"); !errors.Is(err, ErrNoSuchCharacter) {
+		t.Fatalf("mark of an unknown Character: %v", err)
+	}
+
+	// The purge frees the slot, never the name.
+	for _, name := range []string{"Aldric", "aldric"} {
+		if _, err := f.store.CreateCharacter(ctx, b, name, "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+			t.Fatalf("%q after the purge: %v", name, err)
+		}
+	}
+	if _, err := f.store.CreateCharacter(ctx, a, "Corin", "town", "plaza"); err != nil {
+		t.Fatalf("the purge did not free the slot: %v", err)
+	}
+
+	// All of it survives a restart (AC-7: the reservation lives on the topic).
+	f.reopen(func(o *Options) { o.Characters = CharacterOptions{MaxPerAccount: 2} })
+	if _, err := f.store.CreateCharacter(ctx, b, "ALDRIC", "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("reservation lost on restart: %v", err)
+	}
+	if act, dead := f.store.RosterCounts(); act != 2 || dead != 1 {
+		t.Fatalf("counts after restart %d active, %d deleted", act, dead)
+	}
+}
+
+// AC-8: a reservation with no Character is removed; one with a Character
+// behind it, deleted or not, never is; the removal survives a restart.
+func TestReclaimReservations(t *testing.T) {
+	f := newFixture(t, nil)
+	ctx := context.Background()
+	opCtx, _ := f.bootstrapOperator("oper", "operator-password")
+	a, _ := f.store.CreateAccount(opCtx, "alice", "correct horse battery", nil)
+	live, _ := f.store.CreateCharacter(ctx, a, "Aldric", "town", "plaza")
+	dead, _ := f.store.CreateCharacter(ctx, a, "Brenna", "town", "plaza")
+	if _, err := f.store.DeleteCharacter(ctx, a, dead.GetCharacterId()); err != nil {
+		t.Fatal(err)
+	}
+	// A crash between the two writes: the reservation, no Character.
+	orphan := &accountsv1.NameReservation{CharacterId: "gone", AccountId: a}
+	body, _ := proto.Marshal(&accountsv1.AccountRecord{Record: &accountsv1.AccountRecord_NameReservation{NameReservation: orphan}})
+	if err := f.accounts.Append(ctx, NamePrefix+"ghost", body); err != nil {
+		t.Fatal(err)
+	}
+	f.reopen(nil)
+	if _, err := f.store.CreateCharacter(ctx, a, "Ghost", "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("an orphaned reservation holds the name until the sweep: %v", err)
+	}
+
+	removed, err := f.store.ReclaimReservations(ctx)
+	if err != nil || len(removed) != 1 || removed[0] != "ghost" {
+		t.Fatalf("reclaimed %v, %v", removed, err)
+	}
+	if removed, err := f.store.ReclaimReservations(ctx); err != nil || len(removed) != 0 {
+		t.Fatalf("second sweep reclaimed %v, %v", removed, err)
+	}
+	for _, name := range []string{live.GetName(), dead.GetName()} {
+		if _, err := f.store.CreateCharacter(ctx, a, name, "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+			t.Fatalf("%q lost its reservation: %v", name, err)
+		}
+	}
+
+	f.reopen(nil)
+	if _, err := f.store.CreateCharacter(ctx, a, "Ghost", "town", "plaza"); err != nil {
+		t.Fatalf("the reclaimed name is not creatable after a restart: %v", err)
+	}
+	if _, err := f.store.CreateCharacter(ctx, a, "brenna", "town", "plaza"); !errors.Is(err, ErrNameTaken) {
+		t.Fatalf("a deleted Character's name was reclaimed: %v", err)
 	}
 }

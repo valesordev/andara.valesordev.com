@@ -119,6 +119,13 @@ func (w *world) SelectCharacter(_ context.Context, _ *gateway.Session, character
 	return &gamev1.SelectCharacterResponse{Partition: 3, AcceptedOffset: w.offset.Add(1)}, nil
 }
 
+func (w *world) DeleteCharacter(_ context.Context, _ *gateway.Session, characterID string) (*gamev1.DeleteCharacterResponse, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.calls = append(w.calls, "DeleteCharacter:"+characterID)
+	return &gamev1.DeleteCharacterResponse{Character: &gamev1.CharacterSummary{CharacterId: characterID, Status: accountsv1.CharacterStatus_CHARACTER_STATUS_DELETED}}, nil
+}
+
 func (w *world) ReleaseSession(*gateway.Session, gateway.SessionEnd) <-chan struct{} {
 	done := make(chan struct{})
 	close(done)

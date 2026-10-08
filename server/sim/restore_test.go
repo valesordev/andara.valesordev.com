@@ -25,15 +25,10 @@ type restoreFixture struct {
 	round sim.RoundState
 }
 
-func newRestoreFixture(t *testing.T, seed uint64) *restoreFixture {
+// roundOf reads live's current round back through the codec a store holds it
+// in, with the tick's recorded State Hash as the boundary log carries it.
+func roundOf(t *testing.T, live *sim.Engine) sim.RoundState {
 	t.Helper()
-	c := newContent(t)
-	live := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: seed, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: c})
-	mustStep(t, live, c.swap(t, live, nil, "town", 3))
-	mustStep(t, live, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
-	mustStep(t, live, simtest.Bind("docks", "ch-2", "Bryn", "pier"))
-	mustStep(t, live)
-
 	versions, digest := live.Content()
 	recorded := live.StateHash()
 	round := sim.RoundState{Tick: live.Tick(), StateVersion: sim.StateVersion, Content: versions, ContentDigest: digest[:], RecordedHash: recorded[:]}
@@ -60,6 +55,20 @@ func newRestoreFixture(t *testing.T, seed uint64) *restoreFixture {
 		}
 		round.Zones = append(round.Zones, sim.ZoneStateFromProto(&body))
 	}
+	return round
+}
+
+func newRestoreFixture(t *testing.T, seed uint64) *restoreFixture {
+	t.Helper()
+	c := newContent(t)
+	live := sim.NewEngine(sim.EmptyWorld(), nil, sim.Config{Seed: seed, Partitions: simtest.AllPartitions(), Handlers: sim.Handlers(), Content: c})
+	mustStep(t, live, c.swap(t, live, nil, "town", 3))
+	mustStep(t, live, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	mustStep(t, live, simtest.Bind("docks", "ch-2", "Bryn", "pier"))
+	mustStep(t, live)
+
+	round := roundOf(t, live)
+	versions, _ := live.Content()
 	topo, err := sim.PrepareContent(c, versions)
 	if err != nil {
 		t.Fatal(err)
@@ -200,5 +209,26 @@ func TestRestore_NoRecordedHashIsRefused(t *testing.T) {
 	// A caller's bug, not a bad round: no restore outcome, no exit 5.
 	if errors.Is(err, sim.ErrRestoreMismatch) || errors.Is(err, sim.ErrSeedMismatch) || sim.RestoreOutcome(err) != "" {
 		t.Fatalf("restore with no recorded hash reads as a mismatch: %v", err)
+	}
+}
+
+// AW-SRV-032 AC-4: a round taken after a purge restores to the same State
+// Hash, without the body, and replay proceeds from it.
+func TestRestore_AfterAPurge(t *testing.T) {
+	f := newRestoreFixture(t, 7)
+	mustStep(t, f.live, simtest.Unbind("town", "ch-1"))
+	mustStep(t, f.live, simtest.Purge("town", "ch-1"))
+	mustStep(t, f.live)
+	round := roundOf(t, f.live)
+	e, err := f.restore(7, round)
+	if err != nil {
+		t.Fatalf("restore after a purge: %v", err)
+	}
+	if _, ok := e.State().Zones["town"].Entities["ch-1"]; ok {
+		t.Fatal("the restored World holds the purged body")
+	}
+	a, b := mustStep(t, f.live), mustStep(t, e)
+	if a.Completed.StateHash != b.Completed.StateHash {
+		t.Fatalf("tick %d after the restore diverged", a.Tick)
 	}
 }
