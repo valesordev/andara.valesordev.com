@@ -159,6 +159,38 @@ class Stop(unittest.TestCase):
         self.assertIn(server_ctl.ANNOTATION, patches[0][-1])
         self.assertIn("remove", patches[1][-1])
 
+    def test_it_suspends_before_it_scales(self):
+        c = Cluster()
+        run(c, "stop")
+        remove = next(i for i, x in enumerate(c.calls) if x[1] == "patch" and "remove" in x[-1])
+        scale = next(i for i, x in enumerate(c.calls) if x[1] == "scale")
+        self.assertLess(remove, scale)
+
+    def test_the_stop_bound_reaches_the_wait_and_the_message(self):
+        c = Cluster()
+        with mock.patch.dict(os.environ, {"SERVER_STOP_TIMEOUT": "45s"}):
+            run(c, "stop")
+        self.assertIn(("andara-dev", "wait", "--for=delete", "pod/andara-0", "--timeout=45s"), c.calls)
+        c = Cluster(pod_goes_on_scale=False)
+        with mock.patch.dict(os.environ, {"SERVER_STOP_TIMEOUT": "7s"}):
+            with self.assertRaises(server_ctl.Failed) as e:
+                run(c, "stop")
+        self.assertIn("7s after scaling", str(e.exception))
+
+    def test_a_failed_stop_after_the_suspend_says_the_sync_is_suspended(self):
+        c = Cluster(pod_goes_on_scale=False)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(server_ctl.Failed):
+            run(c, "stop")
+        self.assertEqual(err.getvalue().strip(), server_ctl.SUSPENDED_LINE)
+
+    def test_a_failed_stop_with_nothing_suspended_does_not_say_so(self):
+        c = Cluster(app=False, pod_goes_on_scale=False)
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err), self.assertRaises(server_ctl.Failed):
+            run(c, "stop")
+        self.assertEqual(err.getvalue(), "")
+
     def test_a_second_stop_succeeds_and_keeps_the_first_record(self):
         c = Cluster()
         run(c, "stop")
