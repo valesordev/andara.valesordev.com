@@ -126,7 +126,7 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | between `ServerStopping` and the Submit refusal |
-| `deploy.admit_wait` | `ANDARA_DEPLOY_ADMIT_WAIT` | `5s` | the most pre-stop waits for already-admitted Submits, so `grpc.max_request_timeout` is not a term. A Submit still unresolved when SIGTERM arrives gets a dropped call (`UNAVAILABLE` or a stream close); whether its Command landed is decided by the log, and the client retries with its idempotency key |
+| `deploy.admit_wait` | `ANDARA_DEPLOY_ADMIT_WAIT` | `5s` | the most pre-stop waits for already-admitted Submits, so `grpc.max_request_timeout` is not a term. A Submit still unresolved when SIGTERM arrives gets a dropped call (`UNAVAILABLE` or a stream close); whether its Command landed is decided by the log, and the outcome is ambiguous across the restart: the idempotency window is per process (`AW-SRV-031`, out of scope), so a retry is a new Command and the client must check the Character's state before repeating it |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping.expected_back_seconds` |
 | `deploy.image_tag` | `ANDARA_DEPLOY_IMAGE_TAG` | `dev` | set by the chart from `image.tag`, digest stripped; names the `deploy:` tag |
 | `deploy.control_socket` | `ANDARA_DEPLOY_CONTROL_SOCKET` | `/run/andara/control.sock` | the Lifecycle service; the chart mounts `emptyDir` there |
