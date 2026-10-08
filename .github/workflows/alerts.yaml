@@ -1,0 +1,86 @@
+# Alert rule delivery (AW-INF-009): files/alerts.yaml is evaluated by the Grafana Cloud ruler,
+# the one place the cluster's series are. A pull request shows what would change; a merge to
+# main delivers it. Its own workflow, not the kind job (100 minutes) the story's sketch names:
+# the paths filter below is the whole trigger, and a rule that waits on an unrelated cluster
+# test is a page that arrives late.
+#
+# Secrets: MIMIR_ADDRESS, MIMIR_TENANT_ID, MIMIR_API_KEY, repository secrets
+# (docs/runbooks/alert-routing.md creates them). A fork's pull request has none, and says so
+# instead of failing.
+
+name: alerts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "scripts/alerts_sync.py"
+      - ".github/workflows/alerts.yaml"
+  pull_request:
+    paths:
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "scripts/alerts_sync.py"
+      - ".github/workflows/alerts.yaml"
+
+# Two syncs of one file never interleave; a newer push to main waits for the older one.
+concurrency:
+  group: alerts-ruler
+  cancel-in-progress: false
+
+env:
+  MIMIR_ADDRESS: ${{ secrets.MIMIR_ADDRESS }}
+  MIMIR_TENANT_ID: ${{ secrets.MIMIR_TENANT_ID }}
+  MIMIR_API_KEY: ${{ secrets.MIMIR_API_KEY }}
+
+jobs:
+  diff:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: bootstrap
+        run: make bootstrap
+      # Drift is expected on a pull request that edits a rule, so it is shown, not failed. An
+      # error (bad credentials, an unreachable ruler) fails the job.
+      - name: alerts-diff
+        run: |
+          if [ -z "$MIMIR_API_KEY" ]; then
+            echo "::notice::MIMIR_* secrets are not available to this run (a fork?); alerts-diff skipped"
+            exit 0
+          fi
+          rc=0
+          make alerts-diff > diff.txt 2>&1 || rc=$?
+          cat diff.txt
+          { echo '### alerts-diff'; echo '```'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ] && ! grep -q "differs from files/alerts.yaml" diff.txt; then
+            echo "::error::alerts-diff failed for a reason other than drift"
+            exit 1
+          fi
+
+  sync:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: bootstrap
+        run: make bootstrap
+      - name: alerts-sync
+        run: |
+          [ -n "$MIMIR_API_KEY" ] || { echo "::error::MIMIR_* repository secrets are unset; docs/runbooks/alert-routing.md"; exit 1; }
+          make alerts-sync | tee sync.txt
+          { echo '### alerts-sync'; echo '```'; cat sync.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: a second sync changes nothing
+        run: make alerts-sync | grep -q "wrote 0 created, 0 updated, 0 deleted"

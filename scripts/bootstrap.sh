@@ -23,6 +23,9 @@ KUBECONFORM_VERSION="v0.8.0"
 # The compose Prometheus's version (deploy/compose/docker-compose.yaml), so the rules are
 # checked by the parser that loads them. A release tarball, not a Go module — see below.
 PROMETHEUS_VERSION="3.1.0"
+# mimirtool syncs files/alerts.yaml to the Grafana Cloud ruler (AW-INF-009). Also a release
+# binary: Mimir's tags aren't Go module versions, so `go install` can't pin it.
+MIMIRTOOL_VERSION="3.2.2"
 
 fail() { echo "make: bootstrap: $*" >&2; exit 1; }
 ok()   { printf '  %-22s %s\n' "$1" "$2"; }
@@ -185,6 +188,45 @@ install_promtool() {
   ok promtool "$want (installed)"
 }
 install_promtool
+
+# mimirtool backs `make alerts-sync` and `make alerts-diff` (AW-INF-009). The release binary,
+# verified against a checksum pinned here from the release's mimirtool-<os>-<arch>-sha-256.
+install_mimirtool() {
+  local want="$MIMIRTOOL_VERSION" have="" os arch sum
+  [[ -x "$BIN/mimirtool" ]] && have="$("$BIN/mimirtool" version 2>&1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)"
+  if [[ "$have" == "$want" ]]; then
+    ok mimirtool "$have (pinned)"
+    return 0
+  fi
+  os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+  case "$(uname -m)" in
+    x86_64|amd64) arch=amd64 ;;
+    aarch64|arm64) arch=arm64 ;;
+    *) fail "no pinned mimirtool for $(uname -m)" ;;
+  esac
+  case "$os-$arch" in
+    linux-amd64)  sum=1d70a24d08660b7b2e7432228006919352e352d840ba2f15ab188a34b16c4de1 ;;
+    linux-arm64)  sum=2ef14e261955989a69ca1df15b47646d4da1e3c5c53666cb87b6c6f685321087 ;;
+    darwin-amd64) sum=e3537b56d65c621e66d844a6aa9c1fc5c744b91c6791f3f2ca1ecb64b378e345 ;;
+    darwin-arm64) sum=84b4fd631e44b72659eb25036fdf6ce54a85e75b1de433a2b3aad557d0278ec8 ;;
+    *) fail "no pinned mimirtool for $os-$arch" ;;
+  esac
+  local tmp
+  tmp="$(mktemp -d)"
+  echo "  installing mimirtool $want ..."
+  curl -fsSL -o "$tmp/mimirtool" \
+    "https://github.com/grafana/mimir/releases/download/mimir-$want/mimirtool-$os-$arch" \
+    || { rm -rf "$tmp"; fail "could not download mimirtool $want; check network access to github.com"; }
+  if command -v sha256sum >/dev/null 2>&1; then
+    echo "$sum  $tmp/mimirtool" | sha256sum -c --quiet - >/dev/null
+  else
+    echo "$sum  $tmp/mimirtool" | shasum -a 256 -c --quiet - >/dev/null
+  fi || { rm -rf "$tmp"; fail "mimirtool $want does not match its pinned checksum"; }
+  install -m 0755 "$tmp/mimirtool" "$BIN/mimirtool"
+  rm -rf "$tmp"
+  ok mimirtool "$want (installed)"
+}
+install_mimirtool
 
 # kind and kubectl are needed by `make helm-install ENV=local`, not by `make check`.
 command -v kind >/dev/null 2>&1 \

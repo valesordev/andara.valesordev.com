@@ -76,13 +76,32 @@ groups:
         # linger. keep_firing_for bridges those gaps and keeps the page visible for 15 m after
         # the loop is stopped (`docker compose stop`) or its cause is fixed.
         #
-        # On the cluster this expression can't fire: the annotation scrape keeps only Ready
+        # On the cluster the first clause can't fire: the annotation scrape keeps only Ready
         # pods, and a refused recovery was never Ready, so the 0 is never scraped, linger or
-        # not. What pages there is AndaraServerUnavailable, whose runbook sends exits 8 and 6
-        # here. AW-INF-009 (planned for SPRINT-05, PM 2026-10-02) adds a second clause to this
-        # same rule, from kube-state-metrics, with the same for and keep_firing_for, so one alert
-        # name covers compose and the cluster. This rule has been observed firing on compose only.
-        expr: andara_recovery_state_hash_match == 0
+        # not. The second clause (AW-INF-009) reads kube-state-metrics instead: the server
+        # container's last termination exited 8 or 6 (AW-SRV-007's exit table) and it is not
+        # Ready. A last-terminated exit code stays on the container until its next termination,
+        # so without the `ready == 0` term a fixed server would keep the alert firing; with it
+        # the alert resolves once the container is Ready, after keep_firing_for. Any other exit
+        # code (1, 5, and 2, which is Go's exit on a panic) is AndaraServerCrashLooping's.
+        # Each clause is empty where the other applies: compose has no kube-state-metrics.
+        # The `and on (namespace)` matches per namespace, which is per server while each
+        # environment runs one server pod; if AW-INF-011 ever scales the StatefulSet, match
+        # on (namespace, pod). One alert name, one runbook, for compose and the cluster.
+        expr: |
+          andara_recovery_state_hash_match == 0
+          or
+          (
+            max by (namespace) (
+                kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 8
+              or
+                kube_pod_container_status_last_terminated_exitcode{container="server", pod=~"andara-[0-9]+"} == 6
+            )
+            and on (namespace)
+            max by (namespace) (
+              kube_pod_container_status_ready{container="server", pod=~"andara-[0-9]+"} == 0
+            )
+          )
         for: 0m
         keep_firing_for: 15m
         labels:

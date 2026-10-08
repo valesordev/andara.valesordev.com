@@ -446,6 +446,158 @@ tests:
         alertname: RecoveryStateMismatch
         exp_alerts: []
 
+  # AW-INF-009 AC-5, the cluster clause. kube-state-metrics reports the server container's last
+  # termination and its Ready; exits 8 and 6 that leave it unready page, and nothing else does.
+  - name: cluster — exit 8 on a container that is not Ready pages
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '8x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+  - name: cluster — exit 6 on a container that is not Ready pages
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '6x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+  - name: cluster — exit 1 on a container that is not Ready does not page this alert
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '1x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+  - name: cluster — exit 5 on a container that is not Ready does not page this alert
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '5x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+  - name: cluster — exit 2 on a container that is not Ready does not page this alert
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '2x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+  - name: cluster — exit 8 on a Ready container does not page
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '8x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 1m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 9m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+  # The exit code stays on the container after it recovers; Ready is what lets the alert go.
+  - name: cluster — it resolves 15 minutes after the container is Ready again
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '8x30'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x4 1x26'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 18m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+      - eval_time: 21m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+      - eval_time: 25m
+        alertname: RecoveryStateMismatch
+        exp_alerts: []
+  # Another namespace's Ready server doesn't clear dev's mismatch, and its refusal isn't dev's.
+  - name: cluster — the page names only the namespace that is refusing
+    interval: 1m
+    input_series:
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '8x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-dev", pod="andara-0", container="server"}'
+        values: '0x10'
+      - series: 'kube_pod_container_status_last_terminated_exitcode{namespace="andara-prod", pod="andara-0", container="server"}'
+        values: '8x10'
+      - series: 'kube_pod_container_status_ready{namespace="andara-prod", pod="andara-0", container="server"}'
+        values: '1x10'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: RecoveryStateMismatch
+        exp_alerts:
+          - exp_labels: {severity: page, slo: recovery, namespace: andara-dev}
+            exp_annotations:
+              summary: "A recovery did not reproduce the recorded World state — the server refused to take traffic"
+              runbook: docs/runbooks/recovery-state-mismatch.md
+
   # The gauge is never pre-seeded: a server that hasn't finished recovery, or whose HTTP came
   # up early, exposes no sample, and absence is not a mismatch.
   - name: compose — a server whose recovery hasn't set the gauge does not page
