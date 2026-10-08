@@ -53,7 +53,7 @@ position. A reader not in this table that starts at `AtStart` or `AtEnd` is a co
 
 **`client.id` is the principal's name plus an optional purpose suffix: `andara-server`,
 `andara-server-recovery`, `andara-projector-state`, `andara-projector-state-commit`.** No environment and
-no pod. The rule is `^<principal>(-[a-z]+)?$`, with `<principal>` from ADR-0011 §3's table (`andara-server`, `andara-projector-state`, `andara-projection-redis`, `andara-projection-pg`, `andara-operator`); the suffixes in use today (`-ingress`, `-tick`, `-replay`, `-commit` and so on) all fit. A client with **no** `ClientID` (the tick-loop scan and reader clients in `server/tickloop/kafka.go`) is a violation `config-assert` reports, and the constructor fixes. This replaces the first draft's `andara-<component>-<env>-<pod>`, for two reasons:
+no pod. The rule is `^<principal>(-[a-z]+)*$`, with `<principal>` from ADR-0011 §3's table (`andara-server`, `andara-projector-state`, `andara-projection-redis`, `andara-projection-pg`, `andara-operator`); the suffixes in use today (`-ingress`, `-tick`, `-replay`, `-commit` and so on) all fit. A client with **no** `ClientID` (the tick-loop scan and reader clients in `server/tickloop/kafka.go`) is a violation `config-assert` reports, and the constructor fixes. This replaces the first draft's `andara-<component>-<env>-<pod>`, for two reasons:
 
 1. ADR-0011 §3 names principals without the environment, because each environment has its own
    cluster. The environment in the ID carries nothing the broker does not already know.
@@ -84,7 +84,7 @@ A Partition `p` becomes degraded when either:
 
 1. **A produce to `p` fails after the producer's own retries, with a broker-side retriable error:**
    `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, or
-   `NOT_LEADER_OR_FOLLOWER`. A transient single error that the idempotent producer retries
+   `NOT_LEADER_OR_FOLLOWER`, or `REQUEST_TIMED_OUT` (what a Partition led by a surviving broker returns while its dead followers are still in the ISR). A transient single error that the idempotent producer retries
    successfully inside the deadline is not a failure and degrades nothing. **How the error is seen is the implementer's to solve**: franz-go retries these errors until `RecordDeliveryTimeout` and then completes the promise with `ErrRecordTimeout`, not the broker error, so the implementation must capture the broker's per-Partition error another way (a client hook, for example). If it cannot, the probe below is the only trigger and this one is dropped, with the Submit that discovers the fault answered `DEADLINE_EXCEEDED` as now. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
    is added to the three the review named: the record *was* appended, so its Submit is ambiguous in the
    same way a deadline is.) Or
@@ -94,7 +94,7 @@ A Partition `p` becomes degraded when either:
    configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** ping a broker:
    a reachable broker says nothing about a Partition.
 
-If the metadata request itself fails (no broker answers), all 64 Partitions are degraded.
+If the metadata request itself fails (no broker answers) on **two consecutive probes**, all 64 Partitions are degraded; one failed probe marks nothing, so a single transient failure inside an election cannot undo the grace above.
 
 ### What a Submit sees
 
@@ -109,6 +109,18 @@ about two seconds pass unmarked; one that does not settle is a real outage of th
 rehearsal asserts that the gauge is 0 *after* the election settles and that `WorldReadOnly` does not fire,
 not that it never reads 1 in between. An ISR below `min.insync.replicas` is marked at the first probe
 that sees it, because the broker is already refusing writes.
+
+**Timing this delivers against `AW-INF-005` AC-2** ("read-only within `ingress.produce_deadline`"): the
+Submit in flight when the fault begins is `DEADLINE_EXCEEDED` at the deadline. Later Submits for a
+Partition with no leader are `UNAVAILABLE` within two probe intervals (about 2 s) of the leader's loss.
+For a Partition led by a survivor whose dead followers remain in the ISR, metadata still shows a full ISR
+until the broker shrinks it (`replica.lag.time.max.ms`, 30 s by default) and the probe cannot see the
+fault; only the produce-error trigger can, which is why `REQUEST_TIMED_OUT` is in it. If that error is
+unobservable, such a Partition stays unmarked for up to 30 s, every Submit to it is `DEADLINE_EXCEEDED`,
+and `WorldReadOnly` still fires through the other Partitions. AC-2's rehearsal is therefore amended to:
+the World is read-only for every Partition within the deadline plus two probe intervals *or*, where the
+trigger is unobservable, within `replica.lag.time.max.ms` plus a probe interval, and the rehearsal records
+which. The SRE child owns the wording of that AC.
 
 ### Leaving the state
 
@@ -156,4 +168,5 @@ softened when it is written:
 4. The probe marks a Partition degraded with the ISR below `min.insync.replicas` while every broker
    answers a `Ping`, and clears it on recovery without a restart.
 5. All 64 series are present at boot, 0.
-6. A metadata failure degrades all 64.
+6. A metadata failure on two consecutive probes degrades all 64; one failure degrades none.
+7. The topic's `min.insync.replicas` is read at boot and refreshed every 60 s; a change is honoured within 60 s.
