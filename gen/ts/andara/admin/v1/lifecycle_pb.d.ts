@@ -73,7 +73,8 @@ export declare type PrepareStopResponse = Message<"andara.admin.v1.PrepareStopRe
 
   /**
    * "<image tag>@<tick>": the attribute prestop and the next pod's
-   * recovery both put on their spans, so a deploy is one trace. Empty unless
+   * recovery both put on their spans as a correlation attribute, so one query
+   * finds a deploy across two traces. Empty unless
    * COMPLETE.
    *
    * @generated from field: string deploy_id = 6;

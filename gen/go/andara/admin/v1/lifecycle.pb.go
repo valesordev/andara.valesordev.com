@@ -138,7 +138,8 @@ type PrepareStopResponse struct {
 	// Wall time from the call to the response.
 	DurationMs uint32 `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
 	// "<image tag>@<tick>": the attribute prestop and the next pod's
-	// recovery both put on their spans, so a deploy is one trace. Empty unless
+	// recovery both put on their spans as a correlation attribute, so one query
+	// finds a deploy across two traces. Empty unless
 	// COMPLETE.
 	DeployId string `protobuf:"bytes,6,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
 	// Wall time from the Submit refusal to the response; logged as refused_ms.
