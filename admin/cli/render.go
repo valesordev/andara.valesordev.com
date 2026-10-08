@@ -30,7 +30,7 @@ func renderEvent(env *gamev1.EventEnvelope) []string {
 	case *gamev1.EventEnvelope_CharacterArrived:
 		a := p.CharacterArrived
 		if a.GetFromDirection() == "" {
-			return []string{a.GetCharacterName() + " arrives."}
+			return []string{a.GetCharacterName() + " has arrived."}
 		}
 		return []string{fmt.Sprintf("%s arrives from the %s.", a.GetCharacterName(), a.GetFromDirection())}
 	case *gamev1.EventEnvelope_CharacterLeft:

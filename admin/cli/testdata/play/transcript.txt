@@ -19,7 +19,7 @@ Mara leaves north.
 Mara arrives from the south.
 
 # CharacterArrived event_id=5 tick=13 client_ref=""
-Tobin arrives.
+Tobin has arrived.
 
 # CharacterLeft event_id=6 tick=13 client_ref=""
 Tobin leaves.
