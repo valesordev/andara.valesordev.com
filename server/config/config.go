@@ -96,6 +96,11 @@ type Config struct {
 	CharacterMaxPerAccount int
 	CharacterSpawnRoom     string
 	CharacterNamePattern   string
+	// character.delete_retention is how long a deleted Character's body stays
+	// dormant before the Gateway's sweep produces its PurgeCharacter, and
+	// character.purge_sweep_interval how often the sweep looks (AW-SRV-032).
+	CharacterDeleteRetention    time.Duration
+	CharacterPurgeSweepInterval time.Duration
 
 	// The tick loop (AW-SRV-002, ADR-0008). SimSource is kafka or memory;
 	// memory ticks a World with no input and exists for development.
@@ -235,6 +240,9 @@ const (
 	DefaultEgressAssumedEventRate         = 5
 
 	DefaultCharacterMaxPerAccount = 5
+	// DefaultCharacterDeleteRetention is 30 days (AW-SRV-032).
+	DefaultCharacterDeleteRetention    = 720 * time.Hour
+	DefaultCharacterPurgeSweepInterval = 10 * time.Minute
 	// DefaultCharacterSpawnRoom is the dev fixture's Room (Brian,
 	// 2026-09-21); real content sets its own.
 	DefaultCharacterSpawnRoom   = "town/plaza"
@@ -345,9 +353,11 @@ func defaults() Config {
 		RecoveryRTOTarget:              DefaultRecoveryRTOTarget,
 		EgressAssumedEventRate:         DefaultEgressAssumedEventRate,
 
-		CharacterMaxPerAccount: DefaultCharacterMaxPerAccount,
-		CharacterSpawnRoom:     DefaultCharacterSpawnRoom,
-		CharacterNamePattern:   DefaultCharacterNamePattern,
+		CharacterMaxPerAccount:      DefaultCharacterMaxPerAccount,
+		CharacterDeleteRetention:    DefaultCharacterDeleteRetention,
+		CharacterPurgeSweepInterval: DefaultCharacterPurgeSweepInterval,
+		CharacterSpawnRoom:          DefaultCharacterSpawnRoom,
+		CharacterNamePattern:        DefaultCharacterNamePattern,
 
 		SimSource:                DefaultSimSource,
 		SimTickRate:              DefaultSimTickRate,
@@ -511,6 +521,8 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.DurationVar(&c.SessionLinkdeadDetect, "session-linkdead-detect", c.SessionLinkdeadDetect, "keepalive miss before a silent stream is marked linkdead (ANDARA_LINKDEAD_DETECT)")
 	fs.DurationVar(&c.RecoveryRTOTarget, "recovery-rto-target", c.RecoveryRTOTarget, "the recovery time objective, for the linkdead_grace invariant only (ANDARA_RECOVERY_RTO_TARGET)")
 	fs.IntVar(&c.EgressAssumedEventRate, "egress-assumed-event-rate", c.EgressAssumedEventRate, "Events/s per Session the resume window is sized for (ANDARA_EGRESS_ASSUMED_EVENT_RATE)")
+	fs.DurationVar(&c.CharacterDeleteRetention, "character-delete-retention", c.CharacterDeleteRetention, "how long a deleted Character's body stays before it is purged (ANDARA_CHARACTER_DELETE_RETENTION)")
+	fs.DurationVar(&c.CharacterPurgeSweepInterval, "character-purge-sweep-interval", c.CharacterPurgeSweepInterval, "how often the Gateway looks for deleted Characters whose retention has expired (ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL)")
 	fs.IntVar(&c.CharacterMaxPerAccount, "character-max-per-account", c.CharacterMaxPerAccount, "Characters an Account may hold (ANDARA_CHARACTER_MAX_PER_ACCOUNT)")
 	fs.StringVar(&c.CharacterSpawnRoom, "character-spawn-room", c.CharacterSpawnRoom, "zone_id/room_id a new Character spawns in; must resolve against the loaded content (ANDARA_CHARACTER_SPAWN_ROOM)")
 	fs.StringVar(&c.CharacterNamePattern, "character-name-pattern", c.CharacterNamePattern, "RE2 pattern a Character name must match (ANDARA_CHARACTER_NAME_PATTERN)")
@@ -845,6 +857,9 @@ func (c Config) validateAuth() error {
 	if c.CharacterMaxPerAccount < 1 {
 		return fmt.Errorf("character.max_per_account must be positive, got %d", c.CharacterMaxPerAccount)
 	}
+	if c.CharacterDeleteRetention <= 0 || c.CharacterPurgeSweepInterval <= 0 {
+		return fmt.Errorf("character.delete_retention and character.purge_sweep_interval must be positive, got %s and %s", c.CharacterDeleteRetention, c.CharacterPurgeSweepInterval)
+	}
 	if _, _, err := c.SpawnRoom(); err != nil {
 		return err
 	}
@@ -997,9 +1012,11 @@ type fileConfig struct {
 		MismatchLinger  *string `yaml:"mismatch_linger"`
 	} `yaml:"recovery"`
 	Character *struct {
-		MaxPerAccount *int    `yaml:"max_per_account"`
-		SpawnRoom     *string `yaml:"spawn_room"`
-		NamePattern   *string `yaml:"name_pattern"`
+		MaxPerAccount      *int    `yaml:"max_per_account"`
+		SpawnRoom          *string `yaml:"spawn_room"`
+		NamePattern        *string `yaml:"name_pattern"`
+		DeleteRetention    *string `yaml:"delete_retention"`
+		PurgeSweepInterval *string `yaml:"purge_sweep_interval"`
 	} `yaml:"character"`
 	Sim *struct {
 		Source               *string `yaml:"source"`
@@ -1273,6 +1290,21 @@ func applyFile(c *Config, path string) error {
 		}
 		if ch.NamePattern != nil {
 			c.CharacterNamePattern = *ch.NamePattern
+		}
+		for _, d := range []struct {
+			key string
+			v   *string
+			dst *time.Duration
+		}{
+			{"character.delete_retention", ch.DeleteRetention, &c.CharacterDeleteRetention},
+			{"character.purge_sweep_interval", ch.PurgeSweepInterval, &c.CharacterPurgeSweepInterval},
+		} {
+			if d.v == nil {
+				continue
+			}
+			if err := parseDuration(d.key, *d.v, d.dst); err != nil {
+				return fmt.Errorf("config file %s: %w", path, err)
+			}
 		}
 	}
 	if sm := fc.Sim; sm != nil {
@@ -1568,6 +1600,8 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_AUTH_REFRESH_TTL", &c.AuthRefreshTTL},
 		{"ANDARA_AUTH_INVITE_TTL", &c.AuthInviteTTL},
 		{"ANDARA_AUTH_RECHECK_INTERVAL", &c.AuthRecheckInterval},
+		{"ANDARA_CHARACTER_DELETE_RETENTION", &c.CharacterDeleteRetention},
+		{"ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL", &c.CharacterPurgeSweepInterval},
 		{"ANDARA_LINKDEAD_MAX", &c.SessionLinkdeadMax},
 		{"ANDARA_LINKDEAD_GRACE", &c.SessionLinkdeadGrace},
 		{"ANDARA_LINKDEAD_COMBAT_EXTENSION", &c.SessionLinkdeadCombatExtension},

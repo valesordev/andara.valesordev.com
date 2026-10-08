@@ -63,6 +63,10 @@ type Roster interface {
 	ListCharacters(ctx context.Context, s *Session) (*gamev1.ListCharactersResponse, error)
 	CreateCharacter(ctx context.Context, s *Session, name string) (*gamev1.CreateCharacterResponse, error)
 	SelectCharacter(ctx context.Context, s *Session, characterID string) (*gamev1.SelectCharacterResponse, error)
+	// DeleteCharacter soft-deletes one of the Account's Characters
+	// (AW-SRV-032). A Session that drives it, or any Session of the Account
+	// that does, is told character_live.
+	DeleteCharacter(ctx context.Context, s *Session, characterID string) (*gamev1.DeleteCharacterResponse, error)
 	ReleaseSession(s *Session, end SessionEnd) <-chan struct{}
 }
 
@@ -107,6 +111,11 @@ func (UnimplementedRoster) CreateCharacter(context.Context, *Session, string) (*
 
 // SelectCharacter returns UNIMPLEMENTED.
 func (UnimplementedRoster) SelectCharacter(context.Context, *Session, string) (*gamev1.SelectCharacterResponse, error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errRosterPending)
+}
+
+// DeleteCharacter returns UNIMPLEMENTED.
+func (UnimplementedRoster) DeleteCharacter(context.Context, *Session, string) (*gamev1.DeleteCharacterResponse, error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errRosterPending)
 }
 

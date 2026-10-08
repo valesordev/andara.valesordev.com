@@ -271,6 +271,13 @@ func run(args []string, env config.EnvLookup, stdout, stderr io.Writer) (exit in
 		}
 	}()
 
+	// The retention sweep (AW-SRV-032): purges for deleted Characters whose
+	// retention has expired, and name reservations with no Character behind
+	// them. Started once the loop consumes, so what it produces is applied.
+	sweepCtx, stopSweep := context.WithCancel(ctx)
+	defer stopSweep()
+	go rt.Roster.RunSweep(sweepCtx)
+
 	gwErr := make(chan error, 1)
 	go func() { gwErr <- gw.Wait() }()
 

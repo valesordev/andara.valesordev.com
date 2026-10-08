@@ -29,6 +29,8 @@ const (
 	EvCharacterLinkdead    EventType = "character_linkdead"
 	EvCharacterReconnected EventType = "character_reconnected"
 	EvCharacterDespawned   EventType = "character_despawned"
+	// AW-SRV-032: a deleted Character's body was removed from Zone state.
+	EvCharacterPurged EventType = "character_purged"
 )
 
 // Scope answers "who may perceive this" (AW-SRV-004). It is computed inside
@@ -185,6 +187,8 @@ func typeOf(env *gamev1.EventEnvelope) EventType {
 		return EvCharacterReconnected
 	case *gamev1.EventEnvelope_CharacterDespawned:
 		return EvCharacterDespawned
+	case *gamev1.EventEnvelope_CharacterPurged:
+		return EvCharacterPurged
 	}
 	return ""
 }
@@ -197,5 +201,5 @@ func TypeOf(env *gamev1.EventEnvelope) EventType { return typeOf(env) }
 // EventTypes is every EventType the simulation emits.
 func EventTypes() []EventType {
 	return []EventType{EvRoomDescribed, EvCharacterArrived, EvCharacterLeft, EvCommandRejected, EvZoneFaulted, EvSubscriberDropped, EvSimulationStopped, EvEntityRelocated,
-		EvCharacterLinkdead, EvCharacterReconnected, EvCharacterDespawned}
+		EvCharacterLinkdead, EvCharacterReconnected, EvCharacterDespawned, EvCharacterPurged}
 }

@@ -280,6 +280,10 @@ func (rt *Runtime) onTick() func(sim.StepResult, time.Duration) {
 			// (AW-SRV-015). Metrics and log lines are the loop's.
 			rt.Roster.ObserveLinkdead(res.Tick, res.Linkdead)
 		}
+		if len(res.Purges) > 0 && rt.Roster != nil {
+			// A deleted Character's purge applied (AW-SRV-032).
+			rt.Roster.ObservePurges(res.Tick, res.Purges)
+		}
 		if res.Completed.CommandsApplied > 0 || len(res.Linkdead) > 0 {
 			rt.observeCharacters(rt.Engine)
 		}

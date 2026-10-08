@@ -747,6 +747,19 @@ Session unbound it. A Character created and never bound has no body at all: it i
 until its first bind spawns it at `character.spawn_room`. A dormant body keeps its last position so "where you were" survives restart and replay
 (`AW-SRV-014`). A dormant body is purged after the deletion retention window (`AW-SRV-032`).
 
+**Deleted Character** — A Character a player deleted (`AW-SRV-032`): its roster entry is `DELETED` with
+`deleted_unix`, its body stays dormant for `character.delete_retention`, and it still counts against the
+cap of five until purged. It cannot be selected. Its name stays reserved forever, and its roster entry
+is never removed (ADR-0006).
+
+**Purge** — The removal of a deleted Character's body from Zone state, once `character.delete_retention`
+has passed (`AW-SRV-032`). The Gateway's sweep produces `PurgeCharacter`; the sim applies it in log order,
+so a replay purges on the same Tick. A purge frees the Character's slot on the roster and nothing else:
+the entry stays `DELETED` and the name stays reserved.
+
+**Switching bodies** — Selecting another Character on a Session that already drives one: the first is
+unbound (`CharacterDespawned{reason: "switch"}` to its Room), the second bound (`AW-SRV-032`).
+
 **Roster** — An Account's Characters, up to five, one live at a time (ADR-0006). Identity — name,
 status — is Account state; the body is World state. `andara-cli character` lists and creates;
 `play --character` chooses (`AW-SRV-014`, `AW-CLI-007`).

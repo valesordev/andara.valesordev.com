@@ -107,7 +107,10 @@ type StepResult struct {
 	// Linkdead is every step of a body's linkdead lifecycle this tick took
 	// (AW-SRV-015), in the order it took them, for the loop's metrics and
 	// log lines.
-	Linkdead  []LinkdeadChange
+	Linkdead []LinkdeadChange
+	// Purges is every PurgeCharacter this tick applied (AW-SRV-032), in order,
+	// for the roster's metrics and log lines.
+	Purges    []PurgeChange
 	Completed TickCompleted
 }
 
@@ -135,6 +138,8 @@ func KindOf(cmd *logv1.LoggedCommand) CommandKind {
 		return KindMarkLinkdead
 	case *logv1.LoggedCommand_HandoffAck:
 		return KindHandoffAck
+	case *logv1.LoggedCommand_PurgeCharacter:
+		return KindPurgeCharacter
 	}
 	return ""
 }

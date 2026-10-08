@@ -53,6 +53,10 @@ func (r *recordingRoster) SelectCharacter(_ context.Context, s *Session, id stri
 	return &gamev1.SelectCharacterResponse{Partition: 3, AcceptedOffset: 7}, nil
 }
 
+func (r *recordingRoster) DeleteCharacter(_ context.Context, _ *Session, id string) (*gamev1.DeleteCharacterResponse, error) {
+	return &gamev1.DeleteCharacterResponse{Character: &gamev1.CharacterSummary{CharacterId: id}}, nil
+}
+
 func (r *recordingRoster) ReleaseSession(s *Session, end SessionEnd) <-chan struct{} {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -137,6 +141,13 @@ func TestRoster_SeamCarriesTheRPCs(t *testing.T) {
 	}
 	if resp.Msg.GetPartition() != 3 || resp.Msg.GetAcceptedOffset() != 7 {
 		t.Fatalf("SelectCharacter = %v", resp.Msg)
+	}
+	del, err := client.DeleteCharacter(ctx, connect.NewRequest(&gamev1.DeleteCharacterRequest{SessionId: sess.SessionId, CharacterId: "ch-2"}))
+	if err != nil || del.Msg.GetCharacter().GetCharacterId() != "ch-2" {
+		t.Fatalf("DeleteCharacter = %v, %v", del, err)
+	}
+	if _, err := client.DeleteCharacter(ctx, connect.NewRequest(&gamev1.DeleteCharacterRequest{SessionId: "nope", CharacterId: "ch-2"})); connect.CodeOf(err) != connect.CodeUnauthenticated {
+		t.Fatalf("DeleteCharacter on an unknown Session = %v, want UNAUTHENTICATED", err)
 	}
 	rr.mu.Lock()
 	defer rr.mu.Unlock()

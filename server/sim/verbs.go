@@ -96,6 +96,7 @@ func Handlers() map[CommandKind]Apply {
 		KindBindCharacter:   applyBindCharacter,
 		KindUnbindCharacter: applyUnbindCharacter,
 		KindMarkLinkdead:    applyMarkLinkdead,
+		KindPurgeCharacter:  applyPurgeCharacter,
 	}
 }
 

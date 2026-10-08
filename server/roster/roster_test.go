@@ -87,7 +87,27 @@ func (f *fakeLog) records() []*logv1.LoggedCommand {
 
 func (f *fakeLog) failWith(err error) { f.fail.Store(&err) }
 
+// fixtureClock is the Account store's clock, so a test can run the retention
+// window without waiting for it.
+type fixtureClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *fixtureClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *fixtureClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
 type fixture struct {
+	clock    *fixtureClock
 	t        *testing.T
 	store    *auth.Store
 	bindings *ingress.Bindings
@@ -104,7 +124,9 @@ func newFixture(t *testing.T, opts ...func(*roster.Options)) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
+	clock := &fixtureClock{t: time.Now()}
 	store, err := auth.Open(context.Background(), auth.Options{
+		Now:      clock.Now,
 		Accounts: recordlog.NewMemory(), Audit: recordlog.NewMemory(), Keys: kr,
 		Argon2:     auth.Argon2Params{MemoryKiB: 64, Time: 1, Threads: 1},
 		SessionTTL: time.Hour, RefreshTTL: time.Hour, InviteTTL: time.Hour,
@@ -117,7 +139,7 @@ func newFixture(t *testing.T, opts ...func(*roster.Options)) *fixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := &fixture{t: t, store: store, bindings: ingress.NewBindings(time.Second, nil, nil), log: &fakeLog{}, reg: prometheus.NewRegistry(), account: acct}
+	f := &fixture{t: t, clock: clock, store: store, bindings: ingress.NewBindings(time.Second, nil, nil), log: &fakeLog{}, reg: prometheus.NewRegistry(), account: acct}
 	f.bindings.OnChange = func(string) { f.rebinds.Add(1) }
 	ro := roster.Options{
 		Accounts: store, Bindings: f.bindings, Log: f.log,
@@ -594,6 +616,10 @@ func (captureRoster) CreateCharacter(context.Context, *gateway.Session, string) 
 
 func (captureRoster) SelectCharacter(context.Context, *gateway.Session, string) (*gamev1.SelectCharacterResponse, error) {
 	return &gamev1.SelectCharacterResponse{}, nil
+}
+
+func (captureRoster) DeleteCharacter(context.Context, *gateway.Session, string) (*gamev1.DeleteCharacterResponse, error) {
+	return &gamev1.DeleteCharacterResponse{}, nil
 }
 
 func (c captureRoster) ReleaseSession(s *gateway.Session, _ gateway.SessionEnd) <-chan struct{} {

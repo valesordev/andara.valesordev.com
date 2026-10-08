@@ -35,16 +35,18 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 	spawn := sim.RoomRef{Zone: sim.ZoneID(zone), Room: sim.RoomID(room)}
 	grace, extension, max := cfg.LinkdeadTicks()
 	r, err := roster.New(roster.Options{
-		Linkdead:        roster.LinkdeadTicks{Grace: grace, Extension: extension, Max: max},
-		TickRate:        cfg.SimTickRate,
-		Accounts:        rt.Accounts,
-		Bindings:        rt.Bindings,
-		Log:             rt.commandLog,
-		SpawnRoom:       spawn,
-		ProduceDeadline: cfg.IngressProduceDeadline,
-		Metrics:         roster.NewMetrics(rt.Tel.Reg),
-		Logger:          rt.Tel.Log,
-		Tracer:          rt.Tel.Tracer,
+		Linkdead:           roster.LinkdeadTicks{Grace: grace, Extension: extension, Max: max},
+		TickRate:           cfg.SimTickRate,
+		DeleteRetention:    cfg.CharacterDeleteRetention,
+		PurgeSweepInterval: cfg.CharacterPurgeSweepInterval,
+		Accounts:           rt.Accounts,
+		Bindings:           rt.Bindings,
+		Log:                rt.commandLog,
+		SpawnRoom:          spawn,
+		ProduceDeadline:    cfg.IngressProduceDeadline,
+		Metrics:            roster.NewMetrics(rt.Tel.Reg),
+		Logger:             rt.Tel.Log,
+		Tracer:             rt.Tel.Tracer,
 	})
 	if err != nil {
 		return err
@@ -58,6 +60,8 @@ func (rt *Runtime) StartRoster(ctx context.Context) error {
 		slog.String("spawn_room", cfg.CharacterSpawnRoom),
 		slog.Int("max_per_account", cfg.CharacterMaxPerAccount),
 		slog.String("name_pattern", cfg.CharacterNamePattern),
+		slog.String("delete_retention", cfg.CharacterDeleteRetention.String()),
+		slog.String("purge_sweep_interval", cfg.CharacterPurgeSweepInterval.String()),
 		slog.String("linkdead_grace", cfg.SessionLinkdeadGrace.String()),
 		slog.Uint64("linkdead_grace_ticks", grace),
 		slog.String("linkdead_max", cfg.SessionLinkdeadMax.String()),

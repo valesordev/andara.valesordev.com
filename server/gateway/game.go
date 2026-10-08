@@ -225,6 +225,20 @@ func (g *gameService) SelectCharacter(ctx context.Context, req *connect.Request[
 	return connect.NewResponse(resp), nil
 }
 
+func (g *gameService) DeleteCharacter(ctx context.Context, req *connect.Request[gamev1.DeleteCharacterRequest]) (*connect.Response[gamev1.DeleteCharacterResponse], error) {
+	sess, err := g.resolve(req.Msg.GetSessionId())
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := joinContexts(ctx, sess.Context(), g.s.drainCtx)
+	defer cancel()
+	resp, err := g.s.opts.Roster.DeleteCharacter(auth.WithSessionID(ctx, sess.ID), sess, req.Msg.GetCharacterId())
+	if err != nil {
+		return nil, g.s.mapSeamError(ctx, sess, err)
+	}
+	return connect.NewResponse(resp), nil
+}
+
 // mapSeamError names why a seam call ended when the cause was the gateway
 // rather than the seam: drain and Session teardown are typed here so that
 // Ingress and Egress implementations do not each invent a code for them.
