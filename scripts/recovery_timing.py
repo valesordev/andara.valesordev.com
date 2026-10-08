@@ -14,6 +14,11 @@
       the branch into OUT_DIR, with `gh`. Exits 0 and prints "no previous run" when there is none,
       since the first run has nothing to compare with.
 
+  recovery_timing.py budget CURRENT VALUES... [--factor 3]
+      AW-INF-011 AC-7: the startup budget (`probes.startup.periodSeconds × failureThreshold`, the
+      later VALUES files overriding the earlier) must be at least FACTOR × CURRENT's `total`.
+      Prints the comparison; exits 1 and says what failureThreshold would satisfy it when not.
+
 The bounds themselves (`total` under 90 s, a tail of at least 600 ticks) are the test's own
 assertions. It writes the JSON before it asserts them, so a run that breaks one still has its
 numbers, and `previous` only reads successful runs.
@@ -120,6 +125,38 @@ def summary(args):
     return 0
 
 
+def startup_budget(values_files):
+    """periodSeconds × failureThreshold of probes.startup, later files overriding earlier ones."""
+    import yaml
+    startup = {}
+    for f in values_files:
+        doc = yaml.safe_load(Path(f).read_text()) or {}
+        startup.update(((doc.get("probes") or {}).get("startup")) or {})
+    try:
+        return startup["periodSeconds"] * startup["failureThreshold"]
+    except KeyError as e:
+        raise ValueError("%s: probes.startup has no %s" % (", ".join(values_files), e.args[0]))
+
+
+def budget(args):
+    try:
+        cur = load(args.current)
+        have = startup_budget(args.values)
+    except (ValueError, OSError) as e:
+        print("recovery_timing: %s" % e, file=sys.stderr)
+        return 1
+    total = cur["phases_seconds"]["total"]
+    need = args.factor * total
+    print("startup budget %d s; measured recovery %.1f s; %g x = %.1f s; headroom %.1f x"
+          % (have, total, args.factor, need, have / total if total else float("inf")))
+    if have >= need:
+        return 0
+    print("recovery_timing: the startup budget is under %g x the measured recovery (%.1f s needed): "
+          "raise probes.startup.failureThreshold, or say by how much the values change"
+          % (args.factor, need), file=sys.stderr)
+    return 1
+
+
 def gh(*argv):
     return subprocess.run(["gh", *argv], capture_output=True, text=True)
 
@@ -151,6 +188,11 @@ def main(argv=None):
     s.add_argument("current")
     s.add_argument("previous", nargs="?")
     s.set_defaults(fn=summary)
+    b = sub.add_parser("budget")
+    b.add_argument("current")
+    b.add_argument("values", nargs="+")
+    b.add_argument("--factor", type=float, default=3)
+    b.set_defaults(fn=budget)
     p = sub.add_parser("previous")
     p.add_argument("out_dir")
     p.add_argument("--workflow", default="recovery-timing.yaml")

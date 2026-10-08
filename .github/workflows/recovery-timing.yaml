@@ -23,6 +23,8 @@ on:
       - "go.mod"
       - "go.sum"
       - "scripts/recovery_timing.py"
+      - "deploy/helm/andara/values.yaml"
+      - "deploy/helm/values/**"
       - ".github/workflows/recovery-timing.yaml"
   workflow_dispatch:
   schedule:
@@ -82,6 +84,11 @@ jobs:
       - name: compare replay with the previous run
         if: always() && hashFiles('.local/recovery-timing.json') != ''
         run: make recovery-timing-summary
+
+      # AW-INF-011 AC-7: the chart's startup budget is at least 3x the number just measured.
+      - name: startup budget covers 3x the measured recovery
+        if: always() && hashFiles('.local/recovery-timing.json') != ''
+        run: make startup-budget-check
 
       - name: down
         if: always()
