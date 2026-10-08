@@ -60,7 +60,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
-        objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
+        objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check
 
@@ -407,6 +407,14 @@ projector-start:
 ## projector-rebuild: stop the state projector, run `andara-projector state --rebuild` as a one-shot Job until it catches up, then start it — ENV=<dev|prod> [PROJECTOR_REBUILD_TIMEOUT=30m] (AW-INF-025)
 projector-rebuild:
 	@$(PY) $(SCRIPTS)/projector.py rebuild "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## server-stop: suspend Argo CD's automated sync, scale the server to 0 and wait for the pod to go — ENV=<dev|prod> [SERVER_STOP_TIMEOUT=120s] (AW-INF-037)
+server-stop:
+	@$(PY) $(SCRIPTS)/server_ctl.py stop "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## server-start: scale the server to the chart's replica count, restore the sync policy server-stop suspended, wait for Ready — ENV=<dev|prod> [SERVER_START_TIMEOUT=300s] (AW-INF-037)
+server-start:
+	@$(PY) $(SCRIPTS)/server_ctl.py start "$(if $(filter command line,$(origin ENV)),$(ENV))"
 
 ## world-reset: recreate ENV's World log and Account store, keeping content — destroys every Character and Account — ENV=<env> CONFIRM=andara-<env> (AW-INF-021)
 world-reset:

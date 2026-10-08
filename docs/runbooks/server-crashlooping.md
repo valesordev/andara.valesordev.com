@@ -27,16 +27,21 @@ recovery restores the newest complete snapshot round and replays the log tail (`
 the loop itself is load.
 
 ```
-kubectl -n andara-<env> scale statefulset andara --replicas=0
+make server-stop ENV=<dev|prod>
 ```
 
-Scaling to zero retains the snapshot claim (`whenScaled: Retain`). The World is now cleanly down
-instead of flapping; `AndaraServerUnavailable` will fire, which is correct.
+It scales the StatefulSet to zero and waits for `andara-0` to go. Scaling to zero retains the
+snapshot claim (`whenScaled: Retain`). The World is now cleanly down instead of flapping;
+`AndaraServerUnavailable` will fire, which is correct.
 
-**On `dev` this doesn't stick.** Argo CD's self-heal puts the StatefulSet back to one replica within
-seconds. Suspend the `andara-dev` Application's automated sync first, and restore it when you
-scale back. No `make` target does that yet: `make server-stop`/`server-start` is #362, a §9
-defect. Until it ships, leave the loop running on `dev` and diagnose from `--previous` logs.
+On `dev`, Argo CD's self-heal would put the StatefulSet back to one replica within seconds, so
+`server-stop` first suspends the `andara-dev` Application's automated sync and records the policy
+on the Application (annotation `andara.valesordev.com/server-stop-sync-policy`). Its last line says
+the sync is suspended. A second `server-stop` changes nothing and keeps the first record. A manual
+Argo CD sync while stopped starts the server again, with the automated policy still suspended;
+`make server-start` is what restores it. Don't re-run `make argocd-install` while stopped: it
+re-applies the automated sync and the server restarts. If `server-stop` exits 1 after it printed
+the suspended line, the sync is still suspended; `server-start` restores it.
 
 Then, by exit code. A refused recovery has a code of its own (`AW-SRV-007`, `AW-SRV-043`): `3`, `4`, `6`,
 `7` and `8` below. Every other boot failure exits `1`.
@@ -67,9 +72,15 @@ keep the World scaled to zero and escalate to implementation with the `error` li
 Scale back to one replica once the cause is addressed:
 
 ```
-kubectl -n andara-<env> scale statefulset andara --replicas=1
-kubectl -n andara-<env> rollout status statefulset/andara --timeout=10m
+make server-start ENV=<dev|prod>
 ```
+
+It scales to the chart's replica count, restores the sync policy `server-stop` suspended, and waits
+for Ready (`SERVER_START_TIMEOUT`, 300 s by default; a server started and waiting for content
+counts, as in `make world-reset`). Exit 1 on the wait means the policy is already restored and
+the server is still recovering: watch `kubectl -n andara-<env> get pod andara-0`, or run
+`server-start` again with a longer `SERVER_START_TIMEOUT`. The replica count comes from the
+chart values in your checkout, so run it from `main`.
 
 ## How to diagnose
 
