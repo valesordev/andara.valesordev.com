@@ -39,7 +39,9 @@ On `dev`, Argo CD's self-heal would put the StatefulSet back to one replica with
 on the Application (annotation `andara.valesordev.com/server-stop-sync-policy`). Its last line says
 the sync is suspended. A second `server-stop` changes nothing and keeps the first record. A manual
 Argo CD sync while stopped starts the server again, with the automated policy still suspended;
-`make server-start` is what restores it.
+`make server-start` is what restores it. Don't re-run `make argocd-install` while stopped: it
+re-applies the automated sync and the server restarts. If `server-stop` exits 1 after it printed
+the suspended line, the sync is still suspended; `server-start` restores it.
 
 Then, by exit code. A refused recovery has a code of its own (`AW-SRV-007`, `AW-SRV-043`): `3`, `4`, `6`,
 `7` and `8` below. Every other boot failure exits `1`.
@@ -75,7 +77,10 @@ make server-start ENV=<dev|prod>
 
 It scales to the chart's replica count, restores the sync policy `server-stop` suspended, and waits
 for Ready (`SERVER_START_TIMEOUT`, 300 s by default; a server started and waiting for content
-counts, as in `make world-reset`).
+counts, as in `make world-reset`). Exit 1 on the wait means the policy is already restored and
+the server is still recovering: watch `kubectl -n andara-<env> get pod andara-0`, or run
+`server-start` again with a longer `SERVER_START_TIMEOUT`. The replica count comes from the
+chart values in your checkout, so run it from `main`.
 
 ## How to diagnose
 

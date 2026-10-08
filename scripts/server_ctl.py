@@ -37,8 +37,8 @@ import world_reset  # noqa: E402
 ANNOTATION = "andara.valesordev.com/server-stop-sync-policy"
 DEFAULTS = {"SERVER_STOP_TIMEOUT": "120s", "SERVER_START_TIMEOUT": "300s"}
 ENVS = ("dev", "prod")
+SUSPENDED_LINE = "server-stop: automated sync is suspended; make server-start restores it"
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-CHART_VALUES = os.path.join(REPO, "deploy", "helm", "andara", "values.yaml")
 
 Failed = world_reset.StepFailed
 
@@ -65,11 +65,13 @@ def seconds(name):
     return int(m.group(1)) * {"s": 1, "m": 60, "h": 3600, None: 1}[m.group(2)]
 
 
-def chart_replicas(env):
-    """replicaCount as the chart renders it for env: the base values, then the env's file."""
+def chart_replicas(env, values_dir=None):
+    """replicaCount as the chart renders it for env: the base values, then the env's file, from
+    this checkout (run it from main: Argo CD deploys main on dev)."""
     import yaml
     n = None
-    for path in (CHART_VALUES, os.path.join(REPO, "deploy", "helm", "values", env + ".yaml")):
+    base = values_dir or os.path.join(REPO, "deploy", "helm")
+    for path in (os.path.join(base, "andara", "values.yaml"), os.path.join(base, "values", env + ".yaml")):
         with open(path) as f:
             doc = yaml.safe_load(f) or {}
         n = doc.get("replicaCount", n)
@@ -128,7 +130,8 @@ def restore(ns):
         automated = json.loads(recorded)
     except ValueError:
         raise Failed("the annotation %s on %s isn't JSON: %r" % (ANNOTATION, ns, recorded))
-    patch(ns, "merge", {"spec": {"syncPolicy": {"automated": automated}}})
+    # add replaces a member, where a merge patch would union a hand-set block with the record.
+    patch(ns, "json", [{"op": "add", "path": "/spec/syncPolicy/automated", "value": automated}])
     patch(ns, "merge", {"metadata": {"annotations": {ANNOTATION: None}}})
     say("start", "restored automated sync on %s" % ns)
 
@@ -137,15 +140,20 @@ def stop(env, ns):
     t0 = time.time()
     bound = seconds("SERVER_STOP_TIMEOUT")
     suspended = suspend(ns)
-    world_reset.scale(ns, world_reset.SERVER, 0)
-    say("stop", "scaled %s to 0" % world_reset.SERVER)
-    kubectl(ns, "wait", "--for=delete", "pod/" + world_reset.SERVER_POD, "--timeout=%ds" % bound,
-            check=False)
-    if kubectl(ns, "get", "pod", world_reset.SERVER_POD, check=False).returncode == 0:
-        raise Failed("%s still running %ds after scaling to 0" % (world_reset.SERVER_POD, bound))
+    try:
+        world_reset.scale(ns, world_reset.SERVER, 0)
+        say("stop", "scaled %s to 0" % world_reset.SERVER)
+        kubectl(ns, "wait", "--for=delete", "pod/" + world_reset.SERVER_POD, "--timeout=%ds" % bound,
+                check=False)
+        if kubectl(ns, "get", "pod", world_reset.SERVER_POD, check=False).returncode == 0:
+            raise Failed("%s still running %ds after scaling to 0" % (world_reset.SERVER_POD, bound))
+    except Failed:
+        if suspended:
+            print(SUSPENDED_LINE, file=sys.stderr, flush=True)
+        raise
     say("stop", "pods gone (%ds)" % round(time.time() - t0))
     if suspended:
-        say("stop", "automated sync is suspended; make server-start restores it")
+        print(SUSPENDED_LINE, flush=True)
 
 
 def start(env, ns):

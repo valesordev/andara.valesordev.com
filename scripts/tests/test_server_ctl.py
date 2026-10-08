@@ -79,12 +79,14 @@ class Cluster:
     def patch(self, kind, body):
         if kind == "json":
             for op in body:
-                assert op["op"] == "remove"
                 parts = op["path"].strip("/").split("/")
                 node = self.app
                 for p in parts[:-1]:
                     node = node[p]
-                del node[parts[-1]]
+                if op["op"] == "remove":
+                    del node[parts[-1]]
+                else:
+                    node[parts[-1]] = op["value"]
             return
 
         def merge(dst, src):
@@ -224,6 +226,19 @@ class Start(unittest.TestCase):
         self.assertIn("server-start: restored automated sync on andara-dev", out)
         self.assertIn("andara-0 Ready", out)
 
+    def test_the_start_bound_reaches_the_wait(self):
+        c = self.stopped()
+        with mock.patch.dict(os.environ, {"SERVER_START_TIMEOUT": "10m"}), \
+                mock.patch.object(world_reset, "wait_up", return_value="ready") as w:
+            run(c, "start")
+        self.assertEqual(w.call_args.kwargs["deadline"], 600)
+
+    def test_a_hand_set_policy_is_replaced_not_merged(self):
+        c = self.stopped()
+        c.app["spec"]["syncPolicy"]["automated"] = {"allowEmpty": True}
+        run(c, "start")
+        self.assertEqual(c.automated, AUTOMATED)
+
     def test_it_scales_to_the_charts_replica_count(self):
         c = self.stopped()
         with mock.patch.object(server_ctl, "chart_replicas", lambda env: 3):
@@ -264,6 +279,24 @@ class ChartReplicas(unittest.TestCase):
         for env in ("dev", "prod"):
             self.assertEqual(server_ctl.chart_replicas(env), 1)
 
+    def test_each_environments_override_is_read(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "andara"))
+            os.makedirs(os.path.join(d, "values"))
+            for rel, text in (("andara/values.yaml", "replicaCount: 1\n"),
+                              ("values/dev.yaml", "replicaCount: 2\n"),
+                              ("values/prod.yaml", "replicaCount: 3\n")):
+                with open(os.path.join(d, rel), "w") as f:
+                    f.write(text)
+            self.assertEqual(server_ctl.chart_replicas("dev", d), 2)
+            self.assertEqual(server_ctl.chart_replicas("prod", d), 3)
+
+    def test_a_boolean_count_is_refused(self):
+        with mock.patch("builtins.open", mock.mock_open(read_data="replicaCount: true\n")):
+            with self.assertRaises(server_ctl.Failed):
+                server_ctl.chart_replicas("dev")
+
     def test_a_zero_count_is_refused(self):
         with mock.patch("builtins.open", mock.mock_open(read_data="replicaCount: 0\n")):
             with self.assertRaises(server_ctl.Failed):
@@ -271,6 +304,11 @@ class ChartReplicas(unittest.TestCase):
 
 
 class Durations(unittest.TestCase):
+
+    def test_a_malformed_duration_exits_2(self):
+        r = make("server-stop", "ENV=dev", "SERVER_STOP_TIMEOUT=soon")
+        self.assertEqual(r.returncode, 2, r.stderr)
+        self.assertIn("is not a duration", r.stderr)
 
     def test_defaults_and_units(self):
         with mock.patch.dict(os.environ, {}, clear=False):
