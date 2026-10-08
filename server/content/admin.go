@@ -26,6 +26,7 @@ import (
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
 	statev1 "github.com/valesordev/andara/gen/go/andara/state/v1"
 	"github.com/valesordev/andara/server/auth"
+	"github.com/valesordev/andara/server/command"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -747,6 +748,9 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 // skip approval with override and a reason. Nothing skips AC-14's refusals.
 func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersionRequest) (*adminv1.ActivateVersionResponse, error) {
 	pack, version := req.GetPackId(), req.GetVersion()
+	// The ActivateVersion server span, which the pointer record carries so
+	// the Loader's content.load links to it (AW-SRV-045).
+	activation := command.TraceParent(ctx)
 	ctx, span := a.tracer.Start(ctx, "content.activate", trace.WithAttributes(attribute.String("pack_id", pack), attribute.Int64("version", int64(version))))
 	defer span.End()
 
@@ -799,7 +803,7 @@ func (a *Admin) ActivateVersion(ctx context.Context, req *adminv1.ActivateVersio
 	}
 	span.SetAttributes(attribute.String("direction", direction))
 	pctx, pspan := a.tracer.Start(ctx, "content.write_pointer", trace.WithAttributes(attribute.String("direction", direction)))
-	previous, err = a.o.Registry.MovePointer(pctx, pack, version, c.p.AccountID)
+	previous, err = a.o.Registry.MovePointer(pctx, pack, version, c.p.AccountID, activation)
 	pspan.End()
 	if err != nil {
 		return nil, &AdminError{Code: CodeUnavailable, Err: err}

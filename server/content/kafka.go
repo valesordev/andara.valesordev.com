@@ -15,6 +15,7 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
@@ -37,6 +38,13 @@ const (
 type PointerMove struct {
 	Pack    string
 	Version uint64
+	// TraceParent is the W3C traceparent of the ActivateVersion call that
+	// made the move; empty for the boot's core activation and for a record
+	// written before the field (AW-SRV-045).
+	TraceParent string
+
+	// links are the activations a debounced load serves; Follow sets them.
+	links []trace.Link
 }
 
 // KafkaResolver reads the content store from a broker.
@@ -370,7 +378,7 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 					pack = string(rec.Key)
 				}
 				select {
-				case out <- PointerMove{Pack: pack, Version: av.GetVersion()}:
+				case out <- PointerMove{Pack: pack, Version: av.GetVersion(), TraceParent: av.GetTraceParent()}:
 				case <-ctx.Done():
 				}
 			})

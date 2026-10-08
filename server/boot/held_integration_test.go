@@ -218,7 +218,7 @@ func TestHeldNoZones_AMissingManifestIsReportedAtLoad(t *testing.T) {
 	if code := seed.LoadContent(ctx); code != ExitOK {
 		t.Fatalf("the seeding boot: exit %d\n%s", code, slogs.String())
 	}
-	if _, err := seed.registry.MovePointer(ctx, "town", 5, "acct-operator"); err != nil {
+	if _, err := seed.registry.MovePointer(ctx, "town", 5, "acct-operator", ""); err != nil {
 		t.Fatal(err)
 	}
 	rt, logs := storeRuntime(t, st.tp, st.audit, st.brokers)

@@ -291,11 +291,13 @@ func (r *Registry) writeManifest(ctx context.Context, cv *contentv1.ContentVersi
 }
 
 // MovePointer writes pack's Active Pointer and returns the version it moved
-// from, 0 when nothing was active.
-func (r *Registry) MovePointer(ctx context.Context, pack string, version uint64, by string) (previous uint64, err error) {
+// from, 0 when nothing was active. traceParent is the W3C traceparent of the
+// activation that moves it, which the Loader links its content.load to
+// (AW-SRV-045); empty for the boot's core activation.
+func (r *Registry) MovePointer(ctx context.Context, pack string, version uint64, by, traceParent string) (previous uint64, err error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	av := &contentv1.ActiveVersion{PackId: pack, Version: version, ActivatedBy: by, ActivatedAtUnixNano: r.now().UnixNano()}
+	av := &contentv1.ActiveVersion{PackId: pack, Version: version, ActivatedBy: by, ActivatedAtUnixNano: r.now().UnixNano(), TraceParent: traceParent}
 	value, err := proto.Marshal(av)
 	if err != nil {
 		return 0, err

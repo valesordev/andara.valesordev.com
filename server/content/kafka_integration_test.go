@@ -127,7 +127,14 @@ func (p *publisher) publish(pack string, version, core uint64, files map[string]
 
 func (p *publisher) activate(pack string, version uint64) {
 	p.t.Helper()
-	b, err := proto.Marshal(&contentv1.ActiveVersion{PackId: pack, Version: version})
+	p.activateTraced(pack, version, "")
+}
+
+// activateTraced is activate with the activation's traceparent on the record
+// (AW-SRV-045).
+func (p *publisher) activateTraced(pack string, version uint64, traceParent string) {
+	p.t.Helper()
+	b, err := proto.Marshal(&contentv1.ActiveVersion{PackId: pack, Version: version, TraceParent: traceParent})
 	if err != nil {
 		p.t.Fatal(err)
 	}
@@ -340,6 +347,54 @@ func TestKafkaResolver_WatchSeesAPointerMove(t *testing.T) {
 		case <-deadline:
 			t.Fatal("no pointer move observed")
 		}
+	}
+}
+
+// AW-SRV-045: the watch carries each record's trace_parent through, and a
+// record from before the field reads empty.
+func TestKafkaResolver_WatchCarriesTheTraceParent(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	topics, cl := throwawayTopics(t)
+	p := &publisher{t: t, cl: cl, topics: topics}
+	p.publish("town", 1, 0, map[string]string{"town.json": intZone("town", "square")})
+	p.activate("town", 1)
+
+	r, err := NewKafkaResolver(KafkaOptions{Brokers: brokers(t), Topics: topics})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	moves, err := r.Watch(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const traced = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01"
+	p.publish("town", 2, 0, map[string]string{"town.json": intZone("town", "square")})
+	p.publish("town", 3, 0, map[string]string{"town.json": intZone("town", "square")})
+
+	// The watch may take its position after a first write; write both
+	// records again until each has been seen (a repeat is a legal write).
+	seen := map[uint64]string{}
+	retry := time.NewTicker(time.Second)
+	defer retry.Stop()
+	write := func() {
+		p.activateTraced("town", 2, traced)
+		p.activate("town", 3)
+	}
+	write()
+	for len(seen) < 2 {
+		select {
+		case m := <-moves:
+			seen[m.Version] = m.TraceParent
+		case <-retry.C:
+			write()
+		case <-ctx.Done():
+			t.Fatalf("saw %v", seen)
+		}
+	}
+	if seen[2] != traced || seen[3] != "" {
+		t.Fatalf("trace_parents = %v, want v2 %q and v3 empty", seen, traced)
 	}
 }
 
