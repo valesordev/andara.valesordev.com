@@ -20,6 +20,7 @@ import (
 //	a/r1 --west--> b/s2        b/s2 east leads to a/r1     (reciprocal, cross-Zone)
 //	a/r1 --down--> b/s3        b/s3 up leads to b/s1       (back leads elsewhere, cross-Zone)
 //	a/r1 --south-> a/r4        a/r4 north leads to a/r1    (reciprocal)
+//	a/r1 --in----> a/r5        a/r5 north leads to a/r1, no out (an Exit to the origin, but not that Direction)
 func wayBackEngine(t *testing.T) *sim.Engine {
 	t.Helper()
 	x := func(dir, zone, room string) *contentv1.ExitDefinition {
@@ -29,10 +30,11 @@ func wayBackEngine(t *testing.T) *sim.Engine {
 		return &contentv1.RoomDefinition{Id: id, Title: id, Description: "A " + id + ".", Exits: exits}
 	}
 	a := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "a", Name: "A", FallbackRoom: "r1", Rooms: []*contentv1.RoomDefinition{
-		room("r1", x("east", "", "r2"), x("north", "", "r3"), x("up", "b", "s1"), x("west", "b", "s2"), x("down", "b", "s3"), x("south", "", "r4")),
+		room("r1", x("east", "", "r2"), x("north", "", "r3"), x("up", "b", "s1"), x("west", "b", "s2"), x("down", "b", "s3"), x("south", "", "r4"), x("in", "", "r5")),
 		room("r2"),
 		room("r3", x("south", "", "r2")),
 		room("r4", x("north", "", "r1")),
+		room("r5", x("north", "", "r1")),
 	}}
 	b := &contentv1.ZoneDefinition{FormatVersion: 1, Id: "b", Name: "B", FallbackRoom: "s1", Rooms: []*contentv1.RoomDefinition{
 		room("s1"),
@@ -76,6 +78,7 @@ func TestArrival_NamesADirectionOnlyWhenThereIsAWayBack(t *testing.T) {
 		{"reciprocal in-Zone", "south", "north"},
 		{"one-way in-Zone", "east", ""},
 		{"reverse Exit leads to a third Room", "north", ""},
+		{"an Exit to the origin, but not in that Direction", "in", ""},
 		{"reciprocal cross-Zone", "west", "east"},
 		{"one-way cross-Zone", "up", ""},
 		{"cross-Zone reverse Exit leads to a third Room", "down", ""},
