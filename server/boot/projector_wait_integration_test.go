@@ -142,7 +142,7 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 	if _, err := srv.registry.Publish(ctx, cv, 0, "acct-builder"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := srv.registry.MovePointer(ctx, "town", 1, "acct-operator"); err != nil {
+	if _, err := srv.registry.MovePointer(ctx, "town", 1, "acct-operator", ""); err != nil {
 		t.Fatal(err)
 	}
 	// The server's writes are done. From here the topics hold only what

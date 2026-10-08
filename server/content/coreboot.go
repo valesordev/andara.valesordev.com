@@ -135,7 +135,7 @@ func BootCore(ctx context.Context, o CoreBootOptions) (CoreBoot, error) {
 	move := !has || (av.GetVersion() < o.Version && av.GetActivatedBy() == ServerPrincipal)
 	if move {
 		pctx, pspan := o.Tracer.Start(ctx, "content.write_pointer", trace.WithAttributes(attribute.String("direction", DirectionForward)))
-		_, err := o.Registry.MovePointer(pctx, o.Pack, o.Version, ServerPrincipal)
+		_, err := o.Registry.MovePointer(pctx, o.Pack, o.Version, ServerPrincipal, "")
 		pspan.End()
 		if err != nil {
 			return out, err

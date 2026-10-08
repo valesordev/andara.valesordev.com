@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
 	"go.opentelemetry.io/otel/trace/noop"
 
@@ -260,7 +261,7 @@ func (l *Loader) LoadAll(ctx context.Context) ([]Rejection, error) {
 			continue
 		}
 		l.moved(pack, active[pack])
-		if r := l.load(ctx, pack, active[pack]); r != nil {
+		if r := l.load(ctx, pack, active[pack], nil); r != nil {
 			rejects = append(rejects, *r)
 			if r.Reason == ReasonStoreUnavailable {
 				l.mu.Lock()
@@ -347,7 +348,7 @@ func (l *Loader) Apply(ctx context.Context, move PointerMove) []Rejection {
 	}
 	l.moved(move.Pack, move.Version)
 	var out []Rejection
-	if r := l.load(ctx, move.Pack, move.Version); r != nil {
+	if r := l.load(ctx, move.Pack, move.Version, move.links); r != nil {
 		out = append(out, *r)
 	}
 	// AC-8: core moving is what releases packs held for core skew. Re-evaluate
@@ -377,7 +378,7 @@ func (l *Loader) releaseHeld(ctx context.Context) []Rejection {
 
 	var out []Rejection
 	for _, p := range packs {
-		if r := l.load(ctx, p, retry[p]); r != nil {
+		if r := l.load(ctx, p, retry[p], nil); r != nil {
 			out = append(out, *r)
 		}
 	}
@@ -392,7 +393,7 @@ const staleRetries = 3
 // build off-tick, stage, produce the swap, and wait for the Engine to apply or
 // refuse it. A swap refused as stale — built on a World the log had moved
 // past — is evaluated again against what is in effect now.
-func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejection {
+func (l *Loader) load(ctx context.Context, pack string, version uint64, links []trace.Link) *Rejection {
 	if version == 0 {
 		return nil // no Active Pointer for this pack; nothing to load
 	}
@@ -401,7 +402,7 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 			l.settled(pack, version)
 			return nil
 		}
-		refused, rej := l.loadOnce(ctx, pack, version)
+		refused, rej := l.loadOnce(ctx, pack, version, links)
 		if rej != nil || refused == nil {
 			return rej
 		}
@@ -417,8 +418,13 @@ func (l *Loader) load(ctx context.Context, pack string, version uint64) *Rejecti
 // loadOnce is one evaluate-stage-produce-wait. It returns the Engine's refusal
 // when there was one, a rejection when the version did not come into effect
 // for any other reason, and neither when it applied.
-func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64) (*sim.SwapRefused, *Rejection) {
-	ctx, span := l.tracer.Start(ctx, "content.load", trace.WithAttributes(
+//
+// links are the activations it serves (AW-SRV-045): one span link on
+// content.load per pointer move coalesced into it, so a trace of the
+// activation leads to the load that applied it. Every attempt of one load,
+// and every retry of it, carries the same links.
+func (l *Loader) loadOnce(ctx context.Context, pack string, version uint64, links []trace.Link) (*sim.SwapRefused, *Rejection) {
+	ctx, span := l.tracer.Start(ctx, "content.load", trace.WithLinks(links...), trace.WithAttributes(
 		attribute.String("pack", pack), attribute.Int64("version", int64(version))))
 	defer span.End()
 	traceID := ""
@@ -1225,9 +1231,16 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 	if debounce <= 0 {
 		debounce = 2 * time.Second
 	}
-	pending := map[string]uint64{}
+	// What the debounce has coalesced, per pack: the newest version, and a
+	// link for every move that led to it, not only the newest (AW-SRV-045).
+	type coalesced struct {
+		version uint64
+		links   []trace.Link
+	}
+	pending := map[string]coalesced{}
 	type retry struct {
 		version uint64
+		links   []trace.Link
 		backoff time.Duration
 		at      time.Time
 	}
@@ -1263,7 +1276,7 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 	l.startRetries = map[string]uint64{}
 	l.mu.Unlock()
 	rearm()
-	report := func(rejects []Rejection, backoff map[string]time.Duration) {
+	report := func(rejects []Rejection, backoff map[string]time.Duration, batch map[string]coalesced) {
 		for _, r := range rejects {
 			if onReject != nil {
 				onReject(r)
@@ -1275,18 +1288,19 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 				} else {
 					b = min(b*2, retryMax)
 				}
-				retries[r.Pack] = retry{version: r.Version, backoff: b, at: time.Now().Add(b)}
+				// The retry serves the same activations as the attempt it retries.
+				retries[r.Pack] = retry{version: r.Version, links: batch[r.Pack].links, backoff: b, at: time.Now().Add(b)}
 			}
 		}
 		rearm()
 	}
-	apply := func(batch map[string]uint64, backoff map[string]time.Duration) {
+	apply := func(batch map[string]coalesced, backoff map[string]time.Duration) {
 		// A held version the batch supersedes is dropped first: core in the
 		// same batch would otherwise release it, and swap an obsolete
 		// intermediate version into the World before the newer one.
 		for p, v := range batch {
 			if p != CorePack {
-				l.supersedeHeld(p, v)
+				l.supersedeHeld(p, v.version)
 			}
 		}
 		packs := make([]string, 0, len(batch))
@@ -1300,7 +1314,7 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 			packs = append([]string{CorePack}, without(packs, CorePack)...)
 		}
 		for _, p := range packs {
-			report(l.Apply(ctx, PointerMove{Pack: p, Version: batch[p]}), backoff)
+			report(l.Apply(ctx, PointerMove{Pack: p, Version: batch[p].version, links: batch[p].links}), backoff, batch)
 		}
 	}
 
@@ -1317,7 +1331,12 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 				// the end of the debounce or of a load in flight.
 				l.moved(m.Pack, m.Version)
 			}
-			pending[m.Pack] = m.Version
+			c := pending[m.Pack]
+			c.version = m.Version
+			if link, ok := l.moveLink(m); ok {
+				c.links = append(c.links, link)
+			}
+			pending[m.Pack] = c
 			// A newer move supersedes a retry of the version it replaces.
 			delete(retries, m.Pack)
 			rearm()
@@ -1337,16 +1356,16 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 		case <-fire:
 			timer, fire = nil, nil
 			batch := pending
-			pending = map[string]uint64{}
+			pending = map[string]coalesced{}
 			apply(batch, nil)
 		case <-retryFire:
 			retryTimer, retryFire = nil, nil
-			due := map[string]uint64{}
+			due := map[string]coalesced{}
 			backoff := map[string]time.Duration{}
 			now := time.Now()
 			for p, r := range retries {
 				if !r.at.After(now) {
-					due[p] = r.version
+					due[p] = coalesced{version: r.version, links: r.links}
 					backoff[p] = r.backoff
 					delete(retries, p)
 				}
@@ -1354,6 +1373,36 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 			apply(due, backoff)
 		}
 	}
+}
+
+// moveLink is the span link for the activation a pointer move records, from
+// its trace_parent. A move with none (the boot's core activation, or a record
+// from before the field) has no link and says nothing. One whose value does
+// not parse has none either, and is reported once: it is untrusted input, so
+// the value is truncated, and the load goes ahead.
+func (l *Loader) moveLink(m PointerMove) (trace.Link, bool) {
+	if m.TraceParent == "" {
+		return trace.Link{}, false
+	}
+	sc := trace.SpanContextFromContext(propagation.TraceContext{}.Extract(context.Background(), propagation.MapCarrier{"traceparent": m.TraceParent}))
+	if !sc.IsValid() {
+		l.log.Warn("content pointer move: trace_parent is not a W3C traceparent; the load will not link to it",
+			"pack", m.Pack, "version", m.Version, "trace_parent", truncateUTF8(m.TraceParent, maxTraceParentLog))
+		return trace.Link{}, false
+	}
+	return trace.Link{SpanContext: sc, Attributes: []attribute.KeyValue{
+		attribute.String("content.pack", m.Pack), attribute.Int64("content.version", int64(m.Version)),
+	}}, true
+}
+
+// maxTraceParentLog bounds the untrusted trace_parent a warn carries.
+const maxTraceParentLog = 128
+
+func truncateUTF8(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "")
 }
 
 func without(ss []string, drop string) []string {

@@ -1305,6 +1305,14 @@ reason. The swap `LoggedCommand` carries the load's W3C traceparent in `trace_id
 A refusal is logged at `error`, ending "the previous version keeps serving". The runbook's query
 matches that suffix, so a rewording keeps it.
 
+An activation is followed into its load (AW-SRV-045). `ActivateVersion` writes the W3C traceparent
+of its server span as `ActiveVersion.trace_parent`, and the Loader's `content.load` carries one span
+link per pointer move it coalesced for that pack (attributes `content.pack`, `content.version`), a
+link and not a parent because one debounced load can serve several moves. A retry of a refused load
+carries the same links. The boot's core activation and a record from before the field have no
+`trace_parent` and no link; one that is not a traceparent is skipped with one `warn`
+(`pack`, `version`, `trace_parent` cut to 128 bytes) and the load goes ahead.
+
 ### Publishing content (AW-SRV-013)
 
 A `content.source=kafka` server is also the content store's writer, over `Admin`. `HasBlobs` and
