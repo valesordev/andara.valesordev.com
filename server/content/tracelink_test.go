@@ -19,8 +19,10 @@ import (
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
+	"github.com/valesordev/andara/content/core"
 	adminv1 "github.com/valesordev/andara/gen/go/andara/admin/v1"
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
+	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/command"
 )
 
@@ -48,7 +50,7 @@ func (s *syncBuffer) String() string {
 // tp is a valid W3C traceparent whose trace and span ids end in n.
 func tp(n byte) string {
 	const hex = "0123456789abcdef"
-	d := string(hex[n%16])
+	d := string(hex[n%15+1]) // never all-zero, which is not a valid id
 	return "00-" + strings.Repeat(d, 32) + "-" + strings.Repeat(d, 16) + "-01"
 }
 
@@ -177,9 +179,10 @@ func TestFollow_ACoalescedBurstLinksEveryMove(t *testing.T) {
 		linkTo(t, loads[0], i, tp(byte(v)), CorePack, v)
 	}
 	for _, link := range loads[0].Links() {
-		if loads[0].Parent().TraceID() == link.SpanContext.TraceID() {
-			t.Fatalf("content.load is parented into an activation's trace")
-		}
+		_ = link
+	}
+	if loads[0].Parent().IsValid() {
+		t.Fatalf("content.load has a parent: %v", loads[0].Parent())
 	}
 }
 
@@ -284,16 +287,18 @@ func TestFollow_ARetryCarriesTheLinksOfTheAttemptItRetries(t *testing.T) {
 // AC-1: ActivateVersion writes the traceparent of its own server span on the
 // pointer record it produces.
 func TestActivateVersion_TheRecordCarriesTheServerSpansTraceParent(t *testing.T) {
-	h := newPubHarness(t, nil)
+	spans := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	// A real tracer on the Admin: with the default no-op one, content.activate
+	// shares its parent's span context and the test could not tell the spans apart.
+	h := newPubHarness(t, func(ao *AdminOptions, _ *LoaderOptions) { ao.Tracer = provider.Tracer("admin") })
 	if _, err := h.publish(builder(alice), "town", townFiles(t)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := h.admin.ApproveVersion(builder(bob), &adminv1.ApproveVersionRequest{PackId: "town", Version: 1}); err != nil {
 		t.Fatal(err)
 	}
-	spans := tracetest.NewSpanRecorder()
-	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spans))
-	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
 	ctx, server := provider.Tracer("test").Start(builder(alice), "andara.admin.v1.AdminService/ActivateVersion")
 	defer server.End()
 	want := command.TraceParent(ctx)
@@ -313,6 +318,18 @@ func TestActivateVersion_TheRecordCarriesTheServerSpansTraceParent(t *testing.T)
 	if want == "" || ptr.GetTraceParent() != want {
 		t.Fatalf("trace_parent = %q, want the server span's %q", ptr.GetTraceParent(), want)
 	}
+	for _, sp := range spans.Ended() {
+		if sp.Name() == "content.activate" && strings.Contains(ptr.GetTraceParent(), sp.SpanContext().SpanID().String()) {
+			t.Fatalf("trace_parent names the internal content.activate span, not the server span")
+		}
+	}
+	var activate bool
+	for _, sp := range spans.Ended() {
+		activate = activate || sp.Name() == "content.activate"
+	}
+	if !activate {
+		t.Fatal("no content.activate span recorded: the test is not telling the two spans apart")
+	}
 }
 
 // AC-4: the boot's core activation carries none, and neither does the
@@ -322,4 +339,63 @@ func TestMovePointer_TheBootsCoreActivationCarriesNoTraceParent(t *testing.T) {
 	if av, ok := h.reg.Pointer(CorePack); !ok || av.GetTraceParent() != "" {
 		t.Fatalf("core pointer = %v", av)
 	}
+}
+
+// AC-4, through BootCore itself: even under a recording span, the boot's
+// activation writes no trace_parent.
+func TestBootCore_TheCoreActivationCarriesNoTraceParent(t *testing.T) {
+	provider := sdktrace.NewTracerProvider()
+	t.Cleanup(func() { _ = provider.Shutdown(context.Background()) })
+	ctx, span := provider.Tracer("test").Start(context.Background(), "boot")
+	defer span.End()
+	s := newCoreStore(t)
+	log := slog.New(slog.DiscardHandler)
+	res, err := BootCore(ctx, CoreBootOptions{
+		Registry: s.reg, Auditor: auth.NewAuditor(s.audit, log, nil, nil), Metrics: NewPublishMetrics(nil), Log: log,
+		Pack: CorePack, Version: 1, Blobs: core.Blobs(), Build: "v0.9.0", Tracer: provider.Tracer("test"),
+	})
+	if err != nil || !res.Activated {
+		t.Fatalf("boot: %+v %v", res, err)
+	}
+	if av, ok := s.reg.Pointer(CorePack); !ok || av.GetTraceParent() != "" {
+		t.Fatalf("core pointer = %v", av)
+	}
+}
+
+// A pointer that flaps faster than the debounce makes one window of many moves;
+// the load keeps the newest 128 links, not all of them.
+func TestFollow_LinksPerWindowAreBounded(t *testing.T) {
+	r := newLinkRig(t, CorePack)
+	const first, last = 2, 201
+	for v := uint64(first); v <= last; v++ {
+		r.s.publish(CorePack, v, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	}
+	w, stop := r.follow(t, 300*time.Millisecond)
+	defer stop()
+	for v := uint64(first); v <= last; v++ {
+		w.ch <- PointerMove{Pack: CorePack, Version: v, TraceParent: tp(byte(v))}
+	}
+	waitUntil(t, func() bool { return r.l.Versions()[CorePack] == last }, "the newest version to load")
+
+	loads := r.loads(CorePack, last)
+	if len(loads) != 1 || len(loads[0].Links()) != maxLoadLinks {
+		t.Fatalf("loads %d, links %d, want one load with %d", len(loads), len(loads[0].Links()), maxLoadLinks)
+	}
+	linkTo(t, loads[0], maxLoadLinks-1, tp(byte(last)), CorePack, last)
+	linkTo(t, loads[0], 0, tp(byte(last-maxLoadLinks+1)), CorePack, last-maxLoadLinks+1)
+}
+
+// Apply, handed a move directly, links its trace_parent too: only Follow
+// coalesces, but nothing else drops the field.
+func TestApply_AMoveHandedInDirectlyLinksItsTraceParent(t *testing.T) {
+	r := newLinkRig(t, CorePack)
+	r.s.publish(CorePack, 2, 0, map[string]string{"core.json": zoneJSON("core", "void")})
+	if rej := r.l.Apply(context.Background(), PointerMove{Pack: CorePack, Version: 2, TraceParent: tp(5)}); len(rej) != 0 {
+		t.Fatal(rej)
+	}
+	loads := r.loads(CorePack, 2)
+	if len(loads) != 1 || len(loads[0].Links()) != 1 {
+		t.Fatalf("loads = %v", loads)
+	}
+	linkTo(t, loads[0], 0, tp(5), CorePack, 2)
 }

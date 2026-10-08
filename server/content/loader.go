@@ -347,8 +347,15 @@ func (l *Loader) Apply(ctx context.Context, move PointerMove) []Rejection {
 		return nil
 	}
 	l.moved(move.Pack, move.Version)
+	links := move.links
+	if links == nil {
+		// A move handed in directly, not through Follow's coalescing.
+		if link, ok := l.moveLink(move); ok {
+			links = []trace.Link{link}
+		}
+	}
 	var out []Rejection
-	if r := l.load(ctx, move.Pack, move.Version, move.links); r != nil {
+	if r := l.load(ctx, move.Pack, move.Version, links); r != nil {
 		out = append(out, *r)
 	}
 	// AC-8: core moving is what releases packs held for core skew. Re-evaluate
@@ -1333,7 +1340,15 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 			}
 			c := pending[m.Pack]
 			c.version = m.Version
-			if link, ok := l.moveLink(m); ok {
+			if !l.follows(m.Pack) {
+				// not ours: no load will use a link
+			} else if link, ok := l.moveLink(m); ok {
+				// A pointer that flaps faster than the debounce keeps the
+				// window open; the SDK keeps 128 links per span, so keeping
+				// more here only costs memory. The newest are kept.
+				if len(c.links) >= maxLoadLinks {
+					c.links = append(c.links[:0], c.links[1:]...)
+				}
 				c.links = append(c.links, link)
 			}
 			pending[m.Pack] = c
@@ -1375,6 +1390,10 @@ func (l *Loader) Follow(ctx context.Context, w Watcher, debounce time.Duration, 
 	}
 }
 
+// Links follow the moves of one debounce window. A superseded retry's links stay
+// on the refused attempts that carried them, and a pack held for core skew
+// loads, once released, without links: both are accepted gaps, not carried.
+//
 // moveLink is the span link for the activation a pointer move records, from
 // its trace_parent. A move with none (the boot's core activation, or a record
 // from before the field) has no link and says nothing. One whose value does
@@ -1397,6 +1416,9 @@ func (l *Loader) moveLink(m PointerMove) (trace.Link, bool) {
 
 // maxTraceParentLog bounds the untrusted trace_parent a warn carries.
 const maxTraceParentLog = 128
+
+// maxLoadLinks bounds the links Follow keeps for one pack's coalesced moves.
+const maxLoadLinks = 128
 
 func truncateUTF8(s string, n int) string {
 	if len(s) <= n {
