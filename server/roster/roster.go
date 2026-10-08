@@ -150,6 +150,11 @@ type live struct {
 	name      string
 	zone      sim.ZoneID
 	confirmed bool // the BindCharacter is in the log
+	// bound is below; bindDone is closed when the select that made this flag
+	// has finished producing its BindCharacter, whatever came of it. The
+	// teardown waits for it, so its UnbindCharacter is produced after the bind
+	// and never overtaken by it (Kafka enqueues without the caller's context).
+	bindDone  chan struct{}
 	bound     bool // counted on andara_sessions_bound
 	releasing bool // the teardown has begun; the flag frees when it ends
 	// released is closed when the teardown has finished: the produce done,
@@ -428,7 +433,8 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		}
 		return fail(OutcomeNotFound, wireError(err))
 	}
-	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), reconnectOf: prev}
+	l := &live{account: acct, session: s.ID, character: characterID, name: ref.GetName(), zone: sim.ZoneID(ref.GetZoneId()), released: make(chan struct{}), bindDone: make(chan struct{}), reconnectOf: prev}
+	defer close(l.bindDone)
 	if switching != nil {
 		// The first body's flag leaves the maps now and is put back if its
 		// unbind does not reach the log. Its gauge count is settled after.
@@ -724,6 +730,10 @@ func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-ch
 		defer close(l.released)
 		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
 		defer cancel()
+		select {
+		case <-l.bindDone:
+		case <-ctx.Done():
+		}
 		name, reason := "character.unbind", ReasonQuit
 		if end == gateway.EndLinkdead {
 			name, reason = "character.linkdead", ReasonLinkdead

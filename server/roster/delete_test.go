@@ -539,3 +539,48 @@ func TestSwitch_FirstCharacterIsDeletableAfterwards(t *testing.T) {
 		t.Fatalf("delete after the switch: %v", err)
 	}
 }
+
+// holdBindOf holds the BindCharacter of one Character until release is closed,
+// then appends it: a produce that is in flight while another record is produced.
+func holdBindOf(log command.Producer, id string, entered chan<- struct{}, release <-chan struct{}) command.Producer {
+	return producerFunc(func(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
+		if cmd.GetBindCharacter().GetCharacterId() == id {
+			entered <- struct{}{}
+			<-release
+		}
+		return log.Produce(ctx, cmd)
+	})
+}
+
+// Review finding (Codex, #475): a Session that ends while the switch's bind is
+// still being produced must not have its QUIT overtake the bind, which would
+// leave the second body present with no Session and no flag.
+func TestSwitch_TeardownWaitsForTheInFlightBind(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, b := f.create("Aldric"), f.create("Brenna")
+	s := f.session("s1")
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	r := f.rosterOver(holdBindOf(f.log, b, entered, release))
+	if _, err := r.SelectCharacter(ctx, s, a); err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { _, err := r.SelectCharacter(ctx, s, b); errc <- err }()
+	<-entered
+	done := r.ReleaseSession(s, gateway.EndQuit)
+	time.Sleep(50 * time.Millisecond) // let a wrongly-eager teardown produce
+	close(release)
+	if err := <-errc; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("teardown")
+	}
+	want := "unbind-switch:" + a + ",bind:" + b + ",unbind-quit:" + b
+	if got := strings.Join(kinds(f.log.records()[1:]), ","); got != want {
+		t.Fatalf("log order %s, want %s", got, want)
+	}
+}
