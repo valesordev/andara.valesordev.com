@@ -25,6 +25,61 @@ def sample(replay=45.98, total=46.3, tail=602):
             "phases_seconds": {"load": 0.24, "seek": 0.05, "replay": replay, "verify": 0.07, "total": total}}
 
 
+class Budget(unittest.TestCase):
+    def run_budget(self, total, *values, factor=3):
+        with tempfile.TemporaryDirectory() as d:
+            cur = Path(d, "cur.json")
+            cur.write_text(json.dumps(sample(total=total)))
+            files = []
+            for i, v in enumerate(values):
+                f = Path(d, "v%d.yaml" % i)
+                f.write_text(v)
+                files.append(str(f))
+            return rt.main(["budget", str(cur), *files, "--factor", str(factor)])
+
+    BASE = "probes:\n  startup: {periodSeconds: 10, failureThreshold: 60}\n"
+
+    def test_600s_covers_a_34s_recovery_three_times_over(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE), 0)
+
+    def test_a_budget_under_three_times_the_recovery_fails(self):
+        self.assertEqual(self.run_budget(250.0, self.BASE), 1)
+
+    def test_exactly_three_times_passes(self):
+        self.assertEqual(self.run_budget(200.0, self.BASE), 0)
+
+    def test_a_later_file_overrides_the_earlier(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE, "probes:\n  startup: {failureThreshold: 6}\n"), 1)
+
+    def test_the_factor_is_the_one_given(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=20), 1)
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=10), 0)
+
+    def test_a_zero_or_missing_measurement_refuses(self):
+        self.assertEqual(self.run_budget(0, self.BASE), 1)
+        self.assertEqual(self.run_budget("x", self.BASE), 1)
+        self.assertEqual(self.run_budget(float("nan"), self.BASE), 1)
+
+    def test_a_nonpositive_factor_refuses(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=0), 1)
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=-1), 1)
+
+    def test_malformed_probe_values_refuse(self):
+        self.assertEqual(self.run_budget(1.0, "probes: [1]\n"), 1)
+        self.assertEqual(self.run_budget(1.0, "probes:\n  startup: {periodSeconds: x, failureThreshold: 60}\n"), 1)
+        self.assertEqual(self.run_budget(1.0, "probes:\n  startup: {periodSeconds: 10, failureThreshold: 0}\n"), 1)
+
+    def test_the_failure_names_the_threshold_that_would_pass(self):
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_budget(250.0, self.BASE), 1)
+        self.assertIn("failureThreshold 75 at periodSeconds 10", err.getvalue())
+
+    def test_values_without_a_startup_budget_fail(self):
+        self.assertEqual(self.run_budget(1.0, "probes: {}\n"), 1)
+
+
 class Render(unittest.TestCase):
     def test_a_first_run_says_so_and_lists_every_phase(self):
         out = rt.render(sample())

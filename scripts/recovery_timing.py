@@ -14,6 +14,11 @@
       the branch into OUT_DIR, with `gh`. Exits 0 and prints "no previous run" when there is none,
       since the first run has nothing to compare with.
 
+  recovery_timing.py budget CURRENT VALUES... [--factor 3]
+      AW-INF-011 AC-7: the startup budget (`probes.startup.periodSeconds × failureThreshold`, the
+      later VALUES files overriding the earlier) must be at least FACTOR × CURRENT's `total`.
+      Prints the comparison; exits 1 and says what failureThreshold would satisfy it when not.
+
 The bounds themselves (`total` under 90 s, a tail of at least 600 ticks) are the test's own
 assertions. It writes the JSON before it asserts them, so a run that breaks one still has its
 numbers, and `previous` only reads successful runs.
@@ -21,6 +26,7 @@ numbers, and `previous` only reads successful runs.
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -120,6 +126,51 @@ def summary(args):
     return 0
 
 
+def startup_budget(values_files):
+    """(periodSeconds, failureThreshold) of probes.startup, later files overriding earlier ones."""
+    import yaml
+    startup = {}
+    for f in values_files:
+        doc = yaml.safe_load(Path(f).read_text()) or {}
+        probes = doc.get("probes") or {}
+        s = probes.get("startup") if isinstance(probes, dict) else None
+        if isinstance(s, dict):
+            startup.update(s)
+    out = []
+    for k in ("periodSeconds", "failureThreshold"):
+        v = startup.get(k)
+        if k not in startup:
+            raise ValueError("%s: probes.startup has no %s" % (", ".join(values_files), k))
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+            raise ValueError("%s: probes.startup.%s must be a positive integer, got %r" % (", ".join(values_files), k, v))
+        out.append(v)
+    return tuple(out)
+
+
+def budget(args):
+    try:
+        cur = load(args.current)
+        period, threshold = startup_budget(args.values)
+        total = cur["phases_seconds"]["total"]
+        if isinstance(total, bool) or not isinstance(total, (int, float)) or not math.isfinite(total) or total <= 0:
+            raise ValueError("%s: phases_seconds.total must be a positive number, got %r" % (args.current, total))
+        if not math.isfinite(args.factor) or args.factor <= 0:
+            raise ValueError("--factor must be a positive number, got %r" % args.factor)
+    except (ValueError, OSError) as e:
+        print("recovery_timing: %s" % e, file=sys.stderr)
+        return 1
+    have = period * threshold
+    need = args.factor * total
+    print("startup budget %d s; measured recovery %.1f s; %g x = %.1f s; headroom %.1f x"
+          % (have, total, args.factor, need, have / total))
+    if have >= need:
+        return 0
+    print("recovery_timing: the startup budget is under %g x the measured recovery (%.1f s needed): "
+          "failureThreshold %d at periodSeconds %d would satisfy it, or say by how much the values change"
+          % (args.factor, need, math.ceil(need / period), period), file=sys.stderr)
+    return 1
+
+
 def gh(*argv):
     return subprocess.run(["gh", *argv], capture_output=True, text=True)
 
@@ -151,6 +202,11 @@ def main(argv=None):
     s.add_argument("current")
     s.add_argument("previous", nargs="?")
     s.set_defaults(fn=summary)
+    b = sub.add_parser("budget")
+    b.add_argument("current")
+    b.add_argument("values", nargs="+")
+    b.add_argument("--factor", type=float, default=3)
+    b.set_defaults(fn=budget)
     p = sub.add_parser("previous")
     p.add_argument("out_dir")
     p.add_argument("--workflow", default="recovery-timing.yaml")

@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild core-versions-check \
         builder-reference builder-reference-check guide-check \
-        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary
+        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check
 
 ## help: print this target list
 help:
@@ -224,6 +224,13 @@ recovery-timing-previous:
 ## recovery-timing-summary: render RECOVERY_TIMING_OUT against the previous run's as a table, to $$GITHUB_STEP_SUMMARY when set
 recovery-timing-summary:
 	@python3 $(SCRIPTS)/recovery_timing.py summary "$(RECOVERY_TIMING_OUT)" "$(RECOVERY_TIMING_PREVIOUS)/recovery-timing.json"
+
+## startup-budget-check: AW-INF-011 AC-7 — the chart's startup budget (every env's values) is at least 3x RECOVERY_TIMING_OUT's measured total
+startup-budget-check:
+	@for env in local dev prod; do \
+	  echo "== $$env"; \
+	  python3 $(SCRIPTS)/recovery_timing.py budget "$(RECOVERY_TIMING_OUT)" deploy/helm/andara/values.yaml deploy/helm/values/$$env.yaml || exit 1; \
+	done
 
 ## proto: regenerate committed protobuf code from docs/specs/protocol/
 proto:
