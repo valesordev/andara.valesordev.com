@@ -175,8 +175,12 @@ type SnapshotRound struct {
 	Complete bool `protobuf:"varint,4,opt,name=complete,proto3" json:"complete,omitempty"`
 	// The newest taken_at_unix_nano among the round's objects. Diagnostic only.
 	TakenAtUnixNano int64 `protobuf:"varint,5,opt,name=taken_at_unix_nano,json=takenAtUnixNano,proto3" json:"taken_at_unix_nano,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Sorted tag names present on every one of the round's objects
+	// (AW-INF-007). A name on only some of them is not reported; retention
+	// still treats the round as tagged, and tagging it again completes it.
+	Tags          []string `protobuf:"bytes,6,rep,name=tags,proto3" json:"tags,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *SnapshotRound) Reset() {
@@ -244,6 +248,13 @@ func (x *SnapshotRound) GetTakenAtUnixNano() int64 {
 	return 0
 }
 
+func (x *SnapshotRound) GetTags() []string {
+	if x != nil {
+		return x.Tags
+	}
+	return nil
+}
+
 type ListSnapshotRoundsResponse struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Newest first.
@@ -289,6 +300,115 @@ func (x *ListSnapshotRoundsResponse) GetRounds() []*SnapshotRound {
 	return nil
 }
 
+type TagSnapshotRoundRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// `deploy:<tag>` or `rollback:<tick>`, matching
+	// ^(deploy|rollback):[A-Za-z0-9._@+-]{1,200}$.
+	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
+	// 0 means the newest Complete round.
+	Tick          uint64 `protobuf:"varint,2,opt,name=tick,proto3" json:"tick,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TagSnapshotRoundRequest) Reset() {
+	*x = TagSnapshotRoundRequest{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TagSnapshotRoundRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TagSnapshotRoundRequest) ProtoMessage() {}
+
+func (x *TagSnapshotRoundRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TagSnapshotRoundRequest.ProtoReflect.Descriptor instead.
+func (*TagSnapshotRoundRequest) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *TagSnapshotRoundRequest) GetName() string {
+	if x != nil {
+		return x.Name
+	}
+	return ""
+}
+
+func (x *TagSnapshotRoundRequest) GetTick() uint64 {
+	if x != nil {
+		return x.Tick
+	}
+	return 0
+}
+
+type TagSnapshotRoundResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// The tick of the round tagged.
+	Tick uint64 `protobuf:"varint,1,opt,name=tick,proto3" json:"tick,omitempty"`
+	// The round already carried `name` on every object; nothing was written.
+	AlreadyTagged bool `protobuf:"varint,2,opt,name=already_tagged,json=alreadyTagged,proto3" json:"already_tagged,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *TagSnapshotRoundResponse) Reset() {
+	*x = TagSnapshotRoundResponse{}
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *TagSnapshotRoundResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*TagSnapshotRoundResponse) ProtoMessage() {}
+
+func (x *TagSnapshotRoundResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use TagSnapshotRoundResponse.ProtoReflect.Descriptor instead.
+func (*TagSnapshotRoundResponse) Descriptor() ([]byte, []int) {
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *TagSnapshotRoundResponse) GetTick() uint64 {
+	if x != nil {
+		return x.Tick
+	}
+	return 0
+}
+
+func (x *TagSnapshotRoundResponse) GetAlreadyTagged() bool {
+	if x != nil {
+		return x.AlreadyTagged
+	}
+	return false
+}
+
 type VerifySnapshotRoundRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Tick          uint64                 `protobuf:"varint,1,opt,name=tick,proto3" json:"tick,omitempty"`
@@ -298,7 +418,7 @@ type VerifySnapshotRoundRequest struct {
 
 func (x *VerifySnapshotRoundRequest) Reset() {
 	*x = VerifySnapshotRoundRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -310,7 +430,7 @@ func (x *VerifySnapshotRoundRequest) String() string {
 func (*VerifySnapshotRoundRequest) ProtoMessage() {}
 
 func (x *VerifySnapshotRoundRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[3]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -323,7 +443,7 @@ func (x *VerifySnapshotRoundRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifySnapshotRoundRequest.ProtoReflect.Descriptor instead.
 func (*VerifySnapshotRoundRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{3}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *VerifySnapshotRoundRequest) GetTick() uint64 {
@@ -355,7 +475,7 @@ type VerifySnapshotRoundResponse struct {
 
 func (x *VerifySnapshotRoundResponse) Reset() {
 	*x = VerifySnapshotRoundResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -367,7 +487,7 @@ func (x *VerifySnapshotRoundResponse) String() string {
 func (*VerifySnapshotRoundResponse) ProtoMessage() {}
 
 func (x *VerifySnapshotRoundResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[4]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -380,7 +500,7 @@ func (x *VerifySnapshotRoundResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use VerifySnapshotRoundResponse.ProtoReflect.Descriptor instead.
 func (*VerifySnapshotRoundResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{4}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *VerifySnapshotRoundResponse) GetMatch() bool {
@@ -444,7 +564,7 @@ type CreateAccountRequest struct {
 
 func (x *CreateAccountRequest) Reset() {
 	*x = CreateAccountRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -456,7 +576,7 @@ func (x *CreateAccountRequest) String() string {
 func (*CreateAccountRequest) ProtoMessage() {}
 
 func (x *CreateAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[5]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -469,7 +589,7 @@ func (x *CreateAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccountRequest.ProtoReflect.Descriptor instead.
 func (*CreateAccountRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{5}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *CreateAccountRequest) GetUsername() string {
@@ -502,7 +622,7 @@ type CreateAccountResponse struct {
 
 func (x *CreateAccountResponse) Reset() {
 	*x = CreateAccountResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -514,7 +634,7 @@ func (x *CreateAccountResponse) String() string {
 func (*CreateAccountResponse) ProtoMessage() {}
 
 func (x *CreateAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[6]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -527,7 +647,7 @@ func (x *CreateAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAccountResponse.ProtoReflect.Descriptor instead.
 func (*CreateAccountResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{6}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *CreateAccountResponse) GetAccountId() string {
@@ -548,7 +668,7 @@ type ResetPasswordRequest struct {
 
 func (x *ResetPasswordRequest) Reset() {
 	*x = ResetPasswordRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -560,7 +680,7 @@ func (x *ResetPasswordRequest) String() string {
 func (*ResetPasswordRequest) ProtoMessage() {}
 
 func (x *ResetPasswordRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[7]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -573,7 +693,7 @@ func (x *ResetPasswordRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetPasswordRequest.ProtoReflect.Descriptor instead.
 func (*ResetPasswordRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{7}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *ResetPasswordRequest) GetAccountId() string {
@@ -606,7 +726,7 @@ type ResetPasswordResponse struct {
 
 func (x *ResetPasswordResponse) Reset() {
 	*x = ResetPasswordResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -618,7 +738,7 @@ func (x *ResetPasswordResponse) String() string {
 func (*ResetPasswordResponse) ProtoMessage() {}
 
 func (x *ResetPasswordResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[8]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -631,7 +751,7 @@ func (x *ResetPasswordResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ResetPasswordResponse.ProtoReflect.Descriptor instead.
 func (*ResetPasswordResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{8}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{10}
 }
 
 func (x *ResetPasswordResponse) GetRecordVersion() uint64 {
@@ -652,7 +772,7 @@ type SetRolesRequest struct {
 
 func (x *SetRolesRequest) Reset() {
 	*x = SetRolesRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -664,7 +784,7 @@ func (x *SetRolesRequest) String() string {
 func (*SetRolesRequest) ProtoMessage() {}
 
 func (x *SetRolesRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[9]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -677,7 +797,7 @@ func (x *SetRolesRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRolesRequest.ProtoReflect.Descriptor instead.
 func (*SetRolesRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{9}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *SetRolesRequest) GetAccountId() string {
@@ -710,7 +830,7 @@ type SetRolesResponse struct {
 
 func (x *SetRolesResponse) Reset() {
 	*x = SetRolesResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -722,7 +842,7 @@ func (x *SetRolesResponse) String() string {
 func (*SetRolesResponse) ProtoMessage() {}
 
 func (x *SetRolesResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[10]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -735,7 +855,7 @@ func (x *SetRolesResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRolesResponse.ProtoReflect.Descriptor instead.
 func (*SetRolesResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{10}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *SetRolesResponse) GetRecordVersion() uint64 {
@@ -756,7 +876,7 @@ type SetAccountStatusRequest struct {
 
 func (x *SetAccountStatusRequest) Reset() {
 	*x = SetAccountStatusRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -768,7 +888,7 @@ func (x *SetAccountStatusRequest) String() string {
 func (*SetAccountStatusRequest) ProtoMessage() {}
 
 func (x *SetAccountStatusRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[11]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -781,7 +901,7 @@ func (x *SetAccountStatusRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAccountStatusRequest.ProtoReflect.Descriptor instead.
 func (*SetAccountStatusRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{11}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *SetAccountStatusRequest) GetAccountId() string {
@@ -814,7 +934,7 @@ type SetAccountStatusResponse struct {
 
 func (x *SetAccountStatusResponse) Reset() {
 	*x = SetAccountStatusResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -826,7 +946,7 @@ func (x *SetAccountStatusResponse) String() string {
 func (*SetAccountStatusResponse) ProtoMessage() {}
 
 func (x *SetAccountStatusResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[12]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -839,7 +959,7 @@ func (x *SetAccountStatusResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetAccountStatusResponse.ProtoReflect.Descriptor instead.
 func (*SetAccountStatusResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{12}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *SetAccountStatusResponse) GetRecordVersion() uint64 {
@@ -859,7 +979,7 @@ type IssueInviteRequest struct {
 
 func (x *IssueInviteRequest) Reset() {
 	*x = IssueInviteRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -871,7 +991,7 @@ func (x *IssueInviteRequest) String() string {
 func (*IssueInviteRequest) ProtoMessage() {}
 
 func (x *IssueInviteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[13]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -884,7 +1004,7 @@ func (x *IssueInviteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueInviteRequest.ProtoReflect.Descriptor instead.
 func (*IssueInviteRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{13}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *IssueInviteRequest) GetCount() uint32 {
@@ -904,7 +1024,7 @@ type IssueInviteResponse struct {
 
 func (x *IssueInviteResponse) Reset() {
 	*x = IssueInviteResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -916,7 +1036,7 @@ func (x *IssueInviteResponse) String() string {
 func (*IssueInviteResponse) ProtoMessage() {}
 
 func (x *IssueInviteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[14]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -929,7 +1049,7 @@ func (x *IssueInviteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use IssueInviteResponse.ProtoReflect.Descriptor instead.
 func (*IssueInviteResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{14}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *IssueInviteResponse) GetCodes() []string {
@@ -955,7 +1075,7 @@ type RevokeInviteRequest struct {
 
 func (x *RevokeInviteRequest) Reset() {
 	*x = RevokeInviteRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -967,7 +1087,7 @@ func (x *RevokeInviteRequest) String() string {
 func (*RevokeInviteRequest) ProtoMessage() {}
 
 func (x *RevokeInviteRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[15]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -980,7 +1100,7 @@ func (x *RevokeInviteRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeInviteRequest.ProtoReflect.Descriptor instead.
 func (*RevokeInviteRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{15}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *RevokeInviteRequest) GetCode() string {
@@ -998,7 +1118,7 @@ type RevokeInviteResponse struct {
 
 func (x *RevokeInviteResponse) Reset() {
 	*x = RevokeInviteResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1010,7 +1130,7 @@ func (x *RevokeInviteResponse) String() string {
 func (*RevokeInviteResponse) ProtoMessage() {}
 
 func (x *RevokeInviteResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[16]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1023,7 +1143,7 @@ func (x *RevokeInviteResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use RevokeInviteResponse.ProtoReflect.Descriptor instead.
 func (*RevokeInviteResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{16}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{18}
 }
 
 type SetRegistrationModeRequest struct {
@@ -1035,7 +1155,7 @@ type SetRegistrationModeRequest struct {
 
 func (x *SetRegistrationModeRequest) Reset() {
 	*x = SetRegistrationModeRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1047,7 +1167,7 @@ func (x *SetRegistrationModeRequest) String() string {
 func (*SetRegistrationModeRequest) ProtoMessage() {}
 
 func (x *SetRegistrationModeRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[17]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1060,7 +1180,7 @@ func (x *SetRegistrationModeRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRegistrationModeRequest.ProtoReflect.Descriptor instead.
 func (*SetRegistrationModeRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{17}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *SetRegistrationModeRequest) GetMode() v1.RegistrationMode {
@@ -1079,7 +1199,7 @@ type SetRegistrationModeResponse struct {
 
 func (x *SetRegistrationModeResponse) Reset() {
 	*x = SetRegistrationModeResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1091,7 +1211,7 @@ func (x *SetRegistrationModeResponse) String() string {
 func (*SetRegistrationModeResponse) ProtoMessage() {}
 
 func (x *SetRegistrationModeResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[18]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1104,7 +1224,7 @@ func (x *SetRegistrationModeResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetRegistrationModeResponse.ProtoReflect.Descriptor instead.
 func (*SetRegistrationModeResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{18}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *SetRegistrationModeResponse) GetPrevious() v1.RegistrationMode {
@@ -1128,7 +1248,7 @@ type CreateAgentAccountRequest struct {
 
 func (x *CreateAgentAccountRequest) Reset() {
 	*x = CreateAgentAccountRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1140,7 +1260,7 @@ func (x *CreateAgentAccountRequest) String() string {
 func (*CreateAgentAccountRequest) ProtoMessage() {}
 
 func (x *CreateAgentAccountRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[19]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1153,7 +1273,7 @@ func (x *CreateAgentAccountRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAgentAccountRequest.ProtoReflect.Descriptor instead.
 func (*CreateAgentAccountRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{19}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *CreateAgentAccountRequest) GetUsername() string {
@@ -1195,7 +1315,7 @@ type CreateAgentAccountResponse struct {
 
 func (x *CreateAgentAccountResponse) Reset() {
 	*x = CreateAgentAccountResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1207,7 +1327,7 @@ func (x *CreateAgentAccountResponse) String() string {
 func (*CreateAgentAccountResponse) ProtoMessage() {}
 
 func (x *CreateAgentAccountResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[20]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1220,7 +1340,7 @@ func (x *CreateAgentAccountResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CreateAgentAccountResponse.ProtoReflect.Descriptor instead.
 func (*CreateAgentAccountResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{20}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *CreateAgentAccountResponse) GetAccountId() string {
@@ -1245,7 +1365,7 @@ type GetServerInfoRequest struct {
 
 func (x *GetServerInfoRequest) Reset() {
 	*x = GetServerInfoRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1257,7 +1377,7 @@ func (x *GetServerInfoRequest) String() string {
 func (*GetServerInfoRequest) ProtoMessage() {}
 
 func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[21]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1270,7 +1390,7 @@ func (x *GetServerInfoRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoRequest.ProtoReflect.Descriptor instead.
 func (*GetServerInfoRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{21}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{23}
 }
 
 type GetServerInfoResponse struct {
@@ -1302,7 +1422,7 @@ type GetServerInfoResponse struct {
 
 func (x *GetServerInfoResponse) Reset() {
 	*x = GetServerInfoResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1314,7 +1434,7 @@ func (x *GetServerInfoResponse) String() string {
 func (*GetServerInfoResponse) ProtoMessage() {}
 
 func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[22]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1327,7 +1447,7 @@ func (x *GetServerInfoResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetServerInfoResponse.ProtoReflect.Descriptor instead.
 func (*GetServerInfoResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{22}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *GetServerInfoResponse) GetVersion() string {
@@ -1409,7 +1529,7 @@ type SetBuilderPacksRequest struct {
 
 func (x *SetBuilderPacksRequest) Reset() {
 	*x = SetBuilderPacksRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1421,7 +1541,7 @@ func (x *SetBuilderPacksRequest) String() string {
 func (*SetBuilderPacksRequest) ProtoMessage() {}
 
 func (x *SetBuilderPacksRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[23]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1434,7 +1554,7 @@ func (x *SetBuilderPacksRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBuilderPacksRequest.ProtoReflect.Descriptor instead.
 func (*SetBuilderPacksRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{23}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *SetBuilderPacksRequest) GetAccountId() string {
@@ -1471,7 +1591,7 @@ type SetBuilderPacksResponse struct {
 
 func (x *SetBuilderPacksResponse) Reset() {
 	*x = SetBuilderPacksResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1483,7 +1603,7 @@ func (x *SetBuilderPacksResponse) String() string {
 func (*SetBuilderPacksResponse) ProtoMessage() {}
 
 func (x *SetBuilderPacksResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[24]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1496,7 +1616,7 @@ func (x *SetBuilderPacksResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SetBuilderPacksResponse.ProtoReflect.Descriptor instead.
 func (*SetBuilderPacksResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{24}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *SetBuilderPacksResponse) GetBuilderPacks() []string {
@@ -1531,7 +1651,7 @@ type HasBlobsRequest struct {
 
 func (x *HasBlobsRequest) Reset() {
 	*x = HasBlobsRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1543,7 +1663,7 @@ func (x *HasBlobsRequest) String() string {
 func (*HasBlobsRequest) ProtoMessage() {}
 
 func (x *HasBlobsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[25]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1556,7 +1676,7 @@ func (x *HasBlobsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HasBlobsRequest.ProtoReflect.Descriptor instead.
 func (*HasBlobsRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{25}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *HasBlobsRequest) GetPackId() string {
@@ -1583,7 +1703,7 @@ type HasBlobsResponse struct {
 
 func (x *HasBlobsResponse) Reset() {
 	*x = HasBlobsResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1595,7 +1715,7 @@ func (x *HasBlobsResponse) String() string {
 func (*HasBlobsResponse) ProtoMessage() {}
 
 func (x *HasBlobsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[26]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1608,7 +1728,7 @@ func (x *HasBlobsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HasBlobsResponse.ProtoReflect.Descriptor instead.
 func (*HasBlobsResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{26}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *HasBlobsResponse) GetPresent() []bool {
@@ -1631,7 +1751,7 @@ type PublishBlobRequest struct {
 
 func (x *PublishBlobRequest) Reset() {
 	*x = PublishBlobRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1643,7 +1763,7 @@ func (x *PublishBlobRequest) String() string {
 func (*PublishBlobRequest) ProtoMessage() {}
 
 func (x *PublishBlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[27]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1656,7 +1776,7 @@ func (x *PublishBlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishBlobRequest.ProtoReflect.Descriptor instead.
 func (*PublishBlobRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{27}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{29}
 }
 
 func (x *PublishBlobRequest) GetChunk() isPublishBlobRequest_Chunk {
@@ -1720,7 +1840,7 @@ type PublishBlobHeader struct {
 
 func (x *PublishBlobHeader) Reset() {
 	*x = PublishBlobHeader{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1732,7 +1852,7 @@ func (x *PublishBlobHeader) String() string {
 func (*PublishBlobHeader) ProtoMessage() {}
 
 func (x *PublishBlobHeader) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[28]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1745,7 +1865,7 @@ func (x *PublishBlobHeader) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishBlobHeader.ProtoReflect.Descriptor instead.
 func (*PublishBlobHeader) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{28}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *PublishBlobHeader) GetPackId() string {
@@ -1794,7 +1914,7 @@ type PublishBlobResponse struct {
 
 func (x *PublishBlobResponse) Reset() {
 	*x = PublishBlobResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1806,7 +1926,7 @@ func (x *PublishBlobResponse) String() string {
 func (*PublishBlobResponse) ProtoMessage() {}
 
 func (x *PublishBlobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[29]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1819,7 +1939,7 @@ func (x *PublishBlobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishBlobResponse.ProtoReflect.Descriptor instead.
 func (*PublishBlobResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{29}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *PublishBlobResponse) GetHash() []byte {
@@ -1851,7 +1971,7 @@ type PublishVersionRequest struct {
 
 func (x *PublishVersionRequest) Reset() {
 	*x = PublishVersionRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1863,7 +1983,7 @@ func (x *PublishVersionRequest) String() string {
 func (*PublishVersionRequest) ProtoMessage() {}
 
 func (x *PublishVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[30]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1876,7 +1996,7 @@ func (x *PublishVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishVersionRequest.ProtoReflect.Descriptor instead.
 func (*PublishVersionRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{30}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *PublishVersionRequest) GetPackId() string {
@@ -1917,7 +2037,7 @@ type PublishVersionResponse struct {
 
 func (x *PublishVersionResponse) Reset() {
 	*x = PublishVersionResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1929,7 +2049,7 @@ func (x *PublishVersionResponse) String() string {
 func (*PublishVersionResponse) ProtoMessage() {}
 
 func (x *PublishVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[31]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1942,7 +2062,7 @@ func (x *PublishVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishVersionResponse.ProtoReflect.Descriptor instead.
 func (*PublishVersionResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{31}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *PublishVersionResponse) GetVersion() uint64 {
@@ -1976,7 +2096,7 @@ type PublishFindings struct {
 
 func (x *PublishFindings) Reset() {
 	*x = PublishFindings{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[34]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1988,7 +2108,7 @@ func (x *PublishFindings) String() string {
 func (*PublishFindings) ProtoMessage() {}
 
 func (x *PublishFindings) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[32]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[34]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2001,7 +2121,7 @@ func (x *PublishFindings) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PublishFindings.ProtoReflect.Descriptor instead.
 func (*PublishFindings) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{32}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{34}
 }
 
 func (x *PublishFindings) GetFindings() []*v12.Diagnostic {
@@ -2021,7 +2141,7 @@ type ApproveVersionRequest struct {
 
 func (x *ApproveVersionRequest) Reset() {
 	*x = ApproveVersionRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[35]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2033,7 +2153,7 @@ func (x *ApproveVersionRequest) String() string {
 func (*ApproveVersionRequest) ProtoMessage() {}
 
 func (x *ApproveVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[33]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[35]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2046,7 +2166,7 @@ func (x *ApproveVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproveVersionRequest.ProtoReflect.Descriptor instead.
 func (*ApproveVersionRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{33}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{35}
 }
 
 func (x *ApproveVersionRequest) GetPackId() string {
@@ -2077,7 +2197,7 @@ type ApproveVersionResponse struct {
 
 func (x *ApproveVersionResponse) Reset() {
 	*x = ApproveVersionResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[36]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2089,7 +2209,7 @@ func (x *ApproveVersionResponse) String() string {
 func (*ApproveVersionResponse) ProtoMessage() {}
 
 func (x *ApproveVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[34]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[36]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2102,7 +2222,7 @@ func (x *ApproveVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ApproveVersionResponse.ProtoReflect.Descriptor instead.
 func (*ApproveVersionResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{34}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{36}
 }
 
 func (x *ApproveVersionResponse) GetApprovedBy() string {
@@ -2139,7 +2259,7 @@ type ActivateVersionRequest struct {
 
 func (x *ActivateVersionRequest) Reset() {
 	*x = ActivateVersionRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[37]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2151,7 +2271,7 @@ func (x *ActivateVersionRequest) String() string {
 func (*ActivateVersionRequest) ProtoMessage() {}
 
 func (x *ActivateVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[35]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[37]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2164,7 +2284,7 @@ func (x *ActivateVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateVersionRequest.ProtoReflect.Descriptor instead.
 func (*ActivateVersionRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{35}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{37}
 }
 
 func (x *ActivateVersionRequest) GetPackId() string {
@@ -2207,7 +2327,7 @@ type ActivateVersionResponse struct {
 
 func (x *ActivateVersionResponse) Reset() {
 	*x = ActivateVersionResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[36]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[38]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2219,7 +2339,7 @@ func (x *ActivateVersionResponse) String() string {
 func (*ActivateVersionResponse) ProtoMessage() {}
 
 func (x *ActivateVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[36]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[38]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2232,7 +2352,7 @@ func (x *ActivateVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivateVersionResponse.ProtoReflect.Descriptor instead.
 func (*ActivateVersionResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{36}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{38}
 }
 
 func (x *ActivateVersionResponse) GetPreviousVersion() uint64 {
@@ -2265,7 +2385,7 @@ type ActivationRefusal struct {
 
 func (x *ActivationRefusal) Reset() {
 	*x = ActivationRefusal{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[37]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[39]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2277,7 +2397,7 @@ func (x *ActivationRefusal) String() string {
 func (*ActivationRefusal) ProtoMessage() {}
 
 func (x *ActivationRefusal) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[37]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[39]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2290,7 +2410,7 @@ func (x *ActivationRefusal) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ActivationRefusal.ProtoReflect.Descriptor instead.
 func (*ActivationRefusal) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{37}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{39}
 }
 
 func (x *ActivationRefusal) GetReason() string {
@@ -2318,7 +2438,7 @@ type ListVersionsRequest struct {
 
 func (x *ListVersionsRequest) Reset() {
 	*x = ListVersionsRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[38]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[40]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2330,7 +2450,7 @@ func (x *ListVersionsRequest) String() string {
 func (*ListVersionsRequest) ProtoMessage() {}
 
 func (x *ListVersionsRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[38]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[40]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2343,7 +2463,7 @@ func (x *ListVersionsRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVersionsRequest.ProtoReflect.Descriptor instead.
 func (*ListVersionsRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{38}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{40}
 }
 
 func (x *ListVersionsRequest) GetPackId() string {
@@ -2375,7 +2495,7 @@ type ListVersionsResponse struct {
 
 func (x *ListVersionsResponse) Reset() {
 	*x = ListVersionsResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[39]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[41]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2387,7 +2507,7 @@ func (x *ListVersionsResponse) String() string {
 func (*ListVersionsResponse) ProtoMessage() {}
 
 func (x *ListVersionsResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[39]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[41]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2400,7 +2520,7 @@ func (x *ListVersionsResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ListVersionsResponse.ProtoReflect.Descriptor instead.
 func (*ListVersionsResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{39}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{41}
 }
 
 func (x *ListVersionsResponse) GetVersions() []*v12.ContentVersion {
@@ -2434,7 +2554,7 @@ type GetVersionRequest struct {
 
 func (x *GetVersionRequest) Reset() {
 	*x = GetVersionRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[40]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[42]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2446,7 +2566,7 @@ func (x *GetVersionRequest) String() string {
 func (*GetVersionRequest) ProtoMessage() {}
 
 func (x *GetVersionRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[40]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[42]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2459,7 +2579,7 @@ func (x *GetVersionRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVersionRequest.ProtoReflect.Descriptor instead.
 func (*GetVersionRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{40}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{42}
 }
 
 func (x *GetVersionRequest) GetPackId() string {
@@ -2485,7 +2605,7 @@ type GetVersionResponse struct {
 
 func (x *GetVersionResponse) Reset() {
 	*x = GetVersionResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[41]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[43]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2497,7 +2617,7 @@ func (x *GetVersionResponse) String() string {
 func (*GetVersionResponse) ProtoMessage() {}
 
 func (x *GetVersionResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[41]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[43]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2510,7 +2630,7 @@ func (x *GetVersionResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetVersionResponse.ProtoReflect.Descriptor instead.
 func (*GetVersionResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{41}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{43}
 }
 
 func (x *GetVersionResponse) GetVersion() *v12.ContentVersion {
@@ -2531,7 +2651,7 @@ type GetBlobRequest struct {
 
 func (x *GetBlobRequest) Reset() {
 	*x = GetBlobRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[42]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[44]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2543,7 +2663,7 @@ func (x *GetBlobRequest) String() string {
 func (*GetBlobRequest) ProtoMessage() {}
 
 func (x *GetBlobRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[42]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[44]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2556,7 +2676,7 @@ func (x *GetBlobRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlobRequest.ProtoReflect.Descriptor instead.
 func (*GetBlobRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{42}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{44}
 }
 
 func (x *GetBlobRequest) GetPackId() string {
@@ -2590,7 +2710,7 @@ type GetBlobResponse struct {
 
 func (x *GetBlobResponse) Reset() {
 	*x = GetBlobResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[43]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[45]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2602,7 +2722,7 @@ func (x *GetBlobResponse) String() string {
 func (*GetBlobResponse) ProtoMessage() {}
 
 func (x *GetBlobResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[43]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[45]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2615,7 +2735,7 @@ func (x *GetBlobResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use GetBlobResponse.ProtoReflect.Descriptor instead.
 func (*GetBlobResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{43}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{45}
 }
 
 func (x *GetBlobResponse) GetData() []byte {
@@ -2633,7 +2753,7 @@ type ReloadContentRequest struct {
 
 func (x *ReloadContentRequest) Reset() {
 	*x = ReloadContentRequest{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[44]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[46]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2645,7 +2765,7 @@ func (x *ReloadContentRequest) String() string {
 func (*ReloadContentRequest) ProtoMessage() {}
 
 func (x *ReloadContentRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[44]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[46]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2658,7 +2778,7 @@ func (x *ReloadContentRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReloadContentRequest.ProtoReflect.Descriptor instead.
 func (*ReloadContentRequest) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{44}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{46}
 }
 
 type ReloadContentResponse struct {
@@ -2672,7 +2792,7 @@ type ReloadContentResponse struct {
 
 func (x *ReloadContentResponse) Reset() {
 	*x = ReloadContentResponse{}
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[45]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[47]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2684,7 +2804,7 @@ func (x *ReloadContentResponse) String() string {
 func (*ReloadContentResponse) ProtoMessage() {}
 
 func (x *ReloadContentResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_admin_v1_admin_proto_msgTypes[45]
+	mi := &file_andara_admin_v1_admin_proto_msgTypes[47]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2697,7 +2817,7 @@ func (x *ReloadContentResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReloadContentResponse.ProtoReflect.Descriptor instead.
 func (*ReloadContentResponse) Descriptor() ([]byte, []int) {
-	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{45}
+	return file_andara_admin_v1_admin_proto_rawDescGZIP(), []int{47}
 }
 
 func (x *ReloadContentResponse) GetActive() []*v11.PackVersion {
@@ -2714,15 +2834,22 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\x1bandara/admin/v1/admin.proto\x12\x0fandara.admin.v1\x1a andara/accounts/v1/account.proto\x1a\x1fandara/content/v1/content.proto\x1a\x1eandara/state/v1/snapshot.proto\"J\n" +
 	"\x19ListSnapshotRoundsRequest\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x14\n" +
-	"\x05limit\x18\x02 \x01(\rR\x05limit\"\xac\x01\n" +
+	"\x05limit\x18\x02 \x01(\rR\x05limit\"\xc0\x01\n" +
 	"\rSnapshotRound\x12\x12\n" +
 	"\x04tick\x18\x01 \x01(\x04R\x04tick\x12#\n" +
 	"\rstate_version\x18\x02 \x01(\rR\fstateVersion\x12\x19\n" +
 	"\bzone_ids\x18\x03 \x03(\tR\azoneIds\x12\x1a\n" +
 	"\bcomplete\x18\x04 \x01(\bR\bcomplete\x12+\n" +
-	"\x12taken_at_unix_nano\x18\x05 \x01(\x03R\x0ftakenAtUnixNano\"T\n" +
+	"\x12taken_at_unix_nano\x18\x05 \x01(\x03R\x0ftakenAtUnixNano\x12\x12\n" +
+	"\x04tags\x18\x06 \x03(\tR\x04tags\"T\n" +
 	"\x1aListSnapshotRoundsResponse\x126\n" +
-	"\x06rounds\x18\x01 \x03(\v2\x1e.andara.admin.v1.SnapshotRoundR\x06rounds\"0\n" +
+	"\x06rounds\x18\x01 \x03(\v2\x1e.andara.admin.v1.SnapshotRoundR\x06rounds\"A\n" +
+	"\x17TagSnapshotRoundRequest\x12\x12\n" +
+	"\x04name\x18\x01 \x01(\tR\x04name\x12\x12\n" +
+	"\x04tick\x18\x02 \x01(\x04R\x04tick\"U\n" +
+	"\x18TagSnapshotRoundResponse\x12\x12\n" +
+	"\x04tick\x18\x01 \x01(\x04R\x04tick\x12%\n" +
+	"\x0ealready_tagged\x18\x02 \x01(\bR\ralreadyTagged\"0\n" +
 	"\x1aVerifySnapshotRoundRequest\x12\x12\n" +
 	"\x04tick\x18\x01 \x01(\x04R\x04tick\"\xa6\x02\n" +
 	"\x1bVerifySnapshotRoundResponse\x12\x14\n" +
@@ -2879,7 +3006,7 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\x1eVERIFY_OUTCOME_REPLAY_MISMATCH\x10\x02\x12#\n" +
 	"\x1fVERIFY_OUTCOME_RESTORE_MISMATCH\x10\x03\x12 \n" +
 	"\x1cVERIFY_OUTCOME_SEED_MISMATCH\x10\x04\x12#\n" +
-	"\x1fVERIFY_OUTCOME_CONTENT_MISMATCH\x10\x052\xfd\x0f\n" +
+	"\x1fVERIFY_OUTCOME_CONTENT_MISMATCH\x10\x052\xe6\x10\n" +
 	"\x05Admin\x12^\n" +
 	"\rGetServerInfo\x12%.andara.admin.v1.GetServerInfoRequest\x1a&.andara.admin.v1.GetServerInfoResponse\x12^\n" +
 	"\rCreateAccount\x12%.andara.admin.v1.CreateAccountRequest\x1a&.andara.admin.v1.CreateAccountResponse\x12^\n" +
@@ -2902,7 +3029,8 @@ const file_andara_admin_v1_admin_proto_rawDesc = "" +
 	"\aGetBlob\x12\x1f.andara.admin.v1.GetBlobRequest\x1a .andara.admin.v1.GetBlobResponse0\x01\x12^\n" +
 	"\rReloadContent\x12%.andara.admin.v1.ReloadContentRequest\x1a&.andara.admin.v1.ReloadContentResponse\x12m\n" +
 	"\x12ListSnapshotRounds\x12*.andara.admin.v1.ListSnapshotRoundsRequest\x1a+.andara.admin.v1.ListSnapshotRoundsResponse\x12p\n" +
-	"\x13VerifySnapshotRound\x12+.andara.admin.v1.VerifySnapshotRoundRequest\x1a,.andara.admin.v1.VerifySnapshotRoundResponseB\xbc\x01\n" +
+	"\x13VerifySnapshotRound\x12+.andara.admin.v1.VerifySnapshotRoundRequest\x1a,.andara.admin.v1.VerifySnapshotRoundResponse\x12g\n" +
+	"\x10TagSnapshotRound\x12(.andara.admin.v1.TagSnapshotRoundRequest\x1a).andara.admin.v1.TagSnapshotRoundResponseB\xbc\x01\n" +
 	"\x13com.andara.admin.v1B\n" +
 	"AdminProtoP\x01Z;github.com/valesordev/andara/gen/go/andara/admin/v1;adminv1\xa2\x02\x03AAX\xaa\x02\x0fAndara.Admin.V1\xca\x02\x0fAndara\\Admin\\V1\xe2\x02\x1bAndara\\Admin\\V1\\GPBMetadata\xea\x02\x11Andara::Admin::V1b\x06proto3"
 
@@ -2919,127 +3047,131 @@ func file_andara_admin_v1_admin_proto_rawDescGZIP() []byte {
 }
 
 var file_andara_admin_v1_admin_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_andara_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 46)
+var file_andara_admin_v1_admin_proto_msgTypes = make([]protoimpl.MessageInfo, 48)
 var file_andara_admin_v1_admin_proto_goTypes = []any{
 	(VerifyOutcome)(0),                  // 0: andara.admin.v1.VerifyOutcome
 	(*ListSnapshotRoundsRequest)(nil),   // 1: andara.admin.v1.ListSnapshotRoundsRequest
 	(*SnapshotRound)(nil),               // 2: andara.admin.v1.SnapshotRound
 	(*ListSnapshotRoundsResponse)(nil),  // 3: andara.admin.v1.ListSnapshotRoundsResponse
-	(*VerifySnapshotRoundRequest)(nil),  // 4: andara.admin.v1.VerifySnapshotRoundRequest
-	(*VerifySnapshotRoundResponse)(nil), // 5: andara.admin.v1.VerifySnapshotRoundResponse
-	(*CreateAccountRequest)(nil),        // 6: andara.admin.v1.CreateAccountRequest
-	(*CreateAccountResponse)(nil),       // 7: andara.admin.v1.CreateAccountResponse
-	(*ResetPasswordRequest)(nil),        // 8: andara.admin.v1.ResetPasswordRequest
-	(*ResetPasswordResponse)(nil),       // 9: andara.admin.v1.ResetPasswordResponse
-	(*SetRolesRequest)(nil),             // 10: andara.admin.v1.SetRolesRequest
-	(*SetRolesResponse)(nil),            // 11: andara.admin.v1.SetRolesResponse
-	(*SetAccountStatusRequest)(nil),     // 12: andara.admin.v1.SetAccountStatusRequest
-	(*SetAccountStatusResponse)(nil),    // 13: andara.admin.v1.SetAccountStatusResponse
-	(*IssueInviteRequest)(nil),          // 14: andara.admin.v1.IssueInviteRequest
-	(*IssueInviteResponse)(nil),         // 15: andara.admin.v1.IssueInviteResponse
-	(*RevokeInviteRequest)(nil),         // 16: andara.admin.v1.RevokeInviteRequest
-	(*RevokeInviteResponse)(nil),        // 17: andara.admin.v1.RevokeInviteResponse
-	(*SetRegistrationModeRequest)(nil),  // 18: andara.admin.v1.SetRegistrationModeRequest
-	(*SetRegistrationModeResponse)(nil), // 19: andara.admin.v1.SetRegistrationModeResponse
-	(*CreateAgentAccountRequest)(nil),   // 20: andara.admin.v1.CreateAgentAccountRequest
-	(*CreateAgentAccountResponse)(nil),  // 21: andara.admin.v1.CreateAgentAccountResponse
-	(*GetServerInfoRequest)(nil),        // 22: andara.admin.v1.GetServerInfoRequest
-	(*GetServerInfoResponse)(nil),       // 23: andara.admin.v1.GetServerInfoResponse
-	(*SetBuilderPacksRequest)(nil),      // 24: andara.admin.v1.SetBuilderPacksRequest
-	(*SetBuilderPacksResponse)(nil),     // 25: andara.admin.v1.SetBuilderPacksResponse
-	(*HasBlobsRequest)(nil),             // 26: andara.admin.v1.HasBlobsRequest
-	(*HasBlobsResponse)(nil),            // 27: andara.admin.v1.HasBlobsResponse
-	(*PublishBlobRequest)(nil),          // 28: andara.admin.v1.PublishBlobRequest
-	(*PublishBlobHeader)(nil),           // 29: andara.admin.v1.PublishBlobHeader
-	(*PublishBlobResponse)(nil),         // 30: andara.admin.v1.PublishBlobResponse
-	(*PublishVersionRequest)(nil),       // 31: andara.admin.v1.PublishVersionRequest
-	(*PublishVersionResponse)(nil),      // 32: andara.admin.v1.PublishVersionResponse
-	(*PublishFindings)(nil),             // 33: andara.admin.v1.PublishFindings
-	(*ApproveVersionRequest)(nil),       // 34: andara.admin.v1.ApproveVersionRequest
-	(*ApproveVersionResponse)(nil),      // 35: andara.admin.v1.ApproveVersionResponse
-	(*ActivateVersionRequest)(nil),      // 36: andara.admin.v1.ActivateVersionRequest
-	(*ActivateVersionResponse)(nil),     // 37: andara.admin.v1.ActivateVersionResponse
-	(*ActivationRefusal)(nil),           // 38: andara.admin.v1.ActivationRefusal
-	(*ListVersionsRequest)(nil),         // 39: andara.admin.v1.ListVersionsRequest
-	(*ListVersionsResponse)(nil),        // 40: andara.admin.v1.ListVersionsResponse
-	(*GetVersionRequest)(nil),           // 41: andara.admin.v1.GetVersionRequest
-	(*GetVersionResponse)(nil),          // 42: andara.admin.v1.GetVersionResponse
-	(*GetBlobRequest)(nil),              // 43: andara.admin.v1.GetBlobRequest
-	(*GetBlobResponse)(nil),             // 44: andara.admin.v1.GetBlobResponse
-	(*ReloadContentRequest)(nil),        // 45: andara.admin.v1.ReloadContentRequest
-	(*ReloadContentResponse)(nil),       // 46: andara.admin.v1.ReloadContentResponse
-	(v1.Role)(0),                        // 47: andara.accounts.v1.Role
-	(v1.AccountStatus)(0),               // 48: andara.accounts.v1.AccountStatus
-	(v1.RegistrationMode)(0),            // 49: andara.accounts.v1.RegistrationMode
-	(v1.CredentialKind)(0),              // 50: andara.accounts.v1.CredentialKind
-	(*v11.PackVersion)(nil),             // 51: andara.state.v1.PackVersion
-	(*v12.BlobRef)(nil),                 // 52: andara.content.v1.BlobRef
-	(*v12.Diagnostic)(nil),              // 53: andara.content.v1.Diagnostic
-	(*v12.ContentVersion)(nil),          // 54: andara.content.v1.ContentVersion
-	(*v12.ActiveVersion)(nil),           // 55: andara.content.v1.ActiveVersion
+	(*TagSnapshotRoundRequest)(nil),     // 4: andara.admin.v1.TagSnapshotRoundRequest
+	(*TagSnapshotRoundResponse)(nil),    // 5: andara.admin.v1.TagSnapshotRoundResponse
+	(*VerifySnapshotRoundRequest)(nil),  // 6: andara.admin.v1.VerifySnapshotRoundRequest
+	(*VerifySnapshotRoundResponse)(nil), // 7: andara.admin.v1.VerifySnapshotRoundResponse
+	(*CreateAccountRequest)(nil),        // 8: andara.admin.v1.CreateAccountRequest
+	(*CreateAccountResponse)(nil),       // 9: andara.admin.v1.CreateAccountResponse
+	(*ResetPasswordRequest)(nil),        // 10: andara.admin.v1.ResetPasswordRequest
+	(*ResetPasswordResponse)(nil),       // 11: andara.admin.v1.ResetPasswordResponse
+	(*SetRolesRequest)(nil),             // 12: andara.admin.v1.SetRolesRequest
+	(*SetRolesResponse)(nil),            // 13: andara.admin.v1.SetRolesResponse
+	(*SetAccountStatusRequest)(nil),     // 14: andara.admin.v1.SetAccountStatusRequest
+	(*SetAccountStatusResponse)(nil),    // 15: andara.admin.v1.SetAccountStatusResponse
+	(*IssueInviteRequest)(nil),          // 16: andara.admin.v1.IssueInviteRequest
+	(*IssueInviteResponse)(nil),         // 17: andara.admin.v1.IssueInviteResponse
+	(*RevokeInviteRequest)(nil),         // 18: andara.admin.v1.RevokeInviteRequest
+	(*RevokeInviteResponse)(nil),        // 19: andara.admin.v1.RevokeInviteResponse
+	(*SetRegistrationModeRequest)(nil),  // 20: andara.admin.v1.SetRegistrationModeRequest
+	(*SetRegistrationModeResponse)(nil), // 21: andara.admin.v1.SetRegistrationModeResponse
+	(*CreateAgentAccountRequest)(nil),   // 22: andara.admin.v1.CreateAgentAccountRequest
+	(*CreateAgentAccountResponse)(nil),  // 23: andara.admin.v1.CreateAgentAccountResponse
+	(*GetServerInfoRequest)(nil),        // 24: andara.admin.v1.GetServerInfoRequest
+	(*GetServerInfoResponse)(nil),       // 25: andara.admin.v1.GetServerInfoResponse
+	(*SetBuilderPacksRequest)(nil),      // 26: andara.admin.v1.SetBuilderPacksRequest
+	(*SetBuilderPacksResponse)(nil),     // 27: andara.admin.v1.SetBuilderPacksResponse
+	(*HasBlobsRequest)(nil),             // 28: andara.admin.v1.HasBlobsRequest
+	(*HasBlobsResponse)(nil),            // 29: andara.admin.v1.HasBlobsResponse
+	(*PublishBlobRequest)(nil),          // 30: andara.admin.v1.PublishBlobRequest
+	(*PublishBlobHeader)(nil),           // 31: andara.admin.v1.PublishBlobHeader
+	(*PublishBlobResponse)(nil),         // 32: andara.admin.v1.PublishBlobResponse
+	(*PublishVersionRequest)(nil),       // 33: andara.admin.v1.PublishVersionRequest
+	(*PublishVersionResponse)(nil),      // 34: andara.admin.v1.PublishVersionResponse
+	(*PublishFindings)(nil),             // 35: andara.admin.v1.PublishFindings
+	(*ApproveVersionRequest)(nil),       // 36: andara.admin.v1.ApproveVersionRequest
+	(*ApproveVersionResponse)(nil),      // 37: andara.admin.v1.ApproveVersionResponse
+	(*ActivateVersionRequest)(nil),      // 38: andara.admin.v1.ActivateVersionRequest
+	(*ActivateVersionResponse)(nil),     // 39: andara.admin.v1.ActivateVersionResponse
+	(*ActivationRefusal)(nil),           // 40: andara.admin.v1.ActivationRefusal
+	(*ListVersionsRequest)(nil),         // 41: andara.admin.v1.ListVersionsRequest
+	(*ListVersionsResponse)(nil),        // 42: andara.admin.v1.ListVersionsResponse
+	(*GetVersionRequest)(nil),           // 43: andara.admin.v1.GetVersionRequest
+	(*GetVersionResponse)(nil),          // 44: andara.admin.v1.GetVersionResponse
+	(*GetBlobRequest)(nil),              // 45: andara.admin.v1.GetBlobRequest
+	(*GetBlobResponse)(nil),             // 46: andara.admin.v1.GetBlobResponse
+	(*ReloadContentRequest)(nil),        // 47: andara.admin.v1.ReloadContentRequest
+	(*ReloadContentResponse)(nil),       // 48: andara.admin.v1.ReloadContentResponse
+	(v1.Role)(0),                        // 49: andara.accounts.v1.Role
+	(v1.AccountStatus)(0),               // 50: andara.accounts.v1.AccountStatus
+	(v1.RegistrationMode)(0),            // 51: andara.accounts.v1.RegistrationMode
+	(v1.CredentialKind)(0),              // 52: andara.accounts.v1.CredentialKind
+	(*v11.PackVersion)(nil),             // 53: andara.state.v1.PackVersion
+	(*v12.BlobRef)(nil),                 // 54: andara.content.v1.BlobRef
+	(*v12.Diagnostic)(nil),              // 55: andara.content.v1.Diagnostic
+	(*v12.ContentVersion)(nil),          // 56: andara.content.v1.ContentVersion
+	(*v12.ActiveVersion)(nil),           // 57: andara.content.v1.ActiveVersion
 }
 var file_andara_admin_v1_admin_proto_depIdxs = []int32{
 	2,  // 0: andara.admin.v1.ListSnapshotRoundsResponse.rounds:type_name -> andara.admin.v1.SnapshotRound
 	0,  // 1: andara.admin.v1.VerifySnapshotRoundResponse.outcome:type_name -> andara.admin.v1.VerifyOutcome
-	47, // 2: andara.admin.v1.CreateAccountRequest.roles:type_name -> andara.accounts.v1.Role
-	47, // 3: andara.admin.v1.SetRolesRequest.roles:type_name -> andara.accounts.v1.Role
-	48, // 4: andara.admin.v1.SetAccountStatusRequest.status:type_name -> andara.accounts.v1.AccountStatus
-	49, // 5: andara.admin.v1.SetRegistrationModeRequest.mode:type_name -> andara.accounts.v1.RegistrationMode
-	49, // 6: andara.admin.v1.SetRegistrationModeResponse.previous:type_name -> andara.accounts.v1.RegistrationMode
-	50, // 7: andara.admin.v1.CreateAgentAccountRequest.credential_kind:type_name -> andara.accounts.v1.CredentialKind
-	51, // 8: andara.admin.v1.GetServerInfoResponse.content:type_name -> andara.state.v1.PackVersion
-	29, // 9: andara.admin.v1.PublishBlobRequest.header:type_name -> andara.admin.v1.PublishBlobHeader
-	52, // 10: andara.admin.v1.PublishVersionRequest.blobs:type_name -> andara.content.v1.BlobRef
-	53, // 11: andara.admin.v1.PublishVersionResponse.warnings:type_name -> andara.content.v1.Diagnostic
-	53, // 12: andara.admin.v1.PublishFindings.findings:type_name -> andara.content.v1.Diagnostic
-	54, // 13: andara.admin.v1.ListVersionsResponse.versions:type_name -> andara.content.v1.ContentVersion
-	55, // 14: andara.admin.v1.ListVersionsResponse.activations:type_name -> andara.content.v1.ActiveVersion
-	54, // 15: andara.admin.v1.GetVersionResponse.version:type_name -> andara.content.v1.ContentVersion
-	51, // 16: andara.admin.v1.ReloadContentResponse.active:type_name -> andara.state.v1.PackVersion
-	22, // 17: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
-	6,  // 18: andara.admin.v1.Admin.CreateAccount:input_type -> andara.admin.v1.CreateAccountRequest
-	8,  // 19: andara.admin.v1.Admin.ResetPassword:input_type -> andara.admin.v1.ResetPasswordRequest
-	10, // 20: andara.admin.v1.Admin.SetRoles:input_type -> andara.admin.v1.SetRolesRequest
-	12, // 21: andara.admin.v1.Admin.SetAccountStatus:input_type -> andara.admin.v1.SetAccountStatusRequest
-	14, // 22: andara.admin.v1.Admin.IssueInvite:input_type -> andara.admin.v1.IssueInviteRequest
-	16, // 23: andara.admin.v1.Admin.RevokeInvite:input_type -> andara.admin.v1.RevokeInviteRequest
-	18, // 24: andara.admin.v1.Admin.SetRegistrationMode:input_type -> andara.admin.v1.SetRegistrationModeRequest
-	20, // 25: andara.admin.v1.Admin.CreateAgentAccount:input_type -> andara.admin.v1.CreateAgentAccountRequest
-	24, // 26: andara.admin.v1.Admin.SetBuilderPacks:input_type -> andara.admin.v1.SetBuilderPacksRequest
-	26, // 27: andara.admin.v1.Admin.HasBlobs:input_type -> andara.admin.v1.HasBlobsRequest
-	28, // 28: andara.admin.v1.Admin.PublishBlob:input_type -> andara.admin.v1.PublishBlobRequest
-	31, // 29: andara.admin.v1.Admin.PublishVersion:input_type -> andara.admin.v1.PublishVersionRequest
-	34, // 30: andara.admin.v1.Admin.ApproveVersion:input_type -> andara.admin.v1.ApproveVersionRequest
-	36, // 31: andara.admin.v1.Admin.ActivateVersion:input_type -> andara.admin.v1.ActivateVersionRequest
-	39, // 32: andara.admin.v1.Admin.ListVersions:input_type -> andara.admin.v1.ListVersionsRequest
-	41, // 33: andara.admin.v1.Admin.GetVersion:input_type -> andara.admin.v1.GetVersionRequest
-	43, // 34: andara.admin.v1.Admin.GetBlob:input_type -> andara.admin.v1.GetBlobRequest
-	45, // 35: andara.admin.v1.Admin.ReloadContent:input_type -> andara.admin.v1.ReloadContentRequest
+	49, // 2: andara.admin.v1.CreateAccountRequest.roles:type_name -> andara.accounts.v1.Role
+	49, // 3: andara.admin.v1.SetRolesRequest.roles:type_name -> andara.accounts.v1.Role
+	50, // 4: andara.admin.v1.SetAccountStatusRequest.status:type_name -> andara.accounts.v1.AccountStatus
+	51, // 5: andara.admin.v1.SetRegistrationModeRequest.mode:type_name -> andara.accounts.v1.RegistrationMode
+	51, // 6: andara.admin.v1.SetRegistrationModeResponse.previous:type_name -> andara.accounts.v1.RegistrationMode
+	52, // 7: andara.admin.v1.CreateAgentAccountRequest.credential_kind:type_name -> andara.accounts.v1.CredentialKind
+	53, // 8: andara.admin.v1.GetServerInfoResponse.content:type_name -> andara.state.v1.PackVersion
+	31, // 9: andara.admin.v1.PublishBlobRequest.header:type_name -> andara.admin.v1.PublishBlobHeader
+	54, // 10: andara.admin.v1.PublishVersionRequest.blobs:type_name -> andara.content.v1.BlobRef
+	55, // 11: andara.admin.v1.PublishVersionResponse.warnings:type_name -> andara.content.v1.Diagnostic
+	55, // 12: andara.admin.v1.PublishFindings.findings:type_name -> andara.content.v1.Diagnostic
+	56, // 13: andara.admin.v1.ListVersionsResponse.versions:type_name -> andara.content.v1.ContentVersion
+	57, // 14: andara.admin.v1.ListVersionsResponse.activations:type_name -> andara.content.v1.ActiveVersion
+	56, // 15: andara.admin.v1.GetVersionResponse.version:type_name -> andara.content.v1.ContentVersion
+	53, // 16: andara.admin.v1.ReloadContentResponse.active:type_name -> andara.state.v1.PackVersion
+	24, // 17: andara.admin.v1.Admin.GetServerInfo:input_type -> andara.admin.v1.GetServerInfoRequest
+	8,  // 18: andara.admin.v1.Admin.CreateAccount:input_type -> andara.admin.v1.CreateAccountRequest
+	10, // 19: andara.admin.v1.Admin.ResetPassword:input_type -> andara.admin.v1.ResetPasswordRequest
+	12, // 20: andara.admin.v1.Admin.SetRoles:input_type -> andara.admin.v1.SetRolesRequest
+	14, // 21: andara.admin.v1.Admin.SetAccountStatus:input_type -> andara.admin.v1.SetAccountStatusRequest
+	16, // 22: andara.admin.v1.Admin.IssueInvite:input_type -> andara.admin.v1.IssueInviteRequest
+	18, // 23: andara.admin.v1.Admin.RevokeInvite:input_type -> andara.admin.v1.RevokeInviteRequest
+	20, // 24: andara.admin.v1.Admin.SetRegistrationMode:input_type -> andara.admin.v1.SetRegistrationModeRequest
+	22, // 25: andara.admin.v1.Admin.CreateAgentAccount:input_type -> andara.admin.v1.CreateAgentAccountRequest
+	26, // 26: andara.admin.v1.Admin.SetBuilderPacks:input_type -> andara.admin.v1.SetBuilderPacksRequest
+	28, // 27: andara.admin.v1.Admin.HasBlobs:input_type -> andara.admin.v1.HasBlobsRequest
+	30, // 28: andara.admin.v1.Admin.PublishBlob:input_type -> andara.admin.v1.PublishBlobRequest
+	33, // 29: andara.admin.v1.Admin.PublishVersion:input_type -> andara.admin.v1.PublishVersionRequest
+	36, // 30: andara.admin.v1.Admin.ApproveVersion:input_type -> andara.admin.v1.ApproveVersionRequest
+	38, // 31: andara.admin.v1.Admin.ActivateVersion:input_type -> andara.admin.v1.ActivateVersionRequest
+	41, // 32: andara.admin.v1.Admin.ListVersions:input_type -> andara.admin.v1.ListVersionsRequest
+	43, // 33: andara.admin.v1.Admin.GetVersion:input_type -> andara.admin.v1.GetVersionRequest
+	45, // 34: andara.admin.v1.Admin.GetBlob:input_type -> andara.admin.v1.GetBlobRequest
+	47, // 35: andara.admin.v1.Admin.ReloadContent:input_type -> andara.admin.v1.ReloadContentRequest
 	1,  // 36: andara.admin.v1.Admin.ListSnapshotRounds:input_type -> andara.admin.v1.ListSnapshotRoundsRequest
-	4,  // 37: andara.admin.v1.Admin.VerifySnapshotRound:input_type -> andara.admin.v1.VerifySnapshotRoundRequest
-	23, // 38: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
-	7,  // 39: andara.admin.v1.Admin.CreateAccount:output_type -> andara.admin.v1.CreateAccountResponse
-	9,  // 40: andara.admin.v1.Admin.ResetPassword:output_type -> andara.admin.v1.ResetPasswordResponse
-	11, // 41: andara.admin.v1.Admin.SetRoles:output_type -> andara.admin.v1.SetRolesResponse
-	13, // 42: andara.admin.v1.Admin.SetAccountStatus:output_type -> andara.admin.v1.SetAccountStatusResponse
-	15, // 43: andara.admin.v1.Admin.IssueInvite:output_type -> andara.admin.v1.IssueInviteResponse
-	17, // 44: andara.admin.v1.Admin.RevokeInvite:output_type -> andara.admin.v1.RevokeInviteResponse
-	19, // 45: andara.admin.v1.Admin.SetRegistrationMode:output_type -> andara.admin.v1.SetRegistrationModeResponse
-	21, // 46: andara.admin.v1.Admin.CreateAgentAccount:output_type -> andara.admin.v1.CreateAgentAccountResponse
-	25, // 47: andara.admin.v1.Admin.SetBuilderPacks:output_type -> andara.admin.v1.SetBuilderPacksResponse
-	27, // 48: andara.admin.v1.Admin.HasBlobs:output_type -> andara.admin.v1.HasBlobsResponse
-	30, // 49: andara.admin.v1.Admin.PublishBlob:output_type -> andara.admin.v1.PublishBlobResponse
-	32, // 50: andara.admin.v1.Admin.PublishVersion:output_type -> andara.admin.v1.PublishVersionResponse
-	35, // 51: andara.admin.v1.Admin.ApproveVersion:output_type -> andara.admin.v1.ApproveVersionResponse
-	37, // 52: andara.admin.v1.Admin.ActivateVersion:output_type -> andara.admin.v1.ActivateVersionResponse
-	40, // 53: andara.admin.v1.Admin.ListVersions:output_type -> andara.admin.v1.ListVersionsResponse
-	42, // 54: andara.admin.v1.Admin.GetVersion:output_type -> andara.admin.v1.GetVersionResponse
-	44, // 55: andara.admin.v1.Admin.GetBlob:output_type -> andara.admin.v1.GetBlobResponse
-	46, // 56: andara.admin.v1.Admin.ReloadContent:output_type -> andara.admin.v1.ReloadContentResponse
-	3,  // 57: andara.admin.v1.Admin.ListSnapshotRounds:output_type -> andara.admin.v1.ListSnapshotRoundsResponse
-	5,  // 58: andara.admin.v1.Admin.VerifySnapshotRound:output_type -> andara.admin.v1.VerifySnapshotRoundResponse
-	38, // [38:59] is the sub-list for method output_type
-	17, // [17:38] is the sub-list for method input_type
+	6,  // 37: andara.admin.v1.Admin.VerifySnapshotRound:input_type -> andara.admin.v1.VerifySnapshotRoundRequest
+	4,  // 38: andara.admin.v1.Admin.TagSnapshotRound:input_type -> andara.admin.v1.TagSnapshotRoundRequest
+	25, // 39: andara.admin.v1.Admin.GetServerInfo:output_type -> andara.admin.v1.GetServerInfoResponse
+	9,  // 40: andara.admin.v1.Admin.CreateAccount:output_type -> andara.admin.v1.CreateAccountResponse
+	11, // 41: andara.admin.v1.Admin.ResetPassword:output_type -> andara.admin.v1.ResetPasswordResponse
+	13, // 42: andara.admin.v1.Admin.SetRoles:output_type -> andara.admin.v1.SetRolesResponse
+	15, // 43: andara.admin.v1.Admin.SetAccountStatus:output_type -> andara.admin.v1.SetAccountStatusResponse
+	17, // 44: andara.admin.v1.Admin.IssueInvite:output_type -> andara.admin.v1.IssueInviteResponse
+	19, // 45: andara.admin.v1.Admin.RevokeInvite:output_type -> andara.admin.v1.RevokeInviteResponse
+	21, // 46: andara.admin.v1.Admin.SetRegistrationMode:output_type -> andara.admin.v1.SetRegistrationModeResponse
+	23, // 47: andara.admin.v1.Admin.CreateAgentAccount:output_type -> andara.admin.v1.CreateAgentAccountResponse
+	27, // 48: andara.admin.v1.Admin.SetBuilderPacks:output_type -> andara.admin.v1.SetBuilderPacksResponse
+	29, // 49: andara.admin.v1.Admin.HasBlobs:output_type -> andara.admin.v1.HasBlobsResponse
+	32, // 50: andara.admin.v1.Admin.PublishBlob:output_type -> andara.admin.v1.PublishBlobResponse
+	34, // 51: andara.admin.v1.Admin.PublishVersion:output_type -> andara.admin.v1.PublishVersionResponse
+	37, // 52: andara.admin.v1.Admin.ApproveVersion:output_type -> andara.admin.v1.ApproveVersionResponse
+	39, // 53: andara.admin.v1.Admin.ActivateVersion:output_type -> andara.admin.v1.ActivateVersionResponse
+	42, // 54: andara.admin.v1.Admin.ListVersions:output_type -> andara.admin.v1.ListVersionsResponse
+	44, // 55: andara.admin.v1.Admin.GetVersion:output_type -> andara.admin.v1.GetVersionResponse
+	46, // 56: andara.admin.v1.Admin.GetBlob:output_type -> andara.admin.v1.GetBlobResponse
+	48, // 57: andara.admin.v1.Admin.ReloadContent:output_type -> andara.admin.v1.ReloadContentResponse
+	3,  // 58: andara.admin.v1.Admin.ListSnapshotRounds:output_type -> andara.admin.v1.ListSnapshotRoundsResponse
+	7,  // 59: andara.admin.v1.Admin.VerifySnapshotRound:output_type -> andara.admin.v1.VerifySnapshotRoundResponse
+	5,  // 60: andara.admin.v1.Admin.TagSnapshotRound:output_type -> andara.admin.v1.TagSnapshotRoundResponse
+	39, // [39:61] is the sub-list for method output_type
+	17, // [17:39] is the sub-list for method input_type
 	17, // [17:17] is the sub-list for extension type_name
 	17, // [17:17] is the sub-list for extension extendee
 	0,  // [0:17] is the sub-list for field type_name
@@ -3050,7 +3182,7 @@ func file_andara_admin_v1_admin_proto_init() {
 	if File_andara_admin_v1_admin_proto != nil {
 		return
 	}
-	file_andara_admin_v1_admin_proto_msgTypes[27].OneofWrappers = []any{
+	file_andara_admin_v1_admin_proto_msgTypes[29].OneofWrappers = []any{
 		(*PublishBlobRequest_Header)(nil),
 		(*PublishBlobRequest_Data)(nil),
 	}
@@ -3060,7 +3192,7 @@ func file_andara_admin_v1_admin_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_admin_v1_admin_proto_rawDesc), len(file_andara_admin_v1_admin_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   46,
+			NumMessages:   48,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

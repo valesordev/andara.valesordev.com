@@ -90,6 +90,15 @@ export declare type SnapshotRound = Message<"andara.admin.v1.SnapshotRound"> & {
    * @generated from field: int64 taken_at_unix_nano = 5;
    */
   takenAtUnixNano: bigint;
+
+  /**
+   * Sorted tag names present on every one of the round's objects
+   * (AW-INF-007). A name on only some of them is not reported; retention
+   * still treats the round as tagged, and tagging it again completes it.
+   *
+   * @generated from field: repeated string tags = 6;
+   */
+  tags: string[];
 };
 
 /**
@@ -115,6 +124,57 @@ export declare type ListSnapshotRoundsResponse = Message<"andara.admin.v1.ListSn
  * Use `create(ListSnapshotRoundsResponseSchema)` to create a new message.
  */
 export declare const ListSnapshotRoundsResponseSchema: GenMessage<ListSnapshotRoundsResponse>;
+
+/**
+ * @generated from message andara.admin.v1.TagSnapshotRoundRequest
+ */
+export declare type TagSnapshotRoundRequest = Message<"andara.admin.v1.TagSnapshotRoundRequest"> & {
+  /**
+   * `deploy:<tag>` or `rollback:<tick>`, matching
+   * ^(deploy|rollback):[A-Za-z0-9._@+-]{1,200}$.
+   *
+   * @generated from field: string name = 1;
+   */
+  name: string;
+
+  /**
+   * 0 means the newest Complete round.
+   *
+   * @generated from field: uint64 tick = 2;
+   */
+  tick: bigint;
+};
+
+/**
+ * Describes the message andara.admin.v1.TagSnapshotRoundRequest.
+ * Use `create(TagSnapshotRoundRequestSchema)` to create a new message.
+ */
+export declare const TagSnapshotRoundRequestSchema: GenMessage<TagSnapshotRoundRequest>;
+
+/**
+ * @generated from message andara.admin.v1.TagSnapshotRoundResponse
+ */
+export declare type TagSnapshotRoundResponse = Message<"andara.admin.v1.TagSnapshotRoundResponse"> & {
+  /**
+   * The tick of the round tagged.
+   *
+   * @generated from field: uint64 tick = 1;
+   */
+  tick: bigint;
+
+  /**
+   * The round already carried `name` on every object; nothing was written.
+   *
+   * @generated from field: bool already_tagged = 2;
+   */
+  alreadyTagged: boolean;
+};
+
+/**
+ * Describes the message andara.admin.v1.TagSnapshotRoundResponse.
+ * Use `create(TagSnapshotRoundResponseSchema)` to create a new message.
+ */
+export declare const TagSnapshotRoundResponseSchema: GenMessage<TagSnapshotRoundResponse>;
 
 /**
  * @generated from message andara.admin.v1.VerifySnapshotRoundRequest
@@ -1490,6 +1550,21 @@ export declare const Admin: GenService<{
     methodKind: "unary";
     input: typeof VerifySnapshotRoundRequestSchema;
     output: typeof VerifySnapshotRoundResponseSchema;
+  },
+  /**
+   * Tag a Complete round so retention keeps it (AW-INF-007, lifecycle.md,
+   * "Round tags"). OPERATOR only; the actor and tick are logged. Idempotent:
+   * tagging a round with a name it already carries succeeds with
+   * already_tagged. INVALID_ARGUMENT for a name outside the tag grammar;
+   * NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for a round that
+   * isn't complete.
+   *
+   * @generated from rpc andara.admin.v1.Admin.TagSnapshotRound
+   */
+  tagSnapshotRound: {
+    methodKind: "unary";
+    input: typeof TagSnapshotRoundRequestSchema;
+    output: typeof TagSnapshotRoundResponseSchema;
   },
 }>;
 

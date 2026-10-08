@@ -150,6 +150,17 @@ export declare type EventEnvelope = Message<"andara.game.v1.EventEnvelope"> & {
      */
     value: CharacterPurged;
     case: "characterPurged";
+  } | {
+    /**
+     * AW-INF-007: the server is about to stop for a deploy. A stream frame
+     * like Heartbeat, not an Event: the Gateway writes it to every open
+     * Subscribe stream, the sim never emits it, it is not in the log or the
+     * Resume Window, and it carries event_id 0.
+     *
+     * @generated from field: andara.game.v1.ServerStopping server_stopping = 25;
+     */
+    value: ServerStopping;
+    case: "serverStopping";
   } | { case: undefined; value?: undefined };
 };
 
@@ -365,6 +376,36 @@ export declare type SimulationStopped = Message<"andara.game.v1.SimulationStoppe
  * Use `create(SimulationStoppedSchema)` to create a new message.
  */
 export declare const SimulationStoppedSchema: GenMessage<SimulationStopped>;
+
+/**
+ * The server will stop in about `deploy.notice_lead` plus the snapshot, and
+ * is expected back in `expected_back_seconds` (deploy.expected_back). The
+ * stream closes at the stop, not at this frame; the client reconnects with backoff and
+ * rebinds within session.linkdead_grace (AW-SRV-015). `message` is for
+ * players and is Brian's wording; empty means the client shows its own text.
+ * Delivery is best effort, once per open stream: a stream opened after the
+ * frame was written does not receive it, and a client must handle a close
+ * without it.
+ *
+ * @generated from message andara.game.v1.ServerStopping
+ */
+export declare type ServerStopping = Message<"andara.game.v1.ServerStopping"> & {
+  /**
+   * @generated from field: string message = 1;
+   */
+  message: string;
+
+  /**
+   * @generated from field: uint32 expected_back_seconds = 2;
+   */
+  expectedBackSeconds: number;
+};
+
+/**
+ * Describes the message andara.game.v1.ServerStopping.
+ * Use `create(ServerStoppingSchema)` to create a new message.
+ */
+export declare const ServerStoppingSchema: GenMessage<ServerStopping>;
 
 /**
  * An Entity was moved out of a Room that a new content version removed, to

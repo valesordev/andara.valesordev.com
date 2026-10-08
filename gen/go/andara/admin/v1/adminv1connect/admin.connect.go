@@ -93,6 +93,8 @@ const (
 	// AdminVerifySnapshotRoundProcedure is the fully-qualified name of the Admin's VerifySnapshotRound
 	// RPC.
 	AdminVerifySnapshotRoundProcedure = "/andara.admin.v1.Admin/VerifySnapshotRound"
+	// AdminTagSnapshotRoundProcedure is the fully-qualified name of the Admin's TagSnapshotRound RPC.
+	AdminTagSnapshotRoundProcedure = "/andara.admin.v1.Admin/TagSnapshotRound"
 )
 
 // AdminClient is a client for the andara.admin.v1.Admin service.
@@ -173,6 +175,13 @@ type AdminClient interface {
 	// round, a log gap, or a state_version this binary can't read;
 	// DEADLINE_EXCEEDED past recovery.verify_timeout.
 	VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error)
+	// Tag a Complete round so retention keeps it (AW-INF-007, lifecycle.md,
+	// "Round tags"). OPERATOR only; the actor and tick are logged. Idempotent:
+	// tagging a round with a name it already carries succeeds with
+	// already_tagged. INVALID_ARGUMENT for a name outside the tag grammar;
+	// NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for a round that
+	// isn't complete.
+	TagSnapshotRound(context.Context, *connect.Request[v1.TagSnapshotRoundRequest]) (*connect.Response[v1.TagSnapshotRoundResponse], error)
 }
 
 // NewAdminClient constructs a client for the andara.admin.v1.Admin service. By default, it uses the
@@ -312,6 +321,12 @@ func NewAdminClient(httpClient connect.HTTPClient, baseURL string, opts ...conne
 			connect.WithSchema(adminMethods.ByName("VerifySnapshotRound")),
 			connect.WithClientOptions(opts...),
 		),
+		tagSnapshotRound: connect.NewClient[v1.TagSnapshotRoundRequest, v1.TagSnapshotRoundResponse](
+			httpClient,
+			baseURL+AdminTagSnapshotRoundProcedure,
+			connect.WithSchema(adminMethods.ByName("TagSnapshotRound")),
+			connect.WithClientOptions(opts...),
+		),
 	}
 }
 
@@ -338,6 +353,7 @@ type adminClient struct {
 	reloadContent       *connect.Client[v1.ReloadContentRequest, v1.ReloadContentResponse]
 	listSnapshotRounds  *connect.Client[v1.ListSnapshotRoundsRequest, v1.ListSnapshotRoundsResponse]
 	verifySnapshotRound *connect.Client[v1.VerifySnapshotRoundRequest, v1.VerifySnapshotRoundResponse]
+	tagSnapshotRound    *connect.Client[v1.TagSnapshotRoundRequest, v1.TagSnapshotRoundResponse]
 }
 
 // GetServerInfo calls andara.admin.v1.Admin.GetServerInfo.
@@ -445,6 +461,11 @@ func (c *adminClient) VerifySnapshotRound(ctx context.Context, req *connect.Requ
 	return c.verifySnapshotRound.CallUnary(ctx, req)
 }
 
+// TagSnapshotRound calls andara.admin.v1.Admin.TagSnapshotRound.
+func (c *adminClient) TagSnapshotRound(ctx context.Context, req *connect.Request[v1.TagSnapshotRoundRequest]) (*connect.Response[v1.TagSnapshotRoundResponse], error) {
+	return c.tagSnapshotRound.CallUnary(ctx, req)
+}
+
 // AdminHandler is an implementation of the andara.admin.v1.Admin service.
 type AdminHandler interface {
 	// Build and content identity of the running server. ADR-0004 decoupled
@@ -523,6 +544,13 @@ type AdminHandler interface {
 	// round, a log gap, or a state_version this binary can't read;
 	// DEADLINE_EXCEEDED past recovery.verify_timeout.
 	VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error)
+	// Tag a Complete round so retention keeps it (AW-INF-007, lifecycle.md,
+	// "Round tags"). OPERATOR only; the actor and tick are logged. Idempotent:
+	// tagging a round with a name it already carries succeeds with
+	// already_tagged. INVALID_ARGUMENT for a name outside the tag grammar;
+	// NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for a round that
+	// isn't complete.
+	TagSnapshotRound(context.Context, *connect.Request[v1.TagSnapshotRoundRequest]) (*connect.Response[v1.TagSnapshotRoundResponse], error)
 }
 
 // NewAdminHandler builds an HTTP handler from the service implementation. It returns the path on
@@ -658,6 +686,12 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 		connect.WithSchema(adminMethods.ByName("VerifySnapshotRound")),
 		connect.WithHandlerOptions(opts...),
 	)
+	adminTagSnapshotRoundHandler := connect.NewUnaryHandler(
+		AdminTagSnapshotRoundProcedure,
+		svc.TagSnapshotRound,
+		connect.WithSchema(adminMethods.ByName("TagSnapshotRound")),
+		connect.WithHandlerOptions(opts...),
+	)
 	return "/andara.admin.v1.Admin/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case AdminGetServerInfoProcedure:
@@ -702,6 +736,8 @@ func NewAdminHandler(svc AdminHandler, opts ...connect.HandlerOption) (string, h
 			adminListSnapshotRoundsHandler.ServeHTTP(w, r)
 		case AdminVerifySnapshotRoundProcedure:
 			adminVerifySnapshotRoundHandler.ServeHTTP(w, r)
+		case AdminTagSnapshotRoundProcedure:
+			adminTagSnapshotRoundHandler.ServeHTTP(w, r)
 		default:
 			http.NotFound(w, r)
 		}
@@ -793,4 +829,8 @@ func (UnimplementedAdminHandler) ListSnapshotRounds(context.Context, *connect.Re
 
 func (UnimplementedAdminHandler) VerifySnapshotRound(context.Context, *connect.Request[v1.VerifySnapshotRoundRequest]) (*connect.Response[v1.VerifySnapshotRoundResponse], error) {
 	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.VerifySnapshotRound is not implemented"))
+}
+
+func (UnimplementedAdminHandler) TagSnapshotRound(context.Context, *connect.Request[v1.TagSnapshotRoundRequest]) (*connect.Response[v1.TagSnapshotRoundResponse], error) {
+	return nil, connect.NewError(connect.CodeUnimplemented, errors.New("andara.admin.v1.Admin.TagSnapshotRound is not implemented"))
 }
