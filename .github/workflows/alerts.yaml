@@ -1,0 +1,121 @@
+# Alert rule delivery (AW-INF-009): files/alerts.yaml is evaluated by the Grafana Cloud ruler,
+# the one place the cluster's series are. A pull request shows what would change; a merge to
+# main delivers it. Its own workflow, not the kind job (100 minutes) the story's sketch names:
+# the paths filter below is the whole trigger, and a rule that waits on an unrelated cluster
+# test is a page that arrives late.
+#
+# Credentials (docs/runbooks/alert-routing.md creates them):
+#   - the Prometheus URL and tenant come from the repository variables GRAFANA_CLOUD_PROM_URL
+#     and GRAFANA_CLOUD_PROM_USER, the same pair `make observe-check` uses;
+#   - the diff reads with the repository secret ANDARA_ALERTS_CI_READ (rules:read, alerts:read);
+#   - the sync writes with ANDARA_RULES_CI_WRITE (rules:write), a secret of the GitHub
+#     Environment `andara-main`, which only `main` may deploy to. A job that doesn't declare
+#     the environment can't read it, whatever a branch's copy of this file says.
+#
+# The diff runs on `pull_request_target`, so it executes the BASE branch's scripts and
+# Makefile; the pull request's rule file is fetched and read as data, never run. A
+# `pull_request` job would run the branch's own code with the read token. A pull request from
+# a fork is skipped.
+
+name: alerts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "scripts/alerts_sync.py"
+      - ".github/workflows/alerts.yaml"
+  pull_request_target:
+    branches: [main]
+    paths:
+      - "deploy/helm/andara/files/alerts.yaml"
+      - "scripts/alerts_sync.py"
+      - ".github/workflows/alerts.yaml"
+
+permissions:
+  contents: read
+
+# Two syncs of one file never interleave. Only pushes to main share a group: a pull request's
+# diff in the same group could replace a queued sync, and the merged rules would never ship.
+concurrency:
+  group: alerts-ruler-${{ github.event_name }}-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || 'main' }}
+  cancel-in-progress: false
+
+jobs:
+  diff:
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # The base branch, by default for pull_request_target. Do not add `ref:` the head here.
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: bootstrap
+        run: make bootstrap
+      - name: the pull request's rule file, as data
+        run: |
+          git fetch --no-tags --depth=1 origin "refs/pull/${{ github.event.pull_request.number }}/head"
+          git show FETCH_HEAD:deploy/helm/andara/files/alerts.yaml > "$RUNNER_TEMP/pr-alerts.yaml" \
+            || { echo "::error::the pull request has no deploy/helm/andara/files/alerts.yaml to diff"; exit 1; }
+      # Drift is expected on a pull request that edits a rule, so it is shown, not failed. An
+      # error (bad credentials, an unreachable ruler) fails the job.
+      - name: alerts-diff
+        shell: bash
+        env:
+          MIMIR_API_KEY: ${{ secrets.ANDARA_ALERTS_CI_READ }}
+          GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
+          GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
+          ALERTS_FILE: ${{ runner.temp }}/pr-alerts.yaml
+        run: |
+          if [ -z "$MIMIR_API_KEY" ]; then
+            echo "::notice::ANDARA_ALERTS_CI_READ is not available to this run; alerts-diff skipped"
+            exit 0
+          fi
+          # The script directly, not through make, which reports every failure as exit 2: 1 is
+          # drift, anything else is an error. Matching mimirtool's text would let a pull request
+          # put the words in a group name.
+          rc=0
+          python3 scripts/alerts_sync.py diff > diff.txt 2>&1 || rc=$?
+          cat diff.txt
+          { echo '### alerts-diff'; echo '```'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
+            echo "::error::alerts-diff failed (exit $rc), which is not drift"
+            exit 1
+          fi
+
+  sync:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment: andara-main
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: bootstrap
+        run: make bootstrap
+      - name: alerts-sync
+        shell: bash
+        env:
+          MIMIR_API_KEY: ${{ secrets.ANDARA_RULES_CI_WRITE }}
+          GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
+          GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
+        run: |
+          [ -n "$MIMIR_API_KEY" ] || { echo "::error::ANDARA_RULES_CI_WRITE is unset in the andara-main environment; docs/runbooks/alert-routing.md"; exit 1; }
+          make alerts-sync | tee sync.txt
+          { echo '### alerts-sync'; echo '```'; cat sync.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      - name: a second sync changes nothing
+        shell: bash
+        env:
+          MIMIR_API_KEY: ${{ secrets.ANDARA_RULES_CI_WRITE }}
+          GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
+          GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
+        run: make alerts-sync | grep -q "wrote 0 created, 0 updated, 0 deleted"

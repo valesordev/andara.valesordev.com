@@ -27,11 +27,15 @@ and the page keeps firing while it does. `keep_firing_for` keeps it visible for 
 stopped (`docker compose stop andara-server`) or its cause is fixed. `make stack-recover-mismatch` makes
 this happen on purpose and checks each step: it restarts the server on another `sim.seed`, so recovery refuses its
 round with exit `6`, `reason=seed`, and it then watches the linger, the alert, the exit and the alert outliving the
-process, and recovers the same round on the server's own seed. **On `dev` and `prod` this rule can't
+process, and recovers the same round on the server's own seed. **On `dev` and `prod` the first clause can't
 fire**: the annotation scrape keeps only Ready pods, and a refused recovery was never Ready, so the `0` is
-never scraped. What pages there is `AndaraServerUnavailable` (`for: 2m`), and `server-unavailable.md` sends
-exit `8` and exit `6` here. `AW-INF-009` (planned for SPRINT-05) adds a second clause to this same rule, read
-from kube-state-metrics, so that one alert name covers both.
+never scraped. The rule's second clause (`AW-INF-009`) reads kube-state-metrics: the `server` container's last
+termination exited `8` or `6` and it is not Ready. It resolves `keep_firing_for` after the container is Ready
+again, because a last-terminated exit code stays on the container. For the same reason a server that was
+fixed and later goes unready for another reason (a readiness probe) pages this alert again: check the
+container's `Last State` exit code against its current `Reason` before treating it as a new mismatch. `AndaraServerUnavailable` (`for: 2m`) still
+fires beside it, and `server-unavailable.md` sends exit `8` and exit `6` here. The cluster clause is verified by
+`promtool` cases and is **not yet observed firing in the tenant**: that is `AW-INF-009` AC-5's live run.
 
 ## How to confirm
 

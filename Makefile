@@ -62,7 +62,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
-        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check
+        stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff
 
 ## help: print this target list
 help:
@@ -443,6 +443,14 @@ argocd-recover:
 ## argocd-uninstall: remove the andara-dev Application without cascading and hand its resources back to Helm; `make helm-install ENV=dev` then works again — ENV=dev
 argocd-uninstall:
 	@$(PY) $(SCRIPTS)/argocd.py uninstall "$(ENV)"
+
+## alerts-sync: deliver files/alerts.yaml to the Grafana Cloud ruler, namespace andara (MIMIR_API_KEY from the environment, and MIMIR_ADDRESS/MIMIR_TENANT_ID or GRAFANA_CLOUD_PROM_URL/_USER; exits 3 without them) — ENV is accepted and ignored: one rule set serves every environment (AW-INF-009)
+alerts-sync:
+	@$(PY) $(SCRIPTS)/alerts_sync.py sync
+
+## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the key, address or tenant; ALERTS_FILE=<path> diffs another rule file (AW-INF-009)
+alerts-diff:
+	@$(PY) $(SCRIPTS)/alerts_sync.py diff
 
 ## observe-check: ask Grafana Cloud whether andara-<env>'s metrics, logs, and traces arrived (GRAFANA_CLOUD_* from the environment; exits 3 without them) — ENV=<env>
 observe-check:
