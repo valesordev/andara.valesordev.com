@@ -14,11 +14,14 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 ## One-time setup (Brian's account; nothing here can be scripted)
 
-1. **Two access policies** on the `solo7-local` stack, each with one token, scopes and nothing wider:
-   - `andara-alerts-ci-read`: `rules:read`, `alerts:read`. Used by the pull-request diff.
-   - `andara-rules-ci-write`: `rules:write` and `rules:read`. Used by the sync on `main`. `mimirtool rules sync`
-     lists the existing rules before it writes, and a token without `rules:read` gets HTTP 401 `invalid scope
-     requested` on that first call (seen on `main`'s first run, 2026-10-08).
+1. **Two access policies** on the `solo7-local` stack, each with one token and one scope family, as
+   Grafana Cloud advises:
+   - `andara-alerts-ci-read`: `rules:read` (and `alerts:read`, which nothing here uses yet). Used by the
+     pull-request diff, and by the sync to find what differs.
+   - `andara-rules-ci-write`: `rules:write` only. Used by the sync on `main`, and only when the diff found
+     something to write. `mimirtool rules sync` and `load` list before they write, which a write-only token
+     can't do (HTTP 401 `invalid scope requested`, seen on `main`'s first run, 2026-10-08), so
+     `alerts_sync.py` plans with the read key and POSTs and DELETEs to the ruler API itself with the write key.
 2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
    `make observe-check` uses; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
    the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,

@@ -8,8 +8,8 @@
 #   - the Prometheus URL and tenant come from the repository variables GRAFANA_CLOUD_PROM_URL
 #     and GRAFANA_CLOUD_PROM_USER, the same pair `make observe-check` uses;
 #   - the diff reads with the repository secret ANDARA_ALERTS_CI_READ (rules:read, alerts:read);
-#   - the sync writes with ANDARA_RULES_CI_WRITE (rules:write, rules:read), a secret of the GitHub
-#     Environment `andara-main`, which only `main` may deploy to. A job that doesn't declare
+#   - the sync plans with the same read secret and writes with ANDARA_RULES_CI_WRITE (rules:write
+#     only), a secret of the GitHub Environment `andara-main`, which only `main` may deploy to. A job that doesn't declare
 #     the environment can't read it, whatever a branch's copy of this file says.
 #
 # The diff runs on `pull_request_target`, so it executes the BASE branch's scripts and
@@ -105,17 +105,20 @@ jobs:
       - name: alerts-sync
         shell: bash
         env:
-          MIMIR_API_KEY: ${{ secrets.ANDARA_RULES_CI_WRITE }}
+          MIMIR_API_KEY: ${{ secrets.ANDARA_ALERTS_CI_READ }}
+          MIMIR_API_KEY_WRITE: ${{ secrets.ANDARA_RULES_CI_WRITE }}
           GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
           GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
         run: |
-          [ -n "$MIMIR_API_KEY" ] || { echo "::error::ANDARA_RULES_CI_WRITE is unset in the andara-main environment; docs/runbooks/alert-routing.md"; exit 1; }
+          [ -n "$MIMIR_API_KEY_WRITE" ] || { echo "::error::ANDARA_RULES_CI_WRITE is unset in the andara-main environment; docs/runbooks/alert-routing.md"; exit 1; }
           make alerts-sync | tee sync.txt
           { echo '### alerts-sync'; echo '```'; cat sync.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+      # No write key in this step: a second sync that finds no drift never reads it, and one
+      # that finds drift fails for want of it.
       - name: a second sync changes nothing
         shell: bash
         env:
-          MIMIR_API_KEY: ${{ secrets.ANDARA_RULES_CI_WRITE }}
+          MIMIR_API_KEY: ${{ secrets.ANDARA_ALERTS_CI_READ }}
           GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
           GRAFANA_CLOUD_PROM_USER: ${{ vars.GRAFANA_CLOUD_PROM_USER }}
         run: make alerts-sync | grep -q "wrote 0 created, 0 updated, 0 deleted"
