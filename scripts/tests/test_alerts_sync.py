@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -183,6 +184,19 @@ class Secure(unittest.TestCase):
         self.assertTrue(alerts_sync.secure("http://localhost:9"))
         self.assertFalse(alerts_sync.secure("http://prom.example.net"))
         self.assertFalse(alerts_sync.secure("ftp://x"))
+
+
+class ClearText(unittest.TestCase):
+
+    def test_apply_refuses_to_send_the_write_key_over_http(self):
+        import contextlib, io
+        env = {"MIMIR_ADDRESS": "http://prom.example.net", "MIMIR_TENANT_ID": "t", "MIMIR_API_KEY_WRITE": "w"}
+        with mock.patch.object(alerts_sync.urllib.request.OpenerDirector, "open") as opened, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = alerts_sync.apply(alerts_sync.ALERTS, [], env)
+        self.assertEqual(rc, 1)
+        self.assertIn("not https", err.getvalue())
+        opened.assert_not_called()
 
 
 class Summary(unittest.TestCase):
