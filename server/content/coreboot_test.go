@@ -168,7 +168,7 @@ func TestBootCore_WhoseCorePointerMoves(t *testing.T) {
 				t.Fatal(err)
 			}
 			if tc.by != ServerPrincipal {
-				if _, err := s.reg.MovePointer(context.Background(), CorePack, 1, tc.by); err != nil {
+				if _, err := s.reg.MovePointer(context.Background(), CorePack, 1, tc.by, ""); err != nil {
 					t.Fatal(err)
 				}
 			}

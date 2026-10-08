@@ -143,7 +143,7 @@ func (h *pubHarness) seedCore(v uint64) {
 	if err != nil || cv.GetVersion() != v {
 		h.t.Fatalf("seed core@%d: %v %v", v, cv, err)
 	}
-	if _, err := h.reg.MovePointer(context.Background(), CorePack, v, "server"); err != nil {
+	if _, err := h.reg.MovePointer(context.Background(), CorePack, v, "server", ""); err != nil {
 		h.t.Fatal(err)
 	}
 	h.follow(CorePack, v)
