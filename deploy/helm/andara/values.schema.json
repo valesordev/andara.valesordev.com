@@ -541,6 +541,16 @@
               "type": "string",
               "description": "ANDARA_CHARACTER_SPAWN_ROOM (AW-SRV-014). Default when unset: 'town/plaza'."
             },
+            "delete_retention": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_CHARACTER_DELETE_RETENTION (AW-SRV-032). Default when unset: '720h'."
+            },
+            "purge_sweep_interval": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL (AW-SRV-032). Default when unset: '10m'."
+            },
             "name_pattern": {
               "type": "string",
               "description": "ANDARA_CHARACTER_NAME_PATTERN (AW-SRV-014). Default when unset: \"^[\\\\p{L}][\\\\p{L}' -]{2,23}$\"."

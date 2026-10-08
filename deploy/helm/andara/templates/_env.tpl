@@ -294,6 +294,14 @@ ANDARA_CHARACTER_MAX_PER_ACCOUNT: {{ $v | toString | quote }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CHARACTER_SPAWN_ROOM: {{ $v | toString | quote }}
 {{- end }}
+{{- $v := dig "character" "delete_retention" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHARACTER_DELETE_RETENTION: {{ $v | toString | quote }}
+{{- end }}
+{{- $v := dig "character" "purge_sweep_interval" "__unset__" (.Values.server | default dict) }}
+{{- if not (eq (toString $v) "__unset__") }}
+ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL: {{ $v | toString | quote }}
+{{- end }}
 {{- $v := dig "character" "name_pattern" "__unset__" (.Values.server | default dict) }}
 {{- if not (eq (toString $v) "__unset__") }}
 ANDARA_CHARACTER_NAME_PATTERN: {{ $v | toString | quote }}
