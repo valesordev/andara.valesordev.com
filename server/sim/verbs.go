@@ -209,11 +209,15 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	a.Emit(ScopeRoom(a.Zone.ID, v.from.ID).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterLeft{CharacterLeft: &gamev1.CharacterLeft{
 		ZoneId: string(a.Zone.ID), RoomId: string(v.from.ID), CharacterName: name, ToDirection: dir,
 	}}})
-	from, _ := v.exit.Direction.Reverse()
 	if !v.exit.CrossZone {
 		v.actor.Room = v.exit.To.Room
+		var from string
+		if dest, ok := a.World.Resolve(RoomRef{Zone: a.Zone.ID, Room: v.exit.To.Room}); ok {
+			rev, _ := v.exit.Direction.Reverse()
+			from = wayBack(dest, rev, RoomRef{Zone: a.Zone.ID, Room: v.from.ID})
+		}
 		a.Emit(ScopeRoom(a.Zone.ID, v.exit.To.Room).With(v.actor.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
-			ZoneId: string(a.Zone.ID), RoomId: string(v.exit.To.Room), CharacterName: name, FromDirection: string(from),
+			ZoneId: string(a.Zone.ID), RoomId: string(v.exit.To.Room), CharacterName: name, FromDirection: from,
 		}}})
 		// The mover sees where they walked in (AW-SRV-038); a cross-Zone
 		// move's Arrive does the same in the target Zone.
@@ -224,6 +228,22 @@ func applyMove(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	}
 	a.depart(cmd, v.actor, v.exit.To, v.exit.Direction)
 	return nil
+}
+
+// wayBack is CharacterArrived.from_direction: dir if dest has an Exit that way
+// leading back to origin, and empty otherwise — a one-way Exit, a goto, or a
+// reverse Exit that leads somewhere else (AW-SRV-041). Decided from the World
+// at this tick, where the event is emitted.
+func wayBack(dest *Room, dir Direction, origin RoomRef) string {
+	if dir == "" {
+		return ""
+	}
+	for _, e := range dest.Exits {
+		if e.Direction == dir && e.To == origin {
+			return string(dir)
+		}
+	}
+	return ""
 }
 
 // --- goto --------------------------------------------------------------
@@ -485,7 +505,8 @@ func applyArrive(a *ApplyContext, cmd *logv1.LoggedCommand) error {
 	a.Zone.Entities[ent.ID] = &ent
 	a.Zone.markPlaced(v.id, v.seq)
 	a.Emit(ScopeRoom(a.Zone.ID, room.ID).With(ent.ID), &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{CharacterArrived: &gamev1.CharacterArrived{
-		ZoneId: string(a.Zone.ID), RoomId: string(room.ID), CharacterName: ent.DisplayName(), FromDirection: arr.GetFromDirection(),
+		ZoneId: string(a.Zone.ID), RoomId: string(room.ID), CharacterName: ent.DisplayName(),
+		FromDirection: wayBack(room, Direction(arr.GetFromDirection()), RoomRef{Zone: ZoneID(arr.GetOriginZoneId()), Room: RoomID(arr.GetOriginRoomId())}),
 	}}})
 	// Every Arrive describes the Room it lands in to the arrival
 	// (AW-SRV-036): an Arrive can't tell a goto from a move, and a player

@@ -411,7 +411,7 @@ func (r *repl) printDelivery(label string, d events.Delivery) {
 	case *gamev1.EventEnvelope_CharacterArrived:
 		from := p.CharacterArrived.GetFromDirection()
 		if from == "" {
-			human = fmt.Sprintf("%s arrives.", p.CharacterArrived.GetCharacterName())
+			human = fmt.Sprintf("%s has arrived.", p.CharacterArrived.GetCharacterName())
 		} else {
 			human = fmt.Sprintf("%s arrives from the %s.", p.CharacterArrived.GetCharacterName(), from)
 		}

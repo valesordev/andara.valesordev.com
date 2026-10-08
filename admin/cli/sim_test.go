@@ -148,3 +148,22 @@ func TestSimRendersADepartureWithNoDirection(t *testing.T) {
 		}
 	}
 }
+
+// AW-SRV-041: an arrival with no way back reads "has arrived.", in sim's text
+// output as in play's.
+func TestSimRendersAnArrivalWithNoWayBack(t *testing.T) {
+	t.Parallel()
+	var out bytes.Buffer
+	r := &repl{rt: &runtime{stdout: &out, settings: &resolved{Output: outputHuman}}}
+	for _, tc := range []struct{ from, want string }{
+		{"", "[tick 3] Aldric has arrived.\n"},
+		{"south", "[tick 3] Aldric arrives from the south.\n"},
+	} {
+		out.Reset()
+		r.printDelivery("", events.Delivery{Tick: 3, Envelope: &gamev1.EventEnvelope{Payload: &gamev1.EventEnvelope_CharacterArrived{
+			CharacterArrived: &gamev1.CharacterArrived{CharacterName: "Aldric", FromDirection: tc.from}}}})
+		if out.String() != tc.want {
+			t.Fatalf("from_direction %q: %q, want %q", tc.from, out.String(), tc.want)
+		}
+	}
+}
