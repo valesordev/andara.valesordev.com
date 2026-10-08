@@ -16,7 +16,9 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 1. **Two access policies** on the `solo7-local` stack, each with one token, scopes and nothing wider:
    - `andara-alerts-ci-read`: `rules:read`, `alerts:read`. Used by the pull-request diff.
-   - `andara-rules-ci-write`: `rules:write`. Used by the sync on `main`.
+   - `andara-rules-ci-write`: `rules:write` and `rules:read`. Used by the sync on `main`. `mimirtool rules sync`
+     lists the existing rules before it writes, and a token without `rules:read` gets HTTP 401 `invalid scope
+     requested` on that first call (seen on `main`'s first run, 2026-10-08).
 2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
    `make observe-check` uses; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
    the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,
