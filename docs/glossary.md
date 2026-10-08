@@ -584,7 +584,7 @@ produce to it failed with `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPE
 `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER` or `REQUEST_TIMED_OUT`, or the once-a-second metadata
 probe found its leader absent on two consecutive probes or its ISR below `min.insync.replicas`. A probe
 mark clears on the first healthy probe; a produce-error mark only after `ingress.degraded_hold`
-(120 s by default) has passed since it, and a healthy probe
+(120 s by default) has passed since the latest such mark, and a healthy probe
 (`docs/specs/kafka/client-contract.md`).
 
 **Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
@@ -704,7 +704,7 @@ Round (or the one `recovery.pin_round` names), restore it onto the content it re
 Boundary log to the round's tick, replay every boundary after it to the head, and prove the State Hash at
 each. It refuses rather than guess, with an exit code per refusal (`3` log gap, `4` newer state version,
 `6` restore mismatch, `7` incomplete round, `8` hash mismatch), and never tries another round than the one
-it chose. With no complete round it replays from offset zero. `andara-server recover --verify` and
+it chose. With no complete round it replays from offset zero, which is exact only while the World is younger than the `andara.events.v1` retention (its Tick Boundary Records must begin at tick 1); past that it is not a recovery path (`docs/specs/kafka/broker-contract.md`). `andara-server recover --verify` and
 `Admin.VerifySnapshotRound` run the same path against a scratch Engine that is never served.
 
 **Mismatch Linger** — The time (`recovery.mismatch_linger`) a boot that ends in a hash or restore mismatch

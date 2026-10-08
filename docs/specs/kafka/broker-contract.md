@@ -37,7 +37,7 @@ leader missing committed records) and no replication.
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
 
-`make broker-assert` fails on any deviation in the first four rows (on `local`, `unclean.leader.election.enable` is skipped, because the property does not exist on Redpanda) and on any topic that differs from
+`make broker-assert` fails on any deviation in the first five rows, `default.replication.factor` through `auto.create.topics.enable` (on `local`, `unclean.leader.election.enable` and `replica.lag.time.max.ms` are skipped, because the properties do not exist on Redpanda) and on any topic that differs from
 `topics.yaml`. On `local` it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because
 that is the contract for `local`.
 
@@ -63,8 +63,7 @@ replay needs Tick Boundary Records from the replay's first tick. They live on `a
 keeps 30 days, so a World older than that cannot be replayed from the empty World: the projector already
 refuses it (`ErrLogGap`, `server/projector/run.go`). `server/recovery/recover.go` still falls back to
 offset zero when no complete round exists; that path is exact only while the World is younger than the
-events retention, and from then on it is not a recovery path. The durability claim is therefore: **the
-object store holding Snapshots is part of the recovery path, and losing every complete round of an
+events retention, and from then on it is not a recovery path. The durability claim is therefore: **the snapshot store (the PVC or the S3 object store, `server.snapshot.store`) is part of the recovery path, and losing every complete round of an
 old World is unrecoverable**, not "recoverable from the log". Making the log alone sufficient would mean
 infinite retention on `andara.events.v1` or a separate boundary topic, and was declined as permanent
 disk for a path that only runs after a double failure. The follow-ups are routed on `AW-INF-005`:
