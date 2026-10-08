@@ -39,7 +39,7 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 | Command | Does |
 |---|---|
-| `make alerts-diff` | shows how the ruler differs from the file; exit `1` on drift, `3` if the `MIMIR_*` variables are unset |
+| `make alerts-diff` | shows how the ruler differs from the file; the script's exit is `1` on drift, `3` if the `MIMIR_*` variables are unset (`make` itself reports any failure as exit `2`; the printed line says which) |
 | `make alerts-sync` | writes the file to the ruler; a second run prints `wrote 0 created, 0 updated, 0 deleted` |
 
 CI runs `alerts-diff` on a pull request that touches the file (the workflow `alerts`) and shows the
@@ -49,6 +49,9 @@ nothing. Locally, export the three variables from the same source as the secrets
 `make alerts-sync` stages the file as `andara.yaml` because `mimirtool` takes the ruler namespace from
 the file's name. Pointed at `alerts.yaml` directly it syncs namespace `alerts`, and its
 `--namespaces andara` filter then matches nothing and reports `0 Groups`.
+
+CI's `sync` step fails while the three secrets are unset, so `main`'s `alerts` run is red until the
+one-time setup above is done.
 
 ## Confirm a rule is loaded
 

@@ -86,8 +86,11 @@ groups:
         # code (1, 5, and 2, which is Go's exit on a panic) is AndaraServerCrashLooping's.
         # Each clause is empty where the other applies: compose has no kube-state-metrics.
         # The `and on (namespace)` matches per namespace, which is per server while each
-        # environment runs one server pod; if AW-INF-011 ever scales the StatefulSet, match
-        # on (namespace, pod). One alert name, one runbook, for compose and the cluster.
+        # environment runs one server pod; if AW-INF-011 ever scales the StatefulSet, change both
+        # `max by (namespace)` and the `on` to (namespace, pod). The exit code outlives the
+        # recovery, so a fixed server that later goes unready for another reason (a readiness
+        # probe) pages this again; the runbook says how to tell. One alert name, one runbook,
+        # for compose and the cluster.
         expr: |
           andara_recovery_state_hash_match == 0
           or

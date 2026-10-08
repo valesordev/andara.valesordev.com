@@ -23,15 +23,17 @@ on:
       - "scripts/alerts_sync.py"
       - ".github/workflows/alerts.yaml"
 
-# Two syncs of one file never interleave; a newer push to main waits for the older one.
+permissions:
+  contents: read
+
+# Two syncs of one file never interleave. Only pushes to main share a group: a pull request's
+# diff in the same group could replace a queued sync, and the merged rules would never ship.
 concurrency:
-  group: alerts-ruler
+  group: alerts-ruler-${{ github.event_name }}-${{ github.event_name == 'pull_request' && github.ref || 'main' }}
   cancel-in-progress: false
 
-env:
-  MIMIR_ADDRESS: ${{ secrets.MIMIR_ADDRESS }}
-  MIMIR_TENANT_ID: ${{ secrets.MIMIR_TENANT_ID }}
-  MIMIR_API_KEY: ${{ secrets.MIMIR_API_KEY }}
+# The secrets are set on the one step that uses each, not the workflow: `make bootstrap` runs
+# repository code, and the write key shouldn't be in its environment.
 
 jobs:
   diff:
@@ -50,6 +52,11 @@ jobs:
       # Drift is expected on a pull request that edits a rule, so it is shown, not failed. An
       # error (bad credentials, an unreachable ruler) fails the job.
       - name: alerts-diff
+        shell: bash
+        env:
+          MIMIR_ADDRESS: ${{ secrets.MIMIR_ADDRESS }}
+          MIMIR_TENANT_ID: ${{ secrets.MIMIR_TENANT_ID }}
+          MIMIR_API_KEY: ${{ secrets.MIMIR_API_KEY }}
         run: |
           if [ -z "$MIMIR_API_KEY" ]; then
             echo "::notice::MIMIR_* secrets are not available to this run (a fork?); alerts-diff skipped"
@@ -78,9 +85,19 @@ jobs:
       - name: bootstrap
         run: make bootstrap
       - name: alerts-sync
+        shell: bash
+        env:
+          MIMIR_ADDRESS: ${{ secrets.MIMIR_ADDRESS }}
+          MIMIR_TENANT_ID: ${{ secrets.MIMIR_TENANT_ID }}
+          MIMIR_API_KEY: ${{ secrets.MIMIR_API_KEY }}
         run: |
           [ -n "$MIMIR_API_KEY" ] || { echo "::error::MIMIR_* repository secrets are unset; docs/runbooks/alert-routing.md"; exit 1; }
           make alerts-sync | tee sync.txt
           { echo '### alerts-sync'; echo '```'; cat sync.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
       - name: a second sync changes nothing
+        shell: bash
+        env:
+          MIMIR_ADDRESS: ${{ secrets.MIMIR_ADDRESS }}
+          MIMIR_TENANT_ID: ${{ secrets.MIMIR_TENANT_ID }}
+          MIMIR_API_KEY: ${{ secrets.MIMIR_API_KEY }}
         run: make alerts-sync | grep -q "wrote 0 created, 0 updated, 0 deleted"

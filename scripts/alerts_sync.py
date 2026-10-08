@@ -20,7 +20,8 @@ sync   `mimirtool rules sync`; prints the groups created, updated and deleted. A
 diff   `mimirtool rules diff`, which exits 0 whatever it finds, so this reads its summary:
        exit 1 when any group would be created, updated or deleted; 0 when none would.
 
-Exit codes: 0 ok; 1 an API error, or drift (diff); 2 usage; 3 secrets unset.
+Exit codes: 0 ok; 1 an API error, or drift (diff); 2 usage; 3 secrets unset. `make` reports any
+of them as its own exit 2; the script's code is the first line of the failure it prints.
 """
 
 import os
@@ -59,13 +60,13 @@ def summary_counts(output):
     return tuple(int(n) for n in found[-1]) if found else None
 
 
-def run(cmd, rules_file=ALERTS, env=None):
+def run(cmd, rules_file=ALERTS, env=None, find_tool=mimirtool):
     env = os.environ if env is None else env
     missing = [k for k in SECRETS if not env.get(k)]
     if missing:
         return fail(3, "%s unset; they are repository secrets (docs/runbooks/alert-routing.md)"
                     % ", ".join(missing))
-    tool = mimirtool()
+    tool = find_tool()
     if not tool:
         return fail(1, "mimirtool not found; run `make bootstrap`")
     with tempfile.TemporaryDirectory() as tmp:

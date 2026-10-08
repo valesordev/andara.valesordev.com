@@ -84,11 +84,64 @@ class Secrets(unittest.TestCase):
         self.assertIn("MIMIR_ADDRESS unset", r.stderr)
 
 
+class Guards(unittest.TestCase):
+    """The paths that must not report success, in-process with a stand-in mimirtool."""
+    ENV = {"MIMIR_ADDRESS": "http://x", "MIMIR_TENANT_ID": "t", "MIMIR_API_KEY": "k"}
+
+    def fake_tool(self, body):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        path = os.path.join(d, "mimirtool")
+        with open(path, "w") as f:
+            f.write("#!/bin/sh\n" + body + "\n")
+        os.chmod(path, 0o755)
+        return lambda: path
+
+    def run_quiet(self, cmd, find_tool):
+        import contextlib
+        import io
+        err, out = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stderr(err), contextlib.redirect_stdout(out):
+            rc = alerts_sync.run(cmd, env=self.ENV, find_tool=find_tool)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_a_tool_that_exits_0_without_a_summary_is_a_failure(self):
+        rc, _, err = self.run_quiet("sync", self.fake_tool("echo whatever"))
+        self.assertEqual(rc, 1)
+        self.assertIn("printed no summary", err)
+
+    def test_a_missing_tool_is_a_failure(self):
+        rc, _, err = self.run_quiet("sync", lambda: None)
+        self.assertEqual(rc, 1)
+        self.assertIn("mimirtool not found", err)
+
+    def test_mimirtools_stderr_is_part_of_the_output(self):
+        tool = self.fake_tool('echo "level=info msg=syncing group namespace=andara" >&2; '
+                              'echo "Sync Summary: 1 Groups Created, 0 Groups Updated, 0 Groups Deleted"')
+        rc, out, _ = self.run_quiet("sync", tool)
+        self.assertEqual(rc, 0)
+        self.assertIn("syncing group namespace=andara", out)
+        self.assertIn("wrote 1 created, 0 updated, 0 deleted", out)
+
+    def test_usage_is_exit_2(self):
+        import contextlib
+        import io
+        with contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(alerts_sync.main([]), 2)
+            self.assertEqual(alerts_sync.main(["push"]), 2)
+            self.assertEqual(alerts_sync.main(["sync", "extra"]), 2)
+
+
 class Summary(unittest.TestCase):
 
     def test_it_reads_the_last_summary_line(self):
         out = "Sync Summary: 8 Groups Created, 2 Groups Updated, 1 Groups Deleted\n"
         self.assertEqual(alerts_sync.summary_counts(out), (8, 2, 1))
+
+    def test_the_last_summary_wins(self):
+        out = ("Diff Summary: 1 Groups Created, 0 Groups Updated, 0 Groups Deleted\n"
+               "Sync Summary: 4 Groups Created, 5 Groups Updated, 6 Groups Deleted\n")
+        self.assertEqual(alerts_sync.summary_counts(out), (4, 5, 6))
 
     def test_a_clean_diff_has_no_summary_and_means_zero(self):
         self.assertEqual(alerts_sync.summary_counts("no changes detected\n"), (0, 0, 0))
