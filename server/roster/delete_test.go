@@ -456,6 +456,15 @@ func TestSwitch_FailedUnbindAfterTheSessionEndedFreesTheAccount(t *testing.T) {
 	if sid, id, ok := r.Live(f.account); ok {
 		t.Fatalf("LEAK: live flag %s %s after the Session ended", sid, id)
 	}
+	if _, bound, _ := f.bindings.Lookup("s1"); bound {
+		t.Fatal("the Session's routing entry outlived it")
+	}
+	if m := f.metrics(); strings.Contains(m, "andara_sessions_bound 1") {
+		t.Fatalf("sessions_bound not settled:\n%s", m)
+	}
+	if _, err := f.roster.DeleteCharacter(ctx, f.session("s2"), a); err != nil {
+		t.Fatalf("the orphaned first Character is stuck undeletable: %v", err)
+	}
 	recs := f.log.records()
 	if last := recs[len(recs)-1]; last.GetActorId() != a || last.GetUnbindCharacter().GetReason() != logv1.UnbindReason_QUIT {
 		t.Fatalf("the first body was not released: last record %v", last)
@@ -478,8 +487,11 @@ func TestSwitch_FirstCharacterCannotBeDeletedMidSwitch(t *testing.T) {
 	go func() { _, err := r.SelectCharacter(ctx, s, b); errc <- err }()
 	<-entered
 	_, err := r.DeleteCharacter(ctx, f.session("s2"), a)
-	if rs, _ := reason(t, err); rs != roster.ReasonCharacterLive {
+	if rs, _ := reason(t, err); rs != roster.ReasonCharacterLive || !strings.Contains(err.Error(), "Aldric") {
 		t.Fatalf("delete of the Character being switched away from: %v", err)
+	}
+	if _, err := r.SelectCharacter(ctx, f.session("s2"), a); connect.CodeOf(err) != connect.CodeFailedPrecondition {
+		t.Fatalf("select of the Character being switched away from: %v", err)
 	}
 	close(release)
 	<-errc
@@ -507,5 +519,23 @@ func TestSweep_ExpiryIsInclusiveAtTheBoundary(t *testing.T) {
 	f.clock.advance(time.Second)
 	if res := f.roster.Sweep(ctx); res.Expired != 1 {
 		t.Fatalf("not expired at the boundary: %+v", res)
+	}
+}
+
+// After a successful switch the first Character is an ordinary dormant one:
+// the mid-switch claim is gone and it can be deleted.
+func TestSwitch_FirstCharacterIsDeletableAfterwards(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, b := f.create("Aldric"), f.create("Brenna")
+	s := f.session("s1")
+	if _, err := f.roster.SelectCharacter(ctx, s, a); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.roster.SelectCharacter(ctx, s, b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.roster.DeleteCharacter(ctx, f.session("s2"), a); err != nil {
+		t.Fatalf("delete after the switch: %v", err)
 	}
 }

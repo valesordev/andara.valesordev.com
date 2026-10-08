@@ -415,6 +415,10 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 	// flipped it since the read above: it won (AC-11). The status is read here,
 	// under the lock a delete holds across its own check, so a bind never
 	// outlives a delete (never a live body with status DELETED).
+	if _, sw := r.switching[characterID]; sw && switching == nil {
+		r.mu.Unlock()
+		return fail(OutcomeAlreadyLive, alreadyLive(r.characterName(acct, characterID)))
+	}
 	_, deleting := r.deleting[characterID]
 	ref, err := r.opts.Accounts.Character(acct, characterID)
 	if deleting || err != nil {
@@ -452,28 +456,35 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 	if switching != nil {
 		err := r.produceSwitchUnbind(ctx, s, switching, oldZone, oldRoom)
 		r.mu.Lock()
-		delete(r.switching, switching.character)
 		if err != nil {
 			// Nothing reached the log: the Session still drives the first —
 			// unless it ended meanwhile. Then its teardown took the new flag,
 			// not this one, and putting the first back would hold the Account
-			// for a Session that is gone: the body is released here instead.
+			// for a Session that is gone: the body is quit here instead, and
+			// stays claimed in r.switching until that unbind is produced, so
+			// no select or delete of it slips in before the late QUIT.
 			ended := l.releasing
 			r.drop(l)
-			if !ended {
+			if ended {
+				r.opts.Bindings.Unbind(s.ID)
+				r.mu.Unlock()
+				r.releaseOrphanedSwitch(s, switching, oldZone)
+				r.mu.Lock()
+				delete(r.switching, switching.character)
+				r.mu.Unlock()
+			} else {
+				// The table is put back before the flag, under the lock, so
+				// a teardown that finds the first never reads the second's.
+				r.opts.Bindings.Bind(s.ID, oldBinding)
 				switching.releasing = false
 				r.byAccount[acct] = switching
 				r.bySession[s.ID] = switching
-			}
-			r.mu.Unlock()
-			if ended {
-				r.opts.Bindings.Unbind(s.ID)
-				r.releaseOrphanedSwitch(s, switching, oldZone)
-			} else {
-				r.opts.Bindings.Bind(s.ID, oldBinding)
+				delete(r.switching, switching.character)
+				r.mu.Unlock()
 			}
 			return fail(OutcomeProduceFailed, ingress.WireError(err))
 		}
+		delete(r.switching, switching.character)
 		r.mu.Unlock()
 	}
 
@@ -557,6 +568,16 @@ func (r *Roster) releaseOrphanedSwitch(s *gateway.Session, old *live, zone sim.Z
 		r.metrics.SessionsBound.Dec()
 	}
 	r.mu.Unlock()
+}
+
+// characterName is the Character's name for an error, or "" if it is unknown.
+func (r *Roster) characterName(acct, characterID string) string {
+	for _, c := range r.opts.Accounts.AllCharacters(acct) {
+		if c.GetCharacterId() == characterID {
+			return c.GetName()
+		}
+	}
+	return ""
 }
 
 // lookupForSwitch is where the first body stands as the routing table knows
@@ -969,10 +990,7 @@ func (r *Roster) DeleteCharacter(ctx context.Context, s *gateway.Session, charac
 	r.mu.Lock()
 	_, switching := r.switching[characterID]
 	if cur, ok := r.byAccount[acct]; (ok && cur.character == characterID) || switching {
-		name := ""
-		if ok {
-			name = cur.name
-		}
+		name := r.characterName(acct, characterID)
 		r.mu.Unlock()
 		err := characterLive(name)
 		span.SetStatus(codes.Error, err.Error())
