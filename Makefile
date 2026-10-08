@@ -444,11 +444,11 @@ argocd-recover:
 argocd-uninstall:
 	@$(PY) $(SCRIPTS)/argocd.py uninstall "$(ENV)"
 
-## alerts-sync: deliver files/alerts.yaml to the Grafana Cloud ruler, namespace andara (MIMIR_ADDRESS, MIMIR_TENANT_ID, MIMIR_API_KEY from the environment; exits 3 without them) — ENV is accepted and ignored: one rule set serves every environment (AW-INF-009)
+## alerts-sync: deliver files/alerts.yaml to the Grafana Cloud ruler, namespace andara (MIMIR_API_KEY from the environment, and MIMIR_ADDRESS/MIMIR_TENANT_ID or GRAFANA_CLOUD_PROM_URL/_USER; exits 3 without them) — ENV is accepted and ignored: one rule set serves every environment (AW-INF-009)
 alerts-sync:
 	@$(PY) $(SCRIPTS)/alerts_sync.py sync
 
-## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the MIMIR_* secrets (AW-INF-009)
+## alerts-diff: show how the ruler differs from files/alerts.yaml; exits 1 on drift, 3 without the key, address or tenant; ALERTS_FILE=<path> diffs another rule file (AW-INF-009)
 alerts-diff:
 	@$(PY) $(SCRIPTS)/alerts_sync.py diff
 

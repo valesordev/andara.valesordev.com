@@ -14,12 +14,14 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 ## One-time setup (Brian's account; nothing here can be scripted)
 
-1. **Access policy.** Grafana Cloud, Administration, Access policies: create `andara-alerts-ci` on the
-   `solo7-local` stack with the scopes `rules:read`, `rules:write` and `alerts:read`, and nothing wider.
-   Add a token to it.
-2. **Repository secrets.** On the GitHub repository, add `MIMIR_ADDRESS` (the stack's Prometheus
-   details page, the URL without `/api/prom`), `MIMIR_TENANT_ID` (the same page, the numeric username)
-   and `MIMIR_API_KEY` (the token). Never in a file, never in a log.
+1. **Two access policies** on the `solo7-local` stack, each with one token, scopes and nothing wider:
+   - `andara-alerts-ci-read`: `rules:read`, `alerts:read`. Used by the pull-request diff.
+   - `andara-rules-ci-write`: `rules:write`. Used by the sync on `main`.
+2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
+   `make observe-check` uses; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
+   the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,
+   deployable from `main` only, with the secret `ANDARA_RULES_CI_WRITE` (the write token). A job that
+   doesn't declare that environment can't read the write token, so a branch can't use it.
 3. **Notification policy.** Grafana Cloud, Alerting, Notification policies: a child of the default
    policy matching `severity = page`, with the contact point that should wake someone. The default
    contact point is the account email until it is changed. This has no file form this repo owns, so the
@@ -39,23 +41,27 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 | Command | Does |
 |---|---|
-| `make alerts-diff` | shows how the ruler differs from the file; the script's exit is `1` on drift, `3` if the `MIMIR_*` variables are unset (`make` itself reports any failure as exit `2`; the printed line says which) |
+| `make alerts-diff` | shows how the ruler differs from the file; the script's exit is `1` on drift, `3` if the key, address or tenant is unset (`make` itself reports any failure as exit `2`; the printed line says which) |
 | `make alerts-sync` | writes the file to the ruler; a second run prints `wrote 0 created, 0 updated, 0 deleted` |
 
 CI runs `alerts-diff` on a pull request that touches the file (the workflow `alerts`) and shows the
 diff in the job summary. A merge to `main` runs `alerts-sync` and then a second sync that must change
-nothing. Locally, export the three variables from the same source as the secrets, then run the targets.
+nothing. The diff runs the base branch's scripts and reads the pull request's rule file as data
+(`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped.
+Locally, source `.local/box.env` (which has `GRAFANA_CLOUD_PROM_URL` and `_USER`) and export
+`MIMIR_API_KEY` with the read token to diff, or the write token to sync.
 
 `make alerts-sync` stages the file as `andara.yaml` because `mimirtool` takes the ruler namespace from
 the file's name. Pointed at `alerts.yaml` directly it syncs namespace `alerts`, and its
 `--namespaces andara` filter then matches nothing and reports `0 Groups`.
 
-CI's `sync` step fails while the three secrets are unset, so `main`'s `alerts` run is red until the
-one-time setup above is done.
+CI's `sync` step fails while `ANDARA_RULES_CI_WRITE` is unset in `andara-main`, so `main`'s `alerts` run
+is red until the one-time setup above is done.
 
 ## Confirm a rule is loaded
 
-`make alerts-diff` exits `0` and prints `no changes detected`. To read what is loaded, export the three variables and run
+`make alerts-diff` exits `0` and prints `no changes detected`. To read what is loaded, export `MIMIR_API_KEY`, `MIMIR_ADDRESS` (`GRAFANA_CLOUD_PROM_URL` without
+`/api/prom`) and `MIMIR_TENANT_ID` (`GRAFANA_CLOUD_PROM_USER`), and run
 `bin/mimirtool rules print --address "$MIMIR_ADDRESS" --id "$MIMIR_TENANT_ID"`, or open Grafana Cloud,
 Alerting, Alert rules, source `grafanacloud-…-prom`.
 

@@ -84,6 +84,31 @@ class Secrets(unittest.TestCase):
         self.assertIn("MIMIR_ADDRESS unset", r.stderr)
 
 
+class Defaults(unittest.TestCase):
+
+    def test_the_address_and_tenant_come_from_the_grafana_cloud_pair(self):
+        env = alerts_sync.resolve_env({"GRAFANA_CLOUD_PROM_URL": "https://prom.example.net/api/prom/",
+                                       "GRAFANA_CLOUD_PROM_USER": "800950"})
+        self.assertEqual(env["MIMIR_ADDRESS"], "https://prom.example.net")
+        self.assertEqual(env["MIMIR_TENANT_ID"], "800950")
+
+    def test_an_explicit_mimir_value_wins(self):
+        env = alerts_sync.resolve_env({"MIMIR_ADDRESS": "http://x", "MIMIR_TENANT_ID": "t",
+                                       "GRAFANA_CLOUD_PROM_URL": "https://p/api/prom",
+                                       "GRAFANA_CLOUD_PROM_USER": "9"})
+        self.assertEqual((env["MIMIR_ADDRESS"], env["MIMIR_TENANT_ID"]), ("http://x", "t"))
+
+    def test_a_url_without_the_suffix_is_kept(self):
+        env = alerts_sync.resolve_env({"GRAFANA_CLOUD_PROM_URL": "https://p.example.net"})
+        self.assertEqual(env["MIMIR_ADDRESS"], "https://p.example.net")
+
+    def test_only_the_key_missing_names_only_the_key(self):
+        r = script("sync", {"GRAFANA_CLOUD_PROM_URL": "https://p/api/prom", "GRAFANA_CLOUD_PROM_USER": "9"})
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("MIMIR_API_KEY unset", r.stderr)
+        self.assertNotIn("MIMIR_ADDRESS", r.stderr)
+
+
 class Guards(unittest.TestCase):
     """The paths that must not report success, in-process with a stand-in mimirtool."""
     ENV = {"MIMIR_ADDRESS": "http://x", "MIMIR_TENANT_ID": "t", "MIMIR_API_KEY": "k"}
@@ -181,6 +206,18 @@ class AgainstARuler(unittest.TestCase):
         self.assertEqual(r.returncode, 1)
         self.assertIn("differs from files/alerts.yaml", r.stderr)
         self.assertEqual(Ruler.posts, [])
+
+    def test_alerts_file_names_the_file_that_is_read(self):
+        script("sync", self.env)
+        with open(alerts_sync.ALERTS) as f:
+            doc = yaml.safe_load(f)
+        doc["groups"][0]["rules"][0]["for"] = "7m"
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump(doc, f)
+        self.addCleanup(os.unlink, f.name)
+        r = script("diff", dict(self.env, ALERTS_FILE=f.name))
+        self.assertEqual(r.returncode, 1)
+        self.assertIn(doc["groups"][0]["name"], r.stdout)
 
     def test_diff_after_a_sync_is_clean(self):
         script("sync", self.env)

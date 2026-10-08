@@ -7,8 +7,11 @@
     scripts/alerts_sync.py sync
     scripts/alerts_sync.py diff
 
-Reads MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY from the environment and nothing else;
-exit 3 names whichever are unset, before mimirtool runs. `mimirtool` (pinned by `make bootstrap`)
+Reads MIMIR_API_KEY, MIMIR_ADDRESS and MIMIR_TENANT_ID from the environment; the last two default
+to what `make observe-check` and CI already have, GRAFANA_CLOUD_PROM_URL (without its /api/prom)
+and GRAFANA_CLOUD_PROM_USER. ALERTS_FILE names a rule file other than the chart's, which CI sets
+to a pull request's copy so that the base branch's code reads it as data (the workflow says why).
+Exit 3 names whichever of the three are unset, before mimirtool runs. `mimirtool` (pinned by `make bootstrap`)
 takes the ruler namespace from the rule file's *name*, not from `--namespaces`, so the file is
 staged as `andara.yaml` in a temporary directory: the namespace is `andara` in every environment
 (rules are grouped `by (namespace)`, AW-INF-008), and `--namespaces andara` scopes what a sync
@@ -35,6 +38,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
 NAMESPACE = "andara"
 SECRETS = ("MIMIR_ADDRESS", "MIMIR_TENANT_ID", "MIMIR_API_KEY")
+PROM_SUFFIX = "/api/prom"
 SUMMARY = re.compile(r"(\d+) Groups Created, (\d+) Groups Updated, (\d+) Groups Deleted")
 
 
@@ -60,11 +64,23 @@ def summary_counts(output):
     return tuple(int(n) for n in found[-1]) if found else None
 
 
-def run(cmd, rules_file=ALERTS, env=None, find_tool=mimirtool):
-    env = os.environ if env is None else env
+def resolve_env(env):
+    """env with MIMIR_ADDRESS and MIMIR_TENANT_ID filled from the GRAFANA_CLOUD_PROM_* pair."""
+    env = dict(env)
+    url = env.get("GRAFANA_CLOUD_PROM_URL", "").rstrip("/")
+    if not env.get("MIMIR_ADDRESS") and url:
+        env["MIMIR_ADDRESS"] = url[:-len(PROM_SUFFIX)] if url.endswith(PROM_SUFFIX) else url
+    if not env.get("MIMIR_TENANT_ID") and env.get("GRAFANA_CLOUD_PROM_USER"):
+        env["MIMIR_TENANT_ID"] = env["GRAFANA_CLOUD_PROM_USER"]
+    return env
+
+
+def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
+    env = resolve_env(os.environ if env is None else env)
+    rules_file = rules_file or env.get("ALERTS_FILE") or ALERTS
     missing = [k for k in SECRETS if not env.get(k)]
     if missing:
-        return fail(3, "%s unset; they are repository secrets (docs/runbooks/alert-routing.md)"
+        return fail(3, "%s unset (docs/runbooks/alert-routing.md)"
                     % ", ".join(missing))
     tool = find_tool()
     if not tool:
