@@ -576,11 +576,51 @@ func TestSwitch_TeardownWaitsForTheInFlightBind(t *testing.T) {
 	}
 	select {
 	case <-done:
-	case <-time.After(5 * time.Second):
+	case <-time.After(500 * time.Millisecond): // well under ProduceDeadline: bindDone closed, not timed out
 		t.Fatal("teardown")
 	}
 	want := "unbind-switch:" + a + ",bind:" + b + ",unbind-quit:" + b
 	if got := strings.Join(kinds(f.log.records()[1:]), ","); got != want {
 		t.Fatalf("log order %s, want %s", got, want)
+	}
+}
+
+// Review finding: a bind slower than the produce deadline must not leave the
+// teardown an expired context for its own produce.
+func TestSwitch_SlowBindStillLetsTheTeardownProduce(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, b := f.create("Aldric"), f.create("Brenna")
+	s := f.session("s1")
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	held := holdBindOf(f.log, b, entered, release)
+	honoring := producerFunc(func(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
+		if err := ctx.Err(); err != nil {
+			return command.Accepted{}, err
+		}
+		return held.Produce(ctx, cmd)
+	})
+	r := f.rosterOver(honoring, func(o *roster.Options) { o.ProduceDeadline = 200 * time.Millisecond })
+	if _, err := r.SelectCharacter(ctx, s, a); err != nil {
+		t.Fatal(err)
+	}
+	go func() { _, _ = r.SelectCharacter(ctx, s, b) }()
+	<-entered
+	done := r.ReleaseSession(s, gateway.EndQuit)
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("teardown")
+	}
+	close(release)
+	r.Wait()
+	var quit bool
+	for _, rec := range f.log.records() {
+		if rec.GetActorId() == b && rec.GetUnbindCharacter().GetReason() == logv1.UnbindReason_QUIT {
+			quit = true
+		}
+	}
+	if !quit {
+		t.Fatalf("the QUIT was lost to an expired context: %v", kinds(f.log.records()))
 	}
 }

@@ -728,12 +728,16 @@ func (r *Roster) ReleaseSession(s *gateway.Session, end gateway.SessionEnd) <-ch
 	go func() {
 		defer r.releases.Done()
 		defer close(l.released)
-		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
-		defer cancel()
+		// The wait for the in-flight bind has its own budget, so a slow bind
+		// does not leave the unbind an expired context.
+		wait := time.NewTimer(r.opts.ProduceDeadline)
 		select {
 		case <-l.bindDone:
-		case <-ctx.Done():
+		case <-wait.C:
 		}
+		wait.Stop()
+		ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+		defer cancel()
 		name, reason := "character.unbind", ReasonQuit
 		if end == gateway.EndLinkdead {
 			name, reason = "character.linkdead", ReasonLinkdead
