@@ -52,6 +52,12 @@ message EventEnvelope {
     // alone: no Room's occupants ever saw a dormant body, so none are told.
     // It exists so the projector can tombstone the Entity's key (AW-SRV-019).
     CharacterPurged character_purged = 24;
+
+    // AW-INF-007: the server is about to stop for a deploy. A stream frame
+    // like Heartbeat, not an Event: the Gateway writes it to every open
+    // Subscribe stream, the sim never emits it, it is not in the log or the
+    // Resume Window, and it carries event_id 0.
+    ServerStopping server_stopping = 25;
   }
 
   // Payload numbers start at 10 so that envelope metadata has room to grow in
@@ -59,7 +65,7 @@ message EventEnvelope {
   // because a reserved range must shrink to be used and buf counts that as a
   // breaking change. AW-SRV-004's EventType strings map one-to-one onto this
   // oneof; the string form is derived from the field, never carried alongside
-  // it, so the two cannot disagree. Heartbeat, Resync and Attached are the
+  // it, so the two cannot disagree. Heartbeat, Resync, Attached and ServerStopping are the
   // payloads with no EventType: they are about the stream, not the World.
 }
 
@@ -123,6 +129,19 @@ message SubscriberDropped {
 
 message SimulationStopped {
   string reason = 1;
+}
+
+// The server will stop in about `deploy.notice_lead` plus the snapshot, and
+// is expected back in `expected_back_seconds` (deploy.expected_back). The
+// stream closes after this frame; the client reconnects with backoff and
+// rebinds within session.linkdead_grace (AW-SRV-015). `message` is for
+// players and is Brian's wording; empty means the client shows its own text.
+// Delivery is best effort, once per open stream: a stream opened after the
+// frame was written does not receive it, and a client must handle a close
+// without it.
+message ServerStopping {
+  string message = 1;
+  uint32 expected_back_seconds = 2;
 }
 
 // An Entity was moved out of a Room that a new content version removed, to

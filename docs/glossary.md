@@ -570,6 +570,22 @@ Attached) (AW-SRV-011 AC-11).
 send, carrying the last Tick the server has seen. A quiet World and a dead connection look
 different, and an advancing Tick says the simulation is running. Not an Event: `event_id` 0.
 
+**Server Stopping** — The stream frame the Gateway writes to every open `Game.Subscribe` stream when a
+deploy's pre-stop begins, carrying a `message` for players and `expected_back_seconds`. Not an Event:
+`event_id` 0, not in the log or the Resume Window, never replayed. Best effort, once per open stream; a
+client must also handle a close without it. The server stops accepting Submit `deploy.notice_lead` later,
+with reason `server_restarting`, which is not the Read-only World (`AW-INF-007`, `docs/specs/deploy/lifecycle.md`).
+
+**Round Tag** — A name (`deploy:<version>` or `rollback:<tick>`) written on a Complete Snapshot Round so
+retention keeps it. `deploy:<version>` names the binary that wrote the round as it stopped, the round a
+rollback to that version pins; `rollback:<tick>` protects a round an operator pinned. Tags count against
+`snapshot.keep_deploy_rounds`, and no tag keeps a round older than `snapshot.max_round_age`.
+
+**Deploy Interruption** — The time from the head Tick Boundary Record's timestamp to the new server
+process first reporting `serving`: the part of a deploy a player experiences as the World not accepting
+Commands. The notice lead is not in it. `andara_deploy_interruption_seconds`, observed by the new process
+(`docs/specs/deploy/lifecycle.md`).
+
 **Read-only World** — The World while the Command Log cannot take a Command for a Partition
 (AW-SRV-010, per Partition from AW-INF-005): the Tick runs, Sessions stay connected and receive
 Events, and no Command for a Zone on a **Degraded Partition** is accepted — every such Submit is
@@ -750,8 +766,7 @@ an Offset alone does not identify a Snapshot Round.
 
 **Snapshot Round** — Every owned Zone snapshotted at one tick boundary — a single consistent cut, written
 as one Snapshot per Zone. Recovery restores a **complete** round: one with every Zone present and
-hash-valid. An incomplete round is never selectable. Rounds may carry tags (`deploy:<tag>`, `rollback:<T>`) that
-retention keeps longer (`AW-INF-007`).
+hash-valid. An incomplete round is never selectable. Rounds may carry **Round Tags** that retention keeps longer (`AW-INF-007`).
 
 **Dormant** — A Character body that exists in Zone state but is not present in any Room, because its
 Session unbound it. A Character created and never bound has no body at all: it is a roster entry

@@ -58,6 +58,7 @@ type EventEnvelope struct {
 	//	*EventEnvelope_CharacterDespawned
 	//	*EventEnvelope_Attached
 	//	*EventEnvelope_CharacterPurged
+	//	*EventEnvelope_ServerStopping
 	Payload       isEventEnvelope_Payload `protobuf_oneof:"payload"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -256,6 +257,15 @@ func (x *EventEnvelope) GetCharacterPurged() *CharacterPurged {
 	return nil
 }
 
+func (x *EventEnvelope) GetServerStopping() *ServerStopping {
+	if x != nil {
+		if x, ok := x.Payload.(*EventEnvelope_ServerStopping); ok {
+			return x.ServerStopping
+		}
+	}
+	return nil
+}
+
 type isEventEnvelope_Payload interface {
 	isEventEnvelope_Payload()
 }
@@ -327,6 +337,14 @@ type EventEnvelope_CharacterPurged struct {
 	CharacterPurged *CharacterPurged `protobuf:"bytes,24,opt,name=character_purged,json=characterPurged,proto3,oneof"`
 }
 
+type EventEnvelope_ServerStopping struct {
+	// AW-INF-007: the server is about to stop for a deploy. A stream frame
+	// like Heartbeat, not an Event: the Gateway writes it to every open
+	// Subscribe stream, the sim never emits it, it is not in the log or the
+	// Resume Window, and it carries event_id 0.
+	ServerStopping *ServerStopping `protobuf:"bytes,25,opt,name=server_stopping,json=serverStopping,proto3,oneof"`
+}
+
 func (*EventEnvelope_RoomDescribed) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_CharacterArrived) isEventEnvelope_Payload() {}
@@ -356,6 +374,8 @@ func (*EventEnvelope_CharacterDespawned) isEventEnvelope_Payload() {}
 func (*EventEnvelope_Attached) isEventEnvelope_Payload() {}
 
 func (*EventEnvelope_CharacterPurged) isEventEnvelope_Payload() {}
+
+func (*EventEnvelope_ServerStopping) isEventEnvelope_Payload() {}
 
 type RoomDescribed struct {
 	state       protoimpl.MessageState `protogen:"open.v1"`
@@ -789,6 +809,66 @@ func (x *SimulationStopped) GetReason() string {
 	return ""
 }
 
+// The server will stop in about `deploy.notice_lead` plus the snapshot, and
+// is expected back in `expected_back_seconds` (deploy.expected_back). The
+// stream closes after this frame; the client reconnects with backoff and
+// rebinds within session.linkdead_grace (AW-SRV-015). `message` is for
+// players and is Brian's wording; empty means the client shows its own text.
+// Delivery is best effort, once per open stream: a stream opened after the
+// frame was written does not receive it, and a client must handle a close
+// without it.
+type ServerStopping struct {
+	state               protoimpl.MessageState `protogen:"open.v1"`
+	Message             string                 `protobuf:"bytes,1,opt,name=message,proto3" json:"message,omitempty"`
+	ExpectedBackSeconds uint32                 `protobuf:"varint,2,opt,name=expected_back_seconds,json=expectedBackSeconds,proto3" json:"expected_back_seconds,omitempty"`
+	unknownFields       protoimpl.UnknownFields
+	sizeCache           protoimpl.SizeCache
+}
+
+func (x *ServerStopping) Reset() {
+	*x = ServerStopping{}
+	mi := &file_andara_game_v1_event_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ServerStopping) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ServerStopping) ProtoMessage() {}
+
+func (x *ServerStopping) ProtoReflect() protoreflect.Message {
+	mi := &file_andara_game_v1_event_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ServerStopping.ProtoReflect.Descriptor instead.
+func (*ServerStopping) Descriptor() ([]byte, []int) {
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *ServerStopping) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ServerStopping) GetExpectedBackSeconds() uint32 {
+	if x != nil {
+		return x.ExpectedBackSeconds
+	}
+	return 0
+}
+
 // An Entity was moved out of a Room that a new content version removed, to
 // its Zone's fallback_room (AW-SRV-012, ADR-0004), inside the ContentSwap's
 // Apply. Scoped to the fallback Room and the moved Entity. The removed Room
@@ -810,7 +890,7 @@ type EntityRelocated struct {
 
 func (x *EntityRelocated) Reset() {
 	*x = EntityRelocated{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[8]
+	mi := &file_andara_game_v1_event_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -822,7 +902,7 @@ func (x *EntityRelocated) String() string {
 func (*EntityRelocated) ProtoMessage() {}
 
 func (x *EntityRelocated) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[8]
+	mi := &file_andara_game_v1_event_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -835,7 +915,7 @@ func (x *EntityRelocated) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use EntityRelocated.ProtoReflect.Descriptor instead.
 func (*EntityRelocated) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{8}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *EntityRelocated) GetZoneId() string {
@@ -885,7 +965,7 @@ type Heartbeat struct {
 
 func (x *Heartbeat) Reset() {
 	*x = Heartbeat{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[9]
+	mi := &file_andara_game_v1_event_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -897,7 +977,7 @@ func (x *Heartbeat) String() string {
 func (*Heartbeat) ProtoMessage() {}
 
 func (x *Heartbeat) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[9]
+	mi := &file_andara_game_v1_event_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -910,7 +990,7 @@ func (x *Heartbeat) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Heartbeat.ProtoReflect.Descriptor instead.
 func (*Heartbeat) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{9}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{10}
 }
 
 // The stream could not resume from SubscribeRequest.last_event_id: the
@@ -931,7 +1011,7 @@ type Resync struct {
 
 func (x *Resync) Reset() {
 	*x = Resync{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[10]
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -943,7 +1023,7 @@ func (x *Resync) String() string {
 func (*Resync) ProtoMessage() {}
 
 func (x *Resync) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[10]
+	mi := &file_andara_game_v1_event_proto_msgTypes[11]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -956,7 +1036,7 @@ func (x *Resync) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Resync.ProtoReflect.Descriptor instead.
 func (*Resync) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{10}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{11}
 }
 
 func (x *Resync) GetLastEventId() uint64 {
@@ -995,7 +1075,7 @@ type Attached struct {
 
 func (x *Attached) Reset() {
 	*x = Attached{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	mi := &file_andara_game_v1_event_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1007,7 +1087,7 @@ func (x *Attached) String() string {
 func (*Attached) ProtoMessage() {}
 
 func (x *Attached) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[11]
+	mi := &file_andara_game_v1_event_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1020,7 +1100,7 @@ func (x *Attached) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use Attached.ProtoReflect.Descriptor instead.
 func (*Attached) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{11}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *Attached) GetCursorEventId() uint64 {
@@ -1044,7 +1124,7 @@ type CharacterLinkdead struct {
 
 func (x *CharacterLinkdead) Reset() {
 	*x = CharacterLinkdead{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[12]
+	mi := &file_andara_game_v1_event_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1056,7 +1136,7 @@ func (x *CharacterLinkdead) String() string {
 func (*CharacterLinkdead) ProtoMessage() {}
 
 func (x *CharacterLinkdead) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[12]
+	mi := &file_andara_game_v1_event_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1069,7 +1149,7 @@ func (x *CharacterLinkdead) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CharacterLinkdead.ProtoReflect.Descriptor instead.
 func (*CharacterLinkdead) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{12}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *CharacterLinkdead) GetZoneId() string {
@@ -1106,7 +1186,7 @@ type CharacterReconnected struct {
 
 func (x *CharacterReconnected) Reset() {
 	*x = CharacterReconnected{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[13]
+	mi := &file_andara_game_v1_event_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1118,7 +1198,7 @@ func (x *CharacterReconnected) String() string {
 func (*CharacterReconnected) ProtoMessage() {}
 
 func (x *CharacterReconnected) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[13]
+	mi := &file_andara_game_v1_event_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1131,7 +1211,7 @@ func (x *CharacterReconnected) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CharacterReconnected.ProtoReflect.Descriptor instead.
 func (*CharacterReconnected) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{13}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *CharacterReconnected) GetZoneId() string {
@@ -1174,7 +1254,7 @@ type CharacterDespawned struct {
 
 func (x *CharacterDespawned) Reset() {
 	*x = CharacterDespawned{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[14]
+	mi := &file_andara_game_v1_event_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1186,7 +1266,7 @@ func (x *CharacterDespawned) String() string {
 func (*CharacterDespawned) ProtoMessage() {}
 
 func (x *CharacterDespawned) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[14]
+	mi := &file_andara_game_v1_event_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1199,7 +1279,7 @@ func (x *CharacterDespawned) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CharacterDespawned.ProtoReflect.Descriptor instead.
 func (*CharacterDespawned) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{14}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *CharacterDespawned) GetZoneId() string {
@@ -1243,7 +1323,7 @@ type CharacterPurged struct {
 
 func (x *CharacterPurged) Reset() {
 	*x = CharacterPurged{}
-	mi := &file_andara_game_v1_event_proto_msgTypes[15]
+	mi := &file_andara_game_v1_event_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1255,7 +1335,7 @@ func (x *CharacterPurged) String() string {
 func (*CharacterPurged) ProtoMessage() {}
 
 func (x *CharacterPurged) ProtoReflect() protoreflect.Message {
-	mi := &file_andara_game_v1_event_proto_msgTypes[15]
+	mi := &file_andara_game_v1_event_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1268,7 +1348,7 @@ func (x *CharacterPurged) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CharacterPurged.ProtoReflect.Descriptor instead.
 func (*CharacterPurged) Descriptor() ([]byte, []int) {
-	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{15}
+	return file_andara_game_v1_event_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *CharacterPurged) GetZoneId() string {
@@ -1296,7 +1376,8 @@ var File_andara_game_v1_event_proto protoreflect.FileDescriptor
 
 const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\n" +
-	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\xca\t\n" +
+	"\x1aandara/game/v1/event.proto\x12\x0eandara.game.v1\"\x95\n" +
+	"\n" +
 	"\rEventEnvelope\x12\x19\n" +
 	"\bevent_id\x18\x01 \x01(\x04R\aeventId\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -1317,7 +1398,8 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\x15character_reconnected\x18\x15 \x01(\v2$.andara.game.v1.CharacterReconnectedH\x00R\x14characterReconnected\x12U\n" +
 	"\x13character_despawned\x18\x16 \x01(\v2\".andara.game.v1.CharacterDespawnedH\x00R\x12characterDespawned\x126\n" +
 	"\battached\x18\x17 \x01(\v2\x18.andara.game.v1.AttachedH\x00R\battached\x12L\n" +
-	"\x10character_purged\x18\x18 \x01(\v2\x1f.andara.game.v1.CharacterPurgedH\x00R\x0fcharacterPurgedB\t\n" +
+	"\x10character_purged\x18\x18 \x01(\v2\x1f.andara.game.v1.CharacterPurgedH\x00R\x0fcharacterPurged\x12I\n" +
+	"\x0fserver_stopping\x18\x19 \x01(\v2\x1e.andara.game.v1.ServerStoppingH\x00R\x0eserverStoppingB\t\n" +
 	"\apayload\"\xc9\x01\n" +
 	"\rRoomDescribed\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x17\n" +
@@ -1345,7 +1427,10 @@ const file_andara_game_v1_event_proto_rawDesc = "" +
 	"\x11SubscriberDropped\x12\x16\n" +
 	"\x06reason\x18\x01 \x01(\tR\x06reason\"+\n" +
 	"\x11SimulationStopped\x12\x16\n" +
-	"\x06reason\x18\x01 \x01(\tR\x06reason\"\xa3\x01\n" +
+	"\x06reason\x18\x01 \x01(\tR\x06reason\"^\n" +
+	"\x0eServerStopping\x12\x18\n" +
+	"\amessage\x18\x01 \x01(\tR\amessage\x122\n" +
+	"\x15expected_back_seconds\x18\x02 \x01(\rR\x13expectedBackSeconds\"\xa3\x01\n" +
 	"\x0fEntityRelocated\x12\x17\n" +
 	"\azone_id\x18\x01 \x01(\tR\x06zoneId\x12\x1f\n" +
 	"\ventity_name\x18\x02 \x01(\tR\n" +
@@ -1393,7 +1478,7 @@ func file_andara_game_v1_event_proto_rawDescGZIP() []byte {
 	return file_andara_game_v1_event_proto_rawDescData
 }
 
-var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 16)
+var file_andara_game_v1_event_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_andara_game_v1_event_proto_goTypes = []any{
 	(*EventEnvelope)(nil),        // 0: andara.game.v1.EventEnvelope
 	(*RoomDescribed)(nil),        // 1: andara.game.v1.RoomDescribed
@@ -1403,14 +1488,15 @@ var file_andara_game_v1_event_proto_goTypes = []any{
 	(*ZoneFaulted)(nil),          // 5: andara.game.v1.ZoneFaulted
 	(*SubscriberDropped)(nil),    // 6: andara.game.v1.SubscriberDropped
 	(*SimulationStopped)(nil),    // 7: andara.game.v1.SimulationStopped
-	(*EntityRelocated)(nil),      // 8: andara.game.v1.EntityRelocated
-	(*Heartbeat)(nil),            // 9: andara.game.v1.Heartbeat
-	(*Resync)(nil),               // 10: andara.game.v1.Resync
-	(*Attached)(nil),             // 11: andara.game.v1.Attached
-	(*CharacterLinkdead)(nil),    // 12: andara.game.v1.CharacterLinkdead
-	(*CharacterReconnected)(nil), // 13: andara.game.v1.CharacterReconnected
-	(*CharacterDespawned)(nil),   // 14: andara.game.v1.CharacterDespawned
-	(*CharacterPurged)(nil),      // 15: andara.game.v1.CharacterPurged
+	(*ServerStopping)(nil),       // 8: andara.game.v1.ServerStopping
+	(*EntityRelocated)(nil),      // 9: andara.game.v1.EntityRelocated
+	(*Heartbeat)(nil),            // 10: andara.game.v1.Heartbeat
+	(*Resync)(nil),               // 11: andara.game.v1.Resync
+	(*Attached)(nil),             // 12: andara.game.v1.Attached
+	(*CharacterLinkdead)(nil),    // 13: andara.game.v1.CharacterLinkdead
+	(*CharacterReconnected)(nil), // 14: andara.game.v1.CharacterReconnected
+	(*CharacterDespawned)(nil),   // 15: andara.game.v1.CharacterDespawned
+	(*CharacterPurged)(nil),      // 16: andara.game.v1.CharacterPurged
 }
 var file_andara_game_v1_event_proto_depIdxs = []int32{
 	1,  // 0: andara.game.v1.EventEnvelope.room_described:type_name -> andara.game.v1.RoomDescribed
@@ -1420,19 +1506,20 @@ var file_andara_game_v1_event_proto_depIdxs = []int32{
 	5,  // 4: andara.game.v1.EventEnvelope.zone_faulted:type_name -> andara.game.v1.ZoneFaulted
 	6,  // 5: andara.game.v1.EventEnvelope.subscriber_dropped:type_name -> andara.game.v1.SubscriberDropped
 	7,  // 6: andara.game.v1.EventEnvelope.simulation_stopped:type_name -> andara.game.v1.SimulationStopped
-	9,  // 7: andara.game.v1.EventEnvelope.heartbeat:type_name -> andara.game.v1.Heartbeat
-	10, // 8: andara.game.v1.EventEnvelope.resync:type_name -> andara.game.v1.Resync
-	8,  // 9: andara.game.v1.EventEnvelope.entity_relocated:type_name -> andara.game.v1.EntityRelocated
-	12, // 10: andara.game.v1.EventEnvelope.character_linkdead:type_name -> andara.game.v1.CharacterLinkdead
-	13, // 11: andara.game.v1.EventEnvelope.character_reconnected:type_name -> andara.game.v1.CharacterReconnected
-	14, // 12: andara.game.v1.EventEnvelope.character_despawned:type_name -> andara.game.v1.CharacterDespawned
-	11, // 13: andara.game.v1.EventEnvelope.attached:type_name -> andara.game.v1.Attached
-	15, // 14: andara.game.v1.EventEnvelope.character_purged:type_name -> andara.game.v1.CharacterPurged
-	15, // [15:15] is the sub-list for method output_type
-	15, // [15:15] is the sub-list for method input_type
-	15, // [15:15] is the sub-list for extension type_name
-	15, // [15:15] is the sub-list for extension extendee
-	0,  // [0:15] is the sub-list for field type_name
+	10, // 7: andara.game.v1.EventEnvelope.heartbeat:type_name -> andara.game.v1.Heartbeat
+	11, // 8: andara.game.v1.EventEnvelope.resync:type_name -> andara.game.v1.Resync
+	9,  // 9: andara.game.v1.EventEnvelope.entity_relocated:type_name -> andara.game.v1.EntityRelocated
+	13, // 10: andara.game.v1.EventEnvelope.character_linkdead:type_name -> andara.game.v1.CharacterLinkdead
+	14, // 11: andara.game.v1.EventEnvelope.character_reconnected:type_name -> andara.game.v1.CharacterReconnected
+	15, // 12: andara.game.v1.EventEnvelope.character_despawned:type_name -> andara.game.v1.CharacterDespawned
+	12, // 13: andara.game.v1.EventEnvelope.attached:type_name -> andara.game.v1.Attached
+	16, // 14: andara.game.v1.EventEnvelope.character_purged:type_name -> andara.game.v1.CharacterPurged
+	8,  // 15: andara.game.v1.EventEnvelope.server_stopping:type_name -> andara.game.v1.ServerStopping
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_andara_game_v1_event_proto_init() }
@@ -1456,6 +1543,7 @@ func file_andara_game_v1_event_proto_init() {
 		(*EventEnvelope_CharacterDespawned)(nil),
 		(*EventEnvelope_Attached)(nil),
 		(*EventEnvelope_CharacterPurged)(nil),
+		(*EventEnvelope_ServerStopping)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -1463,7 +1551,7 @@ func file_andara_game_v1_event_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_andara_game_v1_event_proto_rawDesc), len(file_andara_game_v1_event_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   16,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

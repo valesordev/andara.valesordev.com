@@ -10,7 +10,7 @@ define not only the wire but also the Kafka record formats, the snapshot envelop
 
 ```
 andara/game/v1/       Game service — OpenSession, Submit, Subscribe   (AW-SRV-005); the roster RPCs (AW-SRV-014)
-andara/admin/v1/      Admin service — operator and builder surface    (AW-SRV-005)
+andara/admin/v1/      Admin service — operator and builder surface    (AW-SRV-005); Lifecycle, the in-pod pre-stop service (AW-INF-007)
 andara/log/v1/        LoggedCommand, Event, TickCompleted             (AW-SRV-004, AW-SRV-005)
 andara/state/v1/      snapshot envelope with state_version (AW-SRV-006); StateRecord, the andara.state.v1 value (AW-SRV-019)
 andara/content/v1/    ZoneDefinition (AW-SRV-001); TemplateDefinition (AW-SRV-022); blobs, version manifests, active pointer (AW-SRV-012, AW-SRV-013)

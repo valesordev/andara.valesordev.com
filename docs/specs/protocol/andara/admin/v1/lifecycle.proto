@@ -1,0 +1,54 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Valesor Development
+
+// The Lifecycle service (AW-INF-007, docs/specs/deploy/lifecycle.md).
+//
+// Served by the running server on a Unix socket inside the pod
+// (deploy.control_socket), never on the Admin endpoint, and called only by
+// `andara-server prestop`, the pod's preStop hook, which runs from the same
+// image. It can do nothing the kubelet's SIGTERM is not about to do: it
+// starts the stop sequence early so the Snapshot is fresh. It is not a way
+// into the World, and ADR-0003's "no privileged back door" is about the
+// operator surface, which this is not.
+
+syntax = "proto3";
+
+package andara.admin.v1;
+
+service Lifecycle {
+  // Run the pre-stop sequence once: emit ServerStopping to every open
+  // Subscribe stream, wait deploy.notice_lead, refuse Submit with reason
+  // `server_restarting` (not the degraded state), snapshot a round at the
+  // next tick boundary, tag it `deploy:<own version>`, commit offsets. A
+  // second call returns the first call's response without repeating any step.
+  rpc PrepareStop(PrepareStopRequest) returns (PrepareStopResponse);
+}
+
+message PrepareStopRequest {}
+
+enum PrepareStopOutcome {
+  PREPARE_STOP_OUTCOME_UNSPECIFIED = 0;
+  // The round is complete and tagged.
+  PREPARE_STOP_OUTCOME_COMPLETE = 1;
+  // The round did not complete within snapshot.upload_timeout. The previous
+  // complete round is the recovery point; the log tail is longer, not wrong.
+  PREPARE_STOP_OUTCOME_TIMEOUT = 2;
+  // The store refused a Put or the tag.
+  PREPARE_STOP_OUTCOME_STORE_ERROR = 3;
+}
+
+message PrepareStopResponse {
+  PrepareStopOutcome outcome = 1;
+  // The tick of the round taken, and the State Hash at it. Zero and empty
+  // unless outcome is COMPLETE.
+  uint64 tick = 2;
+  bytes state_hash = 3;
+  // The tag written, `deploy:<server version>`. Empty unless COMPLETE.
+  string tag = 4;
+  // Wall time from the call to the response.
+  uint32 duration_ms = 5;
+  // "<server version>@<tick>": the attribute prestop and the next pod's
+  // recovery both put on their spans, so a deploy is one trace. Empty unless
+  // COMPLETE.
+  string deploy_id = 6;
+}

@@ -115,6 +115,13 @@ service Admin {
   // round, a log gap, or a state_version this binary can't read;
   // DEADLINE_EXCEEDED past recovery.verify_timeout.
   rpc VerifySnapshotRound(VerifySnapshotRoundRequest) returns (VerifySnapshotRoundResponse);
+  // Tag a Complete round so retention keeps it (AW-INF-007, lifecycle.md,
+  // "Round tags"). OPERATOR only; the actor and tick are logged. Idempotent:
+  // tagging a round with a name it already carries succeeds with
+  // already_tagged. INVALID_ARGUMENT for a name outside the tag grammar;
+  // NOT_FOUND for no round at `tick`; FAILED_PRECONDITION for a round that
+  // isn't complete.
+  rpc TagSnapshotRound(TagSnapshotRoundRequest) returns (TagSnapshotRoundResponse);
 }
 
 message ListSnapshotRoundsRequest {
@@ -136,11 +143,30 @@ message SnapshotRound {
   bool complete = 4;
   // The newest taken_at_unix_nano among the round's objects. Diagnostic only.
   int64 taken_at_unix_nano = 5;
+  // Sorted tag names present on every one of the round's objects
+  // (AW-INF-007). A name on only some of them is not reported; retention
+  // still treats the round as tagged, and tagging it again completes it.
+  repeated string tags = 6;
 }
 
 message ListSnapshotRoundsResponse {
   // Newest first.
   repeated SnapshotRound rounds = 1;
+}
+
+message TagSnapshotRoundRequest {
+  // `deploy:<tag>` or `rollback:<tick>`, matching
+  // ^(deploy|rollback):[A-Za-z0-9._@+-]{1,200}$.
+  string name = 1;
+  // 0 means the newest Complete round.
+  uint64 tick = 2;
+}
+
+message TagSnapshotRoundResponse {
+  // The tick of the round tagged.
+  uint64 tick = 1;
+  // The round already carried `name` on every object; nothing was written.
+  bool already_tagged = 2;
 }
 
 message VerifySnapshotRoundRequest {
