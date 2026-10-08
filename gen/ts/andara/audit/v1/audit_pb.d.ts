@@ -133,8 +133,8 @@ export declare type AuditRecord = Message<"andara.audit.v1.AuditRecord"> & {
   findingsCount: number;
 
   /**
-   * The approver is the publisher, or the real actor behind the publisher's
-   * acting-as Session (ADR-0004, amended 2026-09-26).
+   * The approver is the manifest's `author`, or its `publisher` (the real actor
+   * behind an acting-as publish; AW-SRV-039) (ADR-0004, amended 2026-09-26).
    *
    * @generated from field: bool self_approval = 26;
    */

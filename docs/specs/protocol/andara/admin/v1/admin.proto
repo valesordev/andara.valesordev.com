@@ -381,8 +381,8 @@ message ApproveVersionRequest {
 message ApproveVersionResponse {
   string approved_by = 1;
   int64 approved_at_unix_nano = 2;
-  // The approver is the publisher, or the real actor behind the publisher's
-  // acting-as Session. Only an OPERATOR can do this, and only while
+  // The approver is the manifest's `author`, or its `publisher` (the real actor
+  // behind an acting-as publish; AW-SRV-039). Only an OPERATOR can do this, and only while
   // content.operator_self_approval is true.
   bool self_approval = 3;
 }

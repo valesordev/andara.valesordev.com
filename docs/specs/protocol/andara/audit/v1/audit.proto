@@ -52,8 +52,8 @@ message AuditRecord {
   // `boot <build version>`, and actor_account_id is `server`.
   string reason = 24;
   uint32 findings_count = 25;
-  // The approver is the publisher, or the real actor behind the publisher's
-  // acting-as Session (ADR-0004, amended 2026-09-26).
+  // The approver is the manifest's `author`, or its `publisher` (the real actor
+  // behind an acting-as publish; AW-SRV-039) (ADR-0004, amended 2026-09-26).
   bool self_approval = 26;
 
   // SetBuilderPacks (AW-SRV-035): the Account's pack set before and after.
