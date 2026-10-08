@@ -51,6 +51,31 @@ class Budget(unittest.TestCase):
     def test_a_later_file_overrides_the_earlier(self):
         self.assertEqual(self.run_budget(34.3, self.BASE, "probes:\n  startup: {failureThreshold: 6}\n"), 1)
 
+    def test_the_factor_is_the_one_given(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=20), 1)
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=10), 0)
+
+    def test_a_zero_or_missing_measurement_refuses(self):
+        self.assertEqual(self.run_budget(0, self.BASE), 1)
+        self.assertEqual(self.run_budget("x", self.BASE), 1)
+        self.assertEqual(self.run_budget(float("nan"), self.BASE), 1)
+
+    def test_a_nonpositive_factor_refuses(self):
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=0), 1)
+        self.assertEqual(self.run_budget(34.3, self.BASE, factor=-1), 1)
+
+    def test_malformed_probe_values_refuse(self):
+        self.assertEqual(self.run_budget(1.0, "probes: [1]\n"), 1)
+        self.assertEqual(self.run_budget(1.0, "probes:\n  startup: {periodSeconds: x, failureThreshold: 60}\n"), 1)
+        self.assertEqual(self.run_budget(1.0, "probes:\n  startup: {periodSeconds: 10, failureThreshold: 0}\n"), 1)
+
+    def test_the_failure_names_the_threshold_that_would_pass(self):
+        import contextlib, io
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            self.assertEqual(self.run_budget(250.0, self.BASE), 1)
+        self.assertIn("failureThreshold 75 at periodSeconds 10", err.getvalue())
+
     def test_values_without_a_startup_budget_fail(self):
         self.assertEqual(self.run_budget(1.0, "probes: {}\n"), 1)
 

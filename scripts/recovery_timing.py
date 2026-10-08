@@ -26,6 +26,7 @@ numbers, and `previous` only reads successful runs.
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -126,34 +127,47 @@ def summary(args):
 
 
 def startup_budget(values_files):
-    """periodSeconds × failureThreshold of probes.startup, later files overriding earlier ones."""
+    """(periodSeconds, failureThreshold) of probes.startup, later files overriding earlier ones."""
     import yaml
     startup = {}
     for f in values_files:
         doc = yaml.safe_load(Path(f).read_text()) or {}
-        startup.update(((doc.get("probes") or {}).get("startup")) or {})
-    try:
-        return startup["periodSeconds"] * startup["failureThreshold"]
-    except KeyError as e:
-        raise ValueError("%s: probes.startup has no %s" % (", ".join(values_files), e.args[0]))
+        probes = doc.get("probes") or {}
+        s = probes.get("startup") if isinstance(probes, dict) else None
+        if isinstance(s, dict):
+            startup.update(s)
+    out = []
+    for k in ("periodSeconds", "failureThreshold"):
+        v = startup.get(k)
+        if k not in startup:
+            raise ValueError("%s: probes.startup has no %s" % (", ".join(values_files), k))
+        if isinstance(v, bool) or not isinstance(v, int) or v <= 0:
+            raise ValueError("%s: probes.startup.%s must be a positive integer, got %r" % (", ".join(values_files), k, v))
+        out.append(v)
+    return tuple(out)
 
 
 def budget(args):
     try:
         cur = load(args.current)
-        have = startup_budget(args.values)
+        period, threshold = startup_budget(args.values)
+        total = cur["phases_seconds"]["total"]
+        if isinstance(total, bool) or not isinstance(total, (int, float)) or not math.isfinite(total) or total <= 0:
+            raise ValueError("%s: phases_seconds.total must be a positive number, got %r" % (args.current, total))
+        if not math.isfinite(args.factor) or args.factor <= 0:
+            raise ValueError("--factor must be a positive number, got %r" % args.factor)
     except (ValueError, OSError) as e:
         print("recovery_timing: %s" % e, file=sys.stderr)
         return 1
-    total = cur["phases_seconds"]["total"]
+    have = period * threshold
     need = args.factor * total
     print("startup budget %d s; measured recovery %.1f s; %g x = %.1f s; headroom %.1f x"
-          % (have, total, args.factor, need, have / total if total else float("inf")))
+          % (have, total, args.factor, need, have / total))
     if have >= need:
         return 0
     print("recovery_timing: the startup budget is under %g x the measured recovery (%.1f s needed): "
-          "raise probes.startup.failureThreshold, or say by how much the values change"
-          % (args.factor, need), file=sys.stderr)
+          "failureThreshold %d at periodSeconds %d would satisfy it, or say by how much the values change"
+          % (args.factor, need, math.ceil(need / period), period), file=sys.stderr)
     return 1
 
 
