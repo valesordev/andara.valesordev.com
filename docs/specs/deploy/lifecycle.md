@@ -19,7 +19,7 @@ kubectl rollout ──▶ preStop exec: andara-server prestop
                             ├─ sleep deploy.notice_lead (default 10 s); the World keeps running and accepting Submit
                             ├─ refuse Submit: UNAVAILABLE reason "server_restarting" (the draining flag, NOT the degraded state)
                             ├─ wait for the Submits already admitted to resolve
-                            ├─ at the next tick boundary: SnapshotAll → Put ×zones → tag the round "deploy:<own version>"
+                            ├─ at the next tick boundary: SnapshotAll → Put ×zones → tag the round "deploy:<image tag>"
                             ├─ commit offsets; log "prestop complete tick=T hash=H"
                             └─ respond; prestop prints the response and exits (0 complete, 1 timeout, 2 store_error, 3 no socket)
                     SIGTERM ──▶ drain (grpc.drain_timeout, sim.drain_timeout_ms) ──▶ exit
@@ -54,12 +54,15 @@ so `WorldReadOnly` does not page on every deploy. The Ingress has a separate dra
 refused by it is `UNAVAILABLE` with reason `server_restarting`. (The message wording is Brian's, as for
 `ServerStopping.message`; the reason is the typed contract.)
 
-**4. The deploy tag names the leaving binary.** The round `prestop` takes is tagged `deploy:<v>` where `<v>`
-is the pod's own `GetServerInfo.version`, the image tag it was started with. The old pod cannot know the
+**4. The deploy tag names the leaving image.** The round `prestop` takes is tagged `deploy:<v>` where `<v>`
+is the image tag the pod was started with (`deploy.image_tag`, set by the chart from `image.tag` with any
+`@sha256:` digest stripped, so `sha-<12 hex>` in CI and `dev` locally). It is not `GetServerInfo.version`,
+which is `git describe` and does not match an image tag. Two local builds both tagged `dev` share a name;
+the newest round with the name wins. The old pod cannot know the
 tag of the pod replacing it. It means "the last round written by binary `<v>`", which is exactly what
 `make rollback` to `<v>` wants to pin: a round `<v>` can read.
 
-**5. The deploy's trace id is `<version>@<tick>`.** `PrepareStopResponse.deploy_id`: the leaving version and
+**5. The deploy's trace id is `<image tag>@<tick>`.** `PrepareStopResponse.deploy_id`: the leaving image tag and
 the tick of the pre-stop round. The next pod puts the same string as `deploy_id` on its `deploy.recovery`
 span when the round it restores carries a `deploy:` tag, so a deploy is one trace end to end without the
 old pod knowing the new tag.
@@ -69,8 +72,8 @@ exits seconds after the hook returns; a counter or histogram written there is ne
 pod starts at zero. The record of a pre-stop is the `info` log line `prestop complete` (fields `tick`,
 `hash`, `tag`, `duration_ms`, `outcome`, `trace_id`), the `deploy.prestop_snapshot` span (pushed to the trace
 backend as it ends, so it survives the pod), and `PrepareStopResponse`. `andara_prestop_snapshot_duration_seconds` and
-`andara_prestop_outcome_total` are **withdrawn**. The retained-rounds gauge lives in the serving process
-and stays.
+`andara_prestop_outcome_total` are **withdrawn**. `andara_snapshot_rounds_retained{kind}` (`AW-SRV-055`)
+lives in the serving process and is unaffected.
 
 ## Measuring the interruption
 
@@ -78,9 +81,14 @@ and stays.
 
 - **Emitter: the new pod,** once per boot, at the moment it first reports `serving`. The old process has no
   clock across the gap, and a script cannot write a series for `prod`.
-- **Clock: it starts at the head Tick Boundary Record's timestamp, and stops at the new process's wall clock
-  when `/readyz` first returns `serving`.** The head record is the one recovery already reads to compare
-  the State Hash (`AW-SRV-007`): the last instant the old World was alive. The start is the old pod's
+- **Clock: it starts at the head Tick Boundary Record's timestamp (the Kafka record's CreateTime), and stops at
+  the new process's wall clock when `/readyz` first returns `serving`.** The head record is the last instant
+  the old World was ticking. Recovery does not expose it today: `AW-SRV-054` adds the read to
+  `server/recovery` (`Report.HeadProducedAt`), including when the restored round is already at head, where
+  recovery otherwise reads no record. This measures **the World not ticking**, the same span as the RTO in
+  `docs/specs/slo/recovery.md` (stop to accepting connections). The window in which Submit was refused but
+  the World still ticked (the snapshot, the drain) is not in it; `prestop complete` logs it as
+  `refused_ms`, and neither number includes the notice lead. The start is the old pod's
   clock and the stop the new pod's. On the kind box those are one machine; on a cluster with nodes the
   error is the NTP skew between them, and the report says so. The notice lead is not in the interruption:
   the World runs through it.
@@ -106,7 +114,9 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
   the newest complete round. It deletes any round older than `snapshot.max_round_age` (default `552h`, 23
   days), tagged or not, except that same newest complete round: `broker-contract.md` makes a round older
   than `andara.events.v1` retention minus 7 days unusable, and keeping it would promise a recovery that
-  `ErrLogGap` refuses. `make check` (SRE) asserts `snapshot.max_round_age <= retention.ms(events) - 7 d`.
+  `ErrLogGap` refuses. The one exception besides the newest complete round: **the sweep never deletes the
+  round `recovery.pin_round` names**, whatever its age or tag count, so a pin cannot outlive its round. A
+  pin past 23 days is then an `ErrLogGap` at recovery, which is the honest failure. `make check` (SRE) asserts `snapshot.max_round_age <= retention.ms(events) - 7 d`.
 - A tag for a round that is gone is an error before anything moves (`make rollback ROUND=T`).
 
 ## Configuration
@@ -115,6 +125,7 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | between `ServerStopping` and the Submit refusal |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping.expected_back_seconds` |
+| `deploy.image_tag` | `ANDARA_DEPLOY_IMAGE_TAG` | `dev` | set by the chart from `image.tag`, digest stripped; names the `deploy:` tag |
 | `deploy.control_socket` | `ANDARA_DEPLOY_CONTROL_SOCKET` | `/run/andara/control.sock` | the Lifecycle service; the chart mounts `emptyDir` there |
 | `recovery.pin_round` | `ANDARA_RECOVERY_PIN_ROUND` | `0` | `0` is unset. Set by `make rollback ROUND=T`, cleared by the next `make deploy` or `make rollback`; `AW-SRV-007`'s Configuration table has the server side |
 | `snapshot.keep_rounds` | `ANDARA_SNAPSHOT_KEEP_ROUNDS` | `120` | two hours of minute-rounds |
@@ -122,8 +133,9 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
 | `snapshot.max_round_age` | `ANDARA_SNAPSHOT_MAX_ROUND_AGE` | `552h` | see Round tags |
 
 Chart value `terminationGracePeriodSeconds`, default `90`, is at least `snapshot.upload_timeout +
-deploy.notice_lead + 2 × tick interval + 10 s`; `make check` fails naming the terms if not
-(`AW-INF-042`). The keys `deploy.control_socket` and `snapshot.max_round_age` are new: SRE registers them in
+deploy.notice_lead + 2 × tick interval + grpc.drain_timeout + sim.drain_timeout_ms + 10 s` (the hook and the
+SIGTERM drain share one kubelet clock; the default sum is 72 s); `make check` fails naming the terms if not
+(`AW-INF-042`). The keys `deploy.image_tag`, `deploy.control_socket` and `snapshot.max_round_age` are new: SRE registers them in
 `deploy/helm/andara/keys.yaml` with the chart child.
 
 ## Make targets
@@ -155,8 +167,13 @@ script's `1` with the pod's code printed.
    rollback passes the key explicitly, `0` unless `ROUND=T` is given, so clearing costs no extra rollout.
    It stays set across a restart that isn't one of those; that recovers from `T` again, slower, to the same
    state, because the log tail is replayed.
-2. **`make rollback ROUND=T` tags `T` `rollback:<T>` before it sets the pin.** Retention counts any tag, so
-   a late restart doesn't exit `7` `missing` and crash-loop.
+2. **`make rollback ROUND=T` tags `T` `rollback:<T>` before it sets the pin, when a server answers.**
+   Retention counts any tag, so a late restart doesn't exit `7` `missing` and crash-loop. In the retry after
+   a pod exit `4` no server is running (one replica, the crash-looping old binary), so the Admin call cannot
+   be made: the script then skips the tag with a warning, and the round is still protected because the
+   sweep never deletes the round `recovery.pin_round` names (Round tags). A connection failure skips; a
+   `NOT_FOUND` or `FAILED_PRECONDITION` answer still exits `1`. `ROUND=deploy:<v>` is accepted in place of a
+   tick and resolves to the newest round carrying that tag, when a server answers.
 3. **`make rollback`'s exits are the script's** (table above), read from the pod's last termination code,
    and it prints `rollback: pod exited <n> (<meaning>): round <T> cause=<c>`.
 4. **The spelling is `ROUND=T`.**

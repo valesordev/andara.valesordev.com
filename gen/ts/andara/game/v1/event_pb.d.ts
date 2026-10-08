@@ -380,7 +380,7 @@ export declare const SimulationStoppedSchema: GenMessage<SimulationStopped>;
 /**
  * The server will stop in about `deploy.notice_lead` plus the snapshot, and
  * is expected back in `expected_back_seconds` (deploy.expected_back). The
- * stream closes after this frame; the client reconnects with backoff and
+ * stream closes at the stop, not at this frame; the client reconnects with backoff and
  * rebinds within session.linkdead_grace (AW-SRV-015). `message` is for
  * players and is Brian's wording; empty means the client shows its own text.
  * Delivery is best effort, once per open stream: a stream opened after the

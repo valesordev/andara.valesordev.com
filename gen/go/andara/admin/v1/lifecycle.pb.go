@@ -133,14 +133,16 @@ type PrepareStopResponse struct {
 	// unless outcome is COMPLETE.
 	Tick      uint64 `protobuf:"varint,2,opt,name=tick,proto3" json:"tick,omitempty"`
 	StateHash []byte `protobuf:"bytes,3,opt,name=state_hash,json=stateHash,proto3" json:"state_hash,omitempty"`
-	// The tag written, `deploy:<server version>`. Empty unless COMPLETE.
+	// The tag written, `deploy:<image tag>`. Empty unless COMPLETE.
 	Tag string `protobuf:"bytes,4,opt,name=tag,proto3" json:"tag,omitempty"`
 	// Wall time from the call to the response.
 	DurationMs uint32 `protobuf:"varint,5,opt,name=duration_ms,json=durationMs,proto3" json:"duration_ms,omitempty"`
-	// "<server version>@<tick>": the attribute prestop and the next pod's
+	// "<image tag>@<tick>": the attribute prestop and the next pod's
 	// recovery both put on their spans, so a deploy is one trace. Empty unless
 	// COMPLETE.
-	DeployId      string `protobuf:"bytes,6,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
+	DeployId string `protobuf:"bytes,6,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
+	// Wall time from the Submit refusal to the response; logged as refused_ms.
+	RefusedMs     uint32 `protobuf:"varint,7,opt,name=refused_ms,json=refusedMs,proto3" json:"refused_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -217,12 +219,19 @@ func (x *PrepareStopResponse) GetDeployId() string {
 	return ""
 }
 
+func (x *PrepareStopResponse) GetRefusedMs() uint32 {
+	if x != nil {
+		return x.RefusedMs
+	}
+	return 0
+}
+
 var File_andara_admin_v1_lifecycle_proto protoreflect.FileDescriptor
 
 const file_andara_admin_v1_lifecycle_proto_rawDesc = "" +
 	"\n" +
 	"\x1fandara/admin/v1/lifecycle.proto\x12\x0fandara.admin.v1\"\x14\n" +
-	"\x12PrepareStopRequest\"\xd7\x01\n" +
+	"\x12PrepareStopRequest\"\xf6\x01\n" +
 	"\x13PrepareStopResponse\x12=\n" +
 	"\aoutcome\x18\x01 \x01(\x0e2#.andara.admin.v1.PrepareStopOutcomeR\aoutcome\x12\x12\n" +
 	"\x04tick\x18\x02 \x01(\x04R\x04tick\x12\x1d\n" +
@@ -231,7 +240,9 @@ const file_andara_admin_v1_lifecycle_proto_rawDesc = "" +
 	"\x03tag\x18\x04 \x01(\tR\x03tag\x12\x1f\n" +
 	"\vduration_ms\x18\x05 \x01(\rR\n" +
 	"durationMs\x12\x1b\n" +
-	"\tdeploy_id\x18\x06 \x01(\tR\bdeployId*\xa5\x01\n" +
+	"\tdeploy_id\x18\x06 \x01(\tR\bdeployId\x12\x1d\n" +
+	"\n" +
+	"refused_ms\x18\a \x01(\rR\trefusedMs*\xa5\x01\n" +
 	"\x12PrepareStopOutcome\x12$\n" +
 	" PREPARE_STOP_OUTCOME_UNSPECIFIED\x10\x00\x12!\n" +
 	"\x1dPREPARE_STOP_OUTCOME_COMPLETE\x10\x01\x12 \n" +

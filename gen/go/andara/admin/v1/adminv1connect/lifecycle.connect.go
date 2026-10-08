@@ -54,7 +54,7 @@ type LifecycleClient interface {
 	// Run the pre-stop sequence once: emit ServerStopping to every open
 	// Subscribe stream, wait deploy.notice_lead, refuse Submit with reason
 	// `server_restarting` (not the degraded state), snapshot a round at the
-	// next tick boundary, tag it `deploy:<own version>`, commit offsets. A
+	// next tick boundary, tag it `deploy:<image tag>`, commit offsets. A
 	// second call returns the first call's response without repeating any step.
 	PrepareStop(context.Context, *connect.Request[v1.PrepareStopRequest]) (*connect.Response[v1.PrepareStopResponse], error)
 }
@@ -94,7 +94,7 @@ type LifecycleHandler interface {
 	// Run the pre-stop sequence once: emit ServerStopping to every open
 	// Subscribe stream, wait deploy.notice_lead, refuse Submit with reason
 	// `server_restarting` (not the degraded state), snapshot a round at the
-	// next tick boundary, tag it `deploy:<own version>`, commit offsets. A
+	// next tick boundary, tag it `deploy:<image tag>`, commit offsets. A
 	// second call returns the first call's response without repeating any step.
 	PrepareStop(context.Context, *connect.Request[v1.PrepareStopRequest]) (*connect.Response[v1.PrepareStopResponse], error)
 }

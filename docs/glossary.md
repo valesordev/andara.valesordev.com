@@ -576,14 +576,14 @@ deploy's pre-stop begins, carrying a `message` for players and `expected_back_se
 client must also handle a close without it. The server stops accepting Submit `deploy.notice_lead` later,
 with reason `server_restarting`, which is not the Read-only World (`AW-INF-007`, `docs/specs/deploy/lifecycle.md`).
 
-**Round Tag** — A name (`deploy:<version>` or `rollback:<tick>`) written on a Complete Snapshot Round so
-retention keeps it. `deploy:<version>` names the binary that wrote the round as it stopped, the round a
+**Round Tag** — A name (`deploy:<image tag>` or `rollback:<tick>`) written on a Complete Snapshot Round so
+retention keeps it. `deploy:<image tag>` names the image that wrote the round as it stopped, the round a
 rollback to that version pins; `rollback:<tick>` protects a round an operator pinned. Tags count against
 `snapshot.keep_deploy_rounds`, and no tag keeps a round older than `snapshot.max_round_age`.
 
 **Deploy Interruption** — The time from the head Tick Boundary Record's timestamp to the new server
-process first reporting `serving`: the part of a deploy a player experiences as the World not accepting
-Commands. The notice lead is not in it. `andara_deploy_interruption_seconds`, observed by the new process
+process first reporting `serving`: how long the World was not ticking, the span the RTO measures. Neither
+the notice lead nor the earlier window in which Submit was refused (`refused_ms`) is in it. `andara_deploy_interruption_seconds`, observed by the new process
 (`docs/specs/deploy/lifecycle.md`).
 
 **Read-only World** — The World while the Command Log cannot take a Command for a Partition

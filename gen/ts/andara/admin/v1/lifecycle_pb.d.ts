@@ -58,7 +58,7 @@ export declare type PrepareStopResponse = Message<"andara.admin.v1.PrepareStopRe
   stateHash: Uint8Array;
 
   /**
-   * The tag written, `deploy:<server version>`. Empty unless COMPLETE.
+   * The tag written, `deploy:<image tag>`. Empty unless COMPLETE.
    *
    * @generated from field: string tag = 4;
    */
@@ -72,13 +72,20 @@ export declare type PrepareStopResponse = Message<"andara.admin.v1.PrepareStopRe
   durationMs: number;
 
   /**
-   * "<server version>@<tick>": the attribute prestop and the next pod's
+   * "<image tag>@<tick>": the attribute prestop and the next pod's
    * recovery both put on their spans, so a deploy is one trace. Empty unless
    * COMPLETE.
    *
    * @generated from field: string deploy_id = 6;
    */
   deployId: string;
+
+  /**
+   * Wall time from the Submit refusal to the response; logged as refused_ms.
+   *
+   * @generated from field: uint32 refused_ms = 7;
+   */
+  refusedMs: number;
 };
 
 /**
@@ -132,7 +139,7 @@ export declare const Lifecycle: GenService<{
    * Run the pre-stop sequence once: emit ServerStopping to every open
    * Subscribe stream, wait deploy.notice_lead, refuse Submit with reason
    * `server_restarting` (not the degraded state), snapshot a round at the
-   * next tick boundary, tag it `deploy:<own version>`, commit offsets. A
+   * next tick boundary, tag it `deploy:<image tag>`, commit offsets. A
    * second call returns the first call's response without repeating any step.
    *
    * @generated from rpc andara.admin.v1.Lifecycle.PrepareStop
