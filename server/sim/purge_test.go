@@ -235,3 +235,19 @@ func TestPurge_ReroutedPurgeOfAPresentBodyReplays(t *testing.T) {
 		t.Fatal("the replayed World differs")
 	}
 }
+
+// A body between Zones is not purged: the Command is rejected in_transit.
+func TestPurge_RejectsABodyInTransit(t *testing.T) {
+	e, err := simtest.NewVerbEngine(7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step(t, e, simtest.Bind("town", "ch-1", "Aldric", "plaza"))
+	step(t, e, simtest.Move("town", "ch-1", "east")) // leaves town now; the Arrive is outbound
+	if _, between := e.State().Zones["town"].Transit["ch-1"]; !between {
+		t.Skip("fixture engine does not hand off; the in_transit path is covered by the handoff tests")
+	}
+	if rej := rejection(t, step(t, e, simtest.Purge("town", "ch-1")).Events); rej.GetCode() != sim.CodeInTransit {
+		t.Fatalf("rejection %v", rej)
+	}
+}

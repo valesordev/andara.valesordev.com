@@ -119,6 +119,10 @@ type Roster struct {
 	// held with the live flag's lock, so a SelectCharacter that arrives in
 	// the window loses (AW-SRV-032 AC-11).
 	deleting map[string]struct{}
+	// switching is the Character a Session is switching away from, until its
+	// SWITCH unbind has resolved: it is in neither flag map meanwhile, but it
+	// is still live, and a failed unbind puts it back.
+	switching map[string]struct{}
 	// releases counts the work the roster started in the background — the
 	// teardown produces and the position writes — so a drain or a test can
 	// wait for it. writes bounds the position writes in flight.
@@ -204,6 +208,7 @@ func New(o Options) (*Roster, error) {
 		opts: o, metrics: o.Metrics, log: o.Logger, tracer: o.Tracer, now: o.Now,
 		byAccount: map[string]*live{}, bySession: map[string]*live{},
 		deleting:       map[string]struct{}{},
+		switching:      map[string]struct{}{},
 		writes:         make(chan struct{}, o.PositionWrites),
 		linkdeadBodies: map[sim.EntityID]bool{},
 		recovered:      map[sim.EntityID]bool{},
@@ -424,6 +429,7 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		// The first body's flag leaves the maps now and is put back if its
 		// unbind does not reach the log. Its gauge count is settled after.
 		switching.releasing = true
+		r.switching[switching.character] = struct{}{}
 		delete(r.byAccount, acct)
 		delete(r.bySession, s.ID)
 	}
@@ -444,17 +450,31 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 	r.opts.Bindings.Bind(s.ID, command.Binding{Actor: sim.EntityID(characterID), Zone: sim.ZoneID(ref.GetZoneId()), Room: sim.RoomID(ref.GetRoomId())})
 
 	if switching != nil {
-		if err := r.produceSwitchUnbind(ctx, s, switching, oldZone, oldRoom); err != nil {
-			// Nothing reached the log: the Session still drives the first.
-			r.opts.Bindings.Bind(s.ID, oldBinding)
-			r.mu.Lock()
+		err := r.produceSwitchUnbind(ctx, s, switching, oldZone, oldRoom)
+		r.mu.Lock()
+		delete(r.switching, switching.character)
+		if err != nil {
+			// Nothing reached the log: the Session still drives the first —
+			// unless it ended meanwhile. Then its teardown took the new flag,
+			// not this one, and putting the first back would hold the Account
+			// for a Session that is gone: the body is released here instead.
+			ended := l.releasing
 			r.drop(l)
-			switching.releasing = false
-			r.byAccount[acct] = switching
-			r.bySession[s.ID] = switching
+			if !ended {
+				switching.releasing = false
+				r.byAccount[acct] = switching
+				r.bySession[s.ID] = switching
+			}
 			r.mu.Unlock()
+			if ended {
+				r.opts.Bindings.Unbind(s.ID)
+				r.releaseOrphanedSwitch(s, switching, oldZone)
+			} else {
+				r.opts.Bindings.Bind(s.ID, oldBinding)
+			}
 			return fail(OutcomeProduceFailed, ingress.WireError(err))
 		}
+		r.mu.Unlock()
 	}
 
 	cmd := &logv1.LoggedCommand{
@@ -507,6 +527,36 @@ func (r *Roster) SelectCharacter(ctx context.Context, s *gateway.Session, charac
 		slog.Bool("switch", switching != nil),
 		slog.Int64("partition", int64(acc.Partition)), slog.Int64("offset", acc.Offset), slog.String("trace_id", traceID(ctx)))
 	return &gamev1.SelectCharacterResponse{AcceptedOffset: acc.Offset, Partition: acc.Partition}, nil
+}
+
+// releaseOrphanedSwitch quits the first body of a switch whose unbind failed
+// because the Session ended under it, on its own context as the teardown does.
+// Best effort: a failure leaves the body present until the next select takes
+// it where it stands.
+func (r *Roster) releaseOrphanedSwitch(s *gateway.Session, old *live, zone sim.ZoneID) {
+	ctx, cancel := context.WithTimeout(context.Background(), r.opts.ProduceDeadline)
+	defer cancel()
+	_, err := r.opts.Log.Produce(ctx, &logv1.LoggedCommand{
+		ZoneId: string(zone), ActorId: old.character, SessionId: s.ID,
+		AcceptedAtUnixNano: r.now().UnixNano(),
+		Command: &logv1.LoggedCommand_UnbindCharacter{UnbindCharacter: &logv1.UnbindCharacter{
+			CharacterId: old.character, Reason: logv1.UnbindReason_QUIT,
+		}},
+	})
+	outcome := UnbindOK
+	if err != nil {
+		outcome = UnbindProduceFailed
+		r.log.LogAttrs(ctx, slog.LevelWarn, "character not released: the session ended during a switch and the unbind produce failed",
+			slog.String("account_id", old.account), slog.String("character_id", old.character),
+			slog.String("session_id", s.ID), slog.String("detail", err.Error()))
+	}
+	r.metrics.Unbinds.WithLabelValues(ReasonQuit, outcome).Inc()
+	r.mu.Lock()
+	if old.bound {
+		old.bound = false
+		r.metrics.SessionsBound.Dec()
+	}
+	r.mu.Unlock()
 }
 
 // lookupForSwitch is where the first body stands as the routing table knows
@@ -917,8 +967,12 @@ func (r *Roster) DeleteCharacter(ctx context.Context, s *gateway.Session, charac
 	defer span.End()
 
 	r.mu.Lock()
-	if cur, ok := r.byAccount[acct]; ok && cur.character == characterID {
-		name := cur.name
+	_, switching := r.switching[characterID]
+	if cur, ok := r.byAccount[acct]; (ok && cur.character == characterID) || switching {
+		name := ""
+		if ok {
+			name = cur.name
+		}
 		r.mu.Unlock()
 		err := characterLive(name)
 		span.SetStatus(codes.Error, err.Error())

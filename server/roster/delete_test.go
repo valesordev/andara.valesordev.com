@@ -414,3 +414,98 @@ func TestDeleteAndSelectRace_ExactlyOneWins(t *testing.T) {
 		}
 	}
 }
+
+// holdUnbind wraps log so a SWITCH unbind waits on release, then fails with
+// boom when failIt is set; entered is signaled when it arrives.
+func holdUnbind(log command.Producer, entered chan<- struct{}, release <-chan struct{}) command.Producer {
+	return producerFunc(func(ctx context.Context, cmd *logv1.LoggedCommand) (command.Accepted, error) {
+		if cmd.GetUnbindCharacter().GetReason() == logv1.UnbindReason_SWITCH {
+			entered <- struct{}{}
+			<-release
+			return command.Accepted{}, errors.New("broker down")
+		}
+		return log.Produce(ctx, cmd)
+	})
+}
+
+// Review finding: a switch whose unbind fails after the Session ended must not
+// put the first Character's flag back for a Session that is gone.
+func TestSwitch_FailedUnbindAfterTheSessionEndedFreesTheAccount(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, b := f.create("Aldric"), f.create("Brenna")
+	s := f.session("s1")
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	r := f.rosterOver(holdUnbind(f.log, entered, release))
+	if _, err := r.SelectCharacter(ctx, s, a); err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { _, err := r.SelectCharacter(ctx, s, b); errc <- err }()
+	<-entered
+	select {
+	case <-r.ReleaseSession(s, gateway.EndQuit):
+	case <-time.After(5 * time.Second):
+		t.Fatal("teardown")
+	}
+	close(release)
+	if err := <-errc; err == nil {
+		t.Fatal("the switch succeeded")
+	}
+	r.Wait()
+	if sid, id, ok := r.Live(f.account); ok {
+		t.Fatalf("LEAK: live flag %s %s after the Session ended", sid, id)
+	}
+	recs := f.log.records()
+	if last := recs[len(recs)-1]; last.GetActorId() != a || last.GetUnbindCharacter().GetReason() != logv1.UnbindReason_QUIT {
+		t.Fatalf("the first body was not released: last record %v", last)
+	}
+}
+
+// Review finding: during a switch the first Character is still live, so it
+// cannot be deleted; a failed unbind would otherwise restore a live DELETED body.
+func TestSwitch_FirstCharacterCannotBeDeletedMidSwitch(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	a, b := f.create("Aldric"), f.create("Brenna")
+	s := f.session("s1")
+	entered, release := make(chan struct{}, 1), make(chan struct{})
+	r := f.rosterOver(holdUnbind(f.log, entered, release))
+	if _, err := r.SelectCharacter(ctx, s, a); err != nil {
+		t.Fatal(err)
+	}
+	errc := make(chan error, 1)
+	go func() { _, err := r.SelectCharacter(ctx, s, b); errc <- err }()
+	<-entered
+	_, err := r.DeleteCharacter(ctx, f.session("s2"), a)
+	if rs, _ := reason(t, err); rs != roster.ReasonCharacterLive {
+		t.Fatalf("delete of the Character being switched away from: %v", err)
+	}
+	close(release)
+	<-errc
+	if ref, err := f.store.Character(f.account, a); err != nil || ref.GetStatus() != accountsv1.CharacterStatus_CHARACTER_STATUS_ACTIVE {
+		t.Fatalf("first Character %v %v", ref, err)
+	}
+	// Once the switch has resolved (here: restored), live again, still refused.
+	if _, id, ok := r.Live(f.account); !ok || id != a {
+		t.Fatalf("live = %s %v", id, ok)
+	}
+}
+
+// Review finding: the retention boundary is inclusive, to the second.
+func TestSweep_ExpiryIsInclusiveAtTheBoundary(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	id := f.create("Aldric")
+	if _, err := f.roster.DeleteCharacter(ctx, f.session("s1"), id); err != nil {
+		t.Fatal(err)
+	}
+	f.clock.advance(720*time.Hour - time.Second)
+	if res := f.roster.Sweep(ctx); res.Expired != 0 {
+		t.Fatalf("expired one second early: %+v", res)
+	}
+	f.clock.advance(time.Second)
+	if res := f.roster.Sweep(ctx); res.Expired != 1 {
+		t.Fatalf("not expired at the boundary: %+v", res)
+	}
+}
