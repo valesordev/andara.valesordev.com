@@ -82,6 +82,7 @@ export declare type PrepareStopResponse = Message<"andara.admin.v1.PrepareStopRe
 
   /**
    * Wall time from the Submit refusal to the response; logged as refused_ms.
+   * The pre-stop part only: Submit stays refused through the SIGTERM drain.
    *
    * @generated from field: uint32 refused_ms = 7;
    */

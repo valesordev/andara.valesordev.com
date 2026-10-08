@@ -52,5 +52,6 @@ message PrepareStopResponse {
   // COMPLETE.
   string deploy_id = 6;
   // Wall time from the Submit refusal to the response; logged as refused_ms.
+  // The pre-stop part only: Submit stays refused through the SIGTERM drain.
   uint32 refused_ms = 7;
 }

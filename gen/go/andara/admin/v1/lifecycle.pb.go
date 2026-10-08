@@ -142,6 +142,7 @@ type PrepareStopResponse struct {
 	// COMPLETE.
 	DeployId string `protobuf:"bytes,6,opt,name=deploy_id,json=deployId,proto3" json:"deploy_id,omitempty"`
 	// Wall time from the Submit refusal to the response; logged as refused_ms.
+	// The pre-stop part only: Submit stays refused through the SIGTERM drain.
 	RefusedMs     uint32 `protobuf:"varint,7,opt,name=refused_ms,json=refusedMs,proto3" json:"refused_ms,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

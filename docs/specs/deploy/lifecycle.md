@@ -18,7 +18,7 @@ kubectl rollout ──▶ preStop exec: andara-server prestop
                             ├─ write ServerStopping{message, expected_back_seconds} to every open Subscribe stream
                             ├─ sleep deploy.notice_lead (default 10 s); the World keeps running and accepting Submit
                             ├─ refuse Submit: UNAVAILABLE reason "server_restarting" (the draining flag, NOT the degraded state)
-                            ├─ wait for the Submits already admitted to resolve
+                            ├─ wait for the Submits already admitted to resolve, at most deploy.admit_wait (default 5 s); the rest are replayed
                             ├─ at the next tick boundary: SnapshotAll → Put ×zones → tag the round "deploy:<image tag>"
                             ├─ commit offsets; log "prestop complete tick=T hash=H"
                             └─ respond; prestop prints the response and exits (0 complete, 1 timeout, 2 store_error, 3 no socket)
@@ -62,10 +62,12 @@ the newest round with the name wins. The old pod cannot know the
 tag of the pod replacing it. It means "the last round written by binary `<v>`", which is exactly what
 `make rollback` to `<v>` wants to pin: a round `<v>` can read.
 
-**5. The deploy's trace id is `<image tag>@<tick>`.** `PrepareStopResponse.deploy_id`: the leaving image tag and
-the tick of the pre-stop round. The next pod puts the same string as `deploy_id` on its `deploy.recovery`
-span when the round it restores carries a `deploy:` tag, so a deploy is one trace end to end without the
-old pod knowing the new tag.
+**5. The deploy's correlation id is `<image tag>@<tick>`.** `PrepareStopResponse.deploy_id`: the leaving image
+tag and the tick of the pre-stop round. The next pod puts the same string as a `deploy_id` attribute on its
+`deploy.recovery` span when the round it restores carries a `deploy:` tag. The two processes have
+independent trace ids and the string is not an OpenTelemetry trace id: it is a searchable correlation
+attribute, so a deploy is found by one query across two traces, not one trace. Persisting real trace context
+across the restart was declined as machinery for a rare path.
 
 **6. The pre-stop instruments are a span and a log line, not metrics.** `prestop` runs in the old pod, which
 exits seconds after the hook returns; a counter or histogram written there is never scraped and the new
@@ -124,6 +126,7 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
 | Key | Env | Default | Notes |
 |-----|-----|---------|-------|
 | `deploy.notice_lead` | `ANDARA_DEPLOY_NOTICE_LEAD` | `10s` | between `ServerStopping` and the Submit refusal |
+| `deploy.admit_wait` | `ANDARA_DEPLOY_ADMIT_WAIT` | `5s` | the most pre-stop waits for already-admitted Submits, so `grpc.max_request_timeout` is not a term |
 | `deploy.expected_back` | `ANDARA_DEPLOY_EXPECTED_BACK` | `60s` | copied into `ServerStopping.expected_back_seconds` |
 | `deploy.image_tag` | `ANDARA_DEPLOY_IMAGE_TAG` | `dev` | set by the chart from `image.tag`, digest stripped; names the `deploy:` tag |
 | `deploy.control_socket` | `ANDARA_DEPLOY_CONTROL_SOCKET` | `/run/andara/control.sock` | the Lifecycle service; the chart mounts `emptyDir` there |
@@ -133,9 +136,9 @@ identify one (an idle Zone repeats its offset across rounds). The name grammar i
 | `snapshot.max_round_age` | `ANDARA_SNAPSHOT_MAX_ROUND_AGE` | `552h` | see Round tags |
 
 Chart value `terminationGracePeriodSeconds`, default `90`, is at least `snapshot.upload_timeout +
-deploy.notice_lead + 2 × tick interval + grpc.drain_timeout + sim.drain_timeout_ms + 10 s` (the hook and the
-SIGTERM drain share one kubelet clock; the default sum is 72 s); `make check` fails naming the terms if not
-(`AW-INF-042`). The keys `deploy.image_tag`, `deploy.control_socket` and `snapshot.max_round_age` are new: SRE registers them in
+deploy.notice_lead + deploy.admit_wait + 2 × tick interval + grpc.drain_timeout + sim.drain_timeout_ms + 10 s` (the hook and the
+SIGTERM drain share one kubelet clock; the default sum is about 75 s); `make check` fails naming the terms if not
+(`AW-INF-042`). The keys `deploy.admit_wait`, `deploy.image_tag`, `deploy.control_socket` and `snapshot.max_round_age` are new: SRE registers them in
 `deploy/helm/andara/keys.yaml` with the chart child.
 
 ## Make targets

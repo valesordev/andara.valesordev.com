@@ -579,7 +579,7 @@ with reason `server_restarting`, which is not the Read-only World (`AW-INF-007`,
 **Round Tag** — A name (`deploy:<image tag>` or `rollback:<tick>`) written on a Complete Snapshot Round so
 retention keeps it. `deploy:<image tag>` names the image that wrote the round as it stopped, the round a
 rollback to that version pins; `rollback:<tick>` protects a round an operator pinned. Tags count against
-`snapshot.keep_deploy_rounds`, and no tag keeps a round older than `snapshot.max_round_age`.
+`snapshot.keep_deploy_rounds`, and no tag keeps a round older than `snapshot.max_round_age`, except the round `recovery.pin_round` names.
 
 **Deploy Interruption** — The time from the head Tick Boundary Record's timestamp to the new server
 process first reporting `serving`: how long the World was not ticking, the span the RTO measures. Neither
