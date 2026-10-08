@@ -88,7 +88,7 @@ A Partition `p` becomes degraded when either:
    successfully inside the deadline is not a failure and degrades nothing. **How the error is seen is the implementer's to solve**: franz-go retries these errors until `RecordDeliveryTimeout` and then completes the promise with `ErrRecordTimeout`, not the broker error, so the implementation must capture the broker's per-Partition error another way (a client hook, for example). If it cannot, the probe below is the only trigger and this one is dropped, with the Submit that discovers the fault answered `DEADLINE_EXCEEDED` as now. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
    is added to the three the review named: the record *was* appended, so its Submit is ambiguous in the
    same way a deadline is.) Or
-2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second) the ingress
+2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second; the metadata request is bounded by it) the ingress
    reads topic metadata for `andara.commands.v1` and marks `p` degraded if its leader has been absent on **two consecutive probes**, or its
    in-sync replica count is below the topic's `min.insync.replicas`. The probe asks the broker the
    configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** ping a broker:
@@ -112,7 +112,8 @@ that sees it, because the broker is already refusing writes.
 
 **Timing this delivers against `AW-INF-005` AC-2** ("read-only within `ingress.produce_deadline`"): the
 Submit in flight when the fault begins is `DEADLINE_EXCEEDED` at the deadline. Later Submits for a
-Partition with no leader are `UNAVAILABLE` within two probe intervals (about 2 s) of the leader's loss.
+Partition with no leader are `UNAVAILABLE` from the second probe that finds it leaderless: at most about
+two probe intervals after the loss, plus the interval it fell inside.
 For a Partition led by a survivor whose dead followers remain in the ISR, metadata still shows a full ISR
 until the broker shrinks it (`replica.lag.time.max.ms`, 30 s by default) and the probe cannot see the
 fault; only the produce-error trigger can, which is why `REQUEST_TIMED_OUT` is in it. If that error is
@@ -124,8 +125,13 @@ which. The SRE child owns the wording of that AC.
 
 ### Leaving the state
 
-A Partition leaves the degraded state on the first probe that finds a leader and an ISR of at least
-`min.insync.replicas`. No restart, no operator action.
+A Partition marked by the **probe** leaves the degraded state on the first probe that finds a leader
+and an ISR of at least `min.insync.replicas`. A Partition marked by a **produce error** leaves it only
+after a hold of the broker's `replica.lag.time.max.ms` (read with `min.insync.replicas`; 30 s by
+default) *and* a healthy probe, because the probe's metadata can show a full ISR while the broker is
+still refusing writes (`REQUEST_TIMED_OUT`), and clearing on it would flap the Partition. A refused
+Partition receives no produce, so nothing re-observes the error during the hold; if the fault outlasts it,
+the next Submit discovers it again (`DEADLINE_EXCEEDED`) and re-marks it. No restart, no operator action.
 
 ### Constraints on the implementation
 
@@ -160,7 +166,7 @@ Each of these is a criterion in the per-Partition implementation story, named he
 softened when it is written:
 
 1. A broker-side produce error of `NOT_ENOUGH_REPLICAS` marks only that Partition degraded. Likewise
-   `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER`; one test per error,
+   `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER`, `REQUEST_TIMED_OUT`; one test per error,
    at the point the implementation observes it (see Entering the state). A story that finds the error
    unobservable says so in a comment `--to architecture` rather than dropping the criterion.
 2. With a Partition degraded, a Submit for a Zone on a different Partition is produced and acknowledged.
@@ -170,3 +176,4 @@ softened when it is written:
 5. All 64 series are present at boot, 0.
 6. A metadata failure on two consecutive probes degrades all 64; one failure degrades none.
 7. The topic's `min.insync.replicas` is read at boot and refreshed every 60 s; a change is honoured within 60 s.
+8. A Partition marked by a produce error stays degraded across probes that show a full ISR until the hold has elapsed, then clears on the next healthy probe.

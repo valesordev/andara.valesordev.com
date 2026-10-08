@@ -575,14 +575,15 @@ different, and an advancing Tick says the simulation is running. Not an Event: `
 Events, and no Command for a Zone on a **Degraded Partition** is accepted — every such Submit is
 `UNAVAILABLE` at once with reason `world_read_only`. Deliberate, typed, and bounded, because the
 Log's availability bounds the World's (ADR-0002) and a Command is acknowledged only when it is
-durable. When no broker answers, all 64 Partitions are degraded and the whole World is read-only;
+durable. When no broker answers on two consecutive probes, all 64 Partitions are degraded and the whole World is read-only;
 when one Partition's ISR falls below `min.insync.replicas`, only its Zones are.
 `andara_ingress_degraded{partition}` is 1 for each; `WorldReadOnly` (AW-INF-005) is the alert.
 
 **Degraded Partition** — A Partition of `andara.commands.v1` the ingress has marked read-only: a
 produce to it failed with `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPEND`,
-`LEADER_NOT_AVAILABLE` or `NOT_LEADER_OR_FOLLOWER`, or the once-a-second metadata probe found its leader
-absent or its ISR below `min.insync.replicas`. It clears on the first probe that finds both healthy
+`LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER` or `REQUEST_TIMED_OUT`, or the once-a-second metadata
+probe found its leader absent on two consecutive probes or its ISR below `min.insync.replicas`. A probe
+mark clears on the first healthy probe; a produce-error mark after a hold as well
 (`docs/specs/kafka/client-contract.md`).
 
 **Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
