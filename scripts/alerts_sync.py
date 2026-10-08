@@ -52,7 +52,7 @@ NAMESPACE = "andara"
 SECRETS = ("MIMIR_ADDRESS", "MIMIR_TENANT_ID", "MIMIR_API_KEY")
 PROM_SUFFIX = "/api/prom"
 WRITE_KEY = "MIMIR_API_KEY_WRITE"
-DELETED = re.compile(r"^\s*- Group: (.+?)\s*$", re.M)
+DELETED = re.compile(r"^\s*- Group: (.+?)\r?$", re.M)
 SUMMARY = re.compile(r"(\d+) Groups Created, (\d+) Groups Updated, (\d+) Groups Deleted")
 
 
@@ -93,6 +93,18 @@ def missing(env, names):
     return [k for k in names if not env.get(k)]
 
 
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect on a write would resend the Authorization header elsewhere, or turn a POST into a GET."""
+
+    def redirect_request(self, *a, **kw):
+        return None
+
+
+def secure(address):
+    host = urllib.parse.urlsplit(address).hostname or ""
+    return address.lower().startswith("https://") or host in ("127.0.0.1", "localhost", "::1")
+
+
 def api(env, method, group=None, body=None, key=None, timeout=60):
     """One call to the ruler's namespace endpoint, authenticated as the tenant with `key`."""
     url = "%s/prometheus/config/v1/rules/%s%s" % (env["MIMIR_ADDRESS"].rstrip("/"), NAMESPACE,
@@ -103,7 +115,7 @@ def api(env, method, group=None, body=None, key=None, timeout=60):
     req.add_header("X-Scope-OrgID", env["MIMIR_TENANT_ID"])
     if body is not None:
         req.add_header("Content-Type", "application/yaml")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
+    with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as r:
         return r.status
 
 
@@ -119,7 +131,8 @@ def mimirtool_rules(cmd, tool, rules_file, env, verbose=False):
         staged = os.path.join(tmp, NAMESPACE + ".yaml")
         shutil.copyfile(rules_file, staged)
         args = [tool, "rules", cmd, "--namespaces", NAMESPACE] + (["--verbose"] if verbose else []) + [staged]
-        p = subprocess.run(args, capture_output=True, text=True, env=env)
+        child = {k: v for k, v in env.items() if k != WRITE_KEY}  # mimirtool only ever reads
+        p = subprocess.run(args, capture_output=True, text=True, env=child)
     return p.returncode, p.stdout + p.stderr
 
 
@@ -140,15 +153,22 @@ def apply(rules_file, deleted, env):
     """POST every group in the file and DELETE the ones the file lacks, with the write key."""
     key = env[WRITE_KEY]
     import yaml
+    if not secure(env["MIMIR_ADDRESS"]):
+        return fail(1, "MIMIR_ADDRESS is not https; the write key is not sent in clear text")
+    steps = [("POST", g["name"], yaml.safe_dump(g).encode()) for g in groups_of(rules_file)]
+    steps += [("DELETE", name, None) for name in deleted]
+    done = 0
     try:
-        for g in groups_of(rules_file):
-            api(env, "POST", body=yaml.safe_dump(g).encode(), key=key)
-        for name in deleted:
-            api(env, "DELETE", group=name, key=key)
+        for method, name, body in steps:
+            api(env, method, group=None if method == "POST" else name, body=body, key=key)
+            done += 1
     except urllib.error.HTTPError as e:
-        return fail(1, "the ruler refused the write: HTTP %d %s (the write key needs rules:write)" % (e.code, e.reason))
+        hint = " (the write key needs rules:write)" if e.code in (401, 403) else ""
+        return fail(1, "the ruler refused %s %s after %d of %d writes: HTTP %d %s%s"
+                    % (steps[done][0], steps[done][1], done, len(steps), e.code, e.reason, hint))
     except (urllib.error.URLError, OSError) as e:
-        return fail(1, "could not reach the ruler to write: %s" % e)
+        return fail(1, "could not reach the ruler for %s %s after %d of %d writes: %s"
+                    % (steps[done][0], steps[done][1], done, len(steps), e))
     return 0
 
 
