@@ -3,8 +3,8 @@
 > **Status: decided 2026-10-08, `AW-INF-005`.** Asserted at runtime by `andara-server config-assert`
 > (implementation, a child of `AW-INF-005`). Companion to `broker-contract.md`.
 
-Every Kafka client in the server and projector takes its options from one shared constructor
-(ADR-0011 §7). This contract is what that constructor must produce. It was written against the code as
+Every Kafka client in the server and projector is to take its options from one shared
+constructor (ADR-0011 §7; **not built yet**: today each site calls `kgo.NewClient` itself). This contract is what that constructor must produce. It was written against the code as
 of 2026-10-08, and where the first draft of the story disagreed with the code the disagreement is
 resolved below, not left for the implementer.
 
@@ -15,11 +15,11 @@ Applies to ingress, events, state, content, accounts and audit producers.
 | Setting | Value | Claim it carries | In the code today |
 |---|---|---|---|
 | `acks` | `all` | RPO: "ordered" means the ISR has it | set (`kgo.AllISRAcks()`) |
-| `enable.idempotence` | `true` | An ambiguous retry must not duplicate a record | franz-go default; cannot be turned off while `acks=all` |
+| `enable.idempotence` | `true` | An ambiguous retry must not duplicate a record | franz-go default on; `DisableIdempotentWrite()` turns it off, so `config-assert` must assert it |
 | `max.in.flight.requests.per.connection` | `<= 5` | Order within a Partition under retry | pinned to 5 by franz-go for an idempotent producer; **not settable**, so `config-assert` reports the library's pinned value and does not set it (`AW-SRV-010`, 2026-09-19) |
 | `delivery.timeout.ms` | `ingress.produce_deadline` (ingress producer only) | Bounds the ambiguity window of `AW-SRV-010` AC-5 | set (`RecordDeliveryTimeout`) |
-| partitioner | explicit `hash(ZoneID) % 64` on keyed topics | Order: a library upgrade must not move a Zone to another Partition | `ManualPartitioner` on the keyed producers |
-| `compression.type` | `zstd` | Disk and network cost only. No correctness claim, which is why it is the one row `config-assert` may be told to skip. | **not set**; the library default applies. The `config-assert` child sets it |
+| partitioner | explicit `hash(ZoneID) % 64` on the 64-Partition ZoneID-keyed topics (commands, events, state) | Order: a library upgrade must not move a Zone to another Partition | `ManualPartitioner` on the ingress, tick-loop and projector producers. The `recordlog` producers (accounts, audit, content; 6 Partitions, compacted or keyed by actor) use the library's default key partitioner: **an open gap**, since a library upgrade could move a key and split its compaction history. The `config-assert` child pins the default partitioner there or records why it need not |
+| `compression.type` | `zstd` | Disk and network cost only. No correctness claim; `config-assert` reports a deviation as a warning, not a failure (AC-4 lists the failing settings and compression is not among them). | **not set**; the library default applies. The `config-assert` child sets it |
 
 ## Consumers
 
@@ -34,25 +34,26 @@ resumes strictly from the checkpointed offset"). The first draft's `enable.auto.
 | `isolation.level` | `read_committed` | Nothing reads an aborted transactional record. No producer is transactional today, so this is a guard, not a fix: it is cheap now and a silent bug later | **not set**; franz-go's default is `read_uncommitted`. The `config-assert` child sets it |
 | group membership | none; direct Partition assignment | Position is owned by the checkpoint, not by the broker | holds |
 | committed offsets in Kafka | none | A second source of "where was I" is a second way to be wrong | holds |
-| start offset | always explicit: `At(offset)` from the checkpoint | Replay is exact | holds |
+| start offset | a resumed position is always explicit: `At(offset)` from the checkpoint. Never `AtStart`/`AtEnd` to resume | Replay is exact | holds for the resuming readers; the named one-shot scans below are the exceptions |
 | an offset the broker no longer has | `ErrLogGap` (exit `3`), never a silent reset to earliest or latest | A gap is lost history; skipping it is silent divergence | holds on the `At(offset)` readers |
 
-**The permitted exceptions are the compacted and pointer topics**, which are read for their current
-state and not for a position in history:
+**The permitted exceptions are named one-shot scans**, which read for content and not to resume a
+position. A reader not in this table that starts at `AtStart` or `AtEnd` is a contract violation:
 
 | Reader | Start | Why |
 |---|---|---|
 | accounts, content blobs, content versions (`recordlog`, `content`) | `AtStart` | Compacted: reading from the start is how the latest value per key is found. |
 | content active pointer (watch) | `AtEnd` after an initial read | Changes after the initial read are the point. |
+| audit replay (`recordlog` on `andara.audit.v1`, client `andara-server-replay`) | `AtStart` | A bounded replay of a `delete`-policy topic to rebuild the in-memory audit view; no position is resumed. |
+| Tick Boundary scan (`tickloop`, `andara.events.v1` Partition 0) | `AtStart` | A one-shot scan for the Tick Boundary Records recovery needs; `ErrLogGap` still applies to the round it looks for. |
 
-`config-assert` knows these by reader name. A new reader that starts at `AtStart` or `AtEnd` on a
-non-compacted topic is a contract violation and a review finding.
+`config-assert` knows these by reader name; adding a reader here is a contract change.
 
 ## `client.id`
 
 **`client.id` is the principal's name plus an optional purpose suffix: `andara-server`,
 `andara-server-recovery`, `andara-projector-state`, `andara-projector-state-commit`.** No environment and
-no pod. This replaces the first draft's `andara-<component>-<env>-<pod>`, for two reasons:
+no pod. The rule is `^<principal>(-[a-z]+)?$`, with `<principal>` from ADR-0011 §3's table (`andara-server`, `andara-projector-state`, `andara-projection-redis`, `andara-projection-pg`, `andara-operator`); the suffixes in use today (`-ingress`, `-tick`, `-replay`, `-commit` and so on) all fit. A client with **no** `ClientID` (the tick-loop scan and reader clients in `server/tickloop/kafka.go`) is a violation `config-assert` reports, and the constructor fixes. This replaces the first draft's `andara-<component>-<env>-<pod>`, for two reasons:
 
 1. ADR-0011 §3 names principals without the environment, because each environment has its own
    cluster. The environment in the ID carries nothing the broker does not already know.
@@ -84,11 +85,11 @@ A Partition `p` becomes degraded when either:
 1. **A produce to `p` fails after the producer's own retries, with a broker-side retriable error:**
    `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, or
    `NOT_LEADER_OR_FOLLOWER`. A transient single error that the idempotent producer retries
-   successfully inside the deadline is not a failure and degrades nothing. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
+   successfully inside the deadline is not a failure and degrades nothing. **How the error is seen is the implementer's to solve**: franz-go retries these errors until `RecordDeliveryTimeout` and then completes the promise with `ErrRecordTimeout`, not the broker error, so the implementation must capture the broker's per-Partition error another way (a client hook, for example). If it cannot, the probe below is the only trigger and this one is dropped, with the Submit that discovers the fault answered `DEADLINE_EXCEEDED` as now. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
    is added to the three the review named: the record *was* appended, so its Submit is ambiguous in the
    same way a deadline is.) Or
 2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second) the ingress
-   reads topic metadata for `andara.commands.v1` and marks `p` degraded if its leader is absent, or its
+   reads topic metadata for `andara.commands.v1` and marks `p` degraded if its leader has been absent on **two consecutive probes**, or its
    in-sync replica count is below the topic's `min.insync.replicas`. The probe asks the broker the
    configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** ping a broker:
    a reachable broker says nothing about a Partition.
@@ -101,6 +102,13 @@ A Submit whose actor's Partition is degraded returns `UNAVAILABLE`, reason `worl
 with nothing produced and the wording Brian ruled on 2026-09-19. The error does not name the Partition;
 the reason and the message are unchanged, so no client changes. The Submit that discovers the failure
 by its own produce is `DEADLINE_EXCEEDED` (outcome unknown), exactly as `AW-SRV-010` AC-5 says now.
+
+**Interaction with `AW-INF-005` AC-1** (one broker killed, `andara_ingress_degraded = 0`): killing a
+broker that leads Partitions causes an election. The two-probe rule lets an election that settles in
+about two seconds pass unmarked; one that does not settle is a real outage of those Zones. The
+rehearsal asserts that the gauge is 0 *after* the election settles and that `WorldReadOnly` does not fire,
+not that it never reads 1 in between. An ISR below `min.insync.replicas` is marked at the first probe
+that sees it, because the broker is already refusing writes.
 
 ### Leaving the state
 
@@ -139,10 +147,13 @@ runbook `world-read-only.md`, and the compose dashboards.
 Each of these is a criterion in the per-Partition implementation story, named here so they are not
 softened when it is written:
 
-1. A produce failing with `NOT_ENOUGH_REPLICAS` marks only that Partition degraded. Likewise
-   `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER`; one test per error.
+1. A broker-side produce error of `NOT_ENOUGH_REPLICAS` marks only that Partition degraded. Likewise
+   `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER`; one test per error,
+   at the point the implementation observes it (see Entering the state). A story that finds the error
+   unobservable says so in a comment `--to architecture` rather than dropping the criterion.
 2. With a Partition degraded, a Submit for a Zone on a different Partition is produced and acknowledged.
-3. The probe marks a Partition degraded with the ISR below `min.insync.replicas` while every broker
+3. A leader absent on one probe marks nothing; on two consecutive probes it marks the Partition.
+4. The probe marks a Partition degraded with the ISR below `min.insync.replicas` while every broker
    answers a `Ping`, and clears it on recovery without a restart.
-4. All 64 series are present at boot, 0.
-5. A metadata failure degrades all 64.
+5. All 64 series are present at boot, 0.
+6. A metadata failure degrades all 64.

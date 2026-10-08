@@ -1,7 +1,9 @@
 # Kafka broker contract
 
 > **Status: decided 2026-10-08, `AW-INF-005`.** Enforced by `make broker-assert` (SRE, `AW-INF-005`'s
-> enforcement child). Declared in `deploy/kafka/topics.yaml`; this document says what each setting is
+> enforcement child). Topics, replication factor, `min.insync.replicas` and `unclean.leader.election.enable` are declared in
+> `deploy/kafka/topics.yaml`. `auto.create.topics.enable=false` is **not declared anywhere today**: the
+> enforcement child sets it in the Strimzi and compose broker config. This document says what each setting is
 > *for*, so that nobody relaxes one without knowing which claim it carries.
 
 ADR-0002 makes Kafka the ordering authority for the World, so Kafka availability bounds World
@@ -34,7 +36,7 @@ leader missing committed records) and no replication.
 | per-topic `retention.ms`, `cleanup.policy` | `topics.yaml`; see Retention | Replay window. |
 | rack awareness | none on the box; required off it | Recorded, not enforced. Three replicas on one box share one disk (see below). |
 
-`make broker-assert` fails on any deviation in the first four rows and on any topic that differs from
+`make broker-assert` fails on any deviation in the first four rows (on `local`, `unclean.leader.election.enable` is skipped, because the property does not exist on Redpanda) and on any topic that differs from
 `topics.yaml`. On `local` it prints a warning for RF 1 and `min.insync.replicas` 1 and exits `0`, because
 that is the contract for `local`.
 
