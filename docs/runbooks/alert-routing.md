@@ -47,7 +47,8 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 CI runs `alerts-diff` on a pull request that touches the file (the workflow `alerts`) and shows the
 diff in the job summary. A merge to `main` runs `alerts-sync` and then a second sync that must change
 nothing. The diff runs the base branch's scripts and reads the pull request's rule file as data
-(`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped.
+(`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped, and so is one aimed at a branch other than `main`. A pull request that
+deletes the file fails the diff job with a message saying so.
 Locally, source `.local/box.env` (which has `GRAFANA_CLOUD_PROM_URL` and `_USER`) and export
 `MIMIR_API_KEY` with the read token to diff, or the write token to sync.
 

@@ -27,6 +27,7 @@ on:
       - "scripts/alerts_sync.py"
       - ".github/workflows/alerts.yaml"
   pull_request_target:
+    branches: [main]
     paths:
       - "deploy/helm/andara/files/alerts.yaml"
       - "scripts/alerts_sync.py"
@@ -59,7 +60,8 @@ jobs:
       - name: the pull request's rule file, as data
         run: |
           git fetch --no-tags --depth=1 origin "refs/pull/${{ github.event.pull_request.number }}/head"
-          git show FETCH_HEAD:deploy/helm/andara/files/alerts.yaml > "$RUNNER_TEMP/pr-alerts.yaml"
+          git show FETCH_HEAD:deploy/helm/andara/files/alerts.yaml > "$RUNNER_TEMP/pr-alerts.yaml" \
+            || { echo "::error::the pull request has no deploy/helm/andara/files/alerts.yaml to diff"; exit 1; }
       # Drift is expected on a pull request that edits a rule, so it is shown, not failed. An
       # error (bad credentials, an unreachable ruler) fails the job.
       - name: alerts-diff
@@ -74,12 +76,15 @@ jobs:
             echo "::notice::ANDARA_ALERTS_CI_READ is not available to this run; alerts-diff skipped"
             exit 0
           fi
+          # The script directly, not through make, which reports every failure as exit 2: 1 is
+          # drift, anything else is an error. Matching mimirtool's text would let a pull request
+          # put the words in a group name.
           rc=0
-          make alerts-diff > diff.txt 2>&1 || rc=$?
+          python3 scripts/alerts_sync.py diff > diff.txt 2>&1 || rc=$?
           cat diff.txt
           { echo '### alerts-diff'; echo '```'; cat diff.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$rc" != 0 ] && ! grep -q "differs from files/alerts.yaml" diff.txt; then
-            echo "::error::alerts-diff failed for a reason other than drift"
+          if [ "$rc" != 0 ] && [ "$rc" != 1 ]; then
+            echo "::error::alerts-diff failed (exit $rc), which is not drift"
             exit 1
           fi
 

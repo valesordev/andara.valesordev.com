@@ -92,6 +92,12 @@ class Defaults(unittest.TestCase):
         self.assertEqual(env["MIMIR_ADDRESS"], "https://prom.example.net")
         self.assertEqual(env["MIMIR_TENANT_ID"], "800950")
 
+    def test_an_empty_mimir_value_falls_through_to_the_pair(self):
+        env = alerts_sync.resolve_env({"MIMIR_ADDRESS": "", "MIMIR_TENANT_ID": "",
+                                       "GRAFANA_CLOUD_PROM_URL": "https://p/api/prom",
+                                       "GRAFANA_CLOUD_PROM_USER": "9"})
+        self.assertEqual((env["MIMIR_ADDRESS"], env["MIMIR_TENANT_ID"]), ("https://p", "9"))
+
     def test_an_explicit_mimir_value_wins(self):
         env = alerts_sync.resolve_env({"MIMIR_ADDRESS": "http://x", "MIMIR_TENANT_ID": "t",
                                        "GRAFANA_CLOUD_PROM_URL": "https://p/api/prom",
@@ -218,6 +224,16 @@ class AgainstARuler(unittest.TestCase):
         r = script("diff", dict(self.env, ALERTS_FILE=f.name))
         self.assertEqual(r.returncode, 1)
         self.assertIn(doc["groups"][0]["name"], r.stdout)
+
+    def test_a_sync_ignores_alerts_file(self):
+        with tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False) as f:
+            yaml.safe_dump({"groups": [{"name": "stray", "rules": [
+                {"alert": "Stray", "expr": "vector(1)"}]}]}, f)
+        self.addCleanup(os.unlink, f.name)
+        r = script("sync", dict(self.env, ALERTS_FILE=f.name))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("stray", Ruler.groups["andara"])
+        self.assertIn("andara-edge", Ruler.groups["andara"])
 
     def test_diff_after_a_sync_is_clean(self):
         script("sync", self.env)

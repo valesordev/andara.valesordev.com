@@ -9,7 +9,7 @@
 
 Reads MIMIR_API_KEY, MIMIR_ADDRESS and MIMIR_TENANT_ID from the environment; the last two default
 to what `make observe-check` and CI already have, GRAFANA_CLOUD_PROM_URL (without its /api/prom)
-and GRAFANA_CLOUD_PROM_USER. ALERTS_FILE names a rule file other than the chart's, which CI sets
+and GRAFANA_CLOUD_PROM_USER. ALERTS_FILE names a rule file other than the chart's for `diff` only (`sync` ignores it), which CI sets
 to a pull request's copy so that the base branch's code reads it as data (the workflow says why).
 Exit 3 names whichever of the three are unset, before mimirtool runs. `mimirtool` (pinned by `make bootstrap`)
 takes the ruler namespace from the rule file's *name*, not from `--namespaces`, so the file is
@@ -77,7 +77,8 @@ def resolve_env(env):
 
 def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
     env = resolve_env(os.environ if env is None else env)
-    rules_file = rules_file or env.get("ALERTS_FILE") or ALERTS
+    # Only a diff reads another file; a sync always writes the chart's, whatever the environment says.
+    rules_file = rules_file or (env.get("ALERTS_FILE") if cmd == "diff" else None) or ALERTS
     missing = [k for k in SECRETS if not env.get(k)]
     if missing:
         return fail(3, "%s unset (docs/runbooks/alert-routing.md)"
