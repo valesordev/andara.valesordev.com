@@ -127,11 +127,19 @@ which. The SRE child owns the wording of that AC.
 
 A Partition marked by the **probe** leaves the degraded state on the first probe that finds a leader
 and an ISR of at least `min.insync.replicas`. A Partition marked by a **produce error** leaves it only
-after a hold of the broker's `replica.lag.time.max.ms` (read with `min.insync.replicas`; 30 s by
-default) *and* a healthy probe, because the probe's metadata can show a full ISR while the broker is
+after a fixed hold, `ingress.degraded_hold` (default 120 s), *and* a healthy probe, because the probe's metadata can show a full ISR while the broker is
 still refusing writes (`REQUEST_TIMED_OUT`), and clearing on it would flap the Partition. A refused
 Partition receives no produce, so nothing re-observes the error during the hold; if the fault outlasts it,
 the next Submit discovers it again (`DEADLINE_EXCEEDED`) and re-marks it. No restart, no operator action.
+
+**Why a fixed hold and not a canary.** A canary produce would put a record on `andara.commands.v1`,
+which holds only parsed, authorized Commands (`AW-SRV-010`, Data / state impact). The hold must exceed
+`WorldReadOnly`'s `for:` plus a scrape and evaluation interval, or the alert can miss a fault the
+hold keeps re-marking: `ingress.degraded_hold` is at least twice the alert's `for:` plus 30 s, and the
+implementing story fails config load below that floor. The hold is a ceiling on how long a
+`REQUEST_TIMED_OUT` Partition can read healthy to the probe while still refusing writes, so
+`replica.lag.time.max.ms`, the time the broker takes to shrink the ISR, must not exceed it: the broker
+contract pins and asserts it. The ingress never queries a broker config for this.
 
 ### Constraints on the implementation
 
@@ -176,4 +184,6 @@ softened when it is written:
 5. All 64 series are present at boot, 0.
 6. A metadata failure on two consecutive probes degrades all 64; one failure degrades none.
 7. The topic's `min.insync.replicas` is read at boot and refreshed every 60 s; a change is honoured within 60 s.
-8. A Partition marked by a produce error stays degraded across probes that show a full ISR until the hold has elapsed, then clears on the next healthy probe.
+8. A Partition marked by a produce error stays degraded across probes that show a full ISR until `ingress.degraded_hold` has elapsed, measured from the most recent produce-error mark, then clears on the next healthy probe. A probe mark on the same Partition does not shorten the hold; it ends when both the hold and a healthy probe have occurred.
+9. With a persistent `REQUEST_TIMED_OUT` fault and a full ISR in metadata, `andara_ingress_degraded` for that Partition reads 1 continuously for longer than `WorldReadOnly`'s `for:` plus two scrape intervals, so the alert fires.
+10. `ingress.degraded_hold` below twice the alert's `for:` plus 30 s fails config load.

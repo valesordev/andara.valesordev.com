@@ -583,7 +583,8 @@ when one Partition's ISR falls below `min.insync.replicas`, only its Zones are.
 produce to it failed with `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPEND`,
 `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER` or `REQUEST_TIMED_OUT`, or the once-a-second metadata
 probe found its leader absent on two consecutive probes or its ISR below `min.insync.replicas`. A probe
-mark clears on the first healthy probe; a produce-error mark after a hold as well
+mark clears on the first healthy probe; a produce-error mark only after `ingress.degraded_hold`
+(120 s by default) has passed since it, and a healthy probe
 (`docs/specs/kafka/client-contract.md`).
 
 **Arrive** — The Command a Tick produces to the target Zone's Partition when a Character takes a
