@@ -33,3 +33,6 @@ __pycache__/
 .env.*
 !.env.example
 content-conformance.json
+/docs/status.md
+BACKLOG.md
+
