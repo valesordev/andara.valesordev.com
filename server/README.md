@@ -1340,7 +1340,8 @@ the Active Pointer the Loader follows), `ListVersions`, `GetVersion`, `GetBlob`
   machine. So the gate also refuses, whatever OS the server runs on, the forms Windows can't
   write locally: a colon (a drive or a stream), a NUL byte, and a device name as an element (`CON`,
   `PRN`, `AUX`, `NUL`, `COM1`–`9`, `LPT1`–`9`, `CONIN$`, `CONOUT$`, any case, with or without an
-  extension).
+  extension). The compiler reports the same names offline as `unportable_name`: both call
+  `lang.UnportableElement`, so a pack that passes `content validate` doesn't trip this rule.
 - **Errors** carry `ErrorInfo{domain: "andara.content", reason}`, plus `PublishFindings` on
   `validation` from the Loader. A manifest the gate refuses before validating (no path, a bad hash,
   a path twice, a path that leaves the pack) carries none.

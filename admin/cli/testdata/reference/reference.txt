@@ -65,6 +65,7 @@ Diagnostics
   unknown_room                error     both
   unknown_sense               error     compiler
   unknown_zone                error     both
+  unportable_name             error     compiler
   unresolved_extends          error     both
   unsupported_format_version  error     loader
   zone_removed                error     loader

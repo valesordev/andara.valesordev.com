@@ -79,6 +79,7 @@
 | [`unknown_room`](../specs/content-language/v1/errors.md#3-the-codes) | error | both |
 | [`unknown_sense`](../specs/content-language/v1/errors.md#3-the-codes) | error | compiler |
 | [`unknown_zone`](../specs/content-language/v1/errors.md#3-the-codes) | error | both |
+| [`unportable_name`](../specs/content-language/v1/errors.md#3-the-codes) | error | compiler |
 | [`unresolved_extends`](../specs/content-language/v1/errors.md#3-the-codes) | error | both |
 | [`unsupported_format_version`](../specs/content-language/v1/errors.md#3-the-codes) | error | loader |
 | [`zone_removed`](../specs/content-language/v1/errors.md#3-the-codes) | error | loader |
