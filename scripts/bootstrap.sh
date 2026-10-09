@@ -15,7 +15,7 @@ set -euo pipefail
 
 # Pinned deliberately. An unpinned `@latest` is how a config that parses today stops
 # parsing tomorrow — golangci-lint v1 config against a v2 binary is exactly that failure.
-GOLANGCI_VERSION="v2.13.2"
+GOLANGCI_VERSION="v2.14.0"
 BUF_VERSION="v1.72.0"
 GRPCURL_VERSION="v1.9.4"
 HELM_VERSION="v3.22.0"
