@@ -316,10 +316,16 @@ func (k *KafkaProducer) dropClient(partition int32) {
 // noteProduceResponse is the tap's report of one partition of a produce
 // response. A client carries one Partition, so partition is the client's.
 func (k *KafkaProducer) noteProduceResponse(partition int32, code int16) {
-	if code == 0 || partition < 0 || int(partition) >= len(k.lastErr) {
+	if partition < 0 || int(partition) >= len(k.lastErr) {
 		return
 	}
-	k.lastErr[partition].Store(&brokerError{name: brokerErrorName(code), at: time.Now().UnixNano()})
+	// A success is the latest word too: an error a success followed is not
+	// what a record that fails later heard.
+	name := ""
+	if code != 0 {
+		name = brokerErrorName(code)
+	}
+	k.lastErr[partition].Store(&brokerError{name: name, at: time.Now().UnixNano()})
 }
 
 // tapLost counts a connection the tap stopped following. The produce-error
@@ -411,8 +417,10 @@ func (k *KafkaProducer) Produce(ctx context.Context, cmd *logv1.LoggedCommand) (
 		// A record the client retried to the end of its life against a
 		// broker error marks its Partition; a transient error the retry
 		// cleared left a success after it.
+		// Only a promise that has failed says the retries are over; a wait
+		// that ran out first (the caller's own deadline) may still succeed.
 		marked := false
-		if !errors.Is(err, context.Canceled) {
+		if fired && !errors.Is(err, context.Canceled) {
 			k.noteProduceFailure(ctx, partition, enqueued.UnixNano())
 			marked = k.health.Degraded(partition)
 		}

@@ -769,3 +769,41 @@ func TestProducer_AStaleDegradedNotificationKeepsTheClient(t *testing.T) {
 		t.Fatalf("logged a degradation of a healthy Partition:\n%s", f.logs.String())
 	}
 }
+
+// A Submit whose own context ends before the client has finished retrying
+// does not mark the Partition: the record may yet succeed. The mark follows
+// when the promise fails.
+func TestProducer_ACallersShortContextDoesNotMarkWhileTheClientStillRetries(t *testing.T) {
+	const p = int32(37)
+	f := newProducerFixture(t, func(o *ProducerOptions) { o.Deadline = 3 * time.Second })
+	f.b.failProduce(p, 19, -1)
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	_, err := f.k.Produce(ctx, cmdOn(t, p))
+	if !errors.Is(err, ErrDeadline) {
+		t.Fatalf("Produce = %v, want DEADLINE_EXCEEDED", err)
+	}
+	if f.k.Degraded(p) {
+		t.Fatal("marked while the client was still retrying the record")
+	}
+	waitFor(t, func() bool { return f.k.Degraded(p) }, "the mark after the promise failed")
+}
+
+// A broker error that a later success on the Partition followed is not what
+// a failing record heard: the Partition was serving.
+func TestProducer_ABrokerErrorFollowedByASuccessDoesNotMark(t *testing.T) {
+	const p = int32(9)
+	f := newProducerFixture(t, nil)
+	enqueued := time.Now().Add(-time.Second).UnixNano()
+	f.k.noteProduceResponse(p, 19)
+	f.k.noteProduceResponse(p, 0)
+	f.k.noteProduceFailure(context.Background(), p, enqueued)
+	if f.k.Degraded(p) {
+		t.Fatal("marked on an error that a success followed")
+	}
+	f.k.noteProduceResponse(p, 19)
+	f.k.noteProduceFailure(context.Background(), p, enqueued)
+	if !f.k.Degraded(p) {
+		t.Fatal("an error with nothing after it did not mark")
+	}
+}
