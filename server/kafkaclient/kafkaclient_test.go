@@ -24,6 +24,7 @@ func producerOpts(extra ...kgo.Opt) []kgo.Opt {
 func consumerOpts(extra ...kgo.Opt) []kgo.Opt {
 	return append([]kgo.Opt{
 		kgo.SeedBrokers(dark), kgo.ClientID("andara-server-recovery"), kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{"t": {0: kgo.NewOffset().At(7)}}),
 	}, extra...)
 }
@@ -182,7 +183,7 @@ func TestCheck_AConsumerGroupOrCommittedOffsetsFail(t *testing.T) {
 }
 
 func TestCheck_AnUncommittedReaderFails(t *testing.T) {
-	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-server-recovery"),
+	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-server-recovery"), kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{"t": {0: kgo.NewOffset().At(7)}})}
 	f := only(t, failing(t, Site{Name: "r", Role: Consumer, Opts: opts}), "isolation.level", Fail)
 	if f.Value != "read_uncommitted" {
@@ -201,7 +202,7 @@ func TestCheck_AnAdminClientIsHeldToItsClientIDOnly(t *testing.T) {
 }
 
 func TestCheck_AnAssignedLaterReaderMeetsTheStartRow(t *testing.T) {
-	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-projector-state-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted())}
+	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-projector-state-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted()), kgo.ConsumeResetOffset(kgo.NoResetOffset())}
 	if got := failing(t, Site{Name: "k", Role: Consumer, Opts: opts, AssignedLater: true}); len(got) != 0 {
 		t.Fatalf("%+v", got)
 	}
@@ -245,4 +246,17 @@ func TestKeyHash_AManualPartitionerOnAKeyedTopicFails(t *testing.T) {
 	if got := failing(t, s); len(got) != 0 {
 		t.Fatalf("%+v", got)
 	}
+}
+
+// AC-7: a resuming reader on the library's default reset would skip a gap
+// silently.
+func TestCheck_AResumingReaderThatResetsSilentlyFails(t *testing.T) {
+	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-server-recovery"), kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{"t": {0: kgo.NewOffset().At(7)}})}
+	f := only(t, failing(t, Site{Name: "r", Role: Consumer, Opts: opts}), "offset the broker no longer has", Fail)
+	if !strings.Contains(f.Value, "silently resets to AtStart") {
+		t.Fatalf("value = %q", f.Value)
+	}
+	opts = append(opts, kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()))
+	only(t, failing(t, Site{Name: "r", Role: Consumer, Opts: opts}), "offset the broker no longer has", Fail)
 }

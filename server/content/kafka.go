@@ -23,6 +23,10 @@ import (
 	"github.com/valesordev/andara/server/kafkaclient"
 )
 
+// DefaultClientID is the client.id base of the resolver's clients when the
+// caller names none, and of the clients config-assert describes.
+const DefaultClientID = "andara-server-content"
+
 // The content store's three topics (ADR-0004). Declared in
 // deploy/kafka/topics.yaml and created by `make topics-apply`; this package
 // reads them and never creates them.
@@ -120,7 +124,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		return nil, errors.New("content: no brokers configured")
 	}
 	if o.ClientID == "" {
-		o.ClientID = "andara-server-content"
+		o.ClientID = DefaultClientID
 	}
 	m := o.Metrics
 	if m == nil {
@@ -336,7 +340,7 @@ func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Off
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	}
 	if len(from) > 0 {
-		return append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
+		return append(opts, kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
 	}
 	return append(opts,
 		kgo.ConsumeTopics(active),

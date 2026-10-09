@@ -14,7 +14,10 @@
 package kafkaclient
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"net"
 	"regexp"
 	"strings"
 	"time"
@@ -133,7 +136,12 @@ func (f Finding) String() string {
 // row of the contract that applies to its Role. It dials nothing: the client
 // is closed before it is used.
 func Check(s Site) []Finding {
-	cl, err := kgo.NewClient(s.Opts...)
+	// The client is built to be read, not used: a dialer that refuses every
+	// connection keeps the check off the network.
+	refuse := kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("kafkaclient: the check dials nothing")
+	})
+	cl, err := kgo.NewClient(append(append([]kgo.Opt(nil), s.Opts...), refuse)...)
 	if err != nil {
 		return []Finding{{Client: s.Name, Setting: "client", Value: err.Error(), Contract: "builds", Severity: Fail}}
 	}
@@ -269,6 +277,17 @@ func checkStart(cl *kgo.Client, s Site, add adder) {
 	value := "At(offset)"
 	if !explicit {
 		value = strings.Join(starts, ", ")
+	}
+	if explicit && s.OneShot == NotOneShot {
+		// An offset the broker no longer has is ErrLogGap, never a silent
+		// reset to earliest or latest: the library's default reset is
+		// AtStart, so a resuming reader must opt out of it.
+		reset, _ := cl.OptValue(kgo.ConsumeResetOffset).(kgo.Offset)
+		got := "silently resets to " + offsetName(reset.EpochOffset().Offset)
+		if reset == kgo.NoResetOffset() {
+			got = "error (no reset)"
+		}
+		add("offset the broker no longer has", got, "ErrLogGap, never a silent reset", Fail, reset == kgo.NoResetOffset())
 	}
 	switch {
 	case explicit && s.OneShot == NotOneShot:

@@ -39,6 +39,45 @@ func TestConfigAssert_TheClientsTheCodeBuildsHoldTheContract(t *testing.T) {
 	}
 }
 
+// The story sets zstd on every producer. The compression row warns by design,
+// so "no FAIL" would let a producer lose it: this holds each real producer to it.
+func TestConfigAssert_EveryRealProducerCompressesWithZstd(t *testing.T) {
+	producers := 0
+	for _, s := range realSites() {
+		if s.Role != kafkaclient.Producer {
+			continue
+		}
+		producers++
+		for _, f := range kafkaclient.Check(s) {
+			if f.Setting == "compression.type" && !f.OK {
+				t.Errorf("%s: %s", s.Name, f)
+			}
+		}
+	}
+	if producers < 8 {
+		t.Fatalf("%d producers described", producers)
+	}
+}
+
+// Every real reader that resumes a position says so to the library: an offset
+// the broker no longer has is an error, not a silent reset.
+func TestConfigAssert_EveryResumingReaderRefusesASilentReset(t *testing.T) {
+	resumers := 0
+	for _, s := range realSites() {
+		for _, f := range kafkaclient.Check(s) {
+			if f.Setting == "offset the broker no longer has" {
+				resumers++
+				if !f.OK {
+					t.Errorf("%s: %s", s.Name, f)
+				}
+			}
+		}
+	}
+	if resumers < 7 {
+		t.Fatalf("%d resuming readers checked", resumers)
+	}
+}
+
 // AC-1: a deviation exits 1 and names the client, the setting, the value in
 // effect and the contract's value on stderr.
 func TestConfigAssert_ADeviationExitsOneAndNamesIt(t *testing.T) {

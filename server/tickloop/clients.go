@@ -24,6 +24,7 @@ func simConsumerOpts(brokers []string, clientID, topic string, assign map[int32]
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID + "-sim"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: assign}),
 	}
 }
@@ -42,6 +43,7 @@ func fetchOpts(brokers []string, topic string, partition int32, from int64) []kg
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(scanClientID + "-fetch"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {partition: kgo.NewOffset().At(from)}}),
 	}
 }
@@ -59,6 +61,7 @@ func boundaryProbeOpts(brokers []string, clientID, topic string, offset int64) [
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID + "-boundaries"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.FetchMaxBytes(256 << 10),
 		kgo.FetchMaxPartitionBytes(128 << 10),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
@@ -70,6 +73,7 @@ func boundaryConsumerOpts(brokers []string, clientID, topic string, offset int64
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID + "-boundaries"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.FetchMaxBytes(16 << 20),
 		kgo.FetchMaxPartitionBytes(4 << 20),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
@@ -81,6 +85,7 @@ func commandSourceOpts(brokers []string, clientID, topic string, assign map[int3
 		kgo.SeedBrokers(brokers...),
 		kgo.ClientID(clientID + "-commands"),
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumeResetOffset(kgo.NoResetOffset()),
 		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: assign}),
 	}
 }

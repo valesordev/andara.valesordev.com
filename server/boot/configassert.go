@@ -30,7 +30,7 @@ func KafkaSites(cfg config.Config) []kafkaclient.Site {
 	sites = append(sites, tickloop.Sites(dark, name, tickloop.DeliveryTimeout)...)
 	sites = append(sites, tickloop.ReaderSites(dark, recoveryClientID)...)
 	sites = append(sites, tickloop.ReaderSites(dark, projector.ClientID)...)
-	sites = append(sites, content.Sites(dark, name+"-content", content.Topics{})...)
+	sites = append(sites, content.Sites(dark, content.DefaultClientID, content.Topics{})...)
 	sites = append(sites, projector.Sites(dark)...)
 
 	logs := []struct {

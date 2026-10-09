@@ -406,16 +406,16 @@ exits `0` (compression carries no correctness claim).
 | consumer | `isolation.level` | not `read_committed` |
 | | group membership, committed offsets | any group, or marked commits |
 | | start offset | `AtStart` or `AtEnd` on a reader that is not a named one-shot of the contract |
+| | offset the broker no longer has | a reader that resumes at `At(offset)` is not on `NoResetOffset`, so the library would reset it silently to the start of the log; the client returns the error instead and the reader's own pre-check names the gap (`ErrLogGap`, exit `3`) |
 | all | `client.id` | does not match `^<principal>(-[a-z]+)*$` for an ADR-0011 §3 principal, or is empty |
 
 Each package that builds a client exports its options as a function and describes the client as a
 `kafkaclient.Site` (`server/kafkaclient`); `boot.KafkaSites` collects them. A test counts the
 `kgo.NewClient` calls in the tree and fails on one with its options written inline, or in a file with no
 Site, so a new client cannot slip past the check before `AW-SRV-044`'s single constructor lands.
-Two limits: a reader that gets its Partitions with `AddConsumePartitions` after construction
-(the projector's state key scan) is taken as meeting the start-offset row; and a reader's reaction to an
-offset the broker no longer has (`ErrLogGap`, exit `3`) is the readers' own pre-check, which this
-command cannot see.
+One limit: a reader that gets its Partitions with `AddConsumePartitions` after construction
+(the projector's state key scan) is taken as meeting the start-offset row, since the offsets are not
+among its options. The check builds each client with a dialer that refuses every connection.
 
 ## The command pipeline (AW-SRV-003)
 

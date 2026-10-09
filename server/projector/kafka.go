@@ -85,7 +85,7 @@ func adminOpts(brokers []string, purpose string) []kgo.Opt {
 // keysOpts are the options of the state topic key scan, which reads the
 // compacted topic from explicit offsets.
 func keysOpts(brokers []string) []kgo.Opt {
-	return append(adminOpts(brokers, "-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted()))
+	return append(adminOpts(brokers, "-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted()), kgo.ConsumeResetOffset(kgo.NoResetOffset()))
 }
 
 // MetaOpts are the options of the cmd's topic-size client.
