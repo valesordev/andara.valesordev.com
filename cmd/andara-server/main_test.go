@@ -86,3 +86,14 @@ func TestRun_ConfigAssertExitsZeroWhenTheContractHolds(t *testing.T) {
 		t.Fatalf("a failing row:\n%s", stdout.String())
 	}
 }
+
+// A wrapper that passes --validate-only=false does not turn the server's
+// startup validation back on for config-assert (Codex, #511).
+func TestRun_ConfigAssertIgnoresAnExplicitValidateOnlyFalse(t *testing.T) {
+	for _, arg := range []string{"--validate-only=false", "-validate-only=false"} {
+		var stdout, stderr bytes.Buffer
+		if code := run([]string{"config-assert", arg}, emptyEnv, &stdout, &stderr); code != 0 {
+			t.Fatalf("%s: exit %d; %s", arg, code, stderr.String())
+		}
+	}
+}

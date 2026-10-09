@@ -7,6 +7,7 @@ import (
 	"errors"
 	"flag"
 	"io"
+	"strings"
 
 	"github.com/valesordev/andara/server/boot"
 	"github.com/valesordev/andara/server/config"
@@ -19,7 +20,7 @@ import (
 // parsed as --validate-only is, for the client.id base and the produce
 // deadline it reads. The arguments are the server's own configuration flags.
 func runConfigAssert(args []string, env config.EnvLookup, stdout, stderr io.Writer) int {
-	cfg, err := config.Parse(append([]string{"--validate-only"}, args...), env, stderr)
+	cfg, err := config.Parse(validateOnly(args), env, stderr)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			return boot.ExitOK
@@ -28,4 +29,19 @@ func runConfigAssert(args []string, env config.EnvLookup, stdout, stderr io.Writ
 		return boot.ExitFail
 	}
 	return boot.ConfigAssert(boot.KafkaSites(cfg), stdout, stderr)
+}
+
+// validateOnly is args with --validate-only forced on: an explicit
+// --validate-only=false from a wrapper would otherwise switch the server's
+// startup validation (brokers, TLS material, auth key) back on.
+func validateOnly(args []string) []string {
+	out := []string{"--validate-only"}
+	for _, a := range args {
+		if a == "--validate-only" || a == "-validate-only" ||
+			strings.HasPrefix(a, "--validate-only=") || strings.HasPrefix(a, "-validate-only=") {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
 }
