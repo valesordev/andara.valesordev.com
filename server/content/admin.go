@@ -481,48 +481,22 @@ func (a *Admin) checkRefs(refs []*contentv1.BlobRef) error {
 //     would write onto its output directory (contract amended on #267).
 //   - holds a colon or a NUL byte: a Windows drive ("C:/x") or stream, and
 //     a name no OS writes (review of #322).
-//   - has an element that is a Windows device name (windowsDevice).
+//   - has an element that is a Windows device name (lang.UnportableElement,
+//     the rule the compiler reports offline as unportable_name).
 //
 // `content fetch` writes blobs to disk by these paths on every Builder's
 // machine that fetches the version, so the gate refuses them rather than
 // trusting each client's guard.
 func UnsafeBlobPath(p string) bool {
-	if strings.HasPrefix(p, "/") || strings.ContainsAny(p, "\\:\x00") || path.Clean(p) != p {
+	if strings.HasPrefix(p, "/") || path.Clean(p) != p {
 		return true
 	}
 	for _, el := range strings.Split(p, "/") {
-		if el == "" || el == "." || el == ".." || windowsDevice(el) {
+		if el == "" || el == "." || el == ".." || lang.UnportableElement(el) {
 			return true
 		}
 	}
 	return false
-}
-
-// windowsDevice reports whether a path element names a Windows device, as
-// filepath.IsLocal's reserved-name check on Windows does: CON, PRN, AUX, NUL,
-// COM1-9 and LPT1-9 (with ¹, ² and ³ as digits), CONIN$ and CONOUT$, in any
-// case, ignoring trailing spaces. It's conservative about an extension:
-// "con.aw" is refused, as Windows 10 reserves it, though Windows 11 doesn't.
-func windowsDevice(el string) bool {
-	if i := strings.IndexByte(el, '.'); i >= 0 {
-		el = el[:i]
-	}
-	el = strings.ToUpper(strings.TrimRight(el, " "))
-	switch el {
-	case "CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$":
-		return true
-	}
-	if rest, ok := strings.CutPrefix(el, "COM"); ok {
-		return isDeviceDigit(rest)
-	}
-	if rest, ok := strings.CutPrefix(el, "LPT"); ok {
-		return isDeviceDigit(rest)
-	}
-	return false
-}
-
-func isDeviceDigit(s string) bool {
-	return len(s) == 1 && '1' <= s[0] && s[0] <= '9' || s == "\u00b9" || s == "\u00b2" || s == "\u00b3"
 }
 
 // unsafePath refuses a manifest naming a path that leaves the pack: reason

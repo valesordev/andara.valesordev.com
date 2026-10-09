@@ -239,6 +239,7 @@ func (r *resolver) warn(file string, pos Pos, code, msg string, chain ...string)
 
 func (r *resolver) run() *Output {
 	requires, ok := r.resolvePack()
+	r.checkPortable()
 	if !ok {
 		return nil
 	}

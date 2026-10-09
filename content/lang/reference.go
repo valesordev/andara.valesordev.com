@@ -69,6 +69,7 @@ var Diagnostics = []DiagnosticInfo{
 	{CodeUnknownRoom, SeverityNameError, RaisedByBoth},
 	{CodeUnknownSense, SeverityNameError, RaisedByCompiler},
 	{CodeUnknownZone, SeverityNameError, RaisedByBoth},
+	{CodeUnportableName, SeverityNameError, RaisedByCompiler},
 	{CodeUnresolvedExtends, SeverityNameError, RaisedByBoth},
 	{string(sim.ErrUnsupportedVersion), SeverityNameError, RaisedByLoader},
 	{string(sim.ErrZoneRemoved), SeverityNameError, RaisedByLoader},

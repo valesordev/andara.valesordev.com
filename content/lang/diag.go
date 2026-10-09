@@ -67,6 +67,7 @@ const (
 	CodeExtendsCycle        = "extends_cycle"
 	CodeRemovedBySubtype    = "removed_by_subtype"
 	CodeDuplicateDecl       = "duplicate_declaration"
+	CodeUnportableName      = "unportable_name"
 
 	// Pending a protobuf field (semantics.md §9). Specified, in the grammar,
 	// and reachable only once the field lands.
