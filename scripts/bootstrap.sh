@@ -46,8 +46,14 @@ ${PY:-python3} -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
   || fail "python3 is $PYV; this repo needs 3.9+"
 ok python3 "$PYV"
 
-command -v go >/dev/null 2>&1 || fail "go not found; install Go 1.24+ and re-run"
+# The newest Go any pinned tool below declares in its go.mod (golangci-lint v2.14.0: 1.26.0).
+# go.mod's own `go` line can be older; GOTOOLCHAIN=auto would fetch a newer toolchain for the
+# install, but GOTOOLCHAIN=local or no network would fail halfway, so say so up front.
+GO_MIN="1.26"
+command -v go >/dev/null 2>&1 || fail "go not found; install Go $GO_MIN+ and re-run"
 GOV="$(go env GOVERSION | sed 's/^go//')"
+[[ "$(printf '%s\n%s\n' "$GO_MIN" "$GOV" | sort -V | head -n1)" == "$GO_MIN" ]] \
+  || fail "go is $GOV; the pinned tools need Go $GO_MIN+ to build (raise GO_MIN when a pin needs more)"
 ok go "$GOV"
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
