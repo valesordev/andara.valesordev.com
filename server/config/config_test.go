@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -643,5 +644,57 @@ func TestParse_RecoveryKeys(t *testing.T) {
 	}
 	if _, err := Parse(nil, withTLS(func(k string) (string, bool) { return "x", k == "ANDARA_RECOVERY_PIN_ROUND" }), nil); err == nil {
 		t.Error("a non-numeric pin round was accepted")
+	}
+}
+
+// AW-SRV-052 AC-10: ingress.degraded_hold defaults to 120 s, is read from
+// the flag, the environment and the file, and below 90 s fails config load,
+// naming the key and the floor.
+func TestParse_IngressDegradedHold(t *testing.T) {
+	env := func(k, v string) func(string) (string, bool) {
+		return withTLS(func(name string) (string, bool) {
+			if name == k {
+				return v, true
+			}
+			return "", false
+		})
+	}
+	c, err := Parse(nil, withTLS(nil), nil)
+	if err != nil || c.IngressDegradedHold != 120*time.Second {
+		t.Fatalf("default = %v, %v; want 2m", c.IngressDegradedHold, err)
+	}
+	c, err = Parse([]string{"--ingress-degraded-hold=90s"}, withTLS(nil), nil)
+	if err != nil || c.IngressDegradedHold != 90*time.Second {
+		t.Fatalf("the floor itself = %v, %v; want accepted", c.IngressDegradedHold, err)
+	}
+	c, err = Parse(nil, env("ANDARA_INGRESS_DEGRADED_HOLD", "3m"), nil)
+	if err != nil || c.IngressDegradedHold != 3*time.Minute {
+		t.Fatalf("env = %v, %v", c.IngressDegradedHold, err)
+	}
+	path := filepath.Join(t.TempDir(), "andara.yaml")
+	if err := os.WriteFile(path, []byte("ingress:\n  degraded_hold: 150s\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err = Parse([]string{"--config", path}, withTLS(nil), nil)
+	if err != nil || c.IngressDegradedHold != 150*time.Second {
+		t.Fatalf("file = %v, %v", c.IngressDegradedHold, err)
+	}
+
+	for name, parse := range map[string]func() error{
+		"flag": func() error { _, err := Parse([]string{"--ingress-degraded-hold=89s"}, withTLS(nil), nil); return err },
+		"env":  func() error { _, err := Parse(nil, env("ANDARA_INGRESS_DEGRADED_HOLD", "30s"), nil); return err },
+		"file": func() error {
+			p := filepath.Join(t.TempDir(), "low.yaml")
+			if err := os.WriteFile(p, []byte("ingress:\n  degraded_hold: 1s\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			_, err := Parse([]string{"--config", p}, withTLS(nil), nil)
+			return err
+		},
+	} {
+		err := parse()
+		if err == nil || !strings.Contains(err.Error(), "ingress.degraded_hold") || !strings.Contains(err.Error(), "1m30s") {
+			t.Errorf("%s below the floor: err = %v; want one naming the key and the 1m30s floor", name, err)
+		}
 	}
 }

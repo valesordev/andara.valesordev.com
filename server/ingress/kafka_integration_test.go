@@ -513,8 +513,8 @@ func TestKafka_UnreachableIsReadOnlyThenRecovers(t *testing.T) {
 	if took > 2*time.Second+time.Second {
 		t.Fatalf("took %s, past the produce deadline", took)
 	}
-	waitFor(t, func() bool { return f.producer.Degraded() }, "degraded")
-	if testutil.ToFloat64(f.in.Metrics().Degraded) != 1 {
+	waitFor(t, func() bool { return degradedCount(f.producer) > 0 }, "degraded")
+	if gaugeSum(f.in.Metrics()) != float64(sim.PartitionCount) {
 		t.Fatal("gauge not 1")
 	}
 	// Degraded: the next one fails at once, not after a deadline.
@@ -531,8 +531,8 @@ func TestKafka_UnreachableIsReadOnlyThenRecovers(t *testing.T) {
 	}
 
 	d.refuse.Store(false)
-	waitFor(t, func() bool { return !f.producer.Degraded() }, "probe recovery")
-	if testutil.ToFloat64(f.in.Metrics().Degraded) != 0 {
+	waitFor(t, func() bool { return degradedCount(f.producer) == 0 }, "probe recovery")
+	if gaugeSum(f.in.Metrics()) != 0 {
 		t.Fatal("gauge still 1 after recovery")
 	}
 	resp, err := f.submit(context.Background(), "s-alice", "look")
@@ -555,7 +555,7 @@ func TestKafka_ProbeDetectsOutageWithoutTraffic(t *testing.T) {
 	}
 	d.refuse.Store(true)
 	d.cut()
-	waitFor(t, func() bool { return f.producer.Degraded() }, "probe detection")
+	waitFor(t, func() bool { return degradedCount(f.producer) > 0 }, "probe detection")
 	began := time.Now()
 	if _, err := f.submit(context.Background(), "s-alice", "look"); codeOf(t, err) != connect.CodeUnavailable {
 		t.Fatalf("after detection: %v", err)
@@ -564,7 +564,7 @@ func TestKafka_ProbeDetectsOutageWithoutTraffic(t *testing.T) {
 		t.Fatal("waited after detection")
 	}
 	d.refuse.Store(false)
-	waitFor(t, func() bool { return !f.producer.Degraded() }, "probe recovery")
+	waitFor(t, func() bool { return degradedCount(f.producer) == 0 }, "probe recovery")
 	if resp, err := f.submit(context.Background(), "s-alice", "look"); err != nil || resp.GetAcceptedOffset() != 1 {
 		t.Fatalf("after recovery: %v %v", resp, err)
 	}
@@ -681,11 +681,11 @@ func TestKafka_RetryAfterDroppedRecordIsANewCommand(t *testing.T) {
 	default:
 		t.Fatalf("broker gone: %v", err)
 	}
-	waitFor(t, func() bool { return f.producer.Degraded() }, "degraded")
+	waitFor(t, func() bool { return degradedCount(f.producer) > 0 }, "degraded")
 	// The record's fate is settled — not written — so the key is gone.
 	waitFor(t, func() bool { return testutil.ToFloat64(f.in.Metrics().IdempotencyKeys) == 1 }, "the dropped record's key released")
 	d.refuse.Store(false)
-	waitFor(t, func() bool { return !f.producer.Degraded() }, "probe recovery")
+	waitFor(t, func() bool { return degradedCount(f.producer) == 0 }, "probe recovery")
 	resp, err := f.submitRef(context.Background(), "s-alice", "north", "r1")
 	if err != nil {
 		t.Fatalf("retry: %v", err)
@@ -699,5 +699,39 @@ func TestKafka_RetryAfterDroppedRecordIsANewCommand(t *testing.T) {
 	}
 	if f.outcome(OutcomeDeduplicated) != 0 || f.outcome(OutcomeProduced) != 2 {
 		t.Fatalf("deduplicated=%v produced=%v", f.outcome(OutcomeDeduplicated), f.outcome(OutcomeProduced))
+	}
+}
+
+// AW-SRV-052 against a real broker: the tap follows Redpanda's own produce
+// responses without losing step across Partitions and many requests, the
+// probe reads the topic with the real metadata and DescribeConfigs requests
+// (Redpanda reports no min.insync.replicas, so the default stands), and
+// nothing is marked on a healthy log. The broker errors themselves cannot be
+// made on a one-broker Redpanda; producer_degraded_test.go makes them on the
+// wire.
+func TestKafka_TheTapFollowsARealBrokersProduceResponses(t *testing.T) {
+	topic := throwawayTopic(t, sim.PartitionCount)
+	k, err := NewKafkaProducer(ProducerOptions{Brokers: brokers(t), Topic: topic, ClientID: "ingress-test-tap",
+		Deadline: 3 * time.Second, ProbeInterval: 100 * time.Millisecond, Metrics: NewMetrics(prometheus.NewRegistry())})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = k.Close() })
+
+	for i := range 3 * int(sim.PartitionCount) {
+		zone := fmt.Sprintf("tap-zone-%d", i%7)
+		if _, err := k.Produce(context.Background(), &logv1.LoggedCommand{ZoneId: zone}); err != nil {
+			t.Fatalf("produce %d: %v", i, err)
+		}
+	}
+	waitFor(t, func() bool { return k.minISRKnown.Load() }, "the probe read the topic's min.insync.replicas")
+	if got := k.minISR.Load(); got != defaultMinISR {
+		t.Fatalf("min.insync.replicas = %d, want the default %d (Redpanda reports none)", got, defaultMinISR)
+	}
+	if lost := k.tapLoss.Load(); lost != 0 {
+		t.Fatalf("the tap lost step with %d connections to a real broker", lost)
+	}
+	if got := degradedCount(k); got != 0 {
+		t.Fatalf("%d Partitions degraded on a healthy log", got)
 	}
 }
