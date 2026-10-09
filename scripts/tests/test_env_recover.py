@@ -133,6 +133,20 @@ class Recovery(unittest.TestCase):
         self.assertIn("no sample", self.check([], [], []))
 
 
+class Rebound(unittest.TestCase):
+
+    def test_holds(self):
+        self.assertIsNone(env_recover.check_rebound([], vec(2)))
+        self.assertIsNone(env_recover.check_rebound(vec(0), vec(3)))
+
+    def test_a_despawn_fails(self):
+        self.assertIn("character_despawned", env_recover.check_rebound(vec(1), vec(2)))
+
+    def test_too_few_or_no_reconnects_fail(self):
+        self.assertIn("reconnected", env_recover.check_rebound([], vec(1)))
+        self.assertIn("absent", env_recover.check_rebound([], []))
+
+
 class Inconclusive(unittest.TestCase):
 
     def test_rule_not_loaded(self):
@@ -246,6 +260,14 @@ class RunSteps(unittest.TestCase):
         self.assertEqual(seen, ["acc-a", "acc-b"])
         self.assertFalse(os.path.exists(run.work))
 
+    def test_a_restart_after_ready_fails_the_run(self):
+        run = self.run_()
+        run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=2, exit_code=137))
+        with self.assertRaisesRegex(env_recover.Failed, "restarted again"):
+            run.assert_no_further_restart(1)
+        run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=1, exit_code=137))
+        run.assert_no_further_restart(1)
+
     def test_unlanded_kill(self):
         run = self.run_()
         run.pod = lambda: env_recover.parse_pod(pod_doc())
@@ -318,6 +340,26 @@ class Main(unittest.TestCase):
 
         status, events = self.go(self.CREDS, preflight=boom)
         self.assertEqual((status, events), (1, ["dump", "cleanup"]))
+
+    def test_reconnect_is_awaited_before_the_metrics_poll(self):
+        events = []
+
+        class P:
+            def lines(self):
+                return []
+
+        def setup(self):
+            self.players = {"a": P(), "b": P()}
+
+        def metrics(self, g, r, t_kill):
+            events.append("metrics")
+            raise env_recover.Failed("stop")
+
+        status, _ = self.go(
+            self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup, play_until_round=lambda self: 60,
+            kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, marks: events.append("rebind"),
+            recovered_metrics=metrics)
+        self.assertEqual((status, events), (1, ["rebind", "metrics"]))
 
     def test_transcript_marks_are_taken_before_the_kill(self):
         events = []

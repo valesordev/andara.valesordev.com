@@ -182,6 +182,19 @@ def check_recovery(ns, rounds, matches, stamps, round_r, t_kill):
     return None
 
 
+def check_rebound(despawned, reconnected):
+    """None when the recovered server has despawned no one and rebound both players, else why not.
+    An absent despawn series is a counter never incremented: 0."""
+    if any(v != 0 for _, v in despawned):
+        return "andara_events_emitted_total{type=\"character_despawned\"} is %s after the recovery, want 0" % (
+            sorted({v for _, v in despawned}),)
+    got = [v for _, v in reconnected]
+    if not got or max(got) < 2:
+        return "andara_linkdead_outcomes_total{outcome=\"reconnected\"} is %s, want at least 2 (A and B)" % (
+            got or "absent")
+    return None
+
+
 class Grafana:
     def __init__(self):
         self.oc = _load("observe_check")
@@ -470,6 +483,28 @@ class Run:
             time.sleep(5)
         raise Failed("within %ds: %s" % (METRIC_WAIT, why))
 
+    def rebound_counters(self, g):
+        """The check no transcript can make: B sits in the Purgatory and A in the Town Hall, so
+        neither witnesses the other's despawn, and a despawn emitted before a client resubscribes
+        never reaches it. The recovered process began its counters at 0 (AC-6)."""
+        sel = '{namespace="%s"}' % self.ns
+        end, why = time.monotonic() + METRIC_WAIT, ""
+        while time.monotonic() < end:
+            why = check_rebound(
+                vector(g.instant('sum(andara_events_emitted_total{type="character_despawned",namespace="%s"})' % self.ns)),
+                vector(g.instant('sum(andara_linkdead_outcomes_total{outcome="reconnected",namespace="%s"})' % self.ns)))
+            if not why:
+                return
+            time.sleep(5)
+        raise Failed("within %ds: %s" % (METRIC_WAIT, why))
+
+    def assert_no_further_restart(self, expected):
+        """AC-4's "no further restart", held to the end of the run and not only to first Ready."""
+        now = self.pod()
+        if now["restarts"] != expected:
+            raise Failed("restartCount is %d at the end of the run, was %d at Ready: the server restarted again"
+                         % (now["restarts"], expected))
+
     def trace_id(self, since):
         p = self.sh(["kubectl", "-n", self.ns, "logs", POD, "-c", CONTAINER, "--since-time=" + since])
         tid = ""
@@ -552,15 +587,20 @@ def main(argv):
         since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t_kill))
         say("Ready %.0fs after the kill (RTO %ds), restartCount %d→%d, round %d" %
             (kill_to_ready, run.rto, a_restarts, b_restarts, r))
-        run.recovered_metrics(g, r, t_kill)
-        say("hash match; recovery.run trace %s" % (run.trace_id(since) or "n/a"))
+        # The reconnect deadline runs from Ready, so it is awaited first; the metrics poll can take
+        # minutes and a late reconnect would otherwise already be in the transcript.
         run.rebind(marks)
         say("both rebound; A reads %s (the tail move), B reads %s" % (ROOM_2, SPAWN_ROOM))
+        run.recovered_metrics(g, r, t_kill)
+        say("hash match; recovery.run trace %s" % (run.trace_id(since) or "n/a"))
+        run.rebound_counters(g)
+        say("the server's own counters: no despawn since the recovery, both players reconnected")
         say("waiting %ds for the ruler to judge the recovered 1" % ALERT_SETTLE)
         time.sleep(ALERT_SETTLE)
         now = time.time()
         if g.firing_between(ns, t_start, now):
             raise Failed("%s fired during the run" % RULE)
+        run.assert_no_further_restart(b_restarts)
         say("%s did not fire; AndaraServerUnavailable observed as %s" %
             (RULE, ", ".join(g.observed_states(ns, t_start, now)) or "inactive"))
         say("Ready %.0fs after the kill (RTO %ds), restartCount %d→%d, round %d, hash match" %
