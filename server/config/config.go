@@ -142,6 +142,9 @@ type Config struct {
 	IngressMaxPending        int
 	IngressTransitHold       time.Duration
 	IngressIdempotencyWindow time.Duration
+	// IngressDegradedHold: how long a Partition a produce error marked
+	// stays read-only (AW-SRV-052); at least ingress.MinDegradedHold.
+	IngressDegradedHold time.Duration
 
 	// Event egress (AW-SRV-011). EgressBuffer is how many Events a
 	// Session's stream may leave unsent before the stream is ended;
@@ -270,9 +273,14 @@ const (
 	DefaultIngressMaxPending        = 256
 	DefaultIngressTransitHold       = 2 * time.Second
 	DefaultIngressIdempotencyWindow = 30 * time.Second
-	DefaultEgressBuffer             = 1024
-	DefaultEgressResumeWindow       = 2048
-	DefaultHeartbeatInterval        = 20 * time.Second
+	// DefaultIngressDegradedHold and MinIngressDegradedHold are
+	// ingress.degraded_hold's default and floor (AW-SRV-052; the floor is
+	// twice WorldReadOnly's for: of 30 s, plus 30 s).
+	DefaultIngressDegradedHold = 120 * time.Second
+	MinIngressDegradedHold     = 90 * time.Second
+	DefaultEgressBuffer        = 1024
+	DefaultEgressResumeWindow  = 2048
+	DefaultHeartbeatInterval   = 20 * time.Second
 
 	// Snapshots (AW-SRV-006). The interval is docs/specs/slo/recovery.md's.
 	// The stall budget is AC-1's threshold, and it is a sub-budget of
@@ -379,6 +387,7 @@ func defaults() Config {
 		IngressMaxPending:        DefaultIngressMaxPending,
 		IngressTransitHold:       DefaultIngressTransitHold,
 		IngressIdempotencyWindow: DefaultIngressIdempotencyWindow,
+		IngressDegradedHold:      DefaultIngressDegradedHold,
 		EgressBuffer:             DefaultEgressBuffer,
 		EgressResumeWindow:       DefaultEgressResumeWindow,
 		HeartbeatInterval:        DefaultHeartbeatInterval,
@@ -495,6 +504,7 @@ func Parse(args []string, env EnvLookup, errOut io.Writer) (Config, error) {
 	fs.DurationVar(&c.IngressProduceDeadline, "ingress-produce-deadline", c.IngressProduceDeadline, "how long one produce to the Command log may take (ANDARA_PRODUCE_DEADLINE)")
 	fs.IntVar(&c.IngressMaxPending, "ingress-max-pending", c.IngressMaxPending, "Submits one Session may have in flight (ANDARA_INGRESS_MAX_PENDING)")
 	fs.DurationVar(&c.IngressTransitHold, "ingress-transit-hold", c.IngressTransitHold, "how long a Session's Intents wait for its Character to arrive in the next Zone (ANDARA_INGRESS_TRANSIT_HOLD)")
+	fs.DurationVar(&c.IngressDegradedHold, "ingress-degraded-hold", c.IngressDegradedHold, "how long a Partition a produce error marked stays read-only, at least 90s (ANDARA_INGRESS_DEGRADED_HOLD)")
 	fs.DurationVar(&c.IngressIdempotencyWindow, "ingress-idempotency-window", c.IngressIdempotencyWindow, "how long a Submit's outcome is remembered against its client_ref; must exceed the produce deadline (ANDARA_INGRESS_IDEMPOTENCY_WINDOW)")
 	fs.IntVar(&c.EgressBuffer, "egress-buffer", c.EgressBuffer, "Events a Session's stream may leave unsent before it is ended (ANDARA_EGRESS_BUFFER)")
 	fs.IntVar(&c.EgressResumeWindow, "egress-resume-window", c.EgressResumeWindow, "delivered Events a Session retains for a resume (ANDARA_EGRESS_RESUME_WINDOW)")
@@ -749,6 +759,9 @@ func (c Config) validateSim() error {
 	}
 	if c.IngressProduceDeadline <= 0 || c.IngressTransitHold < 0 {
 		return fmt.Errorf("ingress.produce_deadline must be positive and ingress.transit_hold must not be negative")
+	}
+	if c.IngressDegradedHold < MinIngressDegradedHold {
+		return fmt.Errorf("ingress.degraded_hold %v is below the %v floor: it must exceed WorldReadOnly's for: plus a scrape and an evaluation interval", c.IngressDegradedHold, MinIngressDegradedHold)
 	}
 	if c.IngressIdempotencyWindow <= c.IngressProduceDeadline {
 		return fmt.Errorf("ingress.idempotency_window must exceed ingress.produce_deadline")
@@ -1047,6 +1060,7 @@ type fileConfig struct {
 		MaxPending        *int    `yaml:"max_pending"`
 		TransitHold       *string `yaml:"transit_hold"`
 		IdempotencyWindow *string `yaml:"idempotency_window"`
+		DegradedHold      *string `yaml:"degraded_hold"`
 	} `yaml:"ingress"`
 	Egress *struct {
 		Buffer            *int    `yaml:"buffer"`
@@ -1383,6 +1397,7 @@ func applyFile(c *Config, path string) error {
 			{"ingress.produce_deadline", in.ProduceDeadline, &c.IngressProduceDeadline},
 			{"ingress.transit_hold", in.TransitHold, &c.IngressTransitHold},
 			{"ingress.idempotency_window", in.IdempotencyWindow, &c.IngressIdempotencyWindow},
+			{"ingress.degraded_hold", in.DegradedHold, &c.IngressDegradedHold},
 		} {
 			if d.v != nil {
 				if err := parseDuration(d.key, *d.v, d.dst); err != nil {
@@ -1521,6 +1536,7 @@ func applyEnv(c *Config, env EnvLookup) error {
 		{"ANDARA_PRODUCE_DEADLINE", &c.IngressProduceDeadline},
 		{"ANDARA_INGRESS_TRANSIT_HOLD", &c.IngressTransitHold},
 		{"ANDARA_INGRESS_IDEMPOTENCY_WINDOW", &c.IngressIdempotencyWindow},
+		{"ANDARA_INGRESS_DEGRADED_HOLD", &c.IngressDegradedHold},
 		{"ANDARA_HEARTBEAT_INTERVAL", &c.HeartbeatInterval},
 	} {
 		if v, ok := env(dv.name); ok {

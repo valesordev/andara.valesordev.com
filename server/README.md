@@ -93,6 +93,7 @@ variable, and (where it is a process flag) by flag. Precedence is **flag > env >
 | `egress.heartbeat_interval` | `ANDARA_HEARTBEAT_INTERVAL` | `20s` | How long a stream may be silent before a `Heartbeat` frame is sent. Also how long a stream reset is given to return a blocked writer before its connection is closed. |
 | `ingress.transit_hold` | `ANDARA_INGRESS_TRANSIT_HOLD` | `2s` | How long a Session's Intents wait for its Character to arrive in the next Zone, measured from the `CharacterLeft`. Past it they are rejected `in_transit`. A held Submit is also bounded by the RPC deadline (`grpc.max_request_timeout`). `0` holds nothing: any Submit during a transit, including the same-tick window of a same-Zone move, is `in_transit`. |
 | `ingress.idempotency_window` | `ANDARA_INGRESS_IDEMPOTENCY_WINDOW` | `30s` | How long a Submit's outcome is remembered against its `(Session, client_ref)` once known, so a retry inside it is the same Command. It governs *resolved* keys; a key still in flight lives until its outcome is known, however long that takes. Must exceed `ingress.produce_deadline`. Per process; at most `ingress.max_pending` keys per Session, the oldest resolved one evicted first — a key still in flight is never evicted. |
+| `ingress.degraded_hold` | `ANDARA_INGRESS_DEGRADED_HOLD` | `120s` | How long a Partition that a produce error marked stays read-only, measured from the most recent such mark, before a healthy probe can clear it (`AW-SRV-052`). Must be at least `90s` — twice `WorldReadOnly`'s `for:` plus 30 s — or config load fails; it must exceed `for:` plus a scrape and an evaluation interval, or the alert can miss a fault the hold keeps re-marking. |
 | `character.max_per_account` | `ANDARA_CHARACTER_MAX_PER_ACCOUNT` | `5` | Characters an Account may hold (ADR-0006), ACTIVE or DELETED — a deleted one keeps its slot until purged (`AW-SRV-032`). A sixth is `RESOURCE_EXHAUSTED roster_full`. |
 | `character.delete_retention` | `ANDARA_CHARACTER_DELETE_RETENTION` | `720h` | How long a deleted Character's dormant body stays before the Gateway's sweep produces its `PurgeCharacter` (30 d, `AW-SRV-032`). Judged on the wall clock by the Gateway; the purge applies when its Command does, so a replay purges on the same Tick. The name stays reserved after the purge, and the roster entry stays `DELETED`; only the slot is freed. |
 | `character.purge_sweep_interval` | `ANDARA_CHARACTER_PURGE_SWEEP_INTERVAL` | `10m` | How often the Gateway looks for deleted Characters whose retention has expired, and for name reservations with no Character behind them. |
@@ -505,24 +506,58 @@ arrival resolves the Session, so a stuck handoff surfaces to the player rather t
 `Bind` is the seam `AW-SRV-014` fills when `SelectCharacter` lands; until then no Session is bound
 on a running server and every Submit is `not_authorized: you are not in the world`, audited.
 
-**Read-only World.** The log's availability bounds the World's (ADR-0002): with no broker, no
-Command can be accepted. A probe pings the brokers once a second, always; when none answers — or a
-produce fails and a ping then fails — the ingress is *degraded*: `andara_ingress_degraded` reads
-1, an `info` line names the broker error, and every Submit fails at once with `UNAVAILABLE`
-(reason `world_read_only`, a `RetryInfo` of one second) — no wait, no buffer. The tick and the
-Event stream do not pass through here and carry on; `/readyz` stays 200. The Submits in flight when
-the outage was detected are the ambiguous ones: their records were already handed to the client
-and may have reached the broker, so each is answered `DEADLINE_EXCEEDED` (reason
-`produce_deadline`, *outcome unknown*), and entering the degraded state swaps the producer client
-so nothing it still held lands minutes later on a player who was told the World was read-only. When a broker answers the
-probe again the state clears without a restart. `docs/runbooks/world-read-only.md` is the runbook.
+**Read-only World.** The log's availability bounds the World's (ADR-0002), and it is bounded
+**per Partition** (`AW-SRV-052`, `docs/specs/kafka/client-contract.md`, "Degraded state is per
+Partition"): a Command's Partition is `hash(ZoneID) % 64`, so a Partition that cannot take writes
+makes exactly the Zones on it read-only while the other 63 carry on. A Partition is *degraded* when
+a produce to it fails, after the client's own retries, with a broker's `NOT_ENOUGH_REPLICAS`,
+`NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, `NOT_LEADER_OR_FOLLOWER` or
+`REQUEST_TIMED_OUT`; or when the probe, which reads the topic's metadata once a second and pings no
+broker, finds its leader absent on two consecutive probes or its ISR below the topic's
+`min.insync.replicas` (read at the first probe and every 60 s; a broker that reports none, as
+Redpanda does, is held to the Kafka default of 1). If the metadata request itself fails on two
+consecutive probes, all 64 are degraded; one failure marks nothing.
 
-"None answers" means none. The probe, the ping after a failed produce, and the tick source's check
-behind `tick input starved` all use `recordlog.Ping`. It asks every broker the client has
-discovered at once, and the first answer wins. kgo's own `Ping` asks them one at a time under one
-deadline, so a deleted broker pod whose address has gone dark used up the whole budget while two
-live brokers went unasked. That lasted until the controller dropped the broker from metadata,
-about 14 s, and made one broker bounce read as an outage (#129).
+`andara_ingress_degraded{partition}` reads 1 for each, a `warn` line (`partition degraded`) names
+the `partition`, the `cause` (`produce_error` or `probe`) and the `error_name` (the broker's error,
+or `leader_absent` / `isr_below_min` / `metadata_unavailable`), and every Submit for a Zone on it
+fails at once with `UNAVAILABLE` (reason `world_read_only`, a `RetryInfo` of one second) — no wait,
+no buffer, and the error does not name the Partition; the Submit's span carries
+`degraded_partition`. The tick and the Event stream do not pass through here and carry on; `/readyz`
+stays 200. The Submit that discovers a fault by its own produce is `DEADLINE_EXCEEDED` (reason
+`produce_deadline`, *outcome unknown*): its record was already handed to the client and may have
+reached the broker. A probe mark clears on the first probe that finds a leader and a full-enough
+ISR. A produce-error mark clears only after `ingress.degraded_hold` *and* a healthy probe, because
+metadata can show a full ISR while the broker still refuses writes (`REQUEST_TIMED_OUT`); the hold
+runs from the most recent produce-error mark, and a Partition carrying both marks leaves when the
+hold has elapsed and a healthy probe has been seen. Nothing is produced to a refused Partition, so
+if the fault outlasts the hold the next Submit rediscovers it (`DEADLINE_EXCEEDED`) and re-marks
+it: the gauge is a sawtooth under a persistent fault, which the alert and the SLI must tolerate.
+`docs/runbooks/world-read-only.md` is the runbook.
+
+**One client per Partition.** Nothing a Submit was told was refused may land later, and a produce
+client can only drop what it holds by closing, so each Partition's records go through a client of
+its own, built on the first produce to it. Entering the degraded state closes that Partition's
+client and fails what it still held, and the 63 others are never touched; the next produce after
+recovery builds a new one. The cost is up to 64 clients, each with a connection to its Partition's
+leader and its own metadata refresh (at most one per `produce_deadline / 4`, and only while a
+produce is failing).
+
+**The produce tap.** franz-go retries the five errors until the record's delivery timeout and then
+completes the promise with `ErrRecordTimeout`, not the broker's error, and it has no hook that sees
+a produce response. The ingress wraps the produce connections (`kgo.Dialer`) in a read-only tap
+that follows requests and responses and decodes each produce response's partition error codes with
+`kmsg` (`server/ingress/tap.go`). It must therefore see plaintext: the `Dialer` a producer is given
+does the TLS itself (a `tls.Dialer`'s `DialContext`), never `kgo.DialTLSConfig`, which would layer
+TLS over the conn the tap reads. A conn the tap cannot keep step with is let go, with a `warn`
+line (`produce tap lost step`) at most once a minute; the probe is then the only trigger on it.
+
+"None answers" means none. The probe's metadata request and `DescribeConfigs`, and the tick
+source's check behind `tick input starved` (`recordlog.Ping`), go to every broker the client has
+discovered at once, and the first answer wins. kgo sends a request, and its own `Ping` asks, one
+broker at a time under one deadline, so a deleted broker pod whose address has gone dark used up the
+whole budget while two live brokers went unasked. That lasted until the controller dropped the
+broker from metadata, about 14 s, and made one broker bounce read as an outage (#129).
 
 | Condition | gRPC code | `ErrorInfo.reason` | Log record written |
 |-----------|-----------|--------------------|--------------------|
@@ -550,7 +585,7 @@ wording every player eventually sees (Brian, 2026-09-19).
 | `andara_ingress_pending` | gauge | — | Submits in flight on this process |
 | `andara_ingress_idempotency_keys` | gauge | — | `(Session, client_ref)` keys remembered on this process: in flight, or resolved inside `ingress.idempotency_window` |
 | `andara_ingress_held_intents` | gauge | — | Intents waiting for their Character to arrive |
-| `andara_ingress_degraded` | gauge | — | 1 while the World is read-only; `AW-INF-005` alerts on it |
+| `andara_ingress_degraded` | gauge | `partition` (64) | 1 while that Partition cannot take writes and the Zones on it are read-only; all 64 series are present from boot at 0. `max()` is "some Zones are read-only" and `sum() == 64` is the log unreachable; `AW-INF-005` alerts on it |
 | `andara_ingress_produced_total` | counter | `partition` | 64; Commands produced by Partition — `topk(5, rate(...[5m]))` is the hot-Zone view |
 
 Logs: `command log unreachable` / `command log reachable` at `info` on degradation entry and exit

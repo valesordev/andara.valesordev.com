@@ -364,6 +364,11 @@
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
               "description": "ANDARA_INGRESS_TRANSIT_HOLD (AW-SRV-010). Default when unset: '2s'."
             },
+            "degraded_hold": {
+              "type": "string",
+              "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",
+              "description": "ANDARA_INGRESS_DEGRADED_HOLD (AW-SRV-052). Default when unset: '120s'."
+            },
             "idempotency_window": {
               "type": "string",
               "pattern": "^([0-9]+(\\.[0-9]+)?(ns|us|\u00b5s|ms|s|m|h))+$",

@@ -43,12 +43,13 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 	switch cfg.SimSource {
 	case "kafka":
 		kp, err := ingress.NewKafkaProducer(ingress.ProducerOptions{
-			Brokers:  cfg.KafkaBrokers,
-			ClientID: cfg.ServiceName,
-			Deadline: cfg.IngressProduceDeadline,
-			Metrics:  metrics,
-			Log:      rt.Tel.Log,
-			Tracer:   rt.Tel.Tracer,
+			Brokers:      cfg.KafkaBrokers,
+			ClientID:     cfg.ServiceName,
+			Deadline:     cfg.IngressProduceDeadline,
+			DegradedHold: cfg.IngressDegradedHold,
+			Metrics:      metrics,
+			Log:          rt.Tel.Log,
+			Tracer:       rt.Tel.Tracer,
 		})
 		if err != nil {
 			return err
@@ -99,6 +100,7 @@ func (rt *Runtime) StartIngress(ctx context.Context) error {
 		slog.String("rate_limit", rate.String()), slog.String("agent_rate_limit", agentRate.String()),
 		slog.Int("burst", cfg.IngressBurst), slog.Int("max_pending", cfg.IngressMaxPending),
 		slog.String("produce_deadline", cfg.IngressProduceDeadline.String()),
+		slog.String("degraded_hold", cfg.IngressDegradedHold.String()),
 		slog.String("transit_hold", cfg.IngressTransitHold.String()),
 		slog.String("idempotency_window", cfg.IngressIdempotencyWindow.String()),
 	)

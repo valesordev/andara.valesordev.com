@@ -54,9 +54,10 @@ type Metrics struct {
 	// Held is Intents waiting for their Character to arrive in the next
 	// Zone.
 	Held prometheus.Gauge
-	// Degraded is 1 while the Command log is unreachable and the World is
-	// read-only. AW-INF-005 alerts on it.
-	Degraded prometheus.Gauge
+	// Degraded is 1 for each Partition that cannot take writes and so is
+	// read-only for the Zones on it (AW-SRV-052). max() over it is "some
+	// Zones are read-only"; sum() == 64 is the log being unreachable.
+	Degraded *prometheus.GaugeVec
 	// Produced counts Commands produced to each Partition; the spread of
 	// its rate across the 64 reveals a hot Zone long before it is a tick
 	// problem (ADR-0001): topk(5, rate(andara_ingress_produced_total[5m])).
@@ -92,10 +93,10 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Name: "andara_ingress_held_intents",
 			Help: "Intents held while their Character is between Zones.",
 		}),
-		Degraded: prometheus.NewGauge(prometheus.GaugeOpts{
+		Degraded: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "andara_ingress_degraded",
-			Help: "1 while the Command log is unreachable and the World is read-only.",
-		}),
+			Help: "1 while a Partition cannot take writes and the Zones on it are read-only, by Partition. Cardinality 64; sum 64 is the Command log unreachable.",
+		}, []string{"partition"}),
 		Produced: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "andara_ingress_produced_total",
 			Help: "Commands produced to the log, by Partition. Cardinality 64; the spread of its rate is the Partition skew.",
@@ -106,6 +107,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 	}
 	for p := range int32(sim.PartitionCount) {
 		m.Produced.WithLabelValues(strconv.Itoa(int(p)))
+		m.Degraded.WithLabelValues(strconv.Itoa(int(p)))
 	}
 	if reg != nil {
 		reg.MustRegister(m.Submits, m.ProduceDuration, m.ProduceRetries, m.Pending, m.IdempotencyKeys, m.Held, m.Degraded, m.Produced)
