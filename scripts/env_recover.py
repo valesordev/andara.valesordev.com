@@ -525,10 +525,12 @@ class Run:
                 tid = o.get("trace_id", tid)
         return tid
 
-    def rebind(self, marks):
+    def rebind(self, marks, t_ready):
+        """Both players reconnect within RECONNECT_WAIT of Ready: one deadline, shared."""
         a, b = self.players["a"], self.players["b"]
         for who, p in (("A", a), ("B", b)):
-            if not p.wait_for(r"^-- Connected to ", after=marks[who], secs=RECONNECT_WAIT):
+            left = max(0.0, t_ready + RECONNECT_WAIT - time.time())
+            if not p.wait_for(r"^-- Connected to ", after=marks[who], secs=left):
                 raise Failed("%s's play did not reconnect within %ds of the server being Ready" % (who, RECONNECT_WAIT))
         am, bm = len(a.lines()), len(b.lines())
         a.send("look\n")
@@ -597,7 +599,7 @@ def main(argv):
             (kill_to_ready, run.rto, a_restarts, b_restarts, r))
         # The reconnect deadline runs from Ready, so it is awaited first; the metrics poll can take
         # minutes and a late reconnect would otherwise already be in the transcript.
-        run.rebind(marks)
+        run.rebind(marks, t_kill + kill_to_ready)
         say("both rebound; A reads %s (the tail move), B reads %s" % (ROOM_2, SPAWN_ROOM))
         run.recovered_metrics(g, r, t_kill)
         say("hash match; recovery.run trace %s" % (run.trace_id(since) or "n/a"))
@@ -605,15 +607,15 @@ def main(argv):
         say("the server's own counters: no despawn since the recovery, both players reconnected")
         say("waiting %ds for the ruler to judge the recovered 1" % ALERT_SETTLE)
         time.sleep(ALERT_SETTLE)
-        # Held to the end, not only to first Ready: a second crash or a reschedule after the
-        # recovery would still pass every later check. Counters sampled again for the same reason.
-        run.assert_no_further_restart(b_restarts)
-        run.rebound_counters(g)
+        run.rebound_counters(g)   # sampled again: a despawn after the first sample is still the recovery's
         now = time.time()
         if g.firing_between(ns, t_start, now):
             raise Failed("%s fired during the run" % RULE)
         say("%s did not fire; AndaraServerUnavailable observed as %s" %
             (RULE, ", ".join(g.observed_states(ns, t_start, now)) or "inactive"))
+        # Last, after every blocking check: a second crash or a reschedule at any point since
+        # Ready would still pass each check above.
+        run.assert_no_further_restart(b_restarts)
         say("Ready %.0fs after the kill (RTO %ds), restartCount %d→%d, round %d, hash match" %
             (kill_to_ready, run.rto, a_restarts, b_restarts, r))
         status = 0

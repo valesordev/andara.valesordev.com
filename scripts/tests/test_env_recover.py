@@ -6,6 +6,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 import types
 import unittest
 from unittest import mock
@@ -317,6 +318,33 @@ class RunSteps(unittest.TestCase):
         with self.assertRaisesRegex(env_recover.Failed, "within 0s"):
             run.rebound_counters(g)
 
+    def test_rebind_shares_one_deadline_from_ready(self):
+        run = self.run_()
+        seen = []
+
+        class P:
+            def __init__(self, who):
+                self.who = who
+
+            def lines(self):
+                return []
+
+            def send(self, text):
+                pass
+
+            def wait_for(self, pattern, after=0, secs=20):
+                seen.append((self.who, pattern, secs))
+                return True
+
+        run.players = {"a": P("A"), "b": P("B")}
+        run.rebind({"A": 0, "B": 0}, time.time() - 50)
+        connects = [secs for _, pat, secs in seen if pat.startswith("^-- Connected")]
+        self.assertEqual(len(connects), 2)
+        self.assertTrue(all(s <= 10.5 for s in connects), connects)
+        run.rebind({"A": 0, "B": 0}, time.time() - 500)
+        late = [secs for _, pat, secs in seen[-6:] if pat.startswith("^-- Connected")]
+        self.assertEqual(late, [0.0, 0.0])
+
     def test_unlanded_kill(self):
         run = self.run_()
         run.pod = lambda: env_recover.parse_pod(pod_doc())
@@ -362,7 +390,8 @@ class Main(unittest.TestCase):
         for name, fn in overrides.items():
             setattr(FakeRun, name, fn)
         real = (env_recover.Run, env_recover.Grafana)
-        env_recover.Run, env_recover.Grafana = FakeRun, lambda: object()
+        env_recover.Run, env_recover.Grafana = FakeRun, lambda: types.SimpleNamespace(
+            firing_between=lambda *a: [], observed_states=lambda *a: [])
         try:
             with mock.patch.dict(os.environ, environ, clear=True):
                 status = env_recover.main(["dev", "andara-dev"])
@@ -406,15 +435,15 @@ class Main(unittest.TestCase):
 
         status, _ = self.go(
             self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup, play_until_round=lambda self: 60,
-            kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, marks: events.append("rebind"),
+            kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, marks, t_ready: events.append("rebind"),
             recovered_metrics=metrics)
         self.assertEqual((status, events), (1, ["rebind", "metrics"]))
 
     def test_the_end_of_run_checks_run_in_order_and_fail_the_run(self):
-        full = ["rebind", "recovered_metrics", "rebound_counters", "assert_no_further_restart", "rebound_counters"]
+        full = ["rebind", "recovered_metrics", "rebound_counters", "rebound_counters", "assert_no_further_restart"]
         # (name that fails, which call of it, events seen up to and including the failure)
-        for failing, nth, upto in (("rebound_counters", 1, 3), ("assert_no_further_restart", 1, 4),
-                                   ("rebound_counters", 2, 5)):
+        for failing, nth, upto in (("rebound_counters", 1, 3), ("rebound_counters", 2, 4),
+                                   ("assert_no_further_restart", 1, 5)):
             events = []
 
             class P:
