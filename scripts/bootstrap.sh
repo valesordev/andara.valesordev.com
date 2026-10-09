@@ -15,7 +15,7 @@ set -euo pipefail
 
 # Pinned deliberately. An unpinned `@latest` is how a config that parses today stops
 # parsing tomorrow — golangci-lint v1 config against a v2 binary is exactly that failure.
-GOLANGCI_VERSION="v2.13.2"
+GOLANGCI_VERSION="v2.14.0"
 BUF_VERSION="v1.72.0"
 GRPCURL_VERSION="v1.9.4"
 HELM_VERSION="v3.22.0"
@@ -46,9 +46,25 @@ ${PY:-python3} -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'
   || fail "python3 is $PYV; this repo needs 3.9+"
 ok python3 "$PYV"
 
-command -v go >/dev/null 2>&1 || fail "go not found; install Go 1.24+ and re-run"
+# The newest Go any pinned tool below declares in its go.mod (golangci-lint v2.14.0: 1.26.0).
+# go.mod's own `go` line can be older (CI's setup-go installs exactly that). Unless GOTOOLCHAIN
+# is `local` or a bare pinned version, `go install` can switch to a newer toolchain itself (auto
+# downloads one, +path takes one from PATH), so only note it; otherwise it would fail halfway,
+# so say so up front.
+GO_MIN_MINOR=26
+command -v go >/dev/null 2>&1 || fail "go not found; install Go 1.$GO_MIN_MINOR+ and re-run"
 GOV="$(go env GOVERSION | sed 's/^go//')"
 ok go "$GOV"
+# Go 1 only: the minor is the digits after the first dot ("1.27.2-X:nodwarf5" -> 27, "1.26rc1" -> 26).
+GOV_REST="${GOV#*.}"
+GOV_MINOR="${GOV_REST%%[!0-9]*}"
+if [[ "$GOV" != 1.* || -z "$GOV_MINOR" ]] || (( GOV_MINOR < GO_MIN_MINOR )); then
+  GOTC="$(go env GOTOOLCHAIN)"
+  if [[ "$GOTC" == local || ( "$GOTC" == go* && "$GOTC" != *+* ) ]]; then
+    fail "go is $GOV and GOTOOLCHAIN=$GOTC won't switch to a newer one; the pinned tools need Go 1.$GO_MIN_MINOR+ (raise GO_MIN_MINOR when a pin needs more)"
+  fi
+  echo "  note: go is $GOV; GOTOOLCHAIN=$GOTC may switch to Go 1.$GO_MIN_MINOR+ to build the pinned tools"
+fi
 
 [[ -f go.mod ]] || fail "go.mod is missing; this repo should not be in that state"
 
