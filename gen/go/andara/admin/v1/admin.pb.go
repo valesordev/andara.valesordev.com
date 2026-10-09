@@ -113,7 +113,12 @@ type ListSnapshotRoundsRequest struct {
 	// Empty: every Zone. Otherwise only rounds holding this Zone, with
 	// `complete` still judged against every owned Zone.
 	ZoneId string `protobuf:"bytes,1,opt,name=zone_id,json=zoneId,proto3" json:"zone_id,omitempty"`
-	// 0 means all.
+	// 0 means all. With a limit, the server reads no more of the store than the
+	// newest `limit` rounds need: the listing's cost must not grow with the rounds
+	// retained, or a store that has outgrown retention stops answering (dev, 2026-10-09:
+	// ~5,700 rounds per Zone and a 30 s timeout). The response still holds at most
+	// `limit` rounds, newest first, and `complete` is still judged against every
+	// owned Zone.
 	Limit         uint32 `protobuf:"varint,2,opt,name=limit,proto3" json:"limit,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache

@@ -41,7 +41,12 @@ export declare type ListSnapshotRoundsRequest = Message<"andara.admin.v1.ListSna
   zoneId: string;
 
   /**
-   * 0 means all.
+   * 0 means all. With a limit, the server reads no more of the store than the
+   * newest `limit` rounds need: the listing's cost must not grow with the rounds
+   * retained, or a store that has outgrown retention stops answering (dev, 2026-10-09:
+   * ~5,700 rounds per Zone and a 30 s timeout). The response still holds at most
+   * `limit` rounds, newest first, and `complete` is still judged against every
+   * owned Zone.
    *
    * @generated from field: uint32 limit = 2;
    */
