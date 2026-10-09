@@ -262,11 +262,26 @@ class RunSteps(unittest.TestCase):
 
     def test_a_restart_after_ready_fails_the_run(self):
         run = self.run_()
+        run.uid = "u1"
         run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=2, exit_code=137))
         with self.assertRaisesRegex(env_recover.Failed, "restarted again"):
             run.assert_no_further_restart(1)
         run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=1, exit_code=137))
         run.assert_no_further_restart(1)
+
+    def test_kill_records_the_uid_and_an_unrecorded_one_fails_closed(self):
+        run = self.run_()
+        run.rto = 120
+        states = iter([pod_doc(), pod_doc(restarts=1, exit_code=137, ready=False), pod_doc(restarts=1, exit_code=137)])
+        run.pod = lambda: env_recover.parse_pod(next(states))
+        run.sh = lambda args: types.SimpleNamespace(returncode=0, stdout=json.dumps({"info": {"pid": 4242}}), stderr="")
+        with mock.patch.object(env_recover.time, "sleep", lambda s: None):
+            run.kill()
+        self.assertEqual(run.uid, "u1")
+        run.uid = None
+        run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=1, exit_code=137))
+        with self.assertRaisesRegex(env_recover.Failed, "no pod UID"):
+            run.assert_no_further_restart(1)
 
     def test_a_reschedule_after_ready_fails_the_run(self):
         run = self.run_()

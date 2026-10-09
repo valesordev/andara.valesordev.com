@@ -505,7 +505,9 @@ class Run:
     def assert_no_further_restart(self, expected):
         """AC-4's "no further restart", held to the end of the run and not only to first Ready."""
         now = self.pod()
-        if self.uid and now["uid"] != self.uid:
+        if not self.uid:
+            raise Failed("no pod UID was recorded at the kill; cannot tell a restart from a reschedule")
+        if now["uid"] != self.uid:
             raise Failed("pod UID changed to %s at the end of the run: rescheduled after the recovery" % now["uid"])
         if now["restarts"] != expected:
             raise Failed("restartCount is %d at the end of the run, was %d at Ready: the server restarted again"
