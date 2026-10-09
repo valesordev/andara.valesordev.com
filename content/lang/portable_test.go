@@ -158,7 +158,7 @@ func TestUnportableName_ASourcePathIsReportedPerFile(t *testing.T) {
 func TestUnportableName_OnlyTheDeviceNamesThemselves(t *testing.T) {
 	for name, want := range map[string]bool{
 		"console": false, "auxiliary": false, "com10": false, "lpt0": false, "com0": false, "nullable": false,
-		"Aux": true, "COM¹": true, "con.aw": true, "nul.v2": true, "aux .aw": true, "conin$": true,
+		"Aux": true, "COM¹": true, "COM²": true, "lpt³": true, "con.aw": true, "nul.v2": true, "aux .aw": true, "conin$": true,
 		"a:b": true, `a\b`: true, "a\x00b": true,
 		"fine.aw": false, "..aw": false,
 	} {
