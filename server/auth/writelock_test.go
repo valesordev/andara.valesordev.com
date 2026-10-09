@@ -351,6 +351,13 @@ func (s *S) c() { a.Audit.Record(1) }`, 1},
 	e := func() int { s.wmu.Lock(); defer s.wmu.Unlock(); return 1 }()
 	s.audit.Record(e)
 }`, 0},
+		{"writeLocked callback", head + `func (s *S) A() { s.writeLocked(ctx, func() *Entry { s.audit.Record(1); return nil }) }`, 1},
+		{"writeLocked callback via helper", head + `func (s *S) A() { s.writeLocked(ctx, func() *Entry { s.refuse(); return nil }) }
+func (s *S) refuse() { s.audit.Record(1) }`, 1},
+		{"writeLocked callback returning the entry", head + `func (s *S) A() {
+	s.writeLocked(ctx, func() *Entry { return &Entry{} })
+	s.audit.Record(1)
+}`, 0},
 		{"no lock", head + `func (s *S) A() { s.audit.Record(1) }`, 0},
 		{"other Record", head + `func (s *S) A() { s.wmu.Lock(); defer s.wmu.Unlock(); s.log.Record(1) }`, 0},
 	}
@@ -369,10 +376,11 @@ func (s *S) c() { a.Audit.Record(1) }`, 1},
 
 // auditUnderLock parses src and returns one message per lock-holding region
 // that reaches an audit Record call. A region is a function body that calls
-// wmu.Lock itself (nested literals included), or a function literal that does
-// (its own body only). Reachability follows calls on the receiver or a bare
-// name, by name, so two methods of one name are one node, and a function that
-// unlocks before it records would be reported.
+// wmu.Lock itself (nested literals included), a function literal that does
+// (its own body only), or a literal passed to Store.writeLocked. Reachability
+// follows calls on the receiver or a bare name, by name, so two methods of one
+// name are one node, and a function that unlocks before it records would be
+// reported.
 func auditUnderLock(src map[string]string) ([]string, error) {
 	fset := token.NewFileSet()
 	type fn struct {
@@ -433,8 +441,20 @@ func auditUnderLock(src map[string]string) ([]string, error) {
 				regions = append(regions, whole)
 			}
 			ast.Inspect(fd.Body, func(n ast.Node) bool {
-				if lit, ok := n.(*ast.FuncLit); ok && holdsLock(lit.Body, false) {
-					regions = append(regions, scan(fd.Name.Name+".func", lit.Body))
+				switch n := n.(type) {
+				case *ast.FuncLit:
+					if holdsLock(n.Body, false) {
+						regions = append(regions, scan(fd.Name.Name+".func", n.Body))
+					}
+				case *ast.CallExpr:
+					// Store.writeLocked takes wmu around the callback it is given.
+					if c, ok := n.Fun.(*ast.SelectorExpr); ok && c.Sel.Name == "writeLocked" {
+						for _, a := range n.Args {
+							if lit, ok := a.(*ast.FuncLit); ok {
+								regions = append(regions, scan(fd.Name.Name+".writeLocked callback", lit.Body))
+							}
+						}
+					}
 				}
 				return true
 			})
