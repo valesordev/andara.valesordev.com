@@ -65,7 +65,7 @@ func (rt *runtime) httpClient() (*http.Client, error) {
 	}
 	return &http.Client{
 		Timeout:   rt.settings.Timeout,
-		Transport: &http2.Transport{TLSClientConfig: cfg},
+		Transport: &hintTransport{base: &http2.Transport{TLSClientConfig: cfg}, rt: rt.settings},
 	}, nil
 }
 
@@ -89,7 +89,7 @@ func (rt *runtime) streamClient() (*http.Client, error) {
 		return nil, err
 	}
 	hc.Timeout = 0
-	hc.Transport.(*http2.Transport).ReadIdleTimeout = streamReadIdle
+	hc.Transport.(*hintTransport).base.(*http2.Transport).ReadIdleTimeout = streamReadIdle
 	return hc, nil
 }
 
@@ -210,6 +210,22 @@ func (rt *runtime) callBase() context.Context {
 // reached is 3, a timeout is 4, a refused or failed operation is 1. The
 // server's message is passed through; it never carries a credential.
 func rpcError(err error) error {
+	out := plainRPCError(err)
+	// A certificate that didn't verify says which CA was trusted and where
+	// that setting came from (AW-CLI-011). The code and exit stay connect_failed.
+	var tf *tlsFailure
+	var ae *AppError
+	if errors.As(err, &tf) && errors.As(out, &ae) && ae.Code == CodeConnect {
+		ae.Message += tf.suffix()
+		if ae.Detail == nil {
+			ae.Detail = map[string]any{}
+		}
+		tf.detail(ae.Detail)
+	}
+	return out
+}
+
+func plainRPCError(err error) error {
 	var ae *AppError
 	if errors.As(err, &ae) {
 		return err
