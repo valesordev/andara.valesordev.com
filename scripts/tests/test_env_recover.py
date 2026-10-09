@@ -375,9 +375,9 @@ class Main(unittest.TestCase):
     CREDS = {"GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
              "GRAFANA_CLOUD_PROM_USER": "123", "MIMIR_API_KEY": "k"}
 
-    def go(self, environ, **overrides):
+    def go(self, environ, events=None, **overrides):
         """main() with the cluster-touching pieces stubbed; returns (status, events)."""
-        events = []
+        events = [] if events is None else events
 
         class FakeRun(env_recover.Run):
             def dump(self):
@@ -391,7 +391,8 @@ class Main(unittest.TestCase):
             setattr(FakeRun, name, fn)
         real = (env_recover.Run, env_recover.Grafana)
         env_recover.Run, env_recover.Grafana = FakeRun, lambda: types.SimpleNamespace(
-            firing_between=lambda *a: [], observed_states=lambda *a: [])
+            firing_between=lambda *a: events.append("firing_between") or [],
+            observed_states=lambda *a: events.append("observed_states") or [])
         try:
             with mock.patch.dict(os.environ, environ, clear=True):
                 status = env_recover.main(["dev", "andara-dev"])
@@ -419,6 +420,24 @@ class Main(unittest.TestCase):
         status, events = self.go(self.CREDS, preflight=boom)
         self.assertEqual((status, events), (1, ["dump", "cleanup"]))
 
+    def test_rebind_gets_the_ready_instant(self):
+        got = []
+
+        class P:
+            def lines(self):
+                return []
+
+        def setup(self):
+            self.players = {"a": P(), "b": P()}
+
+        def rebind(self, marks, t_ready):
+            got.append(t_ready)
+            raise env_recover.Failed("stop")
+
+        self.go(self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup, play_until_round=lambda self: 60,
+                kill=lambda self: (1000.0, 5.0, 0, 1), rebind=rebind)
+        self.assertEqual(got, [1005.0])
+
     def test_reconnect_is_awaited_before_the_metrics_poll(self):
         events = []
 
@@ -440,10 +459,11 @@ class Main(unittest.TestCase):
         self.assertEqual((status, events), (1, ["rebind", "metrics"]))
 
     def test_the_end_of_run_checks_run_in_order_and_fail_the_run(self):
-        full = ["rebind", "recovered_metrics", "rebound_counters", "rebound_counters", "assert_no_further_restart"]
+        full = ["rebind", "recovered_metrics", "rebound_counters", "rebound_counters", "firing_between",
+                "observed_states", "assert_no_further_restart"]
         # (name that fails, which call of it, events seen up to and including the failure)
         for failing, nth, upto in (("rebound_counters", 1, 3), ("rebound_counters", 2, 4),
-                                   ("assert_no_further_restart", 1, 5)):
+                                   ("assert_no_further_restart", 1, 7)):
             events = []
 
             class P:
@@ -462,13 +482,13 @@ class Main(unittest.TestCase):
 
             with mock.patch.object(env_recover.time, "sleep", lambda s: None):
                 status, _ = self.go(
-                    self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup,
+                    self.CREDS, events=events, preflight=lambda self, g, e: None, setup_cli=setup,
                     play_until_round=lambda self: 60, kill=lambda self: (1000.0, 5.0, 0, 1),
                     rebind=rec("rebind"), recovered_metrics=rec("recovered_metrics"),
                     trace_id=lambda self, since: "", rebound_counters=rec("rebound_counters"),
                     assert_no_further_restart=rec("assert_no_further_restart"))
             self.assertEqual(status, 1, (failing, nth))
-            self.assertEqual(events, full[:upto], (failing, nth))
+            self.assertEqual([e for e in events if e not in ("dump", "cleanup")], full[:upto], (failing, nth))
 
     def test_transcript_marks_are_taken_before_the_kill(self):
         events = []
