@@ -359,6 +359,22 @@ class RunSteps(unittest.TestCase):
         late = [secs for _, pat, secs in seen[-6:] if pat.startswith("^-- Connected")]
         self.assertEqual(late, [0.0, 0.0])
 
+    def test_a_ready_seen_after_the_rto_fails(self):
+        run = self.run_()
+        run.rto = 0
+        states = iter([pod_doc(), pod_doc(restarts=1, exit_code=137, ready=False), pod_doc(restarts=1, exit_code=137)])
+        run.pod = lambda: env_recover.parse_pod(next(states))
+        run.sh = lambda args: types.SimpleNamespace(returncode=0, stdout=json.dumps({"info": {"pid": 4242}}), stderr="")
+        real_pod = run.pod
+
+        def slow():
+            time.sleep(0.01)
+            return real_pod()
+
+        run.pod = slow
+        with self.assertRaisesRegex(env_recover.Failed, "not Ready within 0s"):
+            run.kill()
+
     def test_unlanded_kill(self):
         run = self.run_()
         run.pod = lambda: env_recover.parse_pod(pod_doc())

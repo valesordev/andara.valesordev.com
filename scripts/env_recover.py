@@ -467,14 +467,15 @@ class Run:
         end = t_kill + self.rto
         while True:
             now = self.pod()
+            seen = time.time()
             if now["restarts"] != after["restarts"]:
                 raise Failed("a further restart (restartCount %d→%d) inside the RTO" % (after["restarts"], now["restarts"]))
+            if seen > end:
+                raise Failed("%s not Ready within %ds of the kill" % (POD, self.rto))
             if now["ready"]:
                 break
-            if time.time() > end:
-                raise Failed("%s not Ready within %ds of the kill" % (POD, self.rto))
             time.sleep(0.5)
-        return t_kill, time.time() - t_kill, before["restarts"], now["restarts"]
+        return t_kill, seen - t_kill, before["restarts"], now["restarts"]
 
     def recovered_metrics(self, g, r, t_kill):
         sel = '{namespace="%s"}' % self.ns
