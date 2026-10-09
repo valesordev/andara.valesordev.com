@@ -59,7 +59,7 @@ HAS_GO := $(shell find . -name '*.go' -not -path './.git/*' -not -path './bin/*'
         k8s-dry check-targets clean build build-info goldens \
         values-schema values-schema-check helm-test image image-publish image-check cli-release cli-release-check cli-release-publish kind-load helm-install measure-tick stack-smoke stack-play stack-linkdead stack-recover stack-recover-mismatch \
         kind-platform stream-soak content-grammar-check observe-check observe-unavailable scripts-test kafka-operator kafka-install kafka-broker-bounce \
-        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy \
+        argocd-install argocd-status argocd-ui argocd-recover argocd-uninstall world-reset content-seed env-destroy env-recover \
         objectstore-install projector-stop projector-start projector-rebuild server-stop server-start core-versions-check \
         builder-reference builder-reference-check guide-check \
         stack-boundary-lost cli-offline-check stack-projector-check recovery-timing recovery-timing-previous recovery-timing-summary startup-budget-check alerts-sync alerts-diff
@@ -427,6 +427,10 @@ env-destroy:
 ## content-seed: publish and activate the dev fixture as pack town in ENV's content store — idempotent — needs the operator credential (ANDARA_BOOTSTRAP_OPERATOR) — ENV=<env> (AW-INF-021)
 content-seed:
 	@$(SCRIPTS)/content_seed.sh "$(if $(filter command line,$(origin ENV)),$(ENV))"
+
+## env-recover: the M2 gate on ENV — SIGKILL the server container mid-play, recover from a snapshot within the RTO with a matching State Hash, both players rebind — kills ENV's live sessions; runs on the box — ENV=<env> CONFIRM=andara-<env> (AW-INF-034)
+env-recover:
+	@ENV_RECOVER_RTO=$(or $(ENV_RECOVER_RTO),120) $(PY) $(SCRIPTS)/env_recover.py "$(if $(filter command line,$(origin ENV)),$(ENV))" "$(CONFIRM)"
 
 ## argocd-status: the andara-dev Application's sync and health, the main revision it synced, and the image it runs with the commit that built it — exit 1 unless Synced/Healthy
 argocd-status:
