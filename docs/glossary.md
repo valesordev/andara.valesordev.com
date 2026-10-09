@@ -228,6 +228,12 @@ flagged `self_approval` on the audit record and counted apart. A Builder still c
 `content.operator_self_approval`, so turning it off when others build is a values change
 (`AW-SRV-013`).
 
+**Publisher** — The real actor behind a Content Version, `ContentVersion.publisher`: the Account that
+made the publish call. Equal to the version's `author` unless an Operator published acting as a Builder,
+in which case `author` is the Builder and `publisher` the Operator. Written on every publish (the
+server's own boot publishes both as `server`); a manifest stored before it reads with `publisher` equal to
+`author`. Self-approval is decided from `author` and `publisher` on the stored manifest (`AW-SRV-039`).
+
 **Content Language** — The purpose-built, text-based language Builders author content in, compiled by
 `andara-cli` to the canonical protobuf (ADR-0009). Not itself a wire format and never stored in place
 of the compiled output. Source files use the `.aw` extension and are published alongside the compiled
@@ -372,7 +378,10 @@ whose `sub` must equal the Account's `workload_subject` (AW-SRV-008, ADR-0005).
 **Acting As** — An `operator` or `game_master` opening a Session as another Account
 (`OpenSessionRequest.act_as_account_id`). The Session takes the target's Roles; every Audit Record in
 it names both `actor_account_id` and `acting_as_account_id`, so acting as someone never hides who was
-acting (decided 2026-09-07; AW-SRV-008).
+acting (decided 2026-09-07; AW-SRV-008). On an Admin call it is the per-call gRPC metadata
+`andara-act-as: <account_id>`, not a token claim, honoured on Admin RPCs only and with the same
+refusals; `andara-cli content publish|approve|activate|rollback --as <account_id>` sends it
+(`AW-SRV-039`).
 
 **Audit Record** — One record on `andara.audit.v1` per privileged action: actor, acting-as, action,
 target, outcome, Session ID, trace ID, timestamp. Written for every Admin RPC, every `authorize`

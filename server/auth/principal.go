@@ -6,6 +6,7 @@ package auth
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -117,6 +118,10 @@ var (
 	// ErrPermissionDenied: invite invalid, role missing, act-as without
 	// privilege, agent out of scope. PERMISSION_DENIED.
 	ErrPermissionDenied = errors.New("permission denied")
+	// ErrActAsNoAccount: the Account an acting-as names is unknown or not
+	// ACTIVE. To the caller it is a permission denial; it is its own error so
+	// andara_admin_act_as_total can tell it from a role refusal (AW-SRV-039).
+	ErrActAsNoAccount = fmt.Errorf("%w: no such active account", ErrPermissionDenied)
 	// ErrRegistrationClosed: Register while the mode is closed. FAILED_PRECONDITION.
 	ErrRegistrationClosed = errors.New("registration is closed")
 	// ErrUsernameTaken: ALREADY_EXISTS.
@@ -151,6 +156,20 @@ func PrincipalFrom(ctx context.Context) (Principal, bool) {
 }
 
 type sessionKey struct{}
+
+type actAsMethodKey struct{}
+
+// WithActAsMethod names the Admin method an acting-as is for, so the audit
+// record of the act says what it was used on (AW-SRV-039).
+func WithActAsMethod(ctx context.Context, method string) context.Context {
+	return context.WithValue(ctx, actAsMethodKey{}, method)
+}
+
+// ActAsMethodFrom returns the method attached by WithActAsMethod, or "".
+func ActAsMethodFrom(ctx context.Context) string {
+	m, _ := ctx.Value(actAsMethodKey{}).(string)
+	return m
+}
 
 // WithSessionID attaches a Session correlation ID to ctx for audit records
 // written on the Session's behalf.

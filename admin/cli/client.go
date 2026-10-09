@@ -118,20 +118,30 @@ func (rt *runtime) gameClient() (gamev1connect.GameClient, *storedCredential, er
 // is given, sends it on every request — unary and streaming alike, so a
 // Subscribe stream's span is parented the same way a Submit's is.
 func (rt *runtime) clientOptions(bearer string) []connect.ClientOption {
+	return rt.clientOptionsAs(bearer, "")
+}
+
+// clientOptionsAs is clientOptions that also sends andara-act-as: the
+// Account an Operator or Game Master runs an Admin call as (AW-SRV-039). It
+// is per call, as metadata; the token still speaks for the caller.
+func (rt *runtime) clientOptionsAs(bearer, actAs string) []connect.ClientOption {
 	return []connect.ClientOption{
 		connect.WithGRPC(),
-		connect.WithInterceptors(headerInterceptor{bearer: bearer}),
+		connect.WithInterceptors(headerInterceptor{bearer: bearer, actAs: actAs}),
 	}
 }
 
 // headerInterceptor injects the trace context and the bearer token into
 // every outgoing request's headers.
-type headerInterceptor struct{ bearer string }
+type headerInterceptor struct{ bearer, actAs string }
 
 func (h headerInterceptor) set(ctx context.Context, header http.Header) {
 	propagator.Inject(ctx, propagation.HeaderCarrier(header))
 	if h.bearer != "" {
 		header.Set("Authorization", "Bearer "+h.bearer)
+	}
+	if h.actAs != "" {
+		header.Set(actAsHeader, h.actAs)
 	}
 }
 
@@ -153,6 +163,9 @@ func (h headerInterceptor) WrapStreamingClient(next connect.StreamingClientFunc)
 func (headerInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return next
 }
+
+// actAsHeader is the metadata `--as` sends (gateway.ActAsHeader).
+const actAsHeader = "andara-act-as"
 
 func (rt *runtime) baseURL() string { return "https://" + rt.settings.ServerAddress }
 
@@ -190,7 +203,7 @@ func (rt *runtime) adminClientWith(noDeadline bool) (adminv1connect.AdminClient,
 	if noDeadline {
 		hc.Timeout = 0
 	}
-	return adminv1connect.NewAdminClient(hc, rt.baseURL(), rt.clientOptions(cred.SessionToken)...), nil
+	return adminv1connect.NewAdminClient(hc, rt.baseURL(), rt.clientOptionsAs(cred.SessionToken, rt.actAs)...), nil
 }
 
 // callCtx bounds one RPC by --timeout and carries the command span.

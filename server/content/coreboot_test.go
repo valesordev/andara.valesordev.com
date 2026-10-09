@@ -77,7 +77,7 @@ func TestBootCore_AnEmptyStoreGetsTheBuildsCore(t *testing.T) {
 		t.Fatalf("boot: %+v %v", res, err)
 	}
 	cv, ok := s.reg.Manifest(CorePack, core.Version())
-	if !ok || cv.GetAuthor() != ServerPrincipal || !bytes.Equal(BlobHashesDigest(cv.GetBlobs()), core.Digest(core.Blobs())) {
+	if !ok || cv.GetAuthor() != ServerPrincipal || cv.GetPublisher() != ServerPrincipal || !bytes.Equal(BlobHashesDigest(cv.GetBlobs()), core.Digest(core.Blobs())) {
 		t.Fatalf("manifest %v", cv)
 	}
 	av, _ := s.reg.Pointer(CorePack)

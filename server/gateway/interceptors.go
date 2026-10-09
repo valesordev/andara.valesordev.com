@@ -6,6 +6,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"net/http"
 	"strings"
 	"time"
 
@@ -14,6 +15,8 @@ import (
 	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/propagation"
 	"go.opentelemetry.io/otel/trace"
+
+	"github.com/valesordev/andara/server/auth"
 )
 
 // The interceptor chain, outermost first:
@@ -31,7 +34,7 @@ func (s *Server) interceptors() connect.HandlerOption {
 		&traceInterceptor{tracer: s.tracer, trust: s.opts.TrustInboundTraceparent},
 		&drainInterceptor{s: s},
 		&deadlineInterceptor{max: s.opts.MaxRequestTimeout},
-		&authInterceptor{verifier: s.opts.Verifier},
+		&authInterceptor{verifier: s.opts.Verifier, metrics: s.metrics},
 	)
 }
 
@@ -208,18 +211,28 @@ func (i *deadlineInterceptor) WrapStreamingHandler(next connect.StreamingHandler
 
 const adminPrefix = "/andara.admin.v1.Admin/"
 
+// ActAsHeader is the per-call metadata an Operator or Game Master sends on an
+// Admin call to act as another Account (AW-SRV-039). It is not a token claim:
+// the token still speaks for the caller, and every use is audited. Game RPCs
+// ignore it; acting-as there is OpenSession's field only.
+const ActAsHeader = "andara-act-as"
+
 // authInterceptor rejects an unauthenticated call to any Admin method before
 // it reaches a handler (AC-10). Admin request messages carry no token field,
 // so the credential travels as `Authorization: Bearer <token>` metadata.
 // Game methods are not gated here: OpenSession carries its token in the
 // request body and the others are authenticated by Session ID in the handler.
-type authInterceptor struct{ verifier TokenVerifier }
+type authInterceptor struct {
+	verifier TokenVerifier
+	// metrics counts acting-as outcomes; nil counts nothing.
+	metrics *Metrics
+}
 
-func (i *authInterceptor) authenticate(ctx context.Context, spec connect.Spec, authorization string) (context.Context, error) {
+func (i *authInterceptor) authenticate(ctx context.Context, spec connect.Spec, header http.Header) (context.Context, error) {
 	if !strings.HasPrefix(spec.Procedure, adminPrefix) {
 		return ctx, nil
 	}
-	tok, err := bearerToken(authorization)
+	tok, err := bearerToken(header.Get("Authorization"))
 	if err != nil {
 		return ctx, connectError(ErrUnauthenticated)
 	}
@@ -230,12 +243,61 @@ func (i *authInterceptor) authenticate(ctx context.Context, spec connect.Spec, a
 		}
 		return ctx, connectError(ErrUnauthenticated)
 	}
+	if target, present := actAsTarget(header); present {
+		var denied error
+		if p, denied = i.actAs(ctx, spec, p, target); denied != nil {
+			return ctx, denied
+		}
+	}
 	return withPrincipal(ctx, p), nil
+}
+
+// actAsTarget is the Account named by andara-act-as, and whether the call
+// asks to act as anyone. Two values are not a target: the call is refused
+// rather than one chosen, since a proxy in front may have added the second.
+func actAsTarget(header http.Header) (target string, present bool) {
+	values := header.Values(ActAsHeader)
+	switch len(values) {
+	case 0:
+		return "", false
+	case 1:
+		target = strings.TrimSpace(values[0])
+		return target, target != ""
+	default:
+		return "", true
+	}
+}
+
+// actAs resolves andara-act-as through the verifier, which audits it either
+// way (AW-SRV-008 AC-10). The outcome is counted and put on the RPC span.
+func (i *authInterceptor) actAs(ctx context.Context, spec connect.Spec, p Principal, target string) (Principal, error) {
+	outcome := ActAsOK
+	var err error
+	if target == "" {
+		outcome, err = ActAsDenied, ErrPermissionDenied
+	} else if p, err = i.verifier.ActAs(auth.WithActAsMethod(ctx, methodLabel(spec)), p, target); err != nil {
+		outcome = ActAsDenied
+		if errors.Is(err, auth.ErrActAsNoAccount) {
+			outcome = ActAsUnknownAccount
+		}
+	}
+	if i.metrics != nil {
+		i.metrics.ActAsTotal.WithLabelValues(outcome).Inc()
+	}
+	span := trace.SpanFromContext(ctx)
+	if target != "" {
+		span.SetAttributes(attribute.String("auth.acting_as", target))
+	}
+	span.SetAttributes(attribute.String("auth.act_as_outcome", outcome))
+	if err != nil {
+		return Principal{}, connectError(ErrPermissionDenied)
+	}
+	return p, nil
 }
 
 func (i *authInterceptor) WrapUnary(next connect.UnaryFunc) connect.UnaryFunc {
 	return func(ctx context.Context, req connect.AnyRequest) (connect.AnyResponse, error) {
-		ctx, err := i.authenticate(ctx, req.Spec(), req.Header().Get("Authorization"))
+		ctx, err := i.authenticate(ctx, req.Spec(), req.Header())
 		if err != nil {
 			return nil, err
 		}
@@ -249,7 +311,7 @@ func (i *authInterceptor) WrapStreamingClient(next connect.StreamingClientFunc) 
 
 func (i *authInterceptor) WrapStreamingHandler(next connect.StreamingHandlerFunc) connect.StreamingHandlerFunc {
 	return func(ctx context.Context, conn connect.StreamingHandlerConn) error {
-		ctx, err := i.authenticate(ctx, conn.Spec(), conn.RequestHeader().Get("Authorization"))
+		ctx, err := i.authenticate(ctx, conn.Spec(), conn.RequestHeader())
 		if err != nil {
 			return err
 		}

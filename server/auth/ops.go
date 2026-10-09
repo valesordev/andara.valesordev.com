@@ -467,12 +467,16 @@ func (s *Store) ActAs(ctx context.Context, p Principal, target string) (Principa
 	acc, ok := s.lookupID(target)
 	if !ok || acc.GetStatus() != accountsv1.AccountStatus_ACTIVE {
 		s.audit.Record(ctx, Entry{Actor: p, Action: ActionActAs, Target: target, Outcome: AuditDenied, Detail: "no such active account"})
-		return Principal{}, ErrPermissionDenied
+		return Principal{}, ErrActAsNoAccount
 	}
 	out := principalFor(acc, p.SessionExp)
 	out.AccountID = p.AccountID
 	out.ActingAs = target
-	s.audit.Record(ctx, Entry{Actor: out, Action: ActionActAs, Target: target, Outcome: AuditOK})
+	e := Entry{Actor: out, Action: ActionActAs, Target: target, Outcome: AuditOK}
+	if m := ActAsMethodFrom(ctx); m != "" {
+		e.Detail = "method " + m // an Admin call; OpenSession names none
+	}
+	s.audit.Record(ctx, e)
 	return out, nil
 }
 

@@ -6,8 +6,9 @@ Usage:
   andara-cli content approve <pack> <version> [flags]
 
 Flags:
-  -h, --help   help for approve
-      --yes    don't ask before approving your own publish
+      --as string   run as this account ID (operator or game master; every call is audited)
+  -h, --help        help for approve
+      --yes         don't ask before approving your own publish
 
 Global Flags:
       --config string            config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)

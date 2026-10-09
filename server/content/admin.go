@@ -419,7 +419,9 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 		return nil, a.staleParent(ctx, c, pack, req.GetParentVersion(), newest, digest, override)
 	}
 
-	cv := &contentv1.ContentVersion{PackId: pack, Blobs: refs, Author: c.p.EffectiveAccountID()}
+	// Author is the effective Account and Publisher the real actor: the
+	// same unless the Operator acted as someone (AW-SRV-039).
+	cv := &contentv1.ContentVersion{PackId: pack, Blobs: refs, Author: c.p.EffectiveAccountID(), Publisher: c.p.AccountID}
 	bodies, err := a.o.Blobs.Blobs(ctx, refs)
 	res, rerr := a.resolveCandidate(ctx, cv, bodies, err)
 	var refusing, warnings []sim.ValidationError
@@ -437,7 +439,7 @@ func (a *Admin) PublishVersion(ctx context.Context, req *adminv1.PublishVersionR
 	}
 
 	mctx, mspan := a.tracer.Start(ctx, "content.write_manifest")
-	out, err := a.o.Registry.Publish(mctx, cv, req.GetParentVersion(), c.p.AccountID)
+	out, err := a.o.Registry.Publish(mctx, cv, req.GetParentVersion())
 	mspan.End()
 	var stale *ErrStaleParent
 	switch {
@@ -682,8 +684,12 @@ func (a *Admin) ApproveVersion(ctx context.Context, req *adminv1.ApproveVersionR
 		return nil, adminErr(CodeNotFound, ErrReasonNotFound, "%s@%d is not published", pack, version)
 	}
 	digest := BlobHashesDigest(cv.GetBlobs())
-	publisher := []string{cv.GetAuthor(), a.o.Registry.PublishedBy(pack, version)}
-	self := slices.Contains(publisher, c.p.AccountID) || slices.Contains(publisher, c.p.EffectiveAccountID())
+	// The stored manifest, not the read default: a manifest written before
+	// AW-SRV-039 has no publisher, and the empty one must match no caller.
+	publishers := []string{cv.GetAuthor(), cv.GetPublisher()}
+	self := slices.ContainsFunc(publishers, func(id string) bool {
+		return id != "" && (id == c.p.AccountID || id == c.p.EffectiveAccountID())
+	})
 	if self && (!c.operator || !a.o.OperatorSelfApproval) {
 		a.m.Approvals.WithLabelValues(ApprovalSelf).Inc()
 		err := adminErr(CodePermissionDenied, ErrReasonSelfApproval, "%s published %s@%d and may not approve it; a second Builder holding %s must", c.p.AccountID, pack, version, pack)
@@ -833,6 +839,9 @@ func (a *Admin) ListVersions(ctx context.Context, req *adminv1.ListVersionsReque
 		Versions:    a.o.Registry.Versions(pack, int(req.GetLimit())),
 		Activations: a.o.Registry.Activations(pack),
 	}
+	for _, cv := range out.Versions {
+		reportPublisher(cv)
+	}
 	if av, ok := a.o.Registry.Pointer(pack); ok {
 		out.ActiveVersion = av.GetVersion()
 	}
@@ -849,7 +858,18 @@ func (a *Admin) GetVersion(ctx context.Context, req *adminv1.GetVersionRequest) 
 	if !ok {
 		return nil, adminErr(CodeNotFound, ErrReasonNotFound, "%s@%d is not published", pack, version)
 	}
+	reportPublisher(cv)
 	return &adminv1.GetVersionResponse{Version: cv}, nil
+}
+
+// reportPublisher fills publisher on a copy about to go on the wire, so no
+// client applies the rule: a manifest written before AW-SRV-039 has none, and
+// no acted-as manifest could exist then, so the publisher was the author. The
+// stored manifest is not changed.
+func reportPublisher(cv *contentv1.ContentVersion) {
+	if cv.GetPublisher() == "" {
+		cv.Publisher = cv.GetAuthor()
+	}
 }
 
 // GetBlob streams one blob of pack@version. Authorization is on the pack and

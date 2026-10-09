@@ -28,7 +28,18 @@ type Metrics struct {
 	SessionDuration prometheus.Histogram
 	RequestsTotal   *prometheus.CounterVec
 	RequestDuration *prometheus.HistogramVec
+	// ActAsTotal counts Admin calls that carried andara-act-as, by outcome
+	// (AW-SRV-039). Three values, pre-seeded; the target Account is a span
+	// attribute and a log field, never a label.
+	ActAsTotal *prometheus.CounterVec
 }
+
+// Outcomes for andara_admin_act_as_total.
+const (
+	ActAsOK             = "ok"
+	ActAsDenied         = "denied"          // the caller may not act as anyone, or the header was ambiguous
+	ActAsUnknownAccount = "unknown_account" // the target is unknown or not ACTIVE
+)
 
 // NewMetrics builds and registers the gateway instruments. A nil registerer
 // builds them unregistered, which a test can read with testutil.
@@ -61,6 +72,14 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 			Help:      "RPC wall time from interceptor entry to completion, by method.",
 			Buckets:   prometheus.DefBuckets,
 		}, []string{"method"}),
+		ActAsTotal: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Namespace: "andara",
+			Name:      "admin_act_as_total",
+			Help:      "Admin calls carrying andara-act-as, by outcome.",
+		}, []string{"outcome"}),
+	}
+	for _, o := range []string{ActAsOK, ActAsDenied, ActAsUnknownAccount} {
+		m.ActAsTotal.WithLabelValues(o)
 	}
 	// Every outcome is present from the first scrape, so a rate() over one
 	// that has not happened yet is zero rather than absent.
@@ -68,7 +87,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		m.SessionsTotal.WithLabelValues(o)
 	}
 	if reg != nil {
-		reg.MustRegister(m.SessionsActive, m.SessionsTotal, m.SessionDuration, m.RequestsTotal, m.RequestDuration)
+		reg.MustRegister(m.SessionsActive, m.SessionsTotal, m.SessionDuration, m.RequestsTotal, m.RequestDuration, m.ActAsTotal)
 	}
 	return m
 }

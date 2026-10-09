@@ -177,22 +177,32 @@ func (rt *runtime) who(accountID string) string {
 	if accountID == "" {
 		return "nobody"
 	}
-	if cred, err := rt.loadCredential(); err == nil && cred != nil && cred.Username != "" && rt.isCaller(cred, accountID) {
+	if cred, err := rt.loadCredential(); err == nil && cred != nil && cred.Username != "" && accountID != "" && accountID == callerID(cred) {
 		return cred.Username
 	}
 	return accountID
 }
 
-// isCaller reports whether accountID is the stored credential's Account, or
-// the one its Session acts as (AC-11). Read from the token unverified: it
-// decides a prompt, and the server decides everything else.
-func (rt *runtime) isCaller(cred *storedCredential, accountID string) bool {
-	id, actingAs, ok := auth.TokenAccountID(cred.SessionToken)
-	if !ok {
-		id = cred.AccountID
+// callerID is the Account the stored credential speaks for, read from its
+// token unverified: it names a caller in a prompt, and the server decides
+// everything else.
+func callerID(cred *storedCredential) string {
+	if id, ok := auth.TokenCaller(cred.SessionToken); ok {
+		return id
 	}
-	return accountID != "" && (accountID == id || accountID == actingAs)
+	return cred.AccountID
 }
+
+// asFlag registers --as on a content write command and returns where its
+// value lands. The command's RunE hands it to useActAs before its first RPC.
+func asFlag(cmd *cobra.Command) *string {
+	var as string
+	cmd.Flags().StringVar(&as, "as", "", "run as this account ID (operator or game master; every call is audited)")
+	return &as
+}
+
+// useActAs makes the command's Admin calls act as the --as account.
+func (rt *runtime) useActAs(as string) { rt.actAs = strings.TrimSpace(as) }
 
 func stamp(unixNano int64) string {
 	if unixNano == 0 {
@@ -213,6 +223,7 @@ func parseVersion(s string) (uint64, error) {
 
 func newContentPublishCmd(rt *runtime) *cobra.Command {
 	var path, pack, cache string
+	var as *string
 	cmd := &cobra.Command{
 		Use:   "publish",
 		Short: "Compile, validate, and publish a pack as a new version, awaiting approval",
@@ -224,9 +235,11 @@ func newContentPublishCmd(rt *runtime) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
+			rt.useActAs(*as)
 			return rt.publish(path, pack, cache)
 		},
 	}
+	as = asFlag(cmd)
 	fs := cmd.Flags()
 	fs.StringVar(&path, "path", ".", "pack directory of .aw source")
 	fs.StringVar(&pack, "pack", "", "the pack to publish as (default: the source's `pack` declaration)")
@@ -439,6 +452,7 @@ func placeAll(smap *lang.SourceMap, fs []*contentv1.Diagnostic) []lang.Diagnosti
 
 func newContentApproveCmd(rt *runtime) *cobra.Command {
 	var yes bool
+	var as *string
 	cmd := &cobra.Command{
 		Use:   "approve <pack> <version>",
 		Short: "Approve a published version, so it can be activated",
@@ -453,9 +467,11 @@ func newContentApproveCmd(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			rt.useActAs(*as)
 			return rt.approve(args[0], version, yes)
 		},
 	}
+	as = asFlag(cmd)
 	cmd.Flags().BoolVar(&yes, "yes", false, "don't ask before approving your own publish")
 	return cmd
 }
@@ -473,7 +489,7 @@ func (rt *runtime) approve(pack string, version uint64, yes bool) error {
 		return rt.contentError(err)
 	}
 	cred, _ := rt.loadCredential()
-	if author := got.Msg.GetVersion().GetAuthor(); cred != nil && rt.isCaller(cred, author) {
+	if cred != nil && rt.publishedByCaller(cred, got.Msg.GetVersion()) {
 		// AC-11: asked before the RPC. Whether it's allowed is the
 		// server's call; this is making sure it's meant.
 		q := fmt.Sprintf("You published %s@%d. Approve it yourself as %s?", pack, version, cred.Username)
@@ -500,11 +516,26 @@ func (rt *runtime) approve(pack string, version uint64, yes bool) error {
 	})
 }
 
+// publishedByCaller reports whether the caller published cv: the manifest's
+// author or publisher is the caller's Account, or the Account --as names
+// (AW-SRV-039). The server reports publisher = author for a manifest written
+// before that field, so the pair is read as the server sends it. It decides a
+// prompt; the server decides everything else.
+func (rt *runtime) publishedByCaller(cred *storedCredential, cv *contentv1.ContentVersion) bool {
+	for _, id := range []string{cv.GetAuthor(), cv.GetPublisher()} {
+		if id != "" && (id == callerID(cred) || id == rt.actAs) {
+			return true
+		}
+	}
+	return false
+}
+
 // --- activate and rollback ---------------------------------------------------
 
 func newContentActivateCmd(rt *runtime) *cobra.Command {
 	var yes, override bool
 	var reason string
+	var as *string
 	cmd := &cobra.Command{
 		Use:   "activate <pack> <version>",
 		Short: "Move a pack's Active Pointer to an approved version",
@@ -525,9 +556,11 @@ func newContentActivateCmd(rt *runtime) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			rt.useActAs(*as)
 			return rt.activate(args[0], version, false, yes, override, reason)
 		},
 	}
+	as = asFlag(cmd)
 	fs := cmd.Flags()
 	fs.BoolVar(&yes, "yes", false, "don't ask for confirmation")
 	fs.BoolVar(&override, "override", false, "activate without approval (operator; needs --reason)")
@@ -538,6 +571,7 @@ func newContentActivateCmd(rt *runtime) *cobra.Command {
 func newContentRollbackCmd(rt *runtime) *cobra.Command {
 	var yes bool
 	var to uint64
+	var as *string
 	cmd := &cobra.Command{
 		Use:   "rollback <pack>",
 		Short: "Move a pack's Active Pointer back to the version active before this one",
@@ -548,9 +582,11 @@ func newContentRollbackCmd(rt *runtime) *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
+			rt.useActAs(*as)
 			return rt.rollback(args[0], to, yes)
 		},
 	}
+	as = asFlag(cmd)
 	cmd.Flags().Uint64Var(&to, "to", 0, "the version to go back to (default: the one active before this)")
 	cmd.Flags().BoolVar(&yes, "yes", false, "don't ask for confirmation")
 	return cmd
@@ -735,6 +771,7 @@ func (rt *runtime) history(pack string, limit uint32) error {
 		Version     uint64     `json:"version"`
 		Parent      uint64     `json:"parent_version"`
 		Author      string     `json:"author"`
+		Publisher   string     `json:"publisher"`
 		PublishedAt string     `json:"published_at"`
 		ApprovedBy  string     `json:"approved_by"`
 		ApprovedAt  string     `json:"approved_at"`
@@ -749,7 +786,7 @@ func (rt *runtime) history(pack string, limit uint32) error {
 			ivs = []interval{}
 		}
 		rows = append(rows, row{
-			Version: v.GetVersion(), Parent: v.GetParentVersion(), Author: v.GetAuthor(),
+			Version: v.GetVersion(), Parent: v.GetParentVersion(), Author: v.GetAuthor(), Publisher: v.GetPublisher(),
 			PublishedAt: stamp(v.GetPublishedAtUnixNano()), ApprovedBy: v.GetApprovedBy(),
 			ApprovedAt: stamp(v.GetApprovedAtUnixNano()), CoreVersion: v.GetCoreVersion(),
 			Active: v.GetVersion() == active, Intervals: ivs,

@@ -447,7 +447,7 @@ func (s *contentServer) publish(t *testing.T, pack string, coreVersion uint64, b
 		}
 		refs = append(refs, &contentv1.BlobRef{Path: p, Hash: sum[:], SizeBytes: uint64(len(body))})
 	}
-	cv, err := s.reg.Publish(ctx, &contentv1.ContentVersion{PackId: pack, Blobs: refs, CoreVersion: coreVersion, Author: "test"}, s.reg.Newest(pack), "test")
+	cv, err := s.reg.Publish(ctx, &contentv1.ContentVersion{PackId: pack, Blobs: refs, CoreVersion: coreVersion, Author: "test", Publisher: "test"}, s.reg.Newest(pack))
 	if err != nil {
 		t.Fatal(err)
 	}
