@@ -9,6 +9,7 @@ Usage:
   andara-cli content activate <pack> <version> [flags]
 
 Flags:
+      --as string       run as this account ID (operator or game master; every call is audited)
   -h, --help            help for activate
       --override        activate without approval (operator; needs --reason)
       --reason string   why --override skips approval; recorded in the audit log

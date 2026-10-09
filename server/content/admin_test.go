@@ -139,7 +139,7 @@ func (h *pubHarness) seedCore(v uint64) {
 		files["templates/andara.core."+name+".json"] = readFile(h.t, filepath.Join("..", "..", "content", "core", "templates", "andara.core."+name+".json"))
 	}
 	refs := h.putBlobs(files)
-	cv, err := h.reg.Publish(context.Background(), &contentv1.ContentVersion{PackId: CorePack, Blobs: refs, Author: "server"}, h.reg.Newest(CorePack), "server")
+	cv, err := h.reg.Publish(context.Background(), &contentv1.ContentVersion{PackId: CorePack, Blobs: refs, Author: "server", Publisher: "server"}, h.reg.Newest(CorePack))
 	if err != nil || cv.GetVersion() != v {
 		h.t.Fatalf("seed core@%d: %v %v", v, cv, err)
 	}
@@ -463,8 +463,8 @@ func TestApproveVersion_ActingAsDoesNotHideTheSamePerson(t *testing.T) {
 		t.Fatal(err)
 	}
 	cv, _ := h.reg.Manifest("town", 1)
-	if cv.GetAuthor() != alice || h.reg.PublishedBy("town", 1) != brian {
-		t.Fatalf("author %s, published by %s", cv.GetAuthor(), h.reg.PublishedBy("town", 1))
+	if cv.GetAuthor() != alice || cv.GetPublisher() != brian {
+		t.Fatalf("author %s, publisher %s", cv.GetAuthor(), cv.GetPublisher())
 	}
 	_, err := h.admin.ApproveVersion(operator(), &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
 	adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
@@ -900,6 +900,128 @@ func TestAuthorizationMatrix(t *testing.T) {
 	}
 }
 
+// The self-approval test names both of the caller's identities: the real
+// actor and the Account acted as. Each is enough on its own (AW-SRV-039).
+func TestApproveVersion_SelfApprovalReadsBothCallerIdentities(t *testing.T) {
+	asAlice := auth.WithPrincipal(context.Background(), auth.Principal{AccountID: brian, ActingAs: alice, Roles: []auth.Role{auth.RoleBuilder}})
+
+	t.Run("published as themselves, approving as another Builder", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(operator(), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		before := len(h.auditRecords())
+		_, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
+		adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
+		if recs := h.auditSince(before); len(recs) != 1 || !recs[0].GetSelfApproval() {
+			t.Errorf("audit %v", recs)
+		}
+	})
+	t.Run("acting as the Builder who published", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(builder(alice), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
+		adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
+	})
+	t.Run("acting as a Builder, approving a third party's version", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(builder(bob), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		if ap, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1}); err != nil || ap.GetSelfApproval() {
+			t.Fatalf("approve %v %v", ap, err)
+		}
+	})
+}
+
+// --- publisher (AW-SRV-039) -----------------------------------------------------
+
+// AC-1, AC-2: the manifest carries the real actor, so it needs no audit topic
+// to say who published. An acted-as publish has author != publisher; a plain
+// one has the two equal.
+func TestPublishVersion_PublisherIsTheRealActor(t *testing.T) {
+	h := newPubHarness(t, nil)
+	asAlice := auth.WithPrincipal(context.Background(), auth.Principal{AccountID: brian, ActingAs: alice, Roles: []auth.Role{auth.RoleBuilder}})
+	if _, err := h.publish(asAlice, "town", townFiles(t)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.publish(builder(bob), "town", townFiles(t)); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		version           uint64
+		author, publisher string
+	}{{1, alice, brian}, {2, bob, bob}} {
+		cv, ok := h.reg.Manifest("town", tc.version)
+		if !ok || cv.GetAuthor() != tc.author || cv.GetPublisher() != tc.publisher {
+			t.Errorf("town@%d: author %q, publisher %q; want %q, %q", tc.version, cv.GetAuthor(), cv.GetPublisher(), tc.author, tc.publisher)
+		}
+	}
+	// With no audit topic at all, as under auth.store=memory after a
+	// restart or past the topic's retention, the publisher is still known.
+	r, err := OpenRegistry(context.Background(), RegistryOptions{Blobs: h.blobs, Versions: h.versions, Active: h.active})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cv, _ := r.Manifest("town", 1); cv.GetPublisher() != brian {
+		t.Errorf("reopened without the audit topic: publisher %q, want %q", cv.GetPublisher(), brian)
+	}
+}
+
+// legacy writes a manifest as it was before this story: no publisher.
+func (h *pubHarness) legacy(author string) uint64 {
+	h.t.Helper()
+	refs := h.putBlobs(townFiles(h.t))
+	cv, err := h.reg.Publish(context.Background(), &contentv1.ContentVersion{PackId: "town", Blobs: refs, Author: author}, h.reg.Newest("town"))
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	if cv.GetPublisher() != "" {
+		h.t.Fatalf("the registry set publisher %q on a manifest that named none", cv.GetPublisher())
+	}
+	return cv.GetVersion()
+}
+
+// AC-6: a manifest stored before this story reads with publisher = author on
+// the wire, and the stored bytes are untouched.
+func TestAdminReads_AManifestWithoutPublisherReportsAuthor(t *testing.T) {
+	h := newPubHarness(t, nil)
+	v := h.legacy(alice)
+
+	got, err := h.admin.GetVersion(operator(), &adminv1.GetVersionRequest{PackId: "town", Version: v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.GetVersion().GetPublisher() != alice {
+		t.Errorf("GetVersion publisher %q, want %q", got.GetVersion().GetPublisher(), alice)
+	}
+	list, err := h.admin.ListVersions(operator(), &adminv1.ListVersionsRequest{PackId: "town"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if vs := list.GetVersions(); len(vs) != 1 || vs[0].GetPublisher() != alice {
+		t.Errorf("ListVersions = %v", vs)
+	}
+	if stored, _ := h.reg.Manifest("town", v); stored.GetPublisher() != "" {
+		t.Errorf("the read default was written back: stored publisher %q", stored.GetPublisher())
+	}
+}
+
+// The self-approval test reads the stored manifest, which for a legacy one
+// has no publisher: author alone decides, and the empty publisher is skipped.
+func TestApproveVersion_ALegacyManifestIsDecidedByAuthor(t *testing.T) {
+	h := newPubHarness(t, nil)
+	v := h.legacy(alice)
+
+	_, err := h.admin.ApproveVersion(builder(alice), &adminv1.ApproveVersionRequest{PackId: "town", Version: v})
+	adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
+	if ap, err := h.admin.ApproveVersion(builder(bob), &adminv1.ApproveVersionRequest{PackId: "town", Version: v}); err != nil || ap.GetSelfApproval() {
+		t.Fatalf("a second Builder: %v %v", ap, err)
+	}
+}
+
 // --- the registry's history ------------------------------------------------------
 
 // A restart rebuilds everything the publish path answers from, including what
@@ -921,8 +1043,8 @@ func TestRegistry_ReopenRebuildsTheIndexAndTheHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	cv, ok := r.Manifest("town", 1)
-	if !ok || cv.GetApprovedBy() != bob || r.Newest("town") != 1 || r.PublishedBy("town", 1) != brian {
-		t.Fatalf("reopened: %v, newest %d, published by %q", cv, r.Newest("town"), r.PublishedBy("town", 1))
+	if !ok || cv.GetApprovedBy() != bob || r.Newest("town") != 1 || cv.GetPublisher() != brian {
+		t.Fatalf("reopened: %v, newest %d", cv, r.Newest("town"))
 	}
 	if av, ok := r.Pointer("town"); !ok || av.GetVersion() != 1 || av.GetActivatedBy() != bob {
 		t.Fatalf("pointer %v", av)

@@ -122,7 +122,7 @@ func BootCore(ctx context.Context, o CoreBootOptions) (CoreBoot, error) {
 			}
 		}
 		mctx, mspan := o.Tracer.Start(ctx, "content.write_manifest")
-		_, err := o.Registry.PublishExact(mctx, &contentv1.ContentVersion{PackId: o.Pack, Blobs: refs, Author: ServerPrincipal}, o.Version, ServerPrincipal)
+		_, err := o.Registry.PublishExact(mctx, &contentv1.ContentVersion{PackId: o.Pack, Blobs: refs, Author: ServerPrincipal, Publisher: ServerPrincipal}, o.Version)
 		mspan.End()
 		if err != nil {
 			return out, err

@@ -50,6 +50,9 @@ type runtime struct {
 	// nil means stdin and stdout are both terminals. A test sets it, with
 	// stdin, to answer confirmations (AW-CLI-003).
 	tty func() bool
+	// actAs is the --as value of the content write command running: the
+	// Account its Admin calls act as. Empty for every other command.
+	actAs string
 	// beforePublishVersion, when set, runs between a publish's uploads and
 	// its PublishVersion: where a test lands someone else's publish to make
 	// the parent stale (AW-CLI-003).

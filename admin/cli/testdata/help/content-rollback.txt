@@ -6,9 +6,10 @@ Usage:
   andara-cli content rollback <pack> [flags]
 
 Flags:
-  -h, --help      help for rollback
-      --to uint   the version to go back to (default: the one active before this)
-      --yes       don't ask for confirmation
+      --as string   run as this account ID (operator or game master; every call is audited)
+  -h, --help        help for rollback
+      --to uint     the version to go back to (default: the one active before this)
+      --yes         don't ask for confirmation
 
 Global Flags:
       --config string            config file path (default $XDG_CONFIG_HOME/andara/cli.yaml)

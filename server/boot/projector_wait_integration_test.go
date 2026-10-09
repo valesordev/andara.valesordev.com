@@ -139,7 +139,7 @@ func TestProjectorBoot_ReadOnlyAndWaitsForZones(t *testing.T) {
 	}
 	cv := &contentv1.ContentVersion{PackId: "town", Author: "acct-builder", CoreVersion: core.Version(),
 		Blobs: []*contentv1.BlobRef{{Path: "town.json", Hash: sum[:], SizeBytes: uint64(len(body))}}}
-	if _, err := srv.registry.Publish(ctx, cv, 0, "acct-builder"); err != nil {
+	if _, err := srv.registry.Publish(ctx, cv, 0); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := srv.registry.MovePointer(ctx, "town", 1, "acct-operator", ""); err != nil {

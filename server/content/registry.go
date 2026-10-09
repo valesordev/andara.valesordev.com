@@ -34,8 +34,9 @@ import (
 // The index is rebuilt at open from the three content topics and the audit
 // topic. The audit topic is the only history that survives compaction: the
 // pointer topic keeps one record per pack, so the activation history
-// ListVersions reports, and the real actor behind an acting-as publish (which
-// the manifest's author can't carry), are read back from andara.audit.v1.
+// ListVersions reports is read back from andara.audit.v1. The real actor
+// behind an acting-as publish is the manifest's publisher, so it needs no
+// audit topic.
 type Registry struct {
 	blobs, versions, active recordlog.Log
 	cache                   BlobCache
@@ -45,12 +46,11 @@ type Registry struct {
 	// sizes is every blob the store holds, by hash, with its body's size:
 	// what HasBlobs answers from, and what PublishVersion checks a
 	// manifest's declared sizes against.
-	sizes       map[[32]byte]uint64
-	manifests   map[string]map[uint64]*contentv1.ContentVersion
-	newest      map[string]uint64
-	pointer     map[string]*contentv1.ActiveVersion
-	history     map[string][]*contentv1.ActiveVersion
-	publishedBy map[string]string // ManifestKey -> the real actor of the publish
+	sizes     map[[32]byte]uint64
+	manifests map[string]map[uint64]*contentv1.ContentVersion
+	newest    map[string]uint64
+	pointer   map[string]*contentv1.ActiveVersion
+	history   map[string][]*contentv1.ActiveVersion
 }
 
 // RegistryOptions configures a Registry.
@@ -88,12 +88,11 @@ func OpenRegistry(ctx context.Context, o RegistryOptions) (*Registry, error) {
 	r := &Registry{
 		blobs: o.Blobs, versions: o.Versions, active: o.Active,
 		cache: o.Cache, now: o.Now,
-		sizes:       map[[32]byte]uint64{},
-		manifests:   map[string]map[uint64]*contentv1.ContentVersion{},
-		newest:      map[string]uint64{},
-		pointer:     map[string]*contentv1.ActiveVersion{},
-		history:     map[string][]*contentv1.ActiveVersion{},
-		publishedBy: map[string]string{},
+		sizes:     map[[32]byte]uint64{},
+		manifests: map[string]map[uint64]*contentv1.ContentVersion{},
+		newest:    map[string]uint64{},
+		pointer:   map[string]*contentv1.ActiveVersion{},
+		history:   map[string][]*contentv1.ActiveVersion{},
 	}
 	if err := o.Versions.Replay(ctx, func(rec recordlog.Record) error {
 		if len(rec.Value) == 0 {
@@ -163,8 +162,6 @@ func (r *Registry) replayAudit(ar *auditv1.AuditRecord) {
 		return
 	}
 	switch ar.GetAction() {
-	case auth.ActionPublish:
-		r.publishedBy[ManifestKey(ar.GetPackId(), ar.GetVersion())] = ar.GetActorAccountId()
 	case auth.ActionActivate, auth.ActionRollback, auth.ActionOverride:
 		r.history[ar.GetPackId()] = append(r.history[ar.GetPackId()], &contentv1.ActiveVersion{
 			PackId: ar.GetPackId(), Version: ar.GetVersion(),
@@ -235,9 +232,9 @@ func (r *Registry) Newest(pack string) uint64 {
 }
 
 // Publish assigns cv the pack's next version and writes it, if parent is
-// still the newest. actor is the real actor, kept for the self-approval
-// check; cv.Author is the effective Account.
-func (r *Registry) Publish(ctx context.Context, cv *contentv1.ContentVersion, parent uint64, actor string) (*contentv1.ContentVersion, error) {
+// still the newest. cv.Author is the effective Account and cv.Publisher the
+// real actor; the caller sets both.
+func (r *Registry) Publish(ctx context.Context, cv *contentv1.ContentVersion, parent uint64) (*contentv1.ContentVersion, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pack := cv.GetPackId()
@@ -251,7 +248,6 @@ func (r *Registry) Publish(ctx context.Context, cv *contentv1.ContentVersion, pa
 	if err := r.writeManifest(ctx, out); err != nil {
 		return nil, err
 	}
-	r.publishedBy[ManifestKey(pack, out.Version)] = actor
 	return proto.Clone(out).(*contentv1.ContentVersion), nil
 }
 
@@ -378,14 +374,6 @@ func (r *Registry) Activations(pack string) []*contentv1.ActiveVersion {
 	return out
 }
 
-// PublishedBy is the real actor who published pack@version, or "" when the
-// history has no record of it.
-func (r *Registry) PublishedBy(pack string, version uint64) string {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.publishedBy[ManifestKey(pack, version)]
-}
-
 // BlobHashesDigest is the audit record's blob_hashes_sha256, and a core's
 // digest: the sha256 of the sorted list of blob hashes.
 func BlobHashesDigest(refs []*contentv1.BlobRef) []byte {
@@ -410,7 +398,7 @@ func (r *Registry) Close() error {
 // PublishExact writes cv as exactly pack@version, with parent the pack's
 // newest version below it: the server's own core at boot, which the build
 // numbers (AW-SRV-013). An existing pack@version is never overwritten.
-func (r *Registry) PublishExact(ctx context.Context, cv *contentv1.ContentVersion, version uint64, actor string) (*contentv1.ContentVersion, error) {
+func (r *Registry) PublishExact(ctx context.Context, cv *contentv1.ContentVersion, version uint64) (*contentv1.ContentVersion, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	pack := cv.GetPackId()
@@ -428,6 +416,5 @@ func (r *Registry) PublishExact(ctx context.Context, cv *contentv1.ContentVersio
 	if err := r.writeManifest(ctx, out); err != nil {
 		return nil, err
 	}
-	r.publishedBy[ManifestKey(pack, version)] = actor
 	return proto.Clone(out).(*contentv1.ContentVersion), nil
 }

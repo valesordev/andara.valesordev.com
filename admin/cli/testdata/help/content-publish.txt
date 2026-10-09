@@ -8,6 +8,7 @@ Usage:
   andara-cli content publish [flags]
 
 Flags:
+      --as string      run as this account ID (operator or game master; every call is audited)
       --cache string   core pack cache (default $ANDARA_CONTENT_CACHE, then ~/.cache/andara/packs)
   -h, --help           help for publish
       --pack pack      the pack to publish as (default: the source's pack declaration)

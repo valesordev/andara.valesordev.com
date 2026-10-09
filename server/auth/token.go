@@ -142,22 +142,25 @@ func newAccountID() string {
 	return string(out)
 }
 
-// TokenAccountID reads the Account a Session token names, and the Account it
-// acts as, without verifying it. It's for a client naming its own caller in a
-// prompt (`andara-cli content approve`, AW-CLI-003), never for deciding
-// anything: only Verify, with the keyring, makes a token mean something.
-func TokenAccountID(token string) (accountID, actingAs string, ok bool) {
+// TokenCaller reads the Account a Session token names, without verifying it.
+// It's for a client naming its own caller in a prompt (`andara-cli content
+// approve`, AW-CLI-003), never for deciding anything: only Verify, with the
+// keyring, makes a token mean something. It reads no other claim: a client
+// never works out who an `act` claim makes it (AW-SRV-039).
+func TokenCaller(token string) (accountID string, ok bool) {
 	enc, _, found := strings.Cut(token, ".")
 	if !found {
-		return "", "", false
+		return "", false
 	}
 	body, err := b64.DecodeString(enc)
 	if err != nil {
-		return "", "", false
+		return "", false
 	}
-	var p tokenPayload
+	var p struct {
+		AccountID string `json:"aid"`
+	}
 	if err := json.Unmarshal(body, &p); err != nil || p.AccountID == "" {
-		return "", "", false
+		return "", false
 	}
-	return p.AccountID, p.ActingAs, true
+	return p.AccountID, true
 }
