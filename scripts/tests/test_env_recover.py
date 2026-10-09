@@ -8,6 +8,7 @@ import subprocess
 import sys
 import types
 import unittest
+from unittest import mock
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, os.path.join(REPO, "scripts"))
@@ -210,7 +211,7 @@ class RunSteps(unittest.TestCase):
         user, name = run.make_player("a", "ab12", "Recovered")
         self.assertEqual(run.account_ids, {"a": "acc-1"})
         self.assertTrue(name.startswith("Recovered"))
-        self.assertNotIn("whoami", [c[2] for c in calls if len(c) > 2])
+        self.assertFalse(any("whoami" in c for c in calls))
 
     def test_account_id_kept_when_a_later_step_fails(self):
         run = self.run_()
@@ -224,6 +225,26 @@ class RunSteps(unittest.TestCase):
         with self.assertRaises(env_recover.Failed):
             run.make_player("a", "ab12", "Recovered")
         self.assertEqual(run.account_ids, {"a": "acc-1"})
+
+    def test_cleanup_survives_a_timeout_and_still_disables_the_other(self):
+        run = self.run_()
+        run.account_ids = {"a": "acc-a", "b": "acc-b"}
+        run.cli = "andara-cli"
+        seen = []
+
+        def fake(cmd, **kw):
+            seen.append(cmd[3])
+            if cmd[3] == "acc-a":
+                raise env_recover.subprocess.TimeoutExpired(cmd, 60)
+            return types.SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        real = env_recover.subprocess.run
+        env_recover.subprocess.run = fake
+        self.addCleanup(setattr, env_recover.subprocess, "run", real)
+        run.cleanup()
+        run.account_ids = {}
+        self.assertEqual(seen, ["acc-a", "acc-b"])
+        self.assertFalse(os.path.exists(run.work))
 
     def test_unlanded_kill(self):
         run = self.run_()
@@ -249,6 +270,79 @@ class RunSteps(unittest.TestCase):
         run.account_ids = {}  # teardown's cleanup has nothing left to disable
         self.assertEqual([c[1:] for c in seen], [["account", "set-status", "acc-a", "disabled"],
                                                   ["account", "set-status", "acc-b", "disabled"]])
+
+
+class Main(unittest.TestCase):
+    CREDS = {"GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
+             "GRAFANA_CLOUD_PROM_USER": "123", "MIMIR_API_KEY": "k"}
+
+    def go(self, environ, **overrides):
+        """main() with the cluster-touching pieces stubbed; returns (status, events)."""
+        events = []
+
+        class FakeRun(env_recover.Run):
+            def dump(self):
+                events.append("dump")
+
+            def cleanup(self):
+                events.append("cleanup")
+                shutil_rm(self.work)
+
+        for name, fn in overrides.items():
+            setattr(FakeRun, name, fn)
+        real = (env_recover.Run, env_recover.Grafana)
+        env_recover.Run, env_recover.Grafana = FakeRun, lambda: object()
+        try:
+            with mock.patch.dict(os.environ, environ, clear=True):
+                status = env_recover.main(["dev", "andara-dev"])
+        finally:
+            env_recover.Run, env_recover.Grafana = real
+        return status, events
+
+    def test_bad_rto_fails_before_the_cluster(self):
+        for rto in ("abc", "1.5", "0", ""):
+            touched = []
+            status, _ = self.go(dict(self.CREDS, ENV_RECOVER_RTO=rto),
+                                preflight=lambda self, g, e: touched.append(1))
+            self.assertEqual((status, touched), (1, []), rto)
+
+    def test_whitespace_token_is_missing(self):
+        touched = []
+        status, _ = self.go(dict(self.CREDS, GRAFANA_CLOUD_READ_TOKEN="  "),
+                            preflight=lambda self, g, e: touched.append(1))
+        self.assertEqual((status, touched), (1, []))
+
+    def test_unexpected_exception_dumps_and_cleans_up(self):
+        def boom(self, g, e):
+            raise RuntimeError("boom")
+
+        status, events = self.go(self.CREDS, preflight=boom)
+        self.assertEqual((status, events), (1, ["dump", "cleanup"]))
+
+    def test_transcript_marks_are_taken_before_the_kill(self):
+        events = []
+
+        class P:
+            def lines(self):
+                events.append("lines")
+                return []
+
+        def setup(self):
+            self.players = {"a": P(), "b": P()}
+
+        def kill(self):
+            events.append("kill")
+            raise env_recover.Failed("stop here")
+
+        status, _ = self.go(self.CREDS, preflight=lambda self, g, e: None, setup_cli=lambda self: setup(self),
+                            play_until_round=lambda self: 60, kill=kill)
+        self.assertEqual(status, 1)
+        self.assertEqual(events, ["lines", "lines", "kill"])
+
+
+def shutil_rm(path):
+    import shutil
+    shutil.rmtree(path, ignore_errors=True)
 
 
 class Transcripts(unittest.TestCase):

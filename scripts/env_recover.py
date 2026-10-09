@@ -520,8 +520,12 @@ class Run:
                 if self.account_ids:
                     say("could not disable player %s: its Account was never created" % who.upper())
                 continue
-            p = subprocess.run([self.cli, "account", "set-status", aid, "disabled"], capture_output=True,
-                               text=True, env=self.cli_env, timeout=60)
+            try:
+                p = subprocess.run([self.cli, "account", "set-status", aid, "disabled"], capture_output=True,
+                                   text=True, env=self.cli_env, timeout=60)
+            except (subprocess.TimeoutExpired, OSError) as e:
+                say("could not disable player %s's Account %s: %s" % (who.upper(), aid, e))
+                continue
             if p.returncode != 0:
                 say("could not disable player %s's Account %s: %s" % (who.upper(), aid, (p.stderr or p.stdout).strip()))
         shutil.rmtree(self.work, ignore_errors=True)
