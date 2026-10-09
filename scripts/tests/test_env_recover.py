@@ -332,32 +332,40 @@ class RunSteps(unittest.TestCase):
         with self.assertRaisesRegex(env_recover.Failed, "within 0s"):
             run.rebound_counters(g)
 
-    def test_rebind_shares_one_deadline_from_ready(self):
-        run = self.run_()
-        seen = []
-
+    def _players(self, run, script):
+        """Players whose lines() follow `script` (a list of line lists, the last one repeating)."""
         class P:
-            def __init__(self, who):
-                self.who = who
+            def __init__(self, calls):
+                self.calls, self.n = calls, 0
 
             def lines(self):
-                return []
+                out = self.calls[min(self.n, len(self.calls) - 1)]
+                self.n += 1
+                return out
 
             def send(self, text):
                 pass
 
             def wait_for(self, pattern, after=0, secs=20):
-                seen.append((self.who, pattern, secs))
                 return True
 
-        run.players = {"a": P("A"), "b": P("B")}
+        run.players = {"a": P(script), "b": P(script)}
+
+    def test_rebind_accepts_a_reconnect_inside_the_window_and_rejects_one_after_it(self):
+        run = self.run_()
+        self._players(run, [["-- Connected to x as a, playing A"]])
         run.rebind({"A": 0, "B": 0}, time.time() - 50)
-        connects = [secs for _, pat, secs in seen if pat.startswith("^-- Connected")]
-        self.assertEqual(len(connects), 2)
-        self.assertTrue(all(s <= 10.5 for s in connects), connects)
-        run.rebind({"A": 0, "B": 0}, time.time() - 500)
-        late = [secs for _, pat, secs in seen[-6:] if pat.startswith("^-- Connected")]
-        self.assertEqual(late, [0.0, 0.0])
+        # The line is already there but the window closed 440 s ago: a scan after the deadline proves nothing.
+        with self.assertRaisesRegex(env_recover.Failed, "did not reconnect within 60s"):
+            run.rebind({"A": 0, "B": 0}, time.time() - 500)
+
+    def test_rebind_rejects_a_line_that_arrives_after_the_deadline(self):
+        run = self.run_()
+        self._players(run, [[], [], ["-- Connected to x as a, playing A"]])
+        real_sleep = time.sleep
+        with mock.patch.object(env_recover.time, "sleep", lambda s: real_sleep(0.06)):
+            with self.assertRaisesRegex(env_recover.Failed, "did not reconnect within 60s"):
+                run.rebind({"A": 0, "B": 0}, time.time() - env_recover.RECONNECT_WAIT + 0.05)
 
     def test_a_ready_seen_after_the_rto_fails(self):
         run = self.run_()

@@ -534,10 +534,19 @@ class Run:
     def rebind(self, marks, t_ready):
         """Both players reconnect within RECONNECT_WAIT of Ready: one deadline, shared."""
         a, b = self.players["a"], self.players["b"]
-        for who, p in (("A", a), ("B", b)):
-            left = max(0.0, t_ready + RECONNECT_WAIT - time.time())
-            if not p.wait_for(r"^-- Connected to ", after=marks[who], secs=left):
-                raise Failed("%s's play did not reconnect within %ds of the server being Ready" % (who, RECONNECT_WAIT))
+        deadline = t_ready + RECONNECT_WAIT
+        rx = re.compile(r"^-- Connected to ")
+        waiting = {"A": a, "B": b}
+        while waiting:
+            for who, p in list(waiting.items()):
+                found = any(rx.search(l) for l in p.lines()[marks[who]:])
+                if found and time.time() <= deadline:  # read first, stamped after: the line is no later than the stamp
+                    del waiting[who]
+            if not waiting:
+                break
+            if time.time() > deadline:
+                raise Failed("%s's play did not reconnect within %ds of the server being Ready" % (sorted(waiting)[0], RECONNECT_WAIT))
+            time.sleep(0.5)
         am, bm = len(a.lines()), len(b.lines())
         a.send("look\n")
         b.send("look\n")
