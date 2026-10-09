@@ -20,7 +20,7 @@ Bet: a persistent, authored text world is already a place worth returning to, be
 fight or collect. If walking it feels empty, the later releases are building on the wrong thing.
 Features:
 - FEAT-?? — Enter the world as a Character (create, select, play via `andara-cli play`) (must)
-- FEAT-?? — Walk a multi-zone settlement (must)
+- FEAT-01 — Walk a multi-zone settlement (must)
 - FEAT-?? — See who else is here (arrivals, departures, linkdead marker) (must)
 - FEAT-?? — Come back to the world as I left it (reconnect, crash recovery) (must)
 - FEAT-?? — Builders publish a world and roll it back without a deploy (must; Builder-facing, and it is
