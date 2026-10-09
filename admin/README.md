@@ -94,6 +94,15 @@ the local stack. Activate it with:
 export ANDARA_CONFIG=$PWD/.local/cli.yaml
 ```
 
+A pinned `server.tls_ca` replaces the system trust store, so a stale pin fails a
+public certificate. When a certificate doesn't verify, the `connect_failed`
+message ends with what the CLI trusted and where that setting came from
+(`; trusted only the CA in <path> (server.tls_ca, from config file <path>
+(ANDARA_CONFIG))`, or `; trusted the system trust store`), and `--output json`
+carries it in `detail` as `tls_ca`, `tls_ca_source`, `config_path` and
+`config_path_source`. A name mismatch on `server.tls_server_name` names the
+expected name instead (`tls_server_name`, `tls_server_name_source`).
+
 ## Credentials
 
 Stored in their own file, never in `cli.yaml`. The file is a YAML mapping keyed
