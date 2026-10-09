@@ -4,6 +4,10 @@
 package cli
 
 import (
+	"context"
+	"crypto/x509"
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -171,4 +175,51 @@ func TestTLSFailure_NamesTheExpectedServerName(t *testing.T) {
 	cfg := filepath.Join(r.cfgDir, "cli.yaml")
 	writeConfig(t, cfg, "server:\n  tls_server_name: andara-0.wrong.svc\n")
 	wantFailure(t, r.connect(t, env), "(server.tls_server_name, from config file "+cfg+")")
+}
+
+// AC-7's JSON half: the name and its source ride in detail.
+func TestTLSFailure_JSONDetailCarriesTheServerName(t *testing.T) {
+	r := newTLSRig(t)
+	for _, c := range []struct {
+		env  map[string]string
+		args []string
+		src  string
+	}{
+		{r.envWith("ANDARA_TLS_CA_FILE", r.s.ca), []string{"--tls-server-name", "x.wrong.svc"}, "flag"},
+		{r.envWith("ANDARA_TLS_CA_FILE", r.s.ca, "ANDARA_TLS_SERVER_NAME", "x.wrong.svc"), nil, "env"},
+	} {
+		res := r.connect(t, c.env, append([]string{"-o", "json"}, c.args...)...)
+		e, _ := decodeJSON(t, res.stdout+res.stderr)["error"].(map[string]any)
+		d, _ := e["detail"].(map[string]any)
+		if d["tls_server_name"] != "x.wrong.svc" || d["tls_server_name_source"] != c.src {
+			t.Errorf("detail = %v, want the name and source %q", d, c.src)
+		}
+	}
+}
+
+func TestVerificationFailure_ClassifiesOnlyCertificateErrors(t *testing.T) {
+	for name, c := range map[string]struct {
+		err              error
+		hostname, wanted bool
+	}{
+		"unknown authority": {x509.UnknownAuthorityError{}, false, true},
+		"expired":           {x509.CertificateInvalidError{Reason: x509.Expired}, false, true},
+		"hostname":          {x509.HostnameError{}, true, true},
+		"wrapped":           {errors.Join(errors.New("tls"), x509.UnknownAuthorityError{}), false, true},
+		"refused":           {&net.OpError{Op: "dial", Err: errors.New("connection refused")}, false, false},
+		"deadline":          {context.DeadlineExceeded, false, false},
+	} {
+		hn, ok := verificationFailure(c.err)
+		if hn != c.hostname || ok != c.wanted {
+			t.Errorf("%s: hostname=%v ok=%v, want %v %v", name, hn, ok, c.hostname, c.wanted)
+		}
+	}
+}
+
+// A name mismatch with no server name set adds no CA suffix: the CA verified.
+func TestTLSFailure_AHostMismatchWithNoNameBlamesNoCA(t *testing.T) {
+	f := &tlsFailure{hostname: true, ca: "/x/ca.pem", caSrc: "file"}
+	if got := f.suffix(); got != "" {
+		t.Errorf("suffix = %q, want none", got)
+	}
 }

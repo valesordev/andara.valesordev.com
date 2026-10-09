@@ -101,6 +101,12 @@ func (e *tlsFailure) suffix() string {
 		return fmt.Sprintf("; expected the name %s (server.tls_server_name, from %s)",
 			e.serverName, e.source(e.serverNmSrc, "--tls-server-name", "ANDARA_TLS_SERVER_NAME"))
 	}
+	if e.hostname {
+		// The CA verified; the certificate just isn't for the host dialed.
+		// Naming the CA would point at the wrong cause, so x509's own text
+		// stands (a gap in the contract, raised with architecture).
+		return ""
+	}
 	if e.ca == "" {
 		return "; trusted the system trust store"
 	}
