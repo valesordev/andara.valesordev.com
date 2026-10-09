@@ -98,11 +98,7 @@ func TestCheck_AProducerWithoutTheExplicitPartitionerFails(t *testing.T) {
 	opts := producerOpts(kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)))
 	only(t, failing(t, producer(opts)), "partitioner", Fail)
 	// The library's default is no more explicit than the key hash.
-	var def []kgo.Opt
-	for _, o := range producerOpts() {
-		def = append(def, o)
-	}
-	def = append(def, kgo.RecordPartitioner(kgo.RoundRobinPartitioner()))
+	def := append(producerOpts(), kgo.RecordPartitioner(kgo.RoundRobinPartitioner()))
 	only(t, failing(t, producer(def)), "partitioner", Fail)
 }
 
