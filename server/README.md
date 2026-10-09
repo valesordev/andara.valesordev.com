@@ -381,6 +381,42 @@ gap or a newer `state_version`.
 Spans: `recovery.run`, with children `recovery.load_snapshot` (per Zone object read, around the read itself: `zone_id`, `key`, `bytes`), `restore.verify`,
 `recovery.seek`, `recovery.replay` (`ticks`, `records`) and `recovery.verify`.
 
+## Kafka client settings (AW-SRV-053)
+
+```
+andara-server config-assert [config flags]     # exit 0: the contract holds; exit 1: a deviation
+```
+
+`config-assert` builds every Kafka client the server and the projector build, from the same options
+their constructors use, reads the settings back from the client library, and prints one row per
+setting: `ok`, `warn` or `FAIL`, with the client, the setting, the value in effect and the value
+`docs/specs/kafka/client-contract.md` names. It reaches no broker and needs no certificate or key;
+the configuration is parsed as `--validate-only` parses it, for the `client.id` base and
+`ingress.produce_deadline`. Exit `1` names every failing row on stderr; a compression warning
+exits `0` (compression carries no correctness claim).
+
+| Role | Row | Fails when |
+|------|-----|------------|
+| producer | `acks` | not `all` |
+| | `enable.idempotence` | off (`DisableIdempotentWrite`) |
+| | `max.in.flight.requests.per.connection` | above 5 (franz-go pins it for an idempotent producer) |
+| | `delivery.timeout.ms` | the ingress producer's is not `ingress.produce_deadline` |
+| | partitioner | the commands, events and state producers do not leave `Record.Partition` to the caller (`ManualPartitioner`); the `recordlog` producers (accounts, audit, content) do not map keys as the pinned murmur2 key hash did, on a fixture of keys |
+| | `compression.type` | warns when not `zstd` |
+| consumer | `isolation.level` | not `read_committed` |
+| | group membership, committed offsets | any group, or marked commits |
+| | start offset | `AtStart` or `AtEnd` on a reader that is not a named one-shot of the contract |
+| all | `client.id` | does not match `^<principal>(-[a-z]+)*$` for an ADR-0011 §3 principal, or is empty |
+
+Each package that builds a client exports its options as a function and describes the client as a
+`kafkaclient.Site` (`server/kafkaclient`); `boot.KafkaSites` collects them. A test counts the
+`kgo.NewClient` calls in the tree and fails on one with its options written inline, or in a file with no
+Site, so a new client cannot slip past the check before `AW-SRV-044`'s single constructor lands.
+Two limits: a reader that gets its Partitions with `AddConsumePartitions` after construction
+(the projector's state key scan) is taken as meeting the start-offset row; and a reader's reaction to an
+offset the broker no longer has (`ErrLogGap`, exit `3`) is the readers' own pre-check, which this
+command cannot see.
+
 ## The command pipeline (AW-SRV-003)
 
 Five stages, with the log in the middle (CLAUDE.md §10, ADR-0002):

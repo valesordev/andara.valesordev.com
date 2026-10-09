@@ -12,6 +12,8 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+
+	"github.com/valesordev/andara/server/kafkaclient"
 )
 
 // Kafka is a Log over one topic on a Kafka or Redpanda broker.
@@ -47,6 +49,56 @@ type KafkaOptions struct {
 	MaxRecordBytes int32
 }
 
+// producerOpts are the options a log's producer is built with, o's defaults
+// applied. The partitioner is pinned to the murmur2 key hash the topics'
+// history was written under, so a library upgrade cannot move a key and
+// split its compaction history (AW-SRV-053).
+func producerOpts(o KafkaOptions) []kgo.Opt {
+	if o.ClientID == "" {
+		o.ClientID = "andara-server"
+	}
+	if o.ProduceTimeout <= 0 {
+		o.ProduceTimeout = 10 * time.Second
+	}
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(o.Brokers...),
+		kgo.ClientID(o.ClientID),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordPartitioner(kgo.StickyKeyPartitioner(nil)),
+		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
+		kgo.ProduceRequestTimeout(o.ProduceTimeout),
+		kgo.RecordDeliveryTimeout(o.ProduceTimeout),
+		kgo.DefaultProduceTopic(o.Topic),
+	}
+	if o.MaxRecordBytes > 0 {
+		opts = append(opts, kgo.ProducerBatchMaxBytes(o.MaxRecordBytes))
+	}
+	return opts
+}
+
+// ProducerSite describes the producer NewKafka builds for o.
+func ProducerSite(name string, o KafkaOptions) kafkaclient.Site {
+	return kafkaclient.Site{Name: name, Role: kafkaclient.Producer, Opts: producerOpts(o), Partitioning: kafkaclient.KeyHash}
+}
+
+// replayOpts are the options a replay consumer is built with: a bounded
+// replay of a delete-policy topic from the start, no position resumed.
+func replayOpts(brokers []string, topic string) []kgo.Opt {
+	return []kgo.Opt{
+		kgo.SeedBrokers(brokers...),
+		kgo.ClientID("andara-server-replay"),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+	}
+}
+
+// ReplaySite describes the consumer Replay builds. oneShot names its row in
+// the contract's table of one-shot readers.
+func ReplaySite(name string, brokers []string, topic string, oneShot kafkaclient.OneShot) kafkaclient.Site {
+	return kafkaclient.Site{Name: name, Role: kafkaclient.Consumer, Opts: replayOpts(brokers, topic), OneShot: oneShot}
+}
+
 // NewKafka connects to the brokers and verifies the topic exists. It does
 // not create the topic: topics are declared in deploy/kafka/topics.yaml and
 // applied by `make topics-apply` (AW-INF-004), never by a producer that
@@ -64,17 +116,7 @@ func NewKafka(ctx context.Context, o KafkaOptions) (*Kafka, error) {
 	if o.ProduceTimeout <= 0 {
 		o.ProduceTimeout = 10 * time.Second
 	}
-	base := []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID),
-		kgo.RequiredAcks(kgo.AllISRAcks()),
-		kgo.ProduceRequestTimeout(o.ProduceTimeout),
-		kgo.RecordDeliveryTimeout(o.ProduceTimeout),
-		kgo.DefaultProduceTopic(o.Topic),
-	}
-	if o.MaxRecordBytes > 0 {
-		base = append(base, kgo.ProducerBatchMaxBytes(o.MaxRecordBytes))
-	}
+	base := producerOpts(o)
 	client, err := kgo.NewClient(base...)
 	if err != nil {
 		return nil, fmt.Errorf("recordlog: connect %s: %w", o.Topic, err)
@@ -148,12 +190,7 @@ func (k *Kafka) Replay(ctx context.Context, fn func(Record) error) error {
 		return nil
 	}
 
-	consumer, err := kgo.NewClient(
-		kgo.SeedBrokers(k.brokers...),
-		kgo.ClientID("andara-server-replay"),
-		kgo.ConsumeTopics(k.topic),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-	)
+	consumer, err := kgo.NewClient(replayOpts(k.brokers, k.topic)...)
 	if err != nil {
 		return fmt.Errorf("recordlog: replay consumer for %s: %w", k.topic, err)
 	}

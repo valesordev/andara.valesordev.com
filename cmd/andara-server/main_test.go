@@ -71,3 +71,18 @@ func abs(t *testing.T, p string) string {
 	}
 	return a
 }
+
+// AW-SRV-053: config-assert needs no certificate, key or broker, prints a row
+// per setting of every Kafka client, and exits 0 when the contract holds.
+func TestRun_ConfigAssertExitsZeroWhenTheContractHolds(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if code := run([]string{"config-assert"}, emptyEnv, &stdout, &stderr); code != 0 {
+		t.Fatalf("exit %d; %s", code, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), `ok    client="ingress producer" setting=acks`) {
+		t.Fatalf("no row for the ingress producer:\n%s", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "FAIL") {
+		t.Fatalf("a failing row:\n%s", stdout.String())
+	}
+}

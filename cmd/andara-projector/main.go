@@ -200,7 +200,7 @@ func handler(tel *telemetry.Telemetry, ready *atomic.Bool) http.Handler {
 // reads this gauge, and a silent 0 is what it read before (AW-SRV-019 feedback
 // §1).
 func topicBytes(ctx context.Context, brokers []string, m *projector.Metrics, log *slog.Logger) {
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ClientID(projector.ClientID+"-meta"))
+	cl, err := kgo.NewClient(projector.MetaOpts(brokers)...)
 	if err != nil {
 		log.Warn("andara_state_topic_bytes will not be reported", "topic", projector.StateTopic, "detail", err.Error())
 		return

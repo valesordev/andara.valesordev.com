@@ -97,10 +97,7 @@ func NewBoundaryReader(ctx context.Context, brokers []string, eventsTopic, clien
 	if eventsTopic == "" {
 		eventsTopic = EventsTopic
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID+"-boundaries"),
-	)
+	client, err := kgo.NewClient(boundaryAdminOpts(brokers, clientID)...)
 	if err != nil {
 		return nil, err
 	}
@@ -239,13 +236,7 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 // offset, not a megabyte, and a 1 MiB fetch per probe was tens of MB of peak
 // RSS in a recovery over a long history (AW-SRV-007 AC-12).
 func (r *BoundaryReader) probeClient(offset int64) (*kgo.Client, error) {
-	return kgo.NewClient(
-		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID+"-boundaries"),
-		kgo.FetchMaxBytes(256<<10),
-		kgo.FetchMaxPartitionBytes(128<<10),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
-	)
+	return kgo.NewClient(boundaryProbeOpts(r.brokers, r.clientID, r.topic, offset)...)
 }
 
 // probe reads from offset until the first boundary, returning its tick and
@@ -374,13 +365,7 @@ func (r *BoundaryReader) consume(offset int64) error {
 		r.consumer.Close()
 		r.consumer = nil
 	}
-	c, err := kgo.NewClient(
-		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID+"-boundaries"),
-		kgo.FetchMaxBytes(16<<20),
-		kgo.FetchMaxPartitionBytes(4<<20),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topic: {BoundaryPartition: kgo.NewOffset().At(offset)}}),
-	)
+	c, err := kgo.NewClient(boundaryConsumerOpts(r.brokers, r.clientID, r.topic, offset)...)
 	if err != nil {
 		return fmt.Errorf("boundary consumer at %d: %w", offset, err)
 	}
@@ -436,11 +421,7 @@ func NewCommandSource(ctx context.Context, brokers []string, topic, clientID str
 	for p, off := range start {
 		assign[p] = kgo.NewOffset().At(off)
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID+"-commands"),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: assign}),
-	)
+	client, err := kgo.NewClient(commandSourceOpts(brokers, clientID, topic, assign)...)
 	if err != nil {
 		return nil, err
 	}
