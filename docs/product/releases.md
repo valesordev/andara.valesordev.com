@@ -1,7 +1,7 @@
 # Releases — Andara's World
 
 Today: a player (in practice Brian and CI) runs `andara-cli play`, creates a Character, enters the dev
-content's `town/plaza` spawn Room, moves between Rooms, sees a bystander arrive and leave, drops the connection and
+content's test town (reached from Purgatory), moves between Rooms, sees a bystander arrive and leave, drops the connection and
 rebinds within the linkdead grace, and finds the World as it was after a `kill -9` of the server (M1 and M2
 gates, passed; `docs/sprints/SPRINT-04-demo.md`, on CI's evidence). A Builder, with test content, can
 publish a Zone, see it live and roll it back (M3's gate, SPRINT-03). There are no Items, no NPCs that act,
@@ -31,7 +31,7 @@ Cut line: no NPCs that act, no Items, no combat, no second gameplay loop; room t
 `TODO(brian)` placeholders where the content roadmap's C1 allows it. Reason: each of those tests a
 different bet, and R2 owns the first of them.
 Success signals (Brian runs them):
-- On `dev`, a Builder publishes the real settlement pack, Brian walks from the spawn Room to every
+- On `dev`, a Builder publishes the real settlement pack, Brian walks from the settlement's arrival Room (Start Location) to every
   settlement zone by exits alone, and rolls the pack back.
 - On `dev` with the real settlement pack loaded, Brian kills the server pod and his Character rebinds
   where it stood (the recovery check on the real pack, not dev content; `AW-INF-034` is the nearest
