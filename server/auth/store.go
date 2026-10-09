@@ -295,6 +295,23 @@ func (s *Store) refreshGauges() {
 
 // --- writes ------------------------------------------------------------------
 
+// writeLocked runs an Account write under wmu and records the audit Entry it
+// returns once wmu is released (AW-SRV-040). An audit write waits up to the
+// audit timeout when the broker is slow, and every Account writer (login and
+// refresh included) queues on wmu, so no audit.Record is reached with wmu
+// held (TestNoAuditRecordUnderWriteLock). fn returns nil when the write has
+// nothing to audit.
+func (s *Store) writeLocked(ctx context.Context, fn func() *Entry) {
+	e := func() *Entry {
+		s.wmu.Lock()
+		defer s.wmu.Unlock()
+		return fn()
+	}()
+	if e != nil {
+		s.audit.Record(ctx, *e)
+	}
+}
+
 // commit makes acc durable and then visible. Caller holds wmu. acc must be
 // a clone the caller owns; after commit it belongs to the index.
 func (s *Store) commit(ctx context.Context, acc *accountsv1.Account) error {
