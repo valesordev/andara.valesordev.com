@@ -14,11 +14,14 @@ tenant, so one rule set in ruler namespace `andara` serves both; every rule carr
 
 ## One-time setup (Brian's account; nothing here can be scripted)
 
-1. **Two access policies** on the `solo7-local` stack, each with one token, scopes and nothing wider:
-   - `andara-alerts-ci-read`: `rules:read`, `alerts:read`. Used by the pull-request diff.
-   - `andara-rules-ci-write`: `rules:write` and `rules:read`. Used by the sync on `main`. `mimirtool rules sync`
-     lists the existing rules before it writes, and a token without `rules:read` gets HTTP 401 `invalid scope
-     requested` on that first call (seen on `main`'s first run, 2026-10-08).
+1. **Two access policies** on the `solo7-local` stack, each with one token and one scope family, as
+   Grafana Cloud advises:
+   - `andara-alerts-ci-read`: `rules:read` (and `alerts:read`, which nothing here uses yet). Used by the
+     pull-request diff, and by the sync to find what differs.
+   - `andara-rules-ci-write`: `rules:write` only. Used by the sync on `main`, and only when the diff found
+     something to write. `mimirtool rules sync` and `load` list before they write, which a write-only token
+     can't do (HTTP 401 `invalid scope requested`, seen on `main`'s first run, 2026-10-08), so
+     `alerts_sync.py` plans with the read key and POSTs and DELETEs to the ruler API itself with the write key.
 2. **GitHub.** Repository variables `GRAFANA_CLOUD_PROM_URL` and `GRAFANA_CLOUD_PROM_USER` (the pair
    `make observe-check` uses; `alerts_sync.py` strips `/api/prom` for `mimirtool` and uses the user as
    the tenant). Repository secret `ANDARA_ALERTS_CI_READ` (the read token). Environment `andara-main`,
@@ -52,7 +55,10 @@ nothing. The diff runs the base branch's scripts and reads the pull request's ru
 (`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped, and so is one aimed at a branch other than `main`. A pull request that
 deletes the file fails the diff job with a message saying so.
 Locally, source `.local/box.env` (which has `GRAFANA_CLOUD_PROM_URL` and `_USER`) and export
-`MIMIR_API_KEY` with the read token to diff, or the write token to sync.
+`MIMIR_API_KEY` with the read token. That is all `make alerts-diff` needs. `make alerts-sync` also needs
+`MIMIR_API_KEY_WRITE` with the write token, which it reads only when the diff finds drift. Keep the read
+token in `MIMIR_API_KEY` for a sync too: the write token can't list rules, so putting it there makes the
+plan step fail with HTTP 401, and leaving the write variable unset with drift present exits 3.
 
 `make alerts-sync` stages the file as `andara.yaml` because `mimirtool` takes the ruler namespace from
 the file's name. Pointed at `alerts.yaml` directly it syncs namespace `alerts`, and its

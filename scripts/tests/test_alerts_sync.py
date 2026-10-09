@@ -9,6 +9,7 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 
 import yaml
 
@@ -23,6 +24,8 @@ class Ruler(http.server.BaseHTTPRequestHandler):
     """Keeps the groups POSTed to it and lists them back the way Mimir's ruler API does."""
     groups = {}
     posts = []
+    calls = []  # (method, path, basic-auth password)
+    identities = []  # (method, basic-auth user, X-Scope-OrgID)
 
     def log_message(self, *a):
         pass
@@ -32,11 +35,20 @@ class Ruler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def note(self):
+        import base64
+        auth = self.headers.get("authorization", "")
+        user, pw = base64.b64decode(auth.split()[-1]).decode().split(":", 1) if auth else ("", "")
+        self.calls.append((self.command, self.path, pw))
+        self.identities.append((self.command, user, self.headers.get("x-scope-orgid")))
+
     def do_GET(self):
+        self.note()
         listing = {ns: list(gs.values()) for ns, gs in self.groups.items()}
         self.reply(yaml.safe_dump(listing).encode())
 
     def do_POST(self):
+        self.note()
         body = self.rfile.read(int(self.headers.get("content-length") or 0))
         ns = self.path.rsplit("/", 1)[1]
         doc = yaml.safe_load(body)
@@ -45,13 +57,14 @@ class Ruler(http.server.BaseHTTPRequestHandler):
         self.reply()
 
     def do_DELETE(self):
+        self.note()
         parts = self.path.split("/")
         self.groups.get(parts[-2], {}).pop(parts[-1], None)
         self.reply()
 
 
 def serve():
-    Ruler.groups, Ruler.posts = {}, []
+    Ruler.groups, Ruler.posts, Ruler.calls, Ruler.identities = {}, [], [], []
     srv = http.server.HTTPServer(("127.0.0.1", 0), Ruler)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     return srv
@@ -148,11 +161,11 @@ class Guards(unittest.TestCase):
 
     def test_mimirtools_stderr_is_part_of_the_output(self):
         tool = self.fake_tool('echo "level=info msg=syncing group namespace=andara" >&2; '
-                              'echo "Sync Summary: 1 Groups Created, 0 Groups Updated, 0 Groups Deleted"')
+                              'echo "Diff Summary: 0 Groups Created, 0 Groups Updated, 0 Groups Deleted"')
         rc, out, _ = self.run_quiet("sync", tool)
         self.assertEqual(rc, 0)
         self.assertIn("syncing group namespace=andara", out)
-        self.assertIn("wrote 1 created, 0 updated, 0 deleted", out)
+        self.assertIn("wrote 0 created, 0 updated, 0 deleted", out)
 
     def test_usage_is_exit_2(self):
         import contextlib
@@ -161,6 +174,29 @@ class Guards(unittest.TestCase):
             self.assertEqual(alerts_sync.main([]), 2)
             self.assertEqual(alerts_sync.main(["push"]), 2)
             self.assertEqual(alerts_sync.main(["sync", "extra"]), 2)
+
+
+class Secure(unittest.TestCase):
+
+    def test_only_https_or_loopback_may_carry_the_write_key(self):
+        self.assertTrue(alerts_sync.secure("https://prom.example.net"))
+        self.assertTrue(alerts_sync.secure("http://127.0.0.1:9"))
+        self.assertTrue(alerts_sync.secure("http://localhost:9"))
+        self.assertFalse(alerts_sync.secure("http://prom.example.net"))
+        self.assertFalse(alerts_sync.secure("ftp://x"))
+
+
+class ClearText(unittest.TestCase):
+
+    def test_apply_refuses_to_send_the_write_key_over_http(self):
+        import contextlib, io
+        env = {"MIMIR_ADDRESS": "http://prom.example.net", "MIMIR_TENANT_ID": "t", "MIMIR_API_KEY_WRITE": "w"}
+        with mock.patch.object(alerts_sync.urllib.request.OpenerDirector, "open") as opened, \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            rc = alerts_sync.apply(alerts_sync.ALERTS, [], env)
+        self.assertEqual(rc, 1)
+        self.assertIn("not https", err.getvalue())
+        opened.assert_not_called()
 
 
 class Summary(unittest.TestCase):
@@ -189,7 +225,8 @@ class AgainstARuler(unittest.TestCase):
         self.addCleanup(self.srv.server_close)
         self.addCleanup(self.srv.shutdown)
         self.env = {"MIMIR_ADDRESS": "http://127.0.0.1:%d" % self.srv.server_address[1],
-                    "MIMIR_TENANT_ID": "t1", "MIMIR_API_KEY": "k"}
+                    "MIMIR_TENANT_ID": "t1", "MIMIR_API_KEY": "read-key",
+                    "MIMIR_API_KEY_WRITE": "write-key"}
 
     def test_sync_lands_in_namespace_andara_not_alerts(self):
         r = script("sync", self.env)
@@ -198,6 +235,113 @@ class AgainstARuler(unittest.TestCase):
         self.assertTrue(all(p.endswith("/rules/andara") for p in Ruler.posts), Ruler.posts)
         self.assertIn("andara-edge", Ruler.groups["andara"])
         self.assertNotRegex(r.stdout, r"0 created, 0 updated, 0 deleted")
+
+    def test_the_read_key_plans_and_the_write_key_writes(self):
+        r = script("sync", self.env)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        reads = {c[2] for c in Ruler.calls if c[0] == "GET"}
+        writes = {c[2] for c in Ruler.calls if c[0] in ("POST", "DELETE")}
+        self.assertEqual(reads, {"read-key"})
+        self.assertEqual(writes, {"write-key"})
+        self.assertIn("wrote 8 created, 0 updated, 0 deleted", r.stdout)
+
+    def test_a_sync_with_no_drift_never_uses_the_write_key(self):
+        script("sync", self.env)
+        Ruler.calls.clear()
+        r = script("sync", dict(self.env, MIMIR_API_KEY_WRITE=""))
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual([c for c in Ruler.calls if c[0] != "GET"], [])
+        self.assertIn("wrote 0 created, 0 updated, 0 deleted", r.stdout)
+
+    def test_drift_without_a_write_key_is_exit_3_and_writes_nothing(self):
+        r = script("sync", dict(self.env, MIMIR_API_KEY_WRITE=""))
+        self.assertEqual(r.returncode, 3)
+        self.assertIn("MIMIR_API_KEY_WRITE unset", r.stderr)
+        self.assertEqual(Ruler.posts, [])
+
+    def test_writes_carry_the_tenant_as_user_and_as_the_org_header(self):
+        script("sync", self.env)
+        Ruler.groups["andara"]["x"] = {"name": "x", "rules": [{"alert": "X", "expr": "vector(1)"}]}
+        script("sync", self.env)
+        writes = [i for i in Ruler.identities if i[0] in ("POST", "DELETE")]
+        self.assertTrue(any(i[0] == "DELETE" for i in writes) and any(i[0] == "POST" for i in writes))
+        self.assertEqual({(u, o) for _, u, o in writes}, {("t1", "t1")})
+
+    def test_a_group_name_is_escaped_in_the_delete_path(self):
+        script("sync", self.env)
+        name = "a b/c(d)?"
+        Ruler.groups["andara"][name] = {"name": name, "rules": [{"alert": "X", "expr": "vector(1)"}]}
+        script("sync", self.env)
+        paths = [p for m, p, _ in Ruler.calls if m == "DELETE"]
+        self.assertEqual(paths, ["/prometheus/config/v1/rules/andara/a%20b%2Fc%28d%29%3F"])
+
+    def test_a_group_name_with_trailing_spaces_is_deleted_whole(self):
+        self.assertEqual(alerts_sync.DELETED.findall("  - Group: trail  \n"), ["trail  "])
+
+    def test_the_plan_never_hands_mimirtool_the_write_key(self):
+        d = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, d)
+        dump = os.path.join(d, "env.txt")
+        tool = os.path.join(d, "mimirtool")
+        with open(tool, "w") as f:
+            f.write('#!/bin/sh\nenv > %s\necho "Diff Summary: 0 Groups Created, 0 Groups Updated, 0 Groups Deleted"\n' % dump)
+        os.chmod(tool, 0o755)
+        import contextlib, io
+        with contextlib.redirect_stdout(io.StringIO()):
+            rc = alerts_sync.run("sync", env=dict(self.env), find_tool=lambda: tool)
+        self.assertEqual(rc, 0)
+        seen = open(dump).read()
+        self.assertIn("MIMIR_API_KEY=read-key", seen)
+        self.assertNotIn("MIMIR_API_KEY_WRITE", seen)
+        self.assertNotIn("write-key", seen)
+
+    def test_a_redirect_on_a_write_is_an_error_not_a_silent_no_op(self):
+        orig = Ruler.do_POST
+        def redirect(h):
+            h.note(); h.rfile.read(int(h.headers.get("content-length") or 0))
+            h.send_response(302); h.send_header("Location", "http://127.0.0.1:1/elsewhere"); h.end_headers()
+        Ruler.do_POST = redirect
+        self.addCleanup(setattr, Ruler, "do_POST", orig)
+        r = script("sync", self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("HTTP 302", r.stderr)
+        self.assertIn("after 0 of", r.stderr)
+
+    def test_diff_does_not_need_the_write_key(self):
+        r = script("diff", dict(self.env, MIMIR_API_KEY_WRITE=""))
+        self.assertEqual(r.returncode, 1)  # drift on an empty ruler, not exit 3
+        self.assertNotIn("WRITE", r.stderr)
+
+    def test_a_group_the_file_lacks_is_deleted(self):
+        script("sync", self.env)
+        Ruler.groups["andara"]["stale-group"] = {"name": "stale-group", "rules": [
+            {"alert": "Stale", "expr": "vector(1)"}]}
+        r = script("sync", self.env)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
+        self.assertNotIn("stale-group", Ruler.groups["andara"])
+        self.assertIn("wrote 0 created, 0 updated, 1 deleted", r.stdout)
+        self.assertTrue(any(c[0] == "DELETE" and c[1].endswith("/andara/stale-group") for c in Ruler.calls))
+
+    def test_a_ruler_that_refuses_the_write_is_an_error_naming_the_scope(self):
+        orig = Ruler.do_POST
+        def deny(h):
+            h.note(); h.send_response(401); h.end_headers()
+        Ruler.do_POST = deny
+        self.addCleanup(setattr, Ruler, "do_POST", orig)
+        r = script("sync", self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("rules:write", r.stderr)
+        self.assertIn("HTTP 401", r.stderr)
+
+    def test_a_write_that_does_not_take_is_an_error(self):
+        orig = Ruler.do_POST
+        def ignore(h):
+            h.note(); h.rfile.read(int(h.headers.get("content-length") or 0)); h.send_response(200); h.end_headers()
+        Ruler.do_POST = ignore
+        self.addCleanup(setattr, Ruler, "do_POST", orig)
+        r = script("sync", self.env)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("still differs after the write", r.stderr)
 
     def test_a_second_sync_changes_nothing(self):
         self.assertEqual(script("sync", self.env).returncode, 0)
@@ -257,7 +401,7 @@ class AgainstARuler(unittest.TestCase):
         env = dict(self.env, MIMIR_ADDRESS="http://127.0.0.1:1")
         r = script("sync", env)
         self.assertEqual(r.returncode, 1)
-        self.assertIn("mimirtool rules sync failed", r.stderr)
+        self.assertIn("mimirtool rules diff failed", r.stderr)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,8 @@
     scripts/alerts_sync.py sync
     scripts/alerts_sync.py diff
 
-Reads MIMIR_API_KEY, MIMIR_ADDRESS and MIMIR_TENANT_ID from the environment; the last two default
+Reads MIMIR_API_KEY (read), MIMIR_API_KEY_WRITE (sync only, and only when there is drift),
+MIMIR_ADDRESS and MIMIR_TENANT_ID from the environment; the last two default
 to what `make observe-check` and CI already have, GRAFANA_CLOUD_PROM_URL (without its /api/prom)
 and GRAFANA_CLOUD_PROM_USER. ALERTS_FILE names a rule file other than the chart's for `diff` only (`sync` ignores it), which CI sets
 to a pull request's copy so that the base branch's code reads it as data (the workflow says why).
@@ -18,27 +19,40 @@ staged as `andara.yaml` in a temporary directory: the namespace is `andara` in e
 may delete to that namespace and nothing else in the tenant. Run directly on alerts.yaml it
 syncs namespace `alerts`, and `--namespaces andara` then matches nothing and reports "0 Groups".
 
-sync   `mimirtool rules sync`; prints the groups created, updated and deleted. A second run
-       against an unchanged file reports 0, 0, 0. Exit 0 ok; 1 the API failed.
-diff   `mimirtool rules diff`, which exits 0 whatever it finds, so this reads its summary:
-       exit 1 when any group would be created, updated or deleted; 0 when none would.
+sync   plans with the read key (`mimirtool rules diff`) and writes with the write key. Grafana
+       Cloud advises one scope per token, and `mimirtool rules sync`/`load` list before they
+       write, so a write-only token fails on its first call. Instead: drift is found with
+       MIMIR_API_KEY (rules:read); only if there is drift, every group in the file is POSTed and
+       every group the ruler has and the file lacks is DELETEd with MIMIR_API_KEY_WRITE
+       (rules:write), straight to the ruler API; then the diff runs again and must be clean.
+       No drift means the write key is never read, so a second run reports 0, 0, 0 and writes
+       nothing. Exit 0 ok; 1 the API failed.
+diff   as above, read key only: exit 1 when any group would be created, updated or deleted; 0 when
+       none would. (`mimirtool rules diff` itself exits 0 whatever it finds.)
 
-Exit codes: 0 ok; 1 an API error, or drift (diff); 2 usage; 3 secrets unset. `make` reports any
+Exit codes: 0 ok; 1 an API error, or drift (diff); 2 usage; 3 a key, address or tenant unset. `make` reports any
 of them as its own exit 2; the script's code is the first line of the failure it prints.
 """
 
+import base64
+import json
 import os
 import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import urllib.error
+import urllib.parse
+import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ALERTS = os.path.join(REPO, "deploy", "helm", "andara", "files", "alerts.yaml")
 NAMESPACE = "andara"
 SECRETS = ("MIMIR_ADDRESS", "MIMIR_TENANT_ID", "MIMIR_API_KEY")
 PROM_SUFFIX = "/api/prom"
+WRITE_KEY = "MIMIR_API_KEY_WRITE"
+DELETED = re.compile(r"^\s*- Group: (.+?)\r?$", re.M)
 SUMMARY = re.compile(r"(\d+) Groups Created, (\d+) Groups Updated, (\d+) Groups Deleted")
 
 
@@ -75,35 +89,122 @@ def resolve_env(env):
     return env
 
 
+def missing(env, names):
+    return [k for k in names if not env.get(k)]
+
+
+class NoRedirect(urllib.request.HTTPRedirectHandler):
+    """A redirect on a write would resend the Authorization header elsewhere, or turn a POST into a GET."""
+
+    def redirect_request(self, *a, **kw):
+        return None
+
+
+def secure(address):
+    host = urllib.parse.urlsplit(address).hostname or ""
+    return address.lower().startswith("https://") or host in ("127.0.0.1", "localhost", "::1")
+
+
+def api(env, method, group=None, body=None, key=None, timeout=60):
+    """One call to the ruler's namespace endpoint, authenticated as the tenant with `key`."""
+    url = "%s/prometheus/config/v1/rules/%s%s" % (env["MIMIR_ADDRESS"].rstrip("/"), NAMESPACE,
+                                                    "/" + urllib.parse.quote(group, safe="") if group else "")
+    req = urllib.request.Request(url, data=body, method=method)
+    token = base64.b64encode(("%s:%s" % (env["MIMIR_TENANT_ID"], key)).encode()).decode()
+    req.add_header("Authorization", "Basic " + token)
+    req.add_header("X-Scope-OrgID", env["MIMIR_TENANT_ID"])
+    if body is not None:
+        req.add_header("Content-Type", "application/yaml")
+    with urllib.request.build_opener(NoRedirect).open(req, timeout=timeout) as r:
+        return r.status
+
+
+def groups_of(path):
+    import yaml
+    with open(path) as f:
+        return (yaml.safe_load(f) or {}).get("groups") or []
+
+
+def mimirtool_rules(cmd, tool, rules_file, env, verbose=False):
+    """Run `mimirtool rules <cmd>` over the rule file staged as andara.yaml. Returns (rc, output)."""
+    with tempfile.TemporaryDirectory() as tmp:
+        staged = os.path.join(tmp, NAMESPACE + ".yaml")
+        shutil.copyfile(rules_file, staged)
+        args = [tool, "rules", cmd, "--namespaces", NAMESPACE] + (["--verbose"] if verbose else []) + [staged]
+        child = {k: v for k, v in env.items() if k != WRITE_KEY}  # mimirtool only ever reads
+        p = subprocess.run(args, capture_output=True, text=True, env=child)
+    return p.returncode, p.stdout + p.stderr
+
+
+def plan(tool, rules_file, env):
+    """(counts, deleted group names, output) from a read-only diff, or an exit code."""
+    rc, out = mimirtool_rules("diff", tool, rules_file, env)
+    if rc != 0:
+        print(out, file=sys.stderr, end="")
+        return fail(1, "mimirtool rules diff failed (exit %d)" % rc)
+    counts = summary_counts(out)
+    if counts is None:
+        print(out, file=sys.stderr, end="")
+        return fail(1, "mimirtool rules diff printed no summary; nothing can be said about the ruler")
+    return counts, DELETED.findall(out), out
+
+
+def apply(rules_file, deleted, env):
+    """POST every group in the file and DELETE the ones the file lacks, with the write key."""
+    key = env[WRITE_KEY]
+    import yaml
+    if not secure(env["MIMIR_ADDRESS"]):
+        return fail(1, "MIMIR_ADDRESS is not https; the write key is not sent in clear text")
+    steps = [("POST", g["name"], yaml.safe_dump(g).encode()) for g in groups_of(rules_file)]
+    steps += [("DELETE", name, None) for name in deleted]
+    done = 0
+    try:
+        for method, name, body in steps:
+            api(env, method, group=None if method == "POST" else name, body=body, key=key)
+            done += 1
+    except urllib.error.HTTPError as e:
+        hint = " (the write key needs rules:write)" if e.code in (401, 403) else ""
+        return fail(1, "the ruler refused %s %s after %d of %d writes: HTTP %d %s%s"
+                    % (steps[done][0], steps[done][1], done, len(steps), e.code, e.reason, hint))
+    except (urllib.error.URLError, OSError) as e:
+        return fail(1, "could not reach the ruler for %s %s after %d of %d writes: %s"
+                    % (steps[done][0], steps[done][1], done, len(steps), e))
+    return 0
+
+
 def run(cmd, rules_file=None, env=None, find_tool=mimirtool):
     env = resolve_env(os.environ if env is None else env)
     # Only a diff reads another file; a sync always writes the chart's, whatever the environment says.
     rules_file = rules_file or (env.get("ALERTS_FILE") if cmd == "diff" else None) or ALERTS
-    missing = [k for k in SECRETS if not env.get(k)]
-    if missing:
-        return fail(3, "%s unset (docs/runbooks/alert-routing.md)"
-                    % ", ".join(missing))
+    absent = missing(env, SECRETS)
+    if absent:
+        return fail(3, "%s unset (docs/runbooks/alert-routing.md)" % ", ".join(absent))
     tool = find_tool()
     if not tool:
         return fail(1, "mimirtool not found; run `make bootstrap`")
-    with tempfile.TemporaryDirectory() as tmp:
-        staged = os.path.join(tmp, NAMESPACE + ".yaml")
-        shutil.copyfile(rules_file, staged)
-        p = subprocess.run([tool, "rules", cmd, "--namespaces", NAMESPACE, staged],
-                           capture_output=True, text=True, env=env)
-    out = p.stdout + p.stderr
-    if p.returncode != 0:
-        print(out, file=sys.stderr, end="")
-        return fail(1, "mimirtool rules %s failed (exit %d)" % (cmd, p.returncode))
-    counts = summary_counts(out)
-    if counts is None:
-        print(out, file=sys.stderr, end="")
-        return fail(1, "mimirtool rules %s printed no summary; nothing can be said about the ruler" % cmd)
+    planned = plan(tool, rules_file, env)
+    if isinstance(planned, int):
+        return planned
+    counts, deleted, out = planned
     print(out, end="")
-    verb = "wrote" if cmd == "sync" else "would change"
-    say("%s %d created, %d updated, %d deleted in namespace %s" % ((verb,) + counts + (NAMESPACE,)))
-    if cmd == "diff" and any(counts):
-        return fail(1, "the ruler differs from files/alerts.yaml; `make alerts-sync` on main delivers it")
+    if cmd == "diff":
+        say("would change %d created, %d updated, %d deleted in namespace %s" % (counts + (NAMESPACE,)))
+        if any(counts):
+            return fail(1, "the ruler differs from files/alerts.yaml; `make alerts-sync` on main delivers it")
+        return 0
+    if any(counts):
+        if missing(env, [WRITE_KEY]):
+            return fail(3, "%s unset: the ruler differs from files/alerts.yaml and there is no key to write it "
+                        "(docs/runbooks/alert-routing.md)" % WRITE_KEY)
+        rc = apply(rules_file, deleted, env)
+        if rc:
+            return rc
+        again = plan(tool, rules_file, env)
+        if isinstance(again, int):
+            return again
+        if any(again[0]):
+            return fail(1, "the ruler still differs after the write (%d created, %d updated, %d deleted)" % again[0])
+    say("wrote %d created, %d updated, %d deleted in namespace %s" % (counts + (NAMESPACE,)))
     return 0
 
 
