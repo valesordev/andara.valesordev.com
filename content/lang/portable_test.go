@@ -4,6 +4,7 @@
 package lang
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -83,9 +84,9 @@ func TestUnportableName_AZoneIDThatIsADeviceName(t *testing.T) {
 func sidecar(ds []Diagnostic) string {
 	var sb strings.Builder
 	for _, d := range ds {
-		sb.WriteString(d.File + ":" + itoa(d.Line) + ":" + itoa(d.Col) + ": " + d.Code + "\n")
+		fmt.Fprintf(&sb, "%s:%s:%s: %s\n", d.File, itoa(d.Line), itoa(d.Col), d.Code)
 		for _, c := range d.Chain {
-			sb.WriteString("  " + c + "\n")
+			fmt.Fprintf(&sb, "  %s\n", c)
 		}
 	}
 	return sb.String()
