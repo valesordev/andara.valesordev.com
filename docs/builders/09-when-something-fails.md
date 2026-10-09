@@ -53,7 +53,7 @@ The message says which of the two applies.
 | Code | What happened | Usual fix |
 |------|---------------|-----------|
 | `validation` | the server refused the publish. Its findings print like local ones | most often `duplicate_zone`: your Zone ID is taken on `dev` ([section 8](08-building-on-dev.md#the-town-and-the-zone-ids-it-holds)) |
-| `validation`, naming a path | a file or Zone name the server can't accept as a path on every platform: Windows reserves `con`, `aux`, `nul`, `prn`, `com1`–`com9` and `lpt1`–`lpt9`, with any extension | rename the Zone or file. `validate` can't catch this offline yet |
+| `unportable_name` (from `validate`, or `validation` naming a path from the server) | a Zone ID, a pack name that declares a Template, or a file or directory name that can't be a path on every platform: Windows reserves `con`, `prn`, `aux`, `nul`, `com1`–`com9` and `lpt1`–`lpt9`, with any extension and in any case, and `\`, `:` and NUL are refused anywhere ([the rule](../specs/content-language/v1/errors.md#31-raised-only-by-the-compiler)) | rename the Zone, pack or file; `validate` reports it offline, at the name's position |
 | `pack_not_held` | you don't hold that pack | ask an Operator for the grant ([section 2](02-getting-access.md#a-pack)) |
 | `stale_parent` | someone published while you were uploading | `content history`, then publish again ([section 5](05-the-everyday-loop.md#sharing-a-pack)) |
 | `unapproved` | the version has no approval | ask for one ([section 5](05-the-everyday-loop.md#asking-for-an-approval)) |
