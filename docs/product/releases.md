@@ -1,7 +1,7 @@
 # Releases — Andara's World
 
 Today: a player (in practice Brian and CI) runs `andara-cli play`, creates a Character, enters the dev
-content's Town Plaza, moves between Rooms, sees a bystander arrive and leave, drops the connection and
+content's `town/plaza` spawn Room, moves between Rooms, sees a bystander arrive and leave, drops the connection and
 rebinds within the linkdead grace, and finds the World as it was after a `kill -9` of the server (M1 and M2
 gates, passed; `docs/sprints/SPRINT-04-demo.md`, on CI's evidence). A Builder, with test content, can
 publish a Zone, see it live and roll it back (M3's gate, SPRINT-03). There are no Items, no NPCs that act,
