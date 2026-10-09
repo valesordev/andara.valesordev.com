@@ -375,6 +375,32 @@ class RunSteps(unittest.TestCase):
         with self.assertRaisesRegex(env_recover.Failed, "not Ready within 0s"):
             run.kill()
 
+    def test_kill_to_ready_is_the_instant_the_poll_saw_ready(self):
+        run = self.run_()
+        run.rto = 120
+        states = iter([pod_doc(), pod_doc(restarts=1, exit_code=137, ready=False), pod_doc(restarts=1, exit_code=137)])
+        run.pod = lambda: env_recover.parse_pod(next(states))
+        run.sh = lambda args: types.SimpleNamespace(returncode=0, stdout=json.dumps({"info": {"pid": 4242}}), stderr="")
+        clock = iter([100.0, 105.0])  # t_kill, then the poll that saw Ready; any later read is 999
+        with mock.patch.object(env_recover.time, "time", lambda: next(clock, 999.0)):
+            _, kill_to_ready, _, _ = run.kill()
+        self.assertEqual(kill_to_ready, 5.0)
+
+    def test_a_restart_seen_after_the_rto_is_reported_as_a_restart(self):
+        run = self.run_()
+        run.rto = 0
+        states = iter([pod_doc(), pod_doc(restarts=1, exit_code=137, ready=False), pod_doc(restarts=2, exit_code=137)])
+        real_pod = lambda: env_recover.parse_pod(next(states))
+
+        def slow():
+            time.sleep(0.01)
+            return real_pod()
+
+        run.pod = slow
+        run.sh = lambda args: types.SimpleNamespace(returncode=0, stdout=json.dumps({"info": {"pid": 4242}}), stderr="")
+        with self.assertRaisesRegex(env_recover.Failed, "a further restart"):
+            run.kill()
+
     def test_unlanded_kill(self):
         run = self.run_()
         run.pod = lambda: env_recover.parse_pod(pod_doc())
