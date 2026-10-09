@@ -55,7 +55,10 @@ nothing. The diff runs the base branch's scripts and reads the pull request's ru
 (`ALERTS_FILE`), so a branch's own code never runs with a token; a fork's pull request is skipped, and so is one aimed at a branch other than `main`. A pull request that
 deletes the file fails the diff job with a message saying so.
 Locally, source `.local/box.env` (which has `GRAFANA_CLOUD_PROM_URL` and `_USER`) and export
-`MIMIR_API_KEY` with the read token to diff, or the write token to sync.
+`MIMIR_API_KEY` with the read token. That is all `make alerts-diff` needs. `make alerts-sync` also needs
+`MIMIR_API_KEY_WRITE` with the write token, which it reads only when the diff finds drift. Keep the read
+token in `MIMIR_API_KEY` for a sync too: the write token can't list rules, so putting it there makes the
+plan step fail with HTTP 401, and leaving the write variable unset with drift present exits 3.
 
 `make alerts-sync` stages the file as `andara.yaml` because `mimirtool` takes the ruler namespace from
 the file's name. Pointed at `alerts.yaml` directly it syncs namespace `alerts`, and its
