@@ -56,6 +56,8 @@ export declare type OpenSessionRequest = Message<"andara.game.v1.OpenSessionRequ
    * token's Account to hold `operator` or `game_master`; anyone else setting
    * it gets PERMISSION_DENIED. Every audit record in the resulting Session
    * names both identities — acting as someone never hides who was acting.
+   * A target holding `operator` can be named only by an Operator; a Game Master
+   * naming one gets PERMISSION_DENIED (AW-SRV-039, 2026-10-09).
    *
    * @generated from field: string act_as_account_id = 4;
    */

@@ -381,7 +381,8 @@ it names both `actor_account_id` and `acting_as_account_id`, so acting as someon
 acting (decided 2026-09-07; AW-SRV-008). On an Admin call it is the per-call gRPC metadata
 `andara-act-as: <account_id>`, not a token claim, honoured on Admin RPCs only and with the same
 refusals; `andara-cli content publish|approve|activate|rollback --as <account_id>` sends it
-(`AW-SRV-039`).
+(`AW-SRV-039`). A target that holds `operator` can be acted as only by an Operator: Roles are a set, so
+`game_master` does not imply it, and acting as an Account takes that Account's Roles (decided 2026-10-09).
 
 **Audit Record** — One record on `andara.audit.v1` per privileged action: actor, acting-as, action,
 target, outcome, Session ID, trace ID, timestamp. Written for every Admin RPC, every `authorize`
