@@ -593,6 +593,32 @@ class Main(unittest.TestCase):
             self.assertEqual(status, 1, (failing, nth))
             self.assertEqual([e for e in events if e not in ("dump", "cleanup")], full[:upto], (failing, nth))
 
+    def test_a_restart_during_cleanup_fails_the_run(self):
+        for fail_on, expect in ((None, 0), (2, 1)):
+            events = []
+
+            class P:
+                def lines(self):
+                    return []
+
+            def setup(self):
+                self.players = {"a": P(), "b": P()}
+
+            def check(self, *a):
+                events.append("assert_no_further_restart")
+                if events.count("assert_no_further_restart") == fail_on:
+                    raise env_recover.Failed("restarted again")
+
+            with mock.patch.object(env_recover.time, "sleep", lambda s: None):
+                status, _ = self.go(
+                    self.CREDS, events=events, preflight=lambda self, g, e: None, setup_cli=setup,
+                    play_until_round=lambda self: 60, kill=lambda self: (1000.0, 5.0, 0, 1),
+                    rebind=lambda self, *a: None, recovered_metrics=lambda self, *a: None,
+                    trace_id=lambda self, since: "", rebound_counters=lambda self, g: None,
+                    assert_no_further_restart=check)
+            self.assertEqual(status, expect, fail_on)
+            self.assertEqual(events[-2:], ["cleanup", "assert_no_further_restart"], fail_on)
+
     def test_transcript_marks_are_taken_before_the_kill(self):
         events = []
 

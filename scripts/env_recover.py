@@ -651,6 +651,12 @@ def main(argv):
     finally:
         run.cleanup()
     if status == 0:
+        # cleanup() blocks for up to ~140 s; a second crash or reschedule in that window is still the run's.
+        try:
+            run.assert_no_further_restart(b_restarts)
+        except Exception as e:
+            print("env-recover: after cleanup: %s" % e, file=sys.stderr)
+            return 1
         say("M2 gate on %s — killed, recovered from a snapshot, hash matched, both rebound — passes" % env)
     return status
 
