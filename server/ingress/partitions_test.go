@@ -6,6 +6,7 @@ package ingress
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -377,5 +378,35 @@ func TestHealth_AFailedProbeBreaksALeaderlessStreak(t *testing.T) {
 	f.h.ObserveProbe(ctx, gone, 2)
 	if f.h.Degraded(5) {
 		t.Fatal("a streak of two was counted across a failed probe")
+	}
+}
+
+// The check and the action in ifDegraded are one step: a recovery cannot land
+// between them.
+func TestHealth_IfDegradedHoldsTheLockAcrossTheAction(t *testing.T) {
+	ctx := context.Background()
+	f := newHealthFixture()
+	f.h.ObserveProbe(ctx, healthy().with(3, partitionView{Leader: 2, ISR: 1}), 2)
+	var actionDone, recovered atomic.Int64
+	in := make(chan struct{})
+	go func() {
+		<-in
+		f.h.ObserveProbe(ctx, healthy(), 2)
+		recovered.Store(time.Now().UnixNano())
+	}()
+	ran := f.h.ifDegraded(3, func() {
+		close(in)
+		time.Sleep(150 * time.Millisecond)
+		actionDone.Store(time.Now().UnixNano())
+	})
+	if !ran {
+		t.Fatal("the action did not run on a degraded Partition")
+	}
+	waitFor(t, func() bool { return recovered.Load() != 0 }, "the recovery")
+	if recovered.Load() < actionDone.Load() {
+		t.Fatal("the Partition recovered in the middle of the action")
+	}
+	if f.h.ifDegraded(3, func() { t.Fatal("ran on a healthy Partition") }) {
+		t.Fatal("reported running on a healthy Partition")
 	}
 }

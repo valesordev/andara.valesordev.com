@@ -267,9 +267,15 @@ func (k *KafkaProducer) onHealthChange(ctx context.Context, partition int32, deg
 		}
 		k.metrics.Degraded.WithLabelValues(strconv.Itoa(int(partition))).Set(v)
 	}
-	if k.health.Degraded(partition) != degraded {
-		// Another goroutine moved the Partition on since this transition;
-		// its own notification carries the side effects.
+	if degraded {
+		// Checked and dropped under the tracker's lock: a Partition that
+		// recovers cannot have its new client closed by this stale callback.
+		// Another goroutine's notification carries a moved-on Partition's
+		// side effects.
+		if !k.health.ifDegraded(partition, func() { k.dropClient(partition) }) {
+			return
+		}
+	} else if k.health.Degraded(partition) {
 		return
 	}
 	attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("cause", cause), slog.String("error_name", name)}
@@ -278,7 +284,6 @@ func (k *KafkaProducer) onHealthChange(ctx context.Context, partition int32, deg
 	}
 	if degraded {
 		k.log.LogAttrs(ctx, slog.LevelWarn, "partition degraded", append(attrs, slog.String("effect", "Commands for its Zones are refused until it recovers"))...)
-		k.dropClient(partition)
 		return
 	}
 	k.log.LogAttrs(ctx, slog.LevelInfo, "partition recovered", append(attrs, slog.String("effect", "it accepts Commands again"))...)

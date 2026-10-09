@@ -178,6 +178,21 @@ func (h *partitionHealth) ObserveProbe(ctx context.Context, v *topicView, minISR
 	h.fire(ctx, changes...)
 }
 
+// ifDegraded runs fn only if the Partition is degraded now, holding the
+// tracker's lock so the Partition cannot recover between the check and fn.
+func (h *partitionHealth) ifDegraded(p int32, fn func()) bool {
+	if p < 0 || int(p) >= len(h.flags) {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.flags[p].Load() {
+		return false
+	}
+	fn()
+	return true
+}
+
 // settleLocked recomputes a Partition's degraded flag and returns the
 // transition, if any.
 func (h *partitionHealth) settleLocked(p int32) []transition {
