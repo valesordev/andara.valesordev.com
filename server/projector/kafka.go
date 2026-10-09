@@ -327,7 +327,7 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 			return nil, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, tickloop.OffsetGap(err)
 		}
 		fetches.EachRecord(func(r *kgo.Record) {
 			end, ok := remaining[r.Partition]

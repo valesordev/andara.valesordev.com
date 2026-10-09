@@ -73,7 +73,7 @@ func TestConfigAssert_EveryResumingReaderRefusesASilentReset(t *testing.T) {
 			}
 		}
 	}
-	if resumers < 7 {
+	if resumers < 6 {
 		t.Fatalf("%d resuming readers checked", resumers)
 	}
 }

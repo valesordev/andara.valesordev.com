@@ -280,3 +280,22 @@ func TestCheck_TheClientsItBuildsRefuseEveryDial(t *testing.T) {
 		t.Fatalf("dial = %v, %v; want a refusal", c, err)
 	}
 }
+
+// A named exception is reported with its reason; without one the row fails.
+func TestCheck_ASilentResetAcceptedWithAReasonPasses(t *testing.T) {
+	opts := []kgo.Opt{kgo.SeedBrokers(dark), kgo.ClientID("andara-server-recovery"), kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{"t": {0: kgo.NewOffset().At(7)}})}
+	site := Site{Name: "w", Role: Consumer, Opts: opts, SilentResetAccepted: "compacted"}
+	if got := failing(t, site); len(got) != 0 {
+		t.Fatalf("%+v", got)
+	}
+	found := false
+	for _, f := range Check(site) {
+		if f.Setting == "offset the broker no longer has" && strings.Contains(f.Value, "accepted: compacted") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("the exception was not reported with its reason")
+	}
+}

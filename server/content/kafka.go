@@ -340,7 +340,7 @@ func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Off
 		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
 	}
 	if len(from) > 0 {
-		return append(opts, kgo.ConsumeResetOffset(kgo.NoResetOffset()), kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
+		return append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
 	}
 	return append(opts,
 		kgo.ConsumeTopics(active),
@@ -360,7 +360,13 @@ func Sites(brokers []string, clientID string, t Topics) []kafkaclient.Site {
 		{Name: "content versions scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Versions), OneShot: kafkaclient.ContentVersionsScan},
 		{Name: "content active pointer scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Active), OneShot: kafkaclient.ContentActiveWatch},
 		{Name: "content active pointer watch", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, nil), OneShot: kafkaclient.ContentActiveWatch},
-		{Name: "content active pointer watch (pinned)", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, pinned)},
+		{Name: "content active pointer watch (pinned)", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, pinned),
+			// The Active topic is compacted, so its log start never moves
+			// past a pinned offset; a cursor reset to the start re-reads
+			// pointers the watch applies idempotently. The watch has no exit
+			// to take on a gap, so NoResetOffset would turn one into an
+			// endless retry (AW-SRV-053, raised to architecture).
+			SilentResetAccepted: "compacted topic; pointer moves are idempotent; the watch never gives up"},
 	}
 }
 

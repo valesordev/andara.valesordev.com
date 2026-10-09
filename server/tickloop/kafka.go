@@ -648,7 +648,7 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	for next < to {
 		fetches := client.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return nil, offsetGap(err)
+			return nil, OffsetGap(err)
 		}
 		var ferr error
 		fetches.EachRecord(func(r *kgo.Record) {

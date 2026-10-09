@@ -98,6 +98,11 @@ type Site struct {
 	// AddConsumePartitions after building it, at At(offset). The check cannot
 	// see those offsets and takes the start offset row as met.
 	AssignedLater bool
+	// SilentResetAccepted is the reason a resuming reader stays on the
+	// library's reset instead of NoResetOffset, where the reader has no way
+	// to act on a gap. It is reported with the row and needs architecture's
+	// agreement.
+	SilentResetAccepted string
 }
 
 // Severity of a finding.
@@ -282,7 +287,11 @@ func checkStart(cl *kgo.Client, s Site, add adder) {
 		if reset == kgo.NoResetOffset() {
 			got = "error (no reset)"
 		}
-		add("offset the broker no longer has", got, "ErrLogGap, never a silent reset", Fail, reset == kgo.NoResetOffset())
+		if reset != kgo.NoResetOffset() && s.SilentResetAccepted != "" {
+			add("offset the broker no longer has", got+" (accepted: "+s.SilentResetAccepted+")", "ErrLogGap, never a silent reset", Fail, true)
+		} else {
+			add("offset the broker no longer has", got, "ErrLogGap, never a silent reset", Fail, reset == kgo.NoResetOffset())
+		}
 	}
 	switch {
 	case explicit && s.OneShot == NotOneShot:
