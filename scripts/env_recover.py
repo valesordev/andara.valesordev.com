@@ -332,6 +332,7 @@ class Run:
         self.account_ids = {}
         self.rto = environ.get("ENV_RECOVER_RTO", "120")
         self.cli_env = dict(os.environ)
+        self.uid = None
 
     # shell-outs
     def sh(self, args, **kw):
@@ -440,6 +441,7 @@ class Run:
 
     def kill(self):
         before = self.pod()
+        self.uid = before["uid"]
         pid = resolve_pid(before["container_id"], before["node"], self.sh)
         say("SIGKILL to pid %d (%s's server container) from node %s" % (pid, POD, before["node"]))
         t_kill = time.time()
@@ -486,7 +488,9 @@ class Run:
     def rebound_counters(self, g):
         """The check no transcript can make: B sits in the Purgatory and A in the Town Hall, so
         neither witnesses the other's despawn, and a despawn emitted before a client resubscribes
-        never reaches it. The recovered process began its counters at 0 (AC-6)."""
+        never reaches it. The recovered process began its counters at 0 (AC-6). The sums are
+        namespace-wide: run it alone on dev, and not within the 180 s linkdead grace of a prior run,
+        whose players the recovered process would re-mark linkdead and then despawn."""
         sel = '{namespace="%s"}' % self.ns
         end, why = time.monotonic() + METRIC_WAIT, ""
         while time.monotonic() < end:
@@ -501,6 +505,8 @@ class Run:
     def assert_no_further_restart(self, expected):
         """AC-4's "no further restart", held to the end of the run and not only to first Ready."""
         now = self.pod()
+        if self.uid and now["uid"] != self.uid:
+            raise Failed("pod UID changed to %s at the end of the run: rescheduled after the recovery" % now["uid"])
         if now["restarts"] != expected:
             raise Failed("restartCount is %d at the end of the run, was %d at Ready: the server restarted again"
                          % (now["restarts"], expected))
@@ -597,10 +603,13 @@ def main(argv):
         say("the server's own counters: no despawn since the recovery, both players reconnected")
         say("waiting %ds for the ruler to judge the recovered 1" % ALERT_SETTLE)
         time.sleep(ALERT_SETTLE)
+        # Held to the end, not only to first Ready: a second crash or a reschedule after the
+        # recovery would still pass every later check. Counters sampled again for the same reason.
+        run.assert_no_further_restart(b_restarts)
+        run.rebound_counters(g)
         now = time.time()
         if g.firing_between(ns, t_start, now):
             raise Failed("%s fired during the run" % RULE)
-        run.assert_no_further_restart(b_restarts)
         say("%s did not fire; AndaraServerUnavailable observed as %s" %
             (RULE, ", ".join(g.observed_states(ns, t_start, now)) or "inactive"))
         say("Ready %.0fs after the kill (RTO %ds), restartCount %d→%d, round %d, hash match" %

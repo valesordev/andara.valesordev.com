@@ -268,6 +268,40 @@ class RunSteps(unittest.TestCase):
         run.pod = lambda: env_recover.parse_pod(pod_doc(restarts=1, exit_code=137))
         run.assert_no_further_restart(1)
 
+    def test_a_reschedule_after_ready_fails_the_run(self):
+        run = self.run_()
+        run.uid = "u1"
+        run.pod = lambda: env_recover.parse_pod(pod_doc(uid="u2", restarts=1, exit_code=137))
+        with self.assertRaisesRegex(env_recover.Failed, "rescheduled"):
+            run.assert_no_further_restart(1)
+
+    def test_rebound_counters_query_both_series_and_retry_to_the_deadline(self):
+        run = self.run_()
+        queries = []
+        answers = iter([[], [], [], [({"x": 1}, 2.0)]])
+
+        def instant(q):
+            queries.append(q)
+            return [{"metric": {}, "value": [0, str(v)]} for _, v in next(answers)]
+
+        g = types.SimpleNamespace(instant=instant)
+        env_recover.time.sleep, real_sleep = lambda s: None, env_recover.time.sleep
+        self.addCleanup(setattr, env_recover.time, "sleep", real_sleep)
+        # despawn absent (empty), reconnected absent on the first pass, then 2.
+        run.rebound_counters(g)
+        self.assertEqual(queries[0], 'sum(andara_events_emitted_total{type="character_despawned",namespace="andara-dev"})')
+        self.assertEqual(queries[1], 'sum(andara_linkdead_outcomes_total{outcome="reconnected",namespace="andara-dev"})')
+        self.assertEqual(len(queries), 4)
+
+    def test_rebound_counters_fail_at_the_deadline(self):
+        run = self.run_()
+        g = types.SimpleNamespace(instant=lambda q: [])
+        real = env_recover.METRIC_WAIT
+        env_recover.METRIC_WAIT = 0
+        self.addCleanup(setattr, env_recover, "METRIC_WAIT", real)
+        with self.assertRaisesRegex(env_recover.Failed, "within 0s"):
+            run.rebound_counters(g)
+
     def test_unlanded_kill(self):
         run = self.run_()
         run.pod = lambda: env_recover.parse_pod(pod_doc())
@@ -360,6 +394,37 @@ class Main(unittest.TestCase):
             kill=lambda self: (1000.0, 5.0, 0, 1), rebind=lambda self, marks: events.append("rebind"),
             recovered_metrics=metrics)
         self.assertEqual((status, events), (1, ["rebind", "metrics"]))
+
+    def test_the_end_of_run_checks_run_in_order_and_fail_the_run(self):
+        full = ["rebind", "recovered_metrics", "rebound_counters", "assert_no_further_restart", "rebound_counters"]
+        # (name that fails, which call of it, events seen up to and including the failure)
+        for failing, nth, upto in (("rebound_counters", 1, 3), ("assert_no_further_restart", 1, 4),
+                                   ("rebound_counters", 2, 5)):
+            events = []
+
+            class P:
+                def lines(self):
+                    return []
+
+            def setup(self):
+                self.players = {"a": P(), "b": P()}
+
+            def rec(name):
+                def f(self, *a):
+                    events.append(name)
+                    if name == failing and events.count(name) == nth:
+                        raise env_recover.Failed(name)
+                return f
+
+            with mock.patch.object(env_recover.time, "sleep", lambda s: None):
+                status, _ = self.go(
+                    self.CREDS, preflight=lambda self, g, e: None, setup_cli=setup,
+                    play_until_round=lambda self: 60, kill=lambda self: (1000.0, 5.0, 0, 1),
+                    rebind=rec("rebind"), recovered_metrics=rec("recovered_metrics"),
+                    trace_id=lambda self, since: "", rebound_counters=rec("rebound_counters"),
+                    assert_no_further_restart=rec("assert_no_further_restart"))
+            self.assertEqual(status, 1, (failing, nth))
+            self.assertEqual(events, full[:upto], (failing, nth))
 
     def test_transcript_marks_are_taken_before_the_kill(self):
         events = []
