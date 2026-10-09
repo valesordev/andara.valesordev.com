@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -94,6 +95,17 @@ func (r *linkRig) follow(t *testing.T, debounce time.Duration) (w *fakeWatcher, 
 	return w, func() { cancel(); <-done }
 }
 
+// awaitLoads is loads once the first span for pack@version has ended. The
+// Loader publishes the version before the deferred span.End runs, so a test
+// that waits on Versions() and then reads the recorder once can see none
+// (#486, main at bb76f62); the span is polled to a deadline, as
+// docs/specs/testing/live-assertions.md says.
+func (r *linkRig) awaitLoads(t *testing.T, pack string, version int64) []sdktrace.ReadOnlySpan {
+	t.Helper()
+	waitUntil(t, func() bool { return len(r.loads(pack, version)) > 0 }, fmt.Sprintf("the content.load span for %s@%d to end", pack, version))
+	return r.loads(pack, version)
+}
+
 // loads are the ended content.load spans for pack@version, in order.
 func (r *linkRig) loads(pack string, version int64) []sdktrace.ReadOnlySpan {
 	var out []sdktrace.ReadOnlySpan
@@ -147,7 +159,7 @@ func TestFollow_OneMoveLinksTheLoadToItsActivation(t *testing.T) {
 	w.ch <- PointerMove{Pack: CorePack, Version: 2, TraceParent: tp(7)}
 	waitUntil(t, func() bool { return r.l.Versions()[CorePack] == 2 }, "core@2 to load")
 
-	loads := r.loads(CorePack, 2)
+	loads := r.awaitLoads(t, CorePack, 2)
 	if len(loads) != 1 || len(loads[0].Links()) != 1 {
 		t.Fatalf("loads = %d, links = %v", len(loads), loads)
 	}
@@ -171,7 +183,7 @@ func TestFollow_ACoalescedBurstLinksEveryMove(t *testing.T) {
 	if n := len(r.loads(CorePack, 2)) + len(r.loads(CorePack, 3)); n != 0 {
 		t.Fatalf("%d loads of the superseded versions", n)
 	}
-	loads := r.loads(CorePack, 4)
+	loads := r.awaitLoads(t, CorePack, 4)
 	if len(loads) != 1 || len(loads[0].Links()) != 3 {
 		t.Fatalf("loads = %d for v4, links = %v", len(loads), loads[0].Links())
 	}
@@ -199,7 +211,7 @@ func TestFollow_ABurstAcrossPacksLinksEachLoadToItsOwnMoves(t *testing.T) {
 	waitUntil(t, func() bool { return r.l.Versions()["abbey"] == 2 && r.l.Versions()["chapel"] == 2 }, "both packs to load")
 
 	for pack, n := range map[string]byte{"abbey": 1, "chapel": 2} {
-		loads := r.loads(pack, 2)
+		loads := r.awaitLoads(t, pack, 2)
 		if len(loads) != 1 || len(loads[0].Links()) != 1 {
 			t.Fatalf("%s: loads %d, links %v", pack, len(loads), loads)
 		}
@@ -217,7 +229,7 @@ func TestFollow_AMoveWithNoTraceParentAddsNoLink(t *testing.T) {
 	w.ch <- PointerMove{Pack: CorePack, Version: 2}
 	waitUntil(t, func() bool { return r.l.Versions()[CorePack] == 2 }, "core@2 to load")
 
-	if loads := r.loads(CorePack, 2); len(loads) != 1 || len(loads[0].Links()) != 0 {
+	if loads := r.awaitLoads(t, CorePack, 2); len(loads) != 1 || len(loads[0].Links()) != 0 {
 		t.Fatalf("loads = %v", loads)
 	}
 	if strings.Contains(r.logs.String(), "trace_parent") {
@@ -236,7 +248,7 @@ func TestFollow_AMalformedTraceParentIsReportedOnceAndTruncated(t *testing.T) {
 	w.ch <- PointerMove{Pack: CorePack, Version: 2, TraceParent: bad}
 	waitUntil(t, func() bool { return r.l.Versions()[CorePack] == 2 }, "core@2 to load despite the bad value")
 
-	if loads := r.loads(CorePack, 2); len(loads) != 1 || len(loads[0].Links()) != 0 {
+	if loads := r.awaitLoads(t, CorePack, 2); len(loads) != 1 || len(loads[0].Links()) != 0 {
 		t.Fatalf("loads = %v", loads)
 	}
 	var warns []string
@@ -377,7 +389,7 @@ func TestFollow_LinksPerWindowAreBounded(t *testing.T) {
 	}
 	waitUntil(t, func() bool { return r.l.Versions()[CorePack] == last }, "the newest version to load")
 
-	loads := r.loads(CorePack, last)
+	loads := r.awaitLoads(t, CorePack, last)
 	if len(loads) != 1 || len(loads[0].Links()) != maxLoadLinks {
 		t.Fatalf("loads %d, links %d, want one load with %d", len(loads), len(loads[0].Links()), maxLoadLinks)
 	}
