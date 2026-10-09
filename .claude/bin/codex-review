@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""Wait for Codex's review of a PR commit and list what it found.
+
+Source of truth: automate.bashburn.com / plugins/valesor-dev/bin/codex-review.
+Vendored into target repos as .claude/bin/codex-review. Don't edit it there.
+
+    codex-review status <PR> [--sha SHA]
+    codex-review wait   <PR> [--sha SHA] [--timeout 600] [--interval 30]
+                             [--grace 120] [--no-request]
+
+Codex keeps one status comment per PR (marker `codex-pull-request-review-summary`)
+with a table row per review (only `Code Review` rows count) and commit, and updates it when a review finishes. It
+reviews on PR open, draft -> ready, and an `@codex review` comment, not on push.
+`wait` therefore posts `@codex review` once when no row for SHA appears within
+--grace seconds (--no-request disables that).
+
+SHA defaults to the PR's head. Prints one JSON object:
+
+    state     completed | pending | failed | none | timeout
+    sha       the full commit reviewed
+    requested true if `wait` asked for a review
+    findings  [{id, path, line, url, body}]  Codex's inline comments on SHA that have
+              no `**pr-comments:**` reply as the thread's last comment
+              (fixed, disputed, routed, deferred, answered)
+    reviews   [{id, state}]                  Codex reviews of SHA
+
+`none`: no status row for SHA. `timeout`: still pending or none at --timeout.
+REST only (cloud sessions block GraphQL). Exit 0 for completed, 3 for failed or
+timeout, 2 when GitHub can't be read.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import subprocess
+import sys
+import time
+
+BOT = "chatgpt-codex-connector[bot]"
+MARKER = "codex-pull-request-review-summary"
+HANDLED = "**pr-comments:**"  # a reply starting with this closes a thread (see /pr-comments)
+ROW = re.compile(r"`([0-9a-f]{7,40})`")
+
+
+class GitHubError(Exception):
+    pass
+
+
+def gh_api(path: str, *extra: str) -> object:
+    r = subprocess.run(["gh", "api", path, "--paginate", *extra],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise GitHubError(f"gh api {path}: {r.stderr.strip() or r.stdout.strip()}")
+    out = r.stdout.strip()
+    if not out:
+        return []
+    # --paginate concatenates JSON arrays as `][` between pages
+    return json.loads(out.replace("]\n[", ",").replace("][", ","))
+
+
+def gh_post_comment(pr: int, body: str) -> None:
+    r = subprocess.run(["gh", "pr", "comment", str(pr), "--body", body],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        raise GitHubError(f"gh pr comment {pr}: {r.stderr.strip()}")
+
+
+def head_sha(pr: int) -> str:
+    r = subprocess.run(["gh", "api", f"repos/{{owner}}/{{repo}}/pulls/{pr}", "--jq", ".head.sha"],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        raise GitHubError(f"gh api pulls/{pr}: {r.stderr.strip() or 'no head sha'}")
+    return r.stdout.strip()
+
+
+def rows_for(comments: list[dict], sha: str) -> list[str]:
+    """Statuses (`completed`/`failed`/`pending`) of the status-table rows for SHA."""
+    out = []
+    for c in comments:
+        if c.get("user", {}).get("login") != BOT or MARKER not in (c.get("body") or ""):
+            continue
+        for line in c["body"].splitlines():
+            if not line.startswith("|"):
+                continue
+            cells = [x.strip() for x in line.strip("|").split("|")]
+            if "code review" not in re.sub(r"[*_`]", "", cells[0]).lower():
+                continue  # Security Review and other rows don't gate the code review
+            commit = next((m.group(1) for x in cells if (m := ROW.fullmatch(x))), None)
+            if not commit or not sha.startswith(commit):
+                continue
+            text = re.sub(r"<[^>]+>|[*_`]", "", " ".join(cells)).lower()
+            if re.search(r"fail|error|cancel", text):
+                out.append("failed")
+            elif "complete" in text:
+                out.append("completed")
+            else:
+                out.append("pending")
+    return out
+
+
+def state_of(rows: list[str]) -> str:
+    if not rows:
+        return "none"
+    for s in ("failed", "pending"):
+        if s in rows:
+            return s
+    return "completed"
+
+
+def snapshot(pr: int, sha: str) -> dict:
+    conv = gh_api(f"repos/{{owner}}/{{repo}}/issues/{pr}/comments")
+    state = state_of(rows_for(conv, sha))  # type: ignore[arg-type]
+    inline = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr}/comments")
+    reviews = gh_api(f"repos/{{owner}}/{{repo}}/pulls/{pr}/reviews")
+    # A thread is handled when its last comment is a tagged reply that isn't Codex's own.
+    last: dict[int, dict] = {}
+    for c in sorted(inline, key=lambda c: c["id"]):  # type: ignore[union-attr]
+        last[c.get("in_reply_to_id") or c["id"]] = c
+    handled = {root for root, c in last.items()
+               if c.get("in_reply_to_id") and c.get("user", {}).get("login") != BOT
+               and (c.get("body") or "").startswith(HANDLED)}
+    return {
+        "state": state,
+        "sha": sha,
+        "requested": False,
+        "findings": [
+            {"id": c["id"], "path": c.get("path"), "line": c.get("line") or c.get("original_line"),
+             "url": c.get("html_url"), "body": c.get("body", "")}
+            for c in inline  # type: ignore[union-attr]
+            if c.get("user", {}).get("login") == BOT and c.get("in_reply_to_id") is None
+            and c["id"] not in handled
+            and (c.get("commit_id") or c.get("original_commit_id") or "").startswith(sha)
+        ],
+        "reviews": [{"id": r["id"], "state": r.get("state")}
+                    for r in reviews  # type: ignore[union-attr]
+                    if r.get("user", {}).get("login") == BOT
+                    and (r.get("commit_id") or "").startswith(sha)],
+    }
+
+
+def wait(pr: int, sha: str, timeout: float, interval: float, grace: float, request: bool,
+         sleep=time.sleep, clock=time.monotonic) -> dict:
+    start, requested = clock(), False
+    while True:
+        snap = snapshot(pr, sha)
+        elapsed = clock() - start
+        if snap["state"] in ("completed", "failed"):
+            break
+        if snap["state"] == "none" and request and not requested and elapsed >= grace:
+            gh_post_comment(pr, "@codex review")
+            requested = True
+        if elapsed + interval > timeout:
+            snap["state"] = "timeout"
+            break
+        sleep(interval)
+    snap["requested"] = requested
+    return snap
+
+
+def main(argv: list[str] | None = None) -> int:
+    p = argparse.ArgumentParser(prog="codex-review", description=__doc__.split("\n")[0])
+    sub = p.add_subparsers(dest="cmd", required=True)
+    for name in ("status", "wait"):
+        s = sub.add_parser(name)
+        s.add_argument("pr", type=int)
+        s.add_argument("--sha")
+        if name == "wait":
+            s.add_argument("--timeout", type=float, default=600)
+            s.add_argument("--interval", type=float, default=30)
+            s.add_argument("--grace", type=float, default=120)
+            s.add_argument("--no-request", action="store_true")
+    a = p.parse_args(argv)
+    try:
+        sha = a.sha or head_sha(a.pr)
+        res = (snapshot(a.pr, sha) if a.cmd == "status"
+               else wait(a.pr, sha, a.timeout, a.interval, a.grace, not a.no_request))
+    except GitHubError as e:
+        print(f"codex-review: {e}", file=sys.stderr)
+        return 2
+    print(json.dumps(res, indent=2))
+    return 3 if res["state"] in ("failed", "timeout") else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -16,3 +16,6 @@ It shows the triage table and waits. Brian approves. The agent fixes #1 test-fir
 
 **Non-trigger:** "Review my branch before I push it" → `/pre-pr`.
 **Non-trigger:** "Merge #212 once the comments are done" → the agent handles the comments, then tells Brian the PR is ready for him to merge. It never merges.
+
+**Prompt:** (run by /pre-pr) "/pr-comments 212 --auto"
+**Behavior:** Codex left two inline comments. The agent prints the triage table and doesn't wait. It reproduces the first (a failing test), fixes it, and commits. The second claims a nil dereference; a test that would fail if the claim were true passes under mutation, so the agent posts a Dispute with that evidence. It runs `/pre-pr --no-codex`, pushes, replies on both threads, and lists the dispute in its report. A comment from Brian on the same PR would have stopped it to ask.

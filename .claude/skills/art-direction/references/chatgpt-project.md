@@ -3,7 +3,7 @@
 Project name: **<Imprint> — Art**, one per imprint. Project files are the selected sources of the imprint's
 slots (`<slot>.png`), uploaded by Brian after each selection so later prompts can reference them.
 
-Render exactly this shape, filled from the approved `direction.md`, under 1,500 characters:
+Render exactly this shape, filled from the approved `illustration-system.md`, under 1,500 characters:
 
 ```text
 <Imprint> — Art · AD v<n>
@@ -15,7 +15,7 @@ Style (apply to every image unless the request overrides it):
 - Value/colour: <one line>
 - Line: <one line>
 - Light: <one line>
-- Composition: follow the aspect ratio and empty zone in the request; default <default>.
+- Composition: follow the composition type, aspect ratio, and empty zone in the request.
 
 Always:
 - When a request lists reference files, keep the named features consistent with them.

@@ -6,7 +6,7 @@ Open each file and look at it; never review from the file name or the prompt.
 | Criterion | Question | Fails when |
 |---|---|---|
 | Brief | Does it show what the brief says, with every must-keep? | A must-keep is missing or contradicted |
-| Direction | Is it on the approved art direction (rendering, value, line, light)? | It drifts to a style the direction excludes |
+| Direction | Is it on the approved illustration system (rendering, value, line, light)? | It drifts to a style the system or `negative-examples.md` excludes |
 | Treatment | Does it survive treatment and both themes? | Tone turns to mush, edges fringe, or the dark theme loses the subject |
 | Composition | Is the empty zone empty, and is every crop in the spec a complete picture? | Type would sit on detail, or a crop cuts the subject |
 | Scale | Does it read at its smallest rendered size (600 px wide for heroes, 16 px for marks)? | It becomes a smear or blob |
