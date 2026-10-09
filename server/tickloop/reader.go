@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 
@@ -214,7 +215,7 @@ func (r *BoundaryReader) lastBoundary(ctx context.Context, from, end int64) (sim
 			return 0, false, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return 0, false, fmt.Errorf("read the boundary head at %d: %w", from, err)
+			return 0, false, fmt.Errorf("read the boundary head at %d: %w", from, offsetGap(err))
 		}
 		fetches.EachRecord(func(rec *kgo.Record) {
 			next = rec.Offset + 1
@@ -255,7 +256,7 @@ func (r *BoundaryReader) probe(ctx context.Context, offset, end int64) (sim.Tick
 			return 0, 0, false, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return 0, 0, false, fmt.Errorf("probe boundaries at %d: %w", offset, err)
+			return 0, 0, false, fmt.Errorf("probe boundaries at %d: %w", offset, offsetGap(err))
 		}
 		var (
 			found bool
@@ -300,7 +301,7 @@ func (r *BoundaryReader) Next(ctx context.Context, max int, wait time.Duration) 
 		}
 		for _, fe := range fetches.Errors() {
 			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
-				return nil, fmt.Errorf("read boundaries: %w", fe.Err)
+				return nil, fmt.Errorf("read boundaries: %w", offsetGap(fe.Err))
 			}
 		}
 		fetches.EachPartition(func(p kgo.FetchTopicPartition) {
@@ -463,7 +464,7 @@ func (c *CommandSource) Fetch(p int32, from, to int64) ([]sim.Record, error) {
 			return nil, fmt.Errorf("fetch %s partition %d [%d,%d): %w", c.topic, p, from, to, ctx.Err())
 		}
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, offsetGap(err)
 		}
 		var derr error
 		fetches.EachRecord(func(r *kgo.Record) {
@@ -485,3 +486,14 @@ func (c *CommandSource) Fetch(p int32, from, to int64) ([]sim.Record, error) {
 
 // Close closes the source.
 func (c *CommandSource) Close() { c.client.Close() }
+
+// offsetGap names a broker's OFFSET_OUT_OF_RANGE as the log gap it is: the
+// readers run on NoResetOffset, so history the broker no longer has reaches
+// them as this error instead of a silent skip (client-contract.md, "an offset
+// the broker no longer has"). Any other error passes through.
+func offsetGap(err error) error {
+	if errors.Is(err, kerr.OffsetOutOfRange) {
+		return fmt.Errorf("%w: the broker no longer has the offset: %w", ErrLogGap, err)
+	}
+	return err
+}

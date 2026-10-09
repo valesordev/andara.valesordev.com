@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 
@@ -155,7 +156,17 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 		var pingErr error
 		pinged := false
 		var fetchErr error
+		var outOfRange *kgo.FetchError
 		for _, fe := range fetches.Errors() {
+			if errors.Is(fe.Err, kerr.OffsetOutOfRange) && outOfRange == nil {
+				// The broker has no such offset: the log was cut below the
+				// position (an unclean election) or past it (retention).
+				// The client is on NoResetOffset, so it reports the error
+				// instead of skipping; a skipped offset is a gap.
+				fe := fe
+				outOfRange = &fe
+				continue
+			}
 			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
 				fetchErr = fe.Err
 				break
@@ -171,6 +182,9 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			pcancel()
 		}
 		s.mu.Lock()
+		if outOfRange != nil && s.gap == nil {
+			s.gap = fmt.Errorf("%w: partition %d: the broker no longer has offset %d (%v)", sim.ErrOffsetGap, outOfRange.Partition, s.expected[outOfRange.Partition], outOfRange.Err)
+		}
 		switch {
 		case fetchErr != nil:
 			s.fetchErr = fetchErr
@@ -634,7 +648,7 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	for next < to {
 		fetches := client.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, offsetGap(err)
 		}
 		var ferr error
 		fetches.EachRecord(func(r *kgo.Record) {

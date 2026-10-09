@@ -4,6 +4,8 @@
 package kafkaclient
 
 import (
+	"context"
+	"net"
 	"strings"
 	"testing"
 	"time"
@@ -259,4 +261,22 @@ func TestCheck_AResumingReaderThatResetsSilentlyFails(t *testing.T) {
 	}
 	opts = append(opts, kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()))
 	only(t, failing(t, Site{Name: "r", Role: Consumer, Opts: opts}), "offset the broker no longer has", Fail)
+}
+
+// The check dials nothing: whatever dialer a Site brings, the client that is
+// read refuses every connection.
+func TestCheck_TheClientsItBuildsRefuseEveryDial(t *testing.T) {
+	brought := kgo.Dialer(func(context.Context, string, string) (net.Conn, error) { return nil, nil })
+	cl, err := kgo.NewClient(hermetic(append(consumerOpts(), brought))...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cl.Close()
+	dial, _ := cl.OptValue(kgo.Dialer).(func(context.Context, string, string) (net.Conn, error))
+	if dial == nil {
+		t.Fatal("no dialer on the client")
+	}
+	if c, err := dial(context.Background(), "tcp", dark); err == nil || c != nil {
+		t.Fatalf("dial = %v, %v; want a refusal", c, err)
+	}
 }

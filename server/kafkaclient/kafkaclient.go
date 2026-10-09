@@ -136,12 +136,7 @@ func (f Finding) String() string {
 // row of the contract that applies to its Role. It dials nothing: the client
 // is closed before it is used.
 func Check(s Site) []Finding {
-	// The client is built to be read, not used: a dialer that refuses every
-	// connection keeps the check off the network.
-	refuse := kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
-		return nil, errors.New("kafkaclient: the check dials nothing")
-	})
-	cl, err := kgo.NewClient(append(append([]kgo.Opt(nil), s.Opts...), refuse)...)
+	cl, err := kgo.NewClient(hermetic(s.Opts)...)
 	if err != nil {
 		return []Finding{{Client: s.Name, Setting: "client", Value: err.Error(), Contract: "builds", Severity: Fail}}
 	}
@@ -381,3 +376,13 @@ type emptyBackup struct{}
 
 func (emptyBackup) Next() (int, int64) { panic("kafkaclient: a keyed record read the buffer") }
 func (emptyBackup) Rem() int           { return 0 }
+
+// hermetic is opts with a dialer that refuses every connection: the client is
+// built to be read, and a consumer would otherwise start dialing its seed
+// brokers as it is built.
+func hermetic(opts []kgo.Opt) []kgo.Opt {
+	refuse := kgo.Dialer(func(context.Context, string, string) (net.Conn, error) {
+		return nil, errors.New("kafkaclient: the check dials nothing")
+	})
+	return append(append([]kgo.Opt(nil), opts...), refuse)
+}

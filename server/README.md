@@ -406,7 +406,7 @@ exits `0` (compression carries no correctness claim).
 | consumer | `isolation.level` | not `read_committed` |
 | | group membership, committed offsets | any group, or marked commits |
 | | start offset | `AtStart` or `AtEnd` on a reader that is not a named one-shot of the contract |
-| | offset the broker no longer has | a reader that resumes at `At(offset)` is not on `NoResetOffset`, so the library would reset it silently to the start of the log; the client returns the error instead and the reader's own pre-check names the gap (`ErrLogGap`, exit `3`) |
+| | offset the broker no longer has | a reader that resumes at `At(offset)` is not on `NoResetOffset`, so the library would reset it silently to the start of the log; the client returns the error instead and the reader's own pre-check names the gap (`ErrLogGap`, exit `3`); the tick-loop command source, the boundary and command readers map the broker's `OFFSET_OUT_OF_RANGE` to it mid-run too |
 | all | `client.id` | does not match `^<principal>(-[a-z]+)*$` for an ADR-0011 §3 principal, or is empty |
 
 Each package that builds a client exports its options as a function and describes the client as a
