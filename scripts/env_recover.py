@@ -185,7 +185,7 @@ def check_recovery(ns, rounds, matches, stamps, round_r, t_kill):
 class Grafana:
     def __init__(self):
         self.oc = _load("observe_check")
-        self.prom = self.oc.Backend("PROM", os.environ["GRAFANA_CLOUD_READ_TOKEN"])
+        self.prom = self.oc.Backend("PROM", os.environ["GRAFANA_CLOUD_READ_TOKEN"].strip())
 
     def instant(self, q):
         return self.oc.instant(self.prom, q)
@@ -210,7 +210,7 @@ def missing_credentials(environ):
     """The variables AC-2 and AC-5 need that aren't set, ruler defaults filled as alerts_sync has them."""
     sync = _load("alerts_sync")
     env = sync.resolve_env(environ)
-    return [k for k in READ_VARS if not environ.get(k)] + sync.missing(env, RULER_VARS), env
+    return [k for k in READ_VARS if not environ.get(k, "").strip()] + sync.missing(env, RULER_VARS), env
 
 
 def rule_loaded(ruler_yaml):
@@ -317,7 +317,7 @@ class Run:
         self.cli = os.environ.get("ANDARA_CLI", os.path.join(REPO, "bin", "andara-cli"))
         self.players = {}
         self.account_ids = {}
-        self.rto = int(environ.get("ENV_RECOVER_RTO", "120"))
+        self.rto = environ.get("ENV_RECOVER_RTO", "120")
         self.cli_env = dict(os.environ)
 
     # shell-outs
@@ -363,11 +363,12 @@ class Run:
 
     def make_player(self, who, hex_, prefix):
         user = "recover-%s-%s" % (who, hex_)
-        self.cli_run("account", "create", "--username", user, "--password-stdin", stdin=PASSWORD + "\n")
+        made = self.cli_run("--output", "json", "account", "create", "--username", user, "--password-stdin",
+                            stdin=PASSWORD + "\n")
+        # Recorded at once, so a later failure still gets this Account disabled.
+        self.account_ids[who] = json.loads(made)["account_id"]
         self.cli_run("auth", "login", "--username", user, "--password-stdin", stdin=PASSWORD + "\n",
                      creds=self.cred(who))
-        who_am_i = json.loads(self.cli_run("--output", "json", "auth", "whoami", creds=self.cred(who)))
-        self.account_ids[who] = who_am_i["account_id"]
         name = prefix + "".join(chr(97 + b % 26) for b in os.urandom(8))
         self.cli_run("character", "create", name, creds=self.cred(who))
         return user, name
@@ -516,10 +517,11 @@ class Run:
         for who in ("a", "b"):
             aid = self.account_ids.get(who)
             if not aid:
-                say("could not disable player %s: its Account was never created" % who.upper())
+                if self.account_ids:
+                    say("could not disable player %s: its Account was never created" % who.upper())
                 continue
             p = subprocess.run([self.cli, "account", "set-status", aid, "disabled"], capture_output=True,
-                               text=True, env=self.cli_env)
+                               text=True, env=self.cli_env, timeout=60)
             if p.returncode != 0:
                 say("could not disable player %s's Account %s: %s" % (who.upper(), aid, (p.stderr or p.stdout).strip()))
         shutil.rmtree(self.work, ignore_errors=True)
@@ -533,15 +535,17 @@ def main(argv):
         absent, ruler_env = missing_credentials(os.environ)
         if absent:
             raise Failed("%s unset; cannot verify" % ", ".join(absent))
-        if run.rto <= 0:
-            raise Failed("ENV_RECOVER_RTO must be above 0")
+        if not re.fullmatch(r"[0-9]+", run.rto) or int(run.rto) <= 0:
+            raise Failed("ENV_RECOVER_RTO=%s is not a whole number of seconds above 0" % run.rto)
+        run.rto = int(run.rto)
         g = Grafana()
         run.preflight(g, ruler_env)
         run.setup_cli()
         r = run.play_until_round()
+        # Before the kill: the absence window is the kill to the reconnect, not Ready to it.
+        marks = {"A": len(run.players["a"].lines()), "B": len(run.players["b"].lines())}
         t_kill, kill_to_ready, a_restarts, b_restarts = run.kill()
         since = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(t_kill))
-        marks = {"A": len(run.players["a"].lines()), "B": len(run.players["b"].lines())}
         say("Ready %.0fs after the kill (RTO %ds), restartCount %d→%d, round %d" %
             (kill_to_ready, run.rto, a_restarts, b_restarts, r))
         run.recovered_metrics(g, r, t_kill)
@@ -567,6 +571,10 @@ def main(argv):
         status = 1
     except Exception as e:  # a backend or tool failure is still a failed run, and still cleans up
         print("env-recover: %s: %s" % (type(e).__name__, e), file=sys.stderr)
+        try:
+            run.dump()
+        except Exception as d:
+            print("env-recover: could not collect logs: %s" % d, file=sys.stderr)
         status = 1
     finally:
         run.cleanup()
