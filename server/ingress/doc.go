@@ -10,10 +10,10 @@
 // submission order, run through command.Pipeline — parse, authorize,
 // produce — and answered with the Partition and offset the Command landed
 // on. The produce is KafkaProducer: acks=all, the idempotent producer, the
-// explicit sim.PartitionFor partitioner, and one deadline. When the log is
-// unreachable the World is read-only, not down: Submit fails fast with
-// UNAVAILABLE, andara_ingress_degraded reads 1, and the tick and the Event
-// stream go on.
+// explicit sim.PartitionFor partitioner, and one deadline. When a Partition
+// cannot take writes the Zones on it are read-only, not down: Submit fails
+// fast with UNAVAILABLE, andara_ingress_degraded{partition} reads 1, and the
+// tick and the Event stream go on.
 //
 // Bindings is the Gateway's routing view of where each Session's Character
 // is: bound by AW-SRV-014, kept current here from the sim's own Events, and

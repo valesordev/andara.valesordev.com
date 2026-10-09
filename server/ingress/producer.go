@@ -259,8 +259,10 @@ func (k *KafkaProducer) Degraded(partition int32) bool { return k.health.Degrade
 // gauge, the line, and — on entering — the drop of its client.
 func (k *KafkaProducer) onHealthChange(ctx context.Context, partition int32, degraded bool, cause, name string) {
 	if k.metrics != nil {
+		// The tracker's current truth, not the transition's: two goroutines'
+		// notifications can arrive out of order.
 		v := 0.0
-		if degraded {
+		if k.health.Degraded(partition) {
 			v = 1
 		}
 		k.metrics.Degraded.WithLabelValues(strconv.Itoa(int(partition))).Set(v)
@@ -270,11 +272,11 @@ func (k *KafkaProducer) onHealthChange(ctx context.Context, partition int32, deg
 		attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))
 	}
 	if degraded {
-		k.log.LogAttrs(ctx, slog.LevelWarn, "partition degraded: Commands for its Zones are refused until it recovers", attrs...)
+		k.log.LogAttrs(ctx, slog.LevelWarn, "partition degraded", append(attrs, slog.String("effect", "Commands for its Zones are refused until it recovers"))...)
 		k.dropClient(partition)
 		return
 	}
-	k.log.LogAttrs(ctx, slog.LevelInfo, "partition recovered: it accepts Commands again", attrs...)
+	k.log.LogAttrs(ctx, slog.LevelInfo, "partition recovered", append(attrs, slog.String("effect", "it accepts Commands again"))...)
 }
 
 // clientFor is the client that carries the Partition, built on first use.

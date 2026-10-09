@@ -331,3 +331,37 @@ func TestHealth_MissingTopicIsAnOutageOfAll(t *testing.T) {
 		t.Fatalf("degraded %d, want %d", len(got), sim.PartitionCount)
 	}
 }
+
+// One probe without a leader marks nothing and does not clear a mark that
+// stands: not an ISR mark, and not a produce mark past its hold.
+func TestHealth_OneLeaderlessProbeDoesNotClearAMark(t *testing.T) {
+	ctx := context.Background()
+	f := newHealthFixture()
+	f.h.ObserveProbe(ctx, healthy().with(7, partitionView{Leader: 2, ISR: 1}), 2)
+	f.h.ObserveProbe(ctx, healthy().with(7, partitionView{Leader: -1}), 2)
+	if !f.h.Degraded(7) {
+		t.Fatal("a probe with no leader cleared an ISR mark")
+	}
+	f.h.ObserveProbe(ctx, healthy(), 2)
+
+	f.h.MarkProduceError(ctx, 9, "REQUEST_TIMED_OUT")
+	f.clock.advance(testHold + time.Second)
+	f.h.ObserveProbe(ctx, healthy().with(9, partitionView{Leader: -1}), 2)
+	if !f.h.Degraded(9) {
+		t.Fatal("a probe with no leader released a produce mark past its hold")
+	}
+}
+
+// A produce mark on a Partition the topic does not list still ends after the
+// hold and a probe.
+func TestHealth_AProduceMarkOnAnUnlistedPartitionEnds(t *testing.T) {
+	ctx := context.Background()
+	f := newHealthFixture()
+	v := &topicView{Partitions: map[int32]partitionView{0: {Leader: 1, ISR: 3}}}
+	f.h.MarkProduceError(ctx, 40, "REQUEST_TIMED_OUT")
+	f.clock.advance(testHold + time.Second)
+	f.h.ObserveProbe(ctx, v, 2)
+	if f.h.Degraded(40) {
+		t.Fatal("the mark outlived its hold")
+	}
+}

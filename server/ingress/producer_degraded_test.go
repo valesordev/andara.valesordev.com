@@ -712,3 +712,43 @@ func gaugeSum(m *Metrics) float64 {
 	}
 	return sum
 }
+
+// The source reads the broker's metadata errors as the tracker needs them.
+func TestSource_TopicReadsMetadataErrors(t *testing.T) {
+	f := newProducerFixture(t, nil)
+	ctx := context.Background()
+
+	f.b.mu.Lock()
+	f.b.topicErr = 3 // UNKNOWN_TOPIC_OR_PARTITION
+	f.b.mu.Unlock()
+	v, err := f.k.source.Topic(ctx)
+	if err != nil || !v.Missing {
+		t.Fatalf("unknown topic = %+v, %v; want Missing", v, err)
+	}
+
+	f.b.mu.Lock()
+	f.b.topicErr = 0
+	f.b.partErr = map[int32]int16{4: 9, 5: 6} // REPLICA_NOT_AVAILABLE, NOT_LEADER_OR_FOLLOWER
+	f.b.mu.Unlock()
+	v, err = f.k.source.Topic(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Partitions[4].Leader < 0 {
+		t.Fatal("REPLICA_NOT_AVAILABLE read as a Partition without a leader")
+	}
+	if v.Partitions[5].Leader != -1 {
+		t.Fatalf("a Partition error left leader %d", v.Partitions[5].Leader)
+	}
+}
+
+// The published gauge follows the tracker's current state, so a notification
+// that arrives after a later one cannot leave it wrong.
+func TestProducer_AStaleNotificationDoesNotSetTheGauge(t *testing.T) {
+	f := newProducerFixture(t, nil)
+	const p = int32(12)
+	f.k.onHealthChange(context.Background(), p, true, CauseProbe, ErrNameLeaderAbsent) // the tracker says healthy
+	if got := f.gauge(p); got != 0 {
+		t.Fatalf("gauge = %v with a healthy Partition", got)
+	}
+}

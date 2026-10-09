@@ -36,8 +36,10 @@ type fakeBroker struct {
 	minISR      string
 	delay       map[int32]time.Duration // produce responses held, by Partition
 	noMetadata  bool
-	extra       []string // further broker addresses Metadata names, which nothing serves
-	noMinISR    bool     // DescribeConfigs answers an empty list, as Redpanda does
+	extra       []string        // further broker addresses Metadata names, which nothing serves
+	noMinISR    bool            // DescribeConfigs answers an empty list, as Redpanda does
+	topicErr    int16           // error code Metadata answers for the topic
+	partErr     map[int32]int16 // error code Metadata answers for a Partition, over the leader's
 	nextOffset  map[int32]int64
 	landed      map[int32][]int64 // offsets appended, by Partition
 	produceReqs map[int32]int     // produce requests received, by Partition
@@ -214,6 +216,7 @@ func (b *fakeBroker) answer(key, version int16, req kmsg.Request) kmsg.Response 
 		}
 		t := kmsg.NewMetadataResponseTopic()
 		t.Topic = kmsg.StringPtr(b.topic)
+		t.ErrorCode = b.topicErr
 		for p := range sim.PartitionCount {
 			v := b.partitions[p]
 			mp := kmsg.NewMetadataResponseTopicPartition()
@@ -223,6 +226,9 @@ func (b *fakeBroker) answer(key, version int16, req kmsg.Request) kmsg.Response 
 			}
 			if v.Leader < 0 {
 				mp.ErrorCode = 5 // LEADER_NOT_AVAILABLE
+			}
+			if code, ok := b.partErr[p]; ok {
+				mp.ErrorCode = code
 			}
 			t.Partitions = append(t.Partitions, mp)
 		}

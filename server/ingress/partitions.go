@@ -140,6 +140,9 @@ func (h *partitionHealth) ObserveProbe(ctx context.Context, v *topicView, minISR
 			if !listed {
 				// The topic has no such Partition: nothing to judge.
 				s.leaderMiss, s.probeName = 0, ""
+				if !s.produceAt.IsZero() && h.now().Sub(s.produceAt) >= h.hold {
+					s.produceAt, s.produceName = time.Time{}, ""
+				}
 				changes = append(changes, h.settleLocked(p)...)
 				continue
 			}
