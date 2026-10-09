@@ -223,8 +223,11 @@ def missing_credentials(environ):
     """The variables AC-2 and AC-5 need that aren't set, ruler defaults filled as alerts_sync has them."""
     sync = _load("alerts_sync")
     env = dict(sync.resolve_env(environ))
-    if not env.get("MIMIR_API_KEY", "").strip() and environ.get("GRAFANA_CLOUD_READ_TOKEN", "").strip():
-        env["MIMIR_API_KEY"] = environ["GRAFANA_CLOUD_READ_TOKEN"].strip()
+    key = env.get("MIMIR_API_KEY", "").strip() or environ.get("GRAFANA_CLOUD_READ_TOKEN", "").strip()
+    if key:
+        env["MIMIR_API_KEY"] = key
+    else:
+        env.pop("MIMIR_API_KEY", None)
     return [k for k in READ_VARS if not environ.get(k, "").strip()] + sync.missing(env, RULER_VARS), env
 
 

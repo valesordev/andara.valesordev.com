@@ -212,6 +212,10 @@ class Inconclusive(unittest.TestCase):
         self.assertEqual((absent, env["MIMIR_API_KEY"]), ([], "t"))
         _, env = env_recover.missing_credentials(dict(base, MIMIR_API_KEY="k"))
         self.assertEqual(env["MIMIR_API_KEY"], "k")
+        _, env = env_recover.missing_credentials(dict(base, MIMIR_API_KEY="  "))
+        self.assertEqual(env["MIMIR_API_KEY"], "t")
+        absent, _ = env_recover.missing_credentials({"MIMIR_API_KEY": "  "})
+        self.assertIn("MIMIR_API_KEY", absent)
 
 
 class RunSteps(unittest.TestCase):
