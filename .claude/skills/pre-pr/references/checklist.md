@@ -46,6 +46,19 @@ test now catches that class mechanically.
       checklist path).
 - [ ] Every acceptance criterion in the story is met, or the gap is stated.
 
+## Plans, gates, and success signals
+
+- [ ] No approval gate depends on the step it gates. A criterion required
+      before an outward-facing step (cutover, publish, deploy) can be met
+      without performing that step: rehearse off production, and run the
+      live drill after approval (solo7.media#8, the rollback test that
+      needed the DNS cutover it was meant to approve).
+- [ ] Every skill, command, or check a success signal or acceptance criterion
+      invokes accepts that input in its own scope (its description's "Not
+      for"), and the signal states a pass condition, not just that it "runs"
+      (solo7.media#8, `/brand-qa` on a target image, which is
+      `/brand-audit`'s).
+
 ## Deploy surface
 
 - [ ] Compose, k8s, and Helm manifests mount every file and volume the new

@@ -1,10 +1,11 @@
-# art/<imprint>/direction.md
+# brands/<slug>/art-direction/illustration-system.md
 
 ```markdown
-# <Imprint> — art direction
+# <Imprint> — illustration system
 
 **Status:** draft | AD v<n> — approved <YYYY-MM-DD>
-**Direction:** <the locked direction name and one-line statement, from positioning.md>
+**Direction:** <the direction statement, from brand/foundation.md>
+**Basis:** visual-audit.md @ <short commit>
 **ChatGPT project:** <Imprint> — Art
 
 ## Subject matter
@@ -25,15 +26,28 @@ Weight, character, hierarchy. "None" is an answer.
 Direction, hardness, time of day. Default and allowed exceptions.
 
 ## Composition
-Default aspect, where the empty space for type goes, horizon and scale cues, crop survival.
+Horizon and scale cues, negative space, crop survival. Rules that hold for every composition type.
+
+## Composition types
+| Type | Aspect | Empty zone | Used for |
+|---|---|---|---|
+| hero-wide | 2.4:1 | <e.g. left third for type> | site headers |
+| banner-wide | <e.g. 4:1> | <…> | README and social banners |
+| square-specimen | 1:1 | <…> | project cards, avatars |
+| vertical-plate | <e.g. 2:3> | <…> | posters, document covers |
+
+A slot names exactly one type. A new type is a revision of this file.
 
 ## Treatment
-The script under `art/treat/` every image goes through, with its default parameters, and
+The script under `brands/_tools/treat/` every image goes through, with its default parameters, and
 what it does (threshold to ink on alpha, recolour to tokens, posterize, grain removal).
 
 ## Exclusions
 Always: no text, lettering, logos, watermarks, UI, named artists or franchises, real people.
 Imprint-specific: <the sibling imprints' languages this one must not borrow>.
+
+Rules here hold for every image. Anything about one composition (this tree, this moon) goes in that
+slot's prompt, never here.
 
 ## Changelog
 - AD v<n> <date> — <what changed>, because <why>; evidence: <slot or image>.

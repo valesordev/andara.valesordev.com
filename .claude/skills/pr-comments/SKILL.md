@@ -1,8 +1,8 @@
 ---
 name: pr-comments
-description: Work through the review comments on an open PR this role owns (Codex, other bots, architecture, Brian). Verify each claim, then fix it test-first, route it to the role that owns the code, or dispute it with evidence; re-run /pre-pr, push, and reply on every thread. Never merges. Trigger on "address the review comments on #212", "Codex left comments", "handle the PR feedback", "respond to review", "what's left on this PR". Not for reviewing a branch before its first push (pre-pr), reviewing someone else's PR, or merging.
-argument-hint: "[PR number; default: the current branch's PR]"
-allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(git fetch:*) Bash(git rev-parse:*)
+description: Work through the review comments on an open PR this role owns (Codex, other bots, architecture, Brian). Verify each claim, then fix it test-first, route it to the role that owns the code, or dispute it with evidence; re-run /pre-pr, push, and reply on every thread. Never merges. `--auto` (what `/pre-pr` runs after Codex reviews) skips the wait for Brian's go-ahead on the triage table. Trigger on "address the review comments on #212", "Codex left comments", "handle the PR feedback", "respond to review", "what's left on this PR". Not for reviewing a branch before its first push (pre-pr), reviewing someone else's PR, or merging.
+argument-hint: "[PR number; default: the current branch's PR] [--auto]"
+allowed-tools: Bash(.claude/bin/role:*) Bash(.claude/bin/codex-review:*) Bash(.claude/bin/story show:*) Bash(gh pr view:*) Bash(gh pr diff:*) Bash(gh pr checks:*) Bash(git add:*) Bash(git commit:*) Bash(git status:*) Bash(git diff:*) Bash(git log:*) Bash(git fetch:*) Bash(git rev-parse:*)
 ---
 
 # PR comments
@@ -65,6 +65,15 @@ who owns it. Then pick one disposition:
 Show Brian the triage table and **wait for his go-ahead** before changing
 anything. He may flip a disposition, especially a Dispute.
 
+**`--auto`:** print the table, then act without waiting. Two limits replace
+the wait:
+- A **Dispute** is posted only with reproducible evidence (command output, or
+  a mutation-checked test). Without it, treat the comment as Fix when it's
+  in scope and cheap, otherwise Defer.
+- Everything you disputed, routed, or deferred goes in the final report so
+  Brian sees it after the fact.
+Comments from Brian himself are never handled automatically: stop and ask.
+
 ```markdown
 | # | Who | Where | Claim (one line) | Reproduced? | Disposition |
 ```
@@ -72,9 +81,11 @@ anything. He may flip a disposition, especially a Dispute.
 ## 4. Act
 
 1. Make the fixes and commits from the approved table.
-2. Run `/pre-pr` with the PR number as its argument. New commits closed the
-   review gate, and the reviewer gets a fresh look at the fixes.
-3. Push (normal permission prompt).
+2. Run `/pre-pr` with the PR number as its argument and `--no-codex`: new
+   commits closed the review gate, and the reviewer gets a fresh look at the
+   fixes. The Codex wait belongs to the caller, so this doesn't recurse.
+3. Push (normal permission prompt; pre-allowed in a target whose
+   `settings.json` allows it).
 4. Reply on each thread, in one line starting with the tag:
    - inline: `gh api 'repos/{owner}/{repo}/pulls/<N>/comments/<id>/replies' -f body=…`
    - review body or conversation: one `gh pr comment <N> --body-file F`, with
@@ -112,4 +123,5 @@ End with one next action, e.g. "Re-request review from Codex on #212" or
   broken citation.
 - A comment that asks for work in another role's paths is routed even when the
   fix looks trivial. A hook denial is not something to route around.
-- Never post a disputed reply that Brian hasn't seen in the triage table.
+- Outside `--auto`, never post a disputed reply that Brian hasn't seen in the
+  triage table.
