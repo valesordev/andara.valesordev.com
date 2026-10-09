@@ -178,6 +178,7 @@ Rule 1, per code. The corpus fixes every row byte for byte; this table is the st
 | `invalid_escape` | the backslash, not the string's opening quote |
 | `removed_by_subtype` | the `remove` keyword |
 | `encoding` | the offending byte — `1:1` for a BOM, the CR's own column for a CR |
+| `unportable_name` | a Zone ID: the identifier after `zone`; a pack name: the identifier after `pack`, in the file that declares it, once per pack; a source file or directory name: `1:1` of that file |
 
 ### Chain
 
@@ -209,6 +210,7 @@ this table is a defect in this document:
 | `removed_by_subtype`, `unknown_behavior` | the inheritance chain, root first, ending at the declaring Template |
 | `extends_cycle` | the cycle from its lowest-named member, that member repeated as the last entry |
 | `chain_too_deep` | every Template in the chain, including the one past the bound |
+| `unportable_name` | Zone for a Zone ID; empty for a pack name or a source file |
 
 *Corrected 2026-09-24 (`AW-CLI-005` review):* this section said an Exit finding carries "the Exit's
 direction", which `unknown_direction`'s own sidecar contradicts, and rules 4, 7, 8, and 9, the
@@ -266,6 +268,7 @@ has no occasion to raise it.
 | `extends_cycle` | `extends` forms a cycle | every Template in the cycle, in order |
 | `removed_by_subtype` | a `remove` form | the ancestor that defined it, the substitutability rule, and `enabled: false` |
 | `duplicate_declaration` | a second `desc` in a Room or a second `fallback` in a Zone | both positions |
+| `unportable_name` | a Zone ID, a pack name that declares a Template, or a source file or directory name whose blob path some supported platform can't write: a Windows device name (`CON`, `PRN`, `AUX`, `NUL`, `CONIN$`, `CONOUT$`, `COM1`–`COM9`, `LPT1`–`LPT9`, the superscript digits `¹ ² ³` counting as digits), in any case, ignoring trailing spaces and anything after the first `.`; or a backslash, colon or NUL. The same rule as the publish gate's `UnsafeBlobPath`, one predicate for both (`AW-CLI-010`). Severity `error`: the gate would refuse the publish | the name, and the platform rule it breaks |
 
 ### 3.2 Raised by the compiler, defined by the loader
 
