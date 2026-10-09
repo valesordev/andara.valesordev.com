@@ -84,87 +84,98 @@ func (s *Store) Register(ctx context.Context, username, password, inviteCode str
 	cred := hashCredential(accountsv1.CredentialKind_PASSWORD, password, s.opts.Argon2)
 	now := s.now()
 
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-
-	if _, taken := s.lookupUsername(username); taken {
-		return "", ErrUsernameTaken
-	}
-	// Re-read the mode under the write lock: an Operator may have closed
-	// registration between the check above and now.
-	if s.RegistrationMode() != mode {
-		return "", ErrRegistrationClosed
-	}
-
-	id := newAccountID()
-	var issuer *accountsv1.Account
-	if inviteCode != "" {
-		// Codes are issued lower-case; a player who types one in capitals
-		// meant the same code, and RevokeInvite normalizes the same way.
-		hash := hashSecret(strings.ToLower(strings.TrimSpace(inviteCode)))
-		s.mu.RLock()
-		issuerID, ok := s.invites[key32(hash)]
-		s.mu.RUnlock()
-		if !ok {
-			s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
-			return "", ErrPermissionDenied
-		}
-		issuer, _ = s.clone(issuerID)
-		idx := slices.IndexFunc(issuer.GetInvites(), func(i *accountsv1.Invite) bool { return bytes.Equal(i.GetCodeHash(), hash) })
-		if idx < 0 {
-			s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
-			return "", ErrPermissionDenied
-		}
-		inv := issuer.Invites[idx]
-		switch {
-		case inv.GetRedeemed():
-			// Under wmu this is the losers of a race that has already been
-			// decided, which is the only way a redeemed code is presented
-			// from a caller that read it as unredeemed.
-			s.metrics.InviteRedemptions.WithLabelValues(RedemptionRaceLost).Inc()
-			return "", ErrPermissionDenied
-		case inv.GetRevoked(), now.Unix() >= inv.GetExpiresUnix():
-			s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
-			return "", ErrPermissionDenied
-		}
-		inv.Redeemed = true
-		inv.RedeemedByAccountId = id
-		// Burn first. A crash between this write and the next leaves a
-		// burned code with no Account — an Operator re-issues one — which
-		// is the stated failure mode, and better than the reverse.
-		if err := s.commit(ctx, issuer); err != nil {
-			return "", err
-		}
-		s.metrics.InviteRedemptions.WithLabelValues(RedemptionOK).Inc()
-	}
-
-	acc := &accountsv1.Account{
-		AccountId:   id,
-		Username:    username,
-		Credential:  cred,
-		Roles:       []accountsv1.Role{accountsv1.Role_PLAYER},
-		Status:      accountsv1.AccountStatus_ACTIVE,
-		CreatedUnix: now.Unix(),
-	}
-	if err := s.commit(ctx, acc); err != nil {
-		return "", err
-	}
-	s.metrics.Registrations.WithLabelValues(modeLabel(mode)).Inc()
-	s.log.LogAttrs(ctx, slog.LevelInfo, "account registered",
-		slog.String("account_id", id),
-		slog.String("registration_mode", modeLabel(mode)),
-		slog.String("trace_id", traceID(ctx)),
+	var (
+		id  string
+		err error
 	)
-	if issuer != nil {
-		s.audit.Record(ctx, Entry{
+	s.writeLocked(ctx, func() *Entry {
+		if _, taken := s.lookupUsername(username); taken {
+			err = ErrUsernameTaken
+			return nil
+		}
+		// Re-read the mode under the write lock: an Operator may have closed
+		// registration between the check above and now.
+		if s.RegistrationMode() != mode {
+			err = ErrRegistrationClosed
+			return nil
+		}
+
+		newID := newAccountID()
+		var issuer *accountsv1.Account
+		if inviteCode != "" {
+			// Codes are issued lower-case; a player who types one in capitals
+			// meant the same code, and RevokeInvite normalizes the same way.
+			hash := hashSecret(strings.ToLower(strings.TrimSpace(inviteCode)))
+			s.mu.RLock()
+			issuerID, ok := s.invites[key32(hash)]
+			s.mu.RUnlock()
+			if !ok {
+				s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
+				err = ErrPermissionDenied
+				return nil
+			}
+			issuer, _ = s.clone(issuerID)
+			idx := slices.IndexFunc(issuer.GetInvites(), func(i *accountsv1.Invite) bool { return bytes.Equal(i.GetCodeHash(), hash) })
+			if idx < 0 {
+				s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
+				err = ErrPermissionDenied
+				return nil
+			}
+			inv := issuer.Invites[idx]
+			switch {
+			case inv.GetRedeemed():
+				// Under wmu this is the losers of a race that has already been
+				// decided, which is the only way a redeemed code is presented
+				// from a caller that read it as unredeemed.
+				s.metrics.InviteRedemptions.WithLabelValues(RedemptionRaceLost).Inc()
+				err = ErrPermissionDenied
+				return nil
+			case inv.GetRevoked(), now.Unix() >= inv.GetExpiresUnix():
+				s.metrics.InviteRedemptions.WithLabelValues(RedemptionInvalid).Inc()
+				err = ErrPermissionDenied
+				return nil
+			}
+			inv.Redeemed = true
+			inv.RedeemedByAccountId = newID
+			// Burn first. A crash between this write and the next leaves a
+			// burned code with no Account — an Operator re-issues one — which
+			// is the stated failure mode, and better than the reverse.
+			if err = s.commit(ctx, issuer); err != nil {
+				return nil
+			}
+			s.metrics.InviteRedemptions.WithLabelValues(RedemptionOK).Inc()
+		}
+
+		acc := &accountsv1.Account{
+			AccountId:   newID,
+			Username:    username,
+			Credential:  cred,
+			Roles:       []accountsv1.Role{accountsv1.Role_PLAYER},
+			Status:      accountsv1.AccountStatus_ACTIVE,
+			CreatedUnix: now.Unix(),
+		}
+		if err = s.commit(ctx, acc); err != nil {
+			return nil
+		}
+		id = newID
+		s.metrics.Registrations.WithLabelValues(modeLabel(mode)).Inc()
+		s.log.LogAttrs(ctx, slog.LevelInfo, "account registered",
+			slog.String("account_id", id),
+			slog.String("registration_mode", modeLabel(mode)),
+			slog.String("trace_id", traceID(ctx)),
+		)
+		if issuer == nil {
+			return nil
+		}
+		return &Entry{
 			Actor:   Principal{AccountID: issuer.GetAccountId()},
 			Action:  ActionRedeemInvite,
 			Target:  id,
 			Outcome: AuditOK,
 			Detail:  "redeemed by registration",
-		})
-	}
-	return id, nil
+		}
+	})
+	return id, err
 }
 
 // Authenticate verifies a username and secret — a password, an API key, or
@@ -305,45 +316,54 @@ func (s *Store) Refresh(ctx context.Context, refreshToken string, peer Peer) (To
 	}
 	hash := hashSecret(refreshToken)
 
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	s.mu.RLock()
-	id, ok := s.refresh[key32(hash)]
-	s.mu.RUnlock()
-	if !ok {
-		return TokenPair{}, s.failAuth(ctx, OutcomeBadCredential)
-	}
-	acc, _ := s.clone(id)
-	idx := slices.IndexFunc(acc.GetRefreshTokens(), func(r *accountsv1.RefreshTokenRecord) bool { return bytes.Equal(r.GetHash(), hash) })
-	if idx < 0 {
-		return TokenPair{}, s.failAuth(ctx, OutcomeBadCredential)
-	}
-	rec := acc.RefreshTokens[idx]
-	now := s.now()
-	switch {
-	case rec.GetRevoked():
-		s.audit.Record(ctx, Entry{Actor: Principal{AccountID: id}, Action: ActionRefreshRevoked, Target: id, Outcome: AuditDenied})
-		return TokenPair{}, s.failAuth(ctx, OutcomeBadCredential)
-	case now.Unix() >= rec.GetExpiresUnix():
-		return TokenPair{}, s.failAuth(ctx, OutcomeBadCredential)
-	}
-	if acc.GetStatus() != accountsv1.AccountStatus_ACTIVE {
-		return TokenPair{}, s.failAuth(ctx, OutcomeDisabled)
-	}
-	rec.Revoked = true
-	pair, err := s.issue(ctx, acc)
-	if err != nil {
-		return TokenPair{}, err
-	}
-	s.metrics.Attempts.WithLabelValues(OutcomeOK).Inc()
-	s.log.LogAttrs(ctx, slog.LevelInfo, "authentication attempt",
-		slog.String("outcome", OutcomeOK),
-		slog.String("account_id", id),
-		slog.String("method", "refresh"),
-		slog.String("session_id", SessionIDFrom(ctx)),
-		slog.String("trace_id", traceID(ctx)),
+	var (
+		pair TokenPair
+		err  error
 	)
-	return pair, nil
+	s.writeLocked(ctx, func() *Entry {
+		s.mu.RLock()
+		id, ok := s.refresh[key32(hash)]
+		s.mu.RUnlock()
+		if !ok {
+			err = s.failAuth(ctx, OutcomeBadCredential)
+			return nil
+		}
+		acc, _ := s.clone(id)
+		idx := slices.IndexFunc(acc.GetRefreshTokens(), func(r *accountsv1.RefreshTokenRecord) bool { return bytes.Equal(r.GetHash(), hash) })
+		if idx < 0 {
+			err = s.failAuth(ctx, OutcomeBadCredential)
+			return nil
+		}
+		rec := acc.RefreshTokens[idx]
+		now := s.now()
+		switch {
+		case rec.GetRevoked():
+			err = s.failAuth(ctx, OutcomeBadCredential)
+			return &Entry{Actor: Principal{AccountID: id}, Action: ActionRefreshRevoked, Target: id, Outcome: AuditDenied}
+		case now.Unix() >= rec.GetExpiresUnix():
+			err = s.failAuth(ctx, OutcomeBadCredential)
+			return nil
+		}
+		if acc.GetStatus() != accountsv1.AccountStatus_ACTIVE {
+			err = s.failAuth(ctx, OutcomeDisabled)
+			return nil
+		}
+		rec.Revoked = true
+		if pair, err = s.issue(ctx, acc); err != nil {
+			pair = TokenPair{}
+			return nil
+		}
+		s.metrics.Attempts.WithLabelValues(OutcomeOK).Inc()
+		s.log.LogAttrs(ctx, slog.LevelInfo, "authentication attempt",
+			slog.String("outcome", OutcomeOK),
+			slog.String("account_id", id),
+			slog.String("method", "refresh"),
+			slog.String("session_id", SessionIDFrom(ctx)),
+			slog.String("trace_id", traceID(ctx)),
+		)
+		return nil
+	})
+	return pair, err
 }
 
 // Revoke retires one refresh token, or every refresh token on its Account.
@@ -358,37 +378,43 @@ func (s *Store) Revoke(ctx context.Context, refreshToken string, all bool, peer 
 	}
 	hash := hashSecret(refreshToken)
 
-	s.wmu.Lock()
-	defer s.wmu.Unlock()
-	s.mu.RLock()
-	id, ok := s.refresh[key32(hash)]
-	s.mu.RUnlock()
-	if !ok {
-		return 0, ErrUnauthenticated
-	}
-	acc, _ := s.clone(id)
-	n := 0
-	for _, r := range acc.GetRefreshTokens() {
-		if r.GetRevoked() {
-			continue
+	var (
+		n   int
+		err error
+	)
+	s.writeLocked(ctx, func() *Entry {
+		s.mu.RLock()
+		id, ok := s.refresh[key32(hash)]
+		s.mu.RUnlock()
+		if !ok {
+			err = ErrUnauthenticated
+			return nil
 		}
-		if all || bytes.Equal(r.GetHash(), hash) {
-			r.Revoked = true
-			n++
+		acc, _ := s.clone(id)
+		revoked := 0
+		for _, r := range acc.GetRefreshTokens() {
+			if r.GetRevoked() {
+				continue
+			}
+			if all || bytes.Equal(r.GetHash(), hash) {
+				r.Revoked = true
+				revoked++
+			}
 		}
-	}
-	if n == 0 {
-		return 0, nil
-	}
-	if err := s.commit(ctx, acc); err != nil {
-		return 0, err
-	}
-	target := "one"
-	if all {
-		target = "all"
-	}
-	s.audit.Record(ctx, Entry{Actor: Principal{AccountID: id}, Action: ActionRevokeRefresh, Target: target, Outcome: AuditOK, Detail: fmt.Sprintf("%d revoked", n)})
-	return n, nil
+		if revoked == 0 {
+			return nil
+		}
+		if err = s.commit(ctx, acc); err != nil {
+			return nil
+		}
+		n = revoked
+		target := "one"
+		if all {
+			target = "all"
+		}
+		return &Entry{Actor: Principal{AccountID: id}, Action: ActionRevokeRefresh, Target: target, Outcome: AuditOK, Detail: fmt.Sprintf("%d revoked", n)}
+	})
+	return n, err
 }
 
 // --- verification ------------------------------------------------------------
