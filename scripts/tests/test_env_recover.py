@@ -341,7 +341,7 @@ class RunSteps(unittest.TestCase):
             def lines(self):
                 out = self.calls[min(self.n, len(self.calls) - 1)]
                 self.n += 1
-                return out
+                return out() if callable(out) else out
 
             def send(self, text):
                 pass
@@ -349,7 +349,10 @@ class RunSteps(unittest.TestCase):
             def wait_for(self, pattern, after=0, secs=20):
                 return True
 
-        run.players = {"a": P(script), "b": P(script)}
+        if isinstance(script, dict):
+            run.players = {"a": P(script["a"]), "b": P(script["b"])}
+        else:
+            run.players = {"a": P(script), "b": P(script)}
 
     def test_rebind_accepts_a_reconnect_inside_the_window_and_rejects_one_after_it(self):
         run = self.run_()
@@ -366,6 +369,42 @@ class RunSteps(unittest.TestCase):
         with mock.patch.object(env_recover.time, "sleep", lambda s: real_sleep(0.06)):
             with self.assertRaisesRegex(env_recover.Failed, "did not reconnect within 60s"):
                 run.rebind({"A": 0, "B": 0}, time.time() - env_recover.RECONNECT_WAIT + 0.05)
+
+    def test_rebind_needs_both_players_and_names_the_one_missing(self):
+        ok = ["-- Connected to x as a, playing A"]
+        for script, who in (({"a": [ok], "b": [[]]}, "B"), ({"a": [[]], "b": [ok]}, "A")):
+            run = self.run_()
+            self._players(run, script)
+            with mock.patch.object(env_recover.time, "sleep", lambda s: None):
+                with self.assertRaisesRegex(env_recover.Failed, "^%s's play did not reconnect" % who):
+                    run.rebind({"A": 0, "B": 0}, time.time() - env_recover.RECONNECT_WAIT + 0.2)
+
+    def test_rebind_ignores_a_connect_line_from_before_the_mark(self):
+        run = self.run_()
+        self._players(run, [["-- Connected to x as a, playing A", "old"]])
+        with mock.patch.object(env_recover.time, "sleep", lambda s: None):
+            with self.assertRaisesRegex(env_recover.Failed, "did not reconnect"):
+                run.rebind({"A": 1, "B": 1}, time.time() - env_recover.RECONNECT_WAIT + 0.2)
+
+    def test_rebind_stamps_after_the_read_and_accepts_a_stamp_at_the_deadline(self):
+        line = ["-- Connected to x as a, playing A"]
+        for advance, ok in ((0.0, True), (0.5, False)):
+            run = self.run_()
+            now = {"t": 100.0}
+
+            def read(advance=advance, now=now):
+                now["t"] += advance  # the read takes `advance` s; the stamp comes after it
+                return line
+
+            self._players(run, [read])
+            deadline_ready = 100.0 - env_recover.RECONNECT_WAIT
+            with mock.patch.object(env_recover.time, "time", lambda: now["t"]), \
+                    mock.patch.object(env_recover.time, "sleep", lambda s: now.update(t=now["t"] + 1)):
+                if ok:
+                    run.rebind({"A": 0, "B": 0}, deadline_ready)
+                else:
+                    with self.assertRaisesRegex(env_recover.Failed, "did not reconnect"):
+                        run.rebind({"A": 0, "B": 0}, deadline_ready)
 
     def test_a_ready_seen_after_the_rto_fails(self):
         run = self.run_()
