@@ -123,6 +123,11 @@ func (h *partitionHealth) ObserveProbe(ctx context.Context, v *topicView, minISR
 	var changes []transition
 	if v == nil {
 		h.metadataMiss++
+		// Leaderless observations either side of a failed probe are not
+		// consecutive; established marks stay.
+		for p := range h.state {
+			h.state[p].leaderMiss = 0
+		}
 		if h.metadataMiss >= 2 {
 			for p := range int32(sim.PartitionCount) {
 				h.state[p].probeName = ErrNameMetadataUnavailable

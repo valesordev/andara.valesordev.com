@@ -365,3 +365,17 @@ func TestHealth_AProduceMarkOnAnUnlistedPartitionEnds(t *testing.T) {
 		t.Fatal("the mark outlived its hold")
 	}
 }
+
+// Two leaderless observations separated by a failed metadata probe are not
+// consecutive probes.
+func TestHealth_AFailedProbeBreaksALeaderlessStreak(t *testing.T) {
+	ctx := context.Background()
+	f := newHealthFixture()
+	gone := healthy().with(5, partitionView{Leader: -1})
+	f.h.ObserveProbe(ctx, gone, 2)
+	f.h.ObserveProbe(ctx, nil, 2)
+	f.h.ObserveProbe(ctx, gone, 2)
+	if f.h.Degraded(5) {
+		t.Fatal("a streak of two was counted across a failed probe")
+	}
+}

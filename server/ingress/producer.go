@@ -267,6 +267,11 @@ func (k *KafkaProducer) onHealthChange(ctx context.Context, partition int32, deg
 		}
 		k.metrics.Degraded.WithLabelValues(strconv.Itoa(int(partition))).Set(v)
 	}
+	if k.health.Degraded(partition) != degraded {
+		// Another goroutine moved the Partition on since this transition;
+		// its own notification carries the side effects.
+		return
+	}
 	attrs := []slog.Attr{slog.Int("partition", int(partition)), slog.String("cause", cause), slog.String("error_name", name)}
 	if sc := trace.SpanContextFromContext(ctx); sc.HasTraceID() {
 		attrs = append(attrs, slog.String("trace_id", sc.TraceID().String()))

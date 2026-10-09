@@ -752,3 +752,20 @@ func TestProducer_AStaleNotificationDoesNotSetTheGauge(t *testing.T) {
 		t.Fatalf("gauge = %v with a healthy Partition", got)
 	}
 }
+
+// A degradation notification that arrives after the Partition recovered does
+// not log or drop the healthy Partition's client.
+func TestProducer_AStaleDegradedNotificationKeepsTheClient(t *testing.T) {
+	f := newProducerFixture(t, nil)
+	const p = int32(13)
+	if _, err := f.k.clientFor(p); err != nil {
+		t.Fatal(err)
+	}
+	f.k.onHealthChange(context.Background(), p, true, CauseProbe, ErrNameLeaderAbsent) // the tracker says healthy
+	if f.k.clients[p].Load() == nil {
+		t.Fatal("the healthy Partition's client was dropped")
+	}
+	if strings.Contains(f.logs.String(), "partition degraded") {
+		t.Fatalf("logged a degradation of a healthy Partition:\n%s", f.logs.String())
+	}
+}
