@@ -5,6 +5,7 @@ package cli
 
 import (
 	"context"
+	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"net"
@@ -206,6 +207,7 @@ func TestVerificationFailure_ClassifiesOnlyCertificateErrors(t *testing.T) {
 		"expired":           {x509.CertificateInvalidError{Reason: x509.Expired}, false, true},
 		"hostname":          {x509.HostnameError{}, true, true},
 		"no system roots":   {x509.SystemRootsError{Err: errors.New("no roots")}, false, true},
+		"no roots, wrapped": {&tls.CertificateVerificationError{Err: x509.SystemRootsError{Err: errors.New("no roots")}}, false, true},
 		"wrapped":           {errors.Join(errors.New("tls"), x509.UnknownAuthorityError{}), false, true},
 		"refused":           {&net.OpError{Op: "dial", Err: errors.New("connection refused")}, false, false},
 		"deadline":          {context.DeadlineExceeded, false, false},
@@ -227,20 +229,20 @@ func TestTLSFailure_AHostMismatchWithNoNameBlamesNoCA(t *testing.T) {
 
 // A hostname mismatch's JSON blames no CA either (review of #487).
 func TestTLSFailure_AHostMismatchJSONCarriesNoCADetail(t *testing.T) {
-	named := &tlsFailure{hostname: true, ca: "/x/ca.pem", caSrc: "file", configPath: "/c.yaml", configSrc: "default",
+	named := &tlsFailure{hostname: true, ca: "/x/ca.pem", caSrc: "file", configPath: "/c.yaml", configSrc: "env",
 		serverName: "n.svc", serverNmSrc: "file"}
 	d := map[string]any{}
 	named.detail(d)
 	if _, ok := d["tls_ca"]; ok {
 		t.Errorf("a name mismatch carries the CA: %v", d)
 	}
-	if d["tls_server_name"] != "n.svc" || d["tls_server_name_source"] != "file" || d["config_path"] != "/c.yaml" {
+	if d["tls_server_name"] != "n.svc" || d["tls_server_name_source"] != "file" || d["config_path"] != "/c.yaml" || d["config_path_source"] != "env" {
 		t.Errorf("a file-sourced name needs the name, source and config path: %v", d)
 	}
 	flagged := &tlsFailure{hostname: true, ca: "/x/ca.pem", caSrc: "file", serverName: "n.svc", serverNmSrc: "flag"}
 	d = map[string]any{}
 	flagged.detail(d)
-	if _, ok := d["config_path"]; ok || d["tls_server_name_source"] != "flag" {
+	if _, ok := d["config_path"]; ok || d["config_path_source"] != nil || d["tls_server_name_source"] != "flag" {
 		t.Errorf("a flag-sourced name needs no config path: %v", d)
 	}
 	bare := &tlsFailure{hostname: true, ca: "/x/ca.pem", caSrc: "file", configPath: "/c.yaml"}

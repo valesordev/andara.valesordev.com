@@ -101,7 +101,10 @@ message ends with what the CLI trusted and where that setting came from
 (ANDARA_CONFIG))`, or `; trusted the system trust store`), and `--output json`
 carries it in `detail` as `tls_ca`, `tls_ca_source`, `config_path` and
 `config_path_source`. A name mismatch on `server.tls_server_name` names the
-expected name instead (`tls_server_name`, `tls_server_name_source`).
+expected name instead (`tls_server_name`, `tls_server_name_source`, and the
+config path when the name came from the file). A mismatch with no name set
+adds nothing, since the CA verified. A system trust store that can't be loaded
+reads `; trusted the system trust store`.
 
 ## Credentials
 
