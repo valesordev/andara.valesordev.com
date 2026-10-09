@@ -17,6 +17,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	auditv1 "github.com/valesordev/andara/gen/go/andara/audit/v1"
+	"github.com/valesordev/andara/server/auth"
 	"github.com/valesordev/andara/server/recordlog"
 )
 
@@ -192,6 +193,31 @@ func TestContentApprove_SelfApprovalOfAnActedAsPublish(t *testing.T) {
 	}
 }
 
+// AC-8: the prompt also compares the manifest with the --as value. An
+// Operator approving --as the author of a version a different Operator
+// published is neither its author nor its publisher, but is asked.
+func TestContentApprove_PromptComparesTheAsValue(t *testing.T) {
+	s := memoryStack(t)
+	aliceID, _ := s.builder(t, "alice", "town")
+	op := auth.WithPrincipal(context.Background(), auth.Principal{AccountID: "op", Roles: []auth.Role{auth.RoleOperator}})
+	if _, err := s.store.CreateAccount(op, "oper2", "operator-two-pw", []auth.Role{auth.RoleOperator}); err != nil {
+		t.Fatal(err)
+	}
+	oper2 := s.identity(t, "oper2", "operator-two-pw")
+	oper := s.identity(t, "oper", "operator-password")
+	mustRun(t, oper2, "content", "publish", "--path", devFixture, "--as", aliceID)
+
+	res := runTTY(t, []string{"content", "approve", "town", "1", "--as", aliceID}, oper, "n\n")
+	if res.exit != ExitFail || !strings.Contains(res.stderr, "You published town@1.") {
+		t.Errorf("exit=%d stderr=%q", res.exit, res.stderr)
+	}
+	// Without --as the caller is neither: no prompt, so a plain approval.
+	res = runTTY(t, []string{"content", "approve", "town", "1"}, oper, "")
+	if res.exit != ExitOK || strings.Contains(res.stderr, "You published") {
+		t.Errorf("no --as: exit=%d stdout=%q stderr=%q", res.exit, res.stdout, res.stderr)
+	}
+}
+
 // --as is on the four write commands and nowhere else; activate and rollback
 // send it too.
 func TestContentWrites_AsOnActivateAndRollback(t *testing.T) {
@@ -253,6 +279,17 @@ func TestCLI_NeverReadsTheTokenActClaim(t *testing.T) {
 			case *ast.BasicLit:
 				if n.Kind == token.STRING && (n.Value == `"act"` || n.Value == "`act`") {
 					t.Errorf("%s: the string %s names the token's act claim", fset.Position(n.Pos()), n.Value)
+				}
+			case *ast.Field:
+				if n.Tag != nil && (strings.Contains(n.Tag.Value, `json:"act"`) || strings.Contains(n.Tag.Value, `json:"act,`)) {
+					t.Errorf("%s: a struct tag %s decodes the token's act claim", fset.Position(n.Pos()), n.Tag.Value)
+				}
+			case *ast.SelectorExpr:
+				if n.Sel.Name == "ActingAs" {
+					t.Errorf("%s: %s reads the acting-as of a Principal or token", fset.Position(n.Pos()), n.Sel.Name)
+				}
+				if x, ok := n.X.(*ast.Ident); ok && x.Name == "auth" && strings.HasPrefix(n.Sel.Name, "Token") && n.Sel.Name != "TokenCaller" {
+					t.Errorf("%s: auth.%s reads a token; only auth.TokenCaller is allowed, and it reads no act claim", fset.Position(n.Pos()), n.Sel.Name)
 				}
 			}
 			return true

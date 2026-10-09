@@ -900,6 +900,42 @@ func TestAuthorizationMatrix(t *testing.T) {
 	}
 }
 
+// The self-approval test names both of the caller's identities: the real
+// actor and the Account acted as. Each is enough on its own (AW-SRV-039).
+func TestApproveVersion_SelfApprovalReadsBothCallerIdentities(t *testing.T) {
+	asAlice := auth.WithPrincipal(context.Background(), auth.Principal{AccountID: brian, ActingAs: alice, Roles: []auth.Role{auth.RoleBuilder}})
+
+	t.Run("published as themselves, approving as another Builder", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(operator(), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		before := len(h.auditRecords())
+		_, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
+		adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
+		if recs := h.auditSince(before); len(recs) != 1 || !recs[0].GetSelfApproval() {
+			t.Errorf("audit %v", recs)
+		}
+	})
+	t.Run("acting as the Builder who published", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(builder(alice), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		_, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1})
+		adminError(t, err, CodePermissionDenied, ErrReasonSelfApproval)
+	})
+	t.Run("acting as a Builder, approving a third party's version", func(t *testing.T) {
+		h := newPubHarness(t, nil)
+		if _, err := h.publish(builder(bob), "town", townFiles(t)); err != nil {
+			t.Fatal(err)
+		}
+		if ap, err := h.admin.ApproveVersion(asAlice, &adminv1.ApproveVersionRequest{PackId: "town", Version: 1}); err != nil || ap.GetSelfApproval() {
+			t.Fatalf("approve %v %v", ap, err)
+		}
+	})
+}
+
 // --- publisher (AW-SRV-039) -----------------------------------------------------
 
 // AC-1, AC-2: the manifest carries the real actor, so it needs no audit topic

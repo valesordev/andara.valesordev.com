@@ -225,3 +225,55 @@ func TestMetrics_ActAsTotalIsPreSeeded(t *testing.T) {
 		t.Fatalf("series = %d, want 3 (ok, denied, unknown_account)", got)
 	}
 }
+
+// fakeStream is the part of a StreamingHandlerConn the auth interceptor reads.
+type fakeStream struct {
+	connect.StreamingHandlerConn
+	spec   connect.Spec
+	header http.Header
+}
+
+func (f fakeStream) Spec() connect.Spec         { return f.spec }
+func (f fakeStream) RequestHeader() http.Header { return f.header }
+
+// The streaming Admin path (GetBlob) resolves andara-act-as as the unary one
+// does.
+func TestAuthInterceptor_ActAsOnAStreamingAdminCall(t *testing.T) {
+	const getBlob = "/andara.admin.v1.Admin/GetBlob"
+	run := func(v *actAsVerifier, m *Metrics, header http.Header) (reached bool, got Principal, err error) {
+		ic := &authInterceptor{verifier: v, metrics: m}
+		header.Set("Authorization", "Bearer tok")
+		next := func(ctx context.Context, _ connect.StreamingHandlerConn) error {
+			reached = true
+			got, _ = PrincipalFrom(ctx)
+			return nil
+		}
+		err = ic.WrapStreamingHandler(next)(context.Background(), fakeStream{spec: connect.Spec{Procedure: getBlob}, header: header})
+		return reached, got, err
+	}
+
+	v := &actAsVerifier{roles: []auth.Role{auth.RoleOperator}}
+	m := NewMetrics(nil)
+	reached, got, err := run(v, m, http.Header{"Andara-Act-As": {"acct-builder"}})
+	if err != nil || !reached || got.ActingAs != "acct-builder" || got.AccountID != "acct-op" {
+		t.Fatalf("acted-as: err=%v reached=%v principal=%+v", err, reached, got)
+	}
+	if want := []string{"andara.admin.v1.Admin/GetBlob"}; !slices.Equal(v.methods, want) {
+		t.Errorf("ActAs methods = %v, want %v", v.methods, want)
+	}
+	if actAsCount(m, "ok") != 1 {
+		t.Errorf("act_as_total{ok} = %v", actAsCount(m, "ok"))
+	}
+
+	v = &actAsVerifier{roles: []auth.Role{auth.RolePlayer}, err: auth.ErrPermissionDenied}
+	m = NewMetrics(nil)
+	if reached, _, err = run(v, m, http.Header{"Andara-Act-As": {"acct-builder"}}); connect.CodeOf(err) != connect.CodePermissionDenied || reached {
+		t.Errorf("refused: err=%v reached=%v", err, reached)
+	}
+	if reached, _, err = run(v, m, http.Header{"Andara-Act-As": {"a", "b"}}); connect.CodeOf(err) != connect.CodePermissionDenied || reached {
+		t.Errorf("two values: err=%v reached=%v", err, reached)
+	}
+	if actAsCount(m, "denied") != 2 {
+		t.Errorf("act_as_total{denied} = %v, want 2", actAsCount(m, "denied"))
+	}
+}
