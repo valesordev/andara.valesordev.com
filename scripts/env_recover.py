@@ -29,8 +29,8 @@ Steps (each printed as `env-recover: <step>`):
 
 Environment: ANDARA_BOOTSTRAP_OPERATOR (user:password); ENV_RECOVER_RTO (seconds, default 120);
 GRAFANA_CLOUD_READ_TOKEN and GRAFANA_CLOUD_PROM_URL / _PROM_USER, as observe_check.py reads them;
-MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY (the ruler read, AC-2), the first two defaulting
-from the PROM pair as alerts_sync.py has them. Credentials go in an isolated $XDG_CONFIG_HOME.
+MIMIR_ADDRESS, MIMIR_TENANT_ID and MIMIR_API_KEY (the ruler read, AC-2), defaulting from the PROM
+pair and GRAFANA_CLOUD_READ_TOKEN (which carries rules:read) when unset. Credentials go in an isolated $XDG_CONFIG_HOME.
 
 Exit codes: 0 the gate held; 1 an assertion failed, a precondition is missing, or the run was
 inconclusive; 2 usage or refusal.
@@ -222,7 +222,9 @@ class Grafana:
 def missing_credentials(environ):
     """The variables AC-2 and AC-5 need that aren't set, ruler defaults filled as alerts_sync has them."""
     sync = _load("alerts_sync")
-    env = sync.resolve_env(environ)
+    env = dict(sync.resolve_env(environ))
+    if not env.get("MIMIR_API_KEY", "").strip() and environ.get("GRAFANA_CLOUD_READ_TOKEN", "").strip():
+        env["MIMIR_API_KEY"] = environ["GRAFANA_CLOUD_READ_TOKEN"].strip()
     return [k for k in READ_VARS if not environ.get(k, "").strip()] + sync.missing(env, RULER_VARS), env
 
 

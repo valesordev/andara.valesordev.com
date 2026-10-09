@@ -196,12 +196,22 @@ class Inconclusive(unittest.TestCase):
     def test_missing_credentials_name_the_variable(self):
         absent, _ = env_recover.missing_credentials({"GRAFANA_CLOUD_READ_TOKEN": "t"})
         self.assertIn("GRAFANA_CLOUD_PROM_URL", absent)
+        self.assertNotIn("MIMIR_API_KEY", absent)
+        absent, _ = env_recover.missing_credentials({})
         self.assertIn("MIMIR_API_KEY", absent)
         absent, env = env_recover.missing_credentials({
             "GRAFANA_CLOUD_READ_TOKEN": "t", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
             "GRAFANA_CLOUD_PROM_USER": "123", "MIMIR_API_KEY": "k"})
         self.assertEqual(absent, [])
         self.assertEqual(env["MIMIR_TENANT_ID"], "123")
+
+    def test_ruler_key_defaults_to_the_read_token_and_an_explicit_key_wins(self):
+        base = {"GRAFANA_CLOUD_READ_TOKEN": " t ", "GRAFANA_CLOUD_PROM_URL": "https://p.example/api/prom",
+                "GRAFANA_CLOUD_PROM_USER": "123"}
+        absent, env = env_recover.missing_credentials(base)
+        self.assertEqual((absent, env["MIMIR_API_KEY"]), ([], "t"))
+        _, env = env_recover.missing_credentials(dict(base, MIMIR_API_KEY="k"))
+        self.assertEqual(env["MIMIR_API_KEY"], "k")
 
 
 class RunSteps(unittest.TestCase):
