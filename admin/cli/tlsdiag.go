@@ -34,10 +34,11 @@ func verificationFailure(err error) (hostname, ok bool) {
 	var ua x509.UnknownAuthorityError
 	var inv x509.CertificateInvalidError
 	var hn x509.HostnameError
+	var sr x509.SystemRootsError
 	switch {
 	case errors.As(err, &hn):
 		return true, true
-	case errors.As(err, &ua), errors.As(err, &inv):
+	case errors.As(err, &ua), errors.As(err, &inv), errors.As(err, &sr):
 		return false, true
 	}
 	return false, false
@@ -118,6 +119,20 @@ func (e *tlsFailure) suffix() string {
 // the config file's selector, so a consumer can tell ANDARA_CONFIG from the
 // default (AC-3).
 func (e *tlsFailure) detail(into map[string]any) {
+	if e.hostname {
+		// The CA verified, so no CA is named, as in suffix. An explicit name
+		// is, with its source; a file source needs the file's path too.
+		if e.serverName == "" {
+			return
+		}
+		into["tls_server_name"] = e.serverName
+		into["tls_server_name_source"] = e.serverNmSrc
+		if Source(e.serverNmSrc) == SourceFile {
+			into["config_path"] = e.configPath
+			into["config_path_source"] = e.configSrc
+		}
+		return
+	}
 	into["tls_ca"] = e.ca
 	into["tls_ca_source"] = e.caSrc
 	into["config_path"] = e.configPath
