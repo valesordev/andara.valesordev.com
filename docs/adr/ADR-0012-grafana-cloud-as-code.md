@@ -72,7 +72,7 @@ prove before its criterion that depends on them is written as passing:
   (seen in `solo7`) **[verify in solo7dev]**.
 - IRM resources are in the same Terraform provider (`grafana_oncall_*`) with a separate `oncall_access_token`
   **[verify in 046: current resource names, the provider may be renaming them for IRM]**.
-- The `gcs` backend locks with a `default.tflock` object beside the state, written with a precondition so a second writer fails, and needs no lock table [verify in 046].
+- The `gcs` backend locks with a `default.tflock` object beside the state, written with a precondition so a second writer fails, and needs no lock table [verify in 046]. It also writes (and locks) an empty state when none exists, even for `plan -lock=false` [verify in 046], which is why the bootstrap seeds all three roots.
 
 ## Decisions
 
@@ -113,8 +113,10 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
 - **Rules carry the `environment` label.** Every aggregation in `alerts.yaml` gains `environment` in front of its
   existing grouping list, and every `on(...)` join gains it likewise: `by (environment, namespace)` wherever
   an aggregation groups by `namespace` alone today, and `by (environment, namespace, pack)` for `ContentLoadFailing`, whose
-  `pack` label identifies the failed load (its tests and the runbook depend on one alert per pack); the joins
-  become `on (environment, namespace)` or `on (environment, namespace, pod)` where they join on `pod` today.
+  `pack` label identifies the failed load (its tests and the runbook depend on one alert per pack); the
+  `on(namespace)` joins become `on (environment, namespace)`. The deliberately empty guard in
+  `AndaraServerUnavailable` (`and on() count(up{namespace!=""}) > 0`, a `by`-less `count`) stays exactly as it is:
+  it asks whether anything at all is reporting, across every environment.
   Each alert instance therefore carries both labels, and every label it carries today. `environment` is the routing and rendering key (decisions 10 and 12); `namespace` stays as the source
   within an environment, because `local` has two (`andara-local`, `andara-ci`) and the
   drills must not see each other's series. Series that have no `environment` of their own (cert-manager,
@@ -125,7 +127,8 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   `namespace`, and the instance carries both. The helm tests gain a `promtool test rules` case per rule
   asserting that `environment` and `namespace` are on the alert.
   This is an edit to `alerts.yaml`, SRE's file, by `AW-INF-047`; the alert set, thresholds and `for` are not
-  touched.
+  touched. Two companions change with it: the `exp_labels` of the existing `promtool` cases (which match labels
+  exactly) and the expression `docs/runbooks/content-load-failing.md` quotes (SRE's, in 047's change).
 - **How the local §8 check stays honest:** the compose Prometheus's local evaluation of `alerts.yaml` ends
   with compose (decision 14). What replaces it is the rule live in `solo7dev` by the same Terraform root, and
   `stack-recover-mismatch` observing it fire there for `environment="local"` (decision 2). The unit-level
@@ -307,7 +310,7 @@ needed for locking and is kept so that the version already chosen does not move.
   `GCP_STATE_PROJECT`); the Storage and IAM APIs enabled; the bucket with the settings above; the six service
   accounts and their conditioned bindings; the dev-box identity and its `solo7dev`-prefix `objectUser` binding; the pool and provider with the attribute condition and the `environment` and
   `event_name` attributes; the `workloadIdentityUser` bindings; and the GitHub repository variables below. It
-  then **creates an empty state object for all three roots** as the owner: the `gcs` backend writes (and locks)
+  then **creates the state for all three roots** as the owner, by running `terraform init` and `terraform state list` per root (the backend itself writes the empty state under its lock; a re-run finds one and leaves it untouched, and a bootstrap check asserts that): the `gcs` backend writes (and locks)
   an empty state when none exists, even for `plan -lock=false`, which the read-only plan accounts cannot do, so
   without it the first `plan-prod` fails before anyone can approve an apply **[verify in 046]** (Codex, PR #520).
   It ends by running `terraform init` against `solo7dev`'s prefix as the dev-box identity, and fails loudly if
