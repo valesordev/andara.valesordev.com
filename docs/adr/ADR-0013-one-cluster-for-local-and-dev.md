@@ -199,7 +199,7 @@ runaway query, or disk fill. Nothing deploys until `AW-SRV-018` has a binary. Se
 ### 5. What sharing does to `dev`'s guarantees
 
 The zero-RPO claim (`AW-INF-040`) and the broker bounce (`AW-INF-014`) are claims about the broker, and the broker
-is now one broker set for both environments. The honest statement, which Brian may not like: **a broker fault
+is now one broker set for both environments. The honest statement: **a broker fault
 cannot be rehearsed on `dev` without disturbing `local`.** The story's AC6 ("none can disturb the other environment")
 therefore cannot hold for the broker drills; this ADR deviates from it, and Brian accepted that deviation on 2026-10-10 (PM amends AC6 to "lists which drills disturb the other and how that is prevented").
 The drills:
@@ -243,7 +243,7 @@ implemented yet, so the amendment costs no migration. What changes:
   `andara-shared`, instead of "same namespace".
 - **The encryption sentence** ("acceptable only while every client and broker share a namespace") becomes "while
   every client and broker share one cluster on one host". Traffic now crosses namespaces on the kind node's docker
-  network, unencrypted, under SCRAM. That is a weaker position than ADR-0011 described Brian accepted it on 2026-10-10.
+  network, unencrypted, under SCRAM. That is a weaker position than ADR-0011 described; Brian accepted it on 2026-10-10.
 - **"Revisit when"** is answered as follows. The first trigger ("any client or broker leaves the namespace") is
   re-read as "leaves the cluster or the host": `prod` on a separate cluster, a client on another host, or
   cross-cluster replication. Crossing a namespace inside this cluster no longer triggers TLS.
@@ -273,7 +273,7 @@ runs is what the tag points at.
 - **Who moves it:** **Brian**, from his own shell, with `make promote ENV=dev SHA=<main sha>`. A role session's
   push hook allows a push only for a commit that passed `/pre-pr` (`.claude/bin/role`), so a promotion is not
   something an agent session does; if that changes, the story that changes it defines how the push is cleared.
-  CLAUDE.md §4's branch list gains `release/dev`, which is Brian's edit.
+  CLAUDE.md §4 names `release/dev` (Brian approved the edit on 2026-10-10).
   It checks the image `sha-<12>` exists and pulls anonymously (`make image-check`), creates the commit and
   both tags, pushes the branch and the tags, and prints the Argo sync command (Argo syncs by itself). Nothing
   automated moves it.
