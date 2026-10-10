@@ -14,9 +14,10 @@ character, joined by exits I can follow on foot. Every Room in the settlement wa
 and I can reach every zone from the settlement's arrival Room.
 
 ## Success signal
-Brian runs it on `dev`, once the C1 pack is published: he walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every settlement
-zone by exits alone, then publishes a second version of the pack and rolls back to the first (a fresh pack's first version has no
-earlier active version, so a lone rollback fails with `no_previous_version`: `docs/builders/09-when-something-fails.md`). It is gated on Brian's Start Location decision and #514; until then he reaches the
+Brian runs it on `dev`, once the C1 pack is published, approved and activated: he walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every settlement
+zone by exits alone, then publishes a second version, has it approved (by an Operator or a second Builder holding the pack) and activated, and rolls back to
+the first (a fresh pack's first version has no earlier active version, so a lone rollback fails with `no_previous_version`:
+`docs/builders/09-when-something-fails.md`). It is gated on Brian's Start Location decision and #514; until then he reaches the
 arrival Room with `goto` (Builder-only, `docs/glossary.md`) and the walk from it still passes. CI on the content PR checks the pack separately: it passes `make check` at the pinned
 tag (C1 gate), where the compiler's `unknown_room` diagnostic rejects a dangling exit.
 Brian records in the R1 review whether a zone he reached felt like somewhere, in his words. That
