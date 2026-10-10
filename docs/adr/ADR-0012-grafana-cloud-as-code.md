@@ -69,7 +69,7 @@ prove before its criterion that depends on them is written as passing:
   (seen in `solo7`) **[verify in solo7dev]**.
 - IRM resources are in the same Terraform provider (`grafana_oncall_*`) with a separate `oncall_access_token`
   **[verify in 046: current resource names, the provider may be renaming them for IRM]**.
-- The S3 backend locks with a `.tflock` file beside the state when `use_lockfile = true` (stable from Terraform 1.11).
+- The `gcs` backend locks with a `default.tflock` object beside the state, written with a precondition so a second writer fails, and needs no lock table [verify in 046].
 
 ## Decisions
 
@@ -206,65 +206,96 @@ is not a test.
 
 ### 3. State backend and locking
 
-**Options.** (a) **S3-compatible bucket** with `use_lockfile`, one key per root; (b) HCP Terraform
-(state only, local execution); (c) state in the git repo (encrypted, e.g. SOPS); (d) the cluster's object
-store.
-(a) is one dependency Brian already understands, versioned, and lock-capable without a database; it needs a
-bucket and an identity that GitHub Actions can assume. (b) is the least to operate and has workspace-level
-locking and access control, at the price of a vendor account and a pricing model that has changed more than
-once. (c) has no lock, so two applies race, and the history of secrets-in-git is permanent. (d) is rejected
-outright: the cluster is rebuilt from this repo (decision 13), so the state of the thing that observes it
-cannot live in it, and CI cannot reach it either.
+**Options.** (a) **a Google Cloud Storage (GCS) bucket** through Terraform's `gcs` backend, one prefix per root;
+(b) HCP Terraform (state only, local execution); (c) state in the git repo (encrypted, e.g. SOPS); (d) the
+cluster's object store.
+(a) is one dependency Brian already runs (his cloud is GCP), versioned, and lock-capable without a database or
+a Terraform feature flag; it needs a bucket and an identity that GitHub Actions can assume. (b) is the least to
+operate and has workspace-level locking and access control, at the price of a vendor account and a pricing
+model that has changed more than once. (c) has no lock, so two applies race, and the history of secrets-in-git
+is permanent. (d) is rejected outright: the cluster is rebuilt from this repo (decision 13), so the state of
+the thing that observes it cannot live in it, and CI cannot reach it either.
 
-**Decision: (a).** A private bucket `andara-tfstate` (the bucket's account and region are Brian's choice at
-creation; the contract is the name and the keys), versioning on, server-side encryption on, public access
-blocked. Keys: `grafana/solo7dev.tfstate`, `grafana/solo7.tfstate`, and `grafana/solo7-irm.tfstate` (the IRM
-root, decision 12). `use_lockfile = true`; no DynamoDB table. Terraform `>= 1.11, < 2` (`required_version`),
-pinned by `.terraform-version` and installed by `make bootstrap`.
+**Decision: (a).** A private bucket `andara-tfstate` in a GCP project that Brian chooses (a dedicated project
+is recommended, so that the project's IAM holds nothing else), with: uniform bucket-level access, public access
+prevention enforced, object versioning on, a lifecycle rule that deletes non-current versions older than 90
+days while keeping the newest 20, and Google-managed encryption. The location is one region of Brian's choice,
+fixed at creation. The contract is the bucket name and the prefixes, not the project or region. The `gcs` backend
+stores each root under a `prefix`: `grafana/solo7dev`, `grafana/solo7`, `grafana/solo7-irm` (the IRM root,
+decision 12), so the state objects are `grafana/<root>/default.tfstate`. The backend locks by writing
+`grafana/<root>/default.tflock` beside the state, with no extra setting and no lock table. `required_version`
+stays `>= 1.11, < 2`, pinned by `.terraform-version` and installed by `make bootstrap`; the floor is no longer
+needed for locking and is kept so that the version already chosen does not move.
 
 - **Who may read the state:** the state holds the Slack webhook URL(s) and, in the IRM root, the IRM
   integration URL, because the provider stores contact-point settings and integration URLs in it. So state
   read is a **secret read**. There are **three roots, three states** (`solo7dev`, `solo7`, `solo7-irm`;
-  decision 12), and a role is bound to named roots, each matched exactly (`s3:prefix` = `grafana/<root>.tfstate*`;
-  `solo7` does not match `solo7dev` or `solo7-irm`, whose names differ at the character after `solo7`). The roles:
-  - an **apply role per root**: get, put and delete on the root's key **and its lock object `<key>.tflock`**,
-    and `ListBucket` for that prefix (which `use_lockfile` needs); trust bound to the environment the root
-    applies from: `andara-main` for `solo7dev`, `andara-prod-apply` for `solo7` and `solo7-irm`;
-  - a **PR/drift plan role for `solo7dev` and `solo7` only**: read on that root's key, the same `ListBucket`,
-    no write, no delete, no lock (`plan -lock=false`); trust bound to the claims below (`pull_request_target` and `schedule` events of the base branch's workflow). **It does not exist for `solo7-irm`**: no pull-request job, and no scheduled job outside
-    `andara-prod-plan`, can read the IRM state;
-  - a **`plan-prod` role** (read on `solo7` and `solo7-irm`, with `ListBucket` for those two prefixes, no write)
-    bound to `environment:andara-prod-plan`, which only `main` can deploy to. Its jobs (`plan-prod`,
+  decision 12), and a service account is granted a root's objects only, by an IAM condition on the object name
+  with a trailing slash: `resource.name.startsWith("projects/_/buckets/andara-tfstate/objects/grafana/solo7/")`
+  does not match `grafana/solo7dev/` or `grafana/solo7-irm/`. **Six service accounts**, each in the state
+  project, with no key (Access, below):
+  - an **apply account per root** (`tf-solo7dev-apply`, `tf-solo7-apply`, `tf-solo7-irm-apply`):
+    `roles/storage.objectUser` on the bucket, conditioned to that root's prefix (get, create, update and delete,
+    which includes its `.tflock`); impersonable only from the environment the root applies from: `andara-main` for
+    `solo7dev`, `andara-prod-apply` for `solo7` and `solo7-irm`;
+  - a **PR/drift plan account for `solo7dev` and `solo7` only** (`tf-solo7dev-plan`, `tf-solo7-plan`):
+    `roles/storage.objectViewer`, conditioned to that root's prefix; no write, no delete, no lock
+    (`plan -lock=false`); impersonable from the claims below (`pull_request_target` and `schedule` events of the
+    base branch's workflow). **It does not exist for `solo7-irm`**: no pull-request job, and no scheduled job
+    outside `andara-prod-plan`, can read the IRM state;
+  - a **`tf-prod-plan` account** (`objectViewer` on the `solo7` and `solo7-irm` prefixes, no write) impersonable
+    only from `environment:andara-prod-plan`, which only `main` can deploy to. Its jobs (`plan-prod`,
     `drift-prod-irm`) run `plan -lock=false`, since a plan would otherwise take the lock object, which needs a
     write; the shared concurrency group serialises them against `apply-prod`;
-  - Brian's own cloud identity, the bucket's owner, which can read every key (the dev box's day-to-day
-    credential is limited to `solo7dev`'s key).
+  - Brian's own Google identity, the project's owner, which can read every prefix (the dev box's day-to-day
+    credential, `gcloud auth application-default login`, is conditioned to `solo7dev`'s prefix, plus
+    impersonation of `tf-prod-plan` for reading prod plans and nothing that writes `solo7` or `solo7-irm`).
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
   `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`,
-  reference no `SOLO7_IRM` role, no `TFSTATE_PRODPLAN_ROLE`, no IRM token and no `TF_PLAN_KEY_PROD`. The trust
-  conditions pin claims that cannot be set by a pull request's branch. The PR/drift plan role requires
-  `workflow_ref` to be the full path `valesordev/andara.valesordev.com/.github/workflows/terraform.yaml@refs/heads/main`
-  (the base branch's workflow, which is what `pull_request_target` and the schedule both run), `event_name` to be
-  `pull_request_target` or `schedule`, and the `sub` not to be an environment subject (these jobs reference no
-  `environment:`, because a job that does gets the `...:environment:<name>` subject instead). The
-  environment-bound roles (`andara-main`, `andara-prod-plan`, `andara-prod-apply`) require
-  `sub = repo:valesordev/andara.valesordev.com:environment:<name>` **and** the same `workflow_ref`; all three
-  environments are deployable from `main` only (`andara-main`'s deployment branch rule says so, as the existing
-  environment does today), and decision 5's `apply` job declares `environment: andara-main`. **The claim values are expected, not yet
-  observed**: GitHub's OIDC reference does not list `pull_request_target`, so `AW-INF-046` first runs a debug
-  step that prints the decoded claims of each job (`pull_request_target`, `schedule`, each environment) and
-  writes the trust policies from what it sees; a positive condition that no job can satisfy fails closed, so a wrong guess there is a failed plan, not an
-  exposure. The PR/drift role's `sub` condition is a negation, so it fails open: `workflow_ref` and
-  `event_name` are the gating conditions and `sub` is defence in depth, replaced by a positive match once 046
-  has observed the real values. If the repository uses immutable subject claims, the immutable forms replace
-  the `sub` strings.
-  **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
-  Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
-  a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
-  a documented step of the runbook.
-- **Access is by OIDC federation** from GitHub Actions to the bucket's cloud account (no static cloud key in
-  GitHub): a trust policy keyed on the repository plus the claims in the role list above. The dev box uses Brian's own cloud identity.
-- State backups: versioning is the recovery path; `terraform import` from the live stack is the second.
+  reference no `SOLO7_IRM` service account, no `TFSTATE_PRODPLAN_SA`, no IRM token and no `TF_PLAN_KEY_PROD`.
+- **Access is by Workload Identity Federation** from GitHub Actions (no service-account key in GitHub, and none is
+  ever created): one workload identity pool, one OIDC provider with issuer
+  `https://token.actions.githubusercontent.com`, and an **attribute condition on the provider** that the token's
+  `repository` is `valesordev/andara.valesordev.com`, so no other repository's token is accepted at all. Jobs use
+  `google-github-actions/auth` with `permissions: id-token: write`. A Google principal set can match only one
+  attribute, and these roles need two claims at once, so the provider maps **composite attributes**:
+  `attribute.env_wf = assertion.sub + "|" + assertion.workflow_ref` and
+  `attribute.event_wf = assertion.event_name + "|" + assertion.workflow_ref`. Each account's
+  `roles/iam.workloadIdentityUser` binding is to one exact value of one of them:
+  - the PR/drift plan accounts: `event_wf` equal to `pull_request_target|` or `schedule|` followed by the full
+    workflow path `valesordev/andara.valesordev.com/.github/workflows/terraform.yaml@refs/heads/main` (the base
+    branch's workflow, which is what `pull_request_target` and the schedule both run: two bindings per account);
+  - the environment-bound accounts (`andara-main`, `andara-prod-plan`, `andara-prod-apply`): `env_wf` equal to
+    `repo:valesordev/andara.valesordev.com:environment:<name>|` followed by the same workflow path. All three
+    environments are deployable from `main` only (`andara-main`'s deployment branch rule says so, as the existing
+    environment does today), and decision 5's `apply` job declares `environment: andara-main`. A job that
+    references an environment gets the `...:environment:<name>` subject, so the PR/drift jobs (which reference
+    none) can never match an environment binding, and an environment job never matches an `event_wf` value
+    (its `event_name` is `push` or `workflow_dispatch`); an exact positive match fails closed, so a wrong guess is
+    a failed plan, not an exposure.
+  **The claim values are expected, not yet observed**: GitHub's OIDC reference does not list
+  `pull_request_target`, so `AW-INF-046` first runs a debug step that prints the decoded claims of each job
+  (`pull_request_target`, `schedule`, each environment) and writes the bindings from what it sees. If the
+  repository uses immutable subject claims, the immutable forms replace the `sub` strings. **[verify in 046]**:
+  that a condition on `resource.name` is honoured for every call the backend makes (it only reads and writes
+  named objects, and `terraform workspace list`, the one call that lists, is not used); that the composite
+  attributes fit Google's attribute-value length limit; and the exact role names.
+- **Terraform never creates the credentials CI uses** (decision 4), **nor the state bucket, the pool, or these
+  service accounts** (decision 6): state holds no token that can write to Grafana and none that can reach the
+  bucket. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
+  a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is a documented
+  step of the runbook.
+- **Bootstrap is Brian's, once, by hand (decision 6), and has a `make` target and a runbook (§9).** `AW-INF-046`
+  delivers `make tf-bootstrap-gcp` (idempotent, uses `gcloud` as Brian's identity, prints what it created) and
+  `docs/runbooks/terraform-state.md`. What it must create, in order: the project (or an existing one named by
+  `GCP_STATE_PROJECT`); the Storage and IAM APIs enabled; the bucket with the settings above; the six service
+  accounts and their conditioned bindings; the pool and provider with the attribute condition and the two
+  composite attributes; the `workloadIdentityUser` bindings; and the GitHub repository variables below. It
+  ends by running `terraform init` against `solo7dev`'s prefix as the dev-box identity, and fails loudly if that
+  does not work. The bootstrap needs `roles/owner`, or the narrower set of Storage Admin, Service Account Admin,
+  Workload Identity Pool Admin and Project IAM Admin, on that project.
+- State backups: versioning (and the bucket's default soft delete) is the recovery path; `terraform import` from
+  the live stack is the second.
 
 ### 4. Credentials
 
@@ -297,7 +328,7 @@ Slack webhooks), which state also holds.
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret that `make monitoring-install` creates from `.local/box.env` for `dev` and `staging`. `solo7`: `.local/box.env` and that secret only, never a repository secret | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
-| `TFSTATE_<ROOT>_PLAN_ROLE` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_ROLE` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
+| `TFSTATE_<ROOT>_PLAN_SA` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_SA` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_SA`, `GCP_WIF_PROVIDER` | not secrets: service-account emails and the workload identity provider name (decision 3) | repository variables | the jobs |
 | `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply`, and a copy in `.local/box.env` (gitignored, mode 0600), because GitHub secrets cannot be read back | `plan-prod`, `apply-prod`; `make tf-plan-show`, by Brian |
 | the dev box's write credential | `GRAFANA_SOLO7DEV_APPLY_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
 
@@ -453,6 +484,7 @@ chain (decision 10).
 
 | Piece | Why it stays manual |
 |---|---|
+| The state bucket, its project, the workload identity pool and the six service accounts (decision 3) | The bucket cannot hold the state of the Terraform that creates it, and they are cloud-account IAM, not Grafana (decision 6's rule). `make tf-bootstrap-gcp` makes the one-time step repeatable. |
 | The two stacks themselves | Creating a stack needs the org-level Cloud credential, which is exactly the broad credential decision 4 refuses to put in CI; created once (`solo7` exists; `solo7dev` is Brian's to create). |
 | The service accounts, Cloud access policies and tokens decision 4 lists | Chicken and egg (Terraform cannot authenticate with a token it is about to create), and creating them needs the org-level Cloud credential. |
 | The Slack workspace, the two channels, the webhooks | Slack's, not Grafana's. |
@@ -645,7 +677,7 @@ states (two stacks and the IRM root), three plans, and one stack's credential se
 ```
 deploy/terraform/grafana/
   modules/stack/            # rules, contact points, policy, mute timings, dashboard; variables below
-  stacks/solo7dev/          # main.tf, backend.tf (key grafana/solo7dev.tfstate), terraform.tfvars
+  stacks/solo7dev/          # main.tf, backend.tf (prefix grafana/solo7dev), terraform.tfvars
   stacks/solo7/             # no IRM resources, no IRM token; refers to the contact point irm-prod by name
   stacks/solo7-irm/         # Grafana and IRM providers: integration, schedule, chain, contact point irm-prod
   modules/irm/
