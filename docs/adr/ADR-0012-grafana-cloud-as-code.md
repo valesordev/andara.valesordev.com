@@ -117,7 +117,7 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   `namespace`, and the instance carries both. The helm tests gain a `promtool test rules` case per rule
   asserting that `environment` and `namespace` are on the alert.
   This is an edit to `alerts.yaml`, SRE's file, by `AW-INF-047`; the alert set, thresholds and `for` are not
-  touched, and the helm tests (`promtool test rules`) are extended to cover the label.
+  touched.
 - **How `make up`'s §8 check stays honest:** the compose Prometheus's local evaluation of `alerts.yaml` ends
   with `AW-INF-048`. What replaces it is the rule live in `solo7dev` by the same Terraform root, and
   `stack-recover-mismatch` observing it fire there for `environment="local"` (decision 2). The unit-level
@@ -183,7 +183,7 @@ is not a test.
   empty `alert instances list`, a bare list without `--json` and `{"items":[…]}` with it, and `result: []` with
   `status: success` for a query that matches nothing; a mistyped `--name` regex looks exactly like "nothing
   firing". The wrapper normalises all of these to `[]`, and every "none" assertion (not already firing; nothing
-  pending before the ruler is deleted) first confirms the rule exists with `alert rules list --group`. An empty
+  pending before the ruler is deleted) first confirms the rule exists, **per backend**: for Grafana-managed rules with `alert rules list --group`; for the legacy ruler, which `alert rules list` cannot see, by requiring a known rule (`AndaraServerUnavailable`) to appear in the unfiltered `alert instances list --datasource grafanacloud-prom` (or a `mimirtool rules list`) before it accepts "none". An empty
   metric, log or trace result fails every "arrived" check. The fixtures record each shape.
 - **Windows are observed, not reconstructed.** `env_recover.py` AC-2/AC-7 and `stack_recover_mismatch.sh`
   today assert over `ALERTS` (a range query in the first, instant in the second). `gcx` answers "now". The
@@ -464,8 +464,7 @@ can hide a real page.
    script prints it so the omission is visible; (ii) Brian deletes the ruler namespace `andara`
    from `solo7` with `make alerts-delete` (a target `AW-INF-047` adds to `alerts_sync.py`, using the existing
    ruler write key, which Brian exports by hand as `MIMIR_API_KEY_WRITE`; it is not in `.local/box.env`; it is
-   run by hand, once, and the key is given to no CI job beyond what `alerts` holds today); step 0's silence is
-   lifted here, since the alert it silenced no longer exists; (iii) the rebuild
+   run by hand, once, and the key is given to no CI job beyond what `alerts` holds today); step 0's silence is lifted only after `alert instances list --datasource grafanacloud-prom` no longer lists the prod-absence alert, so a lingering instance cannot page; (iii) the rebuild
    completes and `k8s-monitoring` ships `dev` to `solo7dev` with `environment="dev"`; (iv) `make observe-check
    ENV=dev --keep-list` (decision 13) passes; (v) a merge sets `required_environments = ["dev"]` in
    `solo7dev`'s tfvars, which adds the `dev` absence line to `AndaraServerUnavailable`; (vi) `make

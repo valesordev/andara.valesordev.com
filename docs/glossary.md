@@ -854,3 +854,7 @@ UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (
 
 **Environment (label)** — The `environment` label on all telemetry: `local`, `dev`, `staging` or `prod`, derived
 from the namespace by one table (ADR-0012 §9). `namespace` stays as the source within an environment.
+
+**`required_environments`** — A Terraform variable per stack: the environments whose absence must page or post (a
+marked `absent()` line of `AndaraServerUnavailable` is rendered only for these). `solo7dev` adds `dev` once `dev`
+ships; `solo7` adds `prod` once prod is installed (ADR-0012 §12).
