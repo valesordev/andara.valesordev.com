@@ -4,7 +4,7 @@ title: One cluster for local and dev
 status: proposed          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
 date: 2026-10-10
 deciders: [brian]
-gates: []                 # the SRE stories this ADR names (decision 11) are written by PM after acceptance
+gates: []                 # the SRE stories this ADR names (decision 12) are written by PM after acceptance
 ---
 
 ## Context
@@ -29,7 +29,8 @@ Facts this ADR rests on, from the repo as of `origin/main` 437efea (read-only su
   cluster pre-existed; no script creates it.
 - The topics are unprefixed and their names are Go constants (`andara.commands.v1`, 64 partitions, a permanent
   choice, `deploy/kafka/topics.yaml`; `server/ingress/producer.go:32`, `server/tickloop/kafka.go:26-27`,
-  `server/projector/kafka.go:26`, `server/boot/accounts.go:18-19`). There is no prefix config key.
+    `server/projector/kafka.go:26`, `server/boot/accounts.go:18-19`, and the content topics
+  `server/content/kafka.go:38-40`). There is no prefix config key.
   Consumer groups are already `<name>-<env>`.
 - Kafka is one Strimzi cluster `andara-log` (3 combined brokers, 500m / 2Gi each, required hostname
   anti-affinity) **per `andara-<env>` namespace** (`AW-INF-014`); the Strimzi operator in namespace `strimzi`
@@ -40,6 +41,8 @@ Facts this ADR rests on, from the repo as of `origin/main` 437efea (read-only su
 - The object store is versitygw (posix backend, one root credential pair per namespace, a 5Gi PVC, Service
   `andara-objectstore:9000`); the bucket is `andara-snapshots-<env>` (`scripts/objectstore.py` accepts `dev|prod`
   only); snapshot keys carry no environment (`{zone}/{tick}/{state_version}/{offset}`).
+- `make test-integration` runs against the compose broker today (`Makefile:196-205`); `topics.yaml` carries a
+  `broker.local` Redpanda block; ADR-0002 §7 says "Redpanda locally".
 - Redis and Postgres are deployed nowhere in the cluster; their projectors have no binary (`AW-SRV-017`,
   `AW-SRV-018`). Their consumer groups are named `andara-projection-redis-<env>` / `-pg-<env>`.
 - Argo CD (chart 10.9.2) follows `main` for `andara-dev`; Image Updater writes `image.tag` back as an Argo
@@ -49,6 +52,13 @@ Facts this ADR rests on, from the repo as of `origin/main` 437efea (read-only su
 - dev requests about 2.7 CPU and 8.9 Gi (brokers 1.5 CPU / 6 Gi of it); the numbers are placeholders
   (`measurements.yaml: measured: false`).
 - No script passes `--context` to `kubectl`; everything uses the ambient context.
+- Traefik takes `hostPort` 80 and 443 on the `ingress-ready` node and the kind config publishes those ports on the
+  host; the chart's hostnames are `andara.local` (local, an `/etc/hosts` line, private CA `andara-ca`),
+  `andara-dev.solo7.valesordev.com` (dev, Let's Encrypt DNS-01 through Cloudflare) and
+  `andara.solo7.valesordev.com` (prod).
+- **New, Brian 2026-10-10:** the cluster publishes **8080 and 8443**, not 80 and 443. DNS and an `nginx` proxy stay in the
+  repo that manages the workstation configuration; that proxy routes `local.andara.valesordev.com` and
+  `dev.andara.valesordev.com` to the cluster (decision 11).
 
 ## Decisions
 
@@ -66,11 +76,12 @@ from a committed config with a `make` target; (c) a cluster-API or Terraform def
 - **Name and context:** the cluster is `andara`, its kubeconfig context `kind-andara`. Every script passes
   `--context kind-andara` (or reads it from one variable, `ANDARA_KUBE_CONTEXT`, default `kind-andara`);
   none uses the ambient context. A script that finds the context missing exits `3` naming it.
-- **Shape:** `deploy/kind/cluster.yaml`: one `control-plane` node (label `ingress-ready=true`, host ports 80
-  and 443) and **three workers**, so Kafka's required hostname anti-affinity can schedule its 3 brokers. The
+- **Shape:** `deploy/kind/cluster.yaml`: one `control-plane` node (label `ingress-ready=true`; the node's ports 80 and 443, where Traefik's `hostPort`
+  sits, are published on the host as **`127.0.0.1:8080` and `127.0.0.1:8443`**, decision 11) and **three workers**, so Kafka's required hostname anti-affinity can schedule its 3 brokers. The
   three workers share one machine and one disk, as the broker contract already says of the current box
   (`docs/specs/kafka/broker-contract.md`); the spread is a scheduling property, not hardware redundancy.
-  `deploy/kind/config.yaml` stays CI's single-node cluster (CI installs no Kafka) and is not the box's.
+  `deploy/kind/config.yaml` stays CI's single-node cluster (CI installs no Kafka, publishes 80 and 443 for its
+  own `--resolve` tests, and is not the box's).
 - **Targets:** `make cluster-up` (create if absent; idempotent), `make cluster-down` (delete, after a
   confirmation naming the cluster, `CONFIRM=andara`), `make cluster-rebuild` (down, up, platform, shared
   services; the one-command rebuild `ADR-0012` decision 13 needs). Names are final.
@@ -129,7 +140,7 @@ names (impossible: two environments cannot both own `andara.commands.v1`).
 (b) isolates fully and costs a second set of brokers (about another 1.5 CPU and 6 Gi) on a machine that
 cannot spare it, which is the complaint that started this direction. (a) shares the broker's partition budget,
 disk and failure domain: with 64 partitions per hot topic and 222 per environment, two environments are 444
-partitions, 1,332 replicas at RF 3 on 3 brokers, which a combined KRaft node handles but not with slack to waste.
+partitions, 888 replicas (222 at RF 3 for `dev`, 222 at RF 1 for `local`, decision below) on 3 brokers, which a combined KRaft node handles but not with slack to waste.
 
 **Decision (Kafka): (a).** Topic names become `<env>.andara.<name>.v<n>`: `dev.andara.commands.v1`,
 `local.andara.commands.v1`. `local` topics use RF 1 and `min.insync.replicas` 1 (local is disposable, and its
@@ -138,11 +149,19 @@ they are (64, permanent); a different count for `local` would test a different h
 config key **`kafka.topic_prefix`** (env `ANDARA_KAFKA_TOPIC_PREFIX`, flag `--kafka-topic-prefix`), default `""`
 (unprefixed, which is what `prod` keeps); the chart sets `dev.` and `local.`. Consumer groups already carry
 `-<env>`. `deploy/kafka/topics.yaml` gains a `prefix:` per environment and renders the topics and principals for
-each. A server change: decision 11's implementation story.
+each. A server change: decision 12's implementation story. The key covers **every** topic the server and the projector
+name, the content topics included. With the default `""` a server would silently use unprefixed topics, so the
+server's config validation fails (exit 1, naming `kafka.topic_prefix`) when `telemetry.environment` is not `prod`
+and the prefix is empty, and the chart's `required` fails the render for the same case.
 
-*What an environment can still do to the other:* fill the brokers' disk (a retention-1 topic does it), exhaust the
-partition or connection budget, or, with the broker superuser, delete the other's topics. The ACLs stop an
-environment's workloads from touching the other's topics, not from starving them.
+*What an environment can still do to the other, and what is bounded:* `topics.yaml` gives `andara.commands.v1`
+`retention.ms: -1`, and brokers have a 20Gi PVC each that `dev`'s zero-RPO claim depends on, so a `local` soak
+could fill them. So `local.` topics get a bounded retention (`retention.bytes` 64 MiB per partition and 7 days,
+a starting value for story 3 to measure), `local`'s principals get `KafkaUser` quotas (producer and consumer byte
+rates), and no environment principal may create topics or alter configs (`CreateTopics`, `AlterConfigs` are
+the operator's alone, ADR-0011). What stays unbounded: a runaway `dev` producer, the partition and connection budget,
+and the broker superuser deleting the other's topics. The residual is a check, `make shared-check`, that reports
+each shared PVC's usage and fails over 80%.
 
 **Object store.** Options: (a) one bucket per environment, a distinct credential per environment, on the
 shared gateway; (b) one bucket with an environment key prefix; (c) a gateway per environment.
@@ -166,7 +185,8 @@ cache of derived data.
 
 **Decision (Redis): (a).** ADR-0002 already rebuilds a projection "into a new key prefix and cuts over", so the
 prefix convention costs nothing. *Not prevented:* one environment exhausting `maxmemory` (the policy is
-`noeviction`, so the other's writes fail). Nothing deploys until `AW-SRV-017` has a binary.
+`noeviction`, which the deployment must set, so the other's writes fail). Nothing deploys until `AW-SRV-017` has a binary. Service `andara-redis.andara-shared.svc:6379`, key prefix
+`<env>:`, users `andara-local` and `andara-dev`.
 
 **Postgres.** Options: (a) a database per environment, a role per environment owning it, `CONNECT` revoked
 from `PUBLIC`; (b) a schema per environment in one database; (c) an instance per environment.
@@ -174,24 +194,35 @@ from `PUBLIC`; (b) a schema per environment in one database; (c) an instance per
 
 **Decision (Postgres): (a).** Databases `andara_local` and `andara_dev`; roles `andara_local` and `andara_dev`;
 the projector role is not a superuser. *Not prevented:* connection exhaustion (`max_connections` is shared), a
-runaway query, or disk fill. Nothing deploys until `AW-SRV-018` has a binary.
+runaway query, or disk fill. Nothing deploys until `AW-SRV-018` has a binary. Service `andara-postgres.andara-shared.svc:5432`.
 
 ### 5. What sharing does to `dev`'s guarantees
 
 The zero-RPO claim (`AW-INF-040`) and the broker bounce (`AW-INF-014`) are claims about the broker, and the broker
 is now one broker set for both environments. The honest statement, which Brian may not like: **a broker fault
-cannot be rehearsed on `dev` without disturbing `local`.** The drills:
+cannot be rehearsed on `dev` without disturbing `local`.** The story's AC6 ("none can disturb the other environment")
+therefore cannot hold for the broker drills; this ADR deviates from it, and Brian's acceptance of the ADR is the
+acceptance of that deviation (PM amends AC6 to "lists which drills disturb the other and how that is prevented").
+The drills:
 
 | Drill | Acts on | Disturbs the other environment? | Rule |
 |---|---|---|---|
-| `make kafka-broker-bounce` (`AW-INF-014`) | deletes `andara-log-broker-0` in `andara-shared` | yes: `local`'s RF 1 partitions on that broker are unavailable until it returns | the drill refuses to start while `andara-local` has a ready server, unless `CONFIRM_LOCAL=down` is given; `make local-down` scales it to 0 |
-| `make kafka-rehearsal` (`AW-INF-040`) | kills brokers | yes, as above, and for longer | same refusal; its assertions read `dev.`-prefixed topics only |
+| `make kafka-broker-bounce` (`AW-INF-014`) | deletes `andara-log-broker-0` in `andara-shared` | yes: `local`'s RF 1 partitions on that broker are unavailable until it returns | broker drill: takes the drill lock (below) |
+| `make kafka-rehearsal` (`AW-INF-040`, a target the story builds) | kills brokers | yes, as above, for longer | broker drill; its assertions read `dev.`-prefixed topics only |
 | `make env-recover ENV=dev` (`AW-INF-034`) | `SIGKILL` of `andara-0`'s `server` container in `andara-dev` | no | unchanged; resolves the context and the namespace, never the node by name |
-| `stack-recover` and the other `stack-*` targets | `andara-local`'s server (per `ADR-0012` decision 14) | no: they touch `andara-local` and `local.`-prefixed topics only | re-pointed by the kind-side stories after this ADR |
+| `stack-boundary-lost` | today stops Redpanda for 90 s or more; on kind it must not stop a shared broker | no, by construction | a `NetworkPolicy` that cuts only `andara-local`'s server pods from the listener for the same period (the server sees the broker unreachable past the delivery timeout, which is the property under test), removed afterwards |
+| `stack-recover` and the other `stack-*` targets | `andara-local`'s server (`ADR-0012` decision 14) | no: `andara-local` and `local.`-prefixed topics only | re-pointed by the kind-side stories |
+
+**The guard is symmetric.** A broker drill takes a lock, the ConfigMap `drill-lock` in `andara-shared`, holding who
+and until when. It refuses to start while that lock is held or while `andara-local` has a ready server, unless
+`CONFIRM_LOCAL=down`, whose meaning is that the drill itself scales `andara-local` to 0 first, restores it
+afterwards, and releases the lock. `make up`, `make local-down`, `make promote` and `make topics-apply` check the lock
+and refuse to run while it is held, so nothing starts `local` or reconfigures the shared brokers mid-drill. Dev's own
+fault drills are namespace-local and need no lock.
 
 `dev` keeps its three brokers (`local` shares them). The alternative that removes the first two rows' cost,
 a separate single-broker Kafka for `local`, is rejected: it is the second Kafka this decision exists to avoid, and
-`local` needs no fault tolerance. Reopen it if the refusal in rows 1 and 2 becomes a nuisance (Revisit when).
+`local` needs no fault tolerance. Reopen it if the lock becomes a nuisance (Revisit when).
 
 ### 6. `ADR-0011` amended
 
@@ -203,6 +234,12 @@ implemented yet, so the amendment costs no migration. What changes:
   its environment's topic prefix (`dev.andara.`) and group prefix (`andara-sim-dev`, `andara-content-dev`,
   `andara-projector-state-dev`). The operator superuser (`andara-operator`) is unchanged and is not
   per-environment.
+- **Credential path.** Strimzi's User Operator creates each principal's Secret in `andara-shared`, where the
+  `KafkaUser` lives (ADR-0011). Workloads mount `secrets.kafkaCreds` in their own namespace, and Secrets do not cross
+  namespaces, so a step of the shared-Kafka story copies each principal's Secret into **its own environment's
+  namespace only** (`andara-server-dev` into `andara-dev`, never into `andara-local`), by a `make` target
+  run by the operator, and the workloads' ServiceAccounts hold no RBAC on `andara-shared`'s Secrets. Rotation: clients
+  read the credential file per connection (ADR-0011), so re-copying is the whole rotation.
 - **The NetworkPolicy** on the listener admits pods by namespace label (`local`, `dev`) and name, in
   `andara-shared`, instead of "same namespace".
 - **The encryption sentence** ("acceptable only while every client and broker share a namespace") becomes "while
@@ -223,30 +260,42 @@ two answers. (c) is a branch, which moves on every push and is not deliberate. T
 (`docs/specs/deploy/lifecycle.md`) also needs the image tag to be unambiguous: a bare `dev` tag, which two builds
 can share, is the failure it names.
 
-**Decision: (a).** A **promotion** is one signed commit on a branch `release/dev` (never `main`, so `publish`'s
-push-to-`main` trigger and the signed-commit rule on `main` are not engaged and nothing loops) that sets
-`image.tag: sha-<12>` in `deploy/helm/values/dev.yaml`, and an **annotated, signed Git tag** `dev` on that commit.
+**Decision: (a).** A **promotion** is one signed commit on a branch `release/dev`, which is **reset to `main@SHA` and given exactly
+one commit each time** (so the tagged tree is that `main` commit's chart and values plus the image line, never a
+stale chart), never `main` itself (so `publish`'s push-to-`main` trigger and the signed-commit rule on `main` are not
+engaged and nothing loops). The commit sets `image.tag: sha-<12>@sha256:<digest>` (the digest `image-publish`
+prints and `lifecycle.md` pins by) in `deploy/helm/values/dev.yaml`, and an **annotated, signed Git tag** `dev` on that commit.
 Argo CD's `andara-dev` Application sets `targetRevision: dev` and is otherwise unchanged (chart path, values
 file, automated sync). The tagged commit therefore carries the chart, the values and the image together: what
 runs is what the tag points at.
 
 - **Type and name:** annotated, signed tag `dev`, moved forward by force-push. Every promotion also creates an
   immutable history tag `dev-<n>` (n monotonic) at the same commit, which is what rollback names.
-- **Who moves it:** Brian, or the SRE role at his instruction, with `make promote ENV=dev SHA=<main sha>`.
+- **Who moves it:** **Brian**, from his own shell, with `make promote ENV=dev SHA=<main sha>`. A role session's
+  push hook allows a push only for a commit that passed `/pre-pr` (`.claude/bin/role`), so a promotion is not
+  something an agent session does; if that changes, the story that changes it defines how the push is cleared.
+  CLAUDE.md §4's branch list gains `release/dev`, which is Brian's edit.
   It checks the image `sha-<12>` exists and pulls anonymously (`make image-check`), creates the commit and
   both tags, pushes the branch and the tags, and prints the Argo sync command (Argo syncs by itself). Nothing
   automated moves it.
-- **Promotion step:** `make promote ENV=dev SHA=…`. **Rollback step:** `make promote ENV=dev TAG=dev-<n>`, which
-  moves `dev` back to that history tag's commit (no new commit). The lifecycle spec's pinned-round rollback
-  (`recovery.pin_round`) is unchanged and is a Helm value, not a tag.
+- **Promotion step:** `make promote ENV=dev SHA=…`. **Rollback step:** `make promote ENV=dev TAG=dev-<n>`, which creates a **new**
+  promotion commit on top of that history tag's commit, so the tag history stays linear, and sets
+  `release.rolled_back_to: dev-<n>` and, when `PIN_ROUND=<round>` is given, `recovery.pin_round` in the same
+  commit (the lifecycle spec's markers, as committed values instead of `--set` flags). `make promote` runs the
+  same pre- and post-steps as `make deploy` (the `andara.core` step, the measured interruption against the RTO)
+  through the same script, after Argo syncs.
 - **Image Updater:** removed (`deploy/argocd/andara-dev-image-updater.yaml`, its install in `scripts/argocd.py`),
   and `AW-INF-019`'s "dev follows `main`" ends. `AW-INF-013`'s image publish stays: it still pushes `sha-<12>`
   (the thing a promotion names) and no longer matters for what `dev` runs, so `:dev` as a moving image tag is
   retired with it.
 - **`AW-INF-041` (`make deploy` / `make rollback`):** stays for `prod`, whose release is `helm upgrade --install`
-  from the box. For `ENV=dev` they become `make promote`; 041's spec gets that one line.
-- **Not decided here, a story must prove:** that tag pushes are allowed by `main`'s protection rules (they apply
-  to branches; this is **[verify]**), and that `allowed_signers` verifies an annotated tag signature.
+  from the box. For `ENV=dev` they become `make promote` with the parity above; `AW-INF-041`'s spec is amended by the story that
+  builds the target, and `lifecycle.md`'s `deploy:<image tag>` stays unambiguous because the tag is `sha-<12>`.
+- **Not decided here, a story must prove:** that tag pushes are allowed by the repository's rulesets (`main`'s
+  protection targets the branch, so `release/dev` is outside it **[verify]**), that `allowed_signers` verifies an
+  annotated tag signature **[verify]**, and that Argo CD notices a force-moved tag promptly (it caches refs, up to
+  about three minutes; the promote script forces a hard refresh **[verify]**).
+- **`make test-integration`'s tests do not use the `dev` tag.** See decision 8.
 
 ### 8. `andara-local`'s path
 
@@ -255,8 +304,15 @@ runs is what the tag points at.
 installed (`make helm-install ENV=local`), behind one target. `make down` removes `andara-local` only (the same
 as `make local-down`); `make local-reset` additionally deletes the `local.`-prefixed topics and empties the
 `andara-snapshots-local` bucket, and its scripts refuse any name that does not carry the `local` prefix, so it
-cannot touch `dev`. `values/local.yaml` gains the shared Kafka and object store (it is broker-free today). The
-compose `min` profile is retired until `ADR-0012` decision 14's trigger fires.
+cannot touch `dev`. `values/local.yaml` gains the shared Kafka and object store (it is broker-free today) and the host
+`local.andara.valesordev.com` (decision 11). **CI keeps its single-node, broker-free cluster** with a new
+`values/ci.yaml` overlay (host `andara.local`, memory sources, no broker): the lifecycle test coverage that CI
+had stays, and the loss is that CI no longer exercises `local`'s broker path (the shared Kafka is covered by the rebuild
+and `dev`). Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
+a port-forward, with a principal `andara-it` that may create and delete only `it-<random>.`-prefixed topics and
+buckets, so the tests never touch `local.` or `dev.` data; story 6 owns it. The compose `min` profile is retired until
+`ADR-0012` decision 14's trigger fires; **its baseline** (`make test-integration`'s wall time on compose `min`) **is
+recorded by story 6 before compose is removed**, because the trigger compares against it.
 
 **A new machine** needs Docker, about 12 Gi of free memory, and `make bootstrap` (which now installs pinned `kind`
 and `kubectl` and the other tools). `make bootstrap && make up && make check` remains the onboarding path;
@@ -266,7 +322,7 @@ and `kubectl` and the other tools). `make bootstrap && make up && make check` re
 
 The rebuild is one planned outage and it discards the whole box cluster.
 
-1. The stories of decision 11 land and pass `make check` and the CI kind job; the `dev` tag exists on a promotion
+1. The stories of decision 12 land and pass `make check` and the CI kind job; the `dev` tag exists on a promotion
    commit for the current `main`.
 2. `ADR-0012`'s prerequisites are done (decision 7 steps 0 to 4(i-b): Terraform applied to both stacks, rules
    paused, the Fleet pipelines applied).
@@ -293,21 +349,61 @@ one-Kafka-per-namespace, on this cluster's successor or another cluster as Brian
 `watchNamespaces` is `{andara-shared}` now and gains `andara-prod` when prod is installed. `ADR-0012` stays
 true: `prod` ships to `solo7`.
 
-### 11. The follow-on stories
+### 11. The edge, and the workstation proxy
 
-PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless noted.
+Brian's direction (2026-10-10): the cluster publishes **8080 and 8443**; DNS and `nginx` stay in the repo that manages
+the workstation configuration, and an `nginx` proxy routes `local.andara.valesordev.com` and
+`dev.andara.valesordev.com` to the cluster. This repo owns the cluster side of that line and states the contract the
+other repo implements; it changes nothing there.
+
+**Options.** (a) `nginx` passes the TLS connection through to the cluster at layer 4 (`stream` with SNI
+preread, `proxy_protocol on`), so cert-manager's certificates stay authoritative; (b) `nginx` terminates TLS with its
+own certificate for `*.andara.valesordev.com` and proxies HTTP/2 to `:8080`.
+(b) moves certificate management and gRPC/Connect/gRPC-Web proxying (`grpc_pass`, streaming timeouts) into the
+other repo, makes the chart's `Certificate` resources redundant, and hides the client address from the
+admin allowlist (it would see `nginx`) unless `X-Forwarded-For` is trusted. (a) keeps the edge exactly as the CI lifecycle
+test exercises it, at the cost of the PROXY protocol on the entrypoint.
+
+**Decision: (a).**
+
+| Concern | Contract |
+|---|---|
+| Ports | the kind control-plane node's 80 and 443 are published as `127.0.0.1:8080` and `127.0.0.1:8443` (`deploy/kind/cluster.yaml`); bound to loopback because the proxy runs on the same host. Traefik's `hostPort` 80/443 inside the node is unchanged. Ports 80 and 443 on the host belong to `nginx`. |
+| Hostnames | `local.andara.valesordev.com` (replaces `andara.local` and its `/etc/hosts` line) and `dev.andara.valesordev.com` (replaces `andara-dev.solo7.valesordev.com`); set in `values/local.yaml` and `values/dev.yaml`. `prod`'s `andara.solo7.valesordev.com` and CI's `andara.local` are unchanged. |
+| TLS | `nginx` does not terminate. `dev`: the `letsencrypt` ClusterIssuer (DNS-01 through Cloudflare, unaffected by ports). `local`: the private CA `andara-ca`, with its CA written to `.local/tls/cluster/local/ca.pem` as today (the browser trusts it; the issuer needs no internet). |
+| Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the host's gateway address (`proxyProtocol.trustedIPs`); the admin allowlist (`AW-INF-006`) then sees the real client. Tested in CI with a PROXY-protocol `curl`. |
+| What the other repo does | DNS for the two names to the workstation; `nginx` `stream` blocks that `ssl_preread` the SNI and forward to `127.0.0.1:8443` with `proxy_protocol on`; an `http` block redirecting port 80 to HTTPS or `proxy_pass` to `:8080` if wanted. It does not manage certificates for these names. |
+| Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443. |
+
+*Rebuilds and Let's Encrypt.* Rebuilding the cluster is routine, and Let's Encrypt allows five duplicate certificates for the
+same names per week, so `make cluster-rebuild` exports the issued `dev` certificate Secret to `.local/tls/` (gitignored,
+mode 0600) before deleting the cluster and restores it after, and falls back to the staging issuer when the limit is hit.
+
+*Needs the other repo, which is Brian's:* the DNS records and the `nginx` `stream` configuration above. Until they exist, a
+developer reaches `local` with `--resolve` against `:8443` and an `/etc/hosts` line for the name, so nothing here is
+blocked by it; the first rebuild is not complete until `dev.andara.valesordev.com` resolves through `nginx`.
+
+### 12. The follow-on stories
+
+PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless noted. Rows 3, 7 and 9 of the first
+draft were `L`-sized and are split.
 
 | # | Story | Size |
 |---|---|---|
-| 1 | Cluster as code: `deploy/kind/cluster.yaml`, `cluster-up/down/rebuild`, `ANDARA_KUBE_CONTEXT`, bootstrap installs `kind` and `kubectl`, every script takes `--context` | M |
-| 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared` | M |
-| 3 | Shared Kafka: `andara-shared`, prefixed topics and per-environment principals in `topics.yaml`, ADR-0011's SASL implementation for them, NetworkPolicies | M |
+| 1 | Cluster as code: `deploy/kind/cluster.yaml` (ports 8080/8443 on loopback), `cluster-up/down/rebuild`, certificate Secret export and restore, `make bootstrap` installs `kind` and `kubectl` | M |
+| 1b | Contexts: every script takes `ANDARA_KUBE_CONTEXT` instead of the ambient context (18 scripts), with a test that fails on a bare `kubectl` | M |
+| 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared`, Traefik PROXY-protocol trust | M |
+| 3 | Shared Kafka: `andara-shared`, prefixed topics, bounded `local.` retention, quotas and per-environment principals rendered from `topics.yaml`, NetworkPolicies, chart FQDN values and the `andara.valesor/env` namespace labels, `make shared-check`, the drill lock | M |
+| 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, `kind.yaml` assertions | M |
 | 4 | Shared object store: versitygw IAM users, a bucket and Secret per environment, `objectstore.py local`, 10Gi | S |
-| 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, remove Image Updater, `AW-INF-041` amendment, tag-protection check | M |
-| 6 | `andara-local`: `values/local.yaml`, `make up/down/local-reset`, CI | M |
-| 7 | Drills re-pointed: contexts, the local refusal in the broker drills, `env-recover` context, the `stack-*` kind-side set (with `ADR-0012`'s replacements for AW-INF-048) | M |
-| 8 | The rebuild run (decision 9) | S |
-| I | **implementation:** `kafka.topic_prefix` in the server and the projector, defaults and tests | S |
+| 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, deploy/rollback parity, remove Image Updater (and `kind.yaml`'s `already installed == 2`), the three `[verify]` items, `AW-INF-041` amendment | M |
+| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, CI | M |
+| 7a | Broker drills: the drill lock and `CONFIRM_LOCAL`, `kafka-broker-bounce` and `kafka-rehearsal` against `andara-shared`, `stack-boundary-lost` as a NetworkPolicy | M |
+| 7b | `env-recover`, `observe-*` and the `stack-*` targets re-pointed at contexts and `andara-local` (with `ADR-0012`'s replacements for `AW-INF-048`) | M |
+| 8 | Collectors and the telemetry token install on the new platform (`ADR-0012` decisions 13 and 15), the `observe_keep_list.py` exclusion for `andara-shared` | M |
+| 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
+| I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, tests | S |
+| I2 | **implementation:** ADR-0011's SASL client in the shared constructor and its 20 `kgo.NewClient` sites | M |
 | later | Redis and Postgres isolation and deployment, when `AW-SRV-017` / `AW-SRV-018` have binaries | S each |
 
 ## Agreement with `ADR-0012`
@@ -323,6 +419,15 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
   in `alerts.yaml` reads a shared-service series today, so no rule is affected; a rule that does must derive the
   environment from the topic prefix, the consumer-group suffix or the bucket, and cannot from a label.
 - **Decision 7** (cutover) gains one prerequisite, "`dev` is deployed from the tag", folded into decision 9 above.
+  `ADR-0012` gets a dated annotation under decision 9 pointing at the `andara-shared` exception.
+- **What keeps `local` series from reaching `solo7`** (the story's open question): the cluster holds only
+  `solo7dev`'s telemetry token (the prod token lives on the prod cluster, never here), its collectors register with
+  `stack=solo7dev`, and `environment` comes from the `stamp` table; there is no path from this cluster to `solo7`.
+- **A cluster with no telemetry token** (`ADR-0012` decision 14): `make platform-up` installs the collectors with an
+  empty credential Secret, they ship nothing, and the target prints that on its last line.
+- **Is local's broker still Redpanda?** No: it is the shared Strimzi Kafka. ADR-0002 §7's "Redpanda locally" no longer
+  describes the cluster environments (it stays true of nothing once compose goes); ADR-0002 gets a dated annotation, and
+  `topics.yaml`'s `broker.local` Redpanda block is removed by story 6.
 
 ## Consequences
 
@@ -342,16 +447,23 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
   (scripts, runbooks, dashboards, `topics.py`) changes; `prod` keeps the unprefixed names.
 - **The tag mechanism is new and its protections are unverified** (tag rules on `main`, signed-tag
   verification); a story proves them before `dev` depends on it.
+- **The edge depends on a second repo.** `nginx` and DNS, outside this one, must carry the SNI passthrough and the PROXY
+  protocol; a mistake there is an outage of `local` and `dev` that nothing in this repo detects. The contract is the
+  table in decision 11; the check is the CI PROXY-protocol test and the rebuild's resolution step.
+- **Local broker drills need an empty `local`.** The drill lock (decision 5) is a convention enforced by the targets,
+  not by the cluster: a hand-run `kubectl` bypasses it.
 - **Foreclosed:** a second Kafka for `local`; Image Updater; compose; a platform managed from another repo.
 
 ## Revisit when
 
-- The broker-drill refusal (decision 5) is hit more than twice in a month: give `local` its own single-broker Kafka.
+- The drill lock (decision 5) is hit more than twice in a month: give `local` its own single-broker Kafka.
 - A client or broker leaves the cluster or the host (decision 6): TLS on the listener, as `ADR-0011` says.
 - Two environments starve each other once (disk, memory, partitions): split the shared service that did it.
 - `make test-integration` on kind exceeds `ADR-0012` decision 14's threshold: bring back compose `min` for the
   tests, which this ADR's shared services then no longer back for that profile.
 - `prod` is installed (decision 10), or a third non-production environment (`staging`) is wanted: a prefix, a
   principal, a bucket and a role are added per environment, which is the cost of each one.
+- `nginx` (or its PROXY-protocol path) breaks `local` or `dev` twice: terminate TLS at `nginx` (option (b) of
+  decision 11) and move certificates to the other repo, or publish 80/443 again.
 - Argo CD's automated sync on a tag misbehaves twice (a tag moved mid-sync, a rollback that does not converge):
   move the promotion to a pull request instead of a force-moved tag.

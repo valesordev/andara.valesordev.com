@@ -647,6 +647,11 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   own usage emails are the "is the free tier enough" signal (no repo job reads usage), and nothing here depends
   on it staying free.
 
+> **Annotation, 2026-10-10 — ADR-0013 adds one exception, not a change to this decision.** `andara-shared` (Kafka,
+> object store, later Redis and Postgres) is a platform namespace with no environment: the `stamp` pipeline leaves it
+> unlabelled (`unknown`) and `observe-check --keep-list`'s `unknown` guard excludes `namespace="andara-shared"`. The
+> mapping table above stays the only mapping of an environment's namespace. ADR-0013 §4 and the Agreement section.
+
 ### 10. Notification routing per stack
 
 **Decision.** `solo7dev` holds three environments, so it routes on the `environment` label.
