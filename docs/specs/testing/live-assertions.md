@@ -108,23 +108,32 @@ evidence of absence, not absence of the race.
 
 `ADR-0012` moved the observable backend from a local Prometheus to Grafana Cloud, read through
 `gcx` (decision 2). The four rules above bind unchanged. What changes is what the subjects are,
-and three consequences of it, none of which is a new rule.
+and four consequences of it, none of which is a new rule.
 
 - **A rule that is *defined* is not a rule that is *live*** (rule 2). `gcx alert rules list` showing
-  the rule proves it exists. A test about its behaviour waits on the rule's `lastEvaluation`
-  moving past the cause, or on the instance itself, not on the rule being listed.
-- **An alert instance is read by its `state` and its labels.** `Alerting` is firing; `Normal` and
-  `Normal (NoData)` are not. Polling for `Normal` is rule 3's case: it also holds before the rule
-  has evaluated at all, so the window needs an anchor (below).
-- **An empty result is not a pass** (rule 3). `gcx` prints `null` for an empty list, the wrapper
-  normalises it to `[]`, and `[]` means "nothing matched", which is also what a wrong stack, a wrong
-  `environment` or a dead pipeline returns. An absence assertion therefore first establishes a
-  positive anchor that is causally after the window: an always-present series for the same
-  `environment` and `namespace` (the keep-list's `up{job="andara-server"}`), or the rule's own
-  `lastEvaluation` after the cause. Only then is an empty result evidence.
-- **A `--context` mistake reads the wrong stack and looks green.** The wrapper always passes the
-  context, and the routing test (ADR-0012 decision 2) proves it; an assertion helper does not call
-  `gcx` any other way.
+  the rule proves it exists. A test about its behaviour waits on the instance itself, or on the
+  rule's `lastEvaluation` moving past the cause plus the time its samples need to arrive (below),
+  not on the rule being listed.
+- **Read the wrapper's states, not `gcx`'s strings.** The wrapper (`scripts/gcx.py`, `AW-INF-046`)
+  maps instance states to firing, pending or not firing (`Alerting` and the ruler's `firing` are firing;
+  `Normal` and `Normal (NoData)` are not; whether `Recovering` under `keep_firing_for` counts as firing is
+  open, `AW-INF-047`). Polling for "not firing" is rule 3's case: it also holds before the rule has
+  evaluated at all, so the window needs a window anchor (next bullet).
+- **An empty result is not a pass, and two different anchors are needed.** `gcx` can print `null` (for
+  example for an empty `alert instances list`), `[]` or an empty `result`; the wrapper normalises all of
+  them to `[]` (shapes are recorded in the `AW-INF-046` fixtures), and `[]` means "nothing matched",
+  which is also what a wrong stack, a wrong `environment` or a dead pipeline returns.
+  - An **existence anchor** rules those out: an always-present series for the same `environment` and
+    `namespace` (the keep-list's `up{job="andara-server"}`), or the rule being listed. It says the
+    observation is working. It does **not** license an absence assertion, because it can be satisfied by
+    a sample from before the window opened.
+  - A **window anchor** closes the window (rule 3): a sample or an evaluation timestamped after the
+    cause plus the scrape interval plus an ingestion allowance, for example the rule's `lastEvaluation`
+    later than that, or a series whose latest sample is. Only an empty or not-firing result read after
+    both anchors is evidence of absence.
+- **A `--context` mistake reads the wrong stack and looks green.** The wrapper always passes the context
+  and the routing test proves it (both `AW-INF-046`; `gcx` pinned at v0.2.13 or later, since v0.2.11
+  ignores `--context` in some operations). An assertion helper does not call `gcx` any other way.
 
 ## Helpers
 
@@ -143,8 +152,8 @@ func eventually(t *testing.T, d time.Duration, what string, want func() bool)
 
 Existing instances to converge on rather than duplicate: `waitFor` in `server/egress`, and the
 bounded `seq 1 30` retry loop in `scripts/stack_smoke.sh` for shell. For `gcx`-backed assertions
-the one helper is the wrapper `scripts/gcx.py` (`AW-INF-046`); a script does not poll `gcx` with
-its own loop.
+the wrapper `scripts/gcx.py` (`AW-INF-046`) is the only way to call `gcx`; the polling stays in each
+language's `eventually`/`wait_for` helper around it, at the 5 s interval above.
 
 A helper's doc comment states **what it waits for and what it does not**. `forgotten` in
 `server/egress` is the worked example: it stopped claiming to cover teardown end to end, named the
@@ -159,11 +168,13 @@ scrape that starts *after* the cause).
 
 Behind Grafana Cloud the delays add, and each is named so a deadline can be computed rather than
 guessed: the pipeline's scrape interval, plus ingestion into the stack, plus (for rule state) one
-or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A
-series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to change
-through `gcx alert instances list`: `2 × evaluation interval + for + 60 s`. These are starting
-values; the first drill that measures them (`AW-INF-046`/`047`) records the observed figures here.
-Poll every 5 s, not faster: `gcx` is a process per call.
+or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to reach
+firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation interval + for`, with
+2 minutes standing in for `scrape + ingest` until measured. To **clear**, add the rule's
+`keep_firing_for` (15 minutes for `RecoveryStateMismatch`), so a "reaches not firing" deadline for it is
+over 20 minutes, not 3. These are starting values. SRE records the figures the first drills observe
+(`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
+its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
 
 ## Enforcement
 
