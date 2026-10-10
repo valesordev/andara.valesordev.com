@@ -119,8 +119,12 @@ A Partition `p` becomes degraded when either:
    a Partition: a reachable broker says nothing about a Partition. (It does send its metadata and configuration
    request to **every broker the metadata lists at once**, and the first answer wins, so one dark address in
    the metadata cannot cost the whole interval and degrade all 64 while the other brokers serve, which is the #129
-   failure. The first answer may come from a broker with stale metadata; the two-probe rule and the produce-error trigger
-   cover that. Ratified 2026-10-10, `AW-SRV-052`.)
+   failure. A broker isolated from the controller can answer fastest with stale metadata, and the two-probe rule only confirms
+   the same stale answer, so **first answer wins is not enough**: the probe collects the answers that arrive within a
+   short grace (a tenth of the probe interval) after the first, and judges each Partition by the answer with the
+   **highest leader epoch**. The implementation does not do this yet (it is a follow-up of `AW-SRV-052`); until it does, a
+   stale healthy answer is corrected only after a Submit fails, and a stale unhealthy one can hold a Partition
+   read-only until the hold and a fresh answer. Ratified 2026-10-10, `AW-SRV-052`, with that requirement.)
 
 If the metadata request itself fails (no broker answers) on **two consecutive probes**, all 64 Partitions are degraded; one failed probe marks nothing, so a single transient failure inside an election cannot undo the grace above.
 
@@ -185,8 +189,9 @@ contract pins and asserts it. The ingress never queries a broker config for this
   `ApiVersions`, plus a produce connection to its leader), its own producer ID and its own metadata refresh, and once
   SASL is on (ADR-0011) every connection authenticates and a degrade-and-rebuild re-authenticates. That is up to
   64 clients per server, times the servers, times two environments on the shared brokers of ADR-0013 (which names
-  connection exhaustion as not prevented): the broker-budget table counts it as 128 connections per server
-  per environment, and byte-rate `KafkaUser` quotas do not bind it. The buffer bound stays producer-wide.
+  connection exhaustion as not prevented): about 128 connections per server per environment, which byte-rate
+  `KafkaUser` quotas do not bind. **No Kafka connection budget exists today**; SRE records the broker's limit and this
+  figure in the broker contract's capacity section (a request on `AW-INF-038`), and the figure is accepted subject to it. The buffer bound stays producer-wide.
   (Ratified 2026-10-10, `AW-SRV-052`.)
 - **The produce error is read from the wire by a read-only tap**, because franz-go v1.20 has no hook that sees a
   produce response. The tap wraps **all of the client's connections** through `kgo.Dialer` (metadata, `ApiVersions` and
@@ -202,7 +207,8 @@ contract pins and asserts it. The ingress never queries a broker config for this
   (`scripts/topics.py`, `AW-INF-004` AC-5a, which skips it on `local`), so a broker **known not to implement it** is
   held at the Kafka default of 1 instead of never being read. On Kafka/Strimzi, which is every cluster once compose is
   retired (ADR-0013), the value is read at boot and every 60 s, and an **absent value is a `warn`**, not a silent 1;
-  AC 7 is scoped to Kafka.
+  AC 7 is scoped to Kafka. The implementation reads this today as 1 on every broker, silently; the change is a
+  follow-up of `AW-SRV-052`, and this text is the target it is held to.
 - Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 
