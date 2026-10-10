@@ -105,7 +105,8 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
 - **The equivalence test** belongs to `AW-INF-047`: for each of the 12 rules, a rendered-pipeline check that
   the `expr` text in the Terraform plan is byte-identical to the file's (after the per-stack rendering of
   decision 12), and a live drill that makes a rule fire and **asserts its state through the rules endpoint**
-  (decision 2): `stack-recover-mismatch` in `solo7local`, `observe-unavailable` in `solo7dev`. A pipeline that
+  (decision 2): `observe-unavailable` in `solo7dev` (047's), and `stack-recover-mismatch` in `solo7local`
+  (048's, once compose Alloy ships; 047's own `solo7local` criterion is **defined**, decision 7). A pipeline that
   changes what an expression means fails a drill, not review. `solo7prod` has no drill: prod's server cannot
   be taken away to prove a rule, so its rules are covered by the same module, the rendered-expression test,
   the "defined" and "live" checks of decision 2, and the first healthy evaluation after un-pause.
@@ -261,9 +262,13 @@ per stack in a fixed order; (c) apply from the dev box only.
     `nonsensitive`, no `sensitive = false` on an output, no `terraform_remote_state`, no `external`, no
     provisioner of any kind;
   - the `backend` block and every `provider` block are byte-identical to the base branch's; each stack's
-    `terraform.tfvars` endpoint values (`grafana_url`, `*_url`, `*_user`) match the pinned pattern
-    `^https://[a-z0-9.-]+\.grafana\.net` and are equal to the base branch's unless the change is to those
-    values (which then needs the maintainer's review of the diff, shown in the job summary); no
+    `terraform.tfvars` endpoint values are checked against the stack they belong to: every `*_url` must equal
+    `https://<host>` with `<host>` one of the stack's own hosts as the base branch's tfvars records it, matched
+    whole with a `$` anchor (fixtures: `https://x.grafana.net.evil.com`, the `user@host` form, a port, a
+    path), and every `*_user` must match `^[0-9]+$`. The endpoint `variable` blocks have **no `default`**, and
+    a change to any `variable` default, or to an endpoint value, makes the job **refuse to plan** and print
+    the diff, until the maintainer merges the change to those values separately from other changes (so the
+    plan token never goes to a host the base branch did not name); no
     `*.auto.tfvars` or other variable file besides `terraform.tfvars`; the job sets no `TF_CLI_ARGS*` and
     passes no `-var`/`-var-file` the base script does not; and `.terraform.lock.hcl` changes the
     `grafana/grafana` hashes only together with the version pin.
@@ -318,8 +323,8 @@ The ruler namespace `andara` exists only in the legacy stack `solo7-local`, whos
 `dev`'s and (once installed) `prod`'s series until Brian's rebuild. `solo7local`, `solo7dev` and `solo7prod`
 have never had ruler rules. So this is a migration of one live rule set from one tenant to three, tied to where
 each environment's series go. A rule must not be live in both places. It may be live in neither only
-during the planned outage, which runs from the deletion of the legacy namespace (step 4(ii)) to the first
-healthy evaluation in `solo7dev` (step 4(vi)): the environment is being rebuilt for most of it, and for the
+during the planned outage, which runs from the deletion of the legacy namespace (step 4(ii)) to the un-pause
+of `solo7dev`'s rules (step 4(v)): the environment is being rebuilt for most of it, and for the
 tail, minutes after the rebuild while Brian runs the keep-list check and merges the un-pause, it is a fresh
 World nobody is playing in. That tail is accepted, not hidden.
 
@@ -351,8 +356,8 @@ is the planned window in which Brian rebuilds the cluster, which discards `dev`'
    observe-unavailable ENV=dev` fires and clears the alert through the rules endpoint. Between (ii) and (v)
    nothing watches `dev`, which is the outage. No step has the same rule live in the ruler and in Grafana.
    (Ordering with `AW-INF-048`: `AW-INF-047` supplies the rules and the reader; `solo7local`'s fire-and-state
-   evidence is `AW-INF-048`'s `stack-recover-mismatch`, so 047's own criteria for `solo7local` stop at
-   "defined, live and healthy through the endpoint", and 048 carries the firing assertion.)
+   evidence is `AW-INF-048`'s `stack-recover-mismatch`, so 047's own criterion for `solo7local` stops at
+   "defined" (rules applied, plan empty), and 048 carries "live" and the firing assertion.)
 5. `solo7prod`, when `prod` is installed: apply `prod`'s telemetry to `solo7prod`, pass `observe-check
    ENV=prod --keep-list`, merge the un-pause. `prod` never reported to a working ruler rule set for any
    user-facing purpose (the runbook has its absence silenced until it exists), so there is nothing to
@@ -606,7 +611,7 @@ Postgres, the object store (`minio`, a versitygw image), Alloy and the server.
   keep their compose drivers. The **same gate is also run on the cluster** by `env-recover`, which is the release
   evidence; the compose run is the fast loop and not a substitute.
 - **CI** runs what it runs today: `make check` and the kind job. The `stack` workflow's drills keep running; a
-  job that has the `solo7local` telemetry and `ALERTS_READ` secrets also checks the rules endpoint, and one
+  job that has the `solo7local` telemetry and `GRAFANA_SOLO7LOCAL_ALERTS_READ_TOKEN` secrets also checks the rules endpoint, and one
   that does not (a fork) skips those assertions and says so (exit `3` locally, a notice in CI).
 - **`AW-INF-048` stays as written**, with these lines changed (the comment on the story says so): its title
   ("writing telemetry to stdout") is wrong against its own body, which ships to `solo7local`; the removed
