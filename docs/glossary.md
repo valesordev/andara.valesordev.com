@@ -834,3 +834,19 @@ read alert state, polling to a deadline (ADR-0012 §2).
 
 **Cutover** — Moving the `andara` rule set from the ruler to Grafana-managed rules without a window in which
 a symptom goes unnotified: apply paused, verify, un-pause, then delete the ruler namespace (ADR-0012 §7).
+
+**IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7prod` uses it: an
+integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).
+
+**Alloy** — Grafana's telemetry collector. The cluster's runs inside `k8s-monitoring`; compose's replaces the
+OTLP collector and ships to `solo7local` (`AW-INF-048`).
+
+**Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or the empty
+`blackhole` that notifies no one. **Notification policy** — The tree that matches an alert's labels
+(`severity`) to contact points. One tree per stack, owned wholly by Terraform.
+
+**Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
+(ADR-0012 §13). `make observe-check ENV=<env>` in keep-list mode queries each one.
+
+**Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
+UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).
