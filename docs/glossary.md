@@ -856,9 +856,16 @@ series that is not stamped carries `environment="unknown"` (ADR-0012 §15). Mana
 **Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
 UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).
 
-**Environment (label)** — The `environment` label on all telemetry: `local`, `dev`, `staging` or `prod`, derived
+**Environment (label)** — The `environment` label on all telemetry: `local`, `dev`, `staging` or `prod` (and the reserved `unknown`, which marks a series nothing stamped and is reported, never routed to IRM), derived
 from the namespace by one table (ADR-0012 §9). `namespace` stays as the source within an environment.
 
 **`required_environments`** — A Terraform variable per stack: the environments whose absence must page or post (a
 marked `absent()` line of `AndaraServerUnavailable` is rendered only for these). `solo7dev` adds `dev` once `dev`
 ships; `solo7` adds `prod` once prod is installed (ADR-0012 §12).
+
+**Workload Identity Federation** — Google Cloud's way to let a GitHub Actions job act as a service account from
+its OIDC token, with no stored key. The Terraform state bucket's six service accounts are reached this way
+(ADR-0012 §3).
+
+**State bucket** — The private GCS bucket `andara-tfstate` holding each Terraform root's state under
+`grafana/<root>/`. Created by hand once (`make tf-bootstrap-gcp`), never by Terraform (ADR-0012 §3).
