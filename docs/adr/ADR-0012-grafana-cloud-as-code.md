@@ -184,7 +184,7 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
     same `ListBucket`, no write, no delete, no lock (`plan -lock=false`); trust bound to the repository's
     pull-request and schedule subjects. **It does not exist for `solo7prod-irm`**: no pull-request job, and no scheduled job outside
     `andara-prod-plan`, can read the IRM state;
-  - a **`plan-prod` role** (read on `solo7prod` and `solo7prod-irm`, no write) bound to
+  - a **`plan-prod` role** (read on `solo7prod` and `solo7prod-irm`, with `ListBucket` for those two prefixes, no write) bound to
     `environment:andara-prod-plan`, which only `main` can deploy to. Its jobs (`plan-prod`, `drift-prod-irm`)
     run `plan -lock=false`, since a plan would otherwise take the lock object, which needs a write; the
     shared concurrency group serialises them against `apply-prod`;
