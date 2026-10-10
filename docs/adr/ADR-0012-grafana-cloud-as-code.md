@@ -172,15 +172,27 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
 `use_lockfile = true`; no DynamoDB table. Terraform `>= 1.11, < 2` (`required_version`), pinned by
 `.terraform-version` and installed by `make bootstrap`.
 
-- **Who may read the state:** the state holds the Slack webhook URL(s) and the IRM integration URL, because
-  the provider stores contact-point settings and integration URLs in it. So state read is a **secret read**,
-  and it is granted to these principals only: a **per-stack apply role** (get, put and delete on that stack's key **and on its lock object
-  `<key>.tflock`**, and `ListBucket` with `s3:prefix` limited to `grafana/<stack>.tfstate*`, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, with the same prefix-limited `ListBucket`, no write, no delete, and it does not take
-  the lock: `plan -lock=false`), assumed by the pull-request plan job and the drift job (decision 5), which is
-  why that job's input is policed; and Brian's own cloud identity, the bucket's owner, which can read every
-  key (the dev box's day-to-day credential is limited to `solo7local`'s key).
+- **Who may read the state:** the state holds the Slack webhook URL(s) and, in the IRM root, the IRM
+  integration URL, because the provider stores contact-point settings and integration URLs in it. So state
+  read is a **secret read**. There are **four roots, four states** (`solo7local`, `solo7dev`, `solo7prod`,
+  `solo7prod-irm`; decision 12), and a role is bound to one root, matched exactly (`s3:prefix` =
+  `grafana/<root>.tfstate*`, so `solo7prod` does not match `solo7prod-irm`). The roles:
+  - an **apply role per root**: get, put and delete on the root's key **and its lock object `<key>.tflock`**,
+    and `ListBucket` for that prefix (which `use_lockfile` needs); trust bound to the environment the root
+    applies from: `andara-main` for `solo7local` and `solo7dev`, `andara-prod-apply` for both prod roots;
+  - a **PR/drift plan role for `solo7local`, `solo7dev` and `solo7prod` only**: read on that root's key, the
+    same `ListBucket`, no write, no delete, no lock (`plan -lock=false`); trust bound to the repository's
+    pull-request and schedule subjects. **It does not exist for `solo7prod-irm`**: nothing a pull request or
+    the schedule runs can read the IRM state;
+  - a **`plan-prod` role** (read on `solo7prod` and `solo7prod-irm`, no write) bound to
+    `environment:andara-prod-plan`, which only `main` can deploy to;
+  - Brian's own cloud identity, the bucket's owner, which can read every key (the dev box's day-to-day
+    credential is limited to `solo7local`'s key).
+  The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
+  `scripts/tests` asserts the workflow's pull-request and schedule jobs reference no `SOLO7PROD_IRM` role.
   **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
-  Grafana. What a leaked webhook buys is a post to a Slack channel, or a false page to Brian; rotating each is
+  Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
+  a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
   a documented step of the runbook.
 - **Access is by OIDC federation** from GitHub Actions to the bucket's cloud account (no static cloud key in
   GitHub): a trust policy keyed on the repository and, for an apply role, on the environment that stack applies from:
@@ -210,34 +222,40 @@ low-harm secrets (the telemetry token and the Slack webhooks), which state also 
 | Credential | Kind and scope | Stored | Read by |
 |---|---|---|---|
 | `GRAFANA_<STACK>_PLAN_TOKEN` (×3) | stack service account `andara-tf-plan`, role **Viewer** **[verify in 046: if Viewer cannot read rule groups, contact points and policies through the provider, use a custom RBAC role `andara-alerting-reader` with read-only alerting and dashboard permissions, never a write role]** | repository secret | `plan` (pull request) and `drift` jobs |
-| `GRAFANA_<STACK>_APPLY_TOKEN` (×3) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7local`, `solo7dev`) or `andara-prod-apply` (`solo7prod`) | `apply` jobs on `main` |
+| `GRAFANA_<STACK>_APPLY_TOKEN` (×3) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7local`, `solo7dev`) or `andara-prod-apply` (`solo7prod`; also used by the `solo7prod-irm` root for its contact point) | `apply` jobs on `main` |
 | `GRAFANA_<STACK>_ALERTS_READ_TOKEN` (×3) | stack service account `andara-alerts-read`, role **Viewer** or the same custom read role **[verify in 046]**; it serves decision 2's rules-endpoint and provisioning reads, including the **defined** check | repository secret; `.local/box.env` | the drills (`env-recover`, `observe-unavailable`, `stack-recover-mismatch`) |
 | `GRAFANA_<STACK>_READ_TOKEN` (×3; replaces `GRAFANA_CLOUD_READ_TOKEN`) | Cloud access policy `andara-<stack>-read`: `metrics:read logs:read traces:read` | repository secret; `.local/box.env` | `make observe-check`, the drills |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×3) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7local`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs. `solo7dev`, `solo7prod`: the cluster repo's `k8s-monitoring` secret, never in this repo | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_SOLO7PROD_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
-| `TFSTATE_<STACK>_PLAN_ROLE`, `_APPLY_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
+| `TFSTATE_<ROOT>_PLAN_ROLE` (`<ROOT>` = `SOLO7LOCAL`, `SOLO7DEV`, `SOLO7PROD`), `TFSTATE_<ROOT>_APPLY_ROLE` (also `SOLO7PROD_IRM`), `TFSTATE_PRODPLAN_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
+| `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply` | `plan-prod`, `apply-prod` |
 | the dev box's write credential | `GRAFANA_SOLO7LOCAL_APPLY_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7local`, by Brian |
 
 - **A telemetry token on a pull-request job is accepted.** It is write-only for series, logs and spans in
   `solo7local`, which notifies nobody (decision 10); the worst a PR can do with it is add series. It is not a
   configuration credential, and `solo7dev` and `solo7prod`'s telemetry tokens are not in this repo at all.
+- **Provider credentials are never Terraform variables.** They reach the providers only through the
+  providers' environment variables (`GRAFANA_AUTH`, the IRM token's variable), never `TF_VAR_*` or `-var`, so
+  no plan file or state holds a token; `scripts/tf_policy.py` and a workflow fixture refuse a token passed
+  any other way. The Slack webhooks are the exception, deliberately: `TF_VAR_slack_webhook`.
 - **IRM is outside the PR `plan` and `drift` jobs, by being its own root.** Its token can write, so
   everything that needs it is in `stacks/solo7prod-irm/` with its own state (decision 12): the IRM integration,
   schedule and escalation chain, **and the `irm-prod` contact point**, whose URL comes from the integration.
   The `solo7prod` root refers to that contact point by its name as a string, with no Terraform dependency, so
   planning it (a pull request, the drift job, `-target`-free) never traverses into IRM and never needs the
-  token. The IRM root is planned only by the `plan-prod` job on `main` (decision 5), and its drift is surfaced
-  there.
+  token. The IRM root uses the Grafana provider (for the contact point; the `solo7prod` plan and apply
+  tokens) and the IRM provider (the IRM token), and is planned only by jobs in `andara-prod-plan` or
+  `andara-prod-apply` (decision 5).
 - **Bootstrap tokens** (the chicken-and-egg step): Brian creates, per stack and by hand, the three service
-  accounts above (stack → Administration → Service accounts) and the Cloud access policies
-  (`grafana.com` → Access policies), and pastes the values into the places above. They are the only manual
+  accounts above (stack → Administration → Service accounts), the Cloud access policies
+  (`grafana.com` → Access policies) and `solo7prod`'s IRM token (IRM → Settings → API), and pastes the values into the places above. They are the only manual
   credential step that cannot be removed. `docs/runbooks/grafana-credentials.md` (`AW-INF-046`) gives each
   one's click path, name, role and expiry. (This changes `AW-INF-046`'s scope: Terraform does not create the
   Cloud access policies or tokens.)
 - **Rotation:** every token carries an expiry of at most 90 days, recorded as a date in
   `deploy/terraform/grafana/credentials.yaml` (names and dates, never values). `make tf-credentials-check`,
-  a scheduled job that reads that file, opens a GitHub issue when any is within 14 days. It calls no API,
+  a scheduled job that reads that file (the IRM token included), opens a GitHub issue when any is within 14 days. It calls no API,
   so it needs no credential and never waits on an environment approval.
 - The dev-box credential is the first credential that leaves CI; the box holds only `solo7local`'s apply
   token, and `solo7dev` and `solo7prod` apply from CI only.
@@ -287,19 +305,25 @@ per stack in a fixed order; (c) apply from the dev box only.
   redacted by Terraform. Fork pull requests, and pull requests aimed at another branch, are skipped, as
   `alerts` does today. The residual is stated in Consequences.
 - **Merge to `main`:** an `apply` job of the same workflow, one per stack in the order **`solo7local` →
-  `solo7dev` → `solo7prod`**, each `needs:` the one before it. Each job: `terraform init`, `plan -out`,
+  `solo7dev` → `solo7prod`**, each `needs:` the one before it (`plan-prod` needs the `solo7dev` apply). Each of the first two: `terraform init`, `plan -out`,
   `apply` of that plan, then `plan -detailed-exitcode` which must exit 0 (a second plan changes nothing, as
   `alerts-sync` does today). A failed or non-converging job stops the chain, so a change that breaks on
-  `solo7local` never reaches `solo7dev` or `solo7prod`.
+  `solo7local` never reaches `solo7dev` or `solo7prod`. Prod is the two jobs below.
 - **`solo7prod` waits for approval, after a complete plan exists.** A job that references an environment with
   required reviewers does not start until it is approved, so the plan cannot be inside it. Prod is therefore
   two jobs: `plan-prod` (environment `andara-prod-plan`: no reviewers, deployable from `main` only, holds the
   plan credentials and the IRM token) plans **both** prod roots, `solo7prod-irm` first, with `-out`, uploads
-  the plan files as a one-day artifact and posts the redacted plan text in the job summary; then `apply-prod`
+  the plan files, **encrypted with `TF_PLAN_KEY_PROD`** (a saved plan embeds state, config and variable
+  values, so the webhook and the IRM integration URL are in it), as a one-day artifact and posts the
+  redacted plan text in the job summary; then `apply-prod`
   (environment `andara-prod-apply`, Brian the required reviewer) starts only when he approves, downloads
   those plan files and applies exactly them, in the order `solo7prod-irm`, `solo7prod`, and finishes with
   the empty-second-plan check of both. What Brian approves is therefore the complete plan, IRM included.
-  The plan files hold secrets, so the artifact is private to the repository and expires in a day.
+  Anyone who can read the repository's artifacts sees only ciphertext; the key is in the two prod
+  environments alone. `apply-prod` deletes the artifact when it ends (`if: always()`), and it **refuses a
+  superseded plan**: the plan records the commit it was made from, and `apply-prod` fails unless that is the
+  current head of `main`. `plan-prod` and `apply-prod` share a `concurrency` group, so two merges queue
+  rather than race, and approving the older run first applies nothing.
 - **What a failed apply leaves behind:** Terraform's state is written after each resource, so a failed apply
   leaves the resources it finished applied and the rest not, and the state says which. Every resource here is
   idempotent and independently valid (a rule group, a contact point), so a partial apply is a stack in a
@@ -310,7 +334,7 @@ per stack in a fixed order; (c) apply from the dev box only.
 - **How an apply failure and drift are surfaced:** an apply failure is a red workflow, which notifies Brian
   through GitHub. **Drift** (someone edited a rule or a policy in the UI) is surfaced by a scheduled
   `drift` job of the same workflow, on a schedule, daily, running `plan -detailed-exitcode` per stack with the read-only
-  credentials (the IRM root excluded, decision 4): exit 2 opens or updates one GitHub issue labelled `drift:<stack>` containing the plan. It is
+  credentials (the IRM root excluded, decision 4): exit 2 opens or updates one GitHub issue labelled `drift:<stack>` containing the plan. A fourth job, `drift-prod-irm`, runs the same daily check for the IRM root in the `andara-prod-plan` environment (no reviewers, `main` only) and opens `drift:solo7prod-irm`. It is
   never an alert in Grafana, because the thing that has failed is the thing that delivers alerts.
 - **Targets:** `make tf-fmt-check tf-validate tf-test` (in `make check`, no credentials needed, mock
   provider), `make tf-plan STACK=<stack>`, `make tf-apply STACK=<stack>`, `make tf-drift STACK=<stack>`.
@@ -354,7 +378,8 @@ can hide a real page.
 **Decision: (b).** Definitions: "live" means evaluating (a paused rule is defined, not live); the **outage**
 is the planned window in which Brian rebuilds the cluster, which discards `dev`'s World anyway.
 
-1. `AW-INF-046` is applied to the three stacks: folder, contact points, notification policy, mute timings.
+1. `AW-INF-046` is applied to the three stacks (for `solo7prod`, the IRM root first, through `plan-prod` and
+   the approved `apply-prod`): folder, contact points, notification policy, mute timings.
    Nothing evaluates in them.
 2. `AW-INF-047` applies the rule groups to the three stacks with `is_paused = true` on every rule. The legacy
    ruler is the only live evaluator, for the series still arriving in `solo7-local`. `terraform plan` is clean
@@ -376,7 +401,8 @@ is the planned window in which Brian rebuilds the cluster, which discards `dev`'
    evidence is `AW-INF-048`'s `stack-recover-mismatch`, so 047's own criterion for `solo7local` stops at
    "defined" (rules applied, plan empty), and 048 carries "live" and the firing assertion.)
 5. `solo7prod`, when `prod` is installed: apply `prod`'s telemetry to `solo7prod`, pass `observe-check
-   ENV=prod --keep-list`, merge the un-pause. `prod` never reported to a working ruler rule set for any
+   ENV=prod --keep-list`, merge the un-pause (which reaches prod through `plan-prod` and Brian's approval of
+   `apply-prod`). `prod` never reported to a working ruler rule set for any
    user-facing purpose (the runbook has its absence silenced until it exists), so there is nothing to
    hand over.
 6. Remove the ruler path in one change after step 4(vi): `alerts_sync.py`, `make alerts-sync alerts-diff
@@ -502,14 +528,14 @@ deploy/terraform/grafana/
   stacks/solo7local/        # main.tf, backend.tf (key grafana/solo7local.tfstate), terraform.tfvars
   stacks/solo7dev/
   stacks/solo7prod/         # no IRM resources, no IRM token; refers to the contact point irm-prod by name
-  stacks/solo7prod-irm/     # the IRM provider and token only: integration, schedule, chain, contact point irm-prod
+  stacks/solo7prod-irm/     # Grafana and IRM providers: integration, schedule, chain, contact point irm-prod
   modules/irm/
   tests/                    # terraform test files, mock provider
   .terraform-version
 ```
 
 `terraform.tfvars` per stack: `stack = "solo7dev"`, `environments = ["andara-dev"]`, `slack = true`,
-`irm = false`, and the endpoints of decision 9. The provider is `grafana/grafana`, pinned `~> 4.7` (**[verify in 046]**
+`page_contact_point = null` (`"irm-prod"` for `solo7prod`: the name the policy tree routes `severity = page` to, as a string), and the endpoints of decision 9. The provider is `grafana/grafana`, pinned `~> 4.7` (**[verify in 046]**
 the latest minor that has `keep_firing_for` and the IRM resources), with `.terraform.lock.hcl` committed.
 
 **Rendering a rule set that names environments.** The source file is also read unrendered (decision 1), so the
@@ -669,12 +695,15 @@ Postgres, the object store (`minio`, a versitygw image), Alloy and the server.
   That is the cost of Grafana-managed rules, and we accept it for the routing, dashboards and IRM we gain.
 - **`alerts.yaml` is now rendered per stack** by Terraform, and the render has its own tests. A mistake in the
   renderer is a mistake in what pages. The mitigation is `make tf-test` plus a live drill per stack.
-- **State holds secrets** (webhooks, an IRM URL). Read access to state is a secret read, and it is shared with
-  the pull-request plan job, which runs a pull request's Terraform. The job's defence is the policy script
+- **State holds secrets** (webhooks; the IRM URL in its own root's state). Read access to state is a secret
+  read, and the webhooks are shared with the pull-request plan job, which runs a pull request's Terraform; the
+  IRM state is not (decision 3). The prod plan artifact is a state-equivalent secret: it is encrypted, lives a
+  day and is deleted after apply, and its key is in the prod environments alone. The job's defence is the policy script
   (decision 5), an allow-list over blocks, functions and the backend; a provider vulnerability, or a construct
   the allow-list wrongly admits, would pass it. Apply tokens and the IRM token are never reachable from it.
-  The residual: a leaked webhook posts to a channel or sends a false page to Brian.
-- **Three stacks, three states, and ~20 credentials** (decision 4) to rotate at least every 90 days.
+  The residual: a leaked webhook posts to a channel; a false page needs the IRM URL, which only the two prod
+  environments and Brian can read.
+- **Three stacks, four states, and ~25 credentials** (decision 4) to rotate at least every 90 days.
   `tf-credentials-check` makes that a notice and not a surprise, and it is still Brian's chore.
 - **Compose has no local rule evaluator.** A rule edit is verified by the expression tests and by loading in
   `solo7local`, not by a Prometheus on the laptop. A developer with no Grafana Cloud credential gets no
