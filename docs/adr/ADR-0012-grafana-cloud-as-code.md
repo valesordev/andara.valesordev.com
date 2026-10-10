@@ -110,9 +110,12 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   `andara-content`, `andara-sessions`, `andara-edge`). `andara` was only ever the ruler's namespace. The file
   has no `interval` key, so the module's `rule_interval` defaults to `60s` (the ruler's implicit 1 m) and a
   group may override it with an `interval:` key the renderer reads when `AW-INF-047` adds one.
-- **Rules carry the `environment` label.** Every aggregation in `alerts.yaml` becomes `by (environment,
-  namespace)` and every `on(...)` join `on (environment, namespace)`, so each alert instance carries both
-  labels. `environment` is the routing and rendering key (decisions 10 and 12); `namespace` stays as the source
+- **Rules carry the `environment` label.** Every aggregation in `alerts.yaml` gains `environment` in front of its
+  existing grouping list, and every `on(...)` join gains it likewise: `by (environment, namespace)` wherever
+  an aggregation groups by `namespace` alone today, and `by (environment, namespace, pack)` for `ContentLoadFailing`, whose
+  `pack` label identifies the failed load (its tests and the runbook depend on one alert per pack); the joins
+  become `on (environment, namespace)` or `on (environment, namespace, pod)` where they join on `pod` today.
+  Each alert instance therefore carries both labels, and every label it carries today. `environment` is the routing and rendering key (decisions 10 and 12); `namespace` stays as the source
   within an environment, because `local` has two (`andara-local`, `andara-ci`) and the
   drills must not see each other's series. Series that have no `environment` of their own (cert-manager,
   Traefik) get one derived in the rule the way `namespace` is derived today: one `label_replace` per
@@ -304,8 +307,11 @@ needed for locking and is kept so that the version already chosen does not move.
   `GCP_STATE_PROJECT`); the Storage and IAM APIs enabled; the bucket with the settings above; the six service
   accounts and their conditioned bindings; the dev-box identity and its `solo7dev`-prefix `objectUser` binding; the pool and provider with the attribute condition and the `environment` and
   `event_name` attributes; the `workloadIdentityUser` bindings; and the GitHub repository variables below. It
-  ends by running `terraform init` against `solo7dev`'s prefix as the dev-box identity, and fails loudly if that
-  does not work. The bootstrap needs `roles/owner`, or the narrower set of Storage Admin, Service Account Admin,
+  then **creates an empty state object for all three roots** as the owner: the `gcs` backend writes (and locks)
+  an empty state when none exists, even for `plan -lock=false`, which the read-only plan accounts cannot do, so
+  without it the first `plan-prod` fails before anyone can approve an apply **[verify in 046]** (Codex, PR #520).
+  It ends by running `terraform init` against `solo7dev`'s prefix as the dev-box identity, and fails loudly if
+  that does not work. The bootstrap needs `roles/owner`, or the narrower set of Storage Admin, Service Account Admin,
   Workload Identity Pool Admin and Project IAM Admin, on that project.
 - State backups: versioning (and the bucket's default soft delete) is the recovery path; `terraform import` from
   the live stack is the second.
