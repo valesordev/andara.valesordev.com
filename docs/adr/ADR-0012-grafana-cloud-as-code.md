@@ -175,7 +175,7 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
 - **Who may read the state:** the state holds the Slack webhook URL(s) and, in the IRM root, the IRM
   integration URL, because the provider stores contact-point settings and integration URLs in it. So state
   read is a **secret read**. There are **four roots, four states** (`solo7local`, `solo7dev`, `solo7prod`,
-  `solo7prod-irm`; decision 12), and a role is bound to one root, matched exactly (`s3:prefix` =
+  `solo7prod-irm`; decision 12), and a role is bound to named roots, each matched exactly (`s3:prefix` =
   `grafana/<root>.tfstate*`, so `solo7prod` does not match `solo7prod-irm`). The roles:
   - an **apply role per root**: get, put and delete on the root's key **and its lock object `<key>.tflock`**,
     and `ListBucket` for that prefix (which `use_lockfile` needs); trust bound to the environment the root
