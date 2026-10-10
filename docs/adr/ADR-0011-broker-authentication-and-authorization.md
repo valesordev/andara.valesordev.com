@@ -216,7 +216,8 @@ hold to. TLS waits for a reason (*Revisit when*).
 > `andara-server-local`, …) with ACLs scoped to that environment's topic and group prefix; the listener's
 > NetworkPolicy admits the environments' namespaces by label; the encryption sentence reads "one cluster on one
 > host"; and the first "Revisit when" trigger reads "leaves the cluster or the host". Nothing here was implemented
-> yet, so the amendment costs no migration. Recorded as an amendment, not a supersession, because the mechanism is
+> yet, so the amendment costs no migration. The clause "including the compose Redpanda" lapses with compose (ADR-0012 decision 14): SASL applies to the Strimzi broker in
+> `andara-shared` and to CI's throwaway Kafka. Recorded as an amendment, not a supersession, because the mechanism is
 > unchanged.
 
 ## Revisit when
