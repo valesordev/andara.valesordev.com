@@ -109,7 +109,7 @@ A Partition `p` becomes degraded when either:
 1. **A produce to `p` fails after the producer's own retries, with a broker-side retriable error:**
    `NOT_ENOUGH_REPLICAS`, `NOT_ENOUGH_REPLICAS_AFTER_APPEND`, `LEADER_NOT_AVAILABLE`, or
    `NOT_LEADER_OR_FOLLOWER`, or `REQUEST_TIMED_OUT` (what a Partition led by a surviving broker returns while its dead followers are still in the ISR). A transient single error that the idempotent producer retries
-   successfully inside the deadline is not a failure and degrades nothing. **How the error is seen is the implementer's to solve**: franz-go retries these errors until `RecordDeliveryTimeout` and then completes the promise with `ErrRecordTimeout`, not the broker error, so the implementation must capture the broker's per-Partition error another way (a client hook, for example). If it cannot, the probe below is the only trigger and this one is dropped, with the Submit that discovers the fault answered `DEADLINE_EXCEEDED` as now. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
+   successfully inside the deadline is not a failure and degrades nothing. **How the error is seen** (the tap, under Constraints): franz-go retries these errors until `RecordDeliveryTimeout` and then completes the promise with `ErrRecordTimeout`, not the broker error, so the implementation must capture the broker's per-Partition error another way (a client hook, for example). If it cannot, the probe below is the only trigger and this one is dropped, with the Submit that discovers the fault answered `DEADLINE_EXCEEDED` as now. (`NOT_ENOUGH_REPLICAS_AFTER_APPEND`
    is added to the three the review named: the record *was* appended, so its Submit is ambiguous in the
    same way a deadline is.) Or
 2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second; the metadata request is bounded by it) the ingress
@@ -119,7 +119,8 @@ A Partition `p` becomes degraded when either:
    a Partition: a reachable broker says nothing about a Partition. (It does send its metadata and configuration
    request to **every broker the metadata lists at once**, and the first answer wins, so one dark address in
    the metadata cannot cost the whole interval and degrade all 64 while the other brokers serve, which is the #129
-   failure. Ratified 2026-10-10, `AW-SRV-052`.)
+   failure. The first answer may come from a broker with stale metadata; the two-probe rule and the produce-error trigger
+   cover that. Ratified 2026-10-10, `AW-SRV-052`.)
 
 If the metadata request itself fails (no broker answers) on **two consecutive probes**, all 64 Partitions are degraded; one failed probe marks nothing, so a single transient failure inside an election cannot undo the grace above.
 
@@ -180,16 +181,28 @@ contract pins and asserts it. The ingress never queries a broker config for this
   `AW-SRV-010`; they are restated because a per-Partition mechanism is where they would be lost.
 - **One client per Partition is the isolation mechanism.** Closing a client is the only way to drop what it holds, so the
   ingress holds one `kgo` client per Partition, built on first use, and entering the state closes that Partition's
-  client and no other. The cost, up to 64 clients each with a connection to its leader, is accepted; the buffer bound
-  stays producer-wide. (Ratified 2026-10-10, `AW-SRV-052`.)
+  client and no other. The cost is accepted and quantified: each client holds about two connections (metadata and
+  `ApiVersions`, plus a produce connection to its leader), its own producer ID and its own metadata refresh, and once
+  SASL is on (ADR-0011) every connection authenticates and a degrade-and-rebuild re-authenticates. That is up to
+  64 clients per server, times the servers, times two environments on the shared brokers of ADR-0013 (which names
+  connection exhaustion as not prevented): the broker-budget table counts it as 128 connections per server
+  per environment, and byte-rate `KafkaUser` quotas do not bind it. The buffer bound stays producer-wide.
+  (Ratified 2026-10-10, `AW-SRV-052`.)
 - **The produce error is read from the wire by a read-only tap**, because franz-go v1.20 has no hook that sees a
-  produce response: the tap wraps the produce connections through `kgo.Dialer` and decodes each `ProduceResponse`'s
-  per-Partition error codes. This constrains every Kafka client constructor (ADR-0011 §7): **TLS must live inside the
+  produce response. The tap wraps **all of the client's connections** through `kgo.Dialer` (metadata, `ApiVersions` and
+  SASL as well as produce) and decodes each `ProduceResponse`'s per-Partition error codes. **TLS must live inside the
   `Dialer`** (a `tls.Dialer`'s `DialContext`), never in `kgo.DialTLSConfig`, which would layer TLS over the tapped
-  connection. A connection the tap cannot follow is let go with a warning, and the probe is then the only trigger.
-- **`min.insync.replicas` where the broker reports none.** Redpanda's `DescribeConfigs` returns no such property
-  (the broker contract says it is absent), so a broker that reports none is held at the Kafka default of 1 instead of
-  never being read; on Kafka/Strimzi the real value is read at boot and every 60 s.
+  connection. The constraint binds the ingress producer's constructor and any shared constructor that builds it (the
+  one of ADR-0011 §7, `AW-SRV-044`, which must accept or compose a caller-supplied `Dialer`); TLS is not in force today
+  (ADR-0011 defers it), so this is a gate to write now: `AW-SRV-044` fails a `DialTLSConfig` on a client with a tap. A
+  connection the tap cannot follow is let go with a warning, and the probe is then the only trigger; with SASL on,
+  `tapLoss` stays 0 and a `NOT_ENOUGH_REPLICAS` still marks the Partition is an acceptance criterion of the SASL
+  stories (`AW-SRV-044`, `AW-INF-056`).
+- **`min.insync.replicas` where the broker reports none.** Redpanda's `DescribeConfigs` does not implement the property
+  (`scripts/topics.py`, `AW-INF-004` AC-5a, which skips it on `local`), so a broker **known not to implement it** is
+  held at the Kafka default of 1 instead of never being read. On Kafka/Strimzi, which is every cluster once compose is
+  retired (ADR-0013), the value is read at boot and every 60 s, and an **absent value is a `warn`**, not a silent 1;
+  AC 7 is scoped to Kafka.
 - Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 
