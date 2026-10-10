@@ -254,10 +254,11 @@ needed for locking and is kept so that the version already chosen does not move.
     `drift-prod-irm`) run `plan -lock=false`, since a plan would otherwise take the lock object, which needs a
     write; the shared concurrency group serialises them against `apply-prod`;
   - Brian's own Google identity, the project's owner, which can read every prefix (the dev box's day-to-day
-    credential is not that identity: it is a second, non-owner Google identity, or impersonation of
-    `tf-solo7dev-apply`, conditioned to `solo7dev`'s prefix and writing nothing in `solo7` or `solo7-irm`, signed in
-    with `gcloud auth application-default login`; reading a prod plan needs the plan key and no bucket role,
-    decision 5).
+    credential is not that identity: it is a second, non-owner Google identity, `GCP_DEVBOX_IDENTITY`, signed in
+    with `gcloud auth application-default login` and granted `roles/storage.objectUser` conditioned to
+    `solo7dev`'s prefix only, so it writes nothing in `solo7` or `solo7-irm`; it is created and bound by the
+    bootstrap, and it is the identity that runs the bootstrap's closing `terraform init`; reading a prod plan
+    needs the plan key and no bucket role, decision 5).
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
   `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`,
   reference no `SOLO7_IRM` service account, no `TFSTATE_PRODPLAN_SA`, no IRM token and no `TF_PLAN_KEY_PROD`.
@@ -301,7 +302,7 @@ needed for locking and is kept so that the version already chosen does not move.
   delivers `make tf-bootstrap-gcp` (idempotent, uses `gcloud` as Brian's identity, prints what it created) and
   `docs/runbooks/terraform-state.md`. What it must create, in order: the project (or an existing one named by
   `GCP_STATE_PROJECT`); the Storage and IAM APIs enabled; the bucket with the settings above; the six service
-  accounts and their conditioned bindings; the pool and provider with the attribute condition and the `environment` and
+  accounts and their conditioned bindings; the dev-box identity and its `solo7dev`-prefix `objectUser` binding; the pool and provider with the attribute condition and the `environment` and
   `event_name` attributes; the `workloadIdentityUser` bindings; and the GitHub repository variables below. It
   ends by running `terraform init` against `solo7dev`'s prefix as the dev-box identity, and fails loudly if that
   does not work. The bootstrap needs `roles/owner`, or the narrower set of Storage Admin, Service Account Admin,
@@ -344,7 +345,7 @@ Slack webhooks), which state also holds.
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<ROOT>_PLAN_SA` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_SA` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_SA`, `GCP_WIF_PROVIDER` | not secrets: service-account emails and the workload identity provider name (decision 3) | repository variables | the jobs |
 | `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply`, and a copy in `.local/box.env` (gitignored, mode 0600), because GitHub secrets cannot be read back | `plan-prod`, `apply-prod`; `make tf-plan-show`, by Brian |
-| the dev box's write credentials | `GRAFANA_SOLO7DEV_APPLY_TOKEN`, `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
+| the dev box's credentials | `GCP_DEVBOX_IDENTITY` (state access, decision 3), `GRAFANA_SOLO7DEV_APPLY_TOKEN`, `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
 
 - **A telemetry token on a pull-request job is accepted.** It is write-only for series, logs and spans in
   `solo7dev`; a pull request that holds it could add series labelled `environment="dev"` and cause a Slack post in
@@ -371,8 +372,8 @@ Slack webhooks), which state also holds.
   `deploy/terraform/grafana/credentials.yaml` (names and dates, never values). `make tf-credentials-check`,
   a scheduled job that reads that file (the IRM token included), opens a GitHub issue when any is within 14 days.
   It calls no API, so it needs no credential and never waits on an environment approval.
-- The dev-box credential is the first credential that leaves CI; the box holds `solo7dev`'s apply
-  token and the plan key (to read, not to apply); `solo7` applies from CI only.
+- The dev-box credentials are the first that leave CI; the box holds `solo7dev`'s apply
+  and Fleet tokens, the `GCP_DEVBOX_IDENTITY` state access (decision 3) and the plan key (to read, not to apply); `solo7` applies from CI only.
 
 ### 5. Delivery
 
@@ -550,9 +551,9 @@ can hide a real page.
    `AW-INF-051`'s Fleet collectors and pipelines are applied to `solo7dev` (decision 15), `terraform plan` clean
    proving they are **defined** only (no collector can have pulled them before the rebuild installs the
    chart), or its static fallback is in the cluster's values; without it every series arrives as
-   `environment="unknown"`. That a collector **pulled** them is checked right after (iii), before (iv): the
-   first registered collector in Fleet's inventory **[verify in 051: whether `gcx` can read the inventory]**,
-   and then (iv)'s `unknown` guard; (i) the precondition, checked by the script, which
+   `environment="unknown"`. (iii-b), right after (iii) and only when Fleet is used (not the static fallback): a collector is
+   registered in Fleet's inventory **[verify in 051: whether `gcx` can read the inventory]**; it is a diagnostic
+   that names the cause early, and (iv)'s `unknown` guard is the gate; (i) the precondition, checked by the script, which
    refuses to continue if unmet: no `severity = page` alert for `namespace="andara-dev"` is pending or firing in
    `solo7`'s ruler (`gcx alert instances list --datasource grafanacloud-prom`). A lower-severity alert that is
    firing (today `ContentLoadFailing`, a ticket) does not block: the rebuild discards that World, and the
@@ -819,7 +820,7 @@ the fault is accepted.)
    which the install reads. `AW-INF-047` is applied **paused** (decision 7 step 2), and `AW-INF-051`'s Fleet pipelines are applied (decision 7 step 4(i-b)).
 2. Brian rebuilds the cluster with ADR-0013's target (cluster, platform, `k8s-monitoring` with the table above) (decision 7 step 4(ii) to (iii):
    the ruler namespace is deleted first).
-3. After: `make observe-check ENV=local --keep-list` and `ENV=dev --keep-list` pass against `solo7dev` (the table's checks are written for `dev`; `local` substitutes `andara-local`); then decision 7 step 4(v) adds `dev`
+3. After: when Fleet is used, a collector shows in its inventory (decision 7 step 4(iii-b)); `make observe-check ENV=local --keep-list` and `ENV=dev --keep-list` pass against `solo7dev` (the table's checks are written for `dev`; `local` substitutes `andara-local`); then decision 7 step 4(v) adds `dev`
    to `required_environments`; then `make observe-unavailable ENV=dev` (step 4(vi)). `AW-INF-034`'s drill is
    rerun on the rebuilt cluster, since the rebuild discards `dev`'s World.
 4. The cluster's shape, and what becomes of `deploy/kind/config.yaml` as CI's single-node cluster, are ADR-0013's.
