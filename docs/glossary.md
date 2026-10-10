@@ -820,27 +820,27 @@ CLAUDE.md §5.
 observably do, not by which stories are closed.
 
 **Grafana Cloud stack** — One Grafana Cloud instance with its own metrics, logs and traces backends,
-alerting, dashboards and credentials. Three, one per kind of environment: `solo7local` (compose, the kind
-platform, CI), `solo7dev` (`dev`, later staging) and `solo7prod` (`prod`). Created by hand; everything inside
-is Terraform's (ADR-0012). Which stack an `ENV` maps to is `scripts/grafana_stack.py`'s.
+alerting, dashboards and credentials. Two: `solo7` (prod) and `solo7dev` (everything non-prod). Created by hand;
+everything inside is Terraform's (ADR-0012). Which stack an `ENV` maps to is `scripts/grafana_stack.py`'s, and
+is also the `gcx` context.
 
 **Grafana-managed rule** — An alert rule evaluated and routed by a stack's Grafana, defined as a query,
 expressions and a condition. Replaces the data-source-managed (Mimir ruler) rule. It writes no `ALERTS`
 series: its state is read from the stack's rules endpoint (ADR-0012 §2).
 
-**Rules endpoint** — `GET /api/prometheus/grafana/api/v1/rules` on a stack: each Grafana-managed rule's
-`state`, `health` and current alerts. Where `env-recover`, `observe-unavailable` and `stack-recover-mismatch`
-read alert state, polling to a deadline (ADR-0012 §2).
+**`gcx`** — Grafana's own command line tool (`github.com/grafana/gcx`), pinned in `make bootstrap`. Every
+test and drill reads Grafana Cloud through it, by `scripts/gcx.py`; no script calls Grafana's query or alerting
+HTTP APIs directly (ADR-0012 §2).
 
-**Cutover** — Moving the `andara` rule set from the legacy tenant's ruler to Grafana-managed rules in the three
-stacks: apply the rules paused, delete the legacy ruler namespace at the planned rebuild outage, then un-pause
-once the keep-list check passes. A rule is never live in both places (ADR-0012 §7).
+**Cutover** — Moving the `andara` rule set from `solo7`'s ruler to Grafana-managed rules: apply the rules paused,
+delete the ruler namespace at the planned rebuild outage, `dev`'s rules go live in `solo7dev`, `solo7`'s stay paused
+until prod is installed. A rule is never live in both places (ADR-0012 §7).
 
-**IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7prod` uses it: an
+**IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7` uses it: an
 integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).
 
 **Alloy** — Grafana's telemetry collector. The cluster's runs inside `k8s-monitoring`; compose's replaces the
-OTLP collector and ships to `solo7local` (`AW-INF-048`).
+OTLP collector and ships to `solo7dev` (`AW-INF-048`).
 
 **Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or the empty
 `blackhole` that notifies no one. **Notification policy** — The tree that matches an alert's labels
@@ -851,3 +851,6 @@ OTLP collector and ships to `solo7local` (`AW-INF-048`).
 
 **Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
 UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).
+
+**Environment (label)** — The `environment` label on all telemetry: `local`, `dev`, `staging` or `prod`, derived
+from the namespace by one table (ADR-0012 §9). `namespace` stays as the source within an environment.
