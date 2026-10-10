@@ -133,7 +133,10 @@ and four consequences of it, none of which is a new rule.
     does for prod today; otherwise the check fails closed). It says the observation works. It does **not** license an absence assertion,
     because it can be satisfied by a sample from before the window opened.
   - A **window anchor** closes the window (rule 3), and is causal, not an estimate of when data usually
-    arrives. Poll the rule's input until a sample timestamped after the cause is queryable, and note the
+    arrives. Poll the rule's input until a sample timestamped after the cause is queryable, read from the sample itself
+    (`gcx metrics query 'timestamp(<selector>)'` greater than the cause time), never from the query
+    result's own timestamp, which is the query's evaluation time and is returned even when the selector
+    reused an older sample inside the lookback window, and note the
     test's own clock `t` at the first poll that sees it (not the sample's timestamp: ingestion sits
     between the two, and an evaluation can start after the scrape and still precede the sample's arrival).
     Then require a rule evaluation that started after `t` plus a 5 s clock-skew allowance (the allowance
@@ -199,14 +202,20 @@ Behind Grafana Cloud the delays add, and each is named so a deadline can be comp
 guessed: the pipeline's scrape interval, plus ingestion into the stack, plus (for rule state) one
 or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to reach
 firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation interval + for`, with
-2 minutes standing in for `scrape + ingest` until measured. To **clear**, the clock starts when the
+2 minutes standing in for `scrape + ingest` until measured. For a rule that fires on a target
+vanishing (an `absent()` clause, `up == 0` on a target that stops reporting), add the instant query's
+lookback of up to 5 minutes when no stale marker arrives, as for clearing below. To **clear**, the clock starts when the
 condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + keep_firing_for`, which for
 `RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
 2-minute stand-in and no lookback, and up to about 23 with the instant query's lookback of up to 5
 minutes when no stale marker arrives (the lookback is its own term:
 `scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline (worst case plus a 2-minute margin, recomputed when measured figures arrive), not 3 minutes. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
-its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
+its §8 review of those stories. Poll every 5 s, not faster, when the group's evaluation interval is 10 s or more: `gcx` is a process per
+call. The polling interval must be at most half the interval of the group being asserted on, so a group
+asserted on in a drill is given an `interval:` of at least 10 s (ADR-0012 decision 1 lets a group
+override the 60 s default); a group evaluated faster than that cannot be asserted on by polling and
+`AW-INF-047` does not set one.
 
 ## Enforcement
 
