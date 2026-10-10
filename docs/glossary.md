@@ -818,3 +818,19 @@ CLAUDE.md §5.
 
 **Milestone** — A demonstrable state of the product on the roadmap. Defined by what a human can
 observably do, not by which stories are closed.
+
+**Grafana Cloud stack** — One Grafana Cloud instance with its own metrics, logs and traces backends,
+alerting, dashboards and credentials. Three, one per kind of environment: `solo7local` (compose, the kind
+platform, CI), `solo7dev` (`dev`, later staging) and `solo7prod` (`prod`). Created by hand; everything inside
+is Terraform's (ADR-0012). Which stack an `ENV` maps to is `scripts/grafana_stack.py`'s.
+
+**Grafana-managed rule** — An alert rule evaluated and routed by a stack's Grafana, defined as a query,
+expressions and a condition. Replaces the data-source-managed (Mimir ruler) rule. It writes no `ALERTS`
+series: its state is read from the stack's rules endpoint (ADR-0012 §2).
+
+**Rules endpoint** — `GET /api/prometheus/grafana/api/v1/rules` on a stack: each Grafana-managed rule's
+`state`, `health` and current alerts. Where `env-recover`, `observe-unavailable` and `stack-recover-mismatch`
+read alert state, polling to a deadline (ADR-0012 §2).
+
+**Cutover** — Moving the `andara` rule set from the ruler to Grafana-managed rules without a window in which
+a symptom goes unnotified: apply paused, verify, un-pause, then delete the ruler namespace (ADR-0012 §7).
