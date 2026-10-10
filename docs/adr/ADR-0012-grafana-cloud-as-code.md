@@ -276,7 +276,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   A fixture per refusal lives in `scripts/tests`. The plan is posted in the job summary with sensitive values
   redacted by Terraform. Fork pull requests, and pull requests aimed at another branch, are skipped, as
   `alerts` does today. The residual is stated in Consequences.
-- **Merge to `main`:** a `apply` job of the same workflow, one per stack in the order **`solo7local` →
+- **Merge to `main`:** an `apply` job of the same workflow, one per stack in the order **`solo7local` →
   `solo7dev` → `solo7prod`**, each `needs:` the one before it. Each job: `terraform init`, `plan -out`,
   `apply` of that plan, then `plan -detailed-exitcode` which must exit 0 (a second plan changes nothing, as
   `alerts-sync` does today). A failed or non-converging job stops the chain, so a change that breaks on
