@@ -182,14 +182,19 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
     applies from: `andara-main` for `solo7local` and `solo7dev`, `andara-prod-apply` for both prod roots;
   - a **PR/drift plan role for `solo7local`, `solo7dev` and `solo7prod` only**: read on that root's key, the
     same `ListBucket`, no write, no delete, no lock (`plan -lock=false`); trust bound to the repository's
-    pull-request and schedule subjects. **It does not exist for `solo7prod-irm`**: nothing a pull request or
-    the schedule runs can read the IRM state;
+    pull-request and schedule subjects. **It does not exist for `solo7prod-irm`**: no pull-request job, and no scheduled job outside
+    `andara-prod-plan`, can read the IRM state;
   - a **`plan-prod` role** (read on `solo7prod` and `solo7prod-irm`, no write) bound to
-    `environment:andara-prod-plan`, which only `main` can deploy to;
+    `environment:andara-prod-plan`, which only `main` can deploy to. Its jobs (`plan-prod`, `drift-prod-irm`)
+    run `plan -lock=false`, since a plan would otherwise take the lock object, which needs a write; the
+    shared concurrency group serialises them against `apply-prod`;
   - Brian's own cloud identity, the bucket's owner, which can read every key (the dev box's day-to-day
     credential is limited to `solo7local`'s key).
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
-  `scripts/tests` asserts the workflow's pull-request and schedule jobs reference no `SOLO7PROD_IRM` role.
+  `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`, reference no
+  `SOLO7PROD_IRM` role, no `TFSTATE_PRODPLAN_ROLE`, no IRM token and no `TF_PLAN_KEY_PROD`. The trust
+  conditions name the actual OIDC `sub` of each job (for `pull_request_target`, the base-branch ref claim);
+  `AW-INF-046` checks the claim against a real run.
   **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
   Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
   a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
@@ -221,7 +226,7 @@ low-harm secrets (the telemetry token and the Slack webhooks), which state also 
 
 | Credential | Kind and scope | Stored | Read by |
 |---|---|---|---|
-| `GRAFANA_<STACK>_PLAN_TOKEN` (×3) | stack service account `andara-tf-plan`, role **Viewer** **[verify in 046: if Viewer cannot read rule groups, contact points and policies through the provider, use a custom RBAC role `andara-alerting-reader` with read-only alerting and dashboard permissions, never a write role]** | repository secret | `plan` (pull request) and `drift` jobs |
+| `GRAFANA_<STACK>_PLAN_TOKEN` (×3) | stack service account `andara-tf-plan`, role **Viewer** **[verify in 046: if Viewer cannot read rule groups, contact points and policies through the provider, use a custom RBAC role `andara-alerting-reader` with read-only alerting and dashboard permissions, never a write role]** | repository secret | `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×3) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7local`, `solo7dev`) or `andara-prod-apply` (`solo7prod`; also used by the `solo7prod-irm` root for its contact point) | `apply` jobs on `main` |
 | `GRAFANA_<STACK>_ALERTS_READ_TOKEN` (×3) | stack service account `andara-alerts-read`, role **Viewer** or the same custom read role **[verify in 046]**; it serves decision 2's rules-endpoint and provisioning reads, including the **defined** check | repository secret; `.local/box.env` | the drills (`env-recover`, `observe-unavailable`, `stack-recover-mismatch`) |
 | `GRAFANA_<STACK>_READ_TOKEN` (×3; replaces `GRAFANA_CLOUD_READ_TOKEN`) | Cloud access policy `andara-<stack>-read`: `metrics:read logs:read traces:read` | repository secret; `.local/box.env` | `make observe-check`, the drills |
@@ -269,7 +274,7 @@ per stack in a fixed order; (c) apply from the dev box only.
 **Decision: (b).**
 
 - **Pull request:** the `plan` job of `.github/workflows/terraform.yaml` (046's single workflow, jobs `plan`,
-  `apply`, `drift`), triggered by `pull_request_target` on changes under `deploy/terraform/**`, `alerts.yaml`
+  `apply`, `drift`, and for prod `plan-prod`, `apply-prod`, `drift-prod-irm`), triggered by `pull_request_target` on changes under `deploy/terraform/**`, `alerts.yaml`
   and the dashboard source; same-repository pull requests only. It is a **matrix of three jobs, one per
   stack**, each with only that stack's `PLAN_TOKEN`, plan role and webhook. It runs the **base branch's**
   scripts and reads the pull request's Terraform as **data**. Because `terraform plan` executes provider code
@@ -322,7 +327,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   Anyone who can read the repository's artifacts sees only ciphertext; the key is in the two prod
   environments alone. `apply-prod` deletes the artifact when it ends (`if: always()`), and it **refuses a
   superseded plan**: the plan records the commit it was made from, and `apply-prod` fails unless that is the
-  current head of `main`. `plan-prod` and `apply-prod` share a `concurrency` group, so two merges queue
+  current head of `main`; if a later merge moved the head, the approved plan is discarded, `plan-prod` is re-run on the new head, and Brian approves again. `plan-prod` and `apply-prod` share a `concurrency` group, so two merges queue
   rather than race, and approving the older run first applies nothing.
 - **What a failed apply leaves behind:** Terraform's state is written after each resource, so a failed apply
   leaves the resources it finished applied and the rest not, and the state says which. Every resource here is
@@ -336,6 +341,8 @@ per stack in a fixed order; (c) apply from the dev box only.
   `drift` job of the same workflow, on a schedule, daily, running `plan -detailed-exitcode` per stack with the read-only
   credentials (the IRM root excluded, decision 4): exit 2 opens or updates one GitHub issue labelled `drift:<stack>` containing the plan. A fourth job, `drift-prod-irm`, runs the same daily check for the IRM root in the `andara-prod-plan` environment (no reviewers, `main` only) and opens `drift:solo7prod-irm`. It is
   never an alert in Grafana, because the thing that has failed is the thing that delivers alerts.
+- **`STACK` values** for `tf-plan`, `tf-apply` and `tf-drift`: `solo7local`, `solo7dev`, `solo7prod`,
+  `solo7prod-irm` (the last takes `solo7prod`'s endpoints in its own `terraform.tfvars`).
 - **Targets:** `make tf-fmt-check tf-validate tf-test` (in `make check`, no credentials needed, mock
   provider), `make tf-plan STACK=<stack>`, `make tf-apply STACK=<stack>`, `make tf-drift STACK=<stack>`.
 
@@ -518,7 +525,7 @@ Per stack:
 **Options.** (a) one root, a provider alias per stack; (b) a thin **root per stack** calling a shared module.
 (a) plans and locks all three stacks at once, needs all three credential sets in one job (the PR plan job
 would hold all three, and so would a dev-box `solo7local` apply), and puts one state's blast radius across
-prod. (b) is three states, three plans, and one stack's credential set per job (decision 5's matrix).
+prod. (b) is four states (the three stacks and the IRM root), four plans, and one stack's credential set per job (decision 5's matrix).
 
 **Decision: (b).**
 
