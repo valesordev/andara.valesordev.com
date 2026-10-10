@@ -32,8 +32,10 @@ Brian's direction (2026-10-09 and 2026-10-10), all of which this ADR takes as gi
   schedule is Brian alone.
 - **Tests and drills stop calling Grafana's HTTP APIs directly** and use the **`gcx`** command line tool
   instead (decision 2).
-- Brian creates the stacks by hand, and rebuilds the cluster with `k8s-monitoring` reinstalled, from the
-  cluster repo, once this ADR is accepted.
+- Brian creates the stacks by hand. **This repository takes over the kind cluster and the `k8s-monitoring`
+  install** (2026-10-10): the cluster's creation and rebuild, and the Helm release that ships its telemetry,
+  are `make` targets here, not a separate cluster repo. A follow-up story builds them and updates the ADRs that
+  assumed the split; this ADR changes only where it named the cluster repo (decisions 3, 4, 6, 7, 13, 14).
 
 The constraint that makes this non-obvious is that **three things disagree about the same rule file**:
 `alerts.yaml` is read by the compose Prometheus (until `AW-INF-048`), the chart's ConfigMap, the helm tests,
@@ -211,8 +213,8 @@ store.
 bucket and an identity that GitHub Actions can assume. (b) is the least to operate and has workspace-level
 locking and access control, at the price of a vendor account and a pricing model that has changed more than
 once. (c) has no lock, so two applies race, and the history of secrets-in-git is permanent. (d) is rejected
-outright: the cluster is Brian's, shared with six projects, and the state of the thing that observes it cannot
-live in it (CI cannot reach it either).
+outright: the cluster is rebuilt from this repo (decision 13), so the state of the thing that observes it
+cannot live in it, and CI cannot reach it either.
 
 **Decision: (a).** A private bucket `andara-tfstate` (the bucket's account and region are Brian's choice at
 creation; the contract is the name and the keys), versioning on, server-side encryption on, public access
@@ -292,7 +294,7 @@ Slack webhooks), which state also holds.
 |---|---|---|---|
 | `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×2) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`; also used by the `solo7-irm` root for its contact point) | `apply` jobs on `main` |
-| `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the cluster repo's `k8s-monitoring` secret for `dev` and `staging`. `solo7`: the cluster repo's `k8s-monitoring` secret only, never in this repo | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
+| `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret that `make monitoring-install` creates from `.local/box.env` for `dev` and `staging`. `solo7`: `.local/box.env` and that secret only, never a repository secret | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<ROOT>_PLAN_ROLE` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_ROLE` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
@@ -449,7 +451,7 @@ chain (decision 10).
 | The service accounts, Cloud access policies and tokens decision 4 lists | Chicken and egg (Terraform cannot authenticate with a token it is about to create), and creating them needs the org-level Cloud credential. |
 | The Slack workspace, the two channels, the webhooks | Slack's, not Grafana's. |
 | IRM's on-call *people* and their notification preferences (phone, push) | Personal data, entered by the person. The *schedule* referencing them is Terraform's. |
-| The `k8s-monitoring` release and its telemetry token | Brian's cluster repo (decision 13). |
+| The `k8s-monitoring` release and the cluster | Helm and `kind`, not Terraform: a Terraform root that could reach the cluster would put cluster credentials beside state and tokens. They are `make` targets in this repo run from Brian's box (decision 13). The telemetry token is created by hand (decision 4) and read from `.local/box.env`. |
 | Data sources | Grafana Cloud provisions each stack's `grafanacloud-prom`, `-logs` and `-traces` data sources; Terraform and `gcx` use their UIDs and do not manage them. |
 | Other things already in `solo7` (Synthetic Monitoring checks and alerts, usage alerts, Faro, k6) | Not Andara's rules; the policy tree Terraform now owns must keep routing them (decision 8). |
 | Billing, org membership, SSO | Not observability. |
@@ -459,7 +461,7 @@ chain (decision 10).
 The ruler namespace `andara` exists in **`solo7`**, the stack that becomes prod. It evaluates `dev`'s series,
 because `dev` ships to `solo7` today; it evaluates nothing for `prod`, which is not installed, and the absence
 rule is firing for it (Context). `solo7dev` is new and has never had ruler rules. So the move is: `dev`'s
-telemetry and its rules go from `solo7` to `solo7dev` together at Brian's rebuild, and `solo7` keeps its
+telemetry and its rules go from `solo7` to `solo7dev` together at the rebuild (`make cluster-rebuild`, decision 13), and `solo7` keeps its
 Grafana-managed rules paused until `prod` is installed. A rule must not be live in both places. It may be live
 in neither only during the planned outage, which runs from the deletion of the ruler namespace (step 4(ii)) to
 `dev`'s first series arriving in `solo7dev` (step 4(iii)): the environment is being rebuilt for most of it, and
@@ -685,22 +687,32 @@ call `gcx` with that context (decision 2). A command whose ENV maps to a stack w
 and names `GRAFANA_<STACK>_READ_TOKEN`. `make alerts-sync` / `alerts-diff` are removed with decision 7's last
 step (so their ignored-`ENV` caveat goes away).
 
-### 13. Platform contract for the cluster repo
+### 13. The cluster and `k8s-monitoring` live in this repo
 
-**Options.** (a) this ADR states the contract and the cluster repo conforms; (b) the cluster repo's
-`k8s-monitoring` values are the source and this repo reads them; (c) the contract is only enforced by a check.
-(b) inverts ownership: the cluster is Brian's, in another repo, and this repo's rules are what break when it
-drifts.
+Until 2026-10-10 the cluster and its `k8s-monitoring` release belonged to a separate repo, and this decision was
+a contract this repo wrote for it. Now one repo owns both the rules and the thing that feeds them.
 
-**Decision: (a), enforced by (c).** The tables below are the contract, and a mechanical check
-(`make observe-check ENV=<env>`'s keep-list mode, which calls `gcx`) confirms it after each rebuild. What the
-reinstalled `k8s-monitoring` must send, and the order:
+**Options.** (a) a contract table in this ADR, enforced by a check, with the values still in another repo;
+(b) the values and the cluster definition live here, so the contract is a file and a test; (c) Terraform manages
+the Helm release.
+(a) keeps the ownership inversion that made the rules break when the cluster drifted. (c) puts cluster
+credentials into Terraform (decision 6).
+
+**Decision: (b).** `k8s-monitoring`'s values are a file in this repo, rendered with the stack endpoints from
+`deploy/terraform/grafana/stacks/<stack>/terraform.tfvars` (decision 9), so an endpoint is written once. The
+tables below are what that file must satisfy, and `make check` fails when it does not (the allow-list half of
+the keep-list mode, below), where before an unset variable skipped it. Targets (names are the follow-up
+story's to confirm; the contract is that each exists and is idempotent): `make cluster-up` creates the
+cluster from the box's kind config; `make monitoring-install ENV=<env>` installs `k8s-monitoring` into it with
+the secret from `.local/box.env`; `make cluster-rebuild` is both, preceded by a destroy that Brian confirms.
+`make kind-platform` (Traefik, cert-manager) joins the same path. What the installed `k8s-monitoring` must
+send, and the order:
 
 **Per environment, send to that environment's stack** (`dev` and `staging` → `solo7dev`; `prod` → `solo7`):
 
 | Signal | Destination | Credential |
 |---|---|---|
-| metrics | `prom_url` and `prom_user` from `deploy/terraform/grafana/stacks/<stack>/terraform.tfvars` (decision 9) | the Cloud access policy `andara-<stack>-telemetry` (decision 4: `metrics:write logs:write traces:write`, nothing else), one token, installed as the release's secret in the cluster repo |
+| metrics | `prom_url` and `prom_user` from `deploy/terraform/grafana/stacks/<stack>/terraform.tfvars` (decision 9) | the Cloud access policy `andara-<stack>-telemetry` (decision 4: `metrics:write logs:write traces:write`, nothing else), one token, installed as the release's secret by `make monitoring-install` |
 | logs | `loki_url` and `loki_user` from the same file | same token |
 | traces | `otlp_url` (and `tempo_url`) from the same file | same token |
 
@@ -717,7 +729,7 @@ they derive `namespace` today (decision 1).
 
 Two kinds of series. **Always present** ones exist on a clean rebuild and are checked before step 4(v). **Fault-only**
 ones (marked ‡) are absent on a clean rebuild until the event they describe, so a clean rebuild has none: the
-`--keep-list` mode does not require them, it checks that the cluster repo's metric allow-list **names** them,
+`--keep-list` mode does not require them, it checks that the values file's metric allow-list **names** them,
 and the first drill that produces the fault (`make env-recover ENV=dev`, rerun on the rebuilt cluster,
 step 3 below) must then see them (the hash gauge at `1` after the fixed recovery, the exit-code series after the
 kill), or the drill is inconclusive (exit 1, as its AC-2 already is).
@@ -738,23 +750,24 @@ kill), or the drill is inconclusive (exit 1, as its AC-2 already is).
 `make observe-check ENV=<env>` a `--keep-list` mode that extracts them from both files and queries each through
 `gcx`, so this table cannot go stale. The fault-only set is a constant in `scripts/observe_keep_list.py`, with
 a test that fails when a metric the rules name is neither in the always-present set nor in that constant.
-The cluster repo's allow-list is read from the file or URL in `K8S_MONITORING_VALUES`, which Brian sets;
-unset, the allow-list half of the mode exits `3` naming the variable, and decision 7 step 4(v) does not
-proceed on a run that skipped it. So the allow-list-names check, like the always-present queries, **gates
-adding `dev` to `required_environments`**; the window until the drill that first produces the fault is
-accepted.)
+The allow-list is read from the in-repo values file; `K8S_MONITORING_VALUES` is gone, and the allow-list half
+runs in `make check`, not only against a live stack. The always-present queries, run by `observe-check
+--keep-list`, **gate adding `dev` to `required_environments`**; the window until the drill that first produces
+the fault is accepted.)
 
 **Order.**
 1. Before the rebuild: apply `AW-INF-046` to `solo7dev` and `solo7` (`solo7dev`, once Brian creates it;
    `solo7` exists; contact points, policy, folder). Brian creates the `andara-<stack>-telemetry` access policy and
-   token by hand (decision 4's bootstrap step) and the tfvars endpoints are filled, so the cluster repo can read
-   them from this repo without asking. `AW-INF-047` is applied **paused** (decision 7 step 2).
-2. Brian rebuilds the cluster and installs `k8s-monitoring` with the table above (decision 7 step 4(ii) to (iii):
+   token by hand (decision 4's bootstrap step), puts it in `.local/box.env`, and fills the tfvars endpoints,
+   which `monitoring-install` reads. `AW-INF-047` is applied **paused** (decision 7 step 2).
+2. Brian runs `make cluster-rebuild` (cluster, platform, `k8s-monitoring` with the table above) (decision 7 step 4(ii) to (iii):
    the ruler namespace is deleted first).
 3. After: `make observe-check ENV=dev --keep-list` passes against `solo7dev`; then decision 7 step 4(v) adds `dev`
    to `required_environments`; then `make observe-unavailable ENV=dev` (step 4(vi)). `AW-INF-034`'s drill is
    rerun on the rebuilt cluster, since the rebuild discards `dev`'s World.
-4. `deploy/kind/config.yaml` stays CI's single-node shape; the cluster repo's multi-node kind config is its own.
+4. `deploy/kind/config.yaml` stays CI's single-node shape. The box's cluster shape (nodes, port mappings)
+   moves into this repo as its own file beside it, so CI's cluster and the box's cannot silently diverge:
+   a test asserts that what the chart and `kind-platform` need (the `ingress-ready` label, `:80`/`:443`) is in both.
 
 ### 14. The local environment: compose, kind, or both
 
@@ -770,8 +783,8 @@ them; **`dev`** is the release gate, with `make env-recover` and `make observe-u
 versions of the M2 gate and the unavailable alert; and ADR-0002 §7 already decided that a local Kafka-API stand-in
 is the right trade for the fast loop. What kind-locally would add is the *chart* on the developer's machine
 — and the resource complaint that started this direction (Strimzi, the object store, `k8s-monitoring`) is
-the price, plus a bootstrap path that must create a cluster that Brian's box cannot let the repo own. The cost
-of B and C is rewriting the `stack-*` drivers and three compose-level fault injections (`SIGKILL`, broker
+the price. The bootstrap path is no longer a blocker: this repo now creates the cluster (decision 13), so
+`make cluster-up` exists whether or not local uses it. The cost of B and C is rewriting the `stack-*` drivers and three compose-level fault injections (`SIGKILL`, broker
 bounce, `stack-boundary-lost`) against pods, for a gain the CI kind job and `dev` already supply.
 
 **Decision: A, narrowed.** Compose stays the local environment. Its observability services (Prometheus, Tempo,
@@ -803,10 +816,11 @@ Alloy and the server.
   decision 9's and the telemetry token is `GRAFANA_SOLO7DEV_TELEMETRY_TOKEN`; the re-pointed targets read through
   `gcx` (decision 2) with `GRAFANA_SOLO7DEV_READ_TOKEN`; rule state comes from `AW-INF-047`'s reads. The
   kind-as-local debate does not create a replacement story.
-- **This is Brian's call.** The alternative worth its name is C: if the dev-loop pain is the chart and the
-  probes rather than the sim, the change is a new `make kind-up` that runs the chart in a kind cluster the
-  repo creates (`deploy/kind/config.yaml`), leaving compose for `min`. It is a different story set
-  (`kind-up`, the four drills against pods), and nothing in decisions 1 to 13 depends on A over C; only
+- **This is Brian's call, and it is cheaper to reverse than it was.** The alternative worth its name is C: if
+  the dev-loop pain is the chart and the probes rather than the sim, the change is to run `make cluster-up` and
+  `monitoring-install ENV=local` (decision 13) on the laptop, leaving compose for `min`. What remains is the
+  four drills against pods (`stack-*` rewritten) and a `local` entry in the namespace table pointing at the
+  kind cluster; the cluster and the install already exist. Nothing in decisions 1 to 13 depends on A over C; only
   `AW-INF-048` and the `stack-*` rows above would change.
 
 ## Consequences
@@ -845,7 +859,16 @@ Alloy and the server.
 - **A drift in the Grafana UI is overwritten at the next apply**, as the ruler path already did, but now it
   also overwrites the *routing*. The runbook must say so in its first line.
 - **Foreclosed:** a single shared stack for prod and non-prod; hand-edited contact points as the routing
-  source; direct Grafana API calls from our scripts; and, for now, kind as the local development environment.
+  source; direct Grafana API calls from our scripts; a cluster or `k8s-monitoring` definition outside this
+  repo; and, for now, kind as the *developer's* local environment (the box's cluster is `dev`/`staging`/`prod`).
+- **This repo now creates and can destroy the box's cluster.** `kind_platform.sh` today leaves existing
+  releases alone because they serve six other projects; if the cluster is still shared, `cluster-rebuild`
+  destroys their workloads too. [ASSUMPTION: the cluster is Andara's alone after this move, or its other
+  tenants are Brian's to re-install; the follow-up story states which, and `cluster-rebuild`'s confirmation
+  names the tenants it will lose.]
+- **The telemetry token lives on the box.** `.local/box.env` now holds `solo7`'s telemetry token as well as
+  `solo7dev`'s (the cluster repo held it before), so the box is the one place that can ship prod telemetry;
+  a lost box means rotating it (`credentials.yaml`).
 - **CLAUDE.md §8** needs one wording change, which is Brian's: replace "the integration suite exercising the
   story's own code against the local stack's backends (Redpanda, Tempo)" with "…against Redpanda locally and
   the `solo7dev` Grafana Cloud stack for telemetry, read through `gcx`". `docs/specs/testing/live-assertions.md`
@@ -861,7 +884,10 @@ Alloy and the server.
 - `gcx` changes a command or output we use twice across version bumps, or reaches 1.0 with a different shape.
 - Two different people need to page: the single-person IRM schedule becomes a rota (decision 10 already
   says how).
-- A chart, probe or edge bug reaches `dev` that compose hid, **twice**: reopen decision 14 for C.
+- A chart, probe or edge bug reaches `dev` that compose hid, **twice**: reopen decision 14 for C. With the
+  cluster in this repo that is now a configuration change plus the drills, not a new subsystem.
+- The cluster hosts workloads that are not Andara's, or a second cluster appears: decision 13's rebuild and
+  token placement assume one cluster, one owner.
 - `solo7dev` exceeds the free tier's active-series limit twice in a month, or a `local` run notifies a person
   once: split `local` back into its own stack.
 - A third stack (a customer environment): root-per-stack still scales, but the credential count (decision 4)
