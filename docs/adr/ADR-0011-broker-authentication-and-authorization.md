@@ -210,6 +210,15 @@ hold to. TLS waits for a reason (*Revisit when*).
 - **Forecloses:** a consumer sharing another workload's credentials to save a Secret. Every new
   Kafka client arrives with a principal declared in `topics.yaml`, or it can't connect.
 
+> **Amended by ADR-0013, 2026-10-10 — the SASL/SCRAM decision stands.** Local and dev now share one Strimzi
+> cluster in the namespace `andara-shared`, so the premises "each environment has its own cluster" and "every client
+> and broker share a namespace" no longer hold. Principals gain an environment (`andara-server-dev`,
+> `andara-server-local`, …) with ACLs scoped to that environment's topic and group prefix; the listener's
+> NetworkPolicy admits the environments' namespaces by label; the encryption sentence reads "one cluster on one
+> host"; and the first "Revisit when" trigger reads "leaves the cluster or the host". Nothing here was implemented
+> yet, so the amendment costs no migration. Recorded as an amendment, not a supersession, because the mechanism is
+> unchanged.
+
 ## Revisit when
 
 - **Any Kafka client or broker leaves the namespace:** `prod` on a separate cluster, a client on
