@@ -55,7 +55,7 @@ Checked before deciding (the repo's own rule for infra picks): no accepted ADR c
 backend or Grafana. ADR-0002 §7 ("Redpanda locally, Kafka on `dev` and `prod`") is the precedent for decision
 14: a local stand-in is acceptable where the contract it exercises is the same.
 
-Facts this ADR leans on, from the providers' published documentation and from `gcx` v0.2.11 run against the
+Facts this ADR leans on, from the providers' published documentation and from `gcx` v0.2.11 (exploration only; the pin is at least v0.2.13, decision 2) run against the
 `solo7` context (read-only). Items marked **[verify in 046/047]** are what the first story to touch them must
 prove before its criterion that depends on them is written as passing:
 
@@ -147,19 +147,19 @@ working; (d) Grafana's alert state history (Loki-backed).
 shapes for four APIs, each with a per-signal credential. (c) makes the rule set carry its own test harness, writes
 a series that is not what pages, and silently diverges the day a rule is edited and its twin is not. (d) is
 retrospective, eventually consistent and a second store. (a) is one tool, one credential per stack, and the same
-commands an operator types by hand; its cost is a pre-1.0 tool (v0.2.11) whose output may change.
+commands an operator types by hand; its cost is a young tool whose output may change between versions.
 
 **Decision: (a).** From this ADR on, **no script, `make` target or workflow calls Grafana's query or alerting
 HTTP APIs directly**; they call `gcx`. Terraform's provider remains the only writer to Grafana, and its traffic
 is not a test.
 
-- **Install.** `make bootstrap` runs `install_pinned gcx github.com/grafana/gcx/cmd/gcx v0.2.11` (its existing helper, which installs into
+- **Install.** `make bootstrap` runs `install_pinned gcx github.com/grafana/gcx/cmd/gcx <tag>` (its existing helper, which installs into
   the repo's `bin/` and checks the module version with `go version -m`, as it does for the other Go tools;
-  `gcx --version` prints `0.2.11`, without the `v`, so it is not the check). The pin moves only
+  `gcx --version` prints the version without the `v`, so it is not the check). **The tag is at least v0.2.13**: v0.2.11, which this ADR was explored with, ignores `--context` in some CRUD-adapter operations, which would let a `solo7dev` check read `solo7` (the v0.2.13 release notes warn of operations on an unintended stack; Codex on PR #520). `AW-INF-046` picks the exact tag (the changelog lists releases to v1.5.0, 2026-10-05), re-runs every command in this decision against it, re-records the fixtures, and adds a routing test: the same read through `--context solo7dev` and `--context solo7` must return each stack's own `server`, with the config's current-context set to the other. The pin moves only
   by an edit to one line, in a change that re-records the fixtures below.
 - **One wrapper.** Every call is made by `scripts/gcx.py` (`AW-INF-046`), which runs `bin/gcx --config
   "$GCX_CONFIG" --context <context> … -o json`, maps a non-zero exit to exit `1` with `gcx`'s message, and
-  parses the JSON. The scripts never parse `gcx` output themselves. Because the tool is pre-1.0 the wrapper is
+  parses the JSON. The scripts never parse `gcx` output themselves. Because the tool's output is not a stable contract the wrapper is
   tested against recorded outputs (`scripts/tests/fixtures/gcx/`), re-recorded on a version bump, so a changed
   field fails a unit test rather than a drill.
 - **Config and context.** `make gcx-config` writes `$GCX_CONFIG` (default `.local/gcx.yaml`, mode 0600,
@@ -949,7 +949,7 @@ this decision adds what makes it checkable and what Fleet adds.
 - **The `ALERTS`-series idiom is gone.** Anything that wants alert history must record it itself
   (decision 2). A rule's firing is no longer a thing one can `rate()`; there is no `ALERTS_FOR_STATE` either.
   That is the cost of Grafana-managed rules, and we accept it for the routing, dashboards and IRM we gain.
-- **We depend on a pre-1.0 tool.** `gcx` v0.2.11 can change its output between versions. The single wrapper,
+- **We depend on a young tool.** `gcx` can change its output between versions (the exploration was on v0.2.11; the pin is at least v0.2.13). The single wrapper,
   the recorded fixtures and the version pin (decision 2) turn that into a failing unit test at a bump, not a
   failing drill. If `gcx` is abandoned, the cost is rewriting one wrapper, because no script parses Grafana's
   APIs itself.
@@ -1010,7 +1010,7 @@ this decision adds what makes it checkable and what Fleet adds.
   once on real data): move the source to HCL (Option B) for that rule.
 - `keep_firing_for` or `is_paused` is dropped or changes meaning in the provider: the 15-minute
   `RecoveryStateMismatch` bridge and the cutover both depend on them.
-- `gcx` changes a command or output we use twice across version bumps, or reaches 1.0 with a different shape.
+- `gcx` changes a command or output we use twice across version bumps, or a major version changes the shape of the commands we use.
 - Two different people need to page: the single-person IRM schedule becomes a rota (decision 10 already
   says how).
 - `make test-integration` on kind exceeds decision 14's threshold: bring back a narrower compose `min` (C).
