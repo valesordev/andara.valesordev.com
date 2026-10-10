@@ -55,7 +55,7 @@ Checked before deciding (the repo's own rule for infra picks): no accepted ADR c
 backend or Grafana. ADR-0002 §7 ("Redpanda locally, Kafka on `dev` and `prod`") is the precedent for decision
 14: a local stand-in is acceptable where the contract it exercises is the same.
 
-Facts this ADR leans on, from the providers' published documentation and from `gcx` v0.2.11 (exploration only; the pin is at least v0.2.13, decision 2) run against the
+Facts this ADR leans on, from the providers' published documentation and from `gcx` v0.2.11, exploration only (the pin is at least v0.2.13, decision 2), run against the
 `solo7` context (read-only). Items marked **[verify in 046/047]** are what the first story to touch them must
 prove before its criterion that depends on them is written as passing:
 
@@ -155,7 +155,7 @@ is not a test.
 
 - **Install.** `make bootstrap` runs `install_pinned gcx github.com/grafana/gcx/cmd/gcx <tag>` (its existing helper, which installs into
   the repo's `bin/` and checks the module version with `go version -m`, as it does for the other Go tools;
-  `gcx --version` prints the version without the `v`, so it is not the check). **The tag is at least v0.2.13**: v0.2.11, which this ADR was explored with, ignores `--context` in some CRUD-adapter operations, which would let a `solo7dev` check read `solo7` (the v0.2.13 release notes warn of operations on an unintended stack; Codex on PR #520). `AW-INF-046` picks the exact tag (the changelog lists releases to v1.5.0, 2026-10-05), re-runs every command in this decision against it, re-records the fixtures, and adds a routing test: the same read through `--context solo7dev` and `--context solo7` must return each stack's own `server`, with the config's current-context set to the other. The pin moves only
+  `gcx --version` prints the version without the `v`, so it is not the check). **The tag is at least v0.2.13**: v0.2.11, which this ADR was explored with, ignores `--context` in some CRUD-adapter operations, which would let a `solo7dev` check read `solo7` (the v0.2.13 release notes warn of operations on an unintended stack; Codex on PR #520). `AW-INF-046` picks any tag from v0.2.13 up, 1.x included (the changelog lists releases to v1.5.0, 2026-10-05), and the re-run covers the rest: every command, flag and output shape in this decision is **[verify in 046]** against the chosen tag, and a criterion that depends on one is written after the re-run (this includes `--json`, `--limit 0`, the `null` for an empty list, and the version output). It re-records the fixtures and adds a routing test that runs against the pinned binary in `make check`, with no credentials: two local HTTP stubs stand in for `solo7dev` and `solo7` (distinct ports), the config's current-context is set to the other stack, and for each distinct adapter class in the table below (`alert rules`, `alert instances`, `metrics`, `irm`) the test asserts that the stub of the requested `--context` received the request and the other received none. The pin moves only
   by an edit to one line, in a change that re-records the fixtures below.
 - **One wrapper.** Every call is made by `scripts/gcx.py` (`AW-INF-046`), which runs `bin/gcx --config
   "$GCX_CONFIG" --context <context> … -o json`, maps a non-zero exit to exit `1` with `gcx`'s message, and
