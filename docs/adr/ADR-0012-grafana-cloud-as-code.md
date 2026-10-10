@@ -358,10 +358,14 @@ per stack in a fixed order; (c) apply from the dev box only.
     `andara-prod-apply` reviewer reads) is the first to include it. The rule covers the `variable` and `output`
     blocks under `modules/` as well, so a story that needs a new variable lands it as its own small change);
   - the `backend` block and every `provider` block are byte-identical to the base branch's; each stack's
-    `terraform.tfvars` endpoint values are checked against the stack they belong to: every `*_url` must equal
-    `https://<host>` with `<host>` one of the stack's own hosts as the base branch's tfvars records it, matched
-    whole with a `$` anchor (fixtures: `https://x.grafana.net.evil.com`, the `user@host` form, a port, a
-    path), and every `*_user` must match `^[0-9]+$`. The endpoint `variable` blocks have **no `default`**, and
+    `terraform.tfvars` endpoint values are checked against the stack they belong to: every URL is split into
+    host and path and both are checked. The **host** must equal one of the stack's own hosts as the base
+    branch's tfvars records it, matched whole with a `$` anchor (fixtures: `https://x.grafana.net.evil.com`, the
+    `user@host` form, a port, a query or fragment). `grafana_url` must have an **empty path**. The sender URLs
+    (`prom_url`, `loki_url`, `tempo_url`, `otlp_url`) carry the path Grafana gives for them (for example
+    `/api/prom/push` for metrics), so each must equal the base branch's value or match a per-kind path constant
+    in `scripts/tf_policy.py` **[verify in 046 against each stack's Details page]**. Every `*_user` must match
+    `^[0-9]+$`. The endpoint `variable` blocks have **no `default`**, and
     a change to any `variable` default, or to an endpoint value, makes the job **refuse to plan** and print
     the diff, until the maintainer merges the change to those values separately from other changes (so the
     read token never goes to a host the base branch did not name); no
@@ -539,7 +543,7 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   --label environment`). `local` has three sources, so the drills select on `namespace` as well as `environment`.
 - **Endpoints** are committed, because they are not secrets: each stack's `terraform.tfvars` carries
   `grafana_url` (what `gcx` and Terraform use) and, for the senders, `prom_url`, `prom_user`, `loki_url`,
-  `loki_user`, `tempo_url`, `tempo_user` and `otlp_url`. `AW-INF-046` fills them from the stack's "Details" page
+  `loki_user`, `tempo_url`, `tempo_user` and `otlp_url`, each a full URL including the path the sender needs. `AW-INF-046` fills them from the stack's "Details" page
   after Brian creates it, and a test fails on an empty one. The unsuffixed `GRAFANA_CLOUD_*` names are retired
   with `alerts_sync.py`, and no script reads a Prometheus, Loki or Tempo URL: `gcx` reaches the data sources
   through `grafana_url`.
@@ -707,8 +711,8 @@ kill), or the drill is inconclusive (exit 1, as its AC-2 already is).
 | `kube_pod_container_status_ready` | same | `…{environment="dev", container="server"}` |
 | `kube_pod_container_status_restarts_total` | `AndaraServerCrashLooping` | `…{environment="dev", container="server"}` |
 | `kube_deployment_spec_replicas` | `StateProjectorDown` (`AW-INF-025`) | `…{environment="dev", deployment="andara-projector-state"}` |
-| `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | any series; its `exported_namespace` carries the Certificate's namespace |
-| `traefik_router_requests_total` | `IngressErrorRateHigh` | any series with `router=~"andara-.*"` (the rule derives `namespace` and `environment` from the router name) |
+| `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | `{exported_namespace="andara-dev"}` (the Certificate's namespace; the check is per environment, so another workload's certificate cannot satisfy it) |
+| `traefik_router_requests_total` | `IngressErrorRateHigh` | `{router=~"andara-dev-andara.*"}` (Traefik names an Ingress router `<namespace>-<ingress>-<host>…`, and the rules derive `namespace` and `environment` from that name; the check uses the selected environment's prefix, so `andara-ci` or `andara-staging` routers cannot satisfy it) |
 | the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match` ‡ (absent until a recovery sets it; on the cluster only `1` is ever scraped, a refused recovery is never Ready, `alerts.yaml`'s own comment), `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{environment="dev"}` |
 
 (Authoritative list: every metric name appearing in `alerts.yaml` and the dashboard; `AW-INF-046` adds
