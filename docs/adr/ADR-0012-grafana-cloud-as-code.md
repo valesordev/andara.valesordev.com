@@ -175,7 +175,7 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
 - **Who may read the state:** the state holds the Slack webhook URL(s) and the IRM integration URL, because
   the provider stores contact-point settings and integration URLs in it. So state read is a **secret read**,
   and it is granted to these principals only: a **per-stack apply role** (get, put and delete on that stack's key **and on its lock object
-  `<key>.tflock`**, and `ListBucket` limited to the `grafana/` prefix, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, no write, no delete, and it does not take
+  `<key>.tflock`**, and `ListBucket` with `s3:prefix` limited to `grafana/<stack>.tfstate*`, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, no write, no delete, and it does not take
   the lock: `plan -lock=false`), assumed by the pull-request plan job and the drift job (decision 5), which is
   why that job's input is policed; and Brian's own cloud identity, the bucket's owner, which can read every
   key (the dev box's day-to-day credential is limited to `solo7local`'s key).
@@ -262,7 +262,10 @@ per stack in a fixed order; (c) apply from the dev box only.
     `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
     `variable` and `output` block is **byte-identical to the base branch's** (so `slack_webhook` and every
     other secret variable keep `sensitive = true`, and no output can be added to print one; a change to
-    either goes through the separate maintainer-merged path below);
+    either goes through the **separate-merge path**: the job refuses to plan, prints the diff, and the maintainer
+    merges that change on its own; the plan that then runs on `main` (and, for `solo7prod`, the one the
+    `andara-prod-apply` reviewer reads) is the first to include it. The rule covers the `variable` and `output`
+    blocks under `modules/` as well, so a story that needs a new variable lands it as its own small change);
   - the `backend` block and every `provider` block are byte-identical to the base branch's; each stack's
     `terraform.tfvars` endpoint values are checked against the stack they belong to: every `*_url` must equal
     `https://<host>` with `<host>` one of the stack's own hosts as the base branch's tfvars records it, matched
@@ -452,7 +455,9 @@ nothing to import or delete, only to create.
 ### 11. Dashboards
 
 **Decision.** The source of truth is the existing JSON, moved to `deploy/grafana/dashboards/tick-health.json`
-(`AW-INF-049` moves it from `deploy/compose/grafana/dashboards/`). Terraform deploys it to each stack with
+(`AW-INF-049` moves it from `deploy/compose/grafana/dashboards/` **and adds** the `ds` datasource variable and
+the `namespace` variable, which the source does not have today, rewriting its panels' `datasource` and
+queries to use them; the `terraform test` fails if either variable is absent from the source). Terraform deploys it to each stack with
 `grafana_dashboard` (`folder` = the `Andara` folder, `overwrite = true`). `config_json` is **rendered**, not
 the file as is: the module does `jsondecode(file(...))`, sets the `ds` variable's `current` and `query`
 and the `namespace` variable's default for the stack by `merge`, and `jsonencode`s the result; a
@@ -555,10 +560,10 @@ are produced by the chart's scrape annotations and must not be relabelled.
 and `"andara-prod"`; `container="server"` where it applies):
 
 Two kinds of series. **Always present** ones exist on a clean rebuild and are checked before the un-pause.
-**Fault-only** ones (marked ‡) appear only after the fault they describe, so a clean rebuild has none: the
+**Fault-only** ones (marked ‡) are absent on a clean rebuild until the event they describe, so a clean rebuild has none: the
 `--keep-list` mode does not require them, it checks that the cluster repo's metric allow-list **names** them,
 and the first drill that produces the fault (`make env-recover ENV=dev`, rerun on the rebuilt cluster,
-step 3 below) must then see them, or the drill is inconclusive (exit 1, as its AC-2 already is).
+step 3 below) must then see them (the hash gauge at `1` after the fixed recovery, the exit-code series after the kill), or the drill is inconclusive (exit 1, as its AC-2 already is).
 
 | Series | Used by | Check after the rebuild (each always-present row returns ≥ 1 series) |
 |---|---|---|
@@ -569,11 +574,16 @@ step 3 below) must then see them, or the drill is inconclusive (exit 1, as its A
 | `kube_deployment_spec_replicas` | `StateProjectorDown` (`AW-INF-025`) | `…{namespace="andara-dev", deployment="andara-projector-state"}` |
 | `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | any series; its `exported_namespace` carries the Certificate's namespace |
 | `traefik_router_requests_total` | `IngressErrorRateHigh` | any series with `router=~"andara-.*"` (the rule derives `namespace` from the router name) |
-| the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match` ‡, `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{namespace="andara-dev"}` |
+| the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match` ‡ (absent until a recovery sets it; on the cluster only `1` is ever scraped, a refused recovery is never Ready, `alerts.yaml`'s own comment), `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{namespace="andara-dev"}` |
 
 (Authoritative list: every metric name appearing in `alerts.yaml` and the dashboard; `AW-INF-046` adds
 `make observe-check ENV=<env>` a `--keep-list` mode that extracts them from both files and queries each,
-so this table cannot go stale.)
+so this table cannot go stale. The fault-only set is a constant in `scripts/observe_keep_list.py`, with a
+test that fails when a metric the rules name is neither in the always-present set nor in that constant.
+The cluster repo's allow-list is read from the file or URL in `K8S_MONITORING_VALUES`, which Brian sets;
+unset, the allow-list half of the mode exits `3` naming the variable, and decision 7 step 4(v) does not
+proceed on a run that skipped it. So the allow-list-names check, like the always-present queries, **gates the
+un-pause**; the window between the un-pause and the drill that first produces the fault is accepted.)
 
 **Order.**
 1. Before the rebuild: apply `AW-INF-046` to `solo7dev` and `solo7prod` (the stacks exist, hand-made;
