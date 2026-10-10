@@ -229,8 +229,7 @@ pinned by `.terraform-version` and installed by `make bootstrap`.
     and `ListBucket` for that prefix (which `use_lockfile` needs); trust bound to the environment the root
     applies from: `andara-main` for `solo7dev`, `andara-prod-apply` for `solo7` and `solo7-irm`;
   - a **PR/drift plan role for `solo7dev` and `solo7` only**: read on that root's key, the same `ListBucket`,
-    no write, no delete, no lock (`plan -lock=false`); trust bound to the repository's pull-request and
-    schedule subjects. **It does not exist for `solo7-irm`**: no pull-request job, and no scheduled job outside
+    no write, no delete, no lock (`plan -lock=false`); trust bound to the claims below (`pull_request_target` and `schedule` events of the base branch's workflow). **It does not exist for `solo7-irm`**: no pull-request job, and no scheduled job outside
     `andara-prod-plan`, can read the IRM state;
   - a **`plan-prod` role** (read on `solo7` and `solo7-irm`, with `ListBucket` for those two prefixes, no write)
     bound to `environment:andara-prod-plan`, which only `main` can deploy to. Its jobs (`plan-prod`,
@@ -241,12 +240,18 @@ pinned by `.terraform-version` and installed by `make bootstrap`.
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
   `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`,
   reference no `SOLO7_IRM` role, no `TFSTATE_PRODPLAN_ROLE`, no IRM token and no `TF_PLAN_KEY_PROD`. The trust
-  conditions name the OIDC claims of each job. For the `pull_request_target` plan job the `sub` is
-  `repo:valesordev/andara.valesordev.com:pull_request`, not a branch ref (the target branch is the separate
-  `base_ref` claim), so the PR plan role requires that `sub`, `base_ref = main`, and `job_workflow_ref` of
-  `terraform.yaml@refs/heads/main` (the base branch's workflow, which is what `pull_request_target` runs). If
-  the repository uses immutable subject claims, the immutable form replaces the `sub` string.
-  `AW-INF-046` checks each role's trust against a real run before the story is done.
+  conditions pin claims that cannot be set by a pull request's branch. The PR/drift plan role requires
+  `workflow_ref` to be the full path `valesordev/andara.valesordev.com/.github/workflows/terraform.yaml@refs/heads/main`
+  (the base branch's workflow, which is what `pull_request_target` and the schedule both run), `event_name` to be
+  `pull_request_target` or `schedule`, and the `sub` not to be an environment subject (these jobs reference no
+  `environment:`, because a job that does gets the `...:environment:<name>` subject instead). The
+  environment-bound roles (`andara-main`, `andara-prod-plan`, `andara-prod-apply`) require
+  `sub = repo:valesordev/andara.valesordev.com:environment:<name>`. **The claim values are expected, not yet
+  observed**: GitHub's OIDC reference does not list `pull_request_target`, so `AW-INF-046` first runs a debug
+  step that prints the decoded claims of each job (`pull_request_target`, `schedule`, each environment) and
+  writes the trust policies from what it sees; a trust that no job can satisfy fails closed, so a wrong guess is
+  a failed plan, not an exposure. If the repository uses immutable subject claims, the immutable forms replace
+  the `sub` strings.
   **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
   Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
   a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
