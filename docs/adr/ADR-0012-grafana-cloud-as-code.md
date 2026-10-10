@@ -296,7 +296,7 @@ Slack webhooks), which state also holds.
 | `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<ROOT>_PLAN_ROLE` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_ROLE` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
-| `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply` | `plan-prod`, `apply-prod` |
+| `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply`, and a copy in `.local/box.env` (gitignored, mode 0600), because GitHub secrets cannot be read back | `plan-prod`, `apply-prod`; `make tf-plan-show`, by Brian |
 | the dev box's write credential | `GRAFANA_SOLO7DEV_APPLY_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
 
 - **A telemetry token on a pull-request job is accepted.** It is write-only for series, logs and spans in
@@ -324,8 +324,8 @@ Slack webhooks), which state also holds.
   `deploy/terraform/grafana/credentials.yaml` (names and dates, never values). `make tf-credentials-check`,
   a scheduled job that reads that file (the IRM token included), opens a GitHub issue when any is within 14 days.
   It calls no API, so it needs no credential and never waits on an environment approval.
-- The dev-box credential is the first credential that leaves CI; the box holds only `solo7dev`'s apply
-  token, and `solo7` applies from CI only.
+- The dev-box credential is the first credential that leaves CI; the box holds `solo7dev`'s apply
+  token and the plan key (to read, not to apply); `solo7` applies from CI only.
 
 ### 5. Delivery
 
@@ -345,15 +345,16 @@ per stack in a fixed order; (c) apply from the dev box only.
   (`scripts/tf_policy.py`, `AW-INF-046`) first checks the pull request's `deploy/terraform/**` against an
   **allow-list** and refuses to plan on anything outside it:
   - blocks and providers: only `grafana/grafana` (and `hashicorp/terraform`'s built-in `terraform_data`
-    without provisioners), `resource`, `data "grafana_*"`, `variable`, `locals`, `output`, `module` with a
+    without provisioners), `resource` of type `grafana_*` or `terraform_data` only, `data "grafana_*"`, `variable`, `locals`, `output`, `module` with a
     local `source` under `deploy/terraform/grafana/modules/`;
-  - functions: the only file function allowed is `file()` with a **literal** path (no computed path) that
-    resolves, as a real path, inside `deploy/terraform/grafana/`, `deploy/helm/andara/files/alerts.yaml` or the
-    dashboard JSON; `fileexists`, `templatefile`, `filebase64`, `fileset` and `abspath` are refused. **Symlinks
+  - functions: the only file function allowed is `file()` whose argument is a string literal or the single template `"${path.module}/<literal>"` or
+    `"${path.root}/<literal>"` (these hold directory paths, not secrets; no other computed path), normalised and
+    resolved as a real path, and that real path is inside `deploy/terraform/grafana/`, `deploy/helm/andara/files/alerts.yaml` or
+    `deploy/grafana/dashboards/`; the tfvars are read natively and need no `file()`. Positive fixtures are the
+    real call sites (`alerts.yaml`, `tick-health.json`); `fileexists`, `templatefile`, `filebase64`, `fileset` and `abspath` are refused. **Symlinks
     are refused**: the script rejects any git entry of mode 120000 and any symlink on disk in the pull
     request's files it extracts, before Terraform runs, because a link under an allowed directory to
-    `/proc/self/environ` would otherwise put the runner's environment into a plan (fixtures: a symlink to
-    `/proc/self/environ`, a `..` path, a computed path). No `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
+    `/proc/self/environ` would otherwise put the runner's environment into a plan (fixtures: a symlink to `/proc/self/environ`, a `..` path that resolves outside the roots, a computed path). No `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
     `variable` and `output` block is **byte-identical to the base branch's** (so `slack_webhook` and every
     other secret variable keep `sensitive = true`, and no output can be added to print one; a change to
     either (and the PR that first creates `deploy/terraform/grafana/`, which has no base to compare to) goes
@@ -374,8 +375,9 @@ per stack in a fixed order; (c) apply from the dev box only.
     the diff, until the maintainer merges the change to those values separately from other changes (so the
     read token never goes to a host the base branch did not name); no
     `*.auto.tfvars` or other variable file besides `terraform.tfvars`; the job sets no `TF_CLI_ARGS*` and
-    passes no `-var`/`-var-file` the base script does not; and `.terraform.lock.hcl` changes the
-    `grafana/grafana` hashes only together with the version pin.
+    passes no `-var`/`-var-file` the base script does not; `required_providers` equal to the base branch's, `terraform init -lockfile=readonly` (so no other provider is
+    downloaded), and `.terraform.lock.hcl` changes the `grafana/grafana` hashes only together with the version
+    pin (fixtures: `resource "local_file"`, `data "external"`).
 
   A fixture per refusal lives in `scripts/tests`. The plan is posted in the job summary with sensitive values
   redacted by Terraform. Fork pull requests, and pull requests aimed at another branch, are skipped, as
@@ -390,17 +392,25 @@ per stack in a fixed order; (c) apply from the dev box only.
   read token and the IRM token) plans **both** prod roots, `solo7-irm` first, with `-out`, uploads
   the plan files, **encrypted with `TF_PLAN_KEY_PROD`** (a saved plan embeds state, config and variable
   values, so the webhook and the IRM integration URL are in it), as a one-day artifact and posts the
-  plan text for the `solo7` root in the job summary, redacted by Terraform. **For the `solo7-irm` root the
-  summary carries only the resource addresses and actions, never attribute values**, because the provider
+  plan text for the `solo7` root in the job summary, redacted by Terraform. **For the `solo7-irm` root no
+  sink ever carries attribute values: the job summary, the Actions log, the `drift:solo7-irm` issue and
+  `apply-prod`'s second-plan check all get only resource addresses and actions** (`terraform plan -out=f
+  >/dev/null`, then `terraform show -json f | jq '.resource_changes[] | {address, actions: .change.actions}'`;
+  the second-plan check prints nothing but its exit code; a fixture fails if an IRM URL string appears in a log,
+  summary or issue body), because the provider
   does not mark the IRM integration's `link` or the `irm-prod` contact point's `url` sensitive, and a
   replacement plan would print a live, usable URL; the contact point also takes it through `sensitive()` in
-  the module. Brian reads the full IRM plan with `make tf-plan-show` (it downloads the run's encrypted
-  artifact and decrypts it with `TF_PLAN_KEY_PROD`, which he holds), and that is what he approves; then `apply-prod`
+  the module. Brian reads the full IRM plan with `make tf-plan-show RUN=<id> STACK=solo7-irm|solo7` (it downloads the run's
+  encrypted artifact with his `gh` login, which needs artifact read, and decrypts it with `TF_PLAN_KEY_PROD`
+  from `.local/box.env`, into a pipe, never a file, and `terraform show` needs only `init -backend=false` and
+  the provider pin, no state-bucket role), and that is what he approves. Fields that pass through `sensitive()`
+  (the IRM URL) show only as changed or unchanged, so `plan-prod` prints the plan file's sha256 in the summary
+  and `tf-plan-show` prints it too, tying what he read to what `apply-prod` applies; then `apply-prod`
   (environment `andara-prod-apply`, Brian the required reviewer) starts only when he approves, downloads
   those plan files and applies exactly them, in the order `solo7-irm`, `solo7`, and finishes with
   the empty-second-plan check of both. What Brian approves is therefore the complete plan, IRM included.
   Anyone who can read the repository's artifacts sees only ciphertext; the key is in the two prod
-  environments alone. `apply-prod` deletes the artifact when it ends (`if: always()`), and it **refuses a
+  environments and on Brian's box alone. `apply-prod` deletes the artifact when it ends (`if: always()`), and it **refuses a
   superseded plan**: the plan records the commit it was made from, and `apply-prod` fails unless that is the
   current head of `main`; if a later merge moved the head, the approved plan is discarded, `plan-prod` is
   re-run on the new head, and Brian approves again. `plan-prod` and `apply-prod` share a `concurrency` group,
@@ -421,7 +431,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   never an alert in Grafana, because the thing that has failed is the thing that delivers alerts.
 - **`STACK` values** for `tf-plan`, `tf-apply` and `tf-drift`: `solo7dev`, `solo7`, `solo7-irm` (the last takes
   `solo7`'s endpoints in its own `terraform.tfvars`).
-- **Targets:** `make tf-fmt-check tf-validate tf-test` (in `make check`, no credentials needed, mock
+- **Targets:** `make tf-plan-show RUN=<id> STACK=<solo7|solo7-irm>` (above), `make tf-fmt-check tf-validate tf-test` (in `make check`, no credentials needed, mock
   provider), `make tf-plan STACK=<stack>`, `make tf-apply STACK=<stack>`, `make tf-drift STACK=<stack>`.
 
 ### 6. Scope of "all Grafana Cloud pieces"
@@ -819,7 +829,7 @@ Alloy and the server.
 - **State holds secrets** (webhooks; the IRM URL in its own root's state). Read access to state is a secret
   read, and the webhooks are shared with the pull-request plan job, which runs a pull request's Terraform; the
   IRM state is not (decision 3). The prod plan artifact is a state-equivalent secret: it is encrypted, lives a
-  day and is deleted after apply, and its key is in the prod environments alone. The job's defence is the policy
+  day and is deleted after apply, and its key is in the prod environments and on Brian's box alone. The job's defence is the policy
   script (decision 5), an allow-list over blocks, functions and the backend; a provider vulnerability, or a
   construct the allow-list wrongly admits, would pass it. Apply tokens and the IRM token are never reachable
   from it. The residual: a leaked webhook posts to a channel; a false page needs the IRM URL, which only the two
