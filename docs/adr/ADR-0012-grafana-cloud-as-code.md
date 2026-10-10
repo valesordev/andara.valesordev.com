@@ -38,8 +38,7 @@ Brian's direction (2026-10-09 and 2026-10-10), all of which this ADR takes as gi
   install** (2026-10-10): one cluster, `andara-local` and `andara-dev` on it, both shipping to `solo7dev`;
   the cluster is not shared any more and rebuilding it to a base state is routine. ADR-0013 (`AW-INF-050`)
   decides how the cluster and the install are built; this ADR is the telemetry contract they build to
-  (decision 13). Local is `andara-local` on that cluster (decision 14, Option B), and the `environment`
-  whole collection pipeline, including the `environment` stamp, lives in Fleet Management, deployed by Terraform (decision 15).
+  (decision 13). Local is `andara-local` on that cluster (decision 14, Option B), and the whole collection pipeline, including the `environment` stamp, lives in Fleet Management, deployed by Terraform (decision 15).
 
 The constraint that makes this non-obvious is that **three things disagree about the same rule file**:
 `alerts.yaml` is read by the compose Prometheus (until compose is retired, decision 14), the chart's ConfigMap, the helm tests,
@@ -349,7 +348,7 @@ Slack webhooks), which state also holds.
 |---|---|---|---|
 | `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×2) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`; also used by the `solo7-irm` root for its contact point) | `apply` jobs on `main` |
-| `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write fleet-management:read` and nothing else (the last lets the collector register in Fleet's inventory, decision 15; droppable if the pinned chart cannot register) | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret created from `.local/box.env` for `local`, `dev` and `staging` (the install mechanism is ADR-0013's). `solo7`: `.local/box.env` and that secret only, never a repository secret | CI kind/`stack` jobs; `k8s-monitoring` |
+| `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write fleet-management:read` and nothing else (the last is required: the collector's `remotecfg` needs it to pull its pipelines, decision 15) | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret created from `.local/box.env` for `local`, `dev` and `staging` (the install mechanism is ADR-0013's). `solo7`: `.local/box.env` and that secret only, never a repository secret | CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_<STACK>_FLEET_READ_TOKEN`, `GRAFANA_<STACK>_FLEET_APPLY_TOKEN` (×2 each) | Cloud access policies `andara-<stack>-fleet-read` (`fleet-management:read`) and `andara-<stack>-fleet-apply` (`fleet-management:read fleet-management:write`), realm one stack (decision 15) | read: repository secrets for both stacks (read-only, like the stack `READ` tokens, so the `solo7` PR and drift legs can refresh its Fleet resources); apply: secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`) | read: `plan`, `drift`, `plan-prod` (the IRM root has no Fleet resources); apply: `apply`, `apply-prod` |
 | `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
@@ -362,7 +361,7 @@ Slack webhooks), which state also holds.
   `#andaras-world-dev`, never a page (decision 10). It is not a configuration credential. `solo7`'s telemetry
   token is not in this repo at all.
 - **Provider credentials are never Terraform variables.** They reach the providers only through the
-  providers' environment variables (`GRAFANA_AUTH`, the IRM token's variable), never `TF_VAR_*` or `-var`, so
+  providers' environment variables (`GRAFANA_AUTH`, the IRM token's variable, and the Fleet provider's `user:token` variable, composed in the job from the committed `fleet_user` and the Fleet token), never `TF_VAR_*` or `-var`, so
   no plan file or state holds a token; `scripts/tf_policy.py` and a workflow fixture refuse a token passed
   any other way. The Slack webhooks are the exception, deliberately: `TF_VAR_slack_webhook`.
 - **IRM is outside the PR `plan` and `drift` jobs, by being its own root.** Its token can write, so
@@ -502,8 +501,8 @@ platform and the `k8s-monitoring` release are never Terraform's, now or later; t
 
 **Decision: in Terraform, in each stack:** the folder `Andara`; the rule groups of `alerts.yaml` (Grafana-managed,
 decision 1); contact points; the notification policy tree; mute timings; the `tick-health` dashboard (and its
-folder permissions where they differ from default); for `solo7`, the IRM integration, schedule and escalation
-chain (decision 10).
+folder permissions where they differ from default); the Fleet pipelines (decision 15; the collectors they configure are installed by `make`, not Terraform);
+for `solo7`, the IRM integration, schedule and escalation chain (decision 10).
 
 **Outside Terraform, by hand, and why:**
 
@@ -514,7 +513,7 @@ chain (decision 10).
 | The service accounts, Cloud access policies and tokens decision 4 lists | Chicken and egg (Terraform cannot authenticate with a token it is about to create), and creating them needs the org-level Cloud credential. |
 | The Slack workspace, the two channels, the webhooks | Slack's, not Grafana's. |
 | IRM's on-call *people* and their notification preferences (phone, push) | Personal data, entered by the person. The *schedule* referencing them is Terraform's. |
-| The `k8s-monitoring` release and the cluster | Out of Terraform's scope by the rule above (and a root that could reach the cluster would put cluster credentials beside state and tokens). They are `make` targets in this repo run from Brian's box (decision 13). The telemetry token is created by hand (decision 4) and read from `.local/box.env`. |
+| The collectors, their chart release and the cluster | Out of Terraform's scope by the rule above (only their Fleet-side pipelines are Terraform's) (and a root that could reach the cluster would put cluster credentials beside state and tokens). They are `make` targets in this repo run from Brian's box (decision 13). The telemetry token is created by hand (decision 4) and read from `.local/box.env`. |
 | Data sources | Grafana Cloud provisions each stack's `grafanacloud-prom`, `-logs` and `-traces` data sources; Terraform and `gcx` use their UIDs and do not manage them. |
 | Other things already in `solo7` (Synthetic Monitoring checks and alerts, usage alerts, Faro, k6) | Not Andara's rules; the policy tree Terraform now owns must keep routing them (decision 8). |
 | Billing, org membership, SSO | Not observability. |
@@ -914,13 +913,21 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   **a pipeline carries no secret**, because its content is in Terraform state and in Grafana. **[verify in 051:
   that the pinned chart can install collectors with no local features, or the Alloy chart replaces it; the
   install mechanism is ADR-0013's.]**
-- **What Terraform manages** (per stack, in that stack's root, never `solo7-irm`): `grafana_fleet_management_collector`
-  resources and `grafana_fleet_management_pipeline` resources, matched on `stack` (and `cluster`). **[verify in
-  051: current resource names and provider version; Fleet Management is newer than the rest of the provider.]**
-  Pipeline sources are Alloy files in the repo (`deploy/terraform/grafana/pipelines/`), rendered into the
-  resources with the namespace-to-environment table (decision 9) as their only input; `templatefile` with a
-  literal path inside the roots joins the policy script's allow-list (decision 5) for it, `AW-INF-046` extends
-  `tf_policy.py` and its fixtures.
+- **What Terraform manages** (per stack, in that stack's root, never `solo7-irm`): `grafana_fleet_management_pipeline`
+  resources only, each with a matcher on the collector attribute `stack`. Collectors register themselves with
+  their attributes from the chart and are not Terraform resources (their IDs change on every rebuild);
+  `cluster` is an attribute for inventory only and no matcher uses it, so the pipelines can be applied before the
+  cluster's name exists. **[verify in 051: current resource names and provider version (Fleet Management is
+  newer than the rest of the provider); the matcher syntax; that one pipeline can pass its output to another (the
+  six pipelines below hand off `scrape` → `stamp` → `keep` → `export`) and, if remote pipelines are isolated from
+  each other, that the design collapses to one pipeline per signal.]**
+  Pipeline sources are complete Alloy files in the repo (`deploy/terraform/grafana/pipelines/*.alloy`, inside the
+  roots, so already within decision 5's `file()` allow-list), read with `file()` and filled by `replace()` over
+  fixed `__PLACEHOLDER__` tokens (the stack endpoints and user IDs, from tfvars); **`templatefile` stays
+  refused**, because a template body is evaluated and could call `file()` on a path the allow-list never saw.
+  The namespace-to-environment table (decision 9) is part of the `stamp` source, edited in the repo. Fixtures: a
+  pipeline source containing `${file("/proc/self/environ")}` is plain text (nothing evaluates it, so Alloy's
+  `${1}` replacement syntax is safe), and a `templatefile` call is refused.
 - **The pipelines.** `scrape` (Andara servers and projectors by their scrape annotations, kube-state-metrics,
   cert-manager and Traefik), `stamp` (maps `namespace` to `environment` with decision 9's table, and sets
   `cluster`), `keep` (the keep-list of decision 13 as an allow-list, so what is not named is dropped before
@@ -946,8 +953,9 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   every namespace of decision 9's table is stamped, and one outside it is `unknown`; and nothing in a pipeline
   matches a secret pattern.
 - **CI's kind cluster** (`andara-ci`, decision 9) does not register with Fleet Management: its ephemeral
-  collectors would pollute the inventory. It runs the same pipeline files as static Alloy config, rendered by the
-  same script, with `environment="local"` set by an override, so its series are `local` and blackholed.
+  collectors would pollute the inventory. It runs the same pipeline files as static Alloy config, filled by the same `__PLACEHOLDER__`
+  substitution (a test asserts that the Terraform `replace()` and the CI script produce byte-identical output for
+  the same inputs), with `environment="local"` set by an override, so its series are `local` and blackholed.
 - **IRM routing is proven in three layers.** A `terraform test` over the rendered policy tree asserts, for
   `solo7`, that `environment = prod` with `severity = page` reaches both `slack-prod` and `irm-prod`, that
   `environment = unknown` and any other value reach `slack-prod` only, and that `solo7dev` contains no IRM
@@ -997,6 +1005,10 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   this scope and the `required_version` is the only coupling.
 - **A drift in the Grafana UI is overwritten at the next apply**, as the ruler path already did, but now it
   also overwrites the *routing*. The runbook must say so in its first line.
+- **The Fleet apply token is config execution on every registered collector.** A pipeline can read the pod's
+  environment, including the telemetry token, and its files. The token is held only by `main` jobs (decision 4),
+  and a pipeline change reaches the collectors at apply, so review of `deploy/terraform/grafana/pipelines/` is
+  review of what runs in the cluster.
 - **Foreclosed:** a single shared stack for prod and non-prod; hand-edited contact points as the routing
   source; direct Grafana API calls from our scripts; a cluster or `k8s-monitoring` definition outside this
   repo; and compose as a local environment with its own observability (decision 14), until its revisit trigger fires.

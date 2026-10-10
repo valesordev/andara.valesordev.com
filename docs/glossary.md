@@ -839,8 +839,8 @@ until prod is installed. A rule is never live in both places (ADR-0012 §7).
 **IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7` uses it: an
 integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).
 
-**Alloy** — Grafana's telemetry collector. The cluster's runs inside `k8s-monitoring` and ships `andara-local`
-and `andara-dev` to `solo7dev` (ADR-0012 §14); compose is retired.
+**Alloy** — Grafana's telemetry collector. The cluster's runs as bare collectors that take their pipelines from Fleet
+Management and ship `andara-local` and `andara-dev` to `solo7dev` (ADR-0012 §15); compose is retired.
 
 **Fleet Management (Grafana Fleet Management)** — Grafana Cloud's service that delivers configuration to
 registered collectors. Here the whole collection pipeline (scrape, `environment` stamp, keep-list, export) is
