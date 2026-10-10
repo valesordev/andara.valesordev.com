@@ -37,8 +37,8 @@ Brian's direction (2026-10-09 and 2026-10-10), all of which this ADR takes as gi
   install** (2026-10-10): one cluster, `andara-local` and `andara-dev` on it, both shipping to `solo7dev`;
   the cluster is not shared any more and rebuilding it to a base state is routine. ADR-0013 (`AW-INF-050`)
   decides how the cluster and the install are built; this ADR is the telemetry contract they build to
-  (decision 13). Local is `andara-local` on that cluster (decision 14, Option B), and Grafana Fleet Management
-  delivers the `environment` stamp (decision 15).
+  (decision 13). Local is `andara-local` on that cluster (decision 14, Option B), and the `environment`
+  stamp is static in the chart's values, with collectors registering in Fleet Management for inventory (decision 15).
 
 The constraint that makes this non-obvious is that **three things disagree about the same rule file**:
 `alerts.yaml` is read by the compose Prometheus (until compose is retired, decision 14), the chart's ConfigMap, the helm tests,
@@ -321,8 +321,8 @@ Terraform.
 **Decision: (b), created by hand once, rotated by hand, named and stored as below.** Terraform manages
 what is *inside* a stack and never the credentials it authenticates with.
 
-**There is no org-level Cloud-API credential in the repo.** The only Cloud access policies Terraform uses are
-Fleet Management's two per stack (read and apply), each scoped to a single stack (decision 15); everything Terraform manages is reached through the stack's own
+**There is no org-level Cloud-API credential in the repo.** Terraform uses no Cloud access policy (decision 15's Fleet
+tokens exist only if its option (b) is reopened, and are scoped to one stack); everything Terraform manages is reached through the stack's own
 endpoint with a stack service account (alerting, folders, dashboards, contact points, policies), plus an IRM
 token for `solo7`. `gcx` reads through the same kind of stack token (decision 2): one **read** token per stack
 serves Terraform's plan, the drift job and every `gcx` call, so the Cloud access policies that used to carry
@@ -340,12 +340,12 @@ Slack webhooks), which state also holds.
 | `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×2) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`; also used by the `solo7-irm` root for its contact point) | `apply` jobs on `main` |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write fleet-management:read` and nothing else (the last lets the collector pull its pipelines, decision 15) | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the `k8s-monitoring` secret created from `.local/box.env` for `local`, `dev` and `staging` (the install mechanism is ADR-0013's). `solo7`: `.local/box.env` and that secret only, never a repository secret | CI kind/`stack` jobs; `k8s-monitoring` |
-| `GRAFANA_<STACK>_FLEET_READ_TOKEN`, `GRAFANA_<STACK>_FLEET_APPLY_TOKEN` (×2 each) | Cloud access policies `andara-<stack>-fleet-read` (`fleet-management:read`) and `andara-<stack>-fleet-apply` (`fleet-management:read fleet-management:write`), realm one stack (decision 15) | read: repository secrets for both stacks (read-only, like the stack `READ` tokens, so the `solo7` PR and drift legs can refresh its Fleet resources); apply: secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`) | read: `plan`, `drift`, `plan-prod` (the IRM root has no Fleet resources); apply: `apply`, `apply-prod` |
+| `GRAFANA_<STACK>_FLEET_READ_TOKEN`, `GRAFANA_<STACK>_FLEET_APPLY_TOKEN` (×2 each; **only if decision 15's option (b) is reopened; not created under (a)**) | Cloud access policies `andara-<stack>-fleet-read` (`fleet-management:read`) and `andara-<stack>-fleet-apply` (`fleet-management:read fleet-management:write`), realm one stack (decision 15) | read: repository secrets for both stacks (read-only, like the stack `READ` tokens, so the `solo7` PR and drift legs can refresh its Fleet resources); apply: secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`) | read: `plan`, `drift`, `plan-prod` (the IRM root has no Fleet resources); apply: `apply`, `apply-prod` |
 | `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<ROOT>_PLAN_SA` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_SA` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_SA`, `GCP_WIF_PROVIDER` | not secrets: service-account emails and the workload identity provider name (decision 3) | repository variables | the jobs |
 | `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply`, and a copy in `.local/box.env` (gitignored, mode 0600), because GitHub secrets cannot be read back | `plan-prod`, `apply-prod`; `make tf-plan-show`, by Brian |
-| the dev box's credentials | `GCP_DEVBOX_IDENTITY` (state access, decision 3), `GRAFANA_SOLO7DEV_APPLY_TOKEN`, `GRAFANA_SOLO7DEV_FLEET_APPLY_TOKEN` and `GRAFANA_SOLO7DEV_FLEET_READ_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
+| the dev box's credentials | `GCP_DEVBOX_IDENTITY` (state access, decision 3), `GRAFANA_SOLO7DEV_APPLY_TOKEN` (and, only under decision 15's option (b), the two `GRAFANA_SOLO7DEV_FLEET_*` tokens) | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7dev`, by Brian |
 
 - **A telemetry token on a pull-request job is accepted.** It is write-only for series, logs and spans in
   `solo7dev`; a pull request that holds it could add series labelled `environment="dev"` and cause a Slack post in
@@ -363,7 +363,7 @@ Slack webhooks), which state also holds.
   uses the Grafana provider (for the contact point; `solo7`'s read and apply tokens) and the IRM provider (the
   IRM token), and is planned only by jobs in `andara-prod-plan` or `andara-prod-apply` (decision 5).
 - **Bootstrap tokens** (the chicken-and-egg step): Brian creates, per stack and by hand, the two service
-  accounts above (stack → Administration → Service accounts), the telemetry and Fleet access policies
+  accounts above (stack → Administration → Service accounts), the telemetry access policies (and Fleet's, only under decision 15's option (b))
   (`grafana.com` → Access policies) and `solo7`'s IRM token (IRM → Settings → API), and pastes the values into the
   places above. They are the only manual credential step that cannot be removed.
   `docs/runbooks/grafana-credentials.md` (`AW-INF-046`) gives each one's click path, name, role and expiry.
@@ -373,7 +373,7 @@ Slack webhooks), which state also holds.
   a scheduled job that reads that file (the IRM token included), opens a GitHub issue when any is within 14 days.
   It calls no API, so it needs no credential and never waits on an environment approval.
 - The dev-box credentials are the first that leave CI; the box holds `solo7dev`'s apply
-  and Fleet tokens, the `GCP_DEVBOX_IDENTITY` state access (decision 3) and the plan key (to read, not to apply); `solo7` applies from CI only.
+  token, the `GCP_DEVBOX_IDENTITY` state access (decision 3) and the plan key (to read, not to apply); `solo7` applies from CI only.
 
 ### 5. Delivery
 
@@ -548,12 +548,10 @@ can hide a real page.
    nothing; the un-pause is merged inside step 4, between (ii) and (iii). `local` alerts route to `blackhole`
    (decision 10). 047's own criterion for `local` is **defined**; the firing assertion is step 4(vi).
 4. `dev`, as one ordered run whose outage starts at (ii): (i-b), which precedes (i) and runs before anything is deleted, the stamp is ready:
-   `AW-INF-051`'s Fleet collectors and pipelines are applied to `solo7dev` (decision 15), `terraform plan` clean
-   proving they are **defined** only (no collector can have pulled them before the rebuild installs the
-   chart), or its static fallback is in the cluster's values; without it every series arrives as
-   `environment="unknown"`. (iii-b), right after (iii) and only when Fleet is used (not the static fallback): a collector is
-   registered in Fleet's inventory **[verify in 051: whether `gcx` can read the inventory]**; it is a diagnostic
-   that names the cause early, and (iv)'s `unknown` guard is the gate; (i) the precondition, checked by the script, which
+   the namespace-to-environment table is rendered into the `k8s-monitoring` values the rebuild installs
+   (decision 15's static stamp), and a rendering test passes; without it every series arrives as
+   `environment="unknown"`. (iii-b), right after (iii): if the chart registered with Fleet, a collector shows in its inventory **[verify in
+   051: whether `gcx` can read the inventory]**, a diagnostic only; (iv)'s `unknown` guard is the gate; (i) the precondition, checked by the script, which
    refuses to continue if unmet: no `severity = page` alert for `namespace="andara-dev"` is pending or firing in
    `solo7`'s ruler (`gcx alert instances list --datasource grafanacloud-prom`). A lower-severity alert that is
    firing (today `ContentLoadFailing`, a ticket) does not block: the rebuild discards that World, and the
@@ -817,10 +815,10 @@ the fault is accepted.)
 1. Before the rebuild: apply `AW-INF-046` to `solo7dev` and `solo7` (`solo7dev`, once Brian creates it;
    `solo7` exists; contact points, policy, folder). Brian creates the `andara-<stack>-telemetry` access policy and
    token by hand (decision 4's bootstrap step), puts it in `.local/box.env`, and fills the tfvars endpoints,
-   which the install reads. `AW-INF-047` is applied **paused** (decision 7 step 2), and `AW-INF-051`'s Fleet pipelines are applied (decision 7 step 4(i-b)).
+   which the install reads. `AW-INF-047` is applied **paused** (decision 7 step 2), and the environment table is rendered into the release's values (decision 7 step 4(i-b)).
 2. Brian rebuilds the cluster with ADR-0013's target (cluster, platform, `k8s-monitoring` with the table above) (decision 7 step 4(ii) to (iii):
    the ruler namespace is deleted first).
-3. After: when Fleet is used, a collector shows in its inventory (decision 7 step 4(iii-b)); `make observe-check ENV=local --keep-list` and `ENV=dev --keep-list` pass against `solo7dev` (the table's checks are written for `dev`; `local` substitutes `andara-local`); then decision 7 step 4(v) adds `dev`
+3. After: a collector shows in Fleet's inventory when the chart registers (decision 7 step 4(iii-b)); `make observe-check ENV=local --keep-list` and `ENV=dev --keep-list` pass against `solo7dev` (the table's checks are written for `dev`; `local` substitutes `andara-local`); then decision 7 step 4(v) adds `dev`
    to `required_environments`; then `make observe-unavailable ENV=dev` (step 4(vi)). `AW-INF-034`'s drill is
    rerun on the rebuilt cluster, since the rebuild discards `dev`'s World.
 4. The cluster's shape, and what becomes of `deploy/kind/config.yaml` as CI's single-node cluster, are ADR-0013's.
@@ -880,11 +878,20 @@ local broker is still Redpanda is ADR-0013's.
 **Options.** (a) `k8s-monitoring`'s values carry the whole `environment` stamp, statically, and Fleet Management
 is not used; (b) Fleet Management delivers the stamp, as a pipeline in each stack's Terraform root, on top of a
 static default that marks anything unstamped; (c) Fleet Management only inventories the collectors.
-(a) is one fewer service but changes the stamp only with a chart redeploy, which on the rebuilt cluster means
-every namespace-table change touches the release. (c) buys a list of collectors and nothing else.
+(a) changes the stamp only with a chart redeploy, which on the rebuilt cluster means every namespace-table change
+touches the release. (c) buys a list of collectors and nothing else. (b) was the first choice and is not
+buildable as an overlay: Grafana documents a collector's local and remote configurations as running in parallel
+and isolated, so a Fleet pipeline cannot insert relabelling into the graph `k8s-monitoring` builds locally
+(Codex, PR #520). (b) would need the whole collection and export pipeline to move into Fleet, which is a different
+and larger change than this ADR makes.
 
-**Decision: (b), conditional on one verification, with (a) as the pre-decided fallback.** Both are in
-Terraform's scope (they are Grafana Cloud objects, decision 6). IRM is already decided (decisions 10 and 12:
+**Decision: (a) the static stamp, with (c) Fleet registration for inventory.** The namespace-to-environment
+table is one data file in the repo; it renders into `k8s-monitoring`'s values (decision 13), so the stamp
+travels with the chart and a table change is a chart upgrade. Collectors register with Fleet Management
+(attributes `cluster`, `stack`) so the inventory shows what is running, and (b) is reopened only if `AW-INF-051`
+proves a Fleet pipeline can change what the chart sends, or Brian chooses to move the pipeline into Fleet.
+Fleet's Terraform objects (pipelines, collector resources) and their two tokens per stack are therefore
+**conditional on (b)**: not created under (a). IRM is already decided (decisions 10 and 12:
 the `solo7-irm` root; a schedule of Brian alone; a `severity = page` route to both Slack and IRM, `solo7` only);
 this decision adds what makes it checkable and what Fleet adds.
 
@@ -894,21 +901,20 @@ this decision adds what makes it checkable and what Fleet adds.
   contact point. The first apply of the IRM root is followed by IRM's own test alert, sent by Brian once, by
   hand, and listed in the runbook (`gcx irm oncall alert-groups list` then shows it). Every later change is
   covered by the `terraform test` and the drift job.
-- **Fleet Management in Terraform:** per stack, `grafana_fleet_management_collector` resources (remote
+- **Fleet Management in Terraform (only if (b) is reopened):** per stack, `grafana_fleet_management_collector` resources (remote
   attributes) and `grafana_fleet_management_pipeline` resources, in that stack's root (`solo7dev` and `solo7`;
   not in `solo7-irm`). **[verify in 051: current resource names and provider version; Fleet Management is newer
   than the rest of the provider.]**
 - **Names.** Collectors carry the attributes `cluster` (the kind cluster's name, ADR-0013's; one value per
   cluster) and `stack` (`solo7dev` or `solo7`); `environment` is **not** a collector attribute, because one
-  collector serves several environments on this cluster (`andara-local` and `andara-dev`). Pipelines:
-  `environment-stamp`, which maps `namespace` to `environment` with the table of decision 9 (the only copy of
-  that table that is not this ADR, rendered from one data file in the repo by Terraform), and `cluster-stamp`,
-  which sets the `cluster` label. The series, log and span labels are `environment` and `cluster` (`cluster`
-  may be added freely, decision 13). Both pipelines match `stack = <that stack>`.
+  collector serves several environments on this cluster (`andara-local` and `andara-dev`). The
+  stamp is the chart's, not Fleet's: the data file renders `environment` (from decision 9's table, the only copy
+  that is not this ADR) and `cluster` into the values. The series, log and span labels are `environment` and
+  `cluster` (`cluster` may be added freely, decision 13). Under (b) the pipelines would be `environment-stamp` and
+  `cluster-stamp`, matching `stack = <that stack>`.
 - **The guard for a missing `environment`.** The chart's static values set the sender's external label
   `environment = "unknown"` (and the equivalent default on logs and traces), which applies only where a series
-  has no `environment` of its own, so a collector that has not yet pulled the pipeline, a pipeline that fails,
-  and a namespace the table does not list all produce `environment="unknown"` rather than no label. `unknown`
+  has no `environment` of its own, so a namespace the table does not list, and a release rendered from a stale data file, all produce `environment="unknown"` rather than no label. `unknown`
   is a visible, unrouted-by-IRM value: in `solo7dev` it reaches `slack-dev` and not `blackhole`; in `solo7` it
   reaches `slack-prod` and never IRM. `observe-check --keep-list` fails if any series **named in the keep-list**
   has `environment="unknown"` (`gcx metrics query -d grafanacloud-prom 'count({__name__=~"<keep-list names>",
@@ -921,17 +927,15 @@ this decision adds what makes it checkable and what Fleet adds.
   `environment="unknown"` that must not fail it. **[verify in 051: that an external label does not
   overwrite a series' own label in Alloy's `prometheus.remote_write`, `loki.write` and the OTLP exporter; if it
   does, the default moves to a final relabel rule that only sets the label when it is empty.]**
-- **Does the pinned `k8s-monitoring` register with Fleet Management? Yes, and that is the condition.** The
-  release enables the chart's remote-configuration setting on each collector, pointing at the stack's Fleet
-  URL with `fleet-management:read` in the telemetry token (decision 4). The chart version `AW-INF-050` pins must
-  support that setting, and a pipeline delivered through it must be able to change labels on what the chart's
-  own pipelines send. **[verify in 050/051.]** If either fails, fall back to (a): the same data file renders the
-  stamp into the chart's static values, Fleet is dropped for that collector, and the collector attributes
-  remain for inventory.
+- **Does the pinned `k8s-monitoring` register with Fleet Management?** Yes, for inventory. The release enables the
+  chart's remote-configuration setting on each collector, pointing at the stack's Fleet URL with
+  `fleet-management:read` in the telemetry token (decision 4). The chart version `AW-INF-050` pins must support
+  that setting **[verify in 050/051]**; if it does not, the collectors simply do not register, and nothing else
+  in this ADR depends on it.
 - **CI's kind cluster** (`andara-ci`, decision 9) does not register with Fleet Management: its ephemeral
   collectors would pollute the inventory and arrive unstamped. Its `k8s-monitoring` values set
   `environment="local"` statically (an override, not the default), so its series are `local` and blackholed.
-- **Credentials** (decision 4): `GRAFANA_<STACK>_FLEET_READ_TOKEN` and `GRAFANA_<STACK>_FLEET_APPLY_TOKEN`
+- **Credentials** (decision 4), created only if (b) is reopened: `GRAFANA_<STACK>_FLEET_READ_TOKEN` and `GRAFANA_<STACK>_FLEET_APPLY_TOKEN`
   (Cloud access policies, `fleet-management:read` and `fleet-management:read fleet-management:write`, realm one
   stack), the read one for the `plan`, `drift` and `plan-prod` jobs and the apply one for the `apply` jobs only, so a
   pull-request job never holds a Fleet write credential. The endpoints (`fleet_url`, `fleet_user`) are committed
@@ -962,7 +966,7 @@ this decision adds what makes it checkable and what Fleet adds.
   construct the allow-list wrongly admits, would pass it. Apply tokens and the IRM token are never reachable
   from it. The residual: a leaked webhook posts to a channel; a false page needs the IRM URL, which only the two
   prod environments and Brian can read.
-- **Two stacks, three states, and fourteen secrets** (decision 4, including Fleet Management's four) to rotate at least every 90 days, fewer than
+- **Two stacks, three states, and ten secrets** (decision 4; fourteen if decision 15's Fleet tokens are ever created) to rotate at least every 90 days, fewer than
   the drafts because `gcx` and Terraform's plan share one read token per stack. `tf-credentials-check` makes
   that a notice and not a surprise, and it is still Brian's chore.
 - **There is no local rule evaluator.** A rule edit is verified by the expression tests and by loading in
@@ -1007,8 +1011,8 @@ this decision adds what makes it checkable and what Fleet adds.
 - Two different people need to page: the single-person IRM schedule becomes a rota (decision 10 already
   says how).
 - `make test-integration` on kind exceeds decision 14's threshold: bring back a narrower compose `min` (C).
-- Fleet Management cannot deliver the `environment` stamp through the pinned chart (decision 15's
-  verification): fall back to the static stamp and reopen the decision.
+- A Fleet pipeline is shown able to change what the chart sends, or Brian chooses to move the collection
+  pipeline into Fleet: reopen decision 15 for option (b).
 - The cluster hosts workloads that are not Andara's, or a second cluster appears: decision 13's rebuild and
   token placement assume one cluster, one owner.
 - `solo7dev` exceeds the free tier's active-series limit twice in a month, or a `local` run notifies a person
