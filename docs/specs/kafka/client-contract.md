@@ -16,10 +16,10 @@ Applies to ingress, events, state, content, accounts and audit producers.
 |---|---|---|---|
 | `acks` | `all` | RPO: "ordered" means the ISR has it | set (`kgo.AllISRAcks()`) |
 | `enable.idempotence` | `true` | An ambiguous retry must not duplicate a record | franz-go default on; `DisableIdempotentWrite()` turns it off, so `config-assert` must assert it |
-| `max.in.flight.requests.per.connection` | `<= 5` | Order within a Partition under retry | franz-go's own value for an idempotent producer; **not settable**, so `config-assert` reports the library's configured value (1 today, 2026-10-10) and fails only above 5 (`AW-SRV-010`, 2026-09-19; `AW-SRV-053`) |
+| `max.in.flight.requests.per.connection` | `<= 5` | Order within a Partition under retry | franz-go's own value for an idempotent producer; **not settable**, so `config-assert` reports the library's configured value (1 today, 2026-10-09) and fails only above 5 (`AW-SRV-010`, 2026-09-19; `AW-SRV-053`) |
 | `delivery.timeout.ms` | `ingress.produce_deadline` (ingress producer only) | Bounds the ambiguity window of `AW-SRV-010` AC-5 | set (`RecordDeliveryTimeout`) |
-| partitioner | explicit `hash(ZoneID) % 64` on the 64-Partition ZoneID-keyed topics (commands, events, state) | Order: a library upgrade must not move a Zone to another Partition | `ManualPartitioner` on the ingress, tick-loop and projector producers. The `recordlog` producers (accounts, audit, content; 6 Partitions, compacted or keyed by actor) pin `StickyKeyPartitioner(nil)` with the murmur2 key hash the library default used, so no key moved (`AW-SRV-053`, 2026-10-10; a test holds the mapping on a fixture of keys). The gap is closed |
-| `compression.type` | `zstd` | Disk and network cost only. No correctness claim; `config-assert` reports a deviation as a warning, not a failure (AC-4 lists the failing settings and compression is not among them). set on every producer (`AW-SRV-053`) |
+| partitioner | explicit `hash(ZoneID) % 64` on the 64-Partition ZoneID-keyed topics (commands, events, state) | Order: a library upgrade must not move a Zone to another Partition | `ManualPartitioner` on the ingress, tick-loop and projector producers. The `recordlog` producers (accounts, audit, content; 6 Partitions, compacted or keyed by actor) pin `StickyKeyPartitioner(nil)` with the murmur2 key hash the library default used, so no key moved (`AW-SRV-053`, 2026-10-09; a test holds the mapping on a fixture of keys). The gap is closed |
+| `compression.type` | `zstd` | Disk and network cost only. No correctness claim; `config-assert` reports a deviation as a warning, not a failure (AC-4 lists the failing settings and compression is not among them). | set on every producer (`AW-SRV-053`) |
 
 ## Consumers
 
@@ -31,9 +31,9 @@ resumes strictly from the checkpointed offset"). The first draft's `enable.auto.
 
 | Setting | Value | Claim it carries | In the code today |
 |---|---|---|---|
-| `isolation.level` | `read_committed` | Nothing reads an aborted transactional record. No producer is transactional today, so this is a guard, not a fix: it is cheap now and a silent bug later set on every consumer (`AW-SRV-053`) |
+| `isolation.level` | `read_committed` | Nothing reads an aborted transactional record. No producer is transactional today, so this is a guard, not a fix: it is cheap now and a silent bug later | set on every consumer (`AW-SRV-053`) |
 | group membership | none; direct Partition assignment | Position is owned by the checkpoint, not by the broker | holds |
-| committed offsets in Kafka | none for a reader's position, with one named exception: the **projector checkpoint** (below) | A second source of "where was I" is a second way to be wrong | holds for every reader; the projector's `Committer` writes its checkpoint as a commit under its group (below) |
+| committed offsets in Kafka | none for a reader's position, with two named exceptions: the **projector checkpoint** and the **tick loop's observer commit** (below) | A second source of "where was I" is a second way to be wrong | holds for every reader's *position*; the projector's `Committer` and the tick loop's `KafkaSource.Commit` write commits, for the reasons below |
 | start offset | a resumed position is always explicit: `At(offset)` from the checkpoint. Never `AtStart`/`AtEnd` to resume | Replay is exact | holds for the resuming readers; the named one-shot scans below are the exceptions |
 | an offset the broker no longer has | `ErrLogGap` (exit `3`), never a silent reset to earliest or latest | A gap is lost history; skipping it is silent divergence | holds on the `At(offset)` readers, which run on `NoResetOffset`, apart from the pinned watch named below |
 
@@ -49,18 +49,24 @@ position. A reader not in this table that starts at `AtStart` or `AtEnd` is a co
 
 `config-assert` knows these by reader name; adding a reader here is a contract change.
 
-**Two named exceptions to the rows above** (ruled 2026-10-10, `AW-SRV-053`):
+**Three named exceptions to the rows above** (ruled 2026-10-09, `AW-SRV-053`):
 
 1. **The projector checkpoint is a committed offset, on purpose.** `projector.Committer` stores the
    projector's checkpoint (tick, per-Partition offsets, and a divergence record in the metadata) as an
    offset commit under the projector's group on `andara.commands.v1`, and `--rebuild` deletes the group
-   (`AW-SRV-019`). The group is never joined and nothing is read back by the broker's own position: the
+   (`AW-SRV-019`). The group is never joined and the broker's own position is never used: the
    projector reads the commit explicitly and resumes with `At(offset)`. So the checkpoint is the single
    source of "where was I", which is what the row protects, and the commit is its storage, not a
-   second copy. The `config-assert` row passes because the consumer client has no group; that is the
-   right answer for the consumer, and `Committer` is the only commit site. A new commit site, or a reader
-   that takes its position from the broker's committed offset, is a contract change.
-2. **The pinned Active Pointer watch stays on the library's reset** (`content active pointer watch
+   second copy.
+2. **The tick loop's per-tick commit is the other commit, and it is write-only.** `tickloop.KafkaSource.Commit`
+   commits the consumed offsets under `andara-sim-<env>` on every tick so a dashboard or a runbook can see
+   lag. Nothing reads it back for position: the tick loop resumes from the Snapshot round and the Tick
+   Boundary offsets (ADR-0002 §4), so it is not a second source of "where was I".
+   The `config-assert` row reports `false` for both consumers and passes, because it sees only the
+   client's own group and marks, not a commit made through `kadm.CommitOffsets`. Those two are the only
+   commit sites today; a third, or any reader that takes its position from the broker's committed
+   offset, is a contract change, and only review catches it until a test pins the sites.
+3. **The pinned Active Pointer watch stays on the library's reset** (`content active pointer watch
    (pinned)`, reported on its row with the reason). The topic is `cleanup.policy: compact` alone
    (`deploy/kafka/topics.yaml`), so its log start never passes a pinned offset, a reset to the start
    re-reads pointers the watch applies idempotently, and the watch has no exit to take on a gap. If the
