@@ -168,7 +168,7 @@ live in it (CI cannot reach it either).
 
 **Decision: (a).** A private bucket `andara-tfstate` (the bucket's account and region are Brian's choice at
 creation; the contract is the name and the keys), versioning on, server-side encryption on, public access
-blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafana/solo7prod.tfstate`.
+blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafana/solo7prod.tfstate`, and `grafana/solo7prod-irm.tfstate` (the IRM root, decision 12).
 `use_lockfile = true`; no DynamoDB table. Terraform `>= 1.11, < 2` (`required_version`), pinned by
 `.terraform-version` and installed by `make bootstrap`.
 
@@ -184,7 +184,7 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
   a documented step of the runbook.
 - **Access is by OIDC federation** from GitHub Actions to the bucket's cloud account (no static cloud key in
   GitHub): a trust policy keyed on the repository and, for an apply role, on the environment that stack applies from:
-  `environment:andara-main` for `solo7local` and `solo7dev`, `environment:andara-prod-apply` for `solo7prod`.
+  `environment:andara-main` for `solo7local` and `solo7dev`, `environment:andara-prod-apply` for both `solo7prod` roots (the prod plan job, which also writes nothing to state, uses a plan role bound to `environment:andara-prod-plan`).
   The dev box uses Brian's own cloud identity.
 - State backups: versioning is the recovery path; `terraform import` from the live stack is the second.
 
@@ -214,7 +214,7 @@ low-harm secrets (the telemetry token and the Slack webhooks), which state also 
 | `GRAFANA_<STACK>_ALERTS_READ_TOKEN` (×3) | stack service account `andara-alerts-read`, role **Viewer** or the same custom read role **[verify in 046]**; it serves decision 2's rules-endpoint and provisioning reads, including the **defined** check | repository secret; `.local/box.env` | the drills (`env-recover`, `observe-unavailable`, `stack-recover-mismatch`) |
 | `GRAFANA_<STACK>_READ_TOKEN` (×3; replaces `GRAFANA_CLOUD_READ_TOKEN`) | Cloud access policy `andara-<stack>-read`: `metrics:read logs:read traces:read` | repository secret; `.local/box.env` | `make observe-check`, the drills |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×3) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7local`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs. `solo7dev`, `solo7prod`: the cluster repo's `k8s-monitoring` secret, never in this repo | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
-| `GRAFANA_SOLO7PROD_IRM_TOKEN` | IRM access token | secret of `andara-prod-apply` | the `solo7prod` `apply` job |
+| `GRAFANA_SOLO7PROD_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<STACK>_PLAN_ROLE`, `_APPLY_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
 | the dev box's write credential | `GRAFANA_SOLO7LOCAL_APPLY_TOKEN` | `.local/box.env` (gitignored, mode 0600) | `make tf-apply STACK=solo7local`, by Brian |
@@ -222,9 +222,13 @@ low-harm secrets (the telemetry token and the Slack webhooks), which state also 
 - **A telemetry token on a pull-request job is accepted.** It is write-only for series, logs and spans in
   `solo7local`, which notifies nobody (decision 10); the worst a PR can do with it is add series. It is not a
   configuration credential, and `solo7dev` and `solo7prod`'s telemetry tokens are not in this repo at all.
-- **IRM is outside the PR `plan` and `drift` jobs.** Its token can write, so those jobs plan `solo7prod` with
-  `-target=module.stack` and do not refresh `grafana_oncall_*`. IRM drift is covered where the token is
-  allowed: the `solo7prod` `apply` job's plan, which Brian reads at the approval (decision 5).
+- **IRM is outside the PR `plan` and `drift` jobs, by being its own root.** Its token can write, so
+  everything that needs it is in `stacks/solo7prod-irm/` with its own state (decision 12): the IRM integration,
+  schedule and escalation chain, **and the `irm-prod` contact point**, whose URL comes from the integration.
+  The `solo7prod` root refers to that contact point by its name as a string, with no Terraform dependency, so
+  planning it (a pull request, the drift job, `-target`-free) never traverses into IRM and never needs the
+  token. The IRM root is planned only by the `plan-prod` job on `main` (decision 5), and its drift is surfaced
+  there.
 - **Bootstrap tokens** (the chicken-and-egg step): Brian creates, per stack and by hand, the three service
   accounts above (stack → Administration → Service accounts) and the Cloud access policies
   (`grafana.com` → Access policies), and pastes the values into the places above. They are the only manual
@@ -287,8 +291,15 @@ per stack in a fixed order; (c) apply from the dev box only.
   `apply` of that plan, then `plan -detailed-exitcode` which must exit 0 (a second plan changes nothing, as
   `alerts-sync` does today). A failed or non-converging job stops the chain, so a change that breaks on
   `solo7local` never reaches `solo7dev` or `solo7prod`.
-- **`solo7prod` waits for approval:** its job declares the environment `andara-prod-apply`, with Brian as a
-  required reviewer. The prod plan is already in the earlier summary; the approval is Brian reading it.
+- **`solo7prod` waits for approval, after a complete plan exists.** A job that references an environment with
+  required reviewers does not start until it is approved, so the plan cannot be inside it. Prod is therefore
+  two jobs: `plan-prod` (environment `andara-prod-plan`: no reviewers, deployable from `main` only, holds the
+  plan credentials and the IRM token) plans **both** prod roots, `solo7prod-irm` first, with `-out`, uploads
+  the plan files as a one-day artifact and posts the redacted plan text in the job summary; then `apply-prod`
+  (environment `andara-prod-apply`, Brian the required reviewer) starts only when he approves, downloads
+  those plan files and applies exactly them, in the order `solo7prod-irm`, `solo7prod`, and finishes with
+  the empty-second-plan check of both. What Brian approves is therefore the complete plan, IRM included.
+  The plan files hold secrets, so the artifact is private to the repository and expires in a day.
 - **What a failed apply leaves behind:** Terraform's state is written after each resource, so a failed apply
   leaves the resources it finished applied and the rest not, and the state says which. Every resource here is
   idempotent and independently valid (a rule group, a contact point), so a partial apply is a stack in a
@@ -299,7 +310,7 @@ per stack in a fixed order; (c) apply from the dev box only.
 - **How an apply failure and drift are surfaced:** an apply failure is a red workflow, which notifies Brian
   through GitHub. **Drift** (someone edited a rule or a policy in the UI) is surfaced by a scheduled
   `drift` job of the same workflow, on a schedule, daily, running `plan -detailed-exitcode` per stack with the read-only
-  credentials (IRM excluded, decision 4): exit 2 opens or updates one GitHub issue labelled `drift:<stack>` containing the plan. It is
+  credentials (the IRM root excluded, decision 4): exit 2 opens or updates one GitHub issue labelled `drift:<stack>` containing the plan. It is
   never an alert in Grafana, because the thing that has failed is the thing that delivers alerts.
 - **Targets:** `make tf-fmt-check tf-validate tf-test` (in `make check`, no credentials needed, mock
   provider), `make tf-plan STACK=<stack>`, `make tf-apply STACK=<stack>`, `make tf-drift STACK=<stack>`.
@@ -434,7 +445,7 @@ nothing to import or delete, only to create.
 |---|---|---|---|
 | `solo7local` | **none**: the default receiver is an empty contact point `blackhole` (no integrations) | `blackhole` | Rules evaluate and their state is readable (decision 2); `RecoveryStateMismatch` fires in `solo7local` and notifies no one. |
 | `solo7dev` | Slack `#andaras-world-dev` for every severity | `slack-dev` (Slack, webhook `SLACK_WEBHOOK_DEV`) | `severity = page` does **not** page on dev: a dev outage is information, not an emergency. |
-| `solo7prod` | root receiver `slack-prod`; two children both matching `severity = page`: the first → `irm-prod` with `continue = true`, the second → `slack-prod` | `slack-prod` (webhook `SLACK_WEBHOOK_PROD`), `irm-prod` (Grafana IRM integration) | One page = one IRM alert group and one Slack post. Non-page severities fall to the root: Slack only. |
+| `solo7prod` | root receiver `slack-prod`; two children both matching `severity = page`: the first → `irm-prod` with `continue = true`, the second → `slack-prod` | `slack-prod` (webhook `SLACK_WEBHOOK_PROD`; in the `solo7prod` root), `irm-prod` (Grafana IRM integration; in the `solo7prod-irm` root, which applies first) | One page = one IRM alert group and one Slack post. Non-page severities fall to the root: Slack only. |
 
 - **Why a separate `blackhole` and not "no policy":** with no default contact point, Grafana falls back to its
   built-in email receiver. An explicit empty receiver is the only way to guarantee nothing is sent.
@@ -445,7 +456,9 @@ nothing to import or delete, only to create.
   the escalation chain (a variable `escalation_users`); the plan shows the change; the person sets their own
   phone and push notifications in IRM. No other file changes.
 - `solo7local` and `solo7dev` have no IRM resources. `grafana_oncall_*` is configured only in the
-  `solo7prod` root (the provider block takes an IRM token only there).
+  `solo7prod-irm` root (the provider block takes an IRM token only there). The policy tree in the `solo7prod`
+  root names `irm-prod` as a string, so applying it before the IRM root exists fails loudly at apply, which is
+  why prod applies the IRM root first.
 - **What a developer without a credential gets from `make up`:** a working local stack, and a warning:
   Alloy does not start without `GRAFANA_SOLO7LOCAL_*` write credentials (`GRAFANA_SOLO7LOCAL_TELEMETRY_TOKEN`, decision 4, distinct from the Terraform credentials), the
   server's OTLP export has no destination, and every target that reads Grafana Cloud exits `3` (the existing
@@ -488,7 +501,8 @@ deploy/terraform/grafana/
   modules/stack/            # rules, contact points, policy, mute timings, dashboard; variables below
   stacks/solo7local/        # main.tf, backend.tf (key grafana/solo7local.tfstate), terraform.tfvars
   stacks/solo7dev/
-  stacks/solo7prod/         # also configures the IRM provider and calls modules/irm
+  stacks/solo7prod/         # no IRM resources, no IRM token; refers to the contact point irm-prod by name
+  stacks/solo7prod-irm/     # the IRM provider and token only: integration, schedule, chain, contact point irm-prod
   modules/irm/
   tests/                    # terraform test files, mock provider
   .terraform-version
@@ -567,7 +581,8 @@ step 3 below) must then see them (the hash gauge at `1` after the fixed recovery
 
 | Series | Used by | Check after the rebuild (each always-present row returns ≥ 1 series) |
 |---|---|---|
-| `up` for `job="andara-server"` and `job="andara-projector-state"` | `AndaraServerUnavailable`, `StateProjectorDown` | `up{job="andara-server", namespace="andara-dev"}` |
+| `up` for `job="andara-server"` | `AndaraServerUnavailable` | `up{job="andara-server", namespace="andara-dev"}` |
+| `up` for `job="andara-projector-state"` | `StateProjectorDown` | `up{job="andara-projector-state", namespace="andara-dev"}` (a separate query: the server's series must not stand in for it) |
 | `kube_pod_container_status_last_terminated_exitcode` ‡ | `RecoveryStateMismatch` (cluster clause) | `…{namespace="andara-dev", container="server"}` |
 | `kube_pod_container_status_ready` | same | `…{namespace="andara-dev", container="server"}` |
 | `kube_pod_container_status_restarts_total` | `AndaraServerCrashLooping` | `…{namespace="andara-dev", container="server"}` |
