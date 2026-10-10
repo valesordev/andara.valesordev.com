@@ -310,11 +310,10 @@ cannot touch `dev`. `values/local.yaml` gains the shared Kafka and object store 
 had stays. **CI also needs a broker for the work compose's `min` and `full` profiles carried there**, and today two
 workflows depend on compose: `stack.yaml` (the four `stack-*` drills, the M2 gate, the observability checks, which
 `make up` and `docker compose` drive) and `recovery-timing.yaml` (`make up PROFILE=min`, then `make recovery-timing`
-against `localhost:9092`, creating `andara.test.rec.*` topics). Both are retired and replaced in story 6 and 7b: a new
+against `localhost:9092`, creating `andara.test.rec.*` topics). Both are retired and replaced in stories 6b, 6d, 7a and 7b: a new
 `drills` job in `kind.yaml` creates a throwaway, **unshared, single-broker Kafka** (Strimzi, RF 1, one replica) in the CI
 cluster for the run, with a CI principal that may create any topic because it is destroyed afterwards; the `stack-*`
-drills run against `andara-ci` there, and `recovery-timing` runs in that job with `ANDARA_KAFKA_BROKERS` pointed at the
-broker (a port-forward) and the test's own topic names, so the `it-` prefix rule does not apply to it. The `andara-it`
+drills run against `andara-ci` there, and `recovery-timing` runs against that broker from an in-cluster Job (below) with the test's own topic names, so the `it-` prefix rule does not apply to it. The `andara-it`
 principal below is for the box only. A manifest guard in `make check` fails if the CI Kafka manifest (the principal that may
 create any topic) is referenced by anything that applies to the box.
 
@@ -342,11 +341,14 @@ by `ANDARA_SCHEMA_REGISTRY_URL`]**), subjects carry the environment prefix with 
 `recovery-timing-previous` (and `startup-budget-check`, `AW-INF-011`) keep their triggers and names in a `recovery-timing`
 workflow that stays separate from `kind.yaml`, so the previous-run lookup is not re-keyed; only its set-up changes, from
 `make up PROFILE=min` to the `drills` Kafka, run from an in-cluster Job rather than a port-forward so the measured
-recovery does not include forwarding latency. Story 6d. Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
-a port-forward, with a principal `andara-it` that may create and delete only `it-<random>.`-prefixed topics and
-buckets, so the tests never touch `local.` or `dev.` data; story 6 owns it. The compose `min` profile is retired until
-`ADR-0012` decision 14's trigger fires; **its baseline** (`make test-integration`'s wall time on compose `min`) **is
-recorded by story 6 before compose is removed**, because the trigger compares against it.
+recovery does not include forwarding latency. Story 6d.
+
+*On the box.* Story 6a owns the `values/ci.yaml` overlay. `make test-integration` is backed by the shared Kafka and
+object store through a port-forward, with a principal `andara-it` that may create and delete only
+`it-<random>.`-prefixed topics and buckets, so the tests never touch `local.` or `dev.` data; story 6a owns it. The
+compose `min` profile is retired until `ADR-0012` decision 14's trigger fires; **its baseline**
+(`make test-integration`'s wall time on compose `min`) **is recorded by story 6a before compose is removed**, because the
+trigger compares against it.
 
 **A new machine** needs Docker, about 12 Gi of free memory, and `make bootstrap` (which now installs pinned `kind`
 and `kubectl` and the other tools). `make bootstrap && make up && make check` remains the onboarding path;
@@ -412,7 +414,7 @@ test exercises it, at the cost of the PROXY protocol on the entrypoint.
 | Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the `kind` docker network's gateway, which `platform-up` reads with `docker network inspect kind` (it differs per machine; it is never a committed constant). The admin allowlist (`AW-INF-006`) then sees the real client, so `admin.allowedCIDRs` changes with it: `local` and `dev` carry `127.0.0.0/8` (a CLI on the workstation resolves the name to loopback and arrives as `127.0.0.1`), `dev` keeps `100.64.0.0/10` and adds the tailnet IPv6 range if used, and `172.16.0.0/12` stays only in `local` and CI for the `--resolve` path that bypasses `nginx` (it is no longer needed to admit docker-proxy's masked address on `dev`; remove it there, the 2026-10-02 403 of #305 was that masking). **Residual risk, stated:** any local process or container that can reach the published port arrives as the trusted gateway and can forge a PROXY header (claiming a tailnet or private address too), so the allowlist is a network-trust control, not authentication. **[verify first, before stories 2 and 6 start]** that Traefik accepts a connection with no PROXY header from a trusted peer (the `--resolve` and CI paths depend on it); if it requires the header, the fallback is: CI keeps trust off and the PROXY test runs against a separate test entrypoint, and `local` is reached through a local `nginx` instead of `--resolve`. CI's Traefik runs with trust on, with its own computed gateway; a CI test sends PROXY-protocol requests with forged client addresses and asserts a `403` for an address outside the list and a `200` for one inside. Owned by story 2, which lands the trust and adds `127.0.0.0/8` in one change; **removing `172.16.0.0/12` from `dev` is story 5's, after the CI PROXY test and the rebuild's resolution check pass**, so the #305 403 cannot return in between. `dev` reached by `--resolve` on the box is unsupported after the change (it arrives masked as the gateway); use the public name. |
 | What the other repo does | DNS for the two names to the workstation; `nginx` `stream` blocks that `ssl_preread` the SNI and forward to `127.0.0.1:8443` with `proxy_protocol on`, with `proxy_timeout` long (12 hours; the default is 10 minutes of silence in both directions, which would cut a quiet `Subscribe` that the server holds open for hours) and `proxy_connect_timeout` 10 s; port 80 handled by an `http` redirect to HTTPS only (the `web` entrypoint trusts no PROXY header, so `proxy_pass` to `:8080` is not offered). It does not manage certificates for these names. |
 | Zone and DNS scope | **[verify]** that the Cloudflare DNS-01 token covers the zone for `*.andara.valesordev.com`; the existing comment says only "under the box's solo7.valesordev.com zone". `dev`'s reachability (tailnet only or not) is decided in the other repo, with its DNS. |
-| Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443: `scripts/helm_install.sh`, `scripts/env_recover.py`, `scripts/stream_soak.sh` and `internal/smoke/soak_test.go` take `ANDARA_EDGE_PORT`, default 8443 (a direct dial to the box cluster); `values/ci.yaml` and the kind workflow set it to 443, because CI's cluster still publishes 80 and 443, and the CI kind job passes only with it set to 443 (an acceptance criterion of story 6); story 6 owns them, with the values files' hostnames and the comments in `values/dev.yaml` and `values/local.yaml` that explain the docker-bridge source address, `deploy/helm/andara/values.yaml:109`, `deploy/helm/andara/README.md` and the Builder's Guide (`docs/builders/02`, `03`, `04`, `09`), which architecture amends in the same change. A soak through `nginx` of more than 10 minutes is a story 6 acceptance criterion. |
+| Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443: `scripts/helm_install.sh`, `scripts/env_recover.py`, `scripts/stream_soak.sh` and `internal/smoke/soak_test.go` take `ANDARA_EDGE_PORT`, default 8443 (a direct dial to the box cluster); `values/ci.yaml` and the kind workflow set it to 443, because CI's cluster still publishes 80 and 443, and the CI kind job passes only with it set to 443 (an acceptance criterion of story 6a); story 6a owns them, with the values files' hostnames and the comments in `values/dev.yaml` and `values/local.yaml` that explain the docker-bridge source address, `deploy/helm/andara/values.yaml:109`, `deploy/helm/andara/README.md` and the Builder's Guide (`docs/builders/02`, `03`, `04`, `09`), which architecture amends in the same change. A soak through `nginx` of more than 10 minutes is a story 6a acceptance criterion. |
 
 *Rebuilds and Let's Encrypt.* Rebuilding the cluster is routine, and Let's Encrypt allows five duplicate certificates for the
 same names per week, so `make cluster-rebuild` exports to `.local/tls/` (gitignored, mode 0600) the issued `dev` certificate Secret **and
@@ -429,7 +431,7 @@ restored: **the first rebuild after the hostname change issues once for `dev.and
 no-op that time), and the export runs again after it.
 
 *Port collision.* The compose `stack-*` flow already uses host 8080 and 8443 (`ANDARA_HTTP_PORT`, `ANDARA_GRPC_PORT`).
-Stories 6 and 7b retire it; until they land, `make cluster-up` checks that 8080 and 8443 are free and refuses, naming the
+Stories 6a and 7b retire it; until they land, `make cluster-up` checks that 8080 and 8443 are free and refuses, naming the
 `ANDARA_*_PORT` variable that holds them, rather than failing inside Docker.
 
 *Needs the other repo, which is Brian's:* the DNS records and the `nginx` `stream` configuration above. Until they exist, a
@@ -482,7 +484,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
   empty credential Secret, they ship nothing, and the target prints that on its last line.
 - **Is local's broker still Redpanda?** No: it is the shared Strimzi Kafka. ADR-0002 §7's "Redpanda locally" no longer
   describes the cluster environments (it stays true of nothing once compose goes); ADR-0002 gets a dated annotation, and
-  `topics.yaml`'s `broker.local` Redpanda block is removed by story 6.
+  `topics.yaml`'s `broker.local` Redpanda block is removed by story 6a.
 
 ## Consequences
 
