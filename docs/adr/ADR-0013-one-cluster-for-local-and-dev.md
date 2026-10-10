@@ -387,6 +387,8 @@ The rebuild is one planned outage and it discards the whole box cluster.
 6. `ADR-0012` decision 7 step 4(ii) onward runs as written (ruler deletion at the point of no return, then the
    first series, `observe-check`, `required_environments`).
 7. `AW-INF-034`'s drill is rerun on the rebuilt `dev`.
+8. After the resolution check passes, the change removing `172.16.0.0/12` from `values/dev.yaml` merges to `main` and
+   `make promote` runs a second time (Amendments, 7).
 
 **Discarded:** `dev`'s World, its Kafka log, snapshots, Accounts, the old cluster and everything else on it
 (the other projects' workloads, which are Brian's to reinstall elsewhere), Argo CD's state, Image Updater.
@@ -564,9 +566,11 @@ rewriting story bodies) are PM's and are in the comment on `AW-INF-050`, not her
 6. **`kafka.topic_prefix` has no trailing dot, and the story-text literal `dev.` is reversed.** The value is `dev` or `local`
    (it must match `[a-z0-9]+`, no hyphen) or empty; the topic is `<prefix>.<name>` when the prefix is set and `<name>` when it
    is empty. Decision 4's `dev.` and `local.` are the prefix plus the separator. `AW-SRV-058` follows this.
-7. **Removing `172.16.0.0/12` from `dev`** is the last step of the rebuild run (`066`), after the resolution check passes;
-   `059` does not remove it. Decision 11 now says story 9 (`066`); `059`'s AC for the removal moves to `066`, with a rollback
-   step for the #305 403 returning.
+7. **Removing `172.16.0.0/12` from `dev`** is a second promotion at the end of the rebuild run (`066`): the rebuild
+   uses the `dev` tag made before it, whose `values/dev.yaml` still carries the CIDR (so the recreated deployment cannot
+   hit the #305 403 before the resolution check). After the check passes, a change that removes it merges to `main` and
+   `make promote` runs again. `059` does not remove it. Decision 11 now says story 9 (`066`); `059`'s AC for the removal
+   moves to `066`, with a rollback step (promote the previous `dev-<n>`) for the 403 returning.
 8. **`internal/smoke/soak_test.go`** is implementation lane. `AW-SRV-058` adds `ANDARA_EDGE_PORT` as an **override** and keeps
    today's 443 default, so `kind.yaml` (which watches that file) still passes against a cluster on 443; `AW-INF-060` flips the
    default to 8443 and sets 443 in CI's workflow.
