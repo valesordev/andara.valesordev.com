@@ -254,8 +254,10 @@ needed for locking and is kept so that the version already chosen does not move.
     `drift-prod-irm`) run `plan -lock=false`, since a plan would otherwise take the lock object, which needs a
     write; the shared concurrency group serialises them against `apply-prod`;
   - Brian's own Google identity, the project's owner, which can read every prefix (the dev box's day-to-day
-    credential, `gcloud auth application-default login`, is conditioned to `solo7dev`'s prefix and writes nothing in `solo7` or `solo7-irm`; reading a prod plan needs the
-    plan key and no bucket role, decision 5).
+    credential is not that identity: it is a second, non-owner Google identity, or impersonation of
+    `tf-solo7dev-apply`, conditioned to `solo7dev`'s prefix and writing nothing in `solo7` or `solo7-irm`, signed in
+    with `gcloud auth application-default login`; reading a prod plan needs the plan key and no bucket role,
+    decision 5).
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
   `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`,
   reference no `SOLO7_IRM` service account, no `TFSTATE_PRODPLAN_SA`, no IRM token and no `TF_PLAN_KEY_PROD`.
@@ -384,7 +386,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   `apply`, `drift`, and for prod `plan-prod`, `apply-prod`, `drift-prod-irm`), triggered by
   `pull_request_target` on changes under `deploy/terraform/**`, `alerts.yaml` and the dashboard source;
   same-repository pull requests only. It is a **matrix of two jobs, one per stack**, each with only that stack's
-  `READ_TOKEN`, plan role and webhook. It runs the **base branch's** scripts and reads the pull request's
+  `READ_TOKEN` and `FLEET_READ_TOKEN`, plan role and webhook. It runs the **base branch's** scripts and reads the pull request's
   Terraform as **data**. Because `terraform plan` executes provider code and evaluates every HCL function, a
   branch could otherwise read the runner's environment into a plan output, so a base-branch script
   (`scripts/tf_policy.py`, `AW-INF-046`) first checks the pull request's `deploy/terraform/**` against an
@@ -544,11 +546,13 @@ can hide a real page.
    from the same rebuild (step 4(iii)). `solo7dev` has no sender before then, so un-pausing earlier evaluates
    nothing; the un-pause is merged inside step 4, between (ii) and (iii). `local` alerts route to `blackhole`
    (decision 10). 047's own criterion for `local` is **defined**; the firing assertion is step 4(vi).
-4. `dev`, as one ordered run whose outage starts at (ii): (i-b) the stamp is ready, before anything is deleted:
-   `AW-INF-051`'s Fleet collectors and pipelines are applied to `solo7dev` (decision 15; `terraform plan` clean
-   proves they are defined, and the first registered collector in Fleet's inventory proves one pulled them
-   **[verify in 051: whether `gcx` can read the inventory]**), or its static fallback is in the cluster's
-   values; without it every series arrives as `environment="unknown"` and (iv) fails; (i) the precondition, checked by the script, which
+4. `dev`, as one ordered run whose outage starts at (ii): (i-b), which precedes (i) and runs before anything is deleted, the stamp is ready:
+   `AW-INF-051`'s Fleet collectors and pipelines are applied to `solo7dev` (decision 15), `terraform plan` clean
+   proving they are **defined** only (no collector can have pulled them before the rebuild installs the
+   chart), or its static fallback is in the cluster's values; without it every series arrives as
+   `environment="unknown"`. That a collector **pulled** them is checked right after (iii), before (iv): the
+   first registered collector in Fleet's inventory **[verify in 051: whether `gcx` can read the inventory]**,
+   and then (iv)'s `unknown` guard; (i) the precondition, checked by the script, which
    refuses to continue if unmet: no `severity = page` alert for `namespace="andara-dev"` is pending or firing in
    `solo7`'s ruler (`gcx alert instances list --datasource grafanacloud-prom`). A lower-severity alert that is
    firing (today `ContentLoadFailing`, a ticket) does not block: the rebuild discards that World, and the
@@ -928,7 +932,7 @@ this decision adds what makes it checkable and what Fleet adds.
   `environment="local"` statically (an override, not the default), so its series are `local` and blackholed.
 - **Credentials** (decision 4): `GRAFANA_<STACK>_FLEET_READ_TOKEN` and `GRAFANA_<STACK>_FLEET_APPLY_TOKEN`
   (Cloud access policies, `fleet-management:read` and `fleet-management:read fleet-management:write`, realm one
-  stack), the read one for the `plan` and `drift` jobs and the apply one for the `apply` jobs only, so a
+  stack), the read one for the `plan`, `drift` and `plan-prod` jobs and the apply one for the `apply` jobs only, so a
   pull-request job never holds a Fleet write credential. The endpoints (`fleet_url`, `fleet_user`) are committed
   in `terraform.tfvars` (decision 9).
 
