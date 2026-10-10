@@ -870,3 +870,18 @@ its OIDC token, with no stored key. The Terraform state bucket's six service acc
 
 **State bucket** — The private GCS bucket `andara-tfstate` holding each Terraform root's state under
 `grafana/<root>/`. Created by hand once (`make tf-bootstrap-gcp`), never by Terraform (ADR-0012 §3).
+
+**`andara-shared`** — The namespace holding the services both non-production environments use: the Kafka cluster
+`andara-log`, the object store, and later Redis and Postgres. Owned by the platform, not by `andara-local` or
+`andara-dev` (ADR-0013 §3).
+
+**Platform** — What the cluster needs before an environment can run: Traefik,
+cert-manager and its issuers, Strimzi, Argo CD, the collectors; installed by `make platform-up` from pinned
+versions (ADR-0013 §2).
+
+**Promotion** — Moving `andara-dev` to a new build: one signed commit on `release/dev` that sets the image tag
+`sha-<12>`, with an annotated signed Git tag `dev` (and a history tag `dev-<n>`) on it, which Argo CD follows
+(ADR-0013 §7).
+
+**`dev` tag** — The annotated, signed Git tag that Argo CD's `andara-dev` follows; it points at the latest promotion
+commit. Each promotion also leaves an immutable history tag `dev-<n>`, which a rollback names (ADR-0013 §7).

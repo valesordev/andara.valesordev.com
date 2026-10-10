@@ -196,3 +196,8 @@ which is correct precisely because apply is a pure function.
 - Recovery time from snapshot plus log tail exceeds the RTO target.
 - `andara.state.v1` compaction cannot keep up with state churn, making a "compacted" topic effectively
   a second full history.
+
+> **Annotation, 2026-10-10 — not a change to this decision.** §7's "Redpanda locally" described the compose stack. With
+> compose retired (ADR-0012 decision 14) the local environment is the `andara-local` namespace on the kind cluster and
+> its Kafka is the shared Strimzi Kafka in `andara-shared` (ADR-0013). The decisions of this ADR (Kafka as the log, snapshots
+> in object storage, 64 partitions) are unchanged.

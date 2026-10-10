@@ -81,7 +81,7 @@ authorizes each request against ACLs, denying by default.
 
 **Bad:**
 - The payload isn't encrypted. That's acceptable only while every client and broker share a
-  namespace, which is true today (`AW-INF-014`: one cluster per `andara-<env>` namespace).
+  namespace, which is true today (`AW-INF-014`: one cluster per `andara-<env>` namespace; see the ADR-0013 amendment below).
 - Two brokers means two ways to create a user: Strimzi's operator and `rpk`.
 
 **Costs us:** a password Secret per principal per environment, and a local stack where every
@@ -200,7 +200,7 @@ hold to. TLS waits for a reason (*Revisit when*).
   ACLs before the authorizer, which Kafka refuses, then turned authorization on last, which would
   have denied every client until reconciliation.)* The compose Redpanda starts empty, with SASL
   and ACLs on from its first boot, so it has no migration.
-- **Traffic is still unencrypted inside the namespace.** The NetworkPolicy stays as a second,
+- **Traffic is still unencrypted inside the namespace** (ADR-0013: now inside one cluster on one host). The NetworkPolicy stays as a second,
   independent barrier. Anyone who can capture the namespace's pod traffic can read the World's
   records. They can't write them without a password, which is the property this ADR is for.
 - **The audit trail's integrity improves, but it isn't complete.** Only `andara-server` and the
@@ -210,9 +210,18 @@ hold to. TLS waits for a reason (*Revisit when*).
 - **Forecloses:** a consumer sharing another workload's credentials to save a Secret. Every new
   Kafka client arrives with a principal declared in `topics.yaml`, or it can't connect.
 
+> **Amended by ADR-0013, 2026-10-10 — the SASL/SCRAM decision stands.** Local and dev now share one Strimzi
+> cluster in the namespace `andara-shared`, so the premises "each environment has its own cluster" and "every client
+> and broker share a namespace" no longer hold. Principals gain an environment (`andara-server-dev`,
+> `andara-server-local`, …) with ACLs scoped to that environment's topic and group prefix; the listener's
+> NetworkPolicy admits the environments' namespaces by label; the encryption sentence reads "one cluster on one
+> host"; and the first "Revisit when" trigger reads "leaves the cluster or the host". Nothing here was implemented
+> yet, so the amendment costs no migration. Recorded as an amendment, not a supersession, because the mechanism is
+> unchanged.
+
 ## Revisit when
 
-- **Any Kafka client or broker leaves the namespace:** `prod` on a separate cluster, a client on
+- **Any Kafka client or broker leaves the namespace** (ADR-0013 reads this as leaving the cluster or the host)**:** `prod` on a separate cluster, a client on
   another host, cross-cluster replication, or a managed Kafka. That's the signal for TLS on the
   listener. SCRAM over TLS (Option D) is the smallest step. mTLS (Option C) is the step if we
   also want to drop passwords.
