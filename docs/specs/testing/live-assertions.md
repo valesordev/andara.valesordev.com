@@ -7,11 +7,13 @@ SPDX-License-Identifier: CC-BY-SA-4.0
 
 > **Status: rule, adopted 2026-09-22.** Written after the third instance of one mistake. It is
 > binding on new tests from adoption, and `docs/specs/testing/README.md` tracks the audit of
-> existing ones.
+> existing ones. Amended 2026-10-10 for Grafana Cloud as the backend (ADR-0012): the section
+> "Grafana Cloud subjects" and the deadlines below.
 
 A **live assertion** is an assertion whose subject is produced by machinery the test does not
 drive directly: a Prometheus series, a registry counter, a projection, an Event on a stream, a
-file in an object store, anything downstream of a tick. The test causes something, and then some
+file in an object store, a Grafana alert instance, a series that has reached Grafana Cloud,
+anything downstream of a tick. The test causes something, and then some
 *other* goroutine, tick, scrape or broker makes the consequence visible.
 
 Every flaky test this repository has had has been a live assertion that treated "the cause has
@@ -102,6 +104,28 @@ evidence of absence, not absence of the race.
 
 ---
 
+## Grafana Cloud subjects
+
+`ADR-0012` moved the observable backend from a local Prometheus to Grafana Cloud, read through
+`gcx` (decision 2). The four rules above bind unchanged. What changes is what the subjects are,
+and three consequences of it, none of which is a new rule.
+
+- **A rule that is *defined* is not a rule that is *live*** (rule 2). `gcx alert rules list` showing
+  the rule proves it exists. A test about its behaviour waits on the rule's `lastEvaluation`
+  moving past the cause, or on the instance itself, not on the rule being listed.
+- **An alert instance is read by its `state` and its labels.** `Alerting` is firing; `Normal` and
+  `Normal (NoData)` are not. Polling for `Normal` is rule 3's case: it also holds before the rule
+  has evaluated at all, so the window needs an anchor (below).
+- **An empty result is not a pass** (rule 3). `gcx` prints `null` for an empty list, the wrapper
+  normalises it to `[]`, and `[]` means "nothing matched", which is also what a wrong stack, a wrong
+  `environment` or a dead pipeline returns. An absence assertion therefore first establishes a
+  positive anchor that is causally after the window: an always-present series for the same
+  `environment` and `namespace` (the keep-list's `up{job="andara-server"}`), or the rule's own
+  `lastEvaluation` after the cause. Only then is an empty result evidence.
+- **A `--context` mistake reads the wrong stack and looks green.** The wrapper always passes the
+  context, and the routing test (ADR-0012 decision 2) proves it; an assertion helper does not call
+  `gcx` any other way.
+
 ## Helpers
 
 **One helper per language, reused.** A polling helper reinvented per test is four subtly different
@@ -118,7 +142,9 @@ func eventually(t *testing.T, d time.Duration, what string, want func() bool)
 ```
 
 Existing instances to converge on rather than duplicate: `waitFor` in `server/egress`, and the
-bounded `seq 1 30` retry loop in `scripts/stack_smoke.sh` for shell.
+bounded `seq 1 30` retry loop in `scripts/stack_smoke.sh` for shell. For `gcx`-backed assertions
+the one helper is the wrapper `scripts/gcx.py` (`AW-INF-046`); a script does not poll `gcx` with
+its own loop.
 
 A helper's doc comment states **what it waits for and what it does not**. `forgotten` in
 `server/egress` is the worked example: it stopped claiming to cover teardown end to end, named the
@@ -130,6 +156,14 @@ Generous, because the cost of a long deadline is paid only when the test is fail
 the cost of a short one is paid at random forever. 5–10 s for an in-process signal, 90 s for
 anything behind a Prometheus scrape (the default interval is 15 s, and the assertion needs a
 scrape that starts *after* the cause).
+
+Behind Grafana Cloud the delays add, and each is named so a deadline can be computed rather than
+guessed: the pipeline's scrape interval, plus ingestion into the stack, plus (for rule state) one
+or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A
+series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to change
+through `gcx alert instances list`: `2 × evaluation interval + for + 60 s`. These are starting
+values; the first drill that measures them (`AW-INF-046`/`047`) records the observed figures here.
+Poll every 5 s, not faster: `gcx` is a process per call.
 
 ## Enforcement
 
