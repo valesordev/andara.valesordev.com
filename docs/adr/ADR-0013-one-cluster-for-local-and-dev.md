@@ -427,7 +427,7 @@ test exercises it, at the cost of the PROXY protocol on the entrypoint.
 | Ports | the kind control-plane node's 80 and 443 are published as `127.0.0.1:8080` and `127.0.0.1:8443` (`deploy/kind/cluster.yaml`); bound to loopback because the proxy runs on the same host. Traefik's `hostPort` 80/443 inside the node is unchanged. Ports 80 and 443 on the host belong to `nginx`. |
 | Hostnames | `local.andara.valesordev.com` (replaces `andara.local` and its `/etc/hosts` line) and `dev.andara.valesordev.com` (replaces `andara-dev.solo7.valesordev.com`); set in `values/local.yaml` and `values/dev.yaml`. `prod`'s `andara.solo7.valesordev.com` and CI's `andara.local` are unchanged. |
 | TLS | `nginx` does not terminate. `dev`: the `letsencrypt` ClusterIssuer (DNS-01 through Cloudflare, unaffected by ports). `local`: the private CA `andara-ca`, with its CA written to `.local/tls/cluster/local/ca.pem` as today (the browser trusts it; the issuer needs no internet). |
-| Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the `kind` docker network's gateway, which `platform-up` reads with `docker network inspect kind` (it differs per machine; it is never a committed constant). The admin allowlist (`AW-INF-006`) then sees the real client, so `admin.allowedCIDRs` changes with it: `local` and `dev` carry `127.0.0.0/8` (a CLI on the workstation resolves the name to loopback and arrives as `127.0.0.1`), `dev` keeps `100.64.0.0/10` and adds the tailnet IPv6 range if used, and `172.16.0.0/12` stays only in `local` and CI for the `--resolve` path that bypasses `nginx` (it is no longer needed to admit docker-proxy's masked address on `dev`; remove it there, the 2026-10-02 403 of #305 was that masking). **Residual risk, stated:** any local process or container that can reach the published port arrives as the trusted gateway and can forge a PROXY header (claiming a tailnet or private address too), so the allowlist is a network-trust control, not authentication. **[verify first, before stories 2 and 6a start]** that Traefik accepts a connection with no PROXY header from a trusted peer (the `--resolve` and CI paths depend on it); if it requires the header, the fallback is: CI keeps trust off and the PROXY test runs against a separate test entrypoint, and `local` is reached through a local `nginx` instead of `--resolve`. CI's Traefik runs with trust on, with its own computed gateway; a CI test sends PROXY-protocol requests with forged client addresses and asserts a `403` for an address outside the list and a `200` for one inside. Owned by story 2, which lands the trust and adds `127.0.0.0/8` in one change; **removing `172.16.0.0/12` from `dev` is story 5's, after the CI PROXY test and the rebuild's resolution check pass**, so the #305 403 cannot return in between. `dev` reached by `--resolve` on the box is unsupported after the change (it arrives masked as the gateway); use the public name. |
+| Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the `kind` docker network's gateway, which `platform-up` reads with `docker network inspect kind` (it differs per machine; it is never a committed constant). The admin allowlist (`AW-INF-006`) then sees the real client, so `admin.allowedCIDRs` changes with it: `local` and `dev` carry `127.0.0.0/8` (a CLI on the workstation resolves the name to loopback and arrives as `127.0.0.1`), `dev` keeps `100.64.0.0/10` and adds the tailnet IPv6 range if used, and `172.16.0.0/12` stays only in `local` and CI for the `--resolve` path that bypasses `nginx` (it is no longer needed to admit docker-proxy's masked address on `dev`; remove it there, the 2026-10-02 403 of #305 was that masking). **Residual risk, stated:** any local process or container that can reach the published port arrives as the trusted gateway and can forge a PROXY header (claiming a tailnet or private address too), so the allowlist is a network-trust control, not authentication. **[verify first, before stories 2 and 6a start]** that Traefik accepts a connection with no PROXY header from a trusted peer (the `--resolve` and CI paths depend on it); if it requires the header, the fallback is: CI keeps trust off and the PROXY test runs against a separate test entrypoint, and `local` is reached through a local `nginx` instead of `--resolve`. CI's Traefik runs with trust on, with its own computed gateway; a CI test sends PROXY-protocol requests with forged client addresses and asserts a `403` for an address outside the list and a `200` for one inside. Owned by story 2, which lands the trust and adds `127.0.0.0/8` in one change; **removing `172.16.0.0/12` from `dev` is the rebuild run's (story 9), as its last step after the CI PROXY test and the resolution check pass**, so the #305 403 cannot return in between. `dev` reached by `--resolve` on the box is unsupported after the change (it arrives masked as the gateway); use the public name. |
 | What the other repo does | DNS for the two names to the workstation; `nginx` `stream` blocks that `ssl_preread` the SNI and forward to `127.0.0.1:8443` with `proxy_protocol on`, with `proxy_timeout` long (12 hours; the default is 10 minutes of silence in both directions, which would cut a quiet `Subscribe` that the server holds open for hours) and `proxy_connect_timeout` 10 s; port 80 handled by an `http` redirect to HTTPS only (the `web` entrypoint trusts no PROXY header, so `proxy_pass` to `:8080` is not offered). It does not manage certificates for these names. |
 | Zone and DNS scope | **[verify]** that the Cloudflare DNS-01 token covers the zone for `*.andara.valesordev.com`; the existing comment says only "under the box's solo7.valesordev.com zone". `dev`'s reachability (tailnet only or not) is decided in the other repo, with its DNS. |
 | Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443: `scripts/helm_install.sh`, `scripts/env_recover.py`, `scripts/stream_soak.sh` and `internal/smoke/soak_test.go` take `ANDARA_EDGE_PORT`, default 8443 (a direct dial to the box cluster); `values/ci.yaml` and the kind workflow set it to 443, because CI's cluster still publishes 80 and 443, and the CI kind job passes only with it set to 443 (an acceptance criterion of story 6a); story 6a owns them, with the values files' hostnames and the comments in `values/dev.yaml` and `values/local.yaml` that explain the docker-bridge source address, `deploy/helm/andara/values.yaml:109`, `deploy/helm/andara/README.md` and the Builder's Guide (`docs/builders/02`, `03`, `04`, `09`), which architecture amends in the same change. A soak through `nginx` of more than 10 minutes is a story 6a acceptance criterion. |
@@ -478,7 +478,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
 | 10 | Compose retirement, only after 6b, 6c, 7a and 7b: delete `deploy/compose`, the compose targets and drivers, `stack.yaml` and the old `recovery-timing` set-up; `make up` and `make down` take their kind meaning | S |
 | I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, the integration tests' consumer-group IDs renamed with the `it-` prefix, tests | S |
-| I2 | **implementation:** not a new story: the SASL client, the single constructor and its test sites already belong to `AW-SRV-044`, which gains the `andara-it` credentials and the S3 test pair (Amendments) | - |
+| I2 | **implementation:** not a new story: the SASL client, the single constructor and its test sites are `AW-SRV-044`'s, which gains the `andara-it` credentials and the S3 test pair (Amendments, 13) | - |
 | later | Redis and Postgres isolation and deployment, when `AW-SRV-017` / `AW-SRV-018` have binaries | S each |
 
 ## Agreement with `ADR-0012`
@@ -548,39 +548,42 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 ### 2026-10-10, contract review of the follow-on stories
 
 PM wrote the stories of decision 12 (`AW-INF-052` to `067`, `AW-SRV-058`, `059`) and listed gaps. These are clarifications of
-decisions already accepted, not new decisions; where they differ from the text above, they win.
+decisions already accepted; where they differ from the text above, they win. Story-level operations (closing, re-linking,
+rewriting story bodies) are PM's and are in the comment on `AW-INF-050`, not here.
 
 1. **The kind node image** is pinned once, in `deploy/platform/versions.yaml`; `cluster-up` passes it to `kind create cluster
-   --image`, and `deploy/kind/cluster.yaml` carries no `image:`.
-2. **`cluster-rebuild` is composed incrementally.** `AW-INF-052` ships it as destroy and create; each later story (platform
-   `054`, shared Kafka `055`, registry `057`, object store `058`, collectors `065`) appends its own step in its own change,
-   and `066` runs the whole chain.
+   --image`, and `deploy/kind/cluster.yaml` carries no `image:`. Sequencing: `AW-INF-052` lands first and creates
+   `versions.yaml` with only the node-image key; `054` extends it.
+2. **`cluster-rebuild` is composed incrementally.** `AW-INF-052` ships it as destroy and create; `platform-up` (`054`),
+   `shared-up` (`055`, `058`, `057` each add to it) and the collectors' step (`065`) are appended by the story that
+   creates them, and `066` runs the whole chain.
 3. **`make shared-up`** is created by whichever of `055` and `058` lands first, and the other appends to it.
 4. **`KafkaUser` quotas** are keyed by principal, so they bind only once the broker authenticates (`056`). Until then the
    bounded `local.` retention (`055`) is the only bound, and `055` says so.
 5. **The staging ClusterIssuer** `letsencrypt-staging` is created by `platform-up` (`054`) beside `letsencrypt`.
-6. **`kafka.topic_prefix` has no trailing dot.** The value is `dev` or `local` (it must match `[a-z0-9-]+`) or empty; the
-   topic is `<prefix>.<name>` when the prefix is set and `<name>` when it is empty. Decision 4's `dev.` and `local.` are the
-   prefix plus the separator.
+6. **`kafka.topic_prefix` has no trailing dot, and the story-text literal `dev.` is reversed.** The value is `dev` or `local`
+   (it must match `[a-z0-9]+`, no hyphen) or empty; the topic is `<prefix>.<name>` when the prefix is set and `<name>` when it
+   is empty. Decision 4's `dev.` and `local.` are the prefix plus the separator. `AW-SRV-058` follows this.
 7. **Removing `172.16.0.0/12` from `dev`** is the last step of the rebuild run (`066`), after the resolution check passes;
-   `059` does not remove it. (Decision 11 said story 5; `059` blocks `066`, so the order is a cycle otherwise.)
-8. **`internal/smoke/soak_test.go`'s `ANDARA_EDGE_PORT`** is implementation lane. It joins `AW-SRV-058` (a second line in
-   its scope, because it is the same kind of change: a test constant that follows the new cluster).
+   `059` does not remove it. Decision 11 now says story 9 (`066`); `059`'s AC for the removal moves to `066`, with a rollback
+   step for the #305 403 returning.
+8. **`internal/smoke/soak_test.go`** is implementation lane. `AW-SRV-058` adds `ANDARA_EDGE_PORT` as an **override** and keeps
+   today's 443 default, so `kind.yaml` (which watches that file) still passes against a cluster on 443; `AW-INF-060` flips the
+   default to 8443 and sets 443 in CI's workflow.
 9. **The Builder's Guide** (`docs/builders/02`, `03`, `04`, `09`) is architecture's; architecture amends the hostnames and
    the port in the change that follows `AW-INF-060` merging, not before (the old names are true until the cluster exists).
-10. **`make kafka-rehearsal`** is built by `AW-INF-040`, which comes first; `063` re-points it at `andara-shared`, adds the lock
-    and the refusal, and depends on `040`.
+10. **`make kafka-rehearsal`** is built by `AW-INF-040`, which comes first; `063` depends on `040` and does not build it. `063`
+    re-points it at `andara-shared`, adds the lock and the refusal.
 11. **The `it-` group-ID grep** in `make check` is added by `AW-INF-060` (SRE's Makefile) after `AW-SRV-058` has renamed the
-    IDs, so the grep never fails on a branch that has not been renamed yet.
+    IDs, so the grep never fails on a branch that has not been renamed yet; `058` does the rename only.
 12. **ADR-0011's compose Redpanda**: the clause "including the compose Redpanda" lapses with compose; SASL applies to the
-    Strimzi broker in `andara-shared` and to the CI `drills` job's throwaway Kafka. ADR-0011's annotation says so.
-13. **Overlaps with existing stories.** `AW-SRV-059` duplicates `AW-SRV-044` (one constructor with SASL, test files
-    included): 059 is closed, and 044 gains the `andara-it` credentials (`kafkaclient.Principals` already admits a
-    `-dev`-style suffix) and the S3 test pair. `AW-INF-030`
-    and `AW-INF-031` (principals, ACLs and SASL on compose Redpanda and `dev`) are superseded by `055` and `056`: 056 carries
-    their non-compose scope (the `principals:` section of `topics.yaml`, `topics-apply`/`topics-diff` ACL drift, the chart's
-    `secrets.kafkaCreds`, the `rpk` wrappers with the operator credential) and 030/031 close. `AW-INF-015` (a schema registry
-    per namespace) is superseded by `057` and closes.
+    Strimzi broker in `andara-shared` and to the CI `drills` job's throwaway Kafka (`061` states it). ADR-0011's annotation says so.
+13. **One SASL client.** The single Kafka client constructor with SASL belongs to `AW-SRV-044` (test files included), not to a
+    second story. It adds `andara-it` to `kafkaclient.Principals` (the `client.id` check there admits a `-dev`-style suffix on
+    the existing names, but `andara-it` is not a prefix of any entry), reads the `andara-it` credentials from
+    `ANDARA_KAFKA_SASL_USERNAME` / `ANDARA_KAFKA_SASL_PASSWORD_FILE`, and the S3 test pair from `ANDARA_S3_TEST_ACCESS_KEY` /
+    `ANDARA_S3_TEST_SECRET_KEY`, skipping with a message when they are unset. The "no client is ever denied" ordering (the
+    client first, then the SASL broker, then the Secret copy) is `056`'s.
 14. **The 18-script count** of story `053` is not an enumeration: the story's first step is the grep, and its test (no bare
     `kubectl` in `scripts/`) is what enumerates.
 15. **Shared-service alerts** have no environment value yet: `andara-shared` stays `unknown` and excluded. The first alert on
