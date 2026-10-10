@@ -140,12 +140,18 @@ and four consequences of it, none of which is a new rule.
     tightens: `lastEvaluation` > `t` + 5 s), with `health == ok` on that read, since `lastEvaluation`
     advances on errored evaluations too. For "nothing fired", extend the window by the rule's `for` plus one
     more evaluation, because a rule with `for > 0` is *pending*, not firing, on the first evaluation that
-    sees the fault, and pending counts as not-absent. Only a result read after both anchors is evidence of
-    absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
+    sees the fault, and pending counts as not-absent. A single read at the end reports the state *now*, not whether the
+    alert fired earlier in the window, so the test polls instance state at every poll from the cause to the
+    end of the window and fails on the first firing or pending instance it sees; a forbidden state that
+    came and went between two polls is invisible to polling, so where that matters the test also reads the
+    rule's state history if the pinned `gcx` exposes it **[verify in AW-INF-047]**. Only a window with no
+    forbidden state observed, closed by both anchors, is evidence of absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
     (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
-    the cause, so anchor on a series from the same collector and namespace ingested after `t`; that bounds
-    ingestion lag only, and the assertion still waits `for` plus one evaluation after the first
-    evaluation past `t`. A windowed rule (`StateProjectorDiverged`, `[6h]`) is asserted on the instance
+    the cause, so anchor on a series from the same collector and namespace: poll until a sample ingested after the
+    cause is queryable, record a **new** local receipt time `t'` at the first poll that sees it, and require
+    an evaluation that started after `t'` plus the skew allowance (`t` is never assigned for such a rule,
+    because there is no positive input sample to observe). That bounds ingestion lag only, and the
+    assertion still waits `for` plus one evaluation after that evaluation. A windowed rule (`StateProjectorDiverged`, `[6h]`) is asserted on the instance
     state at the evaluation after `t`, never on the window. For the legacy ruler, which has no
     `lastEvaluation`: if the pinned `gcx` exposes an evaluation time for ruler instances **[verify in
     AW-INF-046]** that is the anchor (`activeAt` is when the alert became active, not an evaluation
@@ -192,7 +198,7 @@ firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation in
 2 minutes standing in for `scrape + ingest` until measured. To **clear**, the clock starts when the
 condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + keep_firing_for`, which for
 `RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
-2-minute stand-in and no lookback, and up to about 21 with the instant query's lookback of up to 5
+2-minute stand-in and no lookback, and up to about 23 with the instant query's lookback of up to 5
 minutes when no stale marker arrives (the lookback is its own term:
 `scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline, not 3. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
