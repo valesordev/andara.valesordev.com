@@ -175,7 +175,7 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
 - **Who may read the state:** the state holds the Slack webhook URL(s) and the IRM integration URL, because
   the provider stores contact-point settings and integration URLs in it. So state read is a **secret read**,
   and it is granted to these principals only: a **per-stack apply role** (get, put and delete on that stack's key **and on its lock object
-  `<key>.tflock`**, and `ListBucket` with `s3:prefix` limited to `grafana/<stack>.tfstate*`, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, no write, no delete, and it does not take
+  `<key>.tflock`**, and `ListBucket` with `s3:prefix` limited to `grafana/<stack>.tfstate*`, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, with the same prefix-limited `ListBucket`, no write, no delete, and it does not take
   the lock: `plan -lock=false`), assumed by the pull-request plan job and the drift job (decision 5), which is
   why that job's input is policed; and Brian's own cloud identity, the bucket's owner, which can read every
   key (the dev box's day-to-day credential is limited to `solo7local`'s key).
@@ -262,7 +262,8 @@ per stack in a fixed order; (c) apply from the dev box only.
     `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
     `variable` and `output` block is **byte-identical to the base branch's** (so `slack_webhook` and every
     other secret variable keep `sensitive = true`, and no output can be added to print one; a change to
-    either goes through the **separate-merge path**: the job refuses to plan, prints the diff, and the maintainer
+    either (and the PR that first creates `deploy/terraform/grafana/`, which has no base to compare to) goes
+    through the **separate-merge path**: the job refuses to plan, prints the diff, and the maintainer
     merges that change on its own; the plan that then runs on `main` (and, for `solo7prod`, the one the
     `andara-prod-apply` reviewer reads) is the first to include it. The rule covers the `variable` and `output`
     blocks under `modules/` as well, so a story that needs a new variable lands it as its own small change);
@@ -459,8 +460,7 @@ nothing to import or delete, only to create.
 the `namespace` variable, which the source does not have today, rewriting its panels' `datasource` and
 queries to use them; the `terraform test` fails if either variable is absent from the source). Terraform deploys it to each stack with
 `grafana_dashboard` (`folder` = the `Andara` folder, `overwrite = true`). `config_json` is **rendered**, not
-the file as is: the module does `jsondecode(file(...))`, sets the `ds` variable's `current` and `query`
-and the `namespace` variable's default for the stack by `merge`, and `jsonencode`s the result; a
+the file as is: the module does `jsondecode(file(...))`, sets the `ds` variable's `current` and `query` for the stack by `merge`, and `jsonencode`s the result; a
 `terraform test` asserts the rendered model of each stack names that stack's datasource UID and no other.
 Per stack:
 
