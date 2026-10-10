@@ -133,11 +133,14 @@ and four consequences of it, none of which is a new rule.
     does for prod today; otherwise the check fails closed). It says the observation works. It does **not** license an absence assertion,
     because it can be satisfied by a sample from before the window opened.
   - A **window anchor** closes the window (rule 3), and is causal, not an estimate of when data usually
-    arrives. Poll the rule's input until a sample timestamped after the cause is queryable, read from the sample itself
-    (`gcx metrics query 'timestamp(<selector>)'` greater than the cause time), never from the query
-    result's own timestamp, which is the query's evaluation time and is returned even when the selector
-    reused an older sample inside the lookback window, and note the
-    test's own clock `t` at the first poll that sees it (not the sample's timestamp: ingestion sits
+    arrives. Poll the rule's input until a sample timestamped after the cause is queryable. Read the sample's own
+    timestamp, with a bare selector: `timestamp(<selector>)` through the wrapper (`gcx metrics query -d
+    grafanacloud-prom`, an instant query **[verify in AW-INF-046: that it is, and the output shape]**), reduced
+    with `max(...)` when it returns several series, and compared with the cause time plus the same 5 s skew
+    allowance (the collector's clock and the test box's differ). Never use the query result's own timestamp,
+    which is the query's evaluation time and is returned even when the selector reused an older sample inside
+    the lookback window; and a wrapped expression (`sum`, `rate`) returns the evaluation time again, so the
+    selector must be bare. Then note the test's own clock `t` at the first poll that sees it (not the sample's timestamp: ingestion sits
     between the two, and an evaluation can start after the scrape and still precede the sample's arrival).
     Then require a rule evaluation that started after `t` plus a 5 s clock-skew allowance (the allowance
     tightens: `lastEvaluation` > `t` + 5 s), with `health == ok` on that read, since `lastEvaluation`
@@ -153,8 +156,8 @@ and four consequences of it, none of which is a new rule.
     an observation in the window. Only a window with no
     forbidden state observed, closed by both anchors, is evidence of absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
     (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
-    the cause, so anchor on a series from the same collector and namespace: poll until a sample ingested after the
-    cause is queryable, record a local receipt time `t'` at the first poll that sees it, and require
+    the cause, so anchor on a series from the same collector and namespace: poll the sibling's `timestamp(<bare selector>)` as above until it is later than the cause time
+    plus the skew allowance, record a local receipt time `t'` at the first poll that sees it, and require
     an evaluation that started after `t'` plus the skew allowance (a whole-rule absence assertion on a rule with both clauses, as `AndaraServerUnavailable` has, needs `t` for its `up == 0` clause and `t'` for its `absent()` clause; for the `absent()` clause `t` is never assigned, because there is no positive input sample to
     observe; the `up == 0` clause does have one; a ruler-backed rule has no evaluation time to compare
     with, see the ruler sentence below). That bounds ingestion lag only, and the
@@ -202,9 +205,11 @@ Behind Grafana Cloud the delays add, and each is named so a deadline can be comp
 guessed: the pipeline's scrape interval, plus ingestion into the stack, plus (for rule state) one
 or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to reach
 firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation interval + for`, with
-2 minutes standing in for `scrape + ingest` until measured. For a rule that fires on a target
-vanishing (an `absent()` clause, `up == 0` on a target that stops reporting), add the instant query's
-lookback of up to 5 minutes when no stale marker arrives, as for clearing below. To **clear**, the clock starts when the
+2 minutes standing in for `scrape + ingest` until measured. For the `absent()` clause, and for a target whose series
+vanishes with no stale marker, add the instant query's lookback of up to 5 minutes, as for clearing
+below; an `up == 0` clause on a scraper that is still alive has no lookback term, because `up` keeps
+being reported as 0. For `AndaraServerUnavailable` (`for: 2m`, a 60 s group) that is roughly
+2 + 5 + 2 × 1 + 2 = 11 minutes, so a deadline of 15. To **clear**, the clock starts when the
 condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + keep_firing_for`, which for
 `RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
 2-minute stand-in and no lookback, and up to about 23 with the instant query's lookback of up to 5
@@ -213,9 +218,9 @@ minutes when no stale marker arrives (the lookback is its own term:
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
 its §8 review of those stories. Poll every 5 s, not faster, when the group's evaluation interval is 10 s or more: `gcx` is a process per
 call. The polling interval must be at most half the interval of the group being asserted on, so a group
-asserted on in a drill is given an `interval:` of at least 10 s (ADR-0012 decision 1 lets a group
-override the 60 s default); a group evaluated faster than that cannot be asserted on by polling and
-`AW-INF-047` does not set one.
+asserted on must have an interval of at least 10 s (the 60 s default qualifies; ADR-0012 decision 1 lets a
+group override it, and `AW-INF-047` does not set an interval below 10 s). The drill asserts the prod
+rule's group unmodified: nothing shortens an interval to make a drill pass, and nothing lengthens one.
 
 ## Enforcement
 
