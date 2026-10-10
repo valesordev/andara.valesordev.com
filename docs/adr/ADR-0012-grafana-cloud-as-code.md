@@ -246,19 +246,22 @@ pinned by `.terraform-version` and installed by `make bootstrap`.
   `pull_request_target` or `schedule`, and the `sub` not to be an environment subject (these jobs reference no
   `environment:`, because a job that does gets the `...:environment:<name>` subject instead). The
   environment-bound roles (`andara-main`, `andara-prod-plan`, `andara-prod-apply`) require
-  `sub = repo:valesordev/andara.valesordev.com:environment:<name>`. **The claim values are expected, not yet
+  `sub = repo:valesordev/andara.valesordev.com:environment:<name>` **and** the same `workflow_ref`; all three
+  environments are deployable from `main` only (`andara-main`'s deployment branch rule says so, as the existing
+  environment does today), and decision 5's `apply` job declares `environment: andara-main`. **The claim values are expected, not yet
   observed**: GitHub's OIDC reference does not list `pull_request_target`, so `AW-INF-046` first runs a debug
   step that prints the decoded claims of each job (`pull_request_target`, `schedule`, each environment) and
-  writes the trust policies from what it sees; a trust that no job can satisfy fails closed, so a wrong guess is
-  a failed plan, not an exposure. If the repository uses immutable subject claims, the immutable forms replace
+  writes the trust policies from what it sees; a positive condition that no job can satisfy fails closed, so a wrong guess there is a failed plan, not an
+  exposure. The PR/drift role's `sub` condition is a negation, so it fails open: `workflow_ref` and
+  `event_name` are the gating conditions and `sub` is defence in depth, replaced by a positive match once 046
+  has observed the real values. If the repository uses immutable subject claims, the immutable forms replace
   the `sub` strings.
   **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
   Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
   a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
   a documented step of the runbook.
 - **Access is by OIDC federation** from GitHub Actions to the bucket's cloud account (no static cloud key in
-  GitHub): a trust policy keyed on the repository and, for an apply role, on the environment that root applies
-  from. The dev box uses Brian's own cloud identity.
+  GitHub): a trust policy keyed on the repository plus the claims in the role list above. The dev box uses Brian's own cloud identity.
 - State backups: versioning is the recovery path; `terraform import` from the live stack is the second.
 
 ### 4. Credentials
