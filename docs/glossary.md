@@ -832,8 +832,9 @@ series: its state is read from the stack's rules endpoint (ADR-0012 §2).
 `state`, `health` and current alerts. Where `env-recover`, `observe-unavailable` and `stack-recover-mismatch`
 read alert state, polling to a deadline (ADR-0012 §2).
 
-**Cutover** — Moving the `andara` rule set from the ruler to Grafana-managed rules without a window in which
-a symptom goes unnotified: apply paused, verify, un-pause, then delete the ruler namespace (ADR-0012 §7).
+**Cutover** — Moving the `andara` rule set from the legacy tenant's ruler to Grafana-managed rules in the three
+stacks: apply the rules paused, delete the legacy ruler namespace at the planned rebuild outage, then un-pause
+once the keep-list check passes. A rule is never live in both places (ADR-0012 §7).
 
 **IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7prod` uses it: an
 integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).

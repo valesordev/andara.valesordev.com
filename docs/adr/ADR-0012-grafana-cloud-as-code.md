@@ -142,8 +142,8 @@ twin is not; (d) shows only alerts already routed, so a `pending` or a not-yet-f
   becomes the group's interval times two plus the poll interval, read from the group rather than hard-coded.
 - **Credential:** yes, a new one per stack, a **service account token with role `Viewer`**
   (`andara-alerts-read`; decision 4). The ruler read key (`ANDARA_ALERTS_CI_READ`, `rules:read`) does not
-  authorize Grafana's own API. `GRAFANA_CLOUD_READ_TOKEN` (`metrics:read`) is unchanged and still serves the
-  series assertions.
+  authorize Grafana's own API. `GRAFANA_<STACK>_READ_TOKEN` (`metrics:read`, decision 4) serves the
+  series assertions; the unsuffixed `GRAFANA_CLOUD_READ_TOKEN` is retired with the legacy path.
 - **"Not already firing" preflight** (`stack_recover_mismatch.sh` today asserts `ALERTS` has no series before
   it starts): the same call, "no `alerts[]` for the rule in `solo7local`", and the 15 m `keep_firing_for`
   wait-out message stays.
@@ -204,14 +204,14 @@ token for `solo7prod`. The stacks' endpoints are not secrets and are **committed
 The org-level credential that could create stacks and access policies stays with Brian (decision 6). The
 property the repo keeps is stated precisely: **a pull-request job never holds a credential that can change
 Grafana's configuration or routing** (apply tokens, the IRM token). It may hold read credentials, and the
-low-harm secrets of the table's last two rows, which state also holds.
+low-harm secrets (the telemetry token and the Slack webhooks), which state also holds.
 
 | Credential | Kind and scope | Stored | Read by |
 |---|---|---|---|
-| `GRAFANA_<STACK>_PLAN_TOKEN` (×3) | stack service account `andara-tf-plan`, role **Viewer** | repository secret | `plan` (pull request) and `drift` jobs |
+| `GRAFANA_<STACK>_PLAN_TOKEN` (×3) | stack service account `andara-tf-plan`, role **Viewer** **[verify in 046: if Viewer cannot read rule groups, contact points and policies through the provider, use a custom RBAC role `andara-alerting-reader` with read-only alerting and dashboard permissions, never a write role]** | repository secret | `plan` (pull request) and `drift` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×3) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7local`, `solo7dev`) or `andara-prod-apply` (`solo7prod`) | `apply` jobs on `main` |
-| `GRAFANA_<STACK>_ALERTS_READ_TOKEN` (×3) | stack service account `andara-alerts-read`, role **Viewer** (decision 2) | repository secret; `.local/box.env` | the drills (`env-recover`, `observe-unavailable`, `stack-recover-mismatch`) |
-| `GRAFANA_CLOUD_READ_TOKEN` (unchanged name; one value per stack, `GRAFANA_<STACK>_READ_TOKEN`) | Cloud access policy `andara-<stack>-read`: `metrics:read logs:read traces:read` | repository secret; `.local/box.env` | `make observe-check`, the drills |
+| `GRAFANA_<STACK>_ALERTS_READ_TOKEN` (×3) | stack service account `andara-alerts-read`, role **Viewer** or the same custom read role **[verify in 046]**; it serves decision 2's rules-endpoint and provisioning reads, including the **defined** check | repository secret; `.local/box.env` | the drills (`env-recover`, `observe-unavailable`, `stack-recover-mismatch`) |
+| `GRAFANA_<STACK>_READ_TOKEN` (×3; replaces `GRAFANA_CLOUD_READ_TOKEN`) | Cloud access policy `andara-<stack>-read`: `metrics:read logs:read traces:read` | repository secret; `.local/box.env` | `make observe-check`, the drills |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×3) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7local`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs. `solo7dev`, `solo7prod`: the cluster repo's `k8s-monitoring` secret, never in this repo | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
 | `GRAFANA_SOLO7PROD_IRM_TOKEN` | IRM access token | secret of `andara-prod-apply` | the `solo7prod` `apply` job |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
@@ -224,7 +224,7 @@ low-harm secrets of the table's last two rows, which state also holds.
 - **IRM is outside the PR `plan` and `drift` jobs.** Its token can write, so those jobs plan `solo7prod` with
   `-target=module.stack` and do not refresh `grafana_oncall_*`. IRM drift is covered where the token is
   allowed: the `solo7prod` `apply` job's plan, which Brian reads at the approval (decision 5).
-- **Bootstrap tokens** (the chicken-and-egg step): Brian creates, per stack and by hand, the four service
+- **Bootstrap tokens** (the chicken-and-egg step): Brian creates, per stack and by hand, the three service
   accounts above (stack → Administration → Service accounts) and the Cloud access policies
   (`grafana.com` → Access policies), and pastes the values into the places above. They are the only manual
   credential step that cannot be removed. `docs/runbooks/grafana-credentials.md` (`AW-INF-046`) gives each
@@ -260,7 +260,12 @@ per stack in a fixed order; (c) apply from the dev box only.
     `deploy/terraform/grafana/` or `deploy/helm/andara/files/alerts.yaml` and the dashboard JSON, no
     `nonsensitive`, no `sensitive = false` on an output, no `terraform_remote_state`, no `external`, no
     provisioner of any kind;
-  - the `backend` block is byte-identical to the base branch's, and `.terraform.lock.hcl` changes the
+  - the `backend` block and every `provider` block are byte-identical to the base branch's; each stack's
+    `terraform.tfvars` endpoint values (`grafana_url`, `*_url`, `*_user`) match the pinned pattern
+    `^https://[a-z0-9.-]+\.grafana\.net` and are equal to the base branch's unless the change is to those
+    values (which then needs the maintainer's review of the diff, shown in the job summary); no
+    `*.auto.tfvars` or other variable file besides `terraform.tfvars`; the job sets no `TF_CLI_ARGS*` and
+    passes no `-var`/`-var-file` the base script does not; and `.terraform.lock.hcl` changes the
     `grafana/grafana` hashes only together with the version pin.
 
   A fixture per refusal lives in `scripts/tests`. The plan is posted in the job summary with sensitive values
@@ -312,8 +317,11 @@ chain (decision 10).
 The ruler namespace `andara` exists only in the legacy stack `solo7-local`, whose tenant still receives
 `dev`'s and (once installed) `prod`'s series until Brian's rebuild. `solo7local`, `solo7dev` and `solo7prod`
 have never had ruler rules. So this is a migration of one live rule set from one tenant to three, tied to where
-each environment's series go. A rule must not be live in both places, and may be live in neither only while
-its environment is itself down on purpose.
+each environment's series go. A rule must not be live in both places. It may be live in neither only
+during the planned outage, which runs from the deletion of the legacy namespace (step 4(ii)) to the first
+healthy evaluation in `solo7dev` (step 4(vi)): the environment is being rebuilt for most of it, and for the
+tail, minutes after the rebuild while Brian runs the keep-list check and merges the un-pause, it is a fresh
+World nobody is playing in. That tail is accepted, not hidden.
 
 **Options.** (a) delete from the ruler, then create in Grafana; (b) create the Grafana-managed rules
 **paused** in the new stacks, then move each environment's telemetry and its rules together; (c) both live,
@@ -335,12 +343,16 @@ is the planned window in which Brian rebuilds the cluster, which discards `dev`'
 4. `solo7dev`, as one ordered run, starting at the outage: (i) the precondition, checked by the script and
    refusing to continue if unmet: no `andara` alert for `andara-dev` is pending or firing in `solo7-local`;
    (ii) Brian deletes the legacy ruler namespace with `make alerts-delete` (a target `AW-INF-047` adds to
-   `alerts_sync.py`, using the existing ruler write credential from `.local/box.env`; it is run by hand, once,
+   `alerts_sync.py`, using the existing ruler write key, which Brian exports by hand as `MIMIR_API_KEY_WRITE` (it is not in
+   `.local/box.env`); it is run by hand, once,
    and the credential is not given to any CI job beyond what `alerts` holds today); (iii) the rebuild
    completes and `k8s-monitoring` ships `dev` to `solo7dev`; (iv) `make observe-check ENV=dev --keep-list`
    (decision 13) passes; (v) a merge sets `is_paused = false` on `solo7dev`'s rules; (vi) `make
    observe-unavailable ENV=dev` fires and clears the alert through the rules endpoint. Between (ii) and (v)
    nothing watches `dev`, which is the outage. No step has the same rule live in the ruler and in Grafana.
+   (Ordering with `AW-INF-048`: `AW-INF-047` supplies the rules and the reader; `solo7local`'s fire-and-state
+   evidence is `AW-INF-048`'s `stack-recover-mismatch`, so 047's own criteria for `solo7local` stop at
+   "defined, live and healthy through the endpoint", and 048 carries the firing assertion.)
 5. `solo7prod`, when `prod` is installed: apply `prod`'s telemetry to `solo7prod`, pass `observe-check
    ENV=prod --keep-list`, merge the un-pause. `prod` never reported to a working ruler rule set for any
    user-facing purpose (the runbook has its absence silenced until it exists), so there is nothing to
@@ -350,11 +362,11 @@ is the planned window in which Brian rebuilds the cluster, which discards `dev`'
    runbook's step 1 and "Delivering rules" section. `solo7-local` is kept read-only for **7 days** after step
    4(v) as an archive of the last tick-health history, then deleted by Brian (decision 9).
 
-- **Rollback:** before step 4(v), nothing has changed for any user: pause or revert. After it there is
-  **no ruler to roll back to for `dev`**, because its series no longer reach the legacy tenant; the rollback
-  is `is_paused = true`, then fix forward by `git revert` and the same pipeline, with the rules
-  endpoint as the check. The rebuild is the point of no return, and Brian chooses when it happens: he can
-  hold it until step 3 and `solo7dev`'s paused rules are verified. This is the migration-and-rollback
+- **Point of no return: step 4(ii).** Before it, nothing has changed for any user, and rolling back is
+  pausing or reverting. From it on there is **no ruler to roll back to for `dev`**, because its series stop
+  reaching the legacy tenant at the rebuild; the way back is `is_paused = true`, then fix forward by
+  `git revert` and the same pipeline, with the rules endpoint as the check. Brian chooses when 4(ii)
+  happens, and can hold it until step 3 and `solo7dev`'s paused rules (the **defined** check) are verified. This is the migration-and-rollback
   statement CLAUDE.md §6 asks of a dependency.
 
 ### 8. Import
@@ -364,8 +376,7 @@ one email address and one matcher, with no history worth keeping; importing them
 default settings into state and then diffs against them forever. The sequence is: Terraform creates its
 contact points and its policy tree; the policy tree *replaces* the stack's root policy (the provider's
 `grafana_notification_policy` is a singleton that owns the whole tree, so a hand-made child policy is
-overwritten at the first apply, which is the intended outcome); the hand-made contact point is then deleted by
-hand. The email contact point is **not** recreated anywhere: "the account email" was only ever the placeholder, and
+overwritten at the first apply, which is the intended outcome). The email contact point is **not** recreated anywhere: "the account email" was only ever the placeholder, and
 the hand-made one lives in the legacy stack, which is retired (decision 9), so in the new stacks there is
 nothing to import or delete, only to create.
 
@@ -401,8 +412,8 @@ nothing to import or delete, only to create.
 - **Retention and cost of `solo7local`:** compose and CI send continuously whenever they run. The stack is on
   Grafana Cloud's free tier by default (14-day retention, active-series limit); the Alloy config in
   `AW-INF-048` drops everything but the series the server and the drills use, and `make down` stops the
-  sender. A scheduled `tf-credentials-check` also reports `solo7local`'s active series against the limit; this
-  is the "is the free tier enough" signal, and nothing here depends on it staying free.
+  sender. Grafana Cloud's own usage emails are the "is the free tier enough" signal (no repo job reads
+  usage), and nothing here depends on it staying free.
 
 ### 10. Notification routing per stack
 
@@ -444,7 +455,7 @@ nothing to import or delete, only to create.
   present in that stack: `andara-compose`/`andara-local`/`andara-ci` in `solo7local`, `andara-dev` in
   `solo7dev`, `andara-prod` in `solo7prod`. It is `multi = false`, default to the first value, and every panel
   query carries `namespace="$namespace"`.
-- Deleted by hand in the UI is drift, found by the daily `terraform-drift` job. The compose Grafana's
+- Deleted by hand in the UI is drift, found by the daily `drift` job. The compose Grafana's
   provisioning files go with `AW-INF-048`.
 
 ### 12. Multi-stack structure and `ENV`
