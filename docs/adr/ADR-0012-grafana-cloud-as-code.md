@@ -404,7 +404,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   encrypted artifact with his `gh` login, which needs artifact read, and decrypts it with `TF_PLAN_KEY_PROD`
   from `.local/box.env`, into a pipe, never a file, and `terraform show` needs only `init -backend=false` and
   the provider pin, no state-bucket role), and that is what he approves. Fields that pass through `sensitive()`
-  (the IRM URL) show only as changed or unchanged, so `plan-prod` prints the plan file's sha256 in the summary
+  (the IRM URL) show only as changed or unchanged, so `plan-prod` prints the sha256 of the plaintext plan file in the summary (and `apply-prod` prints it again before applying)
   and `tf-plan-show` prints it too, tying what he read to what `apply-prod` applies; then `apply-prod`
   (environment `andara-prod-apply`, Brian the required reviewer) starts only when he approves, downloads
   those plan files and applies exactly them, in the order `solo7-irm`, `solo7`, and finishes with
@@ -426,7 +426,7 @@ per stack in a fixed order; (c) apply from the dev box only.
   through GitHub. **Drift** (someone edited a rule or a policy in the UI) is surfaced by a scheduled
   `drift` job of the same workflow, daily, running `plan -detailed-exitcode` per stack with the read-only
   credentials (the IRM root excluded, decision 4): exit 2 opens or updates one GitHub issue labelled
-  `drift:<stack>` containing the plan. A third job, `drift-prod-irm`, runs the same daily check for the IRM root
+  `drift:<stack>` containing the plan. A third job, `drift-prod-irm`, runs the same daily check for the IRM root, opening its issue with addresses and actions only (above),
   in the `andara-prod-plan` environment (no reviewers, `main` only) and opens `drift:solo7-irm`. It is
   never an alert in Grafana, because the thing that has failed is the thing that delivers alerts.
 - **`STACK` values** for `tf-plan`, `tf-apply` and `tf-drift`: `solo7dev`, `solo7`, `solo7-irm` (the last takes
@@ -569,7 +569,7 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
 - **`solo7` is the stack that exists** (Context), now prod; `solo7dev` is new. There is no stack to retire and
   no archive step.
 - **Write credentials by place:** CI holds `READ` for both stacks and `APPLY` per environment (decision 4); the
-  dev box holds `solo7dev` apply only.
+  dev box holds `solo7dev` apply, plus the prod plan key for reading plans (never applying).
 - **Retention and cost of `solo7dev`:** compose, CI, `dev` and `staging` send to it. The stack is on Grafana
   Cloud's free tier by default (14-day retention, active-series limit); the Alloy config in `AW-INF-048` drops
   everything but the series the server and the drills use, and `make down` stops the sender. Grafana Cloud's
