@@ -58,8 +58,8 @@ position. A reader not in this table that starts at `AtStart` or `AtEnd` is a co
    projector reads the commit explicitly and resumes with `At(offset)`. So the checkpoint is the single
    source of "where was I", which is what the row protects, and the commit is its storage, not a
    second copy.
-2. **The tick loop's per-tick commit is the other commit, and it is write-only.** `tickloop.KafkaSource.Commit`
-   commits the consumed offsets under `andara-sim-<env>` on every tick so a dashboard or a runbook can see
+2. **The tick loop's checkpoint commit is the other commit, and it is write-only.** `tickloop.KafkaSource.Commit`
+   commits the consumed offsets under `andara-sim-<env>` at each checkpoint (`sim.checkpoint_every_ticks`, default 100) so a dashboard or a runbook can see
    lag. Nothing reads it back for position: the tick loop resumes from the Snapshot round and the Tick
    Boundary offsets (ADR-0002 §4), so it is not a second source of "where was I".
    The `config-assert` row reports `false` for both consumers and passes, because it sees only the
