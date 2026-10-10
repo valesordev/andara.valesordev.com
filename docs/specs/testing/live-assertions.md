@@ -125,7 +125,7 @@ and four consequences of it, none of which is a new rule.
   rule with `no_data_state = "OK"` (ADR-0012 decision 1) over no data also evaluates happily and reads
   `Normal (NoData)`, so a rule that is merely listed and evaluating proves nothing about its input.
   - An **existence anchor** rules out the wrong stack and the dead pipeline: a series of the rule's input
-    (or the keep-list's `up{job="andara-server"}`) for the same `environment` and `namespace` is queryable,
+    (or the keep-list's `up{job="andara-server"}`; for an `absent()` clause, the sibling series below) for the same `environment` and `namespace` is queryable,
     and the rule is live, not just listed (`health == ok`, `isPaused == false`, `lastEvaluation` within twice
     the group interval; for the legacy ruler, which
     `alert rules list` cannot see, the rule is confirmed through the unfiltered instance list, per
@@ -142,15 +142,19 @@ and four consequences of it, none of which is a new rule.
     more evaluation, because a rule with `for > 0` is *pending*, not firing, on the first evaluation that
     sees the fault, and pending counts as not-absent. A single read at the end reports the state *now*, not whether the
     alert fired earlier in the window, so the test polls instance state at every poll from the cause to the
-    end of the window and fails on the first firing or pending instance it sees; a forbidden state that
-    came and went between two polls is invisible to polling, so where that matters the test also reads the
-    rule's state history if the pinned `gcx` exposes it **[verify in AW-INF-047]**. Only a window with no
+    end of the window and fails on the first firing or pending instance it sees; a forbidden state shorter than one
+    poll (5 s) is not observable, but a firing or pending instance lasts at least one evaluation interval
+    (60 s by default), so it is visible to 5 s polling. State history is not a substitute: ADR-0012 rejects
+    it as retrospective and eventually consistent, so an empty history proves nothing. An instance present
+    before the cause is a precondition failure, checked first (ADR-0012 decision 2), and is not counted as
+    an observation in the window. Only a window with no
     forbidden state observed, closed by both anchors, is evidence of absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
     (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
     the cause, so anchor on a series from the same collector and namespace: poll until a sample ingested after the
     cause is queryable, record a **new** local receipt time `t'` at the first poll that sees it, and require
-    an evaluation that started after `t'` plus the skew allowance (`t` is never assigned for such a rule,
-    because there is no positive input sample to observe). That bounds ingestion lag only, and the
+    an evaluation that started after `t'` plus the skew allowance (for the `absent()` clause `t` is never assigned, because there is no positive input sample to
+    observe; the `up == 0` clause does have one; a ruler-backed rule has no evaluation time to compare
+    with, see the ruler sentence below). That bounds ingestion lag only, and the
     assertion still waits `for` plus one evaluation after that evaluation. A windowed rule (`StateProjectorDiverged`, `[6h]`) is asserted on the instance
     state at the evaluation after `t`, never on the window. For the legacy ruler, which has no
     `lastEvaluation`: if the pinned `gcx` exposes an evaluation time for ruler instances **[verify in
@@ -200,7 +204,7 @@ condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + kee
 `RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
 2-minute stand-in and no lookback, and up to about 23 with the instant query's lookback of up to 5
 minutes when no stale marker arrives (the lookback is its own term:
-`scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline, not 3. These are starting values. SRE records the figures the first drills observe
+`scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline (worst case plus a 2-minute margin, recomputed when measured figures arrive), not 3. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
 its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
 
