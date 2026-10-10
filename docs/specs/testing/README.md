@@ -17,7 +17,7 @@ the rule.
 
 | File | Status | Covers |
 |------|--------|--------|
-| `live-assertions.md` | rule, adopted 2026-09-22 | asserting on metrics, projections, streams and objects — anything the test does not make visible itself |
+| `live-assertions.md` | rule, adopted 2026-09-22, amended 2026-10-10: Grafana Cloud subjects and deadlines (ADR-0012) | asserting on metrics, projections, streams and objects — anything the test does not make visible itself |
 | `timing-assertions.md` | rule, adopted 2026-10-03 | asserting on a duration — a regression guard measures CPU time in `make check`; a service-level number is measured wall-clock, serially, and recorded |
 
 ## Timing guards: audit state
