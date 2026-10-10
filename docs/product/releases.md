@@ -1,7 +1,7 @@
 # Releases — Andara's World
 
 Today: a player (in practice Brian and CI) runs `andara-cli play`, creates a Character, enters the dev
-content's Town Plaza, moves between Rooms, sees a bystander arrive and leave, drops the connection and
+content's test town (reached from Purgatory), moves between Rooms, sees a bystander arrive and leave, drops the connection and
 rebinds within the linkdead grace, and finds the World as it was after a `kill -9` of the server (M1 and M2
 gates, passed; `docs/sprints/SPRINT-04-demo.md`, on CI's evidence). A Builder, with test content, can
 publish a Zone, see it live and roll it back (M3's gate, SPRINT-03). There are no Items, no NPCs that act,
@@ -20,7 +20,7 @@ Bet: a persistent, authored text world is already a place worth returning to, be
 fight or collect. If walking it feels empty, the later releases are building on the wrong thing.
 Features:
 - FEAT-?? — Enter the world as a Character (create, select, play via `andara-cli play`) (must)
-- FEAT-?? — Walk a multi-zone settlement (must)
+- FEAT-01 — Walk a multi-zone settlement (must)
 - FEAT-?? — See who else is here (arrivals, departures, linkdead marker) (must)
 - FEAT-?? — Come back to the world as I left it (reconnect, crash recovery) (must)
 - FEAT-?? — Builders publish a world and roll it back without a deploy (must; Builder-facing, and it is
@@ -31,8 +31,9 @@ Cut line: no NPCs that act, no Items, no combat, no second gameplay loop; room t
 `TODO(brian)` placeholders where the content roadmap's C1 allows it. Reason: each of those tests a
 different bet, and R2 owns the first of them.
 Success signals (Brian runs them):
-- On `dev`, a Builder publishes the real settlement pack, Brian walks from the spawn Room to every
-  settlement zone by exits alone, and rolls the pack back.
+- On `dev`, a Builder publishes the real settlement pack, Brian walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every
+  settlement zone by exits alone, approves and activates a second version, then rolls back to the first (a lone first version has nothing to roll back to). Gated on the Start Location decision (FEAT-01);
+  until then he reaches that Room with `goto`.
 - On `dev` with the real settlement pack loaded, Brian kills the server pod and his Character rebinds
   where it stood (the recovery check on the real pack, not dev content; `AW-INF-034` is the nearest
   target).
