@@ -174,8 +174,8 @@ blocked. Keys: `grafana/solo7local.tfstate`, `grafana/solo7dev.tfstate`, `grafan
 
 - **Who may read the state:** the state holds the Slack webhook URL(s) and the IRM integration URL, because
   the provider stores contact-point settings and integration URLs in it. So state read is a **secret read**,
-  and it is granted to these principals only: a **per-stack apply role** (read/write on that stack's key
-  alone); a **per-stack plan role** (read on that stack's key alone, no write, no delete, and it does not take
+  and it is granted to these principals only: a **per-stack apply role** (get, put and delete on that stack's key **and on its lock object
+  `<key>.tflock`**, and `ListBucket` limited to the `grafana/` prefix, which `use_lockfile` needs); a **per-stack plan role** (read on that stack's key alone, no write, no delete, and it does not take
   the lock: `plan -lock=false`), assumed by the pull-request plan job and the drift job (decision 5), which is
   why that job's input is policed; and Brian's own cloud identity, the bucket's owner, which can read every
   key (the dev box's day-to-day credential is limited to `solo7local`'s key).
@@ -259,8 +259,10 @@ per stack in a fixed order; (c) apply from the dev box only.
     local `source` under `deploy/terraform/grafana/modules/`;
   - functions: no `file`, `fileexists`, `templatefile`, `filebase64`, `fileset` reaching outside
     `deploy/terraform/grafana/` or `deploy/helm/andara/files/alerts.yaml` and the dashboard JSON, no
-    `nonsensitive`, no `sensitive = false` on an output, no `terraform_remote_state`, no `external`, no
-    provisioner of any kind;
+    `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
+    `variable` and `output` block is **byte-identical to the base branch's** (so `slack_webhook` and every
+    other secret variable keep `sensitive = true`, and no output can be added to print one; a change to
+    either goes through the separate maintainer-merged path below);
   - the `backend` block and every `provider` block are byte-identical to the base branch's; each stack's
     `terraform.tfvars` endpoint values are checked against the stack they belong to: every `*_url` must equal
     `https://<host>` with `<host>` one of the stack's own hosts as the base branch's tfvars records it, matched
@@ -451,11 +453,15 @@ nothing to import or delete, only to create.
 
 **Decision.** The source of truth is the existing JSON, moved to `deploy/grafana/dashboards/tick-health.json`
 (`AW-INF-049` moves it from `deploy/compose/grafana/dashboards/`). Terraform deploys it to each stack with
-`grafana_dashboard` (`config_json = file(...)`, `folder` = the `Andara` folder, `overwrite = true`). Per stack:
+`grafana_dashboard` (`folder` = the `Andara` folder, `overwrite = true`). `config_json` is **rendered**, not
+the file as is: the module does `jsondecode(file(...))`, sets the `ds` variable's `current` and `query`
+and the `namespace` variable's default for the stack by `merge`, and `jsonencode`s the result; a
+`terraform test` asserts the rendered model of each stack names that stack's datasource UID and no other.
+Per stack:
 
 - **Datasource:** the dashboard's `datasource` is a variable `${ds}` of type `datasource` filtered to
-  Prometheus; the module sets its default to the stack's `grafanacloud-<stack>-prom` UID (read as data, decision
-  9), so one JSON serves every stack and no UID is committed.
+  Prometheus; the render sets its `current` to the stack's `grafanacloud-<stack>-prom` UID (read as data, decision
+  9), so one source JSON serves every stack and no UID is committed.
 - **`namespace` variable:** `label_values(up{job="andara-server"}, namespace)`, so it lists the values
   present in that stack: `andara-compose`/`andara-local`/`andara-ci` in `solo7local`, `andara-dev` in
   `solo7dev`, `andara-prod` in `solo7prod`. It is `multi = false`, default to the first value, and every panel
@@ -548,16 +554,22 @@ are produced by the chart's scrape annotations and must not be relabelled.
 **The keep-list: series that must reach Grafana Cloud and not be dropped** (all for `namespace="andara-dev"`
 and `"andara-prod"`; `container="server"` where it applies):
 
-| Series | Used by | Check after the rebuild (each returns ≥ 1 series) |
+Two kinds of series. **Always present** ones exist on a clean rebuild and are checked before the un-pause.
+**Fault-only** ones (marked ‡) appear only after the fault they describe, so a clean rebuild has none: the
+`--keep-list` mode does not require them, it checks that the cluster repo's metric allow-list **names** them,
+and the first drill that produces the fault (`make env-recover ENV=dev`, rerun on the rebuilt cluster,
+step 3 below) must then see them, or the drill is inconclusive (exit 1, as its AC-2 already is).
+
+| Series | Used by | Check after the rebuild (each always-present row returns ≥ 1 series) |
 |---|---|---|
 | `up` for `job="andara-server"` and `job="andara-projector-state"` | `AndaraServerUnavailable`, `StateProjectorDown` | `up{job="andara-server", namespace="andara-dev"}` |
-| `kube_pod_container_status_last_terminated_exitcode` | `RecoveryStateMismatch` (cluster clause) | `…{namespace="andara-dev", container="server"}` |
+| `kube_pod_container_status_last_terminated_exitcode` ‡ | `RecoveryStateMismatch` (cluster clause) | `…{namespace="andara-dev", container="server"}` |
 | `kube_pod_container_status_ready` | same | `…{namespace="andara-dev", container="server"}` |
 | `kube_pod_container_status_restarts_total` | `AndaraServerCrashLooping` | `…{namespace="andara-dev", container="server"}` |
 | `kube_deployment_spec_replicas` | `StateProjectorDown` (`AW-INF-025`) | `…{namespace="andara-dev", deployment="andara-projector-state"}` |
 | `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | any series; its `exported_namespace` carries the Certificate's namespace |
 | `traefik_router_requests_total` | `IngressErrorRateHigh` | any series with `router=~"andara-.*"` (the rule derives `namespace` from the router name) |
-| the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match`, `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{namespace="andara-dev"}` |
+| the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match` ‡, `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{namespace="andara-dev"}` |
 
 (Authoritative list: every metric name appearing in `alerts.yaml` and the dashboard; `AW-INF-046` adds
 `make observe-check ENV=<env>` a `--keep-list` mode that extracts them from both files and queries each,
