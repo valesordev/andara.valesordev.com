@@ -122,15 +122,22 @@ and four consequences of it, none of which is a new rule.
 - **An empty result is not a pass, and two different anchors are needed.** `gcx` can print `null` (for
   example for an empty `alert instances list`), `[]` or an empty `result`; the wrapper normalises all of
   them to `[]` (shapes are recorded in the `AW-INF-046` fixtures), and `[]` means "nothing matched",
-  which is also what a wrong stack, a wrong `environment` or a dead pipeline returns.
-  - An **existence anchor** rules those out: an always-present series for the same `environment` and
-    `namespace` (the keep-list's `up{job="andara-server"}`), or the rule being listed. It says the
-    observation is working. It does **not** license an absence assertion, because it can be satisfied by
-    a sample from before the window opened.
-  - A **window anchor** closes the window (rule 3): a sample or an evaluation timestamped after the
-    cause plus the scrape interval plus an ingestion allowance, for example the rule's `lastEvaluation`
-    later than that, or a series whose latest sample is. Only an empty or not-firing result read after
-    both anchors is evidence of absence.
+  which is also what a wrong stack, a wrong `environment` or a dead pipeline returns. A Grafana-managed
+  rule with `no_data_state = "OK"` (ADR-0012 decision 1) over no data also evaluates happily and reads
+  `Normal (NoData)`, so a rule that is merely listed and evaluating proves nothing about its input.
+  - An **existence anchor** rules out the wrong stack and the dead pipeline: a series of the rule's input
+    (or the keep-list's `up{job="andara-server"}`) for the same `environment` and `namespace` is queryable,
+    and the rule is live, not just listed (`health == ok`, `isPaused == false`; for the legacy ruler, which
+    `alert rules list` cannot see, the rule is confirmed through the unfiltered instance list, per
+    ADR-0012 decision 2). It says the observation works. It does **not** license an absence assertion,
+    because it can be satisfied by a sample from before the window opened.
+  - A **window anchor** closes the window (rule 3), and is causal, not an estimate of when data usually
+    arrives: poll the rule's input until a sample **timestamped after the cause** is queryable, and note
+    that sample's timestamp `t`; then require an evaluation that started after `t` (`lastEvaluation` later
+    than `t`, with a skew allowance of one evaluation interval, since the two clocks are different
+    machines'). For "nothing fired", extend the window by the rule's `for` plus one more evaluation, because a
+    rule with `for > 0` is *pending*, not firing, on the first evaluation that sees the fault, and
+    pending counts as not-absent. Only a result read after both anchors is evidence of absence.
 - **A `--context` mistake reads the wrong stack and looks green.** The wrapper always passes the context
   and the routing test proves it (both `AW-INF-046`; `gcx` pinned at v0.2.13 or later, since v0.2.11
   ignores `--context` in some operations). An assertion helper does not call `gcx` any other way.
@@ -153,7 +160,7 @@ func eventually(t *testing.T, d time.Duration, what string, want func() bool)
 Existing instances to converge on rather than duplicate: `waitFor` in `server/egress`, and the
 bounded `seq 1 30` retry loop in `scripts/stack_smoke.sh` for shell. For `gcx`-backed assertions
 the wrapper `scripts/gcx.py` (`AW-INF-046`) is the only way to call `gcx`; the polling stays in each
-language's `eventually`/`wait_for` helper around it, at the 5 s interval above.
+language's `eventually`/`wait_for` helper around it, at 5 s (see Deadlines).
 
 A helper's doc comment states **what it waits for and what it does not**. `forgotten` in
 `server/egress` is the worked example: it stopped claiming to cover teardown end to end, named the
@@ -170,9 +177,10 @@ Behind Grafana Cloud the delays add, and each is named so a deadline can be comp
 guessed: the pipeline's scrape interval, plus ingestion into the stack, plus (for rule state) one
 or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the rule's `for`. A series to be visible through `gcx metrics query`: start from 2 minutes. A rule's state to reach
 firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation interval + for`, with
-2 minutes standing in for `scrape + ingest` until measured. To **clear**, add the rule's
-`keep_firing_for` (15 minutes for `RecoveryStateMismatch`), so a "reaches not firing" deadline for it is
-over 20 minutes, not 3. These are starting values. SRE records the figures the first drills observe
+2 minutes standing in for `scrape + ingest` until measured. To **clear**, the clock starts when the
+condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + keep_firing_for`, which for
+`RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 19 minutes with the same
+2-minute stand-in; use 20 to 25 minutes, not 3. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
 its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
 
