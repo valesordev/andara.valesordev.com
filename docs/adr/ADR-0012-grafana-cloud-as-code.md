@@ -1,7 +1,7 @@
 ---
 id: ADR-0012
 title: Grafana Cloud as code
-status: proposed          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
+status: accepted          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
 date: 2026-10-09
 deciders: [brian]
 gates: [AW-INF-046, AW-INF-047, AW-INF-049, AW-INF-051]   # cannot reach `ready` until this is accepted
