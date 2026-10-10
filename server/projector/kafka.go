@@ -16,6 +16,7 @@ import (
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
 
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 	"github.com/valesordev/andara/server/tickloop"
 )
@@ -63,18 +64,49 @@ type Producer struct {
 	topic  string
 }
 
+// producerOpts are the options the state producer is built with.
+func producerOpts(brokers []string) []kgo.Opt {
+	return []kgo.Opt{
+		kgo.SeedBrokers(brokers...),
+		kgo.ClientID(ClientID),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordPartitioner(kgo.ManualPartitioner()),
+		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
+		kgo.RecordDeliveryTimeout(time.Minute),
+	}
+}
+
+// adminOpts are the options of the projector's metadata and offset clients,
+// which neither produce nor consume; purpose is the client.id suffix.
+func adminOpts(brokers []string, purpose string) []kgo.Opt {
+	return []kgo.Opt{kgo.SeedBrokers(brokers...), kgo.ClientID(ClientID + purpose)}
+}
+
+// keysOpts are the options of the state topic key scan, which reads the
+// compacted topic from explicit offsets.
+func keysOpts(brokers []string) []kgo.Opt {
+	return append(adminOpts(brokers, "-keys"), kgo.FetchIsolationLevel(kgo.ReadCommitted()), kgo.ConsumeResetOffset(kgo.NoResetOffset()))
+}
+
+// MetaOpts are the options of the cmd's topic-size client.
+func MetaOpts(brokers []string) []kgo.Opt { return adminOpts(brokers, "-meta") }
+
+// Sites describes every Kafka client this package builds.
+func Sites(brokers []string) []kafkaclient.Site {
+	return []kafkaclient.Site{
+		{Name: "projector state producer", Role: kafkaclient.Producer, Opts: producerOpts(brokers), Partitioning: kafkaclient.Manual},
+		{Name: "projector committer", Role: kafkaclient.Admin, Opts: adminOpts(brokers, "-commit")},
+		{Name: "projector state key scan", Role: kafkaclient.Consumer, Opts: keysOpts(brokers), AssignedLater: true},
+		{Name: "projector topic size", Role: kafkaclient.Admin, Opts: MetaOpts(brokers)},
+	}
+}
+
 // NewProducer connects the producer.
 func NewProducer(ctx context.Context, brokers []string, topic string) (*Producer, error) {
 	if topic == "" {
 		topic = StateTopic
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(ClientID),
-		kgo.RequiredAcks(kgo.AllISRAcks()),
-		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-		kgo.RecordDeliveryTimeout(time.Minute),
-	)
+	client, err := kgo.NewClient(producerOpts(brokers)...)
 	if err != nil {
 		return nil, err
 	}
@@ -132,7 +164,7 @@ func NewCommitter(brokers []string, group, commandsTopic string) (*Committer, er
 	if commandsTopic == "" {
 		commandsTopic = tickloop.CommandsTopic
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ClientID(ClientID+"-commit"))
+	cl, err := kgo.NewClient(adminOpts(brokers, "-commit")...)
 	if err != nil {
 		return nil, err
 	}
@@ -261,7 +293,7 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 	if topic == "" {
 		topic = StateTopic
 	}
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...), kgo.ClientID(ClientID+"-keys"))
+	cl, err := kgo.NewClient(keysOpts(brokers)...)
 	if err != nil {
 		return nil, err
 	}
@@ -295,7 +327,7 @@ func TopicKeys(ctx context.Context, brokers []string, topic string) (map[string]
 			return nil, ctx.Err()
 		}
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, tickloop.OffsetGap(err)
 		}
 		fetches.EachRecord(func(r *kgo.Record) {
 			end, ok := remaining[r.Partition]

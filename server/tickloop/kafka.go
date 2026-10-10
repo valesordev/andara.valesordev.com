@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/twmb/franz-go/pkg/kadm"
+	"github.com/twmb/franz-go/pkg/kerr"
 	"github.com/twmb/franz-go/pkg/kgo"
 	"google.golang.org/protobuf/proto"
 
@@ -96,11 +97,7 @@ func NewKafkaSource(ctx context.Context, o KafkaSourceOptions) (*KafkaSource, er
 	for p, off := range o.Start {
 		assign[p] = kgo.NewOffset().At(off)
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID+"-sim"),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{o.Topic: assign}),
-	)
+	client, err := kgo.NewClient(simConsumerOpts(o.Brokers, o.ClientID, o.Topic, assign)...)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: consumer: %w", err)
 	}
@@ -159,7 +156,17 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 		var pingErr error
 		pinged := false
 		var fetchErr error
+		var outOfRange *kgo.FetchError
 		for _, fe := range fetches.Errors() {
+			if errors.Is(fe.Err, kerr.OffsetOutOfRange) && outOfRange == nil {
+				// The broker has no such offset: the log was cut below the
+				// position (an unclean election) or past it (retention).
+				// The client is on NoResetOffset, so it reports the error
+				// instead of skipping; a skipped offset is a gap.
+				fe := fe
+				outOfRange = &fe
+				continue
+			}
 			if !errors.Is(fe.Err, context.DeadlineExceeded) && !errors.Is(fe.Err, context.Canceled) {
 				fetchErr = fe.Err
 				break
@@ -175,6 +182,9 @@ func (s *KafkaSource) fetch(ctx context.Context) {
 			pcancel()
 		}
 		s.mu.Lock()
+		if outOfRange != nil && s.gap == nil {
+			s.gap = fmt.Errorf("%w: partition %d: the broker no longer has offset %d (%v)", sim.ErrOffsetGap, outOfRange.Partition, s.expected[outOfRange.Partition], outOfRange.Err)
+		}
 		switch {
 		case fetchErr != nil:
 			s.fetchErr = fetchErr
@@ -393,17 +403,17 @@ func NewKafkaPublisher(ctx context.Context, brokers []string, clientID string) (
 	return newKafkaPublisher(ctx, brokers, clientID, DeliveryTimeout)
 }
 
-// newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
-// shortens, so a lost boundary costs it seconds rather than a minute.
-func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
+// publisherOpts are the options of the Tick Boundary publisher.
+func publisherOpts(brokers []string, clientID string, deliveryTimeout time.Duration) []kgo.Opt {
 	if clientID == "" {
 		clientID = "andara-server"
 	}
-	client, err := kgo.NewClient(
+	return []kgo.Opt{
 		kgo.SeedBrokers(brokers...),
-		kgo.ClientID(clientID+"-tick"),
+		kgo.ClientID(clientID + "-tick"),
 		kgo.RequiredAcks(kgo.AllISRAcks()),
 		kgo.RecordPartitioner(kgo.ManualPartitioner()),
+		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
 		// A record is retried for a minute before it is given up on, so an
 		// outage shorter than that loses nothing; a longer one loses the
 		// boundary and stops the loop (AW-SRV-026). franz-go never fails a
@@ -421,7 +431,16 @@ func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, d
 		// other, and a minute of it is still a loss.
 		kgo.UnknownTopicRetries(-1),
 		kgo.MaxBufferedRecords(maxBuffered),
-	)
+	}
+}
+
+// newKafkaPublisher is NewKafkaPublisher with the delivery timeout a test
+// shortens, so a lost boundary costs it seconds rather than a minute.
+func newKafkaPublisher(ctx context.Context, brokers []string, clientID string, deliveryTimeout time.Duration) (*KafkaPublisher, error) {
+	if clientID == "" {
+		clientID = "andara-server"
+	}
+	client, err := kgo.NewClient(publisherOpts(brokers, clientID, deliveryTimeout)...)
 	if err != nil {
 		return nil, fmt.Errorf("tickloop: producer: %w", err)
 	}
@@ -572,10 +591,7 @@ func ReadBoundaries(ctx context.Context, brokers []string, eventsTopic string) (
 	if eventsTopic == "" {
 		eventsTopic = EventsTopic
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(brokers...),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{eventsTopic: {BoundaryPartition: kgo.NewOffset().AtStart()}}),
-	)
+	client, err := kgo.NewClient(boundaryScanOpts(brokers, eventsTopic)...)
 	if err != nil {
 		return nil, err
 	}
@@ -622,10 +638,7 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	if topic == "" {
 		topic = CommandsTopic
 	}
-	client, err := kgo.NewClient(
-		kgo.SeedBrokers(k.Brokers...),
-		kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{topic: {partition: kgo.NewOffset().At(from)}}),
-	)
+	client, err := kgo.NewClient(fetchOpts(k.Brokers, topic, partition, from)...)
 	if err != nil {
 		return nil, err
 	}
@@ -635,7 +648,7 @@ func (k KafkaRecords) Fetch(partition int32, from, to int64) ([]sim.Record, erro
 	for next < to {
 		fetches := client.PollFetches(ctx)
 		if err := fetches.Err0(); err != nil {
-			return nil, err
+			return nil, OffsetGap(err)
 		}
 		var ferr error
 		fetches.EachRecord(func(r *kgo.Record) {
@@ -702,7 +715,7 @@ func RecoverFrom(boundaries []sim.TickCompleted, src sim.RecordSource, e *sim.En
 // EndOffset is one past the last record on topic's partition: where a
 // consumer that has read everything written so far stands.
 func EndOffset(ctx context.Context, brokers []string, topic string, partition int32) (int64, error) {
-	cl, err := kgo.NewClient(kgo.SeedBrokers(brokers...))
+	cl, err := kgo.NewClient(offsetsOpts(brokers)...)
 	if err != nil {
 		return 0, err
 	}

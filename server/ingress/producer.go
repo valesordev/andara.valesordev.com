@@ -24,6 +24,7 @@ import (
 
 	logv1 "github.com/valesordev/andara/gen/go/andara/log/v1"
 	"github.com/valesordev/andara/server/command"
+	"github.com/valesordev/andara/server/kafkaclient"
 	"github.com/valesordev/andara/server/sim"
 )
 
@@ -158,6 +159,57 @@ type brokerError struct {
 	at   int64 // unix nanos
 }
 
+// producerOpts are the options every Partition's client is built with, short
+// of the hook and the tapped dialer that bind it to one producer.
+func producerOpts(o ProducerOptions) []kgo.Opt {
+	return []kgo.Opt{
+		kgo.SeedBrokers(o.Brokers...),
+		kgo.ClientID(o.ClientID + "-ingress"),
+		kgo.RequiredAcks(kgo.AllISRAcks()),
+		kgo.RecordPartitioner(kgo.ManualPartitioner()),
+		kgo.ProducerBatchCompression(kgo.ZstdCompression()),
+		kgo.RecordDeliveryTimeout(o.Deadline),
+		kgo.ProduceRequestTimeout(o.Deadline / 2),
+		// A failed produce triggers a metadata refresh and the retry waits
+		// for it; the client's default holds refreshes five seconds apart,
+		// which would put every retry past the deadline. A quarter of the
+		// deadline keeps a retry inside it and still bounds the refresh
+		// rate under a broker outage.
+		kgo.MetadataMinAge(o.Deadline / 4),
+		// Each client carries one Partition, so its own bound is the whole
+		// producer's; the producer-wide one is k.buffered.
+		kgo.MaxBufferedRecords(o.MaxBuffered),
+	}
+}
+
+// probeClientOpts are the options of the probe's metadata client.
+func probeClientOpts(o ProducerOptions) []kgo.Opt {
+	return []kgo.Opt{
+		kgo.SeedBrokers(o.Brokers...),
+		kgo.ClientID(o.ClientID + "-ingress-probe"),
+		kgo.MetadataMinAge(o.ProbeInterval / 2),
+	}
+}
+
+// Sites describes the Kafka clients the ingress builds for o: the producer,
+// one per Partition, and the probe. o's defaults are applied as
+// NewKafkaProducer applies them.
+func Sites(o ProducerOptions) []kafkaclient.Site {
+	if o.ClientID == "" {
+		o.ClientID = "andara-server"
+	}
+	if o.MaxBuffered <= 0 {
+		o.MaxBuffered = 4096
+	}
+	if o.ProbeInterval <= 0 {
+		o.ProbeInterval = time.Second
+	}
+	return []kafkaclient.Site{
+		{Name: "ingress producer", Role: kafkaclient.Producer, Opts: producerOpts(o), Partitioning: kafkaclient.Manual, DeliveryTimeout: o.Deadline},
+		{Name: "ingress probe", Role: kafkaclient.Admin, Opts: probeClientOpts(o)},
+	}
+}
+
 // NewKafkaProducer builds the producer. It does not reach the brokers:
 // the tick loop already fails the boot when they are unreachable, and an
 // outage after boot is the degraded state, not an error here.
@@ -200,25 +252,10 @@ func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
 	k.minISR.Store(1)
 	k.health = newPartitionHealth(o.now, o.DegradedHold, k.onHealthChange)
 
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(o.Brokers...),
-		kgo.ClientID(o.ClientID + "-ingress"),
-		kgo.RequiredAcks(kgo.AllISRAcks()),
-		kgo.RecordPartitioner(kgo.ManualPartitioner()),
-		kgo.RecordDeliveryTimeout(o.Deadline),
-		kgo.ProduceRequestTimeout(o.Deadline / 2),
-		// A failed produce triggers a metadata refresh and the retry waits
-		// for it; the client's default holds refreshes five seconds apart,
-		// which would put every retry past the deadline. A quarter of the
-		// deadline keeps a retry inside it and still bounds the refresh
-		// rate under a broker outage.
-		kgo.MetadataMinAge(o.Deadline / 4),
-		// Each client carries one Partition, so its own bound is the whole
-		// producer's; the producer-wide one is k.buffered.
-		kgo.MaxBufferedRecords(o.MaxBuffered),
+	opts := append(producerOpts(o),
 		kgo.WithHooks(retryHook{k}),
 		kgo.Dialer(tapDialer(o.Dialer, k.noteProduceResponse, k.tapLost)),
-	}
+	)
 	if o.ClientLogger != nil {
 		opts = append(opts, kgo.WithLogger(o.ClientLogger))
 	}
@@ -227,11 +264,7 @@ func NewKafkaProducer(o ProducerOptions) (*KafkaProducer, error) {
 	if o.source != nil {
 		k.source = o.source
 	} else {
-		probeOpts := []kgo.Opt{
-			kgo.SeedBrokers(o.Brokers...),
-			kgo.ClientID(o.ClientID + "-ingress-probe"),
-			kgo.MetadataMinAge(o.ProbeInterval / 2),
-		}
+		probeOpts := probeClientOpts(o)
 		if o.Dialer != nil {
 			probeOpts = append(probeOpts, kgo.Dialer(o.Dialer))
 		}

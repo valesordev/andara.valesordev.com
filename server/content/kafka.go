@@ -15,11 +15,17 @@ import (
 
 	"github.com/twmb/franz-go/pkg/kadm"
 	"github.com/twmb/franz-go/pkg/kgo"
+
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/protobuf/proto"
 
 	contentv1 "github.com/valesordev/andara/gen/go/andara/content/v1"
+	"github.com/valesordev/andara/server/kafkaclient"
 )
+
+// DefaultClientID is the client.id base of the resolver's clients when the
+// caller names none, and of the clients config-assert describes.
+const DefaultClientID = "andara-server-content"
 
 // The content store's three topics (ADR-0004). Declared in
 // deploy/kafka/topics.yaml and created by `make topics-apply`; this package
@@ -118,7 +124,7 @@ func NewKafkaResolver(o KafkaOptions) (*KafkaResolver, error) {
 		return nil, errors.New("content: no brokers configured")
 	}
 	if o.ClientID == "" {
-		o.ClientID = "andara-server-content"
+		o.ClientID = DefaultClientID
 	}
 	m := o.Metrics
 	if m == nil {
@@ -285,7 +291,7 @@ func (r *KafkaResolver) checkBlobSize(path string, n int) error {
 // Calling Pin before the initial scan closes the window from the other side:
 // anything written from that instant on is at or after the pinned offset.
 func (r *KafkaResolver) Pin(ctx context.Context) error {
-	client, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...), kgo.ClientID(r.clientID+"-pin"))
+	client, err := kgo.NewClient(adminOpts(r.brokers, r.clientID, "-pin")...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "connect " + r.topics.Active, Err: err}
 	}
@@ -307,6 +313,63 @@ func (r *KafkaResolver) Pin(ctx context.Context) error {
 	return nil
 }
 
+// adminOpts are the options of a client that asks the log for offsets and
+// neither produces nor consumes; purpose is the client.id suffix.
+func adminOpts(brokers []string, clientID, purpose string) []kgo.Opt {
+	return []kgo.Opt{kgo.SeedBrokers(brokers...), kgo.ClientID(clientID + purpose)}
+}
+
+// scanOpts are the options of the one-shot scan of a compacted topic, read
+// from the start to find the latest value per key.
+func scanOpts(brokers []string, clientID, topic string) []kgo.Opt {
+	return []kgo.Opt{
+		kgo.SeedBrokers(brokers...),
+		kgo.ClientID(clientID + "-scan"),
+		kgo.ConsumeTopics(topic),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+	}
+}
+
+// watchOpts are the options of the Active Pointer watch: from the pinned
+// offsets when Pin ran, else from wherever the topic ends.
+func watchOpts(brokers []string, clientID, active string, from map[int32]kgo.Offset) []kgo.Opt {
+	opts := []kgo.Opt{
+		kgo.SeedBrokers(brokers...),
+		kgo.ClientID(clientID + "-watch"),
+		kgo.FetchIsolationLevel(kgo.ReadCommitted()),
+	}
+	if len(from) > 0 {
+		return append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{active: from}))
+	}
+	return append(opts,
+		kgo.ConsumeTopics(active),
+		kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
+	)
+}
+
+// Sites describes every Kafka client this package builds, for a resolver
+// with the given client.id base and topics.
+func Sites(brokers []string, clientID string, t Topics) []kafkaclient.Site {
+	t = t.OrDefault()
+	pinned := map[int32]kgo.Offset{0: kgo.NewOffset().At(0)}
+	return []kafkaclient.Site{
+		{Name: "content pin", Role: kafkaclient.Admin, Opts: adminOpts(brokers, clientID, "-pin")},
+		{Name: "content scan offsets", Role: kafkaclient.Admin, Opts: adminOpts(brokers, clientID, "-admin")},
+		{Name: "content blobs scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Blobs), OneShot: kafkaclient.ContentBlobsScan},
+		{Name: "content versions scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Versions), OneShot: kafkaclient.ContentVersionsScan},
+		{Name: "content active pointer scan", Role: kafkaclient.Consumer, Opts: scanOpts(brokers, clientID, t.Active), OneShot: kafkaclient.ContentActiveWatch},
+		{Name: "content active pointer watch", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, nil), OneShot: kafkaclient.ContentActiveWatch},
+		{Name: "content active pointer watch (pinned)", Role: kafkaclient.Consumer, Opts: watchOpts(brokers, clientID, t.Active, pinned),
+			// The Active topic is compacted, so its log start never moves
+			// past a pinned offset; a cursor reset to the start re-reads
+			// pointers the watch applies idempotently. The watch has no exit
+			// to take on a gap, so NoResetOffset would turn one into an
+			// endless retry (AW-SRV-053, raised to architecture).
+			SilentResetAccepted: "compacted topic; pointer moves are idempotent; the watch never gives up"},
+	}
+}
+
 // Watch delivers every Active Pointer write from the pinned position, or from
 // the end of the topic when nothing was pinned. It does not replay history:
 // the caller has already resolved the current pointers, and replaying them
@@ -316,18 +379,7 @@ func (r *KafkaResolver) Watch(ctx context.Context) (<-chan PointerMove, error) {
 	from := r.watchFrom
 	r.mu.Unlock()
 
-	opts := []kgo.Opt{
-		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID + "-watch"),
-	}
-	if len(from) > 0 {
-		opts = append(opts, kgo.ConsumePartitions(map[string]map[int32]kgo.Offset{r.topics.Active: from}))
-	} else {
-		opts = append(opts,
-			kgo.ConsumeTopics(r.topics.Active),
-			kgo.ConsumeResetOffset(kgo.NewOffset().AtEnd()),
-		)
-	}
+	opts := watchOpts(r.brokers, r.clientID, r.topics.Active, from)
 	client, err := kgo.NewClient(opts...)
 	if err != nil {
 		return nil, fmt.Errorf("content: watch %s: %w", r.topics.Active, err)
@@ -409,7 +461,7 @@ func ManifestKey(pack string, version uint64) string {
 // reason: compaction leaves gaps, so "we have read enough" is the last fetched
 // offset reaching the captured end, never a count of records.
 func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, value []byte) error) error {
-	admClient, err := kgo.NewClient(kgo.SeedBrokers(r.brokers...), kgo.ClientID(r.clientID+"-admin"))
+	admClient, err := kgo.NewClient(adminOpts(r.brokers, r.clientID, "-admin")...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "connect " + topic, Err: err}
 	}
@@ -441,12 +493,7 @@ func (r *KafkaResolver) scan(ctx context.Context, topic string, fn func(key, val
 		return nil // every partition is empty
 	}
 
-	consumer, err := kgo.NewClient(
-		kgo.SeedBrokers(r.brokers...),
-		kgo.ClientID(r.clientID+"-scan"),
-		kgo.ConsumeTopics(topic),
-		kgo.ConsumeResetOffset(kgo.NewOffset().AtStart()),
-	)
+	consumer, err := kgo.NewClient(scanOpts(r.brokers, r.clientID, topic)...)
 	if err != nil {
 		return &ErrStoreUnavailable{Op: "scan consumer for " + topic, Err: err}
 	}
