@@ -14,8 +14,8 @@ as code a review can see: the 12 rules in `deploy/helm/andara/files/alerts.yaml`
 **data-source-managed** (Mimir) ruler through `scripts/alerts_sync.py` and `mimirtool` (`AW-INF-009`); the
 contact point and the `severity = page` notification policy are set by hand in the UI
 (`docs/runbooks/alert-routing.md`, step 3); and the access policies and tokens CI uses are created by hand
-(step 1). All of it lives in the one stack that exists today. The stories call it `solo7-local`; Brian's `gcx`
-context for it is `solo7` (`gcx config view`: server `https://solo7.grafana.net`), and that is its name here.
+(step 1). All of it lives in the one stack that exists today. Its name is `solo7` (Brian's `gcx` context; `gcx config view`: server `https://solo7.grafana.net`); the
+story text calls it `solo7-local`.
 It holds `dev`'s series, the ruler namespace `andara`, and a hand-made email contact point. Read through
 `gcx` on 2026-10-10 it also shows `AndaraServerUnavailable{namespace="andara-prod"}` **firing**, because prod
 is not installed (the runbook's "silence it until prod exists").
@@ -110,7 +110,12 @@ rule the §8 check is supposed to exercise; `make up` would be verifying a rule 
   labels. `environment` is the routing and rendering key (decisions 10 and 12); `namespace` stays as the source
   within an environment, because `local` has three (`andara-compose`, `andara-local`, `andara-ci`) and the
   drills must not see each other's series. Series that have no `environment` of their own (cert-manager,
-  Traefik) get one derived in the rule the way `namespace` is derived today, by the mapping of decision 9.
+  Traefik) get one derived in the rule the way `namespace` is derived today: one `label_replace` per
+  environment of decision 9's table, applied **before** the aggregation (in `IngressErrorRateHigh`, inside both
+  the numerator and the denominator of the ratio, ahead of `sum by`). An `absent()` copies onto its result only
+  the labels of its equality matchers, so each marked absence line keeps **both** matchers, `environment` and
+  `namespace`, and the instance carries both. The helm tests gain a `promtool test rules` case per rule
+  asserting that `environment` and `namespace` are on the alert.
   This is an edit to `alerts.yaml`, SRE's file, by `AW-INF-047`; the alert set, thresholds and `for` are not
   touched, and the helm tests (`promtool test rules`) are extended to cover the label.
 - **How `make up`'s §8 check stays honest:** the compose Prometheus's local evaluation of `alerts.yaml` ends
@@ -143,8 +148,9 @@ commands an operator types by hand; its cost is a pre-1.0 tool (v0.2.11) whose o
 HTTP APIs directly**; they call `gcx`. Terraform's provider remains the only writer to Grafana, and its traffic
 is not a test.
 
-- **Install.** `make bootstrap` runs `go install github.com/grafana/gcx/cmd/gcx@v0.2.11` into the repo's `bin/`
-  (as it installs other Go tools), and fails if `bin/gcx --version` does not print the pin. The pin moves only
+- **Install.** `make bootstrap` runs `install_pinned gcx github.com/grafana/gcx/cmd/gcx v0.2.11` (its existing helper, which installs into
+  the repo's `bin/` and checks the module version with `go version -m`, as it does for the other Go tools;
+  `gcx --version` prints `0.2.11`, without the `v`, so it is not the check). The pin moves only
   by an edit to one line, in a change that re-records the fixtures below.
 - **One wrapper.** Every call is made by `scripts/gcx.py` (`AW-INF-046`), which runs `bin/gcx --config
   "$GCX_CONFIG" --context <context> … -o json`, maps a non-zero exit to exit `1` with `gcx`'s message, and
@@ -165,14 +171,20 @@ is not a test.
 |---|---|
 | Is the rule **defined** (also true for a paused rule)? | `alert rules list --limit 0 --group <group>` → the rule by `name` / `uid`, its `isPaused` as planned. `terraform plan` showing no diff is the other half. |
 | Is the rule **live** (evaluating)? | the same → `health == "ok"`, `isPaused == false`, and `lastEvaluation` within twice the group's `interval`. A paused rule is defined and never live; a check that needs a live rule fails on a paused one. |
-| What is the rule's state for `environment="dev"`? | `alert instances list --name '^RecoveryStateMismatch$' --json ruleName,labels,state,activeAt` → filter `labels.environment == "dev"` (and `labels.namespace`) in the wrapper; `state` of `firing` is "firing", and it reads the same while `keep_firing_for` runs **[verify in 047]**. |
+| What is the rule's state for `environment="dev"`? | `alert instances list --name '^RecoveryStateMismatch$' --json ruleName,labels,state,activeAt` → filter `labels.environment == "dev"` (and `labels.namespace`) in the wrapper; the wrapper maps the instance `state` to one vocabulary: `Alerting` (Grafana-managed) and `firing` (ruler) are **firing**; `Pending` is pending; `Normal` and `Normal (NoData)` are **not** firing. `Recovering`, during `keep_firing_for`, is **[verify in 047]**: the drills must treat it as firing for AC-7's "the alert outlives the process" only if `gcx` reports it. |
 | Is anything firing or pending for a rule before a drill starts (`stack_recover_mismatch.sh`'s "not already firing")? | `alert instances list --name '^<rule>$' --state firing` and `--state pending` → none for the environment; the 15 m `keep_firing_for` wait-out message stays. |
-| Did metrics arrive (`observe-check`)? | `metrics query -d grafanacloud-prom 'up{job="andara-server",environment="dev"}' --since 5m` (a series is the answer); `metrics series -d … --since 5m` for the keep-list. |
+| Did metrics arrive (`observe-check`)? | `metrics query -d grafanacloud-prom 'up{job="andara-server",environment="dev"}' --since 5m` (a series is the answer); `metrics series -d grafanacloud-prom --since 5m '{__name__=~"andara_.*"}'` (a selector is required) for the keep-list. |
 | Did logs arrive? | `logs query -d grafanacloud-logs '{…environment="dev"…}' --since 5m --limit 5` |
 | Did traces arrive; does a `trace_id` resolve? | `traces query -d grafanacloud-traces '{ … }' --since 5m`; `traces get -d grafanacloud-traces <trace_id>` |
 | Did the page reach IRM (`AW-INF-046` AC9)? | `irm oncall alert-groups list` against `solo7` |
 | What does the legacy ruler still have (cutover only)? | `alert instances list --datasource grafanacloud-prom` against `solo7`, until decision 7 step 6 |
 
+- **Empty is not an error, and not a pass.** `gcx` prints `null` (and `{"ruleName":null,…}` with `--json`) for an
+  empty `alert instances list`, a bare list without `--json` and `{"items":[…]}` with it, and `result: []` with
+  `status: success` for a query that matches nothing; a mistyped `--name` regex looks exactly like "nothing
+  firing". The wrapper normalises all of these to `[]`, and every "none" assertion (not already firing; nothing
+  pending before the ruler is deleted) first confirms the rule exists with `alert rules list --group`. An empty
+  metric, log or trace result fails every "arrived" check. The fixtures record each shape.
 - **Windows are observed, not reconstructed.** `env_recover.py` AC-2/AC-7 and `stack_recover_mismatch.sh`
   today assert over `ALERTS` (a range query in the first, instant in the second). `gcx` answers "now". The
   scripts therefore poll it at ≤ 10 s from the moment they cause the fault, record every `(time, state)` they
@@ -269,7 +281,7 @@ Slack webhooks), which state also holds.
 | `GRAFANA_<STACK>_READ_TOKEN` (×2) | stack service account `andara-read`, role **Viewer** **[verify in 046: Viewer must read rule groups, contact points, policies and dashboards through the provider and run the `gcx` commands of decision 2, including datasource queries and `irm oncall` for `solo7`; if not, use a custom RBAC role `andara-reader` with read-only alerting, dashboard and datasource-query permissions, never a write role]** | repository secret; `.local/box.env` | `gcx` (every drill, `observe-check`, the `stack` workflow), and the `plan` (pull request), `drift`, `plan-prod` and `drift-prod-irm` jobs |
 | `GRAFANA_<STACK>_APPLY_TOKEN` (×2) | stack service account `andara-tf-apply`, role **Admin** on that stack only | secret of `andara-main` (`solo7dev`) or `andara-prod-apply` (`solo7`; also used by the `solo7-irm` root for its contact point) | `apply` jobs on `main` |
 | `GRAFANA_<STACK>_TELEMETRY_TOKEN` (×2) | Cloud access policy `andara-<stack>-telemetry`: `metrics:write logs:write traces:write` and nothing else | `solo7dev`: `.local/box.env` and a repository secret for CI's kind and `stack` jobs, and the cluster repo's `k8s-monitoring` secret for `dev` and `staging`. `solo7`: the cluster repo's `k8s-monitoring` secret only, never in this repo | compose Alloy; CI kind/`stack` jobs; `k8s-monitoring` |
-| `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod` and `apply-prod` jobs, for the IRM root only |
+| `GRAFANA_SOLO7_IRM_TOKEN` | IRM access token | secrets of `andara-prod-plan` and `andara-prod-apply` (both reachable from `main` only) | the `plan-prod`, `drift-prod-irm` and `apply-prod` jobs, for the IRM root only |
 | `SLACK_WEBHOOK_DEV`, `SLACK_WEBHOOK_PROD` (`TF_VAR_slack_webhook`) | Slack incoming webhook, one per channel | repository secrets | `plan`, `drift` and `apply` jobs (low-harm: posts to a channel) |
 | `TFSTATE_<ROOT>_PLAN_ROLE` (`<ROOT>` = `SOLO7DEV`, `SOLO7`), `TFSTATE_<ROOT>_APPLY_ROLE` (also `SOLO7_IRM`), `TFSTATE_PRODPLAN_ROLE` | not secrets: OIDC role ARNs (decision 3) | repository variables | the jobs |
 | `TF_PLAN_KEY_PROD` | symmetric key that encrypts prod plan files before upload (decision 5) | secrets of `andara-prod-plan` and `andara-prod-apply` | `plan-prod`, `apply-prod` |
@@ -446,11 +458,14 @@ can hide a real page.
    and the `gcx` reads, `AW-INF-048` carries the firing assertion, so 047's own criterion for `local` is
    **defined**.)
 4. `dev`, as one ordered run, starting at the outage: (i) the precondition, checked by the script, which
-   refuses to continue if unmet: no alert for `namespace="andara-dev"` is pending or firing in `solo7`'s ruler
-   (`gcx alert instances list --datasource grafanacloud-prom`); (ii) Brian deletes the ruler namespace `andara`
+   refuses to continue if unmet: no `severity = page` alert for `namespace="andara-dev"` is pending or firing in
+   `solo7`'s ruler (`gcx alert instances list --datasource grafanacloud-prom`). A lower-severity alert that is
+   firing (today `ContentLoadFailing`, a ticket) does not block: the rebuild discards that World, and the
+   script prints it so the omission is visible; (ii) Brian deletes the ruler namespace `andara`
    from `solo7` with `make alerts-delete` (a target `AW-INF-047` adds to `alerts_sync.py`, using the existing
    ruler write key, which Brian exports by hand as `MIMIR_API_KEY_WRITE`; it is not in `.local/box.env`; it is
-   run by hand, once, and the key is given to no CI job beyond what `alerts` holds today); (iii) the rebuild
+   run by hand, once, and the key is given to no CI job beyond what `alerts` holds today); step 0's silence is
+   lifted here, since the alert it silenced no longer exists; (iii) the rebuild
    completes and `k8s-monitoring` ships `dev` to `solo7dev` with `environment="dev"`; (iv) `make observe-check
    ENV=dev --keep-list` (decision 13) passes; (v) a merge sets `required_environments = ["dev"]` in
    `solo7dev`'s tfvars, which adds the `dev` absence line to `AndaraServerUnavailable`; (vi) `make
@@ -517,9 +532,8 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
   after Brian creates it, and a test fails on an empty one. The unsuffixed `GRAFANA_CLOUD_*` names are retired
   with `alerts_sync.py`, and no script reads a Prometheus, Loki or Tempo URL: `gcx` reaches the data sources
   through `grafana_url`.
-- **`solo7` is the stack that exists** (Context), now prod; `solo7dev` is new. The earlier name `solo7-local` and
-  the `solo7local` / `solo7prod` stacks of the drafts are retired: there is no stack to delete and no 7-day
-  archive step.
+- **`solo7` is the stack that exists** (Context), now prod; `solo7dev` is new. There is no stack to retire and
+  no archive step.
 - **Write credentials by place:** CI holds `READ` for both stacks and `APPLY` per environment (decision 4); the
   dev box holds `solo7dev` apply only.
 - **Retention and cost of `solo7dev`:** compose, CI, `dev` and `staging` send to it. The stack is on Grafana
@@ -609,8 +623,8 @@ lines that must exist per environment are marked **in the file**, as PromQL comm
 
 ```
 // CONTRACT SKETCH — not an implementation
-or absent(up{job="andara-server", environment="dev"})    # env:dev
-or absent(up{job="andara-server", environment="prod"})   # env:prod
+or absent(up{job="andara-server", environment="dev", namespace="andara-dev"})    # env:dev
+or absent(up{job="andara-server", environment="prod", namespace="andara-prod"})  # env:prod
 ```
 
 The module drops every line marked `# env:<environment>` whose value is not in the stack's
@@ -656,8 +670,8 @@ reinstalled `k8s-monitoring` must send, and the order:
 | logs | `loki_url` and `loki_user` from the same file | same token |
 | traces | `otlp_url` (and `tempo_url`) from the same file | same token |
 
-**Labels.** Every series, log line and span carries `environment` (`dev`, `staging` or `prod`, derived from the
-namespace by decision 9's table) **and** `namespace = <the pod's namespace>`: the rules, the dashboard and the
+**Labels.** Every series, log line and span carries `environment` (`dev` for `andara-dev`, `staging` for
+`andara-staging`, `prod` for `andara-prod`; decision 9's table) **and** `namespace = <the pod's namespace>`: the rules, the dashboard and the
 routing key on both. That includes kube-state-metrics' series, which take `environment` from the pod's
 namespace through the same mapping. `cluster` may be added freely; no rule reads it. `job="andara-server"` and
 `job="andara-projector-state"` are produced by the chart's scrape annotations and must not be relabelled. Series

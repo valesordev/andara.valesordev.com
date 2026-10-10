@@ -826,7 +826,7 @@ is also the `gcx` context.
 
 **Grafana-managed rule** — An alert rule evaluated and routed by a stack's Grafana, defined as a query,
 expressions and a condition. Replaces the data-source-managed (Mimir ruler) rule. It writes no `ALERTS`
-series: its state is read from the stack's rules endpoint (ADR-0012 §2).
+series: its state is read with `gcx alert instances list` and `alert rules list` (ADR-0012 §2).
 
 **`gcx`** — Grafana's own command line tool (`github.com/grafana/gcx`), pinned in `make bootstrap`. Every
 test and drill reads Grafana Cloud through it, by `scripts/gcx.py`; no script calls Grafana's query or alerting
