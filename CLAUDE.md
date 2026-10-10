@@ -358,9 +358,9 @@ result as a story comment (`--record "§8 instrumentation"`) before architecture
 **"Verified against a real backend" when no in-cluster caller exists yet.** Stories land
 bottom-up, so a story's instruments are often unreachable from the running server until a later
 story supplies the caller (a bound Character, a subscriber). The check is then satisfied by the
-integration suite exercising the story's own code against the local stack's backends (Redpanda,
-Tempo) with assertions on the metric objects, plus a scrape of the same registry's sibling series
-from the server. The story's §8 record says exactly which series the server itself has not yet
+integration suite exercising the story's own code against the local kind cluster's services and
+the `solo7dev` Grafana Cloud stack for telemetry, read through `gcx`, with assertions on the metric
+objects, plus a scrape of the same registry's sibling series from the server. The story's §8 record says exactly which series the server itself has not yet
 emitted, and the first story that can make the live observation carries it as an inherited
 Definition-of-done line. Deferring the observation this way is not deferring the check; holding a
 story in `review` until a caller two milestones away lands is what `review` does not mean.
@@ -378,7 +378,7 @@ Baseline targets the SRE role owns and keeps working:
 ```
 make help              # self-documenting target list; default goal
 make bootstrap         # install/verify toolchain, hooks, local deps — idempotent
-make up / make down    # local stack (server + datastores + observability) via compose
+make up / make down    # local environment: the kind cluster and the chart in andara-local (ADR-0012 §14)
 make check             # fmt + vet + lint + test + manifest validation; what CI runs
 make adr               # scaffold a new ADR
 make k8s-dry           # render + validate manifests against the target API version

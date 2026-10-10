@@ -843,8 +843,9 @@ integration, one schedule (Brian alone) and one escalation chain, managed by Ter
 and `andara-dev` to `solo7dev` (ADR-0012 §14); compose is retired.
 
 **Fleet Management (Grafana Fleet Management)** — Grafana Cloud's service that delivers configuration to
-registered collectors. Here collectors register with it for inventory; the `environment` and `cluster` stamp is static
-in the chart's values, and a series that is not stamped carries `environment="unknown"` (ADR-0012 §15).
+registered collectors. Here the whole collection pipeline (scrape, `environment` stamp, keep-list, export) is
+Fleet's, deployed through Terraform per stack; a series nothing stamped carries `environment="unknown"`
+(ADR-0012 §15).
 
 **Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or the empty
 `blackhole` that notifies no one. **Notification policy** — The tree that matches an alert's labels
