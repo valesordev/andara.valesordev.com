@@ -346,8 +346,13 @@ workflow that stays separate from `kind.yaml`, so the previous-run lookup is not
 recovery does not include forwarding latency. Story 6c.
 
 *On the box.* Story 6a owns the `values/ci.yaml` overlay. `make test-integration` is backed by the shared Kafka and
-object store through a port-forward, with a principal `andara-it` that may create and delete only
-`it-<random>.`-prefixed topics and buckets, so the tests never touch `local.` or `dev.` data; story 6a owns it. The
+object store through a port-forward, with a principal `andara-it` whose ACLs are scoped to the names the suite already uses: topics with the prefix
+`andara.test.` (`server/tickloop/kafka_integration_test.go`), buckets with the prefix `andara-test-`
+(`server/store/s3_test.go`, a third versitygw user), and consumer groups with the prefix `it-`. None of those overlaps
+`local.andara.`, `dev.andara.`, `andara-snapshots-<env>` or a real consumer group, so the tests never touch `local` or `dev`
+data. A literal-`*` group ACL is refused, because a principal that can join `andara-sim-dev` can steal `dev`'s offsets.
+The suite's group IDs that do not start with `it-` (for example `gap`, `server/tickloop/offset_gap_integration_test.go`) are
+renamed by the implementation story I1, which gains that line; story 6a owns the principal. The
 compose `min` profile is retired until `ADR-0012` decision 14's trigger fires; **its baseline**
 (`make test-integration`'s wall time on compose `min`) **is recorded by story 6a before compose is removed**, because the
 trigger compares against it.
@@ -463,7 +468,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 8 | Collectors and the telemetry token install on the new platform (`ADR-0012` decisions 13 and 15), the `observe_keep_list.py` exclusion for `andara-shared` | M |
 | 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
 | 10 | Compose retirement, only after 6b, 6c, 7a and 7b: delete `deploy/compose`, the compose targets and drivers, `stack.yaml` and the old `recovery-timing` set-up; `make up` and `make down` take their kind meaning | S |
-| I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, tests | S |
+| I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, the integration tests' consumer-group IDs renamed with the `it-` prefix, tests | S |
 | I2 | **implementation:** ADR-0011's SASL client in the shared constructor and its 20 `kgo.NewClient` sites | M |
 | later | Redis and Postgres isolation and deployment, when `AW-SRV-017` / `AW-SRV-018` have binaries | S each |
 
