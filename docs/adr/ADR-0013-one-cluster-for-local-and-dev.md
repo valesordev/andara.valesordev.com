@@ -147,7 +147,7 @@ partitions, 888 replicas (666 for `dev` at RF 3, 222 for `local` at RF 1, decisi
 RF 3 would triple the load for no property anyone tests); `dev` keeps RF 3 and ISR 2. The partition counts stay as
 they are (64, permanent); a different count for `local` would test a different hash. The server reads a new
 config key **`kafka.topic_prefix`** (env `ANDARA_KAFKA_TOPIC_PREFIX`, flag `--kafka-topic-prefix`), default `""`
-(unprefixed, which is what `prod` keeps); the chart sets `dev.` and `local.`. Consumer groups already carry
+(unprefixed, which is what `prod` keeps); the chart sets `dev` and `local` (the value has no trailing dot; the topic is `<prefix>.<name>`, see Amendments). Consumer groups already carry
 `-<env>`. `deploy/kafka/topics.yaml` gains a `prefix:` per environment and renders the topics and principals for
 each. A server change: decision 12's implementation story. The key covers **every** topic the server and the projector
 name, the content topics included. With the default `""` a server would silently use unprefixed topics, so the
@@ -465,7 +465,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared`, Traefik PROXY-protocol trust and the allowlist CIDRs, the CI PROXY-protocol test | M |
 | 3 | Shared Kafka: `andara-shared`, prefixed topics, bounded `local.` retention, quotas and per-environment principals rendered from `topics.yaml`, **every script that names a topic derives it from the environment's prefix** (`scripts/world_reset.py`'s `RESET_TOPICS`, which would otherwise skip the real World and Account topics and report a reset that preserved them, `scripts/topics.py`, `scripts/proto.sh`, `scripts/stack.sh`) with a test that fails on a bare `andara.*` topic literal in `scripts/`, and the runbooks' topic names (`snapshot-stale`, `state-projector-diverged`, `server-crashlooping`, `projection-stale`, `state-projector-down`), NetworkPolicies, chart FQDN values and the `andara.valesor/env` namespace labels, `make shared-check` | M |
 
-| 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, `kind.yaml` assertions | M |
+| 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, manifest assertions in `make check` (CI's lifecycle job has no shared Kafka) | M |
 | 3c | Shared schema registry (Karapace or Apicurio) in `andara-shared`, `schemas.py` takes `ENV`, prefixed subjects, NetworkPolicy | M |
 | 4 | Shared object store: versitygw IAM users, a bucket and Secret per environment, `objectstore.py local`, 10Gi | S |
 | 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, deploy/rollback parity, remove Image Updater (and `kind.yaml`'s `already installed == 2`), the three `[verify]` items, `AW-INF-041` amendment | M |
@@ -478,7 +478,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
 | 10 | Compose retirement, only after 6b, 6c, 7a and 7b: delete `deploy/compose`, the compose targets and drivers, `stack.yaml` and the old `recovery-timing` set-up; `make up` and `make down` take their kind meaning | S |
 | I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, the integration tests' consumer-group IDs renamed with the `it-` prefix, tests | S |
-| I2 | **implementation:** ADR-0011's SASL client in the shared constructor and its production `kgo.NewClient` sites, and the integration suites' clients and S3 credentials (31 test sites) | M |
+| I2 | **implementation:** not a new story: the SASL client, the single constructor and its test sites already belong to `AW-SRV-044`, which gains the `andara-it` credentials and the S3 test pair (Amendments) | - |
 | later | Redis and Postgres isolation and deployment, when `AW-SRV-017` / `AW-SRV-018` have binaries | S each |
 
 ## Agreement with `ADR-0012`
@@ -542,3 +542,47 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
   decision 11) and move certificates to the other repo, or publish 80/443 again.
 - Argo CD's automated sync on a tag misbehaves twice (a tag moved mid-sync, a rollback that does not converge):
   move the promotion to a pull request instead of a force-moved tag.
+
+## Amendments
+
+### 2026-10-10, contract review of the follow-on stories
+
+PM wrote the stories of decision 12 (`AW-INF-052` to `067`, `AW-SRV-058`, `059`) and listed gaps. These are clarifications of
+decisions already accepted, not new decisions; where they differ from the text above, they win.
+
+1. **The kind node image** is pinned once, in `deploy/platform/versions.yaml`; `cluster-up` passes it to `kind create cluster
+   --image`, and `deploy/kind/cluster.yaml` carries no `image:`.
+2. **`cluster-rebuild` is composed incrementally.** `AW-INF-052` ships it as destroy and create; each later story (platform
+   `054`, shared Kafka `055`, registry `057`, object store `058`, collectors `065`) appends its own step in its own change,
+   and `066` runs the whole chain.
+3. **`make shared-up`** is created by whichever of `055` and `058` lands first, and the other appends to it.
+4. **`KafkaUser` quotas** are keyed by principal, so they bind only once the broker authenticates (`056`). Until then the
+   bounded `local.` retention (`055`) is the only bound, and `055` says so.
+5. **The staging ClusterIssuer** `letsencrypt-staging` is created by `platform-up` (`054`) beside `letsencrypt`.
+6. **`kafka.topic_prefix` has no trailing dot.** The value is `dev` or `local` (it must match `[a-z0-9-]+`) or empty; the
+   topic is `<prefix>.<name>` when the prefix is set and `<name>` when it is empty. Decision 4's `dev.` and `local.` are the
+   prefix plus the separator.
+7. **Removing `172.16.0.0/12` from `dev`** is the last step of the rebuild run (`066`), after the resolution check passes;
+   `059` does not remove it. (Decision 11 said story 5; `059` blocks `066`, so the order is a cycle otherwise.)
+8. **`internal/smoke/soak_test.go`'s `ANDARA_EDGE_PORT`** is implementation lane. It joins `AW-SRV-058` (a second line in
+   its scope, because it is the same kind of change: a test constant that follows the new cluster).
+9. **The Builder's Guide** (`docs/builders/02`, `03`, `04`, `09`) is architecture's; architecture amends the hostnames and
+   the port in the change that follows `AW-INF-060` merging, not before (the old names are true until the cluster exists).
+10. **`make kafka-rehearsal`** is built by `AW-INF-040`, which comes first; `063` re-points it at `andara-shared`, adds the lock
+    and the refusal, and depends on `040`.
+11. **The `it-` group-ID grep** in `make check` is added by `AW-INF-060` (SRE's Makefile) after `AW-SRV-058` has renamed the
+    IDs, so the grep never fails on a branch that has not been renamed yet.
+12. **ADR-0011's compose Redpanda**: the clause "including the compose Redpanda" lapses with compose; SASL applies to the
+    Strimzi broker in `andara-shared` and to the CI `drills` job's throwaway Kafka. ADR-0011's annotation says so.
+13. **Overlaps with existing stories.** `AW-SRV-059` duplicates `AW-SRV-044` (one constructor with SASL, test files
+    included): 059 is closed, and 044 gains the `andara-it` credentials (`kafkaclient.Principals` already admits a
+    `-dev`-style suffix) and the S3 test pair. `AW-INF-030`
+    and `AW-INF-031` (principals, ACLs and SASL on compose Redpanda and `dev`) are superseded by `055` and `056`: 056 carries
+    their non-compose scope (the `principals:` section of `topics.yaml`, `topics-apply`/`topics-diff` ACL drift, the chart's
+    `secrets.kafkaCreds`, the `rpk` wrappers with the operator credential) and 030/031 close. `AW-INF-015` (a schema registry
+    per namespace) is superseded by `057` and closes.
+14. **The 18-script count** of story `053` is not an enumeration: the story's first step is the grep, and its test (no bare
+    `kubectl` in `scripts/`) is what enumerates.
+15. **Shared-service alerts** have no environment value yet: `andara-shared` stays `unknown` and excluded. The first alert on
+    a shared service reopens `ADR-0012` decision 9 for an environment value (SRE's review, items 3 and 4); that is not decided
+    here.
