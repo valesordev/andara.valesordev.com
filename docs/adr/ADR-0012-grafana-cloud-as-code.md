@@ -711,7 +711,7 @@ kill), or the drill is inconclusive (exit 1, as its AC-2 already is).
 | `kube_pod_container_status_ready` | same | `…{environment="dev", container="server"}` |
 | `kube_pod_container_status_restarts_total` | `AndaraServerCrashLooping` | `…{environment="dev", container="server"}` |
 | `kube_deployment_spec_replicas` | `StateProjectorDown` (`AW-INF-025`) | `…{environment="dev", deployment="andara-projector-state"}` |
-| `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | `{exported_namespace="andara-dev"}` (the Certificate's namespace; the check is per environment, so another workload's certificate cannot satisfy it) |
+| `certmanager_certificate_expiration_timestamp_seconds` | `CertificateExpiringSoon` | `{exported_namespace="andara-dev", name=~"andara-.*"}` (the Certificate's namespace; the check is per environment, so another workload's certificate cannot satisfy it) |
 | `traefik_router_requests_total` | `IngressErrorRateHigh` | `{router=~"andara-dev-andara.*"}` (Traefik names an Ingress router `<namespace>-<ingress>-<host>…`, and the rules derive `namespace` and `environment` from that name; the check uses the selected environment's prefix, so `andara-ci` or `andara-staging` routers cannot satisfy it) |
 | the server's `andara_*` series (`andara_ticks_total`, `andara_simulation_lag_seconds`, `andara_snapshot_age_seconds`, `andara_recovery_state_hash_match` ‡ (absent until a recovery sets it; on the cluster only `1` is ever scraped, a refused recovery is never Ready, `alerts.yaml`'s own comment), `andara_session_egress_drops_total`, `andara_stream_subscribers`, `andara_content_pending_seconds`, `andara_state_*`) | the remaining rules and the dashboard | `andara_ticks_total{environment="dev"}` |
 
