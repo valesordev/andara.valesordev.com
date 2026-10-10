@@ -818,3 +818,55 @@ CLAUDE.md §5.
 
 **Milestone** — A demonstrable state of the product on the roadmap. Defined by what a human can
 observably do, not by which stories are closed.
+
+**Grafana Cloud stack** — One Grafana Cloud instance with its own metrics, logs and traces backends,
+alerting, dashboards and credentials. Two: `solo7` (prod) and `solo7dev` (everything non-prod). Created by hand;
+everything inside is Terraform's (ADR-0012). Which stack an `ENV` maps to is `scripts/grafana_stack.py`'s, and
+is also the `gcx` context.
+
+**Grafana-managed rule** — An alert rule evaluated and routed by a stack's Grafana, defined as a query,
+expressions and a condition. Replaces the data-source-managed (Mimir ruler) rule. It writes no `ALERTS`
+series: its state is read with `gcx alert instances list` and `alert rules list` (ADR-0012 §2).
+
+**`gcx`** — Grafana's own command line tool (`github.com/grafana/gcx`), pinned in `make bootstrap`. Every
+test and drill reads Grafana Cloud through it, by `scripts/gcx.py`; no script calls Grafana's query or alerting
+HTTP APIs directly (ADR-0012 §2).
+
+**Cutover** — Moving the `andara` rule set from `solo7`'s ruler to Grafana-managed rules: apply the rules paused,
+delete the ruler namespace at the planned rebuild outage, `dev`'s rules go live in `solo7dev`, `solo7`'s stay paused
+until prod is installed. A rule is never live in both places (ADR-0012 §7).
+
+**IRM (Grafana IRM)** — Grafana Cloud's incident response and on-call product. Only `solo7` uses it: an
+integration, one schedule (Brian alone) and one escalation chain, managed by Terraform (ADR-0012 §10).
+
+**Alloy** — Grafana's telemetry collector. The cluster's runs as bare collectors that take their pipelines from Fleet
+Management and ship `andara-local` and `andara-dev` to `solo7dev` (ADR-0012 §15); compose is retired.
+
+**Fleet Management (Grafana Fleet Management)** — Grafana Cloud's service that delivers configuration to
+registered collectors. Here the whole collection pipeline (scrape, `environment` stamp, keep-list, export) is
+Fleet's, deployed through Terraform per stack; a series nothing stamped carries `environment="unknown"`
+(ADR-0012 §15).
+
+**Contact point** — Where Grafana sends a notification: a Slack channel, an IRM integration, or the empty
+`blackhole` that notifies no one. **Notification policy** — The tree that matches an alert's labels
+(`severity`) to contact points. One tree per stack, owned wholly by Terraform.
+
+**Keep-list** — The metric series a stack's ingest must not drop because a rule or the dashboard reads them
+(ADR-0012 §13). `make observe-check ENV=<env>` in keep-list mode queries each one.
+
+**Drift** — A managed Grafana resource that differs from Terraform's plan because someone edited it in the
+UI. Found by the daily `drift` job, which opens a GitHub issue; never an alert (ADR-0012 §5).
+
+**Environment (label)** — The `environment` label on all telemetry: `local`, `dev`, `staging` or `prod` (and the reserved `unknown`, which marks a series nothing stamped and is reported, never routed to IRM), derived
+from the namespace by one table (ADR-0012 §9). `namespace` stays as the source within an environment.
+
+**`required_environments`** — A Terraform variable per stack: the environments whose absence must page or post (a
+marked `absent()` line of `AndaraServerUnavailable` is rendered only for these). `solo7dev` adds `dev` once `dev`
+ships; `solo7` adds `prod` once prod is installed (ADR-0012 §12).
+
+**Workload Identity Federation** — Google Cloud's way to let a GitHub Actions job act as a service account from
+its OIDC token, with no stored key. The Terraform state bucket's six service accounts are reached this way
+(ADR-0012 §3).
+
+**State bucket** — The private GCS bucket `andara-tfstate` holding each Terraform root's state under
+`grafana/<root>/`. Created by hand once (`make tf-bootstrap-gcp`), never by Terraform (ADR-0012 §3).
