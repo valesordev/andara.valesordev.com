@@ -170,7 +170,7 @@ reaches both. (c) is today's shape and duplicates the gateway.
 
 **Decision (S3): (a).** versitygw is run with its IAM directory (`--iam-dir`) **[verify in the object-store
 story: that the pinned v1.8.0 enforces per-user bucket ownership]**; the root pair is held by the operator
-only; two users, `andara-local` and `andara-dev`, each own their bucket: `andara-snapshots-local` and
+only; users `andara-local` and `andara-dev` each own their bucket (a third, `andara-it`, is the integration suite's, below): `andara-snapshots-local` and
 `andara-snapshots-dev`. The existing Secret name `andara-snapshot-s3` stays in each environment's namespace,
 holding that environment's pair. The snapshot key is unchanged (the bucket is the separation).
 `scripts/objectstore.py` accepts `local`. The PVC grows to 10Gi (two environments' snapshots share one disk).
@@ -348,11 +348,21 @@ recovery does not include forwarding latency. Story 6c.
 *On the box.* Story 6a owns the `values/ci.yaml` overlay. `make test-integration` is backed by the shared Kafka and
 object store through a port-forward, with a principal `andara-it` whose ACLs are scoped to the names the suite already uses: topics with the prefix
 `andara.test.` (`server/tickloop/kafka_integration_test.go`), buckets with the prefix `andara-test-`
-(`server/store/s3_test.go`, a third versitygw user), and consumer groups with the prefix `it-`. None of those overlaps
+(`server/store/s3_test.go`, a third versitygw user, `andara-it`, allowed to create buckets; versitygw has no name-prefix
+ACLs, so the prefix is a convention the suite keeps, not something the gateway enforces, and that `andara-it` cannot take
+a name that already exists is part of the object-store story's **[verify]**), and consumer groups with the prefix `it-`. None of those overlaps
 `local.andara.`, `dev.andara.`, `andara-snapshots-<env>` or a real consumer group, so the tests never touch `local` or `dev`
 data. A literal-`*` group ACL is refused, because a principal that can join `andara-sim-dev` can steal `dev`'s offsets.
-The suite's group IDs that do not start with `it-` (for example `gap`, `server/tickloop/offset_gap_integration_test.go`) are
-renamed by the implementation story I1, which gains that line; story 6a owns the principal. The
+Nine group IDs in the suite do not start with `it-` today (`gap`; `andara-rec-…`, `andara-rec-second-…`;
+`andara-sim-test-…`, `andara-sim-crash-…`, `andara-sim-handoff-…`, `andara-sim-lost-…`, `andara-sim-<commands>`;
+`andara-projector-state-test-%d`, and its `DeleteGroups`), two of which share a prefix with the real `andara-sim-<env>`.
+Story I1 renames them and adds an acceptance line, enforced by a grep in `make check`: no group ID in a
+`*_integration_test.go` file lacks the `it-` prefix. The suite's Kafka clients (31 raw `kgo.NewClient` sites in tests, and
+the `Brokers:` option passed to the production constructors) take SASL credentials for `andara-it` from
+`ANDARA_KAFKA_SASL_USERNAME` / `ANDARA_KAFKA_SASL_PASSWORD_FILE` and the S3 pair from `ANDARA_S3_TEST_ACCESS_KEY` /
+`ANDARA_S3_TEST_SECRET_KEY`, which `make test-integration` exports; that test-side work is story I2's, alongside the
+production constructor. Every topic the suite uses is `andara.test.*` (`tickloop`, `recordlog`, `ingress`, `recovery`,
+`projector`, `content`, `boot`, `admin/cli`), so `kafka.topic_prefix` touches none of them. Story 6a owns the principal. The
 compose `min` profile is retired until `ADR-0012` decision 14's trigger fires; **its baseline**
 (`make test-integration`'s wall time on compose `min`) **is recorded by story 6a before compose is removed**, because the
 trigger compares against it.
@@ -469,7 +479,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
 | 10 | Compose retirement, only after 6b, 6c, 7a and 7b: delete `deploy/compose`, the compose targets and drivers, `stack.yaml` and the old `recovery-timing` set-up; `make up` and `make down` take their kind meaning | S |
 | I1 | **implementation:** `kafka.topic_prefix` in the server and the projector, every topic constant including `server/content/kafka.go`, the config validation of decision 4, the integration tests' consumer-group IDs renamed with the `it-` prefix, tests | S |
-| I2 | **implementation:** ADR-0011's SASL client in the shared constructor and its 20 `kgo.NewClient` sites | M |
+| I2 | **implementation:** ADR-0011's SASL client in the shared constructor and its production `kgo.NewClient` sites, and the integration suites' clients and S3 credentials (31 test sites) | M |
 | later | Redis and Postgres isolation and deployment, when `AW-SRV-017` / `AW-SRV-018` have binaries | S each |
 
 ## Agreement with `ADR-0012`
