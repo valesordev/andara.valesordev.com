@@ -115,8 +115,11 @@ A Partition `p` becomes degraded when either:
 2. **The probe finds it.** Once per probe interval (the producer's existing `ProbeInterval`, one second; the metadata request is bounded by it) the ingress
    reads topic metadata for `andara.commands.v1` and marks `p` degraded if its leader has been absent on **two consecutive probes**, or its
    in-sync replica count is below the topic's `min.insync.replicas`. The probe asks the broker the
-   configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** ping a broker:
-   a reachable broker says nothing about a Partition.
+   configuration, once at boot and every 60 s, and does not hard-code 2. It does **not** `Ping` a broker to judge
+   a Partition: a reachable broker says nothing about a Partition. (It does send its metadata and configuration
+   request to **every broker the metadata lists at once**, and the first answer wins, so one dark address in
+   the metadata cannot cost the whole interval and degrade all 64 while the other brokers serve, which is the #129
+   failure. Ratified 2026-10-10, `AW-SRV-052`.)
 
 If the metadata request itself fails (no broker answers) on **two consecutive probes**, all 64 Partitions are degraded; one failed probe marks nothing, so a single transient failure inside an election cannot undo the grace above.
 
@@ -175,6 +178,18 @@ contract pins and asserts it. The ingress never queries a broker config for this
 - A record whose Submit was answered `UNAVAILABLE` never lands. A record whose Submit was answered
   `DEADLINE_EXCEEDED` may land only until its deadline, and never after it. Both are unchanged from
   `AW-SRV-010`; they are restated because a per-Partition mechanism is where they would be lost.
+- **One client per Partition is the isolation mechanism.** Closing a client is the only way to drop what it holds, so the
+  ingress holds one `kgo` client per Partition, built on first use, and entering the state closes that Partition's
+  client and no other. The cost, up to 64 clients each with a connection to its leader, is accepted; the buffer bound
+  stays producer-wide. (Ratified 2026-10-10, `AW-SRV-052`.)
+- **The produce error is read from the wire by a read-only tap**, because franz-go v1.20 has no hook that sees a
+  produce response: the tap wraps the produce connections through `kgo.Dialer` and decodes each `ProduceResponse`'s
+  per-Partition error codes. This constrains every Kafka client constructor (ADR-0011 §7): **TLS must live inside the
+  `Dialer`** (a `tls.Dialer`'s `DialContext`), never in `kgo.DialTLSConfig`, which would layer TLS over the tapped
+  connection. A connection the tap cannot follow is let go with a warning, and the probe is then the only trigger.
+- **`min.insync.replicas` where the broker reports none.** Redpanda's `DescribeConfigs` returns no such property
+  (the broker contract says it is absent), so a broker that reports none is held at the Kafka default of 1 instead of
+  never being read; on Kafka/Strimzi the real value is read at boot and every 60 s.
 - Entering and leaving log at `info` with `partition` and the cause (`produce_error` or `probe`, and the
   error name or `leader_absent` / `isr_below_min`).
 
