@@ -241,8 +241,12 @@ pinned by `.terraform-version` and installed by `make bootstrap`.
   The PR plan job is policed because it runs a pull request's Terraform (decision 5). A fixture in
   `scripts/tests` asserts the workflow's pull-request jobs, and scheduled jobs outside `andara-prod-plan`,
   reference no `SOLO7_IRM` role, no `TFSTATE_PRODPLAN_ROLE`, no IRM token and no `TF_PLAN_KEY_PROD`. The trust
-  conditions name the actual OIDC `sub` of each job (for `pull_request_target`, the base-branch ref claim);
-  `AW-INF-046` checks the claim against a real run.
+  conditions name the OIDC claims of each job. For the `pull_request_target` plan job the `sub` is
+  `repo:valesordev/andara.valesordev.com:pull_request`, not a branch ref (the target branch is the separate
+  `base_ref` claim), so the PR plan role requires that `sub`, `base_ref = main`, and `job_workflow_ref` of
+  `terraform.yaml@refs/heads/main` (the base branch's workflow, which is what `pull_request_target` runs). If
+  the repository uses immutable subject claims, the immutable form replaces the `sub` string.
+  `AW-INF-046` checks each role's trust against a real run before the story is done.
   **Terraform never creates the credentials CI uses** (decision 4), so state holds no token that can write to
   Grafana. What a leaked webhook buys is a post to a Slack channel; what a leaked IRM integration URL buys is
   a false page to Brian, which is why that URL lives only in the IRM root's state; rotating each is
