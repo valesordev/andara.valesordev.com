@@ -361,7 +361,7 @@ Slack webhooks), which state also holds.
   `#andaras-world-dev`, never a page (decision 10). It is not a configuration credential. `solo7`'s telemetry
   token is not in this repo at all.
 - **Provider credentials are never Terraform variables.** They reach the providers only through the
-  providers' environment variables (`GRAFANA_AUTH`, the IRM token's variable, and the Fleet provider's `user:token` variable, composed in the job from the committed `fleet_user` and the Fleet token), never `TF_VAR_*` or `-var`, so
+  providers' environment variables (`GRAFANA_AUTH`, the IRM token's variable, and the Fleet provider's `user:token` variable, composed in the job from the committed `fleet_user` and the Fleet token; the variable's name is **[verify in 046]**), never `TF_VAR_*` or `-var`, so
   no plan file or state holds a token; `scripts/tf_policy.py` and a workflow fixture refuse a token passed
   any other way. The Slack webhooks are the exception, deliberately: `TF_VAR_slack_webhook`.
 - **IRM is outside the PR `plan` and `drift` jobs, by being its own root.** Its token can write, so
@@ -407,8 +407,8 @@ per stack in a fixed order; (c) apply from the dev box only.
   - functions: the only file function allowed is `file()` whose argument is a string literal or the single template `"${path.module}/<literal>"` or
     `"${path.root}/<literal>"` (these hold directory paths, not secrets; no other computed path), normalised and
     resolved as a real path, and that real path is inside `deploy/terraform/grafana/`, `deploy/helm/andara/files/alerts.yaml` or
-    `deploy/grafana/dashboards/`; the tfvars are read natively and need no `file()`. Positive fixtures are the
-    real call sites (`alerts.yaml`, `tick-health.json`); `fileexists`, `templatefile`, `filebase64`, `fileset` and `abspath` are refused. **Symlinks
+    `deploy/grafana/dashboards/`; the tfvars are read natively and need no `file()`. Other pure functions (`replace`, `yamldecode`, `jsonencode`) are permitted. Positive fixtures are the
+    real call sites (`alerts.yaml`, `tick-health.json`, and one literal `file()` per `pipelines/*.alloy`, never a `for_each` over file names, which is a computed path and fails with its own negative fixture); `fileexists`, `templatefile`, `filebase64`, `fileset` and `abspath` are refused. **Symlinks
     are refused**: the script rejects any git entry of mode 120000 and any symlink on disk in the pull
     request's files it extracts, before Terraform runs, because a link under an allowed directory to
     `/proc/self/environ` would otherwise put the runner's environment into a plan (fixtures: a symlink to `/proc/self/environ`, a `..` path that resolves outside the roots, a computed path). No `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
@@ -628,13 +628,12 @@ so replacing the tree does not silence them. `solo7dev` is new: nothing to impor
 | `andara-staging` | `staging` |
 | `andara-prod` | `prod` |
 
-  The sender applies it: the Fleet `stamp` pipeline derives `environment` from the namespace (this table, the one input
-  of decision 15's pipelines) for every series, log and span of an `andara-*` namespace, including kube-state-metrics' (decision 13). A telemetry-bearing sender that sets a
+  The sender applies it: the Fleet `stamp` pipeline derives `environment` from the namespace (this table, part of decision 15's `stamp` source) for every series, log and span of an `andara-*` namespace, including kube-state-metrics' (decision 13). A telemetry-bearing sender that sets a
   value outside the four is a defect `observe-check --keep-list` reports (`gcx metrics labels -d grafanacloud-prom
   --label environment`). `local` has two sources, so the drills select on `namespace` as well as `environment`.
 - **Endpoints** are committed, because they are not secrets: each stack's `terraform.tfvars` carries
   `grafana_url` (what `gcx` and Terraform use) and, for the senders, `prom_url`, `prom_user`, `loki_url`,
-  `loki_user`, `tempo_url`, `tempo_user`, `otlp_url`, `fleet_url` and `fleet_user`, each a full URL including the path the sender needs. `AW-INF-046` fills them from the stack's "Details" page
+  `loki_user`, `tempo_url`, `tempo_user`, `otlp_url`, `fleet_url` and `fleet_user` (an ID, not a URL), each URL a full URL including the path the sender needs. `AW-INF-046` fills them from the stack's "Details" page
   after Brian creates it, and a test fails on an empty one. The unsuffixed `GRAFANA_CLOUD_*` names are retired
   with `alerts_sync.py`, and no script reads a Prometheus, Loki or Tempo URL: `gcx` reaches the data sources
   through `grafana_url`.
@@ -923,7 +922,7 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   each other, that the design collapses to one pipeline per signal.]**
   Pipeline sources are complete Alloy files in the repo (`deploy/terraform/grafana/pipelines/*.alloy`, inside the
   roots, so already within decision 5's `file()` allow-list), read with `file()` and filled by `replace()` over
-  fixed `__PLACEHOLDER__` tokens (the stack endpoints and user IDs, from tfvars); **`templatefile` stays
+  fixed `__PLACEHOLDER__` tokens (the stack endpoints and user IDs, from tfvars **only**: `tf_policy.py` refuses any other reference, `var.slack_webhook` included, inside a pipeline resource's `contents`, with a fixture); **`templatefile` stays
   refused**, because a template body is evaluated and could call `file()` on a path the allow-list never saw.
   The namespace-to-environment table (decision 9) is part of the `stamp` source, edited in the repo. Fixtures: a
   pipeline source containing `${file("/proc/self/environ")}` is plain text (nothing evaluates it, so Alloy's
@@ -954,8 +953,8 @@ service and a blast radius: a bad pipeline can blind a stack until the next appl
   matches a secret pattern.
 - **CI's kind cluster** (`andara-ci`, decision 9) does not register with Fleet Management: its ephemeral
   collectors would pollute the inventory. It runs the same pipeline files as static Alloy config, filled by the same `__PLACEHOLDER__`
-  substitution (a test asserts that the Terraform `replace()` and the CI script produce byte-identical output for
-  the same inputs), with `environment="local"` set by an override, so its series are `local` and blackholed.
+  substitution (`make tf-test` asserts that the Terraform `replace()` and the CI script produce byte-identical output for
+  the same inputs, and that no `__[A-Z_]+__` token survives substitution), with `environment="local"` set by an override, so its series are `local` and blackholed.
 - **IRM routing is proven in three layers.** A `terraform test` over the rendered policy tree asserts, for
   `solo7`, that `environment = prod` with `severity = page` reaches both `slack-prod` and `irm-prod`, that
   `environment = unknown` and any other value reach `slack-prod` only, and that `solo7dev` contains no IRM

@@ -361,8 +361,8 @@ story supplies the caller (a bound Character, a subscriber). The check is then s
 integration suite exercising the story's own code against the local kind cluster's services and
 the `solo7dev` Grafana Cloud stack for telemetry, read through `gcx`, with assertions on the metric
 objects, plus a scrape of the same registry's sibling series from the server. The story's §8
-record says exactly which series the server itself has not yet emitted, and the first story that can make the live observation carries it as an inherited
-Definition-of-done line. Deferring the observation this way is not deferring the check; holding a
+record says exactly which series the server itself has not yet emitted, and the first story
+that can make the live observation carries it as an inherited Definition-of-done line. Deferring the observation this way is not deferring the check; holding a
 story in `review` until a caller two milestones away lands is what `review` does not mean.
 
 ---
