@@ -305,10 +305,17 @@ installed (`make helm-install ENV=local`), behind one target. `make down` remove
 as `make local-down`); `make local-reset` additionally deletes the `local.`-prefixed topics and empties the
 `andara-snapshots-local` bucket, and its scripts refuse any name that does not carry the `local` prefix, so it
 cannot touch `dev`. `values/local.yaml` gains the shared Kafka and object store (it is broker-free today) and the host
-`local.andara.valesordev.com` (decision 11). **CI keeps its single-node, broker-free cluster** with a new
+`local.andara.valesordev.com` (decision 11). **CI keeps its single-node cluster for the lifecycle job, broker-free,** with a new
 `values/ci.yaml` overlay (host `andara.local`, memory sources, no broker): the lifecycle test coverage that CI
-had stays, and the loss is that CI no longer exercises `local`'s broker path (the shared Kafka is covered by the rebuild
-and `dev`). Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
+had stays. **CI also needs a broker for the work compose's `min` and `full` profiles carried there**, and today two
+workflows depend on compose: `stack.yaml` (the four `stack-*` drills, the M2 gate, the observability checks, which
+`make up` and `docker compose` drive) and `recovery-timing.yaml` (`make up PROFILE=min`, then `make recovery-timing`
+against `localhost:9092`, creating `andara.test.rec.*` topics). Both are retired and replaced in story 6 and 7b: a new
+`drills` job in `kind.yaml` creates a throwaway, **unshared, single-broker Kafka** (Strimzi, RF 1, one replica) in the CI
+cluster for the run, with a CI principal that may create any topic because it is destroyed afterwards; the `stack-*`
+drills run against `andara-ci` there, and `recovery-timing` runs in that job with `ANDARA_KAFKA_BROKERS` pointed at the
+broker (a port-forward) and the test's own topic names, so the `it-` prefix rule does not apply to it. The `andara-it`
+principal below is for the box only. Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
 a port-forward, with a principal `andara-it` that may create and delete only `it-<random>.`-prefixed topics and
 buckets, so the tests never touch `local.` or `dev.` data; story 6 owns it. The compose `min` profile is retired until
 `ADR-0012` decision 14's trigger fires; **its baseline** (`make test-integration`'s wall time on compose `min`) **is
@@ -327,7 +334,8 @@ The rebuild is one planned outage and it discards the whole box cluster.
 2. `ADR-0012`'s prerequisites are done (decision 7 steps 0 to 4(i-b): Terraform applied to both stacks, rules
    paused, the Fleet pipelines applied).
 3. `make cluster-rebuild`: delete the old cluster, create `andara`, platform, shared services.
-4. The `dev` certificate Secret is restored into `andara-dev` (the namespace is created empty first) **before** Argo CD
+4. The `dev` certificate Secret is restored into `andara-dev` (after the first rebuild that issued for the new name; the
+   old name's certificate is discarded) (the namespace is created empty first) **before** Argo CD
    syncs the `Certificate`, so cert-manager finds the Secret instead of issuing and spending a Let's Encrypt slot
    **[verify: that cert-manager adopts a pre-existing Secret whose issuer annotations match]**.
 5. `andara-dev` is created from the `dev` tag by Argo CD; `andara-local` by `make up`.
@@ -380,8 +388,13 @@ test exercises it, at the cost of the PROXY protocol on the entrypoint.
 | Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443: `scripts/helm_install.sh`, `scripts/env_recover.py`, `scripts/stream_soak.sh` and `internal/smoke/soak_test.go` take `ANDARA_EDGE_PORT`, default 8443 (a direct dial to the box cluster); `values/ci.yaml` and the kind workflow set it to 443, because CI's cluster still publishes 80 and 443, and the CI kind job passes only with it set to 443 (an acceptance criterion of story 6); story 6 owns them, with the values files' hostnames and the comments in `values/dev.yaml` and `values/local.yaml` that explain the docker-bridge source address, `deploy/helm/andara/values.yaml:109`, `deploy/helm/andara/README.md` and the Builder's Guide (`docs/builders/02`, `03`, `04`, `09`), which architecture amends in the same change. A soak through `nginx` of more than 10 minutes is a story 6 acceptance criterion. |
 
 *Rebuilds and Let's Encrypt.* Rebuilding the cluster is routine, and Let's Encrypt allows five duplicate certificates for the
-same names per week, so `make cluster-rebuild` exports the issued `dev` certificate Secret to `.local/tls/` (gitignored,
-mode 0600) before deleting the cluster and restores it after, and falls back to the staging issuer when the limit is hit.
+same names per week, so `make cluster-rebuild` exports to `.local/tls/` (gitignored, mode 0600) the issued `dev` certificate Secret **and
+cert-manager's private CA root Secret `andara-ca-tls`** (which holds a CA private key, kept to the same standard as the other
+local secrets) before deleting the cluster, and restores the CA root **before** the `andara-ca` issuer is applied, so the
+CA a browser or CLI already trusts survives a rebuild (`rotationPolicy: Never` intends exactly that). It falls back to the
+staging issuer when the limit is hit. The certificate for the retired name `andara-dev.solo7.valesordev.com` is not
+restored: **the first rebuild after the hostname change issues once for `dev.andara.valesordev.com`** (decision 9 step 4 is a
+no-op that time), and the export runs again after it.
 
 *Port collision.* The compose `stack-*` flow already uses host 8080 and 8443 (`ANDARA_HTTP_PORT`, `ANDARA_GRPC_PORT`).
 Stories 6 and 7b retire it; until they land, `make cluster-up` checks that 8080 and 8443 are free and refuses, naming the
@@ -404,7 +417,7 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, `kind.yaml` assertions | M |
 | 4 | Shared object store: versitygw IAM users, a bucket and Secret per environment, `objectstore.py local`, 10Gi | S |
 | 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, deploy/rollback parity, remove Image Updater (and `kind.yaml`'s `already installed == 2`), the three `[verify]` items, `AW-INF-041` amendment | M |
-| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, hostnames and `ANDARA_EDGE_PORT` in the scripts, README and Builder's Guide, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, the through-`nginx` soak, CI | M |
+| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, the CI `drills` job and its throwaway Kafka (replacing `stack.yaml` and `recovery-timing.yaml`), hostnames and `ANDARA_EDGE_PORT` in the scripts, README and Builder's Guide, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, the through-`nginx` soak, CI | M |
 | 7a | Broker drills: the drill lock (`drill-lock` ConfigMap and the checks in `make up`, `local-down`, `promote`, `topics-apply`) and `CONFIRM_LOCAL`, `kafka-broker-bounce` and `kafka-rehearsal` against `andara-shared`, `stack-boundary-lost` as a NetworkPolicy | M |
 | 7b | `env-recover`, `observe-*` and the `stack-*` targets re-pointed at contexts and `andara-local` (with `ADR-0012`'s replacements for `AW-INF-048`) | M |
 | 8 | Collectors and the telemetry token install on the new platform (`ADR-0012` decisions 13 and 15), the `observe_keep_list.py` exclusion for `andara-shared` | M |
