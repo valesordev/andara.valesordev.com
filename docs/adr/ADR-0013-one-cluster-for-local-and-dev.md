@@ -25,7 +25,7 @@ Postgres and versitygw. Brian's direction (2026-10-10), taken as given here and 
 Facts this ADR rests on, from the repo as of `origin/main` 437efea (read-only survey, 2026-10-10):
 
 - `deploy/kind/config.yaml` is one `control-plane` node, label `ingress-ready=true`, host ports 80 and 443; CI's
-  `kind.yaml` creates cluster `ci` from it and installs no Kafka, object store or `k8s-monitoring`. On the box the
+  `kind.yaml`'s lifecycle job creates cluster `ci` from it and installs no Kafka, object store or `k8s-monitoring`; the compose-driven `stack.yaml` and `recovery-timing.yaml` workflows carry the broker-backed CI (decision 8). On the box the
   cluster pre-existed; no script creates it.
 - The topics are unprefixed and their names are Go constants (`andara.commands.v1`, 64 partitions, a permanent
   choice, `deploy/kafka/topics.yaml`; `server/ingress/producer.go:32`, `server/tickloop/kafka.go:26-27`,
@@ -80,8 +80,8 @@ from a committed config with a `make` target; (c) a cluster-API or Terraform def
   sits, are published on the host as **`127.0.0.1:8080` and `127.0.0.1:8443`**, decision 11) and **three workers**, so Kafka's required hostname anti-affinity can schedule its 3 brokers. The
   three workers share one machine and one disk, as the broker contract already says of the current box
   (`docs/specs/kafka/broker-contract.md`); the spread is a scheduling property, not hardware redundancy.
-  `deploy/kind/config.yaml` stays CI's single-node cluster (CI installs no Kafka, publishes 80 and 443 for its
-  own `--resolve` tests, and is not the box's).
+  `deploy/kind/config.yaml` stays CI's single-node cluster (its lifecycle job installs no Kafka; the `drills` job of decision 8 adds a throwaway one; it publishes 80 and 443 for
+  its own `--resolve` tests, and is not the box's).
 - **Targets:** `make cluster-up` (create if absent; idempotent), `make cluster-down` (delete, after a
   confirmation naming the cluster, `CONFIRM=andara`), `make cluster-rebuild` (down, up, platform, shared
   services; the one-command rebuild `ADR-0012` decision 13 needs). Names are final.
@@ -315,7 +315,34 @@ against `localhost:9092`, creating `andara.test.rec.*` topics). Both are retired
 cluster for the run, with a CI principal that may create any topic because it is destroyed afterwards; the `stack-*`
 drills run against `andara-ci` there, and `recovery-timing` runs in that job with `ANDARA_KAFKA_BROKERS` pointed at the
 broker (a port-forward) and the test's own topic names, so the `it-` prefix rule does not apply to it. The `andara-it`
-principal below is for the box only. Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
+principal below is for the box only. A manifest guard in `make check` fails if the CI Kafka manifest (the principal that may
+create any topic) is referenced by anything that applies to the box.
+
+*What `stack.yaml` becomes.* Every step is kept, moved or dropped; nothing disappears silently.
+
+| `stack.yaml` step | Disposition |
+|---|---|
+| bootstrap, `up`, "the server runs this commit" (build stamp) | kept in `drills`: `make image` stamps, the chart installs it into `andara-ci` |
+| topics match the declaration; `topics-apply` aligns drift and refuses data loss | kept in `drills`, `topics.py` through `kubectl exec` into the throwaway Kafka's tools pod |
+| subjects registered and match the declaration (`schemas-apply` idempotent) | kept in `drills`, against the registry of the next paragraph |
+| build info and scrape targets up; a Session is seen by Prometheus; dashboard provisioned; alert rules load and `AndaraServerUnavailable` follows the server | dropped: the compose Prometheus and Grafana are gone. Replaced by `ADR-0012`: the rules' expressions by `promtool test rules` in `make check`, rule state by `gcx` on `solo7dev` (drills with secrets only), the dashboard by the `terraform test` of its three variables |
+| the record log and the tick loop on the broker (`make test-integration`); snapshot round | kept in `drills` |
+| the tick loop survives a broker outage | moved to 7a: a broker drill, unshared in CI so no lock is needed |
+| the log exporter survives a collector outage; a trace round-trips | kept only if story 8's static CI collector exists, else dropped by Brian's say; the trace round-trip becomes a `gcx` read on `solo7dev` where secrets exist |
+| `stack-boundary-lost`, `stack-play`, `stack-linkdead`, `stack-recover` (the M2 gate), `stack-recover-mismatch`, `stack-projector-check` | kept in `drills` against `andara-ci`, re-pointed by 7b; `stack-boundary-lost` is the NetworkPolicy drill of 7a |
+| `down` leaves nothing behind | replaced by deleting the throwaway Kafka's namespace and asserting nothing remains |
+
+*The schema registry.* Compose's Redpanda provides one (`ANDARA_SCHEMA_REGISTRY`, `make schemas-apply`, `ADR-0007`); a
+Strimzi Kafka does not, and neither does `dev` today. It becomes a shared service in `andara-shared`
+(Karapace or Apicurio **[verify: which, and that the server needs none at runtime, since only `scripts/schemas.py` reads it
+by `ANDARA_SCHEMA_REGISTRY_URL`]**), subjects carry the environment prefix with the topic they describe,
+`make schemas-apply ENV=` registers them, and the CI `drills` job gets its own throwaway instance. Story 3c.
+
+*Recovery timing.* The weekly cron, `workflow_dispatch`, path filters, the `recovery-timing.json` artifact and
+`recovery-timing-previous` (and `startup-budget-check`, `AW-INF-011`) keep their triggers and names in a `recovery-timing`
+workflow that stays separate from `kind.yaml`, so the previous-run lookup is not re-keyed; only its set-up changes, from
+`make up PROFILE=min` to the `drills` Kafka, run from an in-cluster Job rather than a port-forward so the measured
+recovery does not include forwarding latency. Story 6d. Story 6 owns the overlay. `make test-integration` is backed by the shared Kafka and object store through
 a port-forward, with a principal `andara-it` that may create and delete only `it-<random>.`-prefixed topics and
 buckets, so the tests never touch `local.` or `dev.` data; story 6 owns it. The compose `min` profile is retired until
 `ADR-0012` decision 14's trigger fires; **its baseline** (`make test-integration`'s wall time on compose `min`) **is
@@ -334,9 +361,9 @@ The rebuild is one planned outage and it discards the whole box cluster.
 2. `ADR-0012`'s prerequisites are done (decision 7 steps 0 to 4(i-b): Terraform applied to both stacks, rules
    paused, the Fleet pipelines applied).
 3. `make cluster-rebuild`: delete the old cluster, create `andara`, platform, shared services.
-4. The `dev` certificate Secret is restored into `andara-dev` (after the first rebuild that issued for the new name; the
-   old name's certificate is discarded) (the namespace is created empty first) **before** Argo CD
-   syncs the `Certificate`, so cert-manager finds the Secret instead of issuing and spending a Let's Encrypt slot
+4. The `dev` certificate Secret is restored into `andara-dev` (the namespace is created empty first) **before** Argo CD
+   syncs the `Certificate`; on the first rebuild after the hostname change there is nothing to restore (the old name's
+   certificate is discarded) and cert-manager issues once, so cert-manager finds the Secret instead of issuing and spending a Let's Encrypt slot
    **[verify: that cert-manager adopts a pre-existing Secret whose issuer annotations match]**.
 5. `andara-dev` is created from the `dev` tag by Argo CD; `andara-local` by `make up`.
 6. `ADR-0012` decision 7 step 4(ii) onward runs as written (ruler deletion at the point of no return, then the
@@ -390,8 +417,13 @@ test exercises it, at the cost of the PROXY protocol on the entrypoint.
 *Rebuilds and Let's Encrypt.* Rebuilding the cluster is routine, and Let's Encrypt allows five duplicate certificates for the
 same names per week, so `make cluster-rebuild` exports to `.local/tls/` (gitignored, mode 0600) the issued `dev` certificate Secret **and
 cert-manager's private CA root Secret `andara-ca-tls`** (which holds a CA private key, kept to the same standard as the other
-local secrets) before deleting the cluster, and restores the CA root **before** the `andara-ca` issuer is applied, so the
-CA a browser or CLI already trusts survives a rebuild (`rotationPolicy: Never` intends exactly that). It falls back to the
+local secrets) before deleting the cluster, and restores the CA root into the `cert-manager` namespace **after the namespace exists and before the first apply of
+`deploy/k8s/cert-manager/andara-ca.yaml`** (the file holds the self-signed issuer, the `andara-ca` Certificate and the
+`andara-ca` ClusterIssuer together; it is the Certificate existing without its Secret that generates a new root, not
+the ClusterIssuer). The restored Secret keeps its `cert-manager.io/issuer-name`, `issuer-kind` and `certificate-name`
+annotations and drops `resourceVersion`, `uid` and `ownerReferences`; `rotationPolicy: Never` governs renewal, not
+adoption, so adoption is **[verify]**, and an acceptance test asserts the CA's serial and `notBefore` are identical
+before and after a rebuild. The browser and CLI keep the CA they already trust. It falls back to the
 staging issuer when the limit is hit. The certificate for the retired name `andara-dev.solo7.valesordev.com` is not
 restored: **the first rebuild after the hostname change issues once for `dev.andara.valesordev.com`** (decision 9 step 4 is a
 no-op that time), and the export runs again after it.
@@ -414,10 +446,13 @@ PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless not
 | 1b | Contexts: every script takes `ANDARA_KUBE_CONTEXT` instead of the ambient context (18 scripts), with a test that fails on a bare `kubectl` | M |
 | 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared`, Traefik PROXY-protocol trust and the allowlist CIDRs, the CI PROXY-protocol test | M |
 | 3 | Shared Kafka: `andara-shared`, prefixed topics, bounded `local.` retention, quotas and per-environment principals rendered from `topics.yaml`, NetworkPolicies, chart FQDN values and the `andara.valesor/env` namespace labels, `make shared-check` | M |
+| 3c | Shared schema registry (Karapace or Apicurio) in `andara-shared`, `schemas.py` takes `ENV`, prefixed subjects | S |
 | 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, `kind.yaml` assertions | M |
 | 4 | Shared object store: versitygw IAM users, a bucket and Secret per environment, `objectstore.py local`, 10Gi | S |
 | 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, deploy/rollback parity, remove Image Updater (and `kind.yaml`'s `already installed == 2`), the three `[verify]` items, `AW-INF-041` amendment | M |
-| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, the CI `drills` job and its throwaway Kafka (replacing `stack.yaml` and `recovery-timing.yaml`), hostnames and `ANDARA_EDGE_PORT` in the scripts, README and Builder's Guide, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, the through-`nginx` soak, CI | M |
+| 6a | `andara-local`: `values/local.yaml` and `values/ci.yaml`, hostnames and `ANDARA_EDGE_PORT` in the scripts, the values-file comments, README and Builder's Guide, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, the through-`nginx` soak | M |
+| 6b | CI `drills` job: the throwaway single-broker Kafka and its operator install, its registry, the `kind.yaml` timeout, and the migration of `stack.yaml`'s kept steps (table above). `stack.yaml` is deleted only after 7a and 7b have landed | M |
+| 6d | `recovery-timing` workflow set-up on the `drills` Kafka (in-cluster Job), `startup-budget-check` unchanged | S |
 | 7a | Broker drills: the drill lock (`drill-lock` ConfigMap and the checks in `make up`, `local-down`, `promote`, `topics-apply`) and `CONFIRM_LOCAL`, `kafka-broker-bounce` and `kafka-rehearsal` against `andara-shared`, `stack-boundary-lost` as a NetworkPolicy | M |
 | 7b | `env-recover`, `observe-*` and the `stack-*` targets re-pointed at contexts and `andara-local` (with `ADR-0012`'s replacements for `AW-INF-048`) | M |
 | 8 | Collectors and the telemetry token install on the new platform (`ADR-0012` decisions 13 and 15), the `observe_keep_list.py` exclusion for `andara-shared` | M |
