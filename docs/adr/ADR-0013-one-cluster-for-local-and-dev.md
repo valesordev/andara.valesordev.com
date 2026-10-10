@@ -140,7 +140,7 @@ names (impossible: two environments cannot both own `andara.commands.v1`).
 (b) isolates fully and costs a second set of brokers (about another 1.5 CPU and 6 Gi) on a machine that
 cannot spare it, which is the complaint that started this direction. (a) shares the broker's partition budget,
 disk and failure domain: with 64 partitions per hot topic and 222 per environment, two environments are 444
-partitions, 888 replicas (222 at RF 3 for `dev`, 222 at RF 1 for `local`, decision below) on 3 brokers, which a combined KRaft node handles but not with slack to waste.
+partitions, 888 replicas (666 for `dev` at RF 3, 222 for `local` at RF 1, decision below) on 3 brokers, which a combined KRaft node handles but not with slack to waste.
 
 **Decision (Kafka): (a).** Topic names become `<env>.andara.<name>.v<n>`: `dev.andara.commands.v1`,
 `local.andara.commands.v1`. `local` topics use RF 1 and `min.insync.replicas` 1 (local is disposable, and its
@@ -327,10 +327,13 @@ The rebuild is one planned outage and it discards the whole box cluster.
 2. `ADR-0012`'s prerequisites are done (decision 7 steps 0 to 4(i-b): Terraform applied to both stacks, rules
    paused, the Fleet pipelines applied).
 3. `make cluster-rebuild`: delete the old cluster, create `andara`, platform, shared services.
-4. `andara-dev` is created from the `dev` tag by Argo CD; `andara-local` by `make up`.
-5. `ADR-0012` decision 7 step 4(ii) onward runs as written (ruler deletion at the point of no return, then the
+4. The `dev` certificate Secret is restored into `andara-dev` (the namespace is created empty first) **before** Argo CD
+   syncs the `Certificate`, so cert-manager finds the Secret instead of issuing and spending a Let's Encrypt slot
+   **[verify: that cert-manager adopts a pre-existing Secret whose issuer annotations match]**.
+5. `andara-dev` is created from the `dev` tag by Argo CD; `andara-local` by `make up`.
+6. `ADR-0012` decision 7 step 4(ii) onward runs as written (ruler deletion at the point of no return, then the
    first series, `observe-check`, `required_environments`).
-6. `AW-INF-034`'s drill is rerun on the rebuilt `dev`.
+7. `AW-INF-034`'s drill is rerun on the rebuilt `dev`.
 
 **Discarded:** `dev`'s World, its Kafka log, snapshots, Accounts, the old cluster and everything else on it
 (the other projects' workloads, which are Brian's to reinstall elsewhere), Argo CD's state, Image Updater.
@@ -371,13 +374,18 @@ test exercises it, at the cost of the PROXY protocol on the entrypoint.
 | Ports | the kind control-plane node's 80 and 443 are published as `127.0.0.1:8080` and `127.0.0.1:8443` (`deploy/kind/cluster.yaml`); bound to loopback because the proxy runs on the same host. Traefik's `hostPort` 80/443 inside the node is unchanged. Ports 80 and 443 on the host belong to `nginx`. |
 | Hostnames | `local.andara.valesordev.com` (replaces `andara.local` and its `/etc/hosts` line) and `dev.andara.valesordev.com` (replaces `andara-dev.solo7.valesordev.com`); set in `values/local.yaml` and `values/dev.yaml`. `prod`'s `andara.solo7.valesordev.com` and CI's `andara.local` are unchanged. |
 | TLS | `nginx` does not terminate. `dev`: the `letsencrypt` ClusterIssuer (DNS-01 through Cloudflare, unaffected by ports). `local`: the private CA `andara-ca`, with its CA written to `.local/tls/cluster/local/ca.pem` as today (the browser trusts it; the issuer needs no internet). |
-| Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the host's gateway address (`proxyProtocol.trustedIPs`); the admin allowlist (`AW-INF-006`) then sees the real client. Tested in CI with a PROXY-protocol `curl`. |
-| What the other repo does | DNS for the two names to the workstation; `nginx` `stream` blocks that `ssl_preread` the SNI and forward to `127.0.0.1:8443` with `proxy_protocol on`; an `http` block redirecting port 80 to HTTPS or `proxy_pass` to `:8080` if wanted. It does not manage certificates for these names. |
-| Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443. |
+| Client address | Traefik's `websecure` entrypoint trusts the PROXY protocol from the `kind` docker network's gateway, which `platform-up` reads with `docker network inspect kind` (it differs per machine; it is never a committed constant). The admin allowlist (`AW-INF-006`) then sees the real client, so `admin.allowedCIDRs` changes with it: `local` and `dev` carry `127.0.0.0/8` (a CLI on the workstation resolves the name to loopback and arrives as `127.0.0.1`), `dev` keeps `100.64.0.0/10` and adds the tailnet IPv6 range if used, and `172.16.0.0/12` stays only in `local` and CI for the `--resolve` path that bypasses `nginx` (it is no longer needed to admit docker-proxy's masked address on `dev`; remove it there, the 2026-10-02 403 of #305 was that masking). **Residual risk, stated:** any process on the host that connects to `127.0.0.1:8443` arrives as the trusted gateway and can forge a PROXY header, so the allowlist is a network-trust control, not authentication. **[verify]** that Traefik accepts a connection with no PROXY header from a trusted peer (the `--resolve` and CI paths depend on it). CI's Traefik runs with trust on, with its own computed gateway; a CI test sends PROXY-protocol requests with forged client addresses and asserts a `403` for an address outside the list and a `200` for one inside. Owned by story 2. |
+| What the other repo does | DNS for the two names to the workstation; `nginx` `stream` blocks that `ssl_preread` the SNI and forward to `127.0.0.1:8443` with `proxy_protocol on`, with `proxy_timeout` long (12 hours; the default is 10 minutes of silence in both directions, which would cut a quiet `Subscribe` that the server holds open for hours) and `proxy_connect_timeout` 10 s; port 80 handled by an `http` redirect to HTTPS only (the `web` entrypoint trusts no PROXY header, so `proxy_pass` to `:8080` is not offered). It does not manage certificates for these names. |
+| Zone and DNS scope | **[verify]** that the Cloudflare DNS-01 token covers the zone for `*.andara.valesordev.com`; the existing comment says only "under the box's solo7.valesordev.com zone". `dev`'s reachability (tailnet only or not) is decided in the other repo, with its DNS. |
+| Scripts that talk to the edge | direct callers (`stream-soak`, the CLI against `local`) use the public name through `nginx`, or `--resolve <name>:8443:127.0.0.1` to skip it; no script hard-codes 443: `scripts/helm_install.sh`, `scripts/env_recover.py`, `scripts/stream_soak.sh` and `internal/smoke/soak_test.go` take `ANDARA_EDGE_PORT` (default 8443 for a direct dial, 443 through the proxy); story 6 owns them, with the values files' hostnames, `deploy/helm/andara/README.md` and the Builder's Guide (`docs/builders/02`, `03`, `04`, `09`), which architecture amends in the same change. A soak through `nginx` of more than 10 minutes is a story 6 acceptance criterion. |
 
 *Rebuilds and Let's Encrypt.* Rebuilding the cluster is routine, and Let's Encrypt allows five duplicate certificates for the
 same names per week, so `make cluster-rebuild` exports the issued `dev` certificate Secret to `.local/tls/` (gitignored,
 mode 0600) before deleting the cluster and restores it after, and falls back to the staging issuer when the limit is hit.
+
+*Port collision.* The compose `stack-*` flow already uses host 8080 and 8443 (`ANDARA_HTTP_PORT`, `ANDARA_GRPC_PORT`).
+Stories 6 and 7b retire it; until they land, `make cluster-up` checks that 8080 and 8443 are free and refuses, naming the
+`ANDARA_*_PORT` variable that holds them, rather than failing inside Docker.
 
 *Needs the other repo, which is Brian's:* the DNS records and the `nginx` `stream` configuration above. Until they exist, a
 developer reaches `local` with `--resolve` against `:8443` and an `/etc/hosts` line for the name, so nothing here is
@@ -385,20 +393,19 @@ blocked by it; the first rebuild is not complete until `dev.andara.valesordev.co
 
 ### 12. The follow-on stories
 
-PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless noted. Rows 3, 7 and 9 of the first
-draft were `L`-sized and are split.
+PM writes them after acceptance. Each is sized `S` or `M`, lane `sre` unless noted. 
 
 | # | Story | Size |
 |---|---|---|
 | 1 | Cluster as code: `deploy/kind/cluster.yaml` (ports 8080/8443 on loopback), `cluster-up/down/rebuild`, certificate Secret export and restore, `make bootstrap` installs `kind` and `kubectl` | M |
 | 1b | Contexts: every script takes `ANDARA_KUBE_CONTEXT` instead of the ambient context (18 scripts), with a test that fails on a bare `kubectl` | M |
-| 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared`, Traefik PROXY-protocol trust | M |
-| 3 | Shared Kafka: `andara-shared`, prefixed topics, bounded `local.` retention, quotas and per-environment principals rendered from `topics.yaml`, NetworkPolicies, chart FQDN values and the `andara.valesor/env` namespace labels, `make shared-check`, the drill lock | M |
+| 2 | Platform reconcile: `deploy/platform/versions.yaml`, `platform-up`, rewrite `kind_platform.sh`, both ClusterIssuers, Strimzi watching `andara-shared`, Traefik PROXY-protocol trust and the allowlist CIDRs, the CI PROXY-protocol test | M |
+| 3 | Shared Kafka: `andara-shared`, prefixed topics, bounded `local.` retention, quotas and per-environment principals rendered from `topics.yaml`, NetworkPolicies, chart FQDN values and the `andara.valesor/env` namespace labels, `make shared-check` | M |
 | 3b | ADR-0011's SASL for the broker (`ANDARA_KAFKA_SASL_*`), the per-environment Secret copy and RBAC, `kind.yaml` assertions | M |
 | 4 | Shared object store: versitygw IAM users, a bucket and Secret per environment, `objectstore.py local`, 10Gi | S |
 | 5 | The `dev` tag: `make promote`, the Application's `targetRevision`, deploy/rollback parity, remove Image Updater (and `kind.yaml`'s `already installed == 2`), the three `[verify]` items, `AW-INF-041` amendment | M |
-| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, CI | M |
-| 7a | Broker drills: the drill lock and `CONFIRM_LOCAL`, `kafka-broker-bounce` and `kafka-rehearsal` against `andara-shared`, `stack-boundary-lost` as a NetworkPolicy | M |
+| 6 | `andara-local`: `values/local.yaml` and `values/ci.yaml`, hostnames and `ANDARA_EDGE_PORT` in the scripts, README and Builder's Guide, `make up/down/local-reset`, the `andara-it` principal and `make test-integration`'s backing, the compose-`min` baseline, the through-`nginx` soak, CI | M |
+| 7a | Broker drills: the drill lock (`drill-lock` ConfigMap and the checks in `make up`, `local-down`, `promote`, `topics-apply`) and `CONFIRM_LOCAL`, `kafka-broker-bounce` and `kafka-rehearsal` against `andara-shared`, `stack-boundary-lost` as a NetworkPolicy | M |
 | 7b | `env-recover`, `observe-*` and the `stack-*` targets re-pointed at contexts and `andara-local` (with `ADR-0012`'s replacements for `AW-INF-048`) | M |
 | 8 | Collectors and the telemetry token install on the new platform (`ADR-0012` decisions 13 and 15), the `observe_keep_list.py` exclusion for `andara-shared` | M |
 | 9 | The rebuild run (decision 9), including the `dev.andara.valesordev.com` resolution check | S |
