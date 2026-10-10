@@ -347,9 +347,13 @@ per stack in a fixed order; (c) apply from the dev box only.
   - blocks and providers: only `grafana/grafana` (and `hashicorp/terraform`'s built-in `terraform_data`
     without provisioners), `resource`, `data "grafana_*"`, `variable`, `locals`, `output`, `module` with a
     local `source` under `deploy/terraform/grafana/modules/`;
-  - functions: no `file`, `fileexists`, `templatefile`, `filebase64`, `fileset` reaching outside
-    `deploy/terraform/grafana/` or `deploy/helm/andara/files/alerts.yaml` and the dashboard JSON, no
-    `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
+  - functions: the only file function allowed is `file()` with a **literal** path (no computed path) that
+    resolves, as a real path, inside `deploy/terraform/grafana/`, `deploy/helm/andara/files/alerts.yaml` or the
+    dashboard JSON; `fileexists`, `templatefile`, `filebase64`, `fileset` and `abspath` are refused. **Symlinks
+    are refused**: the script rejects any git entry of mode 120000 and any symlink on disk in the pull
+    request's files it extracts, before Terraform runs, because a link under an allowed directory to
+    `/proc/self/environ` would otherwise put the runner's environment into a plan (fixtures: a symlink to
+    `/proc/self/environ`, a `..` path, a computed path). No `nonsensitive`, no `terraform_remote_state`, no `external`, no provisioner of any kind; every
     `variable` and `output` block is **byte-identical to the base branch's** (so `slack_webhook` and every
     other secret variable keep `sensitive = true`, and no output can be added to print one; a change to
     either (and the PR that first creates `deploy/terraform/grafana/`, which has no base to compare to) goes
@@ -386,7 +390,12 @@ per stack in a fixed order; (c) apply from the dev box only.
   read token and the IRM token) plans **both** prod roots, `solo7-irm` first, with `-out`, uploads
   the plan files, **encrypted with `TF_PLAN_KEY_PROD`** (a saved plan embeds state, config and variable
   values, so the webhook and the IRM integration URL are in it), as a one-day artifact and posts the
-  redacted plan text in the job summary; then `apply-prod`
+  plan text for the `solo7` root in the job summary, redacted by Terraform. **For the `solo7-irm` root the
+  summary carries only the resource addresses and actions, never attribute values**, because the provider
+  does not mark the IRM integration's `link` or the `irm-prod` contact point's `url` sensitive, and a
+  replacement plan would print a live, usable URL; the contact point also takes it through `sensitive()` in
+  the module. Brian reads the full IRM plan with `make tf-plan-show` (it downloads the run's encrypted
+  artifact and decrypts it with `TF_PLAN_KEY_PROD`, which he holds), and that is what he approves; then `apply-prod`
   (environment `andara-prod-apply`, Brian the required reviewer) starts only when he approves, downloads
   those plan files and applies exactly them, in the order `solo7-irm`, `solo7`, and finishes with
   the empty-second-plan check of both. What Brian approves is therefore the complete plan, IRM included.
