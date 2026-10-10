@@ -438,6 +438,12 @@ per stack in a fixed order; (c) apply from the dev box only.
 
 ### 6. Scope of "all Grafana Cloud pieces"
 
+**Terraform is for what is deployed to Grafana Cloud, and nothing else** (Brian, 2026-10-10). The cluster, its
+platform and the `k8s-monitoring` release are never Terraform's, now or later; they are `make` targets
+(decision 13).
+
+
+
 **Decision: in Terraform, in each stack:** the folder `Andara`; the rule groups of `alerts.yaml` (Grafana-managed,
 decision 1); contact points; the notification policy tree; mute timings; the `tick-health` dashboard (and its
 folder permissions where they differ from default); for `solo7`, the IRM integration, schedule and escalation
@@ -451,7 +457,7 @@ chain (decision 10).
 | The service accounts, Cloud access policies and tokens decision 4 lists | Chicken and egg (Terraform cannot authenticate with a token it is about to create), and creating them needs the org-level Cloud credential. |
 | The Slack workspace, the two channels, the webhooks | Slack's, not Grafana's. |
 | IRM's on-call *people* and their notification preferences (phone, push) | Personal data, entered by the person. The *schedule* referencing them is Terraform's. |
-| The `k8s-monitoring` release and the cluster | Helm and `kind`, not Terraform: a Terraform root that could reach the cluster would put cluster credentials beside state and tokens. They are `make` targets in this repo run from Brian's box (decision 13). The telemetry token is created by hand (decision 4) and read from `.local/box.env`. |
+| The `k8s-monitoring` release and the cluster | Out of Terraform's scope by the rule above (and a root that could reach the cluster would put cluster credentials beside state and tokens). They are `make` targets in this repo run from Brian's box (decision 13). The telemetry token is created by hand (decision 4) and read from `.local/box.env`. |
 | Data sources | Grafana Cloud provisions each stack's `grafanacloud-prom`, `-logs` and `-traces` data sources; Terraform and `gcx` use their UIDs and do not manage them. |
 | Other things already in `solo7` (Synthetic Monitoring checks and alerts, usage alerts, Faro, k6) | Not Andara's rules; the policy tree Terraform now owns must keep routing them (decision 8). |
 | Billing, org membership, SSO | Not observability. |
@@ -861,11 +867,16 @@ Alloy and the server.
 - **Foreclosed:** a single shared stack for prod and non-prod; hand-edited contact points as the routing
   source; direct Grafana API calls from our scripts; a cluster or `k8s-monitoring` definition outside this
   repo; and, for now, kind as the *developer's* local environment (the box's cluster is `dev`/`staging`/`prod`).
-- **This repo now creates and can destroy the box's cluster.** `kind_platform.sh` today leaves existing
-  releases alone because they serve six other projects; if the cluster is still shared, `cluster-rebuild`
-  destroys their workloads too. [ASSUMPTION: the cluster is Andara's alone after this move, or its other
-  tenants are Brian's to re-install; the follow-up story states which, and `cluster-rebuild`'s confirmation
-  names the tenants it will lose.]
+- **The cluster is Andara's alone, and rebuilding it to a base state is routine** (Brian, 2026-10-10). It is
+  no longer shared with other projects, so `cluster-rebuild` may delete and recreate it without a tenant
+  check, and `kind_platform.sh`'s "leave existing releases alone" stance (written because the box served six
+  other projects) is replaced by reconcile-or-recreate; that rewrite is the follow-up story's.
+- **Persistence is a game's, not a life-support system's.** World content built live by Builders is for
+  building and playtesting in real time and is not permanent: a cluster failure or a rebuild returns the
+  world to a base set of content. A later feature will export built content into the content repo so that
+  work worth keeping survives; until it exists, anything built on a cluster that is rebuilt is lost, and this
+  ADR (cutover step 4, `AW-INF-034`'s rerun) accepts that. Nothing here adds a backup of `dev`'s World, and
+  no decision above may be read as requiring one.
 - **The telemetry token lives on the box.** `.local/box.env` now holds `solo7`'s telemetry token as well as
   `solo7dev`'s (the cluster repo held it before), so the box is the one place that can ship prod telemetry;
   a lost box means rotating it (`credentials.yaml`).
