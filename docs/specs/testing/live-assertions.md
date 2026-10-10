@@ -143,16 +143,16 @@ and four consequences of it, none of which is a new rule.
     sees the fault, and pending counts as not-absent. A single read at the end reports the state *now*, not whether the
     alert fired earlier in the window, so the test polls instance state at every poll from the cause to the
     end of the window and fails on the first firing or pending instance it sees; a forbidden state shorter than one
-    poll (5 s) is not observable, but a firing or pending instance lasts at least one evaluation interval
+    poll (5 s) is not observable, but a firing or pending instance lasts at least its group's evaluation interval
     (60 s by default), so it is visible to 5 s polling. State history is not a substitute: ADR-0012 rejects
-    it as retrospective and eventually consistent, so an empty history proves nothing. An instance present
-    before the cause is a precondition failure, checked first (ADR-0012 decision 2), and is not counted as
+    it as retrospective and eventually consistent, so an empty history proves nothing. An instance of the rule for the same `environment` and `namespace` present
+    before the cause (a `Recovering` one counts, until `AW-INF-047` settles that state) is a precondition failure, checked first (ADR-0012 decision 2), and is not counted as
     an observation in the window. Only a window with no
     forbidden state observed, closed by both anchors, is evidence of absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
     (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
     the cause, so anchor on a series from the same collector and namespace: poll until a sample ingested after the
-    cause is queryable, record a **new** local receipt time `t'` at the first poll that sees it, and require
-    an evaluation that started after `t'` plus the skew allowance (for the `absent()` clause `t` is never assigned, because there is no positive input sample to
+    cause is queryable, record a local receipt time `t'` at the first poll that sees it, and require
+    an evaluation that started after `t'` plus the skew allowance (a whole-rule absence assertion on a rule with both clauses, as `AndaraServerUnavailable` has, needs `t` for its `up == 0` clause and `t'` for its `absent()` clause; for the `absent()` clause `t` is never assigned, because there is no positive input sample to
     observe; the `up == 0` clause does have one; a ruler-backed rule has no evaluation time to compare
     with, see the ruler sentence below). That bounds ingestion lag only, and the
     assertion still waits `for` plus one evaluation after that evaluation. A windowed rule (`StateProjectorDiverged`, `[6h]`) is asserted on the instance
@@ -204,7 +204,7 @@ condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + kee
 `RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
 2-minute stand-in and no lookback, and up to about 23 with the instant query's lookback of up to 5
 minutes when no stale marker arrives (the lookback is its own term:
-`scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline (worst case plus a 2-minute margin, recomputed when measured figures arrive), not 3. These are starting values. SRE records the figures the first drills observe
+`scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline (worst case plus a 2-minute margin, recomputed when measured figures arrive), not 3 minutes. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
 its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
 
