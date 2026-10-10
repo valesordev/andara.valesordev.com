@@ -126,9 +126,11 @@ and four consequences of it, none of which is a new rule.
   `Normal (NoData)`, so a rule that is merely listed and evaluating proves nothing about its input.
   - An **existence anchor** rules out the wrong stack and the dead pipeline: a series of the rule's input
     (or the keep-list's `up{job="andara-server"}`) for the same `environment` and `namespace` is queryable,
-    and the rule is live, not just listed (`health == ok`, `isPaused == false`; for the legacy ruler, which
+    and the rule is live, not just listed (`health == ok`, `isPaused == false`, `lastEvaluation` within twice
+    the group interval; for the legacy ruler, which
     `alert rules list` cannot see, the rule is confirmed through the unfiltered instance list, per
-    ADR-0012 decision 2). It says the observation works. It does **not** license an absence assertion,
+    ADR-0012 decision 2, which only works while the rule has an instance, as `AndaraServerUnavailable`
+    does for prod today; otherwise the check fails closed). It says the observation works. It does **not** license an absence assertion,
     because it can be satisfied by a sample from before the window opened.
   - A **window anchor** closes the window (rule 3), and is causal, not an estimate of when data usually
     arrives. Poll the rule's input until a sample timestamped after the cause is queryable, and note the
@@ -139,13 +141,15 @@ and four consequences of it, none of which is a new rule.
     advances on errored evaluations too. For "nothing fired", extend the window by the rule's `for` plus one
     more evaluation, because a rule with `for > 0` is *pending*, not firing, on the first evaluation that
     sees the fault, and pending counts as not-absent. Only a result read after both anchors is evidence of
-    absence. Two kinds of rule need a different input sample: an absence rule (`AndaraServerUnavailable`
-    is an `absent(up{...})`, which has no positive sample after the cause) anchors on a sibling series of
-    the same target, such as kube-state-metrics' for that namespace; a windowed rule
-    (`StateProjectorDiverged`, `[6h]`) is asserted on the instance state at the evaluation after `t`, never
-    on the window. For the legacy ruler, which has no `lastEvaluation`, the ruler's evaluation time on the
-    instance list is the anchor, and an assertion that cannot find one is out of scope until the ruler is
-    removed.
+    absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
+    (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
+    the cause, so anchor on a series from the same collector and namespace ingested after `t`; that bounds
+    ingestion lag only, and the assertion still waits `for` plus one evaluation after the first
+    evaluation past `t`. A windowed rule (`StateProjectorDiverged`, `[6h]`) is asserted on the instance
+    state at the evaluation after `t`, never on the window. For the legacy ruler, which has no
+    `lastEvaluation`: if the pinned `gcx` exposes an evaluation time for ruler instances **[verify in
+    AW-INF-046]** that is the anchor (`activeAt` is when the alert became active, not an evaluation
+    time); otherwise a ruler-backed absence assertion is out of scope until the ruler is removed.
 - **A `--context` mistake reads the wrong stack and looks green.** The wrapper always passes the context
   and the routing test proves it (both `AW-INF-046`; `gcx` pinned at v0.2.13 or later, since v0.2.11
   ignores `--context` in some operations). An assertion helper does not call `gcx` any other way.
@@ -187,9 +191,10 @@ or two rule evaluation intervals (60 s by default, ADR-0012 decision 1) plus the
 firing through `gcx alert instances list`: `scrape + ingest + 2 × evaluation interval + for`, with
 2 minutes standing in for `scrape + ingest` until measured. To **clear**, the clock starts when the
 condition ends, not at the cause: `scrape + ingest + 1 evaluation interval + keep_firing_for`, which for
-`RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the same
-2-minute stand-in (which also has to cover the instant query's lookback of up to 5 minutes when no stale
-marker arrives); use 20 to 25 minutes, not 3. These are starting values. SRE records the figures the first drills observe
+`RecoveryStateMismatch` (`for: 0m`, `keep_firing_for: 15m`) is about 18 minutes with the
+2-minute stand-in and no lookback, and up to about 21 with the instant query's lookback of up to 5
+minutes when no stale marker arrives (the lookback is its own term:
+`scrape + ingest + lookback + 1 evaluation + keep_firing_for`); use a 25-minute deadline, not 3. These are starting values. SRE records the figures the first drills observe
 (`AW-INF-046`/`047`) on the story and in the runbook it owns; architecture folds them into this file at
 its §8 review of those stories. Poll every 5 s, not faster: `gcx` is a process per call.
 
