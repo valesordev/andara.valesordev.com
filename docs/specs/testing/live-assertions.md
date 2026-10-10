@@ -116,7 +116,7 @@ and four consequences of it, none of which is a new rule.
 - **Read the wrapper's states, not `gcx`'s strings.** The wrapper (`scripts/gcx.py`, `AW-INF-046`)
   maps instance states to firing, pending or not firing (`Alerting` and the ruler's `firing` are firing;
   `Normal` and `Normal (NoData)` are not; whether `Recovering` under `keep_firing_for` counts as firing is
-  open, `AW-INF-047`). Polling for "not firing" is rule 3's case: it also holds before the rule has
+  open, `AW-INF-047`; the precondition below treats it as present until then). Polling for "not firing" is rule 3's case: it also holds before the rule has
   evaluated at all, so the window needs a window anchor (next bullet).
 - **An empty result is not a pass, and two different anchors are needed.** `gcx` can print `null` (for
   example for an empty `alert instances list`), `[]` or an empty `result`; the wrapper normalises all of
@@ -133,16 +133,18 @@ and four consequences of it, none of which is a new rule.
     does for prod today; otherwise the check fails closed). It says the observation works. It does **not** license an absence assertion,
     because it can be satisfied by a sample from before the window opened.
   - A **window anchor** closes the window (rule 3), and is causal, not an estimate of when data usually
-    arrives. Poll the rule's input until a sample timestamped after the cause is queryable. Read the sample's own
-    timestamp, with a bare selector: `timestamp(<selector>)` through the wrapper (`gcx metrics query -d
-    grafanacloud-prom`, an instant query **[verify in AW-INF-046: that it is, and the output shape]**), and the selector must identify the affected series uniquely (labels down to the `pod` or
-    instance the test changed); if it returns several series, every one of them must cross the post-cause
-    timestamp (reduce with `min(...)`, never `max(...)`, which lets one unrelated fresh series open the
-    window), and compared with the cause time plus the same 5 s skew
-    allowance (the collector's clock and the test box's differ). Never use the query result's own timestamp,
-    which is the query's evaluation time and is returned even when the selector reused an older sample inside
-    the lookback window; and a wrapped expression (`sum`, `rate`) returns the evaluation time again, so the
-    selector must be bare. Then note the test's own clock `t` at the first poll that sees it (not the sample's timestamp: ingestion sits
+    arrives. Poll the rule's input until a sample timestamped after the cause is queryable.
+    Read the sample's own timestamp with a **bare** selector, `timestamp(<selector>)`, through the wrapper
+    (`gcx metrics query -d grafanacloud-prom`, an instant query **[verify in AW-INF-046: that it is, and the
+    output shape]**), and compare it with the cause time plus a 5 s skew allowance (the collector's clock
+    and the test box's differ). Never use the query result's own timestamp, which is the query's evaluation
+    time and is returned even when the selector reused an older sample inside the lookback window; and a
+    wrapped expression (`sum`, `rate`) returns the evaluation time again, so the selector must be bare.
+    The selector identifies the affected series uniquely (labels down to the `pod` or instance the test
+    changed). If it returns several series, every one of them must cross the post-cause timestamp: reduce
+    with `min(...)`, never `max(...)`, which lets one unrelated fresh series open the window. An empty
+    result is "not yet", never "crossed": a stale-marked series drops out of the result, and the selector
+    must match at least the series the test changed. Then note the test's own clock `t` at the first poll that sees it (not the sample's timestamp: ingestion sits
     between the two, and an evaluation can start after the scrape and still precede the sample's arrival).
     Then require a rule evaluation that started after `t` plus a 5 s clock-skew allowance (the allowance
     tightens: `lastEvaluation` > `t` + 5 s), with `health == ok` on that read, since `lastEvaluation`
@@ -158,7 +160,7 @@ and four consequences of it, none of which is a new rule.
     an observation in the window. Only a window with no
     forbidden state observed, closed by both anchors, is evidence of absence. Two kinds of rule need a different input sample. A rule with an `absent()` clause
     (`AndaraServerUnavailable` also has an `up == 0` clause) has no positive `andara-server` sample after
-    the cause, so anchor on a series from the same collector and namespace: poll the sibling's `timestamp(<bare selector>)` as above until it is later than the cause time
+    the cause, so anchor on a series from the same collector and namespace: poll the sibling's `timestamp(<bare selector>)` as above (same uniqueness, `min` and empty-result rules) until it is later than the cause time
     plus the skew allowance, record a local receipt time `t'` at the first poll that sees it, and require
     an evaluation that started after `t'` plus the skew allowance (a whole-rule absence assertion on a rule with both clauses, as `AndaraServerUnavailable` has, needs `t` for its `up == 0` clause and `t'` for its `absent()` clause; for the `absent()` clause `t` is never assigned, because there is no positive input sample to
     observe; the `up == 0` clause does have one; a ruler-backed rule has no evaluation time to compare
