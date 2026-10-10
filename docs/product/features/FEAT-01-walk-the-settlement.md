@@ -9,12 +9,12 @@ worth returning to. No real settlement pack exists: the content board holds only
 (`AWC-CAN-*`), and C1's pack stories aren't cut.
 
 ## Outcome
-I enter the world in a settlement I'd recognise as a place: several zones with their own character,
-joined by exits I can follow on foot. Every Room I stand in was written for this village, and I can
-reach every zone from where I arrive.
+I leave Purgatory and arrive in a settlement I'd recognise as a place: several zones with their own
+character, joined by exits I can follow on foot. Every Room in the settlement was written for this village,
+and I can reach every zone from where I arrive.
 
 ## Success signal
-Brian runs it on `dev`, once the C1 pack is published: he walks from the settlement's arrival Room (its Start Location) to every settlement
+Brian runs it on `dev`, once the C1 pack is published: he walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every settlement
 zone by exits alone, then rolls the pack back. It is gated on Brian's Start Location decision and #514; until then he reaches the
 arrival Room with `goto` (Builder-only, `docs/glossary.md`) and the walk from it still passes. CI on the content PR checks the pack separately: it passes `make check` at the pinned
 tag (C1 gate), where the compiler's `unknown_room` diagnostic rejects a dangling exit.
@@ -44,7 +44,7 @@ judgment is his; the walk is the pass/fail.
 - The settlement's arrival Room is the Start Location, not a replacement for Purgatory — Purgatory is every environment's spawn (Brian, 2026-09-26) and this brief does not reverse it.
 
 ## Open for Brian
-- Start Location: how a Character reaches the settlement from Purgatory (`docs/glossary.md`, `[NEEDS BRIAN]`) — recommendation: every new Character moves to the settlement's arrival Room on leaving Purgatory, the same for all; without it the walk signal has no start. The mechanism is architecture's (#514). If he says no: Characters leave Purgatory by `goto` only, and the walk signal starts from a `goto` to the arrival Room.
+- Start Location: how a Character reaches the settlement from Purgatory (`docs/glossary.md`, `[NEEDS BRIAN]`) — recommendation: every new Character moves to the settlement's arrival Room on leaving Purgatory, the same for all; without it the walk signal has no start. The mechanism is architecture's (#514). If he says no: the Exit out of Purgatory stays as it is, and Brian (a Builder, so `goto` is open to him) starts the walk with `goto` to the arrival Room.
 - Pack name (C1 leaves it to Brian) — recommendation: decide before the first zone story is cut, because it appears in every publish and rollback.
 
 ## Sources

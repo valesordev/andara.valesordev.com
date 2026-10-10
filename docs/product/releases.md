@@ -31,7 +31,7 @@ Cut line: no NPCs that act, no Items, no combat, no second gameplay loop; room t
 `TODO(brian)` placeholders where the content roadmap's C1 allows it. Reason: each of those tests a
 different bet, and R2 owns the first of them.
 Success signals (Brian runs them):
-- On `dev`, a Builder publishes the real settlement pack, Brian walks from the settlement's arrival Room (Start Location) to every
+- On `dev`, a Builder publishes the real settlement pack, Brian walks from the settlement's arrival Room (the Start Location, if Brian approves one) to every
   settlement zone by exits alone, and rolls the pack back. Gated on the Start Location decision (FEAT-01);
   until then he reaches that Room with `goto`.
 - On `dev` with the real settlement pack loaded, Brian kills the server pod and his Character rebinds
