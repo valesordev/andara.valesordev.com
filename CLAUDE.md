@@ -178,7 +178,9 @@ commit is tagged `stories-final`.
 - ADR ID: `ADR-<NNNN>`, monotonic, never deleted — superseded ADRs get `status: superseded by ADR-XXXX`.
 - Branch name: `<prefix>/<story-id-lower>-<slug>` → `impl/aw-srv-014-room-graph-loader`, with
   the owning role's prefix from §2. PM branches are `pm/sprint-NN-<slug>`, §8 reviews go
-  on `arch/…-review`, and SRE's instrumentation checks on `sre/…-verify`. Never commit to another agent's branch or directly to `main`.
+  on `arch/…-review`, and SRE's instrumentation checks on `sre/…-verify`. `release/dev` is the one
+  exception: a throwaway branch reset to a `main` commit plus one promotion commit, owned by Brian
+  (`make promote`, ADR-0013 §7). Never commit to another agent's branch or directly to `main`.
 - Commit trailer: `Story: AW-SRV-014`, or `Sprint: SPRINT-NN` for PM commits. The story-merge
   Action reads `Story:` (and `Story-Done:`) lines from a merged PR to move the story.
 - Sprint ID: `SPRINT-<NN>`, monotonic.

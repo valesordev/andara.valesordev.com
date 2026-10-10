@@ -1,7 +1,7 @@
 ---
 id: ADR-0013
 title: One cluster for local and dev
-status: proposed          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
+status: accepted          # draft | proposed | accepted | rejected | superseded by ADR-XXXX
 date: 2026-10-10
 deciders: [brian]
 gates: []                 # the SRE stories this ADR names (decision 12) are written by PM after acceptance
@@ -201,8 +201,7 @@ runaway query, or disk fill. Nothing deploys until `AW-SRV-018` has a binary. Se
 The zero-RPO claim (`AW-INF-040`) and the broker bounce (`AW-INF-014`) are claims about the broker, and the broker
 is now one broker set for both environments. The honest statement, which Brian may not like: **a broker fault
 cannot be rehearsed on `dev` without disturbing `local`.** The story's AC6 ("none can disturb the other environment")
-therefore cannot hold for the broker drills; this ADR deviates from it, and Brian's acceptance of the ADR is the
-acceptance of that deviation (PM amends AC6 to "lists which drills disturb the other and how that is prevented").
+therefore cannot hold for the broker drills; this ADR deviates from it, and Brian accepted that deviation on 2026-10-10 (PM amends AC6 to "lists which drills disturb the other and how that is prevented").
 The drills:
 
 | Drill | Acts on | Disturbs the other environment? | Rule |
@@ -244,7 +243,7 @@ implemented yet, so the amendment costs no migration. What changes:
   `andara-shared`, instead of "same namespace".
 - **The encryption sentence** ("acceptable only while every client and broker share a namespace") becomes "while
   every client and broker share one cluster on one host". Traffic now crosses namespaces on the kind node's docker
-  network, unencrypted, under SCRAM. That is a weaker position than ADR-0011 described and Brian should know it.
+  network, unencrypted, under SCRAM. That is a weaker position than ADR-0011 described Brian accepted it on 2026-10-10.
 - **"Revisit when"** is answered as follows. The first trigger ("any client or broker leaves the namespace") is
   re-read as "leaves the cluster or the host": `prod` on a separate cluster, a client on another host, or
   cross-cluster replication. Crossing a namespace inside this cluster no longer triggers TLS.
@@ -327,7 +326,7 @@ create any topic) is referenced by anything that applies to the box.
 | build info and scrape targets up; a Session is seen by Prometheus; dashboard provisioned; alert rules load and `AndaraServerUnavailable` follows the server | dropped: the compose Prometheus and Grafana are gone. Replaced by `ADR-0012`: the rules' expressions by `promtool test rules` in `make check`, rule state by `gcx` on `solo7dev` (drills with secrets only), the dashboard by the `terraform test` of its three variables |
 | the record log and the tick loop on the broker (`make test-integration`); snapshot round | kept in `drills` |
 | the tick loop survives a broker outage | moved to 7a: a broker drill, unshared in CI so no lock is needed |
-| the log exporter survives a collector outage; a trace round-trips | dropped unless Brian wants a static CI collector (story 8 would add it); the trace round-trip becomes a `gcx` read on `solo7dev` where secrets exist |
+| the log exporter survives a collector outage; a trace round-trips | dropped (Brian, 2026-10-10: no static CI collector); the trace round-trip becomes a `gcx` read on `solo7dev` where secrets exist |
 | `stack-boundary-lost`, `stack-play`, `stack-linkdead`, `stack-recover` (the M2 gate), `stack-projector-check` | kept in `drills`; 7b parameterises the context and namespace and 6b's job passes `andara-ci`; `stack-boundary-lost` is the NetworkPolicy drill of 7a. Their Prometheus reads (`stack_recover.sh`, `stack_smoke.sh`) become the server's own `/metrics` for counters and gauges, and `gcx` on `solo7dev` for anything that needs Grafana Cloud, as `ADR-0012` decision 14 already says |
 | `stack-recover-mismatch` | kept in `drills` **only where the `solo7dev` secrets exist**: it asserts rule state (`RecoveryStateMismatch`, `keep_firing_for`) and the only rule evaluator now is Grafana Cloud's (`ADR-0012` decision 2, read through `gcx`); a fork's pull request skips it and says so (exit `3` locally, a notice in CI); the expression itself stays covered by `promtool test rules` in `make check` |
 | `diagnostics on failure` | replaced: on failure the job dumps `kubectl get pods`, `describe` and `logs` for `andara-ci` and the throwaway Kafka's namespace before the cluster is torn down |
