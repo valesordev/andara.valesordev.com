@@ -63,6 +63,10 @@ plan is not consent to run.
 ## 4. Run
 
 `.claude/bin/coordinator run --apply <the same flags, without --yes>` with `run_in_background`. (`--yes` is this skill's own flag; the script doesn't know it.)
+Run it as its own command, nothing chained: the repo's settings make `coordinator run` an
+`ask` rule, so Claude Code puts it to Brian as a permission prompt, auto mode included. That
+prompt is his consent to start lanes. If it's denied, by him or by auto mode's classifier,
+say so and stop: don't start lanes another way.
 It returns when every lane has ended (90 minutes each at most, $15 each by
 default). `.claude/bin/coordinator status` shows the lanes meanwhile; check it
 when Brian asks, not on a timer.
