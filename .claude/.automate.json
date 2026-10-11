@@ -1,5 +1,5 @@
 {
-  "source": "automate.bashburn.com@c4021bf",
+  "source": "automate.bashburn.com@a6da3fa",
   "target": "andaras-world",
   "files": {
     ".claude/skills/arch-start-sprint/SKILL.md": "94489be54f36d507c373fa734901625e137da6ae00f8d9c258c3513ce2914640",
@@ -36,7 +36,7 @@
     ".claude/skills/pr-comments/SKILL.md": "fa72274d7c7cedff5d1fd48fe17dd2bbb1e104d78268a87b2c9140765ba2aea7",
     ".claude/skills/pr-comments/references/examples.md": "c71472d0e375cca22c4831ebaf7f56c384f7425b49a24588a1c765c2126f0076",
     ".claude/skills/pre-pr/SKILL.md": "d7366d4fbdc3d7461b2e7b2388f817b6ff31581941194094fa8ccff4a6945a9f",
-    ".claude/skills/pre-pr/references/checklist.md": "2380bfa10a2a9546a1b1f92a9ad8704c2676abf8d81409e1064eee174a857ced",
+    ".claude/skills/pre-pr/references/checklist.md": "3524f0bb4f67b4e62c94f143115f209709d194388096cedb9bcb92a73a1cb0b0",
     ".claude/skills/pre-pr/references/examples.md": "90cc350d42a7e445501e60b18aed3c188a42211745be538c14a14f948807e42a",
     ".claude/skills/pre-pr/references/reviewer.md": "2c350f996822f1bca02a6efc7c2108d8fb3e8b55ce68d9d4717d54af56f5e025",
     ".claude/skills/product-triage/SKILL.md": "6c7867520aee631b1e760a5bd6b59d6ef19ffec74b679b7ae544818843df05db",
