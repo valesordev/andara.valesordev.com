@@ -45,6 +45,11 @@ test now catches that class mechanically.
       vendored `.claude/…` in a target repo, not the source tree (the #37
       checklist path).
 - [ ] Every acceptance criterion in the story is met, or the gap is stated.
+- [ ] Every rule, check, or citation rests on one source, or on sources that
+      agree. Where two disagree (a brand doc and its tokens, two sections, a
+      doc and the code), the result isn't determined: name the conflict and
+      leave it for a decision, don't pick one silently (solo7.media#72,
+      qa.md item 14's column-title case).
 
 ## Plans, gates, and success signals
 
